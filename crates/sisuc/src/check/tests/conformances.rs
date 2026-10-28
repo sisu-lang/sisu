@@ -854,6 +854,26 @@ fn a_method_other_than_to_string_should_keep_the_failed_bound_report() {
     }
 }
 
+/// A field named `to_string` is no method, so the call of it is the error of a call of a field:
+/// the generated `Display` does not answer it.
+#[test]
+fn to_string_should_not_answer_a_call_of_a_field_of_that_name() {
+    codes(
+        "class C {\n    to_string: i64\n}\nfn main() {\n    print(C(to_string: 1).to_string())\n}",
+        &[(Code::FieldNotMethod, (5, 27))],
+    );
+}
+
+/// A receiver that failed but kept its type leaves the call a `string`, and the call adds no
+/// error of its own: `("a" + 'c')` is a mismatch, and `.to_string()` on it reports nothing more.
+#[test]
+fn to_string_on_a_receiver_that_failed_should_report_only_the_receiver() {
+    codes(
+        "fn main() {\n    print((\"a\" + 'c').to_string())\n}",
+        &[(Code::Mismatch, (2, 18))],
+    );
+}
+
 /// A precision is for an `f64` only, whatever the part: an enum and a type parameter get the
 /// error too (the fixtures `E0111-enum` and `E0111-parameter` pin the text, which names the type).
 #[test]

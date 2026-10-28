@@ -287,7 +287,11 @@ impl Checker<'_> {
                 // Every type has a `Display`: when no method `to_string` answers the call, because
                 // there is none or its bounds fail for the receiver, the generated one does. No
                 // other method has a fallback.
-                if nullary && name.name.as_str() == "to_string" && !self.has_broken_block(ty) {
+                if nullary
+                    && name.name.as_str() == "to_string"
+                    && !self.has_broken_block(ty)
+                    && !self.names_field(ty, name.name)
+                {
                     return Some(Found::GeneratedDisplay);
                 }
                 // No conformance answers, and the bounds of the plain block fail for the receiver.
@@ -351,6 +355,12 @@ impl Checker<'_> {
         };
         self.diagnostics.push(d);
         None
+    }
+
+    /// Whether `ty` is a class with a field `name`, which a call of that name does not reach.
+    fn names_field(&self, ty: Type, name: Symbol) -> bool {
+        matches!(ty.kind(), TypeKind::Class(class, _)
+            if self.classes[class.0].fields.iter().any(|f| f.name.name == name))
     }
 
     /// Whether an `extend` block of the class or enum `ty` is broken: it may have given `ty`

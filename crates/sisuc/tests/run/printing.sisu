@@ -193,6 +193,12 @@ fn tail(stop: bool) -> string {
     "{e}{if stop { return "done" } else { 0 }}"
 }
 
+// A part of a type parameter pads as its type argument does: a number on the right, and any
+// other value on the left, when the spec has no alignment.
+fn padded<T>(x: T) -> string {
+    "[{x:5}][{x:>5}][{x:^5}]"
+}
+
 fn deep(n: i64) -> Expr {
     if n == 0 {
         Expr.Num(0)
@@ -364,6 +370,15 @@ fn main() {
     print("[{e:>22}]")
     print("{e} {x:.2}")
     print("{[1, 2]:>10}|{Node():<6}|{Shape.Dot:>5}|")
+
+    // The default alignment of a width follows the type argument.
+    print(padded(1))
+    print(padded(small))
+    print(padded(2.5))
+    print(padded("a"))
+    print(padded('x'))
+    print(padded(true))
+    print(padded(Expr.Num(1)))
 
     // A part that leaves evaluates before any text is written.
     print(tail(false))

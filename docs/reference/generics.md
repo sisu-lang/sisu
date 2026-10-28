@@ -523,6 +523,7 @@ The rules:
 - `Ord` requires `Eq`. A type that conforms to `Ord` but not to `Eq` is an error.
 - For `Eq`, `a != b` is `!a.eq(b)`.
 - A conformance that a program writes replaces the generated one. An enum that writes `to_string` prints its own text.
+- `to_string()` is a method of every type except `unit` and `never`. It gives the text that `print` writes, as a `string`. When the bounds of a written `to_string` do not hold for the receiver, as in `extend<T: Eq> Box<T>` for a `Box<Node>`, the generated one answers. A call of another method whose bounds fail is an error.
 - A type can name a generated interface and write no method for it: `enum Level: Eq` has no `eq`. Where nothing is generated, such as `class Node: Eq` with no `eq`, a missing method is an error.
 - Only `to_string` conforms by name. A type with its own `eq` or `less` method conforms to `Eq` or `Ord` only when its declaration names the interface.
 - `i64`, `u8`, `char` and `string` have `Eq` and `Ord` with no declaration. An enum has `Eq` with no declaration when all its payloads have it.

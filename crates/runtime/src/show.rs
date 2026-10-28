@@ -902,6 +902,54 @@ mod tests {
         assert!(out.stdout.windows(want.len()).any(|w| w == want));
     }
 
+    /// The variable that makes `pad_child_should_abort_when_asked` run, and its case.
+    const PAD_VAR: &str = "SISU_RUNTIME_SHOW_PAD";
+
+    /// The child of `pad_should_abort_when_it_cannot_pad`: a pad that has no text to pad, because
+    /// the sink writes to standard output or the mark is past the text. It does nothing unless
+    /// the variable is set.
+    #[expect(unsafe_code, reason = "the test calls the runtime's C ABI")]
+    #[test]
+    fn pad_child_should_abort_when_asked() {
+        let Ok(case) = std::env::var(PAD_VAR) else {
+            return;
+        };
+        let mut slot = MaybeUninit::<Sink>::uninit();
+        let sink = slot.as_mut_ptr();
+        let mark = if case == "stdout" {
+            // SAFETY: `sink` is writable for one sink.
+            unsafe { sisu_show_stdout(sink) };
+            0
+        } else {
+            // SAFETY: `sink` is writable for one sink.
+            unsafe { sisu_show_buffer(sink, 0) };
+            1
+        };
+        // SAFETY: the sink is started.
+        unsafe { sisu_show_pad(sink, mark, 4, 0) };
+    }
+
+    /// A standard output sink has no text to pad, and a mark past the text is no mark: the
+    /// process aborts, as the runtime does for a call that generated code cannot make.
+    #[test]
+    #[cfg_attr(miri, ignore = "spawns a child process, which Miri cannot")]
+    fn pad_should_abort_when_it_cannot_pad() {
+        use std::os::unix::process::ExitStatusExt;
+        for case in ["stdout", "mark"] {
+            let exe = std::env::current_exe().expect("the test binary should have a path");
+            let out = std::process::Command::new(exe)
+                .args([
+                    "--exact",
+                    "show::tests::pad_child_should_abort_when_asked",
+                    "--nocapture",
+                ])
+                .env(PAD_VAR, case)
+                .output()
+                .expect("the child test should start");
+            assert_eq!(out.status.signal(), Some(6), "{case}: {:?}", out.status);
+        }
+    }
+
     #[expect(unsafe_code, reason = "declares libc `dup2`")]
     unsafe extern "C" {
         fn dup2(old: i32, new: i32) -> i32;
