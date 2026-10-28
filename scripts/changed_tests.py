@@ -77,8 +77,8 @@ def changed(ref: str, repo: str = ".") -> set[tuple[str, str]]:
     files only. A deleted test is left out.
 
     shortcut: `test_names.tests()` does not find a test that a macro writes (`fn $name`) or that
-    libtest-mimic makes (`reference`). So it is never a changed test, and its slow check only warns.
-    Map a changed macro row to its test if one of them is ever slow.
+    libtest-mimic makes (`reference`). So it is never a changed test. Map a changed macro row to its
+    test if a caller needs it.
 
     shortcut: a path that git quotes (it holds a quote, a backslash or a control character) keeps
     its quotes, so its file is not found. No such path is in the tree; read `-z` output if one is

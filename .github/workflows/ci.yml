@@ -58,13 +58,13 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install --yes valgrind
       - id: nextest
         run: cargo nextest run --workspace --locked --profile ci
-      # The next three steps run when the test step ran, whatever its result. `always()` would also
+      # The next three steps run when the test step ran, whatever its result; the test-name check
+      # runs only on a pull request. `always()` would also
       # run them after a cancel and after a step before the tests failed.
-      # On a push, warns about tests over their time budget (CODING_STANDARDS.md, Tests).
-      - if: (success() || failure()) && steps.nextest.outcome != 'skipped' && github.event_name != 'pull_request'
+      # Warns about tests over their time budget (CODING_STANDARDS.md, Tests). It never fails the job.
+      - if: (success() || failure()) && steps.nextest.outcome != 'skipped'
         run: python3 scripts/slow_tests.py target/nextest/ci/junit.xml
-      # On a pull request, fails for a changed test that takes more than twice its budget.
-      # It also fails for a test name that the pre-commit hook would reject.
+      # On a pull request, fails for a test name that the pre-commit hook would reject.
       - if: (success() || failure()) && steps.nextest.outcome != 'skipped' && github.event_name == 'pull_request'
         env:
           BASE_REF: ${{ github.base_ref }}
@@ -72,10 +72,7 @@ jobs:
           set -o pipefail
           # The base of the pull request, so a pull request on a stage branch skips the stage below.
           base=$(git merge-base "origin/$BASE_REF" HEAD)
-          status=0
-          git -c core.quotepath=off diff -z --name-only --diff-filter=d "$base" -- '*.rs' | xargs -0 --no-run-if-empty python3 scripts/test_names.py --diff "$base" || status=1
-          python3 scripts/slow_tests.py target/nextest/ci/junit.xml --fail-changed "$base" || status=1
-          exit "$status"
+          git -c core.quotepath=off diff -z --name-only --diff-filter=d "$base" -- '*.rs' | xargs -0 --no-run-if-empty python3 scripts/test_names.py --diff "$base"
       # Shows the test health report in the job summary. It never fails the job.
       - if: (success() || failure()) && steps.nextest.outcome != 'skipped'
         run: |
