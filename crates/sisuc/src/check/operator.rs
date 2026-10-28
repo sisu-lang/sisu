@@ -677,8 +677,9 @@ impl Checker<'_> {
             while let TypeKind::Optional(inner) = base.kind() {
                 base = inner;
             }
-            // A type parameter is an object when its bounds say so: `mono` then makes it a class.
-            let object_param = matches!(base.kind(), TypeKind::Param(..))
+            // A type parameter, or an associated type of one, is an object when its bounds say
+            // so: `mono` then makes it a class.
+            let object_param = matches!(base.kind(), TypeKind::Param(..) | TypeKind::Assoc(..))
                 && self.conforms(base, self.lang.any_object, TypeArgs::NONE);
             let nested = matches!(ty.kind(), TypeKind::Optional(p) if matches!(p.kind(), TypeKind::Optional(_)));
             // Peeling a layer helps only when an object is under the rest.

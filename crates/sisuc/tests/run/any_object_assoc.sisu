@@ -1,0 +1,45 @@
+// GIVEN `Source`, an interface whose associated type `Item` has the bound `AnyObject`,
+// `Pair`, a class that conforms to it with the class `Node` as `Item`, and `same`, a generic
+// function over `S: Source` that tests `a.first() is b.first()` and `a.maybe() is b.maybe()`
+// WHEN `same` runs on two `Pair`s that hold one `Node`, and on two that hold equal `Node`s
+// THEN it prints `true`, `true`, `false` and `false`, and Valgrind and `--rc-checks` find every
+// `Node` and its text released once
+interface Source {
+    type Item: AnyObject
+    fn first(self) -> Item
+    fn maybe(self) -> Item?
+}
+
+class Node {
+    _label: string
+}
+
+class Pair: Source {
+    type Item = Node
+    node: Node
+
+    fn first(self) -> Node { self.node }
+
+    fn maybe(self) -> Node? { Some(self.node) }
+}
+
+fn same<S: Source>(a: S, b: S) -> bool {
+    a.first() is b.first()
+}
+
+fn same_maybe<S: Source>(a: S, b: S) -> bool {
+    a.maybe() is b.maybe()
+}
+
+fn main() {
+    // An interpolation allocates its text, so a missed release of the field leaks.
+    let one = Node(_label: "{1}")
+    let two = Node(_label: "{1}")
+    let a = Pair(node: one)
+    let b = Pair(node: one)
+    let c = Pair(node: two)
+    print(same(a, b)) // true: one object
+    print(same_maybe(a, b)) // true
+    print(same(a, c)) // false: two objects with equal text
+    print(same_maybe(a, c)) // false
+}

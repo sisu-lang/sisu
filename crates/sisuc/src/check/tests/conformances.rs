@@ -2681,6 +2681,79 @@ fn is_should_report_a_bound_parameter_that_is_no_object() {
     }
 }
 
+/// The interfaces whose associated types the rows of the next two tests test with `is`.
+const ASSOC_OBJECTS: &str = "interface Observer: AnyObject {}
+interface Objs {
+    type Item: AnyObject
+    fn first(self) -> Item
+    fn maybe(self) -> Item?
+    fn double(self) -> Item??
+    fn all(self) -> [Item]
+}
+interface Seen {
+    type Item: Observer
+    fn first(self) -> Item
+}
+interface Deep {
+    type Inner: Objs
+    fn inner(self) -> Inner
+}
+interface Plain {
+    type Item
+    fn first(self) -> Item
+    fn all(self) -> [Item]
+}
+interface Equal {
+    type Item: Eq
+    fn first(self) -> Item
+}
+";
+
+/// `is` on an associated type, as on a type parameter, needs the bound `AnyObject` on the
+/// associated type: written, inherited or on a nested one, and for its optional.
+#[test]
+fn is_should_check_on_an_associated_type_that_is_an_object() {
+    for (row, bound, expr) in [
+        ("the bound", "Objs", "a.first() is b.first()"),
+        ("an optional", "Objs", "a.maybe() is b.maybe()"),
+        (
+            "an object beside an optional",
+            "Objs",
+            "a.first() is b.maybe()",
+        ),
+        ("a bound that inherits it", "Seen", "a.first() is b.first()"),
+        (
+            "a nested one",
+            "Deep",
+            "a.inner().first() is b.inner().first()",
+        ),
+    ] {
+        let src = format!(
+            "{ASSOC_OBJECTS}fn same<T: {bound}>(a: T, b: T) -> bool {{\n    {expr}\n}}\nfn main() {{}}"
+        );
+        clean_row(row, &src);
+    }
+}
+
+/// `is` on an associated type with no bound `AnyObject`, on an array of one, and on a double
+/// optional of one is still E0046.
+#[test]
+fn is_should_report_an_associated_type_that_is_no_object() {
+    let line = ASSOC_OBJECTS.lines().count() + 2;
+    for (row, bound, expr) in [
+        ("no bound", "Plain", "a.first() is b.first()"),
+        ("another bound", "Equal", "a.first() is b.first()"),
+        ("an array of it", "Plain", "a.all() is b.all()"),
+        ("an array of an object", "Objs", "a.all() is b.all()"),
+        ("a double optional", "Objs", "a.double() is b.double()"),
+    ] {
+        let src = format!(
+            "{ASSOC_OBJECTS}fn same<T: {bound}>(a: T, b: T) -> bool {{\n    {expr}\n}}\nfn main() {{}}"
+        );
+        codes_row(row, &src, &[(Code::IsNeedsObjects, (line, 5))]);
+    }
+}
+
 /// E0046 on a type that names a parameter has no help when no bound alone fixes it: `T` has no
 /// `==`, and `T??` also needs a layer peeled. The fixture `E0046-param` pins the
 /// help where a bound does fix it.
