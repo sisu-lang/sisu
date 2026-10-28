@@ -2625,6 +2625,12 @@ fn is_should_report_a_parameter_with_no_object_bound() {
         ("no bound", "same<T>(a: T, b: T)", at_a),
         ("another bound", "same<T: Display>(a: T, b: T)", at_a),
         ("an optional with no bound", "same<T>(a: T?, b: T?)", at_a),
+        // An array of `T` is no object whatever `T` is, and no bound of `T` would help.
+        (
+            "an array of the parameter",
+            "same<T: AnyObject>(a: [T], b: [T])",
+            at_a,
+        ),
         // `T??` can hold a `None` of `T?`, so it is no object: one layer comes off first.
         (
             "a double optional",
