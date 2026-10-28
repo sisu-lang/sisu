@@ -822,13 +822,89 @@ fn to_string_should_check_on_a_value_of_every_type() {
 }
 
 /// A `to_string` that takes an argument is an argument-count error, not a call of the
-/// generated one.
+/// generated one, whatever the receiver: a class and an enum with no written `to_string` have the
+/// generated one, so the call is no unknown method.
 #[test]
 fn to_string_with_an_argument_should_report_the_count() {
-    codes(
-        "fn main() {\n    print(5.to_string(1))\n}",
-        &[(Code::ArgumentCount, (2, 11))],
+    let decls = "class C {}\nenum E {\n    A\n}\n";
+    for (row, param) in [
+        ("a number", "i64"),
+        ("a class", "C"),
+        ("an enum", "E"),
+        ("an optional", "i64?"),
+        ("an array", "[i64]"),
+        ("a type parameter", "T"),
+    ] {
+        let generic = if param == "T" { "<T>" } else { "" };
+        let src = format!(
+            "{decls}fn f{generic}(x: {param}) -> string {{\n    x.to_string(1)\n}}\nfn main() {{}}"
+        );
+        let at = where_is(&src, "x.to_string(1)");
+        codes_row(row, &src, &[(Code::ArgumentCount, at)]);
+    }
+}
+
+/// A call of a generated `to_string` asks whether its class has a field of that name. A class
+/// answers once, not once for each call: n fields and many calls read n fields, and n fields with
+/// n calls read in proportion to n (ruling F7).
+#[test]
+fn generated_to_string_lookup_should_read_the_fields_of_a_class_once() {
+    let reads = |fields: usize, calls: usize| {
+        let mut field_lines = String::new();
+        for i in 0..fields {
+            writeln!(field_lines, "    f{i}: i64").expect("a string should take text");
+        }
+        let calls = "    let _ = x.to_string()\n".repeat(calls);
+        let src = format!("class C {{\n{field_lines}}}\nfn f(x: C) {{\n{calls}}}\nfn main() {{}}");
+        DISPLAY_FIELD_READS.set(0);
+        assert!(checked(&src).0.is_some(), "{src}");
+        DISPLAY_FIELD_READS.get()
+    };
+    assert_eq!(reads(10, 1), 10, "one call should read each field once");
+    assert_eq!(
+        reads(10, 50),
+        10,
+        "fifty calls should read each field once, not fifty times"
     );
+    assert_eq!(reads(0, 5), 0, "a class with no field has nothing to read");
+    assert_near_linear(reads(100, 100), reads(200, 200), reads(300, 300));
+}
+
+/// A list of type arguments after `to_string` is the error of a method that takes none, whatever
+/// the receiver: the generated `Display` takes none either, and a list that names a real type is
+/// no better than one that names none. The rows with a written `to_string` are the control: they
+/// have the same code at the same place.
+#[test]
+fn to_string_with_type_arguments_should_report_the_list() {
+    let decls = "class C {}\nclass W {}\nextend W {\n    fn to_string(self) -> string { \"w\" }\n}\nclass B {}\nextend B: Display {\n    fn to_string(self) -> string { \"b\" }\n}\nenum E {\n    A\n}\n";
+    for (row, param) in [
+        ("a bool", "bool"),
+        ("a char", "char"),
+        ("a u8", "u8"),
+        ("a number", "i64"),
+        ("an f64", "f64"),
+        ("a string", "string"),
+        ("an array", "[i64]"),
+        ("an optional", "i64?"),
+        ("a class", "C"),
+        ("an enum", "E"),
+        ("an unbounded type parameter", "T"),
+        ("a class with a written to_string", "W"),
+        ("a class with a Display block", "B"),
+    ] {
+        let generic = if param == "T" { "<T>" } else { "" };
+        for list in ["<Missing>", "<i64>"] {
+            let src = format!(
+                "{decls}fn f{generic}(x: {param}) -> string {{\n    x.to_string{list}()\n}}\nfn main() {{}}"
+            );
+            let at = where_is(&src, list);
+            codes_row(
+                &format!("{row} with {list}"),
+                &src,
+                &[(Code::TypeArguments, at)],
+            );
+        }
+    }
 }
 
 /// The text of a `to_string` is the one of the type's `Display`: a written method whose bounds
@@ -843,14 +919,30 @@ fn to_string_should_fall_back_to_generated_display_when_a_bound_fails() {
 
 /// Only a call of `to_string` with no argument has the fallback: another method of a block whose
 /// bounds fail keeps the report of the failed bound, and so does `to_string` with an argument.
+/// The block is a plain block, or a block of `Display`, whose bounds fail.
 #[test]
 fn a_method_other_than_to_string_should_keep_the_failed_bound_report() {
-    let decls = "class Node {}\nclass Plain<T> {\n    _value: T\n}\nextend<T: Eq> Plain<T> {\n    fn name(self) -> string { \"plain\" }\n    fn to_string(self) -> string { \"plain\" }\n}\n";
-    for call in ["name()", "to_string(1)"] {
-        codes(
-            &format!("{decls}fn main() {{\n    print(Plain(_value: Node()).{call})\n}}"),
-            &[(Code::NotConform, (10, 11))],
-        );
+    let head = "class Node {}\nclass Plain<T> {\n    _value: T\n}\n";
+    for (row, block, call) in [
+        (
+            "name of a plain block",
+            "extend<T: Eq> Plain<T> {\n    fn name(self) -> string { \"plain\" }\n    fn to_string(self) -> string { \"plain\" }\n}\n",
+            "name()",
+        ),
+        (
+            "to_string with an argument, of a plain block",
+            "extend<T: Eq> Plain<T> {\n    fn name(self) -> string { \"plain\" }\n    fn to_string(self) -> string { \"plain\" }\n}\n",
+            "to_string(1)",
+        ),
+        (
+            "to_string with an argument, of a block of Display",
+            "extend<T: Eq> Plain<T>: Display {\n    fn to_string(self) -> string { \"plain\" }\n}\n",
+            "to_string(1)",
+        ),
+    ] {
+        let src = format!("{head}{block}fn main() {{\n    print(Plain(_value: Node()).{call})\n}}");
+        let at = where_is(&src, "Plain(_value: Node())");
+        codes_row(row, &src, &[(Code::NotConform, at)]);
     }
 }
 
@@ -1670,6 +1762,55 @@ fn implicit_interpolation_should_close_an_instantiation_cycle() {
     }
 }
 
+/// A `to_string` call takes the edges of an interpolation of its receiver (see
+/// `implicit_interpolation_should_close_an_instantiation_cycle`): a real cycle is the same error.
+#[test]
+fn to_string_call_should_close_an_instantiation_cycle() {
+    let w = "class W<T> {\n    x: T\n}\n";
+    let main = "fn main() {\n    print(W(x: 1))\n}";
+    let growing = "W(x: [self.x]).to_string()";
+    let rows = [
+        (
+            "a to_string of a class that grows",
+            format!(
+                "{w}extend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        {growing}\n    }}\n}}\n{main}"
+            ),
+            Some(growing.to_string()),
+        ),
+        (
+            "a to_string of an enum payload, reached through its generated Display",
+            format!(
+                "{w}enum Pick<U> {{\n    One(U)\n}}\nextend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        Pick.One(W(x: [self.x])).to_string()\n    }}\n}}\n{main}"
+            ),
+            Some("Pick.One(W(x: [self.x])).to_string()".to_string()),
+        ),
+        (
+            "a to_string of a parameter that holds a class that grows",
+            format!(
+                "{w}fn text<A>(a: A) -> string {{\n    a.to_string()\n}}\nextend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        text(W(x: [self.x]))\n    }}\n}}\n{main}"
+            ),
+            Some("text(W(x: [self.x]))".to_string()),
+        ),
+        (
+            "a to_string that does not grow",
+            format!(
+                "{w}extend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        [self.x].to_string()\n    }}\n}}\n{main}"
+            ),
+            None,
+        ),
+    ];
+    for (row, src, cycle) in rows {
+        match cycle {
+            Some(text) => codes_row(
+                row,
+                &src,
+                &[(Code::InstantiationCycle, where_is(&src, &text))],
+            ),
+            None => clean_row(row, &src),
+        }
+    }
+}
+
 #[test]
 fn operand_under_arrays_of_a_parameter_should_not_close_a_cycle() {
     let same = "fn same<A: Eq>(a: A, b: A) -> bool {\n    a == b\n}\n";
@@ -1685,6 +1826,10 @@ fn operand_under_arrays_of_a_parameter_should_not_close_a_cycle() {
         (
             "arrays of the parameter, interpolated through a bare parameter's second node",
             "class Grid<T> {\n    rows: [[T]]\n}\nfn text<A>(a: A) -> string {\n    \"{a}\"\n}\nextend<T> Grid<T>: Display {\n    fn to_string(self) -> string {\n        text(self.rows)\n    }\n}\nfn main() {\n    print(Grid(rows: [[1]]))\n}".to_string(),
+        ),
+        (
+            "arrays of the parameter, through the to_string of a bare parameter's second node",
+            "class Grid<T> {\n    rows: [[T]]\n}\nfn text<A>(a: A) -> string {\n    a.to_string()\n}\nextend<T> Grid<T>: Display {\n    fn to_string(self) -> string {\n        text(self.rows)\n    }\n}\nfn main() {\n    print(Grid(rows: [[1]]))\n}".to_string(),
         ),
         (
             "arrays of the parameter, printed through a bare parameter's second node",

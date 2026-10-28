@@ -147,6 +147,8 @@ struct ClassInfo {
     fields: Vec<FieldInfo>,
     /// The first method of each name, and every broken one.
     methods: FxHashMap<Symbol, Declared<tir::FuncId>>,
+    /// Whether a field is named `to_string`; `None` until a call of a generated `to_string` asks.
+    names_to_string: Option<bool>,
     /// The associated types the declaration's body chooses.
     assoc: Rc<Choices>,
 }
@@ -321,6 +323,8 @@ struct Source<'src> {
 thread_local! {
     /// How many class fields the class-cycle search has read on this thread.
     pub(super) static FIELD_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many class fields the lookup of a generated `to_string` has read on this thread.
+    pub(super) static DISPLAY_FIELD_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many nested loops the walk that wraps a widened loop's values has entered.
     pub(super) static WRAP_LOOPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many type parameter names have been indexed or looked up on this thread.
@@ -1066,6 +1070,7 @@ impl Checker<'_> {
                         bounds: Vec::new(),
                         fields: Vec::new(),
                         methods: FxHashMap::default(),
+                        names_to_string: None,
                         assoc: Rc::default(),
                     });
                     let name = &class.name;

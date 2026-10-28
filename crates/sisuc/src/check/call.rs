@@ -382,12 +382,17 @@ impl Checker<'_> {
                         c.stray(args);
                         return Err(value);
                     }
-                    deferred = type_of(&checked).is_some_and(|ty| {
-                        matches!(
-                            ty.kind(),
-                            TypeKind::Array(_) | TypeKind::String | TypeKind::I64 | TypeKind::F64
-                        )
-                    });
+                    // A built-in's generated `to_string` reports its own list.
+                    deferred = method.name.as_str() != "to_string"
+                        && type_of(&checked).is_some_and(|ty| {
+                            matches!(
+                                ty.kind(),
+                                TypeKind::Array(_)
+                                    | TypeKind::String
+                                    | TypeKind::I64
+                                    | TypeKind::F64
+                            )
+                        });
                     // A built-in's method takes no type arguments, so two that could be values
                     // were comparisons, of the method's result: the help calls one that takes
                     // no arguments. An unknown one is reported as unknown.
@@ -444,7 +449,7 @@ impl Checker<'_> {
             // A built-in type, an array and an optional have a `Display` that the compiler writes,
             // and no method of their own named `to_string`.
             Some(ty) if method.name.as_str() == "to_string" && generated_display_only(ty) => {
-                return self.generated_display(span, receiver, args);
+                return self.generated_display(span, receiver, site, args);
             }
             Some(ty) if matches!(ty.kind(), TypeKind::Array(_)) => {
                 return self.array_method(span, (receiver, receiver_expr.span), ty, method, args);
@@ -461,7 +466,7 @@ impl Checker<'_> {
         let ty = type_of(&receiver);
         match self.find_method(ty, receiver_expr, site, target, (span, args.is_empty())) {
             Some(Found::Func(func)) => self.invoke(span, func, Some(receiver), site, args),
-            Some(Found::GeneratedDisplay) => self.generated_display(span, receiver, args),
+            Some(Found::GeneratedDisplay) => self.generated_display(span, receiver, site, args),
             None => {
                 self.labels(args);
                 self.stray(args);
@@ -472,8 +477,17 @@ impl Checker<'_> {
 
     /// `receiver.to_string()` on a value whose `Display` the compiler writes: the text that
     /// `print` writes, as a one-part interpolation (`lang::to_string`). The call takes no
-    /// argument.
-    fn generated_display(&mut self, span: Span, receiver: Checked, args: &[ast::Arg]) -> Checked {
+    /// argument and no type argument, as a written method with no type parameter of its own.
+    fn generated_display(
+        &mut self,
+        span: Span,
+        receiver: Checked,
+        site: Site<'_>,
+        args: &[ast::Arg],
+    ) -> Checked {
+        if !site.written.is_empty() {
+            self.not_generic(site.name.name, site.angles);
+        }
         if !args.is_empty() {
             let d = DiagnosticKind::ArgumentCount {
                 name: "to_string".to_string(),

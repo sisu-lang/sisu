@@ -2,6 +2,8 @@
 
 use rustc_hash::FxHashMap;
 
+#[cfg(test)]
+use super::DISPLAY_FIELD_READS;
 use super::expr::{if_some, local, no_member, path};
 use super::extend::holder_of;
 use super::generic::{Site, named_params};
@@ -286,11 +288,13 @@ impl Checker<'_> {
             [] => {
                 // Every type has a `Display`: when no method `to_string` answers the call, because
                 // there is none or its bounds fail for the receiver, the generated one does. No
-                // other method has a fallback.
-                if nullary
-                    && name.name.as_str() == "to_string"
+                // other method has a fallback. A written method whose bounds fail keeps its report
+                // when the call has an argument: the call is not the generated one's.
+                let written = masked.is_some() || self.failed_block.is_some();
+                if name.name.as_str() == "to_string"
+                    && (nullary || !written)
                     && !self.has_broken_block(ty)
-                    && !self.names_field(ty, name.name)
+                    && !self.names_to_string_field(ty)
                 {
                     return Some(Found::GeneratedDisplay);
                 }
@@ -357,10 +361,20 @@ impl Checker<'_> {
         None
     }
 
-    /// Whether `ty` is a class with a field `name`, which a call of that name does not reach.
-    fn names_field(&self, ty: Type, name: Symbol) -> bool {
-        matches!(ty.kind(), TypeKind::Class(class, _)
-            if self.classes[class.0].fields.iter().any(|f| f.name.name == name))
+    /// Whether `ty` is a class with a field `to_string`, which a call of that name does not
+    /// reach. A class answers once: the first call reads its fields, and the rest read the answer.
+    fn names_to_string_field(&mut self, ty: Type) -> bool {
+        let TypeKind::Class(class, _) = ty.kind() else {
+            return false;
+        };
+        let info = &mut self.classes[class.0];
+        *info.names_to_string.get_or_insert_with(|| {
+            info.fields.iter().any(|f| {
+                #[cfg(test)]
+                DISPLAY_FIELD_READS.set(DISPLAY_FIELD_READS.get() + 1);
+                f.name.name.as_str() == "to_string"
+            })
+        })
     }
 
     /// Whether an `extend` block of the class or enum `ty` is broken: it may have given `ty`

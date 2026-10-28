@@ -770,7 +770,7 @@ impl Checker<'_> {
                         // its arguments. A language interface's receiver may stand for an array
                         // or an optional, which its generated conformance takes off first.
                         let hub = interface_hubs + interface.0;
-                        if [self.lang.eq, self.lang.ord].contains(&interface) {
+                        if [self.lang.eq, self.lang.ord, self.lang.display].contains(&interface) {
                             graph.operator(holder, iargs.get()[0], interface, e.span);
                         } else {
                             graph.args(holder, &iargs.get()[..1], hub, e.span, e.span, instance);
