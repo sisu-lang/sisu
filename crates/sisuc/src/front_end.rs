@@ -42,6 +42,8 @@ pub(crate) fn front_end_with(
     match program.map(mono::instantiate).transpose() {
         Ok(program) => (program, diagnostics),
         Err(found) => {
+            // The checker judged liveness on a program that fails, as it does not for an error.
+            diagnostics.retain(|d| !check::is_judged(d));
             diagnostics.extend(found);
             diagnostics.sort_by_key(|d| d.span().start());
             (None, diagnostics)

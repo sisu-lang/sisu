@@ -3998,6 +3998,21 @@ fn mono_should_report_a_chain_that_the_probe_did_not_follow() {
     }
 }
 
+/// A program that `mono` stops after the check gets no warning that judges liveness, as a
+/// program with an error gets none (W0012). `Outer` and `W` are never built in the program, so
+/// the check warns of them until `mono` fails.
+#[test]
+fn mono_should_keep_back_the_liveness_warnings_of_a_program_it_stops() {
+    let src = long_loop(200, "fn main() {\n    get(Leaf())\n}");
+    let (program, diagnostics) = crate::front_end::front_end(&src);
+    let found: Vec<_> = diagnostics.iter().map(Diagnostic::code).collect();
+    assert_eq!(found, [Code::UnknownType], "{diagnostics:?}");
+    assert!(program.is_none());
+    // The check alone passes the program, and warns.
+    let checked = crate::front_end::checked(&src).1;
+    assert!(checked.iter().any(is_judged), "{checked:?}");
+}
+
 /// A bound whose argument names an associated type of a sibling parameter finds that parameter's
 /// bounds, so the only way to write the constraint works; a sibling that has no bound that
 /// declares the type is still reported. A bound that names a parameter that a later argument

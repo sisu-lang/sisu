@@ -47,6 +47,7 @@ use enums::{EnumInfo, HoldsTable};
 use extend::Extension;
 use interface::{Bound, InterfaceInfo, PendingBound, Required, Scope, Slot};
 use prelude::PRELUDE;
+pub(crate) use unused_names::is_judged;
 use unused_names::{Owner, Pending, Use, Used};
 
 /// An expression whose rule failed; its diagnostic is recorded. `ty` is its type when

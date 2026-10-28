@@ -255,6 +255,22 @@ fn dead_function_should_not_warn_when_the_program_has_an_error() {
     );
 }
 
+/// `is_judged` names the warnings that the checker keeps back when a program has an error. The
+/// program has a dead function, a field that nothing reads and an unused variable.
+#[test]
+fn is_judged_should_name_the_warnings_that_an_error_stops() {
+    judge_unused();
+    let src = "class P {\n    x: i64\n}\nfn dead() {}\nfn main() {\n    let _p = P(x: 1)\n    let u = 1\n}";
+    // In order of position: the field, the function, the variable.
+    let found: Vec<Code> = diags(src).iter().map(Diagnostic::code).collect();
+    assert_eq!(found, [W0013, W0012, W0014], "no error");
+    let found = diags(&src.replace("let u = 1", "let u: i64 = \"a\""));
+    assert!(
+        !found.is_empty() && !found.iter().any(is_judged),
+        "{found:?}"
+    );
+}
+
 #[test]
 fn dead_function_should_not_warn_when_its_call_fails() {
     judge_unused();

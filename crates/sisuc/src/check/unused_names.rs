@@ -11,10 +11,20 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::extend::holder_of;
 use super::{Checker, Declared, Holder};
-use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, UsedBy};
+use crate::diagnostic::{Code, Definition, Diagnostic, DiagnosticKind, UsedBy};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeKind};
+
+/// Whether `d` is a warning that `Checker::unused` gives and `Checker::unjudged` does not: one
+/// that judges whether code is live. A program with an error gets none, because a use in code
+/// that fails may be missed. A program that `mono` stops after the check gets none either.
+pub(crate) fn is_judged(d: &Diagnostic) -> bool {
+    matches!(
+        d.code(),
+        Code::UnusedItem | Code::UnusedMember | Code::UnusedVariable
+    )
+}
 
 /// A body that can use items: a function's or a method's, or a constant's value, or the bounds of
 /// an `extend` block.
