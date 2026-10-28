@@ -474,7 +474,7 @@ fn if_with_failed_and_never_branches_is_error() {
 /// A rule that fails makes its expression `Error`. Each row binds the failed expression
 /// and uses it where a typed result would cascade into a second error.
 #[test]
-fn failed_rule_makes_its_expression_error() {
+fn failed_rule_should_make_its_expression_error() {
     const MISMATCH: Code = Code::Mismatch;
     const F: &str = "fn f(a: i64) -> i64 { a }\n";
     let rows: [(&str, String, Code, (usize, usize)); 12] = [
@@ -499,7 +499,7 @@ fn failed_rule_makes_its_expression_error() {
         (
             "compare",
             "fn main() {\n    let x = 1 < true < 2\n    print(x + 1)\n}".into(),
-            MISMATCH,
+            Code::NoOperator,
             (2, 17),
         ),
         (
@@ -1599,19 +1599,25 @@ fn neg_needs_a_signed_number() {
 }
 
 #[test]
-fn less_needs_an_ordered_operand() {
+fn less_should_report_no_operator_for_an_unordered_operand() {
     codes(
         "fn main() { print(true < false) }",
-        &[(Code::Mismatch, (1, 19))],
+        &[(Code::NoOperator, (1, 19))],
     );
 }
 
-/// An operand that fails first leaves the later ones unchecked: one error per operator.
+/// An operand that fails first leaves the later ones unchecked: one error per operator. The
+/// leader `a` of `[] < a` has no `<`, so it is the operand reported, and the `[]` before it is
+/// not held to its type.
 #[test]
-fn operator_after_a_failed_operand_reports_once() {
-    for operator in ["None + p", "[] - p", "[] < a"] {
+fn operator_should_report_once_after_a_failed_operand() {
+    for (operator, code, column) in [
+        ("None + p", Code::Mismatch, 46),
+        ("[] - p", Code::Mismatch, 46),
+        ("[] < a", Code::NoOperator, 51),
+    ] {
         let src = format!("fn main() {{ let p = true; let a = [1]; print({operator}) }}");
-        codes(&src, &[(Code::Mismatch, (1, 46))]);
+        codes(&src, &[(code, (1, column))]);
     }
 }
 
@@ -3744,10 +3750,11 @@ fn spills_is() {
 }
 
 #[test]
-fn spills_equal() {
+fn equal_should_spill_a_counted_operand_before_an_exit() {
+    // A `string` is counted, as the class this row once compared.
     f_contains(
         C,
-        "fn make() -> T { T(v: 0, o: None) }\nfn f(c: bool) -> bool {\n    make() == if c { return false } else { make() }\n}",
+        "fn make() -> string { \"a\" }\nfn f(c: bool) -> bool {\n    make() == if c { return false } else { make() }\n}",
         "(block (let #1 (call make)) (let #2 (if c#0 (block (return false)) (block (call make)))) (== #1 #2))",
     );
 }

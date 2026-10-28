@@ -1,5 +1,6 @@
-// An enum whose payload holds an `f64` is not `==` to itself when that is `nan`, so a class or an
-// array that holds one never takes the same-object shortcut; with `1.0` it does, and is equal.
+// An enum whose payload holds an `f64` is not `==` to itself when that is `nan`, so a class whose
+// `eq` compares one, or an array that holds one, never takes the same-object shortcut; with `1.0`
+// it is equal.
 // The same holds through boxes: two sides that share every box compare the boxes' contents.
 // `nan` is made as `0.0 / 0.0`.
 enum S {
@@ -11,8 +12,9 @@ enum Tree {
     Node(Tree, Tree)
 }
 
-class H {
+class H: Eq {
     s: S
+    fn eq(self, other: Self) -> bool { self.s == other.s }
 }
 
 fn main() {

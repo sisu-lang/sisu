@@ -1,0 +1,10 @@
+class Node {
+    value: i64
+
+    fn eq(self, other: Self) -> bool { self.value == other.value }
+}
+
+fn main() {
+    let a = Node(value: 1)
+    print(a == Node(value: 1))
+}

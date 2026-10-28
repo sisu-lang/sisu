@@ -1,6 +1,8 @@
 // Each function is one case of scalar optionals, `?.`, `??`, `==` and `is`. Valgrind checks
 // that every object is freed exactly once on every path.
-class E {}
+class E: Eq {
+    fn eq(self, _other: Self) -> bool { true }
+}
 
 class P {
     mut n: i64?
@@ -20,15 +22,21 @@ class P {
     }
 }
 
-// `Pt.tag` names a class declared later, so `@sisu_rc.eq.Pt` calls a helper defined after it.
-class Pt {
+// `Pt.eq` compares `tag`, a class declared later, so the `eq` helper of `Pt` calls a helper
+// defined after it.
+class Pt: Eq {
     x: i64
     y: i64?
     tag: Tag?
+
+    fn eq(self, other: Self) -> bool {
+        self.x == other.x && self.y == other.y && self.tag == other.tag
+    }
 }
 
-class Tag {
+class Tag: Eq {
     k: i64
+    fn eq(self, other: Self) -> bool { self.k == other.k }
 }
 
 fn some(x: i64) -> i64? {
@@ -171,7 +179,8 @@ fn equality() {
     print(m is none)
 }
 
-// A class with no fields: two objects are equal, but not the same object.
+// A class with no fields and an `eq` that says true: two objects are equal, but not the same
+// object.
 fn empty() {
     print(E() == E())
     print(E() is E())

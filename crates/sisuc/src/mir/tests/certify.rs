@@ -1561,6 +1561,7 @@ fn borrow_across_a_flagged_equal_should_be_rejected() {
                         lhs: one(),
                         rhs: one(),
                         calls,
+                        none: None,
                     },
                 ),
                 show(read(x)),

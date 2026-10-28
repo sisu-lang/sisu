@@ -539,15 +539,15 @@ fn class_drop_should_call_no_drop_or_release_of_the_other_class_in_its_cycle() {
     assert!(drop("H").contains("@sisu_rc.release.A("));
 }
 
-/// The helpers of an enum and of a class hand an inline enum field to its own helper by
+/// The helpers of an enum and the drop of a class hand an inline enum field to its own helper by
 /// address. A copy in a stack slot makes each frame as large as the field, so a chain of
 /// nested enums needs stack quadratic in its depth.
 #[test]
-fn helpers_pass_inline_enum_fields_by_address() {
+fn helpers_should_pass_inline_enum_fields_by_address() {
     let context = Context::create();
     let ir = compiled(
         &context,
-        "enum Inner {\n    P(string, i64, i64, i64)\n    Q\n}\nenum Outer {\n    W(Inner)\n    V\n}\nenum Tree {\n    Leaf\n    Node(Tree, Inner)\n}\nclass Holder {\n    inner: Inner\n}\nfn same(a: Outer, b: Outer, c: Holder, d: Holder, e: Tree, f: Tree) -> bool { a == b && c == d && e == f }\nfn keep(o: Outer) -> [Outer] { [o, o] }\nfn drop(o: Outer, t: Tree) {\n    let k = o\n    let u = t\n}\nfn main() {}",
+        "enum Inner {\n    P(string, i64, i64, i64)\n    Q\n}\nenum Outer {\n    W(Inner)\n    V\n}\nenum Tree {\n    Leaf\n    Node(Tree, Inner)\n}\nclass Holder {\n    inner: Inner\n}\nfn same(a: Outer, b: Outer, e: Tree, f: Tree) -> bool { a == b && e == f }\nfn keep(o: Outer) -> [Outer] { [o, o] }\nfn drop(o: Outer, t: Tree, h: Holder) {\n    let k = o\n    let u = t\n    let v = h\n}\nfn main() {}",
     )
     .print_to_string()
     .to_string();
@@ -563,10 +563,6 @@ fn helpers_pass_inline_enum_fields_by_address() {
         (
             "define internal void @sisu_rc.retain.Outer(ptr",
             "@sisu_rc.retain.Inner(",
-        ),
-        (
-            "define internal i1 @sisu_rc.eq.Holder(ptr",
-            "@sisu_rc.eq.Inner(",
         ),
         (
             "define internal void @sisu_rc.drop.Holder(ptr",
@@ -739,64 +735,68 @@ fn string_grow_reallocates_from_the_old_capacity() {
     assert_header_plus_capacity(body, block, old_size);
 }
 
+/// A class gets no generated `eq` helper: it compares by identity. A class with a written `Eq`
+/// gets the helper that calls its `eq`, which the helper of an array of it calls.
 #[test]
-fn eq_loops_on_the_chain_field() {
+fn class_should_get_no_eq_helper_and_its_array_should_call_the_written_eq() {
     let context = Context::create();
-    let ir = compiled(
+    let plain = compiled(
         &context,
-        "class Node {\n    value: i64\n    next: Node?\n}\nclass First {\n    next: First?\n    value: i64\n}\nfn same(a: Node?, b: Node?, c: First?, d: First?) -> bool { a == b && c == d }\nfn main() {}",
+        "class C {\n    v: i64\n}\n\nfn main() {\n    let c = C(v: 1)\n    print(c is c)\n}\n",
+    );
+    assert!(plain.get_function("sisu_rc.eq.C").is_none());
+    let written = compiled(
+        &context,
+        "class C: Eq {\n    v: i64\n    fn eq(self, other: Self) -> bool { self.v == other.v }\n}\n\nfn main() {\n    print([C(v: 1)] == [C(v: 2)])\n}\n",
     )
     .print_to_string()
     .to_string();
-    // The chain field is compared in a loop, in either field order: no `eq` calls itself.
-    for (class, header) in [
-        ("Node", "define internal i1 @sisu_rc.eq.Node(ptr"),
-        ("First", "define internal i1 @sisu_rc.eq.First(ptr"),
-    ] {
-        let body = function_body(&ir, header);
-        assert!(body.contains("phi ptr"), "no loop in\n{body}");
-        let own_call = format!("call i1 @sisu_rc.eq.{class}(");
-        assert!(!body.contains(&own_call), "{own_call:?} in\n{body}");
-    }
+    let array = function_body(&written, "define internal i1 @\"sisu_rc.eq.[C]\"(ptr");
+    assert!(array.contains("call i1 @sisu_rc.eq.C("), "{array}");
+    let helper = function_body(&written, "define internal i1 @sisu_rc.eq.C(ptr");
+    assert!(helper.contains("call i1 @sisu.C.eq("), "{helper}");
 }
 
-/// A class gets an `eq` helper when a `==` compares it, and not otherwise.
+/// `x == None` on a counted optional tests whether it holds a value, so it needs no `eq` helper,
+/// which a class has none of: the pointer is tested against `null`.
 #[test]
-fn only_a_compared_class_gets_an_eq_helper() {
-    let context = Context::create();
-    let class = "class C {\n    v: i64\n}\n\n";
-    let unused = compiled(
-        &context,
-        &format!("{class}fn main() {{\n    print(C(v: 1).v)\n}}\n"),
-    );
-    assert!(unused.get_function("sisu_rc.eq.C").is_none());
-    let used = compiled(
-        &context,
-        &format!("{class}fn main() {{\n    print(C(v: 1) == C(v: 2))\n}}\n"),
-    );
-    assert!(used.get_function("sisu_rc.eq.C").is_some());
-}
-
-/// An `eq` helper answers "equal" for one pointer on both sides only when its type's `==` is
-/// reflexive; where an `f64` is reachable, through an optional, an array or a class's fields,
-/// one block or object may hold a `nan`, so only two `null`s are equal at once.
-#[test]
-fn same_pointer_shortcut_only_when_reflexive() {
+fn comparing_an_optional_class_with_none_should_test_the_pointer() {
     let context = Context::create();
     let ir = compiled(
         &context,
-        "class Node {\n    value: i64\n    next: Node?\n}\nclass Pt {\n    x: f64\n}\nclass Bag {\n    ps: [Pt?]\n}\nfn same(a: Node, b: Node, c: Bag, d: Bag, e: [i64], f: [i64], g: [f64], h: [f64]) -> bool { a == b && c == d && e == f && g == h }\nfn main() {}",
+        "class Node {\n    next: Node?\n}\nfn present(n: Node) -> bool { n.next != None }\nfn absent(n: Node) -> bool { None == n.next }\nfn main() {}",
+    )
+    .print_to_string()
+    .to_string();
+    assert!(!ir.contains("sisu_rc.eq."), "{ir}");
+    // `!=` is the test itself, and `==` is its negation.
+    for (name, negated) in [("present", false), ("absent", true)] {
+        let body = function_body(&ir, &format!("define internal i1 @sisu.{name}(ptr"));
+        let test = body
+            .lines()
+            .any(|line| line.contains("icmp ne ptr") && line.ends_with(", null"));
+        assert!(test, "{name}: no test against null in\n{body}");
+        assert_eq!(body.contains("xor i1 %present, true"), negated, "{body}");
+    }
+}
+
+/// An `eq` helper answers "equal" for one pointer on both sides only when its type's `==` is
+/// reflexive; where an `f64` is reachable, or a class has a written `eq`, which need not be
+/// reflexive, one block or object may differ from itself, so only two `null`s are equal at once.
+#[test]
+fn same_pointer_shortcut_should_be_taken_only_when_equality_is_reflexive() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "class Node: Eq {\n    value: i64\n    fn eq(self, other: Self) -> bool { self.value == other.value }\n}\nfn same(e: [i64], f: [i64], g: [f64], h: [f64], i: [Node], j: [Node], k: [Node?], l: [Node?]) -> bool { e == f && g == h && i == j && k == l }\nfn main() {}",
     )
     .print_to_string()
     .to_string();
     for (helper, reflexive) in [
-        // A class whose only cycle is through itself, with no `f64` reached, is reflexive.
-        ("@sisu_rc.eq.Node(ptr", true),
         ("@\"sisu_rc.eq.[i64]\"(ptr", true),
-        ("@sisu_rc.eq.Pt(ptr", false),
-        ("@sisu_rc.eq.Bag(ptr", false),
-        ("@\"sisu_rc.eq.[Pt?]\"(ptr", false),
         ("@\"sisu_rc.eq.[f64]\"(ptr", false),
+        ("@\"sisu_rc.eq.[Node]\"(ptr", false),
+        ("@\"sisu_rc.eq.[Node?]\"(ptr", false),
     ] {
         let body = function_body(&ir, &format!("define internal i1 {helper}"));
         // The shortcut is a pointer comparison against another pointer, not against `null`.
@@ -816,11 +816,11 @@ fn same_pointer_shortcut_only_when_reflexive() {
 /// is compared by pointer first only when no `f64` is reachable from the enum, whatever the
 /// classes before it in the program hold.
 #[test]
-fn enum_box_shortcut_only_when_reflexive() {
+fn enum_box_shortcut_should_be_taken_only_when_equality_is_reflexive() {
     let context = Context::create();
     let ir = compiled(
         &context,
-        "class Pt {\n    x: f64\n}\nclass Other {\n    n: i64\n}\nenum Ints {\n    Nil\n    Cons(i64, Ints)\n}\nenum Floats {\n    Nil\n    Cons(f64, Floats)\n}\nfn main() {\n    print(Pt(x: 1.0) == Pt(x: 1.0) || Other(n: 1) == Other(n: 1))\n    print(Ints.Nil == Ints.Nil)\n    print(Floats.Nil == Floats.Nil)\n}",
+        "class Pt {\n    x: f64\n}\nclass Other {\n    n: i64\n}\nenum Ints {\n    Nil\n    Cons(i64, Ints)\n}\nenum Floats {\n    Nil\n    Cons(f64, Floats)\n}\nfn main() {\n    let _ = Pt(x: 1.0)\n    let _ = Other(n: 1)\n    print(Ints.Nil == Ints.Nil)\n    print(Floats.Nil == Floats.Nil)\n}",
     )
     .print_to_string()
     .to_string();
@@ -851,15 +851,15 @@ fn eq_component_should_not_call_an_eq_component_helper() {
     assert!(!body.contains("@sisu_rc.eq_component."), "{body}");
 }
 
-/// `Pair` has a link and then a class field. `eq_component` compares in field order: it queues
-/// the link, enters it, and compares the class field only after it pops the queue, in the
-/// `resume` block. So no `==` on the class field comes before that block.
+/// `Pair` has a link and then a class field with a written `eq`. `eq_component` compares in field
+/// order: it queues the link, enters it, and calls the class's `eq` only after it pops the queue,
+/// in the `resume` block. So no call of it comes before that block.
 #[test]
 fn eq_component_should_compare_a_field_after_a_link_only_when_it_resumes() {
     let context = Context::create();
     let ir = compiled(
         &context,
-        "class C {\n    n: i64\n}\nenum E {\n    Leaf\n    Pair(E, C)\n}\nfn main() {\n    print(E.Pair(E.Leaf, C(n: 1)) == E.Leaf)\n}",
+        "class C: Eq {\n    n: i64\n    fn eq(self, other: Self) -> bool { self.n == other.n }\n}\nenum E {\n    Leaf\n    Pair(E, C)\n}\nfn main() {\n    print(E.Pair(E.Leaf, C(n: 1)) == E.Leaf)\n}",
     )
     .print_to_string()
     .to_string();
@@ -1073,15 +1073,6 @@ fn scalar_not_equal_is_one_icmp_ne() {
         assert!(!body.contains("icmp eq"), "{body}");
         assert!(!body.contains("xor"), "{body}");
     }
-}
-
-#[test]
-fn eq_helper_per_class() {
-    let context = Context::create();
-    let ir = compiled(&context, "class T {}\nfn main() { print(T() == T()) }")
-        .print_to_string()
-        .to_string();
-    assert!(ir.contains("define internal i1 @sisu_rc.eq.T(ptr"), "{ir}");
 }
 
 #[test]
@@ -2771,17 +2762,17 @@ fn blocks_are_named_after_their_index_or_loop_role() {
     assert_eq!(names, expected, "{}", f.print_to_string());
 }
 
-/// Whether `==` on a class or enum is reflexive is worked out once for the program: a walk
-/// from each `eq` helper's type reads a chain of classes quadratically.
+/// Whether `==` on an enum is reflexive is worked out once for the program: a walk from each
+/// `eq` helper's type reads a chain of enums quadratically.
 #[test]
-fn reflexivity_reads_linearly() {
+fn reflexivity_should_read_linearly() {
     let reads = |n: usize| {
-        let classes = (0..n)
-            .map(|i| format!("class C{i} {{\n    x: C{}?\n}}\n", i + 1))
+        let enums = (0..n)
+            .map(|i| format!("enum C{i} {{\n    End\n    Next(C{})\n}}\n", i + 1))
             .collect::<Vec<_>>()
             .concat();
         let src = format!(
-            "{classes}class C{n} {{}}\nfn main() {{\n    print(C0(x: None) == C0(x: None))\n}}\n"
+            "{enums}enum C{n} {{\n    End\n}}\nfn main() {{\n    print(C0.End == C0.End)\n}}\n"
         );
         TYPE_READS.set(0);
         let context = Context::create();

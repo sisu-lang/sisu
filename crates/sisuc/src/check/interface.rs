@@ -11,8 +11,8 @@ use super::{BindingKind, Body, Checker, Choice, Choices, Declared, Definition};
 use crate::ast;
 use crate::conformance::{CHOICE_DEPTH_LIMIT, Entered, Generated, find, generated};
 use crate::diagnostic::{
-    AddBound, Definition as Kind, DiagnosticKind, NotConformForm, NotInterface, UnknownForm,
-    WideKind,
+    AddBound, Definition as Kind, DiagnosticKind, NoOperatorForm, NotConformForm, NotInterface,
+    UnknownForm, WideKind,
 };
 use crate::graph::components;
 use crate::lang::Dispatch;
@@ -1356,6 +1356,69 @@ impl Checker<'_> {
     ) -> Type {
         let mut seen = FxHashSet::default();
         self.leaf(ty, interface, args, &mut seen).unwrap_or(ty)
+    }
+
+    /// The report that `ty`, the type of the operand at `at`, has no `op`, which `interface` (`Eq`
+    /// or `Ord`) gives; `contains` when the operand is an element of the array that `contains`
+    /// searches. It is E0139 when the part that fails (`failing_leaf`) is a type parameter, and
+    /// then `bound_help` adds the help to bound it. Else it is `NoOperator`, which names the
+    /// part, and helps only when the part has no conformance at all, a class or an enum that does
+    /// not write one. A part with a conformance whose bound fails says which bound.
+    pub(super) fn missing_operator(
+        &mut self,
+        at: Span,
+        ty: Type,
+        op: &str,
+        interface: InterfaceId,
+        contains: bool,
+        bound_help: bool,
+    ) -> DiagnosticKind {
+        let leaf = self.failing_leaf(ty, interface, TypeArgs::NONE);
+        if matches!(leaf.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)) {
+            let add = bound_help
+                .then(|| self.add_bound(leaf, interface))
+                .flatten();
+            return DiagnosticKind::ParamLacks {
+                ty: self.type_name(ty),
+                op: op.to_string(),
+                at,
+                contains,
+                add,
+            };
+        }
+        let record = find(&self.conformances, interface, leaf, TypeArgs::NONE);
+        let needs = record
+            .filter(|&(k, stands)| !self.record_holds(interface, k, stands))
+            .map(|(k, stands)| self.failed_bound(interface, k, stands));
+        // A class or an enum with no conformance can get one.
+        let make = (record.is_none() && holder_of(leaf).is_some()).then(|| self.type_name(leaf));
+        let form = if contains {
+            NoOperatorForm::Contains { make }
+        } else {
+            let object =
+                matches!(ty.kind(), TypeKind::Optional(inner) if inner == leaf) || ty == leaf;
+            match make {
+                Some(make)
+                    if object
+                        && matches!(leaf.kind(), TypeKind::Class(..))
+                        && interface == self.lang.eq =>
+                {
+                    NoOperatorForm::Identity { make }
+                }
+                make => NoOperatorForm::Operator {
+                    make,
+                    interface: self.interfaces[interface.0].name.name.to_string(),
+                },
+            }
+        };
+        DiagnosticKind::NoOperator {
+            ty: self.type_name(ty),
+            op: op.to_string(),
+            at,
+            leaf: (leaf != ty).then(|| self.type_name(leaf)),
+            form,
+            needs,
+        }
     }
 
     /// The part that makes the generated rule of `interface` fail for the enum type `ty`, whatever

@@ -1486,7 +1486,8 @@ impl Checker<'_> {
                 self.read_locals(operand, locals)
             }
             ExprKind::Equal { lhs, rhs, .. } => {
-                // `==` on a class compares fields, which can change with no write of a local.
+                // `==` on a value that holds a class runs the class's written `eq`, which reads
+                // fields that can change with no write of a local.
                 // Both sides have one type, up to an optional, so `lhs` tells for both.
                 let none = matches!(lhs.kind, ExprKind::None) || matches!(rhs.kind, ExprKind::None);
                 (none || !self.holds(lhs.ty).class)

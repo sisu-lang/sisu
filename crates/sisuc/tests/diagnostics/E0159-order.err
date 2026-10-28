@@ -1,0 +1,10 @@
+error[E0159]: `Level` has no `<`
+ --> E0159-order.sisu:7:11
+  |
+7 |     print(Level.Low < Level.High)
+  |           ^^^^^^^^^ this is a `Level`
+  |
+  = help: make `Level` conform to `Ord`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0159

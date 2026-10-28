@@ -1,0 +1,12 @@
+class Node {
+    value: i64
+}
+
+enum Wrap<T>: Eq {
+    Has(T)
+}
+
+fn main() {
+    print(Wrap.Has(1) == Wrap.Has(2))
+    print(Wrap.Has(Node(value: 1)) == Wrap.Has(Node(value: 1)))
+}

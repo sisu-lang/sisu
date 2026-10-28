@@ -494,14 +494,14 @@ fn enum_name_shadowed() {
 }
 
 #[test]
-fn enum_value_rules() {
+fn enum_value_rules_should_give_an_enum_the_code_of_a_class() {
     // Each row: the statement, and the code it reports at the column of line 2. An enum gets the
     // code a class gets for each rule.
     let rows = [
         ("let _ = e is e", Code::IsNeedsObjects, 13),
         ("let _ = o is o", Code::IsNeedsObjects, 13),
-        ("let _ = e < e", Code::Mismatch, 13),
-        ("let _ = p < p", Code::Mismatch, 13),
+        ("let _ = e < e", Code::NoOperator, 13),
+        ("let _ = p < p", Code::NoOperator, 13),
         ("print(e)", Code::PrintArgument, 11),
         ("print(p)", Code::PrintArgument, 11),
         ("let _ = \"{e}\"", Code::CannotInterpolate, 15),

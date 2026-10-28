@@ -5,16 +5,14 @@
 //! uses, each field that it does not read, each variant that it does not build, and the pending
 //! findings of the live functions.
 
-use std::cell::OnceCell;
-
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use super::extend::holder_of;
 use super::{Checker, Declared, Holder};
 use crate::diagnostic::{Code, Definition, Diagnostic, DiagnosticKind, UsedBy};
 use crate::source::Span;
 use crate::symbol::Symbol;
-use crate::tir::{self, Type, TypeKind};
+use crate::tir;
 
 /// Whether `d` is a warning that `Checker::unused` gives and `Checker::unjudged` does not: one
 /// that judges whether code is live. A program with an error gets none, because a use in code
@@ -53,13 +51,10 @@ pub(super) enum Used {
     /// An interface: a bound that names it, or a call of a method that meets one of its
     /// requirements, or of the requirement itself.
     Interface(tir::InterfaceId),
-    /// An `==`, `!=` or `contains` on values of this type, which reads every field of each class
-    /// that the type holds.
-    Equal(Type),
 }
 
-/// A use at `at`, the call, construction, variant path, field access, constant name, comparison
-/// or `contains` call, of `to` by `from`.
+/// A use at `at`, the call, construction, variant path, field access or constant name, of `to`
+/// by `from`.
 pub(super) struct Use {
     from: Owner,
     to: Used,
@@ -107,11 +102,7 @@ impl Used {
         match self {
             Used::Func(f) => Some(Owner::Func(f)),
             Used::Const(c) => Some(Owner::Const(c)),
-            Used::Class(_)
-            | Used::Variant(..)
-            | Used::Field(..)
-            | Used::Interface(_)
-            | Used::Equal(_) => None,
+            Used::Class(_) | Used::Variant(..) | Used::Field(..) | Used::Interface(_) => None,
         }
     }
 }
@@ -142,21 +133,8 @@ struct Reached {
     variants: Vec<Vec<bool>>,
     /// Each field that live code reads, by class.
     read: Vec<Vec<bool>>,
-    /// Each class whose fields a comparison in live code reads.
-    compared: Vec<bool>,
     /// Each interface that live code uses (see `reach`).
     interfaces: Vec<bool>,
-    /// The held type parameters (`held_params`), found when a comparison first walks a class or
-    /// an enum with type arguments.
-    held: OnceCell<FxHashSet<(Holder, usize)>>,
-}
-
-/// What the walks of comparisons walked, which they share, so each type, class and enum is
-/// walked once.
-#[derive(Default)]
-struct Seen {
-    types: FxHashSet<Type>,
-    holders: FxHashSet<Holder>,
 }
 
 /// Where each item's and member's list of cited uses is, past the owners: the classes, the
@@ -301,14 +279,14 @@ impl Checker<'_> {
             }
         }
         for (c, class) in self.classes.iter().enumerate() {
-            if !reached.built[c] {
-                report(Definition::Class, class.name.span, slots.classes + c);
-            } else if !reached.compared[c] {
+            if reached.built[c] {
                 for (f, field) in class.fields.iter().enumerate() {
                     if !reached.read[c][f] {
                         report(Definition::Field, field.name.span, slots.fields[c] + f);
                     }
                 }
+            } else {
+                report(Definition::Class, class.name.span, slots.classes + c);
             }
         }
         for (e, info) in self.enums.iter().enumerate() {
@@ -388,8 +366,7 @@ impl Checker<'_> {
     }
 
     /// By slot (owners first, by `Checker::owner_index`), the first three uses in dead code of each
-    /// item or member, except an owner's own uses, in source order. A field's uses are its reads,
-    /// then, while there are fewer than three, the first dead comparison that reads its class.
+    /// item or member, except an owner's own uses, in source order. A field's uses are its reads.
     /// An enum's uses are those of its variants.
     fn cited(&self, reached: &Reached, slots: &Slots) -> Vec<Vec<usize>> {
         let mut cited = vec![Vec::new(); slots.len];
@@ -407,8 +384,8 @@ impl Checker<'_> {
                 Used::Interface(interface) => {
                     self.cite(&mut cited[slots.interfaces + interface.0], i);
                 }
-                // An owner is cited next, and a comparison once the dead comparisons are walked.
-                Used::Func(_) | Used::Const(_) | Used::Equal(_) => {}
+                // An owner is cited next.
+                Used::Func(_) | Used::Const(_) => {}
             }
             if let Some(owner) = u.to.owner() {
                 self.cite(&mut cited[self.owner_index(owner)], i);
@@ -420,15 +397,6 @@ impl Checker<'_> {
                 && !self.in_block(u.from, block)
             {
                 self.cite(&mut cited[self.owner_index(Owner::Block(block))], i);
-            }
-        }
-        for (c, first) in self.dead_comparisons(reached).into_iter().enumerate() {
-            let Some(i) = first else { continue };
-            let fields = slots.fields[c]..slots.fields[c] + self.classes[c].fields.len();
-            for list in &mut cited[fields] {
-                if list.len() < 3 {
-                    self.cite(list, i);
-                }
             }
         }
         cited
@@ -447,141 +415,6 @@ impl Checker<'_> {
         let at = first.partition_point(|&j| self.uses[j].at.start() <= start);
         first.insert(at, i);
         first.truncate(3);
-    }
-
-    /// By class, the first comparison in dead code, in source order, that reads the class's
-    /// fields. Live comparisons are skipped only to save work: no field of a class that they read
-    /// is reported. The sort of the dead comparisons costs n log n in their count. Their walks
-    /// share what they walked, so together they cost time linear in their types and the declared
-    /// types. A program with no dead comparison walks none.
-    fn dead_comparisons(&self, reached: &Reached) -> Vec<Option<usize>> {
-        let mut dead: Vec<_> = (self.uses.iter().enumerate())
-            .filter_map(|(i, u)| match u.to {
-                Used::Equal(ty) if !reached.live[self.owner_index(u.from)] => {
-                    Some((u.at.start(), (i, ty)))
-                }
-                _ => None,
-            })
-            .collect();
-        // Stable, so comparisons that start at one place keep the order of their check.
-        dead.sort_by_key(|&(start, _)| start);
-        let mut first = vec![None; self.classes.len()];
-        let mut seen = Seen::default();
-        for (_, (i, ty)) in dead {
-            self.held_classes(ty, &reached.held, &mut seen, |c| {
-                first[c.0].get_or_insert(i);
-            });
-        }
-        first
-    }
-
-    /// Calls `found` for each class that a comparison of values of type `ty` reads every field
-    /// of, and that `seen` does not hold. These are the classes that `ty` holds through arrays,
-    /// optionals, declared field and payload types, and the arguments for held parameters
-    /// (`held_params`). No type is made, and each type, class and enum is walked once for all the
-    /// calls that share `seen`. The walk finds the held parameters only when it gets to a class
-    /// or an enum with type arguments. A comparison of primitives does not look for them. An
-    /// explicit stack, so a long chain of classes cannot overflow the stack.
-    fn held_classes(
-        &self,
-        ty: Type,
-        held: &OnceCell<FxHashSet<(Holder, usize)>>,
-        seen: &mut Seen,
-        mut found: impl FnMut(tir::ClassId),
-    ) {
-        let mut stack = vec![ty];
-        while let Some(ty) = stack.pop() {
-            #[cfg(test)]
-            super::HELD_STEPS.set(super::HELD_STEPS.get() + 1);
-            if !seen.types.insert(ty) {
-                continue;
-            }
-            let (holder, args) = match ty.kind() {
-                TypeKind::Array(inner) | TypeKind::Optional(inner) => {
-                    stack.push(inner);
-                    continue;
-                }
-                TypeKind::Class(c, args) => (Holder::Class(c), args),
-                TypeKind::Enum(e, args) => (Holder::Enum(e), args),
-                _ => continue,
-            };
-            if seen.holders.insert(holder) {
-                if let Holder::Class(c) = holder {
-                    found(c);
-                }
-                // A type parameter in these types is skipped: the arguments stand for it.
-                stack.extend(self.declared(holder));
-            }
-            let args = args.get();
-            if !args.is_empty() {
-                let held = held.get_or_init(|| self.held_params());
-                let args = args.iter().enumerate();
-                stack.extend(
-                    args.filter_map(|(k, &arg)| held.contains(&(holder, k)).then_some(arg)),
-                );
-            }
-        }
-    }
-
-    /// Each held type parameter, by its holder and its index. A field or a payload field holds a
-    /// parameter as itself, or in an array or an optional. It also holds it as the argument for a
-    /// held parameter of a class or an enum. A comparison reads the argument for a held
-    /// parameter, and no other argument. Each type of a declaration is walked once. A type that
-    /// waits for a parameter that is not yet held is walked when that parameter is found held. So
-    /// the cost is linear in the declared types.
-    fn held_params(&self) -> FxHashSet<(Holder, usize)> {
-        let classes = (0..self.classes.len()).map(|c| Holder::Class(tir::ClassId(c)));
-        let enums = (0..self.enums.len()).map(|e| Holder::Enum(tir::EnumId(e)));
-        let mut stack: Vec<(Holder, Type)> = (classes.chain(enums))
-            .flat_map(|h| self.declared(h).map(move |ty| (h, ty)))
-            .collect();
-        let mut held = FxHashSet::default();
-        let mut walked = FxHashSet::default();
-        let mut waiting: FxHashMap<(Holder, usize), Vec<(Holder, Type)>> = FxHashMap::default();
-        while let Some((h, ty)) = stack.pop() {
-            #[cfg(test)]
-            super::HELD_STEPS.set(super::HELD_STEPS.get() + 1);
-            if !ty.has_param() || !walked.insert((h, ty)) {
-                continue;
-            }
-            let (of, args) = match ty.kind() {
-                TypeKind::Param(_, i) => {
-                    let param = (h, i as usize);
-                    if held.insert(param) {
-                        stack.extend(waiting.remove(&param).into_iter().flatten());
-                    }
-                    continue;
-                }
-                TypeKind::Array(inner) | TypeKind::Optional(inner) => {
-                    stack.push((h, inner));
-                    continue;
-                }
-                TypeKind::Class(c, args) => (Holder::Class(c), args),
-                TypeKind::Enum(e, args) => (Holder::Enum(e), args),
-                _ => continue,
-            };
-            for (k, &arg) in args.get().iter().enumerate() {
-                if held.contains(&(of, k)) {
-                    stack.push((h, arg));
-                } else {
-                    waiting.entry((of, k)).or_default().push((h, arg));
-                }
-            }
-        }
-        held
-    }
-
-    /// The declared types of a class's fields, or of an enum's payload fields, which can name
-    /// its type parameters.
-    fn declared(&self, holder: Holder) -> impl Iterator<Item = Type> + '_ {
-        let (fields, variants) = match holder {
-            Holder::Class(c) => (&self.classes[c.0].fields[..], &[][..]),
-            Holder::Enum(e) => (&[][..], &self.enums[e.0].variants[..]),
-        };
-        let payloads = variants
-            .iter()
-            .flat_map(|v| v.fields.iter().flatten().copied());
-        fields.iter().filter_map(|f| f.ty).chain(payloads)
     }
 
     /// The span of each constant's name, by its order; `None` for one its name does not hold.
@@ -633,10 +466,6 @@ impl Checker<'_> {
         let mut read: Vec<Vec<bool>> = (self.classes.iter())
             .map(|c| vec![false; c.fields.len()])
             .collect();
-        let mut compared = vec![false; self.classes.len()];
-        let held = OnceCell::new();
-        // One for every comparison, so each type is walked once.
-        let mut seen = Seen::default();
         let conforming = self.conformance_methods();
         let conforming_blocks = self.conformance_blocks();
         let mut enum_started = vec![false; self.enums.len()];
@@ -684,9 +513,6 @@ impl Checker<'_> {
                 match to {
                     Used::Variant(e, v) => variants[e.0][v] = true,
                     Used::Field(c, f) => read[c.0][f] = true,
-                    Used::Equal(ty) => {
-                        self.held_classes(ty, &held, &mut seen, |c| compared[c.0] = true);
-                    }
                     Used::Interface(interface) => {
                         use_interface(&mut interfaces, &mut to_follow, interface.0);
                     }
@@ -705,9 +531,7 @@ impl Checker<'_> {
             enum_built: variants.iter().map(|v| v.contains(&true)).collect(),
             variants,
             read,
-            compared,
             interfaces,
-            held,
         }
     }
 

@@ -1,17 +1,23 @@
 // `==` on a composite compares each `f64` in it by IEEE 754, so one that holds `nan` is not equal
-// to itself, even where both sides are one block or one object; `None` still equals `None`.
+// to itself, even where both sides are one block or one object, or an object whose written `eq`
+// compares it; `None` still equals `None`.
 // `nan` is made as `0.0 / 0.0`.
-class P {
+class P: Eq {
     x: f64
+    fn eq(self, other: Self) -> bool { self.x == other.x }
 }
 
-class Link {
+class Link: Eq {
     value: f64
     next: Link?
+    fn eq(self, other: Self) -> bool {
+        self.value == other.value && self.next == other.next
+    }
 }
 
-class Holder {
+class Holder: Eq {
     o: f64?
+    fn eq(self, other: Self) -> bool { self.o == other.o }
 }
 
 fn main() {

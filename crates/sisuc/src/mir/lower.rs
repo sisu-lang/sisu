@@ -38,7 +38,7 @@ use rustc_hash::FxHashMap;
 
 use super::{
     Block as MirBlock, BlockId, Const, Function, Local, Loop, Operand, Place as MirPlace,
-    Projection, Rvalue, Statement, Terminator,
+    Projection, Rvalue, Side, Statement, Terminator,
 };
 use crate::conformance::{Written, calls_written};
 use crate::tir::{
@@ -267,10 +267,7 @@ impl<'a> Lowering<'a> {
     fn calls_eq(&mut self, ty: Type) -> bool {
         calls_written(
             &self.program.conformances,
-            (
-                self.program.enums.as_slice(),
-                self.program.classes.as_slice(),
-            ),
+            self.program.enums.as_slice(),
             ty,
             self.program.lang.eq,
             self.written,
@@ -803,14 +800,20 @@ impl<'a> Lowering<'a> {
             ExprKind::Equal { negated, lhs, rhs } => {
                 let negated = *negated;
                 // `x == None` tests presence and calls nothing.
-                let calls = !matches!(lhs.kind, ExprKind::None)
-                    && !matches!(rhs.kind, ExprKind::None)
-                    && self.calls_eq(lhs.ty);
+                let none = if matches!(rhs.kind, ExprKind::None) {
+                    Some(Side::Rhs)
+                } else if matches!(lhs.kind, ExprKind::None) {
+                    Some(Side::Lhs)
+                } else {
+                    None
+                };
+                let calls = none.is_none() && self.calls_eq(lhs.ty);
                 return self.borrowed_pair(e.ty, lhs, rhs, dest, |lhs, rhs| Rvalue::Equal {
                     negated,
                     lhs,
                     rhs,
                     calls,
+                    none,
                 });
             }
             ExprKind::Is { lhs, rhs } => {

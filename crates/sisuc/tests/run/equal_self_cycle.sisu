@@ -1,13 +1,13 @@
-// A class with no `f64` is `==` to itself, so `==` on one object stops at the same pointer. Without
-// that, `a == a` would follow the chain `a.next = a` forever.
+// `is` compares two pointers and follows no field, so `a is a` does not follow the chain
+// `a._next = a` forever.
 class Node {
-    value: i64
-    mut next: Node?
+    _value: i64
+    mut _next: Node?
 }
 
 fn main() {
-    let a = Node(value: 1, next: None)
-    a.next = a
-    print(a == a) // true: same pointer, so the cycle is not followed
-    a.next = None // breaks the cycle, so the object is freed
+    let a = Node(_value: 1, _next: None)
+    a._next = a
+    print(a is a) // true: same pointer, so the cycle is not followed
+    a._next = None // breaks the cycle, so the object is freed
 }

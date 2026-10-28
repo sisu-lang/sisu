@@ -311,6 +311,10 @@ pub(crate) enum Rvalue {
         rhs: Operand,
         /// Whether the helper for the operand's type may call a written `eq`.
         calls: bool,
+        /// The operand that is the literal `None`, when one is: the comparison tests whether the
+        /// other operand holds a value, and compares no payload. The operand itself may be a
+        /// temporary that holds the `None`, so this is the one place that tells.
+        none: Option<Side>,
     },
     Is {
         lhs: Operand,
@@ -333,6 +337,13 @@ impl Rvalue {
             _ => false,
         }
     }
+}
+
+/// One of the two operands of a binary `Rvalue`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Side {
+    Lhs,
+    Rhs,
 }
 
 #[derive(Debug)]

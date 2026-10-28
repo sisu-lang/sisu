@@ -1547,16 +1547,6 @@ impl Printer<'_> {
 }
 
 impl Program {
-    /// The field drop follows in a loop: the last, in declaration order, whose type is
-    /// `class` or `class?`.
-    pub(crate) fn chain_field(&self, class: ClassId) -> Option<usize> {
-        let own = Type::intern(TypeKind::Class(class, TypeArgs::NONE));
-        self.classes[class.0].fields.iter().rposition(|field| {
-            field.ty == own
-                || matches!(field.ty.kind(), TypeKind::Optional(payload) if payload == own)
-        })
-    }
-
     /// A type as `--emit tir` prints it: a class or an enum by its name.
     pub(crate) fn type_name(&self, ty: Type) -> String {
         let mut name = String::new();
@@ -2676,57 +2666,6 @@ mod tests {
             ty: Type::I64,
         };
         expr(ExprKind::Block(block), Type::I64)
-    }
-
-    #[test]
-    fn chain_field_is_the_last_own_type_field() {
-        let field = |name: &str, ty: Type| Field {
-            name: name.into(),
-            ty,
-            mutable: false,
-        };
-        let class = |name: &str, fields: Vec<Field>| Class {
-            name: name.into(),
-            type_params: Vec::new(),
-            fields,
-        };
-        let optional =
-            |id: usize| Type::optional(Type::intern(TypeKind::Class(ClassId(id), TypeArgs::NONE)));
-        let program = Program {
-            classes: vec![
-                class(
-                    "Node",
-                    vec![field("value", Type::I64), field("next", optional(0))],
-                ),
-                class(
-                    "Tree",
-                    vec![
-                        field("left", optional(1)),
-                        field("right", optional(1)),
-                        field("v", Type::I64),
-                    ],
-                ),
-                class(
-                    "Rev",
-                    vec![
-                        field("next", optional(2)),
-                        field("value", Type::I64),
-                        field(
-                            "tag",
-                            Type::intern(TypeKind::Class(ClassId(3), TypeArgs::NONE)),
-                        ),
-                    ],
-                ),
-                class("Tag", vec![]),
-                class("A", vec![field("b", optional(5))]),
-                class("B", vec![field("a", optional(4))]),
-            ],
-            enums: vec![],
-            functions: vec![],
-            ..Program::default()
-        };
-        let chains = [0, 1, 2, 4].map(|id| program.chain_field(ClassId(id)));
-        assert_eq!(chains, [Some(1), Some(1), Some(0), None]);
     }
 
     #[test]

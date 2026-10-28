@@ -213,6 +213,7 @@ codes! {
     Ambiguous = "E0156",
     BoundTooWide = "E0157",
     ClassOnly = "E0158",
+    NoOperator = "E0159",
     NanComparison = "W0005",
     UnreachableArm = "W0006",
     RedundantSemicolon = "W0007",
@@ -428,6 +429,20 @@ pub(crate) enum DiagnosticKind {
         ty: String,
         at: Span,
         via: Option<(String, Span)>,
+    },
+    /// The operator `op` on the operand at `at`, of the concrete type `ty`, which has none: the
+    /// interface of the operator is missing from `ty`, or from the part `leaf` of it. For a
+    /// `contains` on the array at `at`, `ty` is the element type.
+    NoOperator {
+        ty: String,
+        op: String,
+        at: Span,
+        /// The part of `ty` that has none, when it is not `ty` itself.
+        leaf: Option<String>,
+        form: NoOperatorForm,
+        /// A conformance that the type has already, whose bound fails: the bound as written
+        /// there, and where it is.
+        needs: Option<(String, Span)>,
     },
     /// A call of the method `method` of `receiver`, at `at`, that more than one conformance
     /// could answer: those of `interfaces`. `annotate` is the `let` that picks one.
@@ -1791,6 +1806,21 @@ pub(crate) enum NotConformForm {
     },
 }
 
+/// What the report of a missing operator (`NoOperator`) says besides the missing operator.
+#[derive(Clone)]
+pub(crate) enum NoOperatorForm {
+    /// `==` or `!=` on a class, which compares by identity. The help shows `is` too.
+    Identity { make: String },
+    /// An operator of the type, with the help to make `make` conform to `interface`; no help when
+    /// the type has a conformance already.
+    Operator {
+        make: Option<String>,
+        interface: String,
+    },
+    /// A `contains` on an array whose element type has no `==`.
+    Contains { make: Option<String> },
+}
+
 /// A bound that a type parameter lacks: `param`, then every bound it would have, in order.
 #[derive(Clone)]
 pub(crate) struct AddBound {
@@ -2417,6 +2447,44 @@ impl From<DiagnosticKind> for Diagnostic {
                     Some((interface, at)) => {
                         d.with_secondary(at, format!("`{interface}` inherits `AnyObject`"))
                     }
+                    None => d,
+                }
+            }
+            DiagnosticKind::NoOperator {
+                ty,
+                op,
+                at,
+                leaf,
+                form,
+                needs,
+            } => {
+                let since = leaf.map(|leaf| format!(", since `{leaf}` has none"));
+                let (message, label, help) = match form {
+                    NoOperatorForm::Identity { make } => (
+                        format!("`{ty}` has no `{op}`; classes compare by identity"),
+                        format!("this is a `{ty}`"),
+                        Some(format!("use `a is b`, or make `{make}` conform to `Eq`")),
+                    ),
+                    NoOperatorForm::Operator { make, interface } => (
+                        format!("`{ty}` has no `{op}`{}", since.unwrap_or_default()),
+                        format!("this is a `{ty}`"),
+                        make.map(|make| format!("make `{make}` conform to `{interface}`")),
+                    ),
+                    NoOperatorForm::Contains { make } => (
+                        format!("`contains` needs `==` on `{ty}`{}", since.unwrap_or_default()),
+                        "`contains` compares elements with `==`".to_string(),
+                        make.map(|make| format!("make `{make}` conform to `Eq`")),
+                    ),
+                };
+                let d = Diagnostic::coded(code, at, message).with_label(label);
+                let d = match needs {
+                    Some((bound, at)) => {
+                        d.with_secondary(at, format!("this conformance needs `{bound}`"))
+                    }
+                    None => d,
+                };
+                match help {
+                    Some(help) => d.with_help(help),
                     None => d,
                 }
             }

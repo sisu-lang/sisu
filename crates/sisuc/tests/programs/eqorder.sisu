@@ -1,10 +1,13 @@
 // `==` on two enum values, under a 256 KiB stack, finds a mismatch in the first field before it
-// compares the second. The second fields hold two class chains of 20 000 objects. `==` on
-// those chains needs a frame per object, which overflows that stack, so an `==` that compared
-// the second field first would crash.
-class C {
+// compares the second. The second fields hold two class chains of 20 000 objects. The written
+// `eq` of their class follows `left`, so `==` on those chains needs a frame per object, which
+// overflows that stack, so an `==` that compared the second field first would crash.
+class C: Eq {
     mut left: C?
     right: C?
+    fn eq(self, other: Self) -> bool {
+        self.left == other.left && self.right == other.right
+    }
 }
 
 enum E {

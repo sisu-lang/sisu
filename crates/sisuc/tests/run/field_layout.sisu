@@ -1,14 +1,15 @@
 // Class layout: codegen sorts a class's fields by alignment, largest first, so a field's place in
 // memory is not its place in the source. Each function proves one property of that layout through
 // what the program prints; `eval_order.sisu`'s `Moved` covers constructor evaluation order.
-class Box {
+class Box: Eq {
     v: i64
+    fn eq(self, other: Self) -> bool { self.v == other.v }
 }
 
 // Property 1, a tight sorted layout: sorting moves these fields, so a field stored through the
 // wrong element overlaps a neighbour. In memory they sit as `n`, `s`, `on`, `xs`, `oxs`, `obj`
 // (align 8), `c`, `oc` (align 4), then `a`, `u`, `ou` (align 1).
-class M {
+class M: Eq {
     mut a: bool
     mut u: u8
     mut c: char
@@ -20,13 +21,24 @@ class M {
     mut xs: [i64]
     mut oxs: [i64]?
     mut obj: Box?
+
+    fn eq(self, other: Self) -> bool {
+        self.a == other.a && self.u == other.u && self.c == other.c && self.n == other.n &&
+            self.s == other.s && self.on == other.on && self.oc == other.oc &&
+            self.ou == other.ou && self.xs == other.xs && self.oxs == other.oxs &&
+            self.obj == other.obj
+    }
 }
 
 // Property 5, a chain field among mixed alignments: in memory `next` comes first and `flag` last.
-class L {
+class L: Eq {
     flag: bool
     next: L?
     n: i64
+
+    fn eq(self, other: Self) -> bool {
+        self.flag == other.flag && self.next == other.next && self.n == other.n
+    }
 }
 
 fn base() -> M {
@@ -182,8 +194,8 @@ fn chain(last: i64) -> L {
     L(flag: true, next: L(flag: false, next: L(flag: true, next: None, n: last), n: 20), n: 100)
 }
 
-// Property 5: the drop and equality loops walk the chain through its moved field. Both chains
-// are dropped when the function returns.
+// Property 5: the drop loop walks the chain through its moved field, and the written `eq` reads
+// it. Both chains are dropped when the function returns.
 fn chains() {
     let a = chain(3)
     let b = chain(3)

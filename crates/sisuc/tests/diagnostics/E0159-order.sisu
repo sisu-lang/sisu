@@ -1,0 +1,8 @@
+enum Level {
+    Low
+    High
+}
+
+fn main() {
+    print(Level.Low < Level.High)
+}

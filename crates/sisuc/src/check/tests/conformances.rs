@@ -1357,12 +1357,6 @@ fn operators_should_report_a_missing_bound() {
             "a < b",
             Code::ParamLacks,
         ),
-        (
-            "equality of a class of a parameter",
-            "fn f<T: Eq>(a: Box<T>, b: Box<T>) -> bool { a == b }",
-            "a == b",
-            Code::ParamLacks,
-        ),
     ];
     for (row, function, at, code) in rows {
         let src = format!("{decls}{function}\nfn main() {{}}");
@@ -1612,6 +1606,136 @@ fn a_written_eq_or_less_whose_block_bounds_fail_should_report_the_bound() {
     ];
     for (row, src, call) in rows {
         codes_row(row, &src, &[(Code::NotConform, where_is(&src, call))]);
+    }
+}
+
+#[test]
+fn operators_should_report_a_type_with_no_operator() {
+    let node = "class Node {}\n";
+    let box_wr = "class Box<T> {\n    v: T\n}\nclass Wr<T> {\n    v: T\n}\n\
+        extend<T: Display> Box<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\n\
+        extend<T: Eq> Wr<T>: Display {\n    fn to_string(self) -> string { \"w\" }\n}\n\
+        enum H {\n    P(Box<Wr<A>>)\n}\nenum A {\n    X(B)\n    Y(Node)\n}\n\
+        enum B {\n    Z(A)\n    M(H)\n}\n";
+    let pair = "enum Pair<T> {\n    X(T)\n}\nextend<T: Ord> Pair<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\n\
+        enum Outer<T> {\n    A(Pair<T>)\n}\n";
+    // Each row: the declarations, the function after them, and the text where the single error
+    // stands. The wording of each form is pinned in the fixtures `E0159-*`.
+    let rows = [
+        (
+            "equality of two classes",
+            format!("{node}fn f(n1: Node, n2: Node) -> bool {{ n1 == n2 }}"),
+            "n1 == n2",
+        ),
+        (
+            "inequality of two classes",
+            format!("{node}fn f(n1: Node, n2: Node) -> bool {{ n1 != n2 }}"),
+            "n1 != n2",
+        ),
+        (
+            "equality of a class with an `eq` method and no `Eq`",
+            "class W {\n    fn eq(self, other: Self) -> bool { true }\n}\nfn f(a: W, b: W) -> bool { a == b }".to_string(),
+            "a == b",
+        ),
+        (
+            "equality of arrays of a class",
+            format!("{node}fn f(n1: Node, n2: Node) -> bool {{ [n1] == [n2] }}"),
+            "[n1] == [n2]",
+        ),
+        (
+            "equality of enums that hold a class",
+            format!("{node}enum H {{\n    N(Node)\n}}\nfn f(n1: Node, n2: Node) -> bool {{ H.N(n1) == H.N(n2) }}"),
+            "H.N(n1) == H.N(n2)",
+        ),
+        (
+            "equality of enums that need each other, one of which holds a class",
+            format!("{node}enum A {{\n    X(B)\n    Y(Node)\n}}\nenum B {{\n    Z(A)\n}}\nfn f(b1: B, b2: B) -> bool {{ b1 == b2 }}"),
+            "b1 == b2",
+        ),
+        (
+            "equality through a written `Display` bound",
+            format!("{node}{box_wr}fn f(b1: B, b2: B) -> bool {{ b1 == b2 }}"),
+            "b1 == b2",
+        ),
+        (
+            "equality of a listed `Eq` that no method meets",
+            format!("{node}enum Wrap<T>: Eq {{\n    A(T)\n}}\nfn f(n1: Node, n2: Node) -> bool {{ Wrap.A(n1) == Wrap.A(n2) }}\nfn g() -> bool {{ Wrap.A(1) == Wrap.A(2) }}"),
+            "Wrap.A(n1) == Wrap.A(n2)",
+        ),
+        (
+            "contains of a class",
+            format!("{node}fn f(nodes: [Node], n: Node) -> bool {{ nodes.contains(n) }}"),
+            "nodes.contains(n)",
+        ),
+        (
+            "order of an enum",
+            "enum E {\n    A\n    B\n}\nfn f() -> bool { E.A < E.B }".to_string(),
+            "E.A < E.B",
+        ),
+        (
+            "order of two `bool`s",
+            "fn f() -> bool { true < false }".to_string(),
+            "true < false",
+        ),
+        (
+            "order of two arrays",
+            "fn f() -> bool { [1] < [2] }".to_string(),
+            "[1] < [2]",
+        ),
+        (
+            "order of two classes",
+            format!("{node}fn f(c1: Node, c2: Node) -> bool {{ c1 < c2 }}"),
+            "c1 < c2",
+        ),
+        (
+            "equality under a written `Eq` whose bound fails",
+            format!("{pair}fn f(p: Pair<bool>, q: Pair<bool>) -> bool {{ p == q }}"),
+            "p == q",
+        ),
+        (
+            "equality of an enum that holds a written `Eq` whose bound fails",
+            format!("{pair}fn f(o1: Outer<bool>, o2: Outer<bool>) -> bool {{ o1 == o2 }}"),
+            "o1 == o2",
+        ),
+        (
+            "equality of a class of a parameter",
+            format!("{node}class Box<T> {{\n    v: T\n}}\nfn f<T: Eq>(a: Box<T>, b: Box<T>) -> bool {{ a == b }}"),
+            "a == b",
+        ),
+        (
+            "equality of an enum of a parameter that holds a class",
+            format!("{node}enum W<T> {{\n    A(T)\n    B(W<Node>)\n}}\nfn f<T: Eq>(a: W<T>, b: W<T>) -> bool {{ a == b }}"),
+            "a == b",
+        ),
+    ];
+    for (row, src, at) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        codes_row(row, &src, &[(Code::NoOperator, where_is(&src, at))]);
+    }
+}
+
+#[test]
+fn operators_should_check_without_eq_where_none_is_needed() {
+    let rows = [
+        (
+            "identity of two objects",
+            "class Node {}\nfn f(a: Node, b: Node) -> bool { a is b }",
+        ),
+        (
+            "an optional class against `None`",
+            "class Node {\n    next: Node?\n}\nfn f(n: Node) -> bool { n.next == None }",
+        ),
+        (
+            "`None` on the left",
+            "class Node {\n    next: Node?\n}\nfn f(n: Node) -> bool { None != n.next }",
+        ),
+        (
+            "an optional array of classes against `None`",
+            "class Node {}\nfn f(xs: [Node]?) -> bool { xs == None }",
+        ),
+    ];
+    for (row, src) in rows {
+        clean_row(row, &format!("{src}\nfn main() {{}}"));
     }
 }
 

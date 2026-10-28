@@ -56,7 +56,7 @@ fn assert_panics(out: &Output, stdout: &str, stderr: &str) {
 
 /// The programs the small-stack tests run. They are not `tests/run` cases: many objects
 /// under Valgrind is too slow, and `deepchain` overflows on purpose.
-const SMALL_STACK: [&str; 19] = [
+const SMALL_STACK: [&str; 18] = [
     "longlist",
     "rightskew",
     "deepchain",
@@ -64,7 +64,6 @@ const SMALL_STACK: [&str; 19] = [
     "dropmutual",
     "dropoptional",
     "dropmutualoptional",
-    "eqlist",
     "enumlist",
     "enumfold",
     "enummutual",
@@ -298,20 +297,6 @@ fn longlist_should_free_a_long_list_in_a_small_stack() {
 #[test]
 fn rightskew_should_free_a_long_tree_in_a_small_stack() {
     assert_small_stack_prints("rightskew", "100000\n");
-}
-
-/// GIVEN the `eqlist` program, which compares two lists of 100 000 nodes
-/// WHEN it runs under a 256 KiB stack, with and without `-O2`
-/// THEN it exits 0 and prints `true` twice
-///
-/// `==` on two lists of 100 000 nodes, with the chain field last and first, at both levels.
-#[test]
-fn equal_long_lists_should_compare_in_a_small_stack() {
-    for o2 in [false, true] {
-        let out = run_in_small_stack_at("eqlist", o2);
-        assert_eq!(out.status.code(), Some(0), "-O2 {o2}: {:?}", out.status);
-        assert_eq!(String::from_utf8_lossy(&out.stdout), "true\ntrue\n");
-    }
 }
 
 /// `assert_small_stack_prints` at both levels: `-O2` must not need more stack either.

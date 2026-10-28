@@ -9,8 +9,8 @@ use rustc_hash::FxHashMap;
 use crate::graph::components;
 use crate::symbol::Symbol;
 use crate::tir::{
-    ChoicePlace, Class, ClassId, Conformances, Enum, EnumId, InterfaceId, LangInterfaces, Type,
-    TypeArgs, TypeKind, head_of,
+    ChoicePlace, Conformances, Enum, EnumId, InterfaceId, LangInterfaces, Type, TypeArgs, TypeKind,
+    head_of,
 };
 
 #[cfg(test)]
@@ -277,37 +277,14 @@ impl Payloads for [Vec<Type>] {
     }
 }
 
-/// The field types of each class, declared: what [`parts`] reads of a class.
-pub(crate) trait Fields {
-    /// Calls `each` with the type of each field of the class `id`.
-    fn each(&self, id: ClassId, each: &mut dyn FnMut(Type));
-}
-
-impl Fields for [Class] {
-    fn each(&self, id: ClassId, each: &mut dyn FnMut(Type)) {
-        for field in &self[id.0].fields {
-            each(field.ty);
-        }
-    }
-}
-
-impl Fields for [Vec<Type>] {
-    fn each(&self, id: ClassId, each: &mut dyn FnMut(Type)) {
-        for &ty in &self[id.0] {
-            each(ty);
-        }
-    }
-}
-
-/// The parts of `ty`, whatever the interface: an array's element, an optional's contents, each
-/// payload type of an enum and each field type of a class, with the type's arguments in place of
-/// its parameters. A class lists its fields since the structural `==` of a class with no `Eq`
-/// compares them (until ADR 0022 removes it), and a field may have a written `Eq`. Nothing for a
-/// scalar, `string` or a type parameter. A part whose associated type has no choice is poison,
-/// and is left out. A generated `Display`, which asks no part, still lists them.
-pub(crate) fn parts<P: Payloads + ?Sized, F: Fields + ?Sized>(
+/// The parts of `ty`, whatever the interface: an array's element, an optional's contents and each
+/// payload type of an enum, with the type's arguments in place of its parameters. Nothing for a
+/// scalar, `string`, a class (it compares by identity, or through a written `Eq`) or a type
+/// parameter. A part whose associated type has no choice is poison, and is left out. A generated
+/// `Display`, which asks no part, still lists them.
+pub(crate) fn parts<P: Payloads + ?Sized>(
     conformances: &Conformances,
-    (enums, classes): (&P, &F),
+    enums: &P,
     ty: Type,
     mut each: impl FnMut(Type),
 ) {
@@ -315,11 +292,6 @@ pub(crate) fn parts<P: Payloads + ?Sized, F: Fields + ?Sized>(
         TypeKind::Array(part) | TypeKind::Optional(part) => each(part),
         TypeKind::Enum(id, args) => enums.each(id, &mut |payload| {
             if let Some(part) = normalize(conformances, payload.subst(args.get())) {
-                each(part);
-            }
-        }),
-        TypeKind::Class(id, args) => classes.each(id, &mut |field| {
-            if let Some(part) = normalize(conformances, field.subst(args.get())) {
                 each(part);
             }
         }),
@@ -501,9 +473,9 @@ pub(crate) struct Written {
 /// is true exactly when it reaches a leaf. The keys that are not settled yet are listed once, with
 /// their parts, and settled by their strongly connected components in completion order, so each
 /// key of a program is decided once.
-pub(crate) fn calls_written<P: Payloads + ?Sized, F: Fields + ?Sized>(
+pub(crate) fn calls_written<P: Payloads + ?Sized>(
     conformances: &Conformances,
-    types: (&P, &F),
+    enums: &P,
     ty: Type,
     interface: InterfaceId,
     written: &mut Written,
@@ -530,7 +502,7 @@ pub(crate) fn calls_written<P: Payloads + ?Sized, F: Fields + ?Sized>(
         let mut settled_true = leaf;
         // A written `eq` is the whole comparison: the helper compares no part of the type.
         if !leaf {
-            parts(conformances, types, key, |part| {
+            parts(conformances, enums, key, |part| {
                 if let Some(&answer) = written.settled.get(&(part, interface)) {
                     settled_true |= answer;
                     return;
@@ -2064,9 +2036,9 @@ mod tests {
         });
     }
 
-    /// `parts` lists the element of an array, the contents of an optional, each payload type of an
-    /// enum and each field type of a class with its arguments in place, and nothing for the other
-    /// types.
+    /// `parts` lists the element of an array, the contents of an optional and each payload type of
+    /// an enum with its arguments in place, and nothing for the other types, a class included:
+    /// a class compares by identity or through a written `Eq`, and prints its name.
     #[test]
     fn parts_should_list_what_a_type_holds() {
         let src = "enum Two<T> {\n    A(T, [T])\n    B\n}\nclass C {}\n\
@@ -2074,8 +2046,7 @@ mod tests {
         deciding(src, |program, _, source| {
             let parts = |ty| {
                 let mut out = Vec::new();
-                let types = (source.enums, program.classes.as_slice());
-                parts(source.conformances, types, ty, |part| out.push(part));
+                parts(source.conformances, source.enums, ty, |part| out.push(part));
                 out
             };
             assert_eq!(parts(Type::array(Type::I64)), [Type::I64]);
@@ -2085,10 +2056,7 @@ mod tests {
             assert_eq!(parts(Type::I64), Vec::<Type>::new());
             assert_eq!(parts(class_named(program, "C", &[])), Vec::<Type>::new());
             let holds = class_named(program, "Holds", &[Type::STRING]);
-            assert_eq!(
-                parts(holds),
-                [Type::STRING, Type::array(Type::optional(Type::STRING))]
-            );
+            assert_eq!(parts(holds), Vec::<Type>::new());
         });
     }
 
@@ -2159,12 +2127,10 @@ mod tests {
         // One collector for the calls: the array has a part; the payload and the field have none.
         let mut listed = Vec::new();
         let mut collect = |part| listed.push(part);
-        // The class `C` has the same field, so it has no part either.
-        let fields: Vec<Vec<Type>> = vec![vec![item]];
-        let types = (payloads.as_slice(), fields.as_slice());
-        parts(&conformances, types, Type::array(Type::I64), &mut collect);
-        parts(&conformances, types, enum_type, &mut collect);
-        parts(&conformances, types, class, &mut collect);
+        let enums = payloads.as_slice();
+        parts(&conformances, enums, Type::array(Type::I64), &mut collect);
+        parts(&conformances, enums, enum_type, &mut collect);
+        parts(&conformances, enums, class, &mut collect);
         assert_eq!(listed, [Type::I64], "a payload with no choice has no part");
         assert_eq!(
             holds(&mut cx, &source, enum_type, interface, TypeArgs::NONE),

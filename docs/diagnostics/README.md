@@ -170,6 +170,7 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0156](E0156.md) | error | call or type that more than one conformance answers |
 | [E0157](E0157.md) | error | bound that gives too many interfaces |
 | [E0158](E0158.md) | error | only classes conform to `AnyObject` |
+| [E0159](E0159.md) | error | operator on a type that has none |
 | [W0001](W0001.md) | warning | unreachable code |
 | [W0002](W0002.md) | warning | variable that is never reassigned |
 | [W0003](W0003.md) | warning | `todo` left in the program |

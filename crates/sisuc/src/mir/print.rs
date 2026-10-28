@@ -216,6 +216,7 @@ impl Printer<'_> {
                 lhs,
                 rhs,
                 calls,
+                ..
             } => {
                 let op = if *negated { "!=" } else { "==" };
                 flagged(

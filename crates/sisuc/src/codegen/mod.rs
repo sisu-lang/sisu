@@ -38,7 +38,9 @@ use self::array::element_of;
 use self::enums::EnumLayout;
 use self::layout::{ClassLayout, HeapBlock, tbaa_tag};
 use self::rc::Helper;
-use crate::mir::{self, BlockId, Const, Operand, Place, Projection, Rvalue, Statement, Terminator};
+use crate::mir::{
+    self, BlockId, Const, Operand, Place, Projection, Rvalue, Side, Statement, Terminator,
+};
 use crate::source::{LineIndex, Span};
 use crate::tir::{
     ClassId, EnumId, FuncId, LocalId, Program, Stream, Type, TypeArgs, TypeKind, UnaryOp,
@@ -735,11 +737,34 @@ impl<'ctx> Codegen<'ctx, '_> {
                 self.compare(*op, ty, lhs, self.operand(rhs).0).into()
             }
             Rvalue::Equal {
-                negated, lhs, rhs, ..
+                negated,
+                lhs,
+                rhs,
+                none,
+                ..
             } => {
                 let (lhs, ty) = self.operand(lhs);
-                self.equal_value(*negated, ty, lhs, self.operand(rhs).0)
-                    .into()
+                let (rhs, other) = self.operand(rhs);
+                // `x == None` on a counted optional tests whether `x` holds a value; it compares
+                // no payload, so it calls no `eq` helper, which a class has none of.
+                if let Some(side) = none {
+                    let (value, held) = match side {
+                        Side::Lhs => (rhs, other),
+                        Side::Rhs => (lhs, ty),
+                    };
+                    if held.is_counted(&self.program.enums) {
+                        let present = self.has_value(held, value, "present");
+                        return Some(if *negated {
+                            present.into()
+                        } else {
+                            self.builder
+                                .build_not(present, "none")
+                                .expect(POSITIONED)
+                                .into()
+                        });
+                    }
+                }
+                self.equal_value(*negated, ty, lhs, rhs).into()
             }
             Rvalue::Is { lhs, rhs } => {
                 let lhs = self.pointer(lhs);

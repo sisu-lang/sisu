@@ -1,8 +1,9 @@
 // Arrays hold enum values inline. Each element's counted parts are retained when a shared block
 // is copied for a write, and released when a block is freed; Valgrind sees every string and
 // object freed exactly once.
-class Counter {
+class Counter: Eq {
     mut count: i64
+    fn eq(self, other: Self) -> bool { self.count == other.count }
 }
 
 enum State {

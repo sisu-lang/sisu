@@ -456,7 +456,7 @@ impl Gen<'_> {
                 Info::folding(&[lhs, rhs], 0, true)
             }
             Rule::Equal => {
-                let operand = self.bare_type();
+                let operand = self.eq_type();
                 self.w.text("(");
                 self.synth = true;
                 let lhs = self.expr(&operand, MAX_SIZE);
@@ -726,7 +726,7 @@ impl Gen<'_> {
 
     /// `((a).contains(v))`.
     fn contains(&mut self) -> Info {
-        let element = self.bare_type();
+        let element = self.eq_type();
         self.w.text("((");
         self.synth = true;
         let receiver = self.expr(&Ty::Array(Box::new(element.clone())), MAX_SIZE);
@@ -925,6 +925,17 @@ impl Gen<'_> {
     /// with no expected type can have (`Ty::least`).
     pub(crate) fn bare_type(&mut self) -> Ty {
         self.type_within(2, false)
+    }
+
+    /// A `bare_type` whose values `==` compares: one with no class in it. A class compares with
+    /// `is`, or against `None`, and has no `Eq`.
+    pub(crate) fn eq_type(&mut self) -> Ty {
+        loop {
+            let ty = self.bare_type();
+            if !self.scope.contains_class(&ty) {
+                return ty;
+            }
+        }
     }
 
     /// With `nest`, an optional may be the payload of an optional.

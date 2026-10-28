@@ -1,0 +1,11 @@
+error[E0159]: `Outer` has no `==`, since `Pair<bool>` has none
+  --> E0159-bound-holder.sisu:14:11
+   |
+ 5 | extend<T: Ord> Pair<T>: Eq {
+   |           --- this conformance needs `T: Ord`
+...
+14 |     print(Outer.Has(Pair.Two(true, false)) == Outer.Has(Pair.Two(true, false)))
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is a `Outer`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0159

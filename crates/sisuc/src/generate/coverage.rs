@@ -106,9 +106,12 @@ const CONVERSIONS: [(&str, &str); 6] = [
     ("I64", "F64"),
 ];
 
+/// The key of a class that is compared with `is`, or against `None`: it has no `==`.
+const IDENTITY: &str = "reach: a class is compared with `is` or against `None`";
+
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 86] = [
+const REACH: [&str; 87] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -125,6 +128,7 @@ const REACH: [&str; 86] = [
     "reach: an index reads an array literal in bounds",
     "reach: a plain `=` to a local that is not an array",
     "reach: `==` or `!=` compares with `None`",
+    IDENTITY,
     "reach: a `+=` adds chars to a string local",
     "reach: a compound assignment targets a field",
     "reach: a variant is built with labeled fields",
@@ -2278,6 +2282,16 @@ impl Walk {
             }
             tir::ExprKind::Equal { lhs, rhs, .. } => {
                 self.mark("tir::ExprKind::Equal");
+                // A class has no `Eq`: only the comparison with `None` is left of it.
+                let none = matches!(lhs.kind, tir::ExprKind::None)
+                    || matches!(rhs.kind, tir::ExprKind::None);
+                let mut held = lhs.ty;
+                while let TypeKind::Optional(inner) = held.kind() {
+                    held = inner;
+                }
+                if none && matches!(held.kind(), TypeKind::Class(..)) {
+                    self.mark(IDENTITY);
+                }
                 // `x == None` on a `T?` calls nothing and needs no bound.
                 if lhs.ty.has_param()
                     && !matches!(lhs.kind, tir::ExprKind::None)
@@ -2290,6 +2304,7 @@ impl Walk {
             }
             tir::ExprKind::Is { lhs, rhs } => {
                 self.mark("tir::ExprKind::Is");
+                self.mark(IDENTITY);
                 self.tir_expr(lhs, Parent::Other);
                 self.tir_expr(rhs, Parent::Other);
             }

@@ -1,9 +1,10 @@
-// `==` on composites compares strings by content: in arrays, optionals and class fields, and
-// `[char]` by code point. The `[string?]` holds strings built at run time, so dropping it is
+// `==` on composites compares strings by content: in arrays, optionals and the written `eq` of a
+// class, and `[char]` by code point. The `[string?]` holds strings built at run time, so dropping it is
 // checked under Valgrind.
-class Person {
+class Person: Eq {
     name: string
     age: i64
+    fn eq(self, other: Self) -> bool { self.name == other.name && self.age == other.age }
 }
 
 fn maybe(c: bool) -> string? { if c { "" } else { None } }

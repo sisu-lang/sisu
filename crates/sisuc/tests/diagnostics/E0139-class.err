@@ -1,8 +1,0 @@
-error[E0139]: `Box<T>` has no `==`
- --> E0139-class.sisu:6:5
-  |
-6 |     a == b
-  |     ^ this is a `Box<T>`
-
-sisu: 1 error
-sisu: for more on a code, run `sisu explain <code>`: E0139

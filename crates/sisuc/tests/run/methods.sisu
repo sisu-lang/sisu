@@ -1,6 +1,7 @@
 // `sum` and `contains`. Valgrind checks that each releases its base, and `contains` its value.
-class Node {
+class Node: Eq {
     v: i64
+    fn eq(self, other: Self) -> bool { self.v == other.v }
 }
 
 // The value exits before `contains` runs: the spilled base is released by the `return`.
@@ -24,7 +25,7 @@ fn main() {
     print(xs.contains(4))                     // false
     print(none.contains(1))                   // false
 
-    // Objects are compared by structure, not identity.
+    // Objects are compared by their written `eq`, not by identity.
     let nodes = [Node(v: 1), Node(v: 2)]
     print(nodes.contains(Node(v: 2)))         // true
     print(nodes.contains(Node(v: 3)))         // false

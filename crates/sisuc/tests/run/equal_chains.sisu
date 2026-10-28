@@ -1,21 +1,20 @@
-// `==` follows the chain field (`next`) pair by pair. `last` and `first` prepend, so
-// `last([3, 2, 1])` is the chain 1 -> 2 -> 3 with head 1. The lists below differ at the head
-// (their last element), at the tail (their first element), in length, or not at all, with the
-// chain field last (`Last`) and first (`First`).
+// `== None` and `!= None` test only whether a chain has a head: they compare no field, so they
+// call no `eq` and walk no chain, so the fields stay unread. `last` and `first` prepend, so `last([3, 2, 1])` is the chain
+// 1 -> 2 -> 3 with head 1. The chain field is last in `Last` and first in `First`.
 class Last {
-    value: i64
-    next: Last?
+    _value: i64
+    _next: Last?
 }
 
 class First {
-    next: First?
-    value: i64
+    _next: First?
+    _value: i64
 }
 
 fn last(values: [i64]) -> Last? {
     let mut head: Last? = None
     for value in values {
-        head = Last(value: value, next: head)
+        head = Last(_value: value, _next: head)
     }
     head
 }
@@ -23,30 +22,23 @@ fn last(values: [i64]) -> Last? {
 fn first(values: [i64]) -> First? {
     let mut head: First? = None
     for value in values {
-        head = First(next: head, value: value)
+        head = First(_next: head, _value: value)
     }
     head
 }
 
 fn main() {
     let a = last([3, 2, 1])
-    print(a == a) // true: same pointer
-    print(a == last([3, 2, 1])) // true: equal field by field
-    print(a == last([3, 2, 9])) // false: differs at the head (its last element)
-    print(a == last([9, 2, 1])) // false: differs at the tail (its first element)
-    print(a == last([2, 1])) // false: shorter list
-    print(last([2, 1]) == a) // false: shorter on the left
-    print(a == None) // false: one side is None
-    print(last([]) == last([])) // true: two Nones
-    print(a != last([3, 2, 9])) // true: `!=` negates the false above
+    print(a == None) // false: a chain with a head
+    print(a != None) // true
+    print(None == a) // false: `None` on the left
+    print(last([]) == None) // true: no head
+    print(last([]) != None) // false
 
     let b = first([3, 2, 1])
-    print(b == b) // true: same pointer
-    print(b == first([3, 2, 1])) // true: equal field by field
-    print(b == first([3, 2, 9])) // false: differs at the head (its last element)
-    print(b == first([9, 2, 1])) // false: differs at the tail (its first element)
-    print(b == first([2, 1])) // false: shorter list
-    print(first([2, 1]) == b) // false: shorter on the left
-    print(b == None) // false: one side is None
-    print(first([]) == first([])) // true: two Nones
+    print(b == None) // false: a chain with a head
+    print(b != None) // true
+    print(None == b) // false: `None` on the left
+    print(first([]) == None) // true: no head
+    print(first([]) != None) // false
 }

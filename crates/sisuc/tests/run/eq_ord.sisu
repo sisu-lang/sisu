@@ -81,7 +81,7 @@ interface Tag {}
 class C: Tag {}
 
 class Tagged<T> {
-    value: T
+    _value: T
 }
 
 extend<T: Tag> Tagged<T>: Eq {
@@ -112,17 +112,17 @@ extend<T: Ord> Slot<T>: Eq {
 
 // A written `eq` that keeps its parameter: `other` is owned, so a helper retains the part first.
 class Keeper: Eq {
-    mut last: Keeper?
+    mut _last: Keeper?
     name: string
     fn eq(self, other: Self) -> bool {
-        self.last = other
+        self._last = other
         true
     }
 }
 
 // An `eq` that is not reflexive: the same array or box is not equal to itself.
 class Never: Eq {
-    n: i64
+    _n: i64
     fn eq(self, _other: Self) -> bool {
         false
     }
@@ -214,9 +214,9 @@ fn main() {
     print([Box(value: 2)].contains(Box(value: 2)))     // false
 
     // A shared array or box compared with itself: the written `eq` says `false`.
-    let shared = [Never(n: 1)]
+    let shared = [Never(_n: 1)]
     print(shared == shared)                            // false
-    let link = Link.Cons(Never(n: 1), Link.End)
+    let link = Link.Cons(Never(_n: 1), Link.End)
     print(link == link)                                // false
 
     let a = Circle(name: "a{1}", r: 1)
@@ -264,11 +264,11 @@ fn main() {
     print(A.X(B.Y(A.End)) == A.X(B.End))               // true: `B`'s written `eq` ends the walk
     print(A.X(B.End) == A.End)                         // false: the tags of `A` differ
 
-    print([Tagged(value: C())] == [Tagged(value: C())]) // false: the written `eq`, not the fields
+    print([Tagged(_value: C())] == [Tagged(_value: C())]) // false: the written `eq`, not the fields
     print([Slot(value: Score(n: 2))] == [Slot(value: Score(n: 1))]) // true: `!(2 < 1)`
 
-    let k1 = Keeper(last: None, name: "k{1}")
-    let k2 = Keeper(last: None, name: "k{2}")
+    let k1 = Keeper(_last: None, name: "k{1}")
+    let k2 = Keeper(_last: None, name: "k{2}")
     print([k1] == [k2])                                // true
     print([k1].contains(k2))                           // true
     print(k1.name + k2.name)                           // k1k2

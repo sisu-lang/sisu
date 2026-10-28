@@ -2,7 +2,6 @@
 
 use super::expr::{fits, literal_type, no_member, none_literal, path, rank, typed};
 use super::interface::Operation;
-use super::unused_names::Used;
 use super::{Checked, Checker, Poisoned, UNKNOWN, as_optional, payload, type_of, wrap};
 use crate::ast;
 use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Literal};
@@ -297,9 +296,7 @@ impl Checker<'_> {
                 let kind = receiver.ok().map(|r| tir::ExprKind::Sum(Box::new(r)));
                 typed(span, element, false, kind)
             }
-            _ if element.has_param()
-                && self.operation(element, self.lang.eq) == Operation::Missing =>
-            {
+            _ if self.operation(element, self.lang.eq) == Operation::Missing => {
                 // The report goes before the labels and the argument's own, which it waits for:
                 // a bound helps only when the argument is an element, or the contents of an
                 // optional element (`x: T` in a `[T?]`), not a `T?` in a `[T]`.
@@ -308,25 +305,12 @@ impl Checker<'_> {
                 let argument = self.expr(&args[0].value, Some(UNKNOWN));
                 let alike = type_of(&argument)
                     .is_none_or(|got| got == element || Type::optional(got) == element);
-                let add = alike
-                    .then(|| self.lacking_bound(element, self.lang.eq))
-                    .flatten();
-                let d = DiagnosticKind::ParamLacks {
-                    ty: self.type_name(element),
-                    op: "==".to_string(),
-                    at,
-                    contains: true,
-                    add,
-                };
+                let d = self.missing_operator(at, element, "==", self.lang.eq, true, alike);
                 self.diagnostics.insert(first, d.into());
                 Err(Poisoned::error())
             }
             _ => {
                 let labeled = self.labels(args);
-                // A class compares field by field, as `==` does; a `None` reads no field.
-                if !none_literal(&args[0].value) {
-                    self.record(Used::Equal(element), span);
-                }
                 let (value, mismatched) = self.operand(&args[0].value, Some(element));
                 match (receiver, value) {
                     (Ok(base), Ok(value)) if !labeled => {

@@ -1,0 +1,10 @@
+error[E0159]: `[Node]` has no `==`, since `Node` has none
+ --> E0159-array.sisu:8:11
+  |
+8 |     print(a == b)
+  |           ^ this is a `[Node]`
+  |
+  = help: make `Node` conform to `Eq`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0159

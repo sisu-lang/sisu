@@ -1,12 +1,13 @@
 // `==` on two enum values compares depth first. In each variant it compares the fields in
 // order and stops at the first difference. Here the mismatch is in an early field. The later
-// fields hold two distinct class objects that each point to themselves. `==` on those two
-// objects never ends. So an `==` that compared such a field before it found the mismatch
-// would hang. The first pair differs in the first field of `Node`, and its second field is the
+// fields hold two distinct class objects that each point to themselves. The written `eq` of
+// their class follows `next`, so `==` on those two objects never ends. So an `==` that called
+// it before it found the mismatch would never finish. The first pair differs in the first field of `Node`, and its second field is the
 // last link. Each other pair differs in a link that a class field follows: a box in `Pair`, a
 // box of an optional in `Maybe`, and an inline link in `Both`, which holds an `Expr` inline.
-class C {
+class C: Eq {
     mut next: C?
+    fn eq(self, other: Self) -> bool { self.next == other.next }
 }
 
 enum E {

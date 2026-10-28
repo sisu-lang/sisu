@@ -73,18 +73,19 @@ fn while_should_not_warn_when_its_condition_calls_a_function() {
     ));
 }
 
-/// `==` on a class compares fields, which `bump` could change through `a`.
+/// `!=` on a class with a written `Eq` calls its `eq`, which reads fields that `bump` could
+/// change through `a`.
 #[test]
 fn while_should_not_warn_when_it_compares_objects() {
     clean(&with_main(
-        "class Node {\n    v: i64\n}\nfn bump(a: Node) { print(a.v) }\nfn f(a: Node, b: Node) {\n    while a != b { bump(a) }\n}",
+        "class Node: Eq {\n    v: i64\n    fn eq(self, other: Self) -> bool { self.v == other.v }\n}\nfn bump(a: Node) { print(a.v) }\nfn f(a: Node, b: Node) {\n    while a != b { bump(a) }\n}",
     ));
 }
 
 #[test]
 fn while_should_not_warn_when_it_compares_arrays_of_objects() {
     clean(&with_main(
-        "class Node {\n    v: i64\n}\nfn bump(a: Node) { print(a.v) }\nfn f(xs: [Node], ys: [Node]) {\n    while xs != ys { bump(xs[0]) }\n}",
+        "class Node: Eq {\n    v: i64\n    fn eq(self, other: Self) -> bool { self.v == other.v }\n}\nfn bump(a: Node) { print(a.v) }\nfn f(xs: [Node], ys: [Node]) {\n    while xs != ys { bump(xs[0]) }\n}",
     ));
 }
 
@@ -92,14 +93,14 @@ fn while_should_not_warn_when_it_compares_arrays_of_objects() {
 #[test]
 fn while_should_not_warn_when_it_compares_generic_enums_of_objects() {
     clean(&with_main(
-        "class Node {\n    v: i64\n}\nenum Opt<T> {\n    Has(T)\n    Empty\n}\nfn f(a: Opt<Node>, b: Opt<Node>) {\n    while a != b { print(1) }\n}",
+        "class Node: Eq {\n    v: i64\n    fn eq(self, other: Self) -> bool { self.v == other.v }\n}\nenum Opt<T> {\n    Has(T)\n    Empty\n}\nfn f(a: Opt<Node>, b: Opt<Node>) {\n    while a != b { print(1) }\n}",
     ));
 }
 
 #[test]
 fn while_should_not_warn_when_its_enum_holds_a_generic_enum_of_objects() {
     clean(&with_main(
-        "class Node {\n    v: i64\n}\nenum Opt<T> {\n    Has(T)\n    Empty\n}\nenum Wrap {\n    W(Opt<Node>)\n}\nfn f(a: Wrap, b: Wrap) {\n    while a != b { print(1) }\n}",
+        "class Node: Eq {\n    v: i64\n    fn eq(self, other: Self) -> bool { self.v == other.v }\n}\nenum Opt<T> {\n    Has(T)\n    Empty\n}\nenum Wrap {\n    W(Opt<Node>)\n}\nfn f(a: Wrap, b: Wrap) {\n    while a != b { print(1) }\n}",
     ));
 }
 
@@ -432,7 +433,7 @@ fn while_should_not_warn_when_an_operand_calls_a_function() {
 #[test]
 fn while_should_not_warn_when_its_enum_holds_an_enum_that_holds_a_class() {
     clean(&with_main(
-        "class Node {\n    v: i64\n}\nenum Inner {\n    Holds(Node)\n}\nenum Outer {\n    Wraps(Inner)\n}\nfn f(a: Outer, b: Outer) {\n    while a != b { print(1) }\n}",
+        "class Node: Eq {\n    v: i64\n    fn eq(self, other: Self) -> bool { self.v == other.v }\n}\nenum Inner {\n    Holds(Node)\n}\nenum Outer {\n    Wraps(Inner)\n}\nfn f(a: Outer, b: Outer) {\n    while a != b { print(1) }\n}",
     ));
 }
 

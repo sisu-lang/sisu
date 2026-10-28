@@ -206,9 +206,10 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// calls `@sisu_rc.drop.<C>`, which releases each counted field, then frees the object.
     /// Both return at once on `null`. Drop does not recurse on a field of a class in its own
     /// cycle: see `define_drop`.
-    /// `@sisu_rc.eq.<C>` is `==` on two objects; see `define_eq`. An array's `drop`, `eq` and
-    /// `unique` come from `define_array_helper`, a string's `drop` and `eq` from
-    /// `define_string_helper`, an enum's `retain`, `release` and `eq` from `define_enum_helper`.
+    /// `@sisu_rc.eq.<C>` is `==` on two objects with a written `Eq`; see `define_written_eq`.
+    /// An array's `drop`, `eq` and `unique` come from `define_array_helper`, a string's `drop` and
+    /// `eq` from `define_string_helper`, an enum's `retain`, `release` and `eq` from
+    /// `define_enum_helper`.
     /// Defining a body can declare more helpers, so this runs until none is left to define.
     pub(super) fn define_helpers(&self) {
         let (object, done) = self.helper_entry(self.rc_retain);
@@ -236,7 +237,11 @@ impl<'ctx> Codegen<'ctx, '_> {
                 (_, TypeKind::String) => self.define_string_helper(kind, function),
                 (Helper::Drop, _) => self.define_drop(function, ty),
                 (Helper::Drain, _) => self.define_class_drain(function, ty),
-                (Helper::Eq, _) => self.define_eq(function, ty),
+                (Helper::Eq, _) => {
+                    unreachable!(
+                        "only a class with a written `Eq` should be queued for a class `eq` helper"
+                    )
+                }
                 (Helper::Unique, _) => {
                     unreachable!("only an array type should be queued for a `unique` helper")
                 }
@@ -445,69 +450,6 @@ impl<'ctx> Codegen<'ctx, '_> {
     fn free_class(&self, id: ClassId, object: PointerValue<'ctx>) {
         let (size, align) = self.heap_size(&HeapBlock::Class(id));
         self.call(self.free, &[object.into(), size.into(), align.into()]);
-    }
-
-    /// `@sisu_rc.eq.<C>(a, b)`: see `eq_entry` for the same pointer and `null`; otherwise
-    /// whether each pair of fields is equal, comparing the chain field last and stopping at the
-    /// first difference. It neither retains nor releases. It does not recurse on the chain
-    /// field: it compares the other fields of the pair, then steps both objects to the objects
-    /// their chain fields hold. Then it repeats the checks of `eq_entry`, in one frame.
-    fn define_eq(&self, function: FunctionValue<'ctx>, ty: Type) {
-        let TypeKind::Class(id, _) = ty.kind() else {
-            unreachable!("only a class type should reach the class helper bodies")
-        };
-        let ptr_type = self.context.ptr_type(AddressSpace::default());
-        let block = |name| self.context.append_basic_block(function, name);
-        let reflexive = self.reflexive(ty);
-        let (a, b, equal, unequal) = self.eq_entry(function, reflexive);
-        let branch = |cond, then, other| {
-            self.builder
-                .build_conditional_branch(cond, then, other)
-                .expect(POSITIONED);
-        };
-        let chain = self.program.chain_field(id);
-        // With a chain field, the body is a loop over the pairs of the two chains.
-        let looped = chain.map(|_| {
-            let (entered, body) = (self.current_block(), block("loop"));
-            self.branch_to(body);
-            self.builder.position_at_end(body);
-            let pair = |name| self.builder.build_phi(ptr_type, name).expect(POSITIONED);
-            let (pa, pb) = (pair("a"), pair("b"));
-            pa.add_incoming(&[(&a, entered)]);
-            pb.add_incoming(&[(&b, entered)]);
-            (body, pa, pb)
-        });
-        let (a, b) = looped.map_or((a, b), |(_, pa, pb)| {
-            (
-                pa.as_basic_value().into_pointer_value(),
-                pb.as_basic_value().into_pointer_value(),
-            )
-        });
-        for (index, field) in self.program.classes[id.0].fields.iter().enumerate() {
-            if chain == Some(index) {
-                continue;
-            }
-            let place = |object| self.field_ptr(id, object, index);
-            let next = block("next");
-            branch(self.equal_at(field.ty, place(a), place(b)), next, unequal);
-            self.builder.position_at_end(next);
-        }
-        let (Some(index), Some((body, pa, pb))) = (chain, looped) else {
-            self.branch_to(equal);
-            return;
-        };
-        let load = |object| {
-            self.builder
-                .build_load(ptr_type, self.field_ptr(id, object, index), "chain")
-                .expect(POSITIONED)
-                .into_pointer_value()
-        };
-        let (next_a, next_b) = (load(a), load(b));
-        self.compare_at_once(reflexive, true, next_a, next_b, equal, unequal);
-        let step = self.current_block();
-        pa.add_incoming(&[(&next_a, step)]);
-        pb.add_incoming(&[(&next_b, step)]);
-        self.branch_to(body);
     }
 
     /// The method of the written `Eq` of the class or enum `ty`, when the program has a record

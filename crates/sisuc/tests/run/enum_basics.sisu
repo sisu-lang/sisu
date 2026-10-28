@@ -1,8 +1,9 @@
 // Enum values of every non-recursive payload kind are built, passed to and returned from
 // functions, called through methods, held in class fields and arrays, and compared with `==` and
 // `!=`. Strings are built at run time, so Valgrind sees each one freed exactly once.
-class C {
+class C: Eq {
     n: i64
+    fn eq(self, other: Self) -> bool { self.n == other.n }
 }
 
 enum Inner {
@@ -28,8 +29,9 @@ enum Shape {
     }
 }
 
-class Holder {
+class Holder: Eq {
     s: Shape
+    fn eq(self, other: Self) -> bool { self.s == other.s }
 }
 
 fn pass(s: Shape) -> Shape {
@@ -52,7 +54,7 @@ fn main() {
     print(label != Shape.Label("ab" + ""))                   // true: the strings differ
     print(label == Shape.Dot)                                // false
     let shared = Shape.Ref(C(n: 1))
-    print(shared == Shape.Ref(C(n: 1)))                      // true: classes compare their fields
+    print(shared == Shape.Ref(C(n: 1)))                      // true: the class's written `eq` compares its fields
     print(shared == Shape.Ref(C(n: 2)))                      // false
     let nest = Shape.Nest(Inner.Name("x" + "y"))
     print(nest == Shape.Nest(Inner.Name("xy" + "")))         // true
@@ -69,7 +71,7 @@ fn main() {
     print(v == Shape.Circle(3))                              // true: the old value is released
     let h = Holder(s: label)
     print(h.s == label)                                      // true
-    print(h == Holder(s: Shape.Label("abc" + "")))           // true: the class compares its enum field
+    print(h == Holder(s: Shape.Label("abc" + "")))           // true: the class's `eq` compares its enum field
     print(h == Holder(s: Shape.Dot))                         // false
     let shapes = [dot, r, label, shared, nest, mixed]
     print(shapes[1] == r)                                    // true

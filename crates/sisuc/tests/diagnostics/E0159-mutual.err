@@ -1,0 +1,10 @@
+error[E0159]: `B` has no `==`, since `Node` has none
+  --> E0159-mutual.sisu:15:5
+   |
+15 |     a == b
+   |     ^ this is a `B`
+   |
+   = help: make `Node` conform to `Eq`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0159

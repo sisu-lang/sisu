@@ -254,7 +254,7 @@ fn row_of_a_nested_index_is_borrowed() {
 /// stays a copy across any `==` or `contains` whose helper may run that `eq`.
 const HOLDER: &str = "class Holder: Eq {\n    mut items: [string]\n    fn eq(self, other: Self) -> bool {\n        self.items = [\"y\"]\n        true\n    }\n}\n\
     enum Wrap {\n    One(Holder)\n}\n\
-    class Outer {\n    h: Holder\n}\nclass Lone {\n    h: Holder?\n}\nclass Pair<T> {\n    first: T\n}\nenum Cover {\n    One(Outer)\n}\n";
+    enum Deep {\n    One(Wrap)\n}\nenum Lone {\n    One(Holder?)\n}\nenum Gen<T> {\n    One(T)\n}\n";
 
 /// The program of `HOLDER` with `compare` as the line that runs the hidden call. With `live`,
 /// `h` is read after it, so the comparison copies `h`, and the copy of `h.items` has nothing else
@@ -276,15 +276,14 @@ fn copy_should_stay_across_a_written_eq() {
         "let same = [h] == [h]",
         "let same = [h].contains(h)",
         "let same = Wrap.One(h) == Wrap.One(h)",
-        // The structural `==` of a class with no `Eq` compares its fields, so it may run the
-        // written `eq` of a field: directly, in an array, an optional, an enum payload or a
-        // generic class, whichever way the wrapper is reached.
-        "let o = Outer(h: h)\n    let same = o == o",
-        "let same = [Outer(h: h)] == [Outer(h: h)]",
-        "let same = Cover.One(Outer(h: h)) == Cover.One(Outer(h: h))",
-        "let same = Lone(h: h) == Lone(h: h)",
-        "let same = Pair(first: h) == Pair(first: h)",
-        "let same = [Outer(h: h)].contains(Outer(h: h))",
+        // A written `eq` of a part runs from the helper of an enum that holds it: directly, in an
+        // array, an optional, an enum payload or a generic enum, whichever way the wrapper is
+        // reached.
+        "let same = Deep.One(Wrap.One(h)) == Deep.One(Wrap.One(h))",
+        "let same = [Deep.One(Wrap.One(h))] == [Deep.One(Wrap.One(h))]",
+        "let same = Lone.One(h) == Lone.One(h)",
+        "let same = Gen.One(h) == Gen.One(h)",
+        "let same = [Gen.One(h)].contains(Gen.One(h))",
     ] {
         for live in [false, true] {
             let printed = built(&holder_program(compare, live));
