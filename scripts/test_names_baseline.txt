@@ -176,7 +176,6 @@ crates/sisuc/src/check/tests/floats.rs::f64_constant_in_const
 crates/sisuc/src/check/tests/floats.rs::f64_constants
 crates/sisuc/src/check/tests/floats.rs::float_constants
 crates/sisuc/src/check/tests/floats.rs::float_conversions
-crates/sisuc/src/check/tests/floats.rs::float_interpolation
 crates/sisuc/src/check/tests/floats.rs::float_never_integer
 crates/sisuc/src/check/tests/floats.rs::float_sum
 crates/sisuc/src/check/tests/floats.rs::int_to_float
@@ -422,7 +421,6 @@ crates/sisuc/src/check/tests/mod.rs::parenthesized_true_is_endless
 crates/sisuc/src/check/tests/mod.rs::poisoned_binding_reports_once
 crates/sisuc/src/check/tests/mod.rs::poisoned_operand_checks_siblings
 crates/sisuc/src/check/tests/mod.rs::poisoned_receiver_checks_args
-crates/sisuc/src/check/tests/mod.rs::print_optional
 crates/sisuc/src/check/tests/mod.rs::rejected_if_let_scrutinee_reports_once
 crates/sisuc/src/check/tests/mod.rs::rejected_none_reports_once
 crates/sisuc/src/check/tests/mod.rs::repeated_param

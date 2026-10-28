@@ -501,11 +501,11 @@ fn is_on_arrays() {
 }
 
 #[test]
-fn print_should_accept_an_array_and_reject_an_optional_one() {
+fn print_should_accept_an_array_and_warn_on_an_optional_one() {
     clean("fn f(xs: [i64]) { print(xs) }\nfn main() {}");
     diagnostic(
         "fn f(m: [i64]?) { print(m) }\nfn main() {}",
-        Code::PrintArray,
+        Code::PrintsOptional,
         (1, 25, "m"),
         &[],
     );

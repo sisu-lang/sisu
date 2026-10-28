@@ -3,8 +3,8 @@
 //! keyword that panics as `panic` does, is checked here too.
 
 use super::array::pair;
-use super::expr::typed;
-use super::{Checked, Checker, Poisoned, payload, type_of};
+use super::expr::{path, typed};
+use super::{Checked, Checker, Poisoned, type_of};
 use crate::ast;
 use crate::diagnostic::{DiagnosticKind, MismatchFix, PrintProblem};
 use crate::source::Span;
@@ -61,21 +61,9 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         };
         let checked = self.expr(&arg.value, None);
-        // Every type prints through `Display`, but `unit` and `never`, and an optional, which
-        // may print `None` (the warning replaces this error in a later task).
+        self.warn_if_optional(&arg.value, &checked);
+        // Every type prints through `Display` but `unit` and `never`.
         let error = match type_of(&checked) {
-            Some(ty) if matches!(ty.kind(), TypeKind::Optional(_)) => {
-                if matches!(payload(ty).kind(), TypeKind::Array(_)) {
-                    DiagnosticKind::PrintArray {
-                        function,
-                        ty: self.type_name(ty),
-                        at: arg.value.span,
-                    }
-                    .into()
-                } else {
-                    wrong(PrintProblem::Optional)
-                }
-            }
             Some(Type::UNIT) => wrong(PrintProblem::NoValue),
             Some(Type::NEVER) => DiagnosticKind::PrintNever {
                 function,
@@ -95,6 +83,20 @@ impl Checker<'_> {
         };
         self.diagnostics.push(error);
         Err(Poisoned::error())
+    }
+
+    /// Warns when `checked`, the check of the printed `value`, is an optional: the text may be
+    /// `None`. Only the type of `value` itself counts, not a type that it holds.
+    pub(super) fn warn_if_optional(&mut self, value: &ast::Expr, checked: &Checked) {
+        if matches!(
+            type_of(checked).map(Type::kind),
+            Some(TypeKind::Optional(_))
+        ) {
+            self.report(DiagnosticKind::PrintsOptional {
+                value: path(value),
+                at: value.span,
+            });
+        }
     }
 
     /// `panic(message)`, which never finishes.

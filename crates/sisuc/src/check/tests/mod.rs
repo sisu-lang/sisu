@@ -3149,18 +3149,6 @@ fn assign_while_let_binding() {
     );
 }
 
-#[test]
-fn print_optional() {
-    codes(
-        &format!("{T}fn f(x: T?) {{ print(x) }}\nfn main() {{}}"),
-        &[(Code::PrintArgument, (5, 15))],
-    );
-    codes(
-        "fn f(x: i64?) { print(x) }\nfn main() {}",
-        &[(Code::PrintArgument, (1, 17))],
-    );
-}
-
 /// A `None` that its rule rejects fails that rule: what the rule makes is `Error`, so a
 /// later use draws nothing.
 #[test]

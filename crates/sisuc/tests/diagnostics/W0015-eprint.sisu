@@ -1,0 +1,4 @@
+fn main() {
+    let name: string? = "Sisu"
+    eprint(name)
+}

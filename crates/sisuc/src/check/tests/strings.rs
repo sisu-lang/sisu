@@ -91,15 +91,16 @@ fn interpolation_spills() {
     );
 }
 
-/// An optional part and a part with no value are reported at the part; one whose type is unknown
-/// reports nothing more. Every other type interpolates (`interpolation_should_take_every_type`).
+/// A part with no value is reported at the part; one whose type is unknown reports nothing more.
+/// Every other type interpolates (`interpolation_should_take_every_type`), an optional with a
+/// warning (`printing_an_optional_should_warn_only_at_the_top_level`).
 #[test]
-fn interpolating_an_optional_or_a_unit_should_report_the_part() {
+fn interpolating_a_unit_should_report_the_part() {
     let params = "xs: [i64], m: [i64]?, n: i64?, p: P";
-    for part in ["m", "n", "print(1)"] {
-        let src = with_items(&body(params, &format!("print(\"a{{{part}}}\")")));
-        codes(&src, &[(Code::CannotInterpolate, (2, 14))]);
-    }
+    codes(
+        &with_items(&body(params, "print(\"a{print(1)}\")")),
+        &[(Code::CannotInterpolate, (2, 14))],
+    );
     codes(
         &with_items(&body(params, "print(\"a{nope}\")")),
         &[(Code::BindingNotFound, (2, 14))],
@@ -161,7 +162,7 @@ fn format_spec_should_default_its_alignment_by_type_and_take_a_precision_for_an_
     // A part that is already reported gets no precision error.
     let params = "xs: [i64]?, n: i64";
     codes(
-        &body(params, "print(\"{xs:.2}\")"),
+        &body(params, "print(\"{print(1):.2}\")"),
         &[(Code::CannotInterpolate, (2, 13))],
     );
     codes(
@@ -449,10 +450,10 @@ fn a_join_with_a_failed_operand_should_have_the_type_error() {
     // An operand that failed but kept its type, `string`, leaves the join a `string`, so a
     // `char` beside it is still reported.
     codes(
-        &body(params, "print(s + \"{xs}\" + c)"),
+        &body(params, "print(s + \"{print(1)}\" + c)"),
         &[
             (Code::CannotInterpolate, (2, 17)),
-            (Code::Mismatch, (2, 24)),
+            (Code::Mismatch, (2, 30)),
         ],
     );
     // A value appended to a field that already failed is not the join's mistake.

@@ -118,13 +118,10 @@ impl Gen<'_> {
     fn call_stmt(&mut self) {
         let callee = self.pick(self.callees_any());
         let ret = &self.scope.funcs[callee].ret;
-        // Every type prints but `unit` and an optional, which warns, then prints, in a later task.
-        let print = !matches!(ret, Ty::Unit | Ty::Optional(_));
-        let discard = !print && *ret != Ty::Unit;
+        // Every type prints but `unit`; an optional warns (W0015), then prints.
+        let print = *ret != Ty::Unit;
         if print {
             self.w.text("print(");
-        } else if discard {
-            self.w.text("let _ = ");
         }
         self.invoke(callee, false);
         if print {
@@ -185,8 +182,8 @@ impl Gen<'_> {
     }
 
     /// A value for `print`, in a `form` from 0 to 3: as it is, interpolated alone, interpolated
-    /// with a width, or through `to_string`. Each writes the same text for a compound value or a
-    /// number, and only `to_string` takes an optional, which `print` and an interpolation reject.
+    /// with a width, or through `to_string`. Each writes the same text for any type. An optional
+    /// in the first three forms warns (W0015), and `to_string` of it does not.
     fn printed_value(&mut self, form: usize) {
         if form == 3 {
             let ty = self.bare_type();
@@ -196,7 +193,7 @@ impl Gen<'_> {
             self.w.text(").to_string()");
             return;
         }
-        let ty = self.print_type();
+        let ty = self.bare_type();
         if form == 0 {
             self.synth = true;
             self.expr(&ty, MAX_SIZE);

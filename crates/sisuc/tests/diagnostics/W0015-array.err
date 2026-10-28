@@ -1,0 +1,10 @@
+warning[W0015]: `xs` is an optional and may print `None`
+ --> W0015-array.sisu:3:11
+  |
+3 |     print(xs)
+  |           ^^
+  |
+  = help: unwrap it with `if let` or `??`, or write `xs.to_string()` to print `None` on purpose
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0015

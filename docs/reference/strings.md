@@ -106,7 +106,7 @@ fn main() {
 
 ## Text of a value
 
-Interpolation and `print` write a value as text in the same way. They take a value of any type except `unit`, `never` and an optional ([E0098](../diagnostics/E0098.md), [E0059](../diagnostics/E0059.md)). The table lists the scalar types; [Text of other types](#text-of-other-types) lists the others.
+Interpolation and `print` write a value as text in the same way. They take a value of any type except `unit` and `never` ([E0098](../diagnostics/E0098.md), [E0059](../diagnostics/E0059.md)). An optional builds with the warning [W0015](../diagnostics/W0015.md), because the text can be `None`. The table lists the scalar types; [Text of other types](#text-of-other-types) lists the others.
 
 | Type | Text |
 | --- | --- |
@@ -169,7 +169,7 @@ fn main() {
 }
 ```
 
-Interpolation does not convert a value: it writes the text of the type that the value has. To write an optional, use `??` or `if let`. To write an array, use a `for` loop.
+Interpolation does not convert a value: it writes the text of the type that the value has. To write an optional without the warning [W0015](../diagnostics/W0015.md), use `??` or `if let`, or call `to_string()` to write `None` on purpose.
 
 The program calculates each expression once, from left to right, before it builds the text. This is so also when the parts have format specs.
 

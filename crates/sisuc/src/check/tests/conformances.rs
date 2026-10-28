@@ -954,12 +954,12 @@ fn to_string_should_not_answer_a_call_of_a_field_of_that_name() {
 }
 
 /// A receiver that failed but kept its type leaves the call a `string`, and the call adds no
-/// error of its own: the part `{m}` of the receiver is an optional, which is the one error.
+/// error of its own: the part `{g()}` of the receiver has no value, which is the one error.
 #[test]
 fn to_string_on_a_receiver_that_failed_should_report_only_the_receiver() {
     codes(
-        "fn f(m: i64?) {\n    print(\"{m}\".to_string())\n}\nfn main() {}",
-        &[(Code::CannotInterpolate, (2, 13))],
+        "fn g() {}\nfn f() {\n    print(\"{g()}\".to_string())\n}\nfn main() {}",
+        &[(Code::CannotInterpolate, (3, 13))],
     );
 }
 
@@ -2372,4 +2372,218 @@ fn eq_and_less_through_a_bound_should_stay_interface_calls() {
     // `mono` resolves them for each type argument: a type parameter's call is not the operator.
     let src = "fn same<T: Eq>(a: T, b: T) -> bool { a.eq(b) }\nfn below<T: Ord>(a: T, b: T) -> bool { a.less(b) }\nfn main() {\n    print(same(1, 2))\n    print(below(1, 2))\n}";
     contains(src, &["(call Eq.eq a#0 b#1)", "(call Ord.less a#0 b#1)"]);
+}
+
+const USER: &str = "class User {\n    name: string?\n}\n";
+const FIND: &str = "fn find() -> string? {\n    None\n}\n";
+const SHOW: &str = "fn show<T>(x: T) {\n    print(x)\n    print(\"{x}\")\n}\n";
+const ITEM: &str = "enum Item {\n    Tag(string?)\n}\n";
+
+/// A row of `PRINTED`: its name, the declarations, the parameters of `f`, the statement of the
+/// body of `f`, and the text of the expression that gets the warning, if any.
+type Row = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    Option<&'static str>,
+);
+
+const PRINTED: [Row; 29] = [
+    ("print", "", "name: string?", "print(name)", Some("name")),
+    ("eprint", "", "name: string?", "eprint(name)", Some("name")),
+    (
+        "interpolation",
+        "",
+        "name: string?",
+        "print(\"{name}\")",
+        Some("name"),
+    ),
+    (
+        "interpolation with a width",
+        "",
+        "name: string?",
+        "print(\"{name:>8}\")",
+        Some("name"),
+    ),
+    (
+        "element of an array",
+        "",
+        "xs: [string?]",
+        "print(xs[0])",
+        Some("xs[0]"),
+    ),
+    (
+        "field path",
+        USER,
+        "u: User",
+        "print(u.name)",
+        Some("u.name"),
+    ),
+    (
+        "safe chain",
+        USER,
+        "u: User?",
+        "print(u?.name)",
+        Some("u?.name"),
+    ),
+    ("call result", FIND, "", "print(find())", Some("find()")),
+    (
+        "optional of an optional",
+        "",
+        "n: i64??",
+        "print(n)",
+        Some("n"),
+    ),
+    (
+        "optional of an optional, interpolated",
+        "",
+        "n: i64??",
+        "print(\"{n}\")",
+        Some("n"),
+    ),
+    ("optional array", "", "xs: [i64]?", "print(xs)", Some("xs")),
+    (
+        "optional array, interpolated",
+        "",
+        "xs: [i64]?",
+        "print(\"{xs}\")",
+        Some("xs"),
+    ),
+    (
+        "optional of a class",
+        "class Node {}\n",
+        "n: Node?",
+        "print(n)",
+        Some("n"),
+    ),
+    (
+        "`??` that leaves an optional",
+        "",
+        "a: string??, b: string?",
+        "print(a ?? b)",
+        Some("a ?? b"),
+    ),
+    ("array of optionals", "", "xs: [string?]", "print(xs)", None),
+    (
+        "array literal of an optional",
+        "",
+        "name: string?",
+        "print([name])",
+        None,
+    ),
+    (
+        "interpolated array of optionals",
+        "",
+        "xs: [string?]",
+        "print(\"{xs}\")",
+        None,
+    ),
+    (
+        "payload of an enum",
+        ITEM,
+        "name: string?",
+        "print(Item.Tag(name))",
+        None,
+    ),
+    (
+        "to_string",
+        "",
+        "name: string?",
+        "print(name.to_string())",
+        None,
+    ),
+    (
+        "to_string of an optional of an optional",
+        "",
+        "n: i64??",
+        "print(n.to_string())",
+        None,
+    ),
+    (
+        "interpolated to_string",
+        "",
+        "name: string?",
+        "print(\"{name.to_string()}\")",
+        None,
+    ),
+    (
+        "default with `??`",
+        "",
+        "name: string?",
+        "print(name ?? \"x\")",
+        None,
+    ),
+    (
+        "default with `??`, interpolated",
+        "",
+        "name: string?",
+        "print(\"{name ?? \"x\"}\")",
+        None,
+    ),
+    (
+        "unwrapped with `if let`",
+        "",
+        "name: string?",
+        "if let n = name {\n        print(n)\n    }",
+        None,
+    ),
+    ("a string", "", "name: string", "print(name)", None),
+    (
+        "a type parameter",
+        SHOW,
+        "name: string?",
+        "show(name)",
+        None,
+    ),
+    (
+        "a type parameter, array of optionals",
+        SHOW,
+        "xs: [string?]",
+        "show(xs)",
+        None,
+    ),
+    (
+        "an optional that is not printed",
+        "",
+        "name: string?",
+        "let copy = name",
+        None,
+    ),
+    (
+        "a comparison",
+        "",
+        "name: string?",
+        "print(name == None)",
+        None,
+    ),
+];
+
+/// A top-level optional in `print`, `eprint` or an interpolation, whatever the expression that
+/// gives it, warns once at that expression; an optional inside another value, a text from
+/// `to_string` or `??`, and a `T` that holds an optional when it is instantiated, do not. The
+/// fixtures `W0015` and `W0015-value` pin the text.
+#[test]
+fn printing_an_optional_should_warn_only_at_the_top_level() {
+    for (row, decls, params, stmt, warned) in PRINTED {
+        let src = format!("{decls}fn f({params}) {{\n    {stmt}\n}}\nfn main() {{}}");
+        match warned {
+            Some(text) => {
+                let call = stmt.find('(').expect("a row prints through a call") + 1;
+                let col = 5 + call + stmt[call..].find(text).expect("the row holds the text");
+                let line = decls.lines().count() + 2;
+                diagnostic_row(row, &src, Code::PrintsOptional, (line, col, text), &[]);
+            }
+            None => clean_row(row, &src),
+        }
+    }
+}
+
+/// `print(None)` has no type for its `None`: the call gets no warning on top of the error.
+#[test]
+fn printing_none_should_not_infer_a_type() {
+    codes(
+        "fn main() {\n    print(None)\n}",
+        &[(Code::CannotInfer, (2, 11))],
+    );
 }

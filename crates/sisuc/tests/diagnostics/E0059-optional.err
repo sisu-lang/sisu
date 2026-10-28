@@ -1,8 +1,0 @@
-error[E0059]: `print` cannot take an optional
- --> E0059-optional.sisu:3:5
-  |
-3 |     print(n)
-  |     ^^^^^^^^
-
-sisu: 1 error
-sisu: for more on a code, run `sisu explain <code>`: E0059

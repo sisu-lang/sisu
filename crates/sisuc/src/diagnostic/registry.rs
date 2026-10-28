@@ -114,7 +114,6 @@ codes! {
     MethodNotField = "E0057",
     FieldNotMethod = "E0058",
     PrintArgument = "E0059",
-    PrintArray = "E0060",
     PrintNever = "E0061",
     MayBeNone = "E0062",
     NoMember = "E0063",
@@ -224,6 +223,7 @@ codes! {
     UnusedItem | UnusedBlock = "W0012",
     UnusedMember = "W0013",
     UnusedVariable = "W0014",
+    PrintsOptional = "W0015",
 }
 
 /// Codes the compiler no longer reports, and their explanations (`docs/diagnostics/README.md`,
@@ -236,6 +236,10 @@ pub(crate) const RETIRED: &[(&str, &str)] = &[
     (
         "E0014",
         include_str!("../../../../docs/diagnostics/E0014.md"),
+    ),
+    (
+        "E0060",
+        include_str!("../../../../docs/diagnostics/E0060.md"),
     ),
 ];
 
@@ -683,17 +687,11 @@ pub(crate) enum DiagnosticKind {
         owner: String,
         at: Span,
     },
-    /// A call of `function` (`print` or `eprint`) at `at` with no argument or several, one that
-    /// returns nothing, or an optional that is not an array.
+    /// A call of `function` (`print` or `eprint`) at `at` with no argument or several, or one that
+    /// returns nothing.
     PrintArgument {
         function: &'static str,
         problem: PrintProblem,
-        at: Span,
-    },
-    /// The argument at `at` of a call of `function`, of the type `ty`: an optional array.
-    PrintArray {
-        function: &'static str,
-        ty: String,
         at: Span,
     },
     /// The argument at `at` of a call of `function`, which never finishes.
@@ -827,13 +825,11 @@ pub(crate) enum DiagnosticKind {
     EmptyInterpolation { at: Span },
     /// The `//` at `at`, inside an interpolation.
     CommentInInterpolation { at: Span },
-    /// The interpolated value at `at`, of type `ty`, which interpolation cannot write as text;
-    /// `help` is the advice for its kind of type, if there is one.
-    CannotInterpolate {
-        ty: String,
-        help: Option<InterpolateHelp>,
-        at: Span,
-    },
+    /// The interpolated value at `at`, of type `ty`, which interpolation cannot write as text.
+    CannotInterpolate { ty: String, at: Span },
+    /// The printed or interpolated optional at `at`, which may print `None`. `value` is its path
+    /// as written, when it has one.
+    PrintsOptional { value: Option<String>, at: Span },
     /// The `todo` at `at`, which panics when it runs.
     TodoLeft { at: Span },
     /// A `todo` written as Rust's `todo!` or as `todo()`: `at` is the first extra token, and
@@ -1242,8 +1238,6 @@ pub(crate) enum PrintProblem {
     Count,
     /// The argument has no value: it is a call that returns nothing.
     NoValue,
-    /// The argument is an optional that is not an array.
-    Optional,
 }
 
 /// Why `main`'s signature is wrong.
@@ -1371,15 +1365,6 @@ impl Panic {
 pub(crate) enum Literal {
     None,
     EmptyArray,
-}
-
-/// The advice for a value that interpolation cannot write as text.
-#[derive(Clone, Copy)]
-pub(crate) enum InterpolateHelp {
-    /// An array, or an optional of one.
-    ForLoop,
-    /// Any other optional.
-    Unwrap,
 }
 
 /// The statement or expression that unwraps an optional.
@@ -3176,14 +3161,8 @@ impl From<DiagnosticKind> for Diagnostic {
                 match problem {
                     PrintProblem::Count => format!("`{function}` takes one value"),
                     PrintProblem::NoValue => format!("the argument of `{function}` has no value"),
-                    PrintProblem::Optional => format!("`{function}` cannot take an optional"),
                 },
             ),
-            DiagnosticKind::PrintArray { function, ty, at } => {
-                Diagnostic::coded(code, at, format!("cannot {function} `{ty}`")).with_help(format!(
-                    "unwrap it with `if let`, then {function} the array"
-                ))
-            }
             DiagnosticKind::PrintNever { function, at } => Diagnostic::coded(
                 code,
                 at,
@@ -3531,15 +3510,22 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::CommentInInterpolation { at } => {
                 Diagnostic::coded(code, at, "a comment cannot appear inside an interpolation")
             }
-            DiagnosticKind::CannotInterpolate { ty, help, at } => {
-                let d = Diagnostic::coded(code, at, format!("cannot interpolate `{ty}`"));
-                match help {
-                    Some(InterpolateHelp::ForLoop) => d.with_help("build the text in a `for` loop"),
-                    Some(InterpolateHelp::Unwrap) => {
-                        d.with_help("unwrap it with `if let`, or give a default with `??`")
-                    }
-                    None => d,
-                }
+            DiagnosticKind::CannotInterpolate { ty, at } => {
+                Diagnostic::coded(code, at, format!("cannot interpolate `{ty}`"))
+            }
+            DiagnosticKind::PrintsOptional { value, at } => {
+                let (subject, call) = match value {
+                    Some(path) => (format!("`{path}`"), format!("write `{path}.to_string()`")),
+                    None => ("this value".to_string(), "call `.to_string()`".to_string()),
+                };
+                Diagnostic::coded(
+                    code,
+                    at,
+                    format!("{subject} is an optional and may print `None`"),
+                )
+                .with_help(format!(
+                    "unwrap it with `if let` or `??`, or {call} to print `None` on purpose"
+                ))
             }
             DiagnosticKind::TodoLeft { at } => {
                 Diagnostic::coded(code, at, "`todo` panics when it runs")

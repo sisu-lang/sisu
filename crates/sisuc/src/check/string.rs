@@ -11,8 +11,7 @@ use super::expr::{local, no_member, path, typed};
 use super::{Checked, Checker, Poisoned, block_expr, type_of};
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{
-    Code, Definition, Diagnostic, DiagnosticKind, InterpolateHelp, MismatchFix, MismatchSource,
-    Operand, invisible,
+    Code, Definition, Diagnostic, DiagnosticKind, MismatchFix, MismatchSource, Operand, invisible,
 };
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
@@ -43,7 +42,7 @@ impl Checker<'_> {
 
     /// A string literal with interpolations. Each part is checked with no expected type, so that
     /// a `unit` one is reported here, and must be of a type that has a `Display`, which is every
-    /// type but `unit`; an optional waits for its warning. A part that never finishes makes the
+    /// type but `unit`; an optional warns. A part that never finishes makes the
     /// whole never finish.
     pub(super) fn interpolate(&mut self, span: Span, parts: &[ast::Part]) -> Checked {
         let mut ty = Type::STRING;
@@ -51,46 +50,26 @@ impl Checker<'_> {
         let mut formats = Vec::new();
         for (i, ast::Part { value: part, spec }) in parts.iter().enumerate() {
             let value = self.expr(part, None);
-            // Every type interpolates but an optional (a warning replaces this error later) and
-            // `unit`.
-            let help = match type_of(&value).map(Type::kind) {
-                None
-                | Some(
-                    TypeKind::I64
-                    | TypeKind::U8
-                    | TypeKind::F64
-                    | TypeKind::Bool
-                    | TypeKind::Char
-                    | TypeKind::String
-                    | TypeKind::Array(_)
-                    | TypeKind::Class(..)
-                    | TypeKind::Enum(..)
-                    | TypeKind::Param(..)
-                    | TypeKind::Assoc(..),
-                ) => {
+            // Every type interpolates but `unit`; an optional warns.
+            match type_of(&value).map(Type::kind) {
+                Some(TypeKind::Unit) => {}
+                Some(TypeKind::Never) => {
+                    ty = Type::NEVER;
+                    checked.push(value);
+                    continue;
+                }
+                _ => {
+                    self.warn_if_optional(part, &value);
                     if let (Some(spec), Some(found)) = (spec, type_of(&value)) {
                         formats.push(self.format(i, part, spec, found));
                     }
                     checked.push(value);
                     continue;
                 }
-                Some(TypeKind::Never) => {
-                    ty = Type::NEVER;
-                    checked.push(value);
-                    continue;
-                }
-                Some(TypeKind::Optional(payload))
-                    if !matches!(payload.kind(), TypeKind::Array(_)) =>
-                {
-                    Some(InterpolateHelp::Unwrap)
-                }
-                Some(TypeKind::Optional(_)) => Some(InterpolateHelp::ForLoop),
-                Some(TypeKind::Unit) => None,
-            };
+            }
             let found = type_of(&value).expect("a part reported here should have a type");
             self.report(DiagnosticKind::CannotInterpolate {
                 ty: self.type_name(found),
-                help,
                 at: part.span,
             });
             checked.push(Err(Poisoned::error()));

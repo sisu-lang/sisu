@@ -71,7 +71,6 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0057](E0057.md) | error | method read as a field |
 | [E0058](E0058.md) | error | field called as a method |
 | [E0059](E0059.md) | error | `print` or `eprint` of something it cannot print |
-| [E0060](E0060.md) | error | `print` or `eprint` of an optional array |
 | [E0061](E0061.md) | error | `print` or `eprint` of an expression that never finishes |
 | [E0062](E0062.md) | error | optional used as if it were present |
 | [E0063](E0063.md) | error | field or method that does not exist |
@@ -185,6 +184,7 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [W0012](W0012.md) | warning | function, method, class, enum, interface, `extend` block or constant that no live code uses |
 | [W0013](W0013.md) | warning | field that no live code reads, or variant that no live code builds |
 | [W0014](W0014.md) | warning | local or parameter that nothing reads |
+| [W0015](W0015.md) | warning | optional that `print` or an interpolation may write as `None` |
 
 ## Explanations
 
@@ -200,7 +200,7 @@ both, and apply every safe fix to the Broken program.
 A new code takes the next free number in its series, in the order codes land
 on `main`. A code is never reused or renumbered.
 
-E0012 and E0014 are the retired codes. When the compiler stops reporting a code,
+E0012, E0014 and E0060 are the retired codes. When the compiler stops reporting a code,
 its variant leaves `DiagnosticKind` and its row leaves the table above. Its
 file stays here and gains a `Status: retired` line after its title, naming
 the ADR that retired it, and `sisu explain` serves it from `RETIRED`, the

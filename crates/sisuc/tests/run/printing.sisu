@@ -4,8 +4,8 @@
 // bare alone and quoted in an array, a payload or an optional; an optional is transparent, and
 // by the Some rule `Some(` wraps only a `None`; a variant has no enum name and keeps its labels;
 // a class is its name with its type arguments; a written `to_string`'s text is raw wherever the
-// value sits. An optional alone is still an error to `print`, so the optional rows sit in an
-// array there; `to_string` takes one alone.
+// value sits. An optional alone warns (W0015) when it is printed or interpolated, and prints as
+// `to_string` does.
 class Node {}
 
 class Stack<T> {
@@ -334,6 +334,31 @@ fn main() {
     both(n2)                        // 5
     both(m2)                        // Some(Some(None))
 
+    // An optional alone warns when it is printed or interpolated, and prints by the Some rule.
+    let ss: string?? = Some("hi")
+    print(n0)
+    print("{n0}")
+    print(n1)
+    print("{n1}")
+    print(n2)
+    print("{n2}")
+    print(m0)
+    print("{m0}")
+    print(m1)
+    print("{m1}")
+    print(m2)
+    print("{m2}")
+    print(m3)
+    print("{m3}")
+    print(hi)
+    print("{hi}")
+    print(no_string)
+    print("{no_string}")
+    print(q)
+    print("{q}")
+    print(ss)
+    print("{ss}")
+
     // `to_string` alone takes an optional, which prints by the Some rule.
     print(n0.to_string())           // None
     print(n1.to_string())           // Some(None)
@@ -342,7 +367,6 @@ fn main() {
     print(m1.to_string())           // Some(None)
     print(m2.to_string())           // Some(Some(None))
     print(m3.to_string())           // 5
-    let ss: string?? = Some("hi")
     print(ss.to_string())           // hi
 
     // `to_string` of each scalar is the text that `print` writes.

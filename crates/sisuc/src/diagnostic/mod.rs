@@ -10,8 +10,8 @@ mod suggest;
 pub(crate) use registry::{
     AddBound, Annotate, ArgumentsForm, BadRange, BuiltIn, CannotExtendForm, ClashForm, ClashKind,
     Code, ConformanceForm, Conversion, Definition, DiagnosticKind, Earlier, ForeignPattern,
-    ForeignRange, GuardHelp, Hop, Immutable, InterfaceBodyForm, InterpolateHelp, Join, LetField,
-    Literal, LiteralKind, MainForm, MatchIdiomForm, MathFix, Member, MethodReceiver, MismatchFix,
+    ForeignRange, GuardHelp, Hop, Immutable, InterfaceBodyForm, Join, LetField, Literal,
+    LiteralKind, MainForm, MatchIdiomForm, MathFix, Member, MethodReceiver, MismatchFix,
     MismatchSource, NanFix, NoOperatorForm, NotConformForm, NotInterface, Operand, Owner, Panic,
     Peel, PowerFix, PrintProblem, RETIRED, ReceiverArgument, TypedLiteral, Unbuilt, Ungenerated,
     UnknownForm, Unwrap, UsedBy, VariantLabels, WideKind, invisible,

@@ -111,7 +111,7 @@ const IDENTITY: &str = "reach: a class is compared with `is` or against `None`";
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 91] = [
+const REACH: [&str; 93] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -203,6 +203,8 @@ const REACH: [&str; 91] = [
     "reach: `print` runs a written `to_string` inside a value",
     "reach: an interpolation writes a compound part",
     "reach: `to_string` runs on a generated `Display`",
+    "reach: a top-level optional is printed",
+    "reach: an optional is printed through `.to_string()`",
 ];
 
 /// Whether `ty` is an array, an optional, an enum or a class: a type whose value `print` writes
@@ -2228,6 +2230,9 @@ impl Walk {
                 if is_compound(operand.ty) {
                     self.mark("reach: `print` writes a compound value");
                 }
+                if matches!(operand.ty.kind(), TypeKind::Optional(_)) {
+                    self.mark("reach: a top-level optional is printed");
+                }
                 self.tir_expr(operand, Parent::Other);
             }
             tir::ExprKind::Panic(message) => {
@@ -2298,10 +2303,21 @@ impl Walk {
                 // interpolation of one part, with the span of the call. The tree has no other
                 // mark of it, so the key reads the text of the span: `generated_display` must keep
                 // the span of the call, or the key never fires and the REACH table fails.
-                if let ([_], []) = (&parts[..], &formats[..])
-                    && self.source[e.span.range()].ends_with(".to_string()")
-                {
+                let call = matches!((&parts[..], &formats[..]), ([_], []))
+                    && self.source[e.span.range()].ends_with(".to_string()");
+                if call {
                     self.mark("reach: `to_string` runs on a generated `Display`");
+                }
+                // `"{x}"` and `x.to_string()` have the same tree, so the text tells them apart.
+                if parts
+                    .iter()
+                    .any(|part| matches!(part.ty.kind(), TypeKind::Optional(_)))
+                {
+                    self.mark(if call {
+                        "reach: an optional is printed through `.to_string()`"
+                    } else {
+                        "reach: a top-level optional is printed"
+                    });
                 }
                 self.tir_exprs(parts);
             }
@@ -3249,11 +3265,11 @@ fn a_return_gives_a_value_where_its_function_returns_one() {
 }
 
 #[test]
-fn main_should_print_a_value_and_discard_an_optional_that_a_call_returns() {
+fn main_should_print_what_a_call_returns_but_unit() {
     // Byte by byte: one statement in `main`, a call, of the function the third byte names, at
-    // depth 0 once the bytes run out. A value is printed, an optional discarded, and a `unit`
-    // call stands alone; the statement gives back the fuel it did not spend.
-    for (callee, line) in [(0, "print(f1(0))"), (1, "f2(0)"), (2, "let _ = f3(0)")] {
+    // depth 0 once the bytes run out. A value is printed, an optional too, and a `unit` call
+    // stands alone; the statement gives back the fuel it did not spend.
+    for (callee, line) in [(0, "print(f1(0))"), (1, "f2(0)"), (2, "print(f3(0))")] {
         let data = [1, 1, callee];
         let mut g = with_funcs(&data);
         g.main_stmts();
