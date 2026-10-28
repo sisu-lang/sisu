@@ -225,7 +225,9 @@ enum Step<'a> {
 }
 
 /// Writes `ty` to `out` as a program writes it, each class and enum named by `head`. Returns
-/// whether the text was cut: past `NAME_LIMIT` bytes, `...` and the closers still owed end it.
+/// whether the text was cut: past `NAME_LIMIT` bytes, `...` and the closers and the associated
+/// type names still owed end it. Each level entered before the cut adds at most one closer or one
+/// name, so the text is never longer than the whole text.
 pub(crate) fn write_type<'n>(out: &mut String, ty: Type, head: impl Fn(Head) -> &'n str) -> bool {
     write_steps(out, vec![Step::Type(ty)], head)
 }
@@ -282,11 +284,19 @@ fn write_steps<'n>(
                 continue;
             }
             Step::Rest([]) => continue,
-            Step::Type(_) | Step::Rest(_) | Step::Assoc(..) if out.len() >= NAME_LIMIT => {
+            Step::Type(_) | Step::Rest(_) if out.len() >= NAME_LIMIT => {
+                // The cut elides only what has not begun: a type or the rest of a list. A type
+                // that has begun gets its end, each closer and each associated type name, so a
+                // name that ends in `.Item` or `]` still names what it began to name.
                 out.push_str("...");
                 for step in steps.iter().rev() {
-                    if let Step::Close(text) = step {
-                        out.push_str(text);
+                    match step {
+                        Step::Close(text) => out.push_str(text),
+                        Step::Assoc(interface, k) => {
+                            out.push('.');
+                            out.push_str(head(Head::Assoc(*interface, *k)));
+                        }
+                        Step::Type(_) | Step::Rest(_) => {}
                     }
                 }
                 return true;
@@ -637,6 +647,52 @@ mod tests {
         assert!(!cut && !closed.contains("..."), "{closed}");
     }
 
+    /// A cut elides only what has not begun, so a name that is cut inside the type before an
+    /// associated type's name keeps that name: the text names an associated type, and not a class.
+    /// The names are all `P` here, except where a case says so.
+    #[test]
+    fn type_text_should_keep_the_associated_type_name_when_the_base_is_cut() {
+        let item = |base| Type::intern(TypeKind::Assoc(base, InterfaceId(0), TypeArgs::NONE, 0));
+        let (cut_inside, cut) = text(item(doubled(Type::I64, 40)));
+        assert!(cut && cut_inside.contains("..."), "{cut_inside}");
+        assert!(cut_inside.ends_with(">.P"), "{cut_inside}");
+        assert_eq!(
+            count(&cut_inside, '<'),
+            count(&cut_inside, '>'),
+            "{cut_inside}"
+        );
+        // The name after the closers of an array and an optional, outermost last.
+        let (wrapped, _) = text(Type::array(item(item(Type::optional(doubled(
+            Type::I64,
+            40,
+        ))))));
+        assert!(wrapped.ends_with("?.P.P]"), "{wrapped}");
+        // A chain of them is begun when its base is written, so it is written whole.
+        let chain = (0..200).fold(item(Type::I64), |t, _| item(t));
+        let (chain, cut) = text(chain);
+        assert!(!cut && chain.rsplit('.').next() == Some("P"), "{chain}");
+        // The base ends exactly at the limit, before its name, inside an array: the cut is at the
+        // step of the name, which is not elided.
+        let long = "x".repeat(NAME_LIMIT - 1);
+        let named = |ty| {
+            let mut out = String::new();
+            let cut = write_type(&mut out, ty, |head| match head {
+                Head::Class(_) => &long,
+                Head::Assoc(_, k) => ["B", "C"][k as usize],
+                Head::Enum(_) => unreachable!("the type holds no enum"),
+            });
+            (out, cut)
+        };
+        let base = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE));
+        let assoc =
+            |base, k| Type::intern(TypeKind::Assoc(base, InterfaceId(0), TypeArgs::NONE, k));
+        let (text, cut) = named(Type::array(assoc(base, 0)));
+        assert!(!cut && text == format!("[{long}.B]"), "{text}");
+        // The name `.C` of the outer associated type stands before the first closer, and stays.
+        let (text, cut) = named(Type::array(assoc(assoc(base, 0), 1)));
+        assert!(!cut && text == format!("[{long}.B.C]"), "{text}");
+    }
+
     /// A list of 100,000 arguments, cut after a few dozen of them.
     #[test]
     fn steps_held_should_stay_within_the_text_when_a_list_is_wide() {
@@ -811,15 +867,17 @@ mod tests {
             named(Type::array(Type::optional(item(ty, TypeArgs::NONE)))),
             ("[S.Item.Item?]".to_string(), false)
         );
-        // A chain of them is cut at the limit, as a wide list is.
+        // A chain of them is begun when its base is written, and a type that has begun gets its
+        // end: no link is elided, so the text is as long as the whole type (`S` and 201 `.Item`),
+        // and no more, and it is not cut.
         let mut deep = ty;
         for _ in 0..200 {
             deep = item(deep, TypeArgs::NONE);
         }
         let (text, cut) = named(deep);
-        assert!(cut && text.ends_with("..."), "{text}");
+        assert!(!cut && text.starts_with("S.Item.Item"), "{text}");
         assert!(
-            text.starts_with("S.Item.Item") && text.len() <= NAME_LIMIT + 8,
+            text.rsplit('.').next() == Some("Item") && text.len() == 1 + 201 * ".Item".len(),
             "{text}"
         );
     }

@@ -9,7 +9,7 @@ use rustc_hash::FxHashMap;
 use super::interface::Bound;
 use super::{Checker, Definition, DiagnosticKind, Holder, Symbol, built_in_type};
 use crate::ast;
-use crate::conformance::normalize_noting;
+use crate::conformance::{Cause, Stuck, normalize_noting};
 use crate::diagnostic::{CannotExtendForm, UnknownForm, WideKind};
 use crate::source::Span;
 use crate::tir::{FuncId, InterfaceId, Type, TypeArgs, TypeKind};
@@ -80,12 +80,19 @@ impl Checker<'_> {
 
     /// `normalize` of a type that holds an associated type.
     fn normalized(&self, ty: Type) -> Option<Type> {
-        let mut loops = Vec::new();
-        let normal = normalize_noting(&self.conformances, ty, &mut loops);
-        if !loops.is_empty() {
+        let mut stuck = Vec::new();
+        let normal = normalize_noting(&self.conformances, ty, &mut stuck);
+        if !stuck.is_empty() {
             let mut known = self.loops.borrow_mut();
-            for (assoc, interface, index, k) in loops {
-                known.entry((interface, index, k)).or_insert(assoc);
+            for Stuck {
+                assoc,
+                interface,
+                index,
+                k,
+                cause,
+            } in stuck
+            {
+                known.entry((interface, index, k)).or_insert((assoc, cause));
             }
         }
         normal
@@ -103,17 +110,22 @@ impl Checker<'_> {
         }
     }
 
-    /// Reports each choice that `normalize` found to need its own associated type, once, at the
-    /// type it writes (E0030). The associated types that depend on it stay unknown.
+    /// Reports each choice that `normalize` found to need its own associated type, or to need
+    /// more than `CHOICE_DEPTH_LIMIT` steps, once, at the type it writes (E0030). The associated
+    /// types that depend on it stay unknown.
     pub(super) fn report_loops(&mut self) {
         // The diagnostics are sorted by their place, so the order of the map is no matter.
         let loops = std::mem::take(&mut *self.loops.borrow_mut());
-        for (place, assoc) in loops {
+        for (place, (assoc, cause)) in loops {
             let at = self.choice_ats[&place];
+            let form = match cause {
+                Cause::Loops => UnknownForm::ChoiceLoops,
+                Cause::TooDeep => UnknownForm::ChoiceTooDeep,
+            };
             self.report(DiagnosticKind::UnknownType {
                 name: self.type_name(assoc),
                 at,
-                form: UnknownForm::ChoiceLoops,
+                form,
             });
         }
     }

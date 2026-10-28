@@ -94,7 +94,7 @@ The end-to-end cases are files. The `cases` test binary runs one test per
 
 | Directory | The program must | Expected output |
 | --- | --- | --- |
-| `run/` | exit 0 with empty stderr unless there is a `<name>.err`, in a plain and an `-O2` build, both also under Valgrind on Linux, and in a `--rc-checks` build | `<name>.out`: stdout; optional `<name>.err`: stderr |
+| `run/` | exit 0 with empty stderr unless there is a `<name>.err`, in a plain and an `-O2` build, both also under Valgrind on Linux, in a `--rc-checks` build, and on Linux in an `-O2` build on mimalloc | `<name>.out`: stdout; optional `<name>.err`: stderr |
 | `run-fail/` | panic with exit code 101, the same in a plain and an `-O2` build | `<name>.out`: stdout; `<name>.err`: stderr |
 | `diagnostics/` | report diagnostics under `sisu check`, exiting 1 if one is an error and 0 if all are warnings; a case named `<CODE>.sisu` or `<CODE>-<case>.sisu` reports that code | `<name>.err`: the diagnostics; `<name>.json`: the same under `--format json` |
 
@@ -115,12 +115,12 @@ file.
 
 A `run/` or `run-fail/` case that reads standard input has a `<name>.in` beside
 it, which every run of the case gets on its standard input: plain, `-O2`, both
-Valgrind runs and `--rc-checks`. Without the file, standard input is empty.
-Write the file with `printf` or a script, byte for byte: the formatting hooks
-leave the `.in`, `.out` and `.err` files of these directories alone, so a
-`\r\n`, a lone `\r` or a last line without a newline stays as written. Input
-that is large or generated, such as a line longer than the runtime's input
-buffer, goes in a `programs.rs` test instead.
+Valgrind runs, `--rc-checks` and, on Linux, `-O2` on mimalloc. Without the
+file, standard input is empty. Write the file with `printf` or a script, byte
+for byte: the formatting hooks leave the `.in`, `.out` and `.err` files of
+these directories alone, so a `\r\n`, a lone `\r` or a last line without a
+newline stays as written. Input that is large or generated, such as a line
+longer than the runtime's input buffer, goes in a `programs.rs` test instead.
 
 A `run/` or `run-fail/` case that takes arguments gives them in a marker line,
 `// args: <arg> <arg> ...`, at the start of a line. Every run of the case gets
@@ -131,15 +131,20 @@ argument that holds a space, or that is not valid UTF-8, goes in a
 `programs.rs` test instead, which can pass any bytes.
 
 A `run/` case that writes to standard error on purpose, with `eprint`, has a
-`<name>.err` beside it. The plain, `-O2` and `--rc-checks` runs must all write
-exactly that to stderr. Without the file, stderr must stay empty. The Valgrind
-runs' stderr holds Valgrind's own log, so they check only stdout and the exit
-code. To add the file to a case, `touch` it like any expected file.
+`<name>.err` beside it. The plain, `-O2`, `--rc-checks` and, on Linux, `-O2` on
+mimalloc runs must all write exactly that to stderr. Without the file, stderr
+must stay empty. The Valgrind runs' stderr holds Valgrind's own log, so they
+check only stdout and the exit code. To add the file to a case, `touch` it
+like any expected file.
 
 The runs go in order: plain and `-O2` without Valgrind, then, on Linux, both
-under Valgrind, then `--rc-checks`, and the first failure ends the case. On
-Linux the Valgrind runs build with `--allocator system`, because Valgrind sees
-no block that mimalloc hands out; the plain runs there are system builds too.
+under Valgrind, then `--rc-checks`, then, on Linux, `-O2` on mimalloc, and the
+first failure ends the case. On Linux the Valgrind runs build with
+`--allocator system`, because Valgrind sees no block that mimalloc hands out;
+the plain runs there are system builds too. So that `-O2` code also runs on
+mimalloc, the allocator that users get, Linux makes a further `-O2` build with
+no `--allocator` flag and checks that it links mimalloc. On macOS the `-O2`
+build is on mimalloc already.
 A double free usually aborts in the plain run on Linux, so Valgrind never
 reports it there; on macOS the plain runs use mimalloc, which does not check.
 To show what Valgrind says about a broken build, build the program with

@@ -1389,6 +1389,50 @@ fn valgrind_runs_should_refuse_a_mimalloc_build_and_a_stripped_build() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "mi_malloc_aligned\n");
 }
 
+/// GIVEN a build with no `--allocator` flag and a system build
+/// WHEN `require_mimalloc` checks each
+/// THEN it accepts the first and panics on the second with a message that names the cause
+///
+/// The `tests/run` harness uses it on its `-O2` build on mimalloc.
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "macOS symbol names have a leading `_`, so the check runs on Linux only"
+)]
+fn require_mimalloc_should_accept_a_default_build_and_refuse_a_system_build() {
+    const PROGRAM: &str = "fn main() {\n    print(1)\n}\n";
+    let default = compile_tmp("require_default", PROGRAM, true);
+    let system = compile_tmp_for_valgrind("require_system", PROGRAM, true);
+    support::require_mimalloc(&default);
+    let message = panic_message(|| support::require_mimalloc(&system));
+    assert!(message.contains("does not link mimalloc"), "{message}");
+}
+
+/// GIVEN a `run` case that passes
+/// WHEN the harness runs it
+/// THEN the case directory holds the `-O2` executable on mimalloc, and it links mimalloc
+///
+/// Without the build, the harness runs no `-O2` code on the allocator that users get. The harness
+/// also runs the executable and compares its output, but the program cannot see which build runs
+/// it, so only the executable's existence and allocator are checked, with no test-only seam in
+/// `run`.
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "macOS symbol names have a leading `_`, so the check runs on Linux only"
+)]
+fn run_should_build_the_o2_executable_on_mimalloc() {
+    let dir = fixture(
+        "run_builds_o2_mimalloc",
+        &[("a.sisu", PRINTS_1), ("a.out", "1\n")],
+    );
+    let source = dir.join("a.sisu");
+    support::run(&source, false);
+    let exe = support::case_path(&source).join(support::MIMALLOC_O2.0);
+    assert!(exe.exists(), "{} should exist", exe.display());
+    support::require_mimalloc(&exe);
+}
+
 /// Writes `source` to `<CARGO_TARGET_TMPDIR>/<name>.sisu`, builds it with `--rc-checks`, at
 /// `-O2` if `o2`, into `<name>-rc` or `<name>-rc-O2`, and runs it.
 fn run_rc_checked(name: &str, source: &str, o2: bool) -> Output {

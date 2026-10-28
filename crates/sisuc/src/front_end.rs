@@ -27,7 +27,8 @@ pub(crate) fn decode(bytes: Vec<u8>) -> Result<String, Box<(String, Diagnostic)>
 /// items come after the user's in every list.
 pub(crate) const PRELUDE_SOURCE: &str = include_str!("prelude.sisu");
 
-/// `checked`, its program instantiated by `mono`.
+/// `checked`, its program instantiated by `mono`, which reports a choice of an associated type
+/// that the checker did not follow and that an instance needs itself or needs too many steps.
 pub(crate) fn front_end(source: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
     front_end_with(PRELUDE_SOURCE, source)
 }
@@ -37,8 +38,17 @@ pub(crate) fn front_end_with(
     prelude: &str,
     source: &str,
 ) -> (Option<tir::Program>, Vec<Diagnostic>) {
-    let (program, diagnostics) = checked_with(prelude, source);
-    (program.map(mono::instantiate), diagnostics)
+    let (program, mut diagnostics) = checked_with(prelude, source);
+    match program.map(mono::instantiate).transpose() {
+        Ok(program) => (program, diagnostics),
+        Err(found) => {
+            // The checker judged liveness on a program that fails, as it does not for an error.
+            diagnostics.retain(|d| !check::is_judged(d));
+            diagnostics.extend(found);
+            diagnostics.sort_by_key(|d| d.span().start());
+            (None, diagnostics)
+        }
+    }
 }
 
 /// Lexes, parses and checks `source`. Returns every diagnostic, sorted by position, and the
@@ -342,6 +352,21 @@ fn main() {
             codes(src),
             [(Code::Expected, (5, 9)), (Code::NeverReassigned, (8, 13))]
         );
+    }
+
+    /// A program that `mono` stops after the check gets no warning that judges liveness, as a
+    /// program with an error gets none (W0012). `Outer` and `W` are never built in the program, so
+    /// the check warns of them until `mono` fails.
+    #[test]
+    fn front_end_should_drop_the_liveness_warnings_when_mono_stops_the_program() {
+        let src = check::tests::interfaces::long_loop(200, "fn main() {\n    get(Leaf())\n}");
+        let (program, diagnostics) = front_end(&src);
+        let found: Vec<_> = diagnostics.iter().map(Diagnostic::code).collect();
+        assert_eq!(found, [Code::UnknownType], "{diagnostics:?}");
+        assert!(program.is_none());
+        // The check alone passes the program, and warns.
+        let checked = checked(&src).1;
+        assert!(checked.iter().any(check::is_judged), "{checked:?}");
     }
 
     /// The unnamed `const enum` starts where its line does, inside the unnamed `1` before it;

@@ -11,15 +11,31 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::extend::holder_of;
 use super::{Checker, Declared, Holder};
-use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind};
+use crate::diagnostic::{Code, Definition, Diagnostic, DiagnosticKind, UsedBy};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeKind};
 
-/// A body that can use items: a function's or a method's, or a constant's value.
+/// Whether `d` is a warning that `Checker::unused` gives and `Checker::unjudged` does not: one
+/// that judges whether code is live. A program with an error gets none, because a use in code
+/// that fails may be missed. A program that `mono` stops after the check gets none either. There
+/// a pending variable of a live function gets no warning, where the checker's own error path gives
+/// it W0002.
+pub(crate) fn is_judged(d: &Diagnostic) -> bool {
+    matches!(
+        d.code(),
+        Code::UnusedItem | Code::UnusedMember | Code::UnusedVariable
+    )
+}
+
+/// A body that can use items: a function's or a method's, or a constant's value, or the bounds of
+/// an `extend` block.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Owner {
     Func(tir::FuncId),
+    /// The `extend` block at this place among `Checker.extensions`. It uses the interfaces in the
+    /// bounds of its type parameters, once, when it is live.
+    Block(usize),
     /// The constant at this place among the constants (`ConstInfo::order`).
     Const(usize),
 }
@@ -85,17 +101,6 @@ impl Pending {
     }
 }
 
-impl Owner {
-    /// The owner's index among the owners: its `FuncId`, or for a constant, the number of
-    /// functions plus its order.
-    fn index(self, functions: usize) -> usize {
-        match self {
-            Owner::Func(f) => f.0,
-            Owner::Const(c) => functions + c,
-        }
-    }
-}
-
 impl Used {
     /// The owner that this use names: a function, a method or a constant.
     fn owner(self) -> Option<Owner> {
@@ -118,9 +123,16 @@ fn use_interface(used: &mut [bool], queue: &mut Vec<usize>, i: usize) {
     }
 }
 
+/// Marks the owner `o` as live, and queues it to be followed once.
+fn make_live(live: &mut [bool], stack: &mut Vec<usize>, o: usize) {
+    if !std::mem::replace(&mut live[o], true) {
+        stack.push(o);
+    }
+}
+
 /// What the walk from the roots reaches.
 struct Reached {
-    /// Each owner that live code uses, by its index (`Owner::index`).
+    /// Each owner that live code uses, by its index (`Checker::owner_index`).
     live: Vec<bool>,
     /// Each class that live code builds.
     built: Vec<bool>,
@@ -170,14 +182,40 @@ impl Checker<'_> {
         }
     }
 
+    /// Records a use of each interface in the bounds of the `extend` block `block`, by the block:
+    /// one use for each bound, however many methods the block has.
+    pub(super) fn record_block_bounds(&mut self, block: usize) {
+        let bounds = self.extensions[block].bounds.iter().flatten();
+        let from = Owner::Block(block);
+        let uses = bounds.map(|b| Use {
+            from,
+            to: Used::Interface(b.interface),
+            at: b.at,
+        });
+        self.uses.extend(uses);
+    }
+
+    /// The owner's index among the owners: its `FuncId`; for a block, the number of functions plus
+    /// its place; for a constant, the number of functions and blocks plus its order.
+    fn owner_index(&self, owner: Owner) -> usize {
+        let functions = self.signatures.len();
+        match owner {
+            Owner::Func(f) => f.0,
+            Owner::Block(b) => functions + b,
+            Owner::Const(c) => functions + self.extensions.len() + c,
+        }
+    }
+
     /// The W0012, W0013 and W0014 warnings, in no order. W0012 is for each function, method,
     /// class, enum and constant that no live code uses. W0013 is for each field of a built class
     /// that live code does not read. It is also for each variant of a built enum that live code
     /// does not build. A `_` name gets no warning. A method of a class or an enum that nothing
-    /// builds is not reported: the class or enum is. Each cites up to three of its uses in dead
-    /// code. Each pending finding of a live function is W0014. A pending finding of a dead
-    /// function gives only the W0002 that it holds, if any. The function's warning tells you to
-    /// delete all of it.
+    /// builds is not reported: the class or enum is. An `extend` block is live when one of its
+    /// methods is live, or when it conforms a type that live code builds. A dead block of a type
+    /// that live code builds is reported, and its methods are not. Each cites up to three of its
+    /// uses in dead code. Each pending finding of a live function is W0014. A pending finding of a
+    /// dead function gives only the W0002 that it holds, if any. The function's warning tells you
+    /// to delete all of it.
     #[expect(
         clippy::too_many_lines,
         reason = "one report loop for each kind of item, so the warnings read in one place"
@@ -192,14 +230,38 @@ impl Checker<'_> {
             Some(_) => Definition::Method,
             None => Definition::Function,
         };
-        let slots = self.slots(functions + constants.len());
+        let slots = self.slots(functions + self.extensions.len() + constants.len());
         let mut cited = self.cited(&reached, &slots);
+        let built = |holder: Holder| match holder {
+            Holder::Class(c) => reached.built[c.0],
+            Holder::Enum(e) => reached.enum_built[e.0],
+        };
         let named = |o: Owner| match o {
-            Owner::Func(f) => (function_kind(f.0), self.signatures[f.0].span),
-            Owner::Const(c) => (
-                Definition::Constant,
-                constants[c].expect("a constant with a use should be the first of its name"),
+            Owner::Func(f) => (
+                UsedBy::Item(function_kind(f.0)),
+                self.text(self.signatures[f.0].span),
             ),
+            Owner::Block(b) => {
+                let block = &self.extensions[b];
+                let built = built(block.holder);
+                (UsedBy::Block { built }, self.text(block.written))
+            }
+            Owner::Const(c) => (
+                UsedBy::Item(Definition::Constant),
+                self.text(
+                    constants[c].expect("a constant with a use should be the first of its name"),
+                ),
+            ),
+        };
+        let describe = |sites: &[usize]| -> Vec<(Span, UsedBy, String)> {
+            sites
+                .iter()
+                .map(|&i| {
+                    let u = &self.uses[i];
+                    let (by, name) = named(u.from);
+                    (u.at, by, name.to_string())
+                })
+                .collect()
         };
         let mut found = Vec::new();
         let mut report = |kind: Definition, at: Span, item: usize| {
@@ -211,13 +273,8 @@ impl Checker<'_> {
             if name.starts_with('_') {
                 return;
             }
-            let sites = std::mem::take(&mut cited[item]);
-            let sites = sites.iter().map(|&i| {
-                let u = &self.uses[i];
-                let (kind, name) = named(u.from);
-                (u.at, kind, self.text(name).to_string())
-            });
-            let (name, uses) = (name.to_string(), sites.collect());
+            let uses = describe(&std::mem::take(&mut cited[item]));
+            let name = name.to_string();
             let d = match kind {
                 Definition::Field | Definition::Variant => DiagnosticKind::UnusedMember {
                     kind,
@@ -235,12 +292,11 @@ impl Checker<'_> {
             found.push(d.into());
         };
         for f in (0..functions).filter(|&f| !reached.live[f]) {
-            let held = match holders[f] {
-                Some(Holder::Class(c)) => reached.built[c.0],
-                Some(Holder::Enum(e)) => reached.enum_built[e.0],
-                None => true,
-            };
-            if held {
+            let held = holders[f].is_none_or(built);
+            // A dead block is reported itself, or its type is.
+            let dead_block = (self.signatures[f].extension)
+                .is_some_and(|b| !reached.live[self.owner_index(Owner::Block(b))]);
+            if held && !dead_block {
                 report(function_kind(f), self.signatures[f].span, f);
             }
         }
@@ -276,10 +332,20 @@ impl Checker<'_> {
             }
         }
         for (c, span) in constants.iter().enumerate() {
+            let owner = self.owner_index(Owner::Const(c));
             if let Some(span) = *span
-                && !reached.live[Owner::Const(c).index(functions)]
+                && !reached.live[owner]
             {
-                report(Definition::Constant, span, Owner::Const(c).index(functions));
+                report(Definition::Constant, span, owner);
+            }
+        }
+        for (b, block) in self.extensions.iter().enumerate() {
+            let owner = self.owner_index(Owner::Block(b));
+            if !reached.live[owner] && built(block.holder) && !block.header.in_prelude() {
+                let name = self.text(block.written).to_string();
+                let at = block.header;
+                let uses = describe(&std::mem::take(&mut cited[owner]));
+                found.push(DiagnosticKind::UnusedBlock { name, at, uses }.into());
             }
         }
         found.extend(pending.into_iter().filter_map(|p| {
@@ -321,15 +387,14 @@ impl Checker<'_> {
         }
     }
 
-    /// By slot (owners first, by `Owner::index`), the first three uses in dead code of each
+    /// By slot (owners first, by `Checker::owner_index`), the first three uses in dead code of each
     /// item or member, except an owner's own uses, in source order. A field's uses are its reads,
     /// then, while there are fewer than three, the first dead comparison that reads its class.
     /// An enum's uses are those of its variants.
     fn cited(&self, reached: &Reached, slots: &Slots) -> Vec<Vec<usize>> {
-        let functions = self.signatures.len();
         let mut cited = vec![Vec::new(); slots.len];
         for (i, u) in self.uses.iter().enumerate() {
-            if reached.live[u.from.index(functions)] || u.to.owner() == Some(u.from) {
+            if reached.live[self.owner_index(u.from)] || u.to.owner() == Some(u.from) {
                 continue;
             }
             match u.to {
@@ -346,7 +411,15 @@ impl Checker<'_> {
                 Used::Func(_) | Used::Const(_) | Used::Equal(_) => {}
             }
             if let Some(owner) = u.to.owner() {
-                self.cite(&mut cited[owner.index(functions)], i);
+                self.cite(&mut cited[self.owner_index(owner)], i);
+            }
+            // A call of a method of a block is a use of the block, unless a method of the block
+            // makes it.
+            if let Used::Func(f) = u.to
+                && let Some(block) = self.signatures[f.0].extension
+                && !self.in_block(u.from, block)
+            {
+                self.cite(&mut cited[self.owner_index(Owner::Block(block))], i);
             }
         }
         for (c, first) in self.dead_comparisons(reached).into_iter().enumerate() {
@@ -359,6 +432,11 @@ impl Checker<'_> {
             }
         }
         cited
+    }
+
+    /// Whether `owner` is a method of the `extend` block `block`.
+    fn in_block(&self, owner: Owner, block: usize) -> bool {
+        matches!(owner, Owner::Func(g) if self.signatures[g.0].extension == Some(block))
     }
 
     /// Puts the use `i` into `first`, a list of at most three uses in source order, and keeps
@@ -377,10 +455,9 @@ impl Checker<'_> {
     /// share what they walked, so together they cost time linear in their types and the declared
     /// types. A program with no dead comparison walks none.
     fn dead_comparisons(&self, reached: &Reached) -> Vec<Option<usize>> {
-        let functions = self.signatures.len();
         let mut dead: Vec<_> = (self.uses.iter().enumerate())
             .filter_map(|(i, u)| match u.to {
-                Used::Equal(ty) if !reached.live[u.from.index(functions)] => {
+                Used::Equal(ty) if !reached.live[self.owner_index(u.from)] => {
                     Some((u.at.start(), (i, ty)))
                 }
                 _ => None,
@@ -522,19 +599,22 @@ impl Checker<'_> {
     }
 
     /// What the uses reach from the roots: `main`, and each function, method and constant whose
-    /// name starts with `_`. Owners are indexed by `Owner::index`.
+    /// name starts with `_`. Owners are indexed by `Checker::owner_index`.
     fn reach(&self, constants: &[Option<Span>]) -> Reached {
         let functions = self.signatures.len();
-        let owners = functions + constants.len();
+        let blocks = self.extensions.len();
+        let owners = functions + blocks + constants.len();
         let mut edges = vec![Vec::new(); owners];
         for (i, u) in self.uses.iter().enumerate() {
-            edges[u.from.index(functions)].push(i);
+            edges[self.owner_index(u.from)].push(i);
         }
         let main = match self.function_ids.get(&Symbol::intern("main")) {
             Some(&Declared::Known(id)) => Some(id.0),
             _ => None,
         };
         let names = (0..functions).map(|f| Some(self.signatures[f].span));
+        // A block has no name, so nothing keeps it live.
+        let names = names.chain(std::iter::repeat_n(None, blocks));
         let names = names.chain(constants.iter().copied());
         let mut live = vec![false; owners];
         let mut stack: Vec<usize> = (names.enumerate())
@@ -544,10 +624,8 @@ impl Checker<'_> {
                         .is_some_and(|name| !name.in_prelude() && self.text(name).starts_with('_'))
             })
             .map(|(o, _)| o)
+            .inspect(|&o| live[o] = true)
             .collect();
-        for &o in &stack {
-            live[o] = true;
-        }
         let mut built = vec![false; self.classes.len()];
         let mut variants: Vec<Vec<bool>> = (self.enums.iter())
             .map(|e| vec![false; e.variants.len()])
@@ -560,12 +638,19 @@ impl Checker<'_> {
         // One for every comparison, so each type is walked once.
         let mut seen = Seen::default();
         let conforming = self.conformance_methods();
-        let block_bounds = self.block_bounds();
+        let conforming_blocks = self.conformance_blocks();
         let mut enum_started = vec![false; self.enums.len()];
         // The interfaces live code uses, and those not yet followed to the ones they name.
         let mut interfaces = vec![false; self.interfaces.len()];
         let mut to_follow = Vec::new();
         while let Some(o) = stack.pop() {
+            // A live method makes its `extend` block live: the block names the interfaces in its
+            // bounds.
+            if o < functions
+                && let Some(b) = self.signatures[o].extension
+            {
+                make_live(&mut live, &mut stack, self.owner_index(Owner::Block(b)));
+            }
             for &i in &edges[o] {
                 let to = self.uses[i].to;
                 let started = match to {
@@ -580,19 +665,19 @@ impl Checker<'_> {
                 };
                 if let Some((holder, true)) = started {
                     for &method in conforming.get(&holder).into_iter().flatten() {
-                        if !std::mem::replace(&mut live[method], true) {
-                            stack.push(method);
-                        }
+                        make_live(&mut live, &mut stack, method);
                     }
-                    // A class or an enum that is built names the interfaces of its bounds, and of
-                    // the bounds of the blocks that conform it.
+                    // The blocks that conform it are live, as their methods are.
+                    for &b in conforming_blocks.get(&holder).into_iter().flatten() {
+                        make_live(&mut live, &mut stack, self.owner_index(Owner::Block(b)));
+                    }
+                    // A class or an enum that is built names the interfaces of its bounds.
                     let bounds = match holder {
                         Holder::Class(c) => &self.classes[c.0].bounds,
                         Holder::Enum(e) => &self.enums[e.0].bounds,
                     };
                     let bounds = bounds.iter().flatten().map(|bound| bound.interface.0);
-                    let blocks = block_bounds.get(&holder).into_iter().flatten().copied();
-                    for interface in bounds.chain(blocks) {
+                    for interface in bounds {
                         use_interface(&mut interfaces, &mut to_follow, interface);
                     }
                 }
@@ -609,10 +694,7 @@ impl Checker<'_> {
                     Used::Class(_) | Used::Func(_) | Used::Const(_) => {}
                 }
                 if let Some(owner) = to.owner() {
-                    let reached = owner.index(functions);
-                    if !std::mem::replace(&mut live[reached], true) {
-                        stack.push(reached);
-                    }
+                    make_live(&mut live, &mut stack, self.owner_index(owner));
                 }
             }
         }
@@ -642,17 +724,15 @@ impl Checker<'_> {
         conforming
     }
 
-    /// The interfaces in the bounds of the `extend` blocks of each class and enum that conform it
-    /// or have no method. They are used when the type is built, like the methods of its
-    /// conformances are live: no method names them.
-    fn block_bounds(&self) -> FxHashMap<Holder, Vec<usize>> {
-        let mut bounds: FxHashMap<Holder, Vec<usize>> = FxHashMap::default();
-        let blocks = self.extensions.iter();
-        for block in blocks.filter(|b| b.interface.is_some() || b.methods.is_empty()) {
-            let interfaces = block.bounds.iter().flatten().map(|b| b.interface.0);
-            (bounds.entry(block.holder).or_default()).extend(interfaces);
+    /// The `extend` blocks of each class and enum that conform it, by their places. Such a block
+    /// is live when the type is built, like the methods of its conformances: no call names it.
+    fn conformance_blocks(&self) -> FxHashMap<Holder, Vec<usize>> {
+        let mut conforming: FxHashMap<Holder, Vec<usize>> = FxHashMap::default();
+        let blocks = self.extensions.iter().enumerate();
+        for (b, block) in blocks.filter(|(_, b)| b.interface.is_some()) {
+            conforming.entry(block.holder).or_default().push(b);
         }
-        bounds
+        conforming
     }
 
     /// Marks as used the interfaces that the used ones in `to_follow` name: those they inherit,

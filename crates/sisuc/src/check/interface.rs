@@ -9,7 +9,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::extend::holder_of;
 use super::{BindingKind, Body, Checker, Choice, Choices, Declared, Definition};
 use crate::ast;
-use crate::conformance::find;
+use crate::conformance::{CHOICE_DEPTH_LIMIT, find};
 use crate::diagnostic::{
     AddBound, Definition as Kind, DiagnosticKind, NotConformForm, NotInterface, UnknownForm,
     WideKind,
@@ -24,8 +24,14 @@ use crate::tir::{ClassId, EnumId, FuncId, InterfaceId, Type, TypeArgs, TypeKind}
 /// arguments, doubles the number at each level of inheritance, so the walk stops here (E0157).
 pub(super) const BOUND_CLOSURE_LIMIT: usize = 256;
 
-/// How deep a type that `probe_associated` follows may nest its arguments.
-const PROBE_NESTING: usize = 16;
+/// How deep a type that `probe_associated` follows may nest its arguments: as many levels as a
+/// walk of `normalize` follows choices, so the probe finds what `mono` would meet.
+const PROBE_NESTING: usize = CHOICE_DEPTH_LIMIT;
+
+/// How many associated types one bound's probe may normalize. Choices that each grow the type in
+/// their own way make `2^n` types in `n` steps, so the nesting limit does not bound the work
+/// alone. A chain of `PROBE_NESTING` levels with up to eight associated types in each fits.
+const PROBE_BUDGET: usize = 8 * PROBE_NESTING;
 
 pub(super) struct InterfaceInfo {
     pub(super) name: ast::Ident,
@@ -1205,9 +1211,20 @@ impl Checker<'_> {
     /// place where that type is found. A type is probed once for a bound.
     ///
     /// shortcut: a chosen type that nests deeper than `PROBE_NESTING` is not followed, as a choice
-    /// such as `type B = W<W<T>>` gives a larger type at each step and has no end; a loop that
-    /// closes past it reaches `mono`. Upgrade when a program needs a chain of types that deep.
+    /// such as `type B = W<W<T>>` gives a larger type at each step and has no end; and a probe
+    /// stops after `PROBE_BUDGET` associated types, as choices that each grow the type in their
+    /// own way make `2^n` types. The budget costs up to `PROBE_BUDGET` normalizations for each
+    /// bound, each with a walk of up to `CHOICE_DEPTH_LIMIT` steps, so a program with many bounds
+    /// over growing types takes time in proportion to them, with a large constant. What it does not
+    /// follow reaches `mono`, which reports a loop or a chain that is too long (E0030) for a type
+    /// that an instance meets. Upgrade when a program needs `check` to find those too.
     fn probe_associated(&mut self, ty: Type, interface: InterfaceId, args: TypeArgs) {
+        self.probe_budget = PROBE_BUDGET;
+        self.probe_further(ty, interface, args);
+    }
+
+    /// `probe_associated`, within the budget that it set.
+    fn probe_further(&mut self, ty: Type, interface: InterfaceId, args: TypeArgs) {
         if !matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Enum(..))
             || !self.probed_types.insert((ty, interface, args))
         {
@@ -1217,6 +1234,10 @@ impl Checker<'_> {
         let mut with = vec![ty];
         with.extend_from_slice(args.get());
         for declaration in &names.list {
+            let Some(left) = self.probe_budget.checked_sub(1) else {
+                return;
+            };
+            self.probe_budget = left;
             #[cfg(test)]
             super::PROBE_STEPS.set(super::PROBE_STEPS.get() + 1);
             let args = declaration.args.subst(&with);
@@ -1230,9 +1251,10 @@ impl Checker<'_> {
                 continue;
             }
             // A type with a parameter is no instance: `mono` never meets it.
-            let Some(chosen) = (self.normalize(assoc))
-                .filter(|chosen| !chosen.has_param() && nests_within(*chosen, PROBE_NESTING))
-            else {
+            let Some(chosen) = (self.normalize(assoc)).filter(|chosen| {
+                !chosen.has_param()
+                    && nests_within(*chosen, PROBE_NESTING, &mut FxHashMap::default())
+            }) else {
                 continue;
             };
             let mut under = vec![ty];
@@ -1241,7 +1263,7 @@ impl Checker<'_> {
             let declared = &self.interfaces[declaration.declarer.0].assoc[declaration.k as usize];
             for bound in declared.bounds.clone() {
                 let bound_args = self.subst_args(bound.args, &under);
-                self.probe_associated(chosen, bound.interface, bound_args);
+                self.probe_further(chosen, bound.interface, bound_args);
             }
         }
     }
@@ -1606,17 +1628,41 @@ pub(super) struct Names {
     wide: bool,
 }
 
-/// Whether `ty` nests its arguments, arrays and optionals no deeper than `limit` levels.
-fn nests_within(ty: Type, limit: usize) -> bool {
-    let inner = |list: &[Type]| {
-        list.is_empty() || (limit > 0 && list.iter().all(|&t| nests_within(t, limit - 1)))
-    };
-    match ty.kind() {
-        TypeKind::Array(t) | TypeKind::Optional(t) => inner(&[t]),
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => inner(args.get()),
+/// Whether `ty` nests its arguments, arrays and optionals no deeper than `limit` levels. A type
+/// shared by many paths is measured once (`depths`), so the cost is the number of distinct types
+/// and not of paths: `Pair<T, T>` at each level has `2^n` paths and `n` types.
+pub(super) fn nests_within(ty: Type, limit: usize, depths: &mut FxHashMap<Type, usize>) -> bool {
+    nesting(ty, limit, depths).is_some()
+}
+
+/// How deep `ty` nests, or `None` when that is more than `limit`. The recursion goes no deeper
+/// than `limit`.
+fn nesting(ty: Type, limit: usize, depths: &mut FxHashMap<Type, usize>) -> Option<usize> {
+    #[cfg(test)]
+    super::NESTING_STEPS.set(super::NESTING_STEPS.get() + 1);
+    let one;
+    let inner: &[Type] = match ty.kind() {
+        TypeKind::Array(t) | TypeKind::Optional(t) => {
+            one = [t];
+            &one
+        }
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args.get(),
         // A normalized type with no type parameter holds no associated type.
-        _ => true,
+        _ => &[],
+    };
+    if inner.is_empty() {
+        return Some(0);
     }
+    if let Some(&depth) = depths.get(&ty) {
+        return (depth <= limit).then_some(depth);
+    }
+    let below = limit.checked_sub(1)?;
+    let mut deepest = 0;
+    for &t in inner {
+        deepest = deepest.max(nesting(t, below, depths)?);
+    }
+    depths.insert(ty, deepest + 1);
+    Some(deepest + 1)
 }
 
 /// An associated type that an interface declares, or that one it inherits declares.

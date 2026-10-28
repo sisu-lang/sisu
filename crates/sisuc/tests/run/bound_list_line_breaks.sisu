@@ -1,0 +1,50 @@
+// GIVEN a class `Cat` that conforms to the interfaces `Named` and `Sized`, and a generic function
+// and a generic class with bounds whose `&` and `:` start a line, after a name, a `//` comment and
+// a blank line
+// WHEN the function and a method of the class call both interfaces on a `Cat`
+// THEN each call runs, and the lines print `cat 3` and `cat 3`
+interface Named {
+    fn name(self) -> string
+}
+
+interface Sized {
+    fn size(self) -> i64
+}
+
+class Cat {}
+
+extend Cat: Named {
+    fn name(self) -> string {
+        "cat"
+    }
+}
+
+extend Cat: Sized {
+    fn size(self) -> i64 {
+        3
+    }
+}
+
+fn show<T: Named // the name
+    & Sized>(x: T) {
+    print("{x.name()} {x.size()}")
+}
+
+class Holder<T
+    : Named
+
+    & Sized> {
+    inner: T
+}
+
+extend<T: Named
+    & Sized> Holder<T> {
+    fn show_inner(self) {
+        print("{self.inner.name()} {self.inner.size()}")
+    }
+}
+
+fn main() {
+    show(Cat())
+    Holder(inner: Cat()).show_inner()
+}

@@ -85,10 +85,11 @@ the code of a copy written by hand.
   declare, and then the same for each type that a choice gives, as the bound of
   its associated type says. A choice of a generic block gives a type that no
   block names, so a body that writes `S.B.B` can meet a loop only there. The
-  chain of chosen types stops at a type that nests its arguments deeper than 16
-  levels, because a choice such as `type B = W<W<T>>` gives a larger type at each
-  step and has no end. A loop that closes past that depth reaches `mono`. A call
-  that compiles finds the conformance of each base.
+  probe follows the chosen types to 128 levels of nesting and to 1024
+  associated types for each bound, because a choice such as `type B = W<W<T>>`
+  gives a larger type at each step and has no end. A chain that the probe does
+  not follow is stopped by `mono` at a loop or after 128 steps, with E0030. Such a program passes
+  `sisu check` and fails `sisu build`.
 - **An instantiation cycle through an interface is a cycle of weights.** The
   rule for `fn f<T>(x: T) { f([x]) }` becomes a graph where each edge has a
   weight, the depth at which an argument nests a type parameter. A call

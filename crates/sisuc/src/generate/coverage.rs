@@ -2584,13 +2584,56 @@ fn walk() -> Walk {
     walk
 }
 
-#[test]
-fn every_generated_program_checks_clean() {
-    for data in seeds() {
+/// Checks the programs of the seeds `from..from + 8` and instantiates them. One test for each
+/// range, so that nextest runs the ranges in parallel and each fits its time budget; the eight
+/// tests together take the `SEEDS` seeds that `seeds` gives.
+fn check_and_instantiate(from: u64) {
+    const _: () = assert!(SEEDS == 64, "add or drop a test of eight seeds");
+    for data in (from..from + 8).map(seed) {
         let (_, program) = checked(&generate(&data).program);
         // In a debug build, `mono` asserts that no type parameter is left in what it gives.
-        crate::mono::instantiate(program);
+        crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     }
+}
+
+#[test]
+fn the_programs_of_seeds_0_to_7_should_check_clean_and_instantiate() {
+    check_and_instantiate(0);
+}
+
+#[test]
+fn the_programs_of_seeds_8_to_15_should_check_clean_and_instantiate() {
+    check_and_instantiate(8);
+}
+
+#[test]
+fn the_programs_of_seeds_16_to_23_should_check_clean_and_instantiate() {
+    check_and_instantiate(16);
+}
+
+#[test]
+fn the_programs_of_seeds_24_to_31_should_check_clean_and_instantiate() {
+    check_and_instantiate(24);
+}
+
+#[test]
+fn the_programs_of_seeds_32_to_39_should_check_clean_and_instantiate() {
+    check_and_instantiate(32);
+}
+
+#[test]
+fn the_programs_of_seeds_40_to_47_should_check_clean_and_instantiate() {
+    check_and_instantiate(40);
+}
+
+#[test]
+fn the_programs_of_seeds_48_to_55_should_check_clean_and_instantiate() {
+    check_and_instantiate(48);
+}
+
+#[test]
+fn the_programs_of_seeds_56_to_63_should_check_clean_and_instantiate() {
+    check_and_instantiate(56);
 }
 
 #[test]
@@ -5798,10 +5841,10 @@ fn generated_interfaces_should_be_used() {
     assert!(interfaces > 0, "no seed writes an interface");
 }
 
-/// `source` without everything W0012 names, deleted all at once: each function, method, constant
-/// and interface, and each conformance block of a deleted interface. A class or an enum stays: a
-/// type that names it is not a use, so deleting it can break correct code. Gives the new text and
-/// how many items it cut.
+/// `source` without everything W0012 names, deleted all at once: each function, method, constant,
+/// interface and `extend` block, and each conformance block of a deleted interface. A class or an
+/// enum stays: a type that names it is not a use, so deleting it can break correct code. Gives the
+/// new text and how many items it cut.
 fn without_unused(source: &str) -> (String, usize) {
     let parsed = parser::parse(
         lexer::lex(source).expect("a generated program should lex"),
@@ -5826,7 +5869,13 @@ fn without_unused(source: &str) -> (String, usize) {
                 ast::Member::Field(_) => None,
             })),
             ast::Item::Enum(e) => methods.extend(&e.methods),
-            ast::Item::Extend(x) => methods.extend(&x.methods),
+            ast::Item::Extend(x) => {
+                // W0012 reports a dead block at its keyword, and its methods not at all.
+                if unused.contains(&x.keyword.start()) {
+                    cuts.push(x.span.range());
+                }
+                methods.extend(&x.methods);
+            }
             ast::Item::Const(c) if unused.contains(&c.name.span.start()) => {
                 let keyword = source[..c.name.span.start()].rfind("const");
                 cuts.push(keyword.expect("a constant should follow `const`")..c.value.span.end());
@@ -5871,8 +5920,7 @@ fn without_unused(source: &str) -> (String, usize) {
 }
 
 /// Deleting what W0012 names, all at once, from the programs of `seeds` leaves programs with no
-/// error. This holds for what the generator writes. It does not hold for every program: a plain
-/// `extend` block with a bound, whose methods are all dead, still names the deleted interface.
+/// error. This holds for what the generator writes.
 fn deleting_unused_should_leave_programs_that_check(seeds: impl Iterator<Item = Vec<u8>>) {
     let mut cut = 0;
     for data in seeds {
