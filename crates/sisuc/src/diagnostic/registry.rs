@@ -879,12 +879,12 @@ pub(crate) enum DiagnosticKind {
     /// The format spec at `at`, its `:` included, whose width, when `width`, or else precision is
     /// above its limit.
     FormatSpecLimit { at: Span, width: bool },
-    /// The precision of the spec at `at` on a part of type `ty`, which is not `f64`; `fix` is the
-    /// part, when it is an `i64` that `f64(...)` converts.
+    /// The precision of the spec at `at` on a part of type `ty`, which is not `f64`; `help` says
+    /// what can take the precision, when something can.
     PrecisionNeedsF64 {
         ty: String,
         at: Span,
-        fix: Option<Span>,
+        help: Option<PrecisionHelp>,
     },
     /// The variant at `at`, which follows the method whose `fn` is at `first_method`.
     VariantAfterMethod { at: Span, first_method: Span },
@@ -1583,6 +1583,15 @@ pub(crate) enum MismatchSource {
     Binding { name: String, at: Span },
     /// The `break` at the span, the first of its `loop` whose value set the loop's type.
     Break(Span),
+}
+
+/// What helps a precision on a part that is not an `f64`.
+#[derive(Clone, Copy)]
+pub(crate) enum PrecisionHelp {
+    /// An `i64` part, which `f64(...)` converts: the part.
+    Convert(Span),
+    /// An `f64?` part, which `??` can give a default.
+    Default,
 }
 
 /// A rewrite that would give a mismatched value the type expected.
@@ -3712,11 +3721,14 @@ impl From<DiagnosticKind> for Diagnostic {
                     "a precision is at most 30"
                 },
             ),
-            DiagnosticKind::PrecisionNeedsF64 { ty, at, fix } => {
+            DiagnosticKind::PrecisionNeedsF64 { ty, at, help } => {
                 let d = Diagnostic::coded(code, at, "precision needs an `f64`")
                     .with_label(format!("the value is `{ty}`"));
-                match fix {
-                    Some(operand) => d.with_fix(Fix {
+                match help {
+                    Some(PrecisionHelp::Default) => d.with_help(
+                        "give a default with `??` first, for example `{x ?? 0.0:.2}`",
+                    ),
+                    Some(PrecisionHelp::Convert(operand)) => d.with_fix(Fix {
                         message: "convert it with `f64(...)`".to_string(),
                         safe: true,
                         edits: vec![

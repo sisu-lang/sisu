@@ -1,0 +1,6 @@
+fn main() {
+    let f: f64? = 1.5
+    let n: i64? = 7
+    print("{f:.2}")
+    print("{n:.2}")
+}

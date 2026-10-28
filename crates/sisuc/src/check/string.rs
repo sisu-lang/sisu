@@ -11,7 +11,8 @@ use super::expr::{local, no_member, path, typed};
 use super::{Checked, Checker, Poisoned, block_expr, type_of};
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{
-    Code, Definition, Diagnostic, DiagnosticKind, MismatchFix, MismatchSource, Operand, invisible,
+    Code, Definition, Diagnostic, DiagnosticKind, MismatchFix, MismatchSource, Operand,
+    PrecisionHelp, invisible,
 };
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
@@ -59,9 +60,15 @@ impl Checker<'_> {
                     continue;
                 }
                 _ => {
-                    self.warn_if_optional(part, &value);
+                    // A precision error is the one report of the part: it gets no warning.
+                    let mut reported = false;
                     if let (Some(spec), Some(found)) = (spec, type_of(&value)) {
-                        formats.push(self.format(i, part, spec, found));
+                        let (format, error) = self.format(i, part, spec, found);
+                        formats.push(format);
+                        reported = error;
+                    }
+                    if !reported {
+                        self.warn_if_optional(part, &value);
                     }
                     checked.push(value);
                     continue;
@@ -87,14 +94,15 @@ impl Checker<'_> {
 
     /// The format of the part `i`, `part`, of type `ty`, that `spec` gives. Without an alignment,
     /// a number pads on the left and any other value on the right; a type parameter's text pads
-    /// as its type argument's does, which `mono` decides. Only an `f64` takes a precision.
+    /// as its type argument's does, which `mono` decides. Only an `f64` takes a precision; the
+    /// result says whether a precision on another type got its error.
     fn format(
         &mut self,
         i: usize,
         part: &ast::Expr,
         spec: &ast::FormatSpec,
         ty: Type,
-    ) -> tir::Format {
+    ) -> (tir::Format, bool) {
         let numeric = matches!(ty, Type::I64 | Type::U8 | Type::F64);
         let by_type =
             spec.align.is_none() && matches!(ty.kind(), TypeKind::Param(..) | TypeKind::Assoc(..));
@@ -108,19 +116,26 @@ impl Checker<'_> {
             by_type,
         });
         let mut precision = spec.precision;
-        if precision.is_some() && ty != Type::F64 {
+        let error = precision.is_some() && ty != Type::F64;
+        if error {
+            let help = match ty.kind() {
+                _ if ty == Type::I64 => Some(PrecisionHelp::Convert(part.span)),
+                TypeKind::Optional(inner) if inner == Type::F64 => Some(PrecisionHelp::Default),
+                _ => None,
+            };
             self.report(DiagnosticKind::PrecisionNeedsF64 {
                 ty: self.type_name(ty),
                 at: spec.span,
-                fix: (ty == Type::I64).then_some(part.span),
+                help,
             });
             precision = None;
         }
-        tir::Format {
+        let format = tir::Format {
             part: i,
             pad,
             precision,
-        }
+        };
+        (format, error)
     }
 
     /// The operand `e` of the `+` over `operands`, of type `got`, which is not the `string` the

@@ -1,0 +1,16 @@
+error[E0111]: precision needs an `f64`
+ --> E0111-optional.sisu:4:14
+  |
+4 |     print("{f:.2}")
+  |              ^^^ the value is `f64?`
+  |
+  = help: give a default with `??` first, for example `{x ?? 0.0:.2}`
+
+error[E0111]: precision needs an `f64`
+ --> E0111-optional.sisu:5:14
+  |
+5 |     print("{n:.2}")
+  |              ^^^ the value is `i64?`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0111

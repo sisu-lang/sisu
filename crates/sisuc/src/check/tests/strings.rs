@@ -171,6 +171,31 @@ fn format_spec_should_default_its_alignment_by_type_and_take_a_precision_for_an_
     );
 }
 
+/// A precision on an optional gives E0111 alone, so a part that is reported once gets no second
+/// report. A width, `print`, and a precision after `??` do not give E0111.
+#[test]
+fn a_precision_on_an_optional_should_give_one_error_and_no_warning() {
+    const E0111: (Code, (usize, usize)) = (Code::PrecisionNeedsF64, (2, 14));
+    let params = "f: f64?, g: f64??, n: i64?, s: string?, p: P?";
+    for (row, statement, expected) in [
+        ("precision", "print(\"{f:.2}\")", vec![E0111]),
+        ("width and precision", "print(\"{f:8.2}\")", vec![E0111]),
+        ("optional of an optional", "print(\"{g:.2}\")", vec![E0111]),
+        ("optional `i64`", "print(\"{n:.2}\")", vec![E0111]),
+        ("optional `string`", "print(\"{s:.2}\")", vec![E0111]),
+        ("optional class", "print(\"{p:.2}\")", vec![E0111]),
+        (
+            "width only",
+            "print(\"{f:8}\")",
+            vec![(Code::PrintsOptional, (2, 13))],
+        ),
+        ("print", "print(f)", vec![(Code::PrintsOptional, (2, 11))]),
+        ("default first", "print(\"{f ?? 0.0:.2}\")", vec![]),
+    ] {
+        codes_row(row, &with_items(&body(params, statement)), &expected);
+    }
+}
+
 /// `src` with a class `P` and a function `g` after it, on lines that come after `body`'s.
 fn with_items(src: &str) -> String {
     format!("{src}\nclass P {{\n    mut name: string\n}}\nfn g(x: i64) -> i64 {{\n    x\n}}")
