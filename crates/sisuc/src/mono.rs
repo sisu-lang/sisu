@@ -1704,9 +1704,10 @@ mod tests {
         (program(), broken)
     }
 
-    const LOOPING: &str = "interface Sized {\n    fn size(self) -> i64\n}\n\
+    const LOOPING: &str = "interface Sized: Eq {\n    fn size(self) -> i64\n}\n\
         interface Source {\n    type A: Sized\n    type B: Sized\n    fn first(self) -> A\n    fn second(self) -> B\n}\n\
         class Thing: Sized {\n    fn size(self) -> i64 { 1 }\n}\n\
+        extend Thing: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\n\
         class Leaf: Source {\n    type A = Thing\n    type B = Thing\n    fn first(self) -> A { Thing() }\n    fn second(self) -> B { Thing() }\n}\n\
         class Holder<T> {\n    value: T\n}\n\
         enum Maybe<T> {\n    Just(T)\n    Nothing\n}\n";
@@ -1737,7 +1738,7 @@ mod tests {
     /// receiver does, stop the walk of the body: no panic on a stand-in type, and one report. Each
     /// row is a statement that drops its value (a warning), before a `print` so that the value of
     /// the block is no part of it. A construction and a variant read their class or enum from the
-    /// type, which a stand-in is not.
+    /// type, which a stand-in is not, and a search reads the element from the array type.
     #[test]
     fn mono_should_stop_a_body_whose_expression_names_a_choice_that_needs_itself() {
         for (row, body) in [
@@ -1745,6 +1746,7 @@ mod tests {
             ("a call", "s.first().size()"),
             ("a construction", "Holder(value: s.first())"),
             ("a variant", "Maybe.Just(s.first())"),
+            ("a search", "[s.first()].contains(s.first())"),
         ] {
             let src = format!(
                 "{LOOPING}fn run<S: Source>(s: S) {{\n    {body}\n    print(1)\n}}\nfn main() {{\n    run(Leaf())\n}}"
