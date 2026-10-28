@@ -121,26 +121,27 @@ pub(super) fn components(enums: &[Enum]) -> Vec<Option<Component>> {
     #[cfg(test)]
     super::MEMBER_SCANS.set(super::MEMBER_SCANS.get() + enums.len());
     let mut by_cycle: FxHashMap<usize, Vec<EnumId>> = FxHashMap::default();
-    let indices: Vec<Option<usize>> = enums
+    let slots: Vec<Option<(usize, usize)>> = enums
         .iter()
         .enumerate()
         .map(|(i, e)| {
-            let members = by_cycle.entry(e.cycle?).or_default();
-            members.push(EnumId(i));
-            Some(members.len() - 1)
+            e.cycle.map(|cycle| {
+                let members = by_cycle.entry(cycle).or_default();
+                members.push(EnumId(i));
+                (cycle, members.len() - 1)
+            })
         })
         .collect();
     let shared: FxHashMap<usize, Rc<[EnumId]>> = by_cycle
         .into_iter()
         .map(|(cycle, members)| (cycle, members.into()))
         .collect();
-    enums
-        .iter()
-        .zip(indices)
-        .map(|(e, index)| {
-            Some(Component {
-                members: Rc::clone(shared.get(&e.cycle?)?),
-                index: index?,
+    slots
+        .into_iter()
+        .map(|slot| {
+            slot.map(|(cycle, index)| Component {
+                members: Rc::clone(&shared[&cycle]),
+                index,
             })
         })
         .collect()
