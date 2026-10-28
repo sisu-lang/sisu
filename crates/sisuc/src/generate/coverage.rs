@@ -5798,10 +5798,10 @@ fn generated_interfaces_should_be_used() {
     assert!(interfaces > 0, "no seed writes an interface");
 }
 
-/// `source` without everything W0012 names, deleted all at once: each function, method, constant
-/// and interface, and each conformance block of a deleted interface. A class or an enum stays: a
-/// type that names it is not a use, so deleting it can break correct code. Gives the new text and
-/// how many items it cut.
+/// `source` without everything W0012 names, deleted all at once: each function, method, constant,
+/// interface and `extend` block, and each conformance block of a deleted interface. A class or an
+/// enum stays: a type that names it is not a use, so deleting it can break correct code. Gives the
+/// new text and how many items it cut.
 fn without_unused(source: &str) -> (String, usize) {
     let parsed = parser::parse(
         lexer::lex(source).expect("a generated program should lex"),
@@ -5826,7 +5826,13 @@ fn without_unused(source: &str) -> (String, usize) {
                 ast::Member::Field(_) => None,
             })),
             ast::Item::Enum(e) => methods.extend(&e.methods),
-            ast::Item::Extend(x) => methods.extend(&x.methods),
+            ast::Item::Extend(x) => {
+                // W0012 reports a dead block at its keyword, and its methods not at all.
+                if unused.contains(&x.keyword.start()) {
+                    cuts.push(x.span.range());
+                }
+                methods.extend(&x.methods);
+            }
             ast::Item::Const(c) if unused.contains(&c.name.span.start()) => {
                 let keyword = source[..c.name.span.start()].rfind("const");
                 cuts.push(keyword.expect("a constant should follow `const`")..c.value.span.end());
@@ -5871,8 +5877,7 @@ fn without_unused(source: &str) -> (String, usize) {
 }
 
 /// Deleting what W0012 names, all at once, from the programs of `seeds` leaves programs with no
-/// error. This holds for what the generator writes. It does not hold for every program: a plain
-/// `extend` block with a bound, whose methods are all dead, still names the deleted interface.
+/// error. This holds for what the generator writes.
 fn deleting_unused_should_leave_programs_that_check(seeds: impl Iterator<Item = Vec<u8>>) {
     let mut cut = 0;
     for data in seeds {

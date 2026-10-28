@@ -218,7 +218,7 @@ codes! {
     WhileTrue = "W0009",
     UnconditionalRecursion = "W0010",
     UnchangedLoopCondition = "W0011",
-    UnusedItem = "W0012",
+    UnusedItem | UnusedBlock = "W0012",
     UnusedMember = "W0013",
     UnusedVariable = "W0014",
 }
@@ -1072,15 +1072,18 @@ pub(crate) enum DiagnosticKind {
         kind: Definition,
         name: String,
         at: Span,
-        uses: Vec<(Span, Definition, String)>,
+        uses: Vec<(Span, UsedBy, String)>,
     },
+    /// The `extend` block of the type written `name`, whose header is at `at`, which no live code
+    /// uses, while live code builds its type.
+    UnusedBlock { name: String, at: Span },
     /// The field or variant `name` (its `kind`), whose name in its declaration is at `at`, which
     /// no live code reads or builds; `uses` are as `UnusedItem`'s.
     UnusedMember {
         kind: Definition,
         name: String,
         at: Span,
-        uses: Vec<(Span, Definition, String)>,
+        uses: Vec<(Span, UsedBy, String)>,
     },
     /// The local `name`, or the parameter when `param`, declared at `at`, which nothing reads;
     /// `fix` holds, for a `for` or pattern name, each place that binds it, which `_` can replace.
@@ -1420,6 +1423,31 @@ impl Definition {
             | Definition::Type
             | Definition::LoopLabel
             | Definition::Interface => "used",
+        }
+    }
+}
+
+/// The dead code that holds a use which a warning cites.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UsedBy {
+    /// A function, a method or a constant.
+    Item(Definition),
+    /// An `extend` block of a type; `built` is whether live code builds the type.
+    Block { built: bool },
+}
+
+impl UsedBy {
+    /// What the label of a use says of its holder, which is written `name`: `in `f`, which is
+    /// never called`.
+    fn described(self, name: &str) -> String {
+        match self {
+            UsedBy::Item(kind) => format!("in `{name}`, which is never {}", kind.unused_verb()),
+            UsedBy::Block { built: true } => {
+                format!("in the `extend` block of `{name}`, which is never used")
+            }
+            UsedBy::Block { built: false } => {
+                format!("in the `extend` block of `{name}`, whose type is never built")
+            }
         }
     }
 }
@@ -4104,12 +4132,16 @@ impl From<DiagnosticKind> for Diagnostic {
                 .with_label(format!("never {verb}"))
                 .with_help(help);
                 uses.into_iter().fold(d, |d, (at, user, name)| {
-                    d.with_secondary(
-                        at,
-                        format!("used here, in `{name}`, which is never {}", user.unused_verb()),
-                    )
+                    d.with_secondary(at, format!("used here, {}", user.described(&name)))
                 })
             }
+            DiagnosticKind::UnusedBlock { name, at } => Diagnostic::coded(
+                code,
+                at,
+                format!("the `extend` block of `{name}` is never used"),
+            )
+            .with_label("never used")
+            .with_help("delete it"),
             DiagnosticKind::UnusedVariable {
                 param,
                 name,

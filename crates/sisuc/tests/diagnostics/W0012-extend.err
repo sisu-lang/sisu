@@ -1,0 +1,32 @@
+warning[W0012]: interface `Shape` is never used
+  --> W0012-extend.sisu:1:11
+   |
+ 1 | interface Shape {
+   |           ^^^^^ never used
+...
+ 9 | extend<T: Shape> Crate<T> {
+   |           ----- used here, in the `extend` block of `Crate<T>`, which is never used
+...
+23 | extend<T: Shape> Spare<T> {
+   |           ----- used here, in the `extend` block of `Spare<T>`, whose type is never built
+   |
+   = help: delete it, or name it `_Shape` if it is kept on purpose
+
+warning[W0012]: the `extend` block of `Crate<T>` is never used
+ --> W0012-extend.sisu:9:1
+  |
+9 | extend<T: Shape> Crate<T> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^ never used
+  |
+  = help: delete it
+
+warning[W0012]: class `Spare` is never built
+  --> W0012-extend.sisu:19:7
+   |
+19 | class Spare<T> {
+   |       ^^^^^ never built
+   |
+   = help: delete it, or name it `_Spare` if it is kept on purpose
+
+sisu: 3 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0012

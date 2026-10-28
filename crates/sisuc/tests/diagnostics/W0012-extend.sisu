@@ -1,0 +1,32 @@
+interface Shape {
+    fn area(self) -> f64
+}
+
+class Crate<T> {
+    item: T
+}
+
+extend<T: Shape> Crate<T> {
+    fn one(self) -> f64 {
+        self.item.area()
+    }
+
+    fn two(self) -> f64 {
+        self.item.area() * 2.0
+    }
+}
+
+class Spare<T> {
+    item: T
+}
+
+extend<T: Shape> Spare<T> {
+    fn one(self) -> f64 {
+        self.item.area()
+    }
+}
+
+fn main() {
+    let c = Crate(item: 1)
+    print("{c.item}")
+}

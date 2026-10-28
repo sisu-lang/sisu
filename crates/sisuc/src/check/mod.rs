@@ -1594,7 +1594,6 @@ impl Checker<'_> {
         let conformance = sig.conformance;
         // The parameters of a method's owner: its class's, or its `extend` block's.
         let owner_params = sig.type_params.len() - sig.own;
-        let extension = sig.extension.is_some();
         let mut fresh = Body {
             owner: Some(Owner::Func(id)),
             ret,
@@ -1613,10 +1612,9 @@ impl Checker<'_> {
         bounds.extend(sig.bounds.iter().cloned());
         fresh.set_bounds(0, bounds);
         let ((params, body), state) = self.with_body(fresh, |c| {
-            // The signature's bounds name interfaces for this function, and a method of an
-            // `extend` block also names those of the block's parameters.
-            let first = if extension { 0 } else { owner_params };
-            for place in first..c.body.bounds.len() {
+            // The signature's bounds name interfaces for this function. The bounds of a block's
+            // parameters are named once, by the block (`record_block_bounds`).
+            for place in owner_params..c.body.bounds.len() {
                 for bound in c.body.bounds[place].clone() {
                     c.record(Used::Interface(bound.interface), bound.at);
                 }

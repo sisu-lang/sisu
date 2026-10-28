@@ -136,7 +136,7 @@ always matches. `check/recursion.rs` walks the `tir` of each function and gives
 W0010 when the function calls itself on every path. After a check with no
 error, `check/unused_names.rs` walks the uses that the checker records, out
 from `main` and each function, method and constant whose name starts with `_`.
-It gives W0012 for an item that no live code uses, W0013 for a field that live
+It gives W0012 for an item or an `extend` block that no live code uses, W0013 for a field that live
 code does not read or a variant that it does not build, and W0014 for a local
 or parameter of live code that nothing reads. `check/operator.rs` checks operators (arithmetic, comparison,
 equality, `is` and `??`), `check/branch.rs` `if` and `if let` and the join of
