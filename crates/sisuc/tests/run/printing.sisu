@@ -278,4 +278,16 @@ fn main() {
     both(Maybe2.Next(middle2))
     let inner2: Maybe2? = Maybe2.End
     both(Maybe2.Next(inner2))
+
+    // A type parameter that stands for an optional prints it alone: transparent, by the Some rule.
+    let hi: string? = "hi"
+    let no_string: string? = None
+    let q: char? = 'q'
+    both(hi)                        // hi
+    both(no_string)                 // None
+    both(q)                         // q
+    both(n0)                        // None
+    both(n1)                        // Some(None)
+    both(n2)                        // 5
+    both(m2)                        // Some(Some(None))
 }
