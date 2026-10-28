@@ -22,7 +22,9 @@ same reason.
 - **A top-level function, class or constant may not take a prelude name.**
   It is the existing "defined twice" error with its "is a built-in function"
   message, as for `print` today. Milestone 4 already takes `print` from
-  constants.
+  constants. The names of the four language interfaces (`Display`, `Eq`,
+  `Ord` and `AnyObject`) get the "is a built-in interface" form of E0026
+  instead, for an interface and a type parameter too.
 - **A local, a parameter, a method or a field may take a prelude name.** A
   method is always called on a receiver, and a local is never called as a
   function, so neither hides the prelude name.

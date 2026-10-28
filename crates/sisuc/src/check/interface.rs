@@ -821,7 +821,10 @@ impl Checker<'_> {
             ast::TypeKind::Applied(applied) => applied.name,
             _ => return false,
         };
+        // A class or an enum that took a language interface's name is the type.
         self.body.type_param(name).is_none()
+            && !self.class_ids.contains_key(&name)
+            && !self.enum_ids.contains_key(&name)
             && matches!(self.interface_ids.get(&name), Some(Declared::Known(_)))
     }
 
@@ -1701,7 +1704,9 @@ impl Checker<'_> {
     ///
     /// shortcut: a payload whose own checks are running (a check that needs an enum that has the
     /// payload) is read as it is written, so such a loop of checks can answer by the order of its
-    /// declarations; upgrade when a program needs the answer of a loop of failing checks.
+    /// declarations; upgrade when a program needs the answer of a loop of failing checks. Known
+    /// case: `class Hold {}`, `enum Wrap<T: Eq> { W(T) }`, `enum E1 { A(Wrap<E2>) }` and
+    /// `enum E2 { B(Wrap<E1>) C(Hold) }` give two errors with `E1` first and one with `E2` first.
     fn payload_type(&mut self, id: EnumId, (variant, field): (usize, usize)) -> Option<Type> {
         self.settle_payload((id, variant, field));
         self.enums[id.0].variants[variant].fields[field]

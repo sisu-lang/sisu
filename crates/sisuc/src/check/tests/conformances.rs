@@ -1084,6 +1084,48 @@ fn a_top_level_item_should_not_take_the_name_of_a_language_interface() {
 }
 
 #[test]
+fn the_uses_of_an_item_that_took_the_name_of_a_language_interface_should_add_no_error() {
+    // As for `class Some`: the item takes the name, so its uses are the item's, and the one
+    // error stands at its name. Each row: the program, and the column of the name.
+    let rows: [(&str, &str, usize); 5] = [
+        (
+            "a class as a type and a constructor",
+            "class NAME {\n    w: i64\n}\nfn width(d: NAME) -> i64 { d.w }\nfn main() {\n    print(width(NAME(w: 1)))\n}",
+            7,
+        ),
+        (
+            "an enum as a type and a variant",
+            "enum NAME {\n    A\n}\nfn f(e: NAME) {}\nfn main() {\n    f(NAME.A)\n}",
+            6,
+        ),
+        (
+            "a function called",
+            "fn NAME() -> i64 { 1 }\nfn main() {\n    print(NAME())\n}",
+            4,
+        ),
+        (
+            "a constant read",
+            "const NAME = 1\nfn main() {\n    print(NAME)\n}",
+            7,
+        ),
+        (
+            "a class as the target of an extend block",
+            "class NAME {\n    w: i64\n}\nextend NAME {\n    fn get(self) -> i64 { self.w }\n}\nfn main() {\n    print(NAME(w: 1).get())\n}",
+            7,
+        ),
+    ];
+    for name in ["Display", "Eq", "Ord", "AnyObject"] {
+        for (kind, form, column) in rows {
+            codes_row(
+                &format!("{kind} {name}"),
+                &form.replace("NAME", name),
+                &[(Code::BuiltInName, (1, column))],
+            );
+        }
+    }
+}
+
+#[test]
 fn a_binding_member_or_variant_should_still_take_the_name_of_a_language_interface() {
     // ADR 0015 lets a local, a parameter, a method and a field take a prelude name.
     let src = "class C {\n    Eq: i64\n    fn Ord(self) {}\n}\nenum E {\n    Display\n    AnyObject\n}\nfn f(Display: i64) {\n    let AnyObject = Display\n    print(AnyObject)\n}\nfn main() {}";

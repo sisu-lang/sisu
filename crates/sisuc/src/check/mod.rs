@@ -1188,10 +1188,11 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether `name` is a built-in type's or a language interface's, which no class, function,
-    /// enum, constant or interface may take; reports it when it is. A name milestone 8's prelude
-    /// takes without declaring it is reported too, but the item still takes it, so that its uses
-    /// do not cascade. The prelude's own declarations take the language interfaces' names.
+    /// Whether `name` is a built-in type's, which no class, function, enum, constant or interface
+    /// may take; reports it when it is. A language interface's name is reported too, and so is a
+    /// name milestone 8's prelude takes without declaring it, but the item still takes it, so
+    /// that its uses do not cascade. The prelude's own declarations take the language
+    /// interfaces' names as well, in `interface_ids`.
     fn built_in(&mut self, name: &ast::Ident) -> bool {
         let kind = if built_in_type(name.name.as_str()).is_some() {
             Some(BuiltIn::Type)
@@ -1209,7 +1210,7 @@ impl Checker<'_> {
         } else {
             self.reserved(name);
         }
-        kind.is_some()
+        matches!(kind, Some(BuiltIn::Type))
     }
 
     /// Whether `name` is the first function, class, enum or constant of its name; reports it when
@@ -1237,9 +1238,10 @@ impl Checker<'_> {
         name: &ast::Ident,
     ) -> bool {
         if let Some(&(span, first_kind)) = first.get(&name.name) {
-            // A user's item took the prelude's name first, and its `BuiltInName` has said so.
+            // A user's item took the prelude's name first, and its `BuiltInName` has said so. A
+            // language interface still takes its name, which only the prelude's code reads.
             if name.span.in_prelude() && !span.in_prelude() {
-                return false;
+                return is_language_interface(name.name.as_str());
             }
             let first = Earlier::At {
                 span,
@@ -1578,7 +1580,9 @@ impl Checker<'_> {
         if let (Some(Declared::Broken), _) | (_, Some(Declared::Broken)) = declared {
             return None;
         }
-        if let Some(found) = self.interface_ids.get(&name) {
+        // A class or an enum that took a language interface's name is the type.
+        let taken = matches!(declared, (Some(_), _) | (_, Some(_)));
+        if let (false, Some(found)) = (taken, self.interface_ids.get(&name)) {
             if matches!(found, Declared::Known(_)) {
                 self.report(DiagnosticKind::InterfaceAsType {
                     name: name.to_string(),
@@ -1834,7 +1838,10 @@ impl Checker<'_> {
     /// open loop label right after an unlabeled `break`. A type's name, built in or a class's or
     /// an enum's, is in scope, but as a type: that is reported instead. So is a function's name.
     fn not_found(&mut self, name: Symbol, span: Span) -> Diagnostic {
-        if self.interface_ids.contains_key(&name) {
+        let item = self.class_ids.contains_key(&name)
+            || self.enum_ids.contains_key(&name)
+            || self.function_ids.contains_key(&name);
+        if !item && self.interface_ids.contains_key(&name) {
             return DiagnosticKind::InterfaceAsValue {
                 name: name.to_string(),
                 at: span,
