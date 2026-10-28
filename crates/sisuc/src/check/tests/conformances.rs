@@ -635,6 +635,12 @@ fn conformance_lists_should_report_what_is_not_generated() {
             "class Node {}\nenum H: Eq {\n    N(Node)\n}\nfn main() {}",
             vec![(Code::ConformanceBody, (2, 9))],
         ),
+        // The payload that fails its bound is unknown, so the note names the part that follows.
+        (
+            "an enum that lists Eq, with a payload that fails its bound and a class",
+            "class Node {}\nclass NeedOrd<T: Ord> {}\nenum H: Eq {\n    A(NeedOrd<bool>)\n    B(Node)\n}\nfn main() {}",
+            vec![(Code::ConformanceBody, (3, 9)), (Code::NotConform, (4, 15))],
+        ),
         (
             "a class that lists Ord with less alone",
             circle,
@@ -665,6 +671,19 @@ fn conformance_lists_should_report_what_is_not_generated() {
             "interface Observer: AnyObject {}\nenum E {\n    A\n}\nextend E: Observer {}\nfn main() {}",
             vec![(Code::ClassOnly, (5, 11))],
         ),
+        (
+            "a block of Display beside a method named to_string",
+            "class Circle {\n    fn to_string(self) -> string { \"c\" }\n}\nextend Circle: Display {\n    fn to_string(self) -> string { \"c\" }\n}\nfn main() {}",
+            vec![(Code::ConformsTwice, (4, 16))],
+        ),
+    ] {
+        codes_row(row, src, &expected);
+    }
+}
+
+#[test]
+fn plain_blocks_and_eq_blocks_should_report_only_what_is_wrong() {
+    for (row, src, expected) in [
         // A listed `Display` has no method of its own: a method in a plain block meets it, with the
         // signature of the requirement, as it does for a type that lists nothing.
         (
@@ -711,11 +730,6 @@ fn conformance_lists_should_report_what_is_not_generated() {
             "a listed Display, a to_string in the body and in a plain block",
             "class C: Display {\n    fn to_string(self) -> string { \"c\" }\n}\nextend C {\n    fn to_string(self) -> string { \"d\" }\n}\nfn main() {}",
             vec![(Code::DefinedTwice, (5, 8))],
-        ),
-        (
-            "a block of Display beside a method named to_string",
-            "class Circle {\n    fn to_string(self) -> string { \"c\" }\n}\nextend Circle: Display {\n    fn to_string(self) -> string { \"c\" }\n}\nfn main() {}",
-            vec![(Code::ConformsTwice, (4, 16))],
         ),
     ] {
         codes_row(row, src, &expected);

@@ -1332,22 +1332,19 @@ impl Checker<'_> {
         self.leaf(ty, interface, args, &mut seen).unwrap_or(ty)
     }
 
-    /// The part that makes the generated rule of `interface` fail for `ty`, whatever record `ty`
-    /// has itself: as `failing_leaf` finds it, `ty` if the walk finds none. `None` when the rule
-    /// holds. It is for a conformance that the compiler would write, to say why it does not.
+    /// The part that makes the generated rule of `interface` fail for the enum type `ty`, whatever
+    /// record `ty` has itself: as `failing_leaf` finds it, `ty` if the walk finds none. `None`
+    /// when the rule holds. It is for a conformance that the compiler would write, to say why it
+    /// does not.
     pub(super) fn rule_failure(&mut self, ty: Type, interface: InterfaceId) -> Option<Type> {
         match generated(self.lang, ty, interface) {
-            Generated::Holds => None,
-            Generated::Fails | Generated::Element(_) => Some(ty),
-            Generated::Payloads(id, own) => {
-                if self.payloads_conform(id, own, interface) {
-                    return None;
-                }
+            Generated::Payloads(id, own) if !self.payloads_conform(id, own, interface) => {
                 let mut seen = FxHashSet::default();
                 seen.insert((ty, interface, TypeArgs::NONE));
                 let leaf = self.payloads_leaf(id, own, interface, &mut seen);
                 Some(leaf.unwrap_or(ty))
             }
+            _ => None,
         }
     }
 
@@ -1661,16 +1658,12 @@ impl Checker<'_> {
     /// queued in, and makes unknown the type kept at the place of each that fails. A scope is set
     /// up once for the checks that follow each other in it.
     fn run_waiting(&mut self, indices: &[usize]) {
-        let Some(waiting) = &self.waiting else {
-            return;
-        };
+        let waiting = (self.waiting.as_ref()).expect("the checks should run while they wait");
         let groups: Vec<&[usize]> = indices
             .chunk_by(|a, b| waiting.scope_of[*a] == waiting.scope_of[*b])
             .collect();
         for group in groups {
-            let Some(waiting) = &self.waiting else {
-                return;
-            };
+            let waiting = (self.waiting.as_ref()).expect("the checks should run while they wait");
             if group.iter().all(|&i| waiting.checks[i].is_none()) {
                 continue;
             }
