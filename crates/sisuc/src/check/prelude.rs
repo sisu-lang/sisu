@@ -6,7 +6,7 @@ use super::array::pair;
 use super::expr::typed;
 use super::{Checked, Checker, Poisoned, payload, type_of};
 use crate::ast;
-use crate::diagnostic::{DiagnosticKind, MismatchFix};
+use crate::diagnostic::{DiagnosticKind, MismatchFix, PrintProblem};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Stream, Type, TypeKind};
@@ -46,10 +46,17 @@ impl Checker<'_> {
     fn print(&mut self, span: Span, args: &[ast::Arg], stream: Stream) -> Checked {
         let function = stream.name();
         // Not `value()`: a `unit` argument needs this code, not "expression has no value".
-        let wrong = || DiagnosticKind::PrintArgument { function, at: span }.into();
+        let wrong = |problem| {
+            DiagnosticKind::PrintArgument {
+                function,
+                problem,
+                at: span,
+            }
+            .into()
+        };
         let labeled = self.labels(args);
         let [arg] = args else {
-            self.diagnostics.push(wrong());
+            self.diagnostics.push(wrong(PrintProblem::Count));
             self.stray(args);
             return Err(Poisoned::error());
         };
@@ -66,10 +73,10 @@ impl Checker<'_> {
                     }
                     .into()
                 } else {
-                    wrong()
+                    wrong(PrintProblem::Optional)
                 }
             }
-            Some(Type::UNIT) => wrong(),
+            Some(Type::UNIT) => wrong(PrintProblem::NoValue),
             Some(Type::NEVER) => DiagnosticKind::PrintNever {
                 function,
                 at: arg.value.span,

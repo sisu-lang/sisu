@@ -4,7 +4,7 @@ error[E0060]: cannot eprint `[i64]?`
 3 |     eprint(xs)
   |            ^^
   |
-  = help: unwrap it with `if let`, then print the array
+  = help: unwrap it with `if let`, then eprint the array
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0060

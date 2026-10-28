@@ -1,4 +1,4 @@
-error[E0059]: `print` takes one value that is not an optional
+error[E0059]: `print` takes one value
  --> E0059-count.sisu:2:5
   |
 2 |     print(1, 2)

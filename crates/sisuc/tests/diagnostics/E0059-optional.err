@@ -1,4 +1,4 @@
-error[E0059]: `print` takes one value that is not an optional
+error[E0059]: `print` cannot take an optional
  --> E0059-optional.sisu:3:5
   |
 3 |     print(n)

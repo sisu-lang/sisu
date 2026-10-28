@@ -683,9 +683,13 @@ pub(crate) enum DiagnosticKind {
         owner: String,
         at: Span,
     },
-    /// A call of `function` (`print` or `eprint`) at `at` with no argument, several, one that
-    /// returns nothing, or an optional.
-    PrintArgument { function: &'static str, at: Span },
+    /// A call of `function` (`print` or `eprint`) at `at` with no argument or several, one that
+    /// returns nothing, or an optional that is not an array.
+    PrintArgument {
+        function: &'static str,
+        problem: PrintProblem,
+        at: Span,
+    },
     /// The argument at `at` of a call of `function`, of the type `ty`: an optional array.
     PrintArray {
         function: &'static str,
@@ -1230,6 +1234,16 @@ pub(crate) enum ArgumentsForm {
     Value { compare: Option<String> },
     /// A variant of a generic enum, which takes its enum's: `instead` writes them on the enum.
     Variant { instead: Option<String> },
+}
+
+/// What is wrong with the argument of a `print` or `eprint` call.
+pub(crate) enum PrintProblem {
+    /// The call has no argument or several.
+    Count,
+    /// The argument has no value: it is a call that returns nothing.
+    NoValue,
+    /// The argument is an optional that is not an array.
+    Optional,
 }
 
 /// Why `main`'s signature is wrong.
@@ -3152,14 +3166,23 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 format!("`{name}` is a field of `{owner}`, not a method"),
             ),
-            DiagnosticKind::PrintArgument { function, at } => Diagnostic::coded(
+            DiagnosticKind::PrintArgument {
+                function,
+                problem,
+                at,
+            } => Diagnostic::coded(
                 code,
                 at,
-                format!("`{function}` takes one value that is not an optional"),
+                match problem {
+                    PrintProblem::Count => format!("`{function}` takes one value"),
+                    PrintProblem::NoValue => format!("the argument of `{function}` has no value"),
+                    PrintProblem::Optional => format!("`{function}` cannot take an optional"),
+                },
             ),
             DiagnosticKind::PrintArray { function, ty, at } => {
-                Diagnostic::coded(code, at, format!("cannot {function} `{ty}`"))
-                    .with_help("unwrap it with `if let`, then print the array")
+                Diagnostic::coded(code, at, format!("cannot {function} `{ty}`")).with_help(format!(
+                    "unwrap it with `if let`, then {function} the array"
+                ))
             }
             DiagnosticKind::PrintNever { function, at } => Diagnostic::coded(
                 code,
