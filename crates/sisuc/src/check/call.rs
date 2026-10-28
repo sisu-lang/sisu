@@ -4,7 +4,6 @@
 use std::fmt;
 
 use super::expr::{fits, no_member, option_written, path, postfix};
-use super::extend::holder_of;
 use super::generic::{GenericSig, Site, mark, mismatched};
 use super::interface::LangPath;
 use super::prelude::PRELUDE;
@@ -481,10 +480,11 @@ impl Checker<'_> {
         let Some(ty) = type_of(&receiver) else {
             return Err(receiver);
         };
-        let written = holder_of(ty).is_some_and(|holder| {
-            self.own_method(ty, method.name).is_some()
-                || self.extension_methods.contains_key(&(holder, method.name))
-        });
+        // The lookup of `find_method`: a method that does not apply to this `ty` is no method.
+        let written = self.applicable_method(ty, method.name).is_some() || {
+            self.conforming_methods(ty, method.name);
+            !self.candidates.is_empty()
+        };
         if written
             || matches!(ty.kind(), TypeKind::Param(..) | TypeKind::Assoc(..))
             || self.lang_path(ty, interface) != LangPath::Generated

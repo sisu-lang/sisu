@@ -1543,6 +1543,18 @@ fn a_written_eq_or_less_method_should_win_over_the_generated_one() {
             "a `less` of an enum",
             "enum E {\n    A\n    fn less(self, n: i64) -> bool { n == 0 }\n}\nfn f(x: E) -> bool { x.less(0) }\nfn main() {}",
         ),
+        (
+            "an `eq` for `P<i64>` called on a `P<i64>`",
+            "enum P<T> {\n    A(T)\n}\nextend P<i64> {\n    fn eq(self, n: i64) -> bool { n == 0 }\n}\nfn f(x: P<i64>) -> bool { x.eq(0) }\nfn main() {}",
+        ),
+        (
+            "an `eq` for `P<i64>` called on a `P<string>`: the generated one",
+            "enum P<T> {\n    A(T)\n}\nextend P<i64> {\n    fn eq(self, n: i64) -> bool { n == 0 }\n}\nfn f(x: P<string>) -> bool { x.eq(P.A(\"s\")) }\nfn main() {}",
+        ),
+        (
+            "an `eq` of a conformance for `P<i64>` called on a `P<string>`",
+            "interface Same {\n    fn eq(self, n: i64) -> bool\n}\nenum P<T> {\n    A(T)\n}\nextend P<i64>: Same {\n    fn eq(self, n: i64) -> bool { n == 0 }\n}\nfn f(x: P<string>) -> bool { x.eq(P.A(\"s\")) }\nfn main() {}",
+        ),
     ];
     for (row, src) in rows {
         clean_row(row, src);

@@ -19,9 +19,23 @@ extend Level {
     }
 }
 
+enum P<T> {
+    A(T)
+}
+
+// This block covers `P<i64>` only: the other instances keep the generated `eq`.
+extend P<i64> {
+    fn eq(self, n: i64) -> bool {
+        n == 0
+    }
+}
+
 fn main() {
     print(Dir.North.eq(Dir.North))
     print(Dir.North == Dir.North)
     print(Level.Low.eq(0))
     print(Level.Low == Level.Low)
+    print(P.A(1).eq(0))
+    print(P.A("s").eq(P.A("s")))
+    print(P.A("s").eq(P.A("t")))
 }
