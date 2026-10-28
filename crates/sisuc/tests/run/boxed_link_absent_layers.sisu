@@ -1,0 +1,54 @@
+// GIVEN an enum `Chain` that holds itself in a box under three `?`s (`Next(Chain???)`), so that
+// the field is two flags around a box pointer
+// AND 9 values with `None`, `Some(None)` and `Some(Some(None))` in that field, a value at the third
+// layer, and a chain of two `Chain` with the absent layer in the inner one
+// WHEN each value is printed
+// AND every value of one list is compared with `==` to every value of a second list that has the
+// same values
+// AND both lists are dropped
+// THEN each absent layer prints as `None` under one `Some(` for each layer above it
+// AND `==` is true for the same value only
+// AND every string is released once
+enum Chain {
+    End
+    Next(Chain???)
+    Lit(string)
+}
+
+fn values() -> [Chain] {
+    [
+        Chain.End,
+        // Next(None)
+        Chain.Next(None),
+        // Next(Some(None))
+        Chain.Next(Some(None)),
+        // Next(Some(Some(None)))
+        Chain.Next(Some(Some(None))),
+        // Next(Lit("x"))
+        Chain.Next(Some(Some(Chain.Lit("x")))),
+        // Next(Lit("y"))
+        Chain.Next(Some(Some(Chain.Lit("y")))),
+        // Next(Next(None))
+        Chain.Next(Some(Some(Chain.Next(None)))),
+        // Next(Next(Some(None)))
+        Chain.Next(Some(Some(Chain.Next(Some(None))))),
+        // Next(Next(Some(Some(None))))
+        Chain.Next(Some(Some(Chain.Next(Some(Some(None)))))),
+    ]
+}
+
+fn main() {
+    let xs = values()
+    let ys = values()
+    for x in xs {
+        print(x)
+    }
+    // Row i, column j is `T` when value i equals value j: `T` on the diagonal only.
+    for i in 0..9 {
+        let mut row = ""
+        for j in 0..9 {
+            row = if xs[i] == ys[j] { "{row}T" } else { "{row}." }
+        }
+        print(row)
+    }
+}
