@@ -930,23 +930,41 @@ mod tests {
     }
 
     /// A standard output sink has no text to pad, and a mark past the text is no mark: the
-    /// process aborts, as the runtime does for a call that generated code cannot make.
+    /// process aborts, as the runtime does for a call that generated code cannot make. A child
+    /// that does not end is a failure of the test, not a hang.
     #[test]
     #[cfg_attr(miri, ignore = "spawns a child process, which Miri cannot")]
     fn pad_should_abort_when_it_cannot_pad() {
         use std::os::unix::process::ExitStatusExt;
+        use std::process::Stdio;
+        use std::time::{Duration, Instant};
+
         for case in ["stdout", "mark"] {
             let exe = std::env::current_exe().expect("the test binary should have a path");
-            let out = std::process::Command::new(exe)
+            let mut child = std::process::Command::new(exe)
                 .args([
                     "--exact",
                     "show::tests::pad_child_should_abort_when_asked",
                     "--nocapture",
                 ])
                 .env(PAD_VAR, case)
-                .output()
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
                 .expect("the child test should start");
-            assert_eq!(out.status.signal(), Some(6), "{case}: {:?}", out.status);
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let status = loop {
+                if let Some(status) = child.try_wait().expect("the child should be waited for") {
+                    break status;
+                }
+                if Instant::now() > deadline {
+                    child.kill().expect("the hung child should be killed");
+                    child.wait().expect("the killed child should be waited for");
+                    panic!("{case}: the child should abort, not run on");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            };
+            assert_eq!(status.signal(), Some(6), "{case}: {status:?}");
         }
     }
 
