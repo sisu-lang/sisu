@@ -15,8 +15,9 @@ import subprocess
 import time
 import xml.etree.ElementTree as ET
 
-# Seconds on a GitHub-hosted runner. A unit test runs in-process; an end-to-end test spawns
-# sisu, links, and may run under Valgrind, and a `tests/run` case, with three builds and two Valgrind runs, takes about 2 s.
+# Seconds on a GitHub-hosted runner. A unit test runs in-process. An end-to-end test spawns sisu,
+# links, and may run under Valgrind. A `tests/run` case, with its builds and Valgrind runs, takes
+# about 2 s.
 UNIT_BUDGET = 1.0
 END_TO_END_BUDGET = 4.0
 
@@ -37,11 +38,6 @@ def timed(junit: str) -> list[tuple[float, float, str]]:
 def over_budget(tests: list[tuple[float, float, str]]) -> list[tuple[float, float, str]]:
     """The tests over their budget, slowest first."""
     return sorted((test for test in tests if test[0] > test[1]), reverse=True)
-
-
-def slow_tests(junit: str) -> list[tuple[float, float, str]]:
-    """(seconds, budget, name) of each test over its budget, slowest first."""
-    return over_budget(timed(junit))
 
 
 def in_diff(name: str, diff: str) -> bool:

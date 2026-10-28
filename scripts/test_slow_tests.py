@@ -27,7 +27,7 @@ REPORT = """<testsuites>
 
 class SlowTests(unittest.TestCase):
     def test_each_kind_has_its_budget_and_scripts_are_skipped(self):
-        self.assertEqual(st.slow_tests(REPORT), [
+        self.assertEqual(st.over_budget(st.timed(REPORT)), [
             (7.0, st.END_TO_END_BUDGET, "sisuc::cases run::big.sisu"),
             (1.5, st.UNIT_BUDGET, "sisuc slow"),
         ])
@@ -51,6 +51,7 @@ class SlowTests(unittest.TestCase):
             run = subprocess.run([sys.executable, SCRIPT, report, '--diff', 'HEAD'],
                                  capture_output=True, text=True, cwd=tmp, env=git_fixture.env())
         lines = run.stdout.splitlines()
+        self.assertEqual(run.returncode, 0)
         self.assertEqual(lines[0], "slow_tests: 1 other tests over budget are outside `git diff HEAD`")
         self.assertEqual([line.split()[-1] for line in lines[2:]], ["run::big"])
 

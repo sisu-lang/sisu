@@ -8,8 +8,8 @@ stands. The code may be in any case. Links in an explanation are relative to
 `docs/diagnostics/`.
 
 The tests keep copies of each explanation: the `.json` file of each case in
-`crates/sisuc/tests/diagnostics/` that reports the code, and
-`site/programs/explanations/<code>.json`. After you edit an explanation, run
+`crates/sisuc/tests/diagnostics/` and `site/programs/diagnostics/` that
+reports the code, and `site/programs/explanations/<code>.json`. After you edit an explanation, run
 `make bless` and commit the changed copies with it.
 
 | Code | Severity | Title |

@@ -58,7 +58,8 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install --yes valgrind
       - id: nextest
         run: cargo nextest run --workspace --locked --profile ci
-      # The next three steps run when the test step ran, whatever its result. `always()` would also
+      # The next three steps run when the test step ran, whatever its result; the test-name check
+      # runs only on a pull request. `always()` would also
       # run them after a cancel and after a step before the tests failed.
       # Warns about tests over their time budget (CODING_STANDARDS.md, Tests). It never fails the job.
       - if: (success() || failure()) && steps.nextest.outcome != 'skipped'
