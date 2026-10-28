@@ -123,6 +123,9 @@ pub(crate) struct Program {
     pub(crate) interfaces: Vec<Interface>,
     /// Every conformance of a class or an enum to an interface. Only the checker sets it.
     pub(crate) conformances: Conformances,
+    /// Where each choice that writes an associated type is written: `mono` reports a walk that it
+    /// cannot end there. Only the checker sets it.
+    pub(crate) choice_ats: FxHashMap<ChoicePlace, Span>,
 }
 
 /// An interface, as the typed tree names it.
@@ -134,6 +137,10 @@ pub(crate) struct Interface {
     /// The names of its associated types, in the order of `TypeKind::Assoc`'s index.
     pub(crate) assoc: Vec<String>,
 }
+
+/// The place of a choice of an associated type: the interface, the index of the conformance among
+/// those of the interface, and the index of the associated type among the interface's.
+pub(crate) type ChoicePlace = (InterfaceId, usize, usize);
 
 /// The conformance of the class or enum `target` to an interface with the arguments `args`
 /// (without `Self`). `type_params` is how many type parameters of an `extend` block the target

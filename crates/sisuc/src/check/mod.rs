@@ -32,6 +32,7 @@ use std::rc::Rc;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ast;
+use crate::conformance::StuckChoices;
 use crate::diagnostic::{
     BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, MainForm, MismatchFix,
     MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
@@ -414,10 +415,11 @@ struct Checker<'src> {
     conformance_bounds: FxHashMap<(tir::InterfaceId, usize), ParamBounds>,
     /// Where each choice that writes an associated type is written, by conformance (interface and
     /// place among the interface's) and place of the associated type among the interface's.
-    choice_ats: FxHashMap<(tir::InterfaceId, usize, usize), Span>,
-    /// The choices that `normalize` found to need their own associated type, each with the first
-    /// type found for it; reported once all bodies are checked (see `report_loops`).
-    loops: std::cell::RefCell<FxHashMap<(tir::InterfaceId, usize, usize), Type>>,
+    choice_ats: FxHashMap<tir::ChoicePlace, Span>,
+    /// The choices that `normalize` found to need their own associated type, or too many steps,
+    /// each with the first type found for it and why; reported once all bodies are checked (see
+    /// `report_loops`).
+    loops: std::cell::RefCell<StuckChoices>,
     /// The associated types that a bound of each interface gives its type, with the ones that the
     /// interfaces it inherits declare, indexed by name: built when first asked for, once every
     /// interface has its inheritance (`interfaces_resolved`), and kept for the program.
@@ -431,6 +433,8 @@ struct Checker<'src> {
     /// The associated types that `probe_associated` has normalized: two bounds that inherit one
     /// interface give it once.
     probed_assoc: FxHashSet<Type>,
+    /// How many associated types the probe of the bound being checked may still normalize.
+    probe_budget: usize,
     /// The answers of `conforms` for a type with no type parameter, which no body changes.
     conformed: FxHashMap<(Type, tir::InterfaceId, TypeArgs), bool>,
     /// The place among `extensions` of the first block that covers the receiver of the call being
@@ -789,7 +793,7 @@ pub(crate) fn check<'src>(
     let interfaces = checker.lowered_interfaces();
     let enums = checker.lowered_enums;
     let (instantiates, prelude) = (checker.instantiates, checker.prelude);
-    let conformances = checker.conformances;
+    let (conformances, choice_ats) = (checker.conformances, checker.choice_ats);
     let program = functions
         .into_iter()
         .collect::<Option<_>>()
@@ -803,6 +807,7 @@ pub(crate) fn check<'src>(
             prelude,
             interfaces,
             conformances,
+            choice_ats,
         });
     // A use of a broken item poisons without a diagnostic of its own.
     debug_assert!(
@@ -914,6 +919,7 @@ impl<'src> Checker<'src> {
             interfaces_resolved: false,
             probed_types: FxHashSet::default(),
             probed_assoc: FxHashSet::default(),
+            probe_budget: 0,
             conformed: FxHashMap::default(),
             failed_block: None,
             lowered_enums: Vec::new(),

@@ -650,7 +650,6 @@ crates/sisuc/src/codegen/tests.rs::a_bool_fill_is_a_memset_at_o2
 crates/sisuc/src/codegen/tests.rs::a_loop_makes_its_written_arrays_unique_before_it_starts
 crates/sisuc/src/codegen/tests.rs::args_declarations_carry_memory_effects
 crates/sisuc/src/codegen/tests.rs::arithmetic_calls_overflow_intrinsics
-crates/sisuc/src/codegen/tests.rs::binary_takes_and_and_or_of_two_computed_bools
 crates/sisuc/src/codegen/tests.rs::blocks_are_named_after_their_index_or_loop_role
 crates/sisuc/src/codegen/tests.rs::check_of_a_moved_array_faults
 crates/sisuc/src/codegen/tests.rs::class_fields_follow_their_elements
@@ -903,7 +902,6 @@ crates/sisuc/src/generate/coverage.rs::dead_branch_never_ends_a_block
 crates/sisuc/src/generate/coverage.rs::declared_types_keep_their_sizes_0
 crates/sisuc/src/generate/coverage.rs::declared_types_keep_their_sizes_256
 crates/sisuc/src/generate/coverage.rs::each_count_reaches_its_most_and_stays_within_it
-crates/sisuc/src/generate/coverage.rs::every_generated_program_checks_clean
 crates/sisuc/src/generate/coverage.rs::every_index_is_in_bounds_or_meant_to_panic
 crates/sisuc/src/generate/coverage.rs::every_loop_is_bounded
 crates/sisuc/src/generate/coverage.rs::every_match_checks_without_an_unreachable_arm

@@ -27,7 +27,8 @@ pub(crate) fn decode(bytes: Vec<u8>) -> Result<String, Box<(String, Diagnostic)>
 /// items come after the user's in every list.
 pub(crate) const PRELUDE_SOURCE: &str = include_str!("prelude.sisu");
 
-/// `checked`, its program instantiated by `mono`.
+/// `checked`, its program instantiated by `mono`, which reports a choice of an associated type
+/// that the checker did not follow and that an instance needs itself or needs too many steps.
 pub(crate) fn front_end(source: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
     front_end_with(PRELUDE_SOURCE, source)
 }
@@ -37,8 +38,15 @@ pub(crate) fn front_end_with(
     prelude: &str,
     source: &str,
 ) -> (Option<tir::Program>, Vec<Diagnostic>) {
-    let (program, diagnostics) = checked_with(prelude, source);
-    (program.map(mono::instantiate), diagnostics)
+    let (program, mut diagnostics) = checked_with(prelude, source);
+    match program.map(mono::instantiate).transpose() {
+        Ok(program) => (program, diagnostics),
+        Err(found) => {
+            diagnostics.extend(found);
+            diagnostics.sort_by_key(|d| d.span().start());
+            (None, diagnostics)
+        }
+    }
 }
 
 /// Lexes, parses and checks `source`. Returns every diagnostic, sorted by position, and the

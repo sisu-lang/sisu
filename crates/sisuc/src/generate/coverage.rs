@@ -2585,11 +2585,11 @@ fn walk() -> Walk {
 }
 
 #[test]
-fn every_generated_program_checks_clean() {
+fn every_generated_program_should_check_clean_and_instantiate() {
     for data in seeds() {
         let (_, program) = checked(&generate(&data).program);
         // In a debug build, `mono` asserts that no type parameter is left in what it gives.
-        crate::mono::instantiate(program);
+        crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     }
 }
 

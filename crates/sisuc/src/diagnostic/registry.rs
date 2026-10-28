@@ -1,6 +1,7 @@
 //! The registry: every diagnostic code, and the message, labels, help and fixes of each.
 
 use super::{Diagnostic, Edit, Fix, Severity, Suggestion};
+use crate::conformance::CHOICE_DEPTH_LIMIT;
 use crate::source::Span;
 
 /// The code table: each code's variant and number. A number is never reused or changed.
@@ -1524,6 +1525,10 @@ pub(crate) enum UnknownForm {
     /// The choice of an associated type needs the associated type itself, which the diagnostic's
     /// name gives with its base, as `W<Leaf>.A`: the types the choice names lead back to it.
     ChoiceLoops,
+    /// The choice of an associated type leads through more than `CHOICE_DEPTH_LIMIT` other
+    /// associated types, one after the other, before it gives a type. The diagnostic's name gives
+    /// the associated type where the walk stopped.
+    ChoiceTooDeep,
     /// The associated type of the type parameter `base` is written in a bound that the bounds of
     /// `base` wait for, so the bounds of `base` are not known yet.
     BoundsLoop { base: String },
@@ -2543,6 +2548,12 @@ impl From<DiagnosticKind> for Diagnostic {
                     format!("the associated type `{name}` needs itself to find its type"),
                 )
                 .with_help("write a choice that does not lead back to the same associated type"),
+                UnknownForm::ChoiceTooDeep => Diagnostic::coded(
+                    code,
+                    at,
+                    format!("the associated type `{name}` needs more than {CHOICE_DEPTH_LIMIT} steps to find its type"),
+                )
+                .with_help("write a choice that gives its type in fewer steps, or that does not grow its types"),
                 UnknownForm::BoundsLoop { base } => Diagnostic::coded(
                     code,
                     at,
