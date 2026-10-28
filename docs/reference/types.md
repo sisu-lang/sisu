@@ -361,7 +361,7 @@ The rules:
 - A type argument can be an optional ([Type arguments](generics.md#type-arguments)).
 - `None` prints as `None` at every depth. A `T?` that holds `x` prints the text of `x`. When `x` is itself an optional that holds `None` at its innermost layer, the text is `Some(`, the text of `x`, and `)`. So every state of a nested optional prints in its own way. A `print` of an optional still builds with the warning; `to_string` does not.
 
-```sisu pending
+```sisu
 fn main() {
     let a: i64?? = None
     let b: i64?? = Some(None)

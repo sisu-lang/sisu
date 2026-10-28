@@ -40,7 +40,7 @@ The rules:
 
 - The argument is one value of any type except `unit`, `never` and an optional ([Text of other types](strings.md#text-of-other-types)). A call that returns nothing, no argument, more than one, and an optional are errors ([E0059](../diagnostics/E0059.md), [E0060](../diagnostics/E0060.md)). The section [Option and Result](types.md#option-and-result) is in development, and it changes the rule for an optional.
 - An argument of the type `never`, such as a call of `panic`, is an error ([E0061](../diagnostics/E0061.md)).
-- The text of a value is the same as in an interpolation ([Strings and formatting](strings.md#text-of-a-value)). `print("{x}")` and `print(x)` write the same text for a value `x` that an interpolation takes: an `i64`, a `u8`, an `f64`, a `bool`, a `char` or a `string`. An interpolation does not take the other types yet ([E0098](../diagnostics/E0098.md)).
+- The text of a value is the same as in an interpolation ([Strings and formatting](strings.md#text-of-a-value)). `print("{x}")` and `print(x)` write the same text for a value `x` that an interpolation takes: any type except `unit`, `never` and an optional ([E0098](../diagnostics/E0098.md)).
 - The line break is one `\n` byte. A `\r` is written only when the text holds it.
 - `print` and `eprint` give no value ([E0043](../diagnostics/E0043.md)).
 - When standard output is a terminal, `print` writes each line at once. Otherwise `print` collects its text and writes it later, and `eprint` still writes at once. So the order of the two streams in one file or pipe is not fixed.

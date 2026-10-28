@@ -20,9 +20,9 @@ use crate::diagnostic::{Diagnostic, DiagnosticKind, UnknownForm};
 use crate::lang::{self, Cx, Dispatch};
 use crate::source::Span;
 use crate::tir::{
-    Arm, Block, ChoicePlace, Class, ClassId, CompareOp, Conformance, Conformances, Enum, EnumId,
-    Expr, ExprKind, Field, FuncId, Function, InterfaceId, Local, Place, Program, Stmt, Type,
-    TypeArgs, TypeKind, layout_enums,
+    Align, Arm, Block, ChoicePlace, Class, ClassId, CompareOp, Conformance, Conformances, Enum,
+    EnumId, Expr, ExprKind, Field, FuncId, Function, InterfaceId, Local, Place, Program, Stmt,
+    Type, TypeArgs, TypeKind, layout_enums,
 };
 use crate::types::{Head, write_args, write_method, write_type};
 
@@ -609,6 +609,28 @@ impl Mono {
                     self.walk(ty, self.out.lang.display);
                 }
             }
+            K::Interpolate { parts, formats } => {
+                for format in formats {
+                    // A part of a type parameter's type pads as its type argument's does.
+                    if let Some(pad) = format.pad.as_mut().filter(|pad| pad.by_type) {
+                        let ty = self.subst(parts[format.part].ty, args);
+                        pad.align = if matches!(ty, Type::I64 | Type::U8 | Type::F64) {
+                            Align::Right
+                        } else {
+                            Align::Left
+                        };
+                        pad.by_type = false;
+                    }
+                }
+                // The helper for a compound part calls a written `to_string` at each part that
+                // has one.
+                for part in parts.iter() {
+                    let ty = self.subst(part.ty, args);
+                    if prints_by_helper(ty) {
+                        self.walk(ty, self.out.lang.display);
+                    }
+                }
+            }
             K::Contains { base, .. } => {
                 let array = self.subst(base.ty, args);
                 // A stand-in type is no array: `run` reports the failure.
@@ -660,6 +682,17 @@ impl Mono {
                     .expect("an interface call should name its receiver's type");
                 if self.failed() {
                     return;
+                }
+                // A `Display` that the compiler writes: also for a type whose written record fails
+                // its bounds, which `find` would match.
+                if *interface == self.out.lang.display
+                    && self.dispatch(receiver, *interface).is_none()
+                {
+                    let [operand]: [Expr; 1] = mem::take(operands)
+                        .try_into()
+                        .expect("a call of `to_string` should have one operand");
+                    e.kind = lang::to_string(operand);
+                    return self.expr(e, args);
                 }
                 let Some((index, bindings)) = find(&self.conformances, *interface, receiver, rest)
                 else {

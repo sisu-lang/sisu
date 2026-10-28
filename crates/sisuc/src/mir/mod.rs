@@ -260,6 +260,8 @@ pub(crate) enum Rvalue {
     Interpolate {
         parts: Vec<Operand>,
         formats: Vec<Format>,
+        /// Whether the helper for a compound part may call a written `to_string`.
+        calls: bool,
     },
     ReadLine,
     Chars(Operand),
@@ -331,14 +333,15 @@ pub(crate) enum Rvalue {
 impl Rvalue {
     /// Whether the statement may run a written method, which can store through a `mut` field and
     /// free what a borrow reads: a `Call`, an `Equal` or `Contains` whose helper reaches a
-    /// written `eq`, and a `Print` whose helper reaches a written `to_string`. Pair removal and
-    /// the certifier both ask this, so they agree.
+    /// written `eq`, and a `Print` or `Interpolate` whose helper reaches a written `to_string`.
+    /// Pair removal and the certifier both ask this, so they agree.
     pub(crate) fn may_call_written(&self) -> bool {
         match self {
             Rvalue::Call { .. } => true,
             Rvalue::Equal { calls, .. }
             | Rvalue::Contains { calls, .. }
-            | Rvalue::Print { calls, .. } => *calls,
+            | Rvalue::Print { calls, .. }
+            | Rvalue::Interpolate { calls, .. } => *calls,
             _ => false,
         }
     }

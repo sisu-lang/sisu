@@ -6,6 +6,7 @@ use std::fmt;
 use super::expr::{fits, no_member, option_written, path, postfix};
 use super::generic::{GenericSig, Site, mark, mismatched};
 use super::interface::LangPath;
+use super::member::Found;
 use super::prelude::PRELUDE;
 use super::unused_names::Used;
 use super::{
@@ -440,6 +441,11 @@ impl Checker<'_> {
             Err(receiver) => receiver,
         };
         match type_of(&receiver) {
+            // A built-in type, an array and an optional have a `Display` that the compiler writes,
+            // and no method of their own named `to_string`.
+            Some(ty) if method.name.as_str() == "to_string" && generated_display_only(ty) => {
+                return self.generated_display(span, receiver, args);
+            }
             Some(ty) if matches!(ty.kind(), TypeKind::Array(_)) => {
                 return self.array_method(span, (receiver, receiver_expr.span), ty, method, args);
             }
@@ -452,13 +458,40 @@ impl Checker<'_> {
             }
             _ => {}
         }
-        let Some(func) = self.find_method(type_of(&receiver), receiver_expr, site, target, span)
-        else {
-            self.labels(args);
-            self.stray(args);
-            return Err(Poisoned::error());
-        };
-        self.invoke(span, func, Some(receiver), site, args)
+        let ty = type_of(&receiver);
+        match self.find_method(ty, receiver_expr, site, target, (span, args.is_empty())) {
+            Some(Found::Func(func)) => self.invoke(span, func, Some(receiver), site, args),
+            Some(Found::GeneratedDisplay) => self.generated_display(span, receiver, args),
+            None => {
+                self.labels(args);
+                self.stray(args);
+                Err(Poisoned::error())
+            }
+        }
+    }
+
+    /// `receiver.to_string()` on a value whose `Display` the compiler writes: the text that
+    /// `print` writes, as a one-part interpolation (`lang::to_string`). The call takes no
+    /// argument.
+    fn generated_display(&mut self, span: Span, receiver: Checked, args: &[ast::Arg]) -> Checked {
+        if !args.is_empty() {
+            let d = DiagnosticKind::ArgumentCount {
+                name: "to_string".to_string(),
+                want: 0,
+                found: args.len(),
+                at: span,
+            };
+            return self.rejected(d.into(), args);
+        }
+        match receiver {
+            Ok(receiver) => Ok(self.spilled(span, Type::STRING, vec![receiver], |parts| {
+                let [part]: [tir::Expr; 1] = parts
+                    .try_into()
+                    .expect("`spilled` should hand its closure one operand per input");
+                lang::to_string(part)
+            })),
+            Err(_) => Err(Poisoned::of(Some(Type::STRING))),
+        }
     }
 
     /// `receiver.eq(other)` or `receiver.less(other)` on a type whose `Eq` or `Ord` the compiler
@@ -862,4 +895,21 @@ fn built_in_arity(ty: Type, name: &str) -> Option<usize> {
         TypeKind::I64 | TypeKind::F64 => number::method(ty, name).map(|(_, params)| params),
         _ => None,
     }
+}
+
+/// Whether the `Display` of a value of type `ty` is the compiler's alone: a number, a `bool`, a
+/// `char`, a `string`, an array or an optional. A class or an enum may write its own, and a type
+/// parameter is a call through its bounds.
+fn generated_display_only(ty: Type) -> bool {
+    matches!(
+        ty.kind(),
+        TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::String
+            | TypeKind::Array(_)
+            | TypeKind::Optional(_)
+    )
 }

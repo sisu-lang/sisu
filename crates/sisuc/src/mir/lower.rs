@@ -801,10 +801,14 @@ impl<'a> Lowering<'a> {
                     }
                 }
             },
-            ExprKind::Interpolate { parts, formats } => Rvalue::Interpolate {
-                parts: self.operands(&parts.iter().collect::<Vec<_>>())?,
-                formats: formats.clone(),
-            },
+            ExprKind::Interpolate { parts, formats } => {
+                let calls = parts.iter().any(|part| self.calls_display(part.ty));
+                Rvalue::Interpolate {
+                    parts: self.operands(&parts.iter().collect::<Vec<_>>())?,
+                    formats: formats.clone(),
+                    calls,
+                }
+            }
             ExprKind::Concat { lhs, rhs } => {
                 let [lhs, rhs] = self.pair(lhs, rhs)?;
                 Rvalue::Concat { lhs, rhs }

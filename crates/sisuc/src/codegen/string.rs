@@ -298,7 +298,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 _ => self.write_text("sisu_write_char", &[value, at.into()]),
             };
             let written = match format.and_then(|format| format.pad) {
-                Some(Pad { align, width }) => {
+                Some(Pad { align, width, .. }) => {
                     let align = match align {
                         Align::Left => PAD_LEFT,
                         Align::Right => PAD_RIGHT,

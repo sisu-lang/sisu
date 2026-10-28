@@ -4,7 +4,8 @@
 // reading `xs` after the comparison reads live memory (Valgrind and `--rc-checks` see a mistake).
 // `h` stays live after the comparison, so the copy has nothing else that keeps it. A `print`
 // whose helper may run a written `to_string` is such a call too: the `to_string` of `B` stores
-// into `s`, and the copy `old` of the field stays live memory across the `print`.
+// into `s`, and the copy `old` of the field stays live memory across the `print`, and across an
+// interpolation or a `to_string` call of such a value.
 class Holder: Eq {
     mut items: [string]
     fn eq(self, _other: Self) -> bool {
@@ -126,6 +127,42 @@ fn print_payload() {
     print(b.s)
 }
 
+fn interpolate_object() {
+    let b = B(s: "heap {1}")
+    let old = b.s
+    let t = "{b}"
+    print(t)
+    print(old)
+    print(b.s)
+}
+
+fn interpolate_array() {
+    let b = B(s: "heap {1}")
+    let old = b.s
+    let t = "{[b]}"
+    print(t)
+    print(old)
+    print(b.s)
+}
+
+fn interpolate_payload() {
+    let b = B(s: "heap {1}")
+    let old = b.s
+    let t = "{Boxed.One(b)}"
+    print(t)
+    print(old)
+    print(b.s)
+}
+
+fn to_string_payload() {
+    let b = B(s: "heap {1}")
+    let old = b.s
+    let t = Boxed.One(b).to_string()
+    print(t)
+    print(old)
+    print(b.s)
+}
+
 fn main() {
     in_array()
     in_contains()
@@ -136,4 +173,8 @@ fn main() {
     print_object()
     print_array()
     print_payload()
+    interpolate_object()
+    interpolate_array()
+    interpolate_payload()
+    to_string_payload()
 }

@@ -42,14 +42,17 @@ impl Checker<'_> {
     }
 
     /// A string literal with interpolations. Each part is checked with no expected type, so that
-    /// a `unit` one is reported here, and must be of a type that interpolation writes as text. A
-    /// part that never finishes makes the whole never finish.
+    /// a `unit` one is reported here, and must be of a type that has a `Display`, which is every
+    /// type but `unit`; an optional waits for its warning. A part that never finishes makes the
+    /// whole never finish.
     pub(super) fn interpolate(&mut self, span: Span, parts: &[ast::Part]) -> Checked {
         let mut ty = Type::STRING;
         let mut checked = Vec::with_capacity(parts.len());
         let mut formats = Vec::new();
         for (i, ast::Part { value: part, spec }) in parts.iter().enumerate() {
             let value = self.expr(part, None);
+            // Every type interpolates but an optional (a warning replaces this error later) and
+            // `unit`.
             let help = match type_of(&value).map(Type::kind) {
                 None
                 | Some(
@@ -58,7 +61,12 @@ impl Checker<'_> {
                     | TypeKind::F64
                     | TypeKind::Bool
                     | TypeKind::Char
-                    | TypeKind::String,
+                    | TypeKind::String
+                    | TypeKind::Array(_)
+                    | TypeKind::Class(..)
+                    | TypeKind::Enum(..)
+                    | TypeKind::Param(..)
+                    | TypeKind::Assoc(..),
                 ) => {
                     if let (Some(spec), Some(found)) = (spec, type_of(&value)) {
                         formats.push(self.format(i, part, spec, found));
@@ -76,14 +84,8 @@ impl Checker<'_> {
                 {
                     Some(InterpolateHelp::Unwrap)
                 }
-                Some(TypeKind::Array(_) | TypeKind::Optional(_)) => Some(InterpolateHelp::ForLoop),
-                Some(
-                    TypeKind::Unit
-                    | TypeKind::Class(..)
-                    | TypeKind::Enum(..)
-                    | TypeKind::Param(..)
-                    | TypeKind::Assoc(..),
-                ) => None,
+                Some(TypeKind::Optional(_)) => Some(InterpolateHelp::ForLoop),
+                Some(TypeKind::Unit) => None,
             };
             let found = type_of(&value).expect("a part reported here should have a type");
             self.report(DiagnosticKind::CannotInterpolate {
@@ -105,8 +107,8 @@ impl Checker<'_> {
     }
 
     /// The format of the part `i`, `part`, of type `ty`, that `spec` gives. Without an alignment,
-    /// a number pads on the left and any other value on the right. Only an `f64` takes a
-    /// precision.
+    /// a number pads on the left and any other value on the right; a type parameter's text pads
+    /// as its type argument's does, which `mono` decides. Only an `f64` takes a precision.
     fn format(
         &mut self,
         i: usize,
@@ -115,6 +117,8 @@ impl Checker<'_> {
         ty: Type,
     ) -> tir::Format {
         let numeric = matches!(ty, Type::I64 | Type::U8 | Type::F64);
+        let by_type =
+            spec.align.is_none() && matches!(ty.kind(), TypeKind::Param(..) | TypeKind::Assoc(..));
         let pad = spec.width.map(|width| tir::Pad {
             align: spec.align.unwrap_or(if numeric {
                 tir::Align::Right
@@ -122,6 +126,7 @@ impl Checker<'_> {
                 tir::Align::Left
             }),
             width,
+            by_type,
         });
         let mut precision = spec.precision;
         if precision.is_some() && ty != Type::F64 {

@@ -267,7 +267,7 @@ fn main() {
 
 The rules:
 
-- The value of the expression must be an `i64`, a `u8`, an `f64`, a `bool`, a `char` or a `string` ([E0098](../diagnostics/E0098.md)). The section [Text of other types](strings.md#text-of-other-types) is in development, and it changes this rule.
+- The value of the expression can have any type except `unit`, `never` and an optional ([E0098](../diagnostics/E0098.md)). The text of an array, an object or an enum is in [Text of other types](strings.md#text-of-other-types). The section [Option and Result](types.md#option-and-result) is in development, and it changes the rule for an optional.
 - The expression can include a string literal of its own: `"{ "a" + "b" }"`.
 - The expression must be on the line of the string literal.
 - A `}` closes the interpolation only when every bracket opened in the interpolation is closed. A `{` or `}` in a string or character literal in the expression does not count, so `"{ c == '}' }"` is valid.
@@ -278,8 +278,8 @@ The rules:
 
 ```sisu
 fn main() {
-    let xs = [1, 2]
-    print("xs = {xs}")       // error[E0098]
+    let name: string? = "Sisu"
+    print("name = {name}")   // error[E0098]
 }
 ```
 

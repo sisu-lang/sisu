@@ -174,7 +174,11 @@ impl Printer<'_> {
             Rvalue::Concat { lhs, rhs } => {
                 format!("concat({}, {})", self.operand(lhs), self.operand(rhs))
             }
-            Rvalue::Interpolate { parts, formats } => {
+            Rvalue::Interpolate {
+                parts,
+                formats,
+                calls,
+            } => {
                 // The formats are in part order, so one pass over them meets each in turn.
                 let mut formats = formats.iter().peekable();
                 let parts: Vec<_> = parts
@@ -192,7 +196,7 @@ impl Printer<'_> {
                         }
                     })
                     .collect();
-                format!("interp({})", parts.join(", "))
+                flagged(format!("interp({})", parts.join(", ")), *calls)
             }
             Rvalue::ReadLine => "call read_line()".to_owned(),
             Rvalue::Chars(operand) => format!("chars {}", self.operand(operand)),

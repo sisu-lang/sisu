@@ -241,7 +241,7 @@ The rules:
 - `!`, `&&` and `||` take only a `bool`, so a `T` there is a type mismatch ([E0032](../diagnostics/E0032.md)).
 - A `T` has no method and no field ([E0063](../diagnostics/E0063.md)).
 - `is` does not apply to a `T`, because `T` can stand for a type that is not a class ([E0046](../diagnostics/E0046.md)).
-- `print` takes a `T` with no bound, because every type has a `Display` ([Display, Eq and Ord](#display-eq-and-ord)). Interpolation does not take a `T` yet ([E0098](../diagnostics/E0098.md)).
+- `print` takes a `T` with no bound, because every type has a `Display` ([Display, Eq and Ord](#display-eq-and-ord)). Interpolation and `to_string()` take a `T` as well.
 - `[x; n]` with `x: T` is an error ([E0067](../diagnostics/E0067.md)), because `T` can be a class ([Filled arrays](arrays.md#filled-arrays)). `[None; n]` is valid.
 - `match` does not take a `T` ([E0124](../diagnostics/E0124.md)). In a payload of the type `T`, a pattern is a name or `_` ([Variant patterns](enums.md#variants)).
 

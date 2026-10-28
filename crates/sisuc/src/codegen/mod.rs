@@ -678,9 +678,15 @@ impl<'ctx> Codegen<'ctx, '_> {
                 let lhs = self.pointer(lhs);
                 self.concat(lhs, self.pointer(rhs)).into()
             }
-            Rvalue::Interpolate { parts, formats } => {
+            Rvalue::Interpolate { parts, formats, .. } => {
                 let parts: Vec<_> = parts.iter().map(|part| self.operand(part)).collect();
-                let text = self.interpolate(&parts, formats);
+                // Text, numbers, `bool` and `char` go in one block of known size; a compound part
+                // goes through a sink.
+                let text = if parts.iter().all(|&(_, ty)| text_part(ty)) {
+                    self.interpolate(&parts, formats)
+                } else {
+                    self.interpolate_compound(&parts, formats)
+                };
                 for (value, ty) in parts {
                     self.release(value, ty);
                 }
@@ -1247,6 +1253,20 @@ pub(crate) fn keep_functions(module: &Module<'_>, names: &str) {
             function.add_attribute(AttributeLoc::Function, noinline);
         }
     }
+}
+
+/// Whether an interpolation writes a part of type `ty` itself, in the one block of its result: a
+/// number, a `bool`, a `char` or a `string`.
+fn text_part(ty: Type) -> bool {
+    matches!(
+        ty.kind(),
+        TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::String
+    )
 }
 
 /// Verifies `module`, then runs the pipeline. This is the build's only verifier run: a pass

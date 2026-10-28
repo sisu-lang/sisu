@@ -111,7 +111,7 @@ const IDENTITY: &str = "reach: a class is compared with `is` or against `None`";
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 89] = [
+const REACH: [&str; 91] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -201,6 +201,8 @@ const REACH: [&str; 89] = [
     "reach: an `==` or `print` on a compound value runs no written method",
     "reach: `print` writes a compound value",
     "reach: `print` runs a written `to_string` inside a value",
+    "reach: an interpolation writes a compound part",
+    "reach: `to_string` runs on a generated `Display`",
 ];
 
 /// Whether `ty` is an array, an optional, an enum or a class: a type whose value `print` writes
@@ -564,9 +566,10 @@ impl Walk {
         }
     }
 
-    /// The keys that the built mir shows: an `==`, `contains` or `print` on a compound value that
-    /// may run a written method inside it, and one that cannot. The mir is that of the program
-    /// `mono` instantiates, as lowering makes it: `build` sets the same flags and costs far more.
+    /// The keys that the built mir shows: an `==`, `contains`, `print` or interpolation on a
+    /// compound value that may run a written method inside it, and one that cannot. The mir is
+    /// that of the program `mono` instantiates, as lowering makes it: `build` sets the same flags
+    /// and costs far more.
     fn built(&mut self, program: tir::Program) {
         let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
         let mir = crate::mir::lowered(&program);
@@ -576,21 +579,32 @@ impl Walk {
                     let crate::mir::Statement::Assign { value, .. } = stmt else {
                         continue;
                     };
-                    let (operand, calls, printed) = match value {
-                        crate::mir::Rvalue::Equal { lhs, calls, .. } => (lhs, *calls, false),
-                        crate::mir::Rvalue::Contains { base, calls, .. } => (base, *calls, false),
-                        crate::mir::Rvalue::Print { operand, calls, .. } => (operand, *calls, true),
-                        _ => continue,
-                    };
-                    // A whole local is all that tells the type here.
-                    let local = match operand {
-                        crate::mir::Operand::Use(l) => *l,
-                        crate::mir::Operand::Read(place) if place.projections.is_empty() => {
-                            place.local
+                    let (operands, calls, printed) = match value {
+                        crate::mir::Rvalue::Equal { lhs, calls, .. } => {
+                            (std::slice::from_ref(lhs), *calls, false)
+                        }
+                        crate::mir::Rvalue::Contains { base, calls, .. } => {
+                            (std::slice::from_ref(base), *calls, false)
+                        }
+                        crate::mir::Rvalue::Print { operand, calls, .. } => {
+                            (std::slice::from_ref(operand), *calls, true)
+                        }
+                        crate::mir::Rvalue::Interpolate { parts, calls, .. } => {
+                            (&parts[..], *calls, false)
                         }
                         _ => continue,
                     };
-                    let compound = is_compound(function.locals[local.0].ty);
+                    // A whole local is all that tells the type here.
+                    let compound = operands.iter().any(|operand| {
+                        let local = match operand {
+                            crate::mir::Operand::Use(l) => *l,
+                            crate::mir::Operand::Read(place) if place.projections.is_empty() => {
+                                place.local
+                            }
+                            _ => return false,
+                        };
+                        is_compound(function.locals[local.0].ty)
+                    });
                     if calls {
                         self.mark("reach: an `==` or `print` runs a written method inside a value");
                         if printed {
@@ -2275,8 +2289,18 @@ impl Walk {
                 self.tir_expr(lhs, Parent::Other);
                 self.tir_expr(rhs, Parent::Other);
             }
-            tir::ExprKind::Interpolate { parts, .. } => {
+            tir::ExprKind::Interpolate { parts, formats } => {
                 self.mark("tir::ExprKind::Interpolate");
+                if parts.iter().any(|part| is_compound(part.ty)) {
+                    self.mark("reach: an interpolation writes a compound part");
+                }
+                // A call of `to_string` on a type whose `Display` the compiler writes is an
+                // interpolation of one part, with the span of the call.
+                if let ([_], []) = (&parts[..], &formats[..])
+                    && self.source[e.span.range()].ends_with(".to_string()")
+                {
+                    self.mark("reach: `to_string` runs on a generated `Display`");
+                }
                 self.tir_exprs(parts);
             }
             tir::ExprKind::Concat { lhs, rhs } => {

@@ -1,6 +1,7 @@
-class P {}
+fn greet() {
+    print("hi")
+}
 
 fn main() {
-    let p = P()
-    print("{p}")
+    print("{greet()}")
 }

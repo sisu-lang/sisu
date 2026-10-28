@@ -184,13 +184,45 @@ impl Gen<'_> {
         self.effect = effect;
     }
 
+    /// A value for `print`, in a `form` from 0 to 3: as it is, interpolated alone, interpolated
+    /// with a width, or through `to_string`. Each writes the same text for a compound value or a
+    /// number, and only `to_string` takes an optional, which `print` and an interpolation reject.
+    fn printed_value(&mut self, form: usize) {
+        if form == 3 {
+            let ty = self.bare_type();
+            self.w.text("(");
+            self.synth = true;
+            self.expr(&ty, MAX_SIZE);
+            self.w.text(").to_string()");
+            return;
+        }
+        let ty = self.print_type();
+        if form == 0 {
+            self.synth = true;
+            self.expr(&ty, MAX_SIZE);
+            return;
+        }
+        let one_line = std::mem::replace(&mut self.one_line, true);
+        self.w.text("\"{");
+        self.synth = true;
+        self.expr(&ty, MAX_SIZE);
+        if form == 2 {
+            let align = ["", "<", ">", "^"][self.pick(4)];
+            let width = self.upto(39) + 1;
+            self.w.text(&format!(":{align}{width}"));
+        }
+        self.w.text("}\"");
+        self.one_line = one_line;
+    }
+
     fn stmt_rule(&mut self, rule: Rule) {
         match rule {
             Rule::Print => {
-                self.one_of(&["print(", "eprint("]);
-                let ty = self.print_type();
-                self.synth = true;
-                self.expr(&ty, MAX_SIZE);
+                // One pick for both, so that the bytes after it stay where they were: the stream
+                // is `print` or `eprint`, and the form is the value's.
+                let choice = self.pick(8);
+                self.w.text(["print(", "eprint("][choice % 2]);
+                self.printed_value(choice / 2);
                 self.w.text(")");
             }
             Rule::Let => self.let_stmt(),

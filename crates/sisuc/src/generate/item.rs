@@ -820,7 +820,11 @@ impl Gen<'_> {
                 "Ord",
                 "if x < x || x >= x || x.less(x) { 2 } else { 2 }",
             ),
-            ("display", "Display", "3"),
+            (
+                "display",
+                "Display",
+                "if x.to_string() == \"\" || x.to_string() != \"\" { 3 } else { 3 }",
+            ),
         ] {
             self.w.text(&format!(
                 "fn lang_{name}<T: {bound}>(x: T) -> i64 {{ {body} }}"
@@ -838,6 +842,8 @@ impl Gen<'_> {
             "let _ = lang_ord('c')".to_string(),
             "let _ = lang_display(true)".to_string(),
             "let _ = lang_display([\"a\"])".to_string(),
+            "let _ = lang_display(Choice.Nothing)".to_string(),
+            "let _ = 5.to_string() == \"5\" && \"{[1, 2]}\" == [1, 2].to_string()".to_string(),
             "let rank_a = Ranked(r: 1)".to_string(),
             "let rank_b = Ranked(r: 2)".to_string(),
             "let rank_m: Ranked? = rank_b".to_string(),

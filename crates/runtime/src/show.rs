@@ -13,6 +13,7 @@
 use std::io::Write;
 use std::ptr;
 
+use crate::text::sisu_pad;
 use crate::{float, sisu_alloc, sisu_realloc, stdout_panic, text, with_stdout};
 
 /// The size in bytes of a [`Sink`]. Generated code allocates this much for a sink, and
@@ -108,6 +109,26 @@ impl Sink {
         let grown = unsafe { sisu_realloc(self.block, old_size, BLOCK_ALIGN, new_size) };
         self.block = grown;
         self.cap = cap;
+    }
+
+    /// Pads the text written since `mark` to `width` code points, in place, as `sisu_pad` pads a
+    /// part. Interpolation pads a part of a buffer sink: standard output has taken its text
+    /// already, so a standard output sink cannot pad.
+    fn pad(&mut self, mark: usize, width: usize, align: u8) {
+        if self.kind == STDOUT || mark > self.len {
+            std::process::abort();
+        }
+        // `sisu_pad` writes at most `width` bytes after the text, so make room for as many.
+        self.reserve(width);
+        let text = self.block.wrapping_add(self.header + mark);
+        #[expect(
+            unsafe_code,
+            reason = "pads the text in the block that `reserve` has grown"
+        )]
+        // SAFETY: the block holds the `len - mark` bytes of text at `text`, and `reserve` made
+        // room for `width` more after `len`, so `len - mark + width` bytes are writable there.
+        let padded = unsafe { sisu_pad(text, self.len - mark, width, align) };
+        self.len = mark + padded;
     }
 
     /// Ends the line: a standard output sink writes the newline and the line's end, a buffer
@@ -277,6 +298,39 @@ pub unsafe extern "C" fn sisu_show_finish(sink: *mut Sink) -> *mut u8 {
 pub unsafe extern "C" fn sisu_show_line_end(sink: *mut Sink) {
     // SAFETY: the caller promises that `sink` is started.
     unsafe { sink_at(sink) }.line_end();
+}
+
+/// The length of the text of `sink` so far, for `sisu_show_pad` to pad from. A buffer sink
+/// only: standard output has taken its text already.
+///
+/// # Safety
+///
+/// `sink` is a started sink.
+#[expect(
+    unsafe_code,
+    reason = "generated code calls this function by its unmangled symbol name and passes a raw pointer"
+)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sisu_show_mark(sink: *mut Sink) -> usize {
+    // SAFETY: the caller promises that `sink` is started.
+    unsafe { sink_at(sink) }.len
+}
+
+/// Pads the text written since `mark`, a result of `sisu_show_mark` on the same buffer sink, to
+/// `width` code points, in place, as `sisu_pad` does: `align` 0 puts the text on the left, 1 on
+/// the right and 2 in the centre. The sink grows if the padding needs room.
+///
+/// # Safety
+///
+/// `sink` is a started buffer sink. `mark` is at most its text length.
+#[expect(
+    unsafe_code,
+    reason = "generated code calls this function by its unmangled symbol name and passes a raw pointer"
+)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sisu_show_pad(sink: *mut Sink, mark: usize, width: usize, align: u8) {
+    // SAFETY: the caller promises that `sink` is started.
+    unsafe { sink_at(sink) }.pad(mark, width, align);
 }
 
 /// Writes the `len` bytes at `bytes` as they are.
@@ -672,6 +726,65 @@ mod tests {
         let long = "x".repeat(1000);
         let (text, cap) = buffered(|s| raw(s, &long));
         assert_eq!((text, cap), (long, 1024));
+    }
+
+    /// `text` after `before`, padded by `sisu_show_pad` from the mark that `sisu_show_mark` gave
+    /// before `text`; `before` stays as it is.
+    #[expect(unsafe_code, reason = "the test calls the runtime's C ABI")]
+    fn padded_after(before: &str, text: &str, width: usize, align: u8) -> String {
+        text_of(|s| {
+            raw(s, before);
+            // SAFETY: `s` is a started buffer sink.
+            let mark = unsafe { sisu_show_mark(s) };
+            raw(s, text);
+            // SAFETY: as above, and `mark` came from the same sink.
+            unsafe { sisu_show_pad(s, mark, width, align) };
+        })
+    }
+
+    /// `sisu_show_pad` pads the text since the mark as `sisu_pad` pads a part, for each
+    /// alignment, and never the text before the mark.
+    #[test]
+    fn pad_should_pad_the_text_since_the_mark_as_sisu_pad_does() {
+        for (text, width, align, want) in [
+            ("é", 5, 1, "    é"),
+            ("日本", 7, 2, "  日本   "),
+            ("abc", 2, 0, "abc"),
+            ("abc", 3, 1, "abc"),
+            ("ab", 4, 0, "ab  "),
+            ("ab", 4, 1, "  ab"),
+            ("ab", 4, 2, " ab "),
+            ("ab", 5, 2, " ab  "),
+            ("", 3, 0, "   "),
+        ] {
+            let got = padded_after("xy", text, width, align);
+            assert_eq!(got, format!("xy{want}"), "{text:?} {width} {align}");
+        }
+    }
+
+    /// The room for the padding is made when the text is at the end of the room, and the
+    /// text before the mark stays.
+    #[test]
+    fn pad_should_grow_the_buffer_when_the_padding_does_not_fit() {
+        let before = "b".repeat(60);
+        let got = padded_after(&before, "abc", 40, 1);
+        assert_eq!(got, format!("{before}{}abc", " ".repeat(37)));
+    }
+
+    /// A mark is the length of the text so far.
+    #[expect(unsafe_code, reason = "the test calls the runtime's C ABI")]
+    #[test]
+    fn mark_should_be_the_length_of_the_text_so_far() {
+        let marks = std::cell::RefCell::new(Vec::new());
+        let text = text_of(|s| {
+            // SAFETY: `s` is a started buffer sink.
+            marks.borrow_mut().push(unsafe { sisu_show_mark(s) });
+            raw(s, "abc");
+            // SAFETY: as above.
+            marks.borrow_mut().push(unsafe { sisu_show_mark(s) });
+        });
+        assert_eq!(text, "abc");
+        assert_eq!(*marks.borrow(), [0, 3]);
     }
 
     /// The sink is `SINK_SIZE` bytes and keeps `len` and `cap` where generated code reads them,

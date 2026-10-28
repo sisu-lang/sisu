@@ -117,7 +117,7 @@ Hello, Aino
 Hello, Eero
 ```
 
-`print` takes an array, and writes it as `[1, 2]` ([Text of other types](strings.md#text-of-other-types)). An interpolation cannot take an array yet ([E0098](../diagnostics/E0098.md)). A `string` or a `char` in an array is quoted: `["a", "b"]`.
+`print` takes an array, and writes it as `[1, 2]` ([Text of other types](strings.md#text-of-other-types)). An interpolation takes an array too: `"{xs}"` writes the same text, and `xs.to_string()` gives it as a `string`. A `string` or a `char` in an array is quoted: `["a", "b"]`.
 
 ## Methods
 

@@ -1,0 +1,18 @@
+fn iterations() -> i64 { 1000 }
+
+// The same for a tree of five nodes: one block for each call, none for a node. The value is
+// built once, so its boxes are the same with no iteration.
+enum Expr {
+    Num(i64)
+    Add(Expr, Expr)
+    Mul(Expr, Expr)
+}
+
+fn main() {
+    let e = Expr.Add(Expr.Num(1), Expr.Mul(Expr.Num(2), Expr.Num(3)))
+    let mut last = "-"
+    for _ in 0..iterations() {
+        last = e.to_string()
+    }
+    print(last)
+}

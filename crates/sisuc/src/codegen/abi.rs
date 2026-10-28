@@ -294,8 +294,20 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
         attrs: NOUNWIND,
     },
     RuntimeFn {
+        name: "sisu_show_mark",
+        params: &[Abi::Ptr],
+        ret: Some(Abi::I64),
+        attrs: NOUNWIND,
+    },
+    RuntimeFn {
         name: "sisu_show_open",
         params: &[Abi::Ptr, Abi::Ptr, Abi::I64],
+        ret: None,
+        attrs: NOUNWIND,
+    },
+    RuntimeFn {
+        name: "sisu_show_pad",
+        params: &[Abi::Ptr, Abi::I64, Abi::I64, Abi::U8],
         ret: None,
         attrs: NOUNWIND,
     },

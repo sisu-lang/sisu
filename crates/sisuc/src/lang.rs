@@ -3,6 +3,8 @@
 //! operand type that it knows, and `mono` calls it again for an operand whose type a type argument
 //! fixes.
 //!
+//! `to_string` on a type whose `Display` the compiler writes is a one-part interpolation.
+//!
 //! The caller chooses a [`Dispatch`]. A generated conformance keeps today's node: `Equal` and
 //! `Compare`. A written one is a call of the conformance's method, with the spec's formulas:
 //! `a != b` is `!a.eq(b)`, `a > b` is `b.less(a)`, `a <= b` is `!b.less(a)` and `a >= b` is
@@ -37,6 +39,15 @@ impl Cx<'_> {
             mutable: false,
         });
         id
+    }
+}
+
+/// The node for `operand.to_string()` where the compiler writes the `Display`: a one-part
+/// interpolation, which `print` and `"{x}"` already lower the same way for every type.
+pub(crate) fn to_string(operand: Expr) -> ExprKind {
+    ExprKind::Interpolate {
+        parts: vec![operand],
+        formats: Vec::new(),
     }
 }
 

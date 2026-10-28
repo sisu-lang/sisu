@@ -1,0 +1,8 @@
+error[E0111]: precision needs an `f64`
+ --> E0111-enum.sisu:7:14
+  |
+7 |     print("{s:.2}")
+  |              ^^^ the value is `Shape`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0111

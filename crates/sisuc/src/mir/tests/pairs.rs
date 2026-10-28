@@ -311,14 +311,27 @@ fn equal_without_a_written_eq_should_not_be_flagged() {
 }
 
 /// A class whose written `to_string` stores into a `mut` field, as a call can: the copy `old` of
-/// `b.s` stays a copy across any `print` whose helper may run that `to_string`, the object itself
-/// or a value that holds it.
+/// `b.s` stays a copy across any `print` or interpolation whose helper may run that `to_string`,
+/// the object itself or a value that holds it.
 #[test]
 fn copy_should_stay_across_a_written_to_string() {
     let decls = "class B {\n    mut s: string\n}\nextend B: Display {\n    fn to_string(self) -> string {\n        self.s = \"new\"\n        \"B\"\n    }\n}\nenum Wrap {\n    One(B)\n}\n";
-    for printed in ["print(b)", "print([b])", "print(Wrap.One(b))"] {
+    for printed in [
+        "print(b)",
+        "print([b])",
+        "print(Wrap.One(b))",
+        "let t = \"{b}\"",
+        "let t = \"{[b]}\"",
+        "let t = \"{Wrap.One(b)}\"",
+    ] {
+        // The text of an interpolation is printed last.
+        let last = if printed.starts_with("let t") {
+            "\n    print(t)"
+        } else {
+            ""
+        };
         let src = format!(
-            "{decls}fn main() {{\n    let b = B(s: \"heap {{1}}\")\n    let old = b.s\n    {printed}\n    print(old)\n    print(b.s)\n}}"
+            "{decls}fn main() {{\n    let b = B(s: \"heap {{1}}\")\n    let old = b.s\n    {printed}\n    print(old)\n    print(b.s){last}\n}}"
         );
         let f = function(&built(&src), "main");
         let copy = f

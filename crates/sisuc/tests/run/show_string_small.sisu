@@ -1,0 +1,24 @@
+fn iterations() -> i64 { 1000 }
+
+// `e.to_string()` writes its text through a buffer sink: the one block that becomes the result
+// string, whose first 64 bytes of room hold the text. It allocates once for each call and nothing
+// for the node. Each assignment releases the previous result. The branch that builds `Add` and
+// `Mul` never runs: it keeps every variant built.
+enum Expr {
+    Num(i64)
+    Add(Expr, Expr)
+    Mul(Expr, Expr)
+}
+
+fn main() {
+    let e = if iterations() > 100000 {
+        Expr.Add(Expr.Num(1), Expr.Mul(Expr.Num(2), Expr.Num(3)))
+    } else {
+        Expr.Num(1)
+    }
+    let mut last = "-"
+    for _ in 0..iterations() {
+        last = e.to_string()
+    }
+    print(last)
+}

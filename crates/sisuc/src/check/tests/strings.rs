@@ -91,12 +91,12 @@ fn interpolation_spills() {
     );
 }
 
-/// Each part that is not an `i64`, `u8`, `f64`, `bool`, `char` or `string` is reported at the part;
-/// one whose type is unknown reports nothing more.
+/// An optional part and a part with no value are reported at the part; one whose type is unknown
+/// reports nothing more. Every other type interpolates (`interpolation_should_take_every_type`).
 #[test]
-fn cannot_interpolate() {
+fn interpolating_an_optional_or_a_unit_should_report_the_part() {
     let params = "xs: [i64], m: [i64]?, n: i64?, p: P";
-    for part in ["xs", "m", "n", "p", "print(1)"] {
+    for part in ["m", "n", "print(1)"] {
         let src = with_items(&body(params, &format!("print(\"a{{{part}}}\")")));
         codes(&src, &[(Code::CannotInterpolate, (2, 14))]);
     }
@@ -114,7 +114,7 @@ fn cannot_interpolate() {
 /// A spec's alignment defaults by type: numbers right, the rest left. Precision needs an `f64`;
 /// on an `i64` the safe fix converts it.
 #[test]
-fn format_spec_checks() {
+fn format_spec_should_default_its_alignment_by_type_and_take_a_precision_for_an_f64_only() {
     let params = "n: i64, b: u8, x: f64, s: string, c: char, t: bool";
     for (statement, part) in [
         ("print(\"{n:5}\")", "(fmt n#0 \">5\")"),
@@ -159,7 +159,7 @@ fn format_spec_checks() {
         assert_eq!(fixes(&src, &d), [], "{src}");
     }
     // A part that is already reported gets no precision error.
-    let params = "xs: [i64], n: i64";
+    let params = "xs: [i64]?, n: i64";
     codes(
         &body(params, "print(\"{xs:.2}\")"),
         &[(Code::CannotInterpolate, (2, 13))],
@@ -173,6 +173,16 @@ fn format_spec_checks() {
 /// `src` with a class `P` and a function `g` after it, on lines that come after `body`'s.
 fn with_items(src: &str) -> String {
     format!("{src}\nclass P {{\n    mut name: string\n}}\nfn g(x: i64) -> i64 {{\n    x\n}}")
+}
+
+/// An array, a class, an enum and a type parameter interpolate as the types of `print` do, and
+/// take a width: the text of any type pads.
+#[test]
+fn interpolation_should_take_every_type() {
+    contains(
+        "class P {\n    _name: string\n}\nenum E {\n    A\n}\nfn f<T>(xs: [i64], p: P, e: E, t: T) {\n    print(\"{xs}{p}{e:>30}{t}\")\n}\nfn main() {}",
+        &["(interp xs#0 p#1 (fmt e#2 \">30\") t#3)"],
+    );
 }
 
 /// A `string` joined to a `print`ed value that is not one: in each row, the statement on line 2,
@@ -413,8 +423,8 @@ fn nested_joins_check_in_quadratic_time() {
 /// expected type, a `char` beside it nor its uses report anything more: the operand may have
 /// been meant as a number.
 #[test]
-fn failed_concat_type() {
-    let params = "s: string, xs: [i64], n: i64, c: char";
+fn a_join_with_a_failed_operand_should_have_the_type_error() {
+    let params = "s: string, xs: [i64]?, n: i64, c: char";
     for (statement, expected) in [
         ("let b: u8 = nope + s", (Code::BindingNotFound, (2, 17))),
         ("let b: u8 = s + nope", (Code::BindingNotFound, (2, 21))),

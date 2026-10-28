@@ -576,15 +576,12 @@ crates/sisuc/src/check/tests/shadowing.rs::if_let_binding_shadowed
 crates/sisuc/src/check/tests/shadowing.rs::let_mut_shadows_let
 crates/sisuc/src/check/tests/shadowing.rs::rhs_sees_old_binding
 crates/sisuc/src/check/tests/shadowing.rs::type_can_change
-crates/sisuc/src/check/tests/strings.rs::cannot_interpolate
 crates/sisuc/src/check/tests/strings.rs::chain_binds_each_operand
 crates/sisuc/src/check/tests/strings.rs::chars_and_bytes_are_arrays
 crates/sisuc/src/check/tests/strings.rs::compare_spills
 crates/sisuc/src/check/tests/strings.rs::concat_mismatch
 crates/sisuc/src/check/tests/strings.rs::concat_mismatch_layout
 crates/sisuc/src/check/tests/strings.rs::concat_spills
-crates/sisuc/src/check/tests/strings.rs::failed_concat_type
-crates/sisuc/src/check/tests/strings.rs::format_spec_checks
 crates/sisuc/src/check/tests/strings.rs::interpolation_spills
 crates/sisuc/src/check/tests/strings.rs::join_literal_after_another_mismatch
 crates/sisuc/src/check/tests/strings.rs::join_literal_in_element_compound
@@ -1521,7 +1518,6 @@ crates/sisuc/src/tir.rs::prints_every_node
 crates/sisuc/src/tir.rs::prints_float_literals
 crates/sisuc/src/tir.rs::prints_functions_joined_by_newline
 crates/sisuc/src/tir.rs::prints_interpolation
-crates/sisuc/src/tir.rs::prints_interpolation_with_formats
 crates/sisuc/src/tir.rs::prints_panic
 crates/sisuc/src/tir.rs::prints_read_line
 crates/sisuc/src/tir.rs::prints_strings

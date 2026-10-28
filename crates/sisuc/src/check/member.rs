@@ -13,6 +13,15 @@ use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, InterfaceId, Type, TypeArgs, TypeKind};
 
+/// What a method lookup found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Found {
+    /// A method that the program writes.
+    Func(tir::FuncId),
+    /// No written `to_string` answers the call, so the `Display` that the compiler writes does.
+    GeneratedDisplay,
+}
+
 impl Checker<'_> {
     /// `receiver.member`, which `member` checks on the checked receiver. With `safe`, it is
     /// `receiver?.member`, and `member` checks it on a fresh local bound to the receiver's
@@ -257,13 +266,15 @@ impl Checker<'_> {
         receiver: &ast::Expr,
         site: Site<'_>,
         target: bool,
-        span: Span,
-    ) -> Option<tir::FuncId> {
+        (span, nullary): (Span, bool),
+    ) -> Option<Found> {
         let ty = ty?;
         let name = site.name;
         let mut masked = None;
         match self.own_method(ty, name.name) {
-            Some(Declared::Known(func)) if self.plain_block_holds(func, ty) => return Some(func),
+            Some(Declared::Known(func)) if self.plain_block_holds(func, ty) => {
+                return Some(Found::Func(func));
+            }
             // A conformance that applies answers the call instead.
             Some(Declared::Known(func)) => masked = Some(func),
             // Its own error is reported; the caller checks the arguments.
@@ -273,6 +284,12 @@ impl Checker<'_> {
         self.conforming_methods(ty, name.name);
         match self.candidates[..] {
             [] => {
+                // Every type has a `Display`: when no method `to_string` answers the call, because
+                // there is none or its bounds fail for the receiver, the generated one does. No
+                // other method has a fallback.
+                if nullary && name.name.as_str() == "to_string" && !self.has_broken_block(ty) {
+                    return Some(Found::GeneratedDisplay);
+                }
                 // No conformance answers, and the bounds of the plain block fail for the receiver.
                 if let Some(func) = masked {
                     let at = (self.signatures[func.0].extension)
@@ -286,19 +303,17 @@ impl Checker<'_> {
                     return None;
                 }
             }
-            [(func, ..)] => return Some(func),
+            [(func, ..)] => return Some(Found::Func(func)),
             _ => {
                 // Taken while the call picks, so that the buffer is free to the calls it reads.
                 let candidates = std::mem::take(&mut self.candidates);
                 let picked = self.pick_conforming(ty, site, span, &candidates);
                 self.candidates = candidates;
-                return picked;
+                return picked.map(Found::Func);
             }
         }
         // A broken block may have given the type the method.
-        let broken = holder_of(ty)
-            .is_some_and(|holder| self.broken_extensions.contains(&self.holder_name(holder)));
-        if broken {
+        if self.has_broken_block(ty) {
             return None;
         }
         let d = match ty.kind() {
@@ -336,6 +351,13 @@ impl Checker<'_> {
         };
         self.diagnostics.push(d);
         None
+    }
+
+    /// Whether an `extend` block of the class or enum `ty` is broken: it may have given `ty`
+    /// the method that a call names.
+    fn has_broken_block(&self, ty: Type) -> bool {
+        holder_of(ty)
+            .is_some_and(|holder| self.broken_extensions.contains(&self.holder_name(holder)))
     }
 
     /// `own_method`, unless the method is a plain block's and the bounds of its block fail for

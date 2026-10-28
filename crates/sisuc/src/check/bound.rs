@@ -5,7 +5,7 @@ use super::generic::{GenericSig, Site, mismatched, named_params};
 use super::interface::Required;
 use super::{Checked, Checker, Poisoned};
 use crate::ast;
-use crate::diagnostic::{Definition, DiagnosticKind, UnknownForm};
+use crate::diagnostic::{Definition, DiagnosticKind};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeArgs};
 
@@ -22,7 +22,16 @@ impl Checker<'_> {
         site: Site<'_>,
         args: &[ast::Arg],
     ) -> Checked {
-        let found = self.required(ty, site.name.name);
+        let mut found = self.required(ty, site.name.name);
+        // Every type parameter has a `Display`, with no bound (the spec's "Every type parameter
+        // prints"), so `to_string` is always a call of it. `mono` lowers it for the type argument.
+        if found.is_empty() && site.name.name.as_str() == "to_string" {
+            found.push(Required {
+                interface: self.lang.display,
+                args: TypeArgs::NONE,
+                method: 0,
+            });
+        }
         let Some(picked) = self.pick_required(ty, site, span, &found) else {
             self.labels(args);
             self.stray(args);
@@ -33,18 +42,6 @@ impl Checker<'_> {
             args: iargs,
             method,
         } = picked;
-        // Until the task that lowers it, a call of `to_string` through a bound of `Display`
-        // waits: `mono` would find no conformance for a generated one.
-        if interface == self.lang.display {
-            self.labels(args);
-            self.stray(args);
-            self.report(DiagnosticKind::UnknownType {
-                name: site.name.name.to_string(),
-                at: site.name.span,
-                form: UnknownForm::Name { suggestion: None },
-            });
-            return Err(Poisoned::error());
-        }
         let labeled = self.labels(args);
         // The call keeps copies of the requirement while it checks its arguments, as `invoke`
         // does of a function.

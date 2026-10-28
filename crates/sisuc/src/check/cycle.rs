@@ -36,8 +36,9 @@
 //! the enum's generated `Eq` node, a declaration of its own that has the enum's parameters and an
 //! edge for each payload type, chosen by the same rule. Any other type goes to the interface's
 //! hub, as the receiver of a call through a bound does. An enum with only conditional
-//! conformances takes both edges. A `print` is the same for `Display`: its operand type chooses
-//! the edges, and each enum has a generated `Display` node beside its generated `Eq` node.
+//! conformances takes both edges. A `print` and each part of an interpolation are the same for
+//! `Display`: the operand type chooses the edges, and each enum has a generated `Display` node
+//! beside its generated `Eq` node.
 //!
 //! Each parameter of a function, class, enum or generated node has a second node, for its value
 //! with its outer array and optional levels taken off, since the generated rule takes those off
@@ -792,6 +793,11 @@ impl Checker<'_> {
                     }
                     tir::ExprKind::Print { ref operand, .. } => {
                         graph.operator(holder, operand.ty, self.lang.display, e.span);
+                    }
+                    tir::ExprKind::Interpolate { ref parts, .. } => {
+                        for part in parts {
+                            graph.operator(holder, part.ty, self.lang.display, e.span);
+                        }
                     }
                     tir::ExprKind::Contains { ref base, .. } => {
                         let element =

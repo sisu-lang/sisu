@@ -1,9 +1,11 @@
 // Every type prints at the top level, through `print` and `eprint` (a generic `both` runs
-// both on its argument), by the rows of the spec's "Printing" table. A `string` or a `char` is
+// both on its argument, and then prints the same value through `"{x}"` and `x.to_string()`), by
+// the rows of the spec's "Printing" table. A `string` or a `char` is
 // bare alone and quoted in an array, a payload or an optional; an optional is transparent, and
 // by the Some rule `Some(` wraps only a `None`; a variant has no enum name and keeps its labels;
 // a class is its name with its type arguments; a written `to_string`'s text is raw wherever the
-// value sits. An optional alone is still an error, so the optional rows sit in an array.
+// value sits. An optional alone is still an error to `print`, so the optional rows sit in an
+// array there; `to_string` takes one alone.
 class Node {}
 
 class Stack<T> {
@@ -41,6 +43,18 @@ class Box<T> {
 extend<T: Eq> Box<T>: Display {
     fn to_string(self) -> string {
         "boxed"
+    }
+}
+
+// A plain block whose bounds fail for a `Node`: `to_string` falls back to the generated
+// `Display`, which prints the name.
+class Plain<T> {
+    _value: T
+}
+
+extend<T: Eq> Plain<T> {
+    fn to_string(self) -> string {
+        "plain"
     }
 }
 
@@ -159,9 +173,32 @@ enum Maybe2 {
     Next(Maybe2??)
 }
 
+// `print`, `eprint`, the interpolation and `to_string` write one text. The line of `eprint` goes
+// to the other stream.
 fn both<T>(x: T) {
     print(x)
     eprint(x)
+    print("{x}")
+    print(x.to_string())
+}
+
+fn via_bound<T: Display>(x: T) -> string {
+    x.to_string()
+}
+
+// The parts are evaluated before the buffer: a `return` in a part leaves the text of `e` to be
+// released and no buffer behind.
+fn tail(stop: bool) -> string {
+    let e = Expr.Add(Expr.Num(1), Expr.Num(2))
+    "{e}{if stop { return "done" } else { 0 }}"
+}
+
+fn deep(n: i64) -> Expr {
+    if n == 0 {
+        Expr.Num(0)
+    } else {
+        Expr.Add(Expr.Num(n), deep(n - 1))
+    }
 }
 
 fn main() {
@@ -290,4 +327,57 @@ fn main() {
     both(n1)                        // Some(None)
     both(n2)                        // 5
     both(m2)                        // Some(Some(None))
+
+    // `to_string` alone takes an optional, which prints by the Some rule.
+    print(n0.to_string())           // None
+    print(n1.to_string())           // Some(None)
+    print(n2.to_string())           // 5
+    print(m0.to_string())           // None
+    print(m1.to_string())           // Some(None)
+    print(m2.to_string())           // Some(Some(None))
+    print(m3.to_string())           // 5
+    let ss: string?? = Some("hi")
+    print(ss.to_string())           // hi
+
+    // `to_string` of each scalar is the text that `print` writes.
+    let small: u8 = 7
+    print(5.to_string())
+    print((0 - 5).to_string())
+    print(small.to_string())
+    print(2.5.to_string())
+    print(true.to_string())
+    print('x'.to_string())
+    print("hi".to_string())
+    print([1, 2].to_string())
+
+    // `to_string` through a bound, on a number and on an enum.
+    print(via_bound(1))
+    print(via_bound(Expr.Num(1)))
+
+    // The width pads the text of a compound part in place, from where the part starts.
+    let e = Expr.Add(Expr.Num(1), Expr.Num(2))
+    let x = 3.14159
+    print("{e:>30}")
+    print("{e:<30}|")
+    print("{e:^30}|")
+    print("{e:>5}|")
+    print("[{e:>22}]")
+    print("{e} {x:.2}")
+    print("{[1, 2]:>10}|{Node():<6}|{Shape.Dot:>5}|")
+
+    // A part that leaves evaluates before any text is written.
+    print(tail(false))
+    print(tail(true))
+
+    // A text longer than 128 bytes grows the buffer twice.
+    let long = deep(12).to_string()
+    print(long.len())
+    print(long)
+    print("{deep(12)}!".len())
+
+    // A conditional block whose bounds fail: `to_string` is the generated `Display`.
+    print(Plain(_value: Node()).to_string())
+    print(Plain(_value: 1).to_string())
+    print(Box(_value: Node()).to_string())
+    print(Box(_value: 1).to_string())
 }

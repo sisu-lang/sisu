@@ -1,8 +1,8 @@
-error[E0098]: cannot interpolate `P`
- --> E0098.sisu:5:13
+error[E0098]: cannot interpolate `unit`
+ --> E0098.sisu:6:13
   |
-5 |     print("{p}")
-  |             ^
+6 |     print("{greet()}")
+  |             ^^^^^^^
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0098

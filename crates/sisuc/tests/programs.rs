@@ -270,6 +270,12 @@ allocation_counts! {
     // A left-leaning value has two entries waiting at once, and the second spills the pending list
     // to the heap: one block for each `print`.
     (show_print_left, "start\n".to_string() + &"Add(Add(Num(1), Num(2)), Num(3))\n".repeat(1000), "start\n", 1000),
+    // `e.to_string()` of an enum is one block, the result string, for each call and none for a
+    // node, whatever the size of the tree.
+    (show_string_small, "Num(1)\n", "-\n", 1000),
+    (show_string_tree, "Add(Num(1), Mul(Num(2), Num(3)))\n", "-\n", 1000),
+    // An interpolation with a compound part is one block too.
+    (show_interp, "Add(Num(1), Mul(Num(2), Num(3)))!\n", "-\n", 1000),
     // `print` of an `i64` allocates nothing.
     (print_int, super::numbered_lines("start", 1000), "start\n", 0),
 }

@@ -25,3 +25,15 @@ new
 One(B)
 heap 1
 new
+B
+heap 1
+new
+[B]
+heap 1
+new
+One(B)
+heap 1
+new
+One(B)
+heap 1
+new

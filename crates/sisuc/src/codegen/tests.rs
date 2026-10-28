@@ -1716,6 +1716,35 @@ fn printing_a_compound_value_should_use_the_sink_of_its_stream() {
     assert!(main.contains(&format!("alloca [{words} x i64]")), "{main}");
 }
 
+/// An interpolation with a compound part writes every part through one buffer sink, which is the
+/// result string, and pads a part from its mark; one with only text and numbers keeps the block
+/// of known size and never touches a sink.
+#[test]
+fn interpolating_a_compound_part_should_use_one_buffer_sink() {
+    let context = Context::create();
+    let enum_part = "enum E {\n    A\n    B(E)\n}\nfn f(e: E, n: i64, x: f64) -> string {\n    \"{n}{e:>8}{x:.2}\"\n}\nfn main() {\n    print(f(E.B(E.A), 1, 2.5))\n}";
+    let ir = compiled(&context, enum_part).print_to_string().to_string();
+    let f = definition(&ir, "sisu.f");
+    for wanted in [
+        "@sisu_show_buffer(",
+        "@sisu_show_int(",
+        "@sisu_show_mark(",
+        "@sisu_show_pad(",
+        "@sisu_show_f64_fixed(",
+        "@sisu_show_finish(",
+    ] {
+        assert!(f.contains(wanted), "{wanted} in\n{f}");
+    }
+    assert_eq!(f.matches("@sisu_show_buffer(").count(), 1, "{f}");
+    assert_eq!(f.matches("@sisu_show_mark(").count(), 1, "{f}");
+    assert!(!f.contains("@sisu_alloc("), "the sink makes the block: {f}");
+    let plain = "fn f(s: string, n: i64) -> string {\n    \"{s}{n:>4}\"\n}\nfn main() {\n    print(f(\"a\", 1))\n}";
+    let ir = compiled(&context, plain).print_to_string().to_string();
+    let f = definition(&ir, "sisu.f");
+    assert!(f.contains("@sisu_write_int("), "{f}");
+    assert!(!f.contains("@sisu_show_"), "{f}");
+}
+
 /// The number of calls of `sisu_show_*` functions that printing `[x]` emits, for an `x` of a
 /// `char` under `layers` optionals that holds `None` in the outermost.
 fn show_calls_of_nested_optionals(layers: usize) -> usize {
@@ -2981,6 +3010,12 @@ fn instantiation_symbols_should_name_their_arguments() {
 /// The program of the chain `G0<T>` ... `G{n-1}<T>`: `main` builds one `Gk<i64>` for each k and
 /// compares it with itself, `G0` first.
 fn chain_program(n: usize) -> String {
+    chain_program_using(n, |k| format!("print(g{k} == g{k})"))
+}
+
+/// The program of the chain `G0<T>` ... `G{n-1}<T>` whose `main` runs `statement(k)` for each
+/// `Gk<i64>` that it builds.
+fn chain_program_using(n: usize, statement: impl Fn(usize) -> String) -> String {
     let mut src = String::new();
     for k in 0..n - 1 {
         writeln!(src, "enum G{k}<T> {{\n    A(G{}<T>)\n    End\n}}", k + 1)
@@ -2995,7 +3030,7 @@ fn chain_program(n: usize) -> String {
     writeln!(src, "    let g{} = G{}.End(1)", n - 1, n - 1)
         .expect("writing to a `String` should succeed");
     for k in 0..n {
-        writeln!(src, "    print(g{k} == g{k})").expect("writing to a `String` should succeed");
+        writeln!(src, "    {}", statement(k)).expect("writing to a `String` should succeed");
     }
     src + "}\n"
 }
@@ -3039,6 +3074,24 @@ fn mono_should_decide_each_type_once_and_codegen_should_ask_none() {
 #[test]
 fn mono_counts_should_grow_in_proportion_to_the_types() {
     let counts = |n| mono_counts(&chain_program(n)).0;
+    let (a, b, c) = (counts(20), counts(40), counts(60));
+    assert_near_linear(a.0, b.0, c.0);
+    assert_near_linear(a.1, b.1, c.1);
+}
+
+/// The walk of an interpolation is the walk of a `print`: it enters each `(type, interface)` pair
+/// once, and `holds` decides each enum key once, however many parts reach them.
+#[test]
+fn mono_should_walk_each_interpolated_type_once() {
+    let interpolated = |n| chain_program_using(n, |k| format!("print(\"{{g{k}}}\")"));
+    let (after_mono, after_codegen) = mono_counts(&interpolated(50));
+    assert_eq!(
+        after_mono,
+        (50, 51),
+        "`mono` should decide each key once and enter each pair once"
+    );
+    assert_eq!(after_codegen, after_mono, "codegen should ask no query");
+    let counts = |n| mono_counts(&interpolated(n)).0;
     let (a, b, c) = (counts(20), counts(40), counts(60));
     assert_near_linear(a.0, b.0, c.0);
     assert_near_linear(a.1, b.1, c.1);

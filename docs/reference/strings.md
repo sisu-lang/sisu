@@ -106,7 +106,7 @@ fn main() {
 
 ## Text of a value
 
-Interpolation and `print` write a value as text in the same way. They take an `i64`, a `u8`, an `f64`, a `bool`, a `char` or a `string` ([E0098](../diagnostics/E0098.md), [E0059](../diagnostics/E0059.md)).
+Interpolation and `print` write a value as text in the same way. They take a value of any type except `unit`, `never` and an optional ([E0098](../diagnostics/E0098.md), [E0059](../diagnostics/E0059.md)). The table lists the scalar types; [Text of other types](#text-of-other-types) lists the others.
 
 | Type | Text |
 | --- | --- |
@@ -134,7 +134,7 @@ fn main() {
 
 ### Text of other types
 
-`print` also takes a value of any type that can be a type argument. An array prints as `[1, 2]`. A class prints its name. A class can write its own text with a method `to_string` ([Display, Eq and Ord](generics.md#display-eq-and-ord)). An interpolation does not take these types yet ([E0098](../diagnostics/E0098.md)).
+`print` and an interpolation also take a value of any type that can be a type argument. An array prints as `[1, 2]`. A class prints its name. A class can write its own text with a method `to_string` ([Display, Eq and Ord](generics.md#display-eq-and-ord)). Every such value has a method `to_string()` that gives the same text as a `string`. A width pads that text: `"{sauna:>8}"`.
 
 ```sisu
 class Sauna {
@@ -146,6 +146,9 @@ fn main() {
     print([1, 2])                      // [1, 2]
     print(sauna)                       // Sauna
     print(sauna.heat)                  // 80
+    print("{sauna}: {[1, 2]}")         // Sauna: [1, 2]
+    print("[{sauna:>8}]")              // [   Sauna]
+    print(sauna.to_string())           // Sauna
 }
 ```
 

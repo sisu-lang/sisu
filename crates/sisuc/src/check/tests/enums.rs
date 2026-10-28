@@ -502,8 +502,6 @@ fn enum_value_rules_should_give_an_enum_the_code_of_a_class() {
         ("let _ = o is o", Code::IsNeedsObjects, 13),
         ("let _ = e < e", Code::NoOperator, 13),
         ("let _ = p < p", Code::NoOperator, 13),
-        ("let _ = \"{e}\"", Code::CannotInterpolate, 15),
-        ("let _ = \"{p}\"", Code::CannotInterpolate, 15),
         ("let _ = e == f", Code::CannotCompare, 13),
     ];
     let decls = "enum E {\n    A(string)\n    B\n}\nenum F { C }\nclass P { x: i64 }";

@@ -460,12 +460,16 @@ pub(crate) struct Format {
 pub(crate) struct Pad {
     pub(crate) align: Align,
     pub(crate) width: u16,
+    /// The spec has no alignment and the part's type is a type parameter or an associated type,
+    /// so `align` is only a stand-in: `mono` sets the default of the type argument, a number on
+    /// the right and any other value on the left, and clears the flag.
+    pub(crate) by_type: bool,
 }
 
 /// The format as a spec: `>8.2`.
 impl fmt::Display for Format {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(Pad { align, width }) = self.pad {
+        if let Some(Pad { align, width, .. }) = self.pad {
             write!(f, "{}{width}", align.char())?;
         }
         if let Some(precision) = self.precision {
@@ -2497,7 +2501,7 @@ mod tests {
     }
 
     #[test]
-    fn prints_interpolation_with_formats() {
+    fn interpolation_should_print_each_format_with_its_part() {
         // fn f(n: i64, x: f64) { print("a{n:^4}{x:.3}{n:<10.0}") }, as if the checker allowed
         // the last precision.
         let n = || expr(ExprKind::Local(LocalId(0)), Type::I64);
@@ -2507,7 +2511,13 @@ mod tests {
             expr(ExprKind::Local(LocalId(1)), Type::F64),
             n(),
         ];
-        let pad = |align, width| Some(Pad { align, width });
+        let pad = |align, width| {
+            Some(Pad {
+                align,
+                width,
+                by_type: false,
+            })
+        };
         let formats = vec![
             Format {
                 part: 1,

@@ -30,12 +30,12 @@ use inkwell::values::{
 
 use inkwell::attributes::AttributeLoc;
 
-use super::abi::{self, Abi, SINK_CAP, SINK_LEN, SINK_SIZE};
+use super::abi::{self, Abi, PAD_CENTER, PAD_LEFT, PAD_RIGHT, SINK_CAP, SINK_LEN, SINK_SIZE};
 use super::enums::{Pending, boxed_enum, nested};
 use super::layout::{BYTES, CAP, LEN};
 use super::rc::{Helper, param};
 use super::{Codegen, POSITIONED, zeroext};
-use crate::tir::{EnumId, FuncId, Stream, Type, TypeArgs, TypeKind};
+use crate::tir::{Align, EnumId, Format, FuncId, Pad, Stream, Type, TypeArgs, TypeKind};
 
 /// The blocks and phis of a `show_component` helper's loop that each variant uses.
 struct ShowLoop<'ctx> {
@@ -55,44 +55,115 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// `print` or `eprint` of an evaluated operand of type `ty`, a compound value, which it
     /// borrows.
     pub(super) fn print_compound(&self, stream: Stream, ty: Type, value: BasicValueEnum<'ctx>) {
-        let i64_type = self.context.i64_type();
-        let words = u32::try_from(SINK_SIZE / 8).expect("the sink should be a few words");
-        let sink_type = i64_type.array_type(words);
-        let sink = self.entry_alloca(sink_type.into(), "sink");
-        let sink_arg = [sink.into()];
         match stream {
             Stream::Stdout => {
-                self.show_call("sisu_show_stdout", &sink_arg);
+                let sink = self.sink_slot();
+                self.show_call("sisu_show_stdout", &[sink.into()]);
                 self.show_value(sink, ty, value, false);
-                self.show_call("sisu_show_line_end", &sink_arg);
+                self.show_call("sisu_show_line_end", &[sink.into()]);
             }
             Stream::Stderr => {
-                let header = i64_type.const_int(self.string_layout().size, false);
-                self.show_call("sisu_show_buffer", &[sink.into(), header.into()]);
+                let sink = self.buffer_sink();
                 self.show_value(sink, ty, value, false);
-                let block = self
-                    .show_call("sisu_show_finish", &sink_arg)
-                    .try_as_basic_value()
-                    .basic()
-                    .expect(
-                        "`sisu_show_finish` should return the block, as the runtime declares it",
-                    )
-                    .into_pointer_value();
-                // The block is a string once its header holds the count, the length and the
-                // capacity that the sink ended with.
-                self.init_count(block);
-                self.store(
-                    self.string_field(block, LEN),
-                    self.sink_word(sink_type, sink, SINK_LEN).into(),
-                );
-                self.store(
-                    self.string_field(block, CAP),
-                    self.sink_word(sink_type, sink, SINK_CAP).into(),
-                );
+                let block = self.finish_buffer_sink(sink);
                 self.print_string(Stream::Stderr, block);
                 self.release(block.into(), Type::STRING);
             }
         }
+    }
+
+    /// The string of the evaluated `parts`, each with its type, when one of them is a compound
+    /// value: every part is written in turn through one buffer sink, which becomes the result
+    /// string with no copy. A width pads the text of its part in place, from the mark taken
+    /// before the part, and a precision is for an `f64`. The parts are evaluated already, so a
+    /// part that returns, breaks or continues has left no buffer behind. The caller releases the
+    /// parts.
+    pub(super) fn interpolate_compound(
+        &self,
+        parts: &[(BasicValueEnum<'ctx>, Type)],
+        formats: &[Format],
+    ) -> PointerValue<'ctx> {
+        let sink = self.buffer_sink();
+        // The formats are in part order, so one pass over them meets each in turn.
+        let mut formats = formats.iter().peekable();
+        for (i, &(value, ty)) in parts.iter().enumerate() {
+            let format = formats.next_if(|format| format.part == i);
+            let mark = format.and_then(|format| format.pad).map(|_| {
+                (self.show_call("sisu_show_mark", &[sink.into()]))
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("`sisu_show_mark` should return the mark, as the runtime declares it")
+            });
+            match (ty, format.and_then(|format| format.precision)) {
+                (Type::F64, Some(precision)) => {
+                    let precision = self.context.i8_type().const_int(precision.into(), false);
+                    let args = [sink.into(), value.into(), precision.into()];
+                    self.show_call("sisu_show_f64_fixed", &args);
+                }
+                _ => self.show_value(sink, ty, value, false),
+            }
+            if let (Some(Pad { align, width, .. }), Some(mark)) =
+                (format.and_then(|format| format.pad), mark)
+            {
+                let align = match align {
+                    Align::Left => PAD_LEFT,
+                    Align::Right => PAD_RIGHT,
+                    Align::Center => PAD_CENTER,
+                };
+                let i64_type = self.context.i64_type();
+                let args = [
+                    sink.into(),
+                    mark.into(),
+                    i64_type.const_int(width.into(), false).into(),
+                    self.context.i8_type().const_int(align, false).into(),
+                ];
+                self.show_call("sisu_show_pad", &args);
+            }
+        }
+        self.finish_buffer_sink(sink)
+    }
+
+    /// A slot in the frame for a sink.
+    fn sink_slot(&self) -> PointerValue<'ctx> {
+        self.entry_alloca(self.sink_type().into(), "sink")
+    }
+
+    fn sink_type(&self) -> inkwell::types::ArrayType<'ctx> {
+        let words = u32::try_from(SINK_SIZE / 8).expect("the sink should be a few words");
+        self.context.i64_type().array_type(words)
+    }
+
+    /// Starts a sink in a new slot that builds a block with a string's header, and gives the slot.
+    fn buffer_sink(&self) -> PointerValue<'ctx> {
+        let sink = self.sink_slot();
+        let header = self
+            .context
+            .i64_type()
+            .const_int(self.string_layout().size, false);
+        self.show_call("sisu_show_buffer", &[sink.into(), header.into()]);
+        sink
+    }
+
+    /// Ends the buffer sink `sink`: its block is a string once its header holds the count, the
+    /// length and the capacity that the sink ended with.
+    fn finish_buffer_sink(&self, sink: PointerValue<'ctx>) -> PointerValue<'ctx> {
+        let block = self
+            .show_call("sisu_show_finish", &[sink.into()])
+            .try_as_basic_value()
+            .basic()
+            .expect("`sisu_show_finish` should return the block, as the runtime declares it")
+            .into_pointer_value();
+        self.init_count(block);
+        let sink_type = self.sink_type();
+        self.store(
+            self.string_field(block, LEN),
+            self.sink_word(sink_type, sink, SINK_LEN).into(),
+        );
+        self.store(
+            self.string_field(block, CAP),
+            self.sink_word(sink_type, sink, SINK_CAP).into(),
+        );
+        block
     }
 
     /// The word of the sink `sink`, of type `sink_type`, at byte `offset`.

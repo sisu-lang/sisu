@@ -1,10 +1,10 @@
-error[E0098]: cannot interpolate `[i64]`
- --> E0098.sisu:3:13
+error[E0098]: cannot interpolate `string?`
+ --> E0098.sisu:3:19
   |
-3 |     print("{xs}")
-  |             ^^
+3 |     print("Hello {name}")
+  |                   ^^^^
   |
-  = help: build the text in a `for` loop
+  = help: unwrap it with `if let`, or give a default with `??`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0098

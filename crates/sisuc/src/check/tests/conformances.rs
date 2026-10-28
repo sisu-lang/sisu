@@ -803,12 +803,70 @@ fn plain_blocks_and_eq_blocks_should_report_only_what_is_wrong() {
     }
 }
 
-/// A call of `to_string` through a bound of `Display` waits for Task 5; `eq` and `less` through a
-/// bound run (`operators_should_check_through_eq_and_ord`).
+/// A call of `to_string` through a bound of `Display` checks for a number and for an enum, as
+/// `eq` and `less` do (`operators_should_check_through_eq_and_ord`).
 #[test]
-fn to_string_through_a_bound_should_wait_for_its_task() {
-    let src = "fn s<T: Display>(x: T) -> string { x.to_string() }\nfn main() {\n    print(s(1))\n}";
-    codes(src, &[(Code::UnknownType, (1, 38))]);
+fn to_string_through_a_bound_should_check_for_every_type() {
+    clean(
+        "enum Expr {\n    Num(i64)\n}\nfn s<T: Display>(x: T) -> string { x.to_string() }\nfn main() {\n    print(s(1))\n    print(s(Expr.Num(1)))\n}",
+    );
+}
+
+/// `to_string` is a method of every type but `unit` and `never`: a generated `Display` answers
+/// it, for a type parameter with no bound too.
+#[test]
+fn to_string_should_check_on_a_value_of_every_type() {
+    clean(
+        "class Node {}\nenum Expr {\n    Num(i64)\n}\nfn any<T>(x: T) -> string { x.to_string() }\nfn main() {\n    let n: i64?? = None\n    print(5.to_string())\n    print(2.5.to_string())\n    print(true.to_string())\n    print('c'.to_string())\n    print(\"s\".to_string())\n    print([1, 2].to_string())\n    print(n.to_string())\n    print(Node().to_string())\n    print(Expr.Num(1).to_string())\n    print(any(1))\n}",
+    );
+}
+
+/// A `to_string` that takes an argument is an argument-count error, not a call of the
+/// generated one.
+#[test]
+fn to_string_with_an_argument_should_report_the_count() {
+    codes(
+        "fn main() {\n    print(5.to_string(1))\n}",
+        &[(Code::ArgumentCount, (2, 11))],
+    );
+}
+
+/// The text of a `to_string` is the one of the type's `Display`: a written method whose bounds
+/// fail for the receiver gives way to the generated `Display`, in a plain block and in a block
+/// of `Display`.
+#[test]
+fn to_string_should_fall_back_to_generated_display_when_a_bound_fails() {
+    clean(
+        "class Node {}\nclass Plain<T> {\n    _value: T\n}\nextend<T: Eq> Plain<T> {\n    fn to_string(self) -> string { \"plain\" }\n}\nclass Box<T> {\n    _value: T\n}\nextend<T: Eq> Box<T>: Display {\n    fn to_string(self) -> string { \"box\" }\n}\nfn main() {\n    print(Plain(_value: Node()).to_string())\n    print(Plain(_value: 1).to_string())\n    print(Box(_value: Node()).to_string())\n    print(Box(_value: 1).to_string())\n}",
+    );
+}
+
+/// Only a call of `to_string` with no argument has the fallback: another method of a block whose
+/// bounds fail keeps the report of the failed bound, and so does `to_string` with an argument.
+#[test]
+fn a_method_other_than_to_string_should_keep_the_failed_bound_report() {
+    let decls = "class Node {}\nclass Plain<T> {\n    _value: T\n}\nextend<T: Eq> Plain<T> {\n    fn name(self) -> string { \"plain\" }\n    fn to_string(self) -> string { \"plain\" }\n}\n";
+    for call in ["name()", "to_string(1)"] {
+        codes(
+            &format!("{decls}fn main() {{\n    print(Plain(_value: Node()).{call})\n}}"),
+            &[(Code::NotConform, (10, 11))],
+        );
+    }
+}
+
+/// A precision is for an `f64` only, whatever the part: an enum and a type parameter get the
+/// error too (the fixtures `E0111-enum` and `E0111-parameter` pin the text, which names the type).
+#[test]
+fn a_precision_on_a_part_that_is_not_an_f64_should_be_reported() {
+    for (decls, param) in [("enum E {\n    A\n}\n", "e: E"), ("", "x: T")] {
+        let generic = if param.ends_with('T') { "<T>" } else { "" };
+        let part = param.split(':').next().expect("a parameter has a name");
+        let src = format!(
+            "{decls}fn f{generic}({param}) -> string {{\n    \"{{{part}:.2}}\"\n}}\nfn main() {{}}"
+        );
+        let line = decls.lines().count() + 2;
+        codes(&src, &[(Code::PrecisionNeedsF64, (line, 8))]);
+    }
 }
 
 /// How `lang_path` finds the language interface `interface` for `ty`, once the checker has
@@ -1553,6 +1611,46 @@ fn implicit_print_should_close_an_instantiation_cycle() {
 }
 
 #[test]
+fn implicit_interpolation_should_close_an_instantiation_cycle() {
+    let w = "class W<T> {\n    x: T\n}\n";
+    let main = "fn main() {\n    print(W(x: 1))\n}";
+    let growing = "\"{W(x: [self.x])}\"";
+    let rows = [
+        (
+            "an interpolation of a class that grows",
+            format!(
+                "{w}extend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        {growing}\n    }}\n}}\n{main}"
+            ),
+            Some(growing),
+        ),
+        (
+            "an interpolation of an enum payload, reached through its generated Display",
+            format!(
+                "{w}enum Pick<U> {{\n    One(U)\n}}\nextend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        \"{{Pick.One(W(x: [self.x]))}}\"\n    }}\n}}\n{main}"
+            ),
+            Some("\"{Pick.One(W(x: [self.x]))}\""),
+        ),
+        (
+            "an interpolation that does not grow",
+            format!(
+                "{w}extend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        \"{{[self.x]}}\"\n    }}\n}}\n{main}"
+            ),
+            None,
+        ),
+    ];
+    for (row, src, cycle) in rows {
+        match cycle {
+            Some(text) => codes_row(
+                row,
+                &src,
+                &[(Code::InstantiationCycle, where_is(&src, text))],
+            ),
+            None => clean_row(row, &src),
+        }
+    }
+}
+
+#[test]
 fn operand_under_arrays_of_a_parameter_should_not_close_a_cycle() {
     let same = "fn same<A: Eq>(a: A, b: A) -> bool {\n    a == b\n}\n";
     let rows = [
@@ -1563,6 +1661,10 @@ fn operand_under_arrays_of_a_parameter_should_not_close_a_cycle() {
         (
             "arrays under an enum's generated Eq",
             "class G2<T> {\n    x: T\n}\nenum Q<V> {\n    A(V)\n}\nextend<T: Eq> G2<T>: Eq {\n    fn eq(self, other: Self) -> bool {\n        Q.A([[self.x]]) == Q.A([[other.x]])\n    }\n}\nfn main() {\n    print(G2(x: 1) == G2(x: 2))\n}".to_string(),
+        ),
+        (
+            "arrays of the parameter, interpolated through a bare parameter's second node",
+            "class Grid<T> {\n    rows: [[T]]\n}\nfn text<A>(a: A) -> string {\n    \"{a}\"\n}\nextend<T> Grid<T>: Display {\n    fn to_string(self) -> string {\n        text(self.rows)\n    }\n}\nfn main() {\n    print(Grid(rows: [[1]]))\n}".to_string(),
         ),
         (
             "arrays of the parameter, printed through a bare parameter's second node",
@@ -1580,7 +1682,7 @@ fn operand_under_arrays_of_a_parameter_should_not_close_a_cycle() {
 
 #[test]
 fn growing_declaration_should_give_one_diagnostic() {
-    let nest = "enum Nest<T> {\n    End\n    Next(Nest<[T]>)\n}\nfn f(a: Nest<i64>, b: Nest<i64>) -> bool {\n    a == b\n}\nfn p(n: Nest<i64>) {\n    print(n)\n}\nfn main() {}";
+    let nest = "enum Nest<T> {\n    End\n    Next(Nest<[T]>)\n}\nfn f(a: Nest<i64>, b: Nest<i64>) -> bool {\n    a == b\n}\nfn p(n: Nest<i64>) {\n    print(n)\n}\nfn t(n: Nest<i64>) -> string {\n    \"{n}\"\n}\nfn main() {}";
     codes(
         nest,
         &[(Code::InstantiationCycle, where_is(nest, "Nest<[T]>"))],

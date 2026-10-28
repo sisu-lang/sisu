@@ -826,6 +826,26 @@ fn break_without_a_value_edge_makes_no_exit() {
     }
 }
 
+/// An interpolation consumes its parts, so a local that is used again is copied once, whether it
+/// is a `string` (`"{s}"`) or a compound value (`"{e}"`): one retain and one release.
+#[test]
+fn interpolating_a_compound_local_should_copy_it_once() {
+    let decls = "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n}\n";
+    for (ty, name) in [("string", "s"), ("Expr", "e")] {
+        let src = format!(
+            "{decls}fn f({name}: {ty}) -> string {{\n    let t = \"{{{name}}}\"\n    print({name})\n    t\n}}\nfn main() {{}}"
+        );
+        let f = function(&built(&src), "f");
+        assert_eq!(
+            f.matches(&format!("= copy {name}#0")).count(),
+            1,
+            "{ty}: {f}"
+        );
+        assert!(f.contains("interp("), "{ty}: {f}");
+        assert!(!f.contains("[calls]"), "{ty}: {f}");
+    }
+}
+
 /// Each part of an interpolation prints with its own format, in part order.
 #[test]
 fn interpolation_prints_each_format_with_its_part() {
