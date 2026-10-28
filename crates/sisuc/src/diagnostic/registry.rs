@@ -3536,10 +3536,10 @@ impl From<DiagnosticKind> for Diagnostic {
                 Diagnostic::coded(
                     code,
                     at,
-                    format!("{subject} can be `None`, and then this prints the word \"None\""),
+                    format!("{subject} can be `None`, and then this writes the word \"None\""),
                 )
                 .with_help(format!(
-                    "use `if let`, give a default with `??`, or call {call} to print \"None\" on purpose"
+                    "use `if let`, give a default with `??`, or call {call} to write \"None\" on purpose"
                 ))
             }
             DiagnosticKind::TodoLeft { at } => {

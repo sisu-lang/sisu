@@ -16,7 +16,7 @@ An optional is a special case, because the text of a missing value is the word
   [W0015](../diagnostics/W0015.md).** `print(x)`, `eprint(x)` and `"{x}"`
   warn when the type of `x` itself is an optional. The warning points at `x`.
   Its help gives three fixes: unwrap with `if let`, give a default with `??`,
-  or call `.to_string()` to print `None` on purpose.
+  or call `.to_string()` to write `None` on purpose.
 - **An optional inside another value does not warn.** An array of optionals,
   the payload of an enum and the optional inside an optional print as their
   code reads. A call of `.to_string()` does not warn. A generic function that

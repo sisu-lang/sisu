@@ -1,10 +1,10 @@
-warning[W0015]: this value can be `None`, and then this prints the word "None"
+warning[W0015]: this value can be `None`, and then this writes the word "None"
  --> W0015-value.sisu:6:19
   |
 6 |     print("Hello {find()}")
   |                   ^^^^^^
   |
-  = help: use `if let`, give a default with `??`, or call `.to_string()` on the value to print "None" on purpose
+  = help: use `if let`, give a default with `??`, or call `.to_string()` on the value to write "None" on purpose
 
 sisu: 1 warning
 sisu: for more on a code, run `sisu explain <code>`: W0015
