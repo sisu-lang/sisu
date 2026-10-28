@@ -131,11 +131,10 @@ pub(crate) const VALGRIND_FLAGS: &[&str] = if cfg!(target_os = "linux") {
     &[]
 };
 
-/// Panics unless `nm --defined-only` lists `exe`'s symbols, `sisu_alloc` among them, and no
-/// `mi_malloc_aligned`, the function mimalloc's global allocator calls. It reads symbols, not
-/// bytes, so a program whose text holds that name passes; a stripped build, or a failed `nm`,
-/// stops the run rather than passing it.
-fn refuse_mimalloc(exe: &Path) {
+/// The names that `nm --defined-only` lists for `exe`. It reads symbols, not bytes, so a program
+/// whose text holds a name does not list it; a stripped build, or a failed `nm`, stops the run.
+/// `sisu_alloc` must be among them, or the allocator that `exe` links is unknown.
+fn defined_symbols(exe: &Path) -> Vec<String> {
     let out = Command::new("nm")
         .arg("--defined-only")
         .arg(exe)
@@ -149,18 +148,40 @@ fn refuse_mimalloc(exe: &Path) {
         String::from_utf8_lossy(&out.stderr)
     );
     let listing = String::from_utf8_lossy(&out.stdout);
-    let names: Vec<&str> = listing
+    let names: Vec<String> = listing
         .lines()
         .filter_map(|line| line.split_whitespace().last())
+        .map(str::to_owned)
         .collect();
     assert!(
-        names.contains(&"sisu_alloc"),
+        names.iter().any(|name| name == "sisu_alloc"),
         "{}: `nm` lists no `sisu_alloc`, so the allocator it links is unknown",
         exe.display()
     );
+    names
+}
+
+/// Whether `names` lists `mi_malloc_aligned`, the function mimalloc's global allocator calls.
+fn links_mimalloc(names: &[String]) -> bool {
+    names.iter().any(|name| name == "mi_malloc_aligned")
+}
+
+/// Panics when `exe` links mimalloc, whose blocks Valgrind cannot see.
+fn refuse_mimalloc(exe: &Path) {
     assert!(
-        !names.contains(&"mi_malloc_aligned"),
+        !links_mimalloc(&defined_symbols(exe)),
         "{} links mimalloc, whose blocks Valgrind cannot see: build it with `--allocator system`",
+        exe.display()
+    );
+}
+
+/// Panics unless `exe` links mimalloc: a build with no `--allocator` flag must. Linux only: the
+/// symbol names differ on macOS, where `refuse_mimalloc` has no use.
+#[cfg(target_os = "linux")]
+pub(crate) fn require_mimalloc(exe: &Path) {
+    assert!(
+        links_mimalloc(&defined_symbols(exe)),
+        "{} does not link mimalloc, which a build with no `--allocator` flag links",
         exe.display()
     );
 }
@@ -196,20 +217,32 @@ fn output_with_stdin(command: &mut Command, stdin: &[u8]) -> Output {
     })
 }
 
-/// Checks a `tests/run` case: both builds differ, exit 0, agree on stdout and on stderr, and
-/// print the same under Valgrind on Linux, which finds no leak or memory error, and in a
-/// `--rc-checks` build, which finds no count fault or live object at exit; then that stdout is
-/// `<name>.out`.
-/// Stderr is empty, unless `<name>.err` exists: then the stderr of the plain, `-O2` and
-/// `--rc-checks` runs is that file. The Valgrind runs' stderr holds Valgrind's own log, so it is
-/// never compared.
+/// Checks a `tests/run` case: the plain and `-O2` builds differ, exit 0, agree on stdout and on
+/// stderr, and print the same under Valgrind on Linux, which finds no leak or memory error, and in
+/// a `--rc-checks` build, which finds no count fault or live object at exit, and, on Linux, in an
+/// `-O2` build on mimalloc (see `MIMALLOC_O2`); then that stdout is `<name>.out`.
+/// On Linux the plain and `-O2` builds use the System allocator, for Valgrind, so the `-O2` build
+/// on mimalloc is the only Linux build of `-O2` code on the allocator that users get.
+/// Stderr is empty, unless `<name>.err` exists: then the stderr of the plain, `-O2`, `--rc-checks`
+/// and mimalloc `-O2` runs is that file. The Valgrind runs' stderr holds Valgrind's own log, so it
+/// is never compared.
 /// Every run reads `<name>.in` on its standard input, or empty input without one, and gets the
 /// arguments of the case's `// args:` line.
 /// Each `// o2-calls:` marker in the case must hold in the `-O2` IR (see `O2_CALLS`).
 /// With `bless`, rewrites `<name>.out`, and `<name>.err` when it exists, instead, after every
 /// other check passed.
 pub(crate) fn run(path: &Path, bless: bool) {
-    let [o0, o2, rc] = build(path, [VALGRIND_O0, VALGRIND_O2, RC_CHECKS]);
+    let out_dir = case_dir(path);
+    let [o0, o2, rc] = build_into(path, &out_dir, [VALGRIND_O0, VALGRIND_O2, RC_CHECKS]);
+    // On macOS, `o2` is on mimalloc already, so there is no further build.
+    #[cfg(target_os = "linux")]
+    let mimalloc = {
+        let [exe] = build_into(path, &out_dir, [MIMALLOC_O2]);
+        require_mimalloc(&exe);
+        Some(exe)
+    };
+    #[cfg(not(target_os = "linux"))]
+    let mimalloc: Option<PathBuf> = None;
     assert!(
         fs::read(&o0).expect("reads the plain build")
             != fs::read(&o2).expect("reads the -O2 build"),
@@ -266,22 +299,25 @@ pub(crate) fn run(path: &Path, bless: bool) {
             }
         }
     }
-    let checked = invocation.run(&rc, false);
-    let rc_stderr = String::from_utf8_lossy(&checked.stderr);
-    assert_eq!(
-        checked.status.code(),
-        Some(0),
-        "{}: {:?}\n{rc_stderr}",
-        rc.display(),
-        checked.status
-    );
-    assert_eq!(rc_stderr, stderr, "{}", rc.display());
-    assert_eq!(
-        String::from_utf8_lossy(&checked.stdout),
-        stdout,
-        "{}",
-        rc.display()
-    );
+    // The `--rc-checks` build and the `-O2` build on mimalloc.
+    for exe in std::iter::once(&rc).chain(&mimalloc) {
+        let checked = invocation.run(exe, false);
+        let checked_stderr = String::from_utf8_lossy(&checked.stderr);
+        assert_eq!(
+            checked.status.code(),
+            Some(0),
+            "{}: {:?}\n{checked_stderr}",
+            exe.display(),
+            checked.status
+        );
+        assert_eq!(checked_stderr, stderr, "{}", exe.display());
+        assert_eq!(
+            String::from_utf8_lossy(&checked.stdout),
+            stdout,
+            "{}",
+            exe.display()
+        );
+    }
     // Last, so that a run failing any check above writes nothing.
     let mut files = vec![(path.with_extension("out"), stdout)];
     if expects_stderr {
@@ -491,6 +527,11 @@ type Build = (&'static str, &'static [&'static str]);
 const O0: Build = ("O0", &[]);
 const O2: Build = ("O2", &["-O2"]);
 const RC_CHECKS: Build = ("rc", &["--rc-checks"]);
+/// `-O2` on the default allocator, mimalloc, for `run` on Linux, where `VALGRIND_O2` is a System
+/// build: without it, no Linux case runs `-O2` code on mimalloc, the allocator that users get.
+/// On macOS `VALGRIND_O2` is this build already.
+#[cfg(target_os = "linux")]
+const MIMALLOC_O2: Build = ("O2-mimalloc", &["-O2"]);
 /// `O0` and `O2` for `run`, whose plain builds also run under Valgrind.
 const VALGRIND_O0: Build = ("O0", VALGRIND_FLAGS);
 // Repeats `VALGRIND_FLAGS`' values after `-O2`, and must stay in step with them: a const cannot
@@ -507,12 +548,16 @@ const VALGRIND_O2: Build = (
 /// Compiles `path` once for each of `builds` into its `case_dir`, and returns the executables.
 /// A build with an `UNUSED` warning fails the case.
 fn build<const N: usize>(path: &Path, builds: [Build; N]) -> [PathBuf; N] {
+    build_into(path, &case_dir(path), builds)
+}
+
+/// `build`, into the existing directory `out`.
+fn build_into<const N: usize>(path: &Path, out: &Path, builds: [Build; N]) -> [PathBuf; N] {
     let dir = path.parent().expect("a case should sit in a directory");
     let name = path
         .file_stem()
         .and_then(OsStr::to_str)
         .expect("a case's name should be UTF-8");
-    let out = case_dir(path);
     builds.map(|(file, flags)| {
         let exe = out.join(file);
         let stderr = compile(dir, name, &exe, flags);

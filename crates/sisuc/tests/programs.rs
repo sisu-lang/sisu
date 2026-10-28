@@ -1389,6 +1389,22 @@ fn valgrind_runs_should_refuse_a_mimalloc_build_and_a_stripped_build() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "mi_malloc_aligned\n");
 }
 
+/// GIVEN a build with no `--allocator` flag and a system build
+/// WHEN `require_mimalloc` checks each
+/// THEN it accepts the first and panics on the second with a message that names the cause
+///
+/// The `tests/run` harness uses it on its `-O2` build on mimalloc.
+#[test]
+#[cfg(target_os = "linux")]
+fn require_mimalloc_should_accept_a_default_build_and_refuse_a_system_build() {
+    const PROGRAM: &str = "fn main() {\n    print(1)\n}\n";
+    let default = compile_tmp("require_default", PROGRAM, true);
+    let system = compile_tmp_for_valgrind("require_system", PROGRAM, true);
+    support::require_mimalloc(&default);
+    let message = panic_message(|| support::require_mimalloc(&system));
+    assert!(message.contains("does not link mimalloc"), "{message}");
+}
+
 /// Writes `source` to `<CARGO_TARGET_TMPDIR>/<name>.sisu`, builds it with `--rc-checks`, at
 /// `-O2` if `o2`, into `<name>-rc` or `<name>-rc-O2`, and runs it.
 fn run_rc_checked(name: &str, source: &str, o2: bool) -> Output {
