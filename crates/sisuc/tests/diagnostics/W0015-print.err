@@ -1,10 +1,10 @@
-warning[W0015]: `name` is an optional and may print `None`
+warning[W0015]: `name` can be `None`, and then this prints the word "None"
  --> W0015-print.sisu:3:11
   |
 3 |     print(name)
   |           ^^^^
   |
-  = help: unwrap it with `if let` or `??`, or write `name.to_string()` to print `None` on purpose
+  = help: use `if let`, give a default with `??`, or call `name.to_string()` to print "None" on purpose
 
 sisu: 1 warning
 sisu: for more on a code, run `sisu explain <code>`: W0015

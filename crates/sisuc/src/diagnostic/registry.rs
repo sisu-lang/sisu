@@ -1586,12 +1586,13 @@ pub(crate) enum MismatchSource {
 }
 
 /// What helps a precision on a part that is not an `f64`.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) enum PrecisionHelp {
     /// An `i64` part, which `f64(...)` converts: the part.
     Convert(Span),
-    /// An `f64?` part, which `??` can give a default.
-    Default,
+    /// An `f64?` part, which `??` can give a default: the part and the spec, with its `:`, as
+    /// written; the part has parentheses when `??` needs them.
+    Default { part: String, spec: String },
 }
 
 /// A rewrite that would give a mismatched value the type expected.
@@ -3524,16 +3525,16 @@ impl From<DiagnosticKind> for Diagnostic {
             }
             DiagnosticKind::PrintsOptional { value, at } => {
                 let (subject, call) = match value {
-                    Some(path) => (format!("`{path}`"), format!("write `{path}.to_string()`")),
-                    None => ("this value".to_string(), "call `.to_string()`".to_string()),
+                    Some(path) => (format!("`{path}`"), format!("`{path}.to_string()`")),
+                    None => ("this value".to_string(), "`.to_string()` on the value".to_string()),
                 };
                 Diagnostic::coded(
                     code,
                     at,
-                    format!("{subject} is an optional and may print `None`"),
+                    format!("{subject} can be `None`, and then this prints the word \"None\""),
                 )
                 .with_help(format!(
-                    "unwrap it with `if let` or `??`, or {call} to print `None` on purpose"
+                    "use `if let`, give a default with `??`, or call {call} to print \"None\" on purpose"
                 ))
             }
             DiagnosticKind::TodoLeft { at } => {
@@ -3725,9 +3726,9 @@ impl From<DiagnosticKind> for Diagnostic {
                 let d = Diagnostic::coded(code, at, "precision needs an `f64`")
                     .with_label(format!("the value is `{ty}`"));
                 match help {
-                    Some(PrecisionHelp::Default) => d.with_help(
-                        "give a default with `??` first, for example `{x ?? 0.0:.2}`",
-                    ),
+                    Some(PrecisionHelp::Default { part, spec }) => d.with_help(format!(
+                        "give a default with `??` first, for example `{{{part} ?? 0.0{spec}}}`"
+                    )),
                     Some(PrecisionHelp::Convert(operand)) => d.with_fix(Fix {
                         message: "convert it with `f64(...)`".to_string(),
                         safe: true,

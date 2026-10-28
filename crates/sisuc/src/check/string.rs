@@ -7,7 +7,7 @@
 use std::fmt::Write;
 
 use super::array::pair;
-use super::expr::{local, no_member, path, typed};
+use super::expr::{local, no_member, path, postfix, typed};
 use super::{Checked, Checker, Poisoned, block_expr, type_of};
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{
@@ -120,7 +120,19 @@ impl Checker<'_> {
         if error {
             let help = match ty.kind() {
                 _ if ty == Type::I64 => Some(PrecisionHelp::Convert(part.span)),
-                TypeKind::Optional(inner) if inner == Type::F64 => Some(PrecisionHelp::Default),
+                TypeKind::Optional(inner) if inner == Type::F64 => {
+                    let written = self.source.file.slice(part.span.range());
+                    Some(PrecisionHelp::Default {
+                        // `??` binds looser than a call, a field or an index; any other part
+                        // needs parentheses before it.
+                        part: if postfix(part) {
+                            written.to_string()
+                        } else {
+                            format!("({written})")
+                        },
+                        spec: self.source.file.slice(spec.span.range()).to_string(),
+                    })
+                }
                 _ => None,
             };
             self.report(DiagnosticKind::PrecisionNeedsF64 {
