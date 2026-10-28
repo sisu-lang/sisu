@@ -1,7 +1,10 @@
-// Printing compound values and `==` through a written `Eq`. Each round builds an `Expr` tree
-// and writes its text, writes the text of an array of enum values, and compares two arrays of
-// `Circle`s, whose written `eq` compares the radius only, so the helper calls a method for each
-// pair. The lengths of the texts and the counts of equal arrays depend on all the work.
+// GIVEN 400 rounds, an `Expr` tree of depth 7, 60 enum values and arrays of 8 `Circle`s
+// WHEN each round writes the text of the tree and of the array of enum values
+// AND it compares two arrays of `Circle`s, as a whole and element by element
+// AND the helper calls a method for each pair, as the written `eq` compares the radius only
+// THEN it prints the length of all the texts
+// AND it prints the count of equal arrays
+// AND both numbers depend on all the work
 const ROUNDS = 400
 const DEPTH = 7
 
