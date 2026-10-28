@@ -101,8 +101,10 @@ list, as in `let s: Stack<i64>= x`, splits into the `>` and the `=`. It rejects 
 **Front end** (`front_end.rs`). Runs the lexer, parser and checker in order,
 then `mono`, and returns the program and every diagnostic, in position order:
 the checker's are merged in by position. The checker runs only when
-every item has a name. `sisu check` stops after the checker
-(`front_end::checked`), because it prints no instantiation.
+every item has a name. `mono` reports E0030 for an associated type chain that
+the checker's probe did not follow, and the front end then gives no program.
+`sisu check` stops after the checker (`front_end::checked`), because it prints
+no instantiation, so it does not find such a chain.
 
 **Checker** (`check/`, `tir.rs`). Resolves every name, types every expression
 and lowers sugar: `while`, `while let` and `for` become loops, `?.` and `??`
@@ -188,7 +190,9 @@ no declaration has. A call of a requirement through a bound is an
 `InterfaceCall` in `tir`; `mono` replaces it with a call of the method of the
 conformance that the type argument has, so `total<Circle>` calls `Circle.area`
 directly and dispatch is static. It also replaces each associated type with
-the type its conformance chose. A method of an `extend` block that names an
+the type its conformance chose. It reports E0030 for a chain of more than 128
+choices, or a loop, that the checker's probe did not follow, and then gives no
+program. A method of an `extend` block that names an
 interface has the interface between its type and its name,
 `Celsius.Convert<Fahrenheit>.convert`, so two conformances may each hold a
 method of one name. `mir` and codegen see only concrete types, and a program
