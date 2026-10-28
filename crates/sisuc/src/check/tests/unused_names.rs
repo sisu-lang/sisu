@@ -954,7 +954,7 @@ fn extend_block_should_cite_the_calls_of_its_methods_in_dead_code() {
     );
     assert_eq!(
         found(&format!(
-            "{class}extend Crate {{\n    fn a(self, n: i64) -> i64 {{ if n == 0 {{ 0 }} else {{ self.a(n - 1) }} }}\n}}\n{main}"
+            "{class}extend Crate {{\n    fn a(self) -> i64 {{ self.b() }}\n    fn b(self) -> i64 {{ 1 }}\n}}\n{main}"
         )),
         [(W0012, (4, 1), vec![])]
     );
