@@ -111,7 +111,7 @@ const IDENTITY: &str = "reach: a class is compared with `is` or against `None`";
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 95] = [
+const REACH: [&str; 96] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -196,6 +196,7 @@ const REACH: [&str; 95] = [
     "reach: a class gets `Display` through a `to_string` method",
     "reach: a bound names a language interface",
     "reach: an operator runs on a bounded type parameter",
+    "reach: one function prints and compares a type parameter",
     "reach: `is` runs on a type parameter",
     "reach: an operator calls a written `eq` or `less`",
     "reach: an `==` or `print` runs a written method inside a value",
@@ -523,6 +524,9 @@ struct Walk {
     /// walked in it.
     bounds_of: Vec<Vec<Vec<String>>>,
     tir_bounds: Vec<Vec<String>>,
+    /// The type parameters that the function being walked prints, and compares with `==`.
+    printed_params: FxHashSet<Type>,
+    compared_params: FxHashSet<Type>,
     /// The methods of the `extend` blocks over a generic type, by `FuncId`.
     generic_blocks: FxHashSet<usize>,
     /// The conformances that hold when a bound of the block does: the class or enum that the block
@@ -1893,6 +1897,8 @@ impl Walk {
         }
         for (at, function) in program.functions.iter().enumerate() {
             self.tir_bounds.clone_from(&self.bounds_of[at]);
+            self.printed_params.clear();
+            self.compared_params.clear();
             self.ty(function.ret);
             for local in &function.locals {
                 self.ty(local.ty);
@@ -1952,6 +1958,14 @@ impl Walk {
         self.mark("reach: an `Option`-shaped enum has a niche");
         if field.boxed && field.ty.inline_enum().is_some_and(|held| held.0 == id) {
             self.mark("reach: an `Option`-shaped enum holds itself");
+        }
+    }
+
+    /// Marks the function being walked as one that prints and compares the type parameter `ty`,
+    /// once it has done both.
+    fn both_param(&mut self, ty: Type) {
+        if self.printed_params.contains(&ty) && self.compared_params.contains(&ty) {
+            self.mark("reach: one function prints and compares a type parameter");
         }
     }
 
@@ -2243,6 +2257,10 @@ impl Walk {
                 if matches!(operand.ty.kind(), TypeKind::Optional(_)) {
                     self.mark("reach: a top-level optional is printed");
                 }
+                if matches!(operand.ty.kind(), TypeKind::Param(..)) {
+                    self.printed_params.insert(operand.ty);
+                    self.both_param(operand.ty);
+                }
                 self.tir_expr(operand, Parent::Other);
             }
             tir::ExprKind::Panic(message) => {
@@ -2357,6 +2375,10 @@ impl Walk {
                     && !matches!(rhs.kind, tir::ExprKind::None)
                 {
                     self.mark("reach: an operator runs on a bounded type parameter");
+                }
+                if matches!(lhs.ty.kind(), TypeKind::Param(..)) {
+                    self.compared_params.insert(lhs.ty);
+                    self.both_param(lhs.ty);
                 }
                 self.tir_expr(lhs, Parent::Other);
                 self.tir_expr(rhs, Parent::Other);
@@ -6406,7 +6428,6 @@ fn generated_programs_should_name_each_language_interface() {
         ("fn lang_eq<T: Eq>", false),
         ("fn lang_ord<T: Ord>", false),
         ("fn lang_display<T: Display>", false),
-        ("fn lang_both<T: Display & Eq>", false),
         ("fn lang_same<T: AnyObject>", false),
         ("fn lang_pinned<T: Pinned>", false),
         ("lang_eq(N0.A)", false),
@@ -6533,6 +6554,29 @@ fn eq_type_should_pick_no_type_with_a_class() {
     g.scope.types.push(Ty::class(0, 1));
     let ty = g.eq_type();
     assert!(!g.scope.contains_class(&ty), "{ty}");
+}
+
+/// A function that prints and compares one type parameter marks its key; one that does only one
+/// of the two, or prints one parameter and compares another, does not.
+#[test]
+fn the_walk_should_mark_a_function_that_prints_and_compares_one_parameter() {
+    let key = "reach: one function prints and compares a type parameter";
+    for (function, marked) in [
+        (
+            "fn f<T: Display & Eq>(x: T) { print(x)\n    print(x == x) }",
+            true,
+        ),
+        ("fn f<T: Display & Eq>(x: T) { print(x == x) }", false),
+        ("fn f<T: Display & Eq>(x: T) { print(x) }", false),
+        (
+            "fn f<T: Display, U: Eq>(x: T, y: U) { print(x)\n    print(y == y) }\nfn g() { f(1, 2) }",
+            false,
+        ),
+    ] {
+        let mut walk = Walk::default();
+        walk.program(&format!("{function}\nfn main() {{ print(1) }}"));
+        assert_eq!(walk.seen.contains(key), marked, "{key} in {function}");
+    }
 }
 
 /// The keys of the operators: one on a bounded type parameter (but not `x == None`, which needs
