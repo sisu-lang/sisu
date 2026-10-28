@@ -31,24 +31,24 @@ class VerifyMismatch(unittest.TestCase):
         self.head, self.base = sha('HEAD'), sha('HEAD~1')
 
     def mismatch(self, text):
-        log = Path(self.repo) / 'verify.log'
+        log = Path(self.repo) / 'mutation.log'
         log.write_text(text)
         with mock.patch.dict(os.environ, ENV, clear=True):
             return diff_brief.verify_mismatch(log, self.repo, 'HEAD')
 
     def test_a_verdict_on_the_head_should_pass(self):
-        self.assertIsNone(self.mismatch(f'mutants\nverify: FAIL: 2 missed (HEAD {self.head})\n'))
+        self.assertIsNone(self.mismatch(f'mutants\nmutation-test: FAIL: 0 caught, 0 unviable, 2 missed, 0 timeouts (HEAD {self.head})\n'))
 
     def test_a_verdict_on_an_earlier_commit_should_fail(self):
-        why = self.mismatch(f'verify: PASS: all covered (HEAD {self.base})\n')
+        why = self.mismatch(f'mutation-test: PASS: 2 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.base})\n')
         self.assertIn(f'measured {self.base[:8]}, not HEAD', why)
 
     def test_a_verdict_on_uncommitted_changes_should_fail(self):
-        why = self.mismatch(f'verify: PASS: all covered (HEAD {self.head} with uncommitted changes)\n')
+        why = self.mismatch(f'mutation-test: PASS: 2 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.head} with uncommitted changes)\n')
         self.assertIn('measured uncommitted changes', why)
 
     def test_a_log_without_a_verdict_should_fail(self):
-        self.assertIn('no verdict line', self.mismatch('coverage\nmutants still running\n'))
+        self.assertIn('no summary line', self.mismatch('coverage\nmutants still running\n'))
 
 
 if __name__ == '__main__':

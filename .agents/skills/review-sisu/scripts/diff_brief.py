@@ -2,16 +2,16 @@
 keeps the sections for a diff and drops the spec and plan sections. Fails, writing nothing, when
 a slot above "# Report" is left unfilled, so a template change cannot slip past it.
 
-Usage: python3 diff_brief.py REPO BASE..HEAD OUT [--doc PATH]... [--focus FILE] [--verify-log LOG]
+Usage: python3 diff_brief.py REPO BASE..HEAD OUT [--doc PATH]... [--focus FILE] [--mutation-log LOG]
   REPO     the repository root that holds the diff (a worktree is fine)
   --doc    a spec or plan the reviewer reads with the diff; repeat for each
 REPO and each --doc are written as absolute paths: the reviewer runs in REPO, and a doc under
 the main checkout's gitignored docs/superpowers/ is not in a worktree.
   --focus  a file whose text goes under "# Focus"; without it, Focus is "none"
-  --verify-log  the log of `make verify LOG=...` for the diff; Focus names it by its absolute
-           path, so the reviewer checks its verdict line. Fails when the file does not exist,
-           or when its verdict line names another commit than HEAD of the range, or uncommitted
-           changes: a commit after the verify run makes its log describe other code.
+  --mutation-log  the log of `make mutation-test LOG=...` for the diff; Focus names it by its absolute
+           path, so the reviewer checks its summary line. Fails when the file does not exist,
+           or when its summary line names another commit than HEAD of the range, or uncommitted
+           changes: a commit after the mutation-test run makes its log describe other code.
 The template comes from origin/main, so a branch that started before a change to the review
 criteria still gets the current ones. Without origin/main it falls back to ../brief.md.
 """
@@ -43,17 +43,17 @@ SKILLS = {
 
 
 def verify_mismatch(log, repo, head):
-    """Why the verdict line of `log` does not describe commit `head` of `repo`, or None."""
-    lines = [line for line in log.read_text().splitlines() if line.startswith('verify: ')]
+    """Why the summary line of `log` does not describe commit `head` of `repo`, or None."""
+    lines = [line for line in log.read_text().splitlines() if line.startswith('mutation-test: ')]
     found = re.search(r'\(HEAD ([0-9a-f]{40})( with uncommitted changes)?\)$', lines[-1]) if lines else None
     if not found:
-        return f'no verdict line ending "(HEAD <sha>)" in {log}'
+        return f'no summary line ending "(HEAD <sha>)" in {log}'
     want = subprocess.run(['git', '-C', str(repo), 'rev-parse', '--verify', f'{head}^{{commit}}'],
                           capture_output=True, text=True).stdout.strip()
     if found[1] != want:
-        return f'{log} measured {found[1][:8]}, not {head} ({want[:8] or "unknown"}); run make verify again'
+        return f'{log} measured {found[1][:8]}, not {head} ({want[:8] or "unknown"}); run make mutation-test again'
     if found[2]:
-        return f'{log} measured uncommitted changes; commit them and run make verify again'
+        return f'{log} measured uncommitted changes; commit them and run make mutation-test again'
     return None
 
 
@@ -64,11 +64,11 @@ def main():
     p.add_argument('out')
     p.add_argument('--doc', action='append', default=[])
     p.add_argument('--focus')
-    p.add_argument('--verify-log')
+    p.add_argument('--mutation-log')
     a = p.parse_args()
-    log = Path(a.verify_log).resolve() if a.verify_log else None
+    log = Path(a.mutation_log).resolve() if a.mutation_log else None
     if log and not log.is_file():
-        sys.exit(f'diff_brief: no verify log at {log}')
+        sys.exit(f'diff_brief: no mutation-test log at {log}')
     if log and (why := verify_mismatch(log, a.repo, a.range.split('..')[-1])):
         sys.exit(f'diff_brief: {why}')
 
@@ -100,7 +100,7 @@ def main():
         sys.exit(f'diff_brief: unfilled slots: {left or [focus_slot + " missing"]}')
     focus = Path(a.focus).read_text().strip() if a.focus else 'none'
     if log:
-        focus = f'Verify log: {log}\n\n{focus}' if a.focus else f'Verify log: {log}'
+        focus = f'Mutation-test log: {log}\n\n{focus}' if a.focus else f'Mutation-test log: {log}'
     Path(a.out).write_text(t.replace(focus_slot, focus))
     print(a.out)
 

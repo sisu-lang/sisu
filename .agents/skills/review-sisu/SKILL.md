@@ -42,12 +42,12 @@ summarize the target; the reviewer reads it.
 
 For a diff, including one task's diff in a plan run, write the Focus to
 `RUN/focus.md` and let the script fill the rest:
-`python3 .agents/skills/review-sisu/scripts/diff_brief.py <repository root> <base>..<head> RUN/brief.md --doc <spec or plan> --focus RUN/focus.md --verify-log <log>`.
+`python3 .agents/skills/review-sisu/scripts/diff_brief.py <repository root> <base>..<head> RUN/brief.md --doc <spec or plan> --focus RUN/focus.md --mutation-log <log>`.
 Repeat `--doc` for each document; leave it out when there is none. Pass
-the `LOG=` file of the last `make verify` run on the diff as
-`--verify-log`, so the reviewer can check its verdict line; leave it out
-only when no verify ran. The script stops when the log measured another commit than
-the range's head: run `make verify` again on that head.
+the `LOG=` file of a `make mutation-test` run on the diff as
+`--mutation-log`, so the reviewer can check its summary line; leave it out
+when no mutation test ran. The script stops when the log measured another commit than
+the range's head.
 
 ### 3. Launch the reviewers
 
