@@ -1354,8 +1354,18 @@ impl Checker<'_> {
         interface: InterfaceId,
         args: TypeArgs,
     ) -> Type {
-        let mut seen = FxHashSet::default();
-        self.leaf(ty, interface, args, &mut seen).unwrap_or(ty)
+        // A root is asked with nothing in progress, so its answer is the one to give again for the
+        // same root, whatever its walk cut short: a program that compares one type many times
+        // reads it once. Another walk may use it only when the walk cut nothing short.
+        let key = (ty, interface, args);
+        if let Some(&(kept, _)) = self.leaves.get(&key) {
+            return kept.unwrap_or(ty);
+        }
+        let found = self.leaf(ty, interface, args, &mut FxHashSet::default());
+        if !ty.has_param() {
+            self.leaves.entry(key).or_insert((found, false));
+        }
+        found.unwrap_or(ty)
     }
 
     /// The report that `ty`, the type of the operand at `at`, has no `op`, which `interface` (`Eq`
@@ -1472,17 +1482,39 @@ impl Checker<'_> {
                 let broken = holder_of(ty).is_some_and(|holder| {
                     self.broken_extensions.contains(&self.holder_name(holder))
                 });
-                if broken || !seen.insert((ty, interface, args)) {
+                if broken {
                     return None;
                 }
-                if let Some((k, stands)) = find(&self.conformances, interface, ty, args) {
-                    return (!self.record_holds(interface, k, stands)).then_some(ty);
+                if !seen.insert((ty, interface, args)) {
+                    self.leaf_cuts += 1;
+                    return None;
                 }
-                match generated(self.lang, ty, interface) {
-                    Generated::Holds => None,
-                    Generated::Fails | Generated::Element(_) => Some(ty),
-                    Generated::Payloads(id, own) => self.payloads_leaf(id, own, interface, seen),
+                // The answer for a type with no type parameter changes with no body, and when no
+                // part of its walk was cut short it does not depend on where the walk began: it is
+                // kept, so a type that was read before costs nothing more.
+                let key = (ty, interface, args);
+                if let Some(&(kept, true)) = self.leaves.get(&key) {
+                    return kept;
                 }
+                #[cfg(test)]
+                super::LEAF_STEPS.set(super::LEAF_STEPS.get() + 1);
+                let cuts = self.leaf_cuts;
+                let found = if let Some((k, stands)) = find(&self.conformances, interface, ty, args)
+                {
+                    (!self.record_holds(interface, k, stands)).then_some(ty)
+                } else {
+                    match generated(self.lang, ty, interface) {
+                        Generated::Holds => None,
+                        Generated::Fails | Generated::Element(_) => Some(ty),
+                        Generated::Payloads(id, own) => {
+                            self.payloads_leaf(id, own, interface, seen)
+                        }
+                    }
+                };
+                if !ty.has_param() && self.leaf_cuts == cuts {
+                    self.leaves.insert(key, (found, true));
+                }
+                found
             }
             _ => match generated(self.lang, ty, interface) {
                 Generated::Holds => None,

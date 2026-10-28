@@ -142,6 +142,7 @@ impl Checker<'_> {
         }
         // A broken block may be named late: what was answered before it is asked again.
         self.conformed.clear();
+        self.leaves.clear();
     }
 
     /// Records the interfaces that the listed ones inherit, and gives the conformances that a

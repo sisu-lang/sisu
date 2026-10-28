@@ -341,6 +341,9 @@ thread_local! {
     /// The most steps `conforms` may count on this thread: the step that passes it panics, so a
     /// test of a query that would take too many steps fails at once.
     pub(super) static CONFORMS_BUDGET: std::cell::Cell<usize> = const { std::cell::Cell::new(usize::MAX) };
+    /// How many times `failing_leaf` has read a class or an enum for the part that fails, not
+    /// counting an answer it kept.
+    pub(super) static LEAF_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many conformances and choices the checks of the choices have read, or looked up by
     /// the name of an associated type, on this thread.
     pub(super) static CHOICE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -442,6 +445,12 @@ struct Checker<'src> {
     probe_budget: usize,
     /// The answers of `conforms` for a type with no type parameter, which no body changes.
     conformed: FxHashMap<(Type, tir::InterfaceId, TypeArgs), bool>,
+    /// The part that makes a class or an enum with no type parameter fail an interface (`None`
+    /// when it holds), as `failing_leaf` found it; and whether no part of that walk was cut short,
+    /// which lets another walk use it.
+    leaves: FxHashMap<(Type, tir::InterfaceId, TypeArgs), (Option<Type>, bool)>,
+    /// How many parts the walks of `failing_leaf` have cut short, for a part that was being read.
+    leaf_cuts: usize,
     /// The language interfaces, found by name once the prelude's names are collected.
     lang: tir::LangInterfaces,
     /// The state of the root query of `conforms` that is open, if one is.
@@ -939,6 +948,8 @@ impl<'src> Checker<'src> {
             probed_assoc: FxHashSet::default(),
             probe_budget: 0,
             conformed: FxHashMap::default(),
+            leaves: FxHashMap::default(),
+            leaf_cuts: 0,
             lang: tir::LangInterfaces::default(),
             open: conformance::Open::default(),
             unbuilt: Vec::new(),

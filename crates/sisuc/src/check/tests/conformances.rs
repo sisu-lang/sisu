@@ -449,6 +449,63 @@ fn roots(n: usize) -> String {
     calling(&decls, &params.join(", "), &calls)
 }
 
+/// `enum C0 { A(C1) }` … `enum C(n-1) { End(Node) }` and a class `Node` with no `Eq`, and `n`
+/// functions that each compare two values of `C(k)`, where `k` is `at(i)` for the function `i`. In
+/// a ring, the last enum also has `A(C0)`.
+fn comparisons(n: usize, at: fn(usize) -> usize, ring: bool) -> String {
+    let mut enums: Vec<String> = (0..n - 1)
+        .map(|k| format!("enum C{k} {{\n    A(C{})\n}}\n", k + 1))
+        .collect();
+    let back = if ring { "    A(C0)\n" } else { "" };
+    enums.push(format!("enum C{} {{\n{back}    End(Node)\n}}\n", n - 1));
+    let fns: Vec<String> = (0..n)
+        .map(|i| {
+            let ty = format!("C{}", at(i));
+            format!("fn f{i}(a: {ty}, b: {ty}) -> bool {{ a == b }}\n")
+        })
+        .collect();
+    format!(
+        "class Node {{}}\n{}{}fn main() {{}}",
+        enums.concat(),
+        fns.concat()
+    )
+}
+
+/// Each comparison that fails reports the leaf, and a type that was read for one report is not
+/// read again for the next.
+#[test]
+fn failing_leaf_should_read_each_type_once() {
+    /// A row: its name, the enum that the function `i` compares, and whether the chain is a ring.
+    type Row = (&'static str, fn(usize) -> usize, bool);
+    let rows: [Row; 3] = [
+        (
+            "the root of a chain, compared again and again",
+            |_| 0,
+            false,
+        ),
+        ("each enum of a chain, compared once", |i| i, false),
+        ("the root of a ring, compared again and again", |_| 0, true),
+    ];
+    for (row, at, ring) in rows {
+        let count = |n: usize| {
+            LEAF_STEPS.set(0);
+            let (_, ds) = checked(&comparisons(n, at, ring));
+            assert_eq!(
+                ds.iter().filter(|d| d.code() == Code::NoOperator).count(),
+                n,
+                "row `{row}`"
+            );
+            LEAF_STEPS.get()
+        };
+        let (one, two, three) = (count(20), count(40), count(60));
+        assert_eq!(
+            one, 21,
+            "row `{row}`: one read for each enum and for the class"
+        );
+        assert_near_linear(one, two, three);
+    }
+}
+
 #[test]
 fn generated_should_decide_each_type_once() {
     assert_eq!(steps(&chain(40)), (40, vec![]));
@@ -994,6 +1051,24 @@ fn failing_leaf_should_name_the_part_that_fails_on_its_own() {
     for (row, params, ty, interface, leaf) in bounded {
         assert_eq!(leaf_of(items, (params, ty), interface), leaf, "{row}");
     }
+}
+
+#[test]
+fn failing_leaf_should_not_keep_a_part_that_was_found_with_a_cycle_cut_short() {
+    // Read from `Y`, the walk of `X` skips `Y`, which it is inside of, and finds `B`. Read on its
+    // own, it goes through `Y` and finds `A`, so the first answer must not be kept for `X`.
+    let src = "class A {}\nclass B {}\nenum Y {\n    P(X)\n    Q(A)\n}\nenum X {\n    R(Y)\n    S(B)\n}\nfn other(x: X) {}\n";
+    let leaves = with_probe(src, ("T", "Y"), "Eq", |checker, y, eq| {
+        let other = (checker.signatures.iter())
+            .find(|signature| signature.name == "other")
+            .and_then(|signature| signature.params[0])
+            .expect("the program should declare `other`");
+        [y, other].map(|ty| {
+            let leaf = checker.failing_leaf(ty, eq, TypeArgs::NONE);
+            checker.type_name(leaf)
+        })
+    });
+    assert_eq!(leaves, ["B", "A"]);
 }
 
 /// The step that passes the budget panics, so a query that blows up fails at once.
