@@ -71,8 +71,8 @@ warns about each test over its time budget: 1 s for a unit test and 4 s for an
 end-to-end test, on a GitHub-hosted runner. CI runs it after the tests. The
 pre-commit hook runs it on the report of your last `make test` with
 `--diff HEAD`, so it lists only the slow tests your change names and counts the
-rest. The hook only warns. In CI on a pull request, `--fail-changed` fails when
-a test that the pull request adds or edits takes more than twice its budget.
+rest. Neither CI nor the hook fails on a slow test: wall-clock time depends on
+the machine and its load.
 
 After the tests pass, `make test` checks each `test(...)` leaf of a filter in
 `.config/nextest.toml`, and CI does the same. A leaf that matches no test, such
