@@ -15,8 +15,9 @@
 //! when it is done. Before any other link it pushes `(resume index, address, owed)` on the
 //! pending list, sets `owed` to 0 and loops. When a value is done, it writes its `owed` closing
 //! parentheses and pops an entry, which goes on at the field after the link. So the frame does
-//! not grow with the depth or the shape of the value, and the pending list is on the heap, freed
-//! before the helper returns.
+//! not grow with the depth or the shape of the value. The first entry of the pending list is in
+//! the frame. A second entry that waits at the same time, as in a left-leaning value, goes to a
+//! buffer on the heap, which the helper frees before it returns.
 
 use inkwell::AddressSpace;
 use inkwell::IntPredicate;

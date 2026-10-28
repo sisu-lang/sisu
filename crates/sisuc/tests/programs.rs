@@ -263,9 +263,13 @@ allocation_counts! {
     (enum_alloc_chain_rewrite, "3\n", "3\n", 0),
     // `==` on right-deep values needs no buffer of pending pairs: only the 4 boxes per level.
     (enum_alloc_eq_right, "true\n", "true\n", 4000),
-    // `print` of an enum writes into the output buffer and allocates nothing of its own: the
+    // `print` of an enum writes into the output buffer with no text buffer: the pending list of
+    // a right-leaning value stays in its first slot in the frame, so nothing is allocated. The
     // 4 boxes of the one value are built in both runs.
     (show_print, "start\n".to_string() + &"Add(Num(1), Add(Num(2), Num(3)))\n".repeat(1000), "start\n", 0),
+    // A left-leaning value has two entries waiting at once, and the second spills the pending list
+    // to the heap: one block for each `print`.
+    (show_print_left, "start\n".to_string() + &"Add(Add(Num(1), Num(2)), Num(3))\n".repeat(1000), "start\n", 1000),
     // `print` of an `i64` allocates nothing.
     (print_int, super::numbered_lines("start", 1000), "start\n", 0),
 }

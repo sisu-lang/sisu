@@ -1692,7 +1692,8 @@ fn printing_a_deep_enum_should_loop_instead_of_recursing() {
 }
 
 /// `eprint` of a compound value builds the text in a buffer sink and writes it with one
-/// `sisu_eprint_str`; `print` writes through a sink over standard output and allocates nothing.
+/// `sisu_eprint_str`; `print` writes through a sink over standard output, with no buffer for the
+/// text.
 #[test]
 fn printing_a_compound_value_should_use_the_sink_of_its_stream() {
     let context = Context::create();

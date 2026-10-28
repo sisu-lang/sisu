@@ -4,7 +4,7 @@
 //! events later. A flat sink writes `sep` as `, ` and nothing more.
 //!
 //! A sink is a stack slot of `SINK_SIZE` bytes that generated code owns. One kind writes to the
-//! runtime's standard output buffer, so `print` of a value allocates nothing. The other builds a
+//! runtime's standard output buffer, so `print` needs no buffer for the text. The other builds a
 //! block that is the result string: `header` bytes that the sink never touches, then the text.
 //! The runtime neither builds nor reads a Sisu object (ADR 0009) and does not know the string
 //! layout (ADR 0014); generated code writes the header of the block in place after

@@ -1,0 +1,20 @@
+fn iterations() -> i64 { 1000 }
+
+// `print` of a left-leaning enum value writes into a sink over the output buffer with no text
+// buffer, but the pending list of the helper spills to the heap: the root waits for its first
+// field, which is an `Add` that waits for its first field too, so two entries wait at once and
+// the list holds only one in the frame. Each `print` allocates one block for the rest, and the
+// 4 boxes of the build are the same with no iteration. The first line makes the runtime open its
+// output buffer in both runs.
+enum Expr {
+    Num(i64)
+    Add(Expr, Expr)
+}
+
+fn main() {
+    let e = Expr.Add(Expr.Add(Expr.Num(1), Expr.Num(2)), Expr.Num(3))
+    print("start")
+    for _ in 0..iterations() {
+        print(e)
+    }
+}
