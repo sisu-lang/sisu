@@ -2,7 +2,7 @@ error[E0159]: `Holder` has no `!=`, since `Node` has none
   --> E0159-enum.sisu:12:11
    |
 12 |     print(a != Holder.Empty)
-   |           ^ this is a `Holder`
+   |           ^ this has type `Holder`
    |
    = help: make `Node` conform to `Eq`
 

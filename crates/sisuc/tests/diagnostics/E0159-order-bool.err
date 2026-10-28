@@ -2,7 +2,7 @@ error[E0159]: `bool` has no `<`
  --> E0159-order-bool.sisu:2:11
   |
 2 |     print(true < false)
-  |           ^^^^ this is a `bool`
+  |           ^^^^ this has type `bool`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0159

@@ -5,7 +5,7 @@ error[E0159]: `Outer` has no `==`, since `Pair<bool>` has none
    |           --- this conformance needs `T: Ord`
 ...
 14 |     print(Outer.Has(Pair.Two(true, false)) == Outer.Has(Pair.Two(true, false)))
-   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is a `Outer`
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this has type `Outer`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0159

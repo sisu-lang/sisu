@@ -2,7 +2,7 @@ error[E0159]: `Node` has no `==`; classes compare by identity
  --> E0159-eq-method.sisu:9:11
   |
 9 |     print(a == Node(value: 1))
-  |           ^ this is a `Node`
+  |           ^ this has type `Node`
   |
   = help: use `a is b`, or make `Node` conform to `Eq`
 

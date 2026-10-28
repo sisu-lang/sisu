@@ -2,7 +2,7 @@ error[E0159]: `[Node]` has no `==`, since `Node` has none
  --> E0159-array.sisu:8:11
   |
 8 |     print(a == b)
-  |           ^ this is a `[Node]`
+  |           ^ this has type `[Node]`
   |
   = help: make `Node` conform to `Eq`
 

@@ -2,7 +2,7 @@ error[E0159]: `Wrap<Node>` has no `==`, since `Node` has none
   --> E0159-listed.sisu:11:11
    |
 11 |     print(Wrap.Has(Node(value: 1)) == Wrap.Has(Node(value: 1)))
-   |           ^^^^^^^^^^^^^^^^^^^^^^^^ this is a `Wrap<Node>`
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^ this has type `Wrap<Node>`
    |
    = help: make `Node` conform to `Eq`
 

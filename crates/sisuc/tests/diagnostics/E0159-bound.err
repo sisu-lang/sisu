@@ -5,7 +5,7 @@ error[E0159]: `Pair<bool>` has no `==`
    |           --- this conformance needs `T: Ord`
 ...
 10 |     print(Pair.Two(true, false) == Pair.Two(true, false))
-   |           ^^^^^^^^^^^^^^^^^^^^^ this is a `Pair<bool>`
+   |           ^^^^^^^^^^^^^^^^^^^^^ this has type `Pair<bool>`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0159

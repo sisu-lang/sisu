@@ -2462,12 +2462,12 @@ impl From<DiagnosticKind> for Diagnostic {
                 let (message, label, help) = match form {
                     NoOperatorForm::Identity { make } => (
                         format!("`{ty}` has no `{op}`; classes compare by identity"),
-                        format!("this is a `{ty}`"),
+                        format!("this has type `{ty}`"),
                         Some(format!("use `a is b`, or make `{make}` conform to `Eq`")),
                     ),
                     NoOperatorForm::Operator { make, interface } => (
                         format!("`{ty}` has no `{op}`{}", since.unwrap_or_default()),
-                        format!("this is a `{ty}`"),
+                        format!("this has type `{ty}`"),
                         make.map(|make| format!("make `{make}` conform to `{interface}`")),
                     ),
                     NoOperatorForm::Contains { make } => (
@@ -4381,7 +4381,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 let d = if contains {
                     d.with_label("`contains` compares elements with `==`")
                 } else {
-                    d.with_label(format!("this is a `{ty}`"))
+                    d.with_label(format!("this has type `{ty}`"))
                 };
                 match add {
                     Some(add) => d.with_help(add.help()),

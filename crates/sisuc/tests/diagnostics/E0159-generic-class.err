@@ -2,7 +2,7 @@ error[E0159]: `Box<T>` has no `==`; classes compare by identity
  --> E0159-generic-class.sisu:6:5
   |
 6 |     a == b
-  |     ^ this is a `Box<T>`
+  |     ^ this has type `Box<T>`
   |
   = help: use `a is b`, or make `Box<T>` conform to `Eq`
 

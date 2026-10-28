@@ -2,7 +2,7 @@ error[E0139]: `T` has no `<`
  --> E0139-two-types-order.sisu:2:5
   |
 2 |     a < b
-  |     ^ this is a `T`
+  |     ^ this has type `T`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0139

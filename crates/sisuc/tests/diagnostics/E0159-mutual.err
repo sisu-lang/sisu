@@ -2,7 +2,7 @@ error[E0159]: `B` has no `==`, since `Node` has none
   --> E0159-mutual.sisu:15:5
    |
 15 |     a == b
-   |     ^ this is a `B`
+   |     ^ this has type `B`
    |
    = help: make `Node` conform to `Eq`
 
