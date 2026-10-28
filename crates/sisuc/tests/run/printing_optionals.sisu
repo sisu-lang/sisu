@@ -1,0 +1,44 @@
+// GIVEN an `i64??`, an `i64???`, a `string?`, a `char?` and a `string??`, each empty, holding
+// `None` in a layer, or holding a value
+// WHEN `print` and an interpolation write each of them at the top level
+// THEN both forms write the same text, by the Some rule: a `Some(` wraps only a `None` that sits
+// inside another layer
+fn main() {
+    let middle: i64? = None
+    let five: i64? = 5
+    let n0: i64?? = None
+    let n1: i64?? = middle
+    let n2: i64?? = five
+    let m0: i64??? = None
+    let m1: i64??? = n0
+    let m2: i64??? = n1
+    let m3: i64??? = n2
+    let hi: string? = "hi"
+    let no_string: string? = None
+    let q: char? = 'q'
+    let ss: string?? = Some("hi")
+
+    // Each of these warns (W0015), and writes the text of its value.
+    print(n0)                       // None
+    print("{n0}")                   // None
+    print(n1)                       // Some(None)
+    print("{n1}")                   // Some(None)
+    print(n2)                       // 5
+    print("{n2}")                   // 5
+    print(m0)                       // None
+    print("{m0}")                   // None
+    print(m1)                       // Some(None)
+    print("{m1}")                   // Some(None)
+    print(m2)                       // Some(Some(None))
+    print("{m2}")                   // Some(Some(None))
+    print(m3)                       // 5
+    print("{m3}")                   // 5
+    print(hi)                       // hi
+    print("{hi}")                   // hi
+    print(no_string)                // None
+    print("{no_string}")            // None
+    print(q)                        // q
+    print("{q}")                    // q
+    print(ss)                       // hi
+    print("{ss}")                   // hi
+}
