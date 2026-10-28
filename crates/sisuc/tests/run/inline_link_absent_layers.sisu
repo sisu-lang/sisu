@@ -1,14 +1,15 @@
-// GIVEN an enum `Expr` that holds itself inline under two `?`s (`Pair`, through `Both(Expr??,
-// Expr??)`) and under three (`Tri`, through `Both(Expr???, Expr???)` and then a scalar), with 256
-// variants, so that its tag has no spare value and each `?` is a flag, and the variant after `Lit`
-// has no payload, so that a walk which reads a flag as a tag stops at once, and 15 values that
-// have `None`, `Some(None)`, `Some(Some(None))` and a value at each layer of the first and the
-// second link, two of them with the absent layer deep in a chain of two `Expr`
-// WHEN each value is printed, and every value of one list is compared with `==` to every value
-// of a second list that has the same values, and both lists are dropped
-// THEN the padding has 252 variants, each absent layer prints as `None` under one `Some(` for each
-// layer above it, `==` is true for the same value only, which includes the values that differ in
-// layer 2 or 3 alone, and every string is released once
+// GIVEN an enum `Expr` that holds itself inline under two `?`s (`Pair`) and under three (`Tri`)
+// AND `Expr` has 256 variants, so its tag has no spare value and each `?` is a flag
+// AND the variant after `Lit` has no payload, so a walk that reads a flag as a tag stops at once
+// AND 15 values with `None`, `Some(None)`, `Some(Some(None))` and a value at each layer of a link
+// AND two of them have the absent layer deep in a chain of two `Expr`
+// WHEN each value is printed
+// AND every value of one list is compared with `==` to every value of a second list
+// AND both lists are dropped
+// THEN the padding has 252 variants
+// AND each absent layer prints as `None` under one `Some(` for each layer above it
+// AND `==` is true for the same value only, also when the values differ in layer 2 or 3 alone
+// AND every string is released once
 enum Two<T> {
     Both(T??, T??)
 }
@@ -276,27 +277,44 @@ fn lit(s: string) -> Expr { Expr.Lit("lit {s}") }
 
 fn values() -> [Expr] {
     [
+        // Pair(Both(None, None))
         Expr.Pair(Two.Both(None, None)),
+        // Pair(Both(Some(None), None))
         Expr.Pair(Two.Both(Some(None), None)),
+        // Pair(Both(None, Some(None)))
         Expr.Pair(Two.Both(None, Some(None))),
+        // Pair(Both(Lit("lit a"), Some(None)))
         Expr.Pair(Two.Both(Some(Some(lit("a"))), Some(None))),
+        // Pair(Both(Lit("lit a"), Lit("lit b")))
         Expr.Pair(Two.Both(Some(Some(lit("a"))), Some(Some(lit("b"))))),
+        // Pair(Both(Lit("lit a"), Lit("lit c")))
         Expr.Pair(Two.Both(Some(Some(lit("a"))), Some(Some(lit("c"))))),
         // The absent layer is the second layer of a link in the inner `Pair`.
+        // Pair(Both(Pair(Both(Some(None), None)), None))
         Expr.Pair(Two.Both(Some(Some(Expr.Pair(Two.Both(Some(None), None)))), None)),
+        // Pair(Both(Pair(Both(None, None)), None))
         Expr.Pair(Two.Both(Some(Some(Expr.Pair(Two.Both(None, None)))), None)),
+        // Tri(Both(None, None), 1)
         Expr.Tri(Two.Both(None, None), 1),
+        // Tri(Both(Some(None), Some(Some(None))), 1)
         Expr.Tri(Two.Both(Some(None), Some(Some(None))), 1),
+        // Tri(Both(Some(Some(None)), Some(Some(None))), 1)
         Expr.Tri(Two.Both(Some(Some(None)), Some(Some(None))), 1),
+        // Tri(Both(Some(Some(None)), Lit("lit c")), 1)
         Expr.Tri(Two.Both(Some(Some(None)), Some(Some(Some(lit("c"))))), 1),
+        // Tri(Both(Some(Some(None)), Lit("lit c")), 2)
         Expr.Tri(Two.Both(Some(Some(None)), Some(Some(Some(lit("c"))))), 2),
         // The absent layer is the third layer of a link in the inner `Tri`.
+        // Tri(Both(Tri(Both(Some(Some(None)), None), 3), None), 4)
         Expr.Tri(Two.Both(Some(Some(Some(Expr.Tri(Two.Both(Some(Some(None)), None), 3)))), None), 4),
+        // Pair(Both(Nil, Nil))
         Expr.Pair(Two.Both(Some(Some(Expr.Nil)), Some(Some(Expr.Nil)))),
     ]
 }
 
-// The padding variants make the tag full. Each one is built, so that none is a warning.
+// The padding variants make the tag full. With a spare tag value, each `?` would be a tag value,
+// and a walk that stops after the first layer would still read a correct tag, so this test would
+// pass with that bug. Each variant is built, so that none is a warning.
 fn padding() -> [Expr] {
     [
         Expr.Pad0,
@@ -555,12 +573,14 @@ fn padding() -> [Expr] {
 }
 
 fn main() {
+    // 252
     print(padding().len())
     let xs = values()
     let ys = values()
     for x in xs {
         print(x)
     }
+    // Row i, column j is `T` when value i equals value j: `T` on the diagonal only.
     for i in 0..15 {
         let mut row = ""
         for j in 0..15 {
