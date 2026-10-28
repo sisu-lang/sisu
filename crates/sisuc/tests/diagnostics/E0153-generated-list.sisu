@@ -1,0 +1,7 @@
+class Circle: Display, Display {
+    r: f64
+}
+
+fn main() {
+    print(Circle(r: 1.0))
+}

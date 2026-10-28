@@ -12,7 +12,7 @@ use crate::diagnostic::{ConformanceForm, DiagnosticKind, NotConformForm, Ungener
 use crate::front_end::LANG_SOURCE;
 use crate::source::{PRELUDE_BASE, Source as Text, Span};
 use crate::symbol::Symbol;
-use crate::tir::{self, InterfaceId, Type, TypeKind};
+use crate::tir::{self, Conformances, InterfaceId, Type, TypeKind};
 
 /// Where the methods that meet a conformance's requirements are.
 #[derive(Clone, Copy)]
@@ -54,8 +54,11 @@ struct Added {
     ats: FxHashMap<(InterfaceId, usize), Span>,
     /// The listed interfaces that the compiler writes.
     derived: Vec<Derived>,
-    /// The types and interfaces in `derived`, so that a repeated listing is checked once.
-    derived_keys: FxHashSet<(Type, InterfaceId, tir::TypeArgs)>,
+    /// The conformances in `derived` with no methods, so that a repeated listing is found by the
+    /// same overlap test as a written one, and checked once.
+    seen: Conformances,
+    /// Where each conformance of `seen` is listed, by interface and index.
+    seen_ats: FxHashMap<(InterfaceId, usize), Span>,
 }
 
 /// An interface that the list of a class or an enum gets from another, when a block gave the type
@@ -103,6 +106,19 @@ impl Checker<'_> {
             // A listing that the compiler writes is no second conformance.
             self.extensions[block].duplicate = one.is_none() && added.derived.len() == derived;
             pending.extend(one);
+        }
+        // A listing that the compiler writes is a second conformance when a body or a block
+        // writes the same one. Those that a listed interface inherits are no listing.
+        for d in &added.derived {
+            let params = self.source_params(d.source).0.len();
+            let Bound {
+                interface, args, ..
+            } = d.interface;
+            let clash = conformance::clash(&self.conformances, interface, d.target, params, args);
+            if let Some((k, common)) = clash {
+                let earlier = added.ats[&(interface, k)];
+                self.conforms_twice(d.interface, &common, (earlier, d.at));
+            }
         }
         let (inherited_found, gives_display) =
             self.listed_closures(&lists, &mut added, &mut pending);
@@ -218,6 +234,10 @@ impl Checker<'_> {
                     }
                     continue;
                 }
+                // A listed interface that the compiler writes was added with the list.
+                if parents[k].is_none() {
+                    continue;
+                }
                 let bound = Bound {
                     interface,
                     args,
@@ -317,18 +337,7 @@ impl Checker<'_> {
         );
         if let Some((k, common)) = clash {
             let earlier = added.ats[&(bound.interface, k)];
-            let (first, second) = if earlier.start() <= at.start() {
-                (earlier, at)
-            } else {
-                (at, earlier)
-            };
-            self.report(DiagnosticKind::ConformsTwice {
-                ty: self.type_name(common[0]),
-                interface: self.bound_text(bound.interface, tir::TypeArgs::intern(&common[1..])),
-                at: second,
-                first,
-                generic: !bound.args.get().is_empty(),
-            });
+            self.conforms_twice(bound, &common, (earlier, at));
             return None;
         }
         let (assoc, written) = self.chosen(bound.interface, source);
@@ -374,6 +383,24 @@ impl Checker<'_> {
         })
     }
 
+    /// Reports that the type `common[0]` conforms to the interface of `bound` with the arguments
+    /// `common[1..]` twice: at the one of the two places that starts last, with the other as the
+    /// first.
+    fn conforms_twice(&mut self, bound: Bound, common: &[Type], places: (Span, Span)) {
+        let (first, second) = if places.0.start() <= places.1.start() {
+            places
+        } else {
+            (places.1, places.0)
+        };
+        self.report(DiagnosticKind::ConformsTwice {
+            ty: self.type_name(common[0]),
+            interface: self.bound_text(bound.interface, tir::TypeArgs::intern(&common[1..])),
+            at: second,
+            first,
+            generic: !bound.args.get().is_empty(),
+        });
+    }
+
     /// `add_conformance` for an interface that a list or an `extend` block writes, or that a list
     /// gets from `via`, an interface that inherits it, and where it writes that. Only a class
     /// conforms to `AnyObject`; that is reported, and the conformance is recorded all the same,
@@ -392,17 +419,35 @@ impl Checker<'_> {
             self.report_class_only(target, at, via);
         }
         if self.is_derived(bound.interface, target, source) {
-            if added
-                .derived_keys
-                .insert((target, bound.interface, bound.args))
-            {
-                added.derived.push(Derived {
-                    interface: bound,
-                    target,
-                    at,
-                    source,
-                });
+            let params = self.source_params(source).0.len();
+            let clash =
+                conformance::clash(&added.seen, bound.interface, target, params, bound.args);
+            if let Some((k, common)) = clash {
+                // An interface that another listed one inherits is no second listing.
+                if via.is_none() {
+                    let earlier = added.seen_ats[&(bound.interface, k)];
+                    self.conforms_twice(bound, &common, (earlier, at));
+                }
+                return None;
             }
+            let index = added.seen.add(
+                bound.interface,
+                tir::Conformance {
+                    type_params: params,
+                    target,
+                    args: bound.args,
+                    methods: Vec::new(),
+                    assoc: Vec::new(),
+                    bounds: Vec::new(),
+                },
+            );
+            added.seen_ats.insert((bound.interface, index), at);
+            added.derived.push(Derived {
+                interface: bound,
+                target,
+                at,
+                source,
+            });
             return None;
         }
         self.add_conformance(bound, target, at, source, added)

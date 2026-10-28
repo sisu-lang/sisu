@@ -1,0 +1,10 @@
+enum Light: Display {
+    Red
+    Green
+}
+
+extend Light: Display {}
+
+fn main() {
+    print(Light.Red)
+}

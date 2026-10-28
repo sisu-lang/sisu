@@ -1,0 +1,10 @@
+error[E0153]: `Light` conforms to `Eq` twice
+ --> E0153-generated-enum.sisu:1:17
+  |
+1 | enum Light: Eq, Eq {
+  |             --  ^^
+  |             |
+  |             first conformance here
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0153

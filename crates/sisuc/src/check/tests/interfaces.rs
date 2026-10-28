@@ -838,6 +838,23 @@ fn a_second_conformance_to_an_interface_should_be_reported_once() {
             "class Circle: Shape, Shape {\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {}",
             vec![(Code::ConformsTwice, (1, 22))],
         ),
+        // An interface that the compiler writes is a conformance too: a list names it with no
+        // method, and a block that writes it gives a second.
+        (
+            "class Circle: Display {}\nextend Circle: Display {\n    fn to_string(self) -> string { \"c\" }\n}\nfn main() {}",
+            vec![(Code::ConformsTwice, (2, 16))],
+        ),
+        (
+            "extend Circle: Display {\n    fn to_string(self) -> string { \"c\" }\n}\nclass Circle: Display {}\nfn main() {}",
+            vec![(Code::ConformsTwice, (4, 15))],
+        ),
+        // A listing that the compiler writes, once, is no second conformance.
+        ("class Circle: Display {}\nfn main() {}", vec![]),
+        // A listed interface that inherits `Display` is no second listing of it.
+        (
+            "interface Labeled: Display {}\nclass Circle: Labeled, Display {}\nfn main() {}",
+            vec![],
+        ),
         // Two types conform once each, and one type conforms to two interfaces.
         (
             "class Circle: Shape {\n    fn area(self) -> f64 { 1.0 }\n}\nclass Square: Shape {\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {}",
