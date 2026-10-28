@@ -787,8 +787,8 @@ fn comparing_an_optional_class_with_none_should_test_the_pointer() {
     }
 }
 
-/// `a is b` on a `T: AnyObject` costs nothing at run time: with `T = Node` it is one pointer
-/// comparison with no helper, and a `T?` local is a bare pointer, as any `Node?` is.
+/// `a is b` on a `T: AnyObject` costs nothing at run time. With `T = Node` it is one pointer
+/// comparison with no helper. A `T?` local is a bare pointer, as any `Node?` is.
 #[test]
 fn is_on_a_t_any_object_should_be_one_pointer_compare() {
     let context = Context::create();
@@ -808,7 +808,14 @@ fn is_on_a_t_any_object_should_be_one_pointer_compare() {
     assert!(!same.contains("call"), "{same}");
     let kept = function_body(&ir, "define internal i1 @\"sisu.kept<Node>\"(ptr");
     assert_eq!(compares(kept), 1, "{kept}");
-    assert!(kept.contains("%held = alloca ptr,"), "{kept}");
+    // The `T?` local is one of the allocas: a pair `{ i1, ptr }` there would be a flag and a
+    // pointer. The only other type is the `i1` of the result.
+    let slots: Vec<&str> = kept
+        .lines()
+        .filter_map(|line| line.split_once(" = alloca ")?.1.split(',').next())
+        .collect();
+    assert!(!slots.is_empty(), "{kept}");
+    assert!(slots.iter().all(|ty| matches!(*ty, "ptr" | "i1")), "{kept}");
 }
 
 /// An `eq` helper answers "equal" for one pointer on both sides only when its type's `==` is
