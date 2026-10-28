@@ -213,6 +213,10 @@ impl Normalizer<'_> {
         if chosen.has_assoc() && self.active.len() >= CHOICE_DEPTH_LIMIT {
             let cause = Cause::TooDeep;
             // The chain began at `start`, and needs the steps; the choice here is where it stops.
+            // `active` holds `CHOICE_DEPTH_LIMIT` choices, so `start` is set: it was set when
+            // `active` was empty, and each top-level choice sets it again before any push. A type
+            // parameter in its name belongs to the block of the start choice, which can be another
+            // block than the one of the choice that gives the span.
             let assoc = self.start.unwrap_or(assoc);
             self.stuck.push(Stuck {
                 assoc,

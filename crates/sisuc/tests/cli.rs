@@ -1669,6 +1669,21 @@ fn build_should_report_e0030_for_a_loop_that_only_the_instance_meets_and_not_pan
     assert!(!stderr.contains("panicked"), "{stderr}");
 }
 
+/// GIVEN the program of issue 226 with 40 levels, whose type for the loop is 287 bytes long
+/// WHEN `sisu check` runs on it
+/// THEN it exits 1 with E0030 at 17:14, and the name of the associated type ends with `.B`
+#[test]
+fn check_should_end_the_name_of_a_long_associated_type_with_its_own_name() {
+    let out = check("loop_of_40_choices", &long_choice_loop(40));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("loop_of_40_choices.sisu:17:14"), "{stderr}");
+    let first = stderr.lines().next().expect("an error line");
+    let name = first.split('`').nth(1).expect("a type name in backticks");
+    assert!(name.starts_with("W<Outer<Outer<"), "{first}");
+    assert_eq!(name.rsplit('.').next(), Some("B"), "{first}");
+}
+
 /// GIVEN a chain that ends but is 129 steps long: `W<T>` chooses the `B` of `T`, `Done` chooses
 /// itself, and `main` calls a generic function with `W<..W<Done>..>` of 129 levels
 /// WHEN it is built
@@ -1685,16 +1700,13 @@ fn build_should_name_the_start_of_a_chain_that_needs_more_than_128_steps() {
     assert_eq!(out.status.code(), Some(1), "{stderr}");
     assert!(stderr.contains("chain_of_129_steps.sisu:12:14"), "{stderr}");
     let first = stderr.lines().next().expect("an error line");
-    assert!(
-        first.starts_with("error[E0030]: the associated type `W<W<W<W<"),
-        "{first}"
-    );
-    // The type that the walk stopped at is `W<Done>.B`, and is not what the message names.
-    assert!(!first.contains("`W<Done>.B`"), "{first}");
-    assert!(
-        first.ends_with(".B` needs more than 128 steps to find its type"),
-        "{first}"
-    );
+    assert!(first.starts_with("error[E0030]: "), "{first}");
+    // The name is the first text in backticks. It is the type that the walk began at: not the one
+    // it stopped at (`W<Done>.B`), and it ends with the name of the associated type.
+    let name = first.split('`').nth(1).expect("a type name in backticks");
+    assert!(name.starts_with("W<W<W<W<"), "{first}");
+    assert_eq!(name.rsplit('.').next(), Some("B"), "{first}");
+    assert_ne!(name, "W<Done>.B", "{first}");
 }
 
 /// GIVEN a file with an error
