@@ -14,8 +14,9 @@ use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 use super::abi::{RC_FAULT_MOVED, RC_FAULT_RELEASE, RC_FAULT_RETAIN};
 use super::layout::HeapBlock;
 use super::{Codegen, POSITIONED};
+use crate::conformance::find;
 use crate::graph::components;
-use crate::tir::{ClassId, LocalId, Program, Type, TypeArgs, TypeKind};
+use crate::tir::{ClassId, EnumId, FuncId, LocalId, Program, Type, TypeArgs, TypeKind};
 
 /// A kind of helper that a counted type has.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -221,6 +222,11 @@ impl<'ctx> Codegen<'ctx, '_> {
             };
             let function = self.helpers.borrow()[&(kind, ty)];
             match (kind, ty.kind()) {
+                (Helper::Eq, TypeKind::Class(..) | TypeKind::Enum(..))
+                    if self.written_eq(ty).is_some() =>
+                {
+                    self.define_written_eq(function, ty);
+                }
                 (_, TypeKind::Enum(id, _)) => self.define_enum_helper(kind, id, function),
                 (Helper::Release, _) => self.define_release(function, ty),
                 (Helper::Retain, _) => {
@@ -504,6 +510,76 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.branch_to(body);
     }
 
+    /// The method of the written `Eq` of the class or enum `ty`, when the program has a record
+    /// for it. After `mono` each record is concrete, so the lookup is exact.
+    pub(super) fn written_eq(&self, ty: Type) -> Option<FuncId> {
+        let lang = self.program.lang;
+        let (k, _) = find(&self.program.conformances, lang.eq, ty, TypeArgs::NONE)?;
+        self.program
+            .conformances
+            .get(lang.eq, k)
+            .methods
+            .first()
+            .copied()
+    }
+
+    /// `@sisu_rc.eq.<T>(a, b)` for a class or an enum `ty` whose `Eq` is written: a call of its
+    /// `eq`, with each part passed as the method's final `borrowed` flags say. A parameter that
+    /// is not borrowed is owned by the callee, which releases it, so the helper retains the part
+    /// first. A class tests for `null` first, as the generated helper does; there is no look at
+    /// the same pointer, since a written `eq` need not be reflexive.
+    fn define_written_eq(&self, function: FunctionValue<'ctx>, ty: Type) {
+        let method = self
+            .written_eq(ty)
+            .expect("a type with a written `eq` should have a record");
+        let borrowed = &self.mir.functions[method.0].borrowed;
+        let parameter = |n| {
+            function
+                .get_nth_param(n)
+                .expect("the generated `eq` helper should be declared with two parameters")
+                .into_pointer_value()
+        };
+        let (a, b) = if let TypeKind::Class(..) = ty.kind() {
+            // The blocks that `eq_entry` returns answer the `null` cases; both are real here.
+            let (a, b, _, _) = self.eq_entry(function, false);
+            (a, b)
+        } else {
+            let entry = self.context.append_basic_block(function, "entry");
+            self.builder.position_at_end(entry);
+            (parameter(0), parameter(1))
+        };
+        let result = self.call_written_eq(method, ty, [a, b], borrowed);
+        self.builder.build_return(Some(&result)).expect(POSITIONED);
+    }
+
+    /// A call of the written `eq` `method` on the values of type `ty` at `places`: a class is the
+    /// pointer itself, and an enum is read by address. A part is retained first when the
+    /// method owns its parameter.
+    pub(super) fn call_written_eq(
+        &self,
+        method: FuncId,
+        ty: Type,
+        places: [PointerValue<'ctx>; 2],
+        borrowed: &[bool],
+    ) -> IntValue<'ctx> {
+        let values = places.map(|place| {
+            if let TypeKind::Enum(..) = ty.kind() {
+                self.load_value(ty, place)
+            } else {
+                place.into()
+            }
+        });
+        for (value, &keeps) in values.iter().zip(borrowed) {
+            if !keeps {
+                self.retain(*value, ty);
+            }
+        }
+        let args: Vec<_> = values.iter().map(|&value| value.into()).collect();
+        self.call_value(method, &args)
+            .expect("a written `eq` should return a `bool`")
+            .into_int_value()
+    }
+
     /// Starts `eq` helper `function` for a type that is `reflexive` or not: returns its two
     /// parameters and the blocks that return `true` and `false`. It returns `true` at once for
     /// what `equal_at_once` finds equal and `false` when one is `null`; the builder is left
@@ -606,12 +682,12 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// Whether every value of `ty` is `==` to itself: no `f64` is reachable from it, directly,
     /// as an optional's payload, an array's element, or a field of a class or a payload field
-    /// of an enum it reaches, boxed or inline. `reaches_f64` answers it for a class or an enum.
+    /// of an enum it reaches, boxed or inline. `unreflexive` answers it for a class or an enum.
     pub(super) fn reflexive(&self, ty: Type) -> bool {
         match unwrapped(ty).kind() {
             TypeKind::F64 => false,
-            TypeKind::Class(id, _) => !self.reaches_f64[id.0],
-            TypeKind::Enum(id, _) => !self.reaches_f64[self.program.classes.len() + id.0],
+            TypeKind::Class(id, _) => !self.unreflexive[id.0],
+            TypeKind::Enum(id, _) => !self.unreflexive[self.program.classes.len() + id.0],
             _ => true,
         }
     }
@@ -935,11 +1011,12 @@ fn unwrapped(mut ty: Type) -> Type {
     ty
 }
 
-/// Which classes, then which enums, of `program` reach an `f64` through their fields (see
-/// `Codegen::reflexive`): the types with a field of `f64` seed it, and each class or enum with
+/// Which classes, then which enums, of `program` reach an `f64` or a written `eq` through their
+/// fields (see `Codegen::reflexive`): the types with a field of `f64` and the types that have a
+/// written `Eq` seed it, since a written `eq` need not be reflexive, and each class or enum with
 /// a field of a type already in it joins, by a worklist over the reversed field graph. Every
 /// field is read once.
-pub(super) fn reaching_f64(program: &Program) -> Vec<bool> {
+pub(super) fn reaching_unreflexive(program: &Program) -> Vec<bool> {
     let classes = program.classes.len();
     let node_count = classes + program.enums.len();
     let mut reaches = vec![false; node_count];
@@ -962,6 +1039,14 @@ pub(super) fn reaching_f64(program: &Program) -> Vec<bool> {
             TypeKind::Enum(id, _) => holders[classes + id.0].push(node),
             _ => {}
         }
+    }
+    let written = |ty| find(&program.conformances, program.lang.eq, ty, TypeArgs::NONE).is_some();
+    let (class_seeds, enum_seeds) = reaches.split_at_mut(classes);
+    for (id, seed) in class_seeds.iter_mut().enumerate() {
+        *seed |= written(Type::intern(TypeKind::Class(ClassId(id), TypeArgs::NONE)));
+    }
+    for (id, seed) in enum_seeds.iter_mut().enumerate() {
+        *seed |= written(Type::intern(TypeKind::Enum(EnumId(id), TypeArgs::NONE)));
     }
     // Each seed is queued once, however many `f64` fields it has.
     let mut work: Vec<usize> = (0..node_count).filter(|&node| reaches[node]).collect();

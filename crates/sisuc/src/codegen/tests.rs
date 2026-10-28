@@ -931,7 +931,8 @@ fn niche_should_run_out_past_its_storage() {
     let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
     let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
-    let mut codegen = Codegen::new(&context, &program, "test.sisu", &src, &machine, false);
+    let mir = mir::build(&program);
+    let mut codegen = Codegen::new(&context, &program, &mir, "test.sisu", &src, &machine, false);
     codegen.lay_out_types();
     let layers = |ty, k| (0..k).fold(ty, |ty, _| Type::optional(ty));
     let pair = |value| {
@@ -1985,7 +1986,8 @@ fn binary_should_take_and_and_or_as_the_eager_operations_of_two_computed_bools()
     let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
     let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
-    let codegen = Codegen::new(&context, &program, "test.sisu", src, &machine, false);
+    let mir = mir::build(&program);
+    let codegen = Codegen::new(&context, &program, &mir, "test.sisu", src, &machine, false);
     let bool_type = context.bool_type();
     let fn_type = bool_type.fn_type(&[bool_type.into(), bool_type.into()], false);
     let function = codegen.module.add_function("both", fn_type, None);
@@ -2867,5 +2869,134 @@ fn instantiation_symbols_should_name_their_arguments() {
             .filter(|line| line.starts_with("define") && line.contains(symbol))
             .count();
         assert_eq!(defined, 1, "{symbol} in\n{ir}");
+    }
+}
+
+/// The program of the chain `G0<T>` ... `G{n-1}<T>`: `main` builds one `Gk<i64>` for each k and
+/// compares it with itself, `G0` first.
+fn chain_program(n: usize) -> String {
+    let mut src = String::new();
+    for k in 0..n - 1 {
+        writeln!(src, "enum G{k}<T> {{\n    A(G{}<T>)\n    End\n}}", k + 1)
+            .expect("writing to a `String` should succeed");
+    }
+    writeln!(src, "enum G{}<T> {{\n    End(T)\n}}\nfn main() {{", n - 1)
+        .expect("writing to a `String` should succeed");
+    for k in 0..n - 1 {
+        writeln!(src, "    let g{k}: G{k}<i64> = G{k}.End")
+            .expect("writing to a `String` should succeed");
+    }
+    writeln!(src, "    let g{} = G{}.End(1)", n - 1, n - 1)
+        .expect("writing to a `String` should succeed");
+    for k in 0..n {
+        writeln!(src, "    print(g{k} == g{k})").expect("writing to a `String` should succeed");
+    }
+    src + "}\n"
+}
+
+/// What `mono` counts for `src`: the keys `holds` decided and the pairs the record walk entered;
+/// and what the counts are after codegen built the program.
+fn mono_counts(src: &str) -> ((usize, usize), (usize, usize)) {
+    use crate::conformance::HOLDS_STEPS;
+    use crate::mono::WALK_VISITS;
+
+    HOLDS_STEPS.set(0);
+    WALK_VISITS.set(0);
+    let (program, diagnostics) = check_alone(&parse_ok(src), src, &[]);
+    let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+    let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
+    let after_mono = (HOLDS_STEPS.get(), WALK_VISITS.get());
+    let mir = mir::build(&program);
+    let context = Context::create();
+    let machine = target_machine(OptLevel::O0).expect("the host is a target");
+    let module = compile(&context, &program, &mir, "test.sisu", src, &machine, false);
+    module.verify().expect("the module should verify");
+    (after_mono, (HOLDS_STEPS.get(), WALK_VISITS.get()))
+}
+
+/// `mono` decides each class or enum type once, and its record walk enters each `(type, interface)`
+/// pair once, however many operands reach it. The chain makes `mono` take its slow path, where
+/// output ids differ from input ids. From `G0<i64>` the walk enters `G0<i64>` ... `G49<i64>` and
+/// then `i64`: 51 pairs, and `holds` decides the 50 enum keys once. Without the visited set the
+/// walk from `Gk<i64>` enters 51 - k pairs (1325 in all), and without the memo `holds(Gk<i64>)`
+/// follows the generated rule through `Gk` ... `G49` (1275 misses). Codegen asks no conformance
+/// query: it finds a written conformance in the output's records.
+#[test]
+fn mono_should_decide_each_type_once_and_codegen_should_ask_none() {
+    let (after_mono, after_codegen) = mono_counts(&chain_program(50));
+    assert_eq!(after_mono, (50, 51), "`mono` should decide each key once");
+    assert_eq!(after_codegen, after_mono, "codegen should ask no query");
+}
+
+/// The counts of `mono` are linear in the number of types: 20, 40 and 60 enums, ten times the
+/// smallest chain that a quadratic walk shows.
+#[test]
+fn mono_counts_should_grow_in_proportion_to_the_types() {
+    let counts = |n| mono_counts(&chain_program(n)).0;
+    let (a, b, c) = (counts(20), counts(40), counts(60));
+    assert_near_linear(a.0, b.0, c.0);
+    assert_near_linear(a.1, b.1, c.1);
+}
+
+/// `largest<i64>` and a hand-written `largest_i64` emit the same function body, apart from their
+/// names, at O0 and at `-O2`: a generic `>` on `i64` is a `Compare`, not a call of a `less`. Both
+/// use `best` and `x` for their locals, so only the function name differs.
+#[test]
+fn generic_largest_should_emit_the_hand_written_body() {
+    let body = |ty: &str| {
+        format!(
+            "(xs: [{ty}]) -> {ty}? {{\n    let mut best: {ty}? = None\n    for x in xs {{\n        if let b = best {{\n            if x > b {{\n                best = x\n            }}\n        }} else {{\n            best = x\n        }}\n    }}\n    best\n}}\n"
+        )
+    };
+    let src = format!(
+        "fn largest<T: Ord>{}\nfn largest_i64{}\nfn main() {{\n    print(largest([3, 9, 2]) ?? 0)\n    print(largest_i64([3, 9, 2]) ?? 0)\n}}",
+        body("T"),
+        body("i64")
+    );
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    for (level, optimized) in [("O0", false), ("O2", true)] {
+        let context = Context::create();
+        let module = compiled(&context, &src);
+        keep_functions(&module, "largest<i64>,largest_i64");
+        if optimized {
+            optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+        }
+        let ir = module.print_to_string().to_string();
+        // A panic names its position in the source, which differs between the two functions: the
+        // message global and its length are placeholders. So is a loop's metadata number.
+        let sited = |body: &str| -> String {
+            (body.lines())
+                .map(|line| match line.split_once("(ptr @panic.msg") {
+                    Some((call, rest)) => {
+                        let after = rest.splitn(3, ',').nth(2).unwrap_or_default();
+                        format!("{call}(ptr @placeholder,{after}")
+                    }
+                    // A loop's metadata node is numbered by the functions before it.
+                    None => match line.split_once("!llvm.loop !") {
+                        Some((before, _)) => format!("{before}!llvm.loop !loop"),
+                        None => line.to_string(),
+                    },
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        // The text of `ir` from the header line of the function, up to its name's end.
+        let header = |name: &str| {
+            let line = (ir.lines())
+                .find(|line| line.starts_with("define") && line.contains(name))
+                .unwrap_or_else(|| panic!("no {name} in\n{ir}"));
+            line[..line.find(name).expect("the line should hold the name") + name.len()].to_string()
+        };
+        let generic = function_body(&ir, &header("@\"sisu.largest<i64>\"("));
+        let written = function_body(&ir, &header("@sisu.largest_i64("));
+        let (generic, written) = (sited(generic), sited(written));
+        for (a, b) in generic.lines().zip(written.lines()) {
+            assert_eq!(a, b, "at {level}");
+        }
+        assert_eq!(
+            generic.lines().count(),
+            written.lines().count(),
+            "at {level}"
+        );
     }
 }

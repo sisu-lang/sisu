@@ -160,7 +160,8 @@ pub(crate) type ChoicePlace = (InterfaceId, usize, usize);
 /// interface's requirements, the method that meets each; the list is complete only in a program
 /// that checks without an error. `assoc` holds, in the order of the interface's associated types,
 /// the type that the conformance chooses for each, over the same type parameters as `target`;
-/// `None` where it chooses none, which is an error.
+/// `None` where it chooses none, which is an error. `bounds` holds the bounds of each of the
+/// block's type parameters, in order; it is empty when no parameter has one.
 #[derive(Clone, Debug)]
 pub(crate) struct Conformance {
     pub(crate) type_params: usize,
@@ -168,6 +169,15 @@ pub(crate) struct Conformance {
     pub(crate) args: TypeArgs,
     pub(crate) methods: Vec<FuncId>,
     pub(crate) assoc: Vec<Option<Type>>,
+    pub(crate) bounds: Vec<Vec<ParamBound>>,
+}
+
+/// A bound of a type parameter of a conformance block: the interface and its arguments (without
+/// `Self`), over the same type parameters as the block's target.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ParamBound {
+    pub(crate) interface: InterfaceId,
+    pub(crate) args: TypeArgs,
 }
 
 /// The conformances of a program, by interface. A target without parameters is indexed by its

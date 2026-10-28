@@ -33,9 +33,9 @@ impl Checker<'_> {
             args: iargs,
             method,
         } = picked;
-        // Until the tasks that lower them, a call of `eq`, `less` or `to_string` through a bound
-        // of a language interface waits: `mono` would find no conformance for a generated one.
-        if [self.lang.display, self.lang.eq, self.lang.ord].contains(&interface) {
+        // Until the task that lowers it, a call of `to_string` through a bound of `Display`
+        // waits: `mono` would find no conformance for a generated one.
+        if interface == self.lang.display {
             self.labels(args);
             self.stray(args);
             self.report(DiagnosticKind::UnknownType {

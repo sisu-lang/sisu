@@ -555,6 +555,14 @@ impl Type {
         Type::intern(TypeKind::Array(element))
     }
 
+    /// The element of an array type, `None` for any other type.
+    pub(crate) fn array_element(self) -> Option<Type> {
+        match self.kind() {
+            TypeKind::Array(element) => Some(element),
+            _ => None,
+        }
+    }
+
     /// `payload?`.
     pub(crate) fn optional(payload: Type) -> Type {
         Type::intern(TypeKind::Optional(payload))
@@ -880,5 +888,16 @@ mod tests {
             text.rsplit('.').next() == Some("Item") && text.len() == 1 + 201 * ".Item".len(),
             "{text}"
         );
+    }
+
+    /// `array_element` gives the element of an array and nothing for any other type.
+    #[test]
+    fn array_element_should_give_the_element_of_an_array_only() {
+        assert_eq!(
+            Type::array(Type::STRING).array_element(),
+            Some(Type::STRING)
+        );
+        assert_eq!(Type::optional(Type::STRING).array_element(), None);
+        assert_eq!(Type::I64.array_element(), None);
     }
 }

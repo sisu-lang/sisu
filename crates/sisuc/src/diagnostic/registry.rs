@@ -1130,6 +1130,8 @@ pub(crate) enum DiagnosticKind {
         op: String,
         at: Span,
         contains: bool,
+        /// The bound that gives the operator, when the type parameter that lacks it is in scope.
+        add: Option<AddBound>,
     },
     /// The generic declaration `name`, which instantiates itself without end: `instance`, at
     /// `at`, gives a growing type argument, and `through` holds each other instantiation on the
@@ -4305,12 +4307,17 @@ impl From<DiagnosticKind> for Diagnostic {
                 op,
                 at,
                 contains,
+                add,
             } => {
                 let d = Diagnostic::coded(code, at, format!("`{ty}` has no `{op}`"));
-                if contains {
+                let d = if contains {
                     d.with_label("`contains` compares elements with `==`")
                 } else {
                     d.with_label(format!("this is a `{ty}`"))
+                };
+                match add {
+                    Some(add) => d.with_help(add.help()),
+                    None => d,
                 }
             }
             DiagnosticKind::InstantiationCycle {

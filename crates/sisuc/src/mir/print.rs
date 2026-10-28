@@ -8,6 +8,11 @@ use super::{
 };
 use crate::tir;
 
+/// `text`, with ` [calls]` after it when the statement may call a written method.
+fn flagged(text: String, calls: bool) -> String {
+    if calls { text + " [calls]" } else { text }
+}
+
 /// The text of `mir`, whose callee and type names `tir`, the program it was lowered from,
 /// resolves.
 pub(crate) fn print(mir: &Program, tir: &tir::Program) -> String {
@@ -193,9 +198,10 @@ impl Printer<'_> {
             Rvalue::Len(operand) => format!("len {}", self.operand(operand)),
             Rvalue::LenWords(operand) => format!("len_words {}", self.operand(operand)),
             Rvalue::Sum { base, .. } => format!("sum {}", self.operand(base)),
-            Rvalue::Contains { base, value } => {
-                format!("contains({}, {})", self.operand(base), self.operand(value))
-            }
+            Rvalue::Contains { base, value, calls } => flagged(
+                format!("contains({}, {})", self.operand(base), self.operand(value)),
+                *calls,
+            ),
             Rvalue::Convert(operand) => format!("convert {}", self.operand(operand)),
             Rvalue::Math { op, operands } => format!("math {}({})", op.name(), self.list(operands)),
             Rvalue::Unary { op, operand, .. } => format!("{op}{}", self.operand(operand)),
@@ -205,9 +211,17 @@ impl Printer<'_> {
             Rvalue::Compare { op, lhs, rhs } => {
                 format!("{} {op} {}", self.operand(lhs), self.operand(rhs))
             }
-            Rvalue::Equal { negated, lhs, rhs } => {
+            Rvalue::Equal {
+                negated,
+                lhs,
+                rhs,
+                calls,
+            } => {
                 let op = if *negated { "!=" } else { "==" };
-                format!("{} {op} {}", self.operand(lhs), self.operand(rhs))
+                flagged(
+                    format!("{} {op} {}", self.operand(lhs), self.operand(rhs)),
+                    *calls,
+                )
             }
             Rvalue::Is { lhs, rhs } => {
                 format!("{} is {}", self.operand(lhs), self.operand(rhs))

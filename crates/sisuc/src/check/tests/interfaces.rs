@@ -3042,8 +3042,11 @@ fn interface_edges_should_stay_linear() {
     let (edges, relaxed) = graph_cost(&src);
     assert!(edges <= 4 * N, "{edges} edges");
     // One component of all the functions and the hub, with no weight above 0: the first pass
-    // changes nothing, so Bellman–Ford reads each edge once.
-    assert_eq!(relaxed, edges, "{relaxed} steps");
+    // changes nothing, so Bellman–Ford reads each edge of the component once. The edges into
+    // the parameters' second nodes lead nowhere in this graph, so they are outside it.
+    let (_, searched) = cycle::SEARCHED.get();
+    assert!(searched >= 3 * N, "{searched} edges in the component");
+    assert_eq!(relaxed, searched, "{relaxed} steps");
     // A requirement with a type parameter of its own: the calls pass their own argument, and the
     // conformances take it, through a hub for the parameter that costs an edge for each.
     let mut src = String::from("interface Keep {\n    fn keep<U>(self, x: U) -> U\n}\n");
@@ -3106,7 +3109,9 @@ fn a_cycle_in_a_large_component_should_cost_the_nodes_times_the_edges() {
     cycle::BELLMAN_FORD_STEPS.set(0);
     let found: Vec<_> = checked(&src).1.iter().map(Diagnostic::code).collect();
     assert_eq!(found, [Code::InstantiationCycle]);
-    assert_eq!(cycle::EDGES.get(), 3 * N + 3);
+    // The edges of `3n + 3`, and one more for each call's argument, into the second node of the
+    // parameter that it gives.
+    assert_eq!(cycle::EDGES.get(), 4 * N + 3);
     // The contract of the search: at most one pass for each node and one more, of the edges inside
     // the component. The search ran, and the size is the component's, not the graph's.
     let (nodes, edges) = cycle::SEARCHED.get();

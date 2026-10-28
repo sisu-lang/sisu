@@ -62,6 +62,7 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
     fn new(
         context: &'ctx Context,
         program: &'src Program,
+        mir: &'src mir::Program,
         path: &'src str,
         source: &'src str,
         machine: &TargetMachine,
@@ -117,7 +118,8 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             element_tag: tbaa_tag(context, tbaa_root, "array element"),
             tbaa_root,
             program,
-            reaches_f64: rc::reaching_f64(program),
+            mir,
+            unreflexive: rc::reaching_unreflexive(program),
             class_cycles: rc::class_cycles(program),
             helpers: RefCell::new(FxHashMap::default()),
             pending: RefCell::new(Vec::new()),
@@ -151,7 +153,7 @@ pub(crate) fn compile<'ctx>(
     machine: &TargetMachine,
     rc_checks: bool,
 ) -> Module<'ctx> {
-    let mut codegen = Codegen::new(context, program, path, source, machine, rc_checks);
+    let mut codegen = Codegen::new(context, program, mir, path, source, machine, rc_checks);
     codegen.lay_out_types();
     // Every class gets its release helper, used or not; an `eq` helper is made on first use.
     for id in 0..program.classes.len() {
@@ -254,9 +256,12 @@ struct Codegen<'ctx, 'src> {
     /// through a field, carry no tag.
     tbaa_root: MetadataValue<'ctx>,
     program: &'src Program,
-    /// Whether each class, then each enum, reaches an `f64` through its fields; see
-    /// `rc::reaching_f64`.
-    reaches_f64: Vec<bool>,
+    /// The mir, whose functions' `borrowed` flags say how a helper passes a part to a written
+    /// method.
+    mir: &'src mir::Program,
+    /// Whether each class, then each enum, reaches an `f64` or a written `eq` through its fields;
+    /// see `rc::reaching_unreflexive`.
+    unreflexive: Vec<bool>,
     /// The classes that hold each other in a loop; see `rc::class_cycles`.
     class_cycles: rc::ClassCycles,
     /// The helpers declared so far, by kind and counted type; see `rc::helper`.
@@ -694,7 +699,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 self.release(array, base_ty);
                 sum
             }
-            Rvalue::Contains { base, value } => {
+            Rvalue::Contains { base, value, .. } => {
                 let (array, base_ty) = self.operand(base);
                 let (needle, needle_ty) = self.operand(value);
                 let hit = self.contains(element_of(base_ty), array.into_pointer_value(), needle);
@@ -729,7 +734,9 @@ impl<'ctx> Codegen<'ctx, '_> {
                 let (lhs, ty) = self.operand(lhs);
                 self.compare(*op, ty, lhs, self.operand(rhs).0).into()
             }
-            Rvalue::Equal { negated, lhs, rhs } => {
+            Rvalue::Equal {
+                negated, lhs, rhs, ..
+            } => {
                 let (lhs, ty) = self.operand(lhs);
                 self.equal_value(*negated, ty, lhs, self.operand(rhs).0)
                     .into()

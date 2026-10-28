@@ -1,6 +1,7 @@
 //! Array expressions: literals and their element join, `[v; n]`, indexing and methods.
 
 use super::expr::{fits, literal_type, no_member, none_literal, path, rank, typed};
+use super::interface::Operation;
 use super::unused_names::Used;
 use super::{Checked, Checker, Poisoned, UNKNOWN, as_optional, payload, type_of, wrap};
 use crate::ast;
@@ -296,12 +297,16 @@ impl Checker<'_> {
                 let kind = receiver.ok().map(|r| tir::ExprKind::Sum(Box::new(r)));
                 typed(span, element, false, kind)
             }
-            _ if element.has_param() => {
+            _ if element.has_param()
+                && self.operation(element, self.lang.eq) == Operation::Missing =>
+            {
+                let add = self.lacking_bound(element, self.lang.eq);
                 let d = DiagnosticKind::ParamLacks {
                     ty: self.type_name(element),
                     op: "==".to_string(),
                     at,
                     contains: true,
+                    add,
                 };
                 self.rejected(d.into(), args)
             }

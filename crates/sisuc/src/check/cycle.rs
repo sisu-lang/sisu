@@ -29,6 +29,24 @@
 //! the edges grow with the program, and a path through the hub stands for an edge from `P` to
 //! `Q` for each call and conformance, which a pair of edges for each would make a product.
 //!
+//! The operators `==` and `<` and `contains` call a written `eq` or `less` through a helper that
+//! is not a call in the typed tree, so each one in a generic body adds an edge, by the type of its
+//! operand. An array or an optional passes its element or its contents, which the generated rule
+//! does at no cost. An enum with no written conformance to the interface passes its arguments to
+//! the enum's generated `Eq` node, a declaration of its own that has the enum's parameters and an
+//! edge for each payload type, chosen by the same rule. Any other type goes to the interface's
+//! hub, as the receiver of a call through a bound does. An enum with only conditional
+//! conformances takes both edges.
+//!
+//! Each parameter of a function, class, enum or generated node has a second node, for its value
+//! with its outer array and optional levels taken off, since the generated rule takes those off
+//! before any written method runs. An argument feeds a parameter's first node as above, and its
+//! second node from the argument with its outer levels taken off, at weight 0: from the second
+//! node of the parameter when that is one parameter under arrays and optionals only, else from the
+//! node of the argument without those levels. An operand that is a parameter under arrays and
+//! optionals starts its edge to the hub at that parameter's second node. A hub's edges feed first
+//! nodes only. Two nodes for each parameter keep the graph linear.
+//!
 //! An associated type `P.Item` as an argument is a type of its own in the graph, and an edge into
 //! it from `P` weighs the growth of `Item`: the greatest, over the conformances that choose it,
 //! of how much deeper the choice nests the types that stand for the conformance's parameters than
@@ -124,11 +142,19 @@ struct Graph {
     first: Vec<usize>,
     functions: usize,
     classes: usize,
+    enums: usize,
+    /// Where the declaration of the hub of each interface starts: the interface's index added.
+    interface_hubs: usize,
+    /// The declaration of the generated `Eq` node of the first enum; the others follow.
+    eq_first: usize,
+    /// By interface and enum, whether a written conformance has the enum as its target, and
+    /// whether one of them has no bound on its parameters.
+    records: FxHashMap<(tir::InterfaceId, tir::EnumId), (bool, bool)>,
     edges: Vec<Edge>,
     /// By declaration and type, the node of a type argument that mentions a parameter, after
-    /// the parameters' nodes. Its parts' edges into it stand for "mentions": a parameter reaches
-    /// the node of each type that mentions it, so an argument needs one edge however many
-    /// parameters it mentions, and each type of a declaration is looked at once.
+    /// the parameters' first and second nodes. Its parts' edges into it stand for "mentions": a
+    /// parameter reaches the node of each type that mentions it, so an argument needs one edge
+    /// however many parameters it mentions, and each type of a declaration is looked at once.
     typed: FxHashMap<(usize, Type), usize>,
     /// The types `types` has walked, with the site each was written at.
     walked: FxHashSet<(Span, Type)>,
@@ -139,6 +165,21 @@ struct Graph {
 }
 
 impl Graph {
+    /// The number of first nodes, which the second nodes and then the nodes of types follow.
+    fn firsts(&self) -> usize {
+        self.first[self.first.len() - 1]
+    }
+
+    /// Whether a parameter of the declaration `decl` has a second node: all but a hub's.
+    fn has_second(&self, decl: usize) -> bool {
+        decl < self.functions + self.classes + self.enums || decl >= self.eq_first
+    }
+
+    /// The second node of parameter `i` of the declaration `decl`.
+    fn second(&self, decl: usize, i: usize) -> usize {
+        self.firsts() + self.first[decl] + i
+    }
+
     /// The edges into the parameters of the declaration `target` from `args`, its arguments,
     /// inside `holder`: growing unless the argument is a parameter itself.
     fn args(
@@ -164,7 +205,48 @@ impl Graph {
                 mark,
                 instance: Some(instance),
             });
+            if !self.has_second(target) {
+                continue;
+            }
+            // The second node takes the argument with its outer levels off.
+            let mut core = arg;
+            while let TypeKind::Array(inner) | TypeKind::Optional(inner) = core.kind() {
+                core = inner;
+            }
+            let from = match core.kind() {
+                TypeKind::Param(_, i) => self.second(holder, i as usize),
+                _ => self.node(holder, core),
+            };
+            self.edges.push(Edge {
+                from,
+                to: self.second(target, q),
+                weight: 0,
+                growing: false,
+                out: false,
+                assoc: false,
+                holder,
+                site,
+                mark,
+                instance: Some(instance),
+            });
         }
+    }
+
+    /// An edge into the hub declaration `hub` from the node `from`, for the operator or call at
+    /// `site` inside `holder`: it hands on an operand of the receiver's type.
+    fn receive(&mut self, holder: usize, from: usize, hub: usize, site: Span, instance: Instance) {
+        self.edges.push(Edge {
+            from,
+            to: self.first[hub],
+            weight: 0,
+            growing: false,
+            out: false,
+            assoc: false,
+            holder,
+            site,
+            mark: site,
+            instance: Some(instance),
+        });
     }
 
     /// An edge from the hub node `from` to the parameter node `to` of the method `method`.
@@ -183,6 +265,46 @@ impl Graph {
         });
     }
 
+    /// The edges of an operator of the language interface `interface` on an operand of type `ty`
+    /// inside `holder`, at `site`: see the module doc. An operand that names no parameter adds
+    /// none.
+    fn operator(&mut self, holder: usize, ty: Type, interface: tir::InterfaceId, site: Span) {
+        let mut ty = ty;
+        while let TypeKind::Array(inner) | TypeKind::Optional(inner) = ty.kind() {
+            ty = inner;
+        }
+        if !ty.has_param() {
+            return;
+        }
+        let instance = Instance::Required(interface, 0, TypeArgs::NONE);
+        let hub = self.interface_hubs + interface.0;
+        match ty.kind() {
+            TypeKind::Param(_, i) => {
+                let from = self.second(holder, i as usize);
+                self.receive(holder, from, hub, site, instance);
+            }
+            TypeKind::Enum(id, args) => {
+                let (written, unconditional) = self
+                    .records
+                    .get(&(interface, id))
+                    .copied()
+                    .unwrap_or_default();
+                if !written || !unconditional {
+                    let target = self.eq_first + id.0;
+                    self.args(holder, args.get(), target, site, site, Instance::Type(ty));
+                }
+                if written {
+                    let from = self.node(holder, ty);
+                    self.receive(holder, from, hub, site, instance);
+                }
+            }
+            _ => {
+                let from = self.node(holder, ty);
+                self.receive(holder, from, hub, site, instance);
+            }
+        }
+    }
+
     /// The node of `ty`, which mentions a parameter, inside `holder`: a parameter's own, or one
     /// made, with its parts' after them, by a walk that keeps its own stack, as a type can nest
     /// deeper than the program's stack allows.
@@ -197,7 +319,7 @@ impl Graph {
                 stack.extend(self.parts(t).into_iter().map(|(part, _)| (part, false)));
                 continue;
             }
-            let n = self.first[self.first.len() - 1] + self.typed.len();
+            let n = 2 * self.firsts() + self.typed.len();
             self.typed.insert((holder, t), n);
             for (part, weight) in self.parts(t) {
                 let from = self
@@ -304,7 +426,7 @@ struct Strands {
 
 impl Strands {
     fn of(graph: &Graph) -> Strands {
-        let nodes = graph.first[graph.first.len() - 1] + graph.typed.len();
+        let nodes = 2 * graph.firsts() + graph.typed.len();
         let mut out = vec![Vec::new(); nodes];
         for (i, edge) in graph.edges.iter().enumerate() {
             out[edge.from].push(i);
@@ -498,7 +620,12 @@ impl Checker<'_> {
             }
         }
         let declared = graph.functions;
+        // A generated node stands for its enum.
         let name = match edge.holder.checked_sub(declared) {
+            _ if edge.holder >= graph.eq_first => self.enums[edge.holder - graph.eq_first]
+                .name
+                .name
+                .to_string(),
             None => self.signatures[edge.holder].name.clone(),
             Some(c) if c < self.classes.len() => self.classes[c].name.name.to_string(),
             Some(c) => self.enums[c - self.classes.len()].name.name.to_string(),
@@ -535,12 +662,15 @@ impl Checker<'_> {
                 }
             }
         }
-        // The hubs of the interfaces follow, one each.
+        // The hubs of the interfaces follow, one each, and then the generated `Eq` node of each
+        // enum, which has the enum's parameters.
         let interface_hubs = declarations;
+        let eq_first = interface_hubs + self.interfaces.len();
         let counts = self.signatures.iter().map(|s| s.type_params.len());
         let counts = counts.chain(self.classes.iter().map(|c| c.type_params.len()));
         let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
         let counts = counts.chain(std::iter::repeat_n(1, hubs.len() + self.interfaces.len()));
+        let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
         let mut first = vec![0];
         for n in counts {
             first.push(first[first.len() - 1] + n);
@@ -550,6 +680,10 @@ impl Checker<'_> {
             first,
             functions: declared,
             classes: self.classes.len(),
+            enums: self.enums.len(),
+            interface_hubs,
+            eq_first,
+            records: FxHashMap::default(),
             edges: Vec::new(),
             typed: FxHashMap::default(),
             walked: FxHashSet::default(),
@@ -563,6 +697,7 @@ impl Checker<'_> {
     /// The instantiation graph of the program: see `instantiation_cycles`.
     fn instantiation_graph(&self, functions: &[Option<tir::Function>], unbuilt: &[bool]) -> Graph {
         let (mut graph, hubs, interface_hubs) = self.graph_frame();
+        graph.records = self.written_records();
         let mut exprs = Vec::new();
         for (holder, function) in functions.iter().enumerate() {
             let Some(function) = function.as_ref().filter(|f| !f.type_params.is_empty()) else {
@@ -590,21 +725,78 @@ impl Checker<'_> {
                         let method = method as usize;
                         let instance = Instance::Required(interface, method, types);
                         // The receiver goes to the hub of the interface, `Self` first among
-                        // its arguments.
+                        // its arguments. A language interface's receiver may stand for an array
+                        // or an optional, which its generated conformance takes off first.
                         let hub = interface_hubs + interface.0;
-                        graph.args(holder, &iargs.get()[..1], hub, e.span, e.span, instance);
+                        if [self.lang.eq, self.lang.ord].contains(&interface) {
+                            graph.operator(holder, iargs.get()[0], interface, e.span);
+                        } else {
+                            graph.args(holder, &iargs.get()[..1], hub, e.span, e.span, instance);
+                        }
                         for (j, arg) in types.get().iter().enumerate() {
                             let hub = hubs[&(interface.0, method, j)];
                             graph.args(holder, &[*arg], hub, e.span, e.span, instance);
                         }
+                    }
+                    // `x == None` tests presence and calls nothing.
+                    tir::ExprKind::Equal {
+                        ref lhs, ref rhs, ..
+                    } if !matches!(lhs.kind, tir::ExprKind::None)
+                        && !matches!(rhs.kind, tir::ExprKind::None) =>
+                    {
+                        graph.operator(holder, lhs.ty, self.lang.eq, e.span);
+                    }
+                    tir::ExprKind::Compare { ref operands, .. } => {
+                        graph.operator(holder, operands[0].ty, self.lang.ord, e.span);
+                    }
+                    tir::ExprKind::Contains { ref base, .. } => {
+                        let element =
+                            (base.ty.array_element()).expect("`contains` should take an array");
+                        graph.operator(holder, element, self.lang.eq, e.span);
                     }
                     _ => {}
                 }
             }
         }
         self.hub_edges(&mut graph, &hubs, interface_hubs);
+        self.generated_edges(&mut graph);
         self.declaration_edges(&mut graph, unbuilt);
         graph
+    }
+
+    /// By interface and enum, whether a written conformance targets the enum, and whether one of
+    /// them has no bound: one pass over the conformances.
+    pub(super) fn written_records(
+        &self,
+    ) -> FxHashMap<(tir::InterfaceId, tir::EnumId), (bool, bool)> {
+        let mut records: FxHashMap<_, (bool, bool)> = FxHashMap::default();
+        for (interface, conformance) in self.conformances.iter() {
+            if let TypeKind::Enum(id, _) = conformance.target.kind() {
+                let entry = records.entry((interface, id)).or_default();
+                entry.0 = true;
+                entry.1 |= conformance.bounds.iter().all(Vec::is_empty);
+            }
+        }
+        records
+    }
+
+    /// The edges of the generated `Eq` node of each enum: one for each payload type, chosen as an
+    /// operand is. An enum that grows, or that no value can be built of, has none, as its
+    /// declaration has none: its own error stands for its cycle.
+    fn generated_edges(&self, graph: &mut Graph) {
+        for (e, info) in self.enums.iter().enumerate() {
+            if self.marked[e] {
+                continue;
+            }
+            let holder = graph.eq_first + e;
+            for variant in &info.variants {
+                for (ty, &span) in variant.fields.iter().zip(&variant.spans) {
+                    if let Some(ty) = *ty {
+                        graph.operator(holder, ty, self.lang.eq, span);
+                    }
+                }
+            }
+        }
     }
 
     /// By `EnumId`, whether the enum is on a cycle that grows its type arguments (E0140): an enum
@@ -1076,6 +1268,10 @@ mod tests {
             first: vec![0, params, params + 2],
             functions: 1,
             classes: 1,
+            enums: 0,
+            interface_hubs: 2,
+            eq_first: 2,
+            records: FxHashMap::default(),
             edges: Vec::new(),
             typed: FxHashMap::default(),
             walked: FxHashSet::default(),
@@ -1095,19 +1291,21 @@ mod tests {
         let site = Span::new(0, 1);
         let mut g = graph(1);
         g.args(0, &[ty], 0, site, site, Instance::Type(ty));
-        // A node per `Pair`, an edge from each of its two arguments, and the call's edge.
+        // A node per `Pair`, an edge from each of its two arguments, and the call's two edges:
+        // into the parameter's first node and into its second.
         assert_eq!(g.typed.len(), 20);
-        assert_eq!(g.edges.len(), 2 * 20 + 1);
-        // Written as a field's type: each level's `Pair` gives an edge into each of its two
-        // parameters, once, from the nodes of the 19 levels below the top.
+        assert_eq!(g.edges.len(), 2 * 20 + 2);
+        // Written as a field's type: each level's `Pair` gives two edges into each of its two
+        // parameters, once (the first node and the second), and the 19 nodes below the top have
+        // two edges each from their parts.
         let mut g = graph(1);
         g.types(0, ty, site, &[]);
-        assert_eq!(g.edges.len(), 2 * 20 + 2 * 19);
+        assert_eq!(g.edges.len(), 2 * 19 + 2 * 2 * 20);
     }
 
     /// An argument that mentions `n` parameters, `Pair<…Pair<T0, T1>…, Tn>`, costs a node and
-    /// two edges per `Pair` once, and one edge at each further site: never a copy of what each
-    /// part mentions.
+    /// two edges per `Pair` once, and two edges at each further site (the parameter's first node
+    /// and its second): never a copy of what each part mentions.
     #[test]
     fn arguments_mentioning_many_parameters_should_stay_linear() {
         for n in [16_u32, 256] {
@@ -1121,7 +1319,7 @@ mod tests {
                 g.args(0, &[ty], 0, at, at, Instance::Type(ty));
             }
             assert_eq!(g.typed.len(), n as usize);
-            assert_eq!(g.edges.len(), 2 * n as usize + 10);
+            assert_eq!(g.edges.len(), 2 * n as usize + 2 * 10);
         }
     }
 
@@ -1180,5 +1378,83 @@ mod tests {
     #[test]
     fn a_parameter_should_have_no_parts() {
         assert_eq!(graph(1).parts(param(0)), Vec::new());
+    }
+
+    /// A graph of a function, two enums, the hub of an interface and a generated `Eq` node for
+    /// each enum, each with one parameter.
+    fn graph_with_enums() -> Graph {
+        Graph {
+            first: vec![0, 1, 2, 3, 4, 5, 6],
+            functions: 1,
+            classes: 0,
+            enums: 2,
+            interface_hubs: 3,
+            eq_first: 4,
+            records: FxHashMap::default(),
+            edges: Vec::new(),
+            typed: FxHashMap::default(),
+            walked: FxHashSet::default(),
+            assoc_first: Vec::new(),
+            growth: Vec::new(),
+        }
+    }
+
+    /// The nodes after the first nodes are the second nodes, one for each parameter slot in the
+    /// order of the first, and then the nodes of types.
+    #[test]
+    fn second_nodes_should_follow_the_first_nodes_and_precede_the_types() {
+        let mut g = graph(3);
+        // The first nodes are 0 to 4 (a function of three parameters, a class of two).
+        assert_eq!(g.firsts(), 5);
+        assert_eq!(g.second(0, 0), 5);
+        assert_eq!(g.second(0, 2), 7);
+        assert_eq!(g.second(1, 1), 9);
+        let array = Type::intern(TypeKind::Array(param(0)));
+        assert_eq!(g.node(0, array), 10);
+    }
+
+    /// An argument that is a parameter, under any arrays and optionals, feeds the second node of
+    /// the parameter it gives from its own second node; any other argument, from its own node.
+    #[test]
+    fn an_argument_should_feed_the_second_node_from_its_core() {
+        let site = Span::new(0, 1);
+        let mut g = graph(2);
+        let array = Type::intern(TypeKind::Array(Type::intern(TypeKind::Optional(param(1)))));
+        g.args(0, &[array], 0, site, site, Instance::Type(array));
+        // Two edges for the nodes of the optional and the array, then the first node from the
+        // argument's own node, and the second from the parameter's second.
+        assert_eq!(g.edges.len(), 4);
+        let second = &g.edges[3];
+        assert_eq!((second.from, second.to), (g.second(0, 1), g.second(0, 0)));
+        assert_eq!(second.weight, 0);
+    }
+
+    /// An enum operand with no written conformance goes to its generated node alone; one with an
+    /// unconditional conformance, to the hub alone; one with only conditional conformances, to
+    /// both.
+    #[test]
+    fn an_enum_operand_should_choose_its_edges_by_its_conformances() {
+        let site = Span::new(0, 1);
+        let interface = tir::InterfaceId(0);
+        let ty = Type::intern(TypeKind::Enum(
+            tir::EnumId(1),
+            TypeArgs::intern(&[param(0)]),
+        ));
+        // Each row: what the records say, whether the hub and the generated node get an edge.
+        for (row, records, hub, generated) in [
+            ("no conformance", None, false, true),
+            ("an unconditional one", Some((true, true)), true, false),
+            ("only conditional ones", Some((true, false)), true, true),
+        ] {
+            let mut g = graph_with_enums();
+            if let Some(records) = records {
+                g.records.insert((interface, tir::EnumId(1)), records);
+            }
+            g.operator(0, ty, interface, site);
+            let into = |node: usize| g.edges.iter().any(|edge| edge.to == node);
+            // Parameter 0 of the hub is node 3; of the generated node of enum 1, node 5.
+            assert_eq!(into(3), hub, "{row}: the hub");
+            assert_eq!(into(5), generated, "{row}: the generated node");
+        }
     }
 }

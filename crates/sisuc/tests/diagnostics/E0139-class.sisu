@@ -1,0 +1,9 @@
+class Box<T> {
+    value: T
+}
+
+fn same<T: Eq>(a: Box<T>, b: Box<T>) -> bool {
+    a == b
+}
+
+fn main() {}

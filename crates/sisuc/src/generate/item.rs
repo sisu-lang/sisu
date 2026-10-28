@@ -802,20 +802,35 @@ impl Gen<'_> {
     }
 
     /// The generic functions `lang_eq<T: Eq>`, `lang_ord<T: Ord>` and `lang_display<T: Display>`,
-    /// whose bodies call nothing, and the statements of `shapes` that call each with types that
-    /// conform: the compiler writes those conformances. With `enum_value`, `shapes` also calls
-    /// `lang_eq` on an enum, which has `Eq` when its payloads do. It takes no byte.
+    /// whose bodies use the operators that the bounds give and call nothing else, and the
+    /// statements of `shapes` that call each with types that conform: the compiler writes those
+    /// conformances. With `enum_value`, `shapes` also calls `lang_eq` on an enum, which has `Eq`
+    /// when its payloads do. The class `Ranked` writes its `Eq` and `Ord`, and `shapes` compares
+    /// it directly and inside an array, an optional and an enum payload, and calls the generated
+    /// `eq` and `less` of a number. None of it takes a byte.
     fn language_bounds(&mut self, enum_value: bool) -> Vec<String> {
-        for (name, bound, result) in [
-            ("eq", "Eq", 1),
-            ("ord", "Ord", 2),
-            ("display", "Display", 3),
+        for (name, bound, body) in [
+            (
+                "eq",
+                "Eq",
+                "if x == x && !(x != x) && x.eq(x) { 1 } else { 1 }",
+            ),
+            (
+                "ord",
+                "Ord",
+                "if x < x || x >= x || x.less(x) { 2 } else { 2 }",
+            ),
+            ("display", "Display", "3"),
         ] {
             self.w.text(&format!(
-                "fn lang_{name}<T: {bound}>(x: T) -> i64 {{ {result} }}"
+                "fn lang_{name}<T: {bound}>(x: T) -> i64 {{ {body} }}"
             ));
             self.w.line();
         }
+        self.w.text(
+            "class Ranked: Eq, Ord {\n    r: i64\n    fn eq(self, other: Self) -> bool { self.r == other.r }\n    fn less(self, other: Self) -> bool { self.r < other.r }\n}\nenum Choice {\n    One(Ranked)\n    Nothing\n}",
+        );
+        self.w.line();
         let mut calls = vec![
             "let _ = lang_eq([1, 2])".to_string(),
             "let _ = lang_eq(\"a\")".to_string(),
@@ -823,6 +838,19 @@ impl Gen<'_> {
             "let _ = lang_ord('c')".to_string(),
             "let _ = lang_display(true)".to_string(),
             "let _ = lang_display([\"a\"])".to_string(),
+            "let rank_a = Ranked(r: 1)".to_string(),
+            "let rank_b = Ranked(r: 2)".to_string(),
+            "let rank_m: Ranked? = rank_b".to_string(),
+            "let _ = rank_a == rank_b || rank_a != rank_b".to_string(),
+            "let _ = rank_a < rank_b && rank_a >= rank_b".to_string(),
+            "let _ = [rank_a] == [rank_b]".to_string(),
+            "let _ = rank_m == rank_m".to_string(),
+            "let _ = rank_m == None".to_string(),
+            "let _ = Choice.One(rank_a) == Choice.One(rank_b)".to_string(),
+            "let _ = [rank_a].contains(rank_b)".to_string(),
+            "let _ = rank_a.eq(rank_b) || rank_a.less(rank_b)".to_string(),
+            "let _ = lang_eq(rank_a) + lang_ord(rank_b)".to_string(),
+            "let _ = 5.eq(5) || 1.5.less(2.5)".to_string(),
         ];
         if enum_value {
             calls.push("let _ = lang_eq(N0.A)".to_string());

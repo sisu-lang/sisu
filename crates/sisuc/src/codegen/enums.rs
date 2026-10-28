@@ -1456,6 +1456,14 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.builder.position_at_end(start);
             let a = current[1].as_basic_value().into_pointer_value();
             let b = current[2].as_basic_value().into_pointer_value();
+            // A member whose `Eq` is written is compared by its `eq`, wherever a link meets it.
+            let ty = Type::intern(TypeKind::Enum(id, TypeArgs::NONE));
+            if let Some(method) = self.written_eq(ty) {
+                let borrowed = &self.mir.functions[method.0].borrowed;
+                let same = self.call_written_eq(method, ty, [a, b], borrowed);
+                self.branch_on(same, pop, unequal);
+                continue;
+            }
             let tag = self.load_tag(id, a);
             let same = self.int_compare(IntPredicate::EQ, tag, self.load_tag(id, b));
             let fields = block("fields");

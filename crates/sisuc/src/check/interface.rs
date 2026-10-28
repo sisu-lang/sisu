@@ -15,6 +15,7 @@ use crate::diagnostic::{
     WideKind,
 };
 use crate::graph::components;
+use crate::lang::Dispatch;
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{ClassId, EnumId, FuncId, InterfaceId, Type, TypeArgs, TypeKind};
@@ -155,12 +156,19 @@ pub(super) struct Waiting {
     payloads: FxHashMap<(EnumId, usize, usize), Vec<usize>>,
 }
 
+/// How an operator runs for an operand type (`Checker::operation`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Operation {
+    /// The operand type has the interface, and the operator is lowered this way.
+    Run(Dispatch),
+    /// The type has the interface only through the poison of a broken block: no code is made.
+    Poison,
+    /// The type has no such interface.
+    Missing,
+}
+
 /// How a language interface holds for a type (`Checker::lang_path`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "Task 2's operators match on the path")
-)]
 pub(super) enum LangPath {
     /// A written conformance, the one at this place among the interface's, whose methods all exist.
     Written(usize),
@@ -1279,13 +1287,6 @@ impl Checker<'_> {
     /// different: every type but `unit` and `never` has it, so when each written record fails its
     /// bounds, the path is the generated `Display`. Each record's bounds are asked as a root
     /// query of their own, so `conforms` reads none for `Display`.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Task 2's operators choose their lowering by this path"
-        )
-    )]
     pub(super) fn lang_path(&mut self, ty: Type, interface: InterfaceId) -> LangPath {
         let args = TypeArgs::NONE;
         if let Some(holder) = holder_of(ty) {
@@ -1313,18 +1314,40 @@ impl Checker<'_> {
         }
     }
 
+    /// How an operator of the language interface `interface` (`Eq` or `Ord`) runs for the operand
+    /// type `ty`: a type parameter that has the interface runs the generated node, which `mono`
+    /// lowers again for its type argument; a class or an enum runs the method of its written
+    /// conformance, or the generated node when it has none.
+    pub(super) fn operation(&mut self, ty: Type, interface: InterfaceId) -> Operation {
+        if matches!(ty.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)) {
+            let holds = self.conforms(ty, interface, TypeArgs::NONE);
+            return if holds {
+                Operation::Run(Dispatch::Generated)
+            } else {
+                Operation::Missing
+            };
+        }
+        match self.lang_path(ty, interface) {
+            LangPath::Written(k) => {
+                let (_, stands) = find(&self.conformances, interface, ty, TypeArgs::NONE)
+                    .expect("a written path should have a conformance that covers the type");
+                let func = self.conformances.get(interface, k).methods[0];
+                Operation::Run(Dispatch::Method {
+                    func,
+                    types: stands,
+                })
+            }
+            LangPath::Generated => Operation::Run(Dispatch::Generated),
+            LangPath::PoisonOnly => Operation::Poison,
+            LangPath::None => Operation::Missing,
+        }
+    }
+
     /// The part of `ty` that makes `ty` fail `interface` with `args` on its own, the first in the
     /// order of the generated rule: a class with no matching record, a type whose matching
     /// written record fails its bounds, or a type parameter whose bounds lack the interface. It
     /// walks the rule again with a visited set, so a type is read once, and is only for a type
     /// that `conforms` has found to fail; `ty` itself if the walk finds no part.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Task 2's errors name the failing part of a type that lacks an interface"
-        )
-    )]
     pub(super) fn failing_leaf(
         &mut self,
         ty: Type,

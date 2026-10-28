@@ -17,11 +17,11 @@ use super::{
     as_optional, built_in_type, optional_of, payload, type_of,
 };
 use crate::ast::{self, StmtKind};
-use crate::diagnostic::{ArgumentsForm, MainForm, Unwrap};
+use crate::diagnostic::{AddBound, ArgumentsForm, MainForm, Unwrap};
 use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::symbol::Symbol;
-use crate::tir::{Type, TypeArgs, TypeKind};
+use crate::tir::{InterfaceId, Type, TypeArgs, TypeKind};
 use crate::types::HOLE_INDEX;
 
 /// Whether `ty`, an array's element, is an optional, or arrays of them: the shape of element
@@ -1955,15 +1955,31 @@ impl Checker<'_> {
         });
     }
 
-    /// Reports `op` on the operand at `at`, of type `ty`, which names a type parameter: no
-    /// operator takes one.
-    pub(super) fn param_lacks(&mut self, at: Span, ty: Type, op: impl fmt::Display) {
+    /// Reports `op` on the operand at `at`, of type `ty`, which names a type parameter that lacks
+    /// the operator. `needs` is the interface that gives the operator, if one does: the help adds
+    /// its bound when the part of `ty` that lacks it is a type parameter.
+    pub(super) fn param_lacks(
+        &mut self,
+        at: Span,
+        ty: Type,
+        op: impl fmt::Display,
+        needs: Option<InterfaceId>,
+    ) {
+        let add = needs.and_then(|interface| self.lacking_bound(ty, interface));
         self.report(DiagnosticKind::ParamLacks {
             ty: self.type_name(ty),
             op: op.to_string(),
             at,
             contains: false,
+            add,
         });
+    }
+
+    /// The bound that gives `ty` the language interface `interface`: it names the type parameter
+    /// that makes `ty` fail, so a class that lacks it has none.
+    pub(super) fn lacking_bound(&mut self, ty: Type, interface: InterfaceId) -> Option<AddBound> {
+        let leaf = self.failing_leaf(ty, interface, TypeArgs::NONE);
+        self.add_bound(leaf, interface)
     }
 
     /// Reports `name<...>`, a value with type arguments in `angles`: the `<` and `>` were

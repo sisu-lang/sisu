@@ -293,7 +293,7 @@ impl Clobbers {
                 before.push(so_far);
                 let clobbers = match stmt {
                     Statement::Assign { dest, value } => match value {
-                        Rvalue::Call { .. } => true,
+                        value if value.may_call_written() => true,
                         Rvalue::Borrow(place) => {
                             if let Some(dest) = *dest {
                                 if !place.projections.iter().all(Projection::stable)
@@ -306,7 +306,8 @@ impl Clobbers {
                             }
                             false
                         }
-                        Rvalue::Use(_)
+                        Rvalue::Call { .. }
+                        | Rvalue::Use(_)
                         | Rvalue::Copy(_)
                         | Rvalue::CopyStr(_)
                         | Rvalue::Unwrap(_)
@@ -801,6 +802,7 @@ fn rvalue<'a>(
         | Rvalue::Contains {
             base: lhs,
             value: rhs,
+            ..
         } => {
             consumed(lhs, lowered, f);
             consumed(rhs, lowered, f);

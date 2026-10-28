@@ -1094,6 +1094,21 @@ fn main() {
         );
     }
 
+    /// Comparing or ordering the target of a broken `extend` block gives the parse error alone: the
+    /// target holds `Eq` and `Ord` only through the poison, so no code is made and no operator is
+    /// reported, with no panic.
+    #[test]
+    fn comparing_a_broken_extend_target_should_give_the_parse_error_alone() {
+        let src = "class C {\n    x: i64\n}\nextend C: {}\nfn same(a: C, b: C) -> bool {\n    a == b\n}\nfn main() {}\n";
+        assert_eq!(codes(src), [(Code::Expected, (4, 11))]);
+    }
+
+    #[test]
+    fn ordering_a_broken_extend_target_should_give_the_parse_error_alone() {
+        let src = "class C {\n    x: i64\n}\nextend C: {}\nfn same(a: C, b: C) -> bool {\n    a < b\n}\nfn main() {}\n";
+        assert_eq!(codes(src), [(Code::Expected, (4, 11))]);
+    }
+
     /// A block with no name for its target stops the checker, as an unnamed broken item does.
     #[test]
     fn unnamed_broken_extend_should_stop_the_checker() {

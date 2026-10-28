@@ -736,27 +736,12 @@ fn plain_blocks_and_eq_blocks_should_report_only_what_is_wrong() {
     }
 }
 
+/// A call of `to_string` through a bound of `Display` waits for Task 5; `eq` and `less` through a
+/// bound run (`operators_should_check_through_eq_and_ord`).
 #[test]
-fn language_interface_calls_should_wait_for_their_task() {
-    for (row, src, at) in [
-        (
-            "eq",
-            "fn same<T: Eq>(a: T, b: T) -> bool { a.eq(b) }\nfn main() {\n    print(same(1, 2))\n}",
-            (1, 40),
-        ),
-        (
-            "less",
-            "fn lt<T: Ord>(a: T, b: T) -> bool { a.less(b) }\nfn main() {\n    print(lt(1, 2))\n}",
-            (1, 39),
-        ),
-        (
-            "to_string",
-            "fn s<T: Display>(x: T) -> string { x.to_string() }\nfn main() {\n    print(s(1))\n}",
-            (1, 38),
-        ),
-    ] {
-        codes_row(row, src, &[(Code::UnknownType, at)]);
-    }
+fn to_string_through_a_bound_should_wait_for_its_task() {
+    let src = "fn s<T: Display>(x: T) -> string { x.to_string() }\nfn main() {\n    print(s(1))\n}";
+    codes(src, &[(Code::UnknownType, (1, 38))]);
 }
 
 /// How `lang_path` finds the language interface `interface` for `ty`, once the checker has
@@ -1211,4 +1196,397 @@ fn growing_marks_should_search_each_component_once_for_a_shrinking_ring() {
     };
     // 20, 40 and 60 enums: ten times the smallest size that a quadratic search shows.
     assert_near_linear(ring(20), ring(40), ring(60));
+}
+
+/// A class with a written `Eq` and `Ord`, which the operator rows compare.
+const CIRCLE: &str = "class Circle: Eq, Ord {\n    r: i64\n    fn eq(self, other: Self) -> bool { self.r == other.r }\n    fn less(self, other: Self) -> bool { self.r < other.r }\n}\n";
+
+#[test]
+fn operators_should_check_through_eq_and_ord() {
+    // Every row uses each value it computes, since a bare expression statement is W0004.
+    let src = format!(
+        "{CIRCLE}enum Pick {{\n    One(Circle)\n    Two\n}}\nenum Expr: Eq {{\n    Num(i64)\n    Add(Expr, Expr)\n}}\n\
+         fn largest<T: Ord>(xs: [T]) -> T? {{\n    let mut best: T? = None\n    for x in xs {{\n        if let b = best {{\n            if x > b {{\n                best = x\n            }}\n        }} else {{\n            best = x\n        }}\n    }}\n    best\n}}\n\
+         fn same<T: Eq>(a: T, b: T) -> bool {{\n    a == b && !(a != b)\n}}\n\
+         fn same_items<T: Eq>(a: [T], b: [T]) -> bool {{\n    a == b\n}}\n\
+         fn via_eq<T: Eq>(a: T, b: T) -> bool {{\n    a.eq(b)\n}}\n\
+         fn via_less<T: Ord>(a: T, b: T) -> bool {{\n    a.less(b)\n}}\n\
+         fn none_test<T>(x: T?) -> bool {{\n    x == None\n}}\n\
+         fn main() {{\n    let c1 = Circle(r: 1)\n    let c2 = Circle(r: 2)\n    let c3 = Circle(r: 3)\n\
+         \x20   let x = 1.5\n    let y = 2.5\n    let e1 = Expr.Num(1)\n    let e2 = Expr.Num(2)\n\
+         \x20   let rows = [c1 == c2, c1 < c2, c1 >= c2, c1 < c2 < c3, [c1] == [c2], Pick.One(c1) == Pick.One(c2), 5.eq(5), x.less(y), [c1].contains(c2), e1 == e2]\n\
+         \x20   let best = largest([c1, c2])\n\
+         \x20   print(rows.len())\n    print(none_test(best))\n    print(same(c1, c2) || same_items([c1], [c2]) || via_eq(c1, c2) || via_less(c1, c2))\n}}"
+    );
+    clean(&src);
+}
+
+#[test]
+fn operators_should_lower_to_the_spec_formulas() {
+    let decls = format!(
+        "{CIRCLE}enum Expr: Eq {{\n    Num(i64)\n    Add(Expr, Expr)\n}}\nfn f() -> Circle {{ Circle(r: 1) }}\nfn g() -> Circle {{ Circle(r: 2) }}\nfn main() {{\n"
+    );
+    // Each row: the statement in `main`, and what its `tir` holds.
+    let rows: [(&str, &str, &[&str]); 10] = [
+        (
+            "> swaps the operands",
+            "let c1 = Circle(r: 1)\n    let c2 = Circle(r: 2)\n    let r = c1 > c2",
+            &["(call Circle.less c2#1 c1#0)"],
+        ),
+        (
+            "<= swaps and negates",
+            "let c1 = Circle(r: 1)\n    let c2 = Circle(r: 2)\n    let r = c1 <= c2",
+            &["(! (call Circle.less c2#1 c1#0))"],
+        ),
+        (
+            ">= negates",
+            "let c1 = Circle(r: 1)\n    let c2 = Circle(r: 2)\n    let r = c1 >= c2",
+            &["(! (call Circle.less c1#0 c2#1))"],
+        ),
+        (
+            "!= negates",
+            "let c1 = Circle(r: 1)\n    let c2 = Circle(r: 2)\n    let r = c1 != c2",
+            &["(! (call Circle.eq c1#0 c2#1))"],
+        ),
+        (
+            "a swapped pair of calls runs the left first",
+            "let r = f() > g()",
+            &["(let #", "(call f)", "(call g)", "(call Circle.less #"],
+        ),
+        (
+            "a swapped pair with one local binds both",
+            "let c1 = Circle(r: 1)\n    let r = c1 > g()",
+            &["(let #", "(call g)", "(call Circle.less #"],
+        ),
+        (
+            "a class beside its optional is the generated operator",
+            "let c1 = Circle(r: 1)\n    let maybe: Circle? = c1\n    let r = c1 == maybe",
+            &["(== (wrap c1#0) maybe#1)"],
+        ),
+        (
+            "a generated eq is the operator",
+            "let r = 5.eq(5)",
+            &["(== 5 5)"],
+        ),
+        (
+            "a listed Eq on an enum is the operator",
+            "let e1 = Expr.Num(1)\n    let e2 = Expr.Num(2)\n    let r = e1 == e2",
+            &["(== e1#0 e2#1)"],
+        ),
+        (
+            "a chain runs each operand once and skips the rest",
+            "let r = f() < g() < f()",
+            &["(&& (call Circle.less #"],
+        ),
+    ];
+    for (row, body, parts) in rows {
+        let src = format!("{decls}    {body}\n    print(r)\n}}");
+        let printed = lowered(&src);
+        for part in parts {
+            assert!(
+                printed.contains(part),
+                "row `{row}`: `{part}` in\n{printed}"
+            );
+        }
+    }
+}
+
+#[test]
+fn operators_should_report_a_missing_bound() {
+    let decls = "class Node {}\nclass Box<T> {\n    v: T\n}\nenum Wrap<T> {\n    One(T)\n}\n";
+    // Each row: the function after the declarations, the text where the error stands, and the
+    // code. The help text of each is pinned in the fixtures `E0139-*`.
+    let rows = [
+        (
+            "order on a bare parameter",
+            "fn f<T>(a: T, b: T) -> bool { a < b }",
+            "a < b",
+            Code::ParamLacks,
+        ),
+        (
+            "equality on a bare parameter",
+            "fn f<T>(a: T, b: T) -> bool { a == b }",
+            "a == b",
+            Code::ParamLacks,
+        ),
+        (
+            "equality of arrays of a parameter",
+            "fn f<T>(a: [T], b: [T]) -> bool { a == b }",
+            "a == b",
+            Code::ParamLacks,
+        ),
+        (
+            "contains on an array of a parameter",
+            "fn f<T>(a: [T], x: T) -> bool { a.contains(x) }",
+            "a.contains(x)",
+            Code::ParamLacks,
+        ),
+        (
+            "equality of an enum of a parameter",
+            "fn f<T>(a: Wrap<T>, b: Wrap<T>) -> bool { a == b }",
+            "a == b",
+            Code::ParamLacks,
+        ),
+        (
+            "order beside Display",
+            "fn f<T: Display>(a: T, b: T) -> bool { a < b }",
+            "a < b",
+            Code::ParamLacks,
+        ),
+        (
+            "order beside Eq",
+            "fn f<T: Eq>(a: T, b: T) -> bool { a < b }",
+            "a < b",
+            Code::ParamLacks,
+        ),
+        (
+            "equality of a class of a parameter",
+            "fn f<T: Eq>(a: Box<T>, b: Box<T>) -> bool { a == b }",
+            "a == b",
+            Code::ParamLacks,
+        ),
+    ];
+    for (row, function, at, code) in rows {
+        let src = format!("{decls}{function}\nfn main() {{}}");
+        let start = src.find(at).expect("the row should hold its operator");
+        codes_row(row, &src, &[(code, line_col(&src, start))]);
+    }
+    // An argument that does not conform is reported at the argument, not inside the body.
+    let src = format!(
+        "{decls}fn largest<T: Ord>(xs: [T]) -> T? {{\n    None\n}}\nfn main() {{\n    let n1 = Node()\n    let best = largest([n1])\n    print(best == None)\n}}"
+    );
+    let start = src.find("[n1]").expect("the call should have its argument");
+    codes(&src, &[(Code::NotConform, line_col(&src, start))]);
+}
+
+/// The position of the first `needle` in `src`.
+fn where_is(src: &str, needle: &str) -> (usize, usize) {
+    line_col(
+        src,
+        src.find(needle).expect("the program should hold the text"),
+    )
+}
+
+#[test]
+fn implicit_eq_call_should_close_an_instantiation_cycle() {
+    let w = "class W<T> {\n    x: T\n}\n";
+    let main = "fn main() {\n    print(W(x: 1) == W(x: 2))\n}";
+    // Each row: the program, and the E0140 it gets, if any, at the text it stands at.
+    let rows = [
+        (
+            "an operand of a class that grows",
+            format!(
+                "{w}extend<T: Eq> W<T>: Eq {{\n    fn eq(self, other: Self) -> bool {{\n        W(x: [self.x]) == W(x: [other.x])\n    }}\n}}\n{main}"
+            ),
+            Some("W(x: [self.x]) == W(x: [other.x])"),
+        ),
+        (
+            "an operand of an enum, reached through its generated Eq",
+            format!(
+                "{w}enum Pick<U> {{\n    One(U)\n}}\nextend<T: Eq> W<T>: Eq {{\n    fn eq(self, other: Self) -> bool {{\n        Pick.One(W(x: [self.x])) == Pick.One(W(x: [other.x]))\n    }}\n}}\n{main}"
+            ),
+            Some("Pick.One(W(x: [self.x])) == Pick.One(W(x: [other.x]))"),
+        ),
+        (
+            "an array of an operand that grows, reached through the hub",
+            format!(
+                "{w}extend<T: Eq> W<T>: Eq {{\n    fn eq(self, other: Self) -> bool {{\n        [W(x: [self.x])] == [W(x: [other.x])]\n    }}\n}}\n{main}"
+            ),
+            Some("[W(x: [self.x])] == [W(x: [other.x])]"),
+        ),
+        (
+            "an operand that does not grow",
+            format!(
+                "{w}extend<T: Eq> W<T>: Eq {{\n    fn eq(self, other: Self) -> bool {{\n        [self.x] == [other.x]\n    }}\n}}\n{main}"
+            ),
+            None,
+        ),
+    ];
+    for (row, src, cycle) in rows {
+        match cycle {
+            Some(text) => codes_row(
+                row,
+                &src,
+                &[(Code::InstantiationCycle, where_is(&src, text))],
+            ),
+            None => clean_row(row, &src),
+        }
+    }
+}
+
+#[test]
+fn operand_under_arrays_of_a_parameter_should_not_close_a_cycle() {
+    let same = "fn same<A: Eq>(a: A, b: A) -> bool {\n    a == b\n}\n";
+    let rows = [
+        (
+            "arrays of the parameter, through a bare parameter's second node",
+            format!("{same}class Grid<T> {{\n    rows: [[T]]\n}}\nextend<T: Eq> Grid<T>: Eq {{\n    fn eq(self, other: Self) -> bool {{\n        same(self.rows, other.rows)\n    }}\n}}\nfn main() {{\n    print(Grid(rows: [[1]]) == Grid(rows: [[2]]))\n}}"),
+        ),
+        (
+            "arrays under an enum's generated Eq",
+            "class G2<T> {\n    x: T\n}\nenum Q<V> {\n    A(V)\n}\nextend<T: Eq> G2<T>: Eq {\n    fn eq(self, other: Self) -> bool {\n        Q.A([[self.x]]) == Q.A([[other.x]])\n    }\n}\nfn main() {\n    print(G2(x: 1) == G2(x: 2))\n}".to_string(),
+        ),
+        (
+            "a second node that comes from the node of the element, not of the whole argument",
+            format!("{same}class Tree<T> {{\n    value: T\n    children: [Tree<T>]\n}}\nextend<T: Eq> Tree<T>: Eq {{\n    fn eq(self, other: Self) -> bool {{\n        self.value == other.value && same(self.children, other.children)\n    }}\n}}\nfn main() {{\n    print(Tree(value: 1, children: []) == Tree(value: 2, children: []))\n}}"),
+        ),
+    ];
+    for (row, src) in rows {
+        clean_row(row, &src);
+    }
+}
+
+#[test]
+fn growing_declaration_should_give_one_diagnostic() {
+    let nest = "enum Nest<T> {\n    End\n    Next(Nest<[T]>)\n}\nfn f(a: Nest<i64>, b: Nest<i64>) -> bool {\n    a == b\n}\nfn main() {}";
+    codes(
+        nest,
+        &[(Code::InstantiationCycle, where_is(nest, "Nest<[T]>"))],
+    );
+    // An enum no value can be built of has its own error alone, not an E0140 beside it.
+    let dead = "enum Dead<T> {\n    Again(Dead<[T]>)\n}\nfn f(a: Dead<i64>, b: Dead<i64>) -> bool {\n    a == b\n}\nfn main() {}";
+    codes(dead, &[(Code::NeverConstructed, where_is(dead, "Dead"))]);
+}
+
+#[test]
+fn eq_and_less_calls_should_check_their_receiver_and_argument() {
+    // Each row: the program, the text where the error stands, and its code.
+    let rows = [
+        (
+            "an argument of the wrong type",
+            "fn f() -> bool { 5.eq(\"a\") }\nfn main() {}",
+            "\"a\"",
+            Code::Mismatch,
+        ),
+        (
+            "an argument that fails leaves no type to check",
+            "fn f() {\n    let x: i64 = 5.eq(\"a\")\n}\nfn main() {}",
+            "\"a\"",
+            Code::Mismatch,
+        ),
+        (
+            "a receiver that is unknown",
+            "fn f() -> bool { missing.eq(1) }\nfn main() {}",
+            "missing",
+            Code::BindingNotFound,
+        ),
+        (
+            "two arguments are no `eq`",
+            "fn f() -> bool { 5.eq(5, 6) }\nfn main() {}",
+            "eq",
+            Code::NoMember,
+        ),
+    ];
+    for (row, src, at, code) in rows {
+        codes_row(row, src, &[(code, where_is(src, at))]);
+    }
+    // A label also has its own report, beside the method that is not there.
+    let src = "fn f() -> bool { 5.eq(other: 5) }\nfn main() {}";
+    codes(
+        src,
+        &[
+            (Code::NoMember, where_is(src, "eq")),
+            (Code::LabeledArgument, where_is(src, "other")),
+        ],
+    );
+}
+
+#[test]
+fn a_comparison_chain_with_an_exiting_operand_should_bind_its_operands_first() {
+    // The second operand leaves the function, so the first, a counted class, is read after it.
+    let src = format!(
+        "{CIRCLE}fn f(c: Circle, d: Circle?) -> bool {{\n    c < (if let x = d {{ x }} else {{ return true }})\n}}\nfn main() {{}}"
+    );
+    clean(&src);
+}
+
+#[test]
+fn an_enum_with_an_unconditional_written_eq_should_take_only_the_hub_edge() {
+    // The generated rule does not run for the `Wrap<[U]>` inside the array: its written `eq` does,
+    // and it grows nothing.
+    let src = "enum Wrap<T> {\n    One(T)\n}\nextend<T> Wrap<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\n\
+               fn same<U: Eq>(a: [Wrap<[U]>], b: [Wrap<[U]>]) -> bool {\n    a == b\n}\nfn main() {}";
+    clean(src);
+}
+
+#[test]
+fn a_cycle_through_the_generated_eq_of_an_enum_should_name_the_enum() {
+    // `Pick<U>` holds a `Wrap<[U]>`, whose `eq` compares a `Pick<T>`: each turn of the cycle puts
+    // two levels more into `U` and takes one off at the hub. The first step in the source is the
+    // payload of `Pick`, so the error names the enum.
+    let src = "class Wrap<T> {\n    x: T\n}\nenum Pick<U> {\n    One(Wrap<[U]>)\n}\n\
+               extend<T: Eq> Wrap<T>: Eq {\n    fn eq(self, other: Self) -> bool {\n        Pick.One(Wrap(x: [self.x])) == Pick.One(Wrap(x: [other.x]))\n    }\n}\n\
+               fn main() {\n    print(Wrap(x: 1) == Wrap(x: 2))\n}";
+    codes(
+        src,
+        &[(Code::InstantiationCycle, where_is(src, "Wrap<[U]>"))],
+    );
+}
+
+#[test]
+fn an_operator_should_reach_a_written_method_through_its_hub_edge() {
+    let w = "class W<T> {\n    x: T\n}\n";
+    // Each row: the program, and the text of the call that closes an E0140, if any. In each, the
+    // only way back from the callee to the method is the hub of the interface that its operator
+    // reaches.
+    let rows = [
+        (
+            "order on a parameter",
+            format!(
+                "{w}extend<T> W<T>: Eq {{\n    fn eq(self, other: Self) -> bool {{ true }}\n}}\nfn go<A: Ord>(a: A, b: A) -> bool {{\n    a < b\n}}\nextend<T> W<T>: Ord {{\n    fn less(self, other: Self) -> bool {{\n        go(W(x: [self.x]), W(x: [other.x]))\n    }}\n}}\nfn main() {{\n    print(W(x: 1) < W(x: 2))\n}}"
+            ),
+            Some("go(W(x: [self.x]), W(x: [other.x]))"),
+        ),
+        (
+            "contains on an array of a parameter",
+            format!(
+                "{w}fn has<A: Eq>(xs: [A], x: A) -> bool {{\n    xs.contains(x)\n}}\nextend<T: Eq> W<T>: Eq {{\n    fn eq(self, other: Self) -> bool {{\n        has([W(x: [self.x])], W(x: [other.x]))\n    }}\n}}\nfn main() {{\n    print(W(x: 1) == W(x: 2))\n}}"
+            ),
+            Some("has([W(x: [self.x])], W(x: [other.x]))"),
+        ),
+        (
+            "equality with `None` calls nothing",
+            format!(
+                "{w}fn go<A>(a: A?) -> bool {{\n    a == None\n}}\nextend<T: Eq> W<T>: Eq {{\n    fn eq(self, other: Self) -> bool {{\n        go(W(x: [self.x]))\n    }}\n}}\nfn main() {{\n    print(W(x: 1) == W(x: 2))\n}}"
+            ),
+            None,
+        ),
+    ];
+    for (row, src, cycle) in rows {
+        match cycle {
+            Some(text) => codes_row(
+                row,
+                &src,
+                &[(Code::InstantiationCycle, where_is(&src, text))],
+            ),
+            None => clean_row(row, &src),
+        }
+    }
+}
+
+#[test]
+fn written_records_should_tell_a_conditional_conformance_from_an_unconditional_one() {
+    let src = "enum Free<T> {\n    A(T)\n}\nextend<T> Free<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\n\
+               enum Bound<T> {\n    A(T)\n}\nextend<T: Ord> Bound<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\n\
+               enum Plain<T> {\n    A(T)\n}\n";
+    let records = with_probe(src, ("T", "i64"), "Eq", |checker, _, interface| {
+        let named = |name: &str| {
+            let at = checker
+                .enums
+                .iter()
+                .position(|e| e.name.name.as_str() == name);
+            tir::EnumId(at.expect("the program should hold the enum"))
+        };
+        let records = checker.written_records();
+        let of = |name| records.get(&(interface, named(name))).copied();
+        (of("Free"), of("Bound"), of("Plain"))
+    });
+    assert_eq!(records, (Some((true, true)), Some((true, false)), None));
+}
+
+#[test]
+fn eq_and_less_through_a_bound_should_stay_interface_calls() {
+    // `mono` resolves them for each type argument: a type parameter's call is not the operator.
+    let src = "fn same<T: Eq>(a: T, b: T) -> bool { a.eq(b) }\nfn below<T: Ord>(a: T, b: T) -> bool { a.less(b) }\nfn main() {\n    print(same(1, 2))\n    print(below(1, 2))\n}";
+    contains(src, &["(call Eq.eq a#0 b#1)", "(call Ord.less a#0 b#1)"]);
 }

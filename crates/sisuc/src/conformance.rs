@@ -6,9 +6,11 @@ use std::cmp::Ordering;
 
 use rustc_hash::FxHashMap;
 
+use crate::graph::components;
 use crate::symbol::Symbol;
 use crate::tir::{
-    ChoicePlace, Conformances, EnumId, InterfaceId, LangInterfaces, Type, TypeArgs, TypeKind, head_of,
+    ChoicePlace, Conformances, Enum, EnumId, InterfaceId, LangInterfaces, Type, TypeArgs, TypeKind,
+    head_of,
 };
 
 #[cfg(test)]
@@ -23,6 +25,10 @@ thread_local! {
     static WALK_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many types `normalize` has walked on this thread.
     pub(crate) static NORMALIZED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many class or enum keys `holds` has decided (each a miss of its memo) on this thread.
+    pub(crate) static HOLDS_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many keys `calls_written` has listed the parts of on this thread.
+    pub(crate) static CALLS_KEYS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The conformance of `interface` to `ty` with the interface arguments `args`, as its index
@@ -246,6 +252,286 @@ impl Open {
             .map(|(key, _)| (key, false))
             .collect()
     }
+}
+
+/// The payload types of each enum, declared: what [`parts`] and [`holds`] read of an enum. The
+/// output of `mono` has `Enum`s; `mono` also keeps the payload types of the input.
+pub(crate) trait Payloads {
+    /// Calls `each` with the type of each field of each variant of the enum `id`.
+    fn each(&self, id: EnumId, each: &mut dyn FnMut(Type));
+}
+
+impl Payloads for [Enum] {
+    fn each(&self, id: EnumId, each: &mut dyn FnMut(Type)) {
+        for payload in self[id.0].variants.iter().flat_map(|v| &v.fields) {
+            each(payload.ty);
+        }
+    }
+}
+
+impl Payloads for [Vec<Type>] {
+    fn each(&self, id: EnumId, each: &mut dyn FnMut(Type)) {
+        for &ty in &self[id.0] {
+            each(ty);
+        }
+    }
+}
+
+/// The parts of `ty`, whatever the interface: an array's element, an optional's contents and each
+/// payload type of an enum, with the enum's arguments in place of its parameters. Nothing for a
+/// scalar, `string`, a class or a type parameter. A payload type whose associated type has no
+/// choice is poison, and has no part. A generated `Display`, which asks no part, still lists them.
+pub(crate) fn parts<P: Payloads + ?Sized>(
+    conformances: &Conformances,
+    enums: &P,
+    ty: Type,
+    mut each: impl FnMut(Type),
+) {
+    match ty.kind() {
+        TypeKind::Array(part) | TypeKind::Optional(part) => each(part),
+        TypeKind::Enum(id, args) => enums.each(id, &mut |payload| {
+            if let Some(part) = normalize(conformances, payload.subst(args.get())) {
+                each(part);
+            }
+        }),
+        _ => {}
+    }
+}
+
+/// How an interface holds for a concrete type, in the ids of the program that `mono` reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Holds {
+    /// A written conformance, the one at this place among the interface's, with the types that
+    /// stand for its block's parameters.
+    Written(usize, TypeArgs),
+    /// The compiler writes it.
+    Generated,
+    /// The type has no such conformance.
+    No,
+}
+
+impl Holds {
+    /// Whether the interface holds, written or generated.
+    pub(crate) fn is_yes(self) -> bool {
+        self != Holds::No
+    }
+}
+
+/// What [`holds`] reads: the conformances of the program and the payload types of its enums.
+pub(crate) struct Source<'a, P: Payloads + ?Sized> {
+    pub(crate) conformances: &'a Conformances,
+    pub(crate) enums: &'a P,
+    pub(crate) lang: LangInterfaces,
+}
+
+/// The state of `holds` for a program: the answer for each class or enum key, and the `Open`
+/// state of the root query that is running. `mono` keeps one, so each key is decided once.
+#[derive(Debug, Default)]
+pub(crate) struct Decide {
+    memo: FxHashMap<Key, Holds>,
+    open: Open,
+    /// The answer of each key that held and left, until it is final.
+    held: FxHashMap<Key, Holds>,
+}
+
+/// How `interface` holds for the concrete type `ty` with the arguments `args`: the rule of the
+/// checker (`Checker::conforms`) over the input's ids. A written `Eq` or `Ord` that covers `ty`
+/// decides, with its bounds, and when they fail the type has none; only `Display` falls back to
+/// the generated rule. A key of a class or an enum is decided once (`cx.memo`), and a key whose
+/// query is open or pending holds (`Open`).
+pub(crate) fn holds<P: Payloads + ?Sized>(
+    cx: &mut Decide,
+    src: &Source<'_, P>,
+    ty: Type,
+    interface: InterfaceId,
+    args: TypeArgs,
+) -> Holds {
+    match ty.kind() {
+        TypeKind::Class(..) | TypeKind::Enum(..) => holder_holds(cx, src, ty, interface, args),
+        _ => match generated(src.lang, ty, interface) {
+            Generated::Holds => Holds::Generated,
+            Generated::Element(part) => {
+                if holds(cx, src, part, interface, args).is_yes() {
+                    Holds::Generated
+                } else {
+                    Holds::No
+                }
+            }
+            Generated::Fails | Generated::Payloads(..) => Holds::No,
+        },
+    }
+}
+
+fn holder_holds<P: Payloads + ?Sized>(
+    cx: &mut Decide,
+    src: &Source<'_, P>,
+    ty: Type,
+    interface: InterfaceId,
+    args: TypeArgs,
+) -> Holds {
+    let key = (ty, interface, args);
+    if let Some(&answer) = cx.memo.get(&key) {
+        return answer;
+    }
+    match cx.open.enter(key) {
+        Entered::Open(number) | Entered::Pending(number) => {
+            cx.open.hit(number);
+            return Holds::Generated;
+        }
+        Entered::New => {}
+    }
+    #[cfg(test)]
+    HOLDS_STEPS.set(HOLDS_STEPS.get() + 1);
+    let answer = expanded(cx, src, ty, interface, args);
+    if answer.is_yes() {
+        cx.held.insert(key, answer);
+    }
+    let mut done = cx.open.leave(key, answer.is_yes());
+    if cx.open.is_idle() {
+        done.extend(cx.open.settle());
+    }
+    for (key, yes) in done {
+        let value = cx.held.remove(&key).filter(|_| yes).unwrap_or(Holds::No);
+        cx.memo.insert(key, value);
+    }
+    answer
+}
+
+/// The answer for a key that `holder_holds` has opened.
+fn expanded<P: Payloads + ?Sized>(
+    cx: &mut Decide,
+    src: &Source<'_, P>,
+    ty: Type,
+    interface: InterfaceId,
+    args: TypeArgs,
+) -> Holds {
+    if let Some((k, stands)) = find(src.conformances, interface, ty, args) {
+        if record_holds(cx, src, interface, k, stands) {
+            return Holds::Written(k, stands);
+        }
+        if interface != src.lang.display {
+            return Holds::No;
+        }
+    }
+    match generated(src.lang, ty, interface) {
+        Generated::Holds => Holds::Generated,
+        Generated::Fails | Generated::Element(_) => Holds::No,
+        Generated::Payloads(id, own) => {
+            let mut parts = Vec::new();
+            src.enums.each(id, &mut |payload| parts.push(payload));
+            for payload in parts {
+                let Some(part) = normalize(src.conformances, payload.subst(own.get())) else {
+                    continue;
+                };
+                if !holds(cx, src, part, interface, TypeArgs::NONE).is_yes() {
+                    return Holds::No;
+                }
+            }
+            Holds::Generated
+        }
+    }
+}
+
+/// Whether the conformance `k` of `interface` holds when its block's parameters stand for
+/// `stands`: each bound of each parameter holds for the type that stands for it. A bound whose
+/// arguments have no choice for an associated type is poison, and holds.
+fn record_holds<P: Payloads + ?Sized>(
+    cx: &mut Decide,
+    src: &Source<'_, P>,
+    interface: InterfaceId,
+    k: usize,
+    stands: TypeArgs,
+) -> bool {
+    let record = src.conformances.get(interface, k);
+    for (i, bounds) in record.bounds.iter().enumerate() {
+        for bound in bounds {
+            let args: Option<Vec<Type>> = (bound.args.get().iter())
+                .map(|&arg| normalize(src.conformances, arg.subst(stands.get())))
+                .collect();
+            let Some(args) = args else { continue };
+            let args = TypeArgs::intern(&args);
+            if !holds(cx, src, stands.get()[i], bound.interface, args).is_yes() {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// The types whose `Eq` or `Display` reaches a written method, settled for a program: the keys
+/// `calls_written` has decided.
+#[derive(Debug, Default)]
+pub(crate) struct Written {
+    settled: FxHashMap<(Type, InterfaceId), bool>,
+}
+
+/// Whether the helper for `interface` on the concrete type `ty` may call a written method:
+/// `ty`, or a part of it through [`parts`], is a class or an enum with a written conformance. The
+/// keys are the pairs of a type and `interface`; the key of a type with a conformance in
+/// `conformances` is a leaf, and the key of any other type reaches the keys of its parts. A key
+/// is true exactly when it reaches a leaf. The keys that are not settled yet are listed once, with
+/// their parts, and settled by their strongly connected components in completion order, so each
+/// key of a program is decided once.
+pub(crate) fn calls_written<P: Payloads + ?Sized>(
+    conformances: &Conformances,
+    enums: &P,
+    ty: Type,
+    interface: InterfaceId,
+    written: &mut Written,
+) -> bool {
+    if let Some(&answer) = written.settled.get(&(ty, interface)) {
+        return answer;
+    }
+    // The new keys, with the edges to the new keys they reach and whether they are a leaf or
+    // reach a settled `true`.
+    let mut keys: Vec<Type> = vec![ty];
+    let mut at: FxHashMap<Type, usize> = FxHashMap::default();
+    at.insert(ty, 0);
+    let mut edges: Vec<Vec<usize>> = Vec::new();
+    let mut yes: Vec<bool> = Vec::new();
+    let mut next = 0;
+    while next < keys.len() {
+        let key = keys[next];
+        next += 1;
+        #[cfg(test)]
+        CALLS_KEYS.set(CALLS_KEYS.get() + 1);
+        let leaf =
+            head_of(key).is_some() && find(conformances, interface, key, TypeArgs::NONE).is_some();
+        let mut reach = Vec::new();
+        let mut settled_true = leaf;
+        parts(conformances, enums, key, |part| {
+            if let Some(&answer) = written.settled.get(&(part, interface)) {
+                settled_true |= answer;
+                return;
+            }
+            let index = *at.entry(part).or_insert_with(|| {
+                keys.push(part);
+                keys.len() - 1
+            });
+            reach.push(index);
+        });
+        edges.push(reach);
+        yes.push(settled_true);
+    }
+    let component = components(&edges);
+    let count = component.iter().max().map_or(0, |&c| c + 1);
+    let mut members: Vec<Vec<usize>> = vec![Vec::new(); count];
+    for (key, &c) in component.iter().enumerate() {
+        members[c].push(key);
+    }
+    // A component reaches only components with a lower number, which are settled by then.
+    for members in &members {
+        let answer = members.iter().any(|&m| yes[m])
+            || members.iter().any(|&m| {
+                edges[m].iter().any(|&n| {
+                    component[n] != component[m] && written.settled[&(keys[n], interface)]
+                })
+            });
+        for &m in members {
+            written.settled.insert((keys[m], interface), answer);
+        }
+    }
+    written.settled[&(ty, interface)]
 }
 
 /// `ty` with every associated type replaced whose base is a class or an enum: by the type that
@@ -755,6 +1041,7 @@ mod tests {
                     args: TypeArgs::intern(args),
                     methods: Vec::<FuncId>::new(),
                     assoc: Vec::new(),
+                    bounds: Vec::new(),
                 },
             );
         }
@@ -1208,6 +1495,7 @@ mod tests {
                     args: tag(k),
                     methods: Vec::<FuncId>::new(),
                     assoc: Vec::new(),
+                    bounds: Vec::new(),
                 },
             );
         }
@@ -1320,6 +1608,7 @@ mod tests {
                     args: TypeArgs::NONE,
                     methods: Vec::<FuncId>::new(),
                     assoc,
+                    bounds: Vec::new(),
                 },
             );
         }
@@ -1429,6 +1718,7 @@ mod tests {
                     args: TypeArgs::NONE,
                     methods: Vec::<FuncId>::new(),
                     assoc,
+                    bounds: Vec::new(),
                 },
             );
         }
@@ -1477,6 +1767,7 @@ mod tests {
                     args: TypeArgs::NONE,
                     methods: Vec::<FuncId>::new(),
                     assoc,
+                    bounds: Vec::new(),
                 },
             );
         }
@@ -1552,5 +1843,303 @@ mod tests {
             Some(doubled(Type::I64, 20))
         );
         assert_eq!(NORMALIZED.get(), 0);
+    }
+
+    /// The program with a chain `F0` ... `F{n-1}` that reaches no written method, and `n` enums
+    /// `R1` ... `Rn` that each hold `F0` and a `Holder` with a written `eq`. `main` compares each
+    /// `Ri` once, and `F0` after them all.
+    fn written_program(n: usize) -> String {
+        use std::fmt::Write as _;
+        let mut src = String::from(
+            "class Holder: Eq {\n    mut items: [string]\n    fn eq(self, other: Self) -> bool {\n        self.items = [\"y\"]\n        true\n    }\n}\n",
+        );
+        for k in 0..n - 1 {
+            writeln!(src, "enum F{k} {{\n    A(F{})\n    End\n}}", k + 1)
+                .expect("writing to a `String` should succeed");
+        }
+        writeln!(src, "enum F{} {{\n    End\n}}", n - 1)
+            .expect("writing to a `String` should succeed");
+        for i in 1..=n {
+            writeln!(src, "enum R{i} {{\n    P(F0)\n    Q(Holder)\n}}")
+                .expect("writing to a `String` should succeed");
+        }
+        src += "fn main() {\n    let h = Holder(items: [\"x\"])\n    let f = F0.End\n";
+        for i in 1..=n {
+            writeln!(src, "    let r{i} = R{i}.Q(h)\n    print(r{i} == r{i})")
+                .expect("writing to a `String` should succeed");
+        }
+        src + "    print(f == f)\n}\n"
+    }
+
+    /// The keys `calls_written` listed building the mir of `src`, and the printed mir.
+    fn keys_listed(src: &str) -> (usize, String) {
+        CALLS_KEYS.set(0);
+        let (program, diagnostics) =
+            crate::check::check_alone(&crate::parser::parse_ok(src), src, &[]);
+        let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+        let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
+        let mir = crate::mir::build(&program);
+        (CALLS_KEYS.get(), crate::mir::print(&mir, &program))
+    }
+
+    /// Each key is listed once, whichever of the 200 roots asks: a chain that reaches no written
+    /// method is read once, not once for each root that comes before it. The keys are `Holder`,
+    /// the 200 `F`s and the 200 `R`s: at most 401. A walk that read the false chain again from
+    /// each true root would list about 40,000. Every `Ri` reaches the `Holder`, and `F0` does not.
+    #[test]
+    fn calls_written_should_list_each_key_once() {
+        let (keys, printed) = keys_listed(&written_program(200));
+        assert!(keys <= 401, "{keys} keys");
+        assert_eq!(
+            printed.matches(" [calls]").count(),
+            200,
+            "every `Ri` calls `eq`"
+        );
+        let main = printed
+            .find("fn main(")
+            .expect("the mir should hold `main`");
+        let last = printed[main..].rfind("==").expect("`main` should compare");
+        assert!(
+            !printed[main + last..]
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .contains("[calls]"),
+            "`F0` calls no written method"
+        );
+    }
+
+    /// The keys listed grow in proportion to the types: 20, 40 and 60 of each, ten times the
+    /// smallest chain that listing each root's chain again would show.
+    #[test]
+    fn calls_written_should_list_keys_in_proportion_to_the_types() {
+        let keys = |n| keys_listed(&written_program(n)).0;
+        crate::mir::tests::assert_near_linear(keys(20), keys(40), keys(60));
+    }
+
+    /// The program `src` checks without an error, and `ask` gets what `holds` reads of it.
+    fn deciding<R>(
+        src: &str,
+        ask: impl FnOnce(&crate::tir::Program, &mut Decide, &Source<'_, [Enum]>) -> R,
+    ) -> R {
+        let (program, diagnostics) =
+            crate::check::check_alone(&crate::parser::parse_ok(src), src, &[]);
+        let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+        let source = Source {
+            conformances: &program.conformances,
+            enums: program.enums.as_slice(),
+            lang: program.lang,
+        };
+        ask(&program, &mut Decide::default(), &source)
+    }
+
+    /// The class named `name` of `program`, as a type with the arguments `args`.
+    fn class_named(program: &crate::tir::Program, name: &str, args: &[Type]) -> Type {
+        let at = program.classes.iter().position(|c| c.name == name);
+        Type::intern(TypeKind::Class(
+            ClassId(at.expect("the program should hold the class")),
+            TypeArgs::intern(args),
+        ))
+    }
+
+    /// The enum named `name` of `program`, as a type with the arguments `args`.
+    fn enum_named(program: &crate::tir::Program, name: &str, args: &[Type]) -> Type {
+        let at = program.enums.iter().position(|e| e.name == name);
+        Type::intern(TypeKind::Enum(
+            EnumId(at.expect("the program should hold the enum")),
+            TypeArgs::intern(args),
+        ))
+    }
+
+    /// The generated rule over concrete types, with a written conformance deciding where it
+    /// covers a type: `holds` follows `Checker::conforms` over the ids of the input.
+    #[test]
+    fn holds_should_follow_the_rule_of_the_checker() {
+        let src = "class Node {}\nclass Circle: Eq {\n    r: i64\n    fn eq(self, other: Self) -> bool { self.r == other.r }\n}\n\
+                   enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n}\n\
+                   enum Holds {\n    N(Node)\n}\n\
+                   enum Mine {\n    C(Circle)\n}\n\
+                   enum A {\n    X(B)\n    Y(Node)\n}\nenum B {\n    Z(A)\n}\n\
+                   class Pair<T> {\n    v: T\n}\nextend<T: Ord> Pair<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\n\
+                   enum Outer<T> {\n    P(Pair<T>)\n}\n\
+                   interface Tag {}\nclass Tagged: Tag {}\n\
+                   class Label<T> {\n    v: T\n}\nextend<T: Tag> Label<T>: Eq {\n    fn eq(self, other: Self) -> bool { false }\n}\n\
+                   fn main() {}";
+        deciding(src, |program, cx, source| {
+            let lang = program.lang;
+            let mut ask = |ty, interface| holds(cx, source, ty, interface, TypeArgs::NONE);
+            let node = class_named(program, "Node", &[]);
+            let circle = class_named(program, "Circle", &[]);
+            // Scalars and the parts of a type.
+            assert_eq!(ask(Type::I64, lang.eq), Holds::Generated);
+            assert_eq!(ask(Type::BOOL, lang.ord), Holds::No);
+            assert_eq!(ask(Type::array(Type::I64), lang.eq), Holds::Generated);
+            assert_eq!(ask(Type::array(node), lang.eq), Holds::No);
+            assert_eq!(ask(Type::optional(Type::STRING), lang.eq), Holds::Generated);
+            assert_eq!(ask(Type::array(Type::I64), lang.ord), Holds::No);
+            // A class has `Eq` only through a written conformance, which the type's record names.
+            assert_eq!(ask(node, lang.eq), Holds::No);
+            assert!(matches!(ask(circle, lang.eq), Holds::Written(..)));
+            assert_eq!(ask(Type::array(circle), lang.eq), Holds::Generated);
+            // An enum holds when its payloads do, itself included.
+            assert_eq!(
+                ask(enum_named(program, "Expr", &[]), lang.eq),
+                Holds::Generated
+            );
+            assert_eq!(ask(enum_named(program, "Holds", &[]), lang.eq), Holds::No);
+            assert_eq!(
+                ask(enum_named(program, "Mine", &[]), lang.eq),
+                Holds::Generated
+            );
+            // A cycle that meets a class fails in both enums, whichever is asked first.
+            assert_eq!(ask(enum_named(program, "B", &[]), lang.eq), Holds::No);
+            assert_eq!(ask(enum_named(program, "A", &[]), lang.eq), Holds::No);
+            // A written record whose bound fails decides: no fallback to the generated rule.
+            let pair = class_named(program, "Pair", &[Type::BOOL]);
+            assert_eq!(ask(pair, lang.eq), Holds::No);
+            let outer = enum_named(program, "Outer", &[Type::BOOL]);
+            assert_eq!(ask(outer, lang.eq), Holds::No);
+            let good = class_named(program, "Pair", &[Type::I64]);
+            assert!(matches!(ask(good, lang.eq), Holds::Written(..)));
+            // A bound that names a user interface sees the record of the type that has it.
+            let tagged = class_named(program, "Tagged", &[]);
+            let label = class_named(program, "Label", &[tagged]);
+            assert!(matches!(ask(label, lang.eq), Holds::Written(..)));
+            assert_eq!(
+                ask(class_named(program, "Label", &[node]), lang.eq),
+                Holds::No
+            );
+            // `Display` holds for everything but `unit` and `never`.
+            assert_eq!(ask(node, lang.display), Holds::Generated);
+            assert_eq!(ask(Type::UNIT, lang.display), Holds::No);
+        });
+    }
+
+    /// A written `Display` whose bound fails falls back to the generated one: only `Display`
+    /// does, as `Eq` and `Ord` have a fallback nowhere.
+    #[test]
+    fn holds_should_fall_back_to_the_generated_display() {
+        let src = "class Node {}\nclass Box<T> {\n    v: T\n}\nextend<T: Eq> Box<T>: Display {\n    fn to_string(self) -> string { \"box\" }\n}\nfn main() {}";
+        deciding(src, |program, cx, source| {
+            let display = program.lang.display;
+            let mut ask = |ty| holds(cx, source, ty, display, TypeArgs::NONE);
+            let node = class_named(program, "Node", &[]);
+            assert!(matches!(
+                ask(class_named(program, "Box", &[Type::I64])),
+                Holds::Written(..)
+            ));
+            assert_eq!(ask(class_named(program, "Box", &[node])), Holds::Generated);
+        });
+    }
+
+    /// `parts` lists the element of an array, the contents of an optional and each payload type of
+    /// an enum with its arguments in place, and nothing for the other types.
+    #[test]
+    fn parts_should_list_what_a_type_holds() {
+        let src = "enum Two<T> {\n    A(T, [T])\n    B\n}\nclass C {}\nfn main() {}";
+        deciding(src, |program, _, source| {
+            let parts = |ty| {
+                let mut out = Vec::new();
+                parts(source.conformances, source.enums, ty, |part| out.push(part));
+                out
+            };
+            assert_eq!(parts(Type::array(Type::I64)), [Type::I64]);
+            assert_eq!(parts(Type::optional(Type::STRING)), [Type::STRING]);
+            let two = enum_named(program, "Two", &[Type::CHAR]);
+            assert_eq!(parts(two), [Type::CHAR, Type::array(Type::CHAR)]);
+            assert_eq!(parts(Type::I64), Vec::<Type>::new());
+            assert_eq!(parts(class_named(program, "C", &[])), Vec::<Type>::new());
+        });
+    }
+
+    /// A bound with interface arguments names them in terms of the block's parameters, and the
+    /// arguments are substituted before the bound is asked: `Two<A, B>` has `Eq` when `A` has
+    /// `Tag<B>`.
+    #[test]
+    fn holds_should_substitute_the_arguments_of_a_bound() {
+        let src = "interface Tag<X> {}\nclass Two<A, B> {\n    a: A\n    b: B\n}\n\
+                   extend<A: Tag<B>, B> Two<A, B>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\n\
+                   class K {}\nextend K: Tag<[i64]> {}\nfn main() {}";
+        deciding(src, |program, cx, source| {
+            let eq = program.lang.eq;
+            let k = class_named(program, "K", &[]);
+            let mut ask = |args: &[Type]| {
+                let two = class_named(program, "Two", args);
+                holds(cx, source, two, eq, TypeArgs::NONE)
+            };
+            assert!(matches!(
+                ask(&[k, Type::array(Type::I64)]),
+                Holds::Written(..)
+            ));
+            assert_eq!(ask(&[k, Type::I64]), Holds::No);
+        });
+    }
+
+    /// A type that is no class or enum, and a payload or a bound that has no associated type
+    /// choice, are poison for `holds`: it skips them and never panics.
+    #[test]
+    fn holds_should_skip_what_has_no_choice_and_refuse_a_parameter() {
+        let interface = InterfaceId(1);
+        let lang = LangInterfaces {
+            display: InterfaceId(0),
+            eq: interface,
+            ord: InterfaceId(2),
+            any_object: InterfaceId(3),
+        };
+        // `enum E { A(C.Item) }` where nothing chooses the `Item` of the class `C`.
+        let class = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE));
+        let item = Type::intern(TypeKind::Assoc(class, InterfaceId(4), TypeArgs::NONE, 0));
+        let mut conformances = Conformances::default();
+        // A record of `Eq` for the class `C` whose bound names the same missing choice.
+        conformances.add(
+            interface,
+            Conformance {
+                type_params: 1,
+                target: Type::intern(TypeKind::Class(
+                    ClassId(1),
+                    TypeArgs::intern(&[Type::intern(TypeKind::Param(Symbol::intern("T"), 0))]),
+                )),
+                args: TypeArgs::NONE,
+                methods: Vec::new(),
+                assoc: Vec::new(),
+                bounds: vec![vec![crate::tir::ParamBound {
+                    interface: InterfaceId(5),
+                    args: TypeArgs::intern(&[item]),
+                }]],
+            },
+        );
+        let payloads: Vec<Vec<Type>> = vec![vec![item]];
+        let source = Source {
+            conformances: &conformances,
+            enums: payloads.as_slice(),
+            lang,
+        };
+        let mut cx = Decide::default();
+        let enum_type = Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE));
+        // One collector for both calls: the array has a part, the enum's payload has none.
+        let mut listed = Vec::new();
+        let mut collect = |part| listed.push(part);
+        parts(
+            &conformances,
+            payloads.as_slice(),
+            Type::array(Type::I64),
+            &mut collect,
+        );
+        parts(&conformances, payloads.as_slice(), enum_type, &mut collect);
+        assert_eq!(listed, [Type::I64], "a payload with no choice has no part");
+        assert_eq!(
+            holds(&mut cx, &source, enum_type, interface, TypeArgs::NONE),
+            Holds::Generated
+        );
+        let boxed = Type::intern(TypeKind::Class(ClassId(1), TypeArgs::intern(&[Type::I64])));
+        assert!(matches!(
+            holds(&mut cx, &source, boxed, interface, TypeArgs::NONE),
+            Holds::Written(..)
+        ));
+        let param = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
+        assert_eq!(
+            holds(&mut cx, &source, param, interface, TypeArgs::NONE),
+            Holds::No
+        );
     }
 }

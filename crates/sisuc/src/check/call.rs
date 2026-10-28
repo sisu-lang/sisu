@@ -5,6 +5,7 @@ use std::fmt;
 
 use super::expr::{fits, no_member, option_written, path, postfix};
 use super::generic::{GenericSig, Site, mark, mismatched};
+use super::interface::LangPath;
 use super::prelude::PRELUDE;
 use super::unused_names::Used;
 use super::{
@@ -16,6 +17,7 @@ use crate::diagnostic::{
     Code, Definition, Diagnostic, DiagnosticKind, MethodReceiver, ReceiverArgument, Suggestion,
     alias, suggestion,
 };
+use crate::lang::{self, Dispatch};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
@@ -433,6 +435,10 @@ impl Checker<'_> {
         let method = site.name;
         // The arguments are not part of an assignment target's chain; `expr` restores the flag.
         let target = std::mem::take(&mut self.body.in_target);
+        let receiver = match self.generated_operator(span, receiver, method, args) {
+            Ok(checked) => return checked,
+            Err(receiver) => receiver,
+        };
         match type_of(&receiver) {
             Some(ty) if matches!(ty.kind(), TypeKind::Array(_)) => {
                 return self.array_method(span, (receiver, receiver_expr.span), ty, method, args);
@@ -453,6 +459,59 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         };
         self.invoke(span, func, Some(receiver), site, args)
+    }
+
+    /// `receiver.eq(other)` or `receiver.less(other)` on a type whose `Eq` or `Ord` the compiler
+    /// writes: the operator itself, as `==` and `<` make it. `Err` gives the receiver back when
+    /// the call is something else: a written method, or a method of another name.
+    fn generated_operator(
+        &mut self,
+        span: Span,
+        receiver: Checked,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+    ) -> Result<Checked, Checked> {
+        let interface = match method.name.as_str() {
+            "eq" => self.lang.eq,
+            "less" => self.lang.ord,
+            _ => return Err(receiver),
+        };
+        let Some(ty) = type_of(&receiver) else {
+            return Err(receiver);
+        };
+        let plain = matches!(args, [arg] if arg.label.is_none());
+        if !plain
+            || matches!(ty.kind(), TypeKind::Param(..) | TypeKind::Assoc(..))
+            || self.lang_path(ty, interface) != LangPath::Generated
+        {
+            return Err(receiver);
+        }
+        let (other, mismatched) = self.operand(&args[0].value, Some(ty));
+        Ok(match (receiver, other) {
+            (Ok(lhs), Ok(rhs)) => {
+                let eq = interface == self.lang.eq;
+                Ok(self.spilled(span, Type::BOOL, vec![lhs, rhs], |operands| {
+                    let [lhs, rhs]: [tir::Expr; 2] = operands
+                        .try_into()
+                        .expect("`spilled` should hand its closure one operand per input");
+                    if eq {
+                        lang::equal(
+                            Dispatch::Generated,
+                            false,
+                            Box::new(lhs),
+                            Box::new(rhs),
+                            span,
+                        )
+                    } else {
+                        tir::ExprKind::Compare {
+                            operands: vec![lhs, rhs],
+                            ops: vec![ast::CompareOp::Lt],
+                        }
+                    }
+                }))
+            }
+            _ => Err(Poisoned::of((!mismatched).then_some(Type::BOOL))),
+        })
     }
 
     /// A call of `func`, which `site` writes. `receiver` is a method's `self`; `args` match the

@@ -339,6 +339,20 @@ impl Checker<'_> {
                 args: bound.args,
                 methods: Vec::new(),
                 assoc,
+                bounds: if bounds.iter().any(|bounds| !bounds.is_empty()) {
+                    (bounds.iter())
+                        .map(|list| {
+                            list.iter()
+                                .map(|b| tir::ParamBound {
+                                    interface: b.interface,
+                                    args: b.args,
+                                })
+                                .collect()
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                },
             },
         );
         for (k, at) in written {

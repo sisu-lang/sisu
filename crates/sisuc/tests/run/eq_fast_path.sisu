@@ -1,0 +1,28 @@
+// A program with no generic item takes `mono`'s fast path, which keeps the conformance records
+// whole. `==` on an array and on an enum payload still finds the written `eq` of `Circle`, which
+// compares only the radius: the names differ and the results are `true`.
+class Circle: Eq {
+    name: string
+    r: i64
+    fn eq(self, other: Self) -> bool {
+        self.r == other.r
+    }
+}
+
+enum Pick {
+    One(Circle)
+    None2
+}
+
+fn main() {
+    let c = Circle(name: "a{1}", r: 1)
+    let d = Circle(name: "b{2}", r: 1)
+    let e = Circle(name: "c{3}", r: 2)
+    print([c] == [d])                        // true: the radius decides
+    print([c] == [e])                        // false
+    print([c, e] == [d, e])                  // true
+    print(Pick.One(c) == Pick.One(d))        // true
+    print(Pick.One(c) == Pick.One(e))        // false
+    print(Pick.One(c) == Pick.None2)         // false: the variants differ
+    print(c.name + d.name + e.name)          // a1b2c3
+}

@@ -40,6 +40,7 @@ use super::{
     Block as MirBlock, BlockId, Const, Function, Local, Loop, Operand, Place as MirPlace,
     Projection, Rvalue, Statement, Terminator,
 };
+use crate::conformance::{Written, calls_written};
 use crate::tir::{
     self, Block, CompareOp, Expr, ExprKind, FuncId, LocalId, Place, Stmt, Type, TypeKind,
 };
@@ -48,11 +49,12 @@ use crate::tir::{
 /// `Use` operands and borrow sites are still undecided.
 #[cfg(test)]
 pub(crate) fn lower(program: &tir::Program, modes: &[Vec<bool>]) -> super::Program {
+    let mut written = Written::default();
     super::Program {
         functions: modes
             .iter()
             .enumerate()
-            .map(|(id, borrowed)| function(program, FuncId(id), borrowed).0)
+            .map(|(id, borrowed)| function(program, FuncId(id), borrowed, &mut written).0)
             .collect(),
     }
 }
@@ -64,6 +66,7 @@ pub(super) fn function(
     program: &tir::Program,
     id: FuncId,
     borrowed: &[bool],
+    written: &mut Written,
 ) -> (Function, Vec<bool>, Vec<bool>) {
     let f = &program.functions[id.0];
     debug_assert_eq!(
@@ -71,7 +74,7 @@ pub(super) fn function(
         f.params.len(),
         "a function should have one flag per parameter"
     );
-    Lowering::function(program, f, borrowed)
+    Lowering::function(program, f, borrowed, written)
 }
 
 /// What lowering an expression gave: `None` when it cannot fall through, and otherwise the
@@ -84,6 +87,8 @@ type WrittenRoot<'p> = (MirPlace, Vec<(&'p Expr, Operand)>, Option<LocalId>);
 
 struct Lowering<'a> {
     program: &'a tir::Program,
+    /// The types whose equality may call a written method, settled for the whole program.
+    written: &'a mut Written,
     /// Per parameter, whether lowering takes it as borrowed.
     borrowed: &'a [bool],
     /// Per parameter, whether its flag decided the form of a `match` or an `if let`.
@@ -184,6 +189,7 @@ impl<'a> Lowering<'a> {
         program: &'a tir::Program,
         f: &tir::Function,
         borrowed: &'a [bool],
+        written: &'a mut Written,
     ) -> (Function, Vec<bool>, Vec<bool>) {
         let locals = f
             .locals
@@ -198,6 +204,7 @@ impl<'a> Lowering<'a> {
             .collect();
         let mut lowering = Lowering {
             program,
+            written,
             borrowed,
             consulted: vec![false; f.params.len()],
             reuses: vec![false; f.params.len()],
@@ -253,6 +260,18 @@ impl<'a> Lowering<'a> {
 
     fn counted(&self, ty: Type) -> bool {
         ty.is_counted(&self.program.enums)
+    }
+
+    /// Whether comparing values of `ty` may call a written `eq`: the type, or a part of it, has
+    /// a written `Eq`. The answer is kept for the program (`calls_written`).
+    fn calls_eq(&mut self, ty: Type) -> bool {
+        calls_written(
+            &self.program.conformances,
+            self.program.enums.as_slice(),
+            ty,
+            self.program.lang.eq,
+            self.written,
+        )
     }
 
     /// Counts a construction of variant `variant` of enum `id` once for each enum `F` it has a
@@ -737,8 +756,10 @@ impl<'a> Lowering<'a> {
                 span: e.span,
             },
             ExprKind::Contains { base, value } => {
+                let element = (base.ty.array_element()).expect("`contains` should take an array");
+                let calls = self.calls_eq(element);
                 let [base, value] = self.pair(base, value)?;
-                Rvalue::Contains { base, value }
+                Rvalue::Contains { base, value, calls }
             }
             ExprKind::Math { op, operands } => Rvalue::Math {
                 op: *op,
@@ -778,10 +799,15 @@ impl<'a> Lowering<'a> {
             ExprKind::Compare { operands, ops } => return self.compare(operands, ops, dest),
             ExprKind::Equal { negated, lhs, rhs } => {
                 let negated = *negated;
+                // `x == None` tests presence and calls nothing.
+                let calls = !matches!(lhs.kind, ExprKind::None)
+                    && !matches!(rhs.kind, ExprKind::None)
+                    && self.calls_eq(lhs.ty);
                 return self.borrowed_pair(e.ty, lhs, rhs, dest, |lhs, rhs| Rvalue::Equal {
                     negated,
                     lhs,
                     rhs,
+                    calls,
                 });
             }
             ExprKind::Is { lhs, rhs } => {

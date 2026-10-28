@@ -1,0 +1,275 @@
+// `==` and the order operators run through `Eq` and `Ord`. A generic body compiles to the same
+// code as the function written for its type: a number keeps its IEEE comparison, and a class with
+// a written `Ord` calls its `less`. Every `Circle` holds a counted `string`, so Valgrind and
+// `--rc-checks` see a part that a helper passes to a written method without its own reference.
+// Results print as scalars and strings only.
+class Circle: Eq, Ord {
+    name: string
+    r: i64
+    fn eq(self, other: Self) -> bool {
+        self.r == other.r
+    }
+    fn less(self, other: Self) -> bool {
+        self.r < other.r
+    }
+}
+
+enum Pick {
+    One(Circle)
+    Nothing
+}
+
+enum Expr: Eq {
+    Num(i64)
+    Add(Expr, Expr)
+}
+
+// An enum with a written `Ord` and the `Eq` that the compiler writes.
+enum Level: Eq, Ord {
+    Low
+    High
+    fn less(self, other: Self) -> bool {
+        self.rank() < other.rank()
+    }
+    fn rank(self) -> i64 {
+        match self {
+            Level.Low => 0
+            Level.High => 1
+        }
+    }
+}
+
+// An enum with a written `Eq`, compared inside an array: the helper calls its `eq`, which says
+// `true` for any pair.
+enum Sign: Eq {
+    Neg
+    Pos
+    fn eq(self, _other: Self) -> bool {
+        true
+    }
+}
+
+// Two enums that hold each other, so that `A`'s `==` walks into `B` through a link; `B` writes its
+// own `eq`, which says `true` for any pair, so the walk calls it instead of looking inside.
+enum A: Eq {
+    X(B)
+    End
+}
+
+enum B: Eq {
+    Y(A)
+    End
+    fn eq(self, _other: Self) -> bool {
+        true
+    }
+}
+
+class Box<T> {
+    value: T
+}
+
+// The opposite of the fields' equality, so that the structural `==` of a class shows.
+extend<T: Eq> Box<T>: Eq {
+    fn eq(self, other: Self) -> bool {
+        self.value != other.value
+    }
+}
+
+// `Tag` is a bound that the output keeps no record of: `mono` decides it in the input's ids.
+interface Tag {}
+
+class C: Tag {}
+
+class Tagged<T> {
+    value: T
+}
+
+extend<T: Tag> Tagged<T>: Eq {
+    fn eq(self, _other: Self) -> bool {
+        false
+    }
+}
+
+class Score: Eq, Ord {
+    n: i64
+    fn eq(self, other: Self) -> bool {
+        self.n == other.n
+    }
+    fn less(self, other: Self) -> bool {
+        self.n < other.n
+    }
+}
+
+class Slot<T> {
+    value: T
+}
+
+extend<T: Ord> Slot<T>: Eq {
+    fn eq(self, other: Self) -> bool {
+        !(self.value < other.value)
+    }
+}
+
+// A written `eq` that keeps its parameter: `other` is owned, so a helper retains the part first.
+class Keeper: Eq {
+    mut last: Keeper?
+    name: string
+    fn eq(self, other: Self) -> bool {
+        self.last = other
+        true
+    }
+}
+
+// An `eq` that is not reflexive: the same array or box is not equal to itself.
+class Never: Eq {
+    n: i64
+    fn eq(self, _other: Self) -> bool {
+        false
+    }
+}
+
+enum Link {
+    Cons(Never, Link)
+    End
+}
+
+fn largest<T: Ord>(xs: [T]) -> T? {
+    let mut best: T? = None
+    for x in xs {
+        if let b = best {
+            if x > b {
+                best = x
+            }
+        } else {
+            best = x
+        }
+    }
+    best
+}
+
+fn le<T: Ord>(a: T, b: T) -> bool {
+    a <= b
+}
+
+fn between<T: Ord>(a: T, b: T, c: T) -> bool {
+    a < b < c
+}
+
+fn same<T: Eq>(a: T, b: T) -> bool {
+    a == b
+}
+
+fn same_items<T: Eq>(a: [T], b: [T]) -> bool {
+    a == b
+}
+
+fn f() -> Circle {
+    print("f")
+    Circle(name: "f{1}", r: 1)
+}
+
+fn g() -> Circle {
+    print("g")
+    Circle(name: "g{2}", r: 2)
+}
+
+fn h() -> Circle {
+    print("h")
+    Circle(name: "h{3}", r: 3)
+}
+
+fn main() {
+    let none: [i64] = []
+    print(largest([3, 9, 2]) ?? -1)                    // 9
+    print(largest(["b", "c", "a"]) ?? "")              // c
+    print(largest([1.5, 0.5, 2.5]) ?? 0.0)             // 2.5
+    print(largest([f64.nan, 1.0, 3.0]) ?? 0.0)         // nan: nothing is greater than a nan
+    print(largest([1.0, f64.nan, 3.0]) ?? 0.0)         // 3.0
+    print((largest([Circle(name: "a{1}", r: 4), Circle(name: "b{2}", r: 7), Circle(name: "c{3}", r: 5)]) ?? Circle(name: "z", r: 0)).name) // b2
+    print(largest(none) ?? -1)                         // -1
+
+    print(le(1.0, 2.0))                                // true
+    print(le(2.0, 2.0))                                // true
+    print(le(f64.nan, 1.0))                            // false: a nan on the left
+    print(le(1.0, f64.nan))                            // false: a nan on the right
+    print(le(Circle(name: "a{1}", r: 1), Circle(name: "b{2}", r: 2))) // true
+    print(le(Circle(name: "a{1}", r: 3), Circle(name: "b{2}", r: 2))) // false
+
+    print(between(1, 2, 3))                            // true
+    print(between("a", "c", "b"))                      // false: a chain of `string`s
+    print(between(1.5, 2.5, 3.5))                      // true
+    print(between(f(), g(), h()))                      // f g h true: a chain of written `less`
+    print(Level.Low < Level.High)                      // true
+    print(Level.High <= Level.Low)                     // false
+    print(Level.Low == Level.Low)                      // true: the enum's generated `Eq`
+    print((largest([Level.Low, Level.High, Level.Low]) ?? Level.Low) == Level.High) // true
+
+    // The names show source order, and the skipped link.
+    print(f() > g())                                   // f g false
+    print(f() <= g())                                  // f g true
+    print(f() < g() < h())                             // f g h true
+    print(g() < f() < h())                             // g f false: the chain skips h
+
+    print([Box(value: 1)].contains(Box(value: 2)))     // true: the written `eq` says they differ
+    print([Box(value: 2)].contains(Box(value: 2)))     // false
+
+    // A shared array or box compared with itself: the written `eq` says `false`.
+    let shared = [Never(n: 1)]
+    print(shared == shared)                            // false
+    let link = Link.Cons(Never(n: 1), Link.End)
+    print(link == link)                                // false
+
+    let a = Circle(name: "a{1}", r: 1)
+    let b = Circle(name: "b{2}", r: 2)
+    let c = Circle(name: "c{3}", r: 1)
+    print(same(1, 2))                                  // false
+    print(same("a", "a"))                              // true
+    print(same(1.5, 1.5))                              // true
+    print(same(true, false))                           // false
+    print(same('a', 'a'))                              // true
+    print(same([1, 2], [1, 2]))                        // true
+    print(same("x{1}", "x{1}"))                        // true
+    print(same(a, b))                                  // false
+    print(same(a, c))                                  // true
+    print(same_items([1, 2], [1, 3]))                  // false
+    print(same_items([a, b], [c, b]))                  // true
+    print(same_items([a], [b]))                        // false
+
+    let maybe: Circle? = c
+    let nothing: Circle? = None
+    print(a == maybe)                                  // true: `a` becomes an optional, and the helper calls `eq`
+    print(a == nothing)                                // false: a missing value is not equal, and `eq` is not called
+    print(a == c)                                      // true
+    print(a != c)                                      // false
+    print(a < b)                                       // true
+    print(a >= b)                                      // false
+    print(a < b < b)                                   // false
+    print(a < b <= b)                                  // true
+    print([a] == [c])                                  // true
+    print([a, b] == [c, b])                            // true
+    print([a] == [b])                                  // false
+    print(Pick.One(a) == Pick.One(c))                  // true
+    print(Pick.One(a) == Pick.One(b))                  // false
+    print(Pick.One(a) == Pick.Nothing)                 // false
+    print([a, b].contains(c))                          // true
+    print([b].contains(a))                             // false
+
+    let e1 = Expr.Add(Expr.Num(1), Expr.Num(2))
+    let e2 = Expr.Add(Expr.Num(1), Expr.Num(2))
+    let e3 = Expr.Add(Expr.Num(1), Expr.Num(3))
+    print(e1 == e2)                                    // true
+    print(e1 == e3)                                    // false
+
+    print([Sign.Neg] == [Sign.Pos])                    // true: the written `eq` of the enum
+    print(A.X(B.Y(A.End)) == A.X(B.End))               // true: `B`'s written `eq` ends the walk
+    print(A.X(B.End) == A.End)                         // false: the tags of `A` differ
+
+    print([Tagged(value: C())] == [Tagged(value: C())]) // false: the written `eq`, not the fields
+    print([Slot(value: Score(n: 2))] == [Slot(value: Score(n: 1))]) // true: `!(2 < 1)`
+
+    let k1 = Keeper(last: None, name: "k{1}")
+    let k2 = Keeper(last: None, name: "k{2}")
+    print([k1] == [k2])                                // true
+    print([k1].contains(k2))                           // true
+    print(k1.name + k2.name)                           // k1k2
+}

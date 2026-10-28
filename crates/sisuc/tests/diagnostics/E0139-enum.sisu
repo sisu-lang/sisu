@@ -1,0 +1,9 @@
+enum Wrap<T> {
+    One(T)
+}
+
+fn same<T>(a: Wrap<T>, b: Wrap<T>) -> bool {
+    a == b
+}
+
+fn main() {}

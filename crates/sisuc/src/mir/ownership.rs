@@ -156,6 +156,7 @@ impl Placer<'_> {
             | Rvalue::Contains {
                 base: lhs,
                 value: rhs,
+                ..
             }
             | Rvalue::Binary { lhs, rhs, .. }
             | Rvalue::Compare { lhs, rhs, .. }

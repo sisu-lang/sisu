@@ -1,0 +1,49 @@
+// A written `eq` can store into a `mut` field, as a call can, and that frees the field's old
+// value. So an `==` or `contains` whose helper may run the `eq`, on the operand itself or on a
+// value that holds it, is a call to pair removal: the copy `xs` of `h.items` stays a copy, and
+// reading `xs` after the comparison reads live memory (Valgrind and `--rc-checks` see a mistake).
+// `h` stays live after the comparison, so the copy has nothing else that keeps it.
+class Holder: Eq {
+    mut items: [string]
+    fn eq(self, _other: Self) -> bool {
+        self.items = ["y"]
+        true
+    }
+}
+
+enum Wrap {
+    One(Holder)
+}
+
+fn in_array() {
+    let h = Holder(items: ["{1}"])
+    let xs = h.items
+    let same = [h] == [h]
+    print(xs[0])
+    print(same)
+    print(h.items[0])
+}
+
+fn in_contains() {
+    let h = Holder(items: ["{1}"])
+    let xs = h.items
+    let same = [h].contains(h)
+    print(xs[0])
+    print(same)
+    print(h.items[0])
+}
+
+fn in_payload() {
+    let h = Holder(items: ["{1}"])
+    let xs = h.items
+    let same = Wrap.One(h) == Wrap.One(h)
+    print(xs[0])
+    print(same)
+    print(h.items[0])
+}
+
+fn main() {
+    in_array()
+    in_contains()
+    in_payload()
+}

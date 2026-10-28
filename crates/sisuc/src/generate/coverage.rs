@@ -108,7 +108,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 82] = [
+const REACH: [&str; 86] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -191,6 +191,10 @@ const REACH: [&str; 82] = [
     "reach: a declaration names a generated conformance",
     "reach: a class gets `Display` through a `to_string` method",
     "reach: a bound names a language interface",
+    "reach: an operator runs on a bounded type parameter",
+    "reach: an operator calls a written `eq` or `less`",
+    "reach: an `==` or `print` runs a written method inside a value",
+    "reach: an `==` or `print` on a compound value runs no written method",
 ];
 
 /// Whether a program's text holds a form.
@@ -537,9 +541,55 @@ impl Walk {
         self.conditional.clear();
         self.ast(&ast);
         self.tir(&tir);
+        self.built(tir);
         for (feature, holds) in TEXT {
             if holds(source) {
                 self.mark(feature);
+            }
+        }
+    }
+
+    /// The keys that the built mir shows: an `==` or `contains` on a compound value that may run
+    /// a written method inside it, and one that cannot. The mir is that of the program `mono`
+    /// instantiates, as lowering makes it: `build` sets the same flags and costs far more.
+    fn built(&mut self, program: tir::Program) {
+        let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
+        let mir = crate::mir::lowered(&program);
+        for function in &mir.functions {
+            for block in &function.blocks {
+                for stmt in &block.stmts {
+                    let crate::mir::Statement::Assign { value, .. } = stmt else {
+                        continue;
+                    };
+                    let (operand, calls) = match value {
+                        crate::mir::Rvalue::Equal { lhs, calls, .. } => (lhs, *calls),
+                        crate::mir::Rvalue::Contains { base, calls, .. } => (base, *calls),
+                        _ => continue,
+                    };
+                    // A whole local is all that tells the type here.
+                    let local = match operand {
+                        crate::mir::Operand::Use(l) => *l,
+                        crate::mir::Operand::Read(place) if place.projections.is_empty() => {
+                            place.local
+                        }
+                        _ => continue,
+                    };
+                    let ty = function.locals[local.0].ty;
+                    let compound = matches!(
+                        ty.kind(),
+                        TypeKind::Array(_)
+                            | TypeKind::Optional(_)
+                            | TypeKind::Enum(..)
+                            | TypeKind::Class(..)
+                    );
+                    if calls {
+                        self.mark("reach: an `==` or `print` runs a written method inside a value");
+                    } else if compound {
+                        self.mark(
+                            "reach: an `==` or `print` on a compound value runs no written method",
+                        );
+                    }
+                }
             }
         }
     }
@@ -2071,6 +2121,12 @@ impl Walk {
             tir::ExprKind::Local(_) => self.mark("tir::ExprKind::Local"),
             tir::ExprKind::Call { func, types, args } => {
                 self.mark("tir::ExprKind::Call");
+                // An operator on a class or an enum with a written conformance is a call of its
+                // method.
+                let name = &self.function_names[func.0];
+                if matches!(name.rsplit('.').next(), Some("eq" | "less")) {
+                    self.mark("reach: an operator calls a written `eq` or `less`");
+                }
                 if self.generic_blocks.contains(&func.0) {
                     self.mark("reach: a generic `extend` block is called");
                 }
@@ -2174,6 +2230,9 @@ impl Walk {
             tir::ExprKind::Sum(base) => self.receiver_call("tir::ExprKind::Sum", base),
             tir::ExprKind::Contains { base, value } => {
                 self.receiver_call("tir::ExprKind::Contains", base);
+                if matches!(base.ty.kind(), TypeKind::Array(element) if element.has_param()) {
+                    self.mark("reach: an operator runs on a bounded type parameter");
+                }
                 self.tir_expr(value, Parent::Other);
             }
             tir::ExprKind::Math { op, operands } => self.math(e, *op, operands, parent),
@@ -2212,10 +2271,20 @@ impl Walk {
             }
             tir::ExprKind::Compare { operands, .. } => {
                 self.mark("tir::ExprKind::Compare");
+                if operands.first().is_some_and(|first| first.ty.has_param()) {
+                    self.mark("reach: an operator runs on a bounded type parameter");
+                }
                 self.tir_exprs(operands);
             }
             tir::ExprKind::Equal { lhs, rhs, .. } => {
                 self.mark("tir::ExprKind::Equal");
+                // `x == None` on a `T?` calls nothing and needs no bound.
+                if lhs.ty.has_param()
+                    && !matches!(lhs.kind, tir::ExprKind::None)
+                    && !matches!(rhs.kind, tir::ExprKind::None)
+                {
+                    self.mark("reach: an operator runs on a bounded type parameter");
+                }
                 self.tir_expr(lhs, Parent::Other);
                 self.tir_expr(rhs, Parent::Other);
             }
@@ -6365,4 +6434,65 @@ fn declarations_should_name_the_conformances_the_compiler_writes() {
             "enum E5 {"
         ]
     );
+}
+
+/// The keys of the operators: one on a bounded type parameter (but not `x == None`, which needs
+/// no bound), one that calls a written `eq` or `less`, and the two that the built mir shows, for
+/// an `==` on a compound value that may run a written method and one that cannot.
+#[test]
+fn the_walk_should_mark_the_operator_keys() {
+    const RANKED: &str = "class Ranked: Eq, Ord {\n    r: i64\n    fn eq(self, other: Self) -> bool { self.r == other.r }\n    fn less(self, other: Self) -> bool { self.r < other.r }\n}\n";
+    let bounded = "reach: an operator runs on a bounded type parameter";
+    let written = "reach: an operator calls a written `eq` or `less`";
+    let inside = "reach: an `==` or `print` runs a written method inside a value";
+    let plain = "reach: an `==` or `print` on a compound value runs no written method";
+    for (body, expected) in [
+        (
+            "fn f<T: Eq>(x: T) -> bool { x == x }\nfn main() { print(f(1)) }",
+            vec![bounded],
+        ),
+        (
+            "fn f<T: Ord>(x: T) -> bool { x < x }\nfn main() { print(f(1)) }",
+            vec![bounded],
+        ),
+        (
+            "fn f<T: Eq>(xs: [T], x: T) -> bool { xs.contains(x) }\nfn main() { print(f([1], 1)) }",
+            vec![bounded, plain],
+        ),
+        (
+            "fn f<T>(x: T?) -> bool { x == None }\nfn main() { print(f(1)) }",
+            vec![plain],
+        ),
+        (
+            "fn main() {\n    let a = Ranked(r: 1)\n    let b = Ranked(r: 2)\n    print(a == b)\n}",
+            vec![written],
+        ),
+        (
+            "fn main() {\n    let a = Ranked(r: 1)\n    let b = Ranked(r: 2)\n    print(a < b)\n}",
+            vec![written],
+        ),
+        (
+            "fn main() {\n    let a = [Ranked(r: 1)]\n    let b = [Ranked(r: 2)]\n    print(a == b)\n}",
+            vec![inside],
+        ),
+        (
+            "fn main() {\n    let a = [Ranked(r: 1)]\n    print(a.contains(Ranked(r: 1)))\n}",
+            vec![inside],
+        ),
+        (
+            "fn main() {\n    let a = [1]\n    let b = [2]\n    print(a == b)\n}",
+            vec![plain],
+        ),
+        ("fn main() {\n    print(1 == 2)\n}", vec![]),
+    ] {
+        let mut walk = Walk::default();
+        walk.program(&format!("{RANKED}{body}"));
+        for key in [bounded, written, inside, plain] {
+            assert_eq!(
+                walk.seen.contains(key),
+                expected.contains(&key),
+                "{key} in {body}"
+            );
+        }
+    }
 }

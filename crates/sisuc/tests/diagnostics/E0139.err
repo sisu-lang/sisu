@@ -3,6 +3,8 @@ error[E0139]: `T` has no `<`
   |
 2 |     a < b
   |     ^ this is a `T`
+  |
+  = help: add a bound: `T: Ord`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0139

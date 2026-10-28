@@ -1,0 +1,10 @@
+error[E0139]: `T` has no `<`
+ --> E0139-display.sisu:2:5
+  |
+2 |     a < b
+  |     ^ this is a `T`
+  |
+  = help: add a bound: `T: Display & Ord`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0139

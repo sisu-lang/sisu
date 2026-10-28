@@ -237,7 +237,7 @@ fn main() {
 
 The rules:
 
-- An operator that computes with a `T` or compares it, such as `+`, `<` or `==`, is an error ([E0139](../diagnostics/E0139.md)). `contains` on a `[T]` uses `==`, so it is an error too. `x != None` and `x == None` on a `T?` are valid. `x == y` on two `T?` is an error.
+- An operator that computes with a `T` or compares it, such as `+`, `<` or `==`, is an error ([E0139](../diagnostics/E0139.md)), unless a bound gives it: `T: Eq` gives `==` and `!=`, and `T: Ord` gives `<`, `<=`, `>` and `>=` ([Bounds](#bounds)). The help names the bound to add. `contains` on a `[T]` uses `==`, so it needs `T: Eq`. `x != None` and `x == None` on a `T?` are valid. `x == y` on two `T?` needs `T: Eq`.
 - `!`, `&&` and `||` take only a `bool`, so a `T` there is a type mismatch ([E0032](../diagnostics/E0032.md)).
 - A `T` has no method and no field ([E0063](../diagnostics/E0063.md)).
 - `is` does not apply to a `T`, because `T` can stand for a type that is not a class ([E0046](../diagnostics/E0046.md)).
@@ -277,7 +277,7 @@ A use with the same type arguments, such as `nest(x, n - 1)`, is valid.
 
 A *bound* says which interface a type argument must conform to. It follows the type parameter after a `:`. `&` joins two bounds, as in `T: Shape & Ord`.
 
-```sisu pending
+```sisu
 fn largest<T: Ord>(xs: [T]) -> T? {
     let mut best: T? = None
     for x in xs {
@@ -301,7 +301,7 @@ fn main() {
 The rules:
 
 - In the body, a value of type `T` can do what its bounds give it. These are the methods of the interfaces and the operators that they map to.
-- `Eq` gives `==` and `!=`. `Ord` gives `<`, `<=`, `>` and `>=`.
+- `Eq` gives `==` and `!=`. `Ord` gives `<`, `<=`, `>` and `>=`. An array, an optional or an enum of `T` has `==` when `T` has `Eq`. A call of `a.eq(b)` or `a.less(b)` on a `T` works the same way.
 - Anything else is an error where the body is written. The help suggests the bound that is missing.
 - A type argument that does not conform to a bound is an error at the call.
 - Every type parameter can print, with no bound. `print(x)`, `"{x}"` and `x.to_string()` work on a `T`.
@@ -387,7 +387,7 @@ The rules:
 
 An `extend` can have type parameters. `extend<T> Stack<T>` adds methods to every `Stack`. `extend Stack<i64>` adds methods to `Stack<i64>` only.
 
-```sisu pending
+```sisu
 class Stack<T> {
     mut items: [T]
 }
