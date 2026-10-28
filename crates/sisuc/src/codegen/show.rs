@@ -36,11 +36,14 @@ use super::layout::{BYTES, CAP, LEN};
 use super::rc::{Helper, param};
 use super::{Codegen, POSITIONED, zeroext};
 use crate::tir::{Align, EnumId, Format, FuncId, Pad, Stream, Type, TypeArgs, TypeKind};
+use rustc_hash::FxHashMap;
 
 /// The blocks and phis of a `show_component` helper's loop that each variant uses.
 struct ShowLoop<'ctx> {
     sink: PointerValue<'ctx>,
     members: Vec<EnumId>,
+    /// The `kind` of each member, so that a link finds the one it enters at once.
+    kinds: FxHashMap<EnumId, u64>,
     /// The loop's head, and its `kind`, address and `owed` phis.
     top: BasicBlock<'ctx>,
     current: [PhiValue<'ctx>; 3],
@@ -569,11 +572,10 @@ impl<'ctx> Codegen<'ctx, '_> {
             .iter()
             .map(|m| block(&self.program.enums[m.0].name))
             .collect();
-        let cases: Vec<_> = members
-            .iter()
+        let cases: Vec<_> = (0_u64..)
             .zip(&starts)
             .skip(1)
-            .map(|(&m, &start)| (self.member_index(&members, m), start))
+            .map(|(index, &start)| (self.context.i32_type().const_int(index, false), start))
             .collect();
         // `kind` is always a member's index, so the first member can be the default.
         self.builder
@@ -583,9 +585,14 @@ impl<'ctx> Codegen<'ctx, '_> {
                 &cases,
             )
             .expect(POSITIONED);
+        let kinds = (0_u64..)
+            .zip(&members)
+            .map(|(kind, &m)| (m, kind))
+            .collect();
         let show = ShowLoop {
             sink: nth(0).into_pointer_value(),
             members,
+            kinds,
             top,
             current,
             pop,
@@ -826,7 +833,11 @@ impl<'ctx> Codegen<'ctx, '_> {
             place
         };
         let from = self.current_block();
-        let kind = self.member_index(&show.members, inner);
+        let kind = show
+            .kinds
+            .get(&inner)
+            .expect("a link should enter a member of the component");
+        let kind = self.context.i32_type().const_int(*kind, false);
         show.current[0].add_incoming(&[(&kind, from)]);
         show.current[1].add_incoming(&[(&linked, from)]);
         show.current[2].add_incoming(&[(&owed, from)]);

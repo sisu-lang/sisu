@@ -2957,6 +2957,26 @@ fn reflexivity_should_read_linearly() {
     assert_near_linear(reads(100), reads(200), reads(300));
 }
 
+/// The `show` of an enum in a component with boxes is written by one loop over the component. The
+/// loop gives each member its index in the `kind` switch, and each link the index of the enum it
+/// enters, without a search of the component: a search for each member and each link reads a ring
+/// of enums quadratically. Each enum of the ring links to the next, and `print` writes the first.
+#[test]
+fn show_of_a_component_should_find_each_member_in_linear_steps() {
+    let scans = |n: usize| {
+        let enums = (0..n)
+            .map(|i| format!("enum R{i} {{\n    End\n    Link(R{})\n}}\n", (i + 1) % n))
+            .collect::<Vec<_>>()
+            .concat();
+        let src = format!("{enums}fn main() {{\n    print(R0.End)\n}}\n");
+        MEMBER_SCANS.set(0);
+        let context = Context::create();
+        compiled(&context, &src);
+        MEMBER_SCANS.get()
+    };
+    assert_near_linear(scans(100), scans(200), scans(300));
+}
+
 /// A `take_apart` finds each place's token and kept value once: a scan of every token, or of
 /// every rest, per binding would visit quadratically many places.
 #[test]

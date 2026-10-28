@@ -58,6 +58,8 @@ thread_local! {
     static TYPE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many token places and rest places a `take_apart` has visited on this thread.
     static TAKE_APART_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many members of a component `member_index` has stepped over on this thread.
+    static MEMBER_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 impl<'ctx, 'src> Codegen<'ctx, 'src> {

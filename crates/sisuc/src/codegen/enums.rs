@@ -1391,8 +1391,10 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// The `kind` of `member` in a component of `members`: its index, as an `i32`.
     pub(super) fn member_index(&self, members: &[EnumId], member: EnumId) -> IntValue<'ctx> {
-        let index = u64::try_from(member_position(members, member))
-            .expect("a member index should fit in a `u64`");
+        let position = member_position(members, member);
+        #[cfg(test)]
+        super::MEMBER_SCANS.set(super::MEMBER_SCANS.get() + position + 1);
+        let index = u64::try_from(position).expect("a member index should fit in a `u64`");
         self.context.i32_type().const_int(index, false)
     }
 
