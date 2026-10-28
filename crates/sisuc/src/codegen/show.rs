@@ -741,15 +741,17 @@ impl<'ctx> Codegen<'ctx, '_> {
             }
             self.box_value(boxed_enum(ty), boxed)
         } else {
-            let place = self.payload_place(address, id, variant, field);
-            if matches!(ty.kind(), TypeKind::Optional(_)) {
-                let link = self.load_link(ty, place);
-                let present = self.has_value(ty, link, "present");
-                self.show_unless(show, present, 0, owed);
-                self.optional_value_place(ty, place)
-            } else {
-                place
+            // Each `?` of the link adds a `Some(` to the `None` that an absent layer writes.
+            let mut place = self.payload_place(address, id, variant, field);
+            let (mut layer, mut depth) = (ty, 0);
+            while let TypeKind::Optional(contents) = layer.kind() {
+                let link = self.load_link(layer, place);
+                let present = self.has_value(layer, link, "present");
+                self.show_unless(show, present, depth, owed);
+                place = self.optional_value_place(layer, place);
+                (layer, depth) = (contents, depth + 1);
             }
+            place
         };
         let from = self.current_block();
         let kind = self.member_index(&show.members, inner);

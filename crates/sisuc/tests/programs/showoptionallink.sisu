@@ -1,0 +1,30 @@
+// A chain of 1 000 000 `Pair`s, deep through the inline field of `Both`, which is `Expr??`: two
+// `?`s around a link. It is printed, compared with an equal chain and dropped under a 256 KiB
+// stack. A helper that called itself for a link under two `?`s would need a frame per level and
+// overflow that stack. The `Some` rule makes both layers transparent, so the output is
+// `Pair(Both(` 1 000 000 times, `Lit(7)` and 1 000 000 `))`, then `true`.
+enum Two<T> {
+    Both(T??)
+}
+
+enum Expr {
+    Lit(i64)
+    Pair(Two<Expr>)
+}
+
+fn build() -> Expr {
+    let mut e = Expr.Lit(7)
+    let mut i = 0
+    while i < 1_000_000 {
+        e = Expr.Pair(Two.Both(Some(Some(e))))
+        i += 1
+    }
+    e
+}
+
+fn main() {
+    let e = build()
+    print(e)
+    print(e == build())
+    print("done")
+}

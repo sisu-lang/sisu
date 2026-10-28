@@ -56,7 +56,7 @@ fn assert_panics(out: &Output, stdout: &str, stderr: &str) {
 
 /// The programs the small-stack tests run. They are not `tests/run` cases: many objects
 /// under Valgrind is too slow, and `deepchain` overflows on purpose.
-const SMALL_STACK: [&str; 22] = [
+const SMALL_STACK: [&str; 23] = [
     "longlist",
     "rightskew",
     "deepchain",
@@ -79,6 +79,7 @@ const SMALL_STACK: [&str; 22] = [
     "showleft",
     "showmutual",
     "showinline",
+    "showoptionallink",
 ];
 
 /// GIVEN the `tests/programs` directory
@@ -475,6 +476,21 @@ fn printing_two_enums_that_hold_each_other_should_fit_a_small_stack() {
 fn printing_an_inline_link_should_fit_a_small_stack() {
     let text = "Pair(Both(Lit(7), ".repeat(SHOW_DEPTH) + "Lit(7)" + &"))".repeat(SHOW_DEPTH);
     assert_deep_value_prints("showinline", &text);
+}
+
+/// GIVEN the `showoptionallink` program, which builds a chain of 1,000,000 `Pair`s, deep through
+/// an inline field of type `Expr??`
+/// WHEN it prints the chain, compares it with an equal chain and drops it under a 256 KiB stack,
+/// with and without `-O2`
+/// THEN it exits 0 and prints `Pair(Both(` 1,000,000 times, `Lit(7)`, 1,000,000 `))`, `true` and
+/// `done`
+///
+/// A link under more than one `?` is walked in place, as a link under one is: printing, `==` and
+/// the drop each loop on it.
+#[test]
+fn printing_an_inline_link_under_two_optionals_should_fit_a_small_stack() {
+    let text = "Pair(Both(".repeat(SHOW_DEPTH) + "Lit(7)" + &"))".repeat(SHOW_DEPTH);
+    assert_small_stack_prints_at_both("showoptionallink", &format!("{text}\ntrue\ndone\n"));
 }
 
 /// GIVEN the `dropmutual` program, which builds chains of 100 000 pairs of two classes that

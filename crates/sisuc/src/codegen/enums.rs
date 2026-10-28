@@ -761,13 +761,12 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// The enum of payload field `payload` of the enum `id`, whose component has boxes, when the
-    /// field is an inline link: not boxed, and of an enum in that component, or its optional.
-    /// An inline `G??` is no link: it is released and compared as any counted field is.
+    /// field is an inline link: not boxed, and of an enum in that component, or its optional
+    /// under any number of `?`s.
     pub(super) fn inline_link(&self, id: EnumId, payload: &Payload) -> Option<EnumId> {
         let enums = &self.program.enums;
-        (payload.ty.inline_enum()).filter(|g| {
-            !payload.boxed && nested(payload.ty).is_none() && enums[g.0].cycle == enums[id.0].cycle
-        })
+        (payload.ty.inline_enum())
+            .filter(|g| !payload.boxed && enums[g.0].cycle == enums[id.0].cycle)
     }
 
     /// The body of `@sisu_rc.<kind>.<E>`.
@@ -904,16 +903,18 @@ impl<'ctx> Codegen<'ctx, '_> {
                     Helper::Walk,
                     Type::intern(TypeKind::Enum(inner, TypeArgs::NONE)),
                 );
-                if !matches!(payload.ty.kind(), TypeKind::Optional(_)) {
-                    self.call(walk, &[place.into(), heads.into()]);
-                    return;
+                // A link under `?`s is walked when every layer has a value.
+                let next = block("link.next");
+                let (mut ty, mut place) = (payload.ty, place);
+                while let TypeKind::Optional(contents) = ty.kind() {
+                    let some = block("link");
+                    let link = self.load_link(ty, place);
+                    self.branch_on(self.has_value(ty, link, "flag"), some, next);
+                    self.builder.position_at_end(some);
+                    place = self.optional_value_place(ty, place);
+                    ty = contents;
                 }
-                let (some, next) = (block("link"), block("link.next"));
-                let link = self.load_link(payload.ty, place);
-                self.branch_on(self.has_value(payload.ty, link, "flag"), some, next);
-                self.builder.position_at_end(some);
-                let inner_value = self.enum_slot(self.optional_value(payload.ty, link, "link"));
-                self.call(walk, &[inner_value.into(), heads.into()]);
+                self.call(walk, &[place.into(), heads.into()]);
                 self.branch_to(next);
                 self.builder.position_at_end(next);
                 return;
@@ -1305,27 +1306,29 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.payload_place(a, id, variant, field),
             self.payload_place(b, id, variant, field),
         );
-        if !matches!(ty.kind(), TypeKind::Optional(_)) {
-            return (inner, place_a, place_b);
+        // Under each `?` the flags are compared first, so an absent layer's payload is never read.
+        let (mut ty, mut place_a, mut place_b) = (ty, place_a, place_b);
+        while let TypeKind::Optional(contents) = ty.kind() {
+            let (link_a, link_b) = (self.load_link(ty, place_a), self.load_link(ty, place_b));
+            let (fa, fb) = (
+                self.has_value(ty, link_a, "flag"),
+                self.has_value(ty, link_b, "flag"),
+            );
+            let function = self.current_function();
+            let block = |name| self.context.append_basic_block(function, name);
+            let (flags, both) = (block("link.flags"), block("link.both"));
+            let flags_equal = self.int_compare(IntPredicate::EQ, fa, fb);
+            self.branch_on(flags_equal, flags, unequal);
+            self.builder.position_at_end(flags);
+            self.branch_on(fa, both, same);
+            self.builder.position_at_end(both);
+            (place_a, place_b) = (
+                self.optional_value_place(ty, place_a),
+                self.optional_value_place(ty, place_b),
+            );
+            ty = contents;
         }
-        let (link_a, link_b) = (self.load_link(ty, place_a), self.load_link(ty, place_b));
-        let (fa, fb) = (
-            self.has_value(ty, link_a, "flag"),
-            self.has_value(ty, link_b, "flag"),
-        );
-        let function = self.current_function();
-        let block = |name| self.context.append_basic_block(function, name);
-        let (flags, both) = (block("link.flags"), block("link.both"));
-        let flags_equal = self.int_compare(IntPredicate::EQ, fa, fb);
-        self.branch_on(flags_equal, flags, unequal);
-        self.builder.position_at_end(flags);
-        self.branch_on(fa, both, same);
-        self.builder.position_at_end(both);
-        (
-            inner,
-            self.optional_value_place(ty, place_a),
-            self.optional_value_place(ty, place_b),
-        )
+        (inner, place_a, place_b)
     }
 
     /// The box pointers of boxed field `field` of variant `variant` of the enum `id` at `a` and
