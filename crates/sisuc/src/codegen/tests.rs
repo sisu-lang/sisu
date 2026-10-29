@@ -3079,8 +3079,6 @@ fn release_of_an_enum_ring_should_zero_the_heads_with_one_memset() {
     assert!(!release.contains("store ["), "{release}");
 }
 
-/// As for `release` of an enum ring, the `drop` of a class cycle zeroes the heads with one
-/// `memset`.
 #[test]
 fn drop_of_a_class_cycle_should_zero_the_heads_with_one_memset() {
     let context = Context::create();
