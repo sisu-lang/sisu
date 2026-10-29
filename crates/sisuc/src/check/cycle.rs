@@ -41,13 +41,14 @@
 //! beside its generated `Eq` node.
 //!
 //! A `dbg` also writes the fields of a class that has no written `Display`, each as `print` writes
-//! it (`Checker::dbg_show`). So each field type of such a class is an operand of `Display`, inside
-//! the holder, at the `dbg`. An enum has a generated `dbg` node beside its `Display` node, with
-//! the same edges for what its payloads show. An operand adds only its arguments to that node, so
-//! the payloads of an enum are read once for the program, not once for each operand type. An
-//! argument that the enum shows also gets the edges of the holder: a parameter held bare, in an
-//! array or an optional, or as a shown argument of an enum (`Checker::shown_params`). A class or
-//! an enum with a written `Display` that always applies shows its text, so it adds none.
+//! it (`Checker::dbg_show`). So each class and each enum has a generated `dbg` node, beside the
+//! `Display` node of the enum. The node of a class has an edge for each field type, as an operand
+//! of `Display`; the node of an enum has the same edges for what its payloads show. An operand adds
+//! only its arguments to that node, so the fields and payloads are read once for the program, not
+//! once for each operand type. An argument that the enum shows also gets the edges of the holder:
+//! a parameter held bare, in an array or an optional, or as a shown argument of an enum
+//! (`Checker::shown_params`). A class or an enum with a written `Display` that always applies
+//! shows its text, so it adds none.
 //!
 //! Each parameter of a function, class, enum or generated node has a second node, for its value
 //! with its outer array and optional levels taken off, since the generated rule takes those off
@@ -134,6 +135,8 @@ thread_local! {
     pub(super) static MARK_EDGES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many types `dbg_show` has read on this thread, to find what `dbg` shows of an operand.
     pub(super) static DBG_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many types `shown_params` has read on this thread, to find the arguments `dbg` shows.
+    pub(super) static SHOWN_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The nodes and the edges of the component that the last search for a cycle read.
     pub(super) static SEARCHED: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
@@ -278,6 +281,8 @@ struct Graph {
     display_first: usize,
     /// The declaration of the generated `dbg` node of the first enum; the others follow.
     dbg_first: usize,
+    /// The declaration of the generated `dbg` node of the first class; the others follow.
+    dbg_class_first: usize,
     /// The interface whose operators go to the generated `Display` nodes.
     display: tir::InterfaceId,
     /// By interface and enum, whether a written conformance has the enum as its target, and
@@ -944,6 +949,10 @@ impl Checker<'_> {
             _ if holder >= graph.choices_first => self
                 .head(graph.assocs.choices[holder - graph.choices_first].head)
                 .to_string(),
+            _ if holder >= graph.dbg_class_first => self.classes[holder - graph.dbg_class_first]
+                .name
+                .name
+                .to_string(),
             _ if holder >= graph.dbg_first => {
                 self.enums[holder - graph.dbg_first].name.name.to_string()
             }
@@ -982,10 +991,12 @@ impl Checker<'_> {
         }
         // The hubs of the interfaces follow, one each, and then the generated `Eq` node of each
         // enum, which has the enum's parameters, and its generated `Display` node and `dbg` node.
+        // The generated `dbg` node of each class, which has the class's parameters, follows.
         let interface_hubs = declarations;
         let eq_first = interface_hubs + self.interfaces.len();
         let display_first = eq_first + self.enums.len();
         let dbg_first = display_first + self.enums.len();
+        let dbg_class_first = dbg_first + self.enums.len();
         let counts = self.signatures.iter().map(|s| s.type_params.len());
         let counts = counts.chain(self.classes.iter().map(|c| c.type_params.len()));
         let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
@@ -993,6 +1004,7 @@ impl Checker<'_> {
         let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
         let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
         let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
+        let counts = counts.chain(self.classes.iter().map(|c| c.type_params.len()));
         let counts = counts.chain(assocs.choices.iter().map(|c| c.depths.len()));
         let counts = counts.chain(assocs.hubs.iter().map(|_| 1));
         let mut first = vec![0];
@@ -1009,6 +1021,7 @@ impl Checker<'_> {
             eq_first,
             display_first,
             dbg_first,
+            dbg_class_first,
             display: self.lang.display,
             records: FxHashMap::default(),
             edges: Vec::new(),
@@ -1017,7 +1030,7 @@ impl Checker<'_> {
             walked: FxHashSet::default(),
             dbg_edges: FxHashSet::default(),
             assocs,
-            choices_first: dbg_first + self.enums.len(),
+            choices_first: dbg_class_first + self.classes.len(),
         };
         (graph, hubs, interface_hubs)
     }
@@ -1043,6 +1056,7 @@ impl Checker<'_> {
             eq_first: end,
             display_first: end,
             dbg_first: end,
+            dbg_class_first: end,
             display: self.lang.display,
             records: FxHashMap::default(),
             edges: Vec::new(),
@@ -1146,77 +1160,101 @@ impl Checker<'_> {
     /// By enum and parameter, whether `dbg` shows the argument of the parameter: it stands bare, in
     /// an array or in an optional in a payload, or is a shown argument of an enum that a payload
     /// names. A parameter inside the arguments of a class is not shown: `dbg` writes the field of
-    /// a class as `print` does. A worklist finds the answers, and an enum is read again only when
-    /// an enum that its payloads name gains a shown parameter, so a chain of enums is read once.
+    /// a class as `print` does. Nor is an argument of an enum with a written `Display` that always
+    /// applies, as `dbg_show` stops at it. One worklist runs over the nodes `(enum, parameter)`.
+    /// An argument of an enum in a payload is a node too: it holds when the argument around it
+    /// holds and the parameter it fills holds. A parameter holds when a payload shows it. Each
+    /// part of each payload type is read once, so the pass is linear in the type parameters and
+    /// payloads.
     fn shown_params(&self) -> Vec<Vec<bool>> {
-        let count = self.enums.len();
-        let mut shown: Vec<Vec<bool>> = (self.enums.iter())
-            .map(|info| vec![false; info.type_params.len()])
+        // A node is ready when its `need` is 0: a parameter needs one of the nodes that lead to it,
+        // an argument needs both its holders.
+        let first: Vec<usize> = (self.enums.iter())
+            .scan(0, |at, info| {
+                let first = *at;
+                *at += info.type_params.len();
+                Some(first)
+            })
             .collect();
-        let payloads = |e: usize| {
-            let variants = self.enums[e].variants.iter();
-            variants.flat_map(|v| v.fields.iter().copied().flatten())
-        };
-        // By enum, the enums that name it in a payload.
-        let mut users: Vec<Vec<usize>> = vec![Vec::new(); count];
-        for e in 0..count {
-            let mut stack: Vec<Type> = payloads(e).collect();
-            while let Some(ty) = stack.pop() {
+        let params: usize = self.enums.iter().map(|e| e.type_params.len()).sum();
+        let mut need = vec![1_u8; params];
+        let mut then: Vec<Vec<usize>> = vec![Vec::new(); params];
+        let mut ready = Vec::new();
+        let mut stack: Vec<(Type, Option<usize>)> = Vec::new();
+        for (e, info) in self.enums.iter().enumerate() {
+            let payloads = info
+                .variants
+                .iter()
+                .flat_map(|v| v.fields.iter().copied().flatten());
+            stack.extend(payloads.map(|ty| (ty, None)));
+            while let Some((ty, from)) = stack.pop() {
+                #[cfg(test)]
+                SHOWN_STEPS.set(SHOWN_STEPS.get() + 1);
                 match ty.kind() {
-                    TypeKind::Array(part) | TypeKind::Optional(part) => stack.push(part),
+                    TypeKind::Param(_, i) => match from {
+                        Some(from) => then[from].push(first[e] + i as usize),
+                        None => ready.push(first[e] + i as usize),
+                    },
+                    TypeKind::Array(part) | TypeKind::Optional(part) => stack.push((part, from)),
                     TypeKind::Enum(id, args) => {
-                        users[id.0].push(e);
-                        stack.extend(args.get());
+                        if always_written(
+                            &self.conformances,
+                            self.lang.display,
+                            self.own_type(id.0),
+                        ) {
+                            continue;
+                        }
+                        for (j, &arg) in
+                            args.get().iter().enumerate().filter(|(_, a)| a.has_param())
+                        {
+                            let node = need.len();
+                            need.push(1 + u8::from(from.is_some()));
+                            then.push(Vec::new());
+                            then[first[id.0] + j].push(node);
+                            if let Some(from) = from {
+                                then[from].push(node);
+                            }
+                            stack.push((arg, Some(node)));
+                        }
                     }
                     _ => {}
                 }
             }
         }
-        let mut queue: Vec<usize> = (0..count).collect();
-        let mut queued = vec![true; count];
-        while let Some(e) = queue.pop() {
-            queued[e] = false;
-            let mut now = vec![false; shown[e].len()];
-            let mut stack: Vec<Type> = payloads(e).collect();
-            while let Some(ty) = stack.pop() {
-                match ty.kind() {
-                    TypeKind::Param(_, i) => now[i as usize] = true,
-                    TypeKind::Array(part) | TypeKind::Optional(part) => stack.push(part),
-                    TypeKind::Enum(id, args) => {
-                        let on = shown[id.0].iter();
-                        stack.extend(
-                            args.get()
-                                .iter()
-                                .zip(on)
-                                .filter(|(_, on)| **on)
-                                .map(|(&a, _)| a),
-                        );
-                    }
-                    _ => {}
-                }
+        let mut done = vec![false; need.len()];
+        while let Some(node) = ready.pop() {
+            if std::mem::replace(&mut done[node], true) {
+                continue;
             }
-            if now != shown[e] {
-                shown[e] = now;
-                for &user in &users[e] {
-                    if !queued[user] {
-                        queued[user] = true;
-                        queue.push(user);
-                    }
+            for &next in &then[node] {
+                need[next] = need[next].saturating_sub(1);
+                if need[next] == 0 {
+                    ready.push(next);
                 }
             }
         }
-        shown
+        (self.enums.iter().enumerate())
+            .map(|(e, info)| done[first[e]..first[e] + info.type_params.len()].to_vec())
+            .collect()
+    }
+
+    /// The enum `e` applied to its own type parameters, as its declaration names it.
+    fn own_type(&self, e: usize) -> Type {
+        let params: Vec<Type> = (self.enums[e].type_params.iter().zip(0..))
+            .map(|(&name, i)| Type::intern(TypeKind::Param(name, i)))
+            .collect();
+        Type::intern(TypeKind::Enum(tir::EnumId(e), TypeArgs::intern(&params)))
     }
 
     /// The edges that a `dbg` of an operand of type `ty` adds, inside `holder` at `site`, to those
-    /// of a `print`. Its helper also writes the fields of a class, each as `print` writes it. So
-    /// each field type of a class that `ty` holds, through arrays, optionals and the shown
-    /// arguments of enums, is an operand of `Display`. An enum passes its arguments to its `dbg`
-    /// node (`dbg_edges`), which has the same edges for its payloads, so the payloads of an enum
-    /// are read once for the program, not for each operand. A class or an enum with a written
-    /// `Display` that always applies shows its text, so it adds none. A written `Display` with a
-    /// bound on another interface may not apply, and then its fields add their edges, as a
-    /// conditional conformance of an enum does. A holder reads each type once, at its first `dbg`.
+    /// of a `print`. Its helper also writes the fields of a class, each as `print` writes it. A
+    /// class or an enum that `ty` holds, through arrays, optionals and the shown arguments of
+    /// enums, passes its arguments to its generated `dbg` node (`dbg_edges`). That node has the
+    /// edges of the fields or payloads in terms of the parameters, so they are read once for the
+    /// program, not once for each operand. A class or an enum with a written `Display` that always
+    /// applies shows its text, so it adds none. A written `Display` with a bound on another
+    /// interface may not apply, and then its fields add their edges, as a conditional conformance
+    /// of an enum does. A holder reads each type once, at its first `dbg`.
     fn dbg_show(
         &self,
         graph: &mut Graph,
@@ -1251,20 +1289,28 @@ impl Checker<'_> {
                     );
                 }
                 TypeKind::Class(id, args) => {
-                    for field in self.classes[id.0].fields.iter().filter_map(|f| f.ty) {
-                        let field = field.subst(args.get());
-                        graph.operator(holder, field, self.lang.display, site);
-                    }
+                    let target = graph.dbg_class_first + id.0;
+                    graph.args(holder, args.get(), target, site, site, Instance::Type(ty));
                 }
                 _ => {}
             }
         }
     }
 
-    /// The edges of the generated `dbg` node of each enum: what `dbg` shows of each payload type,
-    /// as `dbg_show` reads it, in terms of the enum's parameters. An enum that grows gets its
-    /// growth at the site of its own error, which a cycle reports once.
+    /// The edges of the generated `dbg` node of each class and each enum: what `dbg` shows of each
+    /// field or payload type, in terms of the parameters. A class shows each field as `print` does
+    /// (`Graph::operator`), at the field's type. An enum shows each payload type as `dbg_show`
+    /// reads it. An enum that grows gets its growth at the site of its own error, which a cycle
+    /// reports once.
     fn dbg_edges(&self, graph: &mut Graph, shown: &[Vec<bool>]) {
+        for (c, info) in self.classes.iter().enumerate() {
+            let holder = graph.dbg_class_first + c;
+            for field in &info.fields {
+                if let Some(ty) = field.ty {
+                    graph.operator(holder, ty, self.lang.display, field.ty_span);
+                }
+            }
+        }
         for (e, info) in self.enums.iter().enumerate() {
             let holder = graph.dbg_first + e;
             for variant in &info.variants {
@@ -1977,6 +2023,7 @@ mod tests {
             eq_first: 2,
             display_first: 2,
             dbg_first: 2,
+            dbg_class_first: 2,
             display: tir::InterfaceId(usize::MAX),
             records: FxHashMap::default(),
             edges: Vec::new(),
@@ -2134,6 +2181,7 @@ mod tests {
             eq_first: 4,
             display_first: 6,
             dbg_first: 6,
+            dbg_class_first: 6,
             display: tir::InterfaceId(usize::MAX),
             records: FxHashMap::default(),
             edges: Vec::new(),

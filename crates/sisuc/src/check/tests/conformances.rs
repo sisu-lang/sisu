@@ -2273,8 +2273,17 @@ fn implicit_print_should_close_an_instantiation_cycle() {
     }
 }
 
+/// The type that grows in the field of `Hold<T>`, which `dbg_cycle_rows` declares first. A cycle
+/// that the field type makes is reported there, whatever the operand that reaches it.
+const FIELD: &str = "W<[T]>";
+
+/// The same type in the field of `Rec<T>`, which follows `Hold<T>`.
+const REC_FIELD: &str = "W<[T]>\n}\nenum Pick";
+
 /// `dbg` shows the fields of a class with no written `to_string`. So a growing value held in a
-/// field, in an array or in an enum payload is a cycle for `dbg`.
+/// field, in an array or in an enum payload is a cycle for `dbg`. A class whose field type grows
+/// is reported at the field. A class that only passes its parameter on to a field is reported at
+/// the `dbg`, where the argument grows.
 #[test]
 fn implicit_dbg_should_close_an_instantiation_cycle() {
     dbg_cycle_rows(&[
@@ -2307,22 +2316,38 @@ fn implicit_dbg_should_close_an_instantiation_cycle() {
         (
             "a dbg of a class whose field type grows",
             "let _ = dbg(Hold(v: W(x: [self.x])))",
-            Some("dbg(Hold(v: W(x: [self.x])))"),
+            Some(FIELD),
         ),
         (
             "a dbg of an array of such a class",
             "let _ = dbg([Hold(v: W(x: [self.x]))])",
-            Some("dbg([Hold(v: W(x: [self.x]))])"),
+            Some(FIELD),
         ),
         (
             "a dbg of an optional of such a class",
             "let _ = dbg(Some(Hold(v: W(x: [self.x]))))",
-            Some("dbg(Some(Hold(v: W(x: [self.x]))))"),
+            Some(FIELD),
         ),
         (
             "a dbg of an enum payload of such a class",
             "let _ = dbg(Pick.One(Hold(v: W(x: [self.x]))))",
-            Some("dbg(Pick.One(Hold(v: W(x: [self.x]))))"),
+            Some(FIELD),
+        ),
+        (
+            "a dbg of a recursive class whose field type grows",
+            "let _ = dbg(Rec(next: None, v: W(x: [self.x])))",
+            Some(REC_FIELD),
+        ),
+        (
+            "a dbg of an array of recursive classes whose field type grows",
+            "let _ = dbg([Rec(next: None, v: W(x: [self.x]))])",
+            Some(REC_FIELD),
+        ),
+        // `Wrap<T>` passes its parameter to the field `W<T>`: the argument grows at the `dbg`.
+        (
+            "a dbg of an enum payload that is a class which passes its parameter on",
+            "let _ = dbg(Pick.One(Wrap(v: W(x: [self.x]))))",
+            Some("dbg(Pick.One(Wrap(v: W(x: [self.x]))))"),
         ),
         (
             "a print of a class whose field type grows",
@@ -2334,29 +2359,29 @@ fn implicit_dbg_should_close_an_instantiation_cycle() {
 }
 
 /// The same through an enum: a payload that holds the class, a recursive enum, and an enum that
-/// shows no argument. The class in a payload of the enum is reported at the payload.
+/// shows no argument. The class is reported at its field, however the enum holds it.
 #[test]
 fn implicit_dbg_should_close_an_instantiation_cycle_through_an_enum() {
     dbg_cycle_rows(&[
         (
             "a dbg of a recursive enum that holds such a class",
             "let _ = dbg(Tree.Leaf(Hold(v: W(x: [self.x]))))",
-            Some("dbg(Tree.Leaf(Hold(v: W(x: [self.x]))))"),
+            Some(FIELD),
         ),
         (
             "a dbg of an array of a recursive enum that holds such a class",
             "let _ = dbg([Tree.Leaf(Hold(v: W(x: [self.x])))])",
-            Some("dbg([Tree.Leaf(Hold(v: W(x: [self.x])))])"),
+            Some(FIELD),
         ),
         (
             "a dbg of an enum that holds the class in an array",
             "let _ = dbg(Bag.Many([Hold(v: W(x: [self.x]))]))",
-            Some("dbg(Bag.Many([Hold(v: W(x: [self.x]))]))"),
+            Some(FIELD),
         ),
         (
             "a dbg of an enum that holds the class in an optional",
             "let _ = dbg(Bag.Maybe(Some(Hold(v: W(x: [self.x])))))",
-            Some("dbg(Bag.Maybe(Some(Hold(v: W(x: [self.x])))))"),
+            Some(FIELD),
         ),
         // No payload holds `P`, so `dbg` shows nothing of the argument `Hold<T>`.
         (
@@ -2364,11 +2389,17 @@ fn implicit_dbg_should_close_an_instantiation_cycle_through_an_enum() {
             "let p: Phantom<i64, Hold<T>> = Phantom.One(1)\n        dbg(p)",
             None,
         ),
-        // The cycle is in the payload type of the enum, where it is reported.
+        // The payload type gives the class a longer argument: the growth is at the payload.
+        (
+            "a dbg of an enum whose payload type grows",
+            "let _ = dbg(Grow.One(Wrap(v: W(x: [self.x]))))",
+            Some("Wrap<[U]>"),
+        ),
+        // The class is named in the payload, and its field type grows.
         (
             "a dbg of an enum whose payload is such a class",
             "let _ = dbg(Both.One(Hold(v: W(x: [self.x]))))",
-            Some("Hold<U>)"),
+            Some(FIELD),
         ),
     ]);
 }
@@ -2376,7 +2407,7 @@ fn implicit_dbg_should_close_an_instantiation_cycle_through_an_enum() {
 /// Checks each row `(name, body, cycle)`: the program whose `Display` of `W<T>` runs `body`
 /// reports an E0140 at the text `cycle`, or checks clean when it is `None`.
 fn dbg_cycle_rows(rows: &[(&str, &str, Option<&str>)]) {
-    let w = "class W<T> {\n    x: T\n}\nclass Wrap<T> {\n    v: W<T>\n}\nclass Hold<T> {\n    v: W<[T]>\n}\nenum Pick<U> {\n    One(U)\n}\nenum Pair<U> {\n    Two(U, U)\n}\nenum Tree<U> {\n    Leaf(U)\n    Node(Tree<U>, Tree<U>)\n}\nenum Both<U> {\n    One(Hold<U>)\n}\nenum Phantom<U, P> {\n    One(U)\n}\nenum Bag<U> {\n    Many([U])\n    Maybe(U?)\n}\n";
+    let w = "class W<T> {\n    x: T\n}\nclass Wrap<T> {\n    v: W<T>\n}\nclass Hold<T> {\n    v: W<[T]>\n}\nclass Rec<T> {\n    next: Rec<T>?\n    v: W<[T]>\n}\nenum Pick<U> {\n    One(U)\n}\nenum Pair<U> {\n    Two(U, U)\n}\nenum Tree<U> {\n    Leaf(U)\n    Node(Tree<U>, Tree<U>)\n}\nenum Both<U> {\n    One(Hold<U>)\n}\nenum Grow<U> {\n    One(Wrap<[U]>)\n}\nenum Phantom<U, P> {\n    One(U)\n}\nenum Bag<U> {\n    Many([U])\n    Maybe(U?)\n}\n";
     let main = "fn main() {\n    print(W(x: 1))\n}";
     let display = |body: &str| {
         format!(
@@ -2411,18 +2442,12 @@ fn dbg_should_follow_nothing_of_a_class_or_an_enum_with_an_applicable_written_di
             "{decls}{hold}extend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        {body}\n        \"w\"\n    }}\n}}\nfn main() {{\n    print(W(x: 1))\n}}"
         )
     };
-    // The subject, how to make it, and where the cycle is reported when it is one: at the `dbg`
-    // for a class, and at the payload of the enum for an enum.
+    // The subject and how to make it. A cycle is reported at the field type that grows.
     let subjects = [
-        ("class", class, "Hold(v: W(x: [self.x]))", None),
-        (
-            "enum",
-            enum_,
-            "Hold.One(Plain(v: W(x: [self.x])))",
-            Some("Plain<T>)"),
-        ),
+        ("class", class, "Hold(v: W(x: [self.x]))"),
+        ("enum", enum_, "Hold.One(Plain(v: W(x: [self.x])))"),
     ];
-    for (subject, open, made, payload) in subjects {
+    for (subject, open, made) in subjects {
         let extended =
             |header: &str| format!("{open}}}\nextend{header} Hold<T>: Display {{\n    {text}}}\n");
         let shapes = [
@@ -2466,8 +2491,8 @@ fn dbg_should_follow_nothing_of_a_class_or_an_enum_with_an_applicable_written_di
             for (shape, body) in &shapes {
                 let row = format!("{shape} of {subject} with {written}");
                 let src = display(hold, body);
-                let at = payload.map_or_else(|| where_is(&src, body), |p| where_is(&src, p));
                 if *cycle {
+                    let at = where_is(&src, FIELD);
                     codes_row(&row, &src, &[(Code::InstantiationCycle, at)]);
                 } else {
                     clean_row(&row, &src);
@@ -2475,6 +2500,25 @@ fn dbg_should_follow_nothing_of_a_class_or_an_enum_with_an_applicable_written_di
             }
         }
     }
+}
+
+/// A bare parameter shows the class that it gets, and an enum with a written `Display` that always
+/// applies shows its text. So the argument of the enum is read for the first, not for the second.
+#[test]
+fn dbg_should_read_no_argument_of_an_enum_with_a_written_display() {
+    let reads = |slot: &str| {
+        let src = format!(
+            "class Hold<T> {{\n    v: T\n}}\nenum Slot<U> {{\n    Full(U)\n}}\n{slot}enum Outer<U> {{\n    One(Slot<U>)\n}}\nfn look<T>(x: Outer<Hold<T>>) {{\n    dbg(x)\n}}\nfn main() {{\n    look(Outer.One(Slot.Full(Hold(v: 1))))\n}}"
+        );
+        cycle::DBG_VISITS.set(0);
+        clean(&src);
+        cycle::DBG_VISITS.get()
+    };
+    let written = "extend<U> Slot<U>: Display {\n    fn to_string(self) -> string {\n        \"slot\"\n    }\n}\n";
+    // The operand `Outer<Hold<T>>` and the payload `U` in the node of `Slot`, not `Hold<T>`.
+    assert_eq!(reads(written), 2, "a written Display shows no argument");
+    // The same, and `Hold<T>`, and the payload `Slot<U>` of `Outer` with its argument.
+    assert_eq!(reads(""), 5, "a generated Display shows the argument");
 }
 
 /// The reads of a `dbg` follow its operands and the enums it reaches, not their product. A chain
@@ -2655,6 +2699,92 @@ fn dbg_should_add_edges_in_proportion_to_the_operands_and_the_enums() {
         edges(long, 20) - edges(short, 20),
         chain,
         "20 operand types should not add the edges of the chain again"
+    );
+}
+
+/// A class has one generated `dbg` node, so the edges of its fields are added once for the
+/// program: whatever number of functions and of operand types name the class, a field adds the
+/// same edges. `fields` fields of the class `C<T>`, and `holders` generic functions with
+/// `operands` parameters of type `C<T{i}>`, each shown by a `dbg`.
+#[test]
+fn dbg_should_add_the_edges_of_the_fields_of_a_class_once_for_the_program() {
+    let edges = |holders: usize, operands: usize, fields: usize| {
+        let mut src = String::from("class C<T> {\n");
+        for f in 0..fields {
+            writeln!(src, "    f{f}: [T]").expect("writing to a `String` should succeed");
+        }
+        src += "}\n";
+        let params: Vec<_> = (0..operands).map(|i| format!("T{i}")).collect();
+        let list: Vec<_> = (0..operands).map(|i| format!("a{i}: C<T{i}>")).collect();
+        for h in 0..holders {
+            writeln!(
+                src,
+                "fn inspect{h}<{}>({}) {{",
+                params.join(", "),
+                list.join(", ")
+            )
+            .expect("writing to a `String` should succeed");
+            for i in 0..operands {
+                writeln!(src, "    dbg(a{i})").expect("writing to a `String` should succeed");
+            }
+            src += "}\n";
+        }
+        let empty: Vec<_> = (0..fields).map(|f| format!("f{f}: []")).collect();
+        writeln!(
+            src,
+            "fn main() {{\n    let c: C<i64> = C({})",
+            empty.join(", ")
+        )
+        .expect("writing to a `String` should succeed");
+        for h in 0..holders {
+            writeln!(src, "    inspect{h}({})", vec!["c"; operands].join(", "))
+                .expect("writing to a `String` should succeed");
+        }
+        src += "}";
+        cycle::EDGES.set(0);
+        clean(&src);
+        cycle::EDGES.get()
+    };
+    let (few, many) = (10, 20);
+    let field_edges = |holders: usize, operands: usize| {
+        edges(holders, operands, many) - edges(holders, operands, few)
+    };
+    let once = field_edges(1, 1);
+    assert!(once > 0, "the fields should add edges");
+    assert_eq!(field_edges(10, 1), once, "10 functions share the fields");
+    assert_eq!(
+        field_edges(1, 10),
+        once,
+        "10 operand types share the fields"
+    );
+    assert_eq!(field_edges(10, 10), once, "100 operands share the fields");
+}
+
+/// The arguments that `dbg` shows are found in one pass over the payloads of the enums: a chain of
+/// `n` parameters that each pass to the next costs the same for each one.
+#[test]
+fn dbg_should_find_the_shown_arguments_in_proportion_to_the_type_parameters() {
+    // `E<T0, .., Tn-1>` holds `T0` and `E<T1, .., Tn-1, T0>`: a parameter becomes shown at a time.
+    let steps = |n: usize| {
+        let params: Vec<_> = (0..n).map(|i| format!("T{i}")).collect();
+        let same = vec!["T"; n].join(", ");
+        let rotated: Vec<_> = (1..=n).map(|i| format!("T{}", i % n)).collect();
+        let closed = vec!["i64"; n].join(", ");
+        let src = format!(
+            "enum E<{}> {{\n    Here(T0)\n    Next(E<{}>)\n}}\nfn look<T>(x: E<{same}>, m: T) {{\n    let _ = m\n    dbg(x)\n}}\nfn main() {{\n    let e: E<{closed}> = E.Here(1)\n    look(e, 1)\n}}",
+            params.join(", "),
+            rotated.join(", ")
+        );
+        cycle::SHOWN_STEPS.set(0);
+        clean(&src);
+        cycle::SHOWN_STEPS.get()
+    };
+    let (a, b, c) = (steps(20), steps(40), steps(60));
+    assert!(a > 0, "the payloads should be read");
+    assert_eq!(
+        c - b,
+        b - a,
+        "each parameter should cost the same: {a} {b} {c}"
     );
 }
 
