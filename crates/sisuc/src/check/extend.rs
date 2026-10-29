@@ -324,8 +324,6 @@ impl<'a> Checker<'_> {
     /// remove it, and waits until a program needs it.
     pub(super) fn extension_clashes(&mut self) {
         let mut reports = Vec::new();
-        // The first field of each name of the classes that a block holds a method of, indexed once.
-        let mut fields = FxHashMap::default();
         for (&(holder, name), list) in &self.extension_methods {
             let owner = self.holder_name(holder).to_string();
             let plain = list
@@ -334,7 +332,7 @@ impl<'a> Checker<'_> {
             // Each definition of the name: where it is, its kind, and the target it covers, with
             // its parameters. The body's has none: it covers every instantiation.
             let mut defs: Vec<Def> = self
-                .body_definition(&mut fields, holder, name)
+                .body_definition(holder, name)
                 .into_iter()
                 .map(|(span, kind)| (span, kind, None))
                 .collect();
@@ -397,13 +395,7 @@ impl<'a> Checker<'_> {
     }
 
     /// The method, field or variant `name` of `holder`'s own declaration, and where its name is.
-    /// `fields` holds the index of the first field of each name of the classes read so far.
-    fn body_definition(
-        &self,
-        fields: &mut FxHashMap<tir::ClassId, FxHashMap<Symbol, Span>>,
-        holder: Holder,
-        name: Symbol,
-    ) -> Option<(Span, Definition)> {
+    fn body_definition(&self, holder: Holder, name: Symbol) -> Option<(Span, Definition)> {
         match holder {
             Holder::Class(c) => {
                 let info = &self.classes[c.0];
@@ -411,19 +403,9 @@ impl<'a> Checker<'_> {
                     Some(&Declared::Known(f)) => {
                         Some((self.signatures[f.0].span, Definition::Method))
                     }
-                    _ => fields
-                        .entry(c)
-                        .or_insert_with(|| {
-                            let mut index = FxHashMap::default();
-                            for field in &info.fields {
-                                #[cfg(test)]
-                                super::FIELDS_INDEXED.set(super::FIELDS_INDEXED.get() + 1);
-                                index.entry(field.name.name).or_insert(field.name.span);
-                            }
-                            index
-                        })
-                        .get(&name)
-                        .map(|&span| (span, Definition::Field)),
+                    _ => info
+                        .field(name)
+                        .map(|i| (info.fields[i].name.span, Definition::Field)),
                 }
             }
             Holder::Enum(e) => {

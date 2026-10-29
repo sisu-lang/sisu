@@ -145,12 +145,44 @@ struct ClassInfo {
     bounds: Vec<Vec<Bound>>,
     /// The first field of each name, in declaration order.
     fields: Vec<FieldInfo>,
+    /// Each field's index in `fields`, by name.
+    index: FxHashMap<Symbol, usize>,
     /// The first method of each name, and every broken one.
     methods: FxHashMap<Symbol, Declared<tir::FuncId>>,
     /// Whether a field is named `to_string`.
     names_to_string: bool,
     /// The associated types the declaration's body chooses.
     assoc: Rc<Choices>,
+}
+
+impl ClassInfo {
+    /// A class with no field, bound, method or choice of associated type yet.
+    fn new(name: ast::Ident, type_params: Vec<Symbol>, bounded: bool) -> Self {
+        Self {
+            name,
+            type_params,
+            bounded,
+            bounds: Vec::new(),
+            fields: Vec::new(),
+            index: FxHashMap::default(),
+            methods: FxHashMap::default(),
+            names_to_string: false,
+            assoc: Rc::default(),
+        }
+    }
+
+    /// Adds a field after the ones it has. The caller checks that no field has its name.
+    fn add_field(&mut self, field: FieldInfo) {
+        self.index.insert(field.name.name, self.fields.len());
+        self.fields.push(field);
+    }
+
+    /// The index in `fields` of the field called `name`, if the class has one.
+    fn field(&self, name: Symbol) -> Option<usize> {
+        #[cfg(test)]
+        FIELD_LOOKUPS.set(FIELD_LOOKUPS.get() + 1);
+        self.index.get(&name).copied()
+    }
 }
 
 struct FieldInfo {
@@ -335,8 +367,9 @@ thread_local! {
     /// How many interfaces the closures of a type's conformances have put in a visited set, read
     /// as an inherited one, or traced back to the interface that inherits them.
     pub(super) static CLOSURE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many fields of a class the check for a method named like a field has indexed.
-    pub(super) static FIELDS_INDEXED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many calls the lookups of a class's field by name have made. The tick counts calls of
+    /// the one lookup helper, `ClassInfo::field`, and not the steps inside it.
+    pub(super) static FIELD_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many times `conforms` has looked for the conformance of a class or an enum, not
     /// counting an answer it kept.
     pub(super) static CONFORMS_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -1073,16 +1106,9 @@ impl Checker<'_> {
                 ast::Item::Class(class) => {
                     let type_params = self.type_params(&[], &class.type_params);
                     let id = tir::ClassId(self.classes.len());
-                    self.classes.push(ClassInfo {
-                        name: class.name.clone(),
-                        type_params,
-                        bounded: class.type_params.iter().any(|p| !p.bounds.is_empty()),
-                        bounds: Vec::new(),
-                        fields: Vec::new(),
-                        methods: FxHashMap::default(),
-                        names_to_string: false,
-                        assoc: Rc::default(),
-                    });
+                    let bounded = class.type_params.iter().any(|p| !p.bounds.is_empty());
+                    self.classes
+                        .push(ClassInfo::new(class.name.clone(), type_params, bounded));
                     let name = &class.name;
                     if !self.built_in(name)
                         && self.first_callable(&mut first, Definition::Class, name)
@@ -1356,7 +1382,7 @@ impl Checker<'_> {
                             if field.name.name.as_str() == "to_string" {
                                 self.classes[id.0].names_to_string = true;
                             }
-                            self.classes[id.0].fields.push(FieldInfo {
+                            self.classes[id.0].add_field(FieldInfo {
                                 name: field.name.clone(),
                                 ty_span: field.ty.span,
                                 inner,

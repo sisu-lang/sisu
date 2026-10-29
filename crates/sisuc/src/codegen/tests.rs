@@ -2982,6 +2982,114 @@ fn show_of_a_component_should_find_each_member_in_linear_steps() {
     assert_near_linear(scans(100), scans(200), scans(300));
 }
 
+/// The ring of `n` enums of #245. Each enum links to the next. `main` compares every `End` with
+/// itself, so each enum gets its `walk`, `release` and `eq` helpers.
+fn enum_ring(n: usize) -> String {
+    let enums = (0..n)
+        .map(|i| format!("enum R{i} {{\n    End\n    Link(R{})\n}}\n", (i + 1) % n))
+        .collect::<Vec<_>>()
+        .concat();
+    let compares = (0..n)
+        .map(|i| format!("    print(R{i}.End == R{i}.End)\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    format!("{enums}fn main() {{\n{compares}}}\n")
+}
+
+/// `==` on an enum of a component with boxes finds the index of each member and of each link
+/// in the component. The `walk` helper of each member finds the index of each boxed field the
+/// same way. Each of these is one lookup in the table of the component. A search of the
+/// component for any of them reads a ring of enums quadratically.
+///
+/// The count is exact, so a call site that stops using the lookup helper makes the count fall
+/// and fails the test.
+#[test]
+fn eq_and_walk_of_a_component_should_find_each_member_in_linear_steps() {
+    let scans = |n: usize| {
+        MEMBER_SCANS.set(0);
+        let context = Context::create();
+        compiled(&context, &enum_ring(n));
+        MEMBER_SCANS.get()
+    };
+    // Each enum counts 4. The table counts 1. The `walk` of the enum counts 1 lookup for its
+    // boxed field. Its `eq` counts 1 lookup for the enum itself and 1 for the link.
+    assert_eq!(scans(100), 4 * 100);
+    assert_eq!(scans(200), 4 * 200);
+}
+
+/// The `walk`, `release` and `drain` helper of each member of a component with boxes uses the
+/// type of the heads of the component. A struct type with one element for each member, built
+/// and printed at each use, makes the module quadratic in the size of the ring. The heads type
+/// is an array, so each use prints it in constant size.
+#[test]
+fn drop_of_an_enum_component_should_print_the_heads_type_in_linear_size() {
+    let size = |n: usize| {
+        let context = Context::create();
+        compiled(&context, &enum_ring(n))
+            .print_to_string()
+            .to_bytes()
+            .len()
+    };
+    assert_near_linear(size(100), size(200), size(300));
+}
+
+/// A cycle of `n` classes. Each class is held by a function of its own, so each gets a `drop`.
+fn class_cycle(n: usize) -> String {
+    let classes = (0..n)
+        .map(|i| {
+            format!(
+                "class C{i} {{\n    next: C{}?\n}}\nfn hold{i}(c: C{i}) {{}}\n",
+                (i + 1) % n
+            )
+        })
+        .collect::<Vec<_>>()
+        .concat();
+    format!("{classes}fn main() {{}}\n")
+}
+
+/// `drop` and `drain` of each class of a cycle use the type of the heads of the cycle, as the
+/// helpers of enums do. Each class is dropped in a function of its own, so each gets a `drop`.
+#[test]
+fn drop_of_a_class_cycle_should_print_the_heads_type_in_linear_size() {
+    let size = |n: usize| {
+        let context = Context::create();
+        compiled(&context, &class_cycle(n))
+            .print_to_string()
+            .to_bytes()
+            .len()
+    };
+    assert_near_linear(size(100), size(200), size(300));
+}
+
+/// The slot for the heads of a component is zeroed by one `memset` of constant size. A store of
+/// a zero array would be one store for each member, so the code of `release` would grow with
+/// the ring.
+#[test]
+fn release_of_an_enum_ring_should_zero_the_heads_with_one_memset() {
+    let context = Context::create();
+    let ir = compiled(&context, &enum_ring(10))
+        .print_to_string()
+        .to_string();
+    let release = function_body(&ir, "define internal void @sisu_rc.release.R0(ptr");
+    assert_eq!(
+        release.matches("call void @llvm.memset.").count(),
+        1,
+        "{release}"
+    );
+    assert!(!release.contains("store ["), "{release}");
+}
+
+#[test]
+fn drop_of_a_class_cycle_should_zero_the_heads_with_one_memset() {
+    let context = Context::create();
+    let ir = compiled(&context, &class_cycle(10))
+        .print_to_string()
+        .to_string();
+    let drop = function_body(&ir, "define internal void @sisu_rc.drop.C0(ptr");
+    assert_eq!(drop.matches("call void @llvm.memset.").count(), 1, "{drop}");
+    assert!(!drop.contains("store ["), "{drop}");
+}
+
 /// A `take_apart` finds each place's token and kept value once: a scan of every token, or of
 /// every rest, per binding would visit quadratically many places.
 #[test]
