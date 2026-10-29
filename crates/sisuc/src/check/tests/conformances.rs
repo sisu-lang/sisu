@@ -7,6 +7,11 @@ use super::*;
 use crate::check::cycle;
 use crate::check::interface::{CONFORMS_DEPTH_LIMIT, LangPath};
 
+const _: () = assert!(
+    CONFORMS_DEPTH_LIMIT == 1 << 18,
+    "a conformance query should stop when more than 2^18 class or enum keys are open"
+);
+
 /// The functions that ask for each language interface, with bodies that call nothing.
 const NEEDS: &str = "fn need_eq<T: Eq>(x: T) {}\nfn need_ord<T: Ord>(x: T) {}\nfn need_display<T: Display>(x: T) {}\nfn need_object<T: AnyObject>(x: T) {}\n";
 
@@ -581,87 +586,220 @@ fn queries_should_cost_steps_in_proportion_to_the_types_they_form() {
     }
 }
 
-/// `enum G0<T> { A(G1<T>) }` … `enum G(n-1)<T> { End(T) }`: a query for `G0<i64>` holds `n` class
-/// or enum queries open at once, one inside the other.
-fn generic_chain(n: usize) -> String {
-    let mut enums: Vec<String> = (0..n - 1)
-        .map(|k| format!("enum G{k}<T> {{\n    A(G{}<T>)\n}}\n", k + 1))
-        .collect();
-    enums.push(format!("enum G{}<T> {{\n    End(T)\n}}\n", n - 1));
-    enums.concat()
-}
-
-/// A query for a conformance ends at `CONFORMS_DEPTH_LIMIT` open queries, one inside the other,
-/// and reports the enum it reached (E0140) once, with no other diagnostic: a declaration that
-/// instantiates itself without end, which the graph of instantiations does not see, would
-/// otherwise overflow the stack. A chain of distinct enums as long as the limit is no such
-/// declaration, so it is clean.
+/// A valid chain or ring of enums, longer than the old limit of 1024 open queries, is clean: the
+/// query for `==` on its first enum opens one key for each enum, and none of them is an endless
+/// instantiation (#247).
 #[test]
-fn a_query_should_end_at_the_depth_limit_and_report_the_enum_it_reached_once() {
-    on_the_compiler_stack(query_at_the_depth_limit);
-}
-
-/// Runs `f` on a thread with the stack of the compiler. A query that reaches the depth limit
-/// holds about a thousand frames of the walk, more than the stack of a test thread holds in a
-/// build with coverage; the compiler's own stack holds them.
-fn on_the_compiler_stack(f: fn()) {
-    std::thread::Builder::new()
-        .stack_size(crate::STACK_SIZE)
-        .spawn(f)
-        .expect("the thread should start")
-        .join()
-        .expect("the queries should not overflow the stack");
-}
-
-fn query_at_the_depth_limit() {
+fn a_chain_or_ring_of_enums_past_the_old_limit_should_check_clean() {
     CONFORMS_BUDGET.set(100_000);
-    let limit = CONFORMS_DEPTH_LIMIT;
-    let name = |src: &str, k: usize| {
-        let (line, col) = where_is(src, &format!("enum G{k}<T>"));
-        (line, col + "enum ".len())
+    let main = "fn main() {\n    let e: C0 = C0.End\n    print(e == e)\n}\n";
+    let chain: String = (0..2000)
+        .map(|k| match k {
+            1999 => format!("enum C{k} {{\n    End\n}}\n"),
+            _ => format!("enum C{k} {{\n    End\n    A(C{})\n}}\n", k + 1),
+        })
+        .collect();
+    clean_row("a chain of 2000", &format!("{chain}{main}"));
+    // The ring closes with `A(C0)`, so a query for `C0` meets itself after 2000 keys.
+    let ring = chain.replace(
+        "enum C1999 {\n    End\n}",
+        "enum C1999 {\n    End\n    A(C0)\n}",
+    );
+    clean_row("a ring of 2000", &format!("{ring}{main}"));
+}
+
+/// `class W<T>` with a written `Eq` whose bound asks `T`, and a probe type that gives `W` its id.
+const WRAPPER: &str = "class W<T> {\n    value: T\n}\nextend<T: Eq> W<T>: Eq {\n    fn eq(self, other: Self) -> bool {\n        self.value == other.value\n    }\n}\n";
+
+/// The id of the class named `name`.
+fn class_named(checker: &Checker<'_>, name: &str) -> tir::ClassId {
+    let id = (checker.classes.iter()).position(|class| class.name.name.as_str() == name);
+    tir::ClassId(id.expect("the program should declare the class"))
+}
+
+/// The class or enum type named `holder` with `inner` as its one argument, `levels` times over:
+/// `W<W<...<inner>...>>`. With `levels` zero, `inner`.
+fn nested(checker: &Checker<'_>, holder: &str, levels: usize, inner: Type) -> Type {
+    let class = (checker.classes.iter()).position(|class| class.name.name.as_str() == holder);
+    let enum_id = (checker.enums.iter()).position(|e| e.name.name.as_str() == holder);
+    let kind = |args| match (class, enum_id) {
+        (Some(id), _) => TypeKind::Class(tir::ClassId(id), args),
+        (None, Some(id)) => TypeKind::Enum(tir::EnumId(id), args),
+        (None, None) => panic!("the program should declare `{holder}`"),
     };
-    for (row, n) in [("a chain of 200", 200), ("a chain at the limit", limit)] {
-        clean_row(row, &asking(&generic_chain(n), "eq", "G0<i64>"));
+    (0..levels).fold(inner, |ty, _| Type::intern(kind(TypeArgs::intern(&[ty]))))
+}
+
+/// What `checker.conforms` says for `W` nested `levels` times over `inner`. Each query uses its own
+/// innermost type, so that no answer kept for one is read for the next.
+fn query_nest(checker: &mut Checker<'_>, eq: tir::InterfaceId, levels: usize, inner: Type) -> bool {
+    let ty = nested(checker, "W", levels, inner);
+    checker.conforms(ty, eq, TypeArgs::NONE)
+}
+
+/// A query for a conformance holds `CONFORMS_DEPTH_LIMIT` class or enum keys open at most, one
+/// inside the other. A type that nests as many `W` as the limit is decided with no report: a
+/// class counts, as an enum does, because the walk of a written `Eq` goes through the bound of
+/// each level. The test lowers the limit, as a walk of the whole limit takes about a second.
+#[test]
+fn a_query_should_be_clean_at_the_depth_limit() {
+    let limit = 600;
+    CONFORMS_DEPTH.set(limit);
+    CONFORMS_BUDGET.set(2 * limit);
+    with_probe(WRAPPER, ("T", "W<i64>"), "Eq", |checker, _, eq| {
+        assert!(query_nest(checker, eq, limit, Type::BOOL));
+        assert!(checker.diagnostics.is_empty());
+    });
+}
+
+/// One `W` more than the limit makes the query stop and report E0140 at the name of the class
+/// that it reached. The stopped query holds: the report is its only diagnostic. The test lowers
+/// the limit; the constant above pins the real one.
+#[test]
+fn a_query_should_report_the_class_it_reached_past_the_depth_limit() {
+    let limit = 600;
+    CONFORMS_DEPTH.set(limit);
+    CONFORMS_BUDGET.set(2 * limit);
+    let (name, found) = with_probe(WRAPPER, ("T", "W<i64>"), "Eq", |checker, _, eq| {
+        assert!(query_nest(checker, eq, limit + 1, Type::I64));
+        let found: Vec<_> = (checker.diagnostics.iter())
+            .map(|d| (d.code(), d.span()))
+            .collect();
+        (
+            checker.classes[class_named(checker, "W").0].name.span,
+            found,
+        )
+    });
+    assert_eq!(found, [(Code::InstantiationCycle, name)]);
+}
+
+/// The report of a query that is too deep names the interface, the type that the query began
+/// with, the limit and the class that it reached.
+#[test]
+fn a_query_that_is_too_deep_should_fill_each_field_of_its_report() {
+    CONFORMS_DEPTH.set(3);
+    CONFORMS_BUDGET.set(100);
+    let (found, at) = with_probe(WRAPPER, ("T", "W<i64>"), "Eq", |checker, _, eq| {
+        assert!(query_nest(checker, eq, 4, Type::I64));
+        (
+            (checker.diagnostics.iter())
+                .map(|d| format!("{d:?}"))
+                .collect::<Vec<_>>(),
+            checker.classes[class_named(checker, "W").0].name.span,
+        )
+    });
+    // `Diagnostic` derives only `Clone` and `Debug`, so the test compares rendered text. The
+    // registry arm that builds the message and the label uses every field of the kind.
+    let expected: Diagnostic = DiagnosticKind::ConformanceTooDeep {
+        interface: "Eq".to_string(),
+        root: "W<W<W<W<i64>>>>".to_string(),
+        limit: 3,
+        holder: "W".to_string(),
+        at,
     }
-    let past = asking(&generic_chain(limit + 1), "eq", "G0<i64>");
-    codes_row(
-        "a chain one past the limit",
-        &past,
-        &[(Code::InstantiationCycle, name(&past, limit))],
-    );
-    // Two roots that reach the same enum report it once.
-    let decls = generic_chain(limit + 1);
-    let twice = calling(
-        &decls,
-        "x: G0<i64>, y: G0<bool>",
-        &["need_eq(x)", "need_eq(y)"],
-    );
-    codes_row(
-        "two roots",
-        &twice,
-        &[(Code::InstantiationCycle, name(&twice, limit))],
-    );
+    .into();
+    assert_eq!(found, [format!("{expected:?}")]);
+}
+
+/// A second root that goes past the limit through the same class reports nothing more.
+#[test]
+fn a_query_should_report_a_class_past_the_depth_limit_once() {
+    let limit = 600;
+    CONFORMS_DEPTH.set(limit);
+    CONFORMS_BUDGET.set(4 * limit);
+    let found = with_probe(WRAPPER, ("T", "W<i64>"), "Eq", |checker, _, eq| {
+        assert!(query_nest(checker, eq, limit + 1, Type::I64));
+        assert!(query_nest(checker, eq, limit + 1, Type::CHAR));
+        checker.diagnostics.len()
+    });
+    assert_eq!(found, 1);
+}
+
+/// A class or an enum that grows has its own error (E0140), so a query that reaches it past the
+/// limit gives no second report: a query that holds `W` nested as the limit allows, or one more,
+/// over a growing `G` ends with the one error of `G`, at the same place (#242).
+#[test]
+fn a_query_that_reaches_a_growing_declaration_past_the_depth_limit_should_report_it_once() {
+    let limit = 600;
+    CONFORMS_DEPTH.set(limit);
+    // Four programs, each about `limit` steps.
+    CONFORMS_BUDGET.set(8 * limit);
+    let class = "class G<T> {\n    next: G<[T]>?\n}\nextend<T: Eq> G<T>: Eq {\n    fn eq(self, other: Self) -> bool {\n        true\n    }\n}\n";
+    let rows = [
+        ("enum", "enum G<T> {\n    End\n    A(G<[T]>)\n}\n", (11, 7)),
+        ("class", class, (10, 11)),
+    ];
+    for (kind, decl, at) in rows {
+        for levels in [limit, limit + 1] {
+            let mut lets = String::new();
+            for i in 1..=levels {
+                writeln!(lets, "    let a{i} = W(value: a{})", i - 1)
+                    .expect("writing to a `String` should succeed");
+            }
+            let src = format!(
+                "{WRAPPER}{decl}fn main() {{\n    let a0: G<i64>? = None\n{lets}    print(a{levels} == a{levels})\n}}"
+            );
+            codes_row(
+                &format!("{levels} levels of `W` over a growing {kind}"),
+                &src,
+                &[(Code::InstantiationCycle, at)],
+            );
+        }
+    }
 }
 
 /// The walk that names the part of a failed query stops where the query did: below an enum whose
-/// query was `CONFORMS_DEPTH_LIMIT` deep, a part fails that the query never read, and the part
-/// that made the query fail is the one to name. Here `Deep` is at the end of the chain, past the
-/// limit, and `Shallow` is the payload that fails the query.
+/// query was too deep, a part fails that the query never read, and the part that made the query
+/// fail is the one to name. Here `O` nests as deep as the limit over `Node`, which has no `Eq`, and
+/// `Shallow` is the payload of `R` that fails the query.
 #[test]
 fn failing_leaf_should_stop_at_an_enum_that_a_query_was_too_deep_for() {
-    on_the_compiler_stack(|| {
-        CONFORMS_BUDGET.set(100_000);
-        let decls = format!(
-            "class Deep {{}}\nclass Shallow {{}}\nenum R<T> {{\n    A(G0<T>)\n    B(Shallow)\n}}\n{}",
-            generic_chain(CONFORMS_DEPTH_LIMIT + 1)
-        );
-        let leaf = with_probe(&decls, ("T", "R<Deep>"), "Eq", |checker, ty, eq| {
-            assert!(!checker.conforms(ty, eq, TypeArgs::NONE), "`Shallow` fails");
-            let leaf = checker.failing_leaf(ty, eq, TypeArgs::NONE);
-            checker.type_name(leaf)
-        });
-        assert_eq!(leaf, "Shallow");
+    let limit = 600;
+    CONFORMS_DEPTH.set(limit);
+    CONFORMS_BUDGET.set(2 * limit);
+    let decls = "class Node {}\nclass Shallow {}\nenum O<T> {\n    End\n    S(T)\n}\nenum R<T> {\n    A(T)\n    B(Shallow)\n}\n";
+    let leaf = with_probe(decls, ("T", "R<i64>"), "Eq", |checker, _, eq| {
+        let node = Type::intern(TypeKind::Class(
+            class_named(checker, "Node"),
+            TypeArgs::NONE,
+        ));
+        let deep = nested(checker, "O", limit, node);
+        let ty = nested(checker, "R", 1, deep);
+        assert!(!checker.conforms(ty, eq, TypeArgs::NONE), "`Shallow` fails");
+        let leaf = checker.failing_leaf(ty, eq, TypeArgs::NONE);
+        checker.type_name(leaf)
     });
+    assert_eq!(leaf, "Shallow");
+}
+
+/// The part that makes a failed query fail is found on a stack of 64 KiB, for a chain of enums
+/// that nests deeper than that stack allows recursing into (#242). `failing_leaf` follows the
+/// chain one level at a time, so it grows the stack as the query does.
+#[test]
+fn failing_leaf_should_follow_a_deep_chain_on_a_small_stack() {
+    const STACK: usize = 64 * 1024;
+    // With no stack guard in `leaf`, 39 levels abort on this stack and 38 do not: 400 levels
+    // are about ten times that.
+    let levels = 400;
+    let leaf = std::thread::Builder::new()
+        .stack_size(STACK)
+        .spawn(move || {
+            let decls = "class Node {}\nenum O<T> {\n    End\n    S(T)\n}\n";
+            with_probe(decls, ("T", "O<i64>"), "Eq", |checker, _, eq| {
+                let node = Type::intern(TypeKind::Class(
+                    class_named(checker, "Node"),
+                    TypeArgs::NONE,
+                ));
+                let ty = nested(checker, "O", levels, node);
+                assert!(!checker.conforms(ty, eq, TypeArgs::NONE), "`Node` fails");
+                let leaf = checker.failing_leaf(ty, eq, TypeArgs::NONE);
+                checker.type_name(leaf)
+            })
+        })
+        .expect("the thread should start")
+        .join()
+        .expect("the walk should not panic");
+    assert_eq!(leaf, "Node");
 }
 
 /// A declaration that grows or that no value can be built of has its own error, and the query

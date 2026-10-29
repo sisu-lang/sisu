@@ -82,8 +82,8 @@
 //! other links keep their growth. The link may be a cycle of names alone, which instantiates no
 //! class or enum, and its weight there would report a program that has its own error. It may also
 //! stand for another type of the place, which no conformance with a growing choice stands for; a
-//! growth through such a link is left to the query for a conformance, which stops at a depth
-//! (`CONFORMS_DEPTH_LIMIT`).
+//! growth through such a link is left to the query for a conformance, which stops when more than
+//! `CONFORMS_DEPTH_LIMIT` class or enum types are open (E0140).
 //!
 //! An interface with type parameters has choices for some arguments, and a use `P.Item` has
 //! arguments too. A choice made for arguments that hold no parameter is not meant by a use with
@@ -130,8 +130,8 @@ thread_local! {
     pub(super) static GATHER_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many array and optional levels `Graph::core` has taken off a type on this thread.
     pub(super) static CORE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many edges the graph of the marks of growing enums held on this thread, 0 when it was
-    /// not built.
+    /// How many edges the graph of the marks of growing declarations held on this thread, 0 when
+    /// it was not built.
     pub(super) static MARK_EDGES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many types `dbg_show` has read on this thread, to find what `dbg` shows of an operand.
     pub(super) static DBG_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -566,7 +566,8 @@ impl Graph {
     /// (`normalize` ends it where the type is used), so the weight of its growth would stand for
     /// no instance. The other links keep their growth. The link may also stand for another type
     /// of the place than the one that grows; a growth through that type that the graph misses is
-    /// left to the query for a conformance, which stops at a depth (`CONFORMS_DEPTH_LIMIT`).
+    /// left to the query for a conformance, which stops when more than `CONFORMS_DEPTH_LIMIT`
+    /// class or enum types are open (E0140).
     fn without_unbounded(&self, base: Type) -> Type {
         let mut kept = Vec::new();
         let mut inner = base;
@@ -1361,23 +1362,26 @@ impl Checker<'_> {
         }
     }
 
-    /// By `EnumId`, whether the enum is on a cycle that grows its type arguments (E0140): an enum
-    /// with a parameter in a component of the declarations' graph that holds a cycle of positive
-    /// weight (`Strands::grows`). The graph is the declarations' alone, `declaration_edges` over
-    /// `Strands`, with no hub. It needs the choices of the conformances for the growth of an
-    /// associated type, so it runs once they are recorded, before any query. With no associated
-    /// type, no weight is negative. Only the declarations that `growable_declarations` names
-    /// give edges, and the graph is not built when no enum with a parameter is one of them.
-    pub(super) fn growing_enums(&self) -> Vec<bool> {
+    /// By class and then enum, whether the declaration is on a cycle that grows its type
+    /// arguments (E0140): a declaration with a parameter in a component of the declarations'
+    /// graph that holds a cycle of positive weight (`Strands::grows`). The graph is the
+    /// declarations' alone, `declaration_edges` over `Strands`, with no hub. It needs the choices
+    /// of the conformances for the growth of an associated type, so it runs once they are
+    /// recorded, before any query. With no associated type, no weight is negative. Only the
+    /// declarations that `growable_declarations` names give edges, and the graph is not built
+    /// when no declaration with a parameter is one of them.
+    pub(super) fn growing_declarations(&self) -> Vec<bool> {
         let assocs = if self.holds_assoc {
             self.assocs(true)
         } else {
             Assocs::default()
         };
         let growable = self.growable_declarations(&assocs);
-        let enums = &growable[self.classes.len()..];
-        if !(self.enums.iter().zip(enums)).any(|(info, &on)| on && !info.type_params.is_empty()) {
-            return vec![false; self.enums.len()];
+        let counts: Vec<usize> = (self.classes.iter().map(|c| c.type_params.len()))
+            .chain(self.enums.iter().map(|e| e.type_params.len()))
+            .collect();
+        if !(counts.iter().zip(&growable)).any(|(&n, &on)| on && n > 0) {
+            return vec![false; counts.len()];
         }
         let mut graph = self.declaration_frame(assocs);
         let off: Vec<bool> = growable.iter().map(|&on| !on).collect();
@@ -1385,12 +1389,12 @@ impl Checker<'_> {
         #[cfg(test)]
         MARK_EDGES.set(graph.edges.len());
         let strands = Strands::of(&graph);
-        // Each component is searched once, whatever number of enums its nodes belong to.
+        // Each component is searched once, whatever number of declarations its nodes belong to.
         let mut decided: FxHashMap<usize, bool> = FxHashMap::default();
-        (self.enums.iter().enumerate())
-            .map(|(e, info)| {
-                let first = graph.first[graph.functions + graph.classes + e];
-                (first..first + info.type_params.len()).any(|node| {
+        (counts.iter().enumerate())
+            .map(|(d, &n)| {
+                let first = graph.first[graph.functions + d];
+                (first..first + n).any(|node| {
                     let k = strands.component[node];
                     *decided.entry(k).or_insert_with(|| strands.grows(&graph, k))
                 })
@@ -1459,9 +1463,9 @@ impl Checker<'_> {
 
     /// The edges that the field types of each class and the payload types of each enum give,
     /// except for a declaration in `unbuilt`, by class and then enum, whose own error stands for
-    /// its cycle, or that `growable_declarations` leaves out (`growing_enums`); and those that
-    /// the type of each choice gives. They read the declarations alone, so the marks of growing
-    /// enums use them with no function.
+    /// its cycle, or that `growable_declarations` leaves out (`growing_declarations`); and those
+    /// that the type of each choice gives. They read the declarations alone, so the marks of
+    /// growing declarations use them with no function.
     fn declaration_edges(&self, graph: &mut Graph, unbuilt: &[bool]) {
         let declared = graph.functions;
         for (c, class) in self.classes.iter().enumerate() {
