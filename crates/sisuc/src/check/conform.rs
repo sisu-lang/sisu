@@ -7,7 +7,7 @@ use super::extend::holder_of;
 use super::interface::{Bound, RequirementInfo};
 use super::{Body, Checker, Choice, Choices, Declared, Holder, own_args};
 use crate::ast;
-use crate::conformance::{self, find};
+use crate::conformance::{self, find, find_with};
 use crate::diagnostic::{ConformanceForm, DiagnosticKind, NotConformForm, Ungenerated};
 use crate::front_end::LANG_SOURCE;
 use crate::source::{PRELUDE_BASE, Source as Text, Span};
@@ -121,8 +121,12 @@ impl Checker<'_> {
                 let earlier = added.ats[&(interface, k)];
                 self.conforms_twice(d.interface, &common, (earlier, d.at));
                 // A clash on some instances leaves the listing in force for the others, where
-                // its rule can still fail.
-                if params == 0 || find(&self.conformances, interface, d.target, args).is_some() {
+                // its rule can still fail. So does a clash with blocks that all have bounds:
+                // `find` does not check them, and they can fail.
+                let unbounded = |c: &tir::Conformance| c.bounds.is_empty();
+                if params == 0
+                    || find_with(&self.conformances, interface, d.target, args, unbounded).is_some()
+                {
                     clashed.insert(i);
                 }
             }

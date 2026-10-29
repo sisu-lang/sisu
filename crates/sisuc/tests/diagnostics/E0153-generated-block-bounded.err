@@ -1,0 +1,19 @@
+error[E0152]: `E<T>` does not meet `Eq`
+ --> E0153-generated-block-bounded.sisu:2:12
+  |
+2 | enum E<T>: Eq {
+  |            ^^ `E<T>` gets no generated `Eq`, since `Node` has none
+  |
+  = help: fn eq(self, other: Self) -> bool
+
+error[E0153]: `E<T>` conforms to `Eq` twice
+ --> E0153-generated-block-bounded.sisu:6:22
+  |
+2 | enum E<T>: Eq {
+  |            -- first conformance here
+...
+6 | extend<U: Ord> E<U>: Eq {
+  |                      ^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0152, E0153

@@ -9,8 +9,8 @@ use rustc_hash::FxHashMap;
 use crate::graph::components;
 use crate::symbol::Symbol;
 use crate::tir::{
-    ChoicePlace, Conformances, Enum, EnumId, InterfaceId, LangInterfaces, Type, TypeArgs, TypeKind,
-    head_of,
+    ChoicePlace, Conformance, Conformances, Enum, EnumId, InterfaceId, LangInterfaces, Type,
+    TypeArgs, TypeKind, head_of,
 };
 
 #[cfg(test)]
@@ -48,11 +48,23 @@ pub(crate) fn find(
     ty: Type,
     args: TypeArgs,
 ) -> Option<(usize, TypeArgs)> {
+    find_with(conformances, interface, ty, args, |_| true)
+}
+
+/// `find`, among the conformances that `accept` takes.
+pub(crate) fn find_with(
+    conformances: &Conformances,
+    interface: InterfaceId,
+    ty: Type,
+    args: TypeArgs,
+    accept: impl Fn(&Conformance) -> bool,
+) -> Option<(usize, TypeArgs)> {
     let exact = conformances.exact(interface, ty, args);
     if let Some(&k) = exact.iter().find(|&&k| {
         #[cfg(test)]
         CANDIDATES_READ.set(CANDIDATES_READ.get() + 1);
-        conformances.get(interface, k).args == args
+        let c = conformances.get(interface, k);
+        c.args == args && accept(c)
     }) {
         return Some((k, TypeArgs::NONE));
     }
@@ -62,7 +74,7 @@ pub(crate) fn find(
         CANDIDATES_READ.set(CANDIDATES_READ.get() + 1);
         let c = conformances.get(interface, k);
         let bound = bind(c.target, c.type_params, ty)?;
-        (c.args.subst(bound.get()) == args).then_some((k, bound))
+        (c.args.subst(bound.get()) == args && accept(c)).then_some((k, bound))
     })
 }
 
