@@ -277,7 +277,7 @@ impl<'a> Lowering<'a> {
     /// Whether `dbg` of a value of `ty` may call a written `to_string`: the type, or a part of
     /// it, has a written `Display`, or a class with none has such a field.
     fn calls_dbg(&mut self, ty: Type) -> bool {
-        prints_by_helper(ty) && self.calls_interface(ty, self.program.lang.display, true)
+        self.calls_interface(ty, self.program.lang.display, true)
     }
 
     fn calls_interface(&mut self, ty: Type, interface: tir::InterfaceId, dbg: bool) -> bool {

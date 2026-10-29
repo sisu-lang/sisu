@@ -5,7 +5,6 @@
 //! and all three the same way; property 4 is that the rewritten copy runs as the program does;
 //! property 5 is that the program prints the known integer answers.
 
-use std::borrow::Cow;
 use std::cell::RefCell;
 use std::fmt::Write as _;
 use std::fs::{self, File};
@@ -441,7 +440,7 @@ const PANIC: &str = "sisu: panic at ";
 /// `run`'s stderr, with the `<file>:<line>:<col>: ` taken out of the line of each `dbg` and of a
 /// panic: the panic's only from the last line, and only when the run exited 101, so any other line
 /// compares as written.
-fn unlocated(run: &Run) -> Cow<'_, [u8]> {
+fn unlocated(run: &Run) -> Vec<u8> {
     let stderr = &run.stderr;
     let body = stderr.strip_suffix(b"\n").unwrap_or(stderr);
     let last = body
@@ -455,23 +454,15 @@ fn unlocated(run: &Run) -> Cow<'_, [u8]> {
         .flatten();
     let panic = match location {
         Some(end) if run.exit == Exit::Code(101) => {
-            Cow::Owned([&stderr[..after], &stderr[after + end + 2..]].concat())
+            [&stderr[..after], &stderr[after + end + 2..]].concat()
         }
-        _ => Cow::Borrowed(&stderr[..]),
+        _ => stderr.clone(),
     };
-    if !panic
-        .split(|&b| b == b'\n')
-        .any(|line| dbg_location(line) > 0)
-    {
-        return panic;
-    }
-    let lines = panic.split_inclusive(|&b| b == b'\n');
-    Cow::Owned(
-        lines
-            .flat_map(|line| &line[dbg_location(line)..])
-            .copied()
-            .collect(),
-    )
+    panic
+        .split_inclusive(|&b| b == b'\n')
+        .flat_map(|line| &line[dbg_location(line)..])
+        .copied()
+        .collect()
 }
 
 /// The length of the `<file>.sisu:<line>:<col>: ` that starts `line` when `dbg` wrote it, else 0.

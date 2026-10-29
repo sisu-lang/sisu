@@ -165,13 +165,13 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// `reuse`, and `name` is a class's or an enum's name, `string`, or `[<element name>]` for an
     /// array (`[Node?]`, `[[i64]]`).
     pub(super) fn helper(&self, kind: Helper, ty: Type) -> FunctionValue<'ctx> {
-        // A type that holds no class is written the same in both modes, by one helper.
-        let kind = match kind {
-            Helper::Show(Mode::Dbg) if !self.holds_class(ty) => Helper::Show(Mode::Print),
-            Helper::ShowComponent(Mode::Dbg) if !self.holds_class(ty) => {
-                Helper::ShowComponent(Mode::Print)
-            }
-            kind => kind,
+        // A type that holds no class is written the same in both modes, by one helper. Only the
+        // `dbg` helper of a type that holds a class asks for a `dbg` component helper, and the
+        // component holds a class too.
+        let kind = if kind == Helper::Show(Mode::Dbg) && !self.holds_class(ty) {
+            Helper::Show(Mode::Print)
+        } else {
+            kind
         };
         let key = (kind, ty);
         if let Some(function) = self.helpers.borrow().get(&key) {

@@ -1238,6 +1238,27 @@ mod tests {
         assert_eq!(records("print(same(Circle(r: 1), Circle(r: 2)))"), 1);
     }
 
+    /// `dbg` of an `Outer<i64>` shows its field `inner`, an `Inner<i64>` whose written
+    /// `to_string` nothing else calls: the output holds the record of that `to_string`, whether
+    /// `dbg` takes the object, an array of it or an optional of it. `print` of the object writes
+    /// only its name, so it makes no record.
+    #[test]
+    fn dbg_should_make_a_record_for_a_written_to_string_in_a_field_but_print_should_not() {
+        let decls = "class Inner<T> {\n    v: T\n}\nextend<T> Inner<T>: Display {\n    fn to_string(self) -> string {\n        \"inner\"\n    }\n}\nclass Outer<T> {\n    inner: Inner<T>\n}\n";
+        for (shown, records) in [
+            ("print(o)", 0),
+            ("print([o])", 0),
+            ("let _ = dbg(o)", 1),
+            ("let _ = dbg([o])", 1),
+            ("let _ = dbg(Some(o))", 1),
+        ] {
+            let program = instantiated(&format!(
+                "{decls}fn main() {{\n    let o = Outer(inner: Inner(v: 1))\n    {shown}\n    print(o.inner.v)\n}}"
+            ));
+            assert_eq!(program.conformances.iter().count(), records, "{shown}");
+        }
+    }
+
     #[test]
     fn each_argument_list_should_be_instantiated_once() {
         let program = instantiated(&format!(
