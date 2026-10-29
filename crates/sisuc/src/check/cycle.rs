@@ -521,9 +521,7 @@ impl Graph {
     /// the target, the way a hub feeds the methods of a conformance. The type chosen gives the
     /// edges on from there (`Choice`).
     fn choose(&mut self, holder: usize, ty: Type, base: Type, hub: usize, site: Span) {
-        let Some(base) = self.without_unbounded(base) else {
-            return;
-        };
+        let base = self.without_unbounded(base);
         let from = self.node(holder, base);
         self.edges.push(Edge {
             from,
@@ -540,13 +538,13 @@ impl Graph {
     }
 
     /// `base` without the links of its chain that have unbounded growth for the arguments of
-    /// their use, which pass their base at no cost; `None` when no parameter is left. Such a link
-    /// may be a cycle of names alone, which instantiates no class or enum (`normalize` ends it
-    /// where the type is used), so the weight of its growth would stand for no instance. The
-    /// other links keep their growth. The link may also stand for another type of the place than
-    /// the one that grows; a growth through that type is left to the query for a conformance,
-    /// which stops at a depth (`CONFORMS_DEPTH_LIMIT`).
-    fn without_unbounded(&self, base: Type) -> Option<Type> {
+    /// their use, which pass their base at no cost; the type parameter at the end of the chain
+    /// stays. Such a link may be a cycle of names alone, which instantiates no class or enum
+    /// (`normalize` ends it where the type is used), so the weight of its growth would stand for
+    /// no instance. The other links keep their growth. The link may also stand for another type
+    /// of the place than the one that grows; a growth through that type that the graph misses is
+    /// left to the query for a conformance, which stops at a depth (`CONFORMS_DEPTH_LIMIT`).
+    fn without_unbounded(&self, base: Type) -> Type {
         let mut kept = Vec::new();
         let mut inner = base;
         while let TypeKind::Assoc(next, interface, args, k) = inner.kind() {
@@ -559,7 +557,7 @@ impl Graph {
         for &(interface, args, k) in kept.iter().rev() {
             inner = Type::intern(TypeKind::Assoc(inner, interface, args, k));
         }
-        inner.has_param().then_some(inner)
+        inner
     }
 
     /// The declaration of the first hub of the choices; the others follow the choices.
