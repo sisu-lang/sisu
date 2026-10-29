@@ -304,13 +304,13 @@ impl Checker<'_> {
                 // whatever the element is. A bound helps only for an argument that is an element.
                 let first = self.diagnostics.len();
                 self.labels(args);
-                let start = self.diagnostics.len();
+                let start = self.diagnostics.errors;
                 let (argument, mismatched) = self.operand(&args[0].value, Some(element));
                 // An argument with a type that reported an error in it, such as a branch that is
-                // not an element, has failed. So has one with no type, but a type parameter keeps
-                // its report beside the error of an argument with no type.
+                // not an element, has failed. A warning in it is not an error. So has one with no
+                // type, but a type parameter keeps its report beside the error of such an argument.
                 let failed = if type_of(&argument).is_some() {
-                    self.diagnostics.len() > start
+                    self.diagnostics.errors > start
                 } else {
                     !element.has_param()
                 };

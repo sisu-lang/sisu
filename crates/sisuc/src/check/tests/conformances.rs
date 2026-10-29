@@ -3605,6 +3605,50 @@ fn contains_should_report_an_argument_that_is_not_an_element_first() {
     }
 }
 
+/// A warning in an operand is not an error in it: the missing operator is still reported.
+#[test]
+fn operators_should_report_a_missing_operator_beside_a_warning_in_an_operand() {
+    let node = "class Node {}\n";
+    let rows = [
+        (
+            "contains of a parameter",
+            "fn f<T>(xs: [T], x: T) -> bool { xs.contains({ let mut y = x; y }) }".to_string(),
+            vec![
+                (Code::ParamLacks, "xs.contains("),
+                (Code::NeverReassigned, "y = x"),
+            ],
+        ),
+        (
+            "contains of a class",
+            format!(
+                "{node}fn f(xs: [Node], n: Node) -> bool {{ xs.contains({{ let mut y = n; y }}) }}"
+            ),
+            vec![
+                (Code::NoOperator, "xs.contains("),
+                (Code::NeverReassigned, "y = n"),
+            ],
+        ),
+        (
+            "equality of a parameter",
+            "fn f<T>(a: T, b: T) -> bool { a == { let mut y = b; y } }".to_string(),
+            vec![(Code::ParamLacks, "a =="), (Code::NeverReassigned, "y = b")],
+        ),
+        (
+            "order of a parameter",
+            "fn f<T>(a: T, b: T) -> bool { a < { let mut y = b; y } }".to_string(),
+            vec![(Code::ParamLacks, "a <"), (Code::NeverReassigned, "y = b")],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(code, text)| (code, where_is(&src, text)))
+            .collect();
+        codes_row(row, &src, &expected);
+    }
+}
+
 #[test]
 fn operators_should_check_without_eq_where_none_is_needed() {
     let rows = [
