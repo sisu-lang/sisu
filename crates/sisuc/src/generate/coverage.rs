@@ -111,7 +111,7 @@ const IDENTITY: &str = "reach: a class is compared with `is` or against `None`";
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 97] = [
+const REACH: [&str; 98] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -204,7 +204,8 @@ const REACH: [&str; 97] = [
     "reach: `print` writes a compound value",
     "reach: `print` runs a written `to_string` inside a value",
     "reach: an interpolation writes a compound part",
-    "reach: an interpolation part keeps the pretty flag",
+    "reach: a `#` part of a type parameter keeps its row",
+    "reach: a `#` part of a compound type keeps its row",
     "reach: `to_string` runs on a generated `Display`",
     "reach: a top-level optional is printed",
     "reach: a top-level optional is interpolated",
@@ -2328,9 +2329,16 @@ impl Walk {
             }
             tir::ExprKind::Interpolate { parts, formats } => {
                 self.mark("tir::ExprKind::Interpolate");
-                // The checked tree: a part of a type parameter keeps `#` until `mono` decides.
-                if formats.iter().any(|format| format.pretty) {
-                    self.mark("reach: an interpolation part keeps the pretty flag");
+                // The checked tree: a `#` row stays for a part of a type parameter, which `mono`
+                // decides for each type argument, and for a part of a compound type.
+                for format in formats.iter().filter(|format| format.pretty) {
+                    let ty = parts[format.part].ty;
+                    if matches!(ty.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)) {
+                        self.mark("reach: a `#` part of a type parameter keeps its row");
+                    }
+                    if is_compound(ty) {
+                        self.mark("reach: a `#` part of a compound type keeps its row");
+                    }
                 }
                 if parts.iter().any(|part| is_compound(part.ty)) {
                     self.mark("reach: an interpolation writes a compound part");

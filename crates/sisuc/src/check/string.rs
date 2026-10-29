@@ -150,7 +150,7 @@ impl Checker<'_> {
             part: i,
             pad,
             precision,
-            // A type that writes one piece is the same flat, so `#` is dropped.
+            // `#` gives the same text for a type that writes one piece, so the checker drops it.
             // A type parameter keeps `#`: `mono` decides it for each type argument.
             pretty: spec.pretty && makes_group(ty),
         };
