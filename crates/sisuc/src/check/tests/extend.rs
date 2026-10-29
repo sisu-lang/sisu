@@ -94,9 +94,9 @@ fn an_unknown_method_of_an_array_should_suggest_a_method_of_a_covering_prelude_b
     assert!(d.fixes().is_empty(), "{d:?}");
 }
 
-/// A report of an unknown method on an `i64` reads the methods of the prelude's blocks of `i64`,
-/// and not each method of the program's `extend` blocks. Reading all of them costs `n x n` steps
-/// for `n` blocks and `n` reports.
+/// A report of an unknown method on an `i64` reads the methods of the prelude's blocks of `i64`.
+/// It does not read each method of the program's `extend` blocks. Reading all of them costs
+/// `n x n` steps for `n` blocks and `n` reports.
 #[test]
 fn unknown_methods_of_an_i64_should_read_only_the_methods_of_the_prelude() {
     let steps = |n: usize| {
@@ -114,8 +114,9 @@ fn unknown_methods_of_an_i64_should_read_only_the_methods_of_the_prelude() {
     assert_near_linear(steps(20), steps(40), steps(60));
 }
 
-/// A prelude block of a built-in type that is not plain, or has a `mut self` method, is a mistake
-/// in the prelude: the checker reports it as the internal error, and does not panic elsewhere.
+/// A prelude block of a built-in type that is not plain, or has a `mut self` method, is a
+/// mistake in the prelude. The checker reports it as the internal error. It does not panic
+/// elsewhere.
 #[test]
 fn a_prelude_block_of_a_built_in_type_should_be_plain_without_mut_self() {
     let interface = "interface Sh {\n    fn q(self) -> i64\n}\n";

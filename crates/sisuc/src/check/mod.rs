@@ -454,7 +454,7 @@ struct Checker<'src> {
     /// the method, so that a method call reads only the blocks that hold its name.
     extension_methods: FxHashMap<(Holder, Symbol), Vec<(usize, tir::FuncId)>>,
     /// The methods that the prelude's blocks give an array or an `i64`, each with its holder and
-    /// block: the few that a report of an unknown method reads, in place of every block's.
+    /// block. A report of an unknown method reads these, not the methods of every block.
     builtin_methods: Vec<(Holder, Symbol, usize)>,
     /// The names of the types that a broken `extend` block, or a block of a conformance that
     /// failed, may have given methods to. A method no one finds on them is poisoned.

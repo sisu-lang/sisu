@@ -262,9 +262,9 @@ impl<'a> Checker<'_> {
         })
     }
 
-    /// The type that the target of `extend` names: a class or an enum, or an array or `i64` in a
-    /// plain block of the prelude with no `mut self` method. Reports a target that is not one,
-    /// and `None` for it.
+    /// The type that the target of `extend` names. It is a class or an enum. In a plain block of
+    /// the prelude with no `mut self` method, it can be an array or `i64`. Reports a target that
+    /// is none of these, and gives `None` for it.
     fn extend_target(&mut self, extend: &ast::Extend) -> Option<Type> {
         let ty = &extend.target;
         if self.is_interface_name(ty) {
