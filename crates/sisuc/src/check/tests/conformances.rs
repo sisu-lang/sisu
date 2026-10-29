@@ -691,6 +691,13 @@ fn growing_and_never_built_declarations_should_give_their_own_error_alone() {
             vec![(Code::InstantiationCycle, (16, 10))],
         ),
         (
+            "a growing enum that a dbg shows",
+            format!(
+                "{nest}fn show<T>(x: Nest<T>) {{\n    dbg(x)\n}}\nfn main() {{\n    let n: Nest<i64> = Nest.End\n    show(n)\n}}"
+            ),
+            vec![(Code::InstantiationCycle, (3, 10))],
+        ),
+        (
             "a growing enum under the bound of a class",
             format!("class C<T: Eq> {{}}\n{nest}enum U {{\n    A(C<Nest<i64>>)\n}}\nfn main() {{}}"),
             vec![(Code::InstantiationCycle, (4, 10))],
@@ -2270,14 +2277,7 @@ fn implicit_print_should_close_an_instantiation_cycle() {
 /// field, in an array or in an enum payload is a cycle for `dbg`.
 #[test]
 fn implicit_dbg_should_close_an_instantiation_cycle() {
-    let w = "class W<T> {\n    x: T\n}\nclass Wrap<T> {\n    v: W<T>\n}\nclass Hold<T> {\n    v: W<[T]>\n}\nenum Pick<U> {\n    One(U)\n}\nenum Pair<U> {\n    Two(U, U)\n}\nenum Tree<U> {\n    Leaf(U)\n    Node(Tree<U>, Tree<U>)\n}\nenum Both<U> {\n    One(Hold<U>)\n}\nenum Phantom<U, P> {\n    One(U)\n}\n";
-    let main = "fn main() {\n    print(W(x: 1))\n}";
-    let display = |body: &str| {
-        format!(
-            "{w}extend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        {body}\n        \"w\"\n    }}\n}}\n{main}"
-        )
-    };
-    let rows = [
+    dbg_cycle_rows(&[
         (
             "a dbg of a class that grows",
             "dbg(W(x: [self.x]))",
@@ -2325,6 +2325,20 @@ fn implicit_dbg_should_close_an_instantiation_cycle() {
             Some("dbg(Pick.One(Hold(v: W(x: [self.x]))))"),
         ),
         (
+            "a print of a class whose field type grows",
+            "print(Hold(v: W(x: [self.x])))",
+            None,
+        ),
+        ("a dbg that does not grow", "dbg(self.x)", None),
+    ]);
+}
+
+/// The same through an enum: a payload that holds the class, a recursive enum, and an enum that
+/// shows no argument. The class in a payload of the enum is reported at the payload.
+#[test]
+fn implicit_dbg_should_close_an_instantiation_cycle_through_an_enum() {
+    dbg_cycle_rows(&[
+        (
             "a dbg of a recursive enum that holds such a class",
             "let _ = dbg(Tree.Leaf(Hold(v: W(x: [self.x]))))",
             Some("dbg(Tree.Leaf(Hold(v: W(x: [self.x]))))"),
@@ -2333,6 +2347,16 @@ fn implicit_dbg_should_close_an_instantiation_cycle() {
             "a dbg of an array of a recursive enum that holds such a class",
             "let _ = dbg([Tree.Leaf(Hold(v: W(x: [self.x])))])",
             Some("dbg([Tree.Leaf(Hold(v: W(x: [self.x])))])"),
+        ),
+        (
+            "a dbg of an enum that holds the class in an array",
+            "let _ = dbg(Bag.Many([Hold(v: W(x: [self.x]))]))",
+            Some("dbg(Bag.Many([Hold(v: W(x: [self.x]))]))"),
+        ),
+        (
+            "a dbg of an enum that holds the class in an optional",
+            "let _ = dbg(Bag.Maybe(Some(Hold(v: W(x: [self.x])))))",
+            Some("dbg(Bag.Maybe(Some(Hold(v: W(x: [self.x])))))"),
         ),
         // No payload holds `P`, so `dbg` shows nothing of the argument `Hold<T>`.
         (
@@ -2346,14 +2370,20 @@ fn implicit_dbg_should_close_an_instantiation_cycle() {
             "let _ = dbg(Both.One(Hold(v: W(x: [self.x]))))",
             Some("Hold<U>)"),
         ),
-        (
-            "a print of a class whose field type grows",
-            "print(Hold(v: W(x: [self.x])))",
-            None,
-        ),
-        ("a dbg that does not grow", "dbg(self.x)", None),
-    ];
-    for (row, body, cycle) in rows {
+    ]);
+}
+
+/// Checks each row `(name, body, cycle)`: the program whose `Display` of `W<T>` runs `body`
+/// reports an E0140 at the text `cycle`, or checks clean when it is `None`.
+fn dbg_cycle_rows(rows: &[(&str, &str, Option<&str>)]) {
+    let w = "class W<T> {\n    x: T\n}\nclass Wrap<T> {\n    v: W<T>\n}\nclass Hold<T> {\n    v: W<[T]>\n}\nenum Pick<U> {\n    One(U)\n}\nenum Pair<U> {\n    Two(U, U)\n}\nenum Tree<U> {\n    Leaf(U)\n    Node(Tree<U>, Tree<U>)\n}\nenum Both<U> {\n    One(Hold<U>)\n}\nenum Phantom<U, P> {\n    One(U)\n}\nenum Bag<U> {\n    Many([U])\n    Maybe(U?)\n}\n";
+    let main = "fn main() {\n    print(W(x: 1))\n}";
+    let display = |body: &str| {
+        format!(
+            "{w}extend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        {body}\n        \"w\"\n    }}\n}}\n{main}"
+        )
+    };
+    for &(row, body, cycle) in rows {
         let src = display(body);
         match cycle {
             Some(text) => codes_row(

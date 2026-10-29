@@ -1262,13 +1262,10 @@ impl Checker<'_> {
     }
 
     /// The edges of the generated `dbg` node of each enum: what `dbg` shows of each payload type,
-    /// as `dbg_show` reads it, in terms of the enum's parameters. An enum that grows, or that no
-    /// value can be built of, has none, as for the `Eq` and `Display` nodes.
+    /// as `dbg_show` reads it, in terms of the enum's parameters. An enum that grows gets its
+    /// growth at the site of its own error, which a cycle reports once.
     fn dbg_edges(&self, graph: &mut Graph, shown: &[Vec<bool>]) {
         for (e, info) in self.enums.iter().enumerate() {
-            if self.marked[e] {
-                continue;
-            }
             let holder = graph.dbg_first + e;
             for variant in &info.variants {
                 for (ty, &span) in variant.fields.iter().zip(&variant.spans) {
