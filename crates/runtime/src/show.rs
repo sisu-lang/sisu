@@ -285,11 +285,11 @@ impl Recorder {
         &self.text[span.at..span.at + span.len]
     }
 
-    /// The width that each group needs on one line, at the index of its `Open`: its flat width,
-    /// and 1 more when a `,` follows it. One pass from the last event to the first, with a stack
-    /// of the widths of the groups still open, since a group can hold 1,000,000 levels. A text
-    /// piece that holds a line break has no flat width, so it is `usize::MAX`, and every group
-    /// around it needs more than a line.
+    /// The width that each group needs on one line, at the index of its `Open`. It is its flat
+    /// width, and 1 more when a `,` follows it. The pass goes from the last event to the first.
+    /// It keeps a stack of the widths of the groups still open, since a group can hold 1,000,000
+    /// levels. A text piece that holds a line break has no flat width, so it is `usize::MAX`. Then
+    /// every group around it needs more than a line.
     fn group_needs(&self) -> Vec<usize> {
         let mut needs = vec![0; self.events.len()];
         // The width so far of the group that the pass is inside, and of each group around it,
@@ -367,9 +367,9 @@ struct Frame {
     indent: usize,
 }
 
-/// The second pass of the layout: the events from the first to the last, with a stack of the
-/// groups that are open, and the column of the text written so far. The layout starts at column
-/// 0, wherever the text lands.
+/// The second pass of the layout. It goes over the events from the first to the last. It keeps a
+/// stack of the groups that are open, and the column of the text written so far. The layout
+/// starts at column 0, wherever the text lands.
 struct Layout<'a, O: Output> {
     out: &'a mut O,
     col: usize,
@@ -444,12 +444,12 @@ impl<O: Output> Layout<'_, O> {
 
 /// Lays the events of `recorder` out into `out` to fit 80 columns. Each group is its open text,
 /// its children and its close text. Flat, the children are on one line, joined by `, `. Broken,
-/// each child has a line, four columns in from the group, and all but the last end in `,`; the
-/// close text has a line at the group's own indentation. Groups are decided from the outermost:
-/// one stays flat when its column, its flat width and a following `,` fit in 80 columns, and a
-/// flat group's children are flat. A group with no child is always flat. Widths count Unicode
-/// scalar values. Two passes, each a loop over the events, so the work is linear in the events,
-/// the text recorded and the text written.
+/// each child has a line, four columns in from the group, and all but the last end in `,`. The
+/// close text has a line at the group's own indentation. Groups are decided from the outermost.
+/// A group stays flat when its column, its flat width and a following `,` fit in 80 columns. The
+/// children of a flat group are flat. A group with no child is always flat. Widths count Unicode
+/// scalar values. There are two passes, each a loop over the events. So the work is linear in
+/// the events, the text recorded and the text written.
 fn lay_out(recorder: &Recorder, out: &mut impl Output) {
     let needs = recorder.group_needs();
     let mut layout = Layout {
@@ -622,10 +622,10 @@ pub unsafe extern "C" fn sisu_show_pad(sink: *mut Sink, mark: usize, width: usiz
 }
 
 /// Starts a pretty sink at `sink` over `inner`. The sink records the pieces and the group events
-/// that it gets, as a flat sink would write them, and copies the bytes of each piece before the
-/// call returns. `sisu_show_pretty_finish` lays them out into `inner`, which has taken no text
-/// from the pretty sink until then. A pretty sink takes no `sisu_show_mark` and `sisu_show_pad`:
-/// `#` takes no width.
+/// that it gets, as a flat sink would write them. It copies the bytes of each piece before the
+/// call returns. `sisu_show_pretty_finish` lays them out into `inner`. Until then `inner` has
+/// taken no text from the pretty sink. A pretty sink takes no `sisu_show_mark` and
+/// `sisu_show_pad`, as `#` takes no width.
 ///
 /// # Safety
 ///
