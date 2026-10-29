@@ -1,0 +1,14 @@
+class W<T> {
+    x: T
+}
+
+extend<T> W<T>: Display {
+    fn to_string(self) -> string {
+        let _ = dbg(W(x: [self.x]))
+        "w"
+    }
+}
+
+fn main() {
+    print(W(x: 1))
+}
