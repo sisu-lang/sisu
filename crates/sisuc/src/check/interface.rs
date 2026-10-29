@@ -11,8 +11,8 @@ use super::{BindingKind, Body, Checker, Choice, Choices, Declared, Definition};
 use crate::ast;
 use crate::conformance::{CHOICE_DEPTH_LIMIT, Entered, Generated, find, generated};
 use crate::diagnostic::{
-    AddBound, Definition as Kind, DiagnosticKind, NoOperatorForm, NotConformForm, NotInterface,
-    UnknownForm, WideKind,
+    AddBound, BoundSite, Definition as Kind, DiagnosticKind, NoOperatorForm, NotConformForm,
+    NotInterface, UnknownForm, WideKind,
 };
 use crate::graph::components;
 use crate::lang::Dispatch;
@@ -1676,25 +1676,41 @@ impl Checker<'_> {
         }
     }
 
-    /// The bound that would make the type parameter `ty` conform to `interface`, written with the
-    /// bounds it has: `None` unless `ty` is a type parameter in scope and `interface` takes no
-    /// type parameters.
+    /// The bound that would make `ty` conform to `interface`, written with the bounds it has:
+    /// `None` unless `ty` is a type parameter in scope, or an associated type that the user's
+    /// program declares, and `interface` takes no type parameters.
     pub(super) fn add_bound(&self, ty: Type, interface: InterfaceId) -> Option<AddBound> {
-        let TypeKind::Param(name, place) = ty.kind() else {
-            return None;
-        };
-        if self.body.type_param(name) != Some(place as usize)
-            || self.interfaces[interface.0].type_params.len() != 1
-        {
+        if self.interfaces[interface.0].type_params.len() != 1 {
             return None;
         }
-        let have = self.body.bounds.get(place as usize).into_iter().flatten();
-        let mut bounds: Vec<String> = have.map(|b| self.bound_text(b.interface, b.args)).collect();
+        let (site, have): (_, &[Bound]) = match ty.kind() {
+            TypeKind::Param(name, place) if self.body.type_param(name) == Some(place as usize) => (
+                BoundSite::Param(name.to_string()),
+                self.body
+                    .bounds
+                    .get(place as usize)
+                    .map_or(&[], Vec::as_slice),
+            ),
+            // No help edits the prelude.
+            TypeKind::Assoc(_, owner, _, k) => {
+                let info = &self.interfaces[owner.0].assoc[k as usize];
+                if info.name.span.in_prelude() {
+                    return None;
+                }
+                let site = BoundSite::Assoc {
+                    interface: self.interfaces[owner.0].name.name.to_string(),
+                    name: info.name.name.to_string(),
+                };
+                (site, &info.bounds)
+            }
+            _ => return None,
+        };
+        let mut bounds: Vec<String> = have
+            .iter()
+            .map(|b| self.bound_text(b.interface, b.args))
+            .collect();
         bounds.push(self.bound_text(interface, TypeArgs::NONE));
-        Some(AddBound {
-            param: name.to_string(),
-            bounds,
-        })
+        Some(AddBound { site, bounds })
     }
 
     /// Checks that each argument of the applied type `ty`, written at `ats`, meets the bounds

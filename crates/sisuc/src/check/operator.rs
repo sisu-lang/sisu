@@ -9,7 +9,7 @@ use super::{
     payload, type_of, wrap,
 };
 use crate::ast::{self, CompareOp, ExprKind};
-use crate::diagnostic::{Diagnostic, DiagnosticKind, Literal};
+use crate::diagnostic::{Diagnostic, DiagnosticKind, Literal, PeelIs};
 use crate::lang::{self, Dispatch};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
@@ -684,20 +684,24 @@ impl Checker<'_> {
             let nested = matches!(ty.kind(), TypeKind::Optional(p) if matches!(p.kind(), TypeKind::Optional(_)));
             // Peeling a layer helps only when an object is under the rest.
             if nested && (matches!(base.kind(), TypeKind::Class(..)) || object_param) {
-                let text = |e: &ast::Expr| self.source.file.text(e.span).to_string();
-                let peeled = |e: &ast::Expr| {
-                    if std::ptr::eq(e, side) {
-                        format!("({} ?? None)", text(e))
-                    } else {
-                        text(e)
+                // Each side peels its own extra layers: peeling one side leaves the other.
+                let layers = [self.extra_layers(&l), self.extra_layers(&r)];
+                let text = |e: &ast::Expr, extra: usize| {
+                    let mut text = self.source.file.text(e.span).to_string();
+                    for _ in 0..extra {
+                        text = format!("({text} ?? None)");
                     }
+                    text
                 };
                 let kind = DiagnosticKind::IsNeedsObjects {
                     found: self.type_name(ty),
                     at: side.span,
                     help: false,
                     add: None,
-                    peel: Some(format!("{} is {}", peeled(lhs), peeled(rhs))),
+                    peel: Some(PeelIs {
+                        text: format!("{} is {}", text(lhs, layers[0]), text(rhs, layers[1])),
+                        many: layers.iter().any(|&n| n > 1),
+                    }),
                 };
                 self.diagnostics.push(kind.into());
                 return Err(Poisoned::error());
@@ -722,6 +726,27 @@ impl Checker<'_> {
             }
         }
         self.compared(span, l, r, |lhs, rhs| tir::ExprKind::Is { lhs, rhs })
+    }
+
+    /// The `?` layers of `checked` that `is` must peel before it can compare: all but one, when
+    /// a class or an object parameter lies under them; else none.
+    fn extra_layers(&mut self, checked: &Checked) -> usize {
+        let Some(mut base) = type_of(checked) else {
+            return 0;
+        };
+        let mut layers = 0_usize;
+        while let TypeKind::Optional(inner) = base.kind() {
+            base = inner;
+            layers += 1;
+        }
+        let object = match base.kind() {
+            TypeKind::Class(..) => true,
+            TypeKind::Param(..) | TypeKind::Assoc(..) => {
+                self.conforms(base, self.lang.any_object, TypeArgs::NONE)
+            }
+            _ => false,
+        };
+        if object { layers.saturating_sub(1) } else { 0 }
     }
 
     /// The `bool` node `kind` makes of `l` and `r`, of one type once a `T` beside a `T?` is
