@@ -559,7 +559,7 @@ fn dbg_should_check_clean_with_the_type_of_its_argument() {
 #[test]
 fn dbg_should_report_the_argument_errors_of_print() {
     for (statement, code, pos) in [
-        ("dbg(greet())", Code::PrintArgument, (3, 5)),
+        ("dbg(greet())", Code::PrintArgument, (3, 9)),
         ("dbg(panic(\"x\"))", Code::PrintNever, (3, 9)),
         ("dbg()", Code::PrintArgument, (3, 5)),
         ("dbg(1, 2)", Code::PrintArgument, (3, 5)),
