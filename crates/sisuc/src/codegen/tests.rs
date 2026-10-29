@@ -3331,6 +3331,26 @@ fn dbg_should_share_the_helper_of_a_type_that_holds_a_class_with_a_written_to_st
     }
 }
 
+/// An enum with a written `to_string` shows that text, so `dbg` writes no field of a class in its
+/// payload. The helper of a value that holds only such an enum is the `print` helper.
+#[test]
+fn dbg_should_share_the_helper_of_an_enum_with_a_written_to_string() {
+    let context = Context::create();
+    let decls = "class Plain {\n    v: i64\n}\nenum Slot {\n    Full(Plain)\n}\nextend Slot: Display {\n    fn to_string(self) -> string {\n        \"slot\"\n    }\n}\nenum Pick {\n    One(Slot)\n}\n";
+    for (row, value) in [
+        ("an enum", "Slot.Full(Plain(v: 1))"),
+        ("an array", "[Slot.Full(Plain(v: 1))]"),
+        ("an optional", "Some(Slot.Full(Plain(v: 1)))"),
+        ("an enum payload", "Pick.One(Slot.Full(Plain(v: 1)))"),
+    ] {
+        let src = format!(
+            "{decls}fn main() {{\n    let value = {value}\n    print(value)\n    dbg(value)\n}}"
+        );
+        let ir = compiled(&context, &src).print_to_string().to_string();
+        assert!(dbg_helpers(&ir).is_empty(), "{row}: {ir}");
+    }
+}
+
 /// A recursive enum that holds no class is written by one helper, whether `print` or `dbg` asks.
 /// So is a pair of enums that hold each other: no class is behind either of them.
 #[test]

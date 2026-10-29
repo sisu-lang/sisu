@@ -5,6 +5,7 @@
 //      standard output holds only what `print` writes, in order
 // AND a class shows its fields one level deep, and a class cycle ends after one level
 // AND a value is laid out from column 0 after the prefix, and breaks as `{x:#}` does
+// AND an enum with a written `to_string` shows that text, not the fields of a class in its payload
 // AND `dbg` returns its argument, evaluated once, and a counted value is released once
 fn main() {
     let x = 7
@@ -109,6 +110,18 @@ let y = dbg(f(x)) + 1
     let _ = dbg(b)
     print(direct) // stdout: heap 1
     print(b.s) // stdout: new
+
+    // An enum with a written `to_string` shows that text. It shows no field of the class in its
+    // payload, as it would for an enum with none, also in an array and in an optional.
+    let slot = Slot.Full(Leaf(v: 1))
+    dbg(slot)
+    dbg([slot])
+    let maybe: Slot? = slot
+    dbg(maybe)
+    let seat = Seat.Taken(Cell(value: 2))
+    dbg(seat)
+    let bare = Bare.Full(Leaf(v: 1))
+    dbg(bare)
 }
 
 fn f(x: i64) -> i64 {
@@ -236,4 +249,28 @@ extend<T: Mark> Gate<T>: Display {
     fn to_string(self) -> string {
         "gate {self.v.mark()}"
     }
+}
+
+enum Slot {
+    Full(Leaf)
+}
+
+extend Slot: Display {
+    fn to_string(self) -> string {
+        "slot"
+    }
+}
+
+enum Seat<T> {
+    Taken(Cell<T>)
+}
+
+extend<T> Seat<T>: Display {
+    fn to_string(self) -> string {
+        "seat"
+    }
+}
+
+enum Bare {
+    Full(Leaf)
 }

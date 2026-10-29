@@ -645,8 +645,9 @@ pub(crate) fn calls_written<P: Payloads + ?Sized, F: Fields + ?Sized>(
 
 /// Whether the concrete type `ty` holds a class with no written `Display`. It does when it is
 /// one, or when an array, an optional or an enum payload (any depth) is. Only such a class is
-/// written with its fields by `dbg`. A `dbg` helper of a type that holds none is the `print`
-/// helper. The answers of `held` are the types decided so far, which later queries read.
+/// written with its fields by `dbg`. A class or an enum with a written `Display` shows that text,
+/// so the walk stops at it. A `dbg` helper of a type that holds none is the `print` helper. The
+/// answers of `held` are the types decided so far, which later queries read.
 pub(crate) fn holds_class<P: Payloads + ?Sized>(
     (conformances, display): (&Conformances, InterfaceId),
     enums: &P,
@@ -654,7 +655,10 @@ pub(crate) fn holds_class<P: Payloads + ?Sized>(
     held: &mut FxHashMap<Type, bool>,
 ) -> bool {
     reaches(held, ty, |key, parts_of| {
-        if matches!(key.kind(), TypeKind::Class(..)) && !has_written(conformances, display, key) {
+        if has_written(conformances, display, key) {
+            return false;
+        }
+        if matches!(key.kind(), TypeKind::Class(..)) {
             return true;
         }
         parts(conformances, enums, key, parts_of);
@@ -2454,16 +2458,16 @@ mod tests {
         }
     }
 
-    /// A class with a written `Display` shows its text, so it is no class that `dbg` writes with
-    /// fields. A value that holds only such a class holds none, and one that also holds a class
-    /// with no written `Display` does.
+    /// A class or an enum with a written `Display` shows its text, so `dbg` writes no field of it.
+    /// A value that holds only such types holds none, and one that also holds a class with no
+    /// written `Display` does.
     #[test]
-    fn holds_a_class_should_not_count_a_class_with_a_written_display() {
+    fn holds_a_class_should_not_count_a_class_or_an_enum_with_a_written_display() {
         let program = instantiated(
-            "class Leaf {\n    v: i64\n}\nextend Leaf: Display {\n    fn to_string(self) -> string {\n        \"leaf\"\n    }\n}\nclass Plain {\n    v: i64\n}\nenum Pick {\n    One(Leaf)\n}\nenum Both {\n    One(Leaf)\n    Two(Plain)\n}",
+            "class Leaf {\n    v: i64\n}\nextend Leaf: Display {\n    fn to_string(self) -> string {\n        \"leaf\"\n    }\n}\nclass Plain {\n    v: i64\n}\nenum Pick {\n    One(Leaf)\n}\nenum Both {\n    One(Leaf)\n    Two(Plain)\n}\nenum Slot {\n    Full(Plain)\n}\nextend Slot: Display {\n    fn to_string(self) -> string {\n        \"slot\"\n    }\n}\nenum Row {\n    One(Slot)\n    Two(Plain)\n}\nenum Held {\n    One(Slot)\n}",
         );
-        let [leaf, plain, pick, both] =
-            ["Leaf", "Plain", "Pick", "Both"].map(|n| named(&program, n));
+        let [leaf, plain, pick, both, slot, row, held] =
+            ["Leaf", "Plain", "Pick", "Both", "Slot", "Row", "Held"].map(|n| named(&program, n));
         for (row, ty, expected) in [
             ("a class with a written Display", leaf, false),
             ("an array of it", Type::array(leaf), false),
@@ -2471,6 +2475,10 @@ mod tests {
             ("an enum payload of it", pick, false),
             ("a class with none", plain, true),
             ("an enum that holds one of each", both, true),
+            ("an enum with a written Display", slot, false),
+            ("an array of it", Type::array(slot), false),
+            ("an enum that holds only it", held, false),
+            ("an enum that holds it and a class with none", row, true),
         ] {
             let mut held = FxHashMap::default();
             assert_eq!(holds_a_class(&program, ty, &mut held), expected, "{row}");
@@ -2526,7 +2534,7 @@ mod tests {
     #[test]
     fn calls_written_should_follow_the_fields_of_one_class_only_for_dbg() {
         let program = instantiated(
-            "class Leaf {\n    v: i64\n}\nextend Leaf: Display {\n    fn to_string(self) -> string {\n        \"leaf\"\n    }\n}\nclass Outer {\n    inner: Leaf\n}\nclass Shell {\n    outer: Outer\n}\nenum Pick {\n    One(Outer)\n}",
+            "class Leaf {\n    v: i64\n}\nextend Leaf: Display {\n    fn to_string(self) -> string {\n        \"leaf\"\n    }\n}\nclass Outer {\n    inner: Leaf\n}\nclass Shell {\n    outer: Outer\n}\nenum Pick {\n    One(Outer)\n}\nenum Slot {\n    Full(Outer)\n}\nextend Slot: Display {\n    fn to_string(self) -> string {\n        \"slot\"\n    }\n}",
         );
         let outer = named(&program, "Outer");
         let shell = named(&program, "Shell");
@@ -2538,6 +2546,12 @@ mod tests {
             ("an enum payload", pick, false, true),
             ("a class that holds that class", shell, false, false),
             ("a written one itself", named(&program, "Leaf"), true, true),
+            (
+                "an enum with a written one",
+                named(&program, "Slot"),
+                true,
+                true,
+            ),
         ] {
             assert_eq!(calls_display(&program, ty, false), print, "{row}, print");
             assert_eq!(calls_display(&program, ty, true), dbg, "{row}, dbg");

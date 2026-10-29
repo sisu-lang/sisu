@@ -1259,6 +1259,20 @@ mod tests {
         }
     }
 
+    /// An enum `Slot` with a written `to_string` shows that text, so `dbg` of it, of an array of
+    /// it or of an enum that holds it makes the record of that `to_string` alone, and none of the
+    /// `to_string` of `Inner`, the class in its payload.
+    #[test]
+    fn dbg_should_make_no_record_below_an_enum_with_a_written_to_string() {
+        let decls = "class Inner<T> {\n    v: T\n}\nextend<T> Inner<T>: Display {\n    fn to_string(self) -> string {\n        \"inner\"\n    }\n}\nenum Slot<T> {\n    Full(Inner<T>)\n}\nextend<T> Slot<T>: Display {\n    fn to_string(self) -> string {\n        \"slot\"\n    }\n}\nenum Pick<T> {\n    One(Slot<T>)\n}\n";
+        for shown in ["dbg(s)", "dbg([s])", "dbg(Some(s))", "dbg(Pick.One(s))"] {
+            let program = instantiated(&format!(
+                "{decls}fn main() {{\n    let s = Slot.Full(Inner(v: 1))\n    {shown}\n}}"
+            ));
+            assert_eq!(program.conformances.iter().count(), 1, "{shown}");
+        }
+    }
+
     #[test]
     fn each_argument_list_should_be_instantiated_once() {
         let program = instantiated(&format!(
