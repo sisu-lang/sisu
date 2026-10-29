@@ -9,7 +9,7 @@ use super::{
     payload, type_of, wrap,
 };
 use crate::ast::{self, CompareOp, ExprKind};
-use crate::diagnostic::{Diagnostic, DiagnosticKind, Literal};
+use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, Literal};
 use crate::lang::{self, Dispatch};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
@@ -335,10 +335,8 @@ impl Checker<'_> {
         // by the second operand, if that is a `string`.
         let mut unlabelled = None;
         let mut lacks = false;
-        // The type of the first operand that has one, with one `?` removed. Whether each later
-        // operand has it too. Where the report of a lacking `Ord` stands, for an operand of the
-        // leader's type, once no operand is of another type.
-        let (mut shared, mut one_type) = (None, true);
+        // Where the report of a lacking `Ord` stands, for an operand of the leader's type, once no
+        // operand is of another type.
         let mut pending = None;
         for (i, e) in operands.iter().enumerate() {
             if held && leader == Some(i) {
@@ -349,14 +347,17 @@ impl Checker<'_> {
                 Some((_, operand)) => operand,
                 None => self.value(e, (!by_char).then(|| want.unwrap_or(UNKNOWN))),
             };
+            // A mismatch inside an operand, as an element of another type, is a mistake of the
+            // operands, not a missing `<`. Another error, as an unknown name, is not.
+            let inside = !arithmetic
+                && self.diagnostics[start..]
+                    .iter()
+                    .any(|d| d.code() == Code::Mismatch);
             if rank(e) != 0 {
                 deferred.extend(self.diagnostics.drain(start..));
             }
             let char_value = type_of(&value) == Some(Type::CHAR);
             let got = type_of(&value);
-            if let Some(ty) = got.map(payload) {
-                one_type &= *shared.get_or_insert(ty) == ty;
-            }
             // The leader of a comparison that no `Ord` orders has no `<`, though it is a concrete
             // type: an array, an enum, a class or a `bool`. A later operand of another type is
             // a mismatch, which `settled_by` reports.
@@ -447,18 +448,18 @@ impl Checker<'_> {
             if type_of(&operand).is_none() {
                 want = None;
             }
-            mismatched |= m;
+            mismatched |= m || inside;
             failed |= got.is_none() && rank(e) == 0;
             checked.push(operand);
             before = got;
         }
         // The missing `<` is the mistake only when no operand is of another type. A bound helps
-        // only when the operands are one type.
+        // only when the operands are one type, which they are then.
         if let Some((report, at, param, i)) = pending
             && !mismatched
         {
             let ord = self.lang.ord;
-            let d = self.missing_operator(at, param, &op(i), ord, false, one_type);
+            let d = self.missing_operator(at, param, &op(i), ord, false, true);
             // A type with no `<` makes the chain `Error`, as a mismatch does.
             mismatched |= matches!(d, DiagnosticKind::NoOperator { .. });
             self.diagnostics.insert(report, d.into());

@@ -3605,6 +3605,62 @@ fn contains_should_report_an_argument_that_is_not_an_element_first() {
     }
 }
 
+/// A mismatch inside an operand is the only error: the operands are not one type, so the missing
+/// operator is not reported.
+#[test]
+fn operators_should_report_only_a_mismatch_inside_an_operand() {
+    let rows = [
+        (
+            "equality of arrays of two element types",
+            "fn f() -> bool { [1] == [true] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "inequality of arrays of two element types",
+            "fn f() -> bool { [1] != [true] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "order of arrays of two element types",
+            "fn f() -> bool { [1] < [true] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "order of an array of a parameter and an array of a number",
+            "fn f<T>(a: [T]) -> bool { a < [5] }",
+            vec![(Code::Mismatch, "5]")],
+        ),
+        (
+            "order of nested arrays of two element types",
+            "fn f() -> bool { [[1]] < [[true]] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "a chain with an inner mismatch in the middle operand",
+            "fn f<T>(a: [T]) -> bool { a < [5] < a }",
+            vec![(Code::Mismatch, "5]")],
+        ),
+        (
+            "a chain of three arrays with an inner mismatch in the middle operand",
+            "fn f() -> bool { [1] < [true] < [2] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "arrays of another element type for arrays of numbers",
+            "fn f(xs: [[i64]]) -> bool { xs.contains([true]) }",
+            vec![(Code::Mismatch, "true")],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(code, text)| (code, where_is(&src, text)))
+            .collect();
+        codes_row(row, &src, &expected);
+    }
+}
+
 /// A warning in an operand is not an error in it: the missing operator is still reported.
 #[test]
 fn operators_should_report_a_missing_operator_beside_a_warning_in_an_operand() {
