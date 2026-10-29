@@ -120,6 +120,8 @@ use crate::types::{Head, write_args, write_method};
 thread_local! {
     /// How many edges the last instantiation graph on this thread held.
     pub(super) static EDGES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many heads and calls of `Graph::matching` have been read on this thread.
+    pub(super) static MATCHING_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many edges Bellman–Ford has relaxed on this thread.
     pub(super) static BELLMAN_FORD_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many nodes the search for a cycle has read to gather the nodes of the components.
@@ -214,8 +216,6 @@ struct Edge {
 /// conformance's parameters, as a hub is: the base of the associated type feeds them, and the
 /// type chosen gives the edges.
 struct Choice {
-    /// The class or enum that the conformance has as its target, which a diagnostic names.
-    head: Head,
     /// The type chosen, and where it is written.
     ty: Type,
     at: Span,
@@ -647,13 +647,24 @@ impl Graph {
         let slot =
             (assocs.slot(place, args)).expect("a use whose place has a hub should have a slot");
         let heads = assocs.heads[assocs.first[link.0] + l as usize].as_ref()?;
-        let made =
-            move |head: &Head| (assocs.by_head.get(&(place, *head))).map_or(&[][..], Vec::as_slice);
-        // One read for each head, and one for each choice that a head makes.
-        let read = heads.len() + heads.iter().map(|head| made(head).len()).sum::<usize>();
+        #[cfg(test)]
+        MATCHING_READS.set(MATCHING_READS.get() + 1);
+        let made = move |head: &Head| {
+            #[cfg(test)]
+            MATCHING_READS.set(MATCHING_READS.get() + 1);
+            (assocs.by_head.get(&(place, *head))).map_or(&[][..], Vec::as_slice)
+        };
+        // One read for each head, and one for each choice that a head makes. The count stops at
+        // the cap, so that a use reads at most `MATCHING_CHOICES` and one more.
+        let within = heads.len() <= MATCHING_CHOICES
+            && (heads.iter())
+                .try_fold(heads.len(), |read, head| {
+                    Some(read + made(head).len()).filter(|&read| read <= MATCHING_CHOICES)
+                })
+                .is_some();
         // shortcut: above K matching choices a use feeds the whole hub;
         // raise K if a real program hits it.
-        (read <= MATCHING_CHOICES).then(|| {
+        within.then(|| {
             // An open use means any choice of the place, a closed one the choices of its slot
             // and those for arguments that hold a parameter.
             (heads.iter().flat_map(made).copied()).filter(move |&c| {
@@ -1130,12 +1141,10 @@ impl Checker<'_> {
     }
 
     /// The name of the declaration `holder` of the graph, which a diagnostic gives. A generated
-    /// node stands for its enum, and a choice for the target of its conformance.
+    /// node stands for its enum. A choice is never a holder here: `headline` and the spellings
+    /// of a generated call name the declaration that holds it.
     fn node_owner_name(&self, graph: &Graph, holder: usize) -> String {
         match holder.checked_sub(graph.functions) {
-            _ if holder >= graph.choices_first => self
-                .head(graph.assocs.choices[holder - graph.choices_first].head)
-                .to_string(),
             _ if holder >= graph.display_first => self.enums[holder - graph.display_first]
                 .name
                 .name
@@ -1663,7 +1672,6 @@ impl Checker<'_> {
                     .or_default()
                     .push(assocs.choices.len());
                 assocs.choices.push(Choice {
-                    head,
                     ty,
                     at: self.choice_ats[&(interface, index, k)],
                     depths: param_depths(conformance.target, conformance.type_params),

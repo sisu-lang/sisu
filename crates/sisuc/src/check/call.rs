@@ -568,6 +568,8 @@ impl Checker<'_> {
         Ok(match (receiver, other) {
             (Ok(lhs), Ok(rhs)) if !labeled => {
                 let eq = interface == self.lang.eq;
+                // No program shows this label for `less`: only numbers and strings have a
+                // generated `Ord`, and no cycle can pass them.
                 self.spellings.insert(span, Lowered::Method);
                 Ok(self.spilled(span, Type::BOOL, vec![lhs, rhs], |operands| {
                     let [lhs, rhs]: [tir::Expr; 2] = operands

@@ -1445,8 +1445,8 @@ fn enum_that_holds_the_choice_of_a_link_that_cannot_grow_should_not_be_marked() 
     codes(&src, &[(Code::NotConform, argument(&src, "need_eq(x)"))]);
 }
 
-/// The edges of a use that can mean `n` choices stay in proportion to the program: above
-/// `MATCHING_CHOICES`, the use feeds the hub of all the choices.
+/// The edges of a use that can mean `n` choices stay in proportion to the program, and so do the
+/// reads that find them: above `MATCHING_CHOICES`, the use feeds the hub of all the choices.
 #[test]
 fn uses_of_a_link_with_many_choices_should_cost_edges_in_proportion_to_the_program() {
     // `n` classes that each choose `Link` as the next class and make a choice of `Item`, so that
@@ -1467,11 +1467,15 @@ fn uses_of_a_link_with_many_choices_should_cost_edges_in_proportion_to_the_progr
         }
         src += "fn main() {}";
         cycle::EDGES.set(0);
+        cycle::MATCHING_READS.set(0);
         let found: Vec<Code> = diags(&src).iter().map(Diagnostic::code).collect();
         assert!(!found.contains(&Code::InstantiationCycle), "{found:?}");
-        cycle::EDGES.get()
+        (cycle::EDGES.get(), cycle::MATCHING_READS.get())
     };
-    assert_near_linear(edges(640), edges(1280), edges(1920));
+    let (one, two, three) = (edges(640), edges(1280), edges(1920));
+    assert_near_linear(one.0, two.0, three.0);
+    // A use reads at most the cap, so the reads, too, stay in proportion to the program.
+    assert_near_linear(one.1, two.1, three.1);
 }
 
 #[test]
@@ -2760,8 +2764,15 @@ fn cycle_through_a_lowered_call_should_be_reported_at_the_spelling_of_the_call()
     ];
     for (row, src, label, note) in &rows {
         let notes: Vec<_> = note.iter().map(|note| where_is(src, note)).collect();
-        let expected = [(Code::InstantiationCycle, where_is(src, label), notes)];
-        assert_eq!(found(src), expected, "row `{row}`");
+        let (line, col) = where_is(src, label);
+        // The text of the label pins its end: a label over the receiver alone would differ.
+        diagnostic_row(
+            row,
+            src,
+            Code::InstantiationCycle,
+            (line, col, label),
+            &notes,
+        );
     }
 }
 
