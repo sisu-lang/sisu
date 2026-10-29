@@ -791,6 +791,7 @@ impl Gen<'_> {
             calls.push("both(qboth)".to_string());
         }
         calls.extend(self.language_bounds(!declared.is_empty()));
+        calls.extend(self.associated_cycle());
         self.w.text("fn shapes() ");
         self.w.open();
         for call in &calls {
@@ -869,6 +870,58 @@ impl Gen<'_> {
             calls.push("let _ = lang_eq(N0.A)".to_string());
         }
         calls
+    }
+
+    /// Declares the interface `Nest`, the class `NestW<T>` and the enum `NestE<T: Nest>`. The
+    /// associated type `Item` of `NestW<T>` is `NestE<NestW<T>>`, and the payload of `NestE` is
+    /// `T.Item` or `T.Item?`. So the payload of `NestE<NestW<i64>>` is the enum itself, a cycle
+    /// that no declared name shows. Declares `nest_depth`, which takes a value apart, and `nest`.
+    /// `nest` builds a value of two to four levels, compares it with `==`, prints it and drops
+    /// it. Gives the statements of `shapes` that use them. One draw chooses the form of the
+    /// payload, and another chooses the depth.
+    fn associated_cycle(&mut self) -> Vec<String> {
+        let optional = self.pick(2) == 1;
+        let depth = 2 + self.pick(3);
+        let ty = "NestE<NestW<i64>>";
+        let (payload, arm) = if optional {
+            (
+                "T.Item?",
+                "match x {\n            None => 1\n            Some(y) => 1 + nest_depth(y)\n        }",
+            )
+        } else {
+            ("T.Item", "1 + nest_depth(x)")
+        };
+        self.w.text(&format!(
+            "interface Nest {{ type Item }}\nclass NestW<T>: Nest {{ type Item = NestE<NestW<T>> }}\nenum NestE<T: Nest> {{\n    End\n    A({payload})\n}}\nfn nest_depth(e: {ty}) -> i64 {{\n    match e {{\n        NestE.End => 0\n        NestE.A(x) => {arm}\n    }}\n}}"
+        ));
+        self.w.line();
+        let mut body = format!("let v0: {ty} = NestE.End");
+        for level in 1..=depth {
+            let below = level - 1;
+            write!(body, "\n    let v{level}: {ty} = NestE.A(v{below})")
+                .expect("writing to a `String` should succeed");
+        }
+        let below = depth - 1;
+        write!(
+            body,
+            "\n    print(v{depth})\n    print(v{depth} == v{depth})\n    print(v{depth} == v{below})"
+        )
+        .expect("writing to a `String` should succeed");
+        if optional {
+            write!(
+                body,
+                "\n    let none: {ty} = NestE.A(None)\n    print(none == v1)\n    print(none == none)"
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        self.w.text(&format!(
+            "fn nest() -> i64 {{\n    {body}\n    nest_depth(v{depth})\n}}"
+        ));
+        self.w.line();
+        vec![
+            "let _nest = NestW<i64>()".to_string(),
+            "print(nest())".to_string(),
+        ]
     }
 
     /// A generic class `R<k><T>` that conforms to the interface `k`, and to those it inherits,
