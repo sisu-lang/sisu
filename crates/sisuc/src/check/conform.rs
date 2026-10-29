@@ -137,10 +137,12 @@ impl Checker<'_> {
         // The choices of the associated types are recorded: an enum that grows through one is
         // marked, before the first query.
         self.holds_assoc = self.field_assoc();
-        let growing = self.growing_enums();
-        for (marked, grows) in self.marked.iter_mut().zip(growing) {
+        let mut growing = self.growing_declarations();
+        let enums = growing.split_off(self.classes.len());
+        for (marked, grows) in self.marked.iter_mut().zip(enums) {
             *marked |= grows;
         }
+        self.growing_classes = growing;
         // Every conformance is known now: the checks that waited for them run, and a type that
         // fails is unknown before a requirement is compared with a method.
         self.run_pending_bounds();

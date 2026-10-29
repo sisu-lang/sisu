@@ -688,6 +688,8 @@ fn a_query_that_is_too_deep_should_fill_each_field_of_its_report() {
             checker.classes[class_named(checker, "W").0].name.span,
         )
     });
+    // `Diagnostic` derives only `Clone` and `Debug`, so the test compares rendered text. The
+    // registry arm that builds the message and the label uses every field of the kind.
     let expected: Diagnostic = DiagnosticKind::ConformanceTooDeep {
         interface: "Eq".to_string(),
         root: "W<W<W<W<i64>>>>".to_string(),
@@ -713,28 +715,36 @@ fn a_query_should_report_a_class_past_the_depth_limit_once() {
     assert_eq!(found, 1);
 }
 
-/// An enum that grows has its own error (E0140), so a query that reaches it past the limit gives
-/// no second report: a query that holds `W` nested as the limit allows, or one more, over a
-/// growing `G` ends with the one error of `G`, at the same place (#242).
+/// A class or an enum that grows has its own error (E0140), so a query that reaches it past the
+/// limit gives no second report: a query that holds `W` nested as the limit allows, or one more,
+/// over a growing `G` ends with the one error of `G`, at the same place (#242).
 #[test]
-fn a_query_that_reaches_a_growing_enum_past_the_depth_limit_should_report_it_once() {
+fn a_query_that_reaches_a_growing_declaration_past_the_depth_limit_should_report_it_once() {
     let limit = 600;
     CONFORMS_DEPTH.set(limit);
-    CONFORMS_BUDGET.set(4 * limit);
-    for levels in [limit, limit + 1] {
-        let mut lets = String::new();
-        for i in 1..=levels {
-            writeln!(lets, "    let a{i} = W(value: a{})", i - 1)
-                .expect("writing to a `String` should succeed");
+    // Four programs, each about `limit` steps.
+    CONFORMS_BUDGET.set(8 * limit);
+    let class = "class G<T> {\n    next: G<[T]>?\n}\nextend<T: Eq> G<T>: Eq {\n    fn eq(self, other: Self) -> bool {\n        true\n    }\n}\n";
+    let rows = [
+        ("enum", "enum G<T> {\n    End\n    A(G<[T]>)\n}\n", (11, 7)),
+        ("class", class, (10, 11)),
+    ];
+    for (kind, decl, at) in rows {
+        for levels in [limit, limit + 1] {
+            let mut lets = String::new();
+            for i in 1..=levels {
+                writeln!(lets, "    let a{i} = W(value: a{})", i - 1)
+                    .expect("writing to a `String` should succeed");
+            }
+            let src = format!(
+                "{WRAPPER}{decl}fn main() {{\n    let a0: G<i64>? = None\n{lets}    print(a{levels} == a{levels})\n}}"
+            );
+            codes_row(
+                &format!("{levels} levels of `W` over a growing {kind}"),
+                &src,
+                &[(Code::InstantiationCycle, at)],
+            );
         }
-        let src = format!(
-            "{WRAPPER}enum G<T> {{\n    End\n    A(G<[T]>)\n}}\nfn main() {{\n    let a0: G<i64>? = None\n{lets}    print(a{levels} == a{levels})\n}}"
-        );
-        codes_row(
-            &format!("{levels} levels of `W` over a growing enum"),
-            &src,
-            &[(Code::InstantiationCycle, (11, 7))],
-        );
     }
 }
 
@@ -762,13 +772,15 @@ fn failing_leaf_should_stop_at_an_enum_that_a_query_was_too_deep_for() {
     assert_eq!(leaf, "Shallow");
 }
 
-/// The part that makes a failed query fail is found on a stack of 256 KiB, for a chain of enums
+/// The part that makes a failed query fail is found on a stack of 64 KiB, for a chain of enums
 /// that nests deeper than that stack allows recursing into (#242). `failing_leaf` follows the
 /// chain one level at a time, so it grows the stack as the query does.
 #[test]
 fn failing_leaf_should_follow_a_deep_chain_on_a_small_stack() {
-    const STACK: usize = 256 * 1024;
-    let levels = 600;
+    const STACK: usize = 64 * 1024;
+    // With no stack guard in `leaf`, 39 levels abort on this stack and 38 do not: 400 levels
+    // are about ten times that.
+    let levels = 400;
     let leaf = std::thread::Builder::new()
         .stack_size(STACK)
         .spawn(move || {
@@ -786,7 +798,7 @@ fn failing_leaf_should_follow_a_deep_chain_on_a_small_stack() {
         })
         .expect("the thread should start")
         .join()
-        .expect("the walk should not overflow the stack");
+        .expect("the walk should not panic");
     assert_eq!(leaf, "Node");
 }
 
