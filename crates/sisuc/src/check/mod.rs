@@ -156,6 +156,21 @@ struct ClassInfo {
 }
 
 impl ClassInfo {
+    /// A class with no field, bound, method or choice of associated type yet.
+    fn new(name: ast::Ident, type_params: Vec<Symbol>, bounded: bool) -> Self {
+        Self {
+            name,
+            type_params,
+            bounded,
+            bounds: Vec::new(),
+            fields: Vec::new(),
+            index: FxHashMap::default(),
+            methods: FxHashMap::default(),
+            names_to_string: false,
+            assoc: Rc::default(),
+        }
+    }
+
     /// Adds a field after the ones it has. The caller checks that no field has its name.
     fn add_field(&mut self, field: FieldInfo) {
         self.index.insert(field.name.name, self.fields.len());
@@ -352,7 +367,8 @@ thread_local! {
     /// How many interfaces the closures of a type's conformances have put in a visited set, read
     /// as an inherited one, or traced back to the interface that inherits them.
     pub(super) static CLOSURE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many steps the lookups of a class's field by name have taken.
+    /// How many calls the lookups of a class's field by name have made. The tick counts calls of
+    /// the one lookup helper, `ClassInfo::field`, and not the steps inside it.
     pub(super) static FIELD_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many times `conforms` has looked for the conformance of a class or an enum, not
     /// counting an answer it kept.
@@ -1077,10 +1093,6 @@ impl Checker<'_> {
     /// any of them. They share a namespace. `FuncId`s run in source order, a class's or an
     /// enum's methods at its place.
     /// The first `user_items` of `items` are the user's: `self.prelude` is where the rest start.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one arm per kind of item, so the first pass reads in one place"
-    )]
     fn collect_names(&mut self, items: &[&ast::Item], user_items: usize, broken: &[ast::Broken]) {
         let mut first = FxHashMap::default();
         let mut next_function = 0;
@@ -1094,17 +1106,9 @@ impl Checker<'_> {
                 ast::Item::Class(class) => {
                     let type_params = self.type_params(&[], &class.type_params);
                     let id = tir::ClassId(self.classes.len());
-                    self.classes.push(ClassInfo {
-                        name: class.name.clone(),
-                        type_params,
-                        bounded: class.type_params.iter().any(|p| !p.bounds.is_empty()),
-                        bounds: Vec::new(),
-                        fields: Vec::new(),
-                        index: FxHashMap::default(),
-                        methods: FxHashMap::default(),
-                        names_to_string: false,
-                        assoc: Rc::default(),
-                    });
+                    let bounded = class.type_params.iter().any(|p| !p.bounds.is_empty());
+                    self.classes
+                        .push(ClassInfo::new(class.name.clone(), type_params, bounded));
                     let name = &class.name;
                     if !self.built_in(name)
                         && self.first_callable(&mut first, Definition::Class, name)

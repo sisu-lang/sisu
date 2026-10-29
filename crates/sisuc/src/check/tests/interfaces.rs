@@ -1505,7 +1505,7 @@ fn an_inherited_generic_interface_should_be_conformed_to_as_a_plain_one() {
 }
 
 /// An extension's method is checked against the fields of its class through the class's field
-/// index: each of the `n` methods takes one lookup, and not a scan of the `n` fields.
+/// index. Each of the `n` methods takes one lookup, and not a scan of the `n` fields.
 #[test]
 fn extension_methods_should_read_the_fields_of_their_class_once() {
     let indexed = |n: usize| {

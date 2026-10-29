@@ -1959,8 +1959,8 @@ fn class_cycle_search_reads_linearly() {
     assert_near_linear(reads(100), reads(200), reads(300));
 }
 
-/// A class of `n` fields and a generic method `g`, and a `main` that makes one object `c` and
-/// runs the statement `statement(i)` for each `i` below `n`.
+/// A class of `n` fields and a generic method `g`. Its `main` makes one object `c`. Then it runs
+/// the statement `statement(i)` for each `i` below `n`.
 fn field_program(n: usize, statement: impl Fn(usize) -> String) -> String {
     let lines = |line: &dyn Fn(usize) -> String| (0..n).map(line).collect::<Vec<_>>().concat();
     let fields = lines(&|i| format!("    mut f{i}: i64\n"));
@@ -1974,7 +1974,7 @@ fn field_program(n: usize, statement: impl Fn(usize) -> String) -> String {
     )
 }
 
-/// How many steps the lookups of a field by name took while `src` was checked.
+/// How many calls of the field lookup helper happened while `src` was checked.
 fn field_lookups(src: &str) -> usize {
     FIELD_LOOKUPS.set(0);
     assert!(checked(src).0.is_some(), "{src}");
@@ -1982,8 +1982,8 @@ fn field_lookups(src: &str) -> usize {
 }
 
 /// Each read of a field is one lookup in the field index of its class. A scan of the fields
-/// costs `n(n + 1) / 2` steps for `n` reads, 2080 for 64: quadratic shows at 2 fields, and 64 is
-/// more than 10x that.
+/// costs `n(n + 1) / 2` steps for `n` reads, which is 2080 for 64. Quadratic cost shows at 2
+/// fields, and 64 is more than 10x that.
 #[test]
 fn field_reads_should_look_up_each_field_in_one_step() {
     let src = field_program(64, |i| format!("c.f{i}"));
@@ -1997,8 +1997,8 @@ fn field_assignments_should_look_up_each_field_in_one_step() {
     assert_eq!(field_lookups(&src), 64);
 }
 
-/// Each call of a generic method checks whether the class has a field of the method's name:
-/// one lookup, and not a scan of the fields. A scan costs `n x n` steps for `n` calls.
+/// Each call of a generic method checks whether the class has a field of the method's name. That
+/// is one lookup, and not a scan of the fields. A scan costs `n x n` steps for `n` calls.
 #[test]
 fn generic_method_calls_should_look_up_the_fields_in_one_step() {
     let src = field_program(64, |_| "c.g<i64>()".to_owned());
