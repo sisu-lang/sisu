@@ -237,7 +237,7 @@ fn main() {
 
 The rules:
 
-- An operator that computes with a `T` or compares it, such as `+`, `<` or `==`, is an error ([E0139](../diagnostics/E0139.md)), unless a bound gives it: `T: Eq` gives `==` and `!=`, and `T: Ord` gives `<`, `<=`, `>` and `>=` ([Bounds](#bounds)). The help names the bound to add. `contains` on a `[T]` uses `==`, so it needs `T: Eq`. `x != None` and `x == None` on a `T?` are valid. `x == y` on two `T?` needs `T: Eq`.
+- An operator that computes with a `T` or compares it, such as `+`, `<` or `==`, is an error ([E0139](../diagnostics/E0139.md)), unless a bound gives it: `T: Eq` gives `==` and `!=`, and `T: Ord` gives `<`, `<=`, `>` and `>=` ([Bounds](#bounds)). The help names the bound to add. `contains` on a `[T]` uses `==`, so it needs `T: Eq`. `x != None` and `x == None` on a `T?` are valid. `x == y` on two `T?` needs `T: Eq`. When the other operand has another type, the error is the type mismatch, whatever the bounds are: `a == b` with a `T` and a `U` is [E0047](../diagnostics/E0047.md), and `a < 5` is [E0032](../diagnostics/E0032.md).
 - `!`, `&&` and `||` take only a `bool`, so a `T` there is a type mismatch ([E0032](../diagnostics/E0032.md)).
 - A `T` has the methods that its bounds give, and `to_string()`, which needs no bound. It has no other method and no field ([E0063](../diagnostics/E0063.md)).
 - `is` does not apply to a `T`, because `T` can stand for a type that is not a class ([E0046](../diagnostics/E0046.md)). The bound `T: AnyObject` allows it ([Bounds](#bounds)). The help names the bound to add.
