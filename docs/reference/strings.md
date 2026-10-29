@@ -282,7 +282,9 @@ Add(
 The rules:
 
 - A hand-written `to_string` gives one piece of text that the layout does not break.
-- A part is on one line when its text fits in 80 columns, counted from where the part starts on its line. A part that does not fit puts each element on its own line, four spaces further in, and its closing bracket on its own line. Each element is laid out the same way, from the column where it starts.
+- The layout starts at column 0. Text before the part on its line does not count, so a line can pass 80 columns.
+- A part is on one line when its text fits in 80 columns. A part that does not fit puts each element on its own line, four spaces further in. Its closing bracket goes on its own line.
+- Each element is laid out the same way, from the column where it starts in the layout.
 - `#` does not combine with a width, an alignment or a precision. `{x:#>8}` is an error ([E0109](../diagnostics/E0109.md)).
 - `#` on an `i64`, a `u8`, an `f64`, a `bool`, a `char` or a `string` changes nothing.
 - There is no function for it: `print("{x:#}")` is the one way.

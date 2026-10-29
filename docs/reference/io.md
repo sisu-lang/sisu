@@ -69,7 +69,7 @@ example.sisu:6:17: double(21) = 42
 
 The rules:
 
-- The line holds the file, the line and the column of the argument, the source text of the argument as written, and the value. The value is laid out as `{x:#}` lays it out ([The `#` flag](strings.md#the--flag)).
+- The line holds the file, the line and the column of the argument, the source text of the argument as written, and the value. The value is laid out as `{x:#}` lays it out ([The `#` flag](strings.md#the--flag)). The layout starts at column 0, so the prefix does not count toward the 80 columns.
 - For an object, `dbg` shows the fields one level deep: `dbg(node)` shows `Node(value: 3, next: Node)`. A field that is a class shows only its text, which is its name or its own `to_string`. So `dbg` follows no reference.
 - A class with a method `to_string` shows that text instead of its fields. An enum with a written `to_string` shows that text instead of its payloads. The same holds inside an array, a payload or an optional.
 - An argument of the type `unit` is an error ([E0059](../diagnostics/E0059.md)), and so is an argument of the type `never` ([E0061](../diagnostics/E0061.md)), as for `print`.
