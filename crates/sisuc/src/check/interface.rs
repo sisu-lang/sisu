@@ -25,6 +25,14 @@ use crate::tir::{ClassId, EnumId, FuncId, InterfaceId, Type, TypeArgs, TypeKind}
 /// arguments, doubles the number at each level of inheritance, so the walk stops here (E0157).
 pub(super) const BOUND_CLOSURE_LIMIT: usize = 256;
 
+/// How many queries for the payloads of an enum may be open one inside the other. A declaration
+/// that instantiates itself with a longer type argument each time, through a path that the graph
+/// of instantiations does not see (`check/cycle.rs`), makes a query that has no end, and the call
+/// stack would overflow. The query stops here and reports E0140. A program with no such
+/// declaration nests far less: each level is an enum that holds the next one in a payload, and
+/// 1024 of them is far above a program written by hand.
+pub(super) const CONFORMS_DEPTH_LIMIT: usize = 1024;
+
 /// How deep a type that `probe_associated` follows may nest its arguments: as many levels as a
 /// walk of `normalize` follows choices, so the probe finds what `mono` would meet.
 const PROBE_NESTING: usize = CHOICE_DEPTH_LIMIT;
@@ -1103,6 +1111,24 @@ impl Checker<'_> {
         self.broken_extensions.insert(self.holder_name(holder));
     }
 
+    /// Reports once for the enum `id` that a query of `conforms` went `CONFORMS_DEPTH_LIMIT` deep
+    /// into: it instantiates itself without end (E0140). The report stands at its name, as the
+    /// walk has no use to point at.
+    fn too_deep(&mut self, id: EnumId) {
+        if !self.too_deep.insert(id) {
+            return;
+        }
+        let name = &self.enums[id.0].name;
+        let (name, at) = (name.name.to_string(), name.span);
+        self.report(DiagnosticKind::InstantiationCycle {
+            instance: name.clone(),
+            name,
+            at,
+            through: Vec::new(),
+            reach: None,
+        });
+    }
+
     /// The requirements named `name` that the bounds of the type parameter or associated type `ty`
     /// give, each once, in the order of the bounds. The first ask for a type in a body indexes by
     /// name the requirements of its interfaces, and the rest read the index: a call costs a
@@ -1261,11 +1287,26 @@ impl Checker<'_> {
     /// Whether each payload type of each variant of the enum `id`, with `own` for its
     /// parameters, conforms to `interface`. An enum that grows, or that no value can be built of,
     /// holds with no part query: its own error is its only diagnostic. A payload that is an
-    /// error, or whose associated type has no choice, has its report already, so it holds.
+    /// error, or whose associated type has no choice, has its report already, so it holds. So does
+    /// an enum whose query is `CONFORMS_DEPTH_LIMIT` deep: it has the report of `too_deep`.
     fn payloads_conform(&mut self, id: EnumId, own: TypeArgs, interface: InterfaceId) -> bool {
         if self.marked[id.0] {
             return true;
         }
+        if self.conforms_depth >= CONFORMS_DEPTH_LIMIT {
+            // The query holds, as it does for a marked enum: its own error is its only
+            // diagnostic.
+            self.too_deep(id);
+            return true;
+        }
+        self.conforms_depth += 1;
+        let holds = self.payloads_hold(id, own, interface);
+        self.conforms_depth -= 1;
+        holds
+    }
+
+    /// `payloads_conform` for an enum that is not marked and not too deep.
+    fn payloads_hold(&mut self, id: EnumId, own: TypeArgs, interface: InterfaceId) -> bool {
         for slot in self.payload_slots(id) {
             let Some(payload) = self.payload_type(id, slot) else {
                 continue;

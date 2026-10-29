@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 
 use super::*;
 use crate::check::cycle;
-use crate::check::interface::LangPath;
+use crate::check::interface::{CONFORMS_DEPTH_LIMIT, LangPath};
 
 /// The functions that ask for each language interface, with bodies that call nothing.
 const NEEDS: &str = "fn need_eq<T: Eq>(x: T) {}\nfn need_ord<T: Ord>(x: T) {}\nfn need_display<T: Display>(x: T) {}\nfn need_object<T: AnyObject>(x: T) {}\n";
@@ -579,6 +579,63 @@ fn queries_should_cost_steps_in_proportion_to_the_types_they_form() {
         assert!(one > 0, "{row}");
         assert_near_linear(one, two, three);
     }
+}
+
+/// `enum G0<T> { A(G1<T>) }` … `enum G(n-1)<T> { End(T) }`: a query for `G0<i64>` holds `n` class
+/// or enum queries open at once, one inside the other.
+fn generic_chain(n: usize) -> String {
+    let mut enums: Vec<String> = (0..n - 1)
+        .map(|k| format!("enum G{k}<T> {{\n    A(G{}<T>)\n}}\n", k + 1))
+        .collect();
+    enums.push(format!("enum G{}<T> {{\n    End(T)\n}}\n", n - 1));
+    enums.concat()
+}
+
+/// A query for a conformance ends at `CONFORMS_DEPTH_LIMIT` open queries, one inside the other,
+/// and reports the enum it reached (E0140) once, with no other diagnostic: a declaration that
+/// instantiates itself without end, which the graph of instantiations does not see, would
+/// otherwise overflow the stack. A chain of distinct enums as long as the limit is no such
+/// declaration, so it is clean.
+#[test]
+fn a_query_should_end_at_the_depth_limit_and_report_the_enum_it_reached_once() {
+    // A query that reaches the limit holds about a thousand frames of the walk, more than the
+    // stack of a test thread holds in a build with coverage; the compiler's own stack holds them.
+    std::thread::Builder::new()
+        .stack_size(crate::STACK_SIZE)
+        .spawn(query_at_the_depth_limit)
+        .expect("the thread should start")
+        .join()
+        .expect("the queries should not overflow the stack");
+}
+
+fn query_at_the_depth_limit() {
+    CONFORMS_BUDGET.set(100_000);
+    let limit = CONFORMS_DEPTH_LIMIT;
+    let name = |src: &str, k: usize| {
+        let (line, col) = where_is(src, &format!("enum G{k}<T>"));
+        (line, col + "enum ".len())
+    };
+    for (row, n) in [("a chain of 200", 200), ("a chain at the limit", limit)] {
+        clean_row(row, &asking(&generic_chain(n), "eq", "G0<i64>"));
+    }
+    let past = asking(&generic_chain(limit + 1), "eq", "G0<i64>");
+    codes_row(
+        "a chain one past the limit",
+        &past,
+        &[(Code::InstantiationCycle, name(&past, limit))],
+    );
+    // Two roots that reach the same enum report it once.
+    let decls = generic_chain(limit + 1);
+    let twice = calling(
+        &decls,
+        "x: G0<i64>, y: G0<bool>",
+        &["need_eq(x)", "need_eq(y)"],
+    );
+    codes_row(
+        "two roots",
+        &twice,
+        &[(Code::InstantiationCycle, name(&twice, limit))],
+    );
 }
 
 /// A declaration that grows or that no value can be built of has its own error, and the query

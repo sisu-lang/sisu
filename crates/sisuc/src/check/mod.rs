@@ -454,6 +454,11 @@ struct Checker<'src> {
     leaves: FxHashMap<(Type, tir::InterfaceId, TypeArgs), (Option<Type>, bool)>,
     /// How many parts the walks of `failing_leaf` have cut short, for a part that was being read.
     leaf_cuts: usize,
+    /// How many queries for the payloads of an enum are open, one inside the other
+    /// (`payloads_conform`).
+    conforms_depth: usize,
+    /// The enums whose queries went past `CONFORMS_DEPTH_LIMIT` and were reported.
+    too_deep: FxHashSet<tir::EnumId>,
     /// The language interfaces, found by name once the prelude's names are collected.
     lang: tir::LangInterfaces,
     /// The state of the root query of `conforms` that is open, if one is.
@@ -956,6 +961,8 @@ impl<'src> Checker<'src> {
             conformed: FxHashMap::default(),
             leaves: FxHashMap::default(),
             leaf_cuts: 0,
+            conforms_depth: 0,
+            too_deep: FxHashSet::default(),
             lang: tir::LangInterfaces::default(),
             open: conformance::Open::default(),
             unbuilt: Vec::new(),
