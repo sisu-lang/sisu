@@ -1254,13 +1254,19 @@ impl Checker<'_> {
                 super::CONFORMS_BUDGET.get()
             );
         }
-        // A marked enum has its own report (E0140), so a query that is too deep at one gets no
-        // second report: `payloads_conform` holds for it with no part query.
-        let marked = matches!(holder_of(ty), Some(Holder::Enum(id)) if self.marked[id.0]);
-        let answer = if self.open.depth() > depth_limit() && !marked {
+        // A growing class and a marked enum have their own report, so a query that is too deep at
+        // one gets no second report. It is expanded as before. For a marked enum, its written
+        // conformance checks the types of its parameters, and with none it holds with no part
+        // query. A class has no generated rule: only a written conformance reads its parts.
+        let holder = holder_of(ty).expect("a key of this walk should be a class or an enum");
+        let own = match holder {
+            Holder::Class(id) => self.growing_classes[id.0],
+            Holder::Enum(id) => self.marked[id.0],
+        };
+        let answer = if self.open.depth() > depth_limit() && !own {
             // The query holds, as it does for a marked enum: the report of `too_deep` is its only
             // diagnostic.
-            self.too_deep(holder_of(ty).expect("a key of this walk should be a class or an enum"));
+            self.too_deep(holder);
             true
         } else {
             self.conforms_expanded(ty, interface, args)

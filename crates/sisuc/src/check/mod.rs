@@ -502,6 +502,9 @@ struct Checker<'src> {
     /// no value can be built of it (the never-built error): the generated rule answers `true`
     /// for it with no part query, so its own error is its only diagnostic.
     marked: Vec<bool>,
+    /// By `ClassId`, whether the class grows (`class Nest<T> { next: Nest<[T]>? }`, E0140). A
+    /// query still expands it, but a query that is too deep at it gets no second report.
+    growing_classes: Vec<bool>,
     /// Whether the type of a field of a class or a payload of an enum holds an associated type:
     /// the choices of the associated types matter to the cycles only then. Set before the marks.
     holds_assoc: bool,
@@ -999,6 +1002,7 @@ impl<'src> Checker<'src> {
             open: conformance::Open::default(),
             unbuilt: Vec::new(),
             marked: Vec::new(),
+            growing_classes: Vec::new(),
             holds_assoc: false,
             failed_block: None,
             lowered_enums: Vec::new(),
@@ -1046,6 +1050,7 @@ impl Checker<'_> {
         let cyclic = self.never_constructed();
         self.unbuilt = self.never_built(&cyclic);
         self.marked = self.unbuilt[self.classes.len()..].to_vec();
+        self.growing_classes = vec![false; self.classes.len()];
         self.read_declared_bounds();
         self.conformances(items);
         declared
