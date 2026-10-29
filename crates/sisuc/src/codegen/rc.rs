@@ -7,7 +7,7 @@
 
 use inkwell::basic_block::BasicBlock;
 use inkwell::module::Linkage;
-use inkwell::types::StructType;
+use inkwell::types::ArrayType;
 use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 
@@ -428,7 +428,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         &self,
         id: ClassId,
         object: PointerValue<'ctx>,
-        heads: Option<(StructType<'ctx>, PointerValue<'ctx>)>,
+        heads: Option<(ArrayType<'ctx>, PointerValue<'ctx>)>,
     ) {
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         let block = |name| {

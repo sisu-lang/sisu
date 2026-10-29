@@ -2982,6 +2982,71 @@ fn show_of_a_component_should_find_each_member_in_linear_steps() {
     assert_near_linear(scans(100), scans(200), scans(300));
 }
 
+/// The ring of `n` enums of #245: each links to the next, and `main` compares every `End`
+/// with itself, so each enum gets its `walk`, `release` and `eq` helpers.
+fn enum_ring(n: usize) -> String {
+    let enums = (0..n)
+        .map(|i| format!("enum R{i} {{\n    End\n    Link(R{})\n}}\n", (i + 1) % n))
+        .collect::<Vec<_>>()
+        .concat();
+    let compares = (0..n)
+        .map(|i| format!("    print(R{i}.End == R{i}.End)\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    format!("{enums}fn main() {{\n{compares}}}\n")
+}
+
+/// `==` on an enum of a component with boxes finds the index of each member and of each link
+/// in the component. The `walk` helper of each member finds the index of each boxed field the
+/// same way. A search of the component for each of them reads a ring of enums quadratically.
+#[test]
+fn eq_and_walk_of_a_component_should_find_each_member_in_linear_steps() {
+    let scans = |n: usize| {
+        MEMBER_SCANS.set(0);
+        let context = Context::create();
+        compiled(&context, &enum_ring(n));
+        MEMBER_SCANS.get()
+    };
+    assert_near_linear(scans(100), scans(200), scans(300));
+}
+
+/// The `walk`, `release` and `drain` helper of each member of a component with boxes uses the
+/// type of the heads of the component. A struct type with one element for each member, built
+/// and printed at each use, makes the module quadratic in the size of the ring. The heads type
+/// is an array, so each use prints it in constant size.
+#[test]
+fn drop_of_an_enum_component_should_print_the_heads_type_in_linear_size() {
+    let size = |n: usize| {
+        let context = Context::create();
+        compiled(&context, &enum_ring(n))
+            .print_to_string()
+            .to_bytes()
+            .len()
+    };
+    assert_near_linear(size(100), size(200), size(300));
+}
+
+/// `drop` and `drain` of each class of a cycle use the type of the heads of the cycle, as the
+/// helpers of enums do. Each class is dropped in a function of its own, so each gets a `drop`.
+#[test]
+fn drop_of_a_class_cycle_should_print_the_heads_type_in_linear_size() {
+    let size = |n: usize| {
+        let classes = (0..n)
+            .map(|i| {
+                format!(
+                    "class C{i} {{\n    next: C{}?\n}}\nfn hold{i}(c: C{i}) {{}}\n",
+                    (i + 1) % n
+                )
+            })
+            .collect::<Vec<_>>()
+            .concat();
+        let src = format!("{classes}fn main() {{}}\n");
+        let context = Context::create();
+        compiled(&context, &src).print_to_string().to_bytes().len()
+    };
+    assert_near_linear(size(100), size(200), size(300));
+}
+
 /// A `take_apart` finds each place's token and kept value once: a scan of every token, or of
 /// every rest, per binding would visit quadratically many places.
 #[test]
