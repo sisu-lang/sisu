@@ -2120,13 +2120,11 @@ mod tests {
     }
 
     /// The text between the parentheses of each `dbg(` call in `text`, the calls inside a
-    /// call's argument included. A generated string holds no parenthesis.
+    /// call's argument included. A generated string holds no parenthesis, and no name ends in
+    /// `dbg`.
     fn dbg_arguments(text: &str) -> Vec<&str> {
         let mut found = Vec::new();
         for (at, _) in text.match_indices("dbg(") {
-            if text[..at].ends_with(|c: char| c.is_alphanumeric() || c == '_') {
-                continue;
-            }
             let start = at + "dbg(".len();
             let mut depth = 1;
             for (i, c) in text[start..].char_indices() {

@@ -2310,6 +2310,11 @@ fn implicit_dbg_should_close_an_instantiation_cycle() {
             Some("dbg([Hold(v: W(x: [self.x]))])"),
         ),
         (
+            "a dbg of an optional of such a class",
+            "let _ = dbg(Some(Hold(v: W(x: [self.x]))))",
+            Some("dbg(Some(Hold(v: W(x: [self.x]))))"),
+        ),
+        (
             "a dbg of an enum payload of such a class",
             "let _ = dbg(Pick.One(Hold(v: W(x: [self.x]))))",
             Some("dbg(Pick.One(Hold(v: W(x: [self.x]))))"),

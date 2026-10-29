@@ -2865,7 +2865,7 @@ mod tests {
         clippy::too_many_lines,
         reason = "one row per node kind, so the table reads in one place"
     )]
-    fn each_child_mut_reaches_every_direct_child() {
+    fn each_child_mut_should_reach_every_direct_child() {
         let n = |k| Box::new(int(k));
         let ints = |ks: [i64; 2]| ks.map(int).into();
         let valued = |k| Block {
@@ -2984,6 +2984,14 @@ mod tests {
             (
                 ExprKind::Print {
                     stream: Stream::Stdout,
+                    operand: n(1),
+                },
+                1,
+            ),
+            (
+                ExprKind::Dbg {
+                    at: Span::new(0, 0),
+                    text: "x".to_string(),
                     operand: n(1),
                 },
                 1,

@@ -2357,7 +2357,14 @@ mod tests {
         parts(&conformances, enums, Type::array(Type::I64), &mut collect);
         parts(&conformances, enums, enum_type, &mut collect);
         parts(&conformances, enums, class, &mut collect);
-        assert_eq!(listed, [Type::I64], "a payload with no choice has no part");
+        // The fields of the class `C`: one with no choice for its `Item`, and an `i64`.
+        let fields: Vec<Vec<Type>> = vec![vec![item, Type::I64]];
+        fields_of(&conformances, fields.as_slice(), class, &mut collect);
+        assert_eq!(
+            listed,
+            [Type::I64, Type::I64],
+            "a payload or a field with no choice has no part"
+        );
         assert_eq!(
             holds(&mut cx, &source, enum_type, interface, TypeArgs::NONE),
             Holds::Generated

@@ -1498,7 +1498,6 @@ crates/sisuc/src/source.rs::render_line_clamps_the_end_of_a_text_that_ends_in_a_
 crates/sisuc/src/source.rs::span_offset_past_u32_max_panics
 crates/sisuc/src/source.rs::span_offsets_reach_u32_max
 crates/sisuc/src/symbol.rs::equal_texts_share_a_symbol
-crates/sisuc/src/tir.rs::each_child_mut_reaches_every_direct_child
 crates/sisuc/src/tir.rs::eprints_to_standard_error
 crates/sisuc/src/tir.rs::exits_finds_a_jump_at_any_depth
 crates/sisuc/src/tir.rs::jumps_print_their_depth_and_value

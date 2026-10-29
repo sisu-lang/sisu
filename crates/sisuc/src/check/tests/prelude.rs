@@ -579,3 +579,14 @@ fn dbg_should_be_a_prelude_name() {
         diagnostic(&src, Code::DefinedTwice, (1, col, "dbg"), &[]);
     }
 }
+
+/// An argument that fails to check is reported once, and `dbg` adds no error of its own.
+#[test]
+fn dbg_should_report_a_broken_argument_once() {
+    for (statement, code, pos) in [
+        ("dbg(missing)", Code::BindingNotFound, (2, 9)),
+        ("dbg(1 + \"a\")", Code::Mismatch, (2, 9)),
+    ] {
+        codes_row(statement, &body("", statement), &[(code, pos)]);
+    }
+}
