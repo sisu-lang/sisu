@@ -59,6 +59,9 @@ struct Added {
     seen: Conformances,
     /// Where each conformance of `seen` is listed, by interface and index.
     seen_ats: FxHashMap<(InterfaceId, usize), Span>,
+    /// The conformances that a later one covers whole, by interface and index, with the source
+    /// of each such later one. The methods that they write are not missing from the earlier one.
+    covered: FxHashMap<(InterfaceId, usize), Vec<Source>>,
 }
 
 /// An interface that the list of a class or an enum gets from another, when a block gave the type
@@ -137,10 +140,12 @@ impl Checker<'_> {
         // The choices of the associated types are recorded: an enum that grows through one is
         // marked, before the first query.
         self.holds_assoc = self.field_assoc();
-        let growing = self.growing_enums();
-        for (marked, grows) in self.marked.iter_mut().zip(growing) {
+        let mut growing = self.growing_declarations();
+        let enums = growing.split_off(self.classes.len());
+        for (marked, grows) in self.marked.iter_mut().zip(enums) {
             *marked |= grows;
         }
+        self.growing_classes = growing;
         // Every conformance is known now: the checks that waited for them run, and a type that
         // fails is unknown before a requirement is compared with a method.
         self.run_pending_bounds();
@@ -150,7 +155,9 @@ impl Checker<'_> {
             }
         }
         for p in &pending {
-            self.meet_requirements(p);
+            let key = (p.interface.interface, p.index);
+            let others = added.covered.get(&key).map_or(&[][..], Vec::as_slice);
+            self.meet_requirements(p, others);
         }
         for p in &pending {
             self.check_choices(p);
@@ -358,6 +365,18 @@ impl Checker<'_> {
         if let Some((k, common)) = clash {
             let earlier = added.ats[&(bound.interface, k)];
             self.conforms_twice(bound, &common, (earlier, at));
+            // A bounded conformance can fail for an instance, so it covers none.
+            let c = self.conformances.get(bound.interface, k);
+            if bounds.iter().all(Vec::is_empty)
+                && conformance::bind(target, params.len(), c.target)
+                    .is_some_and(|b| bound.args.subst(b.get()) == c.args)
+            {
+                added
+                    .covered
+                    .entry((bound.interface, k))
+                    .or_default()
+                    .push(source);
+            }
             return None;
         }
         let (assoc, written) = self.chosen(bound.interface, source);
@@ -618,9 +637,32 @@ impl Checker<'_> {
         leaf
     }
 
+    /// The method `name` that `source` writes, if any.
+    fn written_method(&self, source: Source, name: Symbol) -> Option<Declared<tir::FuncId>> {
+        match source {
+            Source::Body(Holder::Class(c)) => self.classes[c.0].methods.get(&name).copied(),
+            Source::Body(Holder::Enum(e)) => self.enums[e.0].methods.get(&name).copied(),
+            Source::Body(Holder::Array | Holder::I64) => {
+                unreachable!("only the body of a class or an enum lists conformances")
+            }
+            Source::Block(b) => {
+                let ext = &self.extensions[b];
+                match ext.methods.get(&name) {
+                    Some(&f) => Some(Declared::Known(f)),
+                    None => self
+                        .broken_extension_methods
+                        .contains(&(ext.holder, name))
+                        .then_some(Declared::Broken),
+                }
+            }
+        }
+    }
+
     /// Reports what the conformance `p` lacks of its interface's requirements, and records the
     /// methods that meet them. A method of an `extend` block that is no requirement is reported.
-    fn meet_requirements(&mut self, p: &Pending) {
+    /// `others`, the sources of the later conformances that cover `p` whole and are reported as
+    /// the second, give the methods and types that `p` lacks: their report stands for them.
+    fn meet_requirements(&mut self, p: &Pending, others: &[Source]) {
         let info = &self.interfaces[p.interface.interface.0];
         let (ty, interface) = (self.type_name(p.target), info.name.name.to_string());
         let mut base = vec![p.target];
@@ -630,28 +672,17 @@ impl Checker<'_> {
         let mut reports = Vec::new();
         for requirement in &info.requirements {
             let name = requirement.name.name;
-            let found = match p.source {
-                Source::Body(Holder::Class(c)) => self.classes[c.0].methods.get(&name).copied(),
-                Source::Body(Holder::Enum(e)) => self.enums[e.0].methods.get(&name).copied(),
-                Source::Body(Holder::Array | Holder::I64) => {
-                    unreachable!("only the body of a class or an enum lists conformances")
-                }
-                Source::Block(b) => {
-                    let ext = &self.extensions[b];
-                    match ext.methods.get(&name) {
-                        Some(&f) => Some(Declared::Known(f)),
-                        None => self
-                            .broken_extension_methods
-                            .contains(&(ext.holder, name))
-                            .then_some(Declared::Broken),
-                    }
-                }
-            };
+            let found = self.written_method(p.source, name);
+            let elsewhere = others
+                .iter()
+                .any(|&o| self.written_method(o, name).is_some());
             match found {
+                None if elsewhere => {}
                 None => missing.push(self.required_text(p.source, p.interface, requirement)),
                 // Its own error is reported.
                 Some(Declared::Broken) => {}
                 Some(Declared::Known(f)) if self.meets(requirement, f, &base) => methods.push(f),
+                Some(Declared::Known(_)) if elsewhere => {}
                 Some(Declared::Known(f)) => {
                     let sig = &self.signatures[f.0];
                     reports.push(DiagnosticKind::ConformanceBody {
@@ -669,7 +700,8 @@ impl Checker<'_> {
         }
         // The choices come after the methods in the help, as the interface's types do in its text.
         for declared in &info.assoc {
-            if !self.chooses(p.source, declared.name.name) {
+            let name = declared.name.name;
+            if !self.chooses(p.source, name) && !others.iter().any(|&o| self.chooses(o, name)) {
                 missing.push(format!("type {}", declared.name.name));
             }
         }

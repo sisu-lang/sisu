@@ -7,6 +7,11 @@ use super::*;
 use crate::check::cycle;
 use crate::check::interface::{CONFORMS_DEPTH_LIMIT, LangPath};
 
+const _: () = assert!(
+    CONFORMS_DEPTH_LIMIT == 1 << 18,
+    "a conformance query should stop when more than 2^18 class or enum keys are open"
+);
+
 /// The functions that ask for each language interface, with bodies that call nothing.
 const NEEDS: &str = "fn need_eq<T: Eq>(x: T) {}\nfn need_ord<T: Ord>(x: T) {}\nfn need_display<T: Display>(x: T) {}\nfn need_object<T: AnyObject>(x: T) {}\n";
 
@@ -581,87 +586,220 @@ fn queries_should_cost_steps_in_proportion_to_the_types_they_form() {
     }
 }
 
-/// `enum G0<T> { A(G1<T>) }` … `enum G(n-1)<T> { End(T) }`: a query for `G0<i64>` holds `n` class
-/// or enum queries open at once, one inside the other.
-fn generic_chain(n: usize) -> String {
-    let mut enums: Vec<String> = (0..n - 1)
-        .map(|k| format!("enum G{k}<T> {{\n    A(G{}<T>)\n}}\n", k + 1))
-        .collect();
-    enums.push(format!("enum G{}<T> {{\n    End(T)\n}}\n", n - 1));
-    enums.concat()
-}
-
-/// A query for a conformance ends at `CONFORMS_DEPTH_LIMIT` open queries, one inside the other,
-/// and reports the enum it reached (E0140) once, with no other diagnostic: a declaration that
-/// instantiates itself without end, which the graph of instantiations does not see, would
-/// otherwise overflow the stack. A chain of distinct enums as long as the limit is no such
-/// declaration, so it is clean.
+/// A valid chain or ring of enums, longer than the old limit of 1024 open queries, is clean: the
+/// query for `==` on its first enum opens one key for each enum, and none of them is an endless
+/// instantiation (#247).
 #[test]
-fn a_query_should_end_at_the_depth_limit_and_report_the_enum_it_reached_once() {
-    on_the_compiler_stack(query_at_the_depth_limit);
-}
-
-/// Runs `f` on a thread with the stack of the compiler. A query that reaches the depth limit
-/// holds about a thousand frames of the walk, more than the stack of a test thread holds in a
-/// build with coverage; the compiler's own stack holds them.
-fn on_the_compiler_stack(f: fn()) {
-    std::thread::Builder::new()
-        .stack_size(crate::STACK_SIZE)
-        .spawn(f)
-        .expect("the thread should start")
-        .join()
-        .expect("the queries should not overflow the stack");
-}
-
-fn query_at_the_depth_limit() {
+fn a_chain_or_ring_of_enums_past_the_old_limit_should_check_clean() {
     CONFORMS_BUDGET.set(100_000);
-    let limit = CONFORMS_DEPTH_LIMIT;
-    let name = |src: &str, k: usize| {
-        let (line, col) = where_is(src, &format!("enum G{k}<T>"));
-        (line, col + "enum ".len())
+    let main = "fn main() {\n    let e: C0 = C0.End\n    print(e == e)\n}\n";
+    let chain: String = (0..2000)
+        .map(|k| match k {
+            1999 => format!("enum C{k} {{\n    End\n}}\n"),
+            _ => format!("enum C{k} {{\n    End\n    A(C{})\n}}\n", k + 1),
+        })
+        .collect();
+    clean_row("a chain of 2000", &format!("{chain}{main}"));
+    // The ring closes with `A(C0)`, so a query for `C0` meets itself after 2000 keys.
+    let ring = chain.replace(
+        "enum C1999 {\n    End\n}",
+        "enum C1999 {\n    End\n    A(C0)\n}",
+    );
+    clean_row("a ring of 2000", &format!("{ring}{main}"));
+}
+
+/// `class W<T>` with a written `Eq` whose bound asks `T`, and a probe type that gives `W` its id.
+const WRAPPER: &str = "class W<T> {\n    value: T\n}\nextend<T: Eq> W<T>: Eq {\n    fn eq(self, other: Self) -> bool {\n        self.value == other.value\n    }\n}\n";
+
+/// The id of the class named `name`.
+fn class_named(checker: &Checker<'_>, name: &str) -> tir::ClassId {
+    let id = (checker.classes.iter()).position(|class| class.name.name.as_str() == name);
+    tir::ClassId(id.expect("the program should declare the class"))
+}
+
+/// The class or enum type named `holder` with `inner` as its one argument, `levels` times over:
+/// `W<W<...<inner>...>>`. With `levels` zero, `inner`.
+fn nested(checker: &Checker<'_>, holder: &str, levels: usize, inner: Type) -> Type {
+    let class = (checker.classes.iter()).position(|class| class.name.name.as_str() == holder);
+    let enum_id = (checker.enums.iter()).position(|e| e.name.name.as_str() == holder);
+    let kind = |args| match (class, enum_id) {
+        (Some(id), _) => TypeKind::Class(tir::ClassId(id), args),
+        (None, Some(id)) => TypeKind::Enum(tir::EnumId(id), args),
+        (None, None) => panic!("the program should declare `{holder}`"),
     };
-    for (row, n) in [("a chain of 200", 200), ("a chain at the limit", limit)] {
-        clean_row(row, &asking(&generic_chain(n), "eq", "G0<i64>"));
+    (0..levels).fold(inner, |ty, _| Type::intern(kind(TypeArgs::intern(&[ty]))))
+}
+
+/// What `checker.conforms` says for `W` nested `levels` times over `inner`. Each query uses its own
+/// innermost type, so that no answer kept for one is read for the next.
+fn query_nest(checker: &mut Checker<'_>, eq: tir::InterfaceId, levels: usize, inner: Type) -> bool {
+    let ty = nested(checker, "W", levels, inner);
+    checker.conforms(ty, eq, TypeArgs::NONE)
+}
+
+/// A query for a conformance holds `CONFORMS_DEPTH_LIMIT` class or enum keys open at most, one
+/// inside the other. A type that nests as many `W` as the limit is decided with no report: a
+/// class counts, as an enum does, because the walk of a written `Eq` goes through the bound of
+/// each level. The test lowers the limit, as a walk of the whole limit takes about a second.
+#[test]
+fn a_query_should_be_clean_at_the_depth_limit() {
+    let limit = 600;
+    CONFORMS_DEPTH.set(limit);
+    CONFORMS_BUDGET.set(2 * limit);
+    with_probe(WRAPPER, ("T", "W<i64>"), "Eq", |checker, _, eq| {
+        assert!(query_nest(checker, eq, limit, Type::BOOL));
+        assert!(checker.diagnostics.is_empty());
+    });
+}
+
+/// One `W` more than the limit makes the query stop and report E0140 at the name of the class
+/// that it reached. The stopped query holds: the report is its only diagnostic. The test lowers
+/// the limit; the constant above pins the real one.
+#[test]
+fn a_query_should_report_the_class_it_reached_past_the_depth_limit() {
+    let limit = 600;
+    CONFORMS_DEPTH.set(limit);
+    CONFORMS_BUDGET.set(2 * limit);
+    let (name, found) = with_probe(WRAPPER, ("T", "W<i64>"), "Eq", |checker, _, eq| {
+        assert!(query_nest(checker, eq, limit + 1, Type::I64));
+        let found: Vec<_> = (checker.diagnostics.iter())
+            .map(|d| (d.code(), d.span()))
+            .collect();
+        (
+            checker.classes[class_named(checker, "W").0].name.span,
+            found,
+        )
+    });
+    assert_eq!(found, [(Code::InstantiationCycle, name)]);
+}
+
+/// The report of a query that is too deep names the interface, the type that the query began
+/// with, the limit and the class that it reached.
+#[test]
+fn a_query_that_is_too_deep_should_fill_each_field_of_its_report() {
+    CONFORMS_DEPTH.set(3);
+    CONFORMS_BUDGET.set(100);
+    let (found, at) = with_probe(WRAPPER, ("T", "W<i64>"), "Eq", |checker, _, eq| {
+        assert!(query_nest(checker, eq, 4, Type::I64));
+        (
+            (checker.diagnostics.iter())
+                .map(|d| format!("{d:?}"))
+                .collect::<Vec<_>>(),
+            checker.classes[class_named(checker, "W").0].name.span,
+        )
+    });
+    // `Diagnostic` derives only `Clone` and `Debug`, so the test compares rendered text. The
+    // registry arm that builds the message and the label uses every field of the kind.
+    let expected: Diagnostic = DiagnosticKind::ConformanceTooDeep {
+        interface: "Eq".to_string(),
+        root: "W<W<W<W<i64>>>>".to_string(),
+        limit: 3,
+        holder: "W".to_string(),
+        at,
     }
-    let past = asking(&generic_chain(limit + 1), "eq", "G0<i64>");
-    codes_row(
-        "a chain one past the limit",
-        &past,
-        &[(Code::InstantiationCycle, name(&past, limit))],
-    );
-    // Two roots that reach the same enum report it once.
-    let decls = generic_chain(limit + 1);
-    let twice = calling(
-        &decls,
-        "x: G0<i64>, y: G0<bool>",
-        &["need_eq(x)", "need_eq(y)"],
-    );
-    codes_row(
-        "two roots",
-        &twice,
-        &[(Code::InstantiationCycle, name(&twice, limit))],
-    );
+    .into();
+    assert_eq!(found, [format!("{expected:?}")]);
+}
+
+/// A second root that goes past the limit through the same class reports nothing more.
+#[test]
+fn a_query_should_report_a_class_past_the_depth_limit_once() {
+    let limit = 600;
+    CONFORMS_DEPTH.set(limit);
+    CONFORMS_BUDGET.set(4 * limit);
+    let found = with_probe(WRAPPER, ("T", "W<i64>"), "Eq", |checker, _, eq| {
+        assert!(query_nest(checker, eq, limit + 1, Type::I64));
+        assert!(query_nest(checker, eq, limit + 1, Type::CHAR));
+        checker.diagnostics.len()
+    });
+    assert_eq!(found, 1);
+}
+
+/// A class or an enum that grows has its own error (E0140), so a query that reaches it past the
+/// limit gives no second report: a query that holds `W` nested as the limit allows, or one more,
+/// over a growing `G` ends with the one error of `G`, at the same place (#242).
+#[test]
+fn a_query_that_reaches_a_growing_declaration_past_the_depth_limit_should_report_it_once() {
+    let limit = 600;
+    CONFORMS_DEPTH.set(limit);
+    // Four programs, each about `limit` steps.
+    CONFORMS_BUDGET.set(8 * limit);
+    let class = "class G<T> {\n    next: G<[T]>?\n}\nextend<T: Eq> G<T>: Eq {\n    fn eq(self, other: Self) -> bool {\n        true\n    }\n}\n";
+    let rows = [
+        ("enum", "enum G<T> {\n    End\n    A(G<[T]>)\n}\n", (11, 7)),
+        ("class", class, (10, 11)),
+    ];
+    for (kind, decl, at) in rows {
+        for levels in [limit, limit + 1] {
+            let mut lets = String::new();
+            for i in 1..=levels {
+                writeln!(lets, "    let a{i} = W(value: a{})", i - 1)
+                    .expect("writing to a `String` should succeed");
+            }
+            let src = format!(
+                "{WRAPPER}{decl}fn main() {{\n    let a0: G<i64>? = None\n{lets}    print(a{levels} == a{levels})\n}}"
+            );
+            codes_row(
+                &format!("{levels} levels of `W` over a growing {kind}"),
+                &src,
+                &[(Code::InstantiationCycle, at)],
+            );
+        }
+    }
 }
 
 /// The walk that names the part of a failed query stops where the query did: below an enum whose
-/// query was `CONFORMS_DEPTH_LIMIT` deep, a part fails that the query never read, and the part
-/// that made the query fail is the one to name. Here `Deep` is at the end of the chain, past the
-/// limit, and `Shallow` is the payload that fails the query.
+/// query was too deep, a part fails that the query never read, and the part that made the query
+/// fail is the one to name. Here `O` nests as deep as the limit over `Node`, which has no `Eq`, and
+/// `Shallow` is the payload of `R` that fails the query.
 #[test]
 fn failing_leaf_should_stop_at_an_enum_that_a_query_was_too_deep_for() {
-    on_the_compiler_stack(|| {
-        CONFORMS_BUDGET.set(100_000);
-        let decls = format!(
-            "class Deep {{}}\nclass Shallow {{}}\nenum R<T> {{\n    A(G0<T>)\n    B(Shallow)\n}}\n{}",
-            generic_chain(CONFORMS_DEPTH_LIMIT + 1)
-        );
-        let leaf = with_probe(&decls, ("T", "R<Deep>"), "Eq", |checker, ty, eq| {
-            assert!(!checker.conforms(ty, eq, TypeArgs::NONE), "`Shallow` fails");
-            let leaf = checker.failing_leaf(ty, eq, TypeArgs::NONE);
-            checker.type_name(leaf)
-        });
-        assert_eq!(leaf, "Shallow");
+    let limit = 600;
+    CONFORMS_DEPTH.set(limit);
+    CONFORMS_BUDGET.set(2 * limit);
+    let decls = "class Node {}\nclass Shallow {}\nenum O<T> {\n    End\n    S(T)\n}\nenum R<T> {\n    A(T)\n    B(Shallow)\n}\n";
+    let leaf = with_probe(decls, ("T", "R<i64>"), "Eq", |checker, _, eq| {
+        let node = Type::intern(TypeKind::Class(
+            class_named(checker, "Node"),
+            TypeArgs::NONE,
+        ));
+        let deep = nested(checker, "O", limit, node);
+        let ty = nested(checker, "R", 1, deep);
+        assert!(!checker.conforms(ty, eq, TypeArgs::NONE), "`Shallow` fails");
+        let leaf = checker.failing_leaf(ty, eq, TypeArgs::NONE);
+        checker.type_name(leaf)
     });
+    assert_eq!(leaf, "Shallow");
+}
+
+/// The part that makes a failed query fail is found on a stack of 64 KiB, for a chain of enums
+/// that nests deeper than that stack allows recursing into (#242). `failing_leaf` follows the
+/// chain one level at a time, so it grows the stack as the query does.
+#[test]
+fn failing_leaf_should_follow_a_deep_chain_on_a_small_stack() {
+    const STACK: usize = 64 * 1024;
+    // With no stack guard in `leaf`, 39 levels abort on this stack and 38 do not: 400 levels
+    // are about ten times that.
+    let levels = 400;
+    let leaf = std::thread::Builder::new()
+        .stack_size(STACK)
+        .spawn(move || {
+            let decls = "class Node {}\nenum O<T> {\n    End\n    S(T)\n}\n";
+            with_probe(decls, ("T", "O<i64>"), "Eq", |checker, _, eq| {
+                let node = Type::intern(TypeKind::Class(
+                    class_named(checker, "Node"),
+                    TypeArgs::NONE,
+                ));
+                let ty = nested(checker, "O", levels, node);
+                assert!(!checker.conforms(ty, eq, TypeArgs::NONE), "`Node` fails");
+                let leaf = checker.failing_leaf(ty, eq, TypeArgs::NONE);
+                checker.type_name(leaf)
+            })
+        })
+        .expect("the thread should start")
+        .join()
+        .expect("the walk should not panic");
+    assert_eq!(leaf, "Node");
 }
 
 /// A declaration that grows or that no value can be built of has its own error, and the query
@@ -1397,17 +1535,38 @@ fn to_string_with_type_arguments_should_report_the_list() {
     }
 }
 
-/// A masked method with a type parameter of its own does not take the list in the check of the
-/// type arguments, so the generated `to_string` reports it: the list is reported once. (The method
-/// does not match `Display`, which is its own error.)
+/// A list of type arguments after `to_string` goes to a written method that has type parameters
+/// of its own, even when the bounds of its block fail: the failed bound is reported, as it is for
+/// a call with an argument, not "takes no type arguments", which is true for the generated one
+/// only. The method does not match `Display`, which is its own error.
 #[test]
-fn to_string_with_type_arguments_should_report_the_list_of_a_masked_generic_method() {
-    let src = "class Node {}\nclass Own<T> {\n    _value: T\n}\nextend<T: Eq> Own<T> {\n    fn to_string<U>(self) -> string { \"own\" }\n}\nfn main() {\n    print(Own(_value: Node()).to_string<i64>())\n}";
-    let at = where_is(src, "<i64>");
-    codes(
-        src,
-        &[(Code::ConformanceBody, (6, 8)), (Code::TypeArguments, at)],
-    );
+fn to_string_with_type_arguments_should_report_the_failed_bound_of_a_masked_generic_method() {
+    let head = "class Node {}\nclass Own<T> {\n    _value: T\n}\n";
+    for (row, block, call) in [
+        (
+            "a plain block",
+            "extend<T: Eq> Own<T> {\n    fn to_string<U>(self) -> string { \"own\" }\n}\n",
+            "Own(_value: Node()).to_string<i64>()",
+        ),
+        (
+            "a plain block with two type parameters",
+            "extend<T: Eq> Own<T> {\n    fn to_string<U, V>(self) -> string { \"own\" }\n}\n",
+            "Own(_value: Node()).to_string<i64>()",
+        ),
+        (
+            "a Display block",
+            "extend<T: Eq> Own<T>: Display {\n    fn to_string<U>(self) -> string { \"own\" }\n}\n",
+            "Own(_value: Node()).to_string<i64>()",
+        ),
+    ] {
+        let src = format!("{head}{block}fn main() {{\n    print({call})\n}}");
+        let at = where_is(&src, call);
+        codes_row(
+            row,
+            &src,
+            &[(Code::ConformanceBody, (6, 8)), (Code::NotConform, at)],
+        );
+    }
 }
 
 /// The text of a `to_string` is the one of the type's `Display`: a written method whose bounds
@@ -2102,7 +2261,9 @@ fn operators_should_lower_to_the_spec_formulas() {
 fn operators_should_report_a_missing_bound() {
     let decls = "class Node {}\nclass Box<T> {\n    v: T\n}\nenum Wrap<T> {\n    One(T)\n}\n";
     // Each row: the function after the declarations, the text where the error stands, and the
-    // code. The help text of each is pinned in the fixtures `E0139-*`.
+    // code. The help text of each is pinned in the fixtures `E0139-*`. A row with operands of two
+    // types is the mistake of the operands: see
+    // `comparisons_should_report_operands_of_two_types_before_a_missing_operator`.
     let rows = [
         (
             "order on a bare parameter",
@@ -2120,19 +2281,19 @@ fn operators_should_report_a_missing_bound() {
             "equality of two parameters",
             "fn f<T, U>(a: T, b: U) -> bool { a == b }",
             "a == b",
-            Code::ParamLacks,
+            Code::CannotCompare,
         ),
         (
             "order of two parameters",
             "fn f<T, U>(a: T, b: U) -> bool { a < b < a }",
-            "a < b",
-            Code::ParamLacks,
+            "b < a",
+            Code::Mismatch,
         ),
         (
             "contains of another parameter",
             "fn f<T, U>(a: [T], b: U) -> bool { a.contains(b) }",
-            "a.contains(b)",
-            Code::ParamLacks,
+            "b)",
+            Code::Mismatch,
         ),
         (
             "equality of arrays of a parameter",
@@ -3311,6 +3472,174 @@ fn operators_should_report_a_failed_operand_alone() {
     }
 }
 
+/// Operands of two types are the mistake in `==` and `!=`, whatever the bounds of the types: a
+/// missing `Eq` is reported only for operands of one type.
+#[test]
+fn equality_should_report_operands_of_two_types_before_a_missing_operator() {
+    let rows = [
+        (
+            "equality of a parameter and a number",
+            "fn f<T>(a: T) -> bool { a == 5 }",
+            vec![(Code::CannotCompare, "a == 5")],
+        ),
+        (
+            "equality of a number and a parameter",
+            "fn f<T>(a: T) -> bool { 5 == a }",
+            vec![(Code::CannotCompare, "5 == a")],
+        ),
+        (
+            "inequality of a parameter and a number",
+            "fn f<T>(a: T) -> bool { a != 5 }",
+            vec![(Code::CannotCompare, "a != 5")],
+        ),
+        (
+            "equality of arrays of two types",
+            "fn f<T>(a: [T], b: [i64]) -> bool { a == b }",
+            vec![(Code::CannotCompare, "a == b")],
+        ),
+        (
+            "equality of arrays of two parameters",
+            "fn f<T, U>(a: [T], b: [U]) -> bool { a == b }",
+            vec![(Code::CannotCompare, "a == b")],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(code, text)| (code, where_is(&src, text)))
+            .collect();
+        codes_row(row, &src, &expected);
+    }
+}
+
+/// Ordered operands of two types are the mistake, whatever the bounds of the types: the missing
+/// `<` is reported only for operands of one type, or for an operand whose own error leaves no type.
+#[test]
+fn comparisons_should_report_operands_of_two_types_before_a_missing_operator() {
+    let rows = [
+        (
+            "order of two parameters that have Ord",
+            "fn f<T: Ord, U: Ord>(a: T, b: U) -> bool { a < b }",
+            vec![(Code::Mismatch, "b }")],
+        ),
+        (
+            "at-least order of two parameters that have Ord",
+            "fn f<T: Ord, U: Ord>(a: T, b: U) -> bool { a >= b }",
+            vec![(Code::Mismatch, "b }")],
+        ),
+        (
+            "a chain with a third operand of another parameter",
+            "fn f<T: Ord, U: Ord>(a: T, b: T, c: U) -> bool { a < b < c }",
+            vec![(Code::Mismatch, "c }")],
+        ),
+        (
+            "order of a number and a parameter that has Ord",
+            "fn f<U: Ord>(a: i64, b: U) -> bool { a < b }",
+            vec![(Code::Mismatch, "b }")],
+        ),
+        (
+            "order of a parameter and a number",
+            "fn f<T>(a: T) -> bool { a < 5 }",
+            vec![(Code::Mismatch, "5")],
+        ),
+        (
+            "order of a number and a parameter",
+            "fn f<T>(a: T) -> bool { 5 < a }",
+            vec![(Code::Mismatch, "5")],
+        ),
+        (
+            "order of two parameters that have no Ord",
+            "fn f<T, U>(a: T, b: U) -> bool { a < b }",
+            vec![(Code::Mismatch, "b }")],
+        ),
+        (
+            "order of an enum with no Ord and a number",
+            "enum L {\n    A\n}\nfn f() -> bool { L.A < 5 }",
+            vec![(Code::Mismatch, "5")],
+        ),
+        (
+            "order of a bool and a number",
+            "fn f() -> bool { true < 5 }",
+            vec![(Code::Mismatch, "5")],
+        ),
+        (
+            "order of a class of a parameter and a number",
+            "class Box<T> {\n    v: T\n}\nfn f<T>(a: Box<T>, n: i64) -> bool { a < n }",
+            vec![(Code::Mismatch, "n }")],
+        ),
+        (
+            "order of arrays of two parameters",
+            "fn f<T, U>(a: [T], b: [U]) -> bool { a < b }",
+            vec![(Code::Mismatch, "b }")],
+        ),
+        (
+            "order of a string and a parameter",
+            "fn f<T>(a: T) -> bool { \"x\" < a }",
+            vec![(Code::Mismatch, "a }")],
+        ),
+        (
+            "order of a parameter that has Ord and a parameter with none",
+            "fn f<T: Ord, U>(a: T, b: U) -> bool { b < a }",
+            vec![(Code::Mismatch, "a }")],
+        ),
+        (
+            "a chain of a parameter and a number",
+            "fn f<T>(a: T, b: T) -> bool { a < b < 5 }",
+            vec![(Code::Mismatch, "5")],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(code, text)| (code, where_is(&src, text)))
+            .collect();
+        codes_row(row, &src, &expected);
+    }
+}
+
+/// The controls of the two tests above for operands of two types: operands of one type, or an
+/// operand with no type, still get the missing operator.
+#[test]
+fn comparisons_should_report_a_missing_operator_for_operands_of_one_type() {
+    let rows = [
+        (
+            "equality of one parameter",
+            "fn f<T>(a: T, b: T) -> bool { a == b }",
+            vec![(Code::ParamLacks, "a == b")],
+        ),
+        (
+            "order of one parameter",
+            "fn f<T>(a: T, b: T) -> bool { a < b }",
+            vec![(Code::ParamLacks, "a < b")],
+        ),
+        (
+            "order of one class with no Ord",
+            "class Node {}\nfn f(n: Node) -> bool { n < n }",
+            vec![(Code::NoOperator, "n < n")],
+        ),
+        (
+            "order of a parameter and an unknown name",
+            "fn f<T>(a: T) -> bool { a < bad }",
+            vec![(Code::ParamLacks, "a <"), (Code::BindingNotFound, "bad")],
+        ),
+        (
+            "equality of a parameter and an unknown name",
+            "fn f<T>(a: T) -> bool { a == bad }",
+            vec![(Code::ParamLacks, "a =="), (Code::BindingNotFound, "bad")],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(code, text)| (code, where_is(&src, text)))
+            .collect();
+        codes_row(row, &src, &expected);
+    }
+}
+
 #[test]
 fn contains_should_report_an_argument_that_is_not_an_element_first() {
     // An argument of another type is the first mistake, as it is for `==`: a conformance to `Eq`
@@ -3358,12 +3687,271 @@ fn contains_should_report_an_argument_that_is_not_an_element_first() {
         (
             "a number for a type parameter",
             "fn f<T>(xs: [T]) -> bool { xs.contains(5) }".to_string(),
-            (Code::ParamLacks, "xs.contains(5)"),
+            (Code::Mismatch, "5"),
+        ),
+        (
+            "another type parameter for a type parameter",
+            "fn f<T, U>(xs: [T], x: U) -> bool { xs.contains(x) }".to_string(),
+            (Code::Mismatch, "x)"),
+        ),
+        (
+            "an optional type parameter for a type parameter",
+            "fn f<T>(xs: [T], x: T?) -> bool { xs.contains(x) }".to_string(),
+            (Code::Mismatch, "x)"),
+        ),
+        (
+            "`None` for a type parameter",
+            "fn f<T>(xs: [T]) -> bool { xs.contains(None) }".to_string(),
+            (Code::Mismatch, "None"),
+        ),
+        (
+            "`None` in a block for classes",
+            format!("{node}fn f(xs: [Node]) -> bool {{ xs.contains({{ None }}) }}"),
+            (Code::Mismatch, "None"),
+        ),
+        (
+            "`None` in a branch for classes",
+            format!(
+                "{node}fn f(xs: [Node], n: Node, c: bool) -> bool {{ xs.contains(if c {{ n }} else {{ None }}) }}"
+            ),
+            (Code::Mismatch, "None"),
+        ),
+        (
+            "an empty array for classes",
+            format!("{node}fn f(xs: [Node]) -> bool {{ xs.contains([]) }}"),
+            (Code::Mismatch, "[]"),
+        ),
+        (
+            "`None` in a block for optional classes",
+            format!("{node}fn f(xs: [Node?]) -> bool {{ xs.contains({{ None }}) }}"),
+            (Code::NoOperator, "xs.contains({ None })"),
+        ),
+        (
+            "an empty array for arrays of classes",
+            format!("{node}fn f(xs: [[Node]]) -> bool {{ xs.contains([]) }}"),
+            (Code::NoOperator, "xs.contains([])"),
+        ),
+        (
+            "a type parameter for optional type parameters",
+            "fn f<T>(xs: [T?], x: T) -> bool { xs.contains(x) }".to_string(),
+            (Code::ParamLacks, "xs.contains(x)"),
         ),
     ];
     for (row, src, (code, text)) in rows {
         let src = format!("{src}\nfn main() {{}}");
         codes_row(row, &src, &[(code, where_is(&src, text))]);
+    }
+}
+
+/// A mismatch inside an operand is the only error: the operands are not one type, so the missing
+/// operator is not reported.
+#[test]
+fn operators_should_report_only_a_mismatch_inside_an_operand() {
+    let rows = [
+        (
+            "equality of arrays of two element types",
+            "fn f() -> bool { [1] == [true] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "inequality of arrays of two element types",
+            "fn f() -> bool { [1] != [true] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "order of arrays of two element types",
+            "fn f() -> bool { [1] < [true] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "order of an array of a parameter and an array of a number",
+            "fn f<T>(a: [T]) -> bool { a < [5] }",
+            vec![(Code::Mismatch, "5]")],
+        ),
+        (
+            "order of nested arrays of two element types",
+            "fn f() -> bool { [[1]] < [[true]] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "a chain with an inner mismatch in the middle operand",
+            "fn f<T>(a: [T]) -> bool { a < [5] < a }",
+            vec![(Code::Mismatch, "5]")],
+        ),
+        (
+            "a chain of three arrays with an inner mismatch in the middle operand",
+            "fn f() -> bool { [1] < [true] < [2] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "arrays of another element type for arrays of numbers",
+            "fn f(xs: [[i64]]) -> bool { xs.contains([true]) }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "an array of a number for arrays of a parameter",
+            "fn f<T>(xs: [[T]]) -> bool { xs.contains([5]) }",
+            vec![(Code::Mismatch, "5]")],
+        ),
+        (
+            "equality of an array of a parameter and an array of a number",
+            "fn f<T>(a: [T]) -> bool { a == [true] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "order with a branch of another type",
+            "fn f<T>(a: [T], c: bool) -> bool { a < if c { true } else { a } }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "order with a branch that holds a number that does not fit",
+            "fn f(a: [u8], c: bool) -> bool { a < if c { [300] } else { a } }",
+            vec![(Code::IntegerDoesNotFit, "300")],
+        ),
+        (
+            "order of bytes and a number that does not fit",
+            "fn f(b: [u8]) -> bool { b < [300] }",
+            vec![(Code::IntegerDoesNotFit, "300")],
+        ),
+        (
+            "order of bytes and a negated number",
+            "fn f(b: [u8]) -> bool { b < [-1] }",
+            vec![(Code::NegatedU8, "-1")],
+        ),
+        (
+            "order of arrays of bytes and a number that does not fit",
+            "fn f(b: [[u8]]) -> bool { b <= [[256]] }",
+            vec![(Code::IntegerDoesNotFit, "256")],
+        ),
+        (
+            "a chain with a number that does not fit in the last operand",
+            "fn f(b: [u8]) -> bool { b < b < [1, 300] }",
+            vec![(Code::IntegerDoesNotFit, "300")],
+        ),
+        (
+            "order of floats and an integer that a float cannot hold",
+            "fn f(a: [f64]) -> bool { a < [9007199254740993] }",
+            vec![(Code::NotExactlyF64, "9007199254740993")],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(code, text)| (code, where_is(&src, text)))
+            .collect();
+        codes_row(row, &src, &expected);
+    }
+}
+
+/// A number that does not fit is a mismatch, as a value of another type is: the call that takes
+/// it has no type, so its use as a `string` gives no second error.
+#[test]
+fn a_call_with_a_number_that_does_not_fit_should_report_only_that_number() {
+    let src =
+        "fn g(x: u8) -> u8 { x }\nfn f() -> bool { let s: string = g(300); true }\nfn main() {}";
+    codes_row(
+        "a call with a number that does not fit, bound to a string",
+        src,
+        &[(Code::IntegerDoesNotFit, where_is(src, "300"))],
+    );
+}
+
+/// An error in an operand that is not about its type does not hide the missing operator: the
+/// operands may still be one type.
+#[test]
+fn operators_should_report_a_missing_operator_beside_an_error_that_is_not_about_the_type() {
+    let node = "class Node {}\n";
+    let rows = [
+        (
+            "order of a class and a block with a wrong binding",
+            format!("{node}fn f(a: Node) -> bool {{ a < {{ let x: i64 = true; a }} }}"),
+            vec![(Code::NoOperator, "a <"), (Code::Mismatch, "true")],
+        ),
+        (
+            "order of a parameter and a block with a wrong binding",
+            "fn f<T>(a: T) -> bool { a < { let x: i64 = true; a } }".to_string(),
+            vec![(Code::ParamLacks, "a <"), (Code::Mismatch, "true")],
+        ),
+        (
+            "equality of a class and a block with a wrong binding",
+            format!("{node}fn f(a: Node) -> bool {{ a == {{ let x: i64 = true; a }} }}"),
+            vec![(Code::NoOperator, "a =="), (Code::Mismatch, "true")],
+        ),
+        (
+            "order of a class and a call with a wrong argument",
+            format!("{node}fn g(x: i64) -> i64 {{ x }}\nfn f(a: Node) -> bool {{ a < g(true) }}"),
+            vec![(Code::NoOperator, "a <"), (Code::Mismatch, "true")],
+        ),
+        (
+            "contains of a parameter and a block with a wrong binding",
+            "fn f<T>(xs: [T], a: T) -> bool { xs.contains({ let x: i64 = true; a }) }".to_string(),
+            vec![(Code::ParamLacks, "xs.contains("), (Code::Mismatch, "true")],
+        ),
+        (
+            "contains of a class and a block with a wrong binding",
+            format!(
+                "{node}fn f(xs: [Node], a: Node) -> bool {{ xs.contains({{ let x: i64 = true; a }}) }}"
+            ),
+            vec![(Code::NoOperator, "xs.contains("), (Code::Mismatch, "true")],
+        ),
+        (
+            "contains of an optional parameter and a block with a wrong binding",
+            "fn f<T>(xs: [T?], a: T) -> bool { xs.contains({ let x: i64 = true; a }) }".to_string(),
+            vec![(Code::ParamLacks, "xs.contains("), (Code::Mismatch, "true")],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(code, text)| (code, where_is(&src, text)))
+            .collect();
+        codes_row(row, &src, &expected);
+    }
+}
+
+/// A warning in an operand is not an error in it: the missing operator is still reported.
+#[test]
+fn operators_should_report_a_missing_operator_beside_a_warning_in_an_operand() {
+    let node = "class Node {}\n";
+    let rows = [
+        (
+            "contains of a parameter",
+            "fn f<T>(xs: [T], x: T) -> bool { xs.contains({ let mut y = x; y }) }".to_string(),
+            vec![
+                (Code::ParamLacks, "xs.contains("),
+                (Code::NeverReassigned, "y = x"),
+            ],
+        ),
+        (
+            "contains of a class",
+            format!(
+                "{node}fn f(xs: [Node], n: Node) -> bool {{ xs.contains({{ let mut y = n; y }}) }}"
+            ),
+            vec![
+                (Code::NoOperator, "xs.contains("),
+                (Code::NeverReassigned, "y = n"),
+            ],
+        ),
+        (
+            "equality of a parameter",
+            "fn f<T>(a: T, b: T) -> bool { a == { let mut y = b; y } }".to_string(),
+            vec![(Code::ParamLacks, "a =="), (Code::NeverReassigned, "y = b")],
+        ),
+        (
+            "order of a parameter",
+            "fn f<T>(a: T, b: T) -> bool { a < { let mut y = b; y } }".to_string(),
+            vec![(Code::ParamLacks, "a <"), (Code::NeverReassigned, "y = b")],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(code, text)| (code, where_is(&src, text)))
+            .collect();
+        codes_row(row, &src, &expected);
     }
 }
 
@@ -3507,7 +4095,7 @@ type Row = (
     Option<&'static str>,
 );
 
-const PRINTED: [Row; 30] = [
+const PRINTED: [Row; 35] = [
     ("print", "", "name: string?", "print(name)", Some("name")),
     ("eprint", "", "name: string?", "eprint(name)", Some("name")),
     (
@@ -3682,11 +4270,22 @@ const PRINTED: [Row; 30] = [
         "print(name == None)",
         None,
     ),
+    ("a Some", "", "", "print(Some(1))", None),
+    ("a Some in parentheses", "", "", "print((Some(1)))", None),
+    ("Option.Some", "", "", "print(Option.Some(1))", None),
+    (
+        "a Some of an optional",
+        "",
+        "",
+        "print(Some(Some(1)))",
+        None,
+    ),
+    ("an interpolated Some", "", "", "print(\"{Some(1)}\")", None),
 ];
 
 /// A top-level optional in `print`, `eprint` or an interpolation, whatever the expression that
-/// gives it, warns once at that expression; an optional inside another value, a text from
-/// `to_string` or `??`, and a `T` that holds an optional when it is instantiated, do not. The
+/// gives it, warns once at that expression; a `Some(x)`, an optional inside another value, a text
+/// from `to_string` or `??`, and a `T` that holds an optional when it is instantiated, do not. The
 /// fixtures `W0015` and `W0015-value` pin the text.
 #[test]
 fn printing_an_optional_should_warn_only_at_the_top_level() {
@@ -3756,6 +4355,37 @@ fn is_should_report_a_bound_parameter_that_is_no_object() {
         let src = format!("fn {signature} -> bool {{\n    a is b\n}}\nfn main() {{}}");
         codes_row(row, &src, &[(Code::IsNeedsObjects, (2, 5))]);
     }
+}
+
+/// `is` with two layers of `?` or more on a side reports once, at the left side, whichever side
+/// has them. The fixtures `E0046-nested`, `E0046-nested-both` and `E0046-nested-triple` pin the
+/// help that peels each side.
+#[test]
+fn is_should_report_once_for_sides_with_extra_layers() {
+    for (row, signature) in [
+        ("both sides", "same(a: Node??, b: Node??)"),
+        ("one side", "same(a: Node??, b: Node?)"),
+        ("the right side", "same(a: Node?, b: Node??)"),
+        ("three layers", "same(a: Node???, b: Node?)"),
+        ("a parameter", "same<T: AnyObject>(a: T??, b: T??)"),
+        ("a side that is no object", "same(a: Node??, b: i64)"),
+    ] {
+        let src =
+            format!("class Node {{}}\nfn {signature} -> bool {{\n    a is b\n}}\nfn main() {{}}");
+        let col = if row == "the right side" { 10 } else { 5 };
+        codes_row(row, &src, &[(Code::IsNeedsObjects, (3, col))]);
+    }
+}
+
+/// A side whose type is unknown does not hide the report on the other side.
+#[test]
+fn is_should_report_a_side_with_extra_layers_beside_an_unknown_side() {
+    let src =
+        "class Node {}\nfn same(a: Node??, b: Missing) -> bool {\n    a is b\n}\nfn main() {}";
+    codes(
+        src,
+        &[(Code::UnknownType, (2, 23)), (Code::IsNeedsObjects, (3, 5))],
+    );
 }
 
 /// The interfaces whose associated types the rows of the next two tests test with `is`.
@@ -3828,6 +4458,56 @@ fn is_should_report_an_associated_type_that_is_no_object() {
             "{ASSOC_OBJECTS}fn same<T: {bound}>(a: T, b: T) -> bool {{\n    {expr}\n}}\nfn main() {{}}"
         );
         codes_row(row, &src, &[(Code::IsNeedsObjects, (line, 5))]);
+    }
+}
+
+/// A report that an associated type lacks a bound gives the help to add it, as for a type
+/// parameter. The fixtures `E0046-assoc` and `E0139-assoc` pin the text.
+#[test]
+fn an_associated_type_with_no_bound_should_get_an_add_bound_help() {
+    let line = ASSOC_OBJECTS.lines().count() + 3;
+    for (row, bound, stmt, code, text) in [
+        (
+            "is",
+            "Plain",
+            "let _ = a.first() is b.first()",
+            Code::IsNeedsObjects,
+            "a.first()",
+        ),
+        (
+            "is, beside another bound",
+            "Equal",
+            "let _ = a.first() is b.first()",
+            Code::IsNeedsObjects,
+            "a.first()",
+        ),
+        (
+            "==",
+            "Plain",
+            "let _ = a.first() == b.first()",
+            Code::ParamLacks,
+            "a.first()",
+        ),
+        (
+            "an argument",
+            "Plain",
+            "need_eq(a.first())",
+            Code::NotConform,
+            "a.first()",
+        ),
+    ] {
+        let src = format!(
+            "{ASSOC_OBJECTS}fn need_eq<U: Eq>(x: U) {{}}\nfn f<T: {bound}>(a: T, b: T) {{\n    {stmt}\n}}\nfn main() {{}}"
+        );
+        let col = 5 + stmt.find(text).expect("the row holds the text");
+        // E0154 points at the bound of `need_eq` too.
+        let bound: &[(usize, usize)] = if code == Code::NotConform {
+            &[(line - 2, 15)]
+        } else {
+            &[]
+        };
+        let d = diagnostic_row(row, &src, code, (line, col, text), bound);
+        assert!(d.help().is_some(), "row `{row}`");
     }
 }
 

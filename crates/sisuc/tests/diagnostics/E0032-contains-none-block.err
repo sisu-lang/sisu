@@ -1,0 +1,8 @@
+error[E0032]: expected `Node`, found `None`
+ --> E0032-contains-none-block.sisu:5:25
+  |
+5 |     print(xs.contains({ None }))
+  |                         ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

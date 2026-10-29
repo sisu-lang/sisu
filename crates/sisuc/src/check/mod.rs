@@ -61,9 +61,11 @@ use unused_names::{Owner, Pending, Use, Used};
 /// excuse another.
 struct Poisoned {
     ty: Option<Type>,
-    /// Whether the expected type passed down was rejected (a `None` that is not optional, or
-    /// a block or `if` whose value is one): the rule that passed it failed, so its expression
-    /// is `Error` too, where an `Error` operand would excuse it.
+    /// Whether the expected type passed down was rejected (a `None` that is not optional, a
+    /// number that does not fit, an array with such an element, or a block or `if` whose value
+    /// is one): the rule that passed it failed, so its expression is `Error` too, where an
+    /// `Error` operand would excuse it. A number that does not fit (E0040, E0042 or E0104)
+    /// counts as a mismatch, as a value of another type does.
     mismatch: bool,
 }
 
@@ -382,6 +384,9 @@ thread_local! {
     /// The most steps `conforms` may count on this thread: the step that passes it panics, so a
     /// test of a query that would take too many steps fails at once.
     pub(super) static CONFORMS_BUDGET: std::cell::Cell<usize> = const { std::cell::Cell::new(usize::MAX) };
+    /// The depth at which `conforms` stops on this thread. A test lowers it: a query that goes
+    /// `CONFORMS_DEPTH_LIMIT` deep takes about a second in a debug build.
+    pub(super) static CONFORMS_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(interface::CONFORMS_DEPTH_LIMIT) };
     /// How many times `failing_leaf` has read a class or an enum for the part that fails, not
     /// counting an answer it kept.
     pub(super) static LEAF_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -496,11 +501,8 @@ struct Checker<'src> {
     leaves: FxHashMap<(Type, tir::InterfaceId, TypeArgs), (Option<Type>, bool)>,
     /// How many parts the walks of `failing_leaf` have cut short, for a part that was being read.
     leaf_cuts: usize,
-    /// How many queries for the payloads of an enum are open, one inside the other
-    /// (`payloads_conform`).
-    conforms_depth: usize,
-    /// The enums whose queries went past `CONFORMS_DEPTH_LIMIT` and were reported.
-    too_deep: FxHashSet<tir::EnumId>,
+    /// The classes and enums whose queries went past `CONFORMS_DEPTH_LIMIT` and were reported.
+    too_deep: FxHashSet<Holder>,
     /// The language interfaces, found by name once the prelude's names are collected.
     lang: tir::LangInterfaces,
     /// The state of the root query of `conforms` that is open, if one is.
@@ -511,12 +513,16 @@ struct Checker<'src> {
     /// no value can be built of it (the never-built error): the generated rule answers `true`
     /// for it with no part query, so its own error is its only diagnostic.
     marked: Vec<bool>,
+    /// By `ClassId`, whether the class grows (`class Nest<T> { next: Nest<[T]>? }`, E0140). A
+    /// query still expands it, but a query that is too deep at it gets no second report.
+    growing_classes: Vec<bool>,
     /// Whether the type of a field of a class or a payload of an enum holds an associated type:
     /// the choices of the associated types matter to the cycles only then. Set before the marks.
     holds_assoc: bool,
     /// The place among `extensions` of the first block that covers the receiver of the call being
-    /// found and whose bounds fail, when `conforming_methods` finds no method for it.
-    failed_block: Option<usize>,
+    /// found and whose bounds fail, when `conforming_methods` finds no method for it, with that
+    /// block's method of the called name.
+    failed_block: Option<(usize, tir::FuncId)>,
     /// The enums as `tir` holds them, with their boxes and countedness; bodies are checked
     /// after they are lowered.
     lowered_enums: Vec<tir::Enum>,
@@ -1004,12 +1010,12 @@ impl<'src> Checker<'src> {
             conformed: FxHashMap::default(),
             leaves: FxHashMap::default(),
             leaf_cuts: 0,
-            conforms_depth: 0,
             too_deep: FxHashSet::default(),
             lang: tir::LangInterfaces::default(),
             open: conformance::Open::default(),
             unbuilt: Vec::new(),
             marked: Vec::new(),
+            growing_classes: Vec::new(),
             holds_assoc: false,
             failed_block: None,
             lowered_enums: Vec::new(),
@@ -1057,6 +1063,7 @@ impl Checker<'_> {
         let cyclic = self.never_constructed();
         self.unbuilt = self.never_built(&cyclic);
         self.marked = self.unbuilt[self.classes.len()..].to_vec();
+        self.growing_classes = vec![false; self.classes.len()];
         self.read_declared_bounds();
         self.conformances(items);
         declared

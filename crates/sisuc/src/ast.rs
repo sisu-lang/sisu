@@ -584,6 +584,8 @@ pub(crate) enum Bound {
 pub(crate) struct Part {
     pub(crate) value: Expr,
     pub(crate) spec: Option<FormatSpec>,
+    /// Whether the part's spec had an error, which the parser reported.
+    pub(crate) bad_spec: bool,
 }
 
 /// A format spec, `#` or `[<^>][width][.precision]`, and its span, from its `:`.

@@ -422,7 +422,10 @@ fn values_of_parameter_types_should_have_no_operators() {
         ("fn f<T>(a: T, b: T) -> bool { a + b }", lacks((1, 31))),
         ("fn f<T>(a: T, b: T) -> bool { -a }", lacks((1, 32))),
         ("fn f<T>(a: T, b: T) -> bool { [a] == [b] }", lacks((1, 31))),
-        ("fn f<T>(a: T, b: i64) -> bool { b < a }", lacks((1, 37))),
+        (
+            "fn f<T>(a: T, b: i64) -> bool { b < a }",
+            vec![(Code::Mismatch, (1, 37))],
+        ),
         (
             "fn f<T>(xs: [T], a: T) -> bool { xs.contains(a) }",
             lacks((1, 34)),

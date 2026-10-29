@@ -25,7 +25,7 @@ const SEEDS: u64 = 64;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.
-const EXCLUDED: [(&str, &str); 14] = [
+const EXCLUDED: [(&str, &str); 15] = [
     (
         "ast::BrokenKind::Function",
         "only an item with a syntax error is broken",
@@ -53,6 +53,10 @@ const EXCLUDED: [(&str, &str); 14] = [
     (
         "ast::Bound::Name",
         "a named range bound is an error (E0126)",
+    ),
+    (
+        "ast::Part.bad_spec = true",
+        "only a format spec with an error sets it",
     ),
     (
         "types::Step::Type",
@@ -1531,6 +1535,7 @@ impl Walk {
                     if let Some(spec) = part.spec {
                         self.mark(&format!("ast::FormatSpec.pretty = {}", spec.pretty));
                     }
+                    self.mark(&format!("ast::Part.bad_spec = {}", part.bad_spec));
                     if let Some(align) = part.spec.and_then(|spec| spec.align) {
                         self.mark(match align {
                             ast::Align::Left => "ast::Align::Left",

@@ -1,8 +1,8 @@
 error[E0059]: the argument of `eprint` has no value
- --> E0059-eprint-unit.sisu:6:5
+ --> E0059-eprint-unit.sisu:6:12
   |
 6 |     eprint(greet())
-  |     ^^^^^^^^^^^^^^^
+  |            ^^^^^^^
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0059

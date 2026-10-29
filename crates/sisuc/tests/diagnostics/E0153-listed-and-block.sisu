@@ -1,0 +1,15 @@
+interface Shape {
+    fn area(self) -> f64
+}
+
+class Circle: Shape {
+    r: f64
+}
+
+extend Circle: Shape {
+    fn area(self) -> f64 {
+        self.r
+    }
+}
+
+fn main() {}

@@ -94,23 +94,23 @@ impl Checker<'_> {
         expected: Option<Type>,
     ) -> Result<(&'a ast::Arg, Checked, bool), Checked> {
         // Not `value()`: a `unit` argument needs this code, not "expression has no value".
-        let wrong = |problem| {
+        let wrong = |problem, at| {
             DiagnosticKind::PrintArgument {
                 function,
                 problem,
-                at: span,
+                at,
             }
             .into()
         };
         let labeled = self.labels(args);
         let [arg] = args else {
-            self.diagnostics.push(wrong(PrintProblem::Count));
+            self.diagnostics.push(wrong(PrintProblem::Count, span));
             self.stray(args);
             return Err(Err(Poisoned::error()));
         };
         let checked = self.expr(&arg.value, expected);
         let error = match type_of(&checked) {
-            Some(Type::UNIT) => wrong(PrintProblem::NoValue),
+            Some(Type::UNIT) => wrong(PrintProblem::NoValue, arg.value.span),
             Some(Type::NEVER) => DiagnosticKind::PrintNever {
                 function,
                 at: arg.value.span,
@@ -125,6 +125,16 @@ impl Checker<'_> {
     /// Warns when `checked`, the check of the printed `value`, is an optional: the text may be
     /// `None`. Only the type of `value` itself counts, not a type that it holds.
     pub(super) fn warn_if_optional(&mut self, value: &ast::Expr, checked: &Checked) {
+        // `Some(x)` is never `None`.
+        if matches!(
+            checked,
+            Ok(tir::Expr {
+                kind: tir::ExprKind::Wrap(_),
+                ..
+            })
+        ) {
+            return;
+        }
         if matches!(
             type_of(checked).map(Type::kind),
             Some(TypeKind::Optional(_))

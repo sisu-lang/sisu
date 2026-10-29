@@ -865,6 +865,132 @@ fn a_second_conformance_to_an_interface_should_be_reported_once() {
     }
 }
 
+/// A row of the next test: its name, its program, and where each E0153 is.
+type Duplicate = (&'static str, &'static str, &'static [(usize, usize)]);
+
+/// A conformance that a second one writes whole is reported once, as the second: the methods
+/// that the second writes are not missing from the first. The fixture `E0153-listed-and-block`
+/// pins the text.
+#[test]
+fn a_conformance_that_its_duplicate_meets_should_report_only_the_duplicate() {
+    let rows: [Duplicate; 10] = [
+        (
+            "a list, then a block",
+            "class C: Shape {}\nextend C: Shape {\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {}",
+            &[(2, 11)],
+        ),
+        (
+            "a block, then a list",
+            "extend C: Shape {\n    fn area(self) -> f64 { 1.0 }\n}\nclass C: Shape {}\nfn main() {}",
+            &[(4, 10)],
+        ),
+        (
+            "an empty block, then a block",
+            "class C {}\nextend C: Shape {}\nextend C: Shape {\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {}",
+            &[(3, 11)],
+        ),
+        (
+            "a method in the body and one in the block",
+            "interface Two {\n    fn a(self)\n    fn b(self)\n}\nclass C: Two {\n    fn a(self) {}\n}\nextend C: Two {\n    fn b(self) {}\n}\nfn main() {}",
+            &[(8, 11)],
+        ),
+        (
+            "a wrong method in the body",
+            "class C: Shape {\n    fn area(self) -> i64 { 1 }\n}\nextend C: Shape {\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {}",
+            &[(4, 11)],
+        ),
+        (
+            "Eq on a class",
+            "class C: Eq {}\nextend C: Eq {\n    fn eq(self, other: C) -> bool { true }\n}\nfn main() {}",
+            &[(2, 11)],
+        ),
+        (
+            "Ord on an enum",
+            "enum E: Ord {\n    A\n}\nextend E: Ord {\n    fn less(self, other: E) -> bool { true }\n}\nfn main() {}",
+            &[(4, 11)],
+        ),
+        (
+            "an associated type that the block chooses",
+            "interface H {\n    type Item\n}\nclass C: H {}\nextend C: H {\n    type Item = i64\n}\nfn main() {}",
+            &[(5, 11)],
+        ),
+        (
+            "an empty block between the list and the block",
+            "class C: Shape {}\nextend C: Shape {}\nextend C: Shape {\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {}",
+            &[(2, 11), (3, 11)],
+        ),
+        (
+            "a block for every instance",
+            "class Box<T>: Shape {}\nextend<U> Box<U>: Shape {\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {}",
+            &[(2, 19)],
+        ),
+    ];
+    for (row, src, at) in rows {
+        let expected: Vec<_> = at.iter().map(|&at| (Code::ConformsTwice, at)).collect();
+        codes_row(row, &with_shapes(src), &expected);
+    }
+}
+
+/// A second conformance that does not write what the first lacks leaves the first's report: the
+/// first still fails when the second is removed.
+#[test]
+fn a_conformance_that_its_duplicate_does_not_meet_should_keep_both_reports() {
+    for (row, src, expected) in [
+        (
+            "two listings and no method",
+            "class C: Shape, Shape {}\nfn main() {}",
+            vec![
+                (Code::ConformanceBody, (1, 10)),
+                (Code::ConformsTwice, (1, 17)),
+            ],
+        ),
+        (
+            "a list and an empty block",
+            "class C: Shape {}\nextend C: Shape {}\nfn main() {}",
+            vec![
+                (Code::ConformanceBody, (1, 10)),
+                (Code::ConformsTwice, (2, 11)),
+            ],
+        ),
+        (
+            "a block for one instance",
+            "class Box<T>: Shape {}\nextend Box<i64>: Shape {\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {}",
+            vec![
+                (Code::ConformanceBody, (1, 15)),
+                (Code::ConformsTwice, (2, 18)),
+            ],
+        ),
+        (
+            "a block with a bound",
+            "class Box<T>: Shape {}\nextend<U: Named> Box<U>: Shape {\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {}",
+            vec![
+                (Code::ConformanceBody, (1, 15)),
+                (Code::ConformsTwice, (2, 26)),
+            ],
+        ),
+        // The block covers every `Box`, but gives other interface arguments: `Box<f64>` has no
+        // `conv`.
+        (
+            "a block with other interface arguments",
+            "interface Conv<T> {\n    fn conv(self) -> T\n}\nclass Box<T>: Conv<T> {}\nextend<U> Box<U>: Conv<i64> {\n    fn conv(self) -> i64 { 1 }\n}\nfn main() {}",
+            vec![
+                (Code::ConformanceBody, (4, 15)),
+                (Code::ConformsTwice, (5, 19)),
+            ],
+        ),
+        (
+            "Ord with no Eq anywhere",
+            "class C: Ord {}\nextend C: Ord {\n    fn less(self, other: C) -> bool { true }\n}\nfn main() {}",
+            vec![
+                (Code::ConformanceBody, (1, 10)),
+                (Code::ConformsTwice, (2, 11)),
+            ],
+        ),
+    ] {
+        codes_row(row, &with_shapes(src), &expected);
+    }
+}
+
 /// An `extend` block's interface needs the interfaces it inherits: the type's list or a block of
 /// its own gives them, and each one missing is reported at the block's interface.
 #[test]
