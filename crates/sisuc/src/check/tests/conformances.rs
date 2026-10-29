@@ -1397,17 +1397,38 @@ fn to_string_with_type_arguments_should_report_the_list() {
     }
 }
 
-/// A masked method with a type parameter of its own does not take the list in the check of the
-/// type arguments, so the generated `to_string` reports it: the list is reported once. (The method
-/// does not match `Display`, which is its own error.)
+/// A list of type arguments after `to_string` goes to a written method that has type parameters
+/// of its own, even when the bounds of its block fail: the failed bound is reported, as it is for
+/// a call with an argument, not "takes no type arguments", which is true for the generated one
+/// only. The method does not match `Display`, which is its own error.
 #[test]
-fn to_string_with_type_arguments_should_report_the_list_of_a_masked_generic_method() {
-    let src = "class Node {}\nclass Own<T> {\n    _value: T\n}\nextend<T: Eq> Own<T> {\n    fn to_string<U>(self) -> string { \"own\" }\n}\nfn main() {\n    print(Own(_value: Node()).to_string<i64>())\n}";
-    let at = where_is(src, "<i64>");
-    codes(
-        src,
-        &[(Code::ConformanceBody, (6, 8)), (Code::TypeArguments, at)],
-    );
+fn to_string_with_type_arguments_should_report_the_failed_bound_of_a_masked_generic_method() {
+    let head = "class Node {}\nclass Own<T> {\n    _value: T\n}\n";
+    for (row, block, call) in [
+        (
+            "a plain block",
+            "extend<T: Eq> Own<T> {\n    fn to_string<U>(self) -> string { \"own\" }\n}\n",
+            "Own(_value: Node()).to_string<i64>()",
+        ),
+        (
+            "a plain block with two type parameters",
+            "extend<T: Eq> Own<T> {\n    fn to_string<U, V>(self) -> string { \"own\" }\n}\n",
+            "Own(_value: Node()).to_string<i64>()",
+        ),
+        (
+            "a Display block",
+            "extend<T: Eq> Own<T>: Display {\n    fn to_string<U>(self) -> string { \"own\" }\n}\n",
+            "Own(_value: Node()).to_string<i64>()",
+        ),
+    ] {
+        let src = format!("{head}{block}fn main() {{\n    print({call})\n}}");
+        let at = where_is(&src, call);
+        codes_row(
+            row,
+            &src,
+            &[(Code::ConformanceBody, (6, 8)), (Code::NotConform, at)],
+        );
+    }
 }
 
 /// The text of a `to_string` is the one of the type's `Display`: a written method whose bounds

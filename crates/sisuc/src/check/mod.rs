@@ -506,8 +506,9 @@ struct Checker<'src> {
     /// the choices of the associated types matter to the cycles only then. Set before the marks.
     holds_assoc: bool,
     /// The place among `extensions` of the first block that covers the receiver of the call being
-    /// found and whose bounds fail, when `conforming_methods` finds no method for it.
-    failed_block: Option<usize>,
+    /// found and whose bounds fail, when `conforming_methods` finds no method for it, with that
+    /// block's method of the called name.
+    failed_block: Option<(usize, tir::FuncId)>,
     /// The enums as `tir` holds them, with their boxes and countedness; bodies are checked
     /// after they are lowered.
     lowered_enums: Vec<tir::Enum>,
