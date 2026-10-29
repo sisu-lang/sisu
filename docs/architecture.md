@@ -165,8 +165,9 @@ conformance chooses: it replaces an associated type of a known type with the
 type its conformance chose. `check/bound.rs` checks a method call on a value
 of type `T`: the name is a requirement of the interfaces of `T`'s bounds, and
 the call becomes an `InterfaceCall` node in `tir`. `conformance.rs` finds the
-conformance that covers a type, for the checker and for `mono`. A type
-argument that does not conform to a bound is an error at the call (E0154).
+conformance that covers a type, for the checker and for `mono`. The walks that
+follow the depth of a type grow the call stack when it is low (`stacker`), so a
+deep type does not overflow it. A type argument that does not conform to a bound is an error at the call (E0154).
 The interfaces `Display`, `Eq`, `Ord` and `AnyObject` are in `lang.sisu`,
 which the front end checks before the prelude. `print`, `eprint`, an
 interpolation and `to_string()` use `Display`, `==` and `!=` use `Eq`, and `<`,
