@@ -840,12 +840,14 @@ Each is small once its milestone's main feature exists:
   hidden shared state; only Swift's capture list copies one. Sisu shares one
   only when the capture list says so (decided 2026-10-29). In
   `tree.walk([mut count] n => count += 1)`, the closure shares the
-  `let mut` local `count`, which lives in a counted cell on the heap. A callback can then count or
-  collect without a class to hold the result. A closure can reach the
-  cell, so the rules treat it as a field of a class object. A borrowed
-  argument from it is retained first (ADR 0029). A `mut self` method
-  written in Sisu cannot be called on it (exclusivity). A callback given
-  to a changing method on it cannot write a field or a shared cell. A class that stores a closure capturing that same object is a
+  `let mut` local `count`, which lives in a counted cell on the heap. A
+  callback can then count or collect without a class to hold the result.
+  A closure can reach the cell, so the rules treat it as a field of a
+  class object. A borrowed argument from it is retained first (ADR 0029).
+  A `mut self` method written in Sisu cannot be called on it
+  (exclusivity). A callback given to a changing method on it cannot
+  write a field or a counted cell. A class that stores a closure
+  capturing that same object is a
   cycle, so the closure needs a way to capture weakly, as Swift's
   `[weak self]` does (ADR 0008; see "Weak captures" in "Open decisions").
 - Milestone 9: a closure that does not escape needs no box. A closure passed

@@ -163,7 +163,7 @@ fn main() {
 
 The rules:
 
-- A closure made before a `let mut` binding changes keeps the old value.
+- A closure made before a `let mut` binding changes keeps the old value, unless it shares the binding with `[mut name]` (below).
 - A captured array or string is copied as any binding of it is ([Values and memory](values.md#copied-and-shared)).
 - A closure that captures an object shares the object. It can write the `mut` fields of the object.
 - An assignment to a plain captured name is an error, also when the name is a `let mut`. The closure cannot change it.
@@ -189,7 +189,7 @@ fn main() {
 }
 ```
 
-Other code can reach a shared variable through the closure, so the compiler treats it as a field of an object. A `mut self` method written in Sisu cannot be called on it.
+The shared variable lives in a counted cell on the heap. Other code can reach it through the closure, so the compiler treats it as a field of an object. A `mut self` method written in Sisu cannot be called on it. An assignment, `+=` and `push` still work.
 
 ## Weak captures
 

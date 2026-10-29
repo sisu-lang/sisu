@@ -410,8 +410,9 @@ _Avoid_: upvalue, closed-over variable
 **Mutable capture**:
 A capture written `[mut name]` that shares a `let mut` local with the
 closure, in place of a copy. A change made by the closure or by the
-function is seen by both. A closure can reach it, so the rules treat it as
-a field of a class object.
+function is seen by both. The local lives in a counted cell on the heap.
+A closure can reach it, so the rules treat it as a field of a class
+object.
 
 **Weak capture**:
 A capture that does not keep its object alive. Inside the closure the name is
