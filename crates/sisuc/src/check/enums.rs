@@ -516,6 +516,8 @@ impl Checker<'_> {
                                     .any(|&n| declared[n] == declared[e])
                                 {
                                     Rank::Late
+                                } else if ty.has_assoc() {
+                                    Rank::Assoc
                                 } else {
                                     Rank::Never
                                 };
