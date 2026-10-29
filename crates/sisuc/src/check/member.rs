@@ -157,7 +157,7 @@ impl Checker<'_> {
         let d = match ty.kind() {
             TypeKind::Class(class, _) => {
                 let info = &self.classes[class.0];
-                if let Some(index) = info.fields.iter().position(|f| f.name.name == name.name) {
+                if let Some(index) = info.field(name.name) {
                     return Some((class, index, self.field_type(ty, index)));
                 }
                 match self.own_method(ty, name.name) {
@@ -328,7 +328,7 @@ impl Checker<'_> {
         let d = match ty.kind() {
             TypeKind::Class(class, _) => {
                 let info = &self.classes[class.0];
-                if info.fields.iter().any(|f| f.name.name == name.name) {
+                if info.field(name.name).is_some() {
                     DiagnosticKind::FieldNotMethod {
                         name: name.name.to_string(),
                         owner: self.type_name(ty),
@@ -342,7 +342,7 @@ impl Checker<'_> {
             }
             TypeKind::Enum(id, _) => {
                 let info = &self.enums[id.0];
-                if info.variants.iter().any(|v| v.name.name == name.name) {
+                if info.index.contains_key(&name.name) {
                     DiagnosticKind::MemberKind {
                         name: name.name.to_string(),
                         enum_name: self.type_name(ty),

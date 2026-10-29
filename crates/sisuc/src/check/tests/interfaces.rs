@@ -1504,8 +1504,8 @@ fn an_inherited_generic_interface_should_be_conformed_to_as_a_plain_one() {
     }
 }
 
-/// An extension's method is checked against the fields of its class through one index, built once
-/// for the class: the work follows the fields and not the product with the methods.
+/// An extension's method is checked against the fields of its class through the class's field
+/// index: each of the `n` methods takes one lookup, and not a scan of the `n` fields.
 #[test]
 fn extension_methods_should_read_the_fields_of_their_class_once() {
     let indexed = |n: usize| {
@@ -1515,9 +1515,9 @@ fn extension_methods_should_read_the_fields_of_their_class_once() {
             .collect();
         let (fields, methods) = (fields.concat(), methods.concat());
         let src = format!("class C {{\n{fields}}}\nextend C {{\n{methods}}}\nfn main() {{}}");
-        FIELDS_INDEXED.set(0);
+        FIELD_LOOKUPS.set(0);
         clean(&src);
-        FIELDS_INDEXED.get()
+        FIELD_LOOKUPS.get()
     };
     assert_eq!(indexed(32), 32);
     assert_eq!(indexed(64), 64);

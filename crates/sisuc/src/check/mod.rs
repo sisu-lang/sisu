@@ -145,12 +145,29 @@ struct ClassInfo {
     bounds: Vec<Vec<Bound>>,
     /// The first field of each name, in declaration order.
     fields: Vec<FieldInfo>,
+    /// Each field's index in `fields`, by name.
+    index: FxHashMap<Symbol, usize>,
     /// The first method of each name, and every broken one.
     methods: FxHashMap<Symbol, Declared<tir::FuncId>>,
     /// Whether a field is named `to_string`.
     names_to_string: bool,
     /// The associated types the declaration's body chooses.
     assoc: Rc<Choices>,
+}
+
+impl ClassInfo {
+    /// Adds a field after the ones it has. The caller checks that no field has its name.
+    fn add_field(&mut self, field: FieldInfo) {
+        self.index.insert(field.name.name, self.fields.len());
+        self.fields.push(field);
+    }
+
+    /// The index in `fields` of the field called `name`, if the class has one.
+    fn field(&self, name: Symbol) -> Option<usize> {
+        #[cfg(test)]
+        FIELD_LOOKUPS.set(FIELD_LOOKUPS.get() + 1);
+        self.index.get(&name).copied()
+    }
 }
 
 struct FieldInfo {
@@ -335,8 +352,8 @@ thread_local! {
     /// How many interfaces the closures of a type's conformances have put in a visited set, read
     /// as an inherited one, or traced back to the interface that inherits them.
     pub(super) static CLOSURE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many fields of a class the check for a method named like a field has indexed.
-    pub(super) static FIELDS_INDEXED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many steps the lookups of a class's field by name have taken.
+    pub(super) static FIELD_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many times `conforms` has looked for the conformance of a class or an enum, not
     /// counting an answer it kept.
     pub(super) static CONFORMS_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -1060,6 +1077,10 @@ impl Checker<'_> {
     /// any of them. They share a namespace. `FuncId`s run in source order, a class's or an
     /// enum's methods at its place.
     /// The first `user_items` of `items` are the user's: `self.prelude` is where the rest start.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per kind of item, so the first pass reads in one place"
+    )]
     fn collect_names(&mut self, items: &[&ast::Item], user_items: usize, broken: &[ast::Broken]) {
         let mut first = FxHashMap::default();
         let mut next_function = 0;
@@ -1079,6 +1100,7 @@ impl Checker<'_> {
                         bounded: class.type_params.iter().any(|p| !p.bounds.is_empty()),
                         bounds: Vec::new(),
                         fields: Vec::new(),
+                        index: FxHashMap::default(),
                         methods: FxHashMap::default(),
                         names_to_string: false,
                         assoc: Rc::default(),
@@ -1356,7 +1378,7 @@ impl Checker<'_> {
                             if field.name.name.as_str() == "to_string" {
                                 self.classes[id.0].names_to_string = true;
                             }
-                            self.classes[id.0].fields.push(FieldInfo {
+                            self.classes[id.0].add_field(FieldInfo {
                                 name: field.name.clone(),
                                 ty_span: field.ty.span,
                                 inner,
