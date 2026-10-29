@@ -968,6 +968,16 @@ fn a_conformance_that_its_duplicate_does_not_meet_should_keep_both_reports() {
                 (Code::ConformsTwice, (2, 26)),
             ],
         ),
+        // The block covers every `Box`, but gives other interface arguments: `Box<f64>` has no
+        // `conv`.
+        (
+            "a block with other interface arguments",
+            "interface Conv<T> {\n    fn conv(self) -> T\n}\nclass Box<T>: Conv<T> {}\nextend<U> Box<U>: Conv<i64> {\n    fn conv(self) -> i64 { 1 }\n}\nfn main() {}",
+            vec![
+                (Code::ConformanceBody, (4, 15)),
+                (Code::ConformsTwice, (5, 19)),
+            ],
+        ),
         (
             "Ord with no Eq anywhere",
             "class C: Ord {}\nextend C: Ord {\n    fn less(self, other: C) -> bool { true }\n}\nfn main() {}",
