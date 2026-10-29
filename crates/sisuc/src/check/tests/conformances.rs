@@ -3650,6 +3650,83 @@ fn operators_should_report_only_a_mismatch_inside_an_operand() {
             "fn f(xs: [[i64]]) -> bool { xs.contains([true]) }",
             vec![(Code::Mismatch, "true")],
         ),
+        (
+            "an array of a number for arrays of a parameter",
+            "fn f<T>(xs: [[T]]) -> bool { xs.contains([5]) }",
+            vec![(Code::Mismatch, "5]")],
+        ),
+        (
+            "equality of an array of a parameter and an array of a number",
+            "fn f<T>(a: [T]) -> bool { a == [true] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "order with a branch of another type",
+            "fn f<T>(a: [T], c: bool) -> bool { a < if c { true } else { a } }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "order with a branch that holds a number that does not fit",
+            "fn f(a: [u8], c: bool) -> bool { a < if c { [300] } else { a } }",
+            vec![(Code::IntegerDoesNotFit, "300")],
+        ),
+        (
+            "order of bytes and a number that does not fit",
+            "fn f(b: [u8]) -> bool { b < [300] }",
+            vec![(Code::IntegerDoesNotFit, "300")],
+        ),
+        (
+            "order of bytes and a negated number",
+            "fn f(b: [u8]) -> bool { b < [-1] }",
+            vec![(Code::NegatedU8, "-1")],
+        ),
+        (
+            "order of arrays of bytes and a number that does not fit",
+            "fn f(b: [[u8]]) -> bool { b <= [[256]] }",
+            vec![(Code::IntegerDoesNotFit, "256")],
+        ),
+        (
+            "a chain with a number that does not fit in the last operand",
+            "fn f(b: [u8]) -> bool { b < b < [1, 300] }",
+            vec![(Code::IntegerDoesNotFit, "300")],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(code, text)| (code, where_is(&src, text)))
+            .collect();
+        codes_row(row, &src, &expected);
+    }
+}
+
+/// An error in an operand that is not about its type does not hide the missing operator: the
+/// operands may still be one type.
+#[test]
+fn operators_should_report_a_missing_operator_beside_an_error_that_is_not_about_the_type() {
+    let node = "class Node {}\n";
+    let rows = [
+        (
+            "order of a class and a block with a wrong binding",
+            format!("{node}fn f(a: Node) -> bool {{ a < {{ let x: i64 = true; a }} }}"),
+            vec![(Code::NoOperator, "a <"), (Code::Mismatch, "true")],
+        ),
+        (
+            "order of a parameter and a block with a wrong binding",
+            "fn f<T>(a: T) -> bool { a < { let x: i64 = true; a } }".to_string(),
+            vec![(Code::ParamLacks, "a <"), (Code::Mismatch, "true")],
+        ),
+        (
+            "equality of a class and a block with a wrong binding",
+            format!("{node}fn f(a: Node) -> bool {{ a == {{ let x: i64 = true; a }} }}"),
+            vec![(Code::NoOperator, "a =="), (Code::Mismatch, "true")],
+        ),
+        (
+            "order of a class and a call with a wrong argument",
+            format!("{node}fn g(x: i64) -> i64 {{ x }}\nfn f(a: Node) -> bool {{ a < g(true) }}"),
+            vec![(Code::NoOperator, "a <"), (Code::Mismatch, "true")],
+        ),
     ];
     for (row, src, expected) in rows {
         let src = format!("{src}\nfn main() {{}}");

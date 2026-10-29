@@ -225,10 +225,16 @@ impl Checker<'_> {
             None if error => None,
             None => Some(Type::NEVER),
         };
-        let mismatch = blocks
-            .iter()
-            .any(|b| matches!(b, Err(Poisoned { mismatch: true, .. })));
-        let ty = ty.ok_or(Poisoned { ty: None, mismatch });
+        // A join that fails with a type expected rejects that type, as a branch that does, and
+        // then the whole is `Error`, whatever type the other branches joined to.
+        let mismatch = failed && expected.is_some_and(|want| want != UNKNOWN)
+            || blocks
+                .iter()
+                .any(|b| matches!(b, Err(Poisoned { mismatch: true, .. })));
+        let ty = match ty {
+            Some(ty) if !mismatch => Ok(ty),
+            _ => Err(Poisoned { ty: None, mismatch }),
+        };
         (blocks, ty)
     }
 

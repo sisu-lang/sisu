@@ -3,13 +3,14 @@
 use super::expr::{
     fits, if_some, int_literal, literal_type, local, none_literal, operator, path, rank, typed,
 };
+use super::generic::mismatched;
 use super::interface::Operation;
 use super::{
     Checked, Checker, Poisoned, UNKNOWN, as_optional, beyond_one_layer, block_expr, optional_of,
     payload, type_of, wrap,
 };
 use crate::ast::{self, CompareOp, ExprKind};
-use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, Literal};
+use crate::diagnostic::{Diagnostic, DiagnosticKind, Literal};
 use crate::lang::{self, Dispatch};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
@@ -35,13 +36,18 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         }
         if type_of(&checked) == Some(Type::U8) {
-            // A literal's "does not fit" is moot once its negation is an error.
-            if matches!(operand.kind, ExprKind::Int { .. }) {
+            // A literal's "does not fit" is moot once its negation is an error. That literal is
+            // a `u8` only because the context wants one, which the negation rejects.
+            let literal = matches!(operand.kind, ExprKind::Int { .. });
+            if literal {
                 self.diagnostics.truncate(before);
             }
             self.diagnostics
                 .push(DiagnosticKind::NegatedU8 { at: span }.into());
-            return Err(Poisoned::error());
+            return Err(Poisoned {
+                ty: None,
+                mismatch: literal,
+            });
         }
         let want = if type_of(&checked).map(payload) == Some(Type::F64) {
             Type::F64
@@ -347,12 +353,6 @@ impl Checker<'_> {
                 Some((_, operand)) => operand,
                 None => self.value(e, (!by_char).then(|| want.unwrap_or(UNKNOWN))),
             };
-            // A mismatch inside an operand, as an element of another type, is a mistake of the
-            // operands, not a missing `<`. Another error, as an unknown name, is not.
-            let inside = !arithmetic
-                && self.diagnostics[start..]
-                    .iter()
-                    .any(|d| d.code() == Code::Mismatch);
             if rank(e) != 0 {
                 deferred.extend(self.diagnostics.drain(start..));
             }
@@ -448,7 +448,7 @@ impl Checker<'_> {
             if type_of(&operand).is_none() {
                 want = None;
             }
-            mismatched |= m || inside;
+            mismatched |= m;
             failed |= got.is_none() && rank(e) == 0;
             checked.push(operand);
             before = got;
@@ -622,7 +622,8 @@ impl Checker<'_> {
             (Some(lt), Some(rt)) if lt == rt => Some((lt, self.operation(lt, eq))),
             _ => None,
         };
-        if !none_literal(second) {
+        // A second side that rejected the first's type is the mistake: it has no type to compare.
+        if !none_literal(second) && !mismatched(&l) && !mismatched(&r) {
             let same = match (type_of(&l), type_of(&r)) {
                 (Some(lt), Some(rt)) => lt == rt || fits(lt, rt) || fits(rt, lt),
                 _ => false,

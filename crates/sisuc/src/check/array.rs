@@ -160,7 +160,10 @@ impl Checker<'_> {
         let ty = Type::array(element);
         match checked.into_iter().collect::<Result<Vec<_>, _>>() {
             Ok(elements) => Ok(self.spilled(span, ty, elements, tir::ExprKind::ArrayLit)),
-            _ => Err(Poisoned::of((!mismatched).then_some(ty))),
+            _ => Err(Poisoned {
+                ty: (!mismatched).then_some(ty),
+                mismatch: mismatched,
+            }),
         }
     }
 

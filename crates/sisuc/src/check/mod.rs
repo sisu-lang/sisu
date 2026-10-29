@@ -61,9 +61,10 @@ use unused_names::{Owner, Pending, Use, Used};
 /// excuse another.
 struct Poisoned {
     ty: Option<Type>,
-    /// Whether the expected type passed down was rejected (a `None` that is not optional, or
-    /// a block or `if` whose value is one): the rule that passed it failed, so its expression
-    /// is `Error` too, where an `Error` operand would excuse it.
+    /// Whether the expected type passed down was rejected (a `None` that is not optional, a
+    /// number that does not fit, an array with such an element, or a block or `if` whose value
+    /// is one): the rule that passed it failed, so its expression is `Error` too, where an
+    /// `Error` operand would excuse it.
     mismatch: bool,
 }
 
