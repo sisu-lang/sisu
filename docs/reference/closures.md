@@ -166,7 +166,7 @@ The rules:
 - A closure made before a `let mut` binding changes keeps the old value.
 - A captured array or string is copied as any binding of it is ([Values and memory](values.md#copied-and-shared)).
 - A closure that captures an object shares the object. It can write the `mut` fields of the object.
-- An assignment to a captured name is an error, also when the name is a `let mut`. The closure cannot change it.
+- An assignment to a plain captured name is an error, also when the name is a `let mut`. The closure cannot change it.
 
 ```sisu pending
 fn main() {
@@ -177,7 +177,19 @@ fn main() {
 }
 ```
 
-To keep a value that changes, return the new value from the closure, or keep the value in a `mut` field of an object.
+To keep a value that changes, return the new value from the closure, or share the variable with a *mutable capture*. `[mut name]` before the parameters shares a `let mut` local with the closure. A change that the closure makes is seen by the function, and a change that the function makes is seen by the closure:
+
+```sisu pending
+fn main() {
+    let mut total = 0
+    let add = [mut total] (x: i64) => total += x
+    add(2)
+    add(3)
+    print(total)                       // 5
+}
+```
+
+Other code can reach a shared variable through the closure, so the compiler treats it as a field of an object. A `mut self` method written in Sisu cannot be called on it.
 
 ## Weak captures
 

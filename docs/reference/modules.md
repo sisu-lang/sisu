@@ -89,7 +89,7 @@ The program is the entry file and each file that its imports reach. `sisu` reads
 
 Only the entry file's `main` runs. A `main` in another module is an ordinary function, so one file can be a script and a module. Another module can import the entry file.
 
-`sisu check` of an entry file with no `main` checks it as a library: it reports no missing `main`, and a `pub` item that nothing uses gets no warning. `sisu run` and `sisu build` still need `main`.
+`sisu check` of an entry file with no `main` checks it as a library. It reports no missing `main`, and a `pub` item that nothing uses gets no warning. `sisu run` and `sisu build` still need `main`.
 
 ## Imports
 
@@ -247,8 +247,8 @@ fn main() {
 - The rule looks only at the outermost type of `T`, of `I` and of each argument in `A`. `[User]` and `User?` do not count as types of the program, and neither do the type arguments of `T`: `extend Result<User, MyErr>: Display` is an error.
 - In a program without a `sisu.toml`, every file is in one project. So the rule rejects only a conformance where the type, the interface and every argument come from the prelude or the standard library: `extend IoError: Display` is an error, and `extend IoError: Convert<TotalsError>` is allowed.
 - A conformance can be in any module of its project. A call finds its methods through the value's type when the conformance's file is part of the program, with no import of the interface. Above, `main.sisu` imports `output.user_csv` only to make that file part of the program.
-- A built-in type such as `f64` or `string` follows the same rule. `extend f64: Mul<Vec2>` is allowed when `Vec2` is the program's, so `2.0 * v` works. `extend i64: Display` is an error.
-- When two conformances give a type methods of the same name, `"hi".shout()` is an error, and a qualified call picks one: `loud.Shout.shout("hi")` calls the method of the conformance to `loud.Shout`, with `"hi"` as the receiver.
+- A built-in type such as `f64` or `string` follows the same rule. When milestone 10 gives operators their interfaces, `extend f64: Mul<Vec2>` is allowed when `Vec2` is the program's, so `2.0 * v` works. `extend i64: Display` is an error.
+- When two conformances give a type methods of the same name, `"hi".shout()` is an error. A qualified call picks one: `loud.Shout.shout("hi")` calls the method of the conformance to `loud.Shout`, with `"hi"` as the receiver.
 - A plain `extend T { ... }`, with methods and no interface, must be in `T`'s module, so a type's own methods are always found with the type. Only the prelude has a plain `extend` of a built-in type.
 - A conformance that replaces a generated one, such as a hand-written `Display` or `Eq`, must be in its type's module. Otherwise `a == b` could give another answer when the file is not part of the program.
 

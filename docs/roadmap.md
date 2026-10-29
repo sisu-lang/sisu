@@ -836,16 +836,16 @@ Each is small once its milestone's main feature exists:
   into Rust's `Fn`, `FnMut` and `FnOnce`, because reference counting keeps
   the captured values alive. A closure captures by value, so it gets a copy
   of a record or an array (ADR 0007), and assigning to a plain capture is a
-  compile error. Swift and Kotlin share a captured variable unless a
-  capture list copies it, which is hidden shared state. Sisu shares one
-  only when the capture list says so (decided 2026-10-29):
-  `tree.walk([mut count] n => count += 1)` shares the `let mut` local
-  `count` through a counted box, so a callback can count or collect
-  without a class to hold the result. A closure can reach the box, so the
-  rules treat it as a field of a class object: a borrowed argument from it
-  is retained first (ADR 0029), a `mut self` method written in Sisu cannot
-  be called on it (exclusivity), and a callback given to a changing method
-  on it cannot write it. A class that stores a closure capturing that same object is a
+  compile error. Swift and Kotlin share a captured variable, which is
+  hidden shared state; only Swift's capture list copies one. Sisu shares one
+  only when the capture list says so (decided 2026-10-29). In
+  `tree.walk([mut count] n => count += 1)`, the closure shares the
+  `let mut` local `count`, which lives in a counted cell on the heap. A callback can then count or
+  collect without a class to hold the result. A closure can reach the
+  cell, so the rules treat it as a field of a class object. A borrowed
+  argument from it is retained first (ADR 0029). A `mut self` method
+  written in Sisu cannot be called on it (exclusivity). A callback given
+  to a changing method on it cannot write a field or a shared cell. A class that stores a closure capturing that same object is a
   cycle, so the closure needs a way to capture weakly, as Swift's
   `[weak self]` does (ADR 0008; see "Weak captures" in "Open decisions").
 - Milestone 9: a closure that does not escape needs no box. A closure passed
@@ -993,10 +993,11 @@ library.
 Status: proposal, 2026-10-10, revised after a review by gpt-6.1-sol. The
 memory model is ADR 0010 (proposed). The model gets a design session of its
 own before a spec (the user, 2026-10-29), and this section is input to that
-session, not a decision. Two findings from the 2026-10-29 review go in: an
-accepted socket cannot cross into a task, so the usual server loop that
-accepts and then spawns does not compile (ADR 0027's third program); and
-large read-only data is copied into each task until `Shared<T>` exists. Concurrency needs generics for
+session, not a decision. The session takes two findings from the
+2026-10-29 review. First, an accepted socket cannot cross into a task, so
+the usual server loop that accepts and then spawns does not compile
+(ADR 0027's third program). Second, large read-only data is copied into
+each task until `Shared<T>` exists. Concurrency needs generics for
 `Channel<T>` (milestone 8) and closures for `spawn` (milestone 9).
 
 The model takes isolation from Elixir and typed channels from Go:
@@ -1197,7 +1198,7 @@ These do not make code nicer to write, so they wait:
   another way, for example through a shared object: that needs an
   exclusivity check, as Swift enforces for `inout`. A `mut self` method
   called on a field, `obj.pos.move_by(1, 2)`, needs the same check
-  (ADR 0011). Until then, `self.cells.replace(with: [])` takes the array
+  (ADR 0011). Until then, `self.cells.exchange(with: [])` takes the array
   out and leaves `[]` (decided 2026-10-29). `inout` parameters stay out (ADR 0007).
 - Proving uniqueness at compile time. Roc's Morphic analysis follows each
   array through the whole program to prove that a write holds the only
@@ -1485,9 +1486,9 @@ accepted.
     a box whose count is above 1, as an array write does (ADR 0007). With
     `any` of an interface whose associated types are bound, which that
     spec also settles, `-> any Iterator<Row>` can return one of two
-    iterators chosen at run time. Later, when a program needs a list of mixed shapes: `any` of an
-    interface with an associated type, whose results are erased to `any`
-    (Swift SE-0309).
+    iterators chosen at run time. Later, when a program needs a list of
+    mixed shapes, `any` can also take an interface with an associated
+    type, whose results are erased to `any` (Swift SE-0309).
   - An interface may take type parameters as well as associated types. A type
     parameter fits when a type conforms several ways (`Convert<T>`); an
     associated type fits when it has one answer, as Rust and Swift use them.
@@ -1511,8 +1512,9 @@ accepted.
     methods: one interface per block. Only the prelude may write a plain
     `extend` of a built-in type. From milestone 11, a program may conform a
     built-in type to an interface when the program declares the interface
-    or one of its arguments (decided 2026-10-29): `extend f64: Mul<Vec2>`
-    makes `2.0 * v` work, and a JSON library may write
+    or one of its arguments (decided 2026-10-29). When milestone 10 gives
+    operators their interfaces, `extend f64: Mul<Vec2>` makes `2.0 * v`
+    work, and a JSON library may write
     `extend string: ToJson`. A method such as `"hi".shout()` comes from a
     one-method interface that the program declares. When two libraries
     both add `shout` to `string`, `"hi".shout()` is ambiguous, and the
@@ -1536,15 +1538,16 @@ accepted.
 - **What a string is.** Resolved by
   [ADR 0014](adr/0014-strings-are-utf-8-values.md): UTF-8, always valid, a
   value shared until written, `len()` in bytes and no `s[i]`.
-- **Substring views.** Resolved: there is no `Substring` type (decided
-  2026-10-17). `s[a..b]` gives a `string` that shares the parent's bytes,
-  and the compiler copies a small part that can outlive its parent
-  (the slices design, 2026-10-26). Positions are bytes. Decided
-  2026-10-29: the methods that cut a string (`find`, `split`, `split_once`,
-  `trim`, `starts_with`, `strip_prefix`, `char_positions`) come with
-  milestone 11 part 2 at the latest, so a program seldom computes a
-  position. A position found in `chars()` counts characters, and `s[..i]`
-  counts bytes, so on `"päivä=1"` the two give `"päiv"` with no panic.
+- **Substring views.** Decided by the slices design (2026-10-26), with no
+  separate `Substring` type: `s[a..b]` gives a `string` that shares the
+  parent's bytes. The compiler copies a small part that can outlive its
+  parent. Positions are bytes. ADR 0014 still calls this open until that
+  design's plan updates it. Decided 2026-10-29: the methods that cut a
+  string (`find`, `split`, `split_once`, `trim`, `starts_with`,
+  `strip_prefix`, `char_positions`) come early, so a program seldom
+  computes a position. A position found in `chars()` counts characters,
+  and `s[..i]` counts bytes. On `"päivä=1"`, a character position used
+  as a byte position gives the wrong part, `"päiv"`, with no panic.
 - **Small-string optimisation.** Store short strings inside the variable's
   slot, as Swift and C++ do. Programs cannot observe it. Decide when a
   benchmark asks for it: the array of records with short and long strings
@@ -1594,9 +1597,9 @@ accepted.
   is to leave the place empty or stale during the call, which needs no check
   but lets such a read see the wrong value. Decide in milestone 10. Decided
   2026-10-29 for moving a value out of a place: the built-in method
-  `x.replace(with: v)`, as Rust's `mem::replace`, which shows at the call
+  `x.exchange(with: v)`, as C++'s `std::exchange`, which shows at the call
   what the place holds meanwhile. `move x` (drop blocks) takes a local
-  only. `self.cells = step(self.cells.replace(with: []))` then needs no
+  only. `self.cells = step(self.cells.exchange(with: []))` then needs no
   check, and `step` copies nothing when the field held the only
   reference. The handover with no syntax (see "Later and
   stretch goals") waits for a proof of concept.
