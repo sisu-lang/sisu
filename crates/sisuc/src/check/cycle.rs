@@ -510,15 +510,13 @@ impl Graph {
         }
     }
 
-    /// The edge of the associated type `ty`, written at `site` inside `holder`. It is
-    /// what each choice chooses, with the choice's parameters standing for parts of the base: the
-    /// base feeds the hub of the choices (`Hub`), which feeds each parameter of the conformance,
-    /// less the greatest depth of the parameter in the target, the way a hub feeds the methods
-    /// of a conformance. The type chosen gives the edges on from there (`Choice`).
-    fn choose(&mut self, holder: usize, ty: Type, site: Span) {
-        let TypeKind::Assoc(base, interface, args, k) = ty.kind() else {
-            return;
-        };
+    /// The edge of the associated type `ty` of `base`, written at `site` inside `holder`, whose
+    /// choices the hub `hub` stands for. It is what each choice chooses, with the choice's
+    /// parameters standing for parts of the base: the base feeds the hub of the choices (`Hub`),
+    /// which feeds each parameter of the conformance, less the greatest depth of the parameter in
+    /// the target, the way a hub feeds the methods of a conformance. The type chosen gives the
+    /// edges on from there (`Choice`).
+    fn choose(&mut self, holder: usize, ty: Type, base: Type, hub: usize, site: Span) {
         // A base that passes an associated type of unbounded growth is a cycle of names alone,
         // which instantiates no class or enum: the walk of the choices ends it where the type is
         // used (`normalize`).
@@ -529,10 +527,6 @@ impl Graph {
             }
             inner = next;
         }
-        let place = self.assocs.first[interface.0] + k as usize;
-        let Some(hub) = self.assocs.hub(place, args) else {
-            return;
-        };
         let from = self.node(holder, base);
         self.edges.push(Edge {
             from,
@@ -616,8 +610,11 @@ impl Graph {
                 }
                 TypeKind::Class(id, args) => (self.functions + id.0, args),
                 TypeKind::Enum(id, args) => (self.functions + self.classes + id.0, args),
-                TypeKind::Assoc(base, _, args, _) => {
-                    self.choose(holder, ty, site);
+                TypeKind::Assoc(base, interface, args, k) => {
+                    let place = self.assocs.first[interface.0] + k as usize;
+                    if let Some(hub) = self.assocs.hub(place, args) {
+                        self.choose(holder, ty, base, hub, site);
+                    }
                     stack.push(base);
                     stack.extend(args.get());
                     continue;
@@ -1358,10 +1355,8 @@ impl Checker<'_> {
             let loose = (assocs.slots.get(&(place, None))).and_then(|&loose| assocs.hub_at[loose]);
             // A slot of closed arguments also reaches the choices made for arguments that hold a
             // parameter, which may be meant for any.
-            match (assocs.hub_at[slot], key, loose) {
-                (Some(hub), Some(_), Some(loose)) => assocs.hubs[hub].hubs.push(loose),
-                (None, Some(_), loose) => assocs.hub_at[slot] = loose,
-                _ => {}
+            if let (Some(hub), Some(_), Some(loose)) = (assocs.hub_at[slot], key, loose) {
+                assocs.hubs[hub].hubs.push(loose);
             }
         }
         // A use with a parameter in its interface arguments may mean any choice of the place.
