@@ -1,0 +1,106 @@
+error[E0111]: precision needs an `f64`
+  --> E0111-optional-parts.sisu:14:18
+   |
+14 |     print("{price:8.2}")
+   |                  ^^^^ the value is `f64?`
+   |
+   = help: give a default with `??` first, for example `{price ?? 0.0:8.2}`
+
+error[E0111]: precision needs an `f64`
+  --> E0111-optional-parts.sisu:15:18
+   |
+15 |     print("{price:>8.2}")
+   |                  ^^^^^ the value is `f64?`
+   |
+   = help: give a default with `??` first, for example `{price ?? 0.0:>8.2}`
+
+error[E0111]: precision needs an `f64`
+  --> E0111-optional-parts.sisu:16:19
+   |
+16 |     eprint("{price:.3}")
+   |                   ^^^ the value is `f64?`
+   |
+   = help: give a default with `??` first, for example `{price ?? 0.0:.3}`
+
+error[E0111]: precision needs an `f64`
+  --> E0111-optional-parts.sisu:17:20
+   |
+17 |     let t = "{price:^10.1}"
+   |                    ^^^^^^ the value is `f64?`
+   |
+   = help: give a default with `??` first, for example `{price ?? 0.0:^10.1}`
+
+error[E0111]: precision needs an `f64`
+  --> E0111-optional-parts.sisu:18:20
+   |
+18 |     print("{p.price:8.2}")
+   |                    ^^^^ the value is `f64?`
+   |
+   = help: give a default with `??` first, for example `{p.price ?? 0.0:8.2}`
+
+error[E0111]: precision needs an `f64`
+  --> E0111-optional-parts.sisu:19:19
+   |
+19 |     eprint("{xs[0]:.2}")
+   |                   ^^^ the value is `f64?`
+   |
+   = help: give a default with `??` first, for example `{xs[0] ?? 0.0:.2}`
+
+error[E0111]: precision needs an `f64`
+  --> E0111-optional-parts.sisu:20:18
+   |
+20 |     let u = "{h():<6.2}"
+   |                  ^^^^^ the value is `f64?`
+   |
+   = help: give a default with `??` first, for example `{h() ?? 0.0:<6.2}`
+
+error[E0111]: precision needs an `f64`
+  --> E0111-optional-parts.sisu:21:21
+   |
+21 |     print("{q?.price:.2}")
+   |                     ^^^ the value is `f64?`
+   |
+   = help: give a default with `??` first, for example `{q?.price ?? 0.0:.2}`
+
+error[E0111]: precision needs an `f64`
+  --> E0111-optional-parts.sisu:22:23
+   |
+22 |     print("{a ?? price:.2}")
+   |                       ^^^ the value is `f64?`
+   |
+   = help: give a default with `??` first, for example `{(a ?? price) ?? 0.0:.2}`
+
+error[E0111]: precision needs an `f64`
+  --> E0111-optional-parts.sisu:23:38
+   |
+23 |     print("{if c { a } else { price }:4.1}")
+   |                                      ^^^^ the value is `f64?`
+   |
+   = help: give a default with `??` first, for example `{(if c { a } else { price }) ?? 0.0:4.1}`
+
+error[E0111]: precision needs an `f64`
+  --> E0111-optional-parts.sisu:24:25
+   |
+24 |     print("{(a ?? price):.2}")
+   |                         ^^^ the value is `f64?`
+   |
+   = help: give a default with `??` first, for example `{(a ?? price) ?? 0.0:.2}`
+
+error[E0111]: precision needs an `f64`
+  --> E0111-optional-parts.sisu:25:27
+   |
+25 |     print("{(a) ?? (price):.2}")
+   |                           ^^^ the value is `f64?`
+   |
+   = help: give a default with `??` first, for example `{((a) ?? (price)) ?? 0.0:.2}`
+
+error[E0111]: precision needs an `f64`
+  --> E0111-optional-parts.sisu:26:27
+   |
+26 |     print("{(a ?? (price)):.2}")
+   |                           ^^^ the value is `f64?`
+   |
+   = help: give a default with `??` first, for example `{(a ?? (price)) ?? 0.0:.2}`
+
+sisu: 13 errors
+sisu: for more on a code, run `sisu explain <code>`: E0111

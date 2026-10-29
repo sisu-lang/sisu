@@ -790,6 +790,7 @@ impl Gen<'_> {
             calls.push("let qboth = QBoth(v: 1)".to_string());
             calls.push("both(qboth)".to_string());
         }
+        calls.extend(self.language_bounds(!declared.is_empty()));
         self.w.text("fn shapes() ");
         self.w.open();
         for call in &calls {
@@ -798,6 +799,76 @@ impl Gen<'_> {
         }
         self.w.close();
         self.w.line();
+    }
+
+    /// The generic functions `lang_eq<T: Eq>`, `lang_ord<T: Ord>` and `lang_display<T: Display>`,
+    /// whose bodies use the operators that the bounds give and call nothing else, and the
+    /// statements of `shapes` that call each with types that conform: the compiler writes those
+    /// conformances. With `enum_value`, `shapes` also calls `lang_eq` on an enum, which has `Eq`
+    /// when its payloads do. The class `Ranked` writes its `Eq` and `Ord`, and `shapes` compares
+    /// it directly and inside an array, an optional and an enum payload, and calls the generated
+    /// `eq` and `less` of a number. `is` runs in `lang_same<T: AnyObject>`, on a `T?` in
+    /// `lang_held`, and through `Pinned`, an interface that inherits `AnyObject`, in `lang_pinned`.
+    /// `lang_both<T: Display & Eq>` prints and compares one `T` in one body. None of it takes a
+    /// byte.
+    fn language_bounds(&mut self, enum_value: bool) -> Vec<String> {
+        for (name, bound, body) in [
+            (
+                "eq",
+                "Eq",
+                "if x == x && !(x != x) && x.eq(x) { 1 } else { 1 }",
+            ),
+            (
+                "ord",
+                "Ord",
+                "if x < x || x >= x || x.less(x) { 2 } else { 2 }",
+            ),
+            (
+                "display",
+                "Display",
+                "if x.to_string() == \"\" || x.to_string() != \"\" { 3 } else { 3 }",
+            ),
+        ] {
+            self.w.text(&format!(
+                "fn lang_{name}<T: {bound}>(x: T) -> i64 {{ {body} }}"
+            ));
+            self.w.line();
+        }
+        self.w.text(
+            "class Ranked: Eq, Ord {\n    r: i64\n    fn eq(self, other: Self) -> bool { self.r == other.r }\n    fn less(self, other: Self) -> bool { self.r < other.r }\n}\nenum Choice {\n    One(Ranked)\n    Nothing\n}\ninterface Pinned: AnyObject {}\nclass Anchor: Pinned {}\nfn lang_same<T: AnyObject>(a: T, b: T) -> bool { a is b }\nfn lang_held<T: AnyObject>(a: T?, b: T) -> bool { a is b }\nfn lang_pinned<T: Pinned>(a: T, b: T) -> bool { a is b }\nfn lang_both<T: Display & Eq>(x: T) -> i64 {\n    print(x)\n    if x == x { 4 } else { 4 }\n}",
+        );
+        self.w.line();
+        let mut calls = vec![
+            "let _ = lang_eq([1, 2])".to_string(),
+            "let _ = lang_eq(\"a\")".to_string(),
+            "let _ = lang_ord(1.5)".to_string(),
+            "let _ = lang_ord('c')".to_string(),
+            "let _ = lang_display(true)".to_string(),
+            "let _ = lang_display([\"a\"])".to_string(),
+            "let _ = lang_display(Choice.Nothing)".to_string(),
+            "let _ = 5.to_string() == \"5\" && \"{[1, 2]}\" == [1, 2].to_string()".to_string(),
+            "let rank_a = Ranked(r: 1)".to_string(),
+            "let rank_b = Ranked(r: 2)".to_string(),
+            "let rank_m: Ranked? = rank_b".to_string(),
+            "let _ = rank_a == rank_b || rank_a != rank_b".to_string(),
+            "let _ = rank_a < rank_b && rank_a >= rank_b".to_string(),
+            "let _ = [rank_a] == [rank_b]".to_string(),
+            "let _ = rank_m == rank_m".to_string(),
+            "let _ = rank_m == None".to_string(),
+            "let _ = Choice.One(rank_a) == Choice.One(rank_b)".to_string(),
+            "let _ = [rank_a].contains(rank_b)".to_string(),
+            "let _ = rank_a.eq(rank_b) || rank_a.less(rank_b)".to_string(),
+            "let _ = lang_eq(rank_a) + lang_ord(rank_b)".to_string(),
+            "let _ = lang_both(rank_a) + lang_both([1, 2])".to_string(),
+            "let anchor = Anchor()".to_string(),
+            "let _ = lang_same(rank_a, rank_b) || lang_held(rank_m, rank_a)".to_string(),
+            "let _ = lang_pinned(anchor, anchor)".to_string(),
+            "let _ = 5.eq(5) || 1.5.less(2.5)".to_string(),
+        ];
+        if enum_value {
+            calls.push("let _ = lang_eq(N0.A)".to_string());
+        }
+        calls
     }
 
     /// A generic class `R<k><T>` that conforms to the interface `k`, and to those it inherits,
@@ -1029,7 +1100,14 @@ impl Gen<'_> {
     /// with a cap on its size, then methods, which may take and give the class itself.
     pub(crate) fn class(&mut self) {
         let id = self.scope.classes.len();
-        self.w.text(&format!("class K{id} "));
+        // One class in three lists `Display`, which the compiler writes, and one in three writes
+        // a method `to_string`, which is its `Display`. Neither takes a byte.
+        let listed = if id.is_multiple_of(3) {
+            ": Display"
+        } else {
+            ""
+        };
+        self.w.text(&format!("class K{id}{listed} "));
         self.w.open();
         let mut fields = Vec::new();
         let mut size = 1;
@@ -1068,6 +1146,10 @@ impl Gen<'_> {
             self.w.line();
             self.function(Some(ty.clone()));
         }
+        if id % 3 == 1 {
+            self.w.line();
+            self.w.text("fn to_string(self) -> string { \"k\" }");
+        }
         self.w.close();
         self.w.line();
     }
@@ -1077,7 +1159,8 @@ impl Gen<'_> {
     /// one may hold the enum itself, which a value built finite ends in the first.
     pub(crate) fn enumeration(&mut self) {
         let id = self.scope.enums.len();
-        self.w.text(&format!("enum E{id} "));
+        // The body goes into a piece, so the header can name what the compiler writes for it.
+        let header = self.w.swap(Piece::default());
         self.w.open();
         let mut variants: Vec<Variant> = Vec::new();
         let mut least = 1;
@@ -1141,6 +1224,18 @@ impl Gen<'_> {
         });
         self.scope.types.push(Ty::enumeration(id, least));
         self.w.close();
+        let body = self.w.swap(header);
+        // An enum with no class in it lists `Eq`, which the compiler writes for it; every other
+        // enum of three lists `Display`. Neither takes a byte.
+        let listed = if !has_class && id.is_multiple_of(2) {
+            ": Eq"
+        } else if id % 3 == 1 {
+            ": Display"
+        } else {
+            ""
+        };
+        self.w.text(&format!("enum E{id}{listed} "));
+        self.w.paste(&body);
         self.w.line();
     }
 

@@ -341,16 +341,16 @@ fn float_sum() {
     );
 }
 
-/// Interpolation writes an `f64`; an `f64?` keeps the "cannot interpolate" error.
+/// Interpolation writes an `f64`; an `f64?` warns that it may print `None`.
 #[test]
-fn float_interpolation() {
+fn interpolation_should_write_an_f64_and_warn_on_an_optional_one() {
     contains(
         "fn f(x: f64) {\n    print(\"{x}!\")\n}\nfn main() {}",
         &["(interp x#0 \"!\")"],
     );
     codes(
         "fn f(x: f64?) {\n    print(\"{x}\")\n}\nfn main() {}",
-        &[(Code::CannotInterpolate, (2, 13))],
+        &[(Code::PrintsOptional, (2, 13))],
     );
 }
 

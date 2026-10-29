@@ -1,0 +1,14 @@
+class Node {
+    value: i64
+}
+
+enum Wide<T> {
+    Has(T)
+    Deeper(Wide<Node>)
+}
+
+fn same<T: Eq>(a: Wide<T>, b: Wide<T>) -> bool {
+    a == b
+}
+
+fn main() {}

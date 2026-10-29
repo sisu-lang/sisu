@@ -45,6 +45,7 @@
 
 use rustc_hash::FxHashMap;
 
+use crate::conformance::Written;
 use crate::source::Span;
 use crate::tir::{self, BinaryOp, ClassId, CompareOp, EnumId, Format, FuncId, MathOp, Stream};
 pub(crate) use crate::tir::{LocalId, Type, UnaryOp};
@@ -64,6 +65,13 @@ pub(crate) use elaborate::flagged;
 #[cfg(test)]
 pub(crate) use lower::lower;
 pub(crate) use print::print;
+
+/// The mir of `program` as lowering leaves it under the assumed flags, before any pass: enough
+/// to see which `Equal` and `Contains` may call a written method, and much cheaper than `build`.
+#[cfg(test)]
+pub(crate) fn lowered(program: &tir::Program) -> Program {
+    lower(program, &params::assumed(program))
+}
 
 /// A program's functions, in `tir`'s order.
 #[derive(Debug)]
@@ -252,6 +260,8 @@ pub(crate) enum Rvalue {
     Interpolate {
         parts: Vec<Operand>,
         formats: Vec<Format>,
+        /// Whether the helper for a compound part may call a written `to_string`.
+        calls: bool,
     },
     ReadLine,
     Chars(Operand),
@@ -269,6 +279,8 @@ pub(crate) enum Rvalue {
     Contains {
         base: Operand,
         value: Operand,
+        /// Whether the helper for the element may call a written `eq`.
+        calls: bool,
     },
     /// The operand converted to the destination's type.
     Convert(Operand),
@@ -299,6 +311,12 @@ pub(crate) enum Rvalue {
         negated: bool,
         lhs: Operand,
         rhs: Operand,
+        /// Whether the helper for the operand's type may call a written `eq`.
+        calls: bool,
+        /// The operand that is the literal `None`, when one is: the comparison tests whether the
+        /// other operand holds a value, and compares no payload. The operand itself may be a
+        /// temporary that holds the `None`, so this is the one place that tells.
+        none: Option<Side>,
     },
     Is {
         lhs: Operand,
@@ -307,7 +325,33 @@ pub(crate) enum Rvalue {
     Print {
         stream: Stream,
         operand: Operand,
+        /// Whether the helper for the operand's type may call a written `to_string`.
+        calls: bool,
     },
+}
+
+impl Rvalue {
+    /// Whether the statement may run a written method, which can store through a `mut` field and
+    /// free what a borrow reads: a `Call`, an `Equal` or `Contains` whose helper reaches a
+    /// written `eq`, and a `Print` or `Interpolate` whose helper reaches a written `to_string`.
+    /// Pair removal and the certifier both ask this, so they agree.
+    pub(crate) fn may_call_written(&self) -> bool {
+        match self {
+            Rvalue::Call { .. } => true,
+            Rvalue::Equal { calls, .. }
+            | Rvalue::Contains { calls, .. }
+            | Rvalue::Print { calls, .. }
+            | Rvalue::Interpolate { calls, .. } => *calls,
+            _ => false,
+        }
+    }
+}
+
+/// One of the two operands of a binary `Rvalue`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Side {
+    Lhs,
+    Rhs,
 }
 
 #[derive(Debug)]
@@ -425,11 +469,13 @@ impl Terminator {
 /// certifies each function and panics on a violation.
 pub(crate) fn build(program: &tir::Program) -> Program {
     let assumed = params::assumed(program);
+    let mut written = Written::default();
     let (mut functions, (consulted, reuses)): (Vec<_>, (Vec<_>, Vec<_>)) = assumed
         .iter()
         .enumerate()
         .map(|(id, borrowed)| {
-            let (function, consulted, reuses) = lower::function(program, FuncId(id), borrowed);
+            let (function, consulted, reuses) =
+                lower::function(program, FuncId(id), borrowed, &mut written);
             (function, (consulted, reuses))
         })
         .unzip();
@@ -445,7 +491,7 @@ pub(crate) fn build(program: &tir::Program) -> Program {
             .zip(&modes[id])
             .any(|(&consulted, &borrowed)| consulted && !borrowed)
         {
-            functions[id] = lower::function(program, FuncId(id), &modes[id]).0;
+            functions[id] = lower::function(program, FuncId(id), &modes[id], &mut written).0;
         }
     }
     params::rewrite(&mut functions, &modes);

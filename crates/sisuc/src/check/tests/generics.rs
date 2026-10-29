@@ -426,14 +426,6 @@ fn values_of_parameter_types_should_have_no_operators() {
             vec![(Code::SameObject, (1, 31))],
         ),
         (
-            "fn f<T>(a: T, b: T) { print(a) }",
-            vec![(Code::PrintArgument, (1, 29))],
-        ),
-        (
-            "fn f<T>(a: T, b: T) -> string { \"{a}\" }",
-            vec![(Code::CannotInterpolate, (1, 35))],
-        ),
-        (
             "fn f<T>(a: T, b: T) -> i64 { a.len() }",
             vec![(Code::NoMember, (1, 32))],
         ),
@@ -458,14 +450,6 @@ fn values_of_parameter_types_should_have_no_operators() {
     ] {
         codes(&with_decls(src), &expected);
     }
-}
-
-/// The `==` help of `is` would point at an operator a parameter lacks.
-#[test]
-fn is_on_a_parameter_should_have_no_help() {
-    let src = with_decls("fn f<T>(a: T, b: T) -> bool { a is b }");
-    let d = diagnostic(&src, Code::IsNeedsObjects, (1, 31, "a"), &[]);
-    assert!(d.help().is_none());
 }
 
 #[test]
@@ -1542,8 +1526,8 @@ fn type_parameters_should_be_found_in_one_step() {
         checked(&src);
         PARAM_STEPS.get()
     };
-    assert_eq!(steps(500), 1502);
-    assert_eq!(steps(1000), 3002);
+    assert_eq!(steps(500), 1502 + LANG_PARAM_STEPS);
+    assert_eq!(steps(1000), 3002 + LANG_PARAM_STEPS);
 }
 
 /// Work kept ahead of a call is found by its span in one step, so finding it grows with the

@@ -22,7 +22,16 @@ impl Checker<'_> {
         site: Site<'_>,
         args: &[ast::Arg],
     ) -> Checked {
-        let found = self.required(ty, site.name.name);
+        let mut found = self.required(ty, site.name.name);
+        // Every type parameter has a `Display`, with no bound (the spec's "Every type parameter
+        // prints"), so `to_string` is always a call of it. `mono` lowers it for the type argument.
+        if found.is_empty() && site.name.name.as_str() == "to_string" {
+            found.push(Required {
+                interface: self.lang.display,
+                args: TypeArgs::NONE,
+                method: 0,
+            });
+        }
         let Some(picked) = self.pick_required(ty, site, span, &found) else {
             self.labels(args);
             self.stray(args);

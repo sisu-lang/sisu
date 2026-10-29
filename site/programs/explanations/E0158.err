@@ -1,0 +1,8 @@
+error[E0158]: only classes conform to `AnyObject`
+ --> E0158.sisu:1:13
+  |
+1 | enum Light: AnyObject {
+  |             ^^^^^^^^^ `Light` is not a class
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0158

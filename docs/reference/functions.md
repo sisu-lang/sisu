@@ -171,15 +171,15 @@ fn main() {
 
 ### A call without a value
 
-A function without a return type has the return type `unit`. A call of it is a `unit` value, which a program can compare ([unit](types.md#unit)).
+A function without a return type has the return type `unit`. A call of it gives no value to print or to compare ([unit](types.md#unit)).
 
-```sisu pending
+```sisu
 fn log(text: string) {
     print(text)
 }
 
 fn main() {
-    print(log("hi") == log("hi"))
+    print(log("hi") == 1)             // error[E0043]
 }
 ```
 

@@ -1,0 +1,8 @@
+class Node {
+    value: i64
+}
+
+fn main() {
+    let nodes = [Node(value: 1)]
+    print(nodes.contains(nodes[0]))
+}

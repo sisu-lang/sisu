@@ -1,0 +1,11 @@
+enum Pair<T> {
+    Two(T, T)
+}
+
+extend<T: Ord> Pair<T>: Eq {
+    fn eq(self, other: Self) -> bool { true }
+}
+
+fn main() {
+    print(Pair.Two(true, false) == Pair.Two(true, false))
+}

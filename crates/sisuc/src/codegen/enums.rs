@@ -21,6 +21,7 @@
 //! depth and shape of value.
 
 use std::num::NonZeroU32;
+use std::rc::Rc;
 
 use inkwell::AddressSpace;
 use inkwell::IntPredicate;
@@ -92,20 +93,58 @@ pub(super) fn tag_bits(count: usize) -> u32 {
 }
 
 /// The enum a boxed field holds: its type is `F` or `F?`.
-fn boxed_enum(ty: Type) -> EnumId {
+pub(super) fn boxed_enum(ty: Type) -> EnumId {
     ty.inline_enum()
         .expect("the checker should box only a field of an enum type or its optional")
 }
 
 /// The payload of `ty` when it is an optional of an optional: a boxed field of that type keeps a
 /// flag around the storage of its payload.
-fn nested(ty: Type) -> Option<Type> {
+pub(super) fn nested(ty: Type) -> Option<Type> {
     match ty.kind() {
         TypeKind::Optional(payload) if matches!(payload.kind(), TypeKind::Optional(_)) => {
             Some(payload)
         }
         _ => None,
     }
+}
+
+/// An enum's component with boxes: its members in declaration order, and the index of the enum
+/// among them.
+pub(super) struct Component {
+    pub(super) members: Rc<[EnumId]>,
+    pub(super) index: usize,
+}
+
+/// The component of each enum of `enums`, when it has boxes, built in one pass over `enums`.
+pub(super) fn components(enums: &[Enum]) -> Vec<Option<Component>> {
+    #[cfg(test)]
+    super::MEMBER_SCANS.set(super::MEMBER_SCANS.get() + enums.len());
+    let mut by_cycle: FxHashMap<usize, Vec<EnumId>> = FxHashMap::default();
+    let slots: Vec<Option<(usize, usize)>> = enums
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            e.cycle.map(|cycle| {
+                let members = by_cycle.entry(cycle).or_default();
+                members.push(EnumId(i));
+                (cycle, members.len() - 1)
+            })
+        })
+        .collect();
+    let shared: FxHashMap<usize, Rc<[EnumId]>> = by_cycle
+        .into_iter()
+        .map(|(cycle, members)| (cycle, members.into()))
+        .collect();
+    slots
+        .into_iter()
+        .map(|slot| {
+            slot.map(|(cycle, index)| Component {
+                members: Rc::clone(&shared[&cycle]),
+                index,
+            })
+        })
+        .collect()
 }
 
 /// The index of `member` in a component of `members`.
@@ -319,7 +358,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// `value_addr`, through the variant's struct laid over the payload storage: a box pointer
     /// for a boxed field. An `Option`-shaped enum's field is the value itself, and a `bool`
     /// there is an `i8`: `payload_value` reads it, never a load of an `i1`.
-    fn field_slot(
+    pub(super) fn field_slot(
         &self,
         value_addr: PointerValue<'ctx>,
         id: EnumId,
@@ -366,7 +405,12 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// The address of element `index` of the storage at `slot` of a boxed field of the optional
     /// of an optional `ty`: its flag at 0, the storage of its payload at 1.
-    fn layer_place(&self, ty: Type, slot: PointerValue<'ctx>, index: u32) -> PointerValue<'ctx> {
+    pub(super) fn layer_place(
+        &self,
+        ty: Type,
+        slot: PointerValue<'ctx>,
+        index: u32,
+    ) -> PointerValue<'ctx> {
         self.builder
             .build_struct_gep(
                 self.box_storage(ty).into_struct_type(),
@@ -378,7 +422,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// The flag of the layer at `slot` of a boxed field of the optional of an optional `ty`.
-    fn load_layer_flag(&self, ty: Type, slot: PointerValue<'ctx>) -> IntValue<'ctx> {
+    pub(super) fn load_layer_flag(&self, ty: Type, slot: PointerValue<'ctx>) -> IntValue<'ctx> {
         self.builder
             .build_load(
                 self.context.bool_type(),
@@ -392,7 +436,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// The box pointer of boxed payload field `field` of variant `variant` in the enum `id` at
     /// `value_addr`: `null` for a `None` at any layer of an `F?`, `F??` and so on, and in the
     /// zero value that a `Move` of a flagged local leaves.
-    fn load_box(
+    pub(super) fn load_box(
         &self,
         value_addr: PointerValue<'ctx>,
         id: EnumId,
@@ -411,7 +455,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// The address of the value in `boxed`, a box of the enum `inner`.
-    fn box_value(&self, inner: EnumId, boxed: PointerValue<'ctx>) -> PointerValue<'ctx> {
+    pub(super) fn box_value(&self, inner: EnumId, boxed: PointerValue<'ctx>) -> PointerValue<'ctx> {
         self.builder
             .build_struct_gep(self.enums[inner.0].boxed, boxed, 1, "boxed")
             .expect("a box's struct should have the value at element 1")
@@ -744,25 +788,18 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// The members of the enum `id`'s component, in declaration order, when the component has
     /// boxes; `None` otherwise.
-    fn component(&self, id: EnumId) -> Option<Vec<EnumId>> {
-        let enums = &self.program.enums;
-        let cycle = enums[id.0].cycle?;
-        Some(
-            (0..enums.len())
-                .filter(|&e| enums[e].cycle == Some(cycle))
-                .map(EnumId)
-                .collect(),
-        )
+    pub(super) fn component(&self, id: EnumId) -> Option<Rc<[EnumId]>> {
+        let component = self.components[id.0].as_ref()?;
+        Some(Rc::clone(&component.members))
     }
 
     /// The enum of payload field `payload` of the enum `id`, whose component has boxes, when the
-    /// field is an inline link: not boxed, and of an enum in that component, or its optional.
-    /// An inline `G??` is no link: it is released and compared as any counted field is.
-    fn inline_link(&self, id: EnumId, payload: &Payload) -> Option<EnumId> {
+    /// field is an inline link: not boxed, and of an enum in that component, or its optional
+    /// under any number of `?`s.
+    pub(super) fn inline_link(&self, id: EnumId, payload: &Payload) -> Option<EnumId> {
         let enums = &self.program.enums;
-        (payload.ty.inline_enum()).filter(|g| {
-            !payload.boxed && nested(payload.ty).is_none() && enums[g.0].cycle == enums[id.0].cycle
-        })
+        (payload.ty.inline_enum())
+            .filter(|g| !payload.boxed && enums[g.0].cycle == enums[id.0].cycle)
     }
 
     /// The body of `@sisu_rc.<kind>.<E>`.
@@ -784,6 +821,9 @@ impl<'ctx> Codegen<'ctx, '_> {
             Helper::Reuse => self.define_reuse(id, function),
             Helper::Drop | Helper::Unique => {
                 unreachable!("an enum should never be queued for a `drop` or `unique` helper")
+            }
+            Helper::Show | Helper::ShowComponent => {
+                unreachable!("`define_helpers` should define every `show` helper itself")
             }
         }
     }
@@ -896,16 +936,18 @@ impl<'ctx> Codegen<'ctx, '_> {
                     Helper::Walk,
                     Type::intern(TypeKind::Enum(inner, TypeArgs::NONE)),
                 );
-                if !matches!(payload.ty.kind(), TypeKind::Optional(_)) {
-                    self.call(walk, &[place.into(), heads.into()]);
-                    return;
+                // A link under `?`s is walked when every layer has a value.
+                let next = block("link.next");
+                let (mut ty, mut place) = (payload.ty, place);
+                while let TypeKind::Optional(contents) = ty.kind() {
+                    let some = block("link");
+                    let link = self.load_link(ty, place);
+                    self.branch_on(self.has_value(ty, link, "flag"), some, next);
+                    self.builder.position_at_end(some);
+                    place = self.optional_value_place(ty, place);
+                    ty = contents;
                 }
-                let (some, next) = (block("link"), block("link.next"));
-                let link = self.load_link(payload.ty, place);
-                self.branch_on(self.has_value(payload.ty, link, "flag"), some, next);
-                self.builder.position_at_end(some);
-                let inner_value = self.enum_slot(self.optional_value(payload.ty, link, "link"));
-                self.call(walk, &[inner_value.into(), heads.into()]);
+                self.call(walk, &[place.into(), heads.into()]);
                 self.branch_to(next);
                 self.builder.position_at_end(next);
                 return;
@@ -1251,7 +1293,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// The value of the inline link of type `ty`, `G` or `G?`, at `place`.
-    fn load_link(&self, ty: Type, place: PointerValue<'ctx>) -> BasicValueEnum<'ctx> {
+    pub(super) fn load_link(&self, ty: Type, place: PointerValue<'ctx>) -> BasicValueEnum<'ctx> {
         let llvm_ty = self
             .llvm_type(ty)
             .expect("an inline link should be of an enum type or its optional");
@@ -1297,27 +1339,29 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.payload_place(a, id, variant, field),
             self.payload_place(b, id, variant, field),
         );
-        if !matches!(ty.kind(), TypeKind::Optional(_)) {
-            return (inner, place_a, place_b);
+        // Under each `?` the flags are compared first, so an absent layer's payload is never read.
+        let (mut ty, mut place_a, mut place_b) = (ty, place_a, place_b);
+        while let TypeKind::Optional(contents) = ty.kind() {
+            let (link_a, link_b) = (self.load_link(ty, place_a), self.load_link(ty, place_b));
+            let (fa, fb) = (
+                self.has_value(ty, link_a, "flag"),
+                self.has_value(ty, link_b, "flag"),
+            );
+            let function = self.current_function();
+            let block = |name| self.context.append_basic_block(function, name);
+            let (flags, both) = (block("link.flags"), block("link.both"));
+            let flags_equal = self.int_compare(IntPredicate::EQ, fa, fb);
+            self.branch_on(flags_equal, flags, unequal);
+            self.builder.position_at_end(flags);
+            self.branch_on(fa, both, same);
+            self.builder.position_at_end(both);
+            (place_a, place_b) = (
+                self.optional_value_place(ty, place_a),
+                self.optional_value_place(ty, place_b),
+            );
+            ty = contents;
         }
-        let (link_a, link_b) = (self.load_link(ty, place_a), self.load_link(ty, place_b));
-        let (fa, fb) = (
-            self.has_value(ty, link_a, "flag"),
-            self.has_value(ty, link_b, "flag"),
-        );
-        let function = self.current_function();
-        let block = |name| self.context.append_basic_block(function, name);
-        let (flags, both) = (block("link.flags"), block("link.both"));
-        let flags_equal = self.int_compare(IntPredicate::EQ, fa, fb);
-        self.branch_on(flags_equal, flags, unequal);
-        self.builder.position_at_end(flags);
-        self.branch_on(fa, both, same);
-        self.builder.position_at_end(both);
-        (
-            inner,
-            self.optional_value_place(ty, place_a),
-            self.optional_value_place(ty, place_b),
-        )
+        (inner, place_a, place_b)
     }
 
     /// The box pointers of boxed field `field` of variant `variant` of the enum `id` at `a` and
@@ -1379,9 +1423,16 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// The `kind` of `member` in a component of `members`: its index, as an `i32`.
-    fn member_index(&self, members: &[EnumId], member: EnumId) -> IntValue<'ctx> {
-        let index = u64::try_from(member_position(members, member))
-            .expect("a member index should fit in a `u64`");
+    pub(super) fn member_index(&self, members: &[EnumId], member: EnumId) -> IntValue<'ctx> {
+        let position = member_position(members, member);
+        #[cfg(test)]
+        super::MEMBER_SCANS.set(super::MEMBER_SCANS.get() + position + 1);
+        self.kind(position)
+    }
+
+    /// The `kind` of the member at `index` in a component, as an `i32`.
+    pub(super) fn kind(&self, index: usize) -> IntValue<'ctx> {
+        let index = u64::try_from(index).expect("a member index should fit in a `u64`");
         self.context.i32_type().const_int(index, false)
     }
 
@@ -1456,6 +1507,14 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.builder.position_at_end(start);
             let a = current[1].as_basic_value().into_pointer_value();
             let b = current[2].as_basic_value().into_pointer_value();
+            // A member whose `Eq` is written is compared by its `eq`, wherever a link meets it.
+            let ty = Type::intern(TypeKind::Enum(id, TypeArgs::NONE));
+            if let Some(method) = self.written_eq(ty) {
+                let borrowed = &self.mir.functions[method.0].borrowed;
+                let same = self.call_written_eq(method, ty, [a, b], borrowed);
+                self.branch_on(same, pop, unequal);
+                continue;
+            }
             let tag = self.load_tag(id, a);
             let same = self.int_compare(IntPredicate::EQ, tag, self.load_tag(id, b));
             let fields = block("fields");
@@ -1485,7 +1544,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// Whether payload field `payload` of the enum `id` is a link: a box, or an inline link.
-    fn is_link(&self, id: EnumId, payload: &Payload) -> bool {
+    pub(super) fn is_link(&self, id: EnumId, payload: &Payload) -> bool {
         payload.boxed || self.inline_link(id, payload).is_some()
     }
 
@@ -1588,7 +1647,7 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// No pending pairs: no top pair held, and a buffer that is `null`, with capacity and
     /// length 0, so that a comparison that never holds two pairs at once allocates nothing.
-    fn empty_pending(&self) -> Pending<'ctx> {
+    pub(super) fn empty_pending(&self) -> Pending<'ctx> {
         let i64_type = self.context.i64_type();
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         let bool_type = self.context.bool_type();
@@ -1684,7 +1743,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// Pushes `pair` onto `pending`. It becomes the top pair, which lives in the helper's
     /// frame; a top pair held before moves to the buffer (`push_buffer`). So the buffer
     /// grows only when the comparison waits on two pairs at once.
-    fn push_pending(&self, pending: &Pending<'ctx>, pair: [BasicValueEnum<'ctx>; 3]) {
+    pub(super) fn push_pending(&self, pending: &Pending<'ctx>, pair: [BasicValueEnum<'ctx>; 3]) {
         let function = self.current_function();
         let (spill, set) = (
             self.context.append_basic_block(function, "pending.spill"),
@@ -1761,7 +1820,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// Pops the last pair of `pending` into the `popped` phis of block `resumed`, and branches
     /// there: the top pair when one is held, else the buffer's last. Branches to `empty` when
     /// `pending` holds no pair.
-    fn pop_pending(
+    pub(super) fn pop_pending(
         &self,
         pending: &Pending<'ctx>,
         empty: BasicBlock<'ctx>,
@@ -1802,7 +1861,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// Frees the buffer of `pending` when a push allocated it.
-    fn free_pending(&self, pending: &Pending<'ctx>) {
+    pub(super) fn free_pending(&self, pending: &Pending<'ctx>) {
         let function = self.current_function();
         let (free, done) = (
             self.context.append_basic_block(function, "pending.free"),
@@ -1915,7 +1974,7 @@ impl<'ctx> Codegen<'ctx, '_> {
 
 /// The blocks and phis of an `eq_component` helper's loop that each variant's comparison uses.
 struct EqLoop<'ctx> {
-    members: Vec<EnumId>,
+    members: Rc<[EnumId]>,
     /// The loop's head, and its `kind`, `a` and `b` phis.
     top: BasicBlock<'ctx>,
     current: [PhiValue<'ctx>; 3],
@@ -1932,7 +1991,7 @@ const FIRST_PENDING: u64 = 8;
 /// The slots of the pending pairs of an `eq_component` helper, in its entry block, which
 /// `mem2reg` makes phis: the top pair and whether it is held, then the buffer of the pairs
 /// below it, `null` until the first spill, its capacity and its length.
-struct Pending<'ctx> {
+pub(super) struct Pending<'ctx> {
     top: PointerValue<'ctx>,
     held: PointerValue<'ctx>,
     buffer: PointerValue<'ctx>,

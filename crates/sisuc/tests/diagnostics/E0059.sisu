@@ -1,8 +1,7 @@
-class Point {
-    x: i64
+fn greet() {
+    print(1)
 }
 
 fn main() {
-    let p = Point(x: 1)
-    print(p)
+    print(greet())
 }

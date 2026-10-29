@@ -1,0 +1,8 @@
+error[E0046]: `is` needs objects; found `T.Item`
+ --> E0046-assoc.sisu:7:5
+  |
+7 |     a.first() is b.first()
+  |     ^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0046

@@ -1,0 +1,5 @@
+interface Eq {}
+
+fn main() {
+    print(1)
+}

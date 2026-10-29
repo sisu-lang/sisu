@@ -952,8 +952,8 @@ class Pages(unittest.TestCase):
         pager = re.search(r'<nav class="pager".*?</nav>', page, re.S)[0]
         self.assertEqual(re.findall(r'<a href="([^"]*)" rel="\w+"><span>(\w+)</span>(.*?)</a>', pager),
                          [('lexical.html', 'Previous', 'Lexical structure'), ('types.html', 'Next', 'Types')])
-        # AND each marker of the source is a link in a paragraph after its example
-        after = ''.join(re.findall(r'</pre></figure>\n((?:<p class="marker">.*?</p>\n)+)', page))
+        # AND each marker of the source is a link in a paragraph after its example, and after its output panel
+        after = ''.join(re.findall(r'</pre></figure>(?:</figure>)*\n((?:<p class="marker">.*?</p>\n)+)', page))
         linked = re.findall(r'<p class="marker"><a href="\.\./diagnostics/(\w+)\.html">\1</a>', after)
         self.assertIn('E0008', linked)
         self.assertEqual(linked, re.findall(r'// (?:error|warning)\[(\w+)\]', markdown))

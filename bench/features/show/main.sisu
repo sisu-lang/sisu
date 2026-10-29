@@ -1,0 +1,95 @@
+// GIVEN 400 rounds, an `Expr` tree of depth 7, 60 enum values and arrays of 8 `Circle`s
+// WHEN each round writes the text of the tree and of the array of enum values
+// AND it compares two arrays of `Circle`s, as a whole and element by element
+// AND the helper calls a method for each pair, as the written `eq` compares the radius only
+// THEN it prints the length of all the texts
+// AND it prints the count of equal arrays
+// AND both numbers depend on all the work
+const ROUNDS = 400
+const DEPTH = 7
+
+enum Expr {
+    Num(i64)
+    Add(Expr, Expr)
+    Mul(Expr, Expr)
+}
+
+enum Color {
+    Red
+    Green
+    Blue
+    Mix(i64, i64)
+}
+
+class Circle: Eq {
+    r: i64
+    _tag: string
+
+    fn eq(self, other: Self) -> bool {
+        self.r == other.r
+    }
+}
+
+fn tree(depth: i64, seed: i64) -> Expr {
+    if depth == 0 {
+        Expr.Num(seed % 10)
+    } else if seed % 2 == 0 {
+        Expr.Add(tree(depth - 1, seed * 3 + 1), tree(depth - 1, seed + 2))
+    } else {
+        Expr.Mul(tree(depth - 1, seed + 1), tree(depth - 1, seed * 2 + 1))
+    }
+}
+
+fn colors(n: i64, seed: i64) -> [Color] {
+    let mut out = [Color.Red; n]
+    for i in 0..n {
+        let k = (i * 7 + seed) % 4
+        out[i] = if k == 0 {
+            Color.Red
+        } else if k == 1 {
+            Color.Green
+        } else if k == 2 {
+            Color.Blue
+        } else {
+            Color.Mix(i, seed)
+        }
+    }
+    out
+}
+
+fn circle(i: i64, seed: i64) -> Circle {
+    Circle(r: (i * 3 + seed) % 11, _tag: "c{i}")
+}
+
+fn circles(seed: i64) -> [Circle] {
+    [
+        circle(0, seed), circle(1, seed), circle(2, seed), circle(3, seed),
+        circle(4, seed), circle(5, seed), circle(6, seed), circle(7, seed),
+    ]
+}
+
+fn main() {
+    let mut text_len = 0
+    let mut equal = 0
+    let base = circles(0)
+    for round in 0..ROUNDS {
+        text_len += tree(DEPTH, round).to_string().len()
+        text_len += colors(60, round).to_string().len()
+        let other = circles(round % 4)
+        if base == other {
+            equal += 1
+        }
+        if base == circles(0) {
+            equal += 100
+        }
+        let mut same = 0
+        for i in 0..base.len() {
+            if base[i] == other[i] {
+                same += 1
+            }
+        }
+        equal += same
+    }
+    print(text_len)
+    print(equal)
+}

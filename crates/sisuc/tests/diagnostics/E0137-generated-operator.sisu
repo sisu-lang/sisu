@@ -1,0 +1,15 @@
+enum Light {
+    Red
+}
+
+fn main() {
+    let byte: u8 = 1
+    let maybe: i64? = 1
+    print(true.eq<Missing>(false))
+    print('a'.eq<i64>('b'))
+    print('a'.less<i64>('b'))
+    print(byte.eq<Missing>(byte))
+    print(byte.less<i64>(byte))
+    print(Light.Red.eq<i64>(Light.Red))
+    print(maybe.eq<Missing>(1))
+}

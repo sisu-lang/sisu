@@ -27,6 +27,10 @@ pub(crate) fn decode(bytes: Vec<u8>) -> Result<String, Box<(String, Diagnostic)>
 /// items come after the user's in every list.
 pub(crate) const PRELUDE_SOURCE: &str = include_str!("prelude.sisu");
 
+/// The language interfaces (`Display`, `Eq`, `Ord` and `AnyObject`): Sisu source that
+/// `prelude_program` puts ahead of every prelude.
+pub(crate) const LANG_SOURCE: &str = include_str!("lang.sisu");
+
 /// `checked`, its program instantiated by `mono`, which reports a choice of an associated type
 /// that the checker did not follow and that an instance needs itself or needs too many steps.
 pub(crate) fn front_end(source: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
@@ -83,10 +87,12 @@ pub(crate) fn checked_with(prelude: &str, source: &str) -> (Option<tir::Program>
     (program.filter(|_| !failed), diagnostics)
 }
 
-/// The syntax tree of `prelude`, whose spans start at `PRELUDE_BASE`.
+/// The syntax tree of `LANG_SOURCE` followed by `prelude`, whose spans start at `PRELUDE_BASE`.
+/// Every prelude, an empty one included, declares the language interfaces.
 pub(crate) fn prelude_program(prelude: &str) -> ast::Program {
+    let source = format!("{LANG_SOURCE}\n{prelude}");
     let lexed =
-        lexer::lex_at(prelude, PRELUDE_BASE as usize).unwrap_or_else(|d| internal_error(&d));
+        lexer::lex_at(&source, PRELUDE_BASE as usize).unwrap_or_else(|d| internal_error(&d));
     let parsed = parser::parse(lexed, true);
     if let Some(d) = parsed.diagnostics.first() {
         internal_error(d);
@@ -1088,6 +1094,21 @@ fn main() {
         );
     }
 
+    /// Comparing or ordering the target of a broken `extend` block gives the parse error alone: the
+    /// target holds `Eq` and `Ord` only through the poison, so no code is made and no operator is
+    /// reported, with no panic.
+    #[test]
+    fn comparing_a_broken_extend_target_should_give_the_parse_error_alone() {
+        let src = "class C {\n    x: i64\n}\nextend C: {}\nfn same(a: C, b: C) -> bool {\n    a == b\n}\nfn main() {}\n";
+        assert_eq!(codes(src), [(Code::Expected, (4, 11))]);
+    }
+
+    #[test]
+    fn ordering_a_broken_extend_target_should_give_the_parse_error_alone() {
+        let src = "class C {\n    x: i64\n}\nextend C: {}\nfn same(a: C, b: C) -> bool {\n    a < b\n}\nfn main() {}\n";
+        assert_eq!(codes(src), [(Code::Expected, (4, 11))]);
+    }
+
     /// A block with no name for its target stops the checker, as an unnamed broken item does.
     #[test]
     fn unnamed_broken_extend_should_stop_the_checker() {
@@ -1206,9 +1227,9 @@ fn main() {
                 "C.Item",
             ),
             (
-                "fn f<T: Ord ? ?>(x: T) {}\nfn main() {}\n",
+                "fn f<T: Order ? ?>(x: T) {}\nfn main() {}\n",
                 Code::UnknownType,
-                "Ord",
+                "Order",
             ),
             // An optional bound is reported through its `?`, which is the error.
             (

@@ -1,0 +1,9 @@
+class Node {
+    value: i64
+}
+
+fn main() {
+    let a = Node(value: 1)
+    let b = Node(value: 1)
+    print(a == b)
+}

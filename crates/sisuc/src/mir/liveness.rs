@@ -260,6 +260,7 @@ fn rvalue(value: &Rvalue, read: &mut impl FnMut(LocalId)) {
         | Rvalue::Contains {
             base: lhs,
             value: rhs,
+            ..
         }
         | Rvalue::Binary { lhs, rhs, .. }
         | Rvalue::Compare { lhs, rhs, .. }

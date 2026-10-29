@@ -1,0 +1,18 @@
+fn iterations() -> i64 { 1000 }
+
+// An interpolation with a compound part writes the part and the text after it through one buffer
+// sink: one block for each result, none for a node or for the part. The value is built once.
+enum Expr {
+    Num(i64)
+    Add(Expr, Expr)
+    Mul(Expr, Expr)
+}
+
+fn main() {
+    let e = Expr.Add(Expr.Num(1), Expr.Mul(Expr.Num(2), Expr.Num(3)))
+    let mut last = "-"
+    for _ in 0..iterations() {
+        last = "{e}!"
+    }
+    print(last)
+}

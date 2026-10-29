@@ -502,8 +502,9 @@ fn inherited_requirements_should_be_found_without_arguments() {
         clean(&src);
         INHERIT_VISITS.get()
     };
-    assert_eq!(visits(12), 66);
-    assert_eq!(visits(24), 276);
+    // `Ord` inherits `Eq`: one visit more.
+    assert_eq!(visits(12), 66 + 1);
+    assert_eq!(visits(24), 276 + 1);
 }
 
 /// A requirement adds its own type parameters to the scope of its interface and drops them, so
@@ -526,8 +527,8 @@ fn the_scope_of_an_interface_should_be_set_up_once() {
         PARAM_STEPS.get()
     };
     // 1 + n to index `Self` and the parameters, then 3 for each requirement.
-    assert_eq!(steps(32), 129);
-    assert_eq!(steps(64), 257);
+    assert_eq!(steps(32), 129 + LANG_PARAM_STEPS);
+    assert_eq!(steps(64), 257 + LANG_PARAM_STEPS);
 }
 
 /// The interfaces a bound gives: itself, then what it inherits, each once, with the arguments
@@ -836,6 +837,23 @@ fn a_second_conformance_to_an_interface_should_be_reported_once() {
         (
             "class Circle: Shape, Shape {\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {}",
             vec![(Code::ConformsTwice, (1, 22))],
+        ),
+        // An interface that the compiler writes is a conformance too: a list names it with no
+        // method, and a block that writes it gives a second.
+        (
+            "class Circle: Display {}\nextend Circle: Display {\n    fn to_string(self) -> string { \"c\" }\n}\nfn main() {}",
+            vec![(Code::ConformsTwice, (2, 16))],
+        ),
+        (
+            "extend Circle: Display {\n    fn to_string(self) -> string { \"c\" }\n}\nclass Circle: Display {}\nfn main() {}",
+            vec![(Code::ConformsTwice, (4, 15))],
+        ),
+        // A listing that the compiler writes, once, is no second conformance.
+        ("class Circle: Display {}\nfn main() {}", vec![]),
+        // A listed interface that inherits `Display` is no second listing of it.
+        (
+            "interface Labeled: Display {}\nclass Circle: Labeled, Display {}\nfn main() {}",
+            vec![],
         ),
         // Two types conform once each, and one type conforms to two interfaces.
         (
@@ -1200,7 +1218,7 @@ fn a_call_of_a_method_lost_to_a_syntax_error_should_withhold_the_program() {
     ] {
         let lexed = crate::lexer::lex(src).expect("the source should lex");
         let parsed = crate::parser::parse(lexed, false);
-        let empty = ast::Program::default();
+        let empty = prelude_program("");
         let (program, ds) = check(&parsed.program, &empty, src, &parsed.diagnostics);
         assert!(program.is_none() && ds.is_empty(), "{src}: {ds:?}");
     }
@@ -1775,12 +1793,12 @@ fn a_bound_should_build_what_its_interface_declares_once_and_probe_a_type_once()
     let steps = |src: String| {
         DECLARED_BUILT.set(0);
         PROBE_STEPS.set(0);
-        crate::conformance::NORMALIZED.set(0);
+        conformance::NORMALIZED.set(0);
         let ds = diags(&with_convert_interface(&src));
         assert!(ds.iter().all(|d| d.severity() != Severity::Error), "{ds:?}");
         [
             DECLARED_BUILT.get(),
-            crate::conformance::NORMALIZED.get(),
+            conformance::NORMALIZED.get(),
             PROBE_STEPS.get(),
         ]
     };
@@ -2666,8 +2684,8 @@ fn bound_checks_that_wait_should_set_up_their_scope_once() {
     // A constant number of steps for each parameter, and 6 besides; a replay of the scope for
     // each check would add a step for each pair.
     for class in [false, true] {
-        assert_eq!(steps(16, class), 7 * 16 + 6);
-        assert_eq!(steps(32, class), 7 * 32 + 6);
+        assert_eq!(steps(16, class), 7 * 16 + 6 + LANG_PARAM_STEPS);
+        assert_eq!(steps(32, class), 7 * 32 + 6 + LANG_PARAM_STEPS);
     }
 }
 
@@ -3041,8 +3059,11 @@ fn interface_edges_should_stay_linear() {
     let (edges, relaxed) = graph_cost(&src);
     assert!(edges <= 4 * N, "{edges} edges");
     // One component of all the functions and the hub, with no weight above 0: the first pass
-    // changes nothing, so Bellman–Ford reads each edge once.
-    assert_eq!(relaxed, edges, "{relaxed} steps");
+    // changes nothing, so Bellman–Ford reads each edge of the component once. The edges into
+    // the parameters' second nodes lead nowhere in this graph, so they are outside it.
+    let (_, searched) = cycle::SEARCHED.get();
+    assert!(searched >= 3 * N, "{searched} edges in the component");
+    assert_eq!(relaxed, searched, "{relaxed} steps");
     // A requirement with a type parameter of its own: the calls pass their own argument, and the
     // conformances take it, through a hub for the parameter that costs an edge for each.
     let mut src = String::from("interface Keep {\n    fn keep<U>(self, x: U) -> U\n}\n");
@@ -3105,7 +3126,9 @@ fn a_cycle_in_a_large_component_should_cost_the_nodes_times_the_edges() {
     cycle::BELLMAN_FORD_STEPS.set(0);
     let found: Vec<_> = checked(&src).1.iter().map(Diagnostic::code).collect();
     assert_eq!(found, [Code::InstantiationCycle]);
-    assert_eq!(cycle::EDGES.get(), 3 * N + 3);
+    // The edges of `3n + 3`, and one more for each call's argument, into the second node of the
+    // parameter that it gives.
+    assert_eq!(cycle::EDGES.get(), 4 * N + 3);
     // The contract of the search: at most one pass for each node and one more, of the edges inside
     // the component. The search ran, and the size is the component's, not the graph's.
     let (nodes, edges) = cycle::SEARCHED.get();
@@ -3879,6 +3902,14 @@ fn a_chain_of_growing_types_should_be_reported_at_the_choice_once_the_limit_ends
     // of the walk is found at the bound, wherever the type is used.
     let ends = growing("fn main() {\n    get(Outer<Leaf>())\n}");
     codes(&ends.replace("type B = T.B.B", "type B = T"), &[]);
+}
+
+/// The same types beside a field that holds an associated type: a loop of names alone
+/// instantiates no class or enum, so the check gives the one error at the choice, and no E0140.
+#[test]
+fn a_chain_of_growing_types_beside_a_field_that_holds_one_should_be_reported_once() {
+    let src = "interface Base {\n    type B: Holder\n}\ninterface Holder: Base {}\nclass Leaf {}\nextend Leaf: Base {\n    type B = Leaf\n}\nextend Leaf: Holder {}\nclass Outer<T> {}\nextend<T: Holder> Outer<T>: Base {\n    type B = W<Outer<Outer<T>>>\n}\nextend<T: Holder> Outer<T>: Holder {}\nclass W<T> {}\nextend<T: Holder> W<T>: Base {\n    type B = T.B.B\n}\nextend<T: Holder> W<T>: Holder {}\nfn get<S: Holder>(_s: S) {\n    let _x: [S.B.B] = []\n}\nclass Keep<S: Holder> {\n    b: [S.B.B]\n}\nfn main() {\n    get(Outer<Leaf>())\n}";
+    codes(src, &[(Code::UnknownType, (17, 14))]);
 }
 
 /// A chain of choices that ends, nested as deep as the limit allows, is clean: `W<T>` chooses the

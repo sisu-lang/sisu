@@ -1005,15 +1005,15 @@ mod tests {
 
     /// `program` end to end, all six builds and properties 1 to 5: it passes and leaves no
     /// directory behind. Of the seeds under 4000 with rewrites, a value site and a panic site
-    /// that its run reaches, seed 661 has the shortest program, so its builds are quick.
+    /// that its run reaches, seed 3934 has the shortest program, so its builds are quick.
     #[test]
     fn program_should_pass_and_leave_no_directory_behind() {
         let tmp = Scratch::new();
-        let data = seed(661);
+        let data = seed(3934);
         let g = generate(&data);
         assert!(
             g.rewritten != g.program && panic_sites(&g) == 1 && g.known.len() > 1,
-            "seed 661 should have rewrites, a value site and a panic site"
+            "seed 3934 should have rewrites, a value site and a panic site"
         );
         on_stack(|| program_in(&data, &runtime(), &tmp.0));
         let left = fs::read_dir(&tmp.0)
@@ -1022,18 +1022,18 @@ mod tests {
         assert_eq!(left, 0, "`program` should remove its directory");
     }
 
-    /// Seed 661's one panic site is the last thing its O0 run prints, as the marker `item.rs`
+    /// Seed 3934's one panic site is the last thing its O0 run prints, as the marker `item.rs`
     /// writes. `judge_known` takes a run without that line for an earlier panic, so with it
     /// property 5 judged this panic site.
     #[test]
     fn a_seed_with_a_panic_site_should_print_its_marker_last() {
-        let g = generate(&seed(661));
-        assert_eq!(panic_sites(&g), 1, "seed 661 should have one panic site");
+        let g = generate(&seed(3934));
+        assert_eq!(panic_sites(&g), 1, "seed 3934 should have one panic site");
         let marker = g
             .known
             .iter()
             .find_map(|known| matches!(known.answer, Answer::Panic(_)).then_some(&known.marker))
-            .expect("seed 661 should have a panic site");
+            .expect("seed 3934 should have a panic site");
         let Run { exit, stdout, .. } = o0_run(&g);
         assert_eq!(exit, Exit::Code(101), "{}", g.program);
         assert_eq!(
@@ -1086,8 +1086,12 @@ mod tests {
         ]);
         let Run { exit, stdout, .. } = o0_run(&g);
         assert_eq!(exit, Exit::Code(0), "{}", g.program);
-        // One line from each pass of the innermost loop: every loop ran to its bound.
-        assert_eq!(String::from_utf8_lossy(&stdout).lines().count(), 8 * 8 * 8);
+        // One line from each pass of the innermost loop: every loop ran to its bound. The two
+        // more lines are the ones that `lang_both` prints.
+        assert_eq!(
+            String::from_utf8_lossy(&stdout).lines().count(),
+            8 * 8 * 8 + 2
+        );
     }
 
     /// Set in a child process that one of the tests below starts from this binary.
@@ -1133,7 +1137,7 @@ mod tests {
     }
 
     #[test]
-    fn a_failure_prints_the_program() {
+    fn a_failure_should_print_the_program() {
         if env::var_os(CHILD).is_some() {
             on_stack(|| {
                 FORCE.set(Some(Force::Stdout));
@@ -1142,17 +1146,19 @@ mod tests {
             return;
         }
         let scratch = Scratch::new();
-        let out = child("a_failure_prints_the_program", &scratch.0);
+        let out = child("a_failure_should_print_the_program", &scratch.0);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(!out.status.success(), "{stderr}");
         let g = generate(&[]);
         assert_record(&stderr, "property 3: ", &g, &scratch.0);
         let builds = [
             stderr.find("==> stdin\n"),
-            // Output without a final line break gets one; the empty input's program, an empty
-            // `main`, prints nothing, which gets none.
+            // Output without a final line break gets one. The empty input's program prints the
+            // two lines of `lang_both`.
             stderr.find("==> program -O2 stdout\nforced\n==> program -O2 stderr\n"),
-            stderr.find("==> program --rc-checks stdout\n==> program --rc-checks stderr\n"),
+            stderr.find(
+                "==> program --rc-checks stdout\nRanked\n[1, 2]\n==> program --rc-checks stderr\n",
+            ),
             stderr.find("program fuzzer: property 3 failed"),
         ];
         assert!(

@@ -1,0 +1,23 @@
+// A chain of 1 000 000 levels of each of two enums that hold each other, printed under a
+// 256 KiB stack. The helper steps from `A` to `B` and back in one frame, and each `)` it owes
+// waits in a count, not in a frame. The output is `ToA(ToB(7, ` 1 000 000 times, `End` and
+// 1 000 000 `))`.
+enum A {
+    ToB(i64, B)
+}
+
+enum B {
+    ToA(A)
+    End
+}
+
+fn main() {
+    let mut chain = B.End
+    let mut i = 0
+    while i < 1_000_000 {
+        chain = B.ToA(A.ToB(7, chain))
+        i += 1
+    }
+    print(chain)
+    print("done")
+}

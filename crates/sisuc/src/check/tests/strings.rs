@@ -91,15 +91,16 @@ fn interpolation_spills() {
     );
 }
 
-/// Each part that is not an `i64`, `u8`, `f64`, `bool`, `char` or `string` is reported at the part;
-/// one whose type is unknown reports nothing more.
+/// A part with no value is reported at the part; one whose type is unknown reports nothing more.
+/// Every other type interpolates (`interpolation_should_take_every_type`), an optional with a
+/// warning (`printing_an_optional_should_warn_only_at_the_top_level`).
 #[test]
-fn cannot_interpolate() {
+fn interpolating_a_unit_should_report_the_part() {
     let params = "xs: [i64], m: [i64]?, n: i64?, p: P";
-    for part in ["xs", "m", "n", "p", "print(1)"] {
-        let src = with_items(&body(params, &format!("print(\"a{{{part}}}\")")));
-        codes(&src, &[(Code::CannotInterpolate, (2, 14))]);
-    }
+    codes(
+        &with_items(&body(params, "print(\"a{print(1)}\")")),
+        &[(Code::CannotInterpolate, (2, 14))],
+    );
     codes(
         &with_items(&body(params, "print(\"a{nope}\")")),
         &[(Code::BindingNotFound, (2, 14))],
@@ -114,7 +115,7 @@ fn cannot_interpolate() {
 /// A spec's alignment defaults by type: numbers right, the rest left. Precision needs an `f64`;
 /// on an `i64` the safe fix converts it.
 #[test]
-fn format_spec_checks() {
+fn format_spec_should_default_its_alignment_by_type_and_take_a_precision_for_an_f64_only() {
     let params = "n: i64, b: u8, x: f64, s: string, c: char, t: bool";
     for (statement, part) in [
         ("print(\"{n:5}\")", "(fmt n#0 \">5\")"),
@@ -159,9 +160,9 @@ fn format_spec_checks() {
         assert_eq!(fixes(&src, &d), [], "{src}");
     }
     // A part that is already reported gets no precision error.
-    let params = "xs: [i64], n: i64";
+    let params = "xs: [i64]?, n: i64";
     codes(
-        &body(params, "print(\"{xs:.2}\")"),
+        &body(params, "print(\"{print(1):.2}\")"),
         &[(Code::CannotInterpolate, (2, 13))],
     );
     codes(
@@ -170,9 +171,44 @@ fn format_spec_checks() {
     );
 }
 
+/// A precision on an optional gives E0111 alone, so a part that is reported once gets no second
+/// report. A width, `print`, and a precision after `??` do not give E0111.
+#[test]
+fn a_precision_on_an_optional_should_give_one_error_and_no_warning() {
+    const E0111: (Code, (usize, usize)) = (Code::PrecisionNeedsF64, (2, 14));
+    let params = "f: f64?, g: f64??, n: i64?, s: string?, p: P?";
+    for (row, statement, expected) in [
+        ("precision", "print(\"{f:.2}\")", vec![E0111]),
+        ("width and precision", "print(\"{f:8.2}\")", vec![E0111]),
+        ("optional of an optional", "print(\"{g:.2}\")", vec![E0111]),
+        ("optional `i64`", "print(\"{n:.2}\")", vec![E0111]),
+        ("optional `string`", "print(\"{s:.2}\")", vec![E0111]),
+        ("optional class", "print(\"{p:.2}\")", vec![E0111]),
+        (
+            "width only",
+            "print(\"{f:8}\")",
+            vec![(Code::PrintsOptional, (2, 13))],
+        ),
+        ("print", "print(f)", vec![(Code::PrintsOptional, (2, 11))]),
+        ("default first", "print(\"{f ?? 0.0:.2}\")", vec![]),
+    ] {
+        codes_row(row, &with_items(&body(params, statement)), &expected);
+    }
+}
+
 /// `src` with a class `P` and a function `g` after it, on lines that come after `body`'s.
 fn with_items(src: &str) -> String {
     format!("{src}\nclass P {{\n    mut name: string\n}}\nfn g(x: i64) -> i64 {{\n    x\n}}")
+}
+
+/// An array, a class, an enum and a type parameter interpolate as the types of `print` do, and
+/// take a width: the text of any type pads.
+#[test]
+fn interpolation_should_take_every_type() {
+    contains(
+        "class P {\n    _name: string\n}\nenum E {\n    A\n}\nfn f<T>(xs: [i64], p: P, e: E, t: T) {\n    print(\"{xs}{p}{e:>30}{t}\")\n}\nfn main() {}",
+        &["(interp xs#0 p#1 (fmt e#2 \">30\") t#3)"],
+    );
 }
 
 /// A `string` joined to a `print`ed value that is not one: in each row, the statement on line 2,
@@ -413,8 +449,8 @@ fn nested_joins_check_in_quadratic_time() {
 /// expected type, a `char` beside it nor its uses report anything more: the operand may have
 /// been meant as a number.
 #[test]
-fn failed_concat_type() {
-    let params = "s: string, xs: [i64], n: i64, c: char";
+fn a_join_with_a_failed_operand_should_have_the_type_error() {
+    let params = "s: string, xs: [i64]?, n: i64, c: char";
     for (statement, expected) in [
         ("let b: u8 = nope + s", (Code::BindingNotFound, (2, 17))),
         ("let b: u8 = s + nope", (Code::BindingNotFound, (2, 21))),
@@ -439,10 +475,10 @@ fn failed_concat_type() {
     // An operand that failed but kept its type, `string`, leaves the join a `string`, so a
     // `char` beside it is still reported.
     codes(
-        &body(params, "print(s + \"{xs}\" + c)"),
+        &body(params, "print(s + \"{print(1)}\" + c)"),
         &[
             (Code::CannotInterpolate, (2, 17)),
-            (Code::Mismatch, (2, 24)),
+            (Code::Mismatch, (2, 30)),
         ],
     );
     // A value appended to a field that already failed is not the join's mistake.

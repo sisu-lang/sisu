@@ -1,0 +1,10 @@
+error[E0152]: `Leaf` does not meet `Eq`
+ --> E0152-generated-eq.sisu:5:13
+  |
+5 | class Leaf: Eq {
+  |             ^^ `Leaf` gets no generated `Eq`
+  |
+  = help: fn eq(self, other: Self) -> bool
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0152

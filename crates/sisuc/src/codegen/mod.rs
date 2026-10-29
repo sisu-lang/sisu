@@ -11,6 +11,7 @@ mod layout;
 mod matching;
 mod math;
 mod rc;
+mod show;
 mod string;
 
 use rustc_hash::FxHashMap;
@@ -35,10 +36,12 @@ use inkwell::values::{
 use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
 
 use self::array::element_of;
-use self::enums::EnumLayout;
+use self::enums::{Component, EnumLayout};
 use self::layout::{ClassLayout, HeapBlock, tbaa_tag};
 use self::rc::Helper;
-use crate::mir::{self, BlockId, Const, Operand, Place, Projection, Rvalue, Statement, Terminator};
+use crate::mir::{
+    self, BlockId, Const, Operand, Place, Projection, Rvalue, Side, Statement, Terminator,
+};
 use crate::source::{LineIndex, Span};
 use crate::tir::{
     ClassId, EnumId, FuncId, LocalId, Program, Stream, Type, TypeArgs, TypeKind, UnaryOp,
@@ -55,6 +58,9 @@ thread_local! {
     static TYPE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many token places and rest places a `take_apart` has visited on this thread.
     static TAKE_APART_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many enums and members the lookup of a component has stepped over on this thread: the
+    /// enums that `components` builds the table from, and the members that `member_index` passes.
+    static MEMBER_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 impl<'ctx, 'src> Codegen<'ctx, 'src> {
@@ -62,6 +68,7 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
     fn new(
         context: &'ctx Context,
         program: &'src Program,
+        mir: &'src mir::Program,
         path: &'src str,
         source: &'src str,
         machine: &TargetMachine,
@@ -117,8 +124,10 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             element_tag: tbaa_tag(context, tbaa_root, "array element"),
             tbaa_root,
             program,
-            reaches_f64: rc::reaching_f64(program),
+            mir,
+            unreflexive: rc::reaching_unreflexive(program),
             class_cycles: rc::class_cycles(program),
+            components: enums::components(&program.enums),
             helpers: RefCell::new(FxHashMap::default()),
             pending: RefCell::new(Vec::new()),
             target_data,
@@ -151,7 +160,7 @@ pub(crate) fn compile<'ctx>(
     machine: &TargetMachine,
     rc_checks: bool,
 ) -> Module<'ctx> {
-    let mut codegen = Codegen::new(context, program, path, source, machine, rc_checks);
+    let mut codegen = Codegen::new(context, program, mir, path, source, machine, rc_checks);
     codegen.lay_out_types();
     // Every class gets its release helper, used or not; an `eq` helper is made on first use.
     for id in 0..program.classes.len() {
@@ -254,11 +263,17 @@ struct Codegen<'ctx, 'src> {
     /// through a field, carry no tag.
     tbaa_root: MetadataValue<'ctx>,
     program: &'src Program,
-    /// Whether each class, then each enum, reaches an `f64` through its fields; see
-    /// `rc::reaching_f64`.
-    reaches_f64: Vec<bool>,
+    /// The mir, whose functions' `borrowed` flags say how a helper passes a part to a written
+    /// method.
+    mir: &'src mir::Program,
+    /// Whether each class, then each enum, reaches an `f64` or a written `eq` through its fields;
+    /// see `rc::reaching_unreflexive`.
+    unreflexive: Vec<bool>,
     /// The classes that hold each other in a loop; see `rc::class_cycles`.
     class_cycles: rc::ClassCycles,
+    /// For each enum, indexed by `EnumId`, its component when the component has boxes; see
+    /// `enums::components`.
+    components: Vec<Option<Component>>,
     /// The helpers declared so far, by kind and counted type; see `rc::helper`.
     helpers: RefCell<FxHashMap<(Helper, Type), FunctionValue<'ctx>>>,
     /// The helpers declared but not yet defined; `define_helpers` empties it.
@@ -670,9 +685,15 @@ impl<'ctx> Codegen<'ctx, '_> {
                 let lhs = self.pointer(lhs);
                 self.concat(lhs, self.pointer(rhs)).into()
             }
-            Rvalue::Interpolate { parts, formats } => {
+            Rvalue::Interpolate { parts, formats, .. } => {
                 let parts: Vec<_> = parts.iter().map(|part| self.operand(part)).collect();
-                let text = self.interpolate(&parts, formats);
+                // Text, numbers, `bool` and `char` go in one block of known size; a compound part
+                // goes through a sink.
+                let text = if parts.iter().all(|&(_, ty)| text_part(ty)) {
+                    self.interpolate(&parts, formats)
+                } else {
+                    self.interpolate_compound(&parts, formats)
+                };
                 for (value, ty) in parts {
                     self.release(value, ty);
                 }
@@ -694,7 +715,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 self.release(array, base_ty);
                 sum
             }
-            Rvalue::Contains { base, value } => {
+            Rvalue::Contains { base, value, .. } => {
                 let (array, base_ty) = self.operand(base);
                 let (needle, needle_ty) = self.operand(value);
                 let hit = self.contains(element_of(base_ty), array.into_pointer_value(), needle);
@@ -729,16 +750,43 @@ impl<'ctx> Codegen<'ctx, '_> {
                 let (lhs, ty) = self.operand(lhs);
                 self.compare(*op, ty, lhs, self.operand(rhs).0).into()
             }
-            Rvalue::Equal { negated, lhs, rhs } => {
+            Rvalue::Equal {
+                negated,
+                lhs,
+                rhs,
+                none,
+                ..
+            } => {
                 let (lhs, ty) = self.operand(lhs);
-                self.equal_value(*negated, ty, lhs, self.operand(rhs).0)
-                    .into()
+                let (rhs, other) = self.operand(rhs);
+                // `x == None` on a counted optional tests whether `x` holds a value; it compares
+                // no payload, so it calls no `eq` helper, which a class has none of.
+                if let Some(side) = none {
+                    let (value, held) = match side {
+                        Side::Lhs => (rhs, other),
+                        Side::Rhs => (lhs, ty),
+                    };
+                    if held.is_counted(&self.program.enums) {
+                        let present = self.has_value(held, value, "present");
+                        return Some(if *negated {
+                            present.into()
+                        } else {
+                            self.builder
+                                .build_not(present, "none")
+                                .expect(POSITIONED)
+                                .into()
+                        });
+                    }
+                }
+                self.equal_value(*negated, ty, lhs, rhs).into()
             }
             Rvalue::Is { lhs, rhs } => {
                 let lhs = self.pointer(lhs);
                 self.same_object(lhs, self.pointer(rhs)).into()
             }
-            Rvalue::Print { stream, operand } => {
+            Rvalue::Print {
+                stream, operand, ..
+            } => {
                 let (value, ty) = self.operand(operand);
                 self.print(*stream, ty, value);
                 return None;
@@ -1032,6 +1080,18 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// `print` or `eprint` of an evaluated operand of type `ty`, which it borrows.
     fn print(&self, stream: Stream, ty: Type, value: BasicValueEnum<'ctx>) {
+        if !matches!(
+            ty.kind(),
+            TypeKind::I64
+                | TypeKind::U8
+                | TypeKind::F64
+                | TypeKind::Bool
+                | TypeKind::Char
+                | TypeKind::String
+        ) {
+            self.print_compound(stream, ty, value);
+            return;
+        }
         if ty == Type::STRING {
             self.print_string(stream, value.into_pointer_value());
             return;
@@ -1200,6 +1260,20 @@ pub(crate) fn keep_functions(module: &Module<'_>, names: &str) {
             function.add_attribute(AttributeLoc::Function, noinline);
         }
     }
+}
+
+/// Whether an interpolation writes a part of type `ty` itself, in the one block of its result: a
+/// number, a `bool`, a `char` or a `string`.
+fn text_part(ty: Type) -> bool {
+    matches!(
+        ty.kind(),
+        TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::String
+    )
 }
 
 /// Verifies `module`, then runs the pipeline. This is the build's only verifier run: a pass

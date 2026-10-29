@@ -1,0 +1,20 @@
+// A conditional `Display` record names a bound that only the source knows: `C: Tag` is a
+// conformance of the source, and `mono`'s output keeps no record of it. The generic `Box` takes
+// `mono`'s slow path, and the bound still holds for `C`, so the array prints the written text.
+interface Tag {}
+
+class C: Tag {}
+
+class Box<T> {
+    _value: T
+}
+
+extend<T: Tag> Box<T>: Display {
+    fn to_string(self) -> string {
+        "written"
+    }
+}
+
+fn main() {
+    print([Box(_value: C())])
+}

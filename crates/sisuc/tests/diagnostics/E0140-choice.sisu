@@ -1,0 +1,16 @@
+interface I {
+    type Item
+}
+
+class W<T>: I {
+    type Item = E<W<W<T>>>
+}
+
+enum E<T: I> {
+    End
+    A(T.Item)
+}
+
+fn main() {
+    let e: E<W<i64>> = E.End
+}

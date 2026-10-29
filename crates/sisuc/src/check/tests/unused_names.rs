@@ -317,76 +317,17 @@ fn field_should_warn_when_code_only_compound_assigns_it() {
     );
 }
 
-/// A comparison or a search reads every field of each class that its type holds, so no field of
-/// these programs is unread.
+/// A comparison reads the fields that the written `eq` reads, and no others: `==` on a class does
+/// not read every field, as it did while a class compared its fields.
 #[test]
-fn field_should_count_as_read_when_a_comparison_or_a_search_reads_its_class() {
+fn field_should_warn_when_the_written_eq_of_a_compared_class_does_not_read_it() {
     judge_unused();
-    for (row, src) in [
-        (
-            "equal on a class",
-            format!(
-                "{P}fn main() {{\n    let a = P(x: 1, y: 2)\n    let b = P(x: 1, y: 2)\n    print(a == b)\n}}"
-            ),
-        ),
-        (
-            "equal on arrays of a class",
-            format!(
-                "{P}fn main() {{\n    let a = P(x: 1, y: 2)\n    let b = P(x: 1, y: 2)\n    print([a] == [b])\n}}"
-            ),
-        ),
-        (
-            "equal on a class held by a class",
-            format!(
-                "{P_X}class Q {{\n    p: P\n}}\nfn main() {{\n    let a = Q(p: P(x: 1))\n    print(a == a)\n}}"
-            ),
-        ),
-        (
-            "equal on a class in a variant",
-            format!(
-                "{P_X}enum E {{\n    Has(P)\n    Empty\n}}\nfn main() {{\n    let e = E.Has(P(x: 1))\n    print(e == E.Empty)\n}}"
-            ),
-        ),
-        (
-            "equal on a class that is a type argument",
-            format!(
-                "{P_X}class Box<T> {{\n    v: T\n}}\nfn main() {{\n    let b = Box(v: P(x: 1))\n    print(b == b)\n}}"
-            ),
-        ),
-        (
-            "equal on a generic class with two arguments",
-            format!(
-                "{P_X}class Q {{\n    y: i64\n}}\nclass Box<T> {{\n    v: T\n}}\nfn main() {{\n    let p = Box(v: P(x: 1))\n    let q = Box(v: Q(y: 2))\n    print(p == p)\n    print(q == q)\n}}"
-            ),
-        ),
-        // `Top` names `Box` before its declaration, and `Outer` names it after.
-        (
-            "equal through a class declared before or after",
-            format!(
-                "{P_X}class Q {{\n    y: i64\n}}\nclass Top<T> {{\n    b: Box<T>?\n}}\nclass Box<T> {{\n    v: T\n}}\nclass Outer<T> {{\n    b: Box<[T]>\n}}\nfn main() {{\n    let p = Outer(b: Box(v: [P(x: 1)]))\n    let q = Top(b: Box(v: Q(y: 2)))\n    print(p == p)\n    print(q == q)\n}}"
-            ),
-        ),
-        (
-            "equal through a generic enum field",
-            format!(
-                "{P_X}enum E<T> {{\n    A(T)\n}}\nclass C<T> {{\n    e: E<T>\n}}\nfn main() {{\n    let c = C(e: E.A(P(x: 1)))\n    print(c == c)\n}}"
-            ),
-        ),
-        (
-            "equal on a payload type argument",
-            format!(
-                "{P_X}enum Maybe<T> {{\n    Has(T)\n    Empty\n}}\nfn main() {{\n    let m = Maybe.Has(P(x: 1))\n    print(m == Maybe.Empty)\n}}"
-            ),
-        ),
-        (
-            "contains on an array of a class",
-            format!(
-                "{P_X}fn main() {{\n    let a = P(x: 1)\n    let xs = [a]\n    print(xs.contains(a))\n}}"
-            ),
-        ),
-    ] {
-        clean_row(row, &src);
-    }
+    diagnostic(
+        "class P: Eq {\n    x: i64\n    y: i64\n    fn eq(self, other: Self) -> bool { self.x == other.x }\n}\nfn main() {\n    print(P(x: 1, y: 2) == P(x: 1, y: 3))\n}",
+        W0013,
+        (3, 5, "y"),
+        &[],
+    );
 }
 
 #[test]
@@ -395,19 +336,6 @@ fn safe_field_read_should_read_the_field() {
     clean(&format!(
         "{P_X}fn get(o: P?) -> i64 {{\n    o?.x ?? 0\n}}\nfn main() {{\n    print(get(P(x: 1)))\n}}"
     ));
-}
-
-#[test]
-fn equal_should_read_no_field_of_an_argument_that_no_field_holds() {
-    judge_unused();
-    diagnostic(
-        &format!(
-            "{P_X}class Tag<T> {{\n    n: i64\n}}\nclass Outer<T> {{\n    tag: Tag<T>\n}}\nfn main() {{\n    let _ = P(x: 1)\n    let o = Outer(tag: Tag<P>(n: 1))\n    print(o == o)\n}}"
-        ),
-        W0013,
-        (2, 5, "x"),
-        &[],
-    );
 }
 
 #[test]
@@ -420,30 +348,6 @@ fn equal_should_read_no_field_when_it_compares_with_none() {
         W0013,
         (2, 5, "x"),
         &[],
-    );
-}
-
-#[test]
-fn contains_should_read_no_field_when_it_searches_for_none() {
-    judge_unused();
-    diagnostic(
-        &format!(
-            "{P_X}fn show(xs: [P?]) {{\n    print(xs.contains(None))\n}}\nfn main() {{\n    show([P(x: 1)])\n}}"
-        ),
-        W0013,
-        (2, 5, "x"),
-        &[],
-    );
-}
-
-#[test]
-fn field_should_cite_a_dead_comparison() {
-    judge_unused();
-    assert_eq!(
-        found(&format!(
-            "{P}fn old_report(p: P) {{\n    print(p == p)\n}}\nfn main() {{\n    print(P(x: 1, y: 2).x)\n}}"
-        )),
-        [(W0013, (3, 5), vec![(6, 11)]), (W0012, (5, 4), vec![])]
     );
 }
 
@@ -491,37 +395,6 @@ fn underscore_field_should_not_warn() {
 }
 
 #[test]
-fn field_should_cite_the_first_dead_comparison_in_source_order() {
-    judge_unused();
-    // `pick` checks its second argument first, as the first needs its type.
-    let src = format!(
-        "{P}fn pick<T>(a: T?, b: T) -> T {{\n    a ?? b\n}}\nfn old_report(p: P) {{\n    print(pick(if p == p {{ None }} else {{ None }}, [p] == [p]))\n}}\nfn main() {{\n    print(P(x: 1, y: 2).x)\n    print(pick(None, 1))\n}}"
-    );
-    assert_eq!(
-        found(&src),
-        [(W0013, (3, 5), vec![(9, 19)]), (W0012, (8, 4), vec![])]
-    );
-}
-
-#[test]
-fn field_should_cite_a_dead_comparison_only_when_it_has_fewer_than_three_reads() {
-    judge_unused();
-    // The comparison comes first in the source, so a list of three reads must still keep it out.
-    let src = "class P {\n    x: i64\n    y: i64\n    z: i64\n}\nfn a(p: P) {\n    print(p == p)\n}\nfn b(p: P) {\n    print(p.y)\n}\nfn c(p: P) {\n    print(p.y + p.z)\n}\nfn d(p: P) {\n    print(p.y)\n}\nfn main() {\n    print(P(x: 1, y: 2, z: 3).x)\n}";
-    assert_eq!(
-        found(src),
-        [
-            (W0013, (3, 5), vec![(10, 11), (13, 11), (16, 11)]),
-            (W0013, (4, 5), vec![(7, 11), (13, 17)]),
-            (W0012, (6, 4), vec![]),
-            (W0012, (9, 4), vec![]),
-            (W0012, (12, 4), vec![]),
-            (W0012, (15, 4), vec![]),
-        ]
-    );
-}
-
-#[test]
 fn variant_should_cite_a_dead_build_of_a_later_variant() {
     judge_unused();
     let src = format!(
@@ -530,21 +403,6 @@ fn variant_should_cite_a_dead_build_of_a_later_variant() {
     assert_eq!(
         found(&src),
         [(W0013, (3, 5), vec![(6, 5)]), (W0012, (5, 4), vec![])]
-    );
-}
-
-#[test]
-fn field_should_cite_each_dead_comparison_when_two_start_at_one_place() {
-    judge_unused();
-    // The `contains` call and the `==` around it start at one place.
-    let src = "class P {\n    x: i64\n}\nclass Q {\n    y: i64\n}\nfn old_report(p: P, q: Q) {\n    print([p].contains(p) == [q].contains(q))\n}\nfn main() {\n    let _ = P(x: 1)\n    let _ = Q(y: 2)\n}";
-    assert_eq!(
-        found(src),
-        [
-            (W0013, (2, 5), vec![(8, 11)]),
-            (W0013, (5, 5), vec![(8, 30)]),
-            (W0012, (7, 4), vec![]),
-        ]
     );
 }
 
@@ -769,45 +627,6 @@ fn never_reassigned_should_warn_once_when_the_checker_checks_it_twice() {
         "fn main() {\n    let s: u8 = \"a\" + if true {\n        let mut t = 1\n        \"b\"\n    } else {\n        \"c\"\n    }\n}",
         &[(Code::Mismatch, (2, 17)), (Code::NeverReassigned, (3, 17))],
     );
-}
-
-#[test]
-fn equal_should_walk_branching_generic_classes_linearly() {
-    judge_unused();
-    // Each class holds the one before it in two ways. A walk that puts in the type arguments
-    // walks twice as many types at each class.
-    let steps = |n: usize| {
-        let classes = (1..=n)
-            .map(|i| {
-                let before = i - 1;
-                format!(
-                    "class _L{i}<T> {{\n    a: _L{before}<[T]>\n    b: _L{before}<_Wrap<T>>\n}}\n"
-                )
-            })
-            .collect::<Vec<_>>()
-            .concat();
-        let src = format!(
-            "class _Wrap<T> {{\n    v: T\n}}\nclass _L0<T> {{\n    v: T\n}}\n{classes}enum E<T> {{\n    Empty\n    Has(_L{n}<T>)\n}}\nfn _keep(x: _L{n}<i64>) {{\n    let _ = E.Has(x)\n}}\nfn main() {{\n    print(E<i64>.Empty == E<i64>.Empty)\n}}"
-        );
-        HELD_STEPS.set(0);
-        clean(&src);
-        HELD_STEPS.get()
-    };
-    assert_near_linear(steps(4), steps(8), steps(12));
-}
-
-#[test]
-fn equal_of_primitives_should_not_walk_the_generic_classes() {
-    judge_unused();
-    let n = 100;
-    let classes = (0..n)
-        .map(|i| format!("class _Tag{i}<T> {{\n    v: T\n}}\n"))
-        .collect::<Vec<_>>()
-        .concat();
-    HELD_STEPS.set(0);
-    clean(&format!("{classes}fn main() {{\n    print(1 == 1)\n}}"));
-    // Finding the held parameters would take a step for each class.
-    assert!(HELD_STEPS.get() < n);
 }
 
 /// An interface, and the code that follows.

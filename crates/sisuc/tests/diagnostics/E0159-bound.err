@@ -1,0 +1,11 @@
+error[E0159]: `Pair<bool>` has no `==`
+  --> E0159-bound.sisu:10:11
+   |
+ 5 | extend<T: Ord> Pair<T>: Eq {
+   |           --- this conformance needs `T: Ord`
+...
+10 |     print(Pair.Two(true, false) == Pair.Two(true, false))
+   |           ^^^^^^^^^^^^^^^^^^^^^ this has type `Pair<bool>`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0159

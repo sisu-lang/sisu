@@ -1,0 +1,180 @@
+// A written `eq` can store into a `mut` field, as a call can, and that frees the field's old
+// value. So an `==` or `contains` whose helper may run the `eq`, on the operand itself or on a
+// value that holds it, is a call to pair removal: the copy `xs` of `h.items` stays a copy, and
+// reading `xs` after the comparison reads live memory (Valgrind and `--rc-checks` see a mistake).
+// `h` stays live after the comparison, so the copy has nothing else that keeps it. A `print`
+// whose helper may run a written `to_string` is such a call too: the `to_string` of `B` stores
+// into `s`, and the copy `old` of the field stays live memory across the `print`, and across an
+// interpolation or a `to_string` call of such a value.
+class Holder: Eq {
+    mut items: [string]
+    fn eq(self, _other: Self) -> bool {
+        self.items = ["y"]
+        true
+    }
+}
+
+enum Wrap {
+    One(Holder)
+}
+
+// An enum that holds the class, directly or in an optional, runs the `eq` of its payload too.
+enum Outer {
+    Has(Holder)
+}
+
+enum Lone {
+    Has(Holder?)
+}
+
+enum Cover {
+    One(Outer)
+}
+
+fn in_array() {
+    let h = Holder(items: ["{1}"])
+    let xs = h.items
+    let same = [h] == [h]
+    print(xs[0])
+    print(same)
+    print(h.items[0])
+}
+
+fn in_contains() {
+    let h = Holder(items: ["{1}"])
+    let xs = h.items
+    let same = [h].contains(h)
+    print(xs[0])
+    print(same)
+    print(h.items[0])
+}
+
+fn in_payload() {
+    let h = Holder(items: ["{1}"])
+    let xs = h.items
+    let same = Wrap.One(h) == Wrap.One(h)
+    print(xs[0])
+    print(same)
+    print(h.items[0])
+}
+
+fn in_enum() {
+    let h = Holder(items: ["{1}"])
+    let xs = h.items
+    let o = Outer.Has(h)
+    let same = o == o
+    print(xs[0])
+    print(same)
+    print(h.items[0])
+}
+
+fn in_optional_payload() {
+    let h = Holder(items: ["{1}"])
+    let xs = h.items
+    let l = Lone.Has(h)
+    let same = l == l
+    print(xs[0])
+    print(same)
+    print(h.items[0])
+}
+
+fn in_nested_payload() {
+    let h = Holder(items: ["{1}"])
+    let xs = h.items
+    let o = Outer.Has(h)
+    let same = Cover.One(o) == Cover.One(o)
+    print(xs[0])
+    print(same)
+    print(h.items[0])
+}
+
+class B {
+    mut s: string
+}
+
+extend B: Display {
+    fn to_string(self) -> string {
+        self.s = "new"
+        "B"
+    }
+}
+
+enum Boxed {
+    One(B)
+}
+
+fn print_object() {
+    let b = B(s: "heap {1}")
+    let old = b.s
+    print(b)
+    print(old)
+    print(b.s)
+}
+
+fn print_array() {
+    let b = B(s: "heap {1}")
+    let old = b.s
+    print([b])
+    print(old)
+    print(b.s)
+}
+
+fn print_payload() {
+    let b = B(s: "heap {1}")
+    let old = b.s
+    print(Boxed.One(b))
+    print(old)
+    print(b.s)
+}
+
+fn interpolate_object() {
+    let b = B(s: "heap {1}")
+    let old = b.s
+    let t = "{b}"
+    print(t)
+    print(old)
+    print(b.s)
+}
+
+fn interpolate_array() {
+    let b = B(s: "heap {1}")
+    let old = b.s
+    let t = "{[b]}"
+    print(t)
+    print(old)
+    print(b.s)
+}
+
+fn interpolate_payload() {
+    let b = B(s: "heap {1}")
+    let old = b.s
+    let t = "{Boxed.One(b)}"
+    print(t)
+    print(old)
+    print(b.s)
+}
+
+fn to_string_payload() {
+    let b = B(s: "heap {1}")
+    let old = b.s
+    let t = Boxed.One(b).to_string()
+    print(t)
+    print(old)
+    print(b.s)
+}
+
+fn main() {
+    in_array()
+    in_contains()
+    in_payload()
+    in_enum()
+    in_optional_payload()
+    in_nested_payload()
+    print_object()
+    print_array()
+    print_payload()
+    interpolate_object()
+    interpolate_array()
+    interpolate_payload()
+    to_string_payload()
+}

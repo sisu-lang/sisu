@@ -1,0 +1,8 @@
+error[E0140]: `W<T>.eq` instantiates itself without end
+ --> E0140-operator.sisu:7:9
+  |
+7 |         W(x: [self.x]) == W(x: [other.x])
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `W<[T]>.eq` here
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

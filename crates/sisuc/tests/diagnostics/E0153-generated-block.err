@@ -1,0 +1,11 @@
+error[E0153]: `Light` conforms to `Display` twice
+ --> E0153-generated-block.sisu:6:15
+  |
+1 | enum Light: Display {
+  |             ------- first conformance here
+...
+6 | extend Light: Display {}
+  |               ^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0153

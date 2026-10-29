@@ -1,0 +1,15 @@
+enum Pair<T> {
+    Two(T, T)
+}
+
+extend<T: Ord> Pair<T>: Eq {
+    fn eq(self, other: Self) -> bool { true }
+}
+
+enum Outer {
+    Has(Pair<bool>)
+}
+
+fn main() {
+    print(Outer.Has(Pair.Two(true, false)) == Outer.Has(Pair.Two(true, false)))
+}

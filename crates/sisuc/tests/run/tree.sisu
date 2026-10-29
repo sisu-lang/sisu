@@ -1,5 +1,5 @@
 // Two binary search trees built from the same 10 000 keys are equal, but not the same object.
-class Tree {
+class Tree: Eq {
     value: i64
     mut left: Tree?
     mut right: Tree?
@@ -20,6 +20,9 @@ class Tree {
         }
     }
 
+    fn eq(self, other: Self) -> bool {
+        self.value == other.value && self.left == other.left && self.right == other.right
+    }
     fn count(self) -> i64 {
         1 + (self.left?.count() ?? 0) + (self.right?.count() ?? 0)
     }

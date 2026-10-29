@@ -1,7 +1,8 @@
 // Arrays: literals, `[v; n]`, reads, `len`, `==`, shared objects, `for`, drops and evaluation
 // order. Valgrind checks that every block is freed exactly once on every path.
-class Node {
+class Node: Eq {
     mut v: i64
+    fn eq(self, other: Self) -> bool { self.v == other.v }
 }
 
 fn side(x: i64) -> i64 {

@@ -269,7 +269,7 @@ The rules:
 - An optional is not its value. An arithmetic operator, a comparison, a field or a method of `T` does not apply to a `T?` ([E0032](../diagnostics/E0032.md), [E0062](../diagnostics/E0062.md)). Use `??`, `?.` ([Operators](operators.md#default-values)) or [`if let`](enums.md#if-let-and-while-let).
 - `x == None` and `x != None` test whether `x` holds a value. When `x` is not optional, the test is an error ([E0044](../diagnostics/E0044.md)).
 - An optional of an optional, such as `i64??`, is a type. A value becomes an optional through one `?` layer only, and `??`, `if let` and `?.` take off one layer at a time. See [Optionals of optionals](#optionals-of-optionals).
-- `print` and interpolation do not take an optional ([E0059](../diagnostics/E0059.md), [E0098](../diagnostics/E0098.md)). The section [Option and Result](#option-and-result) is in development, and it changes this rule.
+- `print`, `eprint` and interpolation take an optional, with the warning [W0015](../diagnostics/W0015.md), because the text can be `None`. See [Option and Result](#option-and-result).
 
 ```sisu
 fn half(n: i64) -> i64? {
@@ -331,7 +331,25 @@ The rules:
 - `Option<T>` is the enum with the variants `None` and `Some(T)`. `Result<T, E>` is the enum with the variants `Ok(T)` and `Err(E)`. [Errors and Result](errors.md#results) tells how a result is used.
 - `Some`, `None`, `Ok` and `Err` are names in expressions and in patterns, without the name of the enum.
 - `Some(p)` and `None` match the optional itself. A variant, a literal or a range matches the value inside it, and a name or `_` matches the whole optional. Only the top of an `if let` or a `while let` takes off one layer. [Patterns on an optional](enums.md#patterns-on-an-optional) has the rules.
-- A `print`, `eprint` or interpolation of an optional builds with a warning, because the text can be `None`. `x.to_string()` gives the same text with no warning, for a program that wants `None` in its output.
+- A `print`, `eprint` or interpolation of an optional builds with the warning [W0015](../diagnostics/W0015.md), because the text can be `None`. `x.to_string()` gives the same text with no warning, for a program that wants `None` in its output.
+- The warning is for the optional itself. An optional inside an array, a payload or another optional, and a value of a type parameter `T` that is an optional where the function is called, get no warning.
+
+```sisu
+fn main() {
+    let name: string? = "Sisu"
+    print("Hello {name}")                  // warning[W0015]
+    print("Hello {name ?? "friend"}")
+    print([name])
+    print(name.to_string())
+}
+```
+
+```output
+Hello Sisu
+Hello Sisu
+["Sisu"]
+Sisu
+```
 
 ### Optionals of optionals
 
@@ -359,9 +377,9 @@ The rules:
 - `??` and `if let` peel one layer. On an `i64??` named `x`, `x ?? 5` gives an `i64?`, and `(x ?? None) ?? 0` gives an `i64`. `if let y = x` binds `y` with the type `i64?`.
 - `?.` removes one layer, as it does now. If `a?.b` has a `b` of the type `i64?`, it gives an `i64?`, not an `i64??`.
 - A type argument can be an optional ([Type arguments](generics.md#type-arguments)).
-- `None` prints as `None` at every depth. A `T?` that holds `x` prints the text of `x`. When `x` is itself an optional that holds `None` at its innermost layer, the text is `Some(`, the text of `x`, and `)`. So every state of a nested optional prints in its own way. A `print` of an optional still builds with the warning; `to_string` does not.
+- `None` prints as `None` at every depth. A `T?` that holds `x` prints the text of `x`. When `x` is itself an optional that holds `None` at its innermost layer, the text is `Some(`, the text of `x`, and `)`. So every state of a nested optional prints in its own way. A `print` of an optional builds with the warning [W0015](../diagnostics/W0015.md); `to_string` does not.
 
-```sisu pending
+```sisu
 fn main() {
     let a: i64?? = None
     let b: i64?? = Some(None)
@@ -426,20 +444,18 @@ fn main() {
 
 `unit` is the type of an expression that gives no value, such as a call of `print`. It is an ordinary type. A program can write it, for example in `-> unit`.
 
-```sisu pending
+```sisu
 fn main() {
-    // Prints x, then ().
-    print(print("x"))
-    // Prints a, then b, then true.
-    print(print("a") == print("b"))
+    print(print("x"))                // error[E0059]
+    print(print("a") == 1)           // error[E0043]
 }
 ```
 
 The rules:
 
-- `unit` can be a type argument, such as `[unit]`, `unit?` and `Stack<unit>`. This lifts the rule in [Type arguments](generics.md#type-arguments).
+- `unit` cannot be a type argument, such as `[unit]`, `unit?` and `Stack<unit>`, as the rule in [Type arguments](generics.md#type-arguments) says.
 - `unit` has no literal. A `unit` value comes from a call, such as `print(...)`.
-- A `unit` value prints as `()`. It has `Eq` and `Ord`, and all `unit` values are equal.
+- `unit` has no `Display`, no `Eq` and no `Ord`. A `unit` value cannot be printed ([E0059](../diagnostics/E0059.md)) or compared.
 
 ## Conversions
 

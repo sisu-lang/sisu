@@ -1,0 +1,11 @@
+error[E0153]: `E<T>` conforms to `Eq` twice
+ --> E0153-generated-block-generic.sisu:6:17
+  |
+2 | enum E<T>: Eq {
+  |            -- first conformance here
+...
+6 | extend<U> E<U>: Eq {
+  |                 ^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0153

@@ -1,0 +1,11 @@
+error[E0154]: `i64` does not conform to `AnyObject`
+ --> E0154-any-object.sisu:6:16
+  |
+1 | fn keep<T: AnyObject>(x: T) -> i64 {
+  |            --------- required by this bound
+...
+6 |     print(keep(1))
+  |                ^ only classes conform to `AnyObject`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154

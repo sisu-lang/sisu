@@ -245,7 +245,7 @@ Today it compiles:
 - classes with methods, optionals, and enums with payloads and methods
 - generic functions, classes and enums, and interfaces: bounds such as
   `T: Shape & Named`, conformance in a declaration or an `extend` block, and
-  associated types
+  associated types; `Display`, `Eq` and `Ord` give `print`, `==` and `<`
 - `match` with nested, alternative, guarded and range patterns
 - arrays, and strings with `+`, `+=`, `chars()` and interpolation, with width
   and precision specs

@@ -1,0 +1,236 @@
+// GIVEN a generic `Stack<T>` over a linked `Cell<T>`
+// AND the generic functions `largest` and `first`, and an `Expr` enum
+// AND `Circle` and `Rect`, which conform to `Shape`
+// AND a generic `biggest` that needs `Shape` and `Ord` together
+// AND `Celsius`, which conforms to `Convert<Fahrenheit>` and to `Convert<Kelvin>`
+// AND two classes that conform to `Source` with a different `Item`
+// AND one generic `drain` that drains both classes
+// WHEN `main` uses each of them
+// AND it prints an optional through `.to_string()`, so that the file builds with no warning
+// THEN the stacks, the order and the nested optionals print as the spec lists them
+// AND an `Expr` and a class print their text
+// AND the prelude's `contains` and `sum` give their answers
+// AND the two conversions print what the annotation chose
+// AND both drains print every item
+class Cell<T> {
+    value: T
+    next: Cell<T>?
+}
+
+class Stack<T> {
+    mut top: Cell<T>?
+
+    fn push(self, x: T) {
+        self.top = Cell(value: x, next: self.top)
+    }
+
+    fn pop(self) -> T? {
+        if let cell = self.top {
+            self.top = cell.next
+            cell.value
+        } else {
+            None
+        }
+    }
+}
+
+enum Expr {
+    Num(i64)
+    Add(Expr, Expr)
+    Mul(Expr, Expr)
+}
+
+fn largest<T: Ord>(xs: [T]) -> T? {
+    let mut best: T? = None
+    for x in xs {
+        if let b = best {
+            if x > b {
+                best = x
+            }
+        } else {
+            best = x
+        }
+    }
+    best
+}
+
+fn first<T>(xs: [T]) -> T? {
+    if xs.len() == 0 {
+        return None
+    }
+    xs[0]
+}
+
+interface Shape: Display {
+    fn area(self) -> f64
+}
+
+// Hand-written text, `eq` and `less`.
+class Circle: Shape, Eq, Ord {
+    r: f64
+
+    fn to_string(self) -> string {
+        "circle of radius {self.r}"
+    }
+
+    fn eq(self, other: Self) -> bool {
+        self.r == other.r
+    }
+
+    fn less(self, other: Self) -> bool {
+        self.r < other.r
+    }
+
+    fn area(self) -> f64 {
+        3.0 * self.r * self.r
+    }
+}
+
+// No `to_string`: it prints its name.
+class Rect: Shape {
+    w: f64
+    h: f64
+
+    fn area(self) -> f64 {
+        self.w * self.h
+    }
+}
+
+fn biggest<T: Shape & Ord>(xs: [T]) {
+    if let b = largest(xs) {
+        print("{b} has area {b.area()}")
+    } else {
+        print("no shapes")
+    }
+}
+
+interface Convert<T> {
+    fn convert(self) -> T
+}
+
+class Fahrenheit {
+    degrees: f64
+}
+
+class Kelvin {
+    degrees: f64
+}
+
+class Celsius {
+    degrees: f64
+}
+
+extend Celsius: Convert<Fahrenheit> {
+    fn convert(self) -> Fahrenheit {
+        Fahrenheit(degrees: self.degrees * 1.8 + 32.0)
+    }
+}
+
+extend Celsius: Convert<Kelvin> {
+    fn convert(self) -> Kelvin {
+        Kelvin(degrees: self.degrees + 273.0)
+    }
+}
+
+interface Source {
+    type Item: Display
+    fn next(self) -> Item?
+}
+
+class Countdown: Source {
+    type Item = i64
+    mut n: i64
+
+    fn next(self) -> Item? {
+        if self.n > 0 {
+            self.n -= 1
+            self.n + 1
+        } else {
+            None
+        }
+    }
+}
+
+class Words {
+    words: [string]
+    mut at: i64
+}
+
+extend Words: Source {
+    type Item = string
+
+    fn next(self) -> Item? {
+        if self.at < self.words.len() {
+            self.at += 1
+            self.words[self.at - 1]
+        } else {
+            None
+        }
+    }
+}
+
+fn drain<S: Source>(s: S) {
+    while let x = s.next() {
+        print(x)
+    }
+}
+
+fn main() {
+    // 1. One stack class at three item types. `pop` on an empty stack gives `None`.
+    let ints: Stack<i64> = Stack(top: None)
+    ints.push(1)
+    ints.push(2)
+    print(ints.pop().to_string())                         // 2
+    print(ints.pop().to_string())                         // 1
+    print(ints.pop().to_string())                         // None
+    let words: Stack<string> = Stack(top: None)
+    words.push("sauna")
+    print(words.pop().to_string())                        // sauna
+    print(words.pop().to_string())                        // None
+    let exprs: Stack<Expr> = Stack(top: None)
+    exprs.push(Expr.Num(7))
+    print(exprs.pop().to_string())                        // Num(7)
+    print(exprs.pop().to_string())                        // None
+
+    // 2. `largest` on three element types, and on an empty array.
+    let none: [i64] = []
+    print(largest([3, 9, 2]).to_string())                 // 9
+    print(largest(["b", "c", "a"]).to_string())           // c
+    print(largest([1.5, 0.5, 2.5]).to_string())           // 2.5
+    print(largest(none).to_string())                      // None
+
+    // 3. Nested optionals: the Some rule writes `Some(` only around a `None`.
+    let nothing: [i64] = []
+    print(first([None, 5]).to_string())                   // Some(None)
+    print(first(nothing).to_string())                     // None
+    print(first([5]).to_string())                         // 5
+
+    // 4. The generated `Display` of an enum.
+    let e = Expr.Add(Expr.Num(1), Expr.Mul(Expr.Num(2), Expr.Num(3)))
+    print(e)                                              // Add(Num(1), Mul(Num(2), Num(3)))
+
+    // 5. A class without `to_string` prints its name, and a class with one prints its text.
+    print(Rect(w: 2.0, h: 3.0))                           // Rect
+    print(Circle(r: 1.5))                                 // circle of radius 1.5
+
+    // 6. The prelude's `contains` on `[string]` and `sum` on `[f64]`.
+    print(["sauna", "kiuas"].contains("kiuas"))           // true
+    print([1.5, 2.5, 3.0].sum())                          // 7.0
+
+    // 8. Combined bounds: `Shape` and `Ord` on a `Circle`, which conforms to `Ord` by hand.
+    biggest([Circle(r: 1.0), Circle(r: 3.0), Circle(r: 2.0)])  // circle of radius 3.0 has area 27.0
+    let no_circles: [Circle] = []
+    biggest(no_circles)                                   // no shapes
+    print([Circle(r: 2.0)] == [Circle(r: 2.0)])           // true
+
+    // 9. A generic interface: the annotation chooses the conformance.
+    let c = Celsius(degrees: 100.0)
+    let f: Fahrenheit = c.convert()
+    let k: Kelvin = c.convert()
+    print(f.degrees)                                      // 212.0
+    print(k.degrees)                                      // 373.0
+
+    // 10. One generic `drain` over two associated types.
+    drain(Countdown(n: 3))                                // 3, 2, 1
+    drain(Words(words: ["a" + "b", "c" + "d"], at: 0))    // ab, cd
+}

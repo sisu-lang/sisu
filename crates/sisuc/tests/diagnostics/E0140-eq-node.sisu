@@ -1,0 +1,23 @@
+// `E` is the first enum and `Other` the second: the cycle names `E` by its place among the
+// enums, and a name taken from a wrong place would be `Other`.
+class W<T> {
+    x: T
+}
+
+enum E<U> {
+    One(W<[U]>)
+}
+
+enum Other<V> {
+    Plain(V)
+}
+
+extend<T: Eq> W<T>: Eq {
+    fn eq(self, other: Self) -> bool {
+        E.One(W(x: [self.x])) == E.One(W(x: [other.x]))
+    }
+}
+
+fn main() {
+    print(W(x: 1) == W(x: 2))
+}

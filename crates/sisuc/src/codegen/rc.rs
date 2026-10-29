@@ -14,8 +14,11 @@ use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 use super::abi::{RC_FAULT_MOVED, RC_FAULT_RELEASE, RC_FAULT_RETAIN};
 use super::layout::HeapBlock;
 use super::{Codegen, POSITIONED};
+use crate::conformance::find;
 use crate::graph::components;
-use crate::tir::{ClassId, LocalId, Program, Type, TypeArgs, TypeKind};
+use crate::tir::{
+    ClassId, EnumId, FuncId, InterfaceId, LocalId, Program, Type, TypeArgs, TypeKind,
+};
 
 /// A kind of helper that a counted type has.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -40,6 +43,12 @@ pub(super) enum Helper {
     /// `@sisu_rc.reuse.<F>(token) -> ptr`: a token's box, or a new block for a box of `F` when
     /// the token is `null`.
     Reuse,
+    /// `@sisu_show.<T>(sink, value)`: writes the text of a value of an array, a class or an
+    /// enum type into a sink (see `codegen/show.rs`).
+    Show,
+    /// `@sisu_show_component.<F0>(sink, kind, value)`: writes the text of a value of member
+    /// `kind` of an enum component with boxes.
+    ShowComponent,
 }
 
 /// The cycles of classes that hold each other, which `define_drop` frees in a loop. A class
@@ -178,6 +187,23 @@ impl<'ctx> Codegen<'ctx, '_> {
             ),
             Helper::Free => ("free", takes_object),
             Helper::Reuse => ("reuse", ptr_type.fn_type(&[ptr_type.into()], false)),
+            Helper::Show => (
+                "",
+                self.context
+                    .void_type()
+                    .fn_type(&[ptr_type.into(); 2], false),
+            ),
+            Helper::ShowComponent => (
+                "",
+                self.context.void_type().fn_type(
+                    &[
+                        ptr_type.into(),
+                        self.context.i32_type().into(),
+                        ptr_type.into(),
+                    ],
+                    false,
+                ),
+            ),
             Helper::EqComponent => (
                 "eq_component",
                 self.context.bool_type().fn_type(
@@ -190,11 +216,14 @@ impl<'ctx> Codegen<'ctx, '_> {
                 ),
             ),
         };
-        let function = self.module.add_function(
-            &format!("sisu_rc.{prefix}.{name}"),
-            fn_type,
-            Some(Linkage::Internal),
-        );
+        let symbol = match kind {
+            Helper::Show => format!("sisu_show.{name}"),
+            Helper::ShowComponent => format!("sisu_show_component.{name}"),
+            _ => format!("sisu_rc.{prefix}.{name}"),
+        };
+        let function = self
+            .module
+            .add_function(&symbol, fn_type, Some(Linkage::Internal));
         self.helpers.borrow_mut().insert(key, function);
         self.pending.borrow_mut().push(key);
         function
@@ -205,9 +234,10 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// calls `@sisu_rc.drop.<C>`, which releases each counted field, then frees the object.
     /// Both return at once on `null`. Drop does not recurse on a field of a class in its own
     /// cycle: see `define_drop`.
-    /// `@sisu_rc.eq.<C>` is `==` on two objects; see `define_eq`. An array's `drop`, `eq` and
-    /// `unique` come from `define_array_helper`, a string's `drop` and `eq` from
-    /// `define_string_helper`, an enum's `retain`, `release` and `eq` from `define_enum_helper`.
+    /// `@sisu_rc.eq.<C>` is `==` on two objects with a written `Eq`; see `define_written_eq`.
+    /// An array's `drop`, `eq` and `unique` come from `define_array_helper`, a string's `drop` and
+    /// `eq` from `define_string_helper`, an enum's `retain`, `release` and `eq` from
+    /// `define_enum_helper`.
     /// Defining a body can declare more helpers, so this runs until none is left to define.
     pub(super) fn define_helpers(&self) {
         let (object, done) = self.helper_entry(self.rc_retain);
@@ -221,6 +251,15 @@ impl<'ctx> Codegen<'ctx, '_> {
             };
             let function = self.helpers.borrow()[&(kind, ty)];
             match (kind, ty.kind()) {
+                (Helper::Show, _) => self.define_show(function, ty),
+                (Helper::ShowComponent, TypeKind::Enum(id, _)) => {
+                    self.define_show_component(id, function);
+                }
+                (Helper::Eq, TypeKind::Class(..) | TypeKind::Enum(..))
+                    if self.written_eq(ty).is_some() =>
+                {
+                    self.define_written_eq(function, ty);
+                }
                 (_, TypeKind::Enum(id, _)) => self.define_enum_helper(kind, id, function),
                 (Helper::Release, _) => self.define_release(function, ty),
                 (Helper::Retain, _) => {
@@ -230,11 +269,15 @@ impl<'ctx> Codegen<'ctx, '_> {
                 (_, TypeKind::String) => self.define_string_helper(kind, function),
                 (Helper::Drop, _) => self.define_drop(function, ty),
                 (Helper::Drain, _) => self.define_class_drain(function, ty),
-                (Helper::Eq, _) => self.define_eq(function, ty),
+                (Helper::Eq, _) => {
+                    unreachable!(
+                        "only a class with a written `Eq` should be queued for a class `eq` helper"
+                    )
+                }
                 (Helper::Unique, _) => {
                     unreachable!("only an array type should be queued for a `unique` helper")
                 }
-                (Helper::Walk | Helper::EqComponent, _) => {
+                (Helper::Walk | Helper::EqComponent | Helper::ShowComponent, _) => {
                     unreachable!("only an enum type should be queued for a component helper")
                 }
                 (Helper::Unbox | Helper::Free | Helper::Reuse, _) => {
@@ -441,67 +484,83 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.call(self.free, &[object.into(), size.into(), align.into()]);
     }
 
-    /// `@sisu_rc.eq.<C>(a, b)`: see `eq_entry` for the same pointer and `null`; otherwise
-    /// whether each pair of fields is equal, comparing the chain field last and stopping at the
-    /// first difference. It neither retains nor releases. It does not recurse on the chain
-    /// field: it compares the other fields of the pair, then steps both objects to the objects
-    /// their chain fields hold. Then it repeats the checks of `eq_entry`, in one frame.
-    fn define_eq(&self, function: FunctionValue<'ctx>, ty: Type) {
-        let TypeKind::Class(id, _) = ty.kind() else {
-            unreachable!("only a class type should reach the class helper bodies")
-        };
-        let ptr_type = self.context.ptr_type(AddressSpace::default());
-        let block = |name| self.context.append_basic_block(function, name);
-        let reflexive = self.reflexive(ty);
-        let (a, b, equal, unequal) = self.eq_entry(function, reflexive);
-        let branch = |cond, then, other| {
-            self.builder
-                .build_conditional_branch(cond, then, other)
-                .expect(POSITIONED);
-        };
-        let chain = self.program.chain_field(id);
-        // With a chain field, the body is a loop over the pairs of the two chains.
-        let looped = chain.map(|_| {
-            let (entered, body) = (self.current_block(), block("loop"));
-            self.branch_to(body);
-            self.builder.position_at_end(body);
-            let pair = |name| self.builder.build_phi(ptr_type, name).expect(POSITIONED);
-            let (pa, pb) = (pair("a"), pair("b"));
-            pa.add_incoming(&[(&a, entered)]);
-            pb.add_incoming(&[(&b, entered)]);
-            (body, pa, pb)
-        });
-        let (a, b) = looped.map_or((a, b), |(_, pa, pb)| {
-            (
-                pa.as_basic_value().into_pointer_value(),
-                pb.as_basic_value().into_pointer_value(),
-            )
-        });
-        for (index, field) in self.program.classes[id.0].fields.iter().enumerate() {
-            if chain == Some(index) {
-                continue;
-            }
-            let place = |object| self.field_ptr(id, object, index);
-            let next = block("next");
-            branch(self.equal_at(field.ty, place(a), place(b)), next, unequal);
-            self.builder.position_at_end(next);
-        }
-        let (Some(index), Some((body, pa, pb))) = (chain, looped) else {
-            self.branch_to(equal);
-            return;
-        };
-        let load = |object| {
-            self.builder
-                .build_load(ptr_type, self.field_ptr(id, object, index), "chain")
-                .expect(POSITIONED)
+    /// The method of the written `Eq` of the class or enum `ty`, when the program has a record
+    /// for it. After `mono` each record is concrete, so the lookup is exact.
+    pub(super) fn written_eq(&self, ty: Type) -> Option<FuncId> {
+        self.written_method(ty, self.program.lang.eq)
+    }
+
+    /// The method of the written `Display` of the class or enum `ty`, its `to_string`, when the
+    /// program has a record for it.
+    pub(super) fn written_display(&self, ty: Type) -> Option<FuncId> {
+        self.written_method(ty, self.program.lang.display)
+    }
+
+    fn written_method(&self, ty: Type, interface: InterfaceId) -> Option<FuncId> {
+        let (k, _) = find(&self.program.conformances, interface, ty, TypeArgs::NONE)?;
+        self.program
+            .conformances
+            .get(interface, k)
+            .methods
+            .first()
+            .copied()
+    }
+
+    /// `@sisu_rc.eq.<T>(a, b)` for a class or an enum `ty` whose `Eq` is written: a call of its
+    /// `eq`, with each part passed as the method's final `borrowed` flags say. A parameter that
+    /// is not borrowed is owned by the callee, which releases it, so the helper retains the part
+    /// first. A class tests for `null` first, as the generated helper does; there is no look at
+    /// the same pointer, since a written `eq` need not be reflexive.
+    fn define_written_eq(&self, function: FunctionValue<'ctx>, ty: Type) {
+        let method = self
+            .written_eq(ty)
+            .expect("a type with a written `eq` should have a record");
+        let borrowed = &self.mir.functions[method.0].borrowed;
+        let parameter = |n| {
+            function
+                .get_nth_param(n)
+                .expect("the generated `eq` helper should be declared with two parameters")
                 .into_pointer_value()
         };
-        let (next_a, next_b) = (load(a), load(b));
-        self.compare_at_once(reflexive, true, next_a, next_b, equal, unequal);
-        let step = self.current_block();
-        pa.add_incoming(&[(&next_a, step)]);
-        pb.add_incoming(&[(&next_b, step)]);
-        self.branch_to(body);
+        let (a, b) = if let TypeKind::Class(..) = ty.kind() {
+            // The blocks that `eq_entry` returns answer the `null` cases; both are real here.
+            let (a, b, _, _) = self.eq_entry(function, false);
+            (a, b)
+        } else {
+            let entry = self.context.append_basic_block(function, "entry");
+            self.builder.position_at_end(entry);
+            (parameter(0), parameter(1))
+        };
+        let result = self.call_written_eq(method, ty, [a, b], borrowed);
+        self.builder.build_return(Some(&result)).expect(POSITIONED);
+    }
+
+    /// A call of the written `eq` `method` on the values of type `ty` at `places`: a class is the
+    /// pointer itself, and an enum is read by address. A part is retained first when the
+    /// method owns its parameter.
+    pub(super) fn call_written_eq(
+        &self,
+        method: FuncId,
+        ty: Type,
+        places: [PointerValue<'ctx>; 2],
+        borrowed: &[bool],
+    ) -> IntValue<'ctx> {
+        let values = places.map(|place| {
+            if let TypeKind::Enum(..) = ty.kind() {
+                self.load_value(ty, place)
+            } else {
+                place.into()
+            }
+        });
+        for (value, &keeps) in values.iter().zip(borrowed) {
+            if !keeps {
+                self.retain(*value, ty);
+            }
+        }
+        let args: Vec<_> = values.iter().map(|&value| value.into()).collect();
+        self.call_value(method, &args)
+            .expect("a written `eq` should return a `bool`")
+            .into_int_value()
     }
 
     /// Starts `eq` helper `function` for a type that is `reflexive` or not: returns its two
@@ -606,12 +665,12 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// Whether every value of `ty` is `==` to itself: no `f64` is reachable from it, directly,
     /// as an optional's payload, an array's element, or a field of a class or a payload field
-    /// of an enum it reaches, boxed or inline. `reaches_f64` answers it for a class or an enum.
+    /// of an enum it reaches, boxed or inline. `unreflexive` answers it for a class or an enum.
     pub(super) fn reflexive(&self, ty: Type) -> bool {
         match unwrapped(ty).kind() {
             TypeKind::F64 => false,
-            TypeKind::Class(id, _) => !self.reaches_f64[id.0],
-            TypeKind::Enum(id, _) => !self.reaches_f64[self.program.classes.len() + id.0],
+            TypeKind::Class(id, _) => !self.unreflexive[id.0],
+            TypeKind::Enum(id, _) => !self.unreflexive[self.program.classes.len() + id.0],
             _ => true,
         }
     }
@@ -690,7 +749,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// The value of type `ty` at `place`.
-    fn load_value(&self, ty: Type, place: PointerValue<'ctx>) -> BasicValueEnum<'ctx> {
+    pub(super) fn load_value(&self, ty: Type, place: PointerValue<'ctx>) -> BasicValueEnum<'ctx> {
         let llvm_ty = self
             .llvm_type(ty)
             .expect("the checker should give every field a value type, never `unit` or `never`");
@@ -935,11 +994,12 @@ fn unwrapped(mut ty: Type) -> Type {
     ty
 }
 
-/// Which classes, then which enums, of `program` reach an `f64` through their fields (see
-/// `Codegen::reflexive`): the types with a field of `f64` seed it, and each class or enum with
+/// Which classes, then which enums, of `program` reach an `f64` or a written `eq` through their
+/// fields (see `Codegen::reflexive`): the types with a field of `f64` and the types that have a
+/// written `Eq` seed it, since a written `eq` need not be reflexive, and each class or enum with
 /// a field of a type already in it joins, by a worklist over the reversed field graph. Every
 /// field is read once.
-pub(super) fn reaching_f64(program: &Program) -> Vec<bool> {
+pub(super) fn reaching_unreflexive(program: &Program) -> Vec<bool> {
     let classes = program.classes.len();
     let node_count = classes + program.enums.len();
     let mut reaches = vec![false; node_count];
@@ -962,6 +1022,14 @@ pub(super) fn reaching_f64(program: &Program) -> Vec<bool> {
             TypeKind::Enum(id, _) => holders[classes + id.0].push(node),
             _ => {}
         }
+    }
+    let written = |ty| find(&program.conformances, program.lang.eq, ty, TypeArgs::NONE).is_some();
+    let (class_seeds, enum_seeds) = reaches.split_at_mut(classes);
+    for (id, seed) in class_seeds.iter_mut().enumerate() {
+        *seed |= written(Type::intern(TypeKind::Class(ClassId(id), TypeArgs::NONE)));
+    }
+    for (id, seed) in enum_seeds.iter_mut().enumerate() {
+        *seed |= written(Type::intern(TypeKind::Enum(EnumId(id), TypeArgs::NONE)));
     }
     // Each seed is queued once, however many `f64` fields it has.
     let mut work: Vec<usize> = (0..node_count).filter(|&node| reaches[node]).collect();

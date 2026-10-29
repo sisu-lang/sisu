@@ -8,6 +8,7 @@ use crate::source::line_col;
 
 mod arrays;
 mod chars;
+mod conformances;
 mod constants;
 mod enums;
 mod floats;
@@ -25,6 +26,10 @@ mod strings;
 mod u8;
 mod unused;
 mod unused_names;
+
+/// The `PARAM_STEPS` that checking the four language interfaces takes, which every test's count
+/// holds: `Self` and one more step for each.
+const LANG_PARAM_STEPS: usize = 8;
 
 thread_local! {
     /// Whether this test judges unused names; `judge_unused` sets it.
@@ -49,11 +54,7 @@ fn judge_unused() {
 }
 
 pub(super) fn checked(src: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
-    let prelude = if PRELUDE.get() {
-        prelude_program(PRELUDE_SOURCE)
-    } else {
-        ast::Program::default()
-    };
+    let prelude = prelude_program(if PRELUDE.get() { PRELUDE_SOURCE } else { "" });
     let (program, mut ds) = check(&parse_ok(src), &prelude, src, &[]);
     if !UNUSED.get() {
         ds.retain(|d| !is_judged(d));
@@ -473,10 +474,10 @@ fn if_with_failed_and_never_branches_is_error() {
 /// A rule that fails makes its expression `Error`. Each row binds the failed expression
 /// and uses it where a typed result would cascade into a second error.
 #[test]
-fn failed_rule_makes_its_expression_error() {
+fn failed_rule_should_make_its_expression_error() {
     const MISMATCH: Code = Code::Mismatch;
     const F: &str = "fn f(a: i64) -> i64 { a }\n";
-    let rows: [(&str, String, Code, (usize, usize)); 12] = [
+    let rows: [(&str, String, Code, (usize, usize)); 15] = [
         (
             "unary",
             "fn main() {\n    let x = -true\n    print(x == false)\n}".into(),
@@ -498,7 +499,7 @@ fn failed_rule_makes_its_expression_error() {
         (
             "compare",
             "fn main() {\n    let x = 1 < true < 2\n    print(x + 1)\n}".into(),
-            MISMATCH,
+            Code::NoOperator,
             (2, 17),
         ),
         (
@@ -506,6 +507,24 @@ fn failed_rule_makes_its_expression_error() {
             "fn main() {\n    let x = 1 == true\n    print(x + 1)\n}".into(),
             Code::CannotCompare,
             (2, 13),
+        ),
+        (
+            "equal of a class",
+            "class C {}\nfn main() {\n    let x = C() == C()\n    print(x + 1)\n}".into(),
+            Code::NoOperator,
+            (3, 13),
+        ),
+        (
+            "not equal of a class",
+            "class C {}\nfn main() {\n    let x = C() != C()\n    print(x + 1)\n}".into(),
+            Code::NoOperator,
+            (3, 13),
+        ),
+        (
+            "contains of a class",
+            "class C {}\nfn main() {\n    let x = [C()].contains(C())\n    print(x + 1)\n}".into(),
+            Code::NoOperator,
+            (3, 13),
         ),
         (
             "call arity",
@@ -1598,19 +1617,25 @@ fn neg_needs_a_signed_number() {
 }
 
 #[test]
-fn less_needs_an_ordered_operand() {
+fn less_should_report_no_operator_for_an_unordered_operand() {
     codes(
         "fn main() { print(true < false) }",
-        &[(Code::Mismatch, (1, 19))],
+        &[(Code::NoOperator, (1, 19))],
     );
 }
 
-/// An operand that fails first leaves the later ones unchecked: one error per operator.
+/// An operand that fails first leaves the later ones unchecked: one error per operator. The
+/// leader `a` of `[] < a` has no `<`, so it is the operand reported, and the `[]` before it is
+/// not held to its type.
 #[test]
-fn operator_after_a_failed_operand_reports_once() {
-    for operator in ["None + p", "[] - p", "[] < a"] {
+fn operator_should_report_once_after_a_failed_operand() {
+    for (operator, code, column) in [
+        ("None + p", Code::Mismatch, 46),
+        ("[] - p", Code::Mismatch, 46),
+        ("[] < a", Code::NoOperator, 51),
+    ] {
         let src = format!("fn main() {{ let p = true; let a = [1]; print({operator}) }}");
-        codes(&src, &[(Code::Mismatch, (1, 46))]);
+        codes(&src, &[(code, (1, column))]);
     }
 }
 
@@ -2229,7 +2254,7 @@ fn misspelled_constructor_is_one_error() {
 }
 
 #[test]
-fn print_reports_labels_and_still_checks_its_arguments() {
+fn print_should_report_labels_and_still_check_its_arguments() {
     codes(
         "fn main() { print(z: 1, 2) }",
         &[
@@ -2239,10 +2264,7 @@ fn print_reports_labels_and_still_checks_its_arguments() {
     );
     codes(
         "class E {}\nfn main() { print(z: E()) }",
-        &[
-            (Code::LabeledArgument, (2, 19)),
-            (Code::PrintArgument, (2, 22)),
-        ],
+        &[(Code::LabeledArgument, (2, 19))],
     );
 }
 
@@ -2657,11 +2679,8 @@ fn assign_bare_field() {
 }
 
 #[test]
-fn print_class() {
-    codes(
-        "class E {}\nfn main() { print(E()) }",
-        &[(Code::PrintArgument, (2, 19))],
-    );
+fn print_should_accept_a_class() {
+    clean("class E {}\nfn main() { print(E()) }");
 }
 
 #[test]
@@ -3127,18 +3146,6 @@ fn assign_while_let_binding() {
         Code::AssignToImmutable,
         (7, 9, "x = T(v: 1, next: None)"),
         &[(6, 15)],
-    );
-}
-
-#[test]
-fn print_optional() {
-    codes(
-        &format!("{T}fn f(x: T?) {{ print(x) }}\nfn main() {{}}"),
-        &[(Code::PrintArgument, (5, 15))],
-    );
-    codes(
-        "fn f(x: i64?) { print(x) }\nfn main() {}",
-        &[(Code::PrintArgument, (1, 17))],
     );
 }
 
@@ -3743,26 +3750,22 @@ fn spills_is() {
 }
 
 #[test]
-fn spills_equal() {
+fn equal_should_spill_a_counted_operand_before_an_exit() {
+    // A `string` is counted, as the class this row once compared.
     f_contains(
         C,
-        "fn make() -> T { T(v: 0, o: None) }\nfn f(c: bool) -> bool {\n    make() == if c { return false } else { make() }\n}",
+        "fn make() -> string { \"a\" }\nfn f(c: bool) -> bool {\n    make() == if c { return false } else { make() }\n}",
         "(block (let #1 (call make)) (let #2 (if c#0 (block (return false)) (block (call make)))) (== #1 #2))",
     );
 }
 
-/// `print` of an object names the argument, not the call; a bad argument count stays on the
-/// whole call.
+/// `print` of a call that returns nothing, and a bad argument count, stay on the whole call; an
+/// object and an array print.
 #[test]
-fn print_argument_errors_sit_on_the_argument() {
+fn print_should_report_a_call_without_a_value_and_a_bad_count_on_the_call() {
     codes(
         "class P {\n    x: i64\n}\nfn nothing() {}\nfn main() {\n    print(P(x: 1))\n    print(nothing())\n    print([1])\n    print(1, 2)\n}",
-        &[
-            (Code::PrintArgument, (6, 11)),
-            (Code::PrintArgument, (7, 5)),
-            (Code::PrintArray, (8, 11)),
-            (Code::PrintArgument, (9, 5)),
-        ],
+        &[(Code::PrintArgument, (7, 5)), (Code::PrintArgument, (9, 5))],
     );
 }
 

@@ -16,7 +16,7 @@ small_sections=20
 
 cargo build --release --locked -p sisuc -p sisu-runtime-mimalloc
 rm -rf "$out"
-mkdir -p "$out"/{fib,sieve,binary_trees,quicksort,nbody,mandelbrot,fannkuch_redux,large,large_20,build_hello,build_binary_trees,build_large,build_large_20,strings,enum_match,shared_arrays,compare,tree_rewrite,interp,interfaces}
+mkdir -p "$out"/{fib,sieve,binary_trees,quicksort,nbody,mandelbrot,fannkuch_redux,large,large_20,build_hello,build_binary_trees,build_large,build_large_20,strings,enum_match,shared_arrays,compare,tree_rewrite,interp,interfaces,show}
 
 fail() {
     echo "codspeed-prep: $*" >&2
@@ -40,7 +40,7 @@ reduce nbody 's/let steps = 5_000_000/let steps = 100_000/'
 reduce mandelbrot 's/let n = 4000/let n = 400/'
 reduce fannkuch_redux 's/fannkuch(10)/fannkuch(9)/'
 # bench/features/ programs are sized for simulation and Sisu-only: no reduction.
-for b in strings enum_match shared_arrays compare tree_rewrite interp interfaces; do
+for b in strings enum_match shared_arrays compare tree_rewrite interp interfaces show; do
     target/release/sisu build -O2 "bench/features/$b/main.sisu" -o "$out/$b/main" || fail "$b failed to compile"
 done
 
@@ -50,7 +50,10 @@ done
 # class and enum, each instantiated twice, a match on a prelude Result,
 # an i64?? that two ?? peel to 0, an interface with an associated type that
 # a class conforms to in its declaration and another in `extend` blocks, a
-# bound with &, and a call through each bound, which adds 0;
+# bound with &, and a call through each bound, a bounded `largest` over
+# numbers and over a class with a written `Eq` and `Ord`, `==` on an array of
+# such classes, `is` on a class through a bound `T: AnyObject`, and the text of an array,
+# an enum and an interpolated array, which add 0;
 # then it calls step(i-1).
 # main prints step(N-1)(0) = N-1. Not fi: f64 is a built-in type.
 large_input() {
@@ -147,6 +150,27 @@ fn parse$i(k: i64) -> Result<i64, string> {
     if k > 0 { Result.Ok(k) } else { Result.Err("none") }
 }
 
+class Disc$i: Eq, Ord {
+    r: i64
+
+    fn eq(self, other: Self) -> bool { self.r == other.r }
+    fn less(self, other: Self) -> bool { self.r < other.r }
+}
+
+fn largest$i<T: Ord>(xs: [T]) -> T? {
+    let mut best: T? = None
+    for v in xs {
+        if let b = best {
+            if v > b { best = v }
+        } else {
+            best = v
+        }
+    }
+    best
+}
+
+fn same$i<T: AnyObject>(a: T, b: T) -> bool { a is b }
+
 fn step$i(x: i64) -> i64 {
     let xs = [x, K$i, 1]
     let mut sum = 0
@@ -177,7 +201,12 @@ fn step$i(x: i64) -> i64 {
         Result.Err(_) => 1
     }
     let gauge = both$i(Dial$i(n: K$i)) - both$i(Bar$i(n: K$i)) + unit_of$i(Dial$i(n: K$i)) - K$i + unit_of$i(Bar$i(n: K$i)).len() - 1
-    let generic = t.size() + u.size() - 3 + q.b - K$i + parsed + peeled + gauge
+    let top = (largest$i([Disc$i(r: K$i), Disc$i(r: 0)]) ?? Disc$i(r: 0)).r - K$i + (largest$i([0, K$i, 1]) ?? 0) - K$i
+    let kept = if [Disc$i(r: top)] == [Disc$i(r: 0)] { 0 } else { 1 }
+    let alias = Bar$i(n: K$i)
+    let same = if same$i(alias, alias) { 0 } else { 1 }
+    let shown = shapes.to_string().len() + t.to_string().len() + "{[x, K$i]}".len()
+    let generic = t.size() + u.size() - 3 + q.b - K$i + parsed + peeled + gauge + top + kept + same + (if shown > 0 { 0 } else { 1 })
     step$((i - 1))(x + (c?.get() ?? 0) + zero + generic)
 }
 SISU
@@ -260,6 +289,7 @@ expected() {
         tree_rewrite) printf '%s\n' 732347 163697 ;;
         interp) printf '%s\n' 549000 126 ;;
         interfaces) printf '%s\n' 699988 949994 1010000 ;;
+        show) printf '%s\n' 852150 40900 ;;
         *) return 1 ;;
     esac
 }

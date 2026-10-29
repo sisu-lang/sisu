@@ -573,7 +573,8 @@ fn seed_counts(src: &str) -> (usize, usize, usize, Vec<bool>) {
             let borrowed = vec![true; program.functions[id].params.len()];
             SEEDED.set(0);
             DEDUPED.set(0);
-            let (_, _, reuses) = lower::function(&program, FuncId(id), &borrowed);
+            let (_, _, reuses) =
+                lower::function(&program, FuncId(id), &borrowed, &mut Written::default());
             (SEEDED.get(), DEDUPED.get(), COUNTERS.get(), reuses)
         })
         .expect("the thread should start")
@@ -671,4 +672,23 @@ fn conformance_methods_should_infer_their_own_modes() {
         "Square.Shape.area",
         "fn Square.Shape.area(self#0: Square)",
     );
+}
+
+/// `c1 > c2` on a written `Ord` is the call `Circle.less(c2, c1)`: `less` keeps neither operand
+/// (ADR 0029), so both stay borrowed and neither is copied.
+#[test]
+fn written_less_should_borrow_both_operands() {
+    let printed = built(
+        "class Circle: Eq, Ord {\n    r: i64\n    fn eq(self, other: Self) -> bool { self.r == other.r }\n    fn less(self, other: Self) -> bool { self.r < other.r }\n}\n\
+         fn main() {\n    let c1 = Circle(r: 1)\n    let c2 = Circle(r: 2)\n    let more = c1 > c2\n    print(more)\n    print(c1.r + c2.r)\n}",
+    );
+    signature(
+        &printed,
+        "Circle.less",
+        "fn Circle.less(self#0: borrow Circle, other#1: borrow Circle)",
+    );
+    let f = function(&printed, "main");
+    assert_eq!(f.matches("= call Circle.less(").count(), 1, "{f}");
+    assert!(f.contains("call Circle.less(c2#1, c1#0)"), "{f}");
+    assert!(!f.contains("= copy c"), "{f}");
 }

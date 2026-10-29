@@ -218,7 +218,7 @@ _Avoid_: deinit, destructor, finalizer
 `==` on a value comparing it part by part: array elements, variant payloads,
 an optional's contents. Classes have none: they compare by **Identity**, and
 have `==` only when they conform to `Eq` by hand.
-Until milestone 8 stage 5 (ADR 0022), classes compare field by field.
+Before milestone 8 (ADR 0022), classes compared field by field.
 
 **Identity**:
 Whether two references refer to the same object, tested with `is`.

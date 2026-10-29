@@ -1,0 +1,20 @@
+class Node {}
+
+enum Dir {
+    North
+    South
+}
+
+enum Held {
+    Item(Node)
+}
+
+extend Dir: Eq {
+    fn helper(self) -> i64 { 1 }
+}
+
+extend Held: Eq {
+    fn helper(self) -> i64 { 1 }
+}
+
+fn main() {}

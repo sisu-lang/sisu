@@ -2,6 +2,7 @@
 
 pub mod args;
 pub mod float;
+pub mod show;
 pub mod stdin;
 pub mod text;
 
@@ -135,14 +136,28 @@ impl Stdout {
     /// Adds `bytes` and a newline. Bytes that would outgrow the buffer go straight out, after
     /// what the buffer holds.
     fn append_bytes(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        self.append_piece(bytes)?;
+        self.finish_line()
+    }
+
+    /// Adds `bytes`, a piece of a line, and leaves one byte of room for the newline that
+    /// `finish_line` adds. The buffer may hold the start of a line, up to `RESERVED` bytes.
+    /// Bytes that would outgrow it go straight out, after what it holds.
+    fn append_piece(&mut self, bytes: &[u8]) -> std::io::Result<()> {
         self.open()?;
-        // The buffer is below `BUFFER_CAPACITY` here, and the newline needs one byte of room.
         if bytes.len() < RESERVED - self.buffer.len() {
             self.buffer.extend_from_slice(bytes);
         } else {
             self.flush()?;
             write_to(self.sink.as_mut(), bytes)?;
         }
+        Ok(())
+    }
+
+    /// Ends the line that `append_piece` has written. A line with no piece has not opened the
+    /// sink yet, and a newline buffered with no sink would be lost at the final flush.
+    fn finish_line(&mut self) -> std::io::Result<()> {
+        self.open()?;
         self.buffer.push(b'\n');
         self.end_line()
     }

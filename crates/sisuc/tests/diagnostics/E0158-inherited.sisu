@@ -1,0 +1,16 @@
+interface Observer: AnyObject {
+    fn notify(self, event: string)
+}
+
+enum Light: Observer {
+    Red
+    Green
+
+    fn notify(self, event: string) {
+        print(event)
+    }
+}
+
+fn main() {
+    print(1)
+}

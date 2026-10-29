@@ -1,0 +1,10 @@
+error[E0152]: `Holder` does not meet `Eq`
+ --> E0152-generated-derive.sisu:5:14
+  |
+5 | enum Holder: Eq {
+  |              ^^ `Holder` gets no generated `Eq`, since `Node` has none
+  |
+  = help: fn eq(self, other: Self) -> bool
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0152

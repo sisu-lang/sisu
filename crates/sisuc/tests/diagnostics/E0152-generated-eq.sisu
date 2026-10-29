@@ -1,0 +1,11 @@
+class Node {
+    id: i64
+}
+
+class Leaf: Eq {
+    id: i64
+}
+
+fn main() {
+    print(Node(id: 1).id + Leaf(id: 2).id)
+}

@@ -3,10 +3,10 @@
 //! keyword that panics as `panic` does, is checked here too.
 
 use super::array::pair;
-use super::expr::typed;
-use super::{Checked, Checker, Poisoned, payload, type_of};
+use super::expr::{path, typed};
+use super::{Checked, Checker, Poisoned, type_of};
 use crate::ast;
-use crate::diagnostic::{DiagnosticKind, MismatchFix};
+use crate::diagnostic::{DiagnosticKind, MismatchFix, PrintProblem};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Stream, Type, TypeKind};
@@ -46,48 +46,25 @@ impl Checker<'_> {
     fn print(&mut self, span: Span, args: &[ast::Arg], stream: Stream) -> Checked {
         let function = stream.name();
         // Not `value()`: a `unit` argument needs this code, not "expression has no value".
-        let wrong = || {
+        let wrong = |problem| {
             DiagnosticKind::PrintArgument {
                 function,
+                problem,
                 at: span,
-                class: None,
             }
             .into()
         };
         let labeled = self.labels(args);
         let [arg] = args else {
-            self.diagnostics.push(wrong());
+            self.diagnostics.push(wrong(PrintProblem::Count));
             self.stray(args);
             return Err(Poisoned::error());
         };
         let checked = self.expr(&arg.value, None);
+        self.warn_if_optional(&arg.value, &checked);
+        // Every type prints through `Display` but `unit` and `never`.
         let error = match type_of(&checked) {
-            Some(ty) if matches!(payload(ty).kind(), TypeKind::Array(_)) => {
-                DiagnosticKind::PrintArray {
-                    function,
-                    ty: self.type_name(ty),
-                    optional: matches!(ty.kind(), TypeKind::Optional(_)),
-                    at: arg.value.span,
-                }
-                .into()
-            }
-            Some(ty)
-                if matches!(
-                    ty.kind(),
-                    TypeKind::Class(..)
-                        | TypeKind::Enum(..)
-                        | TypeKind::Param(..)
-                        | TypeKind::Assoc(..)
-                ) =>
-            {
-                DiagnosticKind::PrintArgument {
-                    function,
-                    at: arg.value.span,
-                    class: Some(self.type_name(ty)),
-                }
-                .into()
-            }
-            Some(ty) if ty == Type::UNIT || matches!(ty.kind(), TypeKind::Optional(_)) => wrong(),
+            Some(Type::UNIT) => wrong(PrintProblem::NoValue),
             Some(Type::NEVER) => DiagnosticKind::PrintNever {
                 function,
                 at: arg.value.span,
@@ -106,6 +83,20 @@ impl Checker<'_> {
         };
         self.diagnostics.push(error);
         Err(Poisoned::error())
+    }
+
+    /// Warns when `checked`, the check of the printed `value`, is an optional: the text may be
+    /// `None`. Only the type of `value` itself counts, not a type that it holds.
+    pub(super) fn warn_if_optional(&mut self, value: &ast::Expr, checked: &Checked) {
+        if matches!(
+            type_of(checked).map(Type::kind),
+            Some(TypeKind::Optional(_))
+        ) {
+            self.report(DiagnosticKind::PrintsOptional {
+                value: path(value),
+                at: value.span,
+            });
+        }
     }
 
     /// `panic(message)`, which never finishes.

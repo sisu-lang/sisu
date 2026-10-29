@@ -249,3 +249,124 @@ fn row_of_a_nested_index_is_borrowed() {
     assert!(f.contains("g#0: borrow [[i64]]"), "{f}");
     assert!(!f.contains("release "), "{f}");
 }
+
+/// A class whose written `eq` stores into a `mut` field, as a call can: the copy of `h.items`
+/// stays a copy across any `==` or `contains` whose helper may run that `eq`.
+const HOLDER: &str = "class Holder: Eq {\n    mut items: [string]\n    fn eq(self, other: Self) -> bool {\n        self.items = [\"y\"]\n        true\n    }\n}\n\
+    enum Wrap {\n    One(Holder)\n}\n\
+    enum Deep {\n    One(Wrap)\n}\nenum Lone {\n    One(Holder?)\n}\nenum Gen<T> {\n    One(T)\n}\n";
+
+/// The program of `HOLDER` with `compare` as the line that runs the hidden call. With `live`,
+/// `h` is read after it, so the comparison copies `h`, and the copy of `h.items` has nothing else
+/// that keeps it: without the hidden call as a clobber it would become a borrow.
+fn holder_program(compare: &str, live: bool) -> String {
+    let after = if live {
+        "\n    print(h.items.len())"
+    } else {
+        ""
+    };
+    format!(
+        "{HOLDER}fn main() {{\n    let h = Holder(items: [\"{{1}}\"])\n    let xs = h.items\n    {compare}\n    print(xs[0])\n    print(same){after}\n}}"
+    )
+}
+
+#[test]
+fn copy_should_stay_across_a_written_eq() {
+    for compare in [
+        "let same = [h] == [h]",
+        "let same = [h].contains(h)",
+        "let same = Wrap.One(h) == Wrap.One(h)",
+        // A written `eq` of a part runs from the helper of an enum that holds it: directly, in an
+        // array, an optional, an enum payload or a generic enum, whichever way the wrapper is
+        // reached.
+        "let same = Deep.One(Wrap.One(h)) == Deep.One(Wrap.One(h))",
+        "let same = [Deep.One(Wrap.One(h))] == [Deep.One(Wrap.One(h))]",
+        "let same = Lone.One(h) == Lone.One(h)",
+        "let same = Gen.One(h) == Gen.One(h)",
+        "let same = [Gen.One(h)].contains(Gen.One(h))",
+    ] {
+        for live in [false, true] {
+            let printed = built(&holder_program(compare, live));
+            let f = function(&printed, "main");
+            let copy = f
+                .lines()
+                .find(|l| l.contains("xs#") && l.contains(" = "))
+                .unwrap_or_else(|| panic!("{compare}: no binding of `xs` in\n{f}"));
+            assert!(
+                copy.contains("= copy "),
+                "{compare} (live {live}): {copy}\n{f}"
+            );
+            assert!(f.contains(" [calls]"), "{compare} (live {live}): {f}");
+        }
+    }
+}
+
+/// A program with no written method keeps pair removal, and prints no `[calls]`.
+#[test]
+fn equal_without_a_written_eq_should_not_be_flagged() {
+    let printed = built("fn main() {\n    let same = [1] == [1]\n    print(same)\n}");
+    let f = function(&printed, "main");
+    assert!(f.contains("=="), "{f}");
+    assert!(!f.contains("[calls]"), "{f}");
+}
+
+/// A class whose written `to_string` stores into a `mut` field, as a call can: the copy `old` of
+/// `b.s` stays a copy across any `print` or interpolation whose helper may run that `to_string`,
+/// the object itself or a value that holds it.
+#[test]
+fn copy_should_stay_across_a_written_to_string() {
+    let decls = "class B {\n    mut s: string\n}\nextend B: Display {\n    fn to_string(self) -> string {\n        self.s = \"new\"\n        \"B\"\n    }\n}\nenum Wrap {\n    One(B)\n}\n";
+    for printed in [
+        "print(b)",
+        "print([b])",
+        "print(Wrap.One(b))",
+        "let t = \"{b}\"",
+        "let t = \"{[b]}\"",
+        "let t = \"{Wrap.One(b)}\"",
+    ] {
+        // The text of an interpolation is printed last.
+        let last = if printed.starts_with("let t") {
+            "\n    print(t)"
+        } else {
+            ""
+        };
+        let src = format!(
+            "{decls}fn main() {{\n    let b = B(s: \"heap {{1}}\")\n    let old = b.s\n    {printed}\n    print(old)\n    print(b.s){last}\n}}"
+        );
+        let f = function(&built(&src), "main");
+        let copy = f
+            .lines()
+            .find(|l| l.contains("old#") && l.contains(" = "))
+            .unwrap_or_else(|| panic!("{printed}: no binding of `old` in\n{f}"));
+        assert!(copy.contains("= copy "), "{printed}: {copy}\n{f}");
+        assert_eq!(f.matches(" [calls]").count(), 1, "{printed}: {f}");
+    }
+    // A value of an enum that holds no object with a written `to_string` prints with no flag.
+    let f = function(
+        &built(
+            "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n}\nfn main() {\n    print(Expr.Num(1))\n}",
+        ),
+        "main",
+    );
+    assert!(!f.contains("[calls]"), "{f}");
+}
+
+/// `A` meets `B`'s `Holder` through `B`, so the cycle `A` - `B` reaches a written `eq` whichever
+/// of the two a comparison asks first.
+#[test]
+fn copy_should_stay_across_a_written_eq_reached_through_a_cycle() {
+    for (first, second) in [("b1 == b2", "a1 == a2"), ("a1 == a2", "b1 == b2")] {
+        let src = format!(
+            "{HOLDER}enum A {{\n    X(B)\n    End\n}}\nenum B {{\n    Y(A)\n    Z(Holder)\n}}\n\
+             fn main() {{\n    let h = Holder(items: [\"{{1}}\"])\n    let b1 = B.Z(h)\n    let b2 = B.Z(h)\n    let a1 = A.X(b1)\n    let a2 = A.X(b2)\n    \
+             let s1 = {first}\n    let xs = h.items\n    let s2 = {second}\n    print(xs[0])\n    print(s1)\n    print(s2)\n    print(h.items.len())\n}}"
+        );
+        let f = function(&built(&src), "main");
+        let copy = f
+            .lines()
+            .find(|l| l.contains("xs#") && l.contains(" = "))
+            .unwrap_or_else(|| panic!("{first}: no binding of `xs` in\n{f}"));
+        assert!(copy.contains("= copy "), "{first} first: {copy}\n{f}");
+        assert_eq!(f.matches(" [calls]").count(), 2, "{first} first: {f}");
+    }
+}

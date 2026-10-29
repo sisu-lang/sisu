@@ -1,0 +1,10 @@
+error[E0139]: `Wrap<T>` has no `==`
+ --> E0139-enum.sisu:6:5
+  |
+6 |     a == b
+  |     ^ this has type `Wrap<T>`
+  |
+  = help: add a bound: `T: Eq`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0139

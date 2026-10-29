@@ -3,15 +3,16 @@
 use super::expr::{
     fits, if_some, int_literal, literal_type, local, none_literal, operator, path, rank, typed,
 };
-use super::unused_names::Used;
+use super::interface::Operation;
 use super::{
-    Checked, Checker, Poisoned, UNKNOWN, as_optional, beyond_one_layer, optional_of, payload,
-    type_of, wrap,
+    Checked, Checker, Poisoned, UNKNOWN, as_optional, beyond_one_layer, block_expr, optional_of,
+    payload, type_of, wrap,
 };
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Literal};
+use crate::lang::{self, Dispatch};
 use crate::source::Span;
-use crate::tir::{self, Type, TypeKind};
+use crate::tir::{self, Type, TypeArgs, TypeKind};
 
 impl Checker<'_> {
     /// The type of unary `-`, its operand, `expected` passed down, and whether it was reported. A
@@ -70,11 +71,10 @@ impl Checker<'_> {
         let op = |i: usize| ops[i.saturating_sub(1)].to_string();
         let (checked, ty, mismatched) = self.integers(&operands, None, Operator::Compare, &op);
         let operands = checked.into_iter().collect::<Result<Vec<_>, _>>().ok();
-        match operands {
-            Some(operands) if ty == Some(Type::STRING) => {
-                Ok(self.string_chain(span, operands, ops))
-            }
-            operands => typed(
+        match (operands, ty) {
+            (Some(operands), Some(Type::STRING)) => Ok(self.string_chain(span, operands, ops)),
+            (Some(operands), Some(ty)) => self.ordered_chain(span, ty, operands, ops),
+            (operands, _) => typed(
                 span,
                 Type::BOOL,
                 mismatched,
@@ -84,6 +84,57 @@ impl Checker<'_> {
                 }),
             ),
         }
+    }
+
+    /// A comparison chain over `operands` of the type `ty`, a class, an enum or a type parameter
+    /// that has `Ord`: a written `less` is a call, and a type parameter's is the `Compare` that
+    /// `mono` lowers again for its type argument. A type that has `Ord` only through the poison
+    /// of a broken block gives a poisoned expression, with no diagnostic.
+    fn ordered_chain(
+        &mut self,
+        span: Span,
+        ty: Type,
+        operands: Vec<tir::Expr>,
+        ops: &[CompareOp],
+    ) -> Checked {
+        let Operation::Run(dispatch) = self.operation(ty, self.lang.ord) else {
+            return Err(Poisoned::error());
+        };
+        let (stmts, operands) = self.spill(operands);
+        let mut cx = lang::Cx {
+            locals: &mut self.body.locals,
+        };
+        let kind = lang::ordered(&mut cx, dispatch, ty, operands, ops, span);
+        let node = tir::Expr {
+            kind,
+            ty: Type::BOOL,
+            span,
+        };
+        Ok(if stmts.is_empty() {
+            node
+        } else {
+            block_expr(stmts, Some(node), Type::BOOL, span)
+        })
+    }
+
+    /// Whether `ty` is a concrete type that no `Ord` orders, though it has the look of one that
+    /// a program may compare: a `bool`, an array, an enum or a class.
+    fn unordered(&mut self, ty: Type) -> bool {
+        (ty == Type::BOOL
+            || matches!(
+                ty.kind(),
+                TypeKind::Array(_) | TypeKind::Enum(..) | TypeKind::Class(..)
+            ))
+            && self.operation(ty, self.lang.ord) == Operation::Missing
+    }
+
+    /// Whether comparison operators run the interface `Ord` for the first operand's type `ty`: a
+    /// type that has it, or has it through a broken block.
+    fn compares_through_ord(&mut self, ty: Type) -> bool {
+        matches!(
+            self.operation(ty, self.lang.ord),
+            Operation::Run(_) | Operation::Poison
+        )
     }
 
     /// Once an operand is `Error`, the other is checked against `Error` too: with that
@@ -239,6 +290,23 @@ impl Checker<'_> {
         } else {
             Some(Type::I64)
         };
+        // A class, an enum or a type parameter with `Ord` is compared through it, and the operands
+        // after the first are held to its type.
+        let by_ord = match first.as_ref().and_then(|f| type_of(&f.1)) {
+            Some(leader) if operator == Operator::Compare && self.compares_through_ord(leader) => {
+                ty = Some(leader);
+                Some(leader)
+            }
+            _ => None,
+        };
+        // A leader with no `<` is the mistake: the operands before it are not held to its type.
+        if operator == Operator::Compare
+            && by_ord.is_none()
+            && let Some(leader) = first.as_ref().and_then(|f| type_of(&f.1))
+            && self.unordered(leader)
+        {
+            ty = None;
+        }
         let (mut want, leader) = (ty, first.as_ref().map(|(k, _)| *k));
         // A `string?` leader after other operands: they are checked with no expected type, so the
         // leader is the one reported, as when it comes first.
@@ -250,7 +318,8 @@ impl Checker<'_> {
             want = None;
         }
         // An integer literal first is the operator's `i64`, as is an `i64` wanted: no list then.
-        let takes = (!wants_i64 && !int_literal(operands[0])).then(|| operator.takes());
+        let takes =
+            (!wants_i64 && !int_literal(operands[0]) && by_ord.is_none()).then(|| operator.takes());
         let by_char = arithmetic && first.as_ref().and_then(|f| type_of(&f.1)) == Some(Type::CHAR);
         let (mut checked, mut mismatched) = (Vec::with_capacity(operands.len()), false);
         // The diagnostics of the operator's type: mismatches, and a literal's, which that type
@@ -263,6 +332,10 @@ impl Checker<'_> {
         // by the second operand, if that is a `string`.
         let mut unlabelled = None;
         let mut lacks = false;
+        // The type of the first operand that has one, with one `?` removed. Whether each later
+        // operand has it too. Where the report of a lacking `Ord` stands.
+        let (mut shared, mut one_type) = (None, true);
+        let mut helped = None;
         for (i, e) in operands.iter().enumerate() {
             if held && leader == Some(i) {
                 want = ty;
@@ -277,9 +350,31 @@ impl Checker<'_> {
             }
             let char_value = type_of(&value) == Some(Type::CHAR);
             let got = type_of(&value);
-            if let Some(param) = got.filter(|ty| ty.has_param()) {
+            if let Some(ty) = got.map(payload) {
+                one_type &= *shared.get_or_insert(ty) == ty;
+            }
+            // The leader of a comparison that no `Ord` orders has no `<`, though it is a concrete
+            // type: an array, an enum, a class or a `bool`. A later operand of another type is
+            // a mismatch, which `settled_by` reports.
+            let unordered = |c: &mut Self, ty: Type| {
+                !arithmetic && leader == Some(i) && by_ord.is_none() && c.unordered(ty)
+            };
+            let lacking =
+                got.filter(|&ty| (ty.has_param() && by_ord != Some(ty)) || unordered(self, ty));
+            if let Some(param) = lacking {
                 if !std::mem::replace(&mut lacks, true) {
-                    self.param_lacks(e.span, param, op(i));
+                    // Reported with no help here, where the operands after it have not been
+                    // checked; the help comes below, once they are known to be one type.
+                    helped = (!arithmetic).then_some((self.diagnostics.len(), e.span, param, i));
+                    if arithmetic {
+                        self.param_lacks(e.span, param, op(i));
+                    } else {
+                        let ord = self.lang.ord;
+                        let d = self.missing_operator(e.span, param, &op(i), ord, false, false);
+                        // A type with no `<` makes the chain `Error`, as a mismatch does.
+                        mismatched |= matches!(d, DiagnosticKind::NoOperator { .. });
+                        self.report(d);
+                    }
                 }
                 checked.push(Err(Poisoned::error()));
                 (want, ty, before) = (None, None, None);
@@ -348,6 +443,15 @@ impl Checker<'_> {
             failed |= got.is_none() && rank(e) == 0;
             checked.push(operand);
             before = got;
+        }
+        // A bound helps only when the operands are one type: else the mistake is the operands.
+        if let Some((report, at, param, i)) = helped
+            && one_type
+        {
+            let ord = self.lang.ord;
+            self.diagnostics[report] = self
+                .missing_operator(at, param, &op(i), ord, false, true)
+                .into();
         }
         // The operator is rejected whatever stands beside the `char`, unless that is an `Error`:
         // then the operator may be the mistake, as for any other type, and the sum is `Error`.
@@ -461,12 +565,6 @@ impl Checker<'_> {
             self.diagnostics.push(d);
             return Err(Poisoned::error());
         }
-        // A class compares field by field, so it reads every field; `None` reads none.
-        if !none_literal(second)
-            && let Some(ty) = type_of(&checked)
-        {
-            self.record(Used::Equal(ty), span);
-        }
         // `second` is the `none_literal`, if either is.
         if none_literal(second)
             && let Some(ty) = type_of(&checked)
@@ -501,26 +599,61 @@ impl Checker<'_> {
         } else {
             (checked, other)
         };
-        // `x == None` tests an optional, which any `T?` is.
-        if !none_literal(second)
-            && let Some((side, ty)) = [(lhs, &l), (rhs, &r)]
-                .into_iter()
-                .find_map(|(side, c)| Some((side, type_of(c).filter(|ty| ty.has_param())?)))
-        {
-            self.param_lacks(side.span, ty, if negated { "!=" } else { "==" });
-            return Err(Poisoned::typed(Type::BOOL));
+        // `x == None` tests an optional, which any `T?` is, and needs no `Eq`. Else a side whose
+        // type has no `Eq` has no `==`, unless the two types differ for good: E0047 reports that.
+        // A side with no type (its error is reported) does not say that the other needs `Eq`,
+        // except a type parameter, which always did.
+        let eq = self.lang.eq;
+        // When the two sides have one type, its operation is asked once, for the check and the
+        // call.
+        let both = match (type_of(&l), type_of(&r)) {
+            (Some(lt), Some(rt)) if lt == rt => Some((lt, self.operation(lt, eq))),
+            _ => None,
+        };
+        if !none_literal(second) {
+            let same = match (type_of(&l), type_of(&r)) {
+                (Some(lt), Some(rt)) => lt == rt || fits(lt, rt) || fits(rt, lt),
+                _ => false,
+            };
+            for (side, checked) in [(lhs, &l), (rhs, &r)] {
+                let Some(ty) = type_of(checked).filter(|ty| same || ty.has_param()) else {
+                    continue;
+                };
+                let operation = match both {
+                    Some((lt, operation)) if lt == ty => operation,
+                    _ => self.operation(ty, eq),
+                };
+                if operation != Operation::Missing {
+                    continue;
+                }
+                let op = if negated { "!=" } else { "==" };
+                // A bound helps only when the sides are one type: else the mistake is the operands.
+                let alike = type_of(&l)
+                    .zip(type_of(&r))
+                    .is_none_or(|(a, b)| payload(a) == payload(b));
+                let d = self.missing_operator(side.span, ty, op, eq, false, alike);
+                self.report(d);
+                return Err(Poisoned::error());
+            }
         }
+        // A class or an enum with a written `Eq` is compared by a call of its `eq`. Any other
+        // type keeps the node that `==` has always had. A type with no `Eq` reaches here only
+        // in a comparison with `None`, which tests presence.
+        let dispatch = match both {
+            Some((_, Operation::Run(dispatch))) => dispatch,
+            Some((_, Operation::Poison)) => return Err(Poisoned::error()),
+            _ => Dispatch::Generated,
+        };
         self.nan_comparison(negated, (lhs, &l), (rhs, &r));
-        self.compared(span, l, r, |lhs, rhs| tir::ExprKind::Equal {
-            negated,
-            lhs,
-            rhs,
+        self.compared(span, l, r, |lhs, rhs| {
+            lang::equal(dispatch, negated, lhs, rhs, span)
         })
     }
 
-    /// `lhs is rhs`: each a class or its optional, of one class. An enum value has no identity
-    /// to test: two equal ones are the same value. An optional of an optional class is no
-    /// object: one layer comes off first.
+    /// `lhs is rhs`: each a class or its optional, of one class, or a type parameter that is
+    /// bound to `AnyObject` or its optional. An enum value has no identity to test: two equal ones
+    /// are the same value. An optional of an optional object is no object: one layer comes off
+    /// first.
     pub(super) fn is(&mut self, span: Span, lhs: &ast::Expr, rhs: &ast::Expr) -> Checked {
         if none_literal(lhs) || none_literal(rhs) {
             let other = if none_literal(lhs) { rhs } else { lhs };
@@ -544,11 +677,13 @@ impl Checker<'_> {
             while let TypeKind::Optional(inner) = base.kind() {
                 base = inner;
             }
+            // A type parameter, or an associated type of one, is an object when its bounds say
+            // so: `mono` then makes it a class.
+            let object_param = matches!(base.kind(), TypeKind::Param(..) | TypeKind::Assoc(..))
+                && self.conforms(base, self.lang.any_object, TypeArgs::NONE);
+            let nested = matches!(ty.kind(), TypeKind::Optional(p) if matches!(p.kind(), TypeKind::Optional(_)));
             // Peeling a layer helps only when an object is under the rest.
-            if let TypeKind::Optional(payload) = ty.kind()
-                && matches!(payload.kind(), TypeKind::Optional(_))
-                && matches!(base.kind(), TypeKind::Class(..))
-            {
+            if nested && (matches!(base.kind(), TypeKind::Class(..)) || object_param) {
                 let text = |e: &ast::Expr| self.source.file.text(e.span).to_string();
                 let peeled = |e: &ast::Expr| {
                     if std::ptr::eq(e, side) {
@@ -561,6 +696,7 @@ impl Checker<'_> {
                     found: self.type_name(ty),
                     at: side.span,
                     help: false,
+                    add: None,
                     peel: Some(format!("{} is {}", peeled(lhs), peeled(rhs))),
                 };
                 self.diagnostics.push(kind.into());
@@ -569,12 +705,16 @@ impl Checker<'_> {
             if matches!(
                 base.kind(),
                 TypeKind::Array(_) | TypeKind::String | TypeKind::Enum(..)
-            ) || !ty.is_counted(&self.lowered_enums)
+            ) || !(object_param || ty.is_counted(&self.lowered_enums))
             {
                 let kind = DiagnosticKind::IsNeedsObjects {
                     found: self.type_name(ty),
                     at: side.span,
                     help: !ty.has_param(),
+                    // The bound alone fixes `T` and `T?`; `T??` would still need a layer peeled.
+                    add: self
+                        .add_bound(base, self.lang.any_object)
+                        .filter(|_| !nested),
                     peel: None,
                 };
                 self.diagnostics.push(kind.into());

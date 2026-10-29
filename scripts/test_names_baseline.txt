@@ -103,7 +103,6 @@ crates/sisuc/src/check/tests/arrays.rs::operands_spill_before_an_exit
 crates/sisuc/src/check/tests/arrays.rs::own_error_poisons
 crates/sisuc/src/check/tests/arrays.rs::poisoned_argument_is_not_found
 crates/sisuc/src/check/tests/arrays.rs::poisoned_operands_and_the_idiom
-crates/sisuc/src/check/tests/arrays.rs::print_an_array
 crates/sisuc/src/check/tests/arrays.rs::sum_and_contains
 crates/sisuc/src/check/tests/arrays.rs::sum_as_function_is_the_idiom
 crates/sisuc/src/check/tests/arrays.rs::sum_as_function_on_u8_is_not
@@ -162,7 +161,6 @@ crates/sisuc/src/check/tests/enums.rs::enum_methods
 crates/sisuc/src/check/tests/enums.rs::enum_name_shadowed
 crates/sisuc/src/check/tests/enums.rs::enum_named_local
 crates/sisuc/src/check/tests/enums.rs::enum_named_math
-crates/sisuc/src/check/tests/enums.rs::enum_value_rules
 crates/sisuc/src/check/tests/enums.rs::failed_construction_poisons
 crates/sisuc/src/check/tests/enums.rs::long_declaration_chain_checks
 crates/sisuc/src/check/tests/enums.rs::mixed_labels_poison_construction
@@ -178,7 +176,6 @@ crates/sisuc/src/check/tests/floats.rs::f64_constant_in_const
 crates/sisuc/src/check/tests/floats.rs::f64_constants
 crates/sisuc/src/check/tests/floats.rs::float_constants
 crates/sisuc/src/check/tests/floats.rs::float_conversions
-crates/sisuc/src/check/tests/floats.rs::float_interpolation
 crates/sisuc/src/check/tests/floats.rs::float_never_integer
 crates/sisuc/src/check/tests/floats.rs::float_sum
 crates/sisuc/src/check/tests/floats.rs::int_to_float
@@ -297,7 +294,6 @@ crates/sisuc/src/check/tests/mod.rs::failed_endless_body_reports_no_missing_valu
 crates/sisuc/src/check/tests/mod.rs::failed_if_let_binding_poisons
 crates/sisuc/src/check/tests/mod.rs::failed_join_blames_the_branch_that_does_not_fit
 crates/sisuc/src/check/tests/mod.rs::failed_labeled_jump_leaves_no_never_loop
-crates/sisuc/src/check/tests/mod.rs::failed_rule_makes_its_expression_error
 crates/sisuc/src/check/tests/mod.rs::failed_tail_of_an_optional_body_reports_once
 crates/sisuc/src/check/tests/mod.rs::failed_value_reports_once
 crates/sisuc/src/check/tests/mod.rs::field_called_as_method
@@ -339,7 +335,6 @@ crates/sisuc/src/check/tests/mod.rs::labeled_continue_outside_loop
 crates/sisuc/src/check/tests/mod.rs::labels_on_unknown_calls_are_not_reported
 crates/sisuc/src/check/tests/mod.rs::labels_on_unknown_methods_are_reported
 crates/sisuc/src/check/tests/mod.rs::later_binding_still_warns
-crates/sisuc/src/check/tests/mod.rs::less_needs_an_ordered_operand
 crates/sisuc/src/check/tests/mod.rs::local_shadowing_a_function_is_assignable
 crates/sisuc/src/check/tests/mod.rs::loop_after_coalesce_is_its_values_type
 crates/sisuc/src/check/tests/mod.rs::loop_in_a_later_branch_is_its_values_type
@@ -418,7 +413,6 @@ crates/sisuc/src/check/tests/mod.rs::none_from_every_source
 crates/sisuc/src/check/tests/mod.rs::none_needs_a_type
 crates/sisuc/src/check/tests/mod.rs::none_on_the_left_takes_the_other_type
 crates/sisuc/src/check/tests/mod.rs::only_the_literal_is_endless
-crates/sisuc/src/check/tests/mod.rs::operator_after_a_failed_operand_reports_once
 crates/sisuc/src/check/tests/mod.rs::optional_breaks_the_cycle
 crates/sisuc/src/check/tests/mod.rs::optional_self_field_is_reported_at_its_path
 crates/sisuc/src/check/tests/mod.rs::optional_value_after_payload_widens_the_loop
@@ -427,10 +421,6 @@ crates/sisuc/src/check/tests/mod.rs::parenthesized_true_is_endless
 crates/sisuc/src/check/tests/mod.rs::poisoned_binding_reports_once
 crates/sisuc/src/check/tests/mod.rs::poisoned_operand_checks_siblings
 crates/sisuc/src/check/tests/mod.rs::poisoned_receiver_checks_args
-crates/sisuc/src/check/tests/mod.rs::print_argument_errors_sit_on_the_argument
-crates/sisuc/src/check/tests/mod.rs::print_class
-crates/sisuc/src/check/tests/mod.rs::print_optional
-crates/sisuc/src/check/tests/mod.rs::print_reports_labels_and_still_checks_its_arguments
 crates/sisuc/src/check/tests/mod.rs::rejected_if_let_scrutinee_reports_once
 crates/sisuc/src/check/tests/mod.rs::rejected_none_reports_once
 crates/sisuc/src/check/tests/mod.rs::repeated_param
@@ -454,7 +444,6 @@ crates/sisuc/src/check/tests/mod.rs::spills_call_argument
 crates/sisuc/src/check/tests/mod.rs::spills_class_optional_before_exit_in_if_let
 crates/sisuc/src/check/tests/mod.rs::spills_compound_field_assignment_base
 crates/sisuc/src/check/tests/mod.rs::spills_constructor_argument
-crates/sisuc/src/check/tests/mod.rs::spills_equal
 crates/sisuc/src/check/tests/mod.rs::spills_every_operand_through_the_last_exit
 crates/sisuc/src/check/tests/mod.rs::spills_field_assignment_base
 crates/sisuc/src/check/tests/mod.rs::spills_for_an_exit_in_a_nested_assignment
@@ -561,7 +550,6 @@ crates/sisuc/src/check/tests/places.rs::recognises_appends
 crates/sisuc/src/check/tests/places.rs::same_place_through_fields_and_elements
 crates/sisuc/src/check/tests/places.rs::spills_an_element_write
 crates/sisuc/src/check/tests/prelude.rs::coalesce_unit_is_not_a_value
-crates/sisuc/src/check/tests/prelude.rs::eprint_argument_errors
 crates/sisuc/src/check/tests/prelude.rs::eprint_lowers
 crates/sisuc/src/check/tests/prelude.rs::panic_argument_count
 crates/sisuc/src/check/tests/prelude.rs::panic_in_parentheses
@@ -586,15 +574,12 @@ crates/sisuc/src/check/tests/shadowing.rs::if_let_binding_shadowed
 crates/sisuc/src/check/tests/shadowing.rs::let_mut_shadows_let
 crates/sisuc/src/check/tests/shadowing.rs::rhs_sees_old_binding
 crates/sisuc/src/check/tests/shadowing.rs::type_can_change
-crates/sisuc/src/check/tests/strings.rs::cannot_interpolate
 crates/sisuc/src/check/tests/strings.rs::chain_binds_each_operand
 crates/sisuc/src/check/tests/strings.rs::chars_and_bytes_are_arrays
 crates/sisuc/src/check/tests/strings.rs::compare_spills
 crates/sisuc/src/check/tests/strings.rs::concat_mismatch
 crates/sisuc/src/check/tests/strings.rs::concat_mismatch_layout
 crates/sisuc/src/check/tests/strings.rs::concat_spills
-crates/sisuc/src/check/tests/strings.rs::failed_concat_type
-crates/sisuc/src/check/tests/strings.rs::format_spec_checks
 crates/sisuc/src/check/tests/strings.rs::interpolation_spills
 crates/sisuc/src/check/tests/strings.rs::join_literal_after_another_mismatch
 crates/sisuc/src/check/tests/strings.rs::join_literal_in_element_compound
@@ -660,10 +645,7 @@ crates/sisuc/src/codegen/tests.rs::division_guards_precede_the_division
 crates/sisuc/src/codegen/tests.rs::drop_frees_with_the_allocated_layout
 crates/sisuc/src/codegen/tests.rs::element_comparison_in_a_loop_retains_nothing
 crates/sisuc/src/codegen/tests.rs::empty_class_allocates_its_count
-crates/sisuc/src/codegen/tests.rs::enum_box_shortcut_only_when_reflexive
 crates/sisuc/src/codegen/tests.rs::eprint_calls_the_stderr_functions
-crates/sisuc/src/codegen/tests.rs::eq_helper_per_class
-crates/sisuc/src/codegen/tests.rs::eq_loops_on_the_chain_field
 crates/sisuc/src/codegen/tests.rs::fast_path_follows_the_index_whitelist
 crates/sisuc/src/codegen/tests.rs::fast_path_skips_base_count
 crates/sisuc/src/codegen/tests.rs::field_accesses_carry_their_fields_tbaa_tag
@@ -675,7 +657,6 @@ crates/sisuc/src/codegen/tests.rs::format_specs_pass_zero_extended_i8s
 crates/sisuc/src/codegen/tests.rs::general_path_releases_base
 crates/sisuc/src/codegen/tests.rs::helper_names_cannot_collide
 crates/sisuc/src/codegen/tests.rs::helpers_are_generated
-crates/sisuc/src/codegen/tests.rs::helpers_pass_inline_enum_fields_by_address
 crates/sisuc/src/codegen/tests.rs::hypot_is_declared_on_first_use
 crates/sisuc/src/codegen/tests.rs::integer_min_max_clamp_are_selects
 crates/sisuc/src/codegen/tests.rs::len_and_field_of_a_local_skip_base_count
@@ -690,7 +671,6 @@ crates/sisuc/src/codegen/tests.rs::methods_lower_to_intrinsics_and_libm
 crates/sisuc/src/codegen/tests.rs::move_stores_null_only_for_a_flag
 crates/sisuc/src/codegen/tests.rs::nested_array_helpers_are_defined
 crates/sisuc/src/codegen/tests.rs::objects_that_stay_local_are_not_allocated_at_o2
-crates/sisuc/src/codegen/tests.rs::only_a_compared_class_gets_an_eq_helper
 crates/sisuc/src/codegen/tests.rs::only_main_is_external
 crates/sisuc/src/codegen/tests.rs::optional_field_method_counts_nothing
 crates/sisuc/src/codegen/tests.rs::partition_makes_its_array_unique_once
@@ -698,8 +678,6 @@ crates/sisuc/src/codegen/tests.rs::print_bool_passes_a_zero_extended_i1
 crates/sisuc/src/codegen/tests.rs::print_declarations_carry_attributes
 crates/sisuc/src/codegen/tests.rs::read_after_move_faults
 crates/sisuc/src/codegen/tests.rs::read_line_declaration_has_no_memory_attribute
-crates/sisuc/src/codegen/tests.rs::reflexivity_reads_linearly
-crates/sisuc/src/codegen/tests.rs::same_pointer_shortcut_only_when_reflexive
 crates/sisuc/src/codegen/tests.rs::scalar_not_equal_is_one_icmp_ne
 crates/sisuc/src/codegen/tests.rs::scalar_optional_is_a_pair
 crates/sisuc/src/codegen/tests.rs::size_of_a_borrowed_array_counts_nothing
@@ -834,7 +812,6 @@ crates/sisuc/src/fuzz.rs::reports_in_color_text_then_json
 crates/sisuc/src/fuzz_program.rs::a_clean_program_passes
 crates/sisuc/src/fuzz_program.rs::a_compiler_panic_leaves_the_dump
 crates/sisuc/src/fuzz_program.rs::a_dump_it_cannot_write_is_reported
-crates/sisuc/src/fuzz_program.rs::a_failure_prints_the_program
 crates/sisuc/src/fuzz_program.rs::a_hang_fails_property_3
 crates/sisuc/src/fuzz_program.rs::a_panic_passes_when_every_build_agrees
 crates/sisuc/src/fuzz_program.rs::a_rejected_program_fails_property_1
@@ -921,7 +898,6 @@ crates/sisuc/src/generate/coverage.rs::let_binding_skips_a_mutated_name
 crates/sisuc/src/generate/coverage.rs::let_binding_skips_a_short_circuit
 crates/sisuc/src/generate/coverage.rs::main_calls_fit_the_budget_left
 crates/sisuc/src/generate/coverage.rs::main_holds_several_statements
-crates/sisuc/src/generate/coverage.rs::main_prints_or_discards_what_a_call_returns
 crates/sisuc/src/generate/coverage.rs::no_block_as_a_place
 crates/sisuc/src/generate/coverage.rs::no_block_in_a_const
 crates/sisuc/src/generate/coverage.rs::no_const_with_an_overflowing_step
@@ -1526,7 +1502,6 @@ crates/sisuc/src/source.rs::render_line_clamps_the_end_of_a_text_that_ends_in_a_
 crates/sisuc/src/source.rs::span_offset_past_u32_max_panics
 crates/sisuc/src/source.rs::span_offsets_reach_u32_max
 crates/sisuc/src/symbol.rs::equal_texts_share_a_symbol
-crates/sisuc/src/tir.rs::chain_field_is_the_last_own_type_field
 crates/sisuc/src/tir.rs::each_child_mut_reaches_every_direct_child
 crates/sisuc/src/tir.rs::eprints_to_standard_error
 crates/sisuc/src/tir.rs::exits_finds_a_jump_at_any_depth
@@ -1540,8 +1515,6 @@ crates/sisuc/src/tir.rs::prints_every_node
 crates/sisuc/src/tir.rs::prints_float_literals
 crates/sisuc/src/tir.rs::prints_functions_joined_by_newline
 crates/sisuc/src/tir.rs::prints_interpolation
-crates/sisuc/src/tir.rs::prints_interpolation_with_formats
-crates/sisuc/src/tir.rs::prints_match
 crates/sisuc/src/tir.rs::prints_panic
 crates/sisuc/src/tir.rs::prints_read_line
 crates/sisuc/src/tir.rs::prints_strings

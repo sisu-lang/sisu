@@ -13,6 +13,7 @@ mod fuzz_program;
 #[cfg(any(test, feature = "fuzz"))]
 mod generate;
 mod graph;
+mod lang;
 mod lexer;
 mod link;
 mod mir;

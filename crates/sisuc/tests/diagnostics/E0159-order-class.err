@@ -1,0 +1,10 @@
+error[E0159]: `Circle` has no `<=`
+ --> E0159-order-class.sisu:7:11
+  |
+7 |     print(a <= Circle(r: 2.0))
+  |           ^ this has type `Circle`
+  |
+  = help: make `Circle` conform to `Ord`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0159

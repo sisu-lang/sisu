@@ -1,0 +1,34 @@
+error[E0152]: `Dir` does not meet `Eq`
+  --> E0152-generated-eq-block.sisu:12:13
+   |
+12 | extend Dir: Eq {
+   |             ^^
+   |
+   = help: fn eq(self, other: Self) -> bool
+
+error[E0152]: `helper` is not a requirement of `Eq`
+  --> E0152-generated-eq-block.sisu:13:8
+   |
+13 |     fn helper(self) -> i64 { 1 }
+   |        ^^^^^^
+   |
+   = help: move it to `extend Dir { ... }`
+
+error[E0152]: `Held` does not meet `Eq`
+  --> E0152-generated-eq-block.sisu:16:14
+   |
+16 | extend Held: Eq {
+   |              ^^ `Held` gets no generated `Eq`, since `Node` has none
+   |
+   = help: fn eq(self, other: Self) -> bool
+
+error[E0152]: `helper` is not a requirement of `Eq`
+  --> E0152-generated-eq-block.sisu:17:8
+   |
+17 |     fn helper(self) -> i64 { 1 }
+   |        ^^^^^^
+   |
+   = help: move it to `extend Held { ... }`
+
+sisu: 4 errors
+sisu: for more on a code, run `sisu explain <code>`: E0152

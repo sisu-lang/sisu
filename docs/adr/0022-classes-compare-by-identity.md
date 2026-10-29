@@ -48,5 +48,6 @@ count and whether to follow a reference.
   `Eq`. `contains` on an array of classes needs the same.
 - A program that compared classes with `==` before milestone 8 must conform to
   `Eq` or compare with `is`.
-- Neither `print` nor `==` follows a class reference, so no cycle is ever
-  walked.
+- Neither `print` nor a generated `==` follows a class reference, so the
+  compiler writes no code that walks a cycle. An `eq` that a program writes
+  follows the references it names, and it must stop on a cycle by itself.

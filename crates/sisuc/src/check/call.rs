@@ -5,6 +5,8 @@ use std::fmt;
 
 use super::expr::{fits, no_member, option_written, path, postfix};
 use super::generic::{GenericSig, Site, mark, mismatched};
+use super::interface::LangPath;
+use super::member::Found;
 use super::prelude::PRELUDE;
 use super::unused_names::Used;
 use super::{
@@ -16,6 +18,7 @@ use crate::diagnostic::{
     Code, Definition, Diagnostic, DiagnosticKind, MethodReceiver, ReceiverArgument, Suggestion,
     alias, suggestion,
 };
+use crate::lang::{self, Dispatch};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
@@ -379,12 +382,17 @@ impl Checker<'_> {
                         c.stray(args);
                         return Err(value);
                     }
-                    deferred = type_of(&checked).is_some_and(|ty| {
-                        matches!(
-                            ty.kind(),
-                            TypeKind::Array(_) | TypeKind::String | TypeKind::I64 | TypeKind::F64
-                        )
-                    });
+                    // A built-in's generated `to_string`, `eq` and `less` report their own list.
+                    deferred = !matches!(method.name.as_str(), "to_string" | "eq" | "less")
+                        && type_of(&checked).is_some_and(|ty| {
+                            matches!(
+                                ty.kind(),
+                                TypeKind::Array(_)
+                                    | TypeKind::String
+                                    | TypeKind::I64
+                                    | TypeKind::F64
+                            )
+                        });
                     // A built-in's method takes no type arguments, so two that could be values
                     // were comparisons, of the method's result: the help calls one that takes
                     // no arguments. An unknown one is reported as unknown.
@@ -433,7 +441,16 @@ impl Checker<'_> {
         let method = site.name;
         // The arguments are not part of an assignment target's chain; `expr` restores the flag.
         let target = std::mem::take(&mut self.body.in_target);
+        let receiver = match self.generated_operator(span, receiver, site, args) {
+            Ok(checked) => return checked,
+            Err(receiver) => receiver,
+        };
         match type_of(&receiver) {
+            // A built-in type, an array and an optional have a `Display` that the compiler writes,
+            // and no method of their own named `to_string`.
+            Some(ty) if method.name.as_str() == "to_string" && generated_display_only(ty) => {
+                return self.generated_display(span, receiver, site, args, false);
+            }
             Some(ty) if matches!(ty.kind(), TypeKind::Array(_)) => {
                 return self.array_method(span, (receiver, receiver_expr.span), ty, method, args);
             }
@@ -446,13 +463,131 @@ impl Checker<'_> {
             }
             _ => {}
         }
-        let Some(func) = self.find_method(type_of(&receiver), receiver_expr, site, target, span)
-        else {
-            self.labels(args);
-            self.stray(args);
-            return Err(Poisoned::error());
+        let ty = type_of(&receiver);
+        match self.find_method(ty, receiver_expr, site, target, (span, args.is_empty())) {
+            Some(Found::Func(func)) => self.invoke(span, func, Some(receiver), site, args),
+            Some(Found::GeneratedDisplay { listed }) => {
+                self.generated_display(span, receiver, site, args, listed)
+            }
+            None => {
+                self.labels(args);
+                self.stray(args);
+                Err(Poisoned::error())
+            }
+        }
+    }
+
+    /// `receiver.to_string()` on a value whose `Display` the compiler writes: the text that
+    /// `print` writes, as a one-part interpolation (`lang::to_string`). The call takes no
+    /// argument and no type argument, as a written method with no type parameter of its own.
+    /// With `listed`, the list of type arguments is already reported.
+    fn generated_display(
+        &mut self,
+        span: Span,
+        receiver: Checked,
+        site: Site<'_>,
+        args: &[ast::Arg],
+        listed: bool,
+    ) -> Checked {
+        if !listed && !site.written.is_empty() {
+            self.not_generic(site.name.name, site.angles);
+        }
+        if !args.is_empty() {
+            let d = DiagnosticKind::ArgumentCount {
+                name: "to_string".to_string(),
+                want: 0,
+                found: args.len(),
+                at: span,
+            };
+            return self.rejected(d.into(), args);
+        }
+        match receiver {
+            Ok(receiver) => Ok(self.spilled(span, Type::STRING, vec![receiver], |parts| {
+                let [part]: [tir::Expr; 1] = parts
+                    .try_into()
+                    .expect("`spilled` should hand its closure one operand per input");
+                lang::to_string(part)
+            })),
+            Err(_) => Err(Poisoned::of(Some(Type::STRING))),
+        }
+    }
+
+    /// `receiver.eq(other)` or `receiver.less(other)` on a type whose `Eq` or `Ord` the compiler
+    /// writes: the operator itself, as `==` and `<` make it. `Err` gives the receiver back when
+    /// the call is something else: a method that the type writes, which wins (ADR 0023), or a
+    /// method of another name. The arguments are checked as for any method: one count, no label,
+    /// and the call takes no type argument.
+    fn generated_operator(
+        &mut self,
+        span: Span,
+        receiver: Checked,
+        site: Site<'_>,
+        args: &[ast::Arg],
+    ) -> Result<Checked, Checked> {
+        let method = site.name;
+        let interface = match method.name.as_str() {
+            "eq" => self.lang.eq,
+            "less" => self.lang.ord,
+            _ => return Err(receiver),
         };
-        self.invoke(span, func, Some(receiver), site, args)
+        let Some(ty) = type_of(&receiver) else {
+            return Err(receiver);
+        };
+        // A method counts as written when a block covers `ty`, even if its bounds fail: then
+        // `find_method` reports the failed bound, and the generated operator is no fallback (only
+        // `to_string` has one). `find_method` repeats this lookup: it needs the buffers that this
+        // one fills, and a call of any other method must not pay for them here.
+        let written = self.own_method(ty, method.name).is_some() || {
+            self.conforming_methods(ty, method.name);
+            !self.candidates.is_empty() || self.failed_block.is_some()
+        };
+        if written
+            || matches!(ty.kind(), TypeKind::Param(..) | TypeKind::Assoc(..))
+            || self.lang_path(ty, interface) != LangPath::Generated
+        {
+            return Err(receiver);
+        }
+        if !site.written.is_empty() {
+            self.not_generic(method.name, site.angles);
+        }
+        if args.len() != 1 {
+            let d = DiagnosticKind::ArgumentCount {
+                name: method.name.to_string(),
+                want: 1,
+                found: args.len(),
+                at: span,
+            };
+            return Ok(self.rejected(d.into(), args));
+        }
+        let labeled = self.labels(args);
+        let (other, mismatched) = self.operand(&args[0].value, Some(ty));
+        Ok(match (receiver, other) {
+            (Ok(lhs), Ok(rhs)) if !labeled => {
+                let eq = interface == self.lang.eq;
+                Ok(self.spilled(span, Type::BOOL, vec![lhs, rhs], |operands| {
+                    let [lhs, rhs]: [tir::Expr; 2] = operands
+                        .try_into()
+                        .expect("`spilled` should hand its closure one operand per input");
+                    if eq {
+                        lang::equal(
+                            Dispatch::Generated,
+                            false,
+                            Box::new(lhs),
+                            Box::new(rhs),
+                            span,
+                        )
+                    } else {
+                        tir::ExprKind::Compare {
+                            operands: vec![lhs, rhs],
+                            ops: vec![ast::CompareOp::Lt],
+                        }
+                    }
+                }))
+            }
+            _ => Err(Poisoned::of(
+                (!mismatched && !labeled).then_some(Type::BOOL),
+            )),
+        })
     }
 
     /// A call of `func`, which `site` writes. `receiver` is a method's `self`; `args` match the
@@ -783,4 +918,21 @@ fn built_in_arity(ty: Type, name: &str) -> Option<usize> {
         TypeKind::I64 | TypeKind::F64 => number::method(ty, name).map(|(_, params)| params),
         _ => None,
     }
+}
+
+/// Whether the `Display` of a value of type `ty` is the compiler's alone: a number, a `bool`, a
+/// `char`, a `string`, an array or an optional. A class or an enum may write its own, and a type
+/// parameter is a call through its bounds.
+fn generated_display_only(ty: Type) -> bool {
+    matches!(
+        ty.kind(),
+        TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::String
+            | TypeKind::Array(_)
+            | TypeKind::Optional(_)
+    )
 }

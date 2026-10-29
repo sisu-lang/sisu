@@ -1,0 +1,8 @@
+enum Light: AnyObject {
+    Red
+    Green
+}
+
+fn main() {
+    print(1)
+}

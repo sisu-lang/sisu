@@ -539,15 +539,15 @@ fn class_drop_should_call_no_drop_or_release_of_the_other_class_in_its_cycle() {
     assert!(drop("H").contains("@sisu_rc.release.A("));
 }
 
-/// The helpers of an enum and of a class hand an inline enum field to its own helper by
+/// The helpers of an enum and the drop of a class hand an inline enum field to its own helper by
 /// address. A copy in a stack slot makes each frame as large as the field, so a chain of
 /// nested enums needs stack quadratic in its depth.
 #[test]
-fn helpers_pass_inline_enum_fields_by_address() {
+fn helpers_should_pass_inline_enum_fields_by_address() {
     let context = Context::create();
     let ir = compiled(
         &context,
-        "enum Inner {\n    P(string, i64, i64, i64)\n    Q\n}\nenum Outer {\n    W(Inner)\n    V\n}\nenum Tree {\n    Leaf\n    Node(Tree, Inner)\n}\nclass Holder {\n    inner: Inner\n}\nfn same(a: Outer, b: Outer, c: Holder, d: Holder, e: Tree, f: Tree) -> bool { a == b && c == d && e == f }\nfn keep(o: Outer) -> [Outer] { [o, o] }\nfn drop(o: Outer, t: Tree) {\n    let k = o\n    let u = t\n}\nfn main() {}",
+        "enum Inner {\n    P(string, i64, i64, i64)\n    Q\n}\nenum Outer {\n    W(Inner)\n    V\n}\nenum Tree {\n    Leaf\n    Node(Tree, Inner)\n}\nclass Holder {\n    inner: Inner\n}\nfn same(a: Outer, b: Outer, e: Tree, f: Tree) -> bool { a == b && e == f }\nfn keep(o: Outer) -> [Outer] { [o, o] }\nfn drop(o: Outer, t: Tree, h: Holder) {\n    let k = o\n    let u = t\n    let v = h\n}\nfn main() {}",
     )
     .print_to_string()
     .to_string();
@@ -563,10 +563,6 @@ fn helpers_pass_inline_enum_fields_by_address() {
         (
             "define internal void @sisu_rc.retain.Outer(ptr",
             "@sisu_rc.retain.Inner(",
-        ),
-        (
-            "define internal i1 @sisu_rc.eq.Holder(ptr",
-            "@sisu_rc.eq.Inner(",
         ),
         (
             "define internal void @sisu_rc.drop.Holder(ptr",
@@ -739,64 +735,106 @@ fn string_grow_reallocates_from_the_old_capacity() {
     assert_header_plus_capacity(body, block, old_size);
 }
 
+/// A class gets no generated `eq` helper: it compares by identity. A class with a written `Eq`
+/// gets the helper that calls its `eq`, which the helper of an array of it calls.
 #[test]
-fn eq_loops_on_the_chain_field() {
+fn class_should_get_no_eq_helper_and_its_array_should_call_the_written_eq() {
     let context = Context::create();
-    let ir = compiled(
+    let plain = compiled(
         &context,
-        "class Node {\n    value: i64\n    next: Node?\n}\nclass First {\n    next: First?\n    value: i64\n}\nfn same(a: Node?, b: Node?, c: First?, d: First?) -> bool { a == b && c == d }\nfn main() {}",
+        "class C {\n    v: i64\n}\n\nfn main() {\n    let c = C(v: 1)\n    print(c is c)\n}\n",
+    );
+    assert!(plain.get_function("sisu_rc.eq.C").is_none());
+    let written = compiled(
+        &context,
+        "class C: Eq {\n    v: i64\n    fn eq(self, other: Self) -> bool { self.v == other.v }\n}\n\nfn main() {\n    print([C(v: 1)] == [C(v: 2)])\n}\n",
     )
     .print_to_string()
     .to_string();
-    // The chain field is compared in a loop, in either field order: no `eq` calls itself.
-    for (class, header) in [
-        ("Node", "define internal i1 @sisu_rc.eq.Node(ptr"),
-        ("First", "define internal i1 @sisu_rc.eq.First(ptr"),
-    ] {
-        let body = function_body(&ir, header);
-        assert!(body.contains("phi ptr"), "no loop in\n{body}");
-        let own_call = format!("call i1 @sisu_rc.eq.{class}(");
-        assert!(!body.contains(&own_call), "{own_call:?} in\n{body}");
-    }
+    let array = function_body(&written, "define internal i1 @\"sisu_rc.eq.[C]\"(ptr");
+    assert!(array.contains("call i1 @sisu_rc.eq.C("), "{array}");
+    let helper = function_body(&written, "define internal i1 @sisu_rc.eq.C(ptr");
+    assert!(helper.contains("call i1 @sisu.C.eq("), "{helper}");
 }
 
-/// A class gets an `eq` helper when a `==` compares it, and not otherwise.
+/// `x == None` on a counted optional tests whether it holds a value, so it needs no `eq` helper,
+/// which a class has none of: the pointer is tested against `null`.
 #[test]
-fn only_a_compared_class_gets_an_eq_helper() {
-    let context = Context::create();
-    let class = "class C {\n    v: i64\n}\n\n";
-    let unused = compiled(
-        &context,
-        &format!("{class}fn main() {{\n    print(C(v: 1).v)\n}}\n"),
-    );
-    assert!(unused.get_function("sisu_rc.eq.C").is_none());
-    let used = compiled(
-        &context,
-        &format!("{class}fn main() {{\n    print(C(v: 1) == C(v: 2))\n}}\n"),
-    );
-    assert!(used.get_function("sisu_rc.eq.C").is_some());
-}
-
-/// An `eq` helper answers "equal" for one pointer on both sides only when its type's `==` is
-/// reflexive; where an `f64` is reachable, through an optional, an array or a class's fields,
-/// one block or object may hold a `nan`, so only two `null`s are equal at once.
-#[test]
-fn same_pointer_shortcut_only_when_reflexive() {
+fn comparing_an_optional_class_with_none_should_test_the_pointer() {
     let context = Context::create();
     let ir = compiled(
         &context,
-        "class Node {\n    value: i64\n    next: Node?\n}\nclass Pt {\n    x: f64\n}\nclass Bag {\n    ps: [Pt?]\n}\nfn same(a: Node, b: Node, c: Bag, d: Bag, e: [i64], f: [i64], g: [f64], h: [f64]) -> bool { a == b && c == d && e == f && g == h }\nfn main() {}",
+        "class Node {\n    next: Node?\n}\nfn present(n: Node) -> bool { n.next != None }\nfn absent(n: Node) -> bool { None == n.next }\nfn main() {}",
+    )
+    .print_to_string()
+    .to_string();
+    assert!(!ir.contains("sisu_rc.eq."), "{ir}");
+    // `!=` is the test itself, and `==` is its negation.
+    for (name, negated) in [("present", false), ("absent", true)] {
+        let body = function_body(&ir, &format!("define internal i1 @sisu.{name}(ptr"));
+        let test = body
+            .lines()
+            .find(|line| line.contains("icmp ne ptr") && line.ends_with(", null"));
+        let result = test
+            .and_then(|line| line.trim().split_once(" = "))
+            .map_or_else(
+                || panic!("{name}: no test against null in\n{body}"),
+                |(result, _)| result,
+            );
+        // The negation takes the result of that test, whatever LLVM calls it.
+        let negation = format!("xor i1 {result}, true");
+        assert_eq!(body.contains(&negation), negated, "{name}:\n{body}");
+    }
+}
+
+/// `a is b` on a `T: AnyObject` costs nothing at run time. With `T = Node` it is one pointer
+/// comparison with no helper. A `T?` local is a bare pointer, as any `Node?` is.
+#[test]
+fn is_on_a_t_any_object_should_be_one_pointer_compare() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "class Node {}\nfn same<T: AnyObject>(a: T, b: T) -> bool { a is b }\nfn kept<T: AnyObject>(a: T) -> bool {\n    let held: T? = a\n    held is a\n}\nfn main() {\n    let n = Node()\n    print(same(n, n))\n    print(kept(n))\n}",
+    )
+    .print_to_string()
+    .to_string();
+    let compares = |body: &str| {
+        body.lines()
+            .filter(|line| line.contains("icmp eq ptr ") && !line.ends_with(", null"))
+            .count()
+    };
+    let same = function_body(&ir, "define internal i1 @\"sisu.same<Node>\"(ptr");
+    assert_eq!(compares(same), 1, "{same}");
+    assert!(!same.contains("call"), "{same}");
+    let kept = function_body(&ir, "define internal i1 @\"sisu.kept<Node>\"(ptr");
+    assert_eq!(compares(kept), 1, "{kept}");
+    // The `T?` local is one of the allocas: a pair `{ i1, ptr }` there would be a flag and a
+    // pointer. The only other type is the `i1` of the result.
+    let slots: Vec<&str> = kept
+        .lines()
+        .filter_map(|line| line.split_once(" = alloca ")?.1.split(',').next())
+        .collect();
+    assert!(!slots.is_empty(), "{kept}");
+    assert!(slots.iter().all(|ty| matches!(*ty, "ptr" | "i1")), "{kept}");
+}
+
+/// An `eq` helper answers "equal" for one pointer on both sides only when its type's `==` is
+/// reflexive; where an `f64` is reachable, or a class has a written `eq`, which need not be
+/// reflexive, one block or object may differ from itself, so only two `null`s are equal at once.
+#[test]
+fn same_pointer_shortcut_should_be_taken_only_when_equality_is_reflexive() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "class Node: Eq {\n    value: i64\n    fn eq(self, other: Self) -> bool { self.value == other.value }\n}\nfn same(e: [i64], f: [i64], g: [f64], h: [f64], i: [Node], j: [Node], k: [Node?], l: [Node?]) -> bool { e == f && g == h && i == j && k == l }\nfn main() {}",
     )
     .print_to_string()
     .to_string();
     for (helper, reflexive) in [
-        // A class whose only cycle is through itself, with no `f64` reached, is reflexive.
-        ("@sisu_rc.eq.Node(ptr", true),
         ("@\"sisu_rc.eq.[i64]\"(ptr", true),
-        ("@sisu_rc.eq.Pt(ptr", false),
-        ("@sisu_rc.eq.Bag(ptr", false),
-        ("@\"sisu_rc.eq.[Pt?]\"(ptr", false),
         ("@\"sisu_rc.eq.[f64]\"(ptr", false),
+        ("@\"sisu_rc.eq.[Node]\"(ptr", false),
+        ("@\"sisu_rc.eq.[Node?]\"(ptr", false),
     ] {
         let body = function_body(&ir, &format!("define internal i1 {helper}"));
         // The shortcut is a pointer comparison against another pointer, not against `null`.
@@ -816,11 +854,11 @@ fn same_pointer_shortcut_only_when_reflexive() {
 /// is compared by pointer first only when no `f64` is reachable from the enum, whatever the
 /// classes before it in the program hold.
 #[test]
-fn enum_box_shortcut_only_when_reflexive() {
+fn enum_box_shortcut_should_be_taken_only_when_equality_is_reflexive() {
     let context = Context::create();
     let ir = compiled(
         &context,
-        "class Pt {\n    x: f64\n}\nclass Other {\n    n: i64\n}\nenum Ints {\n    Nil\n    Cons(i64, Ints)\n}\nenum Floats {\n    Nil\n    Cons(f64, Floats)\n}\nfn main() {\n    print(Pt(x: 1.0) == Pt(x: 1.0) || Other(n: 1) == Other(n: 1))\n    print(Ints.Nil == Ints.Nil)\n    print(Floats.Nil == Floats.Nil)\n}",
+        "class Pt {\n    x: f64\n}\nclass Other {\n    n: i64\n}\nenum Ints {\n    Nil\n    Cons(i64, Ints)\n}\nenum Floats {\n    Nil\n    Cons(f64, Floats)\n}\nfn main() {\n    let _ = Pt(x: 1.0)\n    let _ = Other(n: 1)\n    print(Ints.Nil == Ints.Nil)\n    print(Floats.Nil == Floats.Nil)\n}",
     )
     .print_to_string()
     .to_string();
@@ -851,15 +889,15 @@ fn eq_component_should_not_call_an_eq_component_helper() {
     assert!(!body.contains("@sisu_rc.eq_component."), "{body}");
 }
 
-/// `Pair` has a link and then a class field. `eq_component` compares in field order: it queues
-/// the link, enters it, and compares the class field only after it pops the queue, in the
-/// `resume` block. So no `==` on the class field comes before that block.
+/// `Pair` has a link and then a class field with a written `eq`. `eq_component` compares in field
+/// order: it queues the link, enters it, and calls the class's `eq` only after it pops the queue,
+/// in the `resume` block. So no call of it comes before that block.
 #[test]
 fn eq_component_should_compare_a_field_after_a_link_only_when_it_resumes() {
     let context = Context::create();
     let ir = compiled(
         &context,
-        "class C {\n    n: i64\n}\nenum E {\n    Leaf\n    Pair(E, C)\n}\nfn main() {\n    print(E.Pair(E.Leaf, C(n: 1)) == E.Leaf)\n}",
+        "class C: Eq {\n    n: i64\n    fn eq(self, other: Self) -> bool { self.n == other.n }\n}\nenum E {\n    Leaf\n    Pair(E, C)\n}\nfn main() {\n    print(E.Pair(E.Leaf, C(n: 1)) == E.Leaf)\n}",
     )
     .print_to_string()
     .to_string();
@@ -931,7 +969,8 @@ fn niche_should_run_out_past_its_storage() {
     let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
     let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
-    let mut codegen = Codegen::new(&context, &program, "test.sisu", &src, &machine, false);
+    let mir = mir::build(&program);
+    let mut codegen = Codegen::new(&context, &program, &mir, "test.sisu", &src, &machine, false);
     codegen.lay_out_types();
     let layers = |ty, k| (0..k).fold(ty, |ty, _| Type::optional(ty));
     let pair = |value| {
@@ -1072,15 +1111,6 @@ fn scalar_not_equal_is_one_icmp_ne() {
         assert!(!body.contains("icmp eq"), "{body}");
         assert!(!body.contains("xor"), "{body}");
     }
-}
-
-#[test]
-fn eq_helper_per_class() {
-    let context = Context::create();
-    let ir = compiled(&context, "class T {}\nfn main() { print(T() == T()) }")
-        .print_to_string()
-        .to_string();
-    assert!(ir.contains("define internal i1 @sisu_rc.eq.T(ptr"), "{ir}");
 }
 
 #[test]
@@ -1240,6 +1270,7 @@ fn print_after_move() -> mir::Function {
                 Rvalue::Print {
                     stream: Stream::Stdout,
                     operand: mir::Operand::Read(whole(s)),
+                    calls: false,
                 },
             ),
             Statement::ScopeRelease(s),
@@ -1639,6 +1670,142 @@ fn print_declarations_carry_attributes() {
     }
 }
 
+/// `print(n)` of an `i64` stays the runtime's `sisu_print_int` call: no sink, no `show` helper.
+#[test]
+fn printing_an_i64_should_call_sisu_print_int_alone() {
+    let context = Context::create();
+    let ir = compiled(&context, "fn main() {\n    let n = 5\n    print(n)\n}")
+        .print_to_string()
+        .to_string();
+    assert!(ir.contains("call void @sisu_print_int("), "{ir}");
+    assert!(!ir.contains("sisu_show"), "{ir}");
+}
+
+/// The text of the function `name` in `ir`, from its `define` line to its closing brace.
+fn definition<'a>(ir: &'a str, name: &str) -> &'a str {
+    let start = ir
+        .match_indices("define ")
+        .map(|(at, _)| at)
+        .find(|&at| {
+            let line = ir[at..].lines().next().unwrap_or_default();
+            line.contains(&format!("@{name}("))
+        })
+        .unwrap_or_else(|| panic!("no definition of {name} in\n{ir}"));
+    let end = ir[start..]
+        .find("\n}\n")
+        .expect("a definition ends with a brace");
+    &ir[start..start + end]
+}
+
+/// A right-deep enum list prints in one frame: its component helper loops on the last link, and
+/// never calls itself or another `show` helper of its own enum.
+#[test]
+fn printing_a_deep_enum_should_loop_instead_of_recursing() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "enum List {\n    Nil\n    Cons(i64, List)\n}\nfn main() {\n    print(List.Cons(1, List.Nil))\n}",
+    )
+    .print_to_string()
+    .to_string();
+    let body = definition(&ir, "sisu_show_component.List");
+    let calls = |callee: &str| {
+        body.lines()
+            .any(|l| l.contains("call ") && l.contains(callee))
+    };
+    assert!(!calls("@sisu_show_component.List("), "{body}");
+    assert!(!calls("@sisu_show.List("), "{body}");
+    // The helper of the type is a call of the component helper.
+    assert!(
+        definition(&ir, "sisu_show.List").contains("@sisu_show_component.List("),
+        "{ir}"
+    );
+}
+
+/// `eprint` of a compound value builds the text in a buffer sink and writes it with one
+/// `sisu_eprint_str`; `print` writes through a sink over standard output, with no buffer for the
+/// text.
+#[test]
+fn printing_a_compound_value_should_use_the_sink_of_its_stream() {
+    let context = Context::create();
+    let ir = compiled(&context, "fn main() {\n    print([1])\n    eprint([1])\n}")
+        .print_to_string()
+        .to_string();
+    let main = definition(&ir, "sisu.main");
+    for wanted in [
+        "@sisu_show_stdout(",
+        "@sisu_show_line_end(",
+        "@sisu_show_buffer(",
+        "@sisu_show_finish(",
+        "@sisu_eprint_str(",
+    ] {
+        assert!(main.contains(wanted), "{wanted} in\n{main}");
+    }
+    assert_eq!(main.matches("@sisu_show_buffer(").count(), 1, "{main}");
+    // The sink slot is the runtime's `SINK_SIZE` bytes, as five words.
+    let words = abi::SINK_SIZE / 8;
+    assert!(main.contains(&format!("alloca [{words} x i64]")), "{main}");
+}
+
+/// An interpolation with a compound part writes every part through one buffer sink, which is the
+/// result string, and pads a part from its mark; one with only text and numbers keeps the block
+/// of known size and never touches a sink.
+#[test]
+fn interpolating_a_compound_part_should_use_one_buffer_sink() {
+    let context = Context::create();
+    let enum_part = "enum E {\n    A\n    B(E)\n}\nfn f(e: E, n: i64, x: f64) -> string {\n    \"{n}{e:>8}{x:.2}\"\n}\nfn main() {\n    print(f(E.B(E.A), 1, 2.5))\n}";
+    let ir = compiled(&context, enum_part).print_to_string().to_string();
+    let f = definition(&ir, "sisu.f");
+    for wanted in [
+        "@sisu_show_buffer(",
+        "@sisu_show_int(",
+        "@sisu_show_mark(",
+        "@sisu_show_pad(",
+        "@sisu_show_f64_fixed(",
+        "@sisu_show_finish(",
+    ] {
+        assert!(f.contains(wanted), "{wanted} in\n{f}");
+    }
+    assert_eq!(f.matches("@sisu_show_buffer(").count(), 1, "{f}");
+    assert_eq!(f.matches("@sisu_show_mark(").count(), 1, "{f}");
+    assert!(!f.contains("@sisu_alloc("), "the sink makes the block: {f}");
+    let plain = "fn f(s: string, n: i64) -> string {\n    \"{s}{n:>4}\"\n}\nfn main() {\n    print(f(\"a\", 1))\n}";
+    let ir = compiled(&context, plain).print_to_string().to_string();
+    let f = definition(&ir, "sisu.f");
+    assert!(f.contains("@sisu_write_int("), "{f}");
+    assert!(!f.contains("@sisu_show_"), "{f}");
+}
+
+/// The number of calls of `sisu_show_*` functions that printing `[x]` emits, for an `x` of a
+/// `char` under `layers` optionals that holds `None` in the outermost.
+fn show_calls_of_nested_optionals(layers: usize) -> usize {
+    let src = format!(
+        "fn f(x: char{}) {{\n    print([x])\n}}\nfn main() {{\n    f(None)\n}}\n",
+        "?".repeat(layers)
+    );
+    let context = Context::create();
+    let ir = compiled(&context, &src).print_to_string().to_string();
+    ir.lines()
+        .filter(|line| line.contains(" call ") && line.contains("@sisu_show_"))
+        .count()
+}
+
+/// Printing an optional of `n` layers writes the `Some(` and `)` of a `None` under `k` `Some`s
+/// with one rendering for every `k`, so the calls emitted grow with `n` and not with its square.
+#[test]
+fn printing_nested_optionals_should_emit_calls_in_linear_number() {
+    let calls = show_calls_of_nested_optionals;
+    assert_near_linear(calls(20), calls(40), calls(60));
+}
+
+/// The calls that printing `[x]` emits for a `char` under 20 optionals: three for each layer (the
+/// loop of `Some(`, `None` and the loop of `)`) and four others, so that a change in the
+/// rendering of a `None` shows as a different count.
+#[test]
+fn printing_twenty_nested_optionals_should_emit_three_calls_for_each_layer() {
+    assert_eq!(show_calls_of_nested_optionals(20), 3 * 20 + 4);
+}
+
 /// The attribute group line of the declaration of `name` in `ir`.
 fn attributes<'a>(ir: &'a str, name: &str) -> &'a str {
     let declaration = ir
@@ -1985,7 +2152,8 @@ fn binary_should_take_and_and_or_as_the_eager_operations_of_two_computed_bools()
     let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
     let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
-    let codegen = Codegen::new(&context, &program, "test.sisu", src, &machine, false);
+    let mir = mir::build(&program);
+    let codegen = Codegen::new(&context, &program, &mir, "test.sisu", src, &machine, false);
     let bool_type = context.bool_type();
     let fn_type = bool_type.fn_type(&[bool_type.into(), bool_type.into()], false);
     let function = codegen.module.add_function("both", fn_type, None);
@@ -2769,17 +2937,17 @@ fn blocks_are_named_after_their_index_or_loop_role() {
     assert_eq!(names, expected, "{}", f.print_to_string());
 }
 
-/// Whether `==` on a class or enum is reflexive is worked out once for the program: a walk
-/// from each `eq` helper's type reads a chain of classes quadratically.
+/// Whether `==` on an enum is reflexive is worked out once for the program: a walk from each
+/// `eq` helper's type reads a chain of enums quadratically.
 #[test]
-fn reflexivity_reads_linearly() {
+fn reflexivity_should_read_linearly() {
     let reads = |n: usize| {
-        let classes = (0..n)
-            .map(|i| format!("class C{i} {{\n    x: C{}?\n}}\n", i + 1))
+        let enums = (0..n)
+            .map(|i| format!("enum C{i} {{\n    End\n    Next(C{})\n}}\n", i + 1))
             .collect::<Vec<_>>()
             .concat();
         let src = format!(
-            "{classes}class C{n} {{}}\nfn main() {{\n    print(C0(x: None) == C0(x: None))\n}}\n"
+            "{enums}enum C{n} {{\n    End\n}}\nfn main() {{\n    print(C0.End == C0.End)\n}}\n"
         );
         TYPE_READS.set(0);
         let context = Context::create();
@@ -2787,6 +2955,31 @@ fn reflexivity_reads_linearly() {
         TYPE_READS.get()
     };
     assert_near_linear(reads(100), reads(200), reads(300));
+}
+
+/// The `show` of an enum in a component with boxes is written by one loop over the component. The
+/// loop gives each member its index in the `kind` switch. It gives each link the index of the
+/// enum it enters. A search of the component for each member or link reads a ring of enums
+/// quadratically. A search in the `show` helper of each enum reads it quadratically too. So each
+/// enum of the ring links to the next, and `print` writes every enum of the ring.
+#[test]
+fn show_of_a_component_should_find_each_member_in_linear_steps() {
+    let scans = |n: usize| {
+        let enums = (0..n)
+            .map(|i| format!("enum R{i} {{\n    End\n    Link(R{})\n}}\n", (i + 1) % n))
+            .collect::<Vec<_>>()
+            .concat();
+        let prints = (0..n)
+            .map(|i| format!("    print(R{i}.End)\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        let src = format!("{enums}fn main() {{\n{prints}}}\n");
+        MEMBER_SCANS.set(0);
+        let context = Context::create();
+        compiled(&context, &src);
+        MEMBER_SCANS.get()
+    };
+    assert_near_linear(scans(100), scans(200), scans(300));
 }
 
 /// A `take_apart` finds each place's token and kept value once: a scan of every token, or of
@@ -2867,5 +3060,158 @@ fn instantiation_symbols_should_name_their_arguments() {
             .filter(|line| line.starts_with("define") && line.contains(symbol))
             .count();
         assert_eq!(defined, 1, "{symbol} in\n{ir}");
+    }
+}
+
+/// The program of the chain `G0<T>` ... `G{n-1}<T>`: `main` builds one `Gk<i64>` for each k and
+/// compares it with itself, `G0` first.
+fn chain_program(n: usize) -> String {
+    chain_program_using(n, |k| format!("print(g{k} == g{k})"))
+}
+
+/// The program of the chain `G0<T>` ... `G{n-1}<T>` whose `main` runs `statement(k)` for each
+/// `Gk<i64>` that it builds.
+fn chain_program_using(n: usize, statement: impl Fn(usize) -> String) -> String {
+    let mut src = String::new();
+    for k in 0..n - 1 {
+        writeln!(src, "enum G{k}<T> {{\n    A(G{}<T>)\n    End\n}}", k + 1)
+            .expect("writing to a `String` should succeed");
+    }
+    writeln!(src, "enum G{}<T> {{\n    End(T)\n}}\nfn main() {{", n - 1)
+        .expect("writing to a `String` should succeed");
+    for k in 0..n - 1 {
+        writeln!(src, "    let g{k}: G{k}<i64> = G{k}.End")
+            .expect("writing to a `String` should succeed");
+    }
+    writeln!(src, "    let g{} = G{}.End(1)", n - 1, n - 1)
+        .expect("writing to a `String` should succeed");
+    for k in 0..n {
+        writeln!(src, "    {}", statement(k)).expect("writing to a `String` should succeed");
+    }
+    src + "}\n"
+}
+
+/// What `mono` counts for `src`: the keys `holds` decided and the pairs the record walk entered;
+/// and what the counts are after codegen built the program.
+fn mono_counts(src: &str) -> ((usize, usize), (usize, usize)) {
+    use crate::conformance::HOLDS_STEPS;
+    use crate::mono::WALK_VISITS;
+
+    HOLDS_STEPS.set(0);
+    WALK_VISITS.set(0);
+    let (program, diagnostics) = check_alone(&parse_ok(src), src, &[]);
+    let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+    let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
+    let after_mono = (HOLDS_STEPS.get(), WALK_VISITS.get());
+    let mir = mir::build(&program);
+    let context = Context::create();
+    let machine = target_machine(OptLevel::O0).expect("the host is a target");
+    let module = compile(&context, &program, &mir, "test.sisu", src, &machine, false);
+    module.verify().expect("the module should verify");
+    (after_mono, (HOLDS_STEPS.get(), WALK_VISITS.get()))
+}
+
+/// `mono` decides each class or enum type once, and its record walk enters each `(type, interface)`
+/// pair once, however many operands reach it. The chain makes `mono` take its slow path, where
+/// output ids differ from input ids. From `G0<i64>` the walk enters `G0<i64>` ... `G49<i64>` and
+/// then `i64`: 51 pairs, and `holds` decides the 50 enum keys once. Without the visited set the
+/// walk from `Gk<i64>` enters 51 - k pairs (1325 in all), and without the memo `holds(Gk<i64>)`
+/// follows the generated rule through `Gk` ... `G49` (1275 misses). Codegen asks no conformance
+/// query: it finds a written conformance in the output's records.
+#[test]
+fn mono_should_decide_each_type_once_and_codegen_should_ask_none() {
+    let (after_mono, after_codegen) = mono_counts(&chain_program(50));
+    assert_eq!(after_mono, (50, 51), "`mono` should decide each key once");
+    assert_eq!(after_codegen, after_mono, "codegen should ask no query");
+}
+
+/// The counts of `mono` are linear in the number of types: 20, 40 and 60 enums, ten times the
+/// smallest chain that a quadratic walk shows.
+#[test]
+fn mono_counts_should_grow_in_proportion_to_the_types() {
+    let counts = |n| mono_counts(&chain_program(n)).0;
+    let (a, b, c) = (counts(20), counts(40), counts(60));
+    assert_near_linear(a.0, b.0, c.0);
+    assert_near_linear(a.1, b.1, c.1);
+}
+
+/// The walk of an interpolation is the walk of a `print`: it enters each `(type, interface)` pair
+/// once, and `holds` decides each enum key once, however many parts reach them.
+#[test]
+fn mono_should_walk_each_interpolated_type_once() {
+    let interpolated = |n| chain_program_using(n, |k| format!("print(\"{{g{k}}}\")"));
+    let (after_mono, after_codegen) = mono_counts(&interpolated(50));
+    assert_eq!(
+        after_mono,
+        (50, 51),
+        "`mono` should decide each key once and enter each pair once"
+    );
+    assert_eq!(after_codegen, after_mono, "codegen should ask no query");
+    let counts = |n| mono_counts(&interpolated(n)).0;
+    let (a, b, c) = (counts(20), counts(40), counts(60));
+    assert_near_linear(a.0, b.0, c.0);
+    assert_near_linear(a.1, b.1, c.1);
+}
+
+/// `largest<i64>` and a hand-written `largest_i64` emit the same function body, apart from their
+/// names, at O0 and at `-O2`: a generic `>` on `i64` is a `Compare`, not a call of a `less`. Both
+/// use `best` and `x` for their locals, so only the function name differs.
+#[test]
+fn generic_largest_should_emit_the_hand_written_body() {
+    let body = |ty: &str| {
+        format!(
+            "(xs: [{ty}]) -> {ty}? {{\n    let mut best: {ty}? = None\n    for x in xs {{\n        if let b = best {{\n            if x > b {{\n                best = x\n            }}\n        }} else {{\n            best = x\n        }}\n    }}\n    best\n}}\n"
+        )
+    };
+    let src = format!(
+        "fn largest<T: Ord>{}\nfn largest_i64{}\nfn main() {{\n    print(largest([3, 9, 2]) ?? 0)\n    print(largest_i64([3, 9, 2]) ?? 0)\n}}",
+        body("T"),
+        body("i64")
+    );
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    for (level, optimized) in [("O0", false), ("O2", true)] {
+        let context = Context::create();
+        let module = compiled(&context, &src);
+        keep_functions(&module, "largest<i64>,largest_i64");
+        if optimized {
+            optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+        }
+        let ir = module.print_to_string().to_string();
+        // A panic names its position in the source, which differs between the two functions: the
+        // message global and its length are placeholders. So is a loop's metadata number.
+        let sited = |body: &str| -> String {
+            (body.lines())
+                .map(|line| match line.split_once("(ptr @panic.msg") {
+                    Some((call, rest)) => {
+                        let after = rest.splitn(3, ',').nth(2).unwrap_or_default();
+                        format!("{call}(ptr @placeholder,{after}")
+                    }
+                    // A loop's metadata node is numbered by the functions before it.
+                    None => match line.split_once("!llvm.loop !") {
+                        Some((before, _)) => format!("{before}!llvm.loop !loop"),
+                        None => line.to_string(),
+                    },
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        // The text of `ir` from the header line of the function, up to its name's end.
+        let header = |name: &str| {
+            let line = (ir.lines())
+                .find(|line| line.starts_with("define") && line.contains(name))
+                .unwrap_or_else(|| panic!("no {name} in\n{ir}"));
+            line[..line.find(name).expect("the line should hold the name") + name.len()].to_string()
+        };
+        let generic = function_body(&ir, &header("@\"sisu.largest<i64>\"("));
+        let written = function_body(&ir, &header("@sisu.largest_i64("));
+        let (generic, written) = (sited(generic), sited(written));
+        for (a, b) in generic.lines().zip(written.lines()) {
+            assert_eq!(a, b, "at {level}");
+        }
+        assert_eq!(
+            generic.lines().count(),
+            written.lines().count(),
+            "at {level}"
+        );
     }
 }

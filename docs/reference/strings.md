@@ -106,7 +106,7 @@ fn main() {
 
 ## Text of a value
 
-Interpolation and `print` write a value as text in the same way. They take an `i64`, a `u8`, an `f64`, a `bool`, a `char` or a `string` ([E0098](../diagnostics/E0098.md), [E0059](../diagnostics/E0059.md)).
+Interpolation and `print` write a value as text in the same way. They take a value of any type except `unit` and `never`. A `unit` value is an error in `print` ([E0059](../diagnostics/E0059.md)) and in an interpolation ([E0098](../diagnostics/E0098.md)). A `print` of a `never` value is an error too ([E0061](../diagnostics/E0061.md)). An optional builds with the warning [W0015](../diagnostics/W0015.md), because the text can be `None`. The table lists the scalar types; [Text of other types](#text-of-other-types) lists the others.
 
 | Type | Text |
 | --- | --- |
@@ -134,16 +134,21 @@ fn main() {
 
 ### Text of other types
 
-`print` and interpolation also take a value of any type that can be a type argument. An array prints as `[1, 2]`. A class prints its name. A class can write its own text with a method `to_string` ([Display, Eq and Ord](generics.md#display-eq-and-ord)).
+`print` and an interpolation also take a value of any type that can be a type argument. An array prints as `[1, 2]`. A class prints its name. A class can write its own text with a method `to_string` ([Display, Eq and Ord](generics.md#display-eq-and-ord)). Every such value has a method `to_string()` that gives the same text as a `string`. A width pads that text: `"{sauna:>8}"`.
 
-```sisu pending
+```sisu
 class Sauna {
     heat: i64
 }
 
 fn main() {
+    let sauna = Sauna(heat: 80)
     print([1, 2])                      // [1, 2]
-    print(Sauna(heat: 80))             // Sauna
+    print(sauna)                       // Sauna
+    print(sauna.heat)                  // 80
+    print("{sauna}: {[1, 2]}")         // Sauna: [1, 2]
+    print("[{sauna:>8}]")              // [   Sauna]
+    print(sauna.to_string())           // Sauna
 }
 ```
 
@@ -164,9 +169,9 @@ fn main() {
 }
 ```
 
-Interpolation does not convert a value: it writes the text of the type that the value has. To write an optional, use `??` or `if let`. To write an array, use a `for` loop.
+Interpolation does not convert a value: it writes the text of the type that the value has. To write an optional without the warning [W0015](../diagnostics/W0015.md), use `??` or `if let`, or call `to_string()` to write `None` on purpose.
 
-The program calculates each expression once, from left to right, before it builds the text. This is so also when the parts have format specs.
+The program calculates each expression once, from left to right, before it builds the text. This is so also when the parts have format specs. The program calls a written `to_string` when it builds the text, after it calculates every part.
 
 ```sisu
 fn part(n: i64) -> i64 {

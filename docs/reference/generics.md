@@ -237,11 +237,11 @@ fn main() {
 
 The rules:
 
-- An operator that computes with a `T` or compares it, such as `+`, `<` or `==`, is an error ([E0139](../diagnostics/E0139.md)). `contains` on a `[T]` uses `==`, so it is an error too. `x != None` and `x == None` on a `T?` are valid. `x == y` on two `T?` is an error.
+- An operator that computes with a `T` or compares it, such as `+`, `<` or `==`, is an error ([E0139](../diagnostics/E0139.md)), unless a bound gives it: `T: Eq` gives `==` and `!=`, and `T: Ord` gives `<`, `<=`, `>` and `>=` ([Bounds](#bounds)). The help names the bound to add. `contains` on a `[T]` uses `==`, so it needs `T: Eq`. `x != None` and `x == None` on a `T?` are valid. `x == y` on two `T?` needs `T: Eq`.
 - `!`, `&&` and `||` take only a `bool`, so a `T` there is a type mismatch ([E0032](../diagnostics/E0032.md)).
-- A `T` has no method and no field ([E0063](../diagnostics/E0063.md)).
-- `is` does not apply to a `T`, because `T` can stand for a type that is not a class ([E0046](../diagnostics/E0046.md)).
-- `print` and interpolation do not take a `T` ([E0059](../diagnostics/E0059.md), [E0098](../diagnostics/E0098.md)).
+- A `T` has the methods that its bounds give, and `to_string()`, which needs no bound. It has no other method and no field ([E0063](../diagnostics/E0063.md)).
+- `is` does not apply to a `T`, because `T` can stand for a type that is not a class ([E0046](../diagnostics/E0046.md)). The bound `T: AnyObject` allows it ([Bounds](#bounds)). The help names the bound to add.
+- `print` takes a `T` with no bound, because every type has a `Display` ([Display, Eq and Ord](#display-eq-and-ord)). Interpolation and `to_string()` take a `T` as well.
 - `[x; n]` with `x: T` is an error ([E0067](../diagnostics/E0067.md)), because `T` can be a class ([Filled arrays](arrays.md#filled-arrays)). `[None; n]` is valid.
 - `match` does not take a `T` ([E0124](../diagnostics/E0124.md)). In a payload of the type `T`, a pattern is a name or `_` ([Variant patterns](enums.md#variants)).
 
@@ -277,7 +277,7 @@ A use with the same type arguments, such as `nest(x, n - 1)`, is valid.
 
 A *bound* says which interface a type argument must conform to. It follows the type parameter after a `:`. `&` joins two bounds, as in `T: Shape & Ord`.
 
-```sisu pending
+```sisu
 fn largest<T: Ord>(xs: [T]) -> T? {
     let mut best: T? = None
     for x in xs {
@@ -301,12 +301,26 @@ fn main() {
 The rules:
 
 - In the body, a value of type `T` can do what its bounds give it. These are the methods of the interfaces and the operators that they map to.
-- `Eq` gives `==` and `!=`. `Ord` gives `<`, `<=`, `>` and `>=`.
+- `Eq` gives `==` and `!=`. `Ord` gives `<`, `<=`, `>` and `>=`. An array, an optional or an enum of `T` has `==` when `T` has `Eq`. A call of `a.eq(b)` or `a.less(b)` on a `T` works the same way.
 - Anything else is an error where the body is written. The help suggests the bound that is missing.
 - A type argument that does not conform to a bound is an error at the call.
 - Every type parameter can print, with no bound. `print(x)`, `"{x}"` and `x.to_string()` work on a `T`.
-- Every class conforms to `AnyObject`. So does an `any` value of a class-only interface (next rule). Nothing else does. `T: AnyObject` lets the body use `is` on values of type `T`, and lets a class declare a [weak field](values.md#weak-fields) of type `T?`.
+- Every class conforms to `AnyObject`. So does an `any` value of a class-only interface (next rule). Nothing else does. `T: AnyObject` lets the body use `is` on values of type `T`, and lets a class declare a [weak field](values.md#weak-fields) of type `T?`. An associated type with the bound `AnyObject` (`type Item: AnyObject`) allows `is` on values of type `T.Item` in the same way.
 - An interface that inherits `AnyObject` is class-only. Its `any` values support `is` too, and a class can hold one in a weak field.
+
+```sisu
+class Node {}
+
+fn same<T: AnyObject>(a: T, b: T) -> bool {
+    a is b
+}
+
+fn main() {
+    let a = Node()
+    print(same(a, a))                  // true
+    print(same(a, Node()))             // false
+}
+```
 
 ## Interfaces
 
@@ -387,7 +401,7 @@ The rules:
 
 An `extend` can have type parameters. `extend<T> Stack<T>` adds methods to every `Stack`. `extend Stack<i64>` adds methods to `Stack<i64>` only.
 
-```sisu pending
+```sisu
 class Stack<T> {
     mut items: [T]
 }
@@ -429,7 +443,7 @@ The rules:
 
 An *associated type* is a type that each conforming type chooses once. The interface declares it with `type`. A conforming type sets it with `type Name = Type`.
 
-```sisu pending
+```sisu
 interface Source {
     type Item: Display
     fn next(self) -> Item?
@@ -476,7 +490,7 @@ Use an associated type when each type has one answer, such as the item of a `Sou
 
 `Display`, `Eq` and `Ord` are interfaces of the language. `print` and interpolation use `Display`. `==` and `!=` use `Eq`. `<`, `<=`, `>` and `>=` use `Ord`.
 
-```sisu pending
+```sisu
 class Point {
     x: i64
     y: i64
@@ -523,6 +537,7 @@ The rules:
 - `Ord` requires `Eq`. A type that conforms to `Ord` but not to `Eq` is an error.
 - For `Eq`, `a != b` is `!a.eq(b)`.
 - A conformance that a program writes replaces the generated one. An enum that writes `to_string` prints its own text.
+- `to_string()` is a method of every type except `unit` and `never`. It gives the text that `print` writes, as a `string`. When the bounds of a written `to_string` do not hold for the receiver, as in `extend<T: Eq> Box<T>` for a `Box<Node>`, the generated one answers. A call of another method whose bounds fail is an error.
 - A type can name a generated interface and write no method for it: `enum Level: Eq` has no `eq`. Where nothing is generated, such as `class Node: Eq` with no `eq`, a missing method is an error.
 - Only `to_string` conforms by name. A type with its own `eq` or `less` method conforms to `Eq` or `Ord` only when its declaration names the interface.
 - `i64`, `u8`, `char` and `string` have `Eq` and `Ord` with no declaration. An enum has `Eq` with no declaration when all its payloads have it.

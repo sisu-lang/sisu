@@ -1,0 +1,8 @@
+enum Shape {
+    Dot
+}
+
+fn main() {
+    let s = Shape.Dot
+    print("{s:.2}")
+}

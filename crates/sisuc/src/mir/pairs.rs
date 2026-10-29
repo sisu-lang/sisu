@@ -269,9 +269,10 @@ fn kind<'a>(function: &Function, stmt: &'a Statement) -> Kind<'a> {
         Statement::Assign { dest, value } => match (value, *dest) {
             (Rvalue::Copy(place), Some(t)) => Kind::Copy(t, place),
             (Rvalue::Use(Operand::Move(m)), Some(u)) => Kind::Step(u, *m),
-            (Rvalue::Call { .. }, _) => Kind::Clobber,
+            (value, _) if value.may_call_written() => Kind::Clobber,
             (
-                Rvalue::Use(_)
+                Rvalue::Call { .. }
+                | Rvalue::Use(_)
                 | Rvalue::Copy(_)
                 | Rvalue::CopyStr(_)
                 | Rvalue::Borrow(_)

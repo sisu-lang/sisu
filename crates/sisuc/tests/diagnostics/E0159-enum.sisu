@@ -1,0 +1,13 @@
+class Node {
+    value: i64
+}
+
+enum Holder {
+    Has(Node)
+    Empty
+}
+
+fn main() {
+    let a = Holder.Has(Node(value: 1))
+    print(a != Holder.Empty)
+}

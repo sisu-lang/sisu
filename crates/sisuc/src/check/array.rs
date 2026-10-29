@@ -1,7 +1,7 @@
 //! Array expressions: literals and their element join, `[v; n]`, indexing and methods.
 
-use super::expr::{fits, literal_type, no_member, none_literal, path, rank, typed};
-use super::unused_names::Used;
+use super::expr::{bare_none, fits, literal_type, no_member, none_literal, path, rank, typed};
+use super::interface::Operation;
 use super::{Checked, Checker, Poisoned, UNKNOWN, as_optional, payload, type_of, wrap};
 use crate::ast;
 use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Literal};
@@ -296,21 +296,41 @@ impl Checker<'_> {
                 let kind = receiver.ok().map(|r| tir::ExprKind::Sum(Box::new(r)));
                 typed(span, element, false, kind)
             }
-            _ if element.has_param() => {
-                let d = DiagnosticKind::ParamLacks {
-                    ty: self.type_name(element),
-                    op: "==".to_string(),
-                    at,
-                    contains: true,
+            _ if self.operation(element, self.lang.eq) == Operation::Missing => {
+                // The report goes before the labels and the argument's own, which it waits for.
+                // For a concrete element, the argument comes first: when it failed, its own error
+                // stands alone, and when its type is not the element, or the contents of an
+                // optional element, that mismatch is the mistake, as it is for `==`. A bound helps
+                // only when the argument is an element (`x: T` in a `[T?]`), not a `T?` in a `[T]`.
+                let first = self.diagnostics.len();
+                self.labels(args);
+                let argument = self.expr(&args[0].value, Some(UNKNOWN));
+                let got = type_of(&argument);
+                // A `None` has no type of its own: it is an element only of an optional element.
+                let alike = if bare_none(&args[0].value) {
+                    matches!(element.kind(), TypeKind::Optional(_))
+                } else {
+                    got.is_none_or(|got| got == element || Type::optional(got) == element)
                 };
-                self.rejected(d.into(), args)
+                if !element.has_param() && !alike {
+                    // The `None` was checked with no type to take, so it is checked again as an
+                    // element, which reports it.
+                    return if got.is_none() {
+                        self.operand(&args[0].value, Some(element)).0
+                    } else {
+                        self.against(&args[0].value, argument, Some(element), None)
+                            .0
+                    };
+                }
+                if !element.has_param() && got.is_none() && self.diagnostics.len() > first {
+                    return Err(Poisoned::error());
+                }
+                let d = self.missing_operator(at, element, "==", self.lang.eq, true, alike);
+                self.diagnostics.insert(first, d.into());
+                Err(Poisoned::error())
             }
             _ => {
                 let labeled = self.labels(args);
-                // A class compares field by field, as `==` does; a `None` reads no field.
-                if !none_literal(&args[0].value) {
-                    self.record(Used::Equal(element), span);
-                }
                 let (value, mismatched) = self.operand(&args[0].value, Some(element));
                 match (receiver, value) {
                     (Ok(base), Ok(value)) if !labeled => {

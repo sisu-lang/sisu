@@ -47,15 +47,21 @@ fn call(args: Vec<Operand>, borrowed: Vec<bool>) -> Statement {
     }
 }
 
-/// `print(op)`: a borrowed operand.
-fn show(op: Operand) -> Statement {
+/// `print(op)`: a borrowed operand, whose helper calls a written `to_string` when `calls`.
+fn printing(op: Operand, calls: bool) -> Statement {
     Statement::Assign {
         dest: None,
         value: Rvalue::Print {
             stream: Stream::Stdout,
             operand: op,
+            calls,
         },
     }
+}
+
+/// `print(op)`, which calls no written method.
+fn show(op: Operand) -> Statement {
+    printing(op, false)
 }
 
 fn borrow(binding: LocalId, owner: LocalId) -> Statement {
@@ -1537,6 +1543,72 @@ fn clobber_in_a_covered_block() {
         ret(),
     );
     rejects(&b.finish(), 1, x, Rule::Borrow);
+}
+
+/// `b = borrow o.0` through a `mut` field, then an `Equal` and a read of `b`: an `Equal` that
+/// may call a written `eq` (`calls`) can store through the field, as a call can; one that cannot
+/// is no clobber.
+#[test]
+fn borrow_across_a_flagged_equal_should_be_rejected() {
+    let case = |calls: bool| {
+        let mut b = Builder::new("f");
+        let o = b.param("o", object());
+        let x = b.local("b", Type::STRING);
+        let same = b.local("same", Type::BOOL);
+        b.owner(x, o);
+        let one = || Operand::Const(Const::Int(1, Type::I64));
+        b.block(
+            vec![
+                assign(x, Rvalue::Borrow(field(o))),
+                assign(
+                    same,
+                    Rvalue::Equal {
+                        negated: false,
+                        lhs: one(),
+                        rhs: one(),
+                        calls,
+                        none: None,
+                    },
+                ),
+                show(read(x)),
+                Statement::End(x),
+                Statement::Release(o),
+            ],
+            ret(),
+        );
+        (b.finish(), x)
+    };
+    let (flagged, x) = case(true);
+    rejects(&flagged, 0, x, Rule::Borrow);
+    let (plain, _) = case(false);
+    assert_eq!(certify(&plain), Ok(()));
+}
+
+/// A `print` whose helper may call a written `to_string` (`calls`) can store through the field,
+/// as a call can; one that cannot is no clobber.
+#[test]
+fn borrow_across_a_flagged_print_should_be_rejected() {
+    let case = |calls: bool| {
+        let mut b = Builder::new("f");
+        let o = b.param("o", object());
+        let x = b.local("b", Type::STRING);
+        b.owner(x, o);
+        b.block(
+            vec![
+                assign(x, Rvalue::Borrow(field(o))),
+                printing(read(o), calls),
+                show(read(x)),
+                Statement::End(x),
+                Statement::Release(o),
+            ],
+            ret(),
+        );
+        (b.finish(), x)
+    };
+    let (flagged, x) = case(true);
+    rejects(&flagged, 0, x, Rule::Borrow);
+    let (plain, _) = case(false);
+    assert_eq!(certify(&plain), Ok(()));
 }
 
 /// `p.0 = 1` stores no reference, so it frees nothing a borrow of `o.0` reads.

@@ -1,0 +1,8 @@
+class Circle {
+    r: f64
+}
+
+fn main() {
+    let a = Circle(r: 1.0)
+    print(a <= Circle(r: 2.0))
+}

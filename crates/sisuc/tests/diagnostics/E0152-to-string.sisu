@@ -1,0 +1,11 @@
+class Circle {
+    r: i64
+
+    fn to_string(self) -> i64 {
+        self.r
+    }
+}
+
+fn main() {
+    print(Circle(r: 1).r)
+}

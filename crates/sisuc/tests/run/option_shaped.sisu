@@ -66,11 +66,15 @@ enum Hop {
     Go(Step)
 }
 
-class Holder {
+class Holder: Eq {
     m: Maybe
     f: Flag
     n: Named
     c: Chain
+
+    fn eq(self, other: Self) -> bool {
+        self.m == other.m && self.f == other.f && self.n == other.n && self.c == other.c
+    }
 }
 
 // A string in a new block on each call.

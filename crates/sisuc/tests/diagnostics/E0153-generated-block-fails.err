@@ -1,0 +1,11 @@
+error[E0153]: `Flag` conforms to `Eq` twice
+ --> E0153-generated-block-fails.sisu:8:14
+  |
+3 | enum Flag: Eq {
+  |            -- first conformance here
+...
+8 | extend Flag: Eq {
+  |              ^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0153

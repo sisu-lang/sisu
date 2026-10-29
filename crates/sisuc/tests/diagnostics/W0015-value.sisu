@@ -1,0 +1,7 @@
+fn find() -> string? {
+    "Sisu"
+}
+
+fn main() {
+    print("Hello {find()}")
+}

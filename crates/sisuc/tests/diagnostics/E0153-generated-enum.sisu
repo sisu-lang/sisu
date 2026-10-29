@@ -1,0 +1,8 @@
+enum Light: Eq, Eq {
+    Red
+    Green
+}
+
+fn main() {
+    print(Light.Red == Light.Green)
+}

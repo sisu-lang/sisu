@@ -1,0 +1,11 @@
+fn iterations() -> i64 { 1000 }
+
+// `print` of an `i64` is the runtime's `sisu_print_int` and allocates nothing: it writes into the
+// output buffer, and no sink or `show` helper is made for it. The first line makes the runtime
+// open its output buffer in both runs.
+fn main() {
+    print("start")
+    for n in 0..iterations() {
+        print(n)
+    }
+}

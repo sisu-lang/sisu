@@ -106,9 +106,12 @@ const CONVERSIONS: [(&str, &str); 6] = [
     ("I64", "F64"),
 ];
 
+/// The key of a class that is compared with `is`, or against `None`: it has no `==`.
+const IDENTITY: &str = "reach: a class is compared with `is` or against `None`";
+
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 79] = [
+const REACH: [&str; 96] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -125,6 +128,7 @@ const REACH: [&str; 79] = [
     "reach: an index reads an array literal in bounds",
     "reach: a plain `=` to a local that is not an array",
     "reach: `==` or `!=` compares with `None`",
+    IDENTITY,
     "reach: a `+=` adds chars to a string local",
     "reach: a compound assignment targets a field",
     "reach: a variant is built with labeled fields",
@@ -188,7 +192,40 @@ const REACH: [&str; 79] = [
     "reach: a bound has interface arguments",
     "reach: an associated type has a bound",
     "reach: an associated type's choice is counted",
+    "reach: a declaration names a generated conformance",
+    "reach: a class gets `Display` through a `to_string` method",
+    "reach: a bound names a language interface",
+    "reach: an operator runs on a bounded type parameter",
+    "reach: one function prints and compares a type parameter",
+    "reach: `is` runs on a type parameter",
+    "reach: an operator calls a written `eq` or `less`",
+    "reach: an `==` or `print` runs a written method inside a value",
+    "reach: an `==` or `print` on a compound value runs no written method",
+    "reach: `print` writes a compound value",
+    "reach: `print` runs a written `to_string` inside a value",
+    "reach: an interpolation writes a compound part",
+    "reach: `to_string` runs on a generated `Display`",
+    "reach: a top-level optional is printed",
+    "reach: a top-level optional is interpolated",
+    "reach: an optional is printed through `.to_string()`",
 ];
+
+/// The type under every `?` layer of `ty`.
+fn under_optionals(mut ty: Type) -> Type {
+    while let TypeKind::Optional(inner) = ty.kind() {
+        ty = inner;
+    }
+    ty
+}
+
+/// Whether `ty` is an array, an optional, an enum or a class: a type whose value `print` writes
+/// through a helper.
+fn is_compound(ty: Type) -> bool {
+    matches!(
+        ty.kind(),
+        TypeKind::Array(_) | TypeKind::Optional(_) | TypeKind::Enum(..) | TypeKind::Class(..)
+    )
+}
 
 /// Whether a program's text holds a form.
 type Holds = fn(&str) -> bool;
@@ -487,6 +524,9 @@ struct Walk {
     /// walked in it.
     bounds_of: Vec<Vec<Vec<String>>>,
     tir_bounds: Vec<Vec<String>>,
+    /// The type parameters that the function being walked prints, and compares with `==`.
+    printed_params: FxHashSet<Type>,
+    compared_params: FxHashSet<Type>,
     /// The methods of the `extend` blocks over a generic type, by `FuncId`.
     generic_blocks: FxHashSet<usize>,
     /// The conformances that hold when a bound of the block does: the class or enum that the block
@@ -534,9 +574,64 @@ impl Walk {
         self.conditional.clear();
         self.ast(&ast);
         self.tir(&tir);
+        self.built(tir);
         for (feature, holds) in TEXT {
             if holds(source) {
                 self.mark(feature);
+            }
+        }
+    }
+
+    /// The keys that the built mir shows: an `==`, `contains`, `print` or interpolation on a
+    /// compound value that may run a written method inside it, and one that cannot. The mir is
+    /// that of the program `mono` instantiates, as lowering makes it: `build` sets the same flags
+    /// and costs far more.
+    fn built(&mut self, program: tir::Program) {
+        let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
+        let mir = crate::mir::lowered(&program);
+        for function in &mir.functions {
+            for block in &function.blocks {
+                for stmt in &block.stmts {
+                    let crate::mir::Statement::Assign { value, .. } = stmt else {
+                        continue;
+                    };
+                    let (operands, calls, printed) = match value {
+                        crate::mir::Rvalue::Equal { lhs, calls, .. } => {
+                            (std::slice::from_ref(lhs), *calls, false)
+                        }
+                        crate::mir::Rvalue::Contains { base, calls, .. } => {
+                            (std::slice::from_ref(base), *calls, false)
+                        }
+                        crate::mir::Rvalue::Print { operand, calls, .. } => {
+                            (std::slice::from_ref(operand), *calls, true)
+                        }
+                        crate::mir::Rvalue::Interpolate { parts, calls, .. } => {
+                            (&parts[..], *calls, false)
+                        }
+                        _ => continue,
+                    };
+                    // A whole local is all that tells the type here.
+                    let compound = operands.iter().any(|operand| {
+                        let local = match operand {
+                            crate::mir::Operand::Use(l) => *l,
+                            crate::mir::Operand::Read(place) if place.projections.is_empty() => {
+                                place.local
+                            }
+                            _ => return false,
+                        };
+                        is_compound(function.locals[local.0].ty)
+                    });
+                    if calls {
+                        self.mark("reach: an `==` or `print` runs a written method inside a value");
+                        if printed {
+                            self.mark("reach: `print` runs a written `to_string` inside a value");
+                        }
+                    } else if compound {
+                        self.mark(
+                            "reach: an `==` or `print` on a compound value runs no written method",
+                        );
+                    }
+                }
             }
         }
     }
@@ -685,7 +780,8 @@ impl Walk {
     fn ast_enum(&mut self, e: &ast::Enum) {
         self.mark("ast::Item::Enum");
         self.bounds(&e.type_params);
-        self.listed(&e.conforms, &e.assoc);
+        let methods: Vec<&str> = (e.methods.iter()).map(|f| f.name.name.as_str()).collect();
+        self.listed(&e.conforms, &e.assoc, (&methods, true));
         for field in e.variants.iter().flat_map(|v| v.payload.iter().flatten()) {
             self.type_expr(&field.ty);
         }
@@ -706,7 +802,13 @@ impl Walk {
             self.mark("reach: a generic class has a bound");
         }
         self.bounds(&c.type_params);
-        self.listed(&c.conforms, &c.assoc);
+        let methods: Vec<&str> = (c.members.iter())
+            .filter_map(|member| match member {
+                ast::Member::Method(f) => Some(f.name.name.as_str()),
+                ast::Member::Field(_) => None,
+            })
+            .collect();
+        self.listed(&c.conforms, &c.assoc, (&methods, false));
         self.owner_bounds = written_bounds(&c.type_params);
         for member in &c.members {
             match member {
@@ -717,6 +819,9 @@ impl Walk {
                 }
                 ast::Member::Method(f) => {
                     self.mark("ast::Member::Method");
+                    if f.name.name.as_str() == "to_string" {
+                        self.mark("reach: a class gets `Display` through a `to_string` method");
+                    }
                     if names_self_in(f) {
                         self.mark("reach: a class method names `Self`");
                     }
@@ -759,12 +864,27 @@ impl Walk {
     }
 
     /// Walks the interfaces a class or an enum lists after its name, and the associated types it
-    /// chooses.
-    fn listed(&mut self, conforms: &[ast::TypeExpr], assoc: &[ast::AssocChoice]) {
+    /// chooses. `methods` are the names of its methods, and whether it is an enum: `Display`, and
+    /// `Eq` of an enum, listed with no method to meet it are conformances that the compiler
+    /// writes.
+    fn listed(
+        &mut self,
+        conforms: &[ast::TypeExpr],
+        assoc: &[ast::AssocChoice],
+        (methods, is_enum): (&[&str], bool),
+    ) {
         if !conforms.is_empty() {
             self.mark("reach: a conformance is in a declaration list");
         }
         for interface in conforms {
+            let generated = match interface.to_string().as_str() {
+                "Display" => !methods.contains(&"to_string"),
+                "Eq" => is_enum && !methods.contains(&"eq"),
+                _ => false,
+            };
+            if generated {
+                self.mark("reach: a declaration names a generated conformance");
+            }
             self.type_expr(interface);
         }
         self.choices(assoc);
@@ -785,6 +905,9 @@ impl Walk {
         for bound in params.iter().flat_map(|p| &p.bounds) {
             if matches!(bound.kind, ast::TypeKind::Applied(_)) {
                 self.mark("reach: a bound has interface arguments");
+            }
+            if ["Display", "Eq", "Ord", "AnyObject"].contains(&bound.to_string().as_str()) {
+                self.mark("reach: a bound names a language interface");
             }
             self.type_expr(bound);
         }
@@ -1774,6 +1897,8 @@ impl Walk {
         }
         for (at, function) in program.functions.iter().enumerate() {
             self.tir_bounds.clone_from(&self.bounds_of[at]);
+            self.printed_params.clear();
+            self.compared_params.clear();
             self.ty(function.ret);
             for local in &function.locals {
                 self.ty(local.ty);
@@ -1833,6 +1958,14 @@ impl Walk {
         self.mark("reach: an `Option`-shaped enum has a niche");
         if field.boxed && field.ty.inline_enum().is_some_and(|held| held.0 == id) {
             self.mark("reach: an `Option`-shaped enum holds itself");
+        }
+    }
+
+    /// Marks the function being walked as one that prints and compares the type parameter `ty`,
+    /// once it has done both.
+    fn both_param(&mut self, ty: Type) {
+        if self.printed_params.contains(&ty) && self.compared_params.contains(&ty) {
+            self.mark("reach: one function prints and compares a type parameter");
         }
     }
 
@@ -2040,6 +2173,12 @@ impl Walk {
             tir::ExprKind::Local(_) => self.mark("tir::ExprKind::Local"),
             tir::ExprKind::Call { func, types, args } => {
                 self.mark("tir::ExprKind::Call");
+                // An operator on a class or an enum with a written conformance is a call of its
+                // method.
+                let name = &self.function_names[func.0];
+                if matches!(name.rsplit('.').next(), Some("eq" | "less")) {
+                    self.mark("reach: an operator calls a written `eq` or `less`");
+                }
                 if self.generic_blocks.contains(&func.0) {
                     self.mark("reach: a generic `extend` block is called");
                 }
@@ -2112,6 +2251,16 @@ impl Walk {
                     tir::Stream::Stdout => "tir::Stream::Stdout",
                     tir::Stream::Stderr => "tir::Stream::Stderr",
                 });
+                if is_compound(operand.ty) {
+                    self.mark("reach: `print` writes a compound value");
+                }
+                if matches!(operand.ty.kind(), TypeKind::Optional(_)) {
+                    self.mark("reach: a top-level optional is printed");
+                }
+                if matches!(operand.ty.kind(), TypeKind::Param(..)) {
+                    self.printed_params.insert(operand.ty);
+                    self.both_param(operand.ty);
+                }
                 self.tir_expr(operand, Parent::Other);
             }
             tir::ExprKind::Panic(message) => {
@@ -2143,6 +2292,9 @@ impl Walk {
             tir::ExprKind::Sum(base) => self.receiver_call("tir::ExprKind::Sum", base),
             tir::ExprKind::Contains { base, value } => {
                 self.receiver_call("tir::ExprKind::Contains", base);
+                if matches!(base.ty.kind(), TypeKind::Array(element) if element.has_param()) {
+                    self.mark("reach: an operator runs on a bounded type parameter");
+                }
                 self.tir_expr(value, Parent::Other);
             }
             tir::ExprKind::Math { op, operands } => self.math(e, *op, operands, parent),
@@ -2170,8 +2322,31 @@ impl Walk {
                 self.tir_expr(lhs, Parent::Other);
                 self.tir_expr(rhs, Parent::Other);
             }
-            tir::ExprKind::Interpolate { parts, .. } => {
+            tir::ExprKind::Interpolate { parts, formats } => {
                 self.mark("tir::ExprKind::Interpolate");
+                if parts.iter().any(|part| is_compound(part.ty)) {
+                    self.mark("reach: an interpolation writes a compound part");
+                }
+                // A call of `to_string` on a type whose `Display` the compiler writes is an
+                // interpolation of one part, with the span of the call. The tree has no other
+                // mark of it, so the key reads the text of the span: `generated_display` must keep
+                // the span of the call, or the key never fires and the REACH table fails.
+                let call = matches!((&parts[..], &formats[..]), ([_], []))
+                    && self.source[e.span.range()].ends_with(".to_string()");
+                if call {
+                    self.mark("reach: `to_string` runs on a generated `Display`");
+                }
+                // `"{x}"` and `x.to_string()` have the same tree, so the text tells them apart.
+                if parts
+                    .iter()
+                    .any(|part| matches!(part.ty.kind(), TypeKind::Optional(_)))
+                {
+                    self.mark(if call {
+                        "reach: an optional is printed through `.to_string()`"
+                    } else {
+                        "reach: a top-level optional is interpolated"
+                    });
+                }
                 self.tir_exprs(parts);
             }
             tir::ExprKind::Concat { lhs, rhs } => {
@@ -2181,15 +2356,39 @@ impl Walk {
             }
             tir::ExprKind::Compare { operands, .. } => {
                 self.mark("tir::ExprKind::Compare");
+                if operands.first().is_some_and(|first| first.ty.has_param()) {
+                    self.mark("reach: an operator runs on a bounded type parameter");
+                }
                 self.tir_exprs(operands);
             }
             tir::ExprKind::Equal { lhs, rhs, .. } => {
                 self.mark("tir::ExprKind::Equal");
+                // A class has no `Eq`: only the comparison with `None` is left of it.
+                let none = matches!(lhs.kind, tir::ExprKind::None)
+                    || matches!(rhs.kind, tir::ExprKind::None);
+                if none && matches!(under_optionals(lhs.ty).kind(), TypeKind::Class(..)) {
+                    self.mark(IDENTITY);
+                }
+                // `x == None` on a `T?` calls nothing and needs no bound.
+                if lhs.ty.has_param()
+                    && !matches!(lhs.kind, tir::ExprKind::None)
+                    && !matches!(rhs.kind, tir::ExprKind::None)
+                {
+                    self.mark("reach: an operator runs on a bounded type parameter");
+                }
+                if matches!(lhs.ty.kind(), TypeKind::Param(..)) {
+                    self.compared_params.insert(lhs.ty);
+                    self.both_param(lhs.ty);
+                }
                 self.tir_expr(lhs, Parent::Other);
                 self.tir_expr(rhs, Parent::Other);
             }
             tir::ExprKind::Is { lhs, rhs } => {
                 self.mark("tir::ExprKind::Is");
+                self.mark(IDENTITY);
+                if matches!(under_optionals(lhs.ty).kind(), TypeKind::Param(..)) {
+                    self.mark("reach: `is` runs on a type parameter");
+                }
                 self.tir_expr(lhs, Parent::Other);
                 self.tir_expr(rhs, Parent::Other);
             }
@@ -2834,7 +3033,7 @@ fn the_ast_walk_should_mark_what_interfaces_and_extend_blocks_hold() {
 }
 
 /// A program may declare as many interfaces as `MAX_INTERFACES` and give one as many requirements
-/// as `MAX_REQUIREMENTS`.
+/// as `MAX_REQUIREMENTS`. `Pinned`, which `shapes` declares at a fixed place, is not one of them.
 #[test]
 fn generated_interfaces_should_reach_their_maxima() {
     let (mut most, mut requirements) = (0, 0);
@@ -2844,7 +3043,9 @@ fn generated_interfaces_should_reach_their_maxima() {
             .items
             .iter()
             .filter_map(|item| match item {
-                ast::Item::Interface(interface) => Some(interface),
+                ast::Item::Interface(interface) if interface.name.name.as_str() != "Pinned" => {
+                    Some(interface)
+                }
                 _ => None,
             })
             .collect();
@@ -3068,7 +3269,7 @@ fn with_funcs(data: &[u8]) -> Gen<'_> {
     for (name, ret) in [
         ("f1", Ty::I64),
         ("f2", Ty::Unit),
-        ("f3", Ty::Array(Box::new(Ty::I64))),
+        ("f3", Ty::Optional(Box::new(Ty::I64))),
     ] {
         g.scope.funcs.push(Func {
             name: name.to_string(),
@@ -3097,11 +3298,11 @@ fn a_return_gives_a_value_where_its_function_returns_one() {
 }
 
 #[test]
-fn main_prints_or_discards_what_a_call_returns() {
+fn main_should_print_what_a_call_returns_but_unit() {
     // Byte by byte: one statement in `main`, a call, of the function the third byte names, at
-    // depth 0 once the bytes run out. A value is printed, an array discarded, and a `unit`
-    // call stands alone; the statement gives back the fuel it did not spend.
-    for (callee, line) in [(0, "print(f1(0))"), (1, "f2(0)"), (2, "let _ = f3(0)")] {
+    // depth 0 once the bytes run out. A value is printed, an optional too, and a `unit` call
+    // stands alone; the statement gives back the fuel it did not spend.
+    for (callee, line) in [(0, "print(f1(0))"), (1, "f2(0)"), (2, "print(f3(0))")] {
         let data = [1, 1, callee];
         let mut g = with_funcs(&data);
         g.main_stmts();
@@ -5986,6 +6187,10 @@ fn generated_shapes_should_call_every_requirement_of_a_conformed_interface() {
             // The interface without its arguments.
             let written = interface.to_string();
             let name = written.split('<').next().unwrap_or_default();
+            // The language interfaces are the prelude's, and the program declares none.
+            if ["Display", "Eq", "Ord", "AnyObject"].contains(&name) {
+                continue;
+            }
             let requirements = program.items.iter().find_map(|item| match item {
                 ast::Item::Interface(i) if i.name.name.as_str() == name => Some(&i.methods),
                 _ => None,
@@ -6212,5 +6417,230 @@ fn generated_requirements_should_name_every_kind_of_type() {
             kinds.contains(kind),
             "no requirement names {kind}: {kinds:?}"
         );
+    }
+}
+
+/// The seeds between them bound a type parameter by each language interface, and name a
+/// conformance that the compiler writes, in a class and in an enum.
+#[test]
+fn generated_programs_should_name_each_language_interface() {
+    let mut wanted = FxHashMap::from_iter([
+        ("fn lang_eq<T: Eq>", false),
+        ("fn lang_ord<T: Ord>", false),
+        ("fn lang_display<T: Display>", false),
+        ("fn lang_same<T: AnyObject>", false),
+        ("fn lang_pinned<T: Pinned>", false),
+        ("lang_eq(N0.A)", false),
+        ("fn to_string(self) -> string", false),
+    ]);
+    let (mut class, mut enumeration) = (false, false);
+    for data in seeds() {
+        let text = generate(&data).plain;
+        for (form, seen) in &mut wanted {
+            *seen |= text.contains(form);
+        }
+        let lines = || text.lines();
+        class |= lines().any(|l| l.starts_with("class K") && l.contains(": Display {"));
+        enumeration |= lines().any(|l| {
+            l.starts_with("enum E") && (l.contains(": Eq {") || l.contains(": Display {"))
+        });
+    }
+    for (form, seen) in wanted {
+        assert!(seen, "no seed writes {form}");
+    }
+    assert!(class, "no seed lists Display after a class");
+    assert!(enumeration, "no seed lists Eq or Display after an enum");
+}
+
+/// The walk marks what the language interfaces add: a class or an enum that lists `Display` or
+/// `Eq` with no method to meet it, a class that has a method `to_string`, and a bound that names
+/// a language interface; and not a listing that a method meets.
+#[test]
+fn the_ast_walk_should_mark_the_language_interfaces() {
+    let generated = "reach: a declaration names a generated conformance";
+    let to_string = "reach: a class gets `Display` through a `to_string` method";
+    let bound = "reach: a bound names a language interface";
+    for (src, key, marked) in [
+        ("class C: Display {}\n", generated, true),
+        ("enum E: Eq {\n    A\n}\n", generated, true),
+        ("class C: Eq {}\n", generated, false),
+        (
+            "enum E: Eq {\n    A\n    fn eq(self, other: E) -> bool {}\n}\n",
+            generated,
+            false,
+        ),
+        (
+            "class C: Display {\n    fn to_string(self) {}\n}\n",
+            generated,
+            false,
+        ),
+        ("class C: Named {}\n", generated, false),
+        ("class C {\n    fn to_string(self) {}\n}\n", to_string, true),
+        ("class C {\n    fn other(self) {}\n}\n", to_string, false),
+        ("fn f<T: Ord>(x: T) {}\n", bound, true),
+        ("fn f<T: Display>(x: T) {}\n", bound, true),
+        ("fn f<T: Named>(x: T) {}\n", bound, false),
+    ] {
+        let parsed = parser::parse(lexer::lex(src).expect("the source should lex"), false);
+        let mut walk = Walk::default();
+        walk.ast(&parsed.program);
+        assert_eq!(walk.seen.contains(key), marked, "{key} in {src}");
+    }
+}
+
+/// A class lists `Display` in one case of three, with no method to meet it, and writes a method
+/// `to_string` in another; an enum with no class in it lists `Eq`, and every other enum of
+/// three lists `Display`. None of it takes a byte.
+#[test]
+fn declarations_should_name_the_conformances_the_compiler_writes() {
+    let mut g = Gen::new(&[0; 64]);
+    let mut classes = Vec::new();
+    for _ in 0..5 {
+        let before = g.w.out.program.len();
+        g.class();
+        classes.push(g.w.out.program[before..].to_string());
+    }
+    let headers: Vec<&str> = classes
+        .iter()
+        .map(|c| c.lines().next().unwrap_or(""))
+        .collect();
+    assert_eq!(
+        headers,
+        [
+            "class K0: Display {",
+            "class K1 {",
+            "class K2 {",
+            "class K3: Display {",
+            "class K4 {"
+        ]
+    );
+    let to_string: Vec<bool> = (classes.iter())
+        .map(|c| c.contains("    fn to_string(self) -> string { \"k\" }"))
+        .collect();
+    assert_eq!(to_string, [false, true, false, false, true]);
+    let mut g = Gen::new(&[0; 64]);
+    let mut headers = Vec::new();
+    for _ in 0..6 {
+        let before = g.w.out.program.len();
+        g.enumeration();
+        let text = &g.w.out.program[before..];
+        headers.push(text.lines().next().unwrap_or("").to_string());
+    }
+    assert_eq!(
+        headers,
+        [
+            "enum E0: Eq {",
+            "enum E1: Display {",
+            "enum E2: Eq {",
+            "enum E3 {",
+            "enum E4: Eq {",
+            "enum E5 {"
+        ]
+    );
+}
+
+/// `eq_type` gives a type with no class in it: a draw that holds one is dropped and drawn again.
+/// The one byte of data first draws the class, then runs out and draws `i64`.
+#[test]
+fn eq_type_should_pick_no_type_with_a_class() {
+    let mut g = Gen::new(&[6]);
+    g.scope.types.push(Ty::class(0, 1));
+    let drawn = g.bare_type();
+    assert!(
+        g.scope.contains_class(&drawn),
+        "the first draw should hold a class: {drawn}"
+    );
+    let mut g = Gen::new(&[6]);
+    g.scope.types.push(Ty::class(0, 1));
+    let ty = g.eq_type();
+    assert!(!g.scope.contains_class(&ty), "{ty}");
+}
+
+/// A function that prints and compares one type parameter marks its key; one that does only one
+/// of the two, or prints one parameter and compares another, does not.
+#[test]
+fn the_walk_should_mark_a_function_that_prints_and_compares_one_parameter() {
+    let key = "reach: one function prints and compares a type parameter";
+    for (function, marked) in [
+        (
+            "fn f<T: Display & Eq>(x: T) { print(x)\n    print(x == x) }",
+            true,
+        ),
+        ("fn f<T: Display & Eq>(x: T) { print(x == x) }", false),
+        ("fn f<T: Display & Eq>(x: T) { print(x) }", false),
+        (
+            "fn f<T: Display, U: Eq>(x: T, y: U) { print(x)\n    print(y == y) }\nfn g() { f(1, 2) }",
+            false,
+        ),
+        // The same `T` in two functions: each function starts with nothing printed or compared.
+        (
+            "fn f<T: Display>(x: T) { print(x) }\nfn g<T: Eq>(x: T) { print(x == x) }",
+            false,
+        ),
+    ] {
+        let mut walk = Walk::default();
+        walk.program(&format!("{function}\nfn main() {{ print(1) }}"));
+        assert_eq!(walk.seen.contains(key), marked, "{key} in {function}");
+    }
+}
+
+/// The keys of the operators: one on a bounded type parameter (but not `x == None`, which needs
+/// no bound), one that calls a written `eq` or `less`, and the two that the built mir shows, for
+/// an `==` on a compound value that may run a written method and one that cannot.
+#[test]
+fn the_walk_should_mark_the_operator_keys() {
+    const RANKED: &str = "class Ranked: Eq, Ord {\n    r: i64\n    fn eq(self, other: Self) -> bool { self.r == other.r }\n    fn less(self, other: Self) -> bool { self.r < other.r }\n}\n";
+    let bounded = "reach: an operator runs on a bounded type parameter";
+    let written = "reach: an operator calls a written `eq` or `less`";
+    let inside = "reach: an `==` or `print` runs a written method inside a value";
+    let plain = "reach: an `==` or `print` on a compound value runs no written method";
+    for (body, expected) in [
+        (
+            "fn f<T: Eq>(x: T) -> bool { x == x }\nfn main() { print(f(1)) }",
+            vec![bounded],
+        ),
+        (
+            "fn f<T: Ord>(x: T) -> bool { x < x }\nfn main() { print(f(1)) }",
+            vec![bounded],
+        ),
+        (
+            "fn f<T: Eq>(xs: [T], x: T) -> bool { xs.contains(x) }\nfn main() { print(f([1], 1)) }",
+            vec![bounded, plain],
+        ),
+        (
+            "fn f<T>(x: T?) -> bool { x == None }\nfn main() { print(f(1)) }",
+            vec![plain],
+        ),
+        (
+            "fn main() {\n    let a = Ranked(r: 1)\n    let b = Ranked(r: 2)\n    print(a == b)\n}",
+            vec![written],
+        ),
+        (
+            "fn main() {\n    let a = Ranked(r: 1)\n    let b = Ranked(r: 2)\n    print(a < b)\n}",
+            vec![written],
+        ),
+        (
+            "fn main() {\n    let a = [Ranked(r: 1)]\n    let b = [Ranked(r: 2)]\n    print(a == b)\n}",
+            vec![inside],
+        ),
+        (
+            "fn main() {\n    let a = [Ranked(r: 1)]\n    print(a.contains(Ranked(r: 1)))\n}",
+            vec![inside],
+        ),
+        (
+            "fn main() {\n    let a = [1]\n    let b = [2]\n    print(a == b)\n}",
+            vec![plain],
+        ),
+        ("fn main() {\n    print(1 == 2)\n}", vec![]),
+    ] {
+        let mut walk = Walk::default();
+        walk.program(&format!("{RANKED}{body}"));
+        for key in [bounded, written, inside, plain] {
+            assert_eq!(
+                walk.seen.contains(key),
+                expected.contains(&key),
+                "{key} in {body}"
+            );
+        }
     }
 }

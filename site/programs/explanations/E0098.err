@@ -1,10 +1,8 @@
-error[E0098]: cannot interpolate `[i64]`
- --> E0098.sisu:3:13
+error[E0098]: cannot interpolate `unit`
+ --> E0098.sisu:6:19
   |
-3 |     print("{xs}")
-  |             ^^
-  |
-  = help: build the text in a `for` loop
+6 |     print("Hello {greet()}")
+  |                   ^^^^^^^
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0098

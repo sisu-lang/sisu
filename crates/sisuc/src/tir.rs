@@ -25,8 +25,18 @@ pub(crate) struct ClassId(pub(crate) usize);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct EnumId(pub(crate) usize);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub(crate) struct InterfaceId(pub(crate) usize);
+
+/// The prelude's four language interfaces, which the compiler maps operators, `print` and
+/// interpolation to by name. Only the checker sets them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LangInterfaces {
+    pub(crate) display: InterfaceId,
+    pub(crate) eq: InterfaceId,
+    pub(crate) ord: InterfaceId,
+    pub(crate) any_object: InterfaceId,
+}
 
 /// `==` and `!=` are `ExprKind::Equal`, comparisons are `ExprKind::Compare`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,9 +133,11 @@ pub(crate) struct Program {
     pub(crate) interfaces: Vec<Interface>,
     /// Every conformance of a class or an enum to an interface. Only the checker sets it.
     pub(crate) conformances: Conformances,
-    /// Where each choice that writes an associated type is written: `mono` reports a walk that it
-    /// cannot end there. Only the checker sets it.
+    /// Where each choice that writes an associated type or a type parameter is written: `mono`
+    /// reports a walk that it cannot end there. Only the checker sets it.
     pub(crate) choice_ats: FxHashMap<ChoicePlace, Span>,
+    /// Where the language interfaces are among `interfaces`. Only the checker sets it.
+    pub(crate) lang: LangInterfaces,
 }
 
 /// An interface, as the typed tree names it.
@@ -148,7 +160,8 @@ pub(crate) type ChoicePlace = (InterfaceId, usize, usize);
 /// interface's requirements, the method that meets each; the list is complete only in a program
 /// that checks without an error. `assoc` holds, in the order of the interface's associated types,
 /// the type that the conformance chooses for each, over the same type parameters as `target`;
-/// `None` where it chooses none, which is an error.
+/// `None` where it chooses none, which is an error. `bounds` holds the bounds of each of the
+/// block's type parameters, in order; it is empty when no parameter has one.
 #[derive(Clone, Debug)]
 pub(crate) struct Conformance {
     pub(crate) type_params: usize,
@@ -156,6 +169,15 @@ pub(crate) struct Conformance {
     pub(crate) args: TypeArgs,
     pub(crate) methods: Vec<FuncId>,
     pub(crate) assoc: Vec<Option<Type>>,
+    pub(crate) bounds: Vec<Vec<ParamBound>>,
+}
+
+/// A bound of a type parameter of a conformance block: the interface and its arguments (without
+/// `Self`), over the same type parameters as the block's target.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ParamBound {
+    pub(crate) interface: InterfaceId,
+    pub(crate) args: TypeArgs,
 }
 
 /// The conformances of a program, by interface. A target without parameters is indexed by its
@@ -286,6 +308,9 @@ pub(crate) struct Variant {
 #[derive(Clone, Debug)]
 pub(crate) struct Payload {
     pub(crate) ty: Type,
+    /// The label the declaration gives the field (`w` in `Rect(w: i64, h: i64)`), which a
+    /// printed value writes before the field.
+    pub(crate) label: Option<String>,
     pub(crate) boxed: bool,
     pub(crate) rank: Rank,
 }
@@ -435,12 +460,16 @@ pub(crate) struct Format {
 pub(crate) struct Pad {
     pub(crate) align: Align,
     pub(crate) width: u16,
+    /// The spec has no alignment and the part's type is a type parameter or an associated type,
+    /// so `align` is only a stand-in: `mono` sets the default of the type argument, a number on
+    /// the right and any other value on the left, and clears the flag.
+    pub(crate) by_type: bool,
 }
 
 /// The format as a spec: `>8.2`.
 impl fmt::Display for Format {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(Pad { align, width }) = self.pad {
+        if let Some(Pad { align, width, .. }) = self.pad {
             write!(f, "{}{width}", align.char())?;
         }
         if let Some(precision) = self.precision {
@@ -1525,16 +1554,6 @@ impl Printer<'_> {
 }
 
 impl Program {
-    /// The field drop follows in a loop: the last, in declaration order, whose type is
-    /// `class` or `class?`.
-    pub(crate) fn chain_field(&self, class: ClassId) -> Option<usize> {
-        let own = Type::intern(TypeKind::Class(class, TypeArgs::NONE));
-        self.classes[class.0].fields.iter().rposition(|field| {
-            field.ty == own
-                || matches!(field.ty.kind(), TypeKind::Optional(payload) if payload == own)
-        })
-    }
-
     /// A type as `--emit tir` prints it: a class or an enum by its name.
     pub(crate) fn type_name(&self, ty: Type) -> String {
         let mut name = String::new();
@@ -1872,7 +1891,7 @@ mod tests {
 
     /// `match s { Running(c) => c  Idle => 0  _ => 1 }` over `enum State { Idle  Running(i64) }`.
     #[test]
-    fn prints_match() {
+    fn tir_should_print_a_match_over_an_enum() {
         let state = Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE));
         let pattern = |kind| Pattern {
             kind,
@@ -1930,6 +1949,7 @@ mod tests {
                         name: "Running".into(),
                         fields: vec![Payload {
                             ty: Type::I64,
+                            label: None,
                             boxed: false,
                             rank: Rank::Plain,
                         }],
@@ -2481,7 +2501,7 @@ mod tests {
     }
 
     #[test]
-    fn prints_interpolation_with_formats() {
+    fn interpolation_should_print_each_format_with_its_part() {
         // fn f(n: i64, x: f64) { print("a{n:^4}{x:.3}{n:<10.0}") }, as if the checker allowed
         // the last precision.
         let n = || expr(ExprKind::Local(LocalId(0)), Type::I64);
@@ -2491,7 +2511,13 @@ mod tests {
             expr(ExprKind::Local(LocalId(1)), Type::F64),
             n(),
         ];
-        let pad = |align, width| Some(Pad { align, width });
+        let pad = |align, width| {
+            Some(Pad {
+                align,
+                width,
+                by_type: false,
+            })
+        };
         let formats = vec![
             Format {
                 part: 1,
@@ -2654,57 +2680,6 @@ mod tests {
             ty: Type::I64,
         };
         expr(ExprKind::Block(block), Type::I64)
-    }
-
-    #[test]
-    fn chain_field_is_the_last_own_type_field() {
-        let field = |name: &str, ty: Type| Field {
-            name: name.into(),
-            ty,
-            mutable: false,
-        };
-        let class = |name: &str, fields: Vec<Field>| Class {
-            name: name.into(),
-            type_params: Vec::new(),
-            fields,
-        };
-        let optional =
-            |id: usize| Type::optional(Type::intern(TypeKind::Class(ClassId(id), TypeArgs::NONE)));
-        let program = Program {
-            classes: vec![
-                class(
-                    "Node",
-                    vec![field("value", Type::I64), field("next", optional(0))],
-                ),
-                class(
-                    "Tree",
-                    vec![
-                        field("left", optional(1)),
-                        field("right", optional(1)),
-                        field("v", Type::I64),
-                    ],
-                ),
-                class(
-                    "Rev",
-                    vec![
-                        field("next", optional(2)),
-                        field("value", Type::I64),
-                        field(
-                            "tag",
-                            Type::intern(TypeKind::Class(ClassId(3), TypeArgs::NONE)),
-                        ),
-                    ],
-                ),
-                class("Tag", vec![]),
-                class("A", vec![field("b", optional(5))]),
-                class("B", vec![field("a", optional(4))]),
-            ],
-            enums: vec![],
-            functions: vec![],
-            ..Program::default()
-        };
-        let chains = [0, 1, 2, 4].map(|id| program.chain_field(ClassId(id)));
-        assert_eq!(chains, [Some(1), Some(1), Some(0), None]);
     }
 
     #[test]

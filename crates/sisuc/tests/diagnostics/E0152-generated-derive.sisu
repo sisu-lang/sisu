@@ -1,0 +1,12 @@
+class Node {
+    id: i64
+}
+
+enum Holder: Eq {
+    One(Node)
+    Empty
+}
+
+fn main() {
+    print(Node(id: 1).id)
+}

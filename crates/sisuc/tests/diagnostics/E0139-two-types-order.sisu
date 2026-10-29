@@ -1,0 +1,5 @@
+fn smaller<T, U>(a: T, b: U) -> bool {
+    a < b
+}
+
+fn main() {}

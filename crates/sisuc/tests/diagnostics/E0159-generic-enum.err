@@ -1,0 +1,10 @@
+error[E0159]: `Wide<T>` has no `==`, since `Node` has none
+  --> E0159-generic-enum.sisu:11:5
+   |
+11 |     a == b
+   |     ^ this has type `Wide<T>`
+   |
+   = help: make `Node` conform to `Eq`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0159

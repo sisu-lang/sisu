@@ -1,0 +1,30 @@
+// An enum that holds a class with a written `Eq` runs that `eq` in its `==`: directly, in an array
+// and in another enum. The comparison prints `Holder.eq` whether or not the program has a generic
+// item: `mono` takes its fast path without one and its slow path with one, and both must find the
+// record of `Holder`.
+class Holder: Eq {
+    _n: i64
+    fn eq(self, _other: Self) -> bool {
+        print("Holder.eq")
+        false
+    }
+}
+
+enum Outer {
+    Has(Holder)
+}
+
+enum Cover {
+    One(Outer)
+}
+
+fn _id<T>(x: T) -> T {
+    x
+}
+
+fn main() {
+    let o = Outer.Has(Holder(_n: 1))
+    print(o == o)
+    print([o] == [o])
+    print(Cover.One(o) == Cover.One(o))
+}

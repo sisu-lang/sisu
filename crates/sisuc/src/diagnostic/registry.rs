@@ -114,7 +114,6 @@ codes! {
     MethodNotField = "E0057",
     FieldNotMethod = "E0058",
     PrintArgument = "E0059",
-    PrintArray = "E0060",
     PrintNever = "E0061",
     MayBeNone = "E0062",
     NoMember = "E0063",
@@ -212,6 +211,8 @@ codes! {
     CannotExtend = "E0155",
     Ambiguous = "E0156",
     BoundTooWide = "E0157",
+    ClassOnly = "E0158",
+    NoOperator = "E0159",
     NanComparison = "W0005",
     UnreachableArm = "W0006",
     RedundantSemicolon = "W0007",
@@ -222,6 +223,7 @@ codes! {
     UnusedItem | UnusedBlock = "W0012",
     UnusedMember = "W0013",
     UnusedVariable = "W0014",
+    PrintsOptional = "W0015",
 }
 
 /// Codes the compiler no longer reports, and their explanations (`docs/diagnostics/README.md`,
@@ -234,6 +236,10 @@ pub(crate) const RETIRED: &[(&str, &str)] = &[
     (
         "E0014",
         include_str!("../../../../docs/diagnostics/E0014.md"),
+    ),
+    (
+        "E0060",
+        include_str!("../../../../docs/diagnostics/E0060.md"),
     ),
 ];
 
@@ -420,6 +426,28 @@ pub(crate) enum DiagnosticKind {
         limit: usize,
         at: Span,
     },
+    /// The conformance of the type `ty` to `AnyObject`, whose name is at `at`, though only a class
+    /// conforms to it. `via` is the interface that inherits `AnyObject`, and where, when `ty`
+    /// does not write the conformance itself.
+    ClassOnly {
+        ty: String,
+        at: Span,
+        via: Option<(String, Span)>,
+    },
+    /// The operator `op` on the operand at `at`, of the concrete type `ty`, which has none: the
+    /// interface of the operator is missing from `ty`, or from the part `leaf` of it. For a
+    /// `contains` on the array at `at`, `ty` is the element type.
+    NoOperator {
+        ty: String,
+        op: String,
+        at: Span,
+        /// The part of `ty` that has none, when it is not `ty` itself.
+        leaf: Option<String>,
+        form: NoOperatorForm,
+        /// A conformance that the type has already, whose bound fails: the bound as written
+        /// there, and where it is.
+        needs: Option<(String, Span)>,
+    },
     /// A call of the method `method` of `receiver`, at `at`, that more than one conformance
     /// could answer: those of `interfaces`. `annotate` is the `let` that picks one.
     Ambiguous {
@@ -539,12 +567,14 @@ pub(crate) enum DiagnosticKind {
     /// path of the other side as written.
     IsTestsNone { tested: Option<String>, at: Span },
     /// An `is` whose operand at `at`, of type `found`, is no object. `help` when `==` may
-    /// compare it: its type names no type parameter. `peel`, for an optional of an optional, is
-    /// the `is` with one layer of that operand taken off, as written.
+    /// compare it: its type names no type parameter. `add`, for a type parameter in scope, is
+    /// the bound that makes it an object. `peel`, for an optional of an optional, is the `is`
+    /// with one layer of that operand taken off, as written.
     IsNeedsObjects {
         found: String,
         at: Span,
         help: bool,
+        add: Option<AddBound>,
         peel: Option<String>,
     },
     /// A comparison at `at` of a `left` with a `right`.
@@ -659,19 +689,11 @@ pub(crate) enum DiagnosticKind {
         owner: String,
         at: Span,
     },
-    /// A call of `function` (`print` or `eprint`) at `at` with no argument, several, or one it
-    /// cannot print. `class` is the class or enum of an object or enum argument, and `at` is
-    /// then that argument.
+    /// A call of `function` (`print` or `eprint`) at `at` with no argument or several, or one that
+    /// returns nothing.
     PrintArgument {
         function: &'static str,
-        at: Span,
-        class: Option<String>,
-    },
-    /// The argument at `at` of a call of `function`, of the array type `ty` or an optional of one.
-    PrintArray {
-        function: &'static str,
-        ty: String,
-        optional: bool,
+        problem: PrintProblem,
         at: Span,
     },
     /// The argument at `at` of a call of `function`, which never finishes.
@@ -805,13 +827,11 @@ pub(crate) enum DiagnosticKind {
     EmptyInterpolation { at: Span },
     /// The `//` at `at`, inside an interpolation.
     CommentInInterpolation { at: Span },
-    /// The interpolated value at `at`, of type `ty`, which interpolation cannot write as text;
-    /// `help` is the advice for its kind of type, if there is one.
-    CannotInterpolate {
-        ty: String,
-        help: Option<InterpolateHelp>,
-        at: Span,
-    },
+    /// The interpolated value at `at`, of type `ty`, which interpolation cannot write as text.
+    CannotInterpolate { ty: String, at: Span },
+    /// The printed or interpolated optional at `at`, which may print `None`. `value` is its path
+    /// as written, when it has one.
+    PrintsOptional { value: Option<String>, at: Span },
     /// The `todo` at `at`, which panics when it runs.
     TodoLeft { at: Span },
     /// A `todo` written as Rust's `todo!` or as `todo()`: `at` is the first extra token, and
@@ -861,12 +881,12 @@ pub(crate) enum DiagnosticKind {
     /// The format spec at `at`, its `:` included, whose width, when `width`, or else precision is
     /// above its limit.
     FormatSpecLimit { at: Span, width: bool },
-    /// The precision of the spec at `at` on a part of type `ty`, which is not `f64`; `fix` is the
-    /// part, when it is an `i64` that `f64(...)` converts.
+    /// The precision of the spec at `at` on a part of type `ty`, which is not `f64`; `help` says
+    /// what can take the precision, when something can.
     PrecisionNeedsF64 {
         ty: String,
         at: Span,
-        fix: Option<Span>,
+        help: Option<PrecisionHelp>,
     },
     /// The variant at `at`, which follows the method whose `fn` is at `first_method`.
     VariantAfterMethod { at: Span, first_method: Span },
@@ -1121,6 +1141,8 @@ pub(crate) enum DiagnosticKind {
         op: String,
         at: Span,
         contains: bool,
+        /// The bound that gives the operator, when the type parameter that lacks it is in scope.
+        add: Option<AddBound>,
     },
     /// The generic declaration `name`, which instantiates itself without end: `instance`, at
     /// `at`, gives a growing type argument, and `through` holds each other instantiation on the
@@ -1210,6 +1232,14 @@ pub(crate) enum ArgumentsForm {
     Value { compare: Option<String> },
     /// A variant of a generic enum, which takes its enum's: `instead` writes them on the enum.
     Variant { instead: Option<String> },
+}
+
+/// What is wrong with the argument of a `print` or `eprint` call.
+pub(crate) enum PrintProblem {
+    /// The call has no argument or several.
+    Count,
+    /// The argument has no value: it is a call that returns nothing.
+    NoValue,
 }
 
 /// Why `main`'s signature is wrong.
@@ -1337,15 +1367,6 @@ impl Panic {
 pub(crate) enum Literal {
     None,
     EmptyArray,
-}
-
-/// The advice for a value that interpolation cannot write as text.
-#[derive(Clone, Copy)]
-pub(crate) enum InterpolateHelp {
-    /// An array, or an optional of one.
-    ForLoop,
-    /// Any other optional.
-    Unwrap,
 }
 
 /// The statement or expression that unwraps an optional.
@@ -1566,6 +1587,16 @@ pub(crate) enum MismatchSource {
     Break(Span),
 }
 
+/// What helps a precision on a part that is not an `f64`.
+#[derive(Clone)]
+pub(crate) enum PrecisionHelp {
+    /// An `i64` part, which `f64(...)` converts: the part.
+    Convert(Span),
+    /// An `f64?` part, which `??` can give a default: the part and the spec, with its `:`, as
+    /// written; the part has parentheses when `??` needs them.
+    Default { part: String, spec: String },
+}
+
 /// A rewrite that would give a mismatched value the type expected.
 #[derive(Clone, Copy)]
 pub(crate) enum MismatchFix {
@@ -1705,8 +1736,12 @@ pub(crate) enum Owner {
 /// What is wrong with a conformance.
 #[derive(Clone)]
 pub(crate) enum ConformanceForm {
-    /// The signatures of the requirements that no method meets.
-    Missing(Vec<String>),
+    /// The signatures of the requirements that no method meets. `generated` says why the compiler
+    /// writes none for a language interface.
+    Missing {
+        signatures: Vec<String>,
+        generated: Option<Ungenerated>,
+    },
     /// The method `method`, written as `found` at the diagnostic's span, which the requirement
     /// `want` does not accept.
     Wrong {
@@ -1719,6 +1754,16 @@ pub(crate) enum ConformanceForm {
     NotRequirement { method: String, target: String },
     /// The choice of the associated type `name`, which none of the interfaces `of` declares.
     NotAssociated { name: String, of: Vec<String> },
+}
+
+/// Why the compiler writes no conformance of a language interface for a type.
+#[derive(Clone)]
+pub(crate) enum Ungenerated {
+    /// It writes none for the type at all: a class has no `Eq`, and nothing has an `Ord` but
+    /// the built-in numbers, `char` and `string`.
+    Never,
+    /// The rule for the type needs `leaf` to have the interface, and it has none.
+    Since(String),
 }
 
 /// Why an `extend` block cannot extend.
@@ -1743,10 +1788,11 @@ pub(crate) enum CannotExtendForm {
 #[derive(Clone)]
 pub(crate) enum NotConformForm {
     /// The type conforms to `via`, at the diagnostic's span, which requires `interface` at
-    /// `requires`. `extend` is the block that would add the conformance, when the type has none.
+    /// `requires`, nowhere a user can see for the prelude's. `extend` is the block that would add
+    /// the conformance, when the type has none.
     Inherited {
         via: String,
-        requires: Span,
+        requires: Option<Span>,
         extend: Option<String>,
         /// A conformance the type has already, whose bound fails: the bound as written there,
         /// and where it is.
@@ -1756,11 +1802,28 @@ pub(crate) enum NotConformForm {
     /// needs it. `add` is the bound that a type parameter would need.
     Bound {
         bound: Option<Span>,
+        /// Whether the interface is `AnyObject`, which only classes have.
+        class_only: bool,
         add: Option<AddBound>,
         /// A conformance the type has already, whose bound fails: the bound as written there,
         /// and where it is.
         needs: Option<(String, Span)>,
     },
+}
+
+/// What the report of a missing operator (`NoOperator`) says besides the missing operator.
+#[derive(Clone)]
+pub(crate) enum NoOperatorForm {
+    /// `==` or `!=` on a class, which compares by identity. The help shows `is` too.
+    Identity { make: String },
+    /// An operator of the type, with the help to make `make` conform to `interface`; no help when
+    /// the type has a conformance already.
+    Operator {
+        make: Option<String>,
+        interface: String,
+    },
+    /// A `contains` on an array whose element type has no `==`.
+    Contains { make: Option<String> },
 }
 
 /// A bound that a type parameter lacks: `param`, then every bound it would have, in order.
@@ -1800,6 +1863,8 @@ pub(crate) enum InterfaceBodyForm {
 pub(crate) enum BuiltIn {
     /// The name of a built-in type.
     Type,
+    /// The name of an interface the language declares: `Display`, `Eq`, `Ord` or `AnyObject`.
+    Interface,
     /// A keyword.
     Keyword,
     /// A constructor milestone 8's prelude takes: `Some`, `Ok` or `Err`.
@@ -2186,9 +2251,22 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 form,
             } => match form {
-                ConformanceForm::Missing(signatures) => {
-                    Diagnostic::coded(code, at, format!("`{ty}` does not meet `{interface}`"))
-                        .with_help(signatures.join("\n"))
+                ConformanceForm::Missing {
+                    signatures,
+                    generated,
+                } => {
+                    let d =
+                        Diagnostic::coded(code, at, format!("`{ty}` does not meet `{interface}`"));
+                    let d = match generated {
+                        None => d,
+                        Some(Ungenerated::Never) => {
+                            d.with_label(format!("`{ty}` gets no generated `{interface}`"))
+                        }
+                        Some(Ungenerated::Since(leaf)) => d.with_label(format!(
+                            "`{ty}` gets no generated `{interface}`, since `{leaf}` has none"
+                        )),
+                    };
+                    d.with_help(signatures.join("\n"))
                 }
                 ConformanceForm::Wrong {
                     method,
@@ -2251,10 +2329,11 @@ impl From<DiagnosticKind> for Diagnostic {
                         extend,
                         needs,
                     } => {
-                        let d = d.with_secondary(
-                            requires,
-                            format!("`{via}` requires `{interface}`"),
-                        );
+                        let note = format!("`{via}` requires `{interface}`");
+                        let d = match requires {
+                            Some(requires) => d.with_secondary(requires, note),
+                            None => d.with_label(note),
+                        };
                         let d = match needs {
                             Some((bound, at)) => {
                                 d.with_secondary(at, format!("this conformance needs `{bound}`"))
@@ -2266,7 +2345,17 @@ impl From<DiagnosticKind> for Diagnostic {
                             None => d,
                         }
                     }
-                    NotConformForm::Bound { bound, add, needs } => {
+                    NotConformForm::Bound {
+                        bound,
+                        class_only,
+                        add,
+                        needs,
+                    } => {
+                        let d = if class_only {
+                            d.with_label("only classes conform to `AnyObject`")
+                        } else {
+                            d
+                        };
                         let d = match bound {
                             Some(bound) => d.with_secondary(bound, "required by this bound"),
                             None => d,
@@ -2356,6 +2445,54 @@ impl From<DiagnosticKind> for Diagnostic {
                 "an interface that inherits one interface twice, with different arguments, \
                  doubles this number at each level",
             ),
+            DiagnosticKind::ClassOnly { ty, at, via } => {
+                let d = Diagnostic::coded(code, at, "only classes conform to `AnyObject`")
+                    .with_label(format!("`{ty}` is not a class"));
+                match via {
+                    Some((interface, at)) => {
+                        d.with_secondary(at, format!("`{interface}` inherits `AnyObject`"))
+                    }
+                    None => d,
+                }
+            }
+            DiagnosticKind::NoOperator {
+                ty,
+                op,
+                at,
+                leaf,
+                form,
+                needs,
+            } => {
+                let since = leaf.map(|leaf| format!(", since `{leaf}` has none"));
+                let (message, label, help) = match form {
+                    NoOperatorForm::Identity { make } => (
+                        format!("`{ty}` has no `{op}`; classes compare by identity"),
+                        format!("this has type `{ty}`"),
+                        Some(format!("use `a is b`, or make `{make}` conform to `Eq`")),
+                    ),
+                    NoOperatorForm::Operator { make, interface } => (
+                        format!("`{ty}` has no `{op}`{}", since.unwrap_or_default()),
+                        format!("this has type `{ty}`"),
+                        make.map(|make| format!("make `{make}` conform to `{interface}`")),
+                    ),
+                    NoOperatorForm::Contains { make } => (
+                        format!("`contains` needs `==` on `{ty}`{}", since.unwrap_or_default()),
+                        "`contains` compares elements with `==`".to_string(),
+                        make.map(|make| format!("make `{make}` conform to `Eq`")),
+                    ),
+                };
+                let d = Diagnostic::coded(code, at, message).with_label(label);
+                let d = match needs {
+                    Some((bound, at)) => {
+                        d.with_secondary(at, format!("this conformance needs `{bound}`"))
+                    }
+                    None => d,
+                };
+                match help {
+                    Some(help) => d.with_help(help),
+                    None => d,
+                }
+            }
             DiagnosticKind::NotAnInterface { written, at, kind } => Diagnostic::coded(
                 code,
                 at,
@@ -2443,6 +2580,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 match kind {
                     BuiltIn::Type => format!("`{name}` is a built-in type"),
+                    BuiltIn::Interface => format!("`{name}` is a built-in interface"),
                     BuiltIn::Constructor => format!("`{name}` is a built-in name"),
                     BuiltIn::Keyword => {
                         format!("`{name}` is a keyword; a variant cannot take its name")
@@ -2799,11 +2937,14 @@ impl From<DiagnosticKind> for Diagnostic {
                 found,
                 at,
                 help,
+                add,
                 peel,
             } => {
                 let d = Diagnostic::coded(code, at, format!("`is` needs objects; found `{found}`"));
                 if let Some(peel) = peel {
                     d.with_help(format!("peel one layer first: `{peel}`"))
+                } else if let Some(add) = add {
+                    d.with_help(add.help())
                 } else if help {
                     d.with_help("use `==` to compare values")
                 } else {
@@ -3027,31 +3168,16 @@ impl From<DiagnosticKind> for Diagnostic {
             ),
             DiagnosticKind::PrintArgument {
                 function,
+                problem,
                 at,
-                class,
-            } => {
-                let takes = format!("`{function}` takes one `i64`, `u8`, `f64`, `bool`, `char` or `string`");
-                match class {
-                    Some(class) => {
-                        Diagnostic::coded(code, at, format!("cannot {function} `{class}`"))
-                            .with_help(takes)
-                    }
-                    None => Diagnostic::coded(code, at, takes),
-                }
-            }
-            DiagnosticKind::PrintArray {
-                function,
-                ty,
-                optional,
+            } => Diagnostic::coded(
+                code,
                 at,
-            } => {
-                let help = if optional {
-                    format!("unwrap it with `if let`, then {function} each element in a `for` loop")
-                } else {
-                    format!("{function} each element in a `for` loop")
-                };
-                Diagnostic::coded(code, at, format!("cannot {function} `{ty}`")).with_help(help)
-            }
+                match problem {
+                    PrintProblem::Count => format!("`{function}` takes one value"),
+                    PrintProblem::NoValue => format!("the argument of `{function}` has no value"),
+                },
+            ),
             DiagnosticKind::PrintNever { function, at } => Diagnostic::coded(
                 code,
                 at,
@@ -3399,15 +3525,22 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::CommentInInterpolation { at } => {
                 Diagnostic::coded(code, at, "a comment cannot appear inside an interpolation")
             }
-            DiagnosticKind::CannotInterpolate { ty, help, at } => {
-                let d = Diagnostic::coded(code, at, format!("cannot interpolate `{ty}`"));
-                match help {
-                    Some(InterpolateHelp::ForLoop) => d.with_help("build the text in a `for` loop"),
-                    Some(InterpolateHelp::Unwrap) => {
-                        d.with_help("unwrap it with `if let`, or give a default with `??`")
-                    }
-                    None => d,
-                }
+            DiagnosticKind::CannotInterpolate { ty, at } => {
+                Diagnostic::coded(code, at, format!("cannot interpolate `{ty}`"))
+            }
+            DiagnosticKind::PrintsOptional { value, at } => {
+                let (subject, call) = match value {
+                    Some(path) => (format!("`{path}`"), format!("`{path}.to_string()`")),
+                    None => ("this value".to_string(), "`.to_string()` on the value".to_string()),
+                };
+                Diagnostic::coded(
+                    code,
+                    at,
+                    format!("{subject} can be `None`, and then this writes the word \"None\""),
+                )
+                .with_help(format!(
+                    "use `if let`, give a default with `??`, or call {call} to write \"None\" on purpose"
+                ))
             }
             DiagnosticKind::TodoLeft { at } => {
                 Diagnostic::coded(code, at, "`todo` panics when it runs")
@@ -3594,11 +3727,14 @@ impl From<DiagnosticKind> for Diagnostic {
                     "a precision is at most 30"
                 },
             ),
-            DiagnosticKind::PrecisionNeedsF64 { ty, at, fix } => {
+            DiagnosticKind::PrecisionNeedsF64 { ty, at, help } => {
                 let d = Diagnostic::coded(code, at, "precision needs an `f64`")
                     .with_label(format!("the value is `{ty}`"));
-                match fix {
-                    Some(operand) => d.with_fix(Fix {
+                match help {
+                    Some(PrecisionHelp::Default { part, spec }) => d.with_help(format!(
+                        "give a default with `??` first, for example `{{{part} ?? 0.0{spec}}}`"
+                    )),
+                    Some(PrecisionHelp::Convert(operand)) => d.with_fix(Fix {
                         message: "convert it with `f64(...)`".to_string(),
                         safe: true,
                         edits: vec![
@@ -4242,12 +4378,17 @@ impl From<DiagnosticKind> for Diagnostic {
                 op,
                 at,
                 contains,
+                add,
             } => {
                 let d = Diagnostic::coded(code, at, format!("`{ty}` has no `{op}`"));
-                if contains {
+                let d = if contains {
                     d.with_label("`contains` compares elements with `==`")
                 } else {
-                    d.with_label(format!("this is a `{ty}`"))
+                    d.with_label(format!("this has type `{ty}`"))
+                };
+                match add {
+                    Some(add) => d.with_help(add.help()),
+                    None => d,
                 }
             }
             DiagnosticKind::InstantiationCycle {

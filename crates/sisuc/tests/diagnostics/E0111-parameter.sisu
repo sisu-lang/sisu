@@ -1,0 +1,7 @@
+fn text<T>(x: T) -> string {
+    "{x:.2}"
+}
+
+fn main() {
+    print(text(1))
+}

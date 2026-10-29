@@ -2,8 +2,9 @@
 // value is its first variant with every field zero, so each release helper must release nothing
 // for a null string, a null object, a nested enum's zero value and a null box. `[e; 0]` releases
 // `e` once.
-class C {
+class C: Eq {
     n: i64
+    fn eq(self, other: Self) -> bool { self.n == other.n }
 }
 
 enum Inner {

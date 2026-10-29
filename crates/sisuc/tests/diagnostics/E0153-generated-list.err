@@ -1,0 +1,10 @@
+error[E0153]: `Circle` conforms to `Display` twice
+ --> E0153-generated-list.sisu:1:24
+  |
+1 | class Circle: Display, Display {
+  |               -------  ^^^^^^^
+  |               |
+  |               first conformance here
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0153

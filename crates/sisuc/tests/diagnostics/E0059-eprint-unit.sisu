@@ -1,0 +1,7 @@
+fn greet() {
+    print(1)
+}
+
+fn main() {
+    eprint(greet())
+}

@@ -32,7 +32,7 @@ use std::rc::Rc;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ast;
-use crate::conformance::StuckChoices;
+use crate::conformance::{self, StuckChoices};
 use crate::diagnostic::{
     BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, MainForm, MismatchFix,
     MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
@@ -45,7 +45,7 @@ use assoc::{Choice, Choices, Named};
 use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable};
 use extend::Extension;
-use interface::{Bound, InterfaceInfo, PendingBound, Required, Scope, Slot};
+use interface::{Bound, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};
 use prelude::PRELUDE;
 pub(crate) use unused_names::is_judged;
 use unused_names::{Owner, Pending, Use, Used};
@@ -147,6 +147,8 @@ struct ClassInfo {
     fields: Vec<FieldInfo>,
     /// The first method of each name, and every broken one.
     methods: FxHashMap<Symbol, Declared<tir::FuncId>>,
+    /// Whether a field is named `to_string`.
+    names_to_string: bool,
     /// The associated types the declaration's body chooses.
     assoc: Rc<Choices>,
 }
@@ -325,9 +327,6 @@ thread_local! {
     pub(super) static WRAP_LOOPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many type parameter names have been indexed or looked up on this thread.
     pub(super) static PARAM_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many types the walks for comparisons and for held type parameters have taken from
-    /// their stacks on this thread.
-    pub(super) static HELD_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many inherited interfaces the check for a requirement that an interface declares
     /// again has visited on this thread.
     pub(super) static INHERIT_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -341,6 +340,12 @@ thread_local! {
     /// How many times `conforms` has looked for the conformance of a class or an enum, not
     /// counting an answer it kept.
     pub(super) static CONFORMS_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The most steps `conforms` may count on this thread: the step that passes it panics, so a
+    /// test of a query that would take too many steps fails at once.
+    pub(super) static CONFORMS_BUDGET: std::cell::Cell<usize> = const { std::cell::Cell::new(usize::MAX) };
+    /// How many times `failing_leaf` has read a class or an enum for the part that fails, not
+    /// counting an answer it kept.
+    pub(super) static LEAF_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many conformances and choices the checks of the choices have read, or looked up by
     /// the name of an associated type, on this thread.
     pub(super) static CHOICE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -391,6 +396,8 @@ struct Checker<'src> {
     pending_bounds: Option<Vec<PendingBound>>,
     /// The type parameters in scope where a pending check was queued.
     scopes: Vec<Scope>,
+    /// The pending checks while `run_pending_bounds` runs them.
+    waiting: Option<Waiting>,
     /// Where each bound is written whose closure went past the limit and was reported.
     wide_reported: FxHashSet<Span>,
     /// A buffer for the walk of an interface closure, kept from one closure to the next.
@@ -416,8 +423,9 @@ struct Checker<'src> {
     /// The type parameters of each conformance that has bounded ones, with their bounds, by
     /// interface and place among the interface's: the class's or the block's.
     conformance_bounds: FxHashMap<(tir::InterfaceId, usize), ParamBounds>,
-    /// Where each choice that writes an associated type is written, by conformance (interface and
-    /// place among the interface's) and place of the associated type among the interface's.
+    /// Where each choice that writes an associated type or a type parameter is written, by
+    /// conformance (interface and place among the interface's) and place of the associated type
+    /// among the interface's.
     choice_ats: FxHashMap<tir::ChoicePlace, Span>,
     /// The choices that `normalize` found to need their own associated type, or too many steps,
     /// each with the first type found for it and why; reported once all bodies are checked (see
@@ -440,6 +448,30 @@ struct Checker<'src> {
     probe_budget: usize,
     /// The answers of `conforms` for a type with no type parameter, which no body changes.
     conformed: FxHashMap<(Type, tir::InterfaceId, TypeArgs), bool>,
+    /// The part that makes a class or an enum with no type parameter fail an interface (`None`
+    /// when it holds), as `failing_leaf` found it; and whether no part of that walk was cut short,
+    /// which lets another walk use it.
+    leaves: FxHashMap<(Type, tir::InterfaceId, TypeArgs), (Option<Type>, bool)>,
+    /// How many parts the walks of `failing_leaf` have cut short, for a part that was being read.
+    leaf_cuts: usize,
+    /// How many queries for the payloads of an enum are open, one inside the other
+    /// (`payloads_conform`).
+    conforms_depth: usize,
+    /// The enums whose queries went past `CONFORMS_DEPTH_LIMIT` and were reported.
+    too_deep: FxHashSet<tir::EnumId>,
+    /// The language interfaces, found by name once the prelude's names are collected.
+    lang: tir::LangInterfaces,
+    /// The state of the root query of `conforms` that is open, if one is.
+    open: conformance::Open,
+    /// By class and then enum, whether the declaration has the never-built error.
+    unbuilt: Vec<bool>,
+    /// By `EnumId`, whether the enum grows (`enum Nest<T> { End\n Next(Nest<[T]>) }`, E0140) or
+    /// no value can be built of it (the never-built error): the generated rule answers `true`
+    /// for it with no part query, so its own error is its only diagnostic.
+    marked: Vec<bool>,
+    /// Whether the type of a field of a class or a payload of an enum holds an associated type:
+    /// the choices of the associated types matter to the cycles only then. Set before the marks.
+    holds_assoc: bool,
     /// The place among `extensions` of the first block that covers the receiver of the call being
     /// found and whose bounds fail, when `conforming_methods` finds no method for it.
     failed_block: Option<usize>,
@@ -725,21 +757,16 @@ pub(crate) fn check<'src>(
     let items: Vec<&ast::Item> = (program.items.iter())
         .chain(prelude.items.iter().filter(|item| !option(item)))
         .collect();
-    checker.collect_names(&items, program.items.len(), &program.broken);
-    checker.interface_signatures(&items);
-    let declared = checker.collect_signatures(&items);
-    checker.read_declared_bounds();
-    checker.conformances(&items);
+    let declared = checker.declare_items(&items, program.items.len(), &program.broken);
     checker.fold_constants(&items);
-    let cyclic = checker.never_constructed();
-    let unbuilt;
-    (checker.lowered_enums, unbuilt) = checker.lower_enums(&cyclic);
+    checker.lowered_enums = checker.lower_enums();
     checker.holds_table = checker.holds_table();
     checker.check_main(&declared);
     // Every body is checked, so this collects into a `Vec` before it gives up on a `None`.
     let functions: Vec<_> = (declared.iter().enumerate())
         .map(|(i, &(f, owner))| checker.method_or_function(f, tir::FuncId(i), owner))
         .collect();
+    let unbuilt = std::mem::take(&mut checker.unbuilt);
     checker.instantiation_cycles(&functions, &unbuilt);
     checker.report_loops();
     let classes = checker.classes.iter().map(lower_class).collect();
@@ -795,7 +822,7 @@ pub(crate) fn check<'src>(
         });
     let interfaces = checker.lowered_interfaces();
     let enums = checker.lowered_enums;
-    let (instantiates, prelude) = (checker.instantiates, checker.prelude);
+    let (instantiates, prelude, lang) = (checker.instantiates, checker.prelude, checker.lang);
     let (conformances, choice_ats) = (checker.conformances, checker.choice_ats);
     let program = functions
         .into_iter()
@@ -811,6 +838,7 @@ pub(crate) fn check<'src>(
             interfaces,
             conformances,
             choice_ats,
+            lang,
         });
     // A use of a broken item poisons without a diagnostic of its own.
     debug_assert!(
@@ -820,15 +848,21 @@ pub(crate) fn check<'src>(
     (program, diagnostics)
 }
 
-/// `check` over a program with no prelude, for the tests of what follows the checker: the
-/// prelude's templates would stay in a program that `mono` has not run on.
+/// `check` over a program with no prelude but the language interfaces, for the tests of what
+/// follows the checker: the prelude's templates would stay in a program that `mono` has not run
+/// on.
 #[cfg(test)]
 pub(crate) fn check_alone(
     program: &ast::Program,
     source: &str,
     parsed: &[Diagnostic],
 ) -> (Option<tir::Program>, Vec<Diagnostic>) {
-    check(program, &ast::Program::default(), source, parsed)
+    check(
+        program,
+        &crate::front_end::prelude_program(""),
+        source,
+        parsed,
+    )
 }
 
 /// The non-empty spans of the errors in `diagnostics`, in order. `NoMain`'s empty span at offset
@@ -906,6 +940,7 @@ impl<'src> Checker<'src> {
             assoc_at: FxHashMap::default(),
             pending_bounds: Some(Vec::new()),
             scopes: Vec::new(),
+            waiting: None,
             wide_reported: FxHashSet::default(),
             closure_seen: FxHashSet::default(),
             interface_ids: FxHashMap::default(),
@@ -924,6 +959,15 @@ impl<'src> Checker<'src> {
             probed_assoc: FxHashSet::default(),
             probe_budget: 0,
             conformed: FxHashMap::default(),
+            leaves: FxHashMap::default(),
+            leaf_cuts: 0,
+            conforms_depth: 0,
+            too_deep: FxHashSet::default(),
+            lang: tir::LangInterfaces::default(),
+            open: conformance::Open::default(),
+            unbuilt: Vec::new(),
+            marked: Vec::new(),
+            holds_assoc: false,
             failed_block: None,
             lowered_enums: Vec::new(),
             written: None,
@@ -949,6 +993,48 @@ impl<'src> Checker<'src> {
 }
 
 impl Checker<'_> {
+    /// Passes 1 to 2b: the names, the signatures, the declarations that a query for a generated
+    /// conformance must not expand, and every conformance. Returns each function with the type of
+    /// a method's `self`.
+    fn declare_items<'a>(
+        &mut self,
+        items: &[&'a ast::Item],
+        user_items: usize,
+        broken: &[ast::Broken],
+    ) -> Vec<(&'a ast::Function, Option<Type>)> {
+        self.collect_names(items, user_items, broken);
+        self.lang = self.language_interfaces();
+        self.interface_signatures(items);
+        let declared = self.collect_signatures(items);
+        // The first queries for a generated conformance come before the bodies, in
+        // `conformances`, so the enums that a query must not expand are known first: those that
+        // grow, and those no value can be built of. Each has its own error, which stands alone.
+        // The enums that grow are marked in `conformances`, once the choices of the associated
+        // types are recorded, which a growth through an associated type needs.
+        let cyclic = self.never_constructed();
+        self.unbuilt = self.never_built(&cyclic);
+        self.marked = self.unbuilt[self.classes.len()..].to_vec();
+        self.read_declared_bounds();
+        self.conformances(items);
+        declared
+    }
+
+    /// The language interfaces: the prelude's `Display`, `Eq`, `Ord` and `AnyObject`. A prelude
+    /// that lacks one is the compiler's fault: `prelude_program` puts them in every prelude.
+    fn language_interfaces(&self) -> tir::LangInterfaces {
+        let find = |name: &str| {
+            let at = (self.interfaces.iter())
+                .position(|info| info.name.span.in_prelude() && info.name.name.as_str() == name);
+            tir::InterfaceId(at.expect("the prelude should declare the language interfaces"))
+        };
+        tir::LangInterfaces {
+            display: find("Display"),
+            eq: find("Eq"),
+            ord: find("Ord"),
+            any_object: find("AnyObject"),
+        }
+    }
+
     /// The interfaces as `tir` names them.
     fn lowered_interfaces(&self) -> Vec<tir::Interface> {
         (self.interfaces.iter())
@@ -994,6 +1080,7 @@ impl Checker<'_> {
                         bounds: Vec::new(),
                         fields: Vec::new(),
                         methods: FxHashMap::default(),
+                        names_to_string: false,
                         assoc: Rc::default(),
                     });
                     let name = &class.name;
@@ -1124,21 +1211,29 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether `name` is a built-in type's, which no class, function, enum or constant may
-    /// take; reports it when it is. A name milestone 8's prelude takes is reported too, but the
-    /// item still takes it, so that its uses do not cascade.
+    /// Whether `name` is a built-in type's, which no class, function, enum, constant or interface
+    /// may take; reports it when it is. A language interface's name is reported too, and so is a
+    /// name milestone 8's prelude takes without declaring it, but the item still takes it, so
+    /// that its uses do not cascade. The prelude's own declarations take the language
+    /// interfaces' names as well, in `interface_ids`.
     fn built_in(&mut self, name: &ast::Ident) -> bool {
-        let found = built_in_type(name.name.as_str()).is_some();
-        if found {
+        let kind = if built_in_type(name.name.as_str()).is_some() {
+            Some(BuiltIn::Type)
+        } else if !name.span.in_prelude() && is_language_interface(name.name.as_str()) {
+            Some(BuiltIn::Interface)
+        } else {
+            None
+        };
+        if let Some(kind) = kind {
             self.report(DiagnosticKind::BuiltInName {
                 name: name.name.to_string(),
                 at: name.span,
-                kind: BuiltIn::Type,
+                kind,
             });
         } else {
             self.reserved(name);
         }
-        found
+        matches!(kind, Some(BuiltIn::Type))
     }
 
     /// Whether `name` is the first function, class, enum or constant of its name; reports it when
@@ -1166,9 +1261,10 @@ impl Checker<'_> {
         name: &ast::Ident,
     ) -> bool {
         if let Some(&(span, first_kind)) = first.get(&name.name) {
-            // A user's item took the prelude's name first, and its `BuiltInName` has said so.
+            // A user's item took the prelude's name first, and its `BuiltInName` has said so. A
+            // language interface still takes its name, which only the prelude's code reads.
             if name.span.in_prelude() && !span.in_prelude() {
-                return false;
+                return is_language_interface(name.name.as_str());
             }
             let first = Earlier::At {
                 span,
@@ -1256,6 +1352,10 @@ impl Checker<'_> {
                             &field.name,
                         ) {
                             self.keep_at(queued, Slot::Field(id, self.classes[id.0].fields.len()));
+                            // `names_to_string_field` reads this flag, not the fields.
+                            if field.name.name.as_str() == "to_string" {
+                                self.classes[id.0].names_to_string = true;
+                            }
                             self.classes[id.0].fields.push(FieldInfo {
                                 name: field.name.clone(),
                                 ty_span: field.ty.span,
@@ -1507,7 +1607,9 @@ impl Checker<'_> {
         if let (Some(Declared::Broken), _) | (_, Some(Declared::Broken)) = declared {
             return None;
         }
-        if let Some(found) = self.interface_ids.get(&name) {
+        // A class or an enum that took a language interface's name is the type.
+        let taken = matches!(declared, (Some(_), _) | (_, Some(_)));
+        if let (false, Some(found)) = (taken, self.interface_ids.get(&name)) {
             if matches!(found, Declared::Known(_)) {
                 self.report(DiagnosticKind::InterfaceAsType {
                     name: name.to_string(),
@@ -1763,7 +1865,10 @@ impl Checker<'_> {
     /// open loop label right after an unlabeled `break`. A type's name, built in or a class's or
     /// an enum's, is in scope, but as a type: that is reported instead. So is a function's name.
     fn not_found(&mut self, name: Symbol, span: Span) -> Diagnostic {
-        if self.interface_ids.contains_key(&name) {
+        let item = self.class_ids.contains_key(&name)
+            || self.enum_ids.contains_key(&name)
+            || self.function_ids.contains_key(&name);
+        if !item && self.interface_ids.contains_key(&name) {
             return DiagnosticKind::InterfaceAsValue {
                 name: name.to_string(),
                 at: span,
@@ -1944,6 +2049,12 @@ pub(crate) fn built_in_type(name: &str) -> Option<Type> {
         "string" => Some(Type::STRING),
         _ => None,
     }
+}
+
+/// Whether `name` is one of `lang.sisu`'s interfaces, which `Checker::language_interfaces` finds
+/// by name.
+fn is_language_interface(name: &str) -> bool {
+    matches!(name, "Display" | "Eq" | "Ord" | "AnyObject")
 }
 
 /// `T` for a `T?`, else `ty`.

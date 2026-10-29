@@ -1,0 +1,7 @@
+fn keep<T: AnyObject>(x: T) -> i64 {
+    1
+}
+
+fn main() {
+    print(keep(1))
+}

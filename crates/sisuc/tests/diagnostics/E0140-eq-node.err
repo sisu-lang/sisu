@@ -1,0 +1,13 @@
+error[E0140]: `E` instantiates itself without end
+  --> E0140-eq-node.sisu:8:9
+   |
+ 8 |     One(W<[U]>)
+   |         ^^^^^^ `Eq.eq` here
+...
+17 |         E.One(W(x: [self.x])) == E.One(W(x: [other.x]))
+   |         ----------------------------------------------- which instantiates `E<T>`
+   |
+   = help: a call through `Eq` counts as reaching every conformance to `Eq`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

@@ -17,7 +17,7 @@ use super::{
     as_optional, built_in_type, optional_of, payload, type_of,
 };
 use crate::ast::{self, StmtKind};
-use crate::diagnostic::{ArgumentsForm, MainForm, Unwrap};
+use crate::diagnostic::{ArgumentsForm, Diagnostic, MainForm, Unwrap};
 use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -1955,15 +1955,23 @@ impl Checker<'_> {
         });
     }
 
-    /// Reports `op` on the operand at `at`, of type `ty`, which names a type parameter: no
-    /// operator takes one.
+    /// Reports `op` on the operand at `at`, of type `ty`, which names a type parameter that lacks
+    /// the operator.
     pub(super) fn param_lacks(&mut self, at: Span, ty: Type, op: impl fmt::Display) {
-        self.report(DiagnosticKind::ParamLacks {
+        let d = self.lacks(at, ty, op);
+        self.diagnostics.push(d);
+    }
+
+    /// The report that `param_lacks` makes.
+    pub(super) fn lacks(&self, at: Span, ty: Type, op: impl fmt::Display) -> Diagnostic {
+        DiagnosticKind::ParamLacks {
             ty: self.type_name(ty),
             op: op.to_string(),
             at,
             contains: false,
-        });
+            add: None,
+        }
+        .into()
     }
 
     /// Reports `name<...>`, a value with type arguments in `angles`: the `<` and `>` were

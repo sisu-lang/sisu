@@ -10,14 +10,19 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::mem;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::conformance::{Cause, Stuck, StuckChoices, find, normalize_noting};
+use crate::conformance::{
+    Cause, Decide, Holds, Source, Stuck, StuckChoices, find, holds, normalize_noting, parts,
+    prints_by_helper,
+};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, UnknownForm};
+use crate::lang::{self, Cx, Dispatch};
 use crate::source::Span;
 use crate::tir::{
-    Arm, Block, ChoicePlace, Class, ClassId, Conformances, Enum, EnumId, Expr, ExprKind, Field,
-    FuncId, Function, Place, Program, Stmt, Type, TypeArgs, TypeKind, layout_enums,
+    Align, Arm, Block, ChoicePlace, Class, ClassId, CompareOp, Conformance, Conformances, Enum,
+    EnumId, Expr, ExprKind, Field, FuncId, Function, InterfaceId, Local, Place, Program, Stmt,
+    Type, TypeArgs, TypeKind, layout_enums,
 };
 use crate::types::{Head, write_args, write_method, write_type};
 
@@ -25,6 +30,8 @@ use crate::types::{Head, write_args, write_method, write_type};
 thread_local! {
     /// How many programs on this thread have taken the path that instantiates nothing.
     static FAST_PATHS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many `(type, interface)` pairs the record walk has entered on this thread.
+    pub(crate) static WALK_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// `program` with each generic function, class and enum replaced by the instantiations it
@@ -114,12 +121,23 @@ struct Mono {
     out: Program,
     /// The checked program's conformances, which resolve each interface call.
     conformances: Conformances,
-    /// Where the choices that write an associated type are written (`Program::choice_ats`).
+    /// Where the choices that write an associated type or a type parameter are written
+    /// (`Program::choice_ats`).
     choice_ats: FxHashMap<ChoicePlace, Span>,
     /// The loops and the chains that are too long that `subst` has met, with the first type found
     /// for each place. `subst` then gives a stand-in type, and no instance after the first is
     /// walked: `run` reports them.
     stuck: RefCell<StuckChoices>,
+    /// The payload types of the checked program's enums, in its ids: `holds` reads them, as the
+    /// output's enums name the output's ids.
+    input_payloads: Vec<Vec<Type>>,
+    /// What decides whether a written conformance holds for a type, in the checked program's ids.
+    decide: Decide,
+    /// The `(type, interface)` pairs the record walk has entered, in the checked program's ids.
+    walked: FxHashSet<(Type, InterfaceId)>,
+    /// The locals of the function whose body the worklist is lowering; operators that make
+    /// temporaries add to them.
+    locals: Vec<Local>,
     work: VecDeque<Work>,
 }
 
@@ -136,11 +154,20 @@ impl Mono {
             functions: Vec::new(),
             out: Program {
                 interfaces: program.interfaces,
+                lang: program.lang,
                 ..Program::default()
             },
             conformances: program.conformances,
             choice_ats: program.choice_ats,
             stuck: RefCell::default(),
+            input_payloads: program
+                .enums
+                .iter()
+                .map(|e| (e.variants.iter().flat_map(|v| &v.fields).map(|p| p.ty)).collect())
+                .collect(),
+            decide: Decide::default(),
+            walked: FxHashSet::default(),
+            locals: Vec::new(),
             work: VecDeque::new(),
         };
         for (i, f) in program.functions.into_iter().enumerate() {
@@ -516,7 +543,9 @@ impl Mono {
         });
         // The name is written whole.
         f.method = None;
+        self.locals = mem::take(&mut f.locals);
         self.block(&mut f.body, args);
+        f.locals = mem::take(&mut self.locals);
     }
 
     fn block(&mut self, block: &mut Block, args: &[Type]) {
@@ -555,6 +584,65 @@ impl Mono {
         // A stand-in type may not fit its node, so no node is walked after the first failure.
         if self.failed() {
             return;
+        }
+        // An operator is lowered again before its types change to the output's ids: its operand
+        // type decides, in the checked program's ids, whether a written conformance runs.
+        match &mut e.kind {
+            K::Equal { negated, lhs, rhs } => {
+                let (negated, ty, eq) = (*negated, self.subst(lhs.ty, args), self.out.lang.eq);
+                if let Some(dispatch) = self.dispatch(ty, eq) {
+                    let (lhs, rhs) = (Box::new(hole(lhs)), Box::new(hole(rhs)));
+                    e.kind = lang::equal(dispatch, negated, lhs, rhs, e.span);
+                } else if !matches!(lhs.kind, K::None) && !matches!(rhs.kind, K::None) {
+                    // `x == None` tests presence, and runs no `eq`.
+                    self.walk(ty, eq);
+                }
+            }
+            K::Compare { operands, ops } => {
+                let (operands, ops) = (mem::take(operands), mem::take(ops));
+                e.kind = self.compare(operands, &ops, e.span, args);
+            }
+            K::Print { operand, .. } => {
+                // The helper for a compound operand calls a written `to_string` at each part
+                // that has one.
+                let ty = self.subst(operand.ty, args);
+                if prints_by_helper(ty) {
+                    self.walk(ty, self.out.lang.display);
+                }
+            }
+            K::Interpolate { parts, formats } => {
+                for format in formats {
+                    // A part of a type parameter's type pads as its type argument's does.
+                    if let Some(pad) = format.pad.as_mut().filter(|pad| pad.by_type) {
+                        let ty = self.subst(parts[format.part].ty, args);
+                        pad.align = if matches!(ty, Type::I64 | Type::U8 | Type::F64) {
+                            Align::Right
+                        } else {
+                            Align::Left
+                        };
+                        pad.by_type = false;
+                    }
+                }
+                // The helper for a compound part calls a written `to_string` at each part that
+                // has one.
+                for part in parts.iter() {
+                    let ty = self.subst(part.ty, args);
+                    if prints_by_helper(ty) {
+                        self.walk(ty, self.out.lang.display);
+                    }
+                }
+            }
+            K::Contains { base, .. } => {
+                let array = self.subst(base.ty, args);
+                // A stand-in type is no array: `run` reports the failure.
+                if !self.failed() {
+                    let element = array
+                        .array_element()
+                        .expect("`contains` should take an array");
+                    self.walk(element, self.out.lang.eq);
+                }
+            }
+            _ => {}
         }
         e.ty = self.ty(e.ty, args);
         if self.failed() {
@@ -596,8 +684,44 @@ impl Mono {
                 if self.failed() {
                     return;
                 }
-                let (index, bindings) = find(&self.conformances, *interface, receiver, rest)
-                    .expect("a call that checks should find the conformance of its receiver");
+                // A `Display` that the compiler writes: also for a type whose written record fails
+                // its bounds, which `find` would match.
+                if *interface == self.out.lang.display
+                    && self.dispatch(receiver, *interface).is_none()
+                {
+                    let [operand]: [Expr; 1] = mem::take(operands)
+                        .try_into()
+                        .expect("a call of `to_string` should have one operand");
+                    e.kind = lang::to_string(operand);
+                    return self.expr(e, args);
+                }
+                let Some((index, bindings)) = find(&self.conformances, *interface, receiver, rest)
+                else {
+                    // No written conformance covers the receiver: the checker proved that the
+                    // compiler writes it, and the operator itself is the call.
+                    let lang = self.out.lang;
+                    let mut operands = mem::take(operands).into_iter();
+                    let (Some(lhs), Some(rhs)) = (operands.next(), operands.next()) else {
+                        panic!("a call of `eq` or `less` should have two operands");
+                    };
+                    e.kind = if *interface == lang.eq {
+                        lang::equal(
+                            Dispatch::Generated,
+                            false,
+                            Box::new(lhs),
+                            Box::new(rhs),
+                            e.span,
+                        )
+                    } else if *interface == lang.ord {
+                        K::Compare {
+                            operands: vec![lhs, rhs],
+                            ops: vec![CompareOp::Lt],
+                        }
+                    } else {
+                        panic!("only `eq` and `less` are lowered from a generated conformance")
+                    };
+                    return self.expr(e, args);
+                };
                 let found = self.conformances.get(*interface, index).methods[*method as usize];
                 // The conformance's parameters, then the requirement's own.
                 let mut with = bindings.get().to_vec();
@@ -692,6 +816,106 @@ impl Mono {
         }
     }
 
+    /// `holds` over the checked program's ids.
+    fn holds(&mut self, ty: Type, interface: InterfaceId) -> Holds {
+        let src = Source {
+            conformances: &self.conformances,
+            enums: self.input_payloads.as_slice(),
+            lang: self.out.lang,
+        };
+        holds(&mut self.decide, &src, ty, interface, TypeArgs::NONE)
+    }
+
+    /// The method that a written conformance of `interface` runs for `ty`, as the call that the
+    /// operator makes of it.
+    fn dispatch(&mut self, ty: Type, interface: InterfaceId) -> Option<Dispatch> {
+        if !matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Enum(..)) {
+            return None;
+        }
+        match self.holds(ty, interface) {
+            Holds::Written(k, stands) => Some(Dispatch::Method {
+                func: self.conformances.get(interface, k).methods[0],
+                types: stands,
+            }),
+            Holds::Generated | Holds::No => None,
+        }
+    }
+
+    /// A comparison on a type that `mono` knows: a class or an enum with a written `Ord` is a call
+    /// of its `less` for each link, and a chain of `string`s binds each operand once. A number
+    /// keeps its node.
+    fn compare(
+        &mut self,
+        operands: Vec<Expr>,
+        ops: &[CompareOp],
+        span: Span,
+        args: &[Type],
+    ) -> ExprKind {
+        let ty = self.subst(operands[0].ty, args);
+        let dispatch = (self.dispatch(ty, self.out.lang.ord)).unwrap_or(Dispatch::Generated);
+        let before = self.locals.len();
+        let mut cx = Cx {
+            locals: &mut self.locals,
+        };
+        let kind = lang::ordered(&mut cx, dispatch, ty, operands, ops, span);
+        // The locals that the lowering made have the checked program's types.
+        for i in before..self.locals.len() {
+            let local_ty = self.locals[i].ty;
+            self.locals[i].ty = self.ty(local_ty, args);
+        }
+        kind
+    }
+
+    /// Reaches the written conformances of `interface` that the helper for an operand of the
+    /// checked type `ty` may call: the output gets one record for each type in `ty`, through its
+    /// parts, that a written conformance holds for, and the methods are instantiated.
+    fn walk(&mut self, ty: Type, interface: InterfaceId) {
+        let mut stack = vec![ty];
+        while let Some(ty) = stack.pop() {
+            if !self.walked.insert((ty, interface)) {
+                continue;
+            }
+            #[cfg(test)]
+            WALK_VISITS.set(WALK_VISITS.get() + 1);
+            if matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Enum(..))
+                && let Holds::Written(k, stands) = self.holds(ty, interface)
+            {
+                self.record(ty, interface, k, stands);
+                continue;
+            }
+            parts(
+                &self.conformances,
+                self.input_payloads.as_slice(),
+                ty,
+                |part| {
+                    stack.push(part);
+                },
+            );
+        }
+    }
+
+    /// Adds to the output the record of the written conformance `k` of `interface` for the
+    /// checked type `ty`, in the output's ids, with its methods instantiated.
+    fn record(&mut self, ty: Type, interface: InterfaceId, k: usize, stands: TypeArgs) {
+        let methods = self.conformances.get(interface, k).methods.clone();
+        let methods = methods
+            .into_iter()
+            .map(|method| self.function_id(method, stands))
+            .collect();
+        let target = self.output(ty);
+        self.out.conformances.add(
+            interface,
+            Conformance {
+                type_params: 0,
+                target,
+                args: TypeArgs::NONE,
+                methods,
+                assoc: Vec::new(),
+                bounds: Vec::new(),
+            },
+        );
+    }
+
     fn arm(&mut self, arm: &mut Arm, args: &[Type]) {
         if let Some(guard) = &mut arm.guard {
             self.expr(guard, args);
@@ -704,6 +928,19 @@ impl Mono {
             self.expr(e, args);
         }
     }
+}
+
+/// The expression `expr` holds, which moves out; a placeholder stays, which `mono` overwrites.
+fn hole(expr: &mut Expr) -> Expr {
+    let span = expr.span;
+    mem::replace(
+        expr,
+        Expr {
+            kind: ExprKind::None,
+            ty: Type::UNIT,
+            span,
+        },
+    )
 }
 
 /// Asserts that no type in `program` names a type parameter or holds type arguments: `mir` and
@@ -882,6 +1119,68 @@ mod tests {
         for name in functions.iter().chain(&classes) {
             assert_eq!(name.contains('#'), name.contains("..."), "{name}");
         }
+    }
+
+    /// The printed function `name` of the program `instantiated` gives for `src`.
+    fn printed_function(src: &str, name: &str) -> String {
+        let printed = instantiated(src).to_string();
+        let head = format!("(fn {name} ");
+        printed
+            .lines()
+            .find(|line| line.starts_with(&head))
+            .unwrap_or_else(|| panic!("no `{name}` in\n{printed}"))
+            .to_string()
+    }
+
+    /// An operator in a generic body is lowered again for each type argument: a number keeps its
+    /// `Compare` (so a generic `>` on `f64` is IEEE), a class with a written `Ord` gets a call of
+    /// its `less`, and the same for `==`.
+    #[test]
+    fn generic_operators_should_be_lowered_again_for_their_type_argument() {
+        let src = "class Circle: Eq, Ord {\n    r: i64\n    fn eq(self, other: Self) -> bool { self.r == other.r }\n    fn less(self, other: Self) -> bool { self.r < other.r }\n}\n\
+                   fn bigger<T: Ord>(a: T, b: T) -> bool {\n    a > b\n}\n\
+                   fn same<T: Eq>(a: T, b: T) -> bool {\n    a == b\n}\n\
+                   fn main() {\n    let c = Circle(r: 1)\n    print(bigger(1.5, 2.5))\n    print(bigger(c, c))\n    print(same(1, 2))\n    print(same(c, c))\n}";
+        let number = printed_function(src, "bigger<f64>");
+        assert!(number.contains("(> a#0 b#1)"), "{number}");
+        let class = printed_function(src, "bigger<Circle>");
+        assert!(class.contains("(call Circle.less b#1 a#0)"), "{class}");
+        let scalar = printed_function(src, "same<i64>");
+        assert!(scalar.contains("(== a#0 b#1)"), "{scalar}");
+        let object = printed_function(src, "same<Circle>");
+        assert!(object.contains("(call Circle.eq a#0 b#1)"), "{object}");
+    }
+
+    /// A chain of three keeps one node for numbers, and binds each `string` once, as the checker
+    /// does for a `string` chain; two operands keep one node for either.
+    #[test]
+    fn generic_chains_should_keep_their_shape_for_each_type_argument() {
+        let src = "fn between<T: Ord>(a: T, b: T, c: T) -> bool {\n    a < b < c\n}\n\
+                   fn below<T: Ord>(a: T, b: T) -> bool {\n    a < b\n}\n\
+                   fn main() {\n    print(between(1, 2, 3))\n    print(between(\"a\", \"b\", \"c\"))\n    print(below(\"a\", \"b\"))\n    print(below(1, 2))\n}";
+        let number = printed_function(src, "between<i64>");
+        assert!(number.contains("(< a#0 b#1 < c#2)"), "{number}");
+        let text = printed_function(src, "between<string>");
+        assert!(text.contains("(&& (< #"), "{text}");
+        for name in ["below<string>", "below<i64>"] {
+            let two = printed_function(src, name);
+            assert!(two.contains("(< a#0 b#1)"), "{two}");
+        }
+    }
+
+    /// `x == None` tests presence and calls no `eq`, so it reaches no written conformance: the
+    /// output holds no record for the class that `x` holds, and `x == x` makes one.
+    #[test]
+    fn equality_with_none_should_make_no_record() {
+        let class = "class Circle: Eq {\n    r: i64\n    fn eq(self, other: Self) -> bool { self.r == other.r }\n}\n\
+                     fn same<T: Eq>(x: T?, y: T?) -> bool {\n    x == y\n}\n\
+                     fn missing<T: Eq>(x: T?) -> bool {\n    x == None\n}\n";
+        let records = |main: &str| {
+            let program = instantiated(&format!("{class}fn main() {{\n    {main}\n}}"));
+            program.conformances.iter().count()
+        };
+        assert_eq!(records("print(missing(Circle(r: 1)))"), 0);
+        assert_eq!(records("print(same(Circle(r: 1), Circle(r: 2)))"), 1);
     }
 
     #[test]
@@ -1448,9 +1747,10 @@ mod tests {
         (program(), broken)
     }
 
-    const LOOPING: &str = "interface Sized {\n    fn size(self) -> i64\n}\n\
+    const LOOPING: &str = "interface Sized: Eq {\n    fn size(self) -> i64\n}\n\
         interface Source {\n    type A: Sized\n    type B: Sized\n    fn first(self) -> A\n    fn second(self) -> B\n}\n\
         class Thing: Sized {\n    fn size(self) -> i64 { 1 }\n}\n\
+        extend Thing: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\n\
         class Leaf: Source {\n    type A = Thing\n    type B = Thing\n    fn first(self) -> A { Thing() }\n    fn second(self) -> B { Thing() }\n}\n\
         class Holder<T> {\n    value: T\n}\n\
         enum Maybe<T> {\n    Just(T)\n    Nothing\n}\n";
@@ -1481,7 +1781,7 @@ mod tests {
     /// receiver does, stop the walk of the body: no panic on a stand-in type, and one report. Each
     /// row is a statement that drops its value (a warning), before a `print` so that the value of
     /// the block is no part of it. A construction and a variant read their class or enum from the
-    /// type, which a stand-in is not.
+    /// type, which a stand-in is not, and a search reads the element from the array type.
     #[test]
     fn mono_should_stop_a_body_whose_expression_names_a_choice_that_needs_itself() {
         for (row, body) in [
@@ -1489,6 +1789,7 @@ mod tests {
             ("a call", "s.first().size()"),
             ("a construction", "Holder(value: s.first())"),
             ("a variant", "Maybe.Just(s.first())"),
+            ("a search", "[s.first()].contains(s.first())"),
         ] {
             let src = format!(
                 "{LOOPING}fn run<S: Source>(s: S) {{\n    {body}\n    print(1)\n}}\nfn main() {{\n    run(Leaf())\n}}"

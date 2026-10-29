@@ -8,6 +8,11 @@ use super::{
 };
 use crate::tir;
 
+/// `text`, with ` [calls]` after it when the statement may call a written method.
+fn flagged(text: String, calls: bool) -> String {
+    if calls { text + " [calls]" } else { text }
+}
+
 /// The text of `mir`, whose callee and type names `tir`, the program it was lowered from,
 /// resolves.
 pub(crate) fn print(mir: &Program, tir: &tir::Program) -> String {
@@ -124,6 +129,10 @@ impl Printer<'_> {
             .join(", ")
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per rvalue, so the printer reads in one place"
+    )]
     fn rvalue(&self, rvalue: &Rvalue) -> String {
         match rvalue {
             Rvalue::Use(operand) => self.operand(operand),
@@ -165,7 +174,11 @@ impl Printer<'_> {
             Rvalue::Concat { lhs, rhs } => {
                 format!("concat({}, {})", self.operand(lhs), self.operand(rhs))
             }
-            Rvalue::Interpolate { parts, formats } => {
+            Rvalue::Interpolate {
+                parts,
+                formats,
+                calls,
+            } => {
                 // The formats are in part order, so one pass over them meets each in turn.
                 let mut formats = formats.iter().peekable();
                 let parts: Vec<_> = parts
@@ -183,7 +196,7 @@ impl Printer<'_> {
                         }
                     })
                     .collect();
-                format!("interp({})", parts.join(", "))
+                flagged(format!("interp({})", parts.join(", ")), *calls)
             }
             Rvalue::ReadLine => "call read_line()".to_owned(),
             Rvalue::Chars(operand) => format!("chars {}", self.operand(operand)),
@@ -193,9 +206,10 @@ impl Printer<'_> {
             Rvalue::Len(operand) => format!("len {}", self.operand(operand)),
             Rvalue::LenWords(operand) => format!("len_words {}", self.operand(operand)),
             Rvalue::Sum { base, .. } => format!("sum {}", self.operand(base)),
-            Rvalue::Contains { base, value } => {
-                format!("contains({}, {})", self.operand(base), self.operand(value))
-            }
+            Rvalue::Contains { base, value, calls } => flagged(
+                format!("contains({}, {})", self.operand(base), self.operand(value)),
+                *calls,
+            ),
             Rvalue::Convert(operand) => format!("convert {}", self.operand(operand)),
             Rvalue::Math { op, operands } => format!("math {}({})", op.name(), self.list(operands)),
             Rvalue::Unary { op, operand, .. } => format!("{op}{}", self.operand(operand)),
@@ -205,16 +219,30 @@ impl Printer<'_> {
             Rvalue::Compare { op, lhs, rhs } => {
                 format!("{} {op} {}", self.operand(lhs), self.operand(rhs))
             }
-            Rvalue::Equal { negated, lhs, rhs } => {
+            Rvalue::Equal {
+                negated,
+                lhs,
+                rhs,
+                calls,
+                ..
+            } => {
                 let op = if *negated { "!=" } else { "==" };
-                format!("{} {op} {}", self.operand(lhs), self.operand(rhs))
+                flagged(
+                    format!("{} {op} {}", self.operand(lhs), self.operand(rhs)),
+                    *calls,
+                )
             }
             Rvalue::Is { lhs, rhs } => {
                 format!("{} is {}", self.operand(lhs), self.operand(rhs))
             }
-            Rvalue::Print { stream, operand } => {
-                format!("call {}({})", stream.name(), self.operand(operand))
-            }
+            Rvalue::Print {
+                stream,
+                operand,
+                calls,
+            } => flagged(
+                format!("call {}({})", stream.name(), self.operand(operand)),
+                *calls,
+            ),
         }
     }
 

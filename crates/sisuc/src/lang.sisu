@@ -1,0 +1,21 @@
+// The language interfaces: the compiler checks this file before every program, ahead of the
+// prelude. It maps operators, `print` and interpolation to them by name. The compiler embeds the
+// file (`front_end::LANG_SOURCE`), and an error in it is an internal error.
+
+// What `print(x)`, `eprint(x)` and `"{x}"` write.
+interface Display {
+    fn to_string(self) -> string
+}
+
+// What `==` and `!=` compare.
+interface Eq {
+    fn eq(self, other: Self) -> bool
+}
+
+// What `<`, `<=`, `>` and `>=` compare.
+interface Ord: Eq {
+    fn less(self, other: Self) -> bool
+}
+
+// What only a class has: an identity that `is` compares.
+interface AnyObject {}

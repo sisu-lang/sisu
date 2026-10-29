@@ -1,0 +1,8 @@
+error[E0159]: `[f64]` has no `<`
+ --> E0159-order-array.sisu:4:11
+  |
+4 |     print(a < b)
+  |           ^ this has type `[f64]`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0159

@@ -56,7 +56,7 @@ fn assert_panics(out: &Output, stdout: &str, stderr: &str) {
 
 /// The programs the small-stack tests run. They are not `tests/run` cases: many objects
 /// under Valgrind is too slow, and `deepchain` overflows on purpose.
-const SMALL_STACK: [&str; 19] = [
+const SMALL_STACK: [&str; 23] = [
     "longlist",
     "rightskew",
     "deepchain",
@@ -64,7 +64,6 @@ const SMALL_STACK: [&str; 19] = [
     "dropmutual",
     "dropoptional",
     "dropmutualoptional",
-    "eqlist",
     "enumlist",
     "enumfold",
     "enummutual",
@@ -76,6 +75,11 @@ const SMALL_STACK: [&str; 19] = [
     "eqtrail",
     "tailfresh",
     "tailpass",
+    "showright",
+    "showleft",
+    "showmutual",
+    "showinline",
+    "showoptionallink",
 ];
 
 /// GIVEN the `tests/programs` directory
@@ -180,6 +184,15 @@ fn allocs_in_should_panic_when_the_summary_line_is_missing() {
     allocs_in("==1== All heap blocks were freed -- no leaks are possible");
 }
 
+/// `first`, then the numbers 0 up to `count`, each on a line.
+fn numbered_lines(first: &str, count: u32) -> String {
+    use std::fmt::Write as _;
+    (0..count).fold(format!("{first}\n"), |mut out, n| {
+        writeln!(out, "{n}").expect("writing to a `String` should succeed");
+        out
+    })
+}
+
 /// One test per row, `allocation_counts::<program>`: (program, stdout at k = 1000, stdout at
 /// k = 0, extra allocations), checked against `extra_allocs` at both optimization levels.
 macro_rules! allocation_counts {
@@ -250,6 +263,21 @@ allocation_counts! {
     (enum_alloc_chain_rewrite, "3\n", "3\n", 0),
     // `==` on right-deep values needs no buffer of pending pairs: only the 4 boxes per level.
     (enum_alloc_eq_right, "true\n", "true\n", 4000),
+    // `print` of an enum writes into the output buffer with no text buffer: the pending list of
+    // a right-leaning value stays in its first slot in the frame, so nothing is allocated. The
+    // 4 boxes of the one value are built in both runs.
+    (show_print, "start\n".to_string() + &"Add(Num(1), Add(Num(2), Num(3)))\n".repeat(1000), "start\n", 0),
+    // A left-leaning value has two entries waiting at once, and the second spills the pending list
+    // to the heap: one block for each `print`.
+    (show_print_left, "start\n".to_string() + &"Add(Add(Num(1), Num(2)), Num(3))\n".repeat(1000), "start\n", 1000),
+    // `e.to_string()` of an enum is one block, the result string, for each call and none for a
+    // node, whatever the size of the tree.
+    (show_string_small, "Num(1)\n", "-\n", 1000),
+    (show_string_tree, "Add(Num(1), Mul(Num(2), Num(3)))\n", "-\n", 1000),
+    // An interpolation with a compound part is one block too.
+    (show_interp, "Add(Num(1), Mul(Num(2), Num(3)))!\n", "-\n", 1000),
+    // `print` of an `i64` allocates nothing.
+    (print_int, super::numbered_lines("start", 1000), "start\n", 0),
 }
 
 /// Compiles `tests/programs/<name>.sisu` without `-O2` and runs it under a 256 KiB stack.
@@ -298,20 +326,6 @@ fn longlist_should_free_a_long_list_in_a_small_stack() {
 #[test]
 fn rightskew_should_free_a_long_tree_in_a_small_stack() {
     assert_small_stack_prints("rightskew", "100000\n");
-}
-
-/// GIVEN the `eqlist` program, which compares two lists of 100 000 nodes
-/// WHEN it runs under a 256 KiB stack, with and without `-O2`
-/// THEN it exits 0 and prints `true` twice
-///
-/// `==` on two lists of 100 000 nodes, with the chain field last and first, at both levels.
-#[test]
-fn equal_long_lists_should_compare_in_a_small_stack() {
-    for o2 in [false, true] {
-        let out = run_in_small_stack_at("eqlist", o2);
-        assert_eq!(out.status.code(), Some(0), "-O2 {o2}: {:?}", out.status);
-        assert_eq!(String::from_utf8_lossy(&out.stdout), "true\ntrue\n");
-    }
 }
 
 /// `assert_small_stack_prints` at both levels: `-O2` must not need more stack either.
@@ -404,15 +418,89 @@ fn left_deep_enums_should_compare_in_a_small_stack() {
     assert_small_stack_prints_at_both("eqleft", "true\nfalse\nfalse\n");
 }
 
-/// GIVEN the `eqorder` program, whose two enum values differ in their first fields and hold
-/// 20 000-deep class chains in their second fields
+/// GIVEN the `eqorder` program, whose two pairs of enum values differ in their first fields and
+/// hold 20 000-deep class chains in a later field, the second of two or three
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
-/// THEN it exits 0 and prints `false`
+/// THEN it exits 0 and prints `false` twice
 ///
-/// `==` finds the first mismatch before it compares the chains, whose `==` would overflow.
+/// `==` compares the fields in order and finds the first mismatch before it compares the chains,
+/// whose `==` would overflow.
 #[test]
 fn enum_eq_should_stop_at_the_first_mismatch_in_a_small_stack() {
-    assert_small_stack_prints_at_both("eqorder", "false\n");
+    assert_small_stack_prints_at_both("eqorder", "false\nfalse\n");
+}
+
+/// How deep the values of the `show` programs are.
+const SHOW_DEPTH: usize = 1_000_000;
+
+/// Runs `<name>.sisu` under the small stack at both levels and checks that it prints `text`, the
+/// value's text, and then `done`. Each text is 9 to 20 MB, and the test builds it from the depth.
+fn assert_deep_value_prints(name: &str, text: &str) {
+    assert_small_stack_prints_at_both(name, &format!("{text}\ndone\n"));
+}
+
+/// GIVEN the `showright` program, which builds a right-deep list of 1,000,000 cells
+/// WHEN it runs `print(e)` and then `print("done")` under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints `Cons(7, ` 1,000,000 times, `Nil`, 1,000,000 `)` and `done`
+///
+/// The `show` helper loops on the last link and counts the `)` it owes, not in a frame each. One
+/// test for each shape of `printing_deep_values_should_fit_a_small_stack`, so that they run
+/// at once.
+#[test]
+fn printing_a_right_deep_list_should_fit_a_small_stack() {
+    let text = "Cons(7, ".repeat(SHOW_DEPTH) + "Nil" + &")".repeat(SHOW_DEPTH);
+    assert_deep_value_prints("showright", &text);
+}
+
+/// GIVEN the `showleft` program, which builds a left-deep tree of 1,000,000 nodes
+/// WHEN it runs `print(e)` and then `print("done")` under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints `Node(` 1,000,000 times, `Leaf`, 1,000,000 `, Leaf)` and `done`
+///
+/// The helper keeps the places of the first fields on the heap.
+#[test]
+fn printing_a_left_deep_tree_should_fit_a_small_stack() {
+    let text = "Node(".repeat(SHOW_DEPTH) + "Leaf" + &", Leaf)".repeat(SHOW_DEPTH);
+    assert_deep_value_prints("showleft", &text);
+}
+
+/// GIVEN the `showmutual` program, which builds a chain of 1,000,000 levels of each of two enums
+/// that hold each other
+/// WHEN it runs `print(e)` and then `print("done")` under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints `ToA(ToB(7, ` 1,000,000 times, `End`, 1,000,000 `))` and `done`
+///
+/// The helper steps from one enum to the other in one frame.
+#[test]
+fn printing_two_enums_that_hold_each_other_should_fit_a_small_stack() {
+    let text = "ToA(ToB(7, ".repeat(SHOW_DEPTH) + "End" + &"))".repeat(SHOW_DEPTH);
+    assert_deep_value_prints("showmutual", &text);
+}
+
+/// GIVEN the `showinline` program, which builds a chain of 1,000,000 `Pair`s, deep through the
+/// inline second field of `Both`
+/// WHEN it runs `print(e)` and then `print("done")` under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints `Pair(Both(Lit(7), ` 1,000,000 times, `Lit(7)`, 1,000,000 `))` and
+/// `done`
+///
+/// The helper walks an inline link in place.
+#[test]
+fn printing_an_inline_link_should_fit_a_small_stack() {
+    let text = "Pair(Both(Lit(7), ".repeat(SHOW_DEPTH) + "Lit(7)" + &"))".repeat(SHOW_DEPTH);
+    assert_deep_value_prints("showinline", &text);
+}
+
+/// GIVEN the `showoptionallink` program, which builds a chain of 1,000,000 `Pair`s, deep through
+/// an inline field of type `Expr??`
+/// WHEN it prints the chain, compares it with an equal chain and drops it under a 256 KiB stack,
+/// with and without `-O2`
+/// THEN it exits 0 and prints `Pair(Both(` 1,000,000 times, `Lit(7)`, 1,000,000 `))`, `true` and
+/// `done`
+///
+/// A link under more than one `?` is walked in place, as a link under one is: printing, `==` and
+/// the drop each loop on it.
+#[test]
+fn printing_an_inline_link_under_two_optionals_should_fit_a_small_stack() {
+    let text = "Pair(Both(".repeat(SHOW_DEPTH) + "Lit(7)" + &"))".repeat(SHOW_DEPTH);
+    assert_small_stack_prints_at_both("showoptionallink", &format!("{text}\ntrue\ndone\n"));
 }
 
 /// GIVEN the `dropmutual` program, which builds chains of 100 000 pairs of two classes that
@@ -893,6 +981,34 @@ fn final_flush_should_panic_once_when_stdout_is_full() {
             .open("/dev/full")
             .expect("/dev/full exists on Linux");
         let out = Command::new(compile_tmp("prints_then_full", source, o2))
+            .stdout(full)
+            .output()
+            .expect("the program starts");
+        assert_eq!(out.status.code(), Some(101), "{:?}", out.status);
+        assert_eq!(String::from_utf8_lossy(&out.stderr), STDOUT_WRITE_PANIC);
+    }
+}
+
+/// GIVEN a program whose only `print` is of a value whose written `to_string` gives ""
+/// AND standard output is `/dev/full`
+/// WHEN it is built and run, with and without `-O2`
+/// THEN it exits 101 and writes only one panic line to stderr
+///
+/// The text has no piece, so the line end alone opens standard output. The newline must reach
+/// the final flush, which fails.
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "writes to /dev/full, which only Linux has"
+)]
+fn printing_an_empty_text_should_panic_when_stdout_is_full() {
+    let source = "class Quiet {}\nextend Quiet: Display {\n    fn to_string(self) -> string { \"\" }\n}\nfn main() {\n    print(Quiet())\n}\n";
+    for o2 in [false, true] {
+        let full = File::options()
+            .write(true)
+            .open("/dev/full")
+            .expect("/dev/full exists on Linux");
+        let out = Command::new(compile_tmp("print_empty_full", source, o2))
             .stdout(full)
             .output()
             .expect("the program starts");

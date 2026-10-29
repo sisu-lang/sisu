@@ -1,0 +1,10 @@
+interface Source {
+    type Item
+    fn first(self) -> Item
+}
+
+fn same<T: Source>(a: T, b: T) -> bool {
+    a.first() is b.first()
+}
+
+fn main() {}

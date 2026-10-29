@@ -1,0 +1,10 @@
+error[E0159]: `Node` has no `==`; classes compare by identity
+ --> E0159-eq-method.sisu:9:11
+  |
+9 |     print(a == Node(value: 1))
+  |           ^ this has type `Node`
+  |
+  = help: use `a is b`, or make `Node` conform to `Eq`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0159

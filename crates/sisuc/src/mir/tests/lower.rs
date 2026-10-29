@@ -51,6 +51,19 @@ fn string_literal_is_a_copy() {
     );
 }
 
+/// `print` reads a compound local in place, as it reads a `string` local: `e` is used again, so
+/// the first print borrows it and takes no copy.
+#[test]
+fn printing_a_compound_local_should_read_it_in_place() {
+    let printed = built(
+        "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n}\nfn main() {\n    let e = Expr.Add(Expr.Num(1), Expr.Num(2))\n    print(e)\n    print(e)\n}",
+    );
+    let f = function(&printed, "main");
+    assert!(f.lines().any(|l| l.trim() == "_ = borrow e#0"), "{f}");
+    assert!(!f.contains("= copy e#"), "{f}");
+    assert!(!f.contains("[calls]"), "{f}");
+}
+
 /// The value first, then per level the bounds check and `make_unique`, then the store.
 #[test]
 fn element_write_order() {
@@ -810,6 +823,26 @@ fn break_without_a_value_edge_makes_no_exit() {
             .count();
         assert_eq!(found, returns, "{name}");
         assert_eq!(unreachable_blocks(f), [], "{name}");
+    }
+}
+
+/// An interpolation consumes its parts, so a local that is used again is copied once, whether it
+/// is a `string` (`"{s}"`) or a compound value (`"{e}"`): one retain and one release.
+#[test]
+fn interpolating_a_compound_local_should_copy_it_once() {
+    let decls = "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n}\n";
+    for (ty, name) in [("string", "s"), ("Expr", "e")] {
+        let src = format!(
+            "{decls}fn f({name}: {ty}) -> string {{\n    let t = \"{{{name}}}\"\n    print({name})\n    t\n}}\nfn main() {{}}"
+        );
+        let f = function(&built(&src), "f");
+        assert_eq!(
+            f.matches(&format!("= copy {name}#0")).count(),
+            1,
+            "{ty}: {f}"
+        );
+        assert!(f.contains("interp("), "{ty}: {f}");
+        assert!(!f.contains("[calls]"), "{ty}: {f}");
     }
 }
 

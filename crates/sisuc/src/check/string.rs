@@ -7,13 +7,14 @@
 use std::fmt::Write;
 
 use super::array::pair;
-use super::expr::{local, no_member, path, typed};
+use super::expr::{local, no_member, path, postfix, typed};
 use super::{Checked, Checker, Poisoned, block_expr, type_of};
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{
-    Code, Definition, Diagnostic, DiagnosticKind, InterpolateHelp, MismatchFix, MismatchSource,
-    Operand, invisible,
+    Code, Definition, Diagnostic, DiagnosticKind, MismatchFix, MismatchSource, Operand,
+    PrecisionHelp, invisible,
 };
+use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
 
@@ -42,53 +43,41 @@ impl Checker<'_> {
     }
 
     /// A string literal with interpolations. Each part is checked with no expected type, so that
-    /// a `unit` one is reported here, and must be of a type that interpolation writes as text. A
-    /// part that never finishes makes the whole never finish.
+    /// a `unit` one is reported here, and must be of a type that has a `Display`, which is every
+    /// type but `unit`; an optional warns. A part that never finishes makes the
+    /// whole never finish.
     pub(super) fn interpolate(&mut self, span: Span, parts: &[ast::Part]) -> Checked {
         let mut ty = Type::STRING;
         let mut checked = Vec::with_capacity(parts.len());
         let mut formats = Vec::new();
         for (i, ast::Part { value: part, spec }) in parts.iter().enumerate() {
             let value = self.expr(part, None);
-            let help = match type_of(&value).map(Type::kind) {
-                None
-                | Some(
-                    TypeKind::I64
-                    | TypeKind::U8
-                    | TypeKind::F64
-                    | TypeKind::Bool
-                    | TypeKind::Char
-                    | TypeKind::String,
-                ) => {
-                    if let (Some(spec), Some(found)) = (spec, type_of(&value)) {
-                        formats.push(self.format(i, part, spec, found));
-                    }
-                    checked.push(value);
-                    continue;
-                }
+            // Every type interpolates but `unit`; an optional warns.
+            match type_of(&value).map(Type::kind) {
+                Some(TypeKind::Unit) => {}
                 Some(TypeKind::Never) => {
                     ty = Type::NEVER;
                     checked.push(value);
                     continue;
                 }
-                Some(TypeKind::Optional(payload))
-                    if !matches!(payload.kind(), TypeKind::Array(_)) =>
-                {
-                    Some(InterpolateHelp::Unwrap)
+                _ => {
+                    // A precision error is the one report of the part: it gets no warning.
+                    let mut reported = false;
+                    if let (Some(spec), Some(found)) = (spec, type_of(&value)) {
+                        let (format, error) = self.format(i, part, spec, found);
+                        formats.push(format);
+                        reported = error;
+                    }
+                    if !reported {
+                        self.warn_if_optional(part, &value);
+                    }
+                    checked.push(value);
+                    continue;
                 }
-                Some(TypeKind::Array(_) | TypeKind::Optional(_)) => Some(InterpolateHelp::ForLoop),
-                Some(
-                    TypeKind::Unit
-                    | TypeKind::Class(..)
-                    | TypeKind::Enum(..)
-                    | TypeKind::Param(..)
-                    | TypeKind::Assoc(..),
-                ) => None,
-            };
+            }
             let found = type_of(&value).expect("a part reported here should have a type");
             self.report(DiagnosticKind::CannotInterpolate {
                 ty: self.type_name(found),
-                help,
                 at: part.span,
             });
             checked.push(Err(Poisoned::error()));
@@ -105,16 +94,19 @@ impl Checker<'_> {
     }
 
     /// The format of the part `i`, `part`, of type `ty`, that `spec` gives. Without an alignment,
-    /// a number pads on the left and any other value on the right. Only an `f64` takes a
-    /// precision.
+    /// a number pads on the left and any other value on the right; a type parameter's text pads
+    /// as its type argument's does, which `mono` decides. Only an `f64` takes a precision; the
+    /// result says whether a precision on another type got its error.
     fn format(
         &mut self,
         i: usize,
         part: &ast::Expr,
         spec: &ast::FormatSpec,
         ty: Type,
-    ) -> tir::Format {
+    ) -> (tir::Format, bool) {
         let numeric = matches!(ty, Type::I64 | Type::U8 | Type::F64);
+        let by_type =
+            spec.align.is_none() && matches!(ty.kind(), TypeKind::Param(..) | TypeKind::Assoc(..));
         let pad = spec.width.map(|width| tir::Pad {
             align: spec.align.unwrap_or(if numeric {
                 tir::Align::Right
@@ -122,21 +114,41 @@ impl Checker<'_> {
                 tir::Align::Left
             }),
             width,
+            by_type,
         });
         let mut precision = spec.precision;
-        if precision.is_some() && ty != Type::F64 {
+        let error = precision.is_some() && ty != Type::F64;
+        if error {
+            let help = match ty.kind() {
+                _ if ty == Type::I64 => Some(PrecisionHelp::Convert(part.span)),
+                TypeKind::Optional(inner) if inner == Type::F64 => {
+                    let written = self.source.file.slice(part.span.range());
+                    Some(PrecisionHelp::Default {
+                        // `??` binds looser than a call, a field or an index; any other part
+                        // needs parentheses before it.
+                        part: if postfix(part) || parenthesized(written) {
+                            written.to_string()
+                        } else {
+                            format!("({written})")
+                        },
+                        spec: self.source.file.slice(spec.span.range()).to_string(),
+                    })
+                }
+                _ => None,
+            };
             self.report(DiagnosticKind::PrecisionNeedsF64 {
                 ty: self.type_name(ty),
                 at: spec.span,
-                fix: (ty == Type::I64).then_some(part.span),
+                help,
             });
             precision = None;
         }
-        tir::Format {
+        let format = tir::Format {
             part: i,
             pad,
             precision,
-        }
+        };
+        (format, error)
     }
 
     /// The operand `e` of the `+` over `operands`, of type `got`, which is not the `string` the
@@ -544,6 +556,28 @@ fn and(lhs: tir::Expr, rhs: tir::Expr, span: Span) -> tir::Expr {
         ty: Type::BOOL,
         span,
     }
+}
+
+/// Whether `written` is one expression in a pair of parentheses: its first `(` closes at its last
+/// token, so `(a ?? b)` is and `(a) ?? (b)` is not.
+fn parenthesized(written: &str) -> bool {
+    lex(written).is_ok_and(|lexed| {
+        let body: Vec<_> = (lexed.tokens.iter().map(|token| &token.kind))
+            .filter(|kind| !matches!(kind, TokenKind::Eof | TokenKind::Newline))
+            .collect();
+        let mut depth = 0_usize;
+        // No parenthesis closes back to depth 0 before the last token.
+        let open = body.iter().take(body.len().saturating_sub(1)).all(|kind| {
+            match kind {
+                TokenKind::LParen => depth += 1,
+                TokenKind::RParen => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            depth > 0
+        });
+        open && body.first() == Some(&&TokenKind::LParen)
+            && body.last() == Some(&&TokenKind::RParen)
+    })
 }
 
 #[cfg(test)]

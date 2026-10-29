@@ -1,0 +1,27 @@
+class P {
+    price: f64?
+}
+fn h() -> f64? {
+    None
+}
+fn main() {
+    let price: f64? = 1.5
+    let p = P(price: 2.5)
+    let q: P? = None
+    let xs: [f64?] = [None]
+    let a: f64? = None
+    let c = true
+    print("{price:8.2}")
+    print("{price:>8.2}")
+    eprint("{price:.3}")
+    let t = "{price:^10.1}"
+    print("{p.price:8.2}")
+    eprint("{xs[0]:.2}")
+    let u = "{h():<6.2}"
+    print("{q?.price:.2}")
+    print("{a ?? price:.2}")
+    print("{if c { a } else { price }:4.1}")
+    print("{(a ?? price):.2}")
+    print("{(a) ?? (price):.2}")
+    print("{(a ?? (price)):.2}")
+}
