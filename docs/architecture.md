@@ -149,8 +149,9 @@ including the methods of `extend` blocks.
 class or enum once, at its definition, with each type parameter an opaque
 `TypeKind::Param`. A value of a type parameter can be moved, stored, passed,
 returned, put in an array or a field, wrapped in `T?`, and called with the
-methods of its bounds. No interface gives an operator yet, so an operator on
-one is E0139. A call takes its type arguments written out, or
+methods of its bounds. An operator on one needs a bound that gives it:
+`Eq` gives `==` and `!=`, and `Ord` gives `<`, `<=`, `>` and `>=`. Without
+the bound, the operator is E0139. A call takes its type arguments written out, or
 infers them from its receiver, its arguments and the expected type. `tir`
 keeps the type parameters, and a call records the type arguments it chose.
 `check/interface.rs` declares each interface, with its type parameters,
@@ -166,6 +167,18 @@ of type `T`: the name is a requirement of the interfaces of `T`'s bounds, and
 the call becomes an `InterfaceCall` node in `tir`. `conformance.rs` finds the
 conformance that covers a type, for the checker and for `mono`. A type
 argument that does not conform to a bound is an error at the call (E0154).
+The interfaces `Display`, `Eq`, `Ord` and `AnyObject` are in `lang.sisu`,
+which the front end checks before the prelude. `print`, `eprint`, an
+interpolation and `to_string()` use `Display`, `==` and `!=` use `Eq`, and `<`,
+`<=`, `>` and `>=` use `Ord`. The compiler writes the conformances of the
+numbers, `bool`, `char`, `string`, arrays, optionals and enums, and a class
+gets only the ones its program writes (E0152, E0159). `lang.rs` makes the
+`tir` of an operator for a type it knows: the node that the operator always
+had when the compiler wrote the conformance, and a call of the method when a
+program wrote it. Only a class conforms to `AnyObject` (E0158), and `is` on a
+`T: AnyObject` tests identity. `print` of an optional gives W0015 and
+`to_string()` does not
+([ADR 0036](adr/0036-every-type-prints-and-printing-an-optional-warns.md)).
 `check/cycle.rs` then rejects a program whose instantiations would never end
 (E0140). Its graph has a node for each type parameter of every declaration,
 a node for each interface, and an edge for each type argument that names a
@@ -189,7 +202,9 @@ it, never with its class. `mono` then lays out the enums again with
 no declaration has. A call of a requirement through a bound is an
 `InterfaceCall` in `tir`; `mono` replaces it with a call of the method of the
 conformance that the type argument has, so `total<Circle>` calls `Circle.area`
-directly and dispatch is static. It also replaces each associated type with
+directly and dispatch is static. It does the same for an operator on a `T`,
+through `lang.rs`: `a == b` on a `T` that is a `Circle` with a written `Eq`
+calls `Circle.eq`. It also replaces each associated type with
 the type its conformance chose. It reports E0030 for a chain of more than 128
 choices, or a loop, that the checker's probe did not follow, and then gives no
 program. A method of an `extend` block that names an
@@ -281,8 +296,10 @@ in direct fields, `X` with any number of `?` around it, frees the objects of
 the cycle from pending lists, linked
 through the dead count word. So a chain of any depth drops in one frame. A
 cycle of two or more classes shares one `sisu_rc.drain.<Class>` helper, named
-after its first class. A class that `==` compares also gets
-`sisu_rc.eq.<Class>`, made the first time the compiler needs it. A field
+after its first class. A class gets `sisu_rc.eq.<Class>` only when its program
+writes an `Eq` for it and `==` on an array or an enum of it needs the helper.
+The helper calls the written `eq`; a class has no generated `==`
+([ADR 0022](adr/0022-classes-compare-by-identity.md)). A field
 read and a field assignment tag their load and store with a TBAA tag of that
 field's own, `<Class>.<field>`, so LLVM knows that writing one field changes
 no other field, and no count, length or element.
@@ -370,7 +387,12 @@ expression, calls only `sisu_words_count`. `stdin.rs` holds `sisu_read_line`,
 which `read_line()` calls. `args.rs` holds `sisu_args_len` and `sisu_arg`,
 which the generated `main` calls to build `args` when `sisu.main` takes it.
 `print(x)` and `"{x}"` share one formatter per
-type. The `sisu_print_*` functions write into a buffer that the runtime owns,
+type. The text of an array, a class, an enum or an optional goes through a
+sink in `show.rs`: generated `sisu_show.<type>` helpers call `sisu_show_int`,
+`sisu_show_str`, `sisu_show_quoted`, `sisu_show_open`, `sisu_show_sep`,
+`sisu_show_close` and the other `sisu_show_*` functions. One sink writes into
+the buffer of standard output, and another builds the block that becomes a
+string. The `sisu_print_*` functions write into a buffer that the runtime owns,
 and `main` calls `sisu_flush_stdout` before it returns. The `sisu_eprint_*`
 functions write each value at once, in one write to standard error. The
 runtime counts the blocks that are allocated and not yet freed. A program

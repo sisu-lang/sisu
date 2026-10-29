@@ -169,7 +169,7 @@ The rules:
 
 - An enum value has no fields to read or write ([E0121](../diagnostics/E0121.md)). A `match` names the values of a payload.
 - Two values of an enum are equal when they are the same variant and their payloads are equal ([Operators](operators.md#equality)). `==` compares the payload fields in order, and stops at the first field that is not equal.
-- An enum has no order. `<` and the other comparison operators do not take it ([E0032](../diagnostics/E0032.md)).
+- An enum has no order unless it conforms to `Ord`. Without it, `<` and the other comparison operators do not take it ([E0159](../diagnostics/E0159.md)). An enum has `==` only when all its payloads have it, so a payload that is an object needs a class that conforms to `Eq` ([E0159](../diagnostics/E0159.md)).
 - An object in a payload stays shared. Two copies of an enum value refer to the same object ([Values and memory](values.md#copied-and-shared)).
 - `is` does not take an enum ([E0046](../diagnostics/E0046.md)).
 

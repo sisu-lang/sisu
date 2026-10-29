@@ -148,6 +148,7 @@ The rules:
 - `sum` takes only an `[i64]` or an `[f64]` ([E0069](../diagnostics/E0069.md)). It adds the elements in order, and the sum of an empty array is zero.
 - On an `[i64]`, a sum outside the range of `i64` stops the program with a panic ([Overflow](operators.md#overflow)).
 - The argument of `contains` has the element type ([E0032](../diagnostics/E0032.md)). So `None` is valid only when the elements are optional.
+- `contains` needs `==` on the element type, so an array of objects has it only when the class conforms to `Eq` ([E0159](../diagnostics/E0159.md)).
 - `contains` uses `==`, so `contains(f64.nan)` is always `false` ([Types](types.md#floating-point-numbers)).
 - A name that is not one of these methods is an error ([E0063](../diagnostics/E0063.md)).
 - On an optional array, call a method with `?.` ([Optional chaining](operators.md#optional-chaining)).
@@ -174,7 +175,7 @@ fn main() {
 
 ## Equality
 
-Two arrays are equal when they have the same length and their elements are equal, in order ([Equality](operators.md#equality)). `<` and the other comparisons do not apply to arrays ([E0032](../diagnostics/E0032.md)). Nor does `is`, because an array is not an object ([E0046](../diagnostics/E0046.md)).
+Two arrays are equal when they have the same length and their elements are equal, in order ([Equality](operators.md#equality)). `<` and the other comparisons do not apply to arrays ([E0159](../diagnostics/E0159.md)). An array of objects has `==` only when the class conforms to `Eq` ([E0159](../diagnostics/E0159.md)). Nor does `is`, because an array is not an object ([E0046](../diagnostics/E0046.md)).
 
 ```sisu
 fn main() {

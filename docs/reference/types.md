@@ -444,12 +444,10 @@ fn main() {
 
 `unit` is the type of an expression that gives no value, such as a call of `print`. It is an ordinary type. A program can write it, for example in `-> unit`.
 
-```sisu pending
+```sisu
 fn main() {
-    // Prints x, then ().
-    print(print("x"))
-    // Prints a, then b, then true.
-    print(print("a") == print("b"))
+    print(print("x"))                // error[E0059]
+    print(print("a") == 1)           // error[E0043]
 }
 ```
 

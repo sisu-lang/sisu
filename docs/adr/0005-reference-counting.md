@@ -37,5 +37,6 @@ same way. See the milestone 2 spec, "Reference counting".
   cycle is a set of classes that hold each other in direct fields, `X` with any
   number of `?` around it. A list's `next` is a cycle of one class. Other
   references recurse: a field of an array or an enum, and a class outside the
-  cycle. `==` loops only on the last field of a class's own type, `X` or `X?`. It
-  recurses on every other link until milestone 8 part 5 removes class `==`.
+  cycle. A class has no generated `==` (ADR 0022), so no compiler-written code
+  walks the fields of a class. A written `eq` is a method like any other and
+  follows the references it names.

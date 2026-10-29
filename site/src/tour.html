@@ -4,7 +4,7 @@ A tour of the Sisu language as it works today, one small program at a time.
   <section class="ph"><div class="w">
     <h1>A tour of Sisu</h1>
     <p class="lede">The language as it works today, one small program at a time, in about ten minutes of reading.</p>
-    <p class="meta">The working programs on this page compile with sisu today. Every output and error shown is what sisu really prints. Checked against the repository at commit 9d3965c.</p>
+    <p class="meta">The working programs on this page compile with sisu today. Every output and error shown is what sisu really prints. Checked against the repository at commit e4b0113.</p>
   </div></section>
 
   <div class="w doc">
@@ -89,8 +89,8 @@ A tour of the Sisu language as it works today, one small program at a time.
       <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
 {{text programs/run/counter.out}}</pre></figure>
       <p><code>let b = a</code> does not copy the object: <code>a</code> and <code>b</code> hold the same counter, so both ticks count. <code>is</code> asks whether two references hold the same object.</p>
-      <div class="callout info"><p><span class="soon">planned</span> Today <code>==</code> on two objects compares their fields. A recorded decision changes that: a class will have <code>==</code> only when it asks for one, and <code>is</code> stays the identity test.</p></div>
-      <!-- source: docs/adr/0011-let-mut-marks-what-can-change.md, docs/adr/0005-reference-counting.md, docs/adr/0022-classes-compare-by-identity.md (accepted, not yet built), docs/roadmap.md ("What works today": == field by field, is tests identity) -->
+      <div class="callout info"><p>A class has no <code>==</code> of its own. <code>a == b</code> on two objects is an error unless the class conforms to <code>Eq</code> and writes an <code>eq</code> method. <code>is</code> is the identity test.</p></div>
+      <!-- source: docs/adr/0011-let-mut-marks-what-can-change.md, docs/adr/0005-reference-counting.md, docs/adr/0022-classes-compare-by-identity.md, docs/roadmap.md ("What works today": is tests identity, a class has == only with Eq) -->
 
       <h2 id="enums">Enums and match</h2>
       <p>An enum lists its variants, and each variant can carry data. <code>match</code> takes a value apart, one arm per line, and gives a value.</p>
@@ -139,7 +139,7 @@ $ ./factorial
       <h2 id="not-yet">What is not here yet</h2>
       <p>Sisu is early, and much of an everyday language is still missing. Some of what is planned:</p>
       <ul>
-        <li>Interface values and the interfaces <code>Display</code>, <code>Eq</code> and <code>Ord</code> <span class="soon">planned</span></li>
+        <li>Interface values, <code>any Shape</code> <span class="soon">planned</span></li>
         <li>Closures and iterators <span class="soon">planned</span></li>
         <li>Errors with <code>Result</code> and <code>?</code> <span class="soon">planned</span></li>
         <li>Modules <span class="soon">planned</span></li>

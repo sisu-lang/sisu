@@ -73,9 +73,9 @@ state = "works"
 notes = [["ADR 0023", "docs/adr/0023-generics-are-monomorphized-and-checked-at-the-definition.md"], ["Roadmap: what works today", "docs/roadmap.md#what-works-today"]]
 
 [[area.feature]]
-text = "<code>Display</code>, <code>Eq</code> and <code>Ord</code>"
+text = "<code>Display</code>, <code>Eq</code>, <code>Ord</code> and <code>AnyObject</code>"
 state = "works"
-notes = [["ADR 0036", "docs/adr/0036-every-type-prints-and-printing-an-optional-warns.md"], ["Roadmap: what works today", "docs/roadmap.md#what-works-today"]]
+notes = [["ADR 0022", "docs/adr/0022-classes-compare-by-identity.md"], ["ADR 0036", "docs/adr/0036-every-type-prints-and-printing-an-optional-warns.md"], ["Roadmap: what works today", "docs/roadmap.md#what-works-today"]]
 
 [[area.feature]]
 text = "Interface values, <code>any Shape</code>"

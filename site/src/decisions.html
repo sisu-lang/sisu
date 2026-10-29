@@ -11,7 +11,7 @@ The design decisions behind Sisu, each written down as a short record with its r
   <section class="ph"><div class="w">
     <h1>Design decisions</h1>
     <p class="lede">Every design choice in Sisu is written down with its reasons, as a short decision record. This page lists them all.</p>
-    <p class="meta">{{adr-count}} records · at commit 9d3965c</p>
+    <p class="meta">{{adr-count}} records · at commit e4b0113</p>
   </div></section>
   <!-- source: docs/adr/ (36 files, 0001 to 0036), README.md ("Read why a design choice was made") -->
 
@@ -67,7 +67,7 @@ The design decisions behind Sisu, each written down as a short record with its r
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0002-immutable-by-default.md"><span class="num">0002</span><b>Bindings are immutable by default<small>superseded by 0011</small></b><span><code>let</code> made a binding that cannot change and <code>var</code> one that can; immutable by default still holds.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0011-let-mut-marks-what-can-change.md"><span class="num">0011</span><b><code>let mut</code> marks what can change</b><span>One word, <code>mut</code>, marks every binding, field and method receiver that can change.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0007-arrays-are-values.md"><span class="num">0007</span><b>Arrays are values, shared until written</b><span>Binding, passing or storing an array behaves as a copy, made only when a shared array is written.</span></a></li>
-        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0022-classes-compare-by-identity.md"><span class="num">0022</span><b>Classes compare by identity <span class="soon">planned</span></b><span>A class has no <code>==</code> unless it conforms to <code>Eq</code> by hand; <code>is</code> asks whether two references are the same object.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0022-classes-compare-by-identity.md"><span class="num">0022</span><b>Classes compare by identity</b><span>A class has no <code>==</code> unless it conforms to <code>Eq</code> by hand; <code>is</code> asks whether two references are the same object.</span></a></li>
       </ul>
       <!-- source: docs/adr/0002-immutable-by-default.md, docs/adr/0011-let-mut-marks-what-can-change.md, docs/adr/0007-arrays-are-values.md, docs/adr/0022-classes-compare-by-identity.md -->
 

@@ -233,7 +233,7 @@ The rules:
 
 - A `char` compares by its code point. A `string` compares byte by byte, which is the order of the code points. So the ASCII upper case letters come before the ASCII lower case letters, and a prefix comes before the longer string.
 - An `f64` comparison follows IEEE 754: a comparison with NaN is false.
-- A `bool`, an optional, an array, a class or an enum cannot be compared with `<` ([E0032](../diagnostics/E0032.md)).
+- A `bool`, an array, a class or an enum has no `<` ([E0159](../diagnostics/E0159.md)), unless a class or an enum conforms to `Ord` ([Display, Eq and Ord](generics.md#display-eq-and-ord)). An optional cannot be compared with `<` ([E0032](../diagnostics/E0032.md)).
 - The two operands must have one type ([E0032](../diagnostics/E0032.md)).
 
 ### Comparison chains
@@ -278,6 +278,7 @@ The rules:
 - A `T` beside a `T?` becomes a `T?`. Two optionals are equal when both are `None`, or both hold equal values.
 - `x == None` and `x != None` test whether the optional `x` holds a value. When `x` is not optional, the test is an error ([E0044](../diagnostics/E0044.md)).
 - Values of two types cannot be compared ([E0047](../diagnostics/E0047.md), [E0032](../diagnostics/E0032.md)).
+- A class has no `==`, because objects compare by identity. Use `a is b` ([`is`](#is)), or make the class conform to `Eq` and write its `eq` method. Without it, `a == b` is an error ([E0159](../diagnostics/E0159.md)), and so is `==` on an array or an optional of that class ([Display, Eq and Ord](generics.md#display-eq-and-ord)).
 - An `f64` follows IEEE 754: NaN is not equal to itself, and `-0.0 == 0.0` is true. So an array that holds NaN is not equal to itself.
 - `==`, `!=` and `is` do not chain: `a == b == c` is an error ([E0024](../diagnostics/E0024.md)). Join two tests with `&&`.
 
