@@ -474,6 +474,22 @@ fn main() {
         }
     }
 
+    /// A spec with an error is the one report of its part: an optional there gets no warning.
+    #[test]
+    fn a_bad_format_spec_on_an_optional_should_give_no_warning() {
+        use Code::{FormatSpecLimit, MalformedFormatSpec, UnsupportedFormatSpec};
+        for (spec, expected) in [
+            ("08.2", UnsupportedFormatSpec),
+            ("+", UnsupportedFormatSpec),
+            ("2000", FormatSpecLimit),
+            ("8.", MalformedFormatSpec),
+        ] {
+            let src =
+                format!("fn main() {{\n    let p: f64? = 1.5\n    print(\"{{p:{spec}}}\")\n}}\n");
+            assert_eq!(codes(&src), [(expected, (3, 14))], "spec {spec}");
+        }
+    }
+
     #[test]
     fn call_to_broken_function_checks_arguments() {
         let src = "fn f() {\n    let = 1\n}\nfn main() {\n    f(nope)\n}\n";

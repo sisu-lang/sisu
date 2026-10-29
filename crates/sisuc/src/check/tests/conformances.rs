@@ -3507,7 +3507,7 @@ type Row = (
     Option<&'static str>,
 );
 
-const PRINTED: [Row; 30] = [
+const PRINTED: [Row; 35] = [
     ("print", "", "name: string?", "print(name)", Some("name")),
     ("eprint", "", "name: string?", "eprint(name)", Some("name")),
     (
@@ -3682,11 +3682,22 @@ const PRINTED: [Row; 30] = [
         "print(name == None)",
         None,
     ),
+    ("a Some", "", "", "print(Some(1))", None),
+    ("a Some in parentheses", "", "", "print((Some(1)))", None),
+    ("Option.Some", "", "", "print(Option.Some(1))", None),
+    (
+        "a Some of an optional",
+        "",
+        "",
+        "print(Some(Some(1)))",
+        None,
+    ),
+    ("an interpolated Some", "", "", "print(\"{Some(1)}\")", None),
 ];
 
 /// A top-level optional in `print`, `eprint` or an interpolation, whatever the expression that
-/// gives it, warns once at that expression; an optional inside another value, a text from
-/// `to_string` or `??`, and a `T` that holds an optional when it is instantiated, do not. The
+/// gives it, warns once at that expression; a `Some(x)`, an optional inside another value, a text
+/// from `to_string` or `??`, and a `T` that holds an optional when it is instantiated, do not. The
 /// fixtures `W0015` and `W0015-value` pin the text.
 #[test]
 fn printing_an_optional_should_warn_only_at_the_top_level() {
