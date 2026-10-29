@@ -2359,7 +2359,9 @@ fn implicit_dbg_should_close_an_instantiation_cycle() {
 }
 
 /// The same through an enum: a payload that holds the class, a recursive enum, and an enum that
-/// shows no argument. The class is reported at its field, however the enum holds it.
+/// shows no argument. A class with a field that grows is reported at its field, however the
+/// enum holds it. A payload that grows, or a class that passes its parameter on, is reported at
+/// the payload. That class inside another enum is reported at its field, which does not grow.
 #[test]
 fn implicit_dbg_should_close_an_instantiation_cycle_through_an_enum() {
     dbg_cycle_rows(&[
@@ -2418,13 +2420,20 @@ fn implicit_dbg_should_close_an_instantiation_cycle_through_an_enum() {
             "let _ = dbg(PassOn.One(Wrap(v: W(x: [self.x]))))",
             Some("Wrap<U>"),
         ),
+        // The class is in another enum: it is reported at its field type `W<T>`, which does not
+        // grow. The text `W<T>\n}` skips `class W<T>` and starts at that field type.
+        (
+            "a dbg of an enum whose payload holds such a class inside another enum",
+            "let _ = dbg(NestW.One(Pick.One(Wrap(v: W(x: [self.x])))))",
+            Some("W<T>\n}"),
+        ),
     ]);
 }
 
 /// Checks each row `(name, body, cycle)`: the program whose `Display` of `W<T>` runs `body`
 /// reports an E0140 at the text `cycle`, or checks clean when it is `None`.
 fn dbg_cycle_rows(rows: &[(&str, &str, Option<&str>)]) {
-    let w = "class W<T> {\n    x: T\n}\nclass Wrap<T> {\n    v: W<T>\n}\nclass Hold<T> {\n    v: W<[T]>\n}\nclass Rec<T> {\n    next: Rec<T>?\n    v: W<[T]>\n}\nenum Pick<U> {\n    One(U)\n}\nenum Pair<U> {\n    Two(U, U)\n}\nenum Tree<U> {\n    Leaf(U)\n    Node(Tree<U>, Tree<U>)\n}\nenum Both<U> {\n    One(Hold<U>)\n}\nenum PassOn<U> {\n    One(Wrap<U>)\n}\nenum Grow<U> {\n    One(Wrap<[U]>)\n}\nenum Nest<U> {\n    One(Pick<Pick<U>>)\n}\nenum NestPhantom<U> {\n    One(Phantom<i64, Pick<U>>)\n}\nenum Phantom<U, P> {\n    One(U)\n}\nenum Bag<U> {\n    Many([U])\n    Maybe(U?)\n}\n";
+    let w = "class W<T> {\n    x: T\n}\nclass Wrap<T> {\n    v: W<T>\n}\nclass Hold<T> {\n    v: W<[T]>\n}\nclass Rec<T> {\n    next: Rec<T>?\n    v: W<[T]>\n}\nenum Pick<U> {\n    One(U)\n}\nenum Pair<U> {\n    Two(U, U)\n}\nenum Tree<U> {\n    Leaf(U)\n    Node(Tree<U>, Tree<U>)\n}\nenum Both<U> {\n    One(Hold<U>)\n}\nenum PassOn<U> {\n    One(Wrap<U>)\n}\nenum NestW<U> {\n    One(Pick<Wrap<U>>)\n}\nenum Grow<U> {\n    One(Wrap<[U]>)\n}\nenum Nest<U> {\n    One(Pick<Pick<U>>)\n}\nenum NestPhantom<U> {\n    One(Phantom<i64, Pick<U>>)\n}\nenum Phantom<U, P> {\n    One(U)\n}\nenum Bag<U> {\n    Many([U])\n    Maybe(U?)\n}\n";
     let main = "fn main() {\n    print(W(x: 1))\n}";
     let display = |body: &str| {
         format!(
