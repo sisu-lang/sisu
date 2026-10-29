@@ -581,7 +581,9 @@ pub unsafe extern "C" fn sisu_show_finish(sink: *mut Sink) -> *mut u8 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sisu_show_line_end(sink: *mut Sink) {
     // SAFETY: the caller promises that `sink` is started.
-    unsafe { sink_at(sink) }.line_end();
+    let sink = unsafe { sink_at(sink) };
+    debug_assert_ne!(sink.kind, PRETTY, "a pretty sink ends no line");
+    sink.line_end();
 }
 
 /// The length of the text of `sink` so far, for `sisu_show_pad` to pad from. A buffer sink
@@ -1337,9 +1339,9 @@ mod tests {
     }
 
     /// The layout breaks a group exactly when its column, its flat width and a following `,` pass
-    /// column 80, at each nesting; counts `char`s and not bytes; counts a column from the last
-    /// line break of a piece; and ignores the text before it in the inner sink. Each row is also
-    /// laid out after 40 bytes of earlier text, and must give the same text.
+    /// column 80. It does so at each nesting. It counts `char`s and not bytes. It counts a column
+    /// from the last line break of a piece. It ignores the text before it in the inner sink.
+    /// Each row is also laid out after 40 bytes of earlier text, and must give the same text.
     #[test]
     fn layout_should_break_a_group_only_past_column_80() {
         for (name, events, want) in boundary_rows().into_iter().chain(column_rows()) {
@@ -1372,8 +1374,8 @@ mod tests {
         assert_eq!(got, "[abc]");
     }
 
-    /// Where a layout of 1,000,000 groups writes: it counts the line breaks and drops the text,
-    /// since all the groups break and the indentation alone is terabytes.
+    /// Where a layout of 1,000,000 groups writes. It counts the line breaks and drops the text.
+    /// All the groups break, and the indentation alone is terabytes.
     #[derive(Default)]
     struct Counted {
         line_breaks: usize,
@@ -1408,8 +1410,8 @@ mod tests {
     }
 
     /// The two passes read each event exactly twice, through `Recorder::event`, whatever the
-    /// shape: a small nesting and a wide group first, so that a rescan of a group's children is
-    /// seen at once and not as a hang at a million levels. Then nested groups lay out with no
+    /// shape. A small nesting and a wide group come first. A rescan of a group's children shows
+    /// at once there, and not as a hang at a million levels. Then nested groups lay out with no
     /// recursion: a thread with a small stack lays out a million levels.
     #[test]
     fn layout_should_read_each_event_twice() {
