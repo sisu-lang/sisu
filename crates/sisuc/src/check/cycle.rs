@@ -109,8 +109,8 @@ use std::collections::VecDeque;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::Checker;
-use crate::ast::angled;
-use crate::diagnostic::{DiagnosticKind, Hop};
+use crate::ast::{CompareOp, angled};
+use crate::diagnostic::{DiagnosticKind, Hop, Spelled};
 use crate::graph::components;
 use crate::source::Span;
 use crate::tir::{self, Type, TypeArgs, TypeKind, head_of};
@@ -142,6 +142,24 @@ const UNBOUNDED: i64 = 1 << 32;
 /// of the graph stay in proportion to the program.
 const MATCHING_CHOICES: usize = 64;
 
+/// The text of a comparison operator.
+fn compare_text(op: CompareOp) -> &'static str {
+    match op {
+        CompareOp::Lt => "<",
+        CompareOp::Le => "<=",
+        CompareOp::Gt => ">",
+        CompareOp::Ge => ">=",
+    }
+}
+
+/// The interface that `instance` calls through, if it calls through one.
+fn calls_through(instance: Instance) -> Option<tir::InterfaceId> {
+    match instance {
+        Instance::Required(interface, ..) | Instance::Operator(interface, _) => Some(interface),
+        Instance::Call(..) | Instance::Type(_) => None,
+    }
+}
+
 /// An instantiation, which a diagnostic writes as the program does.
 #[derive(Clone, Copy)]
 enum Instance {
@@ -152,6 +170,21 @@ enum Instance {
     /// A call of a requirement of an interface, by the requirement's place, with its own type
     /// arguments.
     Required(tir::InterfaceId, usize, TypeArgs),
+    /// A call through a language interface that the program spells as an operator, an
+    /// interpolation or a generated `==` or `to_string`, and not as a call of the method.
+    Operator(tir::InterfaceId, Written),
+}
+
+/// How the program spells a call through a language interface that is not a call of its method.
+/// A call of the method through a bound, as `x.eq(y)` writes it, is a `Required` instance.
+#[derive(Clone, Copy)]
+enum Written {
+    /// An operator or built-in function, as written: `==`, `<`, `contains` or `print`.
+    Op(&'static str),
+    /// A part of an interpolation.
+    Interpolation,
+    /// The generated `==` or `to_string` of an enum, for the payload type given.
+    Generated(Type),
 }
 
 /// An edge of the graph, from an instantiation at `site` inside the declaration `holder`; or,
@@ -395,7 +428,14 @@ impl Graph {
 
     /// An edge into the hub declaration `hub` from the node `from`, for the operator or call at
     /// `site` inside `holder`: it hands on an operand of the receiver's type.
-    fn receive(&mut self, holder: usize, from: usize, hub: usize, site: Span, instance: Instance) {
+    fn receive(
+        &mut self,
+        holder: usize,
+        from: usize,
+        hub: usize,
+        (site, mark): (Span, Span),
+        instance: Instance,
+    ) {
         self.edges.push(Edge {
             from,
             to: self.first[hub],
@@ -405,7 +445,7 @@ impl Graph {
             assoc: false,
             holder,
             site,
-            mark: site,
+            mark,
             instance: Some(instance),
         });
     }
@@ -428,42 +468,53 @@ impl Graph {
 
     /// The edges of an operator of the language interface `interface` on an operand of type `ty`
     /// inside `holder`, at `site`: see the module doc. An operand that names no parameter adds
-    /// none.
-    fn operator(&mut self, holder: usize, ty: Type, interface: tir::InterfaceId, site: Span) {
+    /// none. A diagnostic underlines `mark` and spells the call as `written`, or as a call of the
+    /// method when there is none.
+    fn operator(
+        &mut self,
+        holder: usize,
+        ty: Type,
+        interface: tir::InterfaceId,
+        (site, mark): (Span, Span),
+        written: Option<Written>,
+    ) {
         let ty = self.core(ty);
         if !ty.has_param() {
             return;
         }
-        let instance = Instance::Required(interface, 0, TypeArgs::NONE);
+        let instance = written.map_or(
+            Instance::Required(interface, 0, TypeArgs::NONE),
+            |written| Instance::Operator(interface, written),
+        );
         let hub = self.interface_hubs + interface.0;
         match ty.kind() {
             TypeKind::Param(_, i) => {
                 let from = self.second(holder, i as usize);
-                self.receive(holder, from, hub, site, instance);
+                self.receive(holder, from, hub, (site, mark), instance);
             }
             TypeKind::Enum(id, args) => {
-                let (written, unconditional) = self
+                let (listed, unconditional) = self
                     .records
                     .get(&(interface, id))
                     .copied()
                     .unwrap_or_default();
-                if !written || !unconditional {
+                if !listed || !unconditional {
                     let first = if interface == self.display {
                         self.display_first
                     } else {
                         self.eq_first
                     };
                     let target = first + id.0;
-                    self.args(holder, args.get(), target, site, site, Instance::Type(ty));
+                    self.args(holder, args.get(), target, site, mark, Instance::Type(ty));
                 }
-                if written {
+                if listed {
                     let from = self.node(holder, ty);
-                    self.receive(holder, from, hub, site, instance);
+                    self.receive(holder, from, hub, (site, mark), instance);
                 }
             }
             _ => {
                 let from = self.node(holder, ty);
-                self.receive(holder, from, hub, site, instance);
+                self.receive(holder, from, hub, (site, mark), instance);
             }
         }
     }
@@ -954,6 +1005,9 @@ impl Checker<'_> {
                 .expect("a cycle of positive weight should hold a step of positive weight")
         });
         let edge = &edges[label];
+        let label_instance = edge
+            .instance
+            .expect("a labeled edge should be an instantiation");
         if !reported.insert(edge.site) {
             return;
         }
@@ -973,20 +1027,22 @@ impl Checker<'_> {
             })
             .map(|ty| self.type_name(ty))
             .next();
+        let label_spelled = self.spell(functions, graph, edge.holder, label_instance);
         // A call that gives two parameters their arguments is one site, shown once.
         let mut shown = FxHashSet::from_iter([edge.site]);
-        if let Some(Instance::Required(interface, ..)) = edge.instance {
-            reach = Some(interface);
+        if let Some(interface) = calls_through(label_instance) {
+            reach = Some((interface, label_spelled.clone()));
         }
         // A call through a hub, until the edge out of the hub says which method it may run.
-        let mut calling: Option<(Span, tir::InterfaceId)> = None;
+        let mut calling: Option<(Span, tir::InterfaceId, Option<Spelled>)> = None;
         for &i in &cycle[1..] {
             let e = &edges[i];
             if e.out {
-                if let Some((mark, interface)) = calling.take() {
+                if let Some((mark, interface, by)) = calling.take() {
                     through.push((
                         mark,
                         Hop::Calls {
+                            by,
                             // The method that the cycle takes, of all the hub reaches.
                             method: self.method_text(functions, e.holder),
                             interface: self.interfaces[interface.0].name.name.to_string(),
@@ -1001,9 +1057,11 @@ impl Checker<'_> {
             if !shown.insert(e.site) {
                 continue;
             }
-            if let Instance::Required(interface, ..) = instance {
-                reach.get_or_insert(interface);
-                calling = Some((e.mark, interface));
+            if let Some(interface) = calls_through(instance) {
+                let spelled = self.spell(functions, graph, e.holder, instance);
+                let by = matches!(instance, Instance::Operator(..)).then(|| spelled.clone());
+                reach.get_or_insert((interface, spelled));
+                calling = Some((e.mark, interface, by));
             } else {
                 through.push((
                     e.mark,
@@ -1014,15 +1072,34 @@ impl Checker<'_> {
         self.report(DiagnosticKind::InstantiationCycle {
             name: self.node_owner_name(graph, edge.holder),
             at: edge.mark,
-            instance: self.instance_name(
-                functions,
-                edge.instance
-                    .expect("a labeled edge should be an instantiation"),
-            ),
+            instance: label_spelled,
             through,
-            reach: reach.map(|interface| self.interfaces[interface.0].name.name.to_string()),
+            reach: reach
+                .map(|(interface, by)| (self.interfaces[interface.0].name.name.to_string(), by)),
             choice,
         });
+    }
+
+    /// `instance`, at an edge of the declaration `holder`, as the program spells it.
+    fn spell(
+        &self,
+        functions: &[Option<tir::Function>],
+        graph: &Graph,
+        holder: usize,
+        instance: Instance,
+    ) -> Spelled {
+        let Instance::Operator(interface, written) = instance else {
+            return Spelled::Instance(self.instance_name(functions, instance));
+        };
+        match written {
+            Written::Op(op) => Spelled::Operator(op.to_string()),
+            Written::Interpolation => Spelled::Interpolation,
+            Written::Generated(operand) => Spelled::Generated {
+                display: interface == self.lang.display,
+                enum_name: self.node_owner_name(graph, holder),
+                operand: self.type_name(operand),
+            },
+        }
     }
 
     /// The name of the declaration `holder` of the graph, which a diagnostic gives. A generated
@@ -1171,7 +1248,13 @@ impl Checker<'_> {
                         // or an optional, which its generated conformance takes off first.
                         let hub = interface_hubs + interface.0;
                         if [self.lang.eq, self.lang.ord, self.lang.display].contains(&interface) {
-                            graph.operator(holder, iargs.get()[0], interface, e.span);
+                            graph.operator(
+                                holder,
+                                iargs.get()[0],
+                                interface,
+                                (e.span, e.span),
+                                None,
+                            );
                         } else {
                             graph.args(holder, &iargs.get()[..1], hub, e.span, e.span, instance);
                         }
@@ -1180,31 +1263,7 @@ impl Checker<'_> {
                             graph.args(holder, &[*arg], hub, e.span, e.span, instance);
                         }
                     }
-                    // `x == None` tests presence and calls nothing.
-                    tir::ExprKind::Equal {
-                        ref lhs, ref rhs, ..
-                    } if !matches!(lhs.kind, tir::ExprKind::None)
-                        && !matches!(rhs.kind, tir::ExprKind::None) =>
-                    {
-                        graph.operator(holder, lhs.ty, self.lang.eq, e.span);
-                    }
-                    tir::ExprKind::Compare { ref operands, .. } => {
-                        graph.operator(holder, operands[0].ty, self.lang.ord, e.span);
-                    }
-                    tir::ExprKind::Print { ref operand, .. } => {
-                        graph.operator(holder, operand.ty, self.lang.display, e.span);
-                    }
-                    tir::ExprKind::Interpolate { ref parts, .. } => {
-                        for part in parts {
-                            graph.operator(holder, part.ty, self.lang.display, e.span);
-                        }
-                    }
-                    tir::ExprKind::Contains { ref base, .. } => {
-                        let element =
-                            (base.ty.array_element()).expect("`contains` should take an array");
-                        graph.operator(holder, element, self.lang.eq, e.span);
-                    }
-                    _ => {}
+                    _ => self.operator_edges(&mut graph, holder, e),
                 }
             }
         }
@@ -1212,6 +1271,79 @@ impl Checker<'_> {
         self.generated_edges(&mut graph);
         self.declaration_edges(&mut graph, unbuilt);
         graph
+    }
+
+    /// The edges of the operators, `print` and interpolations in the expression `e` inside the
+    /// function `holder`: see the module doc.
+    fn operator_edges(&self, graph: &mut Graph, holder: usize, e: &tir::Expr) {
+        match e.kind {
+            // `x == None` tests presence and calls nothing.
+            tir::ExprKind::Equal {
+                ref lhs,
+                ref rhs,
+                negated,
+            } if !matches!(lhs.kind, tir::ExprKind::None)
+                && !matches!(rhs.kind, tir::ExprKind::None) =>
+            {
+                graph.operator(
+                    holder,
+                    lhs.ty,
+                    self.lang.eq,
+                    (e.span, e.span),
+                    Some(Written::Op(if negated { "!=" } else { "==" })),
+                );
+            }
+            tir::ExprKind::Compare {
+                ref operands,
+                ref ops,
+            } => {
+                graph.operator(
+                    holder,
+                    operands[0].ty,
+                    self.lang.ord,
+                    (e.span, e.span),
+                    Some(Written::Op(compare_text(ops[0]))),
+                );
+            }
+            tir::ExprKind::Print {
+                ref operand,
+                stream,
+            } => {
+                let name = match stream {
+                    tir::Stream::Stdout => "print",
+                    tir::Stream::Stderr => "eprint",
+                };
+                graph.operator(
+                    holder,
+                    operand.ty,
+                    self.lang.display,
+                    (e.span, e.span),
+                    Some(Written::Op(name)),
+                );
+            }
+            tir::ExprKind::Interpolate { ref parts, .. } => {
+                for part in parts {
+                    graph.operator(
+                        holder,
+                        part.ty,
+                        self.lang.display,
+                        (e.span, part.span),
+                        Some(Written::Interpolation),
+                    );
+                }
+            }
+            tir::ExprKind::Contains { ref base, .. } => {
+                let element = (base.ty.array_element()).expect("`contains` should take an array");
+                graph.operator(
+                    holder,
+                    element,
+                    self.lang.eq,
+                    (e.span, e.span),
+                    Some(Written::Op("contains")),
+                );
+            }
+            _ => {}
+        }
     }
 
     /// By interface and enum, whether a written conformance targets the enum, and whether one of
@@ -1245,7 +1377,13 @@ impl Checker<'_> {
                 for variant in &info.variants {
                     for (ty, &span) in variant.fields.iter().zip(&variant.spans) {
                         if let Some(ty) = *ty {
-                            graph.operator(holder, ty, interface, span);
+                            graph.operator(
+                                holder,
+                                ty,
+                                interface,
+                                (span, span),
+                                Some(Written::Generated(ty)),
+                            );
                         }
                     }
                 }
@@ -1649,16 +1787,29 @@ impl Checker<'_> {
         out
     }
 
+    /// The requirement `method` of `interface` with its own type arguments: `Eq.eq`.
+    fn requirement_name(
+        &self,
+        interface: tir::InterfaceId,
+        method: usize,
+        types: TypeArgs,
+    ) -> String {
+        let info = &self.interfaces[interface.0];
+        let name = info.requirements[method].name.name;
+        let mut out = format!("{}.{name}", info.name.name);
+        write_args(&mut out, types.get(), |head| self.head(head));
+        out
+    }
+
     /// `instance` as the program writes it: `f<[T]>`, `C<[T]>.m<U>`, or a type.
     fn instance_name(&self, functions: &[Option<tir::Function>], instance: Instance) -> String {
         let (func, types) = match instance {
             Instance::Type(ty) => return self.type_name(ty),
             Instance::Required(interface, method, types) => {
-                let info = &self.interfaces[interface.0];
-                let name = info.requirements[method].name.name;
-                let mut out = format!("{}.{name}", info.name.name);
-                write_args(&mut out, types.get(), |head| self.head(head));
-                return out;
+                return self.requirement_name(interface, method, types);
+            }
+            Instance::Operator(interface, _) => {
+                return self.requirement_name(interface, 0, TypeArgs::NONE);
             }
             Instance::Call(func, types) => (func, types),
         };
@@ -1929,6 +2080,14 @@ mod tests {
         Type::intern(TypeKind::Param(Symbol::intern("T"), i))
     }
 
+    /// The text of a comparison is the one the program writes, which the same enum displays.
+    #[test]
+    fn compare_text_should_write_each_comparison_as_the_program_does() {
+        for op in [CompareOp::Lt, CompareOp::Le, CompareOp::Gt, CompareOp::Ge] {
+            assert_eq!(compare_text(op), op.to_string());
+        }
+    }
+
     fn pair(a: Type, b: Type) -> Type {
         Type::intern(TypeKind::Class(ClassId(0), TypeArgs::intern(&[a, b])))
     }
@@ -2047,7 +2206,13 @@ mod tests {
             for site in 0..n {
                 let at = Span::new(site, site + 1);
                 g.args(0, &[ty], 0, at, at, Instance::Type(ty));
-                g.operator(0, ty, tir::InterfaceId(0), at);
+                g.operator(
+                    0,
+                    ty,
+                    tir::InterfaceId(0),
+                    (at, at),
+                    Some(Written::Op("==")),
+                );
             }
             CORE_STEPS.get()
         };
@@ -2060,7 +2225,13 @@ mod tests {
         for site in 0..30 {
             ty = Type::intern(TypeKind::Array(ty));
             let at = Span::new(site, site + 1);
-            g.operator(0, ty, tir::InterfaceId(0), at);
+            g.operator(
+                0,
+                ty,
+                tir::InterfaceId(0),
+                (at, at),
+                Some(Written::Op("==")),
+            );
         }
         assert_eq!(CORE_STEPS.get(), 30);
     }
@@ -2160,7 +2331,7 @@ mod tests {
             if let Some(records) = records {
                 g.records.insert((interface, tir::EnumId(1)), records);
             }
-            g.operator(0, ty, interface, site);
+            g.operator(0, ty, interface, (site, site), Some(Written::Op("==")));
             let into = |node: usize| g.edges.iter().any(|edge| edge.to == node);
             // Parameter 0 of the hub is node 3; of the generated node of enum 1, node 5.
             assert_eq!(into(3), hub, "{row}: the hub");

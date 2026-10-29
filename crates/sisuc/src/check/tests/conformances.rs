@@ -2421,6 +2421,113 @@ fn where_is(src: &str, needle: &str) -> (usize, usize) {
     )
 }
 
+/// Each way that a program spells a call through a language interface closes a cycle that is
+/// reported at the spelling: an operator, `contains`, `print`, an interpolation (at its part),
+/// or the generated `==` or `to_string` of an enum (at the payload type). The note of a call
+/// through a bound stands at the spelling too. The text of each label is pinned by the
+/// `E0140-*` fixtures.
+#[test]
+fn cycle_through_a_language_interface_should_be_reported_at_the_spelling_of_the_call() {
+    // Each row: the program, where the label stands, and where the note stands, if there is one.
+    let rows = [
+        (
+            "a written `==` on an array of a class",
+            "class W<T> {\n    v: T\n}\nextend<T: Eq> W<T>: Eq {\n    fn eq(self, other: Self) -> bool {\n        [W(v: [self.v])] == [W(v: [other.v])]\n    }\n}\nfn main() {\n    print(W(v: 1) == W(v: 1))\n}\n",
+            "[W(v: [self.v])] == [W(v: [other.v])]",
+            None,
+        ),
+        (
+            "a written `!=`",
+            "class W<T> {\n    v: T\n}\nextend<T: Eq> W<T>: Eq {\n    fn eq(self, other: Self) -> bool {\n        [W(v: [self.v])] != [W(v: [other.v])]\n    }\n}\nfn main() {\n    print(W(v: 1) == W(v: 1))\n}\n",
+            "[W(v: [self.v])] != [W(v: [other.v])]",
+            None,
+        ),
+        (
+            "`contains`",
+            "class W<T> {\n    v: T\n}\nextend<T: Eq> W<T>: Eq {\n    fn eq(self, other: Self) -> bool {\n        [W(v: [self.v])].contains(W(v: [other.v]))\n    }\n}\nfn main() {\n    print(W(v: 1) == W(v: 1))\n}\n",
+            "[W(v: [self.v])].contains(W(v: [other.v]))",
+            None,
+        ),
+        (
+            "`print`",
+            "class W<T> {\n    v: T\n}\nextend<T: Display> W<T>: Display {\n    fn to_string(self) -> string {\n        print(W(v: [self.v]))\n        \"w\"\n    }\n}\nfn main() {\n    print(W(v: 1))\n}\n",
+            "print(W(v: [self.v]))",
+            None,
+        ),
+        (
+            "`eprint`",
+            "class W<T> {\n    v: T\n}\nextend<T: Display> W<T>: Display {\n    fn to_string(self) -> string {\n        eprint(W(v: [self.v]))\n        \"w\"\n    }\n}\nfn main() {\n    print(W(v: 1))\n}\n",
+            "eprint(W(v: [self.v]))",
+            None,
+        ),
+        (
+            "an interpolation",
+            "class W<T> {\n    v: T\n}\nextend<T: Display> W<T>: Display {\n    fn to_string(self) -> string {\n        \"{W(v: [self.v])}\"\n    }\n}\nfn main() {\n    print(W(v: 1))\n}\n",
+            "W(v: [self.v])",
+            None,
+        ),
+        (
+            "the generated `==` of an enum",
+            "class W<T> {\n    v: T\n}\nenum E<T> {\n    Has(W<T>)\n}\nextend<T: Eq> W<T>: Eq {\n    fn eq(self, other: Self) -> bool {\n        E.Has(W(v: [self.v])) == E.Has(W(v: [other.v]))\n    }\n}\nfn main() {\n    print(W(v: 1) == W(v: 1))\n}\n",
+            "W<T>)",
+            Some("E.Has(W(v: [self.v])) == E.Has(W(v: [other.v]))"),
+        ),
+        (
+            "the generated `to_string` of an enum",
+            "class W<T> {\n    v: T\n}\nenum E<T> {\n    Has(W<T>)\n}\nextend<T: Display> W<T>: Display {\n    fn to_string(self) -> string {\n        \"{E.Has(W(v: [self.v]))}\"\n    }\n}\nfn main() {\n    print(W(v: 1))\n}\n",
+            "W<T>)",
+            Some("E.Has(W(v: [self.v]))"),
+        ),
+        (
+            "`==` in a function over a bound",
+            "class W<T> {\n    v: T\n}\nfn same<T: Eq>(x: T) -> bool {\n    x == x\n}\nextend<T: Eq> W<T>: Eq {\n    fn eq(self, other: Self) -> bool {\n        same(W(v: [self.v]))\n    }\n}\nfn main() {\n    print(W(v: 1) == W(v: 1))\n}\n",
+            "same(W(v: [self.v]))",
+            Some("x == x"),
+        ),
+        (
+            "`<` in a function over a bound",
+            "class W<T> {\n    v: T\n}\nclass V<T> {\n    v: T\n}\nfn lt<T: Ord>(x: T, y: T) -> bool {\n    x < y\n}\nextend<T: Ord> V<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\nextend<T: Ord> V<T>: Ord {\n    fn less(self, other: Self) -> bool { true }\n}\nextend<T: Ord> W<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\nextend<T: Ord> W<T>: Ord {\n    fn less(self, other: Self) -> bool {\n        lt(W(v: V(v: self.v)), W(v: V(v: other.v)))\n    }\n}\nfn main() {\n    print(W(v: 1) < W(v: 1))\n}\n",
+            "lt(W(v: V(v: self.v)), W(v: V(v: other.v)))",
+            Some("x < y"),
+        ),
+        (
+            "`<=` in a function over a bound",
+            "class W<T> {\n    v: T\n}\nclass V<T> {\n    v: T\n}\nfn lt<T: Ord>(x: T, y: T) -> bool {\n    x <= y\n}\nextend<T: Ord> V<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\nextend<T: Ord> V<T>: Ord {\n    fn less(self, other: Self) -> bool { true }\n}\nextend<T: Ord> W<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\nextend<T: Ord> W<T>: Ord {\n    fn less(self, other: Self) -> bool {\n        lt(W(v: V(v: self.v)), W(v: V(v: other.v)))\n    }\n}\nfn main() {\n    print(W(v: 1) < W(v: 1))\n}\n",
+            "lt(W(v: V(v: self.v)), W(v: V(v: other.v)))",
+            Some("x <= y"),
+        ),
+        (
+            "`>` in a function over a bound",
+            "class W<T> {\n    v: T\n}\nclass V<T> {\n    v: T\n}\nfn lt<T: Ord>(x: T, y: T) -> bool {\n    x > y\n}\nextend<T: Ord> V<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\nextend<T: Ord> V<T>: Ord {\n    fn less(self, other: Self) -> bool { true }\n}\nextend<T: Ord> W<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\nextend<T: Ord> W<T>: Ord {\n    fn less(self, other: Self) -> bool {\n        lt(W(v: V(v: self.v)), W(v: V(v: other.v)))\n    }\n}\nfn main() {\n    print(W(v: 1) < W(v: 1))\n}\n",
+            "lt(W(v: V(v: self.v)), W(v: V(v: other.v)))",
+            Some("x > y"),
+        ),
+        (
+            "`>=` in a function over a bound",
+            "class W<T> {\n    v: T\n}\nclass V<T> {\n    v: T\n}\nfn lt<T: Ord>(x: T, y: T) -> bool {\n    x >= y\n}\nextend<T: Ord> V<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\nextend<T: Ord> V<T>: Ord {\n    fn less(self, other: Self) -> bool { true }\n}\nextend<T: Ord> W<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\nextend<T: Ord> W<T>: Ord {\n    fn less(self, other: Self) -> bool {\n        lt(W(v: V(v: self.v)), W(v: V(v: other.v)))\n    }\n}\nfn main() {\n    print(W(v: 1) < W(v: 1))\n}\n",
+            "lt(W(v: V(v: self.v)), W(v: V(v: other.v)))",
+            Some("x >= y"),
+        ),
+        (
+            "an interpolation in a function over a bound",
+            "class W<T> {\n    v: T\n}\nfn show<T: Display>(x: T) -> string {\n    \"{x}\"\n}\nextend<T: Display> W<T>: Display {\n    fn to_string(self) -> string {\n        show(W(v: [self.v]))\n    }\n}\nfn main() {\n    print(W(v: 1))\n}\n",
+            "show(W(v: [self.v]))",
+            Some("x}"),
+        ),
+        (
+            "the generated `==` of an enum declared after its use",
+            "class W<T> {\n    v: T\n}\nextend<T: Eq> W<T>: Eq {\n    fn eq(self, other: Self) -> bool {\n        E.Has(W(v: [self.v])) == E.Has(W(v: [other.v]))\n    }\n}\nenum E<T> {\n    Has(W<T>)\n}\nfn main() {\n    print(W(v: 1) == W(v: 1))\n}\n",
+            "E.Has(W(v: [self.v])) == E.Has(W(v: [other.v]))",
+            Some("W<T>)"),
+        ),
+    ];
+    for (row, src, label, note) in rows {
+        let notes: Vec<_> = note.into_iter().map(|note| where_is(src, note)).collect();
+        let expected = [(Code::InstantiationCycle, where_is(src, label), notes)];
+        assert_eq!(found(src), expected, "row `{row}`");
+    }
+}
+
 #[test]
 fn implicit_eq_call_should_close_an_instantiation_cycle() {
     let w = "class W<T> {\n    x: T\n}\n";
@@ -2519,14 +2626,15 @@ fn implicit_interpolation_should_close_an_instantiation_cycle() {
             format!(
                 "{w}extend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        {growing}\n    }}\n}}\n{main}"
             ),
-            Some(growing),
+            // The error stands at the part of the string, not at the whole string.
+            Some("W(x: [self.x])"),
         ),
         (
             "an interpolation of an enum payload, reached through its generated Display",
             format!(
                 "{w}enum Pick<U> {{\n    One(U)\n}}\nextend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        \"{{Pick.One(W(x: [self.x]))}}\"\n    }}\n}}\n{main}"
             ),
-            Some("\"{Pick.One(W(x: [self.x]))}\""),
+            Some("Pick.One(W(x: [self.x]))"),
         ),
         (
             "an interpolation that does not grow",

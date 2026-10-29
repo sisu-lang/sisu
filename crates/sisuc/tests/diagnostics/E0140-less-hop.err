@@ -1,0 +1,13 @@
+error[E0140]: `W<T>.less` instantiates itself without end
+  --> E0140-less-hop.sisu:21:9
+   |
+ 8 |     x < y
+   |     ----- `<` here may call `W<T>.less` through `Ord`
+...
+21 |         lt(W(v: V(v: self.v)), W(v: V(v: other.v)))
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `lt<W<V<T>>>` here
+   |
+   = help: `<` is a call through `Ord`, and a call through `Ord` counts as reaching every conformance to `Ord`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

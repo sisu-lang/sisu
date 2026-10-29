@@ -1150,11 +1150,11 @@ pub(crate) enum DiagnosticKind {
     InstantiationCycle {
         name: String,
         at: Span,
-        instance: String,
+        instance: Spelled,
         through: Vec<(Span, Hop)>,
-        /// The interface whose hub the cycle passes: a call through it counts as reaching every
-        /// conformance to it.
-        reach: Option<String>,
+        /// The interface whose hub the cycle passes, and how the program spells the call through
+        /// it: a call through it counts as reaching every conformance to it.
+        reach: Option<(String, Spelled)>,
         /// The associated type, as written, whose choices the cycle passes: the check counts it as
         /// every choice that it cannot show to be impossible.
         choice: Option<String>,
@@ -1174,8 +1174,74 @@ pub(crate) enum DiagnosticKind {
 pub(crate) enum Hop {
     /// It instantiates `instance`, as written.
     Instantiates(String),
-    /// It calls through `interface`, which may run `method`, the one the cycle takes.
-    Calls { method: String, interface: String },
+    /// It calls through `interface`, which may run `method`, the one the cycle takes. `by` is the
+    /// spelling in the program, when it is not a call of the method.
+    Calls {
+        by: Option<Spelled>,
+        method: String,
+        interface: String,
+    },
+}
+
+/// An instantiation on a cycle, as the program spells it.
+#[derive(Clone)]
+pub(crate) enum Spelled {
+    /// A function, a method or a type, or a call of a method of an interface, as written.
+    Instance(String),
+    /// An operator or a built-in function that calls through a language interface: `==`, `<`,
+    /// `contains` or `print`.
+    Operator(String),
+    /// A part of an interpolation, which calls through `Display`.
+    Interpolation,
+    /// The generated `==` (or `to_string`, when `display`) of the enum `enum_name`, which uses a
+    /// payload of type `operand`.
+    Generated {
+        display: bool,
+        enum_name: String,
+        operand: String,
+    },
+}
+
+impl Spelled {
+    /// The text of a label at the place of the instantiation.
+    fn label(&self) -> String {
+        match self {
+            Spelled::Instance(name) => format!("`{name}` here"),
+            Spelled::Generated {
+                display, operand, ..
+            } => {
+                let verb = if *display { "shows" } else { "compares" };
+                format!("{} {verb} `{operand}` here", self.subject())
+            }
+            _ => format!("{} here", self.subject()),
+        }
+    }
+
+    /// What the program spells at the place, as the subject of a sentence.
+    fn subject(&self) -> String {
+        match self {
+            Spelled::Instance(name) => format!("`{name}`"),
+            Spelled::Operator(op) => format!("`{op}`"),
+            Spelled::Interpolation => "the interpolation".to_string(),
+            Spelled::Generated {
+                display, enum_name, ..
+            } => {
+                let method = if *display { "to_string" } else { "==" };
+                format!("the `{method}` of `{enum_name}`")
+            }
+        }
+    }
+
+    /// The help that says what the spelling is, when it is not a call of the method.
+    fn call_through(&self, interface: &str) -> Option<String> {
+        match self {
+            Spelled::Operator(op) => Some(format!("`{op}` is a call through `{interface}`, and ")),
+            Spelled::Interpolation => Some(format!(
+                "an interpolation is a call through `{interface}`, and "
+            )),
+            Spelled::Instance(_) | Spelled::Generated { .. } => None,
+        }
+    }
 }
 
 /// The receiver of a method that a call writes as a function.
@@ -4417,21 +4483,32 @@ impl From<DiagnosticKind> for Diagnostic {
                         at,
                         format!("`{name}` instantiates itself without end"),
                     )
-                    .with_label(format!("`{instance}` here")),
+                    .with_label(instance.label()),
                     |d, (site, hop)| {
                         let text = match hop {
                             Hop::Instantiates(instance) => {
                                 format!("which instantiates `{instance}`")
                             }
-                            Hop::Calls { method, interface } => {
-                                format!("which may call `{method}` through `{interface}`")
-                            }
+                            Hop::Calls {
+                                by,
+                                method,
+                                interface,
+                            } => match by {
+                                None => {
+                                    format!("which may call `{method}` through `{interface}`")
+                                }
+                                Some(by) => format!(
+                                    "{} here may call `{method}` through `{interface}`",
+                                    by.subject()
+                                ),
+                            },
                         };
                         d.with_secondary(site, text)
                     },
                 );
-                let reach = reach.map(|i| {
-                    format!("a call through `{i}` counts as reaching every conformance to `{i}`")
+                let reach = reach.map(|(i, by)| {
+                    let lead = by.call_through(&i).unwrap_or_default();
+                    format!("{lead}a call through `{i}` counts as reaching every conformance to `{i}`")
                 });
                 let choice = choice.map(|ty| {
                     format!(

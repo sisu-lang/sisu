@@ -1,0 +1,15 @@
+class W<T> {
+    v: T
+}
+fn same<T: Eq>(x: T) -> bool {
+    x == x
+}
+extend<T: Eq> W<T>: Eq {
+    fn eq(self, other: Self) -> bool {
+        same(W(v: [self.v]))
+    }
+}
+
+fn main() {
+    print(W(v: 1) == W(v: 1))
+}
