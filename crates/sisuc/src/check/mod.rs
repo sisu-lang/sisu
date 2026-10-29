@@ -61,9 +61,11 @@ use unused_names::{Owner, Pending, Use, Used};
 /// excuse another.
 struct Poisoned {
     ty: Option<Type>,
-    /// Whether the expected type passed down was rejected (a `None` that is not optional, or
-    /// a block or `if` whose value is one): the rule that passed it failed, so its expression
-    /// is `Error` too, where an `Error` operand would excuse it.
+    /// Whether the expected type passed down was rejected (a `None` that is not optional, a
+    /// number that does not fit, an array with such an element, or a block or `if` whose value
+    /// is one): the rule that passed it failed, so its expression is `Error` too, where an
+    /// `Error` operand would excuse it. A number that does not fit (E0040, E0042 or E0104)
+    /// counts as a mismatch, as a value of another type does.
     mismatch: bool,
 }
 
@@ -509,8 +511,9 @@ struct Checker<'src> {
     /// the choices of the associated types matter to the cycles only then. Set before the marks.
     holds_assoc: bool,
     /// The place among `extensions` of the first block that covers the receiver of the call being
-    /// found and whose bounds fail, when `conforming_methods` finds no method for it.
-    failed_block: Option<usize>,
+    /// found and whose bounds fail, when `conforming_methods` finds no method for it, with that
+    /// block's method of the called name.
+    failed_block: Option<(usize, tir::FuncId)>,
     /// The enums as `tir` holds them, with their boxes and countedness; bodies are checked
     /// after they are lowered.
     lowered_enums: Vec<tir::Enum>,

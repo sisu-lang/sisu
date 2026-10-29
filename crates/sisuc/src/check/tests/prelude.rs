@@ -158,11 +158,12 @@ fn eprint_lowers() {
 /// reported (the call for a count, the argument otherwise). An object and an array print.
 #[test]
 fn eprint_should_report_the_argument_errors_of_print() {
-    let class = "class P {\n    x: i64\n}\n";
+    let class = "class P {\n    x: i64\n}\nfn nothing() {}\n";
     for (statement, code, pos) in [
-        ("eprint()", Code::PrintArgument, (5, 5)),
-        ("eprint(1, 2)", Code::PrintArgument, (5, 5)),
-        ("eprint(panic(\"x\"))", Code::PrintNever, (5, 12)),
+        ("eprint()", Code::PrintArgument, (6, 5)),
+        ("eprint(1, 2)", Code::PrintArgument, (6, 5)),
+        ("eprint(nothing())", Code::PrintArgument, (6, 12)),
+        ("eprint(panic(\"x\"))", Code::PrintNever, (6, 12)),
     ] {
         codes(
             &format!("{class}fn main() {{\n    {statement}\n}}"),
@@ -558,7 +559,7 @@ fn dbg_should_check_clean_with_the_type_of_its_argument() {
 #[test]
 fn dbg_should_report_the_argument_errors_of_print() {
     for (statement, code, pos) in [
-        ("dbg(greet())", Code::PrintArgument, (3, 5)),
+        ("dbg(greet())", Code::PrintArgument, (3, 9)),
         ("dbg(panic(\"x\"))", Code::PrintNever, (3, 9)),
         ("dbg()", Code::PrintArgument, (3, 5)),
         ("dbg(1, 2)", Code::PrintArgument, (3, 5)),

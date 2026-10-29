@@ -1535,17 +1535,38 @@ fn to_string_with_type_arguments_should_report_the_list() {
     }
 }
 
-/// A masked method with a type parameter of its own does not take the list in the check of the
-/// type arguments, so the generated `to_string` reports it: the list is reported once. (The method
-/// does not match `Display`, which is its own error.)
+/// A list of type arguments after `to_string` goes to a written method that has type parameters
+/// of its own, even when the bounds of its block fail: the failed bound is reported, as it is for
+/// a call with an argument, not "takes no type arguments", which is true for the generated one
+/// only. The method does not match `Display`, which is its own error.
 #[test]
-fn to_string_with_type_arguments_should_report_the_list_of_a_masked_generic_method() {
-    let src = "class Node {}\nclass Own<T> {\n    _value: T\n}\nextend<T: Eq> Own<T> {\n    fn to_string<U>(self) -> string { \"own\" }\n}\nfn main() {\n    print(Own(_value: Node()).to_string<i64>())\n}";
-    let at = where_is(src, "<i64>");
-    codes(
-        src,
-        &[(Code::ConformanceBody, (6, 8)), (Code::TypeArguments, at)],
-    );
+fn to_string_with_type_arguments_should_report_the_failed_bound_of_a_masked_generic_method() {
+    let head = "class Node {}\nclass Own<T> {\n    _value: T\n}\n";
+    for (row, block, call) in [
+        (
+            "a plain block",
+            "extend<T: Eq> Own<T> {\n    fn to_string<U>(self) -> string { \"own\" }\n}\n",
+            "Own(_value: Node()).to_string<i64>()",
+        ),
+        (
+            "a plain block with two type parameters",
+            "extend<T: Eq> Own<T> {\n    fn to_string<U, V>(self) -> string { \"own\" }\n}\n",
+            "Own(_value: Node()).to_string<i64>()",
+        ),
+        (
+            "a Display block",
+            "extend<T: Eq> Own<T>: Display {\n    fn to_string<U>(self) -> string { \"own\" }\n}\n",
+            "Own(_value: Node()).to_string<i64>()",
+        ),
+    ] {
+        let src = format!("{head}{block}fn main() {{\n    print({call})\n}}");
+        let at = where_is(&src, call);
+        codes_row(
+            row,
+            &src,
+            &[(Code::ConformanceBody, (6, 8)), (Code::NotConform, at)],
+        );
+    }
 }
 
 /// The text of a `to_string` is the one of the type's `Display`: a written method whose bounds
@@ -2240,7 +2261,9 @@ fn operators_should_lower_to_the_spec_formulas() {
 fn operators_should_report_a_missing_bound() {
     let decls = "class Node {}\nclass Box<T> {\n    v: T\n}\nenum Wrap<T> {\n    One(T)\n}\n";
     // Each row: the function after the declarations, the text where the error stands, and the
-    // code. The help text of each is pinned in the fixtures `E0139-*`.
+    // code. The help text of each is pinned in the fixtures `E0139-*`. A row with operands of two
+    // types is the mistake of the operands: see
+    // `comparisons_should_report_operands_of_two_types_before_a_missing_operator`.
     let rows = [
         (
             "order on a bare parameter",
@@ -2258,19 +2281,19 @@ fn operators_should_report_a_missing_bound() {
             "equality of two parameters",
             "fn f<T, U>(a: T, b: U) -> bool { a == b }",
             "a == b",
-            Code::ParamLacks,
+            Code::CannotCompare,
         ),
         (
             "order of two parameters",
             "fn f<T, U>(a: T, b: U) -> bool { a < b < a }",
-            "a < b",
-            Code::ParamLacks,
+            "b < a",
+            Code::Mismatch,
         ),
         (
             "contains of another parameter",
             "fn f<T, U>(a: [T], b: U) -> bool { a.contains(b) }",
-            "a.contains(b)",
-            Code::ParamLacks,
+            "b)",
+            Code::Mismatch,
         ),
         (
             "equality of arrays of a parameter",
@@ -3449,6 +3472,174 @@ fn operators_should_report_a_failed_operand_alone() {
     }
 }
 
+/// Operands of two types are the mistake in `==` and `!=`, whatever the bounds of the types: a
+/// missing `Eq` is reported only for operands of one type.
+#[test]
+fn equality_should_report_operands_of_two_types_before_a_missing_operator() {
+    let rows = [
+        (
+            "equality of a parameter and a number",
+            "fn f<T>(a: T) -> bool { a == 5 }",
+            vec![(Code::CannotCompare, "a == 5")],
+        ),
+        (
+            "equality of a number and a parameter",
+            "fn f<T>(a: T) -> bool { 5 == a }",
+            vec![(Code::CannotCompare, "5 == a")],
+        ),
+        (
+            "inequality of a parameter and a number",
+            "fn f<T>(a: T) -> bool { a != 5 }",
+            vec![(Code::CannotCompare, "a != 5")],
+        ),
+        (
+            "equality of arrays of two types",
+            "fn f<T>(a: [T], b: [i64]) -> bool { a == b }",
+            vec![(Code::CannotCompare, "a == b")],
+        ),
+        (
+            "equality of arrays of two parameters",
+            "fn f<T, U>(a: [T], b: [U]) -> bool { a == b }",
+            vec![(Code::CannotCompare, "a == b")],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(code, text)| (code, where_is(&src, text)))
+            .collect();
+        codes_row(row, &src, &expected);
+    }
+}
+
+/// Ordered operands of two types are the mistake, whatever the bounds of the types: the missing
+/// `<` is reported only for operands of one type, or for an operand whose own error leaves no type.
+#[test]
+fn comparisons_should_report_operands_of_two_types_before_a_missing_operator() {
+    let rows = [
+        (
+            "order of two parameters that have Ord",
+            "fn f<T: Ord, U: Ord>(a: T, b: U) -> bool { a < b }",
+            vec![(Code::Mismatch, "b }")],
+        ),
+        (
+            "at-least order of two parameters that have Ord",
+            "fn f<T: Ord, U: Ord>(a: T, b: U) -> bool { a >= b }",
+            vec![(Code::Mismatch, "b }")],
+        ),
+        (
+            "a chain with a third operand of another parameter",
+            "fn f<T: Ord, U: Ord>(a: T, b: T, c: U) -> bool { a < b < c }",
+            vec![(Code::Mismatch, "c }")],
+        ),
+        (
+            "order of a number and a parameter that has Ord",
+            "fn f<U: Ord>(a: i64, b: U) -> bool { a < b }",
+            vec![(Code::Mismatch, "b }")],
+        ),
+        (
+            "order of a parameter and a number",
+            "fn f<T>(a: T) -> bool { a < 5 }",
+            vec![(Code::Mismatch, "5")],
+        ),
+        (
+            "order of a number and a parameter",
+            "fn f<T>(a: T) -> bool { 5 < a }",
+            vec![(Code::Mismatch, "5")],
+        ),
+        (
+            "order of two parameters that have no Ord",
+            "fn f<T, U>(a: T, b: U) -> bool { a < b }",
+            vec![(Code::Mismatch, "b }")],
+        ),
+        (
+            "order of an enum with no Ord and a number",
+            "enum L {\n    A\n}\nfn f() -> bool { L.A < 5 }",
+            vec![(Code::Mismatch, "5")],
+        ),
+        (
+            "order of a bool and a number",
+            "fn f() -> bool { true < 5 }",
+            vec![(Code::Mismatch, "5")],
+        ),
+        (
+            "order of a class of a parameter and a number",
+            "class Box<T> {\n    v: T\n}\nfn f<T>(a: Box<T>, n: i64) -> bool { a < n }",
+            vec![(Code::Mismatch, "n }")],
+        ),
+        (
+            "order of arrays of two parameters",
+            "fn f<T, U>(a: [T], b: [U]) -> bool { a < b }",
+            vec![(Code::Mismatch, "b }")],
+        ),
+        (
+            "order of a string and a parameter",
+            "fn f<T>(a: T) -> bool { \"x\" < a }",
+            vec![(Code::Mismatch, "a }")],
+        ),
+        (
+            "order of a parameter that has Ord and a parameter with none",
+            "fn f<T: Ord, U>(a: T, b: U) -> bool { b < a }",
+            vec![(Code::Mismatch, "a }")],
+        ),
+        (
+            "a chain of a parameter and a number",
+            "fn f<T>(a: T, b: T) -> bool { a < b < 5 }",
+            vec![(Code::Mismatch, "5")],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(code, text)| (code, where_is(&src, text)))
+            .collect();
+        codes_row(row, &src, &expected);
+    }
+}
+
+/// The controls of the two tests above for operands of two types: operands of one type, or an
+/// operand with no type, still get the missing operator.
+#[test]
+fn comparisons_should_report_a_missing_operator_for_operands_of_one_type() {
+    let rows = [
+        (
+            "equality of one parameter",
+            "fn f<T>(a: T, b: T) -> bool { a == b }",
+            vec![(Code::ParamLacks, "a == b")],
+        ),
+        (
+            "order of one parameter",
+            "fn f<T>(a: T, b: T) -> bool { a < b }",
+            vec![(Code::ParamLacks, "a < b")],
+        ),
+        (
+            "order of one class with no Ord",
+            "class Node {}\nfn f(n: Node) -> bool { n < n }",
+            vec![(Code::NoOperator, "n < n")],
+        ),
+        (
+            "order of a parameter and an unknown name",
+            "fn f<T>(a: T) -> bool { a < bad }",
+            vec![(Code::ParamLacks, "a <"), (Code::BindingNotFound, "bad")],
+        ),
+        (
+            "equality of a parameter and an unknown name",
+            "fn f<T>(a: T) -> bool { a == bad }",
+            vec![(Code::ParamLacks, "a =="), (Code::BindingNotFound, "bad")],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(code, text)| (code, where_is(&src, text)))
+            .collect();
+        codes_row(row, &src, &expected);
+    }
+}
+
 #[test]
 fn contains_should_report_an_argument_that_is_not_an_element_first() {
     // An argument of another type is the first mistake, as it is for `==`: a conformance to `Eq`
@@ -3496,12 +3687,271 @@ fn contains_should_report_an_argument_that_is_not_an_element_first() {
         (
             "a number for a type parameter",
             "fn f<T>(xs: [T]) -> bool { xs.contains(5) }".to_string(),
-            (Code::ParamLacks, "xs.contains(5)"),
+            (Code::Mismatch, "5"),
+        ),
+        (
+            "another type parameter for a type parameter",
+            "fn f<T, U>(xs: [T], x: U) -> bool { xs.contains(x) }".to_string(),
+            (Code::Mismatch, "x)"),
+        ),
+        (
+            "an optional type parameter for a type parameter",
+            "fn f<T>(xs: [T], x: T?) -> bool { xs.contains(x) }".to_string(),
+            (Code::Mismatch, "x)"),
+        ),
+        (
+            "`None` for a type parameter",
+            "fn f<T>(xs: [T]) -> bool { xs.contains(None) }".to_string(),
+            (Code::Mismatch, "None"),
+        ),
+        (
+            "`None` in a block for classes",
+            format!("{node}fn f(xs: [Node]) -> bool {{ xs.contains({{ None }}) }}"),
+            (Code::Mismatch, "None"),
+        ),
+        (
+            "`None` in a branch for classes",
+            format!(
+                "{node}fn f(xs: [Node], n: Node, c: bool) -> bool {{ xs.contains(if c {{ n }} else {{ None }}) }}"
+            ),
+            (Code::Mismatch, "None"),
+        ),
+        (
+            "an empty array for classes",
+            format!("{node}fn f(xs: [Node]) -> bool {{ xs.contains([]) }}"),
+            (Code::Mismatch, "[]"),
+        ),
+        (
+            "`None` in a block for optional classes",
+            format!("{node}fn f(xs: [Node?]) -> bool {{ xs.contains({{ None }}) }}"),
+            (Code::NoOperator, "xs.contains({ None })"),
+        ),
+        (
+            "an empty array for arrays of classes",
+            format!("{node}fn f(xs: [[Node]]) -> bool {{ xs.contains([]) }}"),
+            (Code::NoOperator, "xs.contains([])"),
+        ),
+        (
+            "a type parameter for optional type parameters",
+            "fn f<T>(xs: [T?], x: T) -> bool { xs.contains(x) }".to_string(),
+            (Code::ParamLacks, "xs.contains(x)"),
         ),
     ];
     for (row, src, (code, text)) in rows {
         let src = format!("{src}\nfn main() {{}}");
         codes_row(row, &src, &[(code, where_is(&src, text))]);
+    }
+}
+
+/// A mismatch inside an operand is the only error: the operands are not one type, so the missing
+/// operator is not reported.
+#[test]
+fn operators_should_report_only_a_mismatch_inside_an_operand() {
+    let rows = [
+        (
+            "equality of arrays of two element types",
+            "fn f() -> bool { [1] == [true] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "inequality of arrays of two element types",
+            "fn f() -> bool { [1] != [true] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "order of arrays of two element types",
+            "fn f() -> bool { [1] < [true] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "order of an array of a parameter and an array of a number",
+            "fn f<T>(a: [T]) -> bool { a < [5] }",
+            vec![(Code::Mismatch, "5]")],
+        ),
+        (
+            "order of nested arrays of two element types",
+            "fn f() -> bool { [[1]] < [[true]] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "a chain with an inner mismatch in the middle operand",
+            "fn f<T>(a: [T]) -> bool { a < [5] < a }",
+            vec![(Code::Mismatch, "5]")],
+        ),
+        (
+            "a chain of three arrays with an inner mismatch in the middle operand",
+            "fn f() -> bool { [1] < [true] < [2] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "arrays of another element type for arrays of numbers",
+            "fn f(xs: [[i64]]) -> bool { xs.contains([true]) }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "an array of a number for arrays of a parameter",
+            "fn f<T>(xs: [[T]]) -> bool { xs.contains([5]) }",
+            vec![(Code::Mismatch, "5]")],
+        ),
+        (
+            "equality of an array of a parameter and an array of a number",
+            "fn f<T>(a: [T]) -> bool { a == [true] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "order with a branch of another type",
+            "fn f<T>(a: [T], c: bool) -> bool { a < if c { true } else { a } }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "order with a branch that holds a number that does not fit",
+            "fn f(a: [u8], c: bool) -> bool { a < if c { [300] } else { a } }",
+            vec![(Code::IntegerDoesNotFit, "300")],
+        ),
+        (
+            "order of bytes and a number that does not fit",
+            "fn f(b: [u8]) -> bool { b < [300] }",
+            vec![(Code::IntegerDoesNotFit, "300")],
+        ),
+        (
+            "order of bytes and a negated number",
+            "fn f(b: [u8]) -> bool { b < [-1] }",
+            vec![(Code::NegatedU8, "-1")],
+        ),
+        (
+            "order of arrays of bytes and a number that does not fit",
+            "fn f(b: [[u8]]) -> bool { b <= [[256]] }",
+            vec![(Code::IntegerDoesNotFit, "256")],
+        ),
+        (
+            "a chain with a number that does not fit in the last operand",
+            "fn f(b: [u8]) -> bool { b < b < [1, 300] }",
+            vec![(Code::IntegerDoesNotFit, "300")],
+        ),
+        (
+            "order of floats and an integer that a float cannot hold",
+            "fn f(a: [f64]) -> bool { a < [9007199254740993] }",
+            vec![(Code::NotExactlyF64, "9007199254740993")],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(code, text)| (code, where_is(&src, text)))
+            .collect();
+        codes_row(row, &src, &expected);
+    }
+}
+
+/// A number that does not fit is a mismatch, as a value of another type is: the call that takes
+/// it has no type, so its use as a `string` gives no second error.
+#[test]
+fn a_call_with_a_number_that_does_not_fit_should_report_only_that_number() {
+    let src =
+        "fn g(x: u8) -> u8 { x }\nfn f() -> bool { let s: string = g(300); true }\nfn main() {}";
+    codes_row(
+        "a call with a number that does not fit, bound to a string",
+        src,
+        &[(Code::IntegerDoesNotFit, where_is(src, "300"))],
+    );
+}
+
+/// An error in an operand that is not about its type does not hide the missing operator: the
+/// operands may still be one type.
+#[test]
+fn operators_should_report_a_missing_operator_beside_an_error_that_is_not_about_the_type() {
+    let node = "class Node {}\n";
+    let rows = [
+        (
+            "order of a class and a block with a wrong binding",
+            format!("{node}fn f(a: Node) -> bool {{ a < {{ let x: i64 = true; a }} }}"),
+            vec![(Code::NoOperator, "a <"), (Code::Mismatch, "true")],
+        ),
+        (
+            "order of a parameter and a block with a wrong binding",
+            "fn f<T>(a: T) -> bool { a < { let x: i64 = true; a } }".to_string(),
+            vec![(Code::ParamLacks, "a <"), (Code::Mismatch, "true")],
+        ),
+        (
+            "equality of a class and a block with a wrong binding",
+            format!("{node}fn f(a: Node) -> bool {{ a == {{ let x: i64 = true; a }} }}"),
+            vec![(Code::NoOperator, "a =="), (Code::Mismatch, "true")],
+        ),
+        (
+            "order of a class and a call with a wrong argument",
+            format!("{node}fn g(x: i64) -> i64 {{ x }}\nfn f(a: Node) -> bool {{ a < g(true) }}"),
+            vec![(Code::NoOperator, "a <"), (Code::Mismatch, "true")],
+        ),
+        (
+            "contains of a parameter and a block with a wrong binding",
+            "fn f<T>(xs: [T], a: T) -> bool { xs.contains({ let x: i64 = true; a }) }".to_string(),
+            vec![(Code::ParamLacks, "xs.contains("), (Code::Mismatch, "true")],
+        ),
+        (
+            "contains of a class and a block with a wrong binding",
+            format!(
+                "{node}fn f(xs: [Node], a: Node) -> bool {{ xs.contains({{ let x: i64 = true; a }}) }}"
+            ),
+            vec![(Code::NoOperator, "xs.contains("), (Code::Mismatch, "true")],
+        ),
+        (
+            "contains of an optional parameter and a block with a wrong binding",
+            "fn f<T>(xs: [T?], a: T) -> bool { xs.contains({ let x: i64 = true; a }) }".to_string(),
+            vec![(Code::ParamLacks, "xs.contains("), (Code::Mismatch, "true")],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(code, text)| (code, where_is(&src, text)))
+            .collect();
+        codes_row(row, &src, &expected);
+    }
+}
+
+/// A warning in an operand is not an error in it: the missing operator is still reported.
+#[test]
+fn operators_should_report_a_missing_operator_beside_a_warning_in_an_operand() {
+    let node = "class Node {}\n";
+    let rows = [
+        (
+            "contains of a parameter",
+            "fn f<T>(xs: [T], x: T) -> bool { xs.contains({ let mut y = x; y }) }".to_string(),
+            vec![
+                (Code::ParamLacks, "xs.contains("),
+                (Code::NeverReassigned, "y = x"),
+            ],
+        ),
+        (
+            "contains of a class",
+            format!(
+                "{node}fn f(xs: [Node], n: Node) -> bool {{ xs.contains({{ let mut y = n; y }}) }}"
+            ),
+            vec![
+                (Code::NoOperator, "xs.contains("),
+                (Code::NeverReassigned, "y = n"),
+            ],
+        ),
+        (
+            "equality of a parameter",
+            "fn f<T>(a: T, b: T) -> bool { a == { let mut y = b; y } }".to_string(),
+            vec![(Code::ParamLacks, "a =="), (Code::NeverReassigned, "y = b")],
+        ),
+        (
+            "order of a parameter",
+            "fn f<T>(a: T, b: T) -> bool { a < { let mut y = b; y } }".to_string(),
+            vec![(Code::ParamLacks, "a <"), (Code::NeverReassigned, "y = b")],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(code, text)| (code, where_is(&src, text)))
+            .collect();
+        codes_row(row, &src, &expected);
     }
 }
 

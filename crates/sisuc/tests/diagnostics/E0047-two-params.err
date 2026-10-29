@@ -1,0 +1,8 @@
+error[E0047]: cannot compare `T` with `U`
+ --> E0047-two-params.sisu:2:5
+  |
+2 |     a == b
+  |     ^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0047

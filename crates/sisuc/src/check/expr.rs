@@ -47,7 +47,10 @@ impl Checker<'_> {
                     nearest: format!("{x:?}"),
                     at,
                 });
-                return Err(Poisoned::typed(ty));
+                return Err(Poisoned {
+                    ty: Some(ty),
+                    mismatch: true,
+                });
             }
             return Ok(tir::Expr {
                 kind: tir::ExprKind::Float(x),
@@ -66,7 +69,10 @@ impl Checker<'_> {
                 }
                 .into()
             });
-            return Err(Poisoned::typed(ty));
+            return Err(Poisoned {
+                ty: Some(ty),
+                mismatch: true,
+            });
         }
         Ok(tir::Expr {
             kind: tir::ExprKind::Int(value),
