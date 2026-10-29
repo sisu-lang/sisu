@@ -924,7 +924,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 self.context.i8_type().const_zero(),
                 self.context.i64_type().const_int(size, false),
             )
-            .expect("the alignment of an array of pointers should be a power of two");
+            .expect("the builder should be positioned, and an array of pointers should have a power-of-two alignment");
         heads
     }
 

@@ -3033,25 +3033,63 @@ fn drop_of_an_enum_component_should_print_the_heads_type_in_linear_size() {
     assert_near_linear(size(100), size(200), size(300));
 }
 
+/// A cycle of `n` classes. Each class is held by a function of its own, so each gets a `drop`.
+fn class_cycle(n: usize) -> String {
+    let classes = (0..n)
+        .map(|i| {
+            format!(
+                "class C{i} {{\n    next: C{}?\n}}\nfn hold{i}(c: C{i}) {{}}\n",
+                (i + 1) % n
+            )
+        })
+        .collect::<Vec<_>>()
+        .concat();
+    format!("{classes}fn main() {{}}\n")
+}
+
 /// `drop` and `drain` of each class of a cycle use the type of the heads of the cycle, as the
 /// helpers of enums do. Each class is dropped in a function of its own, so each gets a `drop`.
 #[test]
 fn drop_of_a_class_cycle_should_print_the_heads_type_in_linear_size() {
     let size = |n: usize| {
-        let classes = (0..n)
-            .map(|i| {
-                format!(
-                    "class C{i} {{\n    next: C{}?\n}}\nfn hold{i}(c: C{i}) {{}}\n",
-                    (i + 1) % n
-                )
-            })
-            .collect::<Vec<_>>()
-            .concat();
-        let src = format!("{classes}fn main() {{}}\n");
         let context = Context::create();
-        compiled(&context, &src).print_to_string().to_bytes().len()
+        compiled(&context, &class_cycle(n))
+            .print_to_string()
+            .to_bytes()
+            .len()
     };
     assert_near_linear(size(100), size(200), size(300));
+}
+
+/// The slot for the heads of a component is zeroed by one `memset` of constant size. A store of
+/// a zero array would be one store for each member, so the code of `release` would grow with
+/// the ring.
+#[test]
+fn release_of_an_enum_ring_should_zero_the_heads_with_one_memset() {
+    let context = Context::create();
+    let ir = compiled(&context, &enum_ring(10))
+        .print_to_string()
+        .to_string();
+    let release = function_body(&ir, "define internal void @sisu_rc.release.R0(ptr");
+    assert_eq!(
+        release.matches("call void @llvm.memset.").count(),
+        1,
+        "{release}"
+    );
+    assert!(!release.contains("store ["), "{release}");
+}
+
+/// As for `release` of an enum ring, the `drop` of a class cycle zeroes the heads with one
+/// `memset`.
+#[test]
+fn drop_of_a_class_cycle_should_zero_the_heads_with_one_memset() {
+    let context = Context::create();
+    let ir = compiled(&context, &class_cycle(10))
+        .print_to_string()
+        .to_string();
+    let drop = function_body(&ir, "define internal void @sisu_rc.drop.C0(ptr");
+    assert_eq!(drop.matches("call void @llvm.memset.").count(), 1, "{drop}");
+    assert!(!drop.contains("store ["), "{drop}");
 }
 
 /// A `take_apart` finds each place's token and kept value once: a scan of every token, or of
