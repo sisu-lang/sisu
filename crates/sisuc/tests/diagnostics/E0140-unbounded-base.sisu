@@ -1,0 +1,28 @@
+interface S {
+    type Next: S
+    type Item
+}
+
+class Z: S {
+    type Next = Z
+    type Item = i64
+}
+
+class U<T: S>: S {
+    type Next = U<U<T.Next>>
+    type Item = i64
+}
+
+class W<T>: S {
+    type Next = W<T>
+    type Item = E<W<W<T>>>
+}
+
+enum E<T: S> {
+    End
+    A(T.Next.Item)
+}
+
+fn main() {
+    let e: E<W<i64>> = E.End
+}

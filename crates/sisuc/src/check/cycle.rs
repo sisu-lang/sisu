@@ -67,8 +67,12 @@
 //! parameter in the conformance's target, so that a use and a choice add one edge each, not one
 //! for each pair. The type chosen gives the edges that a field type gives. The choice
 //! `type Item = E<W<W<T>>>` of `W<T>` gives the enum `E<T: I>` that holds `T.Item` an edge back to
-//! itself of weight 1. A base that passes an associated type of unbounded growth gives no edge:
-//! it is a cycle of names alone, which instantiates no class or enum.
+//! itself of weight 1. A base that passes an associated type of unbounded growth for the
+//! arguments of its use gives no edge. The base may be a cycle of names alone, which instantiates
+//! no class or enum, and an edge there would report a program that has its own error. It may also
+//! be another type of the place, which no conformance with a growing choice stands for; a growth
+//! through such a base is left to the query for a conformance, which stops at a depth
+//! (`CONFORMS_DEPTH_LIMIT`).
 //!
 //! An interface with type parameters has choices for some arguments, and a use `P.Item` has
 //! arguments too. A choice made for arguments that hold no parameter is not meant by a use with
@@ -215,8 +219,8 @@ struct Hub {
     hubs: Vec<usize>,
 }
 
-/// Whether `args`, the arguments of an interface, hold no parameter and no associated type: two
-/// such lists that differ stand for conformances that no one type meets.
+/// Whether `args`, the arguments of an interface, hold no parameter and no associated type. A use
+/// with one such list never means a conformance with another list.
 fn closed(args: TypeArgs) -> bool {
     !args.has_assoc() && !args.get().iter().any(|arg| arg.has_param())
 }
@@ -517,16 +521,9 @@ impl Graph {
     /// the target, the way a hub feeds the methods of a conformance. The type chosen gives the
     /// edges on from there (`Choice`).
     fn choose(&mut self, holder: usize, ty: Type, base: Type, hub: usize, site: Span) {
-        // A base that passes an associated type of unbounded growth is a cycle of names alone,
-        // which instantiates no class or enum: the walk of the choices ends it where the type is
-        // used (`normalize`).
-        let mut inner = base;
-        while let TypeKind::Assoc(next, interface, _, k) = inner.kind() {
-            if self.assocs.growth[self.assocs.first[interface.0] + k as usize] == Some(UNBOUNDED) {
-                return;
-            }
-            inner = next;
-        }
+        let Some(base) = self.without_unbounded(base) else {
+            return;
+        };
         let from = self.node(holder, base);
         self.edges.push(Edge {
             from,
@@ -540,6 +537,29 @@ impl Graph {
             mark: site,
             instance: Some(Instance::Type(ty)),
         });
+    }
+
+    /// `base` without the links of its chain that have unbounded growth for the arguments of
+    /// their use, which pass their base at no cost; `None` when no parameter is left. Such a link
+    /// may be a cycle of names alone, which instantiates no class or enum (`normalize` ends it
+    /// where the type is used), so the weight of its growth would stand for no instance. The
+    /// other links keep their growth. The link may also stand for another type of the place than
+    /// the one that grows; a growth through that type is left to the query for a conformance,
+    /// which stops at a depth (`CONFORMS_DEPTH_LIMIT`).
+    fn without_unbounded(&self, base: Type) -> Option<Type> {
+        let mut kept = Vec::new();
+        let mut inner = base;
+        while let TypeKind::Assoc(next, interface, args, k) = inner.kind() {
+            let place = self.assocs.first[interface.0] + k as usize;
+            if self.assocs.growth_of(place, args) != Some(UNBOUNDED) {
+                kept.push((interface, args, k));
+            }
+            inner = next;
+        }
+        for &(interface, args, k) in kept.iter().rev() {
+            inner = Type::intern(TypeKind::Assoc(inner, interface, args, k));
+        }
+        inner.has_param().then_some(inner)
     }
 
     /// The declaration of the first hub of the choices; the others follow the choices.
@@ -1410,8 +1430,8 @@ impl Checker<'_> {
         for (interface, conformance) in self.conformances.iter() {
             let target = param_depths(conformance.target, conformance.type_params);
             for (k, chosen) in conformance.assoc.iter().enumerate() {
-                // A choice that names no parameter has no growth, and no slot of its own: the
-                // slot for arguments with a parameter stands for it.
+                // A choice that names no parameter has no growth, and no slot of its own: a use
+                // of its arguments falls back to the slot for arguments with a parameter.
                 let Some(chosen) = chosen.filter(|ty| ty.has_param()) else {
                     continue;
                 };

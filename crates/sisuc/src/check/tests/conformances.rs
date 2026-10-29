@@ -655,35 +655,63 @@ fn growth_through_the_choice_of_an_associated_type_should_be_marked_before_the_f
 /// holds the edges of the uses and of the choices added together, not multiplied.
 #[test]
 fn uses_and_choices_of_an_associated_type_should_cost_edges_in_proportion_to_their_sum() {
-    let edges = |n: usize, arguments: bool| {
+    /// What the program has `n` of.
+    #[derive(Clone, Copy)]
+    enum Shape {
+        /// Choices of one interface, and uses of it.
+        One,
+        /// Choices and uses of an interface with one list of arguments that holds no parameter,
+        /// and one that does.
+        Arguments,
+        /// Choices for `n` different lists of arguments that hold no parameter, and uses whose
+        /// arguments hold a parameter: each use meets every list, so a use that fed each list
+        /// itself would cost the product.
+        Lists,
+    }
+    let edges = |n: usize, shape: Shape| {
+        let arguments = matches!(shape, Shape::Arguments);
         let (interface, bound) = if arguments {
             ("S<A> {\n    type Item\n}\n", "S<i64>")
         } else {
             ("I {\n    type Item\n}\n", "I")
         };
-        let mut src = format!("interface {interface}");
-        let conformance = if arguments { "S<i64>" } else { "I" };
-        for k in 0..n {
-            writeln!(
-                src,
-                "class W{k}<T>: {conformance} {{\n    type Item = T\n}}"
-            )
-            .expect("writing to a `String` should succeed");
-            if arguments {
-                // A conformance with a parameter in its interface arguments.
-                writeln!(src, "class V{k}<T, U>: S<U> {{\n    type Item = T\n}}")
-                    .expect("writing to a `String` should succeed");
-            }
-        }
-        writeln!(src, "enum E<T: {bound}> {{\n    End\n    A(T.Item)\n}}")
-            .expect("writing to a `String` should succeed");
-        for j in 0..n {
-            writeln!(src, "class H{j}<T: {bound}> {{\n    v: T.Item?\n}}")
+        let mut src = if matches!(shape, Shape::Lists) {
+            "interface S<A> {\n    type Item\n}\n".to_string()
+        } else {
+            format!("interface {interface}")
+        };
+        if matches!(shape, Shape::Lists) {
+            for k in 0..n {
+                writeln!(
+                    src,
+                    "class C{k} {{}}\nclass W{k}<T>: S<C{k}> {{\n    type Item = T\n}}"
+                )
                 .expect("writing to a `String` should succeed");
-            if arguments {
-                // A use with a parameter in its interface arguments.
+            }
+            for j in 0..n {
                 writeln!(src, "class G{j}<T: S<A>, A> {{\n    v: T.Item?\n}}")
                     .expect("writing to a `String` should succeed");
+            }
+        } else {
+            for k in 0..n {
+                writeln!(src, "class W{k}<T>: {bound} {{\n    type Item = T\n}}")
+                    .expect("writing to a `String` should succeed");
+                if arguments {
+                    // A conformance with a parameter in its interface arguments.
+                    writeln!(src, "class V{k}<T, U>: S<U> {{\n    type Item = T\n}}")
+                        .expect("writing to a `String` should succeed");
+                }
+            }
+            writeln!(src, "enum E<T: {bound}> {{\n    End\n    A(T.Item)\n}}")
+                .expect("writing to a `String` should succeed");
+            for j in 0..n {
+                writeln!(src, "class H{j}<T: {bound}> {{\n    v: T.Item?\n}}")
+                    .expect("writing to a `String` should succeed");
+                if arguments {
+                    // A use with a parameter in its interface arguments.
+                    writeln!(src, "class G{j}<T: S<A>, A> {{\n    v: T.Item?\n}}")
+                        .expect("writing to a `String` should succeed");
+                }
             }
         }
         src += "fn main() {}";
@@ -691,12 +719,12 @@ fn uses_and_choices_of_an_associated_type_should_cost_edges_in_proportion_to_the
         clean(&src);
         cycle::EDGES.get()
     };
-    for (row, arguments) in [("one interface", false), ("interface arguments", true)] {
-        let (one, two, three) = (
-            edges(50, arguments),
-            edges(100, arguments),
-            edges(150, arguments),
-        );
+    for (row, shape) in [
+        ("one interface", Shape::One),
+        ("interface arguments", Shape::Arguments),
+        ("many lists of interface arguments", Shape::Lists),
+    ] {
+        let (one, two, three) = (edges(50, shape), edges(100, shape), edges(150, shape));
         assert!(one > 0, "{row}");
         assert_near_linear(one, two, three);
     }
@@ -840,6 +868,65 @@ fn growth_through_a_choice_that_may_be_meant_should_be_reported_for_each_form() 
     }
 }
 
+/// An interface with an associated type `Next` that one conformance grows without end (`U`),
+/// beside the conformance `Z` that does not. A base `T.Next` is then of unbounded growth for the
+/// graph, which stands for the choices of every conformance, whatever type it is for.
+const UNBOUNDED: &str = "interface S {\n    type Next: S\n    type Item\n}\nclass Z: S {\n    type Next = Z\n    type Item = i64\n}\nclass U<T: S>: S {\n    type Next = U<U<T.Next>>\n    type Item = i64\n}\n";
+
+/// A class `W` that grows the enum `E` that holds `T.Next.Item`, beside `UNBOUNDED`.
+const GROWS_BESIDE_UNBOUNDED: &str = "class W<T>: S {\n    type Next = W<T>\n    type Item = E<W<W<T>>>\n}\nenum E<T: S> {\n    End\n    A(T.Next.Item)\n}\n";
+
+/// A base whose associated type is of unbounded growth for some type (`U`) does not make the uses
+/// of a type that is not `U` safe: the choice of `W`, a finite class, grows. Each of these
+/// programs overflowed the stack of the check, or was accepted and never ended in `sisu build`.
+#[test]
+fn growth_beside_a_base_of_unbounded_growth_should_be_reported_for_each_form() {
+    let compared = "fn main() {\n    let e: E<W<i64>> = E.End\n    print(e == e)\n}";
+    let built = "fn main() {\n    let e: E<W<i64>> = E.End\n    print(1)\n}";
+    let rows = [
+        (
+            "the growth is of one list of interface arguments, the use is of another",
+            "interface S<A> {\n    type Next: S<A>\n    type Item\n}\nclass Z: S<i64> {\n    type Next = Z\n    type Item = i64\n}\nclass U<T: S<i64>>: S<i64> {\n    type Next = U<U<T.Next>>\n    type Item = i64\n}\nclass W<T>: S<bool> {\n    type Next = W<T>\n    type Item = E<W<W<T>>>\n}\nenum E<T: S<bool>> {\n    End\n    A(T.Next.Item)\n}\nfn main() {\n    let e: E<W<i64>> = E.End\n    print(e == e)\n}".to_string(),
+            "E<W<W<T>>>",
+        ),
+        (
+            "the same interface and no arguments, compared",
+            format!("{UNBOUNDED}{GROWS_BESIDE_UNBOUNDED}{compared}"),
+            "E<W<W<T>>>",
+        ),
+        (
+            "the same, and no query for the value",
+            format!("{UNBOUNDED}{GROWS_BESIDE_UNBOUNDED}{built}"),
+            "E<W<W<T>>>",
+        ),
+        (
+            "a chain of three links, two of them associated types of unbounded growth",
+            format!("{UNBOUNDED}class W<T>: S {{\n    type Next = W<T>\n    type Item = E<W<W<T>>>\n}}\nenum E<T: S> {{\n    End\n    A(T.Next.Next.Next.Item)\n}}\n{compared}"),
+            "E<W<W<T>>>",
+        ),
+        (
+            "a link of unbounded growth beside a link that is bounded",
+            "interface S {\n    type Next: S\n    type Other: S\n    type Item\n}\nclass Z: S {\n    type Next = Z\n    type Other = Z\n    type Item = i64\n}\nclass U<T: S>: S {\n    type Next = U<U<T.Next>>\n    type Other = U<T>\n    type Item = i64\n}\nclass W<T>: S {\n    type Next = W<T>\n    type Other = W<T>\n    type Item = E<W<W<T>>>\n}\nenum E<T: S> {\n    End\n    A(T.Next.Other.Item)\n}\nfn main() {\n    let e: E<W<i64>> = E.End\n    print(1)\n}".to_string(),
+            "E<W<W<T>>>",
+        ),
+        (
+            // The choice of `Other` grows the type by one, and `Item` keeps it: only the link
+            // outside the one of unbounded growth makes the cycle.
+            "a link that grows beside a link of unbounded growth",
+            "interface S {\n    type Next: S\n    type Other: S\n    type Item\n}\nclass Z: S {\n    type Next = Z\n    type Other = Z\n    type Item = i64\n}\nclass U<T: S>: S {\n    type Next = U<U<T.Next>>\n    type Other = U<T>\n    type Item = i64\n}\nclass W<T: S>: S {\n    type Next = W<T>\n    type Other = W<W<T>>\n    type Item = E<W<T>>\n}\nenum E<T: S> {\n    End\n    A(T.Next.Other.Item)\n}\nfn main() {\n    let e: E<W<Z>> = E.End\n    print(1)\n}".to_string(),
+            "E<W<T>>",
+        ),
+        (
+            "a class holds the associated type",
+            format!("{UNBOUNDED}class W<T>: S {{\n    type Next = W<T>\n    type Item = H<W<W<T>>>\n}}\nclass H<T: S> {{\n    v: T.Next.Item?\n}}\nfn f(_h: H<W<i64>>) {{}}\nfn main() {{}}"),
+            "H<W<W<T>>>",
+        ),
+    ];
+    for (row, src, at) in rows {
+        codes_row(row, &src, &[(Code::InstantiationCycle, where_is(&src, at))]);
+    }
+}
+
 /// An interface with a type parameter, and a class whose conformance to it for `i64` grows the
 /// type that it chooses, with a conformance of the same class for `bool` that chooses `i64`.
 const S: &str = "interface S<A> {\n    type Item\n}\n";
@@ -912,6 +999,25 @@ fn choice_of_an_associated_type_that_does_not_grow_should_not_be_reported() {
         (
             "an interface with two type parameters",
             "interface S<A, B> {\n    type Item\n}\nclass W<T>: S<i64, bool> {\n    type Item = E<W<W<T>>>\n}\nextend<T> W<T>: S<bool, i64> {\n    type Item = i64\n}\nenum E<T: S<bool, i64>> {\n    End\n    A(T.Item)\n}\nfn main() {}".to_string(),
+        ),
+        // The associated type is of unbounded growth for `U`, which no value of the program is.
+        (
+            "an associated type of unbounded growth, and no choice that names a parameter",
+            format!("{UNBOUNDED}enum E<T: S> {{\n    End\n    A(T.Next.Item)\n}}\nfn main() {{\n    let e: E<Z> = E.End\n    print(e == e)\n}}"),
+        ),
+        (
+            "an associated type of unbounded growth, and a choice that shrinks the enum",
+            format!("{UNBOUNDED}class W<T: S>: S {{\n    type Next = W<T>\n    type Item = E<T>\n}}\nenum E<T: S> {{\n    End\n    A(T.Next.Item)\n}}\nfn main() {{\n    let e: E<W<Z>> = E.End\n    print(e == e)\n}}"),
+        ),
+        (
+            "the same, through a chain of three links",
+            format!("{UNBOUNDED}class W<T: S>: S {{\n    type Next = W<T>\n    type Item = E<T>\n}}\nenum E<T: S> {{\n    End\n    A(T.Next.Next.Item)\n}}\nfn main() {{\n    let e: E<W<Z>> = E.End\n    print(e == e)\n}}"),
+        ),
+        (
+            // The growth of `Next` for `S<i64>` is unbounded, and for `S<bool>` it shrinks: the
+            // use of `S<bool>` reads the slot of its own arguments.
+            "an associated type of unbounded growth for other interface arguments",
+            "interface S<A> {\n    type Next: S<A>\n    type Item\n}\nclass Z: S<bool> {\n    type Next = Z\n    type Item = i64\n}\nclass U<T: S<i64>>: S<i64> {\n    type Next = U<U<T.Next>>\n    type Item = i64\n}\nclass W<T: S<bool>>: S<bool> {\n    type Next = T\n    type Item = E<W<W<T>>>\n}\nenum E<T: S<bool>> {\n    End\n    A(T.Next.Item)\n}\nfn main() {\n    let e: E<W<Z>> = E.End\n    print(e == e)\n}".to_string(),
         ),
         (
             "an interface argument list that no conformance has",
