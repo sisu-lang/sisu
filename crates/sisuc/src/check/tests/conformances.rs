@@ -3780,12 +3780,24 @@ fn is_should_report_once_for_sides_with_extra_layers() {
         ("the right side", "same(a: Node?, b: Node??)"),
         ("three layers", "same(a: Node???, b: Node?)"),
         ("a parameter", "same<T: AnyObject>(a: T??, b: T??)"),
+        ("a side that is no object", "same(a: Node??, b: i64)"),
     ] {
         let src =
             format!("class Node {{}}\nfn {signature} -> bool {{\n    a is b\n}}\nfn main() {{}}");
         let col = if row == "the right side" { 10 } else { 5 };
         codes_row(row, &src, &[(Code::IsNeedsObjects, (3, col))]);
     }
+}
+
+/// A side whose type is unknown does not hide the report on the other side.
+#[test]
+fn is_should_report_a_side_with_extra_layers_beside_an_unknown_side() {
+    let src =
+        "class Node {}\nfn same(a: Node??, b: Missing) -> bool {\n    a is b\n}\nfn main() {}";
+    codes(
+        src,
+        &[(Code::UnknownType, (2, 23)), (Code::IsNeedsObjects, (3, 5))],
+    );
 }
 
 /// The interfaces whose associated types the rows of the next two tests test with `is`.
