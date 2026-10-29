@@ -5,8 +5,8 @@ use super::expr::{
 };
 use super::interface::Operation;
 use super::{
-    Checked, Checker, Poisoned, UNKNOWN, as_optional, beyond_one_layer, block_expr, optional_of,
-    payload, type_of, wrap,
+    Checked, Checker, Lowered, Poisoned, UNKNOWN, as_optional, beyond_one_layer, block_expr,
+    optional_of, payload, type_of, wrap,
 };
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Literal};
@@ -105,6 +105,10 @@ impl Checker<'_> {
             locals: &mut self.body.locals,
         };
         let kind = lang::ordered(&mut cx, dispatch, ty, operands, ops, span);
+        if matches!(dispatch, Dispatch::Method { .. }) {
+            let written = Lowered::Operator(self.lang.ord, ops[0].text());
+            self.spellings.insert(span, written);
+        }
         let node = tir::Expr {
             kind,
             ty: Type::BOOL,
@@ -645,6 +649,10 @@ impl Checker<'_> {
             _ => Dispatch::Generated,
         };
         self.nan_comparison(negated, (lhs, &l), (rhs, &r));
+        if matches!(dispatch, Dispatch::Method { .. }) {
+            let written = Lowered::Operator(eq, if negated { "!=" } else { "==" });
+            self.spellings.insert(span, written);
+        }
         self.compared(span, l, r, |lhs, rhs| {
             lang::equal(dispatch, negated, lhs, rhs, span)
         })

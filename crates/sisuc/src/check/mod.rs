@@ -501,6 +501,20 @@ struct Checker<'src> {
     instantiates: bool,
     /// How many classes, enums and functions the user's items declare.
     prelude: tir::ItemCounts,
+    /// By the span of an expression, how the program wrote it when the typed tree does not say
+    /// so (`Lowered`): the cycle check reads it for its labels.
+    spellings: FxHashMap<Span, Lowered>,
+}
+
+/// What the typed tree forgets about an expression that the checker lowered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Lowered {
+    /// A method call (`x.eq(y)` or `x.to_string()`) on a type whose conformance the compiler
+    /// writes, lowered to the node of the operator.
+    Method,
+    /// An operator, `==` or `<` for example, on a type with a written conformance, lowered to a
+    /// call of its method. It is a call through the language interface given.
+    Operator(tir::InterfaceId, &'static str),
 }
 
 /// The checker's diagnostics, and how many errors were added to them. The count never goes
@@ -973,6 +987,7 @@ impl<'src> Checker<'src> {
             holds_assoc: false,
             failed_block: None,
             lowered_enums: Vec::new(),
+            spellings: FxHashMap::default(),
             written: None,
             constants: FxHashMap::default(),
             holds_table: HoldsTable::default(),

@@ -1,0 +1,13 @@
+error[E0140]: `W<T>.eq` instantiates itself without end
+  --> E0140-operator-enum-after-use.sisu:6:9
+   |
+ 6 |         E.Has(W(v: [self.v])) == E.Has(W(v: [other.v]))
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `==` here
+...
+10 |     Has(W<T>)
+   |         ---- the `==` of `E` here may call `W<T>.eq` through `Eq`
+   |
+   = help: a call through `Eq` counts as reaching every conformance to `Eq`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

@@ -2615,6 +2615,127 @@ fn cycle_through_a_language_interface_should_be_reported_at_the_spelling_of_the_
     }
 }
 
+/// A program with the class `W<T>`, a conformance of `W<T>` to `interface` (`Eq` or `Display`)
+/// whose method has the body `body`, and then the code `after`.
+fn conformance_with(interface: &str, after: &str, body: &str) -> String {
+    let (method, main) = match interface {
+        "Eq" => ("fn eq(self, other: Self) -> bool", "W(v: 1) == W(v: 1)"),
+        _ => ("fn to_string(self) -> string", "W(v: 1)"),
+    };
+    format!(
+        "class W<T> {{\n    v: T\n}}\nextend<T: {interface}> W<T>: {interface} {{\n    {method} {{\n        {body}\n    }}\n}}\n{after}fn main() {{\n    print({main})\n}}\n"
+    )
+}
+
+/// A program with the classes `W<T>` and `V<T>`, which have a written `Eq` and `Ord`; the `less`
+/// of `W<T>` has the body `body`.
+fn ordered_with(body: &str) -> String {
+    let both = |class: &str, less: &str| {
+        format!(
+            "extend<T: Ord> {class}<T>: Eq {{\n    fn eq(self, other: Self) -> bool {{ true }}\n}}\nextend<T: Ord> {class}<T>: Ord {{\n    fn less(self, other: Self) -> bool {{\n        {less}\n    }}\n}}\n"
+        )
+    };
+    let classes = "class W<T> {\n    v: T\n}\nclass V<T> {\n    v: T\n}\n";
+    let (v, w) = (both("V", "true"), both("W", body));
+    format!("{classes}{v}{w}fn main() {{\n    print(W(v: 1) < W(v: 1))\n}}\n")
+}
+
+/// A method call that the checker lowers to the node of an operator is reported at the whole
+/// call. So is a written operator that the checker lowers to a call, or to an edge into the
+/// generated node of an enum that its use precedes. The text of each label is pinned by the
+/// `E0140-*` fixtures.
+#[test]
+fn cycle_through_a_lowered_call_should_be_reported_at_the_spelling_of_the_call() {
+    let (a, b) = ("W(v: [self.v])", "W(v: [other.v])");
+    let (wa, wb) = ("W(v: V(v: self.v))", "W(v: V(v: other.v))");
+    let (e1, e2) = (format!("E.Has({a})"), format!("E.Has({b})"));
+    let after = "enum E<T> {\n    Has(W<T>)\n}\n";
+    // Each row: the program, where the label stands, and where the note stands, if there is one.
+    let rows = [
+        (
+            "`.to_string()` on an array",
+            conformance_with("Display", "", &format!("[{a}].to_string()")),
+            format!("[{a}].to_string()"),
+            None,
+        ),
+        (
+            "`.to_string()` on an optional",
+            conformance_with(
+                "Display",
+                "",
+                &format!("let x: W<[T]>? = {a}\n        x.to_string()"),
+            ),
+            "x.to_string()".to_string(),
+            None,
+        ),
+        (
+            "`.to_string()` on an enum declared after its use",
+            conformance_with("Display", after, &format!("{e1}.to_string()")),
+            format!("{e1}.to_string()"),
+            Some("W<T>)"),
+        ),
+        (
+            "`.eq()` on an array",
+            conformance_with("Eq", "", &format!("[{a}].eq([{b}])")),
+            format!("[{a}].eq([{b}])"),
+            None,
+        ),
+        (
+            "`.eq()` on an optional",
+            conformance_with("Eq", "", &format!("let x: W<[T]>? = {a}\n        x.eq(x)")),
+            "x.eq(x)".to_string(),
+            None,
+        ),
+        (
+            "`.eq()` on an enum declared after its use",
+            conformance_with("Eq", after, &format!("{e1}.eq({e2})")),
+            format!("{e1}.eq({e2})"),
+            Some("W<T>)"),
+        ),
+        (
+            "`==` on a class with a written `eq`",
+            conformance_with("Eq", "", &format!("{a} == {b}")),
+            format!("{a} == {b}"),
+            None,
+        ),
+        (
+            "`!=` on a class with a written `eq`",
+            conformance_with("Eq", "", &format!("{a} != {b}")),
+            format!("{a} != {b}"),
+            None,
+        ),
+        (
+            "`<` on a class with a written `less`",
+            ordered_with(&format!("{wa} < {wb}")),
+            format!("{wa} < {wb}"),
+            None,
+        ),
+        (
+            "a chain on a class with a written `less`",
+            ordered_with(&format!("{wa} < {wb} <= {wa}")),
+            format!("{wa} < {wb} <= {wa}"),
+            None,
+        ),
+        (
+            "`print` of an enum declared after its use",
+            conformance_with("Display", after, &format!("print({e1})\n        \"\"")),
+            format!("print({e1})"),
+            Some("W<T>)"),
+        ),
+        (
+            "`contains` on an enum declared after its use",
+            conformance_with("Eq", after, &format!("[{e1}].contains({e2})")),
+            format!("[{e1}].contains({e2})"),
+            Some("W<T>)"),
+        ),
+    ];
+    for (row, src, label, note) in &rows {
+        let notes: Vec<_> = note.iter().map(|note| where_is(src, note)).collect();
+        let expected = [(Code::InstantiationCycle, where_is(src, label), notes)];
+        assert_eq!(found(src), expected, "row `{row}`");
+    }
+}
+
 #[test]
 fn implicit_eq_call_should_close_an_instantiation_cycle() {
     let w = "class W<T> {\n    x: T\n}\n";

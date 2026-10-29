@@ -108,8 +108,8 @@ use std::collections::VecDeque;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::Checker;
-use crate::ast::{CompareOp, angled};
+use super::{Checker, Lowered};
+use crate::ast::angled;
 use crate::diagnostic::{DiagnosticKind, Hop, Spelled};
 use crate::graph::components;
 use crate::source::Span;
@@ -142,31 +142,23 @@ const UNBOUNDED: i64 = 1 << 32;
 /// of the graph stay in proportion to the program.
 const MATCHING_CHOICES: usize = 64;
 
-/// The text of a comparison operator.
-fn compare_text(op: CompareOp) -> &'static str {
-    match op {
-        CompareOp::Lt => "<",
-        CompareOp::Le => "<=",
-        CompareOp::Gt => ">",
-        CompareOp::Ge => ">=",
-    }
-}
-
 /// The interface that `instance` calls through, if it calls through one.
 fn calls_through(instance: Instance) -> Option<tir::InterfaceId> {
     match instance {
         Instance::Required(interface, ..) | Instance::Operator(interface, _) => Some(interface),
-        Instance::Call(..) | Instance::Type(_) => None,
+        Instance::Call(..) | Instance::Type(..) => None,
     }
 }
 
 /// An instantiation, which a diagnostic writes as the program does.
 #[derive(Clone, Copy)]
 enum Instance {
-    /// A call of the function, with its type arguments, a method's owner's first.
-    Call(tir::FuncId, TypeArgs),
-    /// A generic class or enum, as a type.
-    Type(Type),
+    /// A call of the function, with its type arguments, a method's owner's first. With a
+    /// `Spelling`, the program wrote an operator and the typed tree lowered it to this call.
+    Call(tir::FuncId, TypeArgs, Option<Spelling>),
+    /// A generic class or enum, as a type. With a `Spelling`, the program wrote an operator or a
+    /// method call that reaches the type's generated node.
+    Type(Type, Option<Spelling>),
     /// A call of a requirement of an interface, by the requirement's place, with its own type
     /// arguments.
     Required(tir::InterfaceId, usize, TypeArgs),
@@ -174,6 +166,9 @@ enum Instance {
     /// interpolation or a generated `==` or `to_string`, and not as a call of the method.
     Operator(tir::InterfaceId, Written),
 }
+
+/// A language interface and how the program spells a call through it.
+type Spelling = (tir::InterfaceId, Written);
 
 /// How the program spells a call through a language interface that is not a call of its method.
 /// A call of the method through a bound, as `x.eq(y)` writes it, is a `Required` instance.
@@ -185,6 +180,9 @@ enum Written {
     Interpolation,
     /// The generated `==` or `to_string` of an enum, for the payload type given.
     Generated(Type),
+    /// A call of the method, as `x.eq(y)` or `x.to_string()` writes it on a type whose conformance
+    /// the compiler writes. The typed tree lowers it to the node of the operator.
+    Method,
 }
 
 /// An edge of the graph, from an instantiation at `site` inside the declaration `holder`; or,
@@ -486,6 +484,12 @@ impl Graph {
             Instance::Required(interface, 0, TypeArgs::NONE),
             |written| Instance::Operator(interface, written),
         );
+        // A generated node keeps the type as its label: only the program's own spelling replaces
+        // it.
+        let spelling = match written {
+            Some(Written::Generated(_)) => None,
+            written => Some((interface, written.unwrap_or(Written::Method))),
+        };
         let hub = self.interface_hubs + interface.0;
         match ty.kind() {
             TypeKind::Param(_, i) => {
@@ -505,7 +509,8 @@ impl Graph {
                         self.eq_first
                     };
                     let target = first + id.0;
-                    self.args(holder, args.get(), target, site, mark, Instance::Type(ty));
+                    let instance = Instance::Type(ty, spelling);
+                    self.args(holder, args.get(), target, site, mark, instance);
                 }
                 if listed {
                     let from = self.node(holder, ty);
@@ -617,7 +622,7 @@ impl Graph {
                 holder,
                 site,
                 mark: site,
-                instance: Some(Instance::Type(ty)),
+                instance: Some(Instance::Type(ty, None)),
             });
         }
     }
@@ -791,7 +796,14 @@ impl Graph {
                 _ => continue,
             };
             let mark = spans.get(&ty).copied().unwrap_or(site);
-            self.args(holder, args.get(), target, site, mark, Instance::Type(ty));
+            self.args(
+                holder,
+                args.get(),
+                target,
+                site,
+                mark,
+                Instance::Type(ty, None),
+            );
             stack.extend(args.get());
         }
     }
@@ -1082,7 +1094,7 @@ impl Checker<'_> {
     fn choice_use(&self, edges: &[Edge], cycle: &[usize]) -> Option<String> {
         (cycle.iter())
             .find_map(|&i| match edges[i].instance {
-                Some(Instance::Type(ty)) if matches!(ty.kind(), TypeKind::Assoc(..)) => Some(ty),
+                Some(Instance::Type(ty, _)) if matches!(ty.kind(), TypeKind::Assoc(..)) => Some(ty),
                 _ => None,
             })
             .map(|ty| self.type_name(ty))
@@ -1096,10 +1108,18 @@ impl Checker<'_> {
         holder: usize,
         instance: Instance,
     ) -> Spelled {
-        let Instance::Operator(interface, written) = instance else {
+        let spelling = match instance {
+            Instance::Operator(interface, written) => Some((interface, written)),
+            Instance::Call(.., spelling) | Instance::Type(_, spelling) => spelling,
+            Instance::Required(..) => None,
+        };
+        let Some((interface, written)) = spelling else {
             return Spelled::Instance(self.instance_name(functions, instance));
         };
         match written {
+            Written::Method => Spelled::Instance(
+                self.instance_name(functions, Instance::Required(interface, 0, TypeArgs::NONE)),
+            ),
             Written::Op(op) => Spelled::Operator(op.to_string()),
             Written::Interpolation => Spelled::Interpolation,
             Written::Generated(operand) => Spelled::Generated {
@@ -1234,14 +1254,17 @@ impl Checker<'_> {
             function.body.exprs(&mut exprs);
             for e in &exprs {
                 match e.kind {
-                    tir::ExprKind::Call { func, types, .. } => graph.args(
-                        holder,
-                        types.get(),
-                        func.0,
-                        e.span,
-                        e.span,
-                        Instance::Call(func, types),
-                    ),
+                    tir::ExprKind::Call { func, types, .. } => {
+                        // An operator that the checker lowered to a call is labeled as written.
+                        let spelling = match self.spellings.get(&e.span) {
+                            Some(&Lowered::Operator(interface, op)) => {
+                                Some((interface, Written::Op(op)))
+                            }
+                            _ => None,
+                        };
+                        let instance = Instance::Call(func, types, spelling);
+                        graph.args(holder, types.get(), func.0, e.span, e.span, instance);
+                    }
                     tir::ExprKind::InterfaceCall {
                         interface,
                         iargs,
@@ -1284,6 +1307,10 @@ impl Checker<'_> {
     /// The edges of the operators, `print` and interpolations in the expression `e` inside the
     /// function `holder`: see the module doc.
     fn operator_edges(&self, graph: &mut Graph, holder: usize, e: &tir::Expr) {
+        // A method call that the checker lowered to the node of an operator is spelled as the
+        // call: `Eq.eq` or `Display.to_string`, over the whole call.
+        let method = self.spellings.get(&e.span) == Some(&Lowered::Method);
+        let written = |written| (!method).then_some(written);
         match e.kind {
             // `x == None` tests presence and calls nothing.
             tir::ExprKind::Equal {
@@ -1298,7 +1325,7 @@ impl Checker<'_> {
                     lhs.ty,
                     self.lang.eq,
                     (e.span, e.span),
-                    Some(Written::Op(if negated { "!=" } else { "==" })),
+                    written(Written::Op(if negated { "!=" } else { "==" })),
                 );
             }
             tir::ExprKind::Compare {
@@ -1310,7 +1337,7 @@ impl Checker<'_> {
                     operands[0].ty,
                     self.lang.ord,
                     (e.span, e.span),
-                    Some(Written::Op(compare_text(ops[0]))),
+                    written(Written::Op(ops[0].text())),
                 );
             }
             tir::ExprKind::Print {
@@ -1331,12 +1358,13 @@ impl Checker<'_> {
             }
             tir::ExprKind::Interpolate { ref parts, .. } => {
                 for part in parts {
+                    let mark = if method { e.span } else { part.span };
                     graph.operator(
                         holder,
                         part.ty,
                         self.lang.display,
-                        (e.span, part.span),
-                        Some(Written::Interpolation),
+                        (e.span, mark),
+                        written(Written::Interpolation),
                     );
                 }
             }
@@ -1797,7 +1825,7 @@ impl Checker<'_> {
     /// `instance` as the program writes it: `f<[T]>`, `C<[T]>.m<U>`, or a type.
     fn instance_name(&self, functions: &[Option<tir::Function>], instance: Instance) -> String {
         let (func, types) = match instance {
-            Instance::Type(ty) => return self.type_name(ty),
+            Instance::Type(ty, _) => return self.type_name(ty),
             Instance::Required(interface, method, types) => {
                 let info = &self.interfaces[interface.0];
                 let name = info.requirements[method].name.name;
@@ -1806,7 +1834,7 @@ impl Checker<'_> {
                 return out;
             }
             Instance::Operator(..) => unreachable!("an operator should be spelled by `spell`"),
-            Instance::Call(func, types) => (func, types),
+            Instance::Call(func, types, _) => (func, types),
         };
         let function = functions[func.0]
             .as_ref()
@@ -2075,14 +2103,6 @@ mod tests {
         Type::intern(TypeKind::Param(Symbol::intern("T"), i))
     }
 
-    /// The text of a comparison is the one the program writes, which the same enum displays.
-    #[test]
-    fn compare_text_should_write_each_comparison_as_the_program_does() {
-        for op in [CompareOp::Lt, CompareOp::Le, CompareOp::Gt, CompareOp::Ge] {
-            assert_eq!(compare_text(op), op.to_string());
-        }
-    }
-
     fn pair(a: Type, b: Type) -> Type {
         Type::intern(TypeKind::Class(ClassId(0), TypeArgs::intern(&[a, b])))
     }
@@ -2118,7 +2138,7 @@ mod tests {
         }
         let site = Span::new(0, 1);
         let mut g = graph(1);
-        g.args(0, &[ty], 0, site, site, Instance::Type(ty));
+        g.args(0, &[ty], 0, site, site, Instance::Type(ty, None));
         // A node per `Pair`, an edge from each of its two arguments, and the call's two edges:
         // into the parameter's first node and into its second.
         assert_eq!(g.typed.len(), 20);
@@ -2144,7 +2164,7 @@ mod tests {
             let mut g = graph(n as usize + 1);
             for site in 0..10 {
                 let at = Span::new(site, site + 1);
-                g.args(0, &[ty], 0, at, at, Instance::Type(ty));
+                g.args(0, &[ty], 0, at, at, Instance::Type(ty, None));
             }
             assert_eq!(g.typed.len(), n as usize);
             assert_eq!(g.edges.len(), 2 * n as usize + 2 * 10);
@@ -2170,7 +2190,7 @@ mod tests {
                     0,
                     Span::new(0, 1),
                     Span::new(0, 1),
-                    Instance::Type(ty),
+                    Instance::Type(ty, None),
                 );
                 assert_eq!(g.typed.len(), levels);
                 let mut ty = param(0);
@@ -2200,7 +2220,7 @@ mod tests {
             CORE_STEPS.set(0);
             for site in 0..n {
                 let at = Span::new(site, site + 1);
-                g.args(0, &[ty], 0, at, at, Instance::Type(ty));
+                g.args(0, &[ty], 0, at, at, Instance::Type(ty, None));
                 g.operator(
                     0,
                     ty,
@@ -2296,7 +2316,7 @@ mod tests {
         let site = Span::new(0, 1);
         let mut g = graph(2);
         let array = Type::intern(TypeKind::Array(Type::intern(TypeKind::Optional(param(1)))));
-        g.args(0, &[array], 0, site, site, Instance::Type(array));
+        g.args(0, &[array], 0, site, site, Instance::Type(array, None));
         // Two edges for the nodes of the optional and the array, then the first node from the
         // argument's own node, and the second from the parameter's second.
         assert_eq!(g.edges.len(), 4);
