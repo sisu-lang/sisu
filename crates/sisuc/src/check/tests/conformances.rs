@@ -3695,11 +3695,6 @@ fn operators_should_report_only_a_mismatch_inside_an_operand() {
             "fn f(a: [f64]) -> bool { a < [9007199254740993] }",
             vec![(Code::NotExactlyF64, "9007199254740993")],
         ),
-        (
-            "a call with a number that does not fit, bound to a string",
-            "fn g(x: u8) -> u8 { x }\nfn f() -> bool { let s: string = g(300); true }",
-            vec![(Code::IntegerDoesNotFit, "300")],
-        ),
     ];
     for (row, src, expected) in rows {
         let src = format!("{src}\nfn main() {{}}");
@@ -3709,6 +3704,19 @@ fn operators_should_report_only_a_mismatch_inside_an_operand() {
             .collect();
         codes_row(row, &src, &expected);
     }
+}
+
+/// A number that does not fit is a mismatch, as a value of another type is: the call that takes
+/// it has no type, so its use as a `string` gives no second error.
+#[test]
+fn a_call_with_a_number_that_does_not_fit_should_report_only_that_number() {
+    let src =
+        "fn g(x: u8) -> u8 { x }\nfn f() -> bool { let s: string = g(300); true }\nfn main() {}";
+    codes_row(
+        "a call with a number that does not fit, bound to a string",
+        src,
+        &[(Code::IntegerDoesNotFit, where_is(src, "300"))],
+    );
 }
 
 /// An error in an operand that is not about its type does not hide the missing operator: the
