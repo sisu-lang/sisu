@@ -1155,6 +1155,9 @@ pub(crate) enum DiagnosticKind {
         /// The interface whose hub the cycle passes: a call through it counts as reaching every
         /// conformance to it.
         reach: Option<String>,
+        /// The associated type, as written, whose choices the cycle passes: the check counts it as
+        /// every choice that it cannot show to be impossible.
+        choice: Option<String>,
     },
     /// The check of `interface` for the type `root`, which stopped after `limit` nested types:
     /// the class or enum `holder`, named at `at`, is the one that the check was too deep for.
@@ -4406,6 +4409,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 instance,
                 through,
                 reach,
+                choice,
             } => {
                 let d = through.into_iter().fold(
                     Diagnostic::coded(
@@ -4426,11 +4430,19 @@ impl From<DiagnosticKind> for Diagnostic {
                         d.with_secondary(site, text)
                     },
                 );
-                match reach {
-                    Some(i) => d.with_help(format!(
-                        "a call through `{i}` counts as reaching every conformance to `{i}`"
-                    )),
-                    None => d,
+                let reach = reach.map(|i| {
+                    format!("a call through `{i}` counts as reaching every conformance to `{i}`")
+                });
+                let choice = choice.map(|ty| {
+                    format!(
+                        "the check is cautious: `{ty}` counts as each choice that a conformance makes, unless the check can show that it is impossible"
+                    )
+                });
+                let help: Vec<String> = reach.into_iter().chain(choice).collect();
+                if help.is_empty() {
+                    d
+                } else {
+                    d.with_help(help.join("; "))
                 }
             }
             DiagnosticKind::ConformanceTooDeep {

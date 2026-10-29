@@ -1,0 +1,13 @@
+error[E0140]: `W` instantiates itself without end
+  --> E0140-choice-cautious.sisu:22:17
+   |
+22 |     type Item = E<W<W<T>>>
+   |                 ^^^^^^^^^^ `E<W<W<T>>>` here
+...
+26 |     A(T.Other.Item)
+   |       ------------ which instantiates `T.Other.Item`
+   |
+   = help: the check is cautious: `T.Other.Item` counts as each choice that a conformance makes, unless the check can show that it is impossible
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

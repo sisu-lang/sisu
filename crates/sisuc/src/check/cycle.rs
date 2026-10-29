@@ -67,7 +67,14 @@
 //! parameter in the conformance's target, so that a use and a choice add one edge each, not one
 //! for each pair. The type chosen gives the edges that a field type gives. The choice
 //! `type Item = E<W<W<T>>>` of `W<T>` gives the enum `E<T: I>` that holds `T.Item` an edge back to
-//! itself of weight 1. A link of the base whose associated type has unbounded growth for the
+//! itself of weight 1. A use `P.Link.Item` whose base is an associated type means only the
+//! choices of `Item` made by the classes and enums that the choices of `Link` name, since `P.Link`
+//! is one of those types (`Assocs::heads`). Such a use feeds the gate of each of those choices
+//! instead of the hub: a node of its own for each choice, which the hub feeds too, and which feeds
+//! the choice's parameters. A use reads at most `MATCHING_CHOICES` heads and choices; above that,
+//! or when a choice of `Link` names a parameter, an associated type or any other type, the use
+//! feeds the hub. The graph does not follow the head from one turn of a cycle to the next. A
+//! link of the base whose associated type has unbounded growth for the
 //! arguments of its use adds no weight: the edge is made from the base without that link, and the
 //! other links keep their growth. The link may be a cycle of names alone, which instantiates no
 //! class or enum, and its weight there would report a program that has its own error. It may also
@@ -130,6 +137,11 @@ thread_local! {
 /// of the graph can take back.
 const UNBOUNDED: i64 = 1 << 32;
 
+/// The most heads and choices that one use of an associated type reads to find the choices that it
+/// can mean (`Graph::matching`). Above it, the use feeds the hub of all the choices, so the edges
+/// of the graph stay in proportion to the program.
+const MATCHING_CHOICES: usize = 64;
+
 /// An instantiation, which a diagnostic writes as the program does.
 #[derive(Clone, Copy)]
 enum Instance {
@@ -178,6 +190,11 @@ struct Choice {
     at: Span,
     /// The greatest depth of each parameter of the conformance in its target (`param_depths`).
     depths: Vec<i64>,
+    /// The slot of the choice (`Assocs::slot`).
+    slot: usize,
+    /// Whether the choice is made for interface arguments that hold a parameter: any use of its
+    /// place may mean it.
+    loose: bool,
 }
 
 /// The associated types of the interfaces, as the graph reads them. A place is an associated
@@ -207,6 +224,11 @@ struct Assocs {
     hubs: Vec<Hub>,
     /// By place and slot, the hub that a use feeds, if a choice can be meant.
     hub_at: Vec<Option<usize>>,
+    /// By place, the classes and enums that its choices name as the type chosen, or `None` when a
+    /// choice names any other type (a parameter, an associated type, an array) or is missing.
+    heads: Vec<Option<Vec<Head>>>,
+    /// By place and head, the choices that a conformance of the head makes for the place.
+    by_head: FxHashMap<(usize, Head), Vec<usize>>,
 }
 
 /// A node that stands for a set of choices, or for hubs that do, so that the uses of an
@@ -515,27 +537,87 @@ impl Graph {
         }
     }
 
-    /// The edge of the associated type `ty` of `base`, written at `site` inside `holder`, whose
+    /// The edges of the associated type `ty` of `base`, written at `site` inside `holder`, whose
     /// choices the hub `hub` stands for. It is what each choice chooses, with the choice's
-    /// parameters standing for parts of the base: the base feeds the hub of the choices (`Hub`),
-    /// which feeds each parameter of the conformance, less the greatest depth of the parameter in
-    /// the target, the way a hub feeds the methods of a conformance. The type chosen gives the
-    /// edges on from there (`Choice`).
+    /// parameters standing for parts of the base: the base feeds the choices (`Hub`), which feed
+    /// each parameter of the conformance, less the greatest depth of the parameter in the
+    /// target, the way a hub feeds the methods of a conformance. The type chosen gives the edges
+    /// on from there (`Choice`). The base feeds the gate of each choice that it can mean when
+    /// `matching` knows them, else the hub of them all.
     fn choose(&mut self, holder: usize, ty: Type, base: Type, hub: usize, site: Span) {
-        let base = self.without_unbounded(base);
-        let from = self.node(holder, base);
-        self.edges.push(Edge {
-            from,
-            to: self.first[self.hubs_first() + hub],
-            weight: 0,
-            growing: false,
-            out: false,
-            assoc: false,
-            holder,
-            site,
-            mark: site,
-            instance: Some(Instance::Type(ty)),
-        });
+        let targets: Vec<usize> = match self.matching(ty, base) {
+            Some(choices) => (choices.iter())
+                .map(|&c| self.first[self.gates_first() + c])
+                .collect(),
+            None => vec![self.first[self.hubs_first() + hub]],
+        };
+        if targets.is_empty() {
+            return;
+        }
+        let from = self.node(holder, self.without_unbounded(base));
+        for to in targets {
+            self.edges.push(Edge {
+                from,
+                to,
+                weight: 0,
+                growing: false,
+                out: false,
+                assoc: false,
+                holder,
+                site,
+                mark: site,
+                instance: Some(Instance::Type(ty)),
+            });
+        }
+    }
+
+    /// The choices of the associated type `ty` that a use with the base `base` can mean, when the
+    /// base is itself an associated type `P.Link`: `P.Link` is a type that a choice of `Link`
+    /// names, so a choice of `ty` is meant only if a conformance of that type's class or enum
+    /// makes it. `None` when the base is no associated type, when a choice of `Link` names any
+    /// other type, or when more than `MATCHING_CHOICES` heads and choices must be read: the use
+    /// then feeds the hub of all the choices.
+    fn matching(&self, ty: Type, base: Type) -> Option<Vec<usize>> {
+        let (TypeKind::Assoc(_, interface, args, k), TypeKind::Assoc(_, link, _, l)) =
+            (ty.kind(), base.kind())
+        else {
+            return None;
+        };
+        let place = self.assocs.first[interface.0] + k as usize;
+        let slot = self.assocs.slot(place, args)?;
+        let heads = self
+            .assocs
+            .heads
+            .get(self.assocs.first[link.0] + l as usize)?;
+        let mut read = 0;
+        let mut found = Vec::new();
+        for &head in heads.as_ref()? {
+            read += 1;
+            for &c in self
+                .assocs
+                .by_head
+                .get(&(place, head))
+                .into_iter()
+                .flatten()
+            {
+                read += 1;
+                // shortcut: above K matching choices a use feeds the whole hub;
+                // raise K if a real program hits it.
+                if read > MATCHING_CHOICES {
+                    return None;
+                }
+                let choice = &self.assocs.choices[c];
+                // An open use means any choice of the place, a closed one the choices of its slot
+                // and those for arguments that hold a parameter.
+                if slot == place || choice.slot == slot || choice.loose {
+                    found.push(c);
+                }
+            }
+            if read > MATCHING_CHOICES {
+                return None;
+            }
+        }
+        Some(found)
     }
 
     /// `base` without the links of its chain that have unbounded growth for the arguments of
@@ -567,26 +649,39 @@ impl Graph {
         self.choices_first + self.assocs.choices.len()
     }
 
-    /// The edges out of each hub of the choices: to each choice it stands for, minus the greatest
-    /// depth of each parameter in the conformance's target, and to the hubs it reaches.
+    /// The declaration of the gate of the first choice; the others follow the hubs of the choices.
+    fn gates_first(&self) -> usize {
+        self.hubs_first() + self.assocs.hubs.len()
+    }
+
+    /// The edges out of each hub of the choices: to the gate of each choice it stands for, at no
+    /// cost, and to the hubs it reaches; and out of each gate: to each parameter of its choice,
+    /// minus the greatest depth of the parameter in the conformance's target. A use that can mean
+    /// only some choices of a hub feeds their gates (`Graph::choose`).
     fn feed(&mut self) {
         for (h, hub) in self.assocs.hubs.iter().enumerate() {
             let from = self.first[self.hubs_first() + h];
             for &c in &hub.choices {
-                let first = self.first[self.choices_first + c];
-                for (q, depth) in self.assocs.choices[c].depths.iter().enumerate() {
-                    self.edges.push(Self::hub_edge(
-                        from,
-                        first + q,
-                        -depth,
-                        self.choices_first + c,
-                    ));
-                }
+                let to = self.first[self.gates_first() + c];
+                self.edges
+                    .push(Self::hub_edge(from, to, 0, self.choices_first + c));
             }
             for &other in &hub.hubs {
                 let to = self.first[self.hubs_first() + other];
                 self.edges
                     .push(Self::hub_edge(from, to, 0, self.hubs_first() + other));
+            }
+        }
+        for (c, choice) in self.assocs.choices.iter().enumerate() {
+            let from = self.first[self.gates_first() + c];
+            let first = self.first[self.choices_first + c];
+            for (q, depth) in choice.depths.iter().enumerate() {
+                self.edges.push(Self::hub_edge(
+                    from,
+                    first + q,
+                    -depth,
+                    self.choices_first + c,
+                ));
             }
         }
     }
@@ -870,6 +965,14 @@ impl Checker<'_> {
         let mut cycle = cycle;
         cycle.rotate_left(at);
         let (mut through, mut reach) = (Vec::new(), None);
+        // The first use of an associated type on the cycle: its edge runs into the choices.
+        let choice = (cycle.iter())
+            .filter_map(|&i| match edges[i].instance {
+                Some(Instance::Type(ty)) if matches!(ty.kind(), TypeKind::Assoc(..)) => Some(ty),
+                _ => None,
+            })
+            .map(|ty| self.type_name(ty))
+            .next();
         // A call that gives two parameters their arguments is one site, shown once.
         let mut shown = FxHashSet::from_iter([edge.site]);
         if let Some(Instance::Required(interface, ..)) = edge.instance {
@@ -918,6 +1021,7 @@ impl Checker<'_> {
             ),
             through,
             reach: reach.map(|interface| self.interfaces[interface.0].name.name.to_string()),
+            choice,
         });
     }
 
@@ -974,6 +1078,7 @@ impl Checker<'_> {
         let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
         let counts = counts.chain(assocs.choices.iter().map(|c| c.depths.len()));
         let counts = counts.chain(assocs.hubs.iter().map(|_| 1));
+        let counts = counts.chain(assocs.choices.iter().map(|_| 1));
         let mut first = vec![0];
         for n in counts {
             first.push(first[first.len() - 1] + n);
@@ -1005,7 +1110,8 @@ impl Checker<'_> {
         let counts = (self.classes.iter().map(|c| c.type_params.len()))
             .chain(self.enums.iter().map(|e| e.type_params.len()))
             .chain(assocs.choices.iter().map(|c| c.depths.len()))
-            .chain(assocs.hubs.iter().map(|_| 1));
+            .chain(assocs.hubs.iter().map(|_| 1))
+            .chain(assocs.choices.iter().map(|_| 1));
         let mut first = vec![0];
         for n in counts {
             first.push(first[first.len() - 1] + n);
@@ -1344,17 +1450,31 @@ impl Checker<'_> {
         }
         // By place, the hubs of its slots that hold a choice, for the hub of the place to reach.
         let mut own: Vec<Vec<usize>> = vec![Vec::new(); assocs.places];
+        assocs.heads = vec![Some(Vec::new()); assocs.places];
         // The place of each conformance among those of its interface.
         let mut seen = vec![0; self.interfaces.len()];
         for (interface, conformance) in self.conformances.iter() {
             let index = seen[interface.0];
             seen[interface.0] += 1;
+            let first = assocs.first[interface.0];
+            // A choice that a conformance does not make leaves the heads of the place unknown.
+            for k in conformance.assoc.len()..self.interfaces[interface.0].assoc.len() {
+                assocs.heads[first + k] = None;
+            }
             for (k, chosen) in conformance.assoc.iter().enumerate() {
+                let place = first + k;
+                match chosen.and_then(head_of) {
+                    Some(head) => {
+                        if let Some(heads) = &mut assocs.heads[place] {
+                            heads.push(head);
+                        }
+                    }
+                    None => assocs.heads[place] = None,
+                }
                 // A choice that names no parameter passes nothing on: no argument changes it.
                 let Some(ty) = chosen.filter(|ty| ty.has_param()) else {
                     continue;
                 };
-                let place = assocs.first[interface.0] + k;
                 let key = closed(conformance.args).then_some(conformance.args);
                 let slot = assocs.slots[&(place, key)];
                 let hub = *assocs.hub_at[slot].get_or_insert_with(|| {
@@ -1362,15 +1482,28 @@ impl Checker<'_> {
                     own[place].push(assocs.hubs.len() - 1);
                     assocs.hubs.len() - 1
                 });
+                let head = head_of(conformance.target)
+                    .expect("the target of a conformance should be a class or an enum type");
                 assocs.hubs[hub].choices.push(assocs.choices.len());
+                assocs
+                    .by_head
+                    .entry((place, head))
+                    .or_default()
+                    .push(assocs.choices.len());
                 assocs.choices.push(Choice {
-                    head: head_of(conformance.target)
-                        .expect("the target of a conformance should be a class or an enum type"),
+                    head,
                     ty,
                     at: self.choice_ats[&(interface, index, k)],
                     depths: param_depths(conformance.target, conformance.type_params),
+                    slot,
+                    loose: key.is_none(),
                 });
             }
+        }
+        // A head that many conformances name is one head.
+        for heads in assocs.heads.iter_mut().flatten() {
+            let mut known = FxHashSet::default();
+            heads.retain(|&head| known.insert(head));
         }
         for i in 0..assocs.made.len() {
             let (place, key) = assocs.made[i];

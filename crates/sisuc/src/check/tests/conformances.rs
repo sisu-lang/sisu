@@ -1254,6 +1254,110 @@ fn choice_of_an_associated_type_that_does_not_grow_should_not_be_reported() {
     }
 }
 
+/// An interface with two links that lead to the item, a class `Z` that ends them, and a class `U`
+/// that no program uses and that chooses `Other` as `U` again: the link `Other` is never `W`.
+const TWO_LINKS: &str = "interface S {\n    type Next: S\n    type Other: S\n    type Item\n}\nclass Z: S {\n    type Next = Z\n    type Other = Z\n    type Item = i64\n}\nclass U<T: S>: S {\n    type Next = U<T>\n    type Other = U<T>\n    type Item = i64\n}\n";
+
+/// A class `W` that ends `Other` with `Z` and grows the enum `E` that holds `T.Other.Item`.
+const W_ENDS_OTHER: &str =
+    "class W<T: S>: S {\n    type Next = W<T>\n    type Other = Z\n    type Item = E<W<W<T>>>\n}\n";
+
+const COMPARED: &str = "fn main() {\n    let e: E<W<Z>> = E.End\n    print(e == e)\n}";
+
+/// A use `T.Other.Item` means a choice of `Item` that a class makes, and `T.Other` is a type that
+/// a choice of `Other` names. When no choice of `Other` names the class of a growing choice of
+/// `Item`, the use never means that choice, and the beginning of the link makes no cycle.
+#[test]
+fn choice_of_a_class_that_the_link_cannot_choose_should_not_be_reported() {
+    let rows = [
+        (
+            "an enum holds the associated type of a link",
+            format!(
+                "{TWO_LINKS}{W_ENDS_OTHER}enum E<T: S> {{\n    End\n    A(T.Other.Item)\n}}\n{COMPARED}"
+            ),
+        ),
+        (
+            "a class holds the associated type of a link",
+            format!(
+                "{TWO_LINKS}{W_ENDS_OTHER}class C<T: S> {{\n    f: T.Other.Item\n}}\nfn main() {{}}"
+            )
+            .replace("E<W<W<T>>>", "C<W<W<T>>>"),
+        ),
+        (
+            "a chain of two links, one of which is unbounded for the class that is unused",
+            format!(
+                "{UNBOUNDED_AND_OTHER}{W_ENDS_OTHER}enum E<T: S> {{\n    End\n    A(T.Next.Other.Item)\n}}\n{COMPARED}"
+            ),
+        ),
+    ];
+    for (row, src) in rows {
+        let found: Vec<Code> = diags(&src).iter().map(Diagnostic::code).collect();
+        assert!(
+            !found.contains(&Code::InstantiationCycle),
+            "row `{row}`: {found:?}"
+        );
+    }
+}
+
+/// `TWO_LINKS` with a `Next` of the class `U` that grows without end, which the issue shows.
+const UNBOUNDED_AND_OTHER: &str = "interface S {\n    type Next: S\n    type Other: S\n    type Item\n}\nclass Z: S {\n    type Next = Z\n    type Other = Z\n    type Item = i64\n}\nclass U<T: S>: S {\n    type Next = U<U<T.Next>>\n    type Other = U<T>\n    type Item = i64\n}\n";
+
+/// A class whose link `Other` can name `W` keeps the error: the graph reads the heads that a link
+/// names directly, not the head that each turn of the cycle gives. `W` ends `Other` with `Z`, so
+/// the second turn never comes back to `W`, and the error is still reported. This pins the known
+/// limit of the head filter.
+#[test]
+fn choice_of_a_class_that_a_link_can_choose_should_be_reported_even_when_the_next_turn_cannot() {
+    let src = format!(
+        "{}{W_ENDS_OTHER}enum E<T: S> {{\n    End\n    A(T.Other.Item)\n}}\n{COMPARED}",
+        TWO_LINKS.replace("type Other = U<T>", "type Other = W<T>")
+    );
+    codes(
+        &src,
+        &[(Code::InstantiationCycle, where_is(&src, "E<W<W<T>>>"))],
+    );
+}
+
+/// The marks of growing enums use the same graph: an enum that holds `T.Other.Item` is not marked
+/// when no choice of `Other` names the growing class, so a query for `Eq` on it reads its
+/// payloads, and finds the class with no `Eq` (E0154).
+#[test]
+fn enum_that_holds_the_choice_of_a_link_that_cannot_grow_should_not_be_marked() {
+    let src = format!(
+        "{TWO_LINKS}{W_ENDS_OTHER}class Plain {{}}\nenum E<T: S> {{\n    End\n    A(T.Other.Item, Plain)\n}}\nfn need_eq<T: Eq>(x: T) {{}}\nfn f(x: E<W<Z>>) {{\n    need_eq(x)\n}}\nfn main() {{}}"
+    );
+    codes(&src, &[(Code::NotConform, argument(&src, "need_eq(x)"))]);
+}
+
+/// The edges of a use that can mean `n` choices stay in proportion to the program: above
+/// `MATCHING_CHOICES`, the use feeds the hub of all the choices.
+#[test]
+fn uses_of_a_link_with_many_choices_should_cost_edges_in_proportion_to_the_program() {
+    // `n` classes that each choose `Link` as the next class and make a choice of `Item`, so that
+    // a use `T.Link.Item` can mean `n` choices, and `n` enums that each hold one such use: with
+    // a gate for each match the edges are `n` times `n`. The sizes are three times the cap and
+    // more, so that the fall back is what keeps them in line.
+    let edges = |n: usize| {
+        let mut src = String::from(
+            "interface S {\n    type Link: S\n    type Item\n}\nclass Box<T> {\n    v: T\n}\n",
+        );
+        for i in 0..n {
+            let next = (i + 1) % n;
+            writeln!(
+                src,
+                "class C{i}<T>: S {{\n    type Link = C{next}<T>\n    type Item = Box<T>\n}}\nenum U{i}<T: S> {{\n    End\n    A(T.Link.Item)\n}}"
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        src += "fn main() {}";
+        cycle::EDGES.set(0);
+        let found: Vec<Code> = diags(&src).iter().map(Diagnostic::code).collect();
+        assert!(!found.contains(&Code::InstantiationCycle), "{found:?}");
+        cycle::EDGES.get()
+    };
+    assert_near_linear(edges(200), edges(400), edges(600));
+}
+
 #[test]
 fn conformance_lists_should_accept_generated_and_by_name_conformances() {
     let main = "fn main() {}";
