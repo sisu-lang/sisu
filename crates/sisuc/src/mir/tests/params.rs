@@ -967,6 +967,29 @@ fn assert_quiet_rows(rows: Vec<(&str, Vec<Function>, Vec<bool>)>) {
     }
 }
 
+/// The debug check of `build` rejects a call whose flag is not the flag of its callee.
+#[test]
+#[should_panic(expected = "should carry its callee's quiet flag")]
+fn quiet_check_should_reject_a_call_that_disagrees_with_its_callee() {
+    let mut functions = [
+        quiet_candidate("a", true, &[1], Vec::new()),
+        quiet_candidate("b", true, &[], Vec::new()),
+    ];
+    // `b` is quiet, and the call in `a` still says that it is not.
+    functions[1].quiet = true;
+    quiet_checked(&functions);
+}
+
+/// The debug check of `build` rejects a quiet function that holds a clobber.
+#[test]
+#[should_panic(expected = "should hold no clobber but a call of a quiet function")]
+fn quiet_check_should_reject_a_quiet_function_with_a_clobber() {
+    let clobber = vec![Statement::MakeUnique(whole(LocalId(0)))];
+    let mut functions = [quiet_candidate("a", true, &[], clobber)];
+    functions[0].quiet = true;
+    quiet_checked(&functions);
+}
+
 /// A function whose only clobber the ownership pass adds is not quiet. Lowering never makes
 /// one, for it pairs a counted store with a counted `take`, so the mir is by hand: `s` is stored
 /// into a `mut` field with a `use`, which is no counted store until `place` makes it a move, and
