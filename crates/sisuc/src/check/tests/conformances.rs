@@ -651,6 +651,57 @@ fn growth_through_the_choice_of_an_associated_type_should_be_marked_before_the_f
     }
 }
 
+/// A use of an associated type feeds one hub, and the hub feeds each choice of it, so the graph
+/// holds the edges of the uses and of the choices added together, not multiplied.
+#[test]
+fn uses_and_choices_of_an_associated_type_should_cost_edges_in_proportion_to_their_sum() {
+    let edges = |n: usize, arguments: bool| {
+        let (interface, bound) = if arguments {
+            ("S<A> {\n    type Item\n}\n", "S<i64>")
+        } else {
+            ("I {\n    type Item\n}\n", "I")
+        };
+        let mut src = format!("interface {interface}");
+        let conformance = if arguments { "S<i64>" } else { "I" };
+        for k in 0..n {
+            writeln!(
+                src,
+                "class W{k}<T>: {conformance} {{\n    type Item = T\n}}"
+            )
+            .expect("writing to a `String` should succeed");
+            if arguments {
+                // A conformance with a parameter in its interface arguments.
+                writeln!(src, "class V{k}<T, U>: S<U> {{\n    type Item = T\n}}")
+                    .expect("writing to a `String` should succeed");
+            }
+        }
+        writeln!(src, "enum E<T: {bound}> {{\n    End\n    A(T.Item)\n}}")
+            .expect("writing to a `String` should succeed");
+        for j in 0..n {
+            writeln!(src, "class H{j}<T: {bound}> {{\n    v: T.Item?\n}}")
+                .expect("writing to a `String` should succeed");
+            if arguments {
+                // A use with a parameter in its interface arguments.
+                writeln!(src, "class G{j}<T: S<A>, A> {{\n    v: T.Item?\n}}")
+                    .expect("writing to a `String` should succeed");
+            }
+        }
+        src += "fn main() {}";
+        cycle::EDGES.set(0);
+        clean(&src);
+        cycle::EDGES.get()
+    };
+    for (row, arguments) in [("one interface", false), ("interface arguments", true)] {
+        let (one, two, three) = (
+            edges(50, arguments),
+            edges(100, arguments),
+            edges(150, arguments),
+        );
+        assert!(one > 0, "{row}");
+        assert_near_linear(one, two, three);
+    }
+}
+
 /// The neighbours of the forms above: each holder of the associated type, each way to name it,
 /// and each shape of choice that grows.
 #[test]
@@ -718,8 +769,90 @@ fn growth_through_the_choice_of_an_associated_type_should_be_reported_for_each_f
     }
 }
 
-/// A choice that passes the type on as it is, or shorter, or that names no parameter, closes no
-/// cycle, and the enum that holds it stays unmarked.
+/// A choice that a conformance makes for interface arguments that the use may have keeps its
+/// edge: the arguments of the use or of the conformance hold a parameter, or are the same. The
+/// rows are the neighbours of the ones that `choice_of_an_associated_type_that_does_not_grow`
+/// accepts.
+#[test]
+fn growth_through_a_choice_that_may_be_meant_should_be_reported_for_each_form() {
+    let rows = [
+        (
+            "the same interface arguments, and a second conformance for other arguments",
+            format!("{S}class W<T>: S<bool> {{\n    type Item = E<W<W<T>>>\n}}\nextend<T> W<T>: S<i64> {{\n    type Item = i64\n}}\nenum E<T: S<bool>> {{\n    End\n    A(T.Item)\n}}\nfn main() {{}}"),
+            "E<W<W<T>>>",
+        ),
+        (
+            "two interface arguments, both the same",
+            "interface S<A, B> {\n    type Item\n}\nclass W<T>: S<i64, bool> {\n    type Item = E<W<W<T>>>\n}\nenum E<T: S<i64, bool>> {\n    End\n    A(T.Item)\n}\nfn main() {}".to_string(),
+            "E<W<W<T>>>",
+        ),
+        (
+            "a use whose interface arguments are a parameter",
+            format!("{S}class W<T>: S<i64> {{\n    type Item = E<W<W<T>>, i64>\n}}\nenum E<T: S<A>, A> {{\n    End\n    A(T.Item)\n}}\nfn main() {{}}"),
+            "E<W<W<T>>, i64>",
+        ),
+        (
+            "a class, and a use whose interface arguments are a parameter",
+            format!("{S}class W<T>: S<i64> {{\n    type Item = H<W<W<T>>, i64>\n}}\nclass H<T: S<A>, A> {{\n    v: T.Item?\n}}\nfn main() {{}}"),
+            "H<W<W<T>>, i64>",
+        ),
+        (
+            "a choice whose conformance has a parameter in its interface arguments",
+            format!("{S}class W<T>: S<[T]> {{\n    type Item = E<W<W<T>>, [W<T>]>\n}}\nenum E<T: S<A>, A> {{\n    End\n    A(T.Item)\n}}\nfn main() {{}}"),
+            "E<W<W<T>>, [W<T>]>",
+        ),
+        (
+            // The use has the arguments `bool`, which a conformance for `bool` has too, but the
+            // choice is made for `S<T>`, which may be `S<bool>`: it stays, as an approximation.
+            "a choice for a parameter, beside a conformance for the arguments of the use",
+            format!("{S}class V<T>: S<bool> {{\n    type Item = i64\n}}\nclass W<T>: S<T> {{\n    type Item = E<V<V<T>>>\n}}\nenum E<T: S<bool>> {{\n    End\n    A(T.Item)\n}}\nfn main() {{}}"),
+            "E<V<V<T>>>",
+        ),
+        (
+            "a choice for a parameter, beside a conformance for the arguments of the use that chooses",
+            format!("{S}class V<T>: S<bool> {{\n    type Item = T\n}}\nclass W<T>: S<T> {{\n    type Item = E<V<V<T>>>\n}}\nenum E<T: S<bool>> {{\n    End\n    A(T.Item)\n}}\nfn main() {{}}"),
+            "E<V<V<T>>>",
+        ),
+        (
+            "a use with a parameter in its arguments, and a choice for a parameter beside one for a type",
+            format!("{S}class V<T>: S<i64> {{\n    type Item = T\n}}\nclass W<T>: S<[T]> {{\n    type Item = E<W<W<T>>, [W<T>]>\n}}\nenum E<T: S<A>, A> {{\n    End\n    A(T.Item)\n}}\nfn main() {{}}"),
+            "E<W<W<T>>, [W<T>]>",
+        ),
+        (
+            "a use with a parameter in its arguments, and two conformances for types",
+            format!("{S}class V<T>: S<i64> {{\n    type Item = T\n}}\nclass U<T>: S<bool> {{\n    type Item = E<U<U<T>>, bool>\n}}\nenum E<T: S<A>, A> {{\n    End\n    A(T.Item)\n}}\nfn main() {{}}"),
+            "E<U<U<T>>, bool>",
+        ),
+        (
+            // The growth of a choice for a parameter holds for the arguments of the use too.
+            "an enum that holds the enum of the associated type, and a choice for a parameter",
+            "interface S<A> {\n    type Item: S<bool>\n}\nclass V<T>: S<bool> {\n    type Item = V<T>\n}\nclass W<T>: S<T> {\n    type Item = V<V<T>>\n}\nenum E<T: S<bool>> {\n    End\n    A(E<T.Item>)\n}\nfn main() {}".to_string(),
+            "E<T.Item>",
+        ),
+        (
+            "an enum that holds the enum of the associated type, for the same arguments",
+            format!("{PARTS}extend<T> W<T>: S<i64> {{\n    type Item = W<T>\n}}\nextend<T> W<T>: S<bool> {{\n    type Item = W<W<T>>\n}}\n{PARTS_ENUM}"),
+            "E<T.Item>",
+        ),
+    ];
+    for (row, src, at) in rows {
+        codes_row(row, &src, &[(Code::InstantiationCycle, where_is(&src, at))]);
+    }
+}
+
+/// An interface with a type parameter, and a class whose conformance to it for `i64` grows the
+/// type that it chooses, with a conformance of the same class for `bool` that chooses `i64`.
+const S: &str = "interface S<A> {\n    type Item\n}\n";
+const OTHER_ARGUMENTS: &str = "class W<T>: S<i64> {\n    type Item = E<W<W<T>>>\n}\nextend<T> W<T>: S<bool> {\n    type Item = i64\n}\n";
+
+/// The older form of the same: an associated type that is bound by the interface itself, so that
+/// the enum can hold the enum of it. The choices for each class follow, and then `PARTS_ENUM`.
+const PARTS: &str = "interface S<A> {\n    type Item: S<bool>\n}\nclass Z {}\nextend Z: S<bool> {\n    type Item = Z\n}\nextend Z: S<i64> {\n    type Item = Z\n}\nclass W<T> {}\n";
+const PARTS_ENUM: &str = "enum E<T: S<bool>> {\n    End\n    A(E<T.Item>)\n}\nfn main() {}";
+
+/// A choice that passes the type on as it is, or shorter, or that names no parameter, or that a
+/// conformance makes for other interface arguments than the use has, closes no cycle, and the
+/// enum that holds it stays unmarked.
 #[test]
 fn choice_of_an_associated_type_that_does_not_grow_should_not_be_reported() {
     let item = "interface I {\n    type Item\n}\n";
@@ -739,9 +872,11 @@ fn choice_of_an_associated_type_that_does_not_grow_should_not_be_reported() {
             ),
         ),
         (
+            // The enum holds `T.Item`, so the choice is read: it names the enum with the
+            // parameter of its target, one level shorter than `E<W<T>>` does.
             "a choice that names the enum one level shorter",
             format!(
-                "{item}class W<T>: I {{\n    type Item = E<T>\n}}\nenum E<T> {{\n    End\n    A(T)\n}}\nfn main() {{}}"
+                "{item}class Z: I {{\n    type Item = i64\n}}\nclass W<T: I>: I {{\n    type Item = E<T>\n}}\nenum E<T: I> {{\n    End\n    A(T.Item)\n}}\nenum F: Eq {{\n    X(E<W<Z>>)\n}}\nfn main() {{}}"
             ),
         ),
         (
@@ -755,6 +890,32 @@ fn choice_of_an_associated_type_that_does_not_grow_should_not_be_reported() {
             format!(
                 "{chain}class X<T>: Nx {{\n    type Next = W<T>\n}}\nclass W<T>: I {{\n    type Item = E<X<T>>\n}}\nenum E<T: Nx> {{\n    End\n    A(T.Next.Item)\n}}\nenum F: Eq {{\n    Y(E<X<i64>>)\n}}\nfn main() {{}}"
             ),
+        ),
+        // A choice that a conformance to `S<i64>` makes is not one that `T.Item` with `T: S<bool>`
+        // can mean, whatever it names.
+        (
+            "an enum, and a choice made for other interface arguments that grows",
+            format!("{S}{OTHER_ARGUMENTS}enum E<T: S<bool>> {{\n    End\n    A(T.Item)\n}}\nfn main() {{}}"),
+        ),
+        (
+            "a class, and a choice made for other interface arguments that grows",
+            format!("{S}class W<T>: S<i64> {{\n    type Item = H<W<W<T>>>\n}}\nextend<T> W<T>: S<bool> {{\n    type Item = i64\n}}\nclass H<T: S<bool>> {{\n    v: T.Item?\n}}\nfn main() {{}}"),
+        ),
+        (
+            "an enum that holds the enum of the associated type, and a choice that grows",
+            format!("{PARTS}extend<T> W<T>: S<i64> {{\n    type Item = W<W<T>>\n}}\nextend<T> W<T>: S<bool> {{\n    type Item = Z\n}}\n{PARTS_ENUM}"),
+        ),
+        (
+            "the same, and a choice for the other arguments that keeps the depth",
+            format!("{PARTS}extend<T> W<T>: S<i64> {{\n    type Item = W<W<T>>\n}}\nextend<T> W<T>: S<bool> {{\n    type Item = W<T>\n}}\n{PARTS_ENUM}"),
+        ),
+        (
+            "an interface with two type parameters",
+            "interface S<A, B> {\n    type Item\n}\nclass W<T>: S<i64, bool> {\n    type Item = E<W<W<T>>>\n}\nextend<T> W<T>: S<bool, i64> {\n    type Item = i64\n}\nenum E<T: S<bool, i64>> {\n    End\n    A(T.Item)\n}\nfn main() {}".to_string(),
+        ),
+        (
+            "an interface argument list that no conformance has",
+            format!("{S}class W<T>: S<i64> {{\n    type Item = E<W<W<T>>>\n}}\nenum E<T: S<bool>> {{\n    End\n    A(T.Item)\n}}\nfn main() {{}}"),
         ),
     ];
     for (row, src) in rows {

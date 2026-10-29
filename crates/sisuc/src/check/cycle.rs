@@ -62,12 +62,21 @@
 //!
 //! A field or payload type that holds an associated type `P.Item` holds the type that each
 //! conformance chooses for `Item`. Each choice is a declaration of its own, with the conformance's
-//! parameters, as a hub is. The base `P` feeds each of those parameters at the weight of minus the
-//! greatest depth of the parameter in the conformance's target, and the type chosen gives the
-//! edges that a field type gives. The choice `type Item = E<W<W<T>>>` of `W<T>` gives the enum
-//! `E<T: I>` that holds `T.Item` an edge back to itself of weight 1. A base that passes an
-//! associated type of unbounded growth gives no edge: it is a cycle of names alone, which
-//! instantiates no class or enum.
+//! parameters, as a hub is. The base `P` feeds a hub of the choices of `Item` at no cost, and the
+//! hub feeds each parameter of each choice at the weight of minus the greatest depth of the
+//! parameter in the conformance's target, so that a use and a choice add one edge each, not one
+//! for each pair. The type chosen gives the edges that a field type gives. The choice
+//! `type Item = E<W<W<T>>>` of `W<T>` gives the enum `E<T: I>` that holds `T.Item` an edge back to
+//! itself of weight 1. A base that passes an associated type of unbounded growth gives no edge:
+//! it is a cycle of names alone, which instantiates no class or enum.
+//!
+//! An interface with type parameters has choices for some arguments, and a use `P.Item` has
+//! arguments too. A choice made for arguments that hold no parameter is not meant by a use with
+//! other arguments that hold none (a conformance to `S<bool>` is not one to `S<i64>`), so it gives
+//! that use no edge and no growth. Each such list of arguments that a conformance has is a slot of
+//! its own, beside one for the lists that hold a parameter and the associated type itself; a slot
+//! of closed arguments counts the choices of the slot for the lists with a parameter, which may
+//! be meant for any, and the associated type itself counts all of them (`Assocs`).
 //!
 //! The weights of a hub's edges are negative, and no known algorithm finds a cycle of positive
 //! weight in a graph with negative weights in linear time. This is an exception to
@@ -80,8 +89,8 @@
 //! of the worst input.
 //!
 //! The growths of the associated types take part in that exception too: they are found by passes
-//! over the choices' names, at most three times the number of associated types plus 1 of them,
-//! each pass reading every name once.
+//! over the choices' names, at most three times the number of associated types and slots plus 1
+//! of them, each pass reading every name once.
 
 use std::collections::VecDeque;
 
@@ -139,7 +148,8 @@ struct Edge {
     weight: i64,
     /// Whether the argument is not a parameter itself.
     growing: bool,
-    /// Whether the edge runs from a hub to a parameter of a method that meets what it stands for.
+    /// Whether the edge runs out of a hub: to a parameter of a method that meets what it stands
+    /// for, or of a choice of an associated type, or to a hub of the choices.
     out: bool,
     /// Whether the edge runs into an associated type from its base, so that its weight is a
     /// growth, which may not be above 0.
@@ -165,17 +175,74 @@ struct Choice {
     depths: Vec<i64>,
 }
 
-/// The associated types of the interfaces, as the graph reads them.
+/// The associated types of the interfaces, as the graph reads them. A place is an associated
+/// type of an interface, `first` plus its index. A choice is made for the interface with some
+/// arguments, and a use `P.Item` is of the interface with some arguments too. A choice made for
+/// arguments that hold no parameter is not meant by a use with other such arguments (a
+/// conformance to `S<bool>` is not one to `S<i64>`), so each place has a slot for each such list
+/// of arguments that a conformance has, and one for the lists that hold a parameter (`slots`).
+/// The slots follow the places in `growth` and `hub_at`.
 #[derive(Default)]
 struct Assocs {
     /// By interface, where its associated types start in `growth`.
     first: Vec<usize>,
-    /// The growth of each associated type of each interface (`growths`); `None` when absent.
+    /// How many places there are: the slots of `made` follow them.
+    places: usize,
+    /// The growth of each place and slot (`growths`); `None` when absent. A place has the
+    /// greatest growth of its slots.
     growth: Vec<Option<i64>>,
+    /// By place and the arguments of a conformance's interface if they hold no parameter, its
+    /// slot.
+    slots: FxHashMap<(usize, Option<TypeArgs>), usize>,
+    /// The place and the arguments of each slot, in the order made: slot `places + i` is `made[i]`.
+    made: Vec<(usize, Option<TypeArgs>)>,
     /// The choices of the associated types that name a parameter of their conformance.
     choices: Vec<Choice>,
-    /// By associated type, placed as `growth` is, the choices that choose it.
-    chosen_by: Vec<Vec<usize>>,
+    /// The hubs of the choices: see `Hub`.
+    hubs: Vec<Hub>,
+    /// By place and slot, the hub that a use feeds, if a choice can be meant.
+    hub_at: Vec<Option<usize>>,
+}
+
+/// A node that stands for a set of choices, or for hubs that do, so that the uses of an
+/// associated type and its choices make a sum of edges, not a product: a use feeds the hub, and
+/// the hub feeds each choice.
+#[derive(Default)]
+struct Hub {
+    /// The choices that the hub feeds.
+    choices: Vec<usize>,
+    /// The hubs that the hub feeds, at no cost.
+    hubs: Vec<usize>,
+}
+
+/// Whether `args`, the arguments of an interface, hold no parameter and no associated type: two
+/// such lists that differ stand for conformances that no one type meets.
+fn closed(args: TypeArgs) -> bool {
+    !args.has_assoc() && !args.get().iter().any(|arg| arg.has_param())
+}
+
+impl Assocs {
+    /// The slot of the uses of the place `place` with the interface arguments `args`: the one
+    /// for those arguments if a conformance has them, else the one for arguments with a
+    /// parameter, and the place itself when `args` hold a parameter, since any choice may be
+    /// meant then. `None` when no choice can be meant.
+    fn slot(&self, place: usize, args: TypeArgs) -> Option<usize> {
+        if !closed(args) {
+            return Some(place);
+        }
+        let key = |key| self.slots.get(&(place, key)).copied();
+        key(Some(args)).or_else(|| key(None))
+    }
+
+    /// The growth of the place `place` for the uses with the interface arguments `args`.
+    fn growth_of(&self, place: usize, args: TypeArgs) -> Option<i64> {
+        self.growth[self.slot(place, args)?]
+    }
+
+    /// The hub that the uses of the place `place` with the interface arguments `args` feed.
+    fn hub(&self, place: usize, args: TypeArgs) -> Option<usize> {
+        self.hub_at.get(self.slot(place, args)?).copied().flatten()
+    }
 }
 
 struct Graph {
@@ -421,8 +488,8 @@ impl Graph {
             TypeKind::Array(inner) | TypeKind::Optional(inner) => (Some(inner), &[][..], 1),
             TypeKind::Class(_, args) | TypeKind::Enum(_, args) => (None, args.get(), 1),
             TypeKind::Assoc(base, interface, args, k) => {
-                let Some(growth) = self.assocs.growth[self.assocs.first[interface.0] + k as usize]
-                else {
+                let place = self.assocs.first[interface.0] + k as usize;
+                let Some(growth) = self.assocs.growth_of(place, args) else {
                     return Vec::new();
                 };
                 (Some(base), args.get(), growth)
@@ -443,12 +510,15 @@ impl Graph {
         }
     }
 
-    /// The edges of the associated type `ty` of `base`, whose choices are `place` among `growth`,
-    /// written at `site` inside `holder`. It is what each choice chooses, with the choice's
-    /// parameters standing for parts of the base: the base feeds each parameter of the
-    /// conformance, less the greatest depth of the parameter in the target, the way a hub feeds
-    /// the methods of a conformance. The type chosen gives the edges on from there (`Choice`).
-    fn choose(&mut self, holder: usize, ty: Type, base: Type, place: usize, site: Span) {
+    /// The edge of the associated type `ty`, written at `site` inside `holder`. It is
+    /// what each choice chooses, with the choice's parameters standing for parts of the base: the
+    /// base feeds the hub of the choices (`Hub`), which feeds each parameter of the conformance,
+    /// less the greatest depth of the parameter in the target, the way a hub feeds the methods
+    /// of a conformance. The type chosen gives the edges on from there (`Choice`).
+    fn choose(&mut self, holder: usize, ty: Type, site: Span) {
+        let TypeKind::Assoc(base, interface, args, k) = ty.kind() else {
+            return;
+        };
         // A base that passes an associated type of unbounded growth is a cycle of names alone,
         // which instantiates no class or enum: the walk of the choices ends it where the type is
         // used (`normalize`).
@@ -459,29 +529,67 @@ impl Graph {
             }
             inner = next;
         }
-        let chosen = self.assocs.chosen_by[place].clone();
+        let place = self.assocs.first[interface.0] + k as usize;
+        let Some(hub) = self.assocs.hub(place, args) else {
+            return;
+        };
         let from = self.node(holder, base);
-        for c in chosen {
-            let first = self.first[self.choices_first + c];
-            for (q, depth) in self.assocs.choices[c]
-                .depths
-                .clone()
-                .into_iter()
-                .enumerate()
-            {
-                self.edges.push(Edge {
-                    from,
-                    to: first + q,
-                    weight: -depth,
-                    growing: false,
-                    out: false,
-                    assoc: false,
-                    holder,
-                    site,
-                    mark: site,
-                    instance: Some(Instance::Type(ty)),
-                });
+        self.edges.push(Edge {
+            from,
+            to: self.first[self.hubs_first() + hub],
+            weight: 0,
+            growing: false,
+            out: false,
+            assoc: false,
+            holder,
+            site,
+            mark: site,
+            instance: Some(Instance::Type(ty)),
+        });
+    }
+
+    /// The declaration of the first hub of the choices; the others follow the choices.
+    fn hubs_first(&self) -> usize {
+        self.choices_first + self.assocs.choices.len()
+    }
+
+    /// The edges out of each hub of the choices: to each choice it stands for, minus the greatest
+    /// depth of each parameter in the conformance's target, and to the hubs it reaches.
+    fn feed(&mut self) {
+        for (h, hub) in self.assocs.hubs.iter().enumerate() {
+            let from = self.first[self.hubs_first() + h];
+            for &c in &hub.choices {
+                let first = self.first[self.choices_first + c];
+                for (q, depth) in self.assocs.choices[c].depths.iter().enumerate() {
+                    self.edges.push(Self::hub_edge(
+                        from,
+                        first + q,
+                        -depth,
+                        self.choices_first + c,
+                    ));
+                }
             }
+            for &other in &hub.hubs {
+                let to = self.first[self.hubs_first() + other];
+                self.edges
+                    .push(Self::hub_edge(from, to, 0, self.hubs_first() + other));
+            }
+        }
+    }
+
+    /// An edge out of a hub of the choices, which no instantiation writes.
+    fn hub_edge(from: usize, to: usize, weight: i64, holder: usize) -> Edge {
+        Edge {
+            from,
+            to,
+            weight,
+            growing: false,
+            out: true,
+            assoc: false,
+            holder,
+            site: Span::new(0, 0),
+            mark: Span::new(0, 0),
+            instance: None,
         }
     }
 
@@ -508,9 +616,8 @@ impl Graph {
                 }
                 TypeKind::Class(id, args) => (self.functions + id.0, args),
                 TypeKind::Enum(id, args) => (self.functions + self.classes + id.0, args),
-                TypeKind::Assoc(base, interface, args, k) => {
-                    let place = self.assocs.first[interface.0] + k as usize;
-                    self.choose(holder, ty, base, place, site);
+                TypeKind::Assoc(base, _, args, _) => {
+                    self.choose(holder, ty, site);
                     stack.push(base);
                     stack.extend(args.get());
                     continue;
@@ -596,10 +703,11 @@ impl Strands {
 }
 
 /// The declarations that the types `fields` name, as nodes (the classes, then the enums, then the
-/// choices of `assocs`), and among them those that a type gives an argument which mentions a
-/// parameter and is not one. An associated type names each choice of it, and gives it a changed
-/// argument when its base is not a parameter itself: the base is a type of its own then, which
-/// nests the parameter at the growth of the associated types in it.
+/// choices of `assocs`, then its hubs), and among them those that a type gives an argument which
+/// mentions a parameter and is not one. An associated type names the hub of its choices (the nodes
+/// after the choices), and gives it a changed argument when its base is not a parameter itself:
+/// the base is a type of its own then, which nests the parameter at the growth of the associated
+/// types in it.
 fn named(
     stack: &mut Vec<Type>,
     (classes, enums): (usize, usize),
@@ -618,10 +726,13 @@ fn named(
             TypeKind::Class(id, args) => (id.0, args),
             TypeKind::Enum(id, args) => (classes + id.0, args),
             TypeKind::Assoc(base, interface, args, k) => {
-                let chosen = &assocs.chosen_by[assocs.first[interface.0] + k as usize];
-                names.extend(chosen.iter().map(|&c| declarations + c));
-                if !matches!(base.kind(), TypeKind::Param(..)) {
-                    changed.extend(chosen.iter().map(|&c| declarations + c));
+                let place = assocs.first[interface.0] + k as usize;
+                if let Some(hub) = assocs.hub(place, args) {
+                    let hub = declarations + assocs.choices.len() + hub;
+                    names.push(hub);
+                    if !matches!(base.kind(), TypeKind::Param(..)) {
+                        changed.push(hub);
+                    }
                 }
                 stack.push(base);
                 stack.extend(args.get());
@@ -845,6 +956,7 @@ impl Checker<'_> {
         let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
         let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
         let counts = counts.chain(assocs.choices.iter().map(|c| c.depths.len()));
+        let counts = counts.chain(assocs.hubs.iter().map(|_| 1));
         let mut first = vec![0];
         for n in counts {
             first.push(first[first.len() - 1] + n);
@@ -875,7 +987,8 @@ impl Checker<'_> {
     fn declaration_frame(&self, assocs: Assocs) -> Graph {
         let counts = (self.classes.iter().map(|c| c.type_params.len()))
             .chain(self.enums.iter().map(|e| e.type_params.len()))
-            .chain(assocs.choices.iter().map(|c| c.depths.len()));
+            .chain(assocs.choices.iter().map(|c| c.depths.len()))
+            .chain(assocs.hubs.iter().map(|_| 1));
         let mut first = vec![0];
         for n in counts {
             first.push(first[first.len() - 1] + n);
@@ -1063,7 +1176,8 @@ impl Checker<'_> {
     fn growable_declarations(&self, assocs: &Assocs) -> Vec<bool> {
         let mut stack = Vec::new();
         let declared = (self.classes.len(), self.enums.len());
-        let nodes = self.classes.len() + self.enums.len() + assocs.choices.len();
+        let nodes =
+            self.classes.len() + self.enums.len() + assocs.choices.len() + assocs.hubs.len();
         let mut names: Vec<Vec<usize>> = Vec::with_capacity(nodes);
         let mut changed: Vec<Vec<usize>> = Vec::with_capacity(nodes);
         let mut read = |(named, passed): (Vec<usize>, Vec<usize>)| {
@@ -1089,6 +1203,13 @@ impl Checker<'_> {
                 assocs,
                 std::iter::once(choice.ty),
             ));
+        }
+        let after = declared.0 + declared.1 + assocs.choices.len();
+        for hub in &assocs.hubs {
+            let fed = (hub.choices.iter())
+                .map(|&c| declared.0 + declared.1 + c)
+                .chain(hub.hubs.iter().map(|&h| after + h));
+            read((fed.collect(), Vec::new()));
         }
         let component = components(&names);
         let mut growable = vec![false; names.len()];
@@ -1143,6 +1264,7 @@ impl Checker<'_> {
             let (ty, at) = (graph.assocs.choices[c].ty, graph.assocs.choices[c].at);
             graph.types(graph.choices_first + c, ty, at, &[]);
         }
+        graph.feed();
     }
 
     /// The edges from each hub to the parameters of the methods that meet what it stands for. The
@@ -1195,17 +1317,13 @@ impl Checker<'_> {
     /// The associated types of the interfaces: their growths and, with `choices`, the choices that
     /// name a parameter of their conformance, which are placed as the growths are.
     fn assocs(&self, choices: bool) -> Assocs {
-        let (first, growth) = self.growths();
-        let mut chosen_by = vec![Vec::new(); growth.len()];
-        let mut list = Vec::new();
-        if !choices || growth.is_empty() {
-            return Assocs {
-                first,
-                growth,
-                choices: list,
-                chosen_by,
-            };
+        let mut assocs = self.growths();
+        assocs.hub_at = vec![None; assocs.growth.len()];
+        if !choices || assocs.growth.is_empty() {
+            return assocs;
         }
+        // By place, the hubs of its slots that hold a choice, for the hub of the place to reach.
+        let mut own: Vec<Vec<usize>> = vec![Vec::new(); assocs.places];
         // The place of each conformance among those of its interface.
         let mut seen = vec![0; self.interfaces.len()];
         for (interface, conformance) in self.conformances.iter() {
@@ -1216,8 +1334,16 @@ impl Checker<'_> {
                 let Some(ty) = chosen.filter(|ty| ty.has_param()) else {
                     continue;
                 };
-                chosen_by[first[interface.0] + k].push(list.len());
-                list.push(Choice {
+                let place = assocs.first[interface.0] + k;
+                let key = closed(conformance.args).then_some(conformance.args);
+                let slot = assocs.slots[&(place, key)];
+                let hub = *assocs.hub_at[slot].get_or_insert_with(|| {
+                    assocs.hubs.push(Hub::default());
+                    own[place].push(assocs.hubs.len() - 1);
+                    assocs.hubs.len() - 1
+                });
+                assocs.hubs[hub].choices.push(assocs.choices.len());
+                assocs.choices.push(Choice {
                     head: head_of(conformance.target)
                         .expect("the target of a conformance should be a class or an enum type"),
                     ty,
@@ -1226,12 +1352,33 @@ impl Checker<'_> {
                 });
             }
         }
-        Assocs {
-            first,
-            growth,
-            choices: list,
-            chosen_by,
+        for i in 0..assocs.made.len() {
+            let (place, key) = assocs.made[i];
+            let slot = assocs.places + i;
+            let loose = (assocs.slots.get(&(place, None))).and_then(|&loose| assocs.hub_at[loose]);
+            // A slot of closed arguments also reaches the choices made for arguments that hold a
+            // parameter, which may be meant for any.
+            match (assocs.hub_at[slot], key, loose) {
+                (Some(hub), Some(_), Some(loose)) => assocs.hubs[hub].hubs.push(loose),
+                (None, Some(_), loose) => assocs.hub_at[slot] = loose,
+                _ => {}
+            }
         }
+        // A use with a parameter in its interface arguments may mean any choice of the place.
+        for (place, hubs) in own.into_iter().enumerate() {
+            assocs.hub_at[place] = match hubs[..] {
+                [] => None,
+                [only] => Some(only),
+                _ => {
+                    assocs.hubs.push(Hub {
+                        choices: Vec::new(),
+                        hubs,
+                    });
+                    Some(assocs.hubs.len() - 1)
+                }
+            };
+        }
+        assocs
     }
 
     /// Where the associated types of each interface start in the second list, and the growth of
@@ -1246,57 +1393,86 @@ impl Checker<'_> {
     /// starts it: `type A = W<W<T.A>>` names a type that is built by the same choice, so each
     /// base that it applies to is deeper than the last. A name that is absent counts as 0 in
     /// that search, which finds such a cycle and nothing else (`cyclic`).
-    fn growths(&self) -> (Vec<usize>, Vec<Option<i64>>) {
+    fn growths(&self) -> Assocs {
         let mut first = Vec::with_capacity(self.interfaces.len());
         let mut count = 0;
         for info in &self.interfaces {
             first.push(count);
             count += info.assoc.len();
         }
-        let mut growth: Vec<Option<i64>> = vec![None; count];
+        let mut assocs = Assocs {
+            first,
+            places: count,
+            growth: vec![None; count],
+            ..Assocs::default()
+        };
         if count == 0 {
-            return (first, growth);
+            return assocs;
         }
+        let growth = &mut assocs.growth;
         // The associated types a choice names through a parameter, by the type that chooses.
         let mut rules: Vec<Rule> = Vec::new();
         for (interface, conformance) in self.conformances.iter() {
             let target = param_depths(conformance.target, conformance.type_params);
+            let key = closed(conformance.args).then_some(conformance.args);
             for (k, chosen) in conformance.assoc.iter().enumerate() {
                 let Some(chosen) = *chosen else { continue };
-                let at = first[interface.0] + k;
+                let place = assocs.first[interface.0] + k;
+                let slot = *assocs.slots.entry((place, key)).or_insert_with(|| {
+                    assocs.made.push((place, key));
+                    growth.push(None);
+                    growth.len() - 1
+                });
                 let (depths, uses) = depths_and_assoc(chosen, conformance.type_params);
                 for (q, depth) in depths.iter().enumerate() {
                     let outright = depth.map(|depth| depth - target[q]);
-                    growth[at] = growth[at].max(outright);
+                    growth[slot] = growth[slot].max(outright);
                 }
                 for used in uses {
                     rules.push(Rule {
-                        at,
+                        at: slot,
                         names: (used.chain.iter())
-                            .map(|&(interface, index)| first[interface.0] + index)
+                            .map(|&(interface, index)| assocs.first[interface.0] + index)
                             .collect(),
                         weight: used.depth - target[used.param],
                     });
                 }
             }
         }
-        if rules.is_empty() {
-            return (first, growth);
+        // A place has the greatest growth of its slots, and a slot of closed arguments at least
+        // that of the slot of the arguments that hold a parameter.
+        for (i, &(place, key)) in assocs.made.iter().enumerate() {
+            let slot = count + i;
+            rules.push(Rule {
+                at: place,
+                names: vec![slot],
+                weight: 0,
+            });
+            if let (Some(_), Some(&loose)) = (key, assocs.slots.get(&(place, None))) {
+                rules.push(Rule {
+                    at: slot,
+                    names: vec![loose],
+                    weight: 0,
+                });
+            }
         }
-        let unbounded = cyclic(&growth, &rules);
+        let growth = &mut assocs.growth;
+        let unbounded = cyclic(growth, &rules);
         for (g, _) in growth.iter_mut().zip(&unbounded).filter(|&(_, &u)| u) {
             *g = Some(UNBOUNDED);
         }
-        for _ in 0..=count {
-            if relax(&mut growth, &rules, &unbounded).is_empty() {
+        // A rule passes a growth on from a slot to its place, and from a name to a slot: at most
+        // two steps for each place along a path.
+        for _ in 0..=growth.len() {
+            if relax(growth, &rules, &unbounded).is_empty() {
                 break;
             }
         }
         debug_assert!(
-            relax(&mut growth, &rules, &unbounded).is_empty(),
-            "a growth that no cycle of positive weight reaches should settle in as many passes as there are associated types"
+            relax(growth, &rules, &unbounded).is_empty(),
+            "a growth that no cycle of positive weight reaches should settle in as many passes as there are associated types and slots"
         );
-        (first, growth)
+        assocs
     }
 
     /// The method `holder`, as the program writes it with its owner's and its own type
