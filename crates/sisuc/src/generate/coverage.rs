@@ -1863,6 +1863,7 @@ impl Walk {
                 tir::Rank::Own => "tir::Rank::Own",
                 tir::Rank::Open => "tir::Rank::Open",
                 tir::Rank::Late => "tir::Rank::Late",
+                tir::Rank::Assoc => "tir::Rank::Assoc",
                 tir::Rank::Never => "tir::Rank::Never",
             });
         }
@@ -3082,7 +3083,8 @@ fn the_ast_walk_should_mark_what_interfaces_and_extend_blocks_hold() {
 }
 
 /// A program may declare as many interfaces as `MAX_INTERFACES` and give one as many requirements
-/// as `MAX_REQUIREMENTS`. `Pinned`, which `shapes` declares at a fixed place, is not one of them.
+/// as `MAX_REQUIREMENTS`. `Pinned` and `Nest`, which `shapes` declares at a fixed place, are not
+/// among them.
 #[test]
 fn generated_interfaces_should_reach_their_maxima() {
     let (mut most, mut requirements) = (0, 0);
@@ -3092,7 +3094,9 @@ fn generated_interfaces_should_reach_their_maxima() {
             .items
             .iter()
             .filter_map(|item| match item {
-                ast::Item::Interface(interface) if interface.name.name.as_str() != "Pinned" => {
+                ast::Item::Interface(interface)
+                    if !["Pinned", "Nest"].contains(&interface.name.name.as_str()) =>
+                {
                     Some(interface)
                 }
                 _ => None,
@@ -3729,10 +3733,19 @@ enum Tree<T> {
     Leaf
     Node(Tree<T>, T, Tree<T>)
 }
+interface I {
+    type Item
+}
+class W: I {
+    type Item = i64
+}
+enum Holder<T: I> {
+    Item(T.Item)
+}
 fn main() {}
 ",
     );
-    for rank in ["Plain", "Own", "Never"] {
+    for rank in ["Plain", "Own", "Never", "Assoc"] {
         assert!(seen.contains(&format!("tir::Rank::{rank}")), "{rank}");
     }
     for rank in ["Open", "Late"] {
@@ -6501,6 +6514,51 @@ fn generated_programs_should_name_each_language_interface() {
     }
     assert!(class, "no seed lists Display after a class");
     assert!(enumeration, "no seed lists Eq or Display after an enum");
+}
+
+/// The seeds between them write the enum `NestE`, whose payload is an associated type of its
+/// parameter and whose conformance chooses the enum again, in the form `T.Item` and in the form
+/// `T.Item?`. Each program that writes it builds a value two or more levels deep, compares it
+/// with `==`, prints it and calls `nest_depth` on it.
+#[test]
+fn generated_programs_should_write_an_enum_with_an_associated_type_payload() {
+    let (mut direct, mut optional, mut deepest) = (false, false, false);
+    for data in seeds() {
+        let text = generate(&data).plain;
+        deepest |= text.contains("let v4: NestE<NestW<i64>> = NestE.A(v3)");
+        if !text.contains("enum NestE<T: Nest>") {
+            continue;
+        }
+        direct |= text.contains("    A(T.Item)\n");
+        optional |= text.contains("    A(T.Item?)\n");
+        for part in [
+            "class NestW<T>: Nest { type Item = NestE<NestW<T>> }",
+            "print(nest())",
+        ] {
+            assert!(text.contains(part), "a program with NestE lacks {part}");
+        }
+        // The rest must be in `nest` itself, which ends at the first line that starts with `}`.
+        let start = text
+            .find("fn nest() -> i64 {")
+            .expect("a program with NestE should have `nest`");
+        let nest = &text[start
+            ..start
+                + text[start..]
+                    .find("\n}")
+                    .expect("`nest` should end with a closing brace")];
+        let lines = || nest.lines();
+        let v2 = "    let v2: NestE<NestW<i64>> = NestE.A(v1)";
+        assert!(lines().any(|l| l == v2), "`nest` lacks {v2}");
+        let printed = |l: &str| l.starts_with("    print(v") && !l.contains(" == ");
+        assert!(lines().any(printed), "`nest` prints no value");
+        let compared = |l: &str| l.starts_with("    print(v") && l.contains(" == v");
+        assert!(lines().any(compared), "`nest` compares no values");
+        let measured = |l: &str| l.starts_with("    nest_depth(v");
+        assert!(lines().any(measured), "`nest` does not measure the value");
+    }
+    assert!(direct, "no seed writes the payload T.Item");
+    assert!(optional, "no seed writes the payload T.Item?");
+    assert!(deepest, "no seed builds a value four levels deep");
 }
 
 /// The walk marks what the language interfaces add: a class or an enum that lists `Display` or

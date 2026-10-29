@@ -7,7 +7,7 @@
 
 use inkwell::basic_block::BasicBlock;
 use inkwell::module::Linkage;
-use inkwell::types::StructType;
+use inkwell::types::ArrayType;
 use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 
@@ -341,8 +341,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             return;
         };
         let heads_type = self.heads_type(members.len());
-        let heads = self.entry_alloca(heads_type.into(), "heads");
-        self.store(heads, heads_type.const_zero().into());
+        let heads = self.entry_alloca_heads(heads_type);
         if members.len() > 1 {
             let head = self.head(heads_type, heads, self.class_cycles.position(id));
             self.store(head, param(drop).into());
@@ -447,7 +446,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         &self,
         id: ClassId,
         object: PointerValue<'ctx>,
-        heads: Option<(StructType<'ctx>, PointerValue<'ctx>)>,
+        heads: Option<(ArrayType<'ctx>, PointerValue<'ctx>)>,
     ) {
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         let block = |name| {

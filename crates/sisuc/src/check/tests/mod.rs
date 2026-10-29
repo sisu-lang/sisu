@@ -1959,6 +1959,61 @@ fn class_cycle_search_reads_linearly() {
     assert_near_linear(reads(100), reads(200), reads(300));
 }
 
+/// A class of `n` fields and a generic method `g`. Its `main` makes one object `c`. Then it runs
+/// the statement `statement(i)` for each `i` below `n`.
+fn field_program(n: usize, statement: impl Fn(usize) -> String) -> String {
+    let lines = |line: &dyn Fn(usize) -> String| (0..n).map(line).collect::<Vec<_>>().concat();
+    let fields = lines(&|i| format!("    mut f{i}: i64\n"));
+    let labels = (0..n)
+        .map(|i| format!("f{i}: 0"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let body = lines(&|i| format!("    {}\n", statement(i)));
+    format!(
+        "class C {{\n{fields}    fn g<T>(self) {{}}\n}}\nfn main() {{\n    let c = C({labels})\n{body}}}\n"
+    )
+}
+
+/// How many calls of the field lookup helper happened while `src` was checked.
+fn field_lookups(src: &str) -> usize {
+    FIELD_LOOKUPS.set(0);
+    assert!(checked(src).0.is_some(), "{src}");
+    FIELD_LOOKUPS.get()
+}
+
+/// Each read of a field is one lookup in the field index of its class. A scan of the fields
+/// costs `n(n + 1) / 2` steps for `n` reads, which is 2080 for 64. Quadratic cost shows at 2
+/// fields, and 64 is more than 10x that.
+#[test]
+fn field_reads_should_look_up_each_field_in_one_step() {
+    let src = field_program(64, |i| format!("c.f{i}"));
+    assert_eq!(field_lookups(&src), 64);
+}
+
+/// Each assignment to a field is one lookup, as each read is.
+#[test]
+fn field_assignments_should_look_up_each_field_in_one_step() {
+    let src = field_program(64, |i| format!("c.f{i} = {i}"));
+    assert_eq!(field_lookups(&src), 64);
+}
+
+/// Each call of a generic method checks whether the class has a field of the method's name. That
+/// is one lookup, and not a scan of the fields. A scan costs `n x n` steps for `n` calls.
+#[test]
+fn generic_method_calls_should_look_up_the_fields_in_one_step() {
+    let src = field_program(64, |_| "c.g<i64>()".to_owned());
+    assert_eq!(field_lookups(&src), 64);
+}
+
+/// A call of a name that is a field reports a field-not-method error with one lookup.
+#[test]
+fn calls_of_a_field_should_look_up_the_field_in_one_step() {
+    let src = field_program(64, |i| format!("c.f{i}()"));
+    FIELD_LOOKUPS.set(0);
+    assert!(checked(&src).0.is_none());
+    assert_eq!(FIELD_LOOKUPS.get(), 64);
+}
+
 #[test]
 fn constructor_missing_label() {
     let src = "class P {\n    x: i64\n}\nfn main() { P(1) }";
