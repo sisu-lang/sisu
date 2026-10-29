@@ -7,6 +7,11 @@ use super::*;
 use crate::check::cycle;
 use crate::check::interface::{CONFORMS_DEPTH_LIMIT, LangPath};
 
+const _: () = assert!(
+    CONFORMS_DEPTH_LIMIT == 1 << 18,
+    "a conformance query should stop when more than 2^18 class or enum keys are open"
+);
+
 /// The functions that ask for each language interface, with bodies that call nothing.
 const NEEDS: &str = "fn need_eq<T: Eq>(x: T) {}\nfn need_ord<T: Ord>(x: T) {}\nfn need_display<T: Display>(x: T) {}\nfn need_object<T: AnyObject>(x: T) {}\n";
 
@@ -648,13 +653,15 @@ fn a_query_should_be_clean_at_the_depth_limit() {
 }
 
 /// One `W` more than the limit makes the query stop and report E0140 at the name of the class
-/// that it reached. The stopped query holds: the report is its only diagnostic. This is the walk
-/// of the whole limit.
+/// that it reached. The stopped query holds: the report is its only diagnostic. The test lowers
+/// the limit; the constant above pins the real one.
 #[test]
 fn a_query_should_report_the_class_it_reached_past_the_depth_limit() {
-    CONFORMS_BUDGET.set(CONFORMS_DEPTH_LIMIT + 10);
+    let limit = 600;
+    CONFORMS_DEPTH.set(limit);
+    CONFORMS_BUDGET.set(2 * limit);
     let (name, found) = with_probe(WRAPPER, ("T", "W<i64>"), "Eq", |checker, _, eq| {
-        assert!(query_nest(checker, eq, CONFORMS_DEPTH_LIMIT + 1, Type::I64));
+        assert!(query_nest(checker, eq, limit + 1, Type::I64));
         let found: Vec<_> = (checker.diagnostics.iter())
             .map(|d| (d.code(), d.span()))
             .collect();
@@ -664,6 +671,32 @@ fn a_query_should_report_the_class_it_reached_past_the_depth_limit() {
         )
     });
     assert_eq!(found, [(Code::InstantiationCycle, name)]);
+}
+
+/// The report of a query that is too deep names the interface, the type that the query began
+/// with, the limit and the class that it reached.
+#[test]
+fn a_query_that_is_too_deep_should_fill_each_field_of_its_report() {
+    CONFORMS_DEPTH.set(3);
+    CONFORMS_BUDGET.set(100);
+    let (found, at) = with_probe(WRAPPER, ("T", "W<i64>"), "Eq", |checker, _, eq| {
+        assert!(query_nest(checker, eq, 4, Type::I64));
+        (
+            (checker.diagnostics.iter())
+                .map(|d| format!("{d:?}"))
+                .collect::<Vec<_>>(),
+            checker.classes[class_named(checker, "W").0].name.span,
+        )
+    });
+    let expected: Diagnostic = DiagnosticKind::ConformanceTooDeep {
+        interface: "Eq".to_string(),
+        root: "W<W<W<W<i64>>>>".to_string(),
+        limit: 3,
+        holder: "W".to_string(),
+        at,
+    }
+    .into();
+    assert_eq!(found, [format!("{expected:?}")]);
 }
 
 /// A second root that goes past the limit through the same class reports nothing more.
@@ -678,6 +711,31 @@ fn a_query_should_report_a_class_past_the_depth_limit_once() {
         checker.diagnostics.len()
     });
     assert_eq!(found, 1);
+}
+
+/// An enum that grows has its own error (E0140), so a query that reaches it past the limit gives
+/// no second report: a query that holds `W` nested as the limit allows, or one more, over a
+/// growing `G` ends with the one error of `G`, at the same place (#242).
+#[test]
+fn a_query_that_reaches_a_growing_enum_past_the_depth_limit_should_report_it_once() {
+    let limit = 600;
+    CONFORMS_DEPTH.set(limit);
+    CONFORMS_BUDGET.set(4 * limit);
+    for levels in [limit, limit + 1] {
+        let mut lets = String::new();
+        for i in 1..=levels {
+            writeln!(lets, "    let a{i} = W(value: a{})", i - 1)
+                .expect("writing to a `String` should succeed");
+        }
+        let src = format!(
+            "{WRAPPER}enum G<T> {{\n    End\n    A(G<[T]>)\n}}\nfn main() {{\n    let a0: G<i64>? = None\n{lets}    print(a{levels} == a{levels})\n}}"
+        );
+        codes_row(
+            &format!("{levels} levels of `W` over a growing enum"),
+            &src,
+            &[(Code::InstantiationCycle, (11, 7))],
+        );
+    }
 }
 
 /// The walk that names the part of a failed query stops where the query did: below an enum whose
@@ -702,6 +760,34 @@ fn failing_leaf_should_stop_at_an_enum_that_a_query_was_too_deep_for() {
         checker.type_name(leaf)
     });
     assert_eq!(leaf, "Shallow");
+}
+
+/// The part that makes a failed query fail is found on a stack of 256 KiB, for a chain of enums
+/// that nests deeper than that stack allows recursing into (#242). `failing_leaf` follows the
+/// chain one level at a time, so it grows the stack as the query does.
+#[test]
+fn failing_leaf_should_follow_a_deep_chain_on_a_small_stack() {
+    const STACK: usize = 256 * 1024;
+    let levels = 600;
+    let leaf = std::thread::Builder::new()
+        .stack_size(STACK)
+        .spawn(move || {
+            let decls = "class Node {}\nenum O<T> {\n    End\n    S(T)\n}\n";
+            with_probe(decls, ("T", "O<i64>"), "Eq", |checker, _, eq| {
+                let node = Type::intern(TypeKind::Class(
+                    class_named(checker, "Node"),
+                    TypeArgs::NONE,
+                ));
+                let ty = nested(checker, "O", levels, node);
+                assert!(!checker.conforms(ty, eq, TypeArgs::NONE), "`Node` fails");
+                let leaf = checker.failing_leaf(ty, eq, TypeArgs::NONE);
+                checker.type_name(leaf)
+            })
+        })
+        .expect("the thread should start")
+        .join()
+        .expect("the walk should not overflow the stack");
+    assert_eq!(leaf, "Node");
 }
 
 /// A declaration that grows or that no value can be built of has its own error, and the query

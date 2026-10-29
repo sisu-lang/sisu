@@ -28,10 +28,11 @@ pub(super) const BOUND_CLOSURE_LIMIT: usize = 256;
 /// How many class or enum keys a query for a conformance may hold open, one inside the other. A
 /// declaration that instantiates itself with a longer type argument each time, through a path that
 /// the graph of instantiations does not see (`check/cycle.rs`), makes a query that has no end.
-/// The query stops here and reports E0140. The stack of the open keys is on the heap, and the walk
-/// grows the call stack as it needs (`ensure_stack`), so the value follows the memory that a
-/// query may use, not the call stack: 2^18 keys take about 40 MB, and `mono` makes the same
-/// number of instances for a program that nests that deep, which is far above any program.
+/// The query stops when more than this many are open, and reports E0140. The stack of the open
+/// keys is on the heap, and the walk grows the call stack as it needs (`ensure_stack`), so the
+/// value follows the memory that a query may use, not the call stack: 2^18 keys take about 40 MB,
+/// and `mono` makes the same number of instances for a program that nests that deep, which is far
+/// above any program.
 pub(super) const CONFORMS_DEPTH_LIMIT: usize = 1 << 18;
 
 /// `CONFORMS_DEPTH_LIMIT`; a test may lower it (`CONFORMS_DEPTH`).
@@ -1120,7 +1121,7 @@ impl Checker<'_> {
         self.broken_extensions.insert(self.holder_name(holder));
     }
 
-    /// Reports once for the class or enum `holder` that a query of `conforms` was
+    /// Reports once for the class or enum `holder` that a query of `conforms` went past
     /// `CONFORMS_DEPTH_LIMIT` keys deep for (E0140). The report stands at its name, as the walk
     /// has no use to point at. It names the interface and the type of the root of the query.
     fn too_deep(&mut self, holder: Holder) {
@@ -1253,7 +1254,10 @@ impl Checker<'_> {
                 super::CONFORMS_BUDGET.get()
             );
         }
-        let answer = if self.open.depth() > depth_limit() {
+        // A marked enum has its own report (E0140), so a query that is too deep at one gets no
+        // second report: `payloads_conform` holds for it with no part query.
+        let marked = matches!(holder_of(ty), Some(Holder::Enum(id)) if self.marked[id.0]);
+        let answer = if self.open.depth() > depth_limit() && !marked {
             // The query holds, as it does for a marked enum: the report of `too_deep` is its only
             // diagnostic.
             self.too_deep(holder_of(ty).expect("a key of this walk should be a class or an enum"));

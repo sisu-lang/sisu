@@ -72,7 +72,7 @@
 //! other links keep their growth. The link may be a cycle of names alone, which instantiates no
 //! class or enum, and its weight there would report a program that has its own error. It may also
 //! stand for another type of the place, which no conformance with a growing choice stands for; a
-//! growth through such a link is left to the query for a conformance, which stops when
+//! growth through such a link is left to the query for a conformance, which stops when more than
 //! `CONFORMS_DEPTH_LIMIT` class or enum types are open (E0140).
 //!
 //! An interface with type parameters has choices for some arguments, and a use `P.Item` has
@@ -544,8 +544,8 @@ impl Graph {
     /// (`normalize` ends it where the type is used), so the weight of its growth would stand for
     /// no instance. The other links keep their growth. The link may also stand for another type
     /// of the place than the one that grows; a growth through that type that the graph misses is
-    /// left to the query for a conformance, which stops when `CONFORMS_DEPTH_LIMIT` class or enum
-    /// types are open (E0140).
+    /// left to the query for a conformance, which stops when more than `CONFORMS_DEPTH_LIMIT`
+    /// class or enum types are open (E0140).
     fn without_unbounded(&self, base: Type) -> Type {
         let mut kept = Vec::new();
         let mut inner = base;
