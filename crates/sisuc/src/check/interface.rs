@@ -1490,7 +1490,8 @@ impl Checker<'_> {
     }
 
     /// The first payload part of the enum `id`, with `own` for its parameters, that fails
-    /// `interface` on its own; `None` when each holds.
+    /// `interface` on its own; `None` when each holds. It ends where `payloads_conform` did: at a
+    /// marked enum, and at an enum whose query was too deep, whose payloads no query read.
     fn payloads_leaf(
         &mut self,
         id: EnumId,
@@ -1498,7 +1499,7 @@ impl Checker<'_> {
         interface: InterfaceId,
         seen: &mut FxHashSet<(Type, InterfaceId, TypeArgs)>,
     ) -> Option<Type> {
-        if self.marked[id.0] {
+        if self.marked[id.0] || self.too_deep.contains(&id) {
             return None;
         }
         self.payload_slots(id).into_iter().find_map(|slot| {

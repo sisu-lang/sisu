@@ -598,11 +598,16 @@ fn generic_chain(n: usize) -> String {
 /// declaration, so it is clean.
 #[test]
 fn a_query_should_end_at_the_depth_limit_and_report_the_enum_it_reached_once() {
-    // A query that reaches the limit holds about a thousand frames of the walk, more than the
-    // stack of a test thread holds in a build with coverage; the compiler's own stack holds them.
+    on_the_compiler_stack(query_at_the_depth_limit);
+}
+
+/// Runs `f` on a thread with the stack of the compiler. A query that reaches the depth limit
+/// holds about a thousand frames of the walk, more than the stack of a test thread holds in a
+/// build with coverage; the compiler's own stack holds them.
+fn on_the_compiler_stack(f: fn()) {
     std::thread::Builder::new()
         .stack_size(crate::STACK_SIZE)
-        .spawn(query_at_the_depth_limit)
+        .spawn(f)
         .expect("the thread should start")
         .join()
         .expect("the queries should not overflow the stack");
@@ -636,6 +641,27 @@ fn query_at_the_depth_limit() {
         &twice,
         &[(Code::InstantiationCycle, name(&twice, limit))],
     );
+}
+
+/// The walk that names the part of a failed query stops where the query did: below an enum whose
+/// query was `CONFORMS_DEPTH_LIMIT` deep, a part fails that the query never read, and the part
+/// that made the query fail is the one to name. Here `Deep` is at the end of the chain, past the
+/// limit, and `Shallow` is the payload that fails the query.
+#[test]
+fn failing_leaf_should_stop_at_an_enum_that_a_query_was_too_deep_for() {
+    on_the_compiler_stack(|| {
+        CONFORMS_BUDGET.set(100_000);
+        let decls = format!(
+            "class Deep {{}}\nclass Shallow {{}}\nenum R<T> {{\n    A(G0<T>)\n    B(Shallow)\n}}\n{}",
+            generic_chain(CONFORMS_DEPTH_LIMIT + 1)
+        );
+        let leaf = with_probe(&decls, ("T", "R<Deep>"), "Eq", |checker, ty, eq| {
+            assert!(!checker.conforms(ty, eq, TypeArgs::NONE), "`Shallow` fails");
+            let leaf = checker.failing_leaf(ty, eq, TypeArgs::NONE);
+            checker.type_name(leaf)
+        });
+        assert_eq!(leaf, "Shallow");
+    });
 }
 
 /// A declaration that grows or that no value can be built of has its own error, and the query
