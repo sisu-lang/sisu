@@ -67,11 +67,12 @@
 //! parameter in the conformance's target, so that a use and a choice add one edge each, not one
 //! for each pair. The type chosen gives the edges that a field type gives. The choice
 //! `type Item = E<W<W<T>>>` of `W<T>` gives the enum `E<T: I>` that holds `T.Item` an edge back to
-//! itself of weight 1. A base that passes an associated type of unbounded growth for the
-//! arguments of its use gives no edge. The base may be a cycle of names alone, which instantiates
-//! no class or enum, and an edge there would report a program that has its own error. It may also
-//! be another type of the place, which no conformance with a growing choice stands for; a growth
-//! through such a base is left to the query for a conformance, which stops at a depth
+//! itself of weight 1. A link of the base whose associated type has unbounded growth for the
+//! arguments of its use adds no weight: the edge is made from the base without that link, and the
+//! other links keep their growth. The link may be a cycle of names alone, which instantiates no
+//! class or enum, and its weight there would report a program that has its own error. It may also
+//! stand for another type of the place, which no conformance with a growing choice stands for; a
+//! growth through such a link is left to the query for a conformance, which stops at a depth
 //! (`CONFORMS_DEPTH_LIMIT`).
 //!
 //! An interface with type parameters has choices for some arguments, and a use `P.Item` has
