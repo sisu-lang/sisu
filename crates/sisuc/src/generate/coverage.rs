@@ -6482,14 +6482,28 @@ fn generated_programs_should_write_an_enum_with_an_associated_type_payload() {
         optional |= text.contains("    A(T.Item?)\n");
         for part in [
             "class NestW<T>: Nest { type Item = NestE<NestW<T>> }",
-            "let v2: NestE<NestW<i64>> = NestE.A(v1)",
-            "print(v",
-            "== v",
-            "nest_depth(v",
             "print(nest())",
         ] {
             assert!(text.contains(part), "a program with NestE lacks {part}");
         }
+        // The rest must be in `nest` itself, which ends at the first line that starts with `}`.
+        let start = text
+            .find("fn nest() -> i64 {")
+            .expect("a program with NestE should have `nest`");
+        let nest = &text[start
+            ..start
+                + text[start..]
+                    .find("\n}")
+                    .expect("`nest` should end with a closing brace")];
+        let lines = || nest.lines();
+        let v2 = "    let v2: NestE<NestW<i64>> = NestE.A(v1)";
+        assert!(lines().any(|l| l == v2), "`nest` lacks {v2}");
+        let printed = |l: &str| l.starts_with("    print(v") && !l.contains(" == ");
+        assert!(lines().any(printed), "`nest` prints no value");
+        let compared = |l: &str| l.starts_with("    print(v") && l.contains(" == v");
+        assert!(lines().any(compared), "`nest` compares no values");
+        let measured = |l: &str| l.starts_with("    nest_depth(v");
+        assert!(lines().any(measured), "`nest` does not measure the value");
     }
     assert!(direct, "no seed writes the payload T.Item");
     assert!(optional, "no seed writes the payload T.Item?");

@@ -3227,8 +3227,11 @@ fn lay_out_enums_should_panic_on_an_enum_that_holds_itself_inline() {
     let (program, diagnostics) = check_alone(&program, src, &[]);
     let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
     let mut program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
-    let fields = program.enums.iter_mut().flat_map(|e| &mut e.variants);
-    for field in fields.flat_map(|v| &mut v.fields) {
+    let enums = program.enums.iter_mut().filter(|e| e.name == "L");
+    for field in enums
+        .flat_map(|e| &mut e.variants)
+        .flat_map(|v| &mut v.fields)
+    {
         assert!(field.boxed, "the checker should box the field of `L.A`");
         field.boxed = false;
     }
