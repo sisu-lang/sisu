@@ -402,10 +402,11 @@ fn len_is_not_a_field() {
 }
 
 #[test]
-fn sum_and_contains() {
+fn sum_and_contains_should_check_to_a_call_and_a_node() {
+    with_prelude();
     contains(
         "fn f(xs: [i64]) -> i64 { xs.sum() }\nfn main() {}",
-        &["(sum xs#0)"],
+        &["(call [i64].sum xs#0)"],
     );
     contains(
         "fn f(xs: [u8?]) -> bool { xs.contains(5) }\nfn main() {}",
@@ -428,7 +429,8 @@ fn contains_spills_for_an_exit_in_its_value() {
 }
 
 #[test]
-fn sum_needs_numbers() {
+fn sum_of_an_array_that_is_not_numbers_should_need_numbers() {
+    with_prelude();
     codes(
         "fn f(xs: [bool]) { print(xs.sum()) }\nfn main() {}",
         &[(Code::SumNeedsNumbers, (1, 29))],
@@ -462,7 +464,8 @@ fn contains_poison() {
 }
 
 #[test]
-fn method_argument_counts() {
+fn a_wrong_count_of_method_arguments_should_be_the_general_count_error() {
+    with_prelude();
     codes(
         "fn f(xs: [i64]) { print(xs.sum(1)) }\nfn main() {}",
         &[(Code::ArgumentCount, (1, 25))],
@@ -790,7 +793,8 @@ fn literal_out_of_u8_range_is_unsafe() {
 }
 
 #[test]
-fn sum_as_function_is_the_idiom() {
+fn sum_written_as_a_function_should_offer_the_method_call() {
+    with_prelude();
     assert_eq!(
         idiom(
             "fn f(xs: [i64]) -> i64 { sum(xs) }\nfn main() {}",

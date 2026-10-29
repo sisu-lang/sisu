@@ -364,6 +364,9 @@ pub(crate) struct Function {
     pub(crate) type_params: Vec<String>,
     /// How many of `type_params` belong to the class or enum of a method.
     pub(crate) owner_params: usize,
+    /// Whether the prelude writes the function. A prelude function takes its caller's location
+    /// as two hidden parameters, so its run-time panics name the caller's line.
+    pub(crate) prelude: bool,
     pub(crate) params: Vec<LocalId>,
     pub(crate) ret: Type,
     pub(crate) locals: Vec<Local>,
@@ -585,8 +588,6 @@ pub(crate) enum ExprKind {
     Words(Box<Expr>),
     /// `string(base)`: a new string that encodes the `[char]` `base`.
     FromChars(Box<Expr>),
-    /// `base.sum()`, on an `[i64]` or an `[f64]`.
-    Sum(Box<Expr>),
     /// `base.contains(value)`, by `==`.
     Contains {
         base: Box<Expr>,
@@ -850,7 +851,6 @@ impl Expr {
             | ExprKind::Bytes(operand)
             | ExprKind::Words(operand)
             | ExprKind::FromChars(operand)
-            | ExprKind::Sum(operand)
             | ExprKind::Wrap(operand)
             | ExprKind::Convert(operand)
             | ExprKind::Print { operand, .. }
@@ -933,7 +933,6 @@ impl Expr {
             | ExprKind::Bytes(operand)
             | ExprKind::Words(operand)
             | ExprKind::FromChars(operand)
-            | ExprKind::Sum(operand)
             | ExprKind::Wrap(operand)
             | ExprKind::Convert(operand)
             | ExprKind::Print { operand, .. }
@@ -1091,7 +1090,6 @@ impl Expr {
             | K::Bytes(e)
             | K::Words(e)
             | K::FromChars(e)
-            | K::Sum(e)
             | K::Unary { operand: e, .. }
             | K::Break { value: Some(e), .. }
             | K::Return(Some(e)) => e.exprs(out),
@@ -1315,7 +1313,6 @@ impl Printer<'_> {
             ExprKind::Bytes(base) => self.unary(f, "bytes", base),
             ExprKind::Words(base) => self.unary(f, "words", base),
             ExprKind::FromChars(base) => self.unary(f, "string", base),
-            ExprKind::Sum(base) => self.unary(f, "sum", base),
             ExprKind::Contains { base, value } => self.binary(f, "contains", base, value),
             ExprKind::Math { op, operands } => {
                 self.list(f, format_args!("math {}", op.name()), operands)
@@ -1745,7 +1742,7 @@ mod tests {
     }
 
     #[test]
-    fn jumps_print_their_depth_and_value() {
+    fn jumps_should_print_their_depth_and_value() {
         let jump = |kind| Stmt::Expr(expr(kind, Type::NEVER));
         let inner = block(vec![
             jump(ExprKind::Break {
@@ -1771,6 +1768,7 @@ mod tests {
                 method: None,
                 type_params: vec![],
                 owner_params: 0,
+                prelude: false,
                 params: vec![],
                 ret: Type::I64,
                 locals: vec![],
@@ -1838,7 +1836,7 @@ mod tests {
     }
 
     #[test]
-    fn prints_every_node() {
+    fn every_node_should_print() {
         let locals = vec![
             Local {
                 name: Some("n".into()),
@@ -1891,6 +1889,7 @@ mod tests {
                 method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
+                prelude: false,
                 params: vec![LocalId(0)],
                 ret: Type::I64,
                 locals,
@@ -2000,6 +1999,7 @@ mod tests {
                 method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
+                prelude: false,
                 params: vec![LocalId(0)],
                 ret: Type::I64,
                 locals: vec![
@@ -2085,6 +2085,7 @@ mod tests {
                 method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
+                prelude: false,
                 params: vec![LocalId(0)],
                 ret: Type::I64,
                 locals: vec![
@@ -2134,6 +2135,7 @@ mod tests {
             method: Some("name".into()),
             type_params: Vec::new(),
             owner_params: 0,
+            prelude: false,
             params: vec![LocalId(0)],
             ret: Type::I64,
             locals: vec![param("self", class)],
@@ -2162,6 +2164,7 @@ mod tests {
             method: None,
             type_params: Vec::new(),
             owner_params: 0,
+            prelude: false,
             params: vec![LocalId(0)],
             ret: Type::I64,
             locals: vec![param("c", class)],
@@ -2231,7 +2234,7 @@ mod tests {
     }
 
     #[test]
-    fn prints_functions_joined_by_newline() {
+    fn functions_should_print_joined_by_newline() {
         // fn first() { return }
         // fn second(a: i64, ok: bool) -> bool { first(); ok && (a == 3 && a < 4) }
         let first = Function {
@@ -2241,6 +2244,7 @@ mod tests {
             method: None,
             type_params: Vec::new(),
             owner_params: 0,
+            prelude: false,
             params: vec![],
             ret: Type::UNIT,
             locals: vec![],
@@ -2278,6 +2282,7 @@ mod tests {
             method: None,
             type_params: Vec::new(),
             owner_params: 0,
+            prelude: false,
             params: vec![LocalId(0), LocalId(1)],
             ret: Type::BOOL,
             locals: vec![param("a", Type::I64), param("ok", Type::BOOL)],
@@ -2318,7 +2323,7 @@ mod tests {
     }
 
     #[test]
-    fn prints_float_literals() {
+    fn float_literals_should_print() {
         let float = |x| expr(ExprKind::Float(x), Type::F64);
         let program = Program {
             classes: vec![],
@@ -2330,6 +2335,7 @@ mod tests {
                 method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
+                prelude: false,
                 params: vec![],
                 ret: Type::UNIT,
                 locals: vec![],
@@ -2349,7 +2355,7 @@ mod tests {
     }
 
     #[test]
-    fn prints_char_literals_and_conversions() {
+    fn char_literals_and_conversions_should_print() {
         // fn f(c: char) { print('ä'); print(i64(c)); print(char(228)) }
         let char_lit = expr(ExprKind::Char('ä'), Type::CHAR);
         let to_i64 = expr(
@@ -2368,6 +2374,7 @@ mod tests {
                 method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
+                prelude: false,
                 params: vec![LocalId(0)],
                 ret: Type::UNIT,
                 locals: vec![param("c", Type::CHAR)],
@@ -2382,7 +2389,7 @@ mod tests {
     }
 
     #[test]
-    fn eprints_to_standard_error() {
+    fn eprint_should_write_to_standard_error() {
         // fn f() { eprint(1) }
         let eprint = expr(
             ExprKind::Print {
@@ -2401,6 +2408,7 @@ mod tests {
                 method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
+                prelude: false,
                 params: vec![],
                 ret: Type::UNIT,
                 locals: vec![],
@@ -2412,7 +2420,7 @@ mod tests {
     }
 
     #[test]
-    fn prints_read_line() {
+    fn read_line_should_print() {
         // fn f() { read_line() }
         let read_line = expr(ExprKind::ReadLine, Type::optional(Type::STRING));
         let program = Program {
@@ -2425,6 +2433,7 @@ mod tests {
                 method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
+                prelude: false,
                 params: vec![],
                 ret: Type::UNIT,
                 locals: vec![],
@@ -2436,7 +2445,7 @@ mod tests {
     }
 
     #[test]
-    fn prints_words() {
+    fn words_should_print() {
         // fn f(s: string) { s.words() }
         let s = Box::new(expr(ExprKind::Local(LocalId(0)), Type::STRING));
         let words = expr(ExprKind::Words(s), Type::array(Type::STRING));
@@ -2450,6 +2459,7 @@ mod tests {
                 method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
+                prelude: false,
                 params: vec![LocalId(0)],
                 ret: Type::UNIT,
                 locals: vec![param("s", Type::STRING)],
@@ -2464,7 +2474,7 @@ mod tests {
     }
 
     #[test]
-    fn prints_strings() {
+    fn strings_should_print() {
         // fn f(s: string) { print("a\"\n" + s) }
         let lit = expr(ExprKind::Str("a\"\n".into()), Type::STRING);
         let s = expr(ExprKind::Local(LocalId(0)), Type::STRING);
@@ -2483,6 +2493,7 @@ mod tests {
                 method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
+                prelude: false,
                 params: vec![LocalId(0)],
                 ret: Type::UNIT,
                 locals: vec![param("s", Type::STRING)],
@@ -2497,7 +2508,7 @@ mod tests {
     }
 
     #[test]
-    fn prints_interpolation() {
+    fn interpolation_should_print() {
         // fn f(s: string, n: i64) { print("a{s}{n}") }
         let parts = vec![
             expr(ExprKind::Str("a".into()), Type::STRING),
@@ -2522,6 +2533,7 @@ mod tests {
                 method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
+                prelude: false,
                 params: vec![LocalId(0), LocalId(1)],
                 ret: Type::UNIT,
                 locals: vec![param("s", Type::STRING), param("n", Type::I64)],
@@ -2585,6 +2597,7 @@ mod tests {
                 method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
+                prelude: false,
                 params: vec![LocalId(0), LocalId(1)],
                 ret: Type::UNIT,
                 locals: vec![param("n", Type::I64), param("x", Type::F64)],
@@ -2599,7 +2612,7 @@ mod tests {
     }
 
     #[test]
-    fn prints_chars_bytes_and_string_from_chars() {
+    fn chars_bytes_and_string_from_chars_should_print() {
         // fn f(s: string) { let cs = s.chars(); print(s.bytes().len()); print(string(cs)) }
         let s = || Box::new(expr(ExprKind::Local(LocalId(0)), Type::STRING));
         let chars = || Box::new(expr(ExprKind::Local(LocalId(1)), Type::array(Type::CHAR)));
@@ -2615,6 +2628,7 @@ mod tests {
                 method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
+                prelude: false,
                 params: vec![LocalId(0)],
                 ret: Type::UNIT,
                 locals: vec![
@@ -2639,7 +2653,7 @@ mod tests {
     }
 
     #[test]
-    fn prints_appends() {
+    fn appends_should_print() {
         // fn f() { let mut names = ["a"]; names[0] += "x" }
         let strings = Type::array(Type::STRING);
         let names = expr(
@@ -2663,6 +2677,7 @@ mod tests {
                 method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
+                prelude: false,
                 params: vec![],
                 ret: Type::UNIT,
                 locals: vec![Local {
@@ -2687,7 +2702,7 @@ mod tests {
     }
 
     #[test]
-    fn prints_panic() {
+    fn panic_should_print() {
         // fn f() { panic("x") }
         let message = expr(ExprKind::Str("x".into()), Type::STRING);
         let panic = expr(ExprKind::Panic(Box::new(message)), Type::NEVER);
@@ -2701,6 +2716,7 @@ mod tests {
                 method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
+                prelude: false,
                 params: vec![],
                 ret: Type::UNIT,
                 locals: vec![],
@@ -2988,7 +3004,6 @@ mod tests {
             (ExprKind::Bytes(n(1)), 1),
             (ExprKind::Words(n(1)), 1),
             (ExprKind::FromChars(n(1)), 1),
-            (ExprKind::Sum(n(1)), 1),
             (ExprKind::Wrap(n(1)), 1),
             (ExprKind::Convert(n(1)), 1),
             (

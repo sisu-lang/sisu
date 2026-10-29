@@ -231,7 +231,7 @@ fn every_block_is_reachable() {
 
 /// The reachability check above sees a cycle that no edge from `bb0` enters.
 #[test]
-fn unreachable_blocks_finds_a_disconnected_cycle() {
+fn unreachable_blocks_should_find_a_disconnected_cycle() {
     let block = |term| Block {
         stmts: Vec::new(),
         term,
@@ -241,6 +241,8 @@ fn unreachable_blocks_finds_a_disconnected_cycle() {
         params: 0,
         borrowed: Vec::new(),
         ret: Type::UNIT,
+        prelude: false,
+        quiet: false,
         locals: Vec::new(),
         blocks: vec![
             block(Terminator::Return(None)),
@@ -410,7 +412,7 @@ fn mentions_every_kind_of_node() {
 /// Each kind of expression lowers to its statement: borrowed operands go to temporaries
 /// released after, consumed ones are `use`d or moved, and a chain or `&&` branches.
 #[test]
-fn lowers_every_kind_of_node() {
+fn every_kind_of_node_should_lower() {
     let printed = lowered(EVERY_KIND);
     has(
         &printed,
@@ -450,7 +452,7 @@ fn lowers_every_kind_of_node() {
             "_ = false",
             "_ = contains(use xs#2, 2)",
             "_ = array[4; 2]",
-            "_ = sum move _",
+            "_ = call [i64].sum(move _)",
             "_ = len_words s#3",
             "ws#13 = words s#3",
             "bs#14 = bytes s#3",

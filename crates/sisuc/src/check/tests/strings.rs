@@ -572,7 +572,8 @@ fn string_methods() {
 /// `chars()` is a `[char]` and `bytes()` a `[u8]`, so milestone 3's array methods apply to them
 /// and `?.` gives an optional array.
 #[test]
-fn chars_and_bytes_are_arrays() {
+fn chars_and_bytes_should_be_arrays() {
+    with_prelude();
     contains(
         "fn f(s: string, m: string?) {\n    let cs: [char] = s.chars()\n    let bs: [u8] = s.bytes()\n    let o: [char]? = m?.chars()\n    print(s.chars().contains('a'))\n    print(s.bytes().len())\n}\nfn main() {}",
         &["(chars s#0)", "(bytes s#0)"],

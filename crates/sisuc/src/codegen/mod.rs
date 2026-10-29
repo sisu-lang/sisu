@@ -15,7 +15,7 @@ mod show;
 mod string;
 
 use rustc_hash::FxHashMap;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fmt::Write as _;
 
 use inkwell::attributes::{Attribute, AttributeLoc};
@@ -56,13 +56,13 @@ const POSITIONED: &str =
 thread_local! {
     /// How many class fields and enum payload fields the reflexivity analysis has read on this
     /// thread.
-    static TYPE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TYPE_READS: Cell<usize> = const { Cell::new(0) };
     /// How many token places and rest places a `take_apart` has visited on this thread.
-    static TAKE_APART_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TAKE_APART_PROBES: Cell<usize> = const { Cell::new(0) };
     /// How many calls of the lookups of a component have happened on this thread. The tick counts
     /// the enums that `components` builds the table from. It also counts each call of the one
     /// lookup helper, `member_position`, and not the steps inside it.
-    static MEMBER_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static MEMBER_SCANS: Cell<usize> = const { Cell::new(0) };
 }
 
 impl<'ctx, 'src> Codegen<'ctx, 'src> {
@@ -144,6 +144,7 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             slots: Vec::new(),
             flagged: Vec::new(),
             types: Vec::new(),
+            caller: Cell::new(None),
             blocks: Vec::new(),
         }
     }
@@ -307,6 +308,10 @@ struct Codegen<'ctx, 'src> {
     flagged: Vec<bool>,
     /// The current function's local types, indexed by `LocalId`.
     types: Vec<Type>,
+    /// The location of the caller that the current function got, when the prelude writes it:
+    /// its hidden last parameters, a pointer and a length. A panic in the function reports
+    /// them, so it names the caller's line and not a line of the prelude.
+    caller: Cell<Option<(PointerValue<'ctx>, IntValue<'ctx>)>>,
     /// The current function's blocks, indexed by `BlockId`.
     blocks: Vec<BasicBlock<'ctx>>,
 }
@@ -443,7 +448,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     fn declare(&mut self, f: &mir::Function) {
-        let params: Vec<BasicMetadataTypeEnum<'_>> = f.locals[..f.params]
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
+        let mut params: Vec<BasicMetadataTypeEnum<'_>> = f.locals[..f.params]
             .iter()
             .map(|p| {
                 self.llvm_type(p.ty)
@@ -451,6 +457,11 @@ impl<'ctx> Codegen<'ctx, '_> {
                     .into()
             })
             .collect();
+        // A prelude function takes its caller's location: a pointer and a length.
+        if f.prelude {
+            params.push(ptr_type.into());
+            params.push(self.context.i64_type().into());
+        }
         let fn_type = match self.llvm_type(f.ret) {
             Some(ret) => ret.fn_type(&params, false),
             None => self.context.void_type().fn_type(&params, false),
@@ -513,9 +524,24 @@ impl<'ctx> Codegen<'ctx, '_> {
                 Some((self.entry_alloca(ty, name), ty))
             })
             .collect();
-        for (local, param) in (0..).map(LocalId).zip(function.get_param_iter()) {
+        for (local, param) in (0..f.params).map(LocalId).zip(function.get_param_iter()) {
             self.store(self.slot(local).0, param);
         }
+        self.caller.set(f.prelude.then(|| {
+            let hidden = |at| {
+                function.get_nth_param(
+                    u32::try_from(at).expect("a function should have fewer than 2^32 parameters"),
+                )
+            };
+            (
+                hidden(f.params)
+                    .expect("a prelude function should have its location pointer")
+                    .into_pointer_value(),
+                hidden(f.params + 1)
+                    .expect("a prelude function should have its location length")
+                    .into_int_value(),
+            )
+        }));
         for (&block, data) in self.blocks.iter().zip(&f.blocks) {
             // The blocks an emitter adds go to the end of the function: moving each mir block
             // there before its code keeps the blocks in mir's order, each followed by its own.
@@ -534,6 +560,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             }
             self.terminator(&data.term);
         }
+        self.caller.set(None);
     }
 
     /// The LLVM block of mir block `id`.
@@ -669,9 +696,18 @@ impl<'ctx> Codegen<'ctx, '_> {
                 let (value, ty) = self.operand(op);
                 self.optional_value(ty, value, "value")
             }
-            Rvalue::Call { func, args, .. } => {
-                let args: Vec<BasicMetadataValueEnum<'_>> =
+            Rvalue::Call {
+                func, args, span, ..
+            } => {
+                let mut args: Vec<BasicMetadataValueEnum<'_>> =
                     args.iter().map(|arg| self.operand(arg).0.into()).collect();
+                if self.mir.functions[func.0].prelude {
+                    // The caller's own location when the caller is the prelude's too, and the
+                    // call's when it is the user's.
+                    let (at, at_len) = self.panic_site(*span);
+                    args.push(at.into());
+                    args.push(at_len.into());
+                }
                 return self.call_value(*func, &args);
             }
             Rvalue::New { class, args } => self.new_object(*class, &self.values(args)).into(),
@@ -717,12 +753,6 @@ impl<'ctx> Codegen<'ctx, '_> {
                 self.len(base.into_pointer_value(), ty).into()
             }
             Rvalue::LenWords(op) => self.len_words(self.pointer(op)).into(),
-            Rvalue::Sum { base, span } => {
-                let (array, base_ty) = self.operand(base);
-                let sum = self.sum(ty(), array.into_pointer_value(), *span);
-                self.release(array, base_ty);
-                sum
-            }
             Rvalue::Contains { base, value, .. } => {
                 let (array, base_ty) = self.operand(base);
                 let (needle, needle_ty) = self.operand(value);
@@ -1131,27 +1161,61 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// Panics with `<path>:<line>:<col>: <message>`, for the start of `span`, when `fails`
-    /// holds; see `panic_with`.
+    /// holds; see `panic_with`. In a prelude function the location is its caller's.
     fn panic_if(&self, fails: IntValue<'ctx>, span: Span, message: &str) {
-        let text = format!("{}: {message}", self.location(span));
-        self.panic_with(fails, &text, self.panic, &[]);
+        self.panic_with(fails, |codegen| {
+            if let Some((at, at_len)) = codegen.caller.get() {
+                let (msg, len) = codegen.text(message);
+                (
+                    codegen.panic_message,
+                    vec![at.into(), at_len.into(), msg.into(), len.into()],
+                )
+            } else {
+                let (msg, len) = codegen.text(&format!("{}: {message}", codegen.location(span)));
+                (codegen.panic, vec![msg.into(), len.into()])
+            }
+        });
     }
 
-    /// `<path>:<line>:<col>` for the start of `span`.
+    /// `<path>:<line>:<col>` for the start of `span`, which is in the user's file: a panic in
+    /// the prelude reports the location of its caller.
     fn location(&self, span: Span) -> String {
+        assert!(
+            !span.in_prelude(),
+            "a prelude span should not reach a baked location: the function should report its caller's"
+        );
         let (line, col) = self.lines.line_col(self.source, span.start());
         format!("{}:{line}:{col}", self.path)
     }
 
+    /// A pointer to the bytes of `text`, in a global, and its length. The builder is positioned.
+    fn text(&self, text: &str) -> (PointerValue<'ctx>, IntValue<'ctx>) {
+        let ptr = self
+            .builder
+            .build_global_string_ptr(text, "panic.msg")
+            .expect(POSITIONED);
+        let len = self.context.i64_type().const_int(
+            u64::try_from(text.len()).expect("a text should be shorter than 2^64 bytes"),
+            false,
+        );
+        (ptr.as_pointer_value(), len)
+    }
+
+    /// The location of a panic at `span`: the position text and its length, which a prelude
+    /// function takes from its caller.
+    fn panic_site(&self, span: Span) -> (PointerValue<'ctx>, IntValue<'ctx>) {
+        self.caller
+            .get()
+            .unwrap_or_else(|| self.text(&self.location(span)))
+    }
+
     /// Branches to a fresh panic block when `fails` holds, and continues in a fresh block
-    /// otherwise. The panic block calls `function`, which never returns, with `text` and its
-    /// length, then `extra`.
+    /// otherwise. The panic block calls the function and arguments that `report` gives, which
+    /// never returns.
     fn panic_with(
         &self,
         fails: IntValue<'ctx>,
-        text: &str,
-        function: FunctionValue<'ctx>,
-        extra: &[BasicMetadataValueEnum<'ctx>],
+        report: impl FnOnce(&Self) -> (FunctionValue<'ctx>, Vec<BasicMetadataValueEnum<'ctx>>),
     ) {
         let current = self.current_function();
         let panic_block = self.context.append_basic_block(current, "panic");
@@ -1160,18 +1224,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .build_conditional_branch(fails, panic_block, ok)
             .expect(POSITIONED);
         self.builder.position_at_end(panic_block);
-        let msg = self
-            .builder
-            .build_global_string_ptr(text, "panic.msg")
-            .expect(POSITIONED);
-        let len = self.context.i64_type().const_int(
-            u64::try_from(text.len()).expect("a panic message should be shorter than 2^64 bytes"),
-            false,
-        );
-        let args: Vec<BasicMetadataValueEnum<'_>> = [msg.as_pointer_value().into(), len.into()]
-            .into_iter()
-            .chain(extra.iter().copied())
-            .collect();
+        let (function, args) = report(self);
         self.builder
             .build_call(function, &args, "")
             .expect(POSITIONED);

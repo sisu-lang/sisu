@@ -798,7 +798,6 @@ impl Mono {
             | K::Bytes(operand)
             | K::Words(operand)
             | K::FromChars(operand)
-            | K::Sum(operand)
             | K::Unary { operand, .. }
             | K::Break {
                 value: Some(operand),
@@ -1366,8 +1365,12 @@ mod tests {
                      _ => [x, x].len()\n    }\n}\n\
              fn main() {\n    print(fill([Box(v: 2)], 3))\n}",
         );
-        // `2.min(3)` reaches the prelude's `min`, and no other function of the prelude.
-        assert_eq!(function_names(&program), ["main", "fill<i64>", "i64.min"]);
+        // `[1, 2].sum()` and `2.min(3)` reach the prelude's `sum` and `min`, and no other
+        // function of the prelude.
+        assert_eq!(
+            function_names(&program),
+            ["main", "fill<i64>", "[i64].sum", "i64.min"]
+        );
         assert_eq!(class_names(&program), ["Box<i64>"]);
         let enums: Vec<&str> = program.enums.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(enums, ["Shape"]);

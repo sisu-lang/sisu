@@ -325,7 +325,6 @@ impl Clobbers {
                         | Rvalue::FromChars(_)
                         | Rvalue::Len(_)
                         | Rvalue::LenWords(_)
-                        | Rvalue::Sum { .. }
                         | Rvalue::Contains { .. }
                         | Rvalue::Convert(_)
                         | Rvalue::Math { .. }
@@ -744,7 +743,7 @@ fn rvalue<'a>(
 ) {
     match value {
         // `l = use op` makes `l` own what `op` hands on.
-        Rvalue::Use(op) | Rvalue::Unwrap(op) | Rvalue::Wrap(op) | Rvalue::Sum { base: op, .. } => {
+        Rvalue::Use(op) | Rvalue::Unwrap(op) | Rvalue::Wrap(op) => {
             consumed(op, lowered, f);
         }
         Rvalue::Chars(op)

@@ -2855,6 +2855,7 @@ const GENERIC_LINES: usize = 15;
 /// meet at a call on any instantiation they cover.
 #[test]
 fn generic_extension_should_check_clean() {
+    with_prelude();
     for row in [
         // `Stack<T>` conforms in its body; a block for every `T` is called on two instantiations.
         "extend<T> Stack<T> {\n    fn top(self) -> T? {\n        if self.items.len() == 0 { None } else { self.items[0] }\n    }\n}\nfn main() {\n    print(Stack(items: [1]).top() ?? 0)\n    print(Stack(items: [\"a\"]).top() ?? \"\")\n}",

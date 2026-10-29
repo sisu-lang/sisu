@@ -105,7 +105,6 @@ impl Walk {
             | ExprKind::Bytes(operand)
             | ExprKind::Words(operand)
             | ExprKind::FromChars(operand)
-            | ExprKind::Sum(operand)
             | ExprKind::Unary { operand, .. } => self.walk(operand, open, calls),
             ExprKind::Binary {
                 op: BinaryOp::And | BinaryOp::Or,

@@ -4,9 +4,9 @@
 use std::fmt::Write as _;
 
 use super::super::lower::{self, COUNTERS, DEDUPED, SEEDED};
-use super::super::params::FOLLOWED;
+use super::super::params::{FOLLOWED, VISITED, quiet};
 use super::*;
-use crate::tir::FuncId;
+use crate::tir::{ClassId, FuncId, Program as TirProgram, TypeArgs, TypeKind};
 
 const KEEP: &str = "fn keep(p: [i64]) -> [i64] {\n    let q = p\n    q\n}";
 
@@ -702,4 +702,217 @@ fn written_less_should_borrow_both_operands() {
     assert_eq!(f.matches("= call Circle.less(").count(), 1, "{f}");
     assert!(f.contains("call Circle.less(c2#1, c1#0)"), "{f}");
     assert!(!f.contains("= copy c"), "{f}");
+}
+
+/// `sum` of the prelude loops over `self`, which a `for` reads in place: `self` is borrowed, and
+/// a caller that sums the same array twice copies it nowhere.
+#[test]
+fn the_prelude_sum_should_borrow_its_array() {
+    let printed = built(
+        "fn main() {\n    let xs = [1, 2]\n    print(xs.sum() + xs.sum())\n    print([1.5].sum())\n}",
+    );
+    signature(&printed, "[i64].sum", "fn [i64].sum(self#0: borrow [i64])");
+    signature(&printed, "[f64].sum", "fn [f64].sum(self#0: borrow [f64])");
+    let main = function(&printed, "main");
+    assert!(!main.contains("copy"), "{main}");
+}
+
+/// A function of `name` that does `n = 1`, calls each of `callees` and then runs `extra`: a
+/// prelude function when `prelude`.
+fn quiet_candidate(
+    name: &str,
+    prelude: bool,
+    callees: &[usize],
+    extra: Vec<Statement>,
+) -> Function {
+    let mut b = Builder::new(name);
+    if prelude {
+        b.prelude();
+    }
+    let n = b.local("n", Type::I64);
+    let mut stmts = vec![assign(
+        n,
+        Rvalue::Use(Operand::Const(Const::Int(1, Type::I64))),
+    )];
+    stmts.extend(callees.iter().map(|&func| Statement::Assign {
+        dest: None,
+        value: Rvalue::Call {
+            func: FuncId(func),
+            args: Vec::new(),
+            borrowed: Vec::new(),
+            span: Span::new(0, 0),
+            quiet: false,
+        },
+    }));
+    stmts.extend(extra);
+    b.block(stmts, ret());
+    b.finish()
+}
+
+/// The call flags of `f`, in order.
+fn call_flags(f: &Function) -> Vec<bool> {
+    (f.blocks.iter().flat_map(|block| &block.stmts))
+        .filter_map(|stmt| match stmt {
+            Statement::Assign {
+                value: Rvalue::Call { quiet, .. },
+                ..
+            } => Some(*quiet),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A chain of prelude functions, each calling the next, is `n` components, and a ring of them is
+/// one: both mark every function quiet and visit each statement once. The sizes grow by two, so
+/// a visit that repeats for a component would grow faster than the statements.
+#[test]
+fn quiet_should_visit_each_statement_once() {
+    for n in [20, 40, 80] {
+        let chain = (0..n).map(|i| {
+            let next = if i + 1 < n { vec![i + 1] } else { vec![] };
+            quiet_candidate(&format!("f{i}"), true, &next, Vec::new())
+        });
+        let ring =
+            (0..n).map(|i| quiet_candidate(&format!("f{i}"), true, &[(i + 1) % n], Vec::new()));
+        for (shape, mut functions) in [
+            ("chain", chain.collect::<Vec<_>>()),
+            ("ring", ring.collect::<Vec<_>>()),
+        ] {
+            let statements: usize = functions.iter().map(|f| f.blocks[0].stmts.len()).sum();
+            VISITED.set(0);
+            quiet(&mut functions);
+            assert!(functions.iter().all(|f| f.quiet), "{shape} of {n}");
+            assert!(
+                functions.iter().all(|f| call_flags(f).iter().all(|&q| q)),
+                "{shape} of {n}: each call takes its callee's flag"
+            );
+            assert_eq!(VISITED.get(), statements, "{shape} of {n}");
+        }
+    }
+}
+
+/// A function is quiet when it is the prelude's and holds no clobber but calls of quiet
+/// functions. A user function never is, and a function that calls one that is not, or that is
+/// in a component with one, is not either.
+#[test]
+fn quiet_should_mark_only_prelude_functions_without_a_clobber() {
+    let clobber = || vec![Statement::MakeUnique(whole(LocalId(0)))];
+    // (rows, expected quiet flags of the functions, in order)
+    let rows: [(&str, Vec<Function>, Vec<bool>); 6] = [
+        (
+            "a clobber",
+            vec![quiet_candidate("a", true, &[], clobber())],
+            vec![false],
+        ),
+        (
+            "a caller of a clobber",
+            vec![
+                quiet_candidate("a", true, &[1], Vec::new()),
+                quiet_candidate("b", true, &[], clobber()),
+            ],
+            vec![false, false],
+        ),
+        (
+            "a ring with one clobber",
+            vec![
+                quiet_candidate("a", true, &[1], Vec::new()),
+                quiet_candidate("b", true, &[2], clobber()),
+                quiet_candidate("c", true, &[0], Vec::new()),
+            ],
+            vec![false, false, false],
+        ),
+        (
+            "a user function",
+            vec![
+                quiet_candidate("a", false, &[1], Vec::new()),
+                quiet_candidate("b", true, &[], Vec::new()),
+            ],
+            vec![false, true],
+        ),
+        (
+            "a caller of a user function",
+            vec![
+                quiet_candidate("a", true, &[1], Vec::new()),
+                quiet_candidate("b", false, &[], Vec::new()),
+            ],
+            vec![false, false],
+        ),
+        (
+            "a quiet callee beside a loud one",
+            vec![
+                quiet_candidate("a", true, &[1, 2], Vec::new()),
+                quiet_candidate("b", true, &[], Vec::new()),
+                quiet_candidate("c", true, &[], clobber()),
+            ],
+            vec![false, true, false],
+        ),
+    ];
+    for (row, mut functions, expected) in rows {
+        quiet(&mut functions);
+        let found: Vec<bool> = functions.iter().map(|f| f.quiet).collect();
+        assert_eq!(found, expected, "row `{row}`");
+        let callee = |at: usize| functions[at].quiet;
+        for (at, f) in functions.iter().enumerate() {
+            let calls = call_flags(f);
+            let callees: Vec<usize> = (f.blocks.iter().flat_map(|block| &block.stmts))
+                .filter_map(|stmt| match stmt {
+                    Statement::Assign {
+                        value: Rvalue::Call { func, .. },
+                        ..
+                    } => Some(func.0),
+                    _ => None,
+                })
+                .collect();
+            let wanted: Vec<bool> = callees.into_iter().map(callee).collect();
+            assert_eq!(
+                calls, wanted,
+                "row `{row}`, fn {at}: each call takes its callee's flag"
+            );
+        }
+    }
+}
+
+/// A function whose only clobber the ownership pass adds is not quiet. Lowering never makes
+/// one, for it pairs a counted store with a counted `take`, so the mir is by hand: `s` is stored
+/// into a `mut` field with a `use`, which is no counted store until `place` makes it a move, and
+/// the `take` before it reads into an `i64` local, which is no clobber. `finish` runs `place`
+/// before `quiet`; a `quiet` that ran first would mark `put`.
+#[test]
+fn quiet_should_see_a_clobber_that_the_ownership_pass_adds() {
+    let bag = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE));
+    let put = || {
+        let mut b = Builder::new("put");
+        b.prelude();
+        let this = b.param("bag", bag);
+        let s = b.param("s", Type::STRING);
+        b.borrowed(this);
+        let old = b.local("old", Type::I64);
+        let field = Place {
+            projections: vec![Projection::Field {
+                index: 0,
+                mutable: true,
+            }],
+            ..whole(this)
+        };
+        b.block(
+            vec![
+                Statement::Take {
+                    dest: old,
+                    place: field.clone(),
+                },
+                Statement::Store {
+                    place: field,
+                    value: Operand::Use(s),
+                },
+            ],
+            ret(),
+        );
+        b.finish()
+    };
+    let mut before = [put()];
+    quiet(&mut before);
+    assert!(before[0].quiet, "no clobber before the ownership pass");
+    let mut after = [put()];
+    finish(&mut after, &TirProgram::default());
+    assert!(!after[0].quiet, "the counted store is a clobber after it");
 }

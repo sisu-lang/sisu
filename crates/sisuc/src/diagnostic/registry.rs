@@ -744,7 +744,12 @@ pub(crate) enum DiagnosticKind {
     /// An index into the value at `at`, of type `ty`, which is no array.
     CannotIndex { ty: String, at: Span },
     /// A `sum` at `at` of an array of type `ty`, which is neither `[i64]` nor `[f64]`.
-    SumNeedsNumbers { ty: String, at: Span },
+    SumNeedsNumbers {
+        method: String,
+        ty: String,
+        targets: Vec<String>,
+        at: Span,
+    },
     /// A call at `at` of the method `name` of an array, a number, a class or an enum as a
     /// function, with its `receiver`.
     MethodAsFunction {
@@ -3340,8 +3345,23 @@ impl From<DiagnosticKind> for Diagnostic {
                 Diagnostic::coded(code, at, format!("cannot index `{ty}`"))
                     .with_help("only arrays can be indexed")
             }
-            DiagnosticKind::SumNeedsNumbers { ty, at } => {
-                Diagnostic::coded(code, at, format!("`sum` needs an `[i64]` or an `[f64]`, found `{ty}`"))
+            DiagnosticKind::SumNeedsNumbers {
+                method,
+                ty,
+                targets,
+                at,
+            } => {
+                // "an `[i64]`", "an `[i64]` or an `[f64]`", "an `[i64]`, an `[f64]` or an `[u8]`".
+                let targets: Vec<_> = targets.iter().map(|t| format!("an `{t}`")).collect();
+                let (end, rest) = targets
+                    .split_last()
+                    .expect("the report should name a type that has the method");
+                let targets = if rest.is_empty() {
+                    end.clone()
+                } else {
+                    format!("{} or {end}", rest.join(", "))
+                };
+                Diagnostic::coded(code, at, format!("`{method}` needs {targets}, found `{ty}`"))
             }
             DiagnosticKind::MethodAsFunction {
                 name,

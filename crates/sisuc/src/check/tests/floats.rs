@@ -328,10 +328,11 @@ fn float_constants() {
 
 /// `sum` adds an `[f64]` too, into an `f64`, and the `sum(xs)` idiom points to it.
 #[test]
-fn float_sum() {
+fn sum_of_an_f64_array_should_be_an_f64_and_the_function_form_should_offer_the_method() {
+    with_prelude();
     contains(
         "fn f(xs: [f64]) {\n    let t: f64 = xs.sum()\n    print(t)\n}\nfn main() {}",
-        &["(let t#1 (sum xs#0))"],
+        &["(let t#1 (call [f64].sum xs#0))"],
     );
     let src = "fn f(xs: [f64]) {\n    print(sum(xs))\n}\nfn main() {}";
     let d = diagnostic(src, Code::MethodAsFunction, (2, 11, "sum"), &[]);

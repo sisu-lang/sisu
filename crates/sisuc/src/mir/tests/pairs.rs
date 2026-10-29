@@ -168,6 +168,26 @@ fn copy_across_a_call_that_replaces_a_mut_field_is_kept() {
     assert!(f.contains("t#2 = copy b#0.0"), "{f}");
 }
 
+/// `Bag` has no written method, so the copy `ys` of its `mut` field is read only. Calls of the
+/// prelude's `sum` and `min` are quiet: they replace no field, so the copy is a borrow across
+/// them. A call of a function of the user's is no such call: `zs` stays a copy across `one()`.
+#[test]
+fn copy_should_become_a_borrow_across_a_quiet_prelude_call() {
+    let printed = built(
+        "class Bag {\n    mut items: [i64]\n}\n\
+         fn one() -> i64 { 1 }\n\
+         fn main() {\n    let xs = [1, 2]\n    let b = Bag(items: xs)\n    let ys = b.items\n\
+             let n = [1].sum() + 5.min(ys[0])\n    print(n)\n\
+             let zs = b.items\n    let m = one() + zs[0]\n    print(m)\n}",
+    );
+    has(
+        &printed,
+        "main",
+        &["ys#2 = borrow b#1.0", "call [i64].sum(", "end ys#2"],
+    );
+    has(&printed, "main", &["zs#4 = copy _.0", "call one()"]);
+}
+
 /// Review Focus 1: copy-on-write must still copy, so the copy that is written stays.
 #[test]
 fn copy_of_an_array_that_is_written_is_kept() {

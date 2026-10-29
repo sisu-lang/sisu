@@ -95,7 +95,6 @@ crates/sisuc/src/check/tests/arrays.rs::len_of_an_optional_array
 crates/sisuc/src/check/tests/arrays.rs::len_takes_no_arguments
 crates/sisuc/src/check/tests/arrays.rs::literal_on_u8_array_is_safe
 crates/sisuc/src/check/tests/arrays.rs::literal_out_of_u8_range_is_unsafe
-crates/sisuc/src/check/tests/arrays.rs::method_argument_counts
 crates/sisuc/src/check/tests/arrays.rs::no_argument_is_not_the_idiom
 crates/sisuc/src/check/tests/arrays.rs::non_array_argument_is_not_found
 crates/sisuc/src/check/tests/arrays.rs::only_the_first_none_cannot_be_inferred
@@ -103,10 +102,7 @@ crates/sisuc/src/check/tests/arrays.rs::operands_spill_before_an_exit
 crates/sisuc/src/check/tests/arrays.rs::own_error_poisons
 crates/sisuc/src/check/tests/arrays.rs::poisoned_argument_is_not_found
 crates/sisuc/src/check/tests/arrays.rs::poisoned_operands_and_the_idiom
-crates/sisuc/src/check/tests/arrays.rs::sum_and_contains
-crates/sisuc/src/check/tests/arrays.rs::sum_as_function_is_the_idiom
 crates/sisuc/src/check/tests/arrays.rs::sum_as_function_on_u8_is_not
-crates/sisuc/src/check/tests/arrays.rs::sum_needs_numbers
 crates/sisuc/src/check/tests/arrays.rs::u8_argument_is_safe_and_i64_is_not
 crates/sisuc/src/check/tests/arrays.rs::unknown_element_type
 crates/sisuc/src/check/tests/arrays.rs::unknown_expected_type_is_reported_once
@@ -177,7 +173,6 @@ crates/sisuc/src/check/tests/floats.rs::f64_constants
 crates/sisuc/src/check/tests/floats.rs::float_constants
 crates/sisuc/src/check/tests/floats.rs::float_conversions
 crates/sisuc/src/check/tests/floats.rs::float_never_integer
-crates/sisuc/src/check/tests/floats.rs::float_sum
 crates/sisuc/src/check/tests/floats.rs::int_to_float
 crates/sisuc/src/check/tests/floats.rs::literal_typing
 crates/sisuc/src/check/tests/floats.rs::math_is_a_name_like_any_other
@@ -368,7 +363,6 @@ crates/sisuc/src/check/tests/mod.rs::method_on_i64
 crates/sisuc/src/check/tests/mod.rs::method_read_as_field
 crates/sisuc/src/check/tests/mod.rs::method_through_class_name
 crates/sisuc/src/check/tests/mod.rs::method_with_arguments_read_as_field
-crates/sisuc/src/check/tests/mod.rs::missing_array_method_suggests_the_closest
 crates/sisuc/src/check/tests/mod.rs::missing_binding_suggests_the_closest_open_binding
 crates/sisuc/src/check/tests/mod.rs::missing_constructor_label_suggests_the_closest_field
 crates/sisuc/src/check/tests/mod.rs::missing_field_suggests_the_closest
@@ -572,7 +566,6 @@ crates/sisuc/src/check/tests/shadowing.rs::let_mut_shadows_let
 crates/sisuc/src/check/tests/shadowing.rs::rhs_sees_old_binding
 crates/sisuc/src/check/tests/shadowing.rs::type_can_change
 crates/sisuc/src/check/tests/strings.rs::chain_binds_each_operand
-crates/sisuc/src/check/tests/strings.rs::chars_and_bytes_are_arrays
 crates/sisuc/src/check/tests/strings.rs::compare_spills
 crates/sisuc/src/check/tests/strings.rs::concat_mismatch
 crates/sisuc/src/check/tests/strings.rs::concat_mismatch_layout
@@ -1194,7 +1187,6 @@ crates/sisuc/src/mir/tests/lower.rs::labeled_jumps_release_each_scope_once
 crates/sisuc/src/mir/tests/lower.rs::loop_exits_release_the_body_locals
 crates/sisuc/src/mir/tests/lower.rs::loops_record_their_blocks
 crates/sisuc/src/mir/tests/lower.rs::lowers_chains_and_exits
-crates/sisuc/src/mir/tests/lower.rs::lowers_every_kind_of_node
 crates/sisuc/src/mir/tests/lower.rs::mentions_every_kind_of_node
 crates/sisuc/src/mir/tests/lower.rs::nested_read_copies_the_middle_level
 crates/sisuc/src/mir/tests/lower.rs::operand_read_before_a_later_sibling_assigns
@@ -1206,7 +1198,6 @@ crates/sisuc/src/mir/tests/lower.rs::store_order_value_before_the_root_array
 crates/sisuc/src/mir/tests/lower.rs::straight_line_call_order
 crates/sisuc/src/mir/tests/lower.rs::string_literal_is_a_copy
 crates/sisuc/src/mir/tests/lower.rs::uncounted_operand_read_before_a_later_sibling_assigns
-crates/sisuc/src/mir/tests/lower.rs::unreachable_blocks_finds_a_disconnected_cycle
 crates/sisuc/src/mir/tests/lower.rs::value_loop_writes_one_destination
 crates/sisuc/src/mir/tests/lower.rs::value_operand_jumps_to_another_loop
 crates/sisuc/src/mir/tests/lower.rs::whole_local_reassignment
@@ -1490,22 +1481,9 @@ crates/sisuc/src/source.rs::render_line_clamps_the_end_of_a_text_that_ends_in_a_
 crates/sisuc/src/source.rs::span_offset_past_u32_max_panics
 crates/sisuc/src/source.rs::span_offsets_reach_u32_max
 crates/sisuc/src/symbol.rs::equal_texts_share_a_symbol
-crates/sisuc/src/tir.rs::eprints_to_standard_error
 crates/sisuc/src/tir.rs::exits_finds_a_jump_at_any_depth
-crates/sisuc/src/tir.rs::jumps_print_their_depth_and_value
 crates/sisuc/src/tir.rs::prints_an_enum_type_by_its_id
-crates/sisuc/src/tir.rs::prints_appends
-crates/sisuc/src/tir.rs::prints_char_literals_and_conversions
-crates/sisuc/src/tir.rs::prints_chars_bytes_and_string_from_chars
 crates/sisuc/src/tir.rs::prints_every_binary_operator
-crates/sisuc/src/tir.rs::prints_every_node
-crates/sisuc/src/tir.rs::prints_float_literals
-crates/sisuc/src/tir.rs::prints_functions_joined_by_newline
-crates/sisuc/src/tir.rs::prints_interpolation
-crates/sisuc/src/tir.rs::prints_panic
-crates/sisuc/src/tir.rs::prints_read_line
-crates/sisuc/src/tir.rs::prints_strings
-crates/sisuc/src/tir.rs::prints_words
 crates/sisuc/src/tir.rs::types_print_their_source_names
 crates/sisuc/src/types.rs::constants_are_their_kinds
 crates/sisuc/src/types.rs::equal_structures_share_a_handle

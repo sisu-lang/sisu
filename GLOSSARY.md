@@ -70,13 +70,15 @@ _Avoid_: cast, fallible conversion, `as`
 **Panic**:
 The program stopping at runtime with `sisu: panic at <file>:<line>:<col>:
 <message>` on stderr and exit code 101. A failed write to standard output or
-read from standard input has no location: `sisu: panic: <message>`.
+read from standard input has no location: `sisu: panic: <message>`. A panic in
+a function of the prelude, such as `sum`, names the line of the user's call.
 _Avoid_: trap, crash, abort
 
 **Prelude**:
 The names visible in every file without an import. Most are declared in Sisu,
 in the prelude file the compiler builds into every program.
-The prelude file, `crates/sisuc/src/prelude.sisu`, declares `Option` and `Result`.
+The prelude file, `crates/sisuc/src/prelude.sisu`, declares `Option` and `Result`,
+and it extends `i64` with `min`, `max` and `clamp`, and `[i64]` and `[f64]` with `sum`.
 
 **RC check**:
 A check that a program built with `--rc-checks` makes on its reference

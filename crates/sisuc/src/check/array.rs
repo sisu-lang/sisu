@@ -8,8 +8,9 @@ use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Literal};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
 
-/// The methods of an array, with their parameter counts.
-pub(super) const METHODS: [(&str, usize); 3] = [("len", 0), ("sum", 0), ("contains", 1)];
+/// The methods of an array that the compiler writes, with their parameter counts. The prelude's
+/// `extend` blocks give an array its other methods.
+pub(super) const METHODS: [(&str, usize); 2] = [("len", 0), ("contains", 1)];
 
 impl Checker<'_> {
     /// `[a, b, ...]`. With an expected `[E]` or `[E]?`, each element is checked against `E`.
@@ -255,8 +256,9 @@ impl Checker<'_> {
     }
 
     /// `receiver.method(args)` on `receiver`, an array of type `ty`, written at `at`. The
-    /// `METHODS`: `len()`, `sum()` on an `[i64]` or an `[f64]`, and `contains(x)`, whose argument
-    /// is checked as an element, which has `==` unless its type names a type parameter.
+    /// `METHODS`: `len()`, and `contains(x)`, whose argument is checked as an element, which has
+    /// `==` unless its type names a type parameter. A method that no block of the prelude gives
+    /// `ty`, but one gives another array type, is E0069.
     pub(super) fn array_method(
         &mut self,
         span: Span,
@@ -271,8 +273,19 @@ impl Checker<'_> {
         let name = method.name.as_str();
         let Some(&(_, arity)) = METHODS.iter().find(|(m, _)| *m == name) else {
             let prelude = self.prelude_method_names(ty);
-            let names = METHODS.iter().map(|&(m, _)| m).chain(prelude);
-            let d = no_member(Definition::Method, self.type_name(ty), method, names);
+            let targets = self.prelude_targets(method.name);
+            let d = if !prelude.contains(&name) && !targets.is_empty() {
+                DiagnosticKind::SumNeedsNumbers {
+                    method: name.to_string(),
+                    ty: self.type_name(ty),
+                    targets: targets.into_iter().map(|t| self.type_name(t)).collect(),
+                    at: method.span,
+                }
+                .into()
+            } else {
+                let names = METHODS.iter().map(|&(m, _)| m).chain(prelude);
+                no_member(Definition::Method, self.type_name(ty), method, names)
+            };
             return self.rejected(d, args);
         };
         if args.len() != arity {
@@ -288,17 +301,6 @@ impl Checker<'_> {
             "len" => {
                 let kind = receiver.ok().map(|r| tir::ExprKind::Len(Box::new(r)));
                 typed(span, Type::I64, false, kind)
-            }
-            "sum" if !matches!(element, Type::I64 | Type::F64) => {
-                let d = DiagnosticKind::SumNeedsNumbers {
-                    ty: self.type_name(ty),
-                    at: method.span,
-                };
-                self.rejected(d.into(), args)
-            }
-            "sum" => {
-                let kind = receiver.ok().map(|r| tir::ExprKind::Sum(Box::new(r)));
-                typed(span, element, false, kind)
             }
             _ if self.operation(element, self.lang.eq) == Operation::Missing => {
                 // The report goes before the labels and the argument's own, which it waits for.

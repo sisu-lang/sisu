@@ -222,7 +222,15 @@ mod tests {
         // ones that nothing calls.
         assert_eq!(
             names(checked(src).0),
-            ["id", "main", "i64.min", "i64.max", "i64.clamp"]
+            [
+                "id",
+                "main",
+                "i64.min",
+                "i64.max",
+                "i64.clamp",
+                "[i64].sum",
+                "[f64].sum"
+            ]
         );
         assert_eq!(names(front_end(src).0), ["main", "id<i64>"]);
     }

@@ -29,3 +29,27 @@ extend i64 {
         self.max(lo).min(hi)
     }
 }
+
+// The sum of an `[i64]`: the elements added in order from `0`. An overflow panics at the
+// caller's `.sum()`.
+extend [i64] {
+    fn sum(self) -> i64 {
+        let mut total = 0
+        for x in self {
+            total += x
+        }
+        total
+    }
+}
+
+// The sum of an `[f64]`: the elements added in order from `0.0`, so an empty array sums to
+// `0.0`.
+extend [f64] {
+    fn sum(self) -> f64 {
+        let mut total = 0.0
+        for x in self {
+            total += x
+        }
+        total
+    }
+}

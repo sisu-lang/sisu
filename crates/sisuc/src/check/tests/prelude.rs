@@ -609,3 +609,31 @@ fn an_i64_method_of_the_prelude_should_keep_its_suggestion_and_call_count_code()
         );
     }
 }
+
+/// The `sum` of `[i64]` and `[f64]` is the prelude's: a misspelled name suggests it, a wrong
+/// count of arguments is the general call-count code, and an array that no block covers is E0069,
+/// whatever the array holds.
+#[test]
+fn an_array_sum_of_the_prelude_should_keep_its_suggestion_and_codes() {
+    with_prelude();
+    for (params, written) in [("xs: [i64]", "summ"), ("xs: [f64]", "sm")] {
+        let src = body(params, &format!("let _ = xs.{written}()"));
+        suggests(&src, Code::NoMember, (2, 16, written), "sum");
+    }
+    codes(
+        &body("xs: [i64]", "let _ = xs.sum(1)"),
+        &[(Code::ArgumentCount, (2, 13))],
+    );
+    for params in ["xs: [string]", "xs: [bool]", "xs: [[i64]]", "xs: [i64?]"] {
+        codes_row(
+            params,
+            &body(params, "let _ = xs.sum()"),
+            &[(Code::SumNeedsNumbers, (2, 16))],
+        );
+    }
+    // A type parameter is no `i64` or `f64`.
+    codes(
+        "fn f<T>(xs: [T]) {\n    let _ = xs.sum()\n}\nfn main() {}",
+        &[(Code::SumNeedsNumbers, (2, 16))],
+    );
+}

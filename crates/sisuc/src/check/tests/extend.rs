@@ -42,14 +42,15 @@ fn a_prelude_extend_of_a_built_in_type_should_answer_a_call_on_a_covered_receive
 }
 
 /// A receiver that no block's target covers finds only the methods of the blocks that do: a
-/// `[string]` has `last_or` of `[T]` and not `total` of `[i64]`.
+/// `[string]` has `last_or` of `[T]` and not `total` of `[i64]`. A method that only other array
+/// targets give is E0069, which names those targets.
 #[test]
 fn a_call_on_an_array_should_find_only_the_methods_of_blocks_that_cover_it() {
     for (expr, expected) in [
         ("[\"x\"].last_or(\"y\")", vec![]),
-        ("[\"x\"].total()", vec![(Code::NoMember, (2, 19))]),
-        ("[true].total()", vec![(Code::NoMember, (2, 20))]),
-        ("[[1]].total()", vec![(Code::NoMember, (2, 19))]),
+        ("[\"x\"].total()", vec![(Code::SumNeedsNumbers, (2, 19))]),
+        ("[true].total()", vec![(Code::SumNeedsNumbers, (2, 20))]),
+        ("[[1]].total()", vec![(Code::SumNeedsNumbers, (2, 19))]),
         ("5.last_or(1)", vec![(Code::NoMember, (2, 15))]),
         ("1.5.twice()", vec![(Code::NoMember, (2, 17))]),
     ] {

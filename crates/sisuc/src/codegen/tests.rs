@@ -25,7 +25,13 @@ fn compiled_from<'ctx>(
     rc_checks: bool,
     edit: impl FnOnce(&mut mir::Program),
 ) -> Module<'ctx> {
-    compiled_over(context, "", src, rc_checks, edit)
+    compiled_over(
+        context,
+        crate::front_end::PRELUDE_SOURCE,
+        src,
+        rc_checks,
+        edit,
+    )
 }
 
 /// `compiled_from` over the prelude `prelude`, which the program may call.
@@ -1279,6 +1285,8 @@ fn print_after_move() -> mir::Function {
                     func: FuncId(0),
                     args: vec![mir::Operand::Move(s)],
                     borrowed: vec![false],
+                    span: Span::new(0, 0),
+                    quiet: false,
                 },
             ),
             assign(
@@ -1359,6 +1367,8 @@ fn assert_root_read_faults(
                 func,
                 borrowed: vec![false; args.len()],
                 args,
+                span: Span::new(0, 0),
+                quiet: false,
             },
         };
         let mut b = mir::tests::Builder::new("main");
@@ -1371,6 +1381,8 @@ fn assert_root_read_faults(
                     func: func(make),
                     args: Vec::new(),
                     borrowed: Vec::new(),
+                    span: Span::new(0, 0),
+                    quiet: false,
                 },
             },
             call(func(take), vec![mir::Operand::Move(r)]),
@@ -2765,6 +2777,60 @@ fn integer_min_max_clamp_should_be_smin_and_smax_at_o2() {
     for body in [lo, hi, both] {
         assert!(!body.contains("@sisu.i64."), "{body}");
     }
+}
+
+/// A prelude function takes its caller's location as two hidden last parameters, a pointer and a
+/// length. Its overflow check and its bounds check pass them to the runtime, and a call from the
+/// user's `main` passes the location of the call.
+#[test]
+fn a_prelude_function_should_report_the_location_it_got_from_its_caller() {
+    let context = Context::create();
+    let module = compiled(&context, "fn main() {\n    print([1, 2].sum())\n}");
+    let ir = module.print_to_string().to_string();
+    let header = "define internal i64 @\"sisu.[i64].sum\"(";
+    let (_, rest) = ir
+        .split_once(header)
+        .unwrap_or_else(|| panic!("no {header} in\n{ir}"));
+    let (params, _) = rest.split_once(')').expect("the header should close");
+    let names: Vec<&str> = params
+        .split(", ")
+        .map(|param| param.rsplit(' ').next().expect("a parameter has a name"))
+        .collect();
+    let [_, at, at_len] = names[..] else {
+        panic!("`sum` should take its array and the location: {params}");
+    };
+    assert!(params.contains("ptr") && params.contains("i64"), "{params}");
+    let sum = function_body(&ir, header);
+    let overflow = format!("call void @sisu_panic_message(ptr {at}, i64 {at_len}, ptr @panic.msg");
+    assert!(sum.contains(&overflow), "{overflow} in\n{sum}");
+    let bounds = format!("call void @sisu_panic_bounds(ptr {at}, i64 {at_len}, i64 ");
+    assert!(sum.contains(&bounds), "{bounds} in\n{sum}");
+    // The call starts at the `[` on line 2, column 11 of the source.
+    let location = "test.sisu:2:11";
+    let constant = format!("c\"{location}\\00\"");
+    let global = ir
+        .lines()
+        .find(|l| l.contains(&format!("{constant},")))
+        .and_then(|l| l.split(" = ").next())
+        .unwrap_or_else(|| panic!("no constant {constant} in\n{ir}"));
+    let main = function_body(&ir, "define internal void @sisu.main(");
+    let call = format!(", ptr {global}, i64 {})", location.len());
+    assert!(
+        main.contains("call i64 @\"sisu.[i64].sum\"(ptr ") && main.contains(&call),
+        "{call} in\n{main}"
+    );
+}
+
+/// At `-O2` the inliner removes the call of `sum` and its location parameters.
+#[test]
+fn sum_should_be_inlined_at_o2() {
+    let context = Context::create();
+    let module = compiled(&context, "fn main() {\n    print([1, 2].sum())\n}");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    assert!(!ir.contains("[i64].sum"), "{ir}");
+    assert!(!ir.contains("sisu_panic_message"), "{ir}");
 }
 
 /// A swap in a loop, as quicksort's partition does it, makes its array unique once: `-O2` keeps

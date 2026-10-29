@@ -205,7 +205,6 @@ impl Printer<'_> {
             Rvalue::FromChars(operand) => format!("string {}", self.operand(operand)),
             Rvalue::Len(operand) => format!("len {}", self.operand(operand)),
             Rvalue::LenWords(operand) => format!("len_words {}", self.operand(operand)),
-            Rvalue::Sum { base, .. } => format!("sum {}", self.operand(base)),
             Rvalue::Contains { base, value, calls } => flagged(
                 format!("contains({}, {})", self.operand(base), self.operand(value)),
                 *calls,

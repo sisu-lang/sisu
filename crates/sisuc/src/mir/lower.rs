@@ -248,6 +248,8 @@ impl<'a> Lowering<'a> {
             params: f.params.len(),
             borrowed: vec![false; f.params.len()],
             ret: f.ret,
+            prelude: f.prelude,
+            quiet: false,
             locals: lowering.locals,
             blocks: lowering.blocks,
             loops: lowering.loops,
@@ -690,6 +692,8 @@ impl<'a> Lowering<'a> {
                 func: *func,
                 args: self.operands(&args.iter().collect::<Vec<_>>())?,
                 borrowed: vec![false; args.len()],
+                span: e.span,
+                quiet: false,
             },
             ExprKind::InterfaceCall { .. } => {
                 panic!("mono should replace every interface call")
@@ -792,10 +796,6 @@ impl<'a> Lowering<'a> {
             ExprKind::Bytes(base) => return self.borrowing(e, base, dest, Rvalue::Bytes),
             ExprKind::Words(base) => return self.borrowing(e, base, dest, Rvalue::Words),
             ExprKind::FromChars(base) => return self.borrowing(e, base, dest, Rvalue::FromChars),
-            ExprKind::Sum(base) => Rvalue::Sum {
-                base: self.operand(base)?,
-                span: e.span,
-            },
             ExprKind::Contains { base, value } => {
                 let element = (base.ty.array_element()).expect("`contains` should take an array");
                 let calls = self.calls_eq(element);
@@ -1339,7 +1339,6 @@ fn leaves_locals(expr: &Expr) -> bool {
         | ExprKind::Bytes(_)
         | ExprKind::Words(_)
         | ExprKind::FromChars(_)
-        | ExprKind::Sum(_)
         | ExprKind::Contains { .. }
         | ExprKind::Math { .. }
         | ExprKind::Interpolate { .. }
@@ -1484,7 +1483,6 @@ fn expr_mentions(e: &Expr, found: &mut Mentions) {
         | ExprKind::Bytes(operand)
         | ExprKind::Words(operand)
         | ExprKind::FromChars(operand)
-        | ExprKind::Sum(operand)
         | ExprKind::Wrap(operand)
         | ExprKind::Convert(operand)
         | ExprKind::Print { operand, .. }

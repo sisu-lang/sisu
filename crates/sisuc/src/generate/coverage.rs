@@ -90,13 +90,12 @@ const EXCLUDED: [(&str, &str); 15] = [
 
 /// The receivers of the built-in methods `check/number.rs` does not list, by their typed
 /// tree's variant.
-const RECEIVERS: [(&str, &[&str]); 7] = [
+const RECEIVERS: [(&str, &[&str]); 6] = [
     ("tir::ExprKind::Len", &["String", "Array"]),
     ("tir::ExprKind::Chars", &["String"]),
     ("tir::ExprKind::Bytes", &["String"]),
     ("tir::ExprKind::Words", &["String"]),
     ("tir::ExprKind::FromChars", &["Array"]),
-    ("tir::ExprKind::Sum", &["Array"]),
     ("tir::ExprKind::Contains", &["Array"]),
 ];
 
@@ -2343,7 +2342,6 @@ impl Walk {
             tir::ExprKind::FromChars(base) => {
                 self.receiver_call("tir::ExprKind::FromChars", base);
             }
-            tir::ExprKind::Sum(base) => self.receiver_call("tir::ExprKind::Sum", base),
             tir::ExprKind::Contains { base, value } => {
                 self.receiver_call("tir::ExprKind::Contains", base);
                 if matches!(base.ty.kind(), TypeKind::Array(element) if element.has_param()) {
@@ -5219,8 +5217,9 @@ fn bound(name: Option<&str>) -> bool {
 }
 
 /// The prelude's functions that have no effect and cannot panic, so that a call of one with pure
-/// arguments is pure: `i64`'s `min`, `max` and `clamp`, which `Math` nodes were.
-const PURE_PRELUDE: [&str; 3] = ["i64.min", "i64.max", "i64.clamp"];
+/// arguments is pure: `i64`'s `min`, `max` and `clamp`, and the `sum` of an `[f64]`, which
+/// `Math` and `Sum` nodes were. The `sum` of an `[i64]` may overflow.
+const PURE_PRELUDE: [&str; 4] = ["i64.min", "i64.max", "i64.clamp", "[f64].sum"];
 
 /// For each function of `program`: whether a call of it is pure, if its arguments are.
 fn pure_calls(program: &tir::Program) -> Vec<bool> {
@@ -5404,7 +5403,6 @@ impl<'f> Lets<'f> {
             | tir::ExprKind::Bytes(x)
             | tir::ExprKind::Words(x)
             | tir::ExprKind::FromChars(x)
-            | tir::ExprKind::Sum(x)
             | tir::ExprKind::Unary { operand: x, .. } => self.expr(x),
             tir::ExprKind::ArrayFill { value: a, len: b }
             | tir::ExprKind::Index { base: a, index: b }
@@ -5506,9 +5504,7 @@ impl<'f> Lets<'f> {
             | tir::ExprKind::Break { .. }
             | tir::ExprKind::Continue { .. }
             | tir::ExprKind::Return(_) => false,
-            // An `i64` sum may overflow, and so may an `i64` negation or arithmetic whose value
-            // is not known.
-            tir::ExprKind::Sum(x) => !int && self.pure(x, reads),
+            // An `i64` negation or arithmetic whose value is not known may overflow.
             tir::ExprKind::Unary { op, operand } => {
                 (!int || *op == tir::UnaryOp::Not || self.value(e).is_some())
                     && self.pure(operand, reads)

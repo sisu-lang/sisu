@@ -146,7 +146,8 @@ The rules:
 
 - `len` is a method, so write `xs.len()`. `xs.len` is an error ([E0057](../diagnostics/E0057.md)), and so is `len(xs)` ([E0070](../diagnostics/E0070.md)).
 - `sum` takes only an `[i64]` or an `[f64]` ([E0069](../diagnostics/E0069.md)). It adds the elements in order, and the sum of an empty array is zero.
-- On an `[i64]`, a sum outside the range of `i64` stops the program with a panic ([Overflow](operators.md#overflow)).
+- The prelude writes `sum` in Sisu, in an `extend [i64]` block and an `extend [f64]` block. The compiler writes `len` and `contains`. A program cannot write an `extend` block for an array: only the prelude can.
+- On an `[i64]`, a sum outside the range of `i64` stops the program with a panic ([Overflow](operators.md#overflow)). The panic names the line of the `.sum()` call, not a line of the prelude.
 - The argument of `contains` has the element type ([E0032](../diagnostics/E0032.md)). So `None` is valid only when the elements are optional.
 - `contains` needs `==` on the element type, so an array of objects has it only when the class conforms to `Eq` ([E0159](../diagnostics/E0159.md)).
 - `contains` uses `==`, so `contains(f64.nan)` is always `false` ([Types](types.md#floating-point-numbers)).

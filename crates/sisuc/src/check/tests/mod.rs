@@ -4044,7 +4044,8 @@ fn missing_method_suggests_the_closest() {
 }
 
 #[test]
-fn missing_array_method_suggests_the_closest() {
+fn a_missing_array_method_should_suggest_the_closest_name() {
+    with_prelude();
     for (name, candidate) in [("lenn", "len"), ("sm", "sum"), ("contain", "contains")] {
         let src = format!("fn main() {{\n    let xs = [1, 2]\n    print(xs.{name}(1))\n}}");
         suggests(&src, Code::NoMember, (3, 14, name), candidate);

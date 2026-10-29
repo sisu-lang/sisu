@@ -6,7 +6,7 @@ use super::expr::{if_some, local, no_member, path};
 use super::extend::holder_of;
 use super::generic::{Site, named_params};
 use super::unused_names::Used;
-use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, type_of, wrap};
+use super::{Checked, Checker, Declared, Holder, Poisoned, UNKNOWN, as_optional, type_of, wrap};
 use crate::ast;
 use crate::diagnostic::{Annotate, Definition, Diagnostic, DiagnosticKind, Peel};
 use crate::source::Span;
@@ -202,9 +202,9 @@ impl Checker<'_> {
     pub(super) fn own_method(&self, ty: Type, name: Symbol) -> Option<Declared<tir::FuncId>> {
         let holder = holder_of(ty)?;
         let body = match holder {
-            super::Holder::Class(c) => self.classes[c.0].methods.get(&name),
-            super::Holder::Enum(e) => self.enums[e.0].methods.get(&name),
-            super::Holder::Array | super::Holder::I64 => None,
+            Holder::Class(c) => self.classes[c.0].methods.get(&name),
+            Holder::Enum(e) => self.enums[e.0].methods.get(&name),
+            Holder::Array | Holder::I64 => None,
         };
         if let Some(&body) = body {
             return Some(body);
@@ -424,6 +424,17 @@ impl Checker<'_> {
         names.sort_unstable();
         names.dedup();
         names
+    }
+
+    /// The array types that the prelude's `extend` blocks give a method `name`, in source order:
+    /// what a receiver needs to have it.
+    pub(super) fn prelude_targets(&self, name: Symbol) -> Vec<Type> {
+        let mut targets: Vec<Type> = (self.builtin_methods.iter())
+            .filter(|&&(holder, method, _)| holder == Holder::Array && method == name)
+            .map(|&(_, _, at)| self.extensions[at].target)
+            .collect();
+        targets.dedup();
+        targets
     }
 
     /// Whether the bounds of the block of the method `func`, which a plain block gives or the

@@ -1,14 +1,19 @@
-// GIVEN `min`, `max` and `clamp` on `i64`, which the prelude writes
+// GIVEN `min`, `max` and `clamp` on `i64`, and `sum` on `[i64]` and `[f64]`, which the prelude
+// writes
 // AND `min`, `max` and `clamp` on `f64`, which stay built in
 // WHEN `main` calls each `i64` method on literals, on the extremes of `i64` and on values that
 // `-O2` cannot fold
 // AND it calls `clamp` with `lo` above `hi`, and with operands that print when they run
+// AND it calls `sum` on an `[i64]`, on an `[f64]`, on an empty `[f64]` and on `[0.1, 0.2, 0.3]`
 // AND it calls each `f64` method on zeros of both signs and on a NaN
 // THEN each `i64` method gives the smaller, the larger or the clamped value, and `clamp` gives
 // `hi` when `lo` is above it
 // AND the operands of `clamp` run in order, receiver first
 // AND each `f64` method gives what IEEE 754 says: a NaN operand gives the other operand and
 // `-0.0` is below `0.0`
+// AND `sum` adds the elements in order, an empty `[f64]` sums to `0.0`, not `-0.0`, and the
+// additions of `[0.1, 0.2, 0.3]` give `0.6000000000000001`, which another order would not
+// AND `sum` leaves the array it reads alive
 // o2-calls: main same_int 2
 fn same_int(n: i64, depth: i64) -> i64 {
     if depth == 0 { n } else { -same_int(-n, depth - 1) }
@@ -61,4 +66,17 @@ fn main() {
     print(f64.nan.min(2.0))             // 2.0
     print(2.0.max(f64.nan))             // 2.0
     print(f64.nan.clamp(0.0, 1.0))      // 0.0
+
+    // `sum` on `[i64]` and `[f64]`.
+    let ints = [1, 2, 3]
+    print(ints.sum())                   // 6
+    print(ints.sum() + ints.sum())      // 12: the array stays alive after a call
+    let none: [i64] = []
+    print(none.sum())                   // 0
+    let floats = [0.5, 1.25]
+    print(floats.sum())                 // 1.75
+    let no_floats: [f64] = []
+    print(no_floats.sum())              // 0.0: not -0.0
+    print([-0.0].sum())                 // 0.0: the sum starts at 0.0, and 0.0 + -0.0 is 0.0
+    print([0.1, 0.2, 0.3].sum())        // 0.6000000000000001: (0.1 + 0.2) + 0.3
 }

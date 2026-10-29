@@ -1745,7 +1745,7 @@ impl Checker<'_> {
     ) -> Option<tir::Function> {
         let sig = &self.signatures[id.0];
         let (name, param_types, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
-        let conformance = sig.conformance;
+        let (conformance, prelude) = (sig.conformance, sig.span.in_prelude());
         // The parameters of a method's owner: its class's, or its `extend` block's.
         let owner_params = sig.type_params.len() - sig.own;
         let mut fresh = Body {
@@ -1837,6 +1837,7 @@ impl Checker<'_> {
             method: owner.map(|_| f.name.name.to_string()),
             type_params,
             owner_params,
+            prelude,
             params,
             ret: ret?,
             locals,
