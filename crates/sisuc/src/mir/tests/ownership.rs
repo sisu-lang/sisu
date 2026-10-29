@@ -30,6 +30,30 @@ fn assign_from_own_call() {
     has(&printed, "f", &["= move x#0"]);
 }
 
+/// `dbg(s)` of a `string` that is used afterwards reads a copy into its result, which `dbg` reads
+/// in place. At the last use of `s`, the result takes `s` itself, with no copy.
+#[test]
+fn dbg_should_copy_a_string_used_afterwards_and_move_it_at_its_last_use() {
+    let printed = built(
+        "fn keep(s: string) -> string {\n    let t = s\n    t\n}\nfn f(s: string) -> string {\n    let a = dbg(s)\n    keep(s) + a\n}\nfn g(s: string) -> string {\n    dbg(s)\n}",
+    );
+    has(
+        &printed,
+        "f",
+        &[
+            "a#1 = copy s#0",
+            "call dbg(a#1, \"s\")",
+            "call keep(move s#0)",
+        ],
+    );
+    has(
+        &printed,
+        "g",
+        &["_ = move s#0", "call dbg(_, \"s\")", "return move _"],
+    );
+    assert!(!function(&printed, "g").contains("copy"), "{printed}");
+}
+
 #[test]
 fn two_reads_in_one_call() {
     let printed =

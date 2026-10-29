@@ -5,7 +5,6 @@
 //! and all three the same way; property 4 is that the rewritten copy runs as the program does;
 //! property 5 is that the program prints the known integer answers.
 
-use std::borrow::Cow;
 use std::cell::RefCell;
 use std::fmt::Write as _;
 use std::fs::{self, File};
@@ -438,9 +437,10 @@ fn judge_pair(program: &Run, rewritten: &Run) -> Result<(), Failure> {
 /// The prefix of the runtime's panic line, before its `<file>:<line>:<col>: <message>`.
 const PANIC: &str = "sisu: panic at ";
 
-/// `run`'s stderr, with the `<file>:<line>:<col>: ` of a panic's line taken out: only from the
-/// last line, and only when the run exited 101, so any other line compares as written.
-fn unlocated(run: &Run) -> Cow<'_, [u8]> {
+/// `run`'s stderr, with the `<file>:<line>:<col>: ` taken out of the line of each `dbg` and of a
+/// panic. The panic's is only from the last line, and only when the run exited 101. Any other
+/// line compares as written.
+fn unlocated(run: &Run) -> Vec<u8> {
     let stderr = &run.stderr;
     let body = stderr.strip_suffix(b"\n").unwrap_or(stderr);
     let last = body
@@ -452,11 +452,44 @@ fn unlocated(run: &Run) -> Cow<'_, [u8]> {
         .starts_with(PANIC.as_bytes())
         .then(|| body[after..].windows(2).position(|pair| pair == b": "))
         .flatten();
-    match location {
+    let panic = match location {
         Some(end) if run.exit == Exit::Code(101) => {
-            Cow::Owned([&stderr[..after], &stderr[after + end + 2..]].concat())
+            [&stderr[..after], &stderr[after + end + 2..]].concat()
         }
-        _ => Cow::Borrowed(stderr),
+        _ => stderr.clone(),
+    };
+    panic
+        .split_inclusive(|&b| b == b'\n')
+        .flat_map(|line| &line[dbg_location(line)..])
+        .copied()
+        .collect()
+}
+
+/// The length of the `<file>.sisu:<line>:<col>: ` that starts `line` when `dbg` wrote it, else 0.
+/// The file name holds no space, so a panic's line or a line of text that `eprint` wrote does not
+/// start with one. A generated program's text holds no `:`.
+fn dbg_location(line: &[u8]) -> usize {
+    let digits = |from: usize| {
+        line.get(from..)
+            .unwrap_or_default()
+            .iter()
+            .take_while(|b| b.is_ascii_digit())
+            .count()
+    };
+    let Some(name) = line.windows(6).position(|window| window == b".sisu:") else {
+        return 0;
+    };
+    if line[..name].iter().any(u8::is_ascii_whitespace) {
+        return 0;
+    }
+    let row = name + 6;
+    let col = row + digits(row) + 1;
+    let end = col + digits(col);
+    let well_formed = digits(row) > 0 && line.get(col - 1) == Some(&b':') && digits(col) > 0;
+    if well_formed && line[end..].starts_with(b": ") {
+        end + 2
+    } else {
+        0
     }
 }
 
@@ -539,6 +572,7 @@ mod tests {
     use std::time::Duration;
     use std::{env, fs, thread};
 
+    use super::dbg_location;
     use super::{
         Answer, BUILDS, Exit, FORCE, Force, Known, LIMIT, Run, build, builds, checked, judge,
         judge_builds, judge_known, judge_pair, judge_source, program, program_in, run,
@@ -839,6 +873,65 @@ mod tests {
         assert_eq!(pair(&program, &rewritten), 0);
     }
 
+    /// Property 4: the line of a `dbg` loses its `<file>:<line>:<col>: `, in every line and in
+    /// both files; its text and its value still compare.
+    #[test]
+    fn pair_should_ignore_dbg_locations_and_compare_the_rest() {
+        let at = |file: &str, place: &str, text: &str| {
+            format!("{file}.sisu:{place}: {text} = 1\nplain\n")
+        };
+        let program = ran(
+            0,
+            "",
+            &(at("program", "3:5", "f(x)") + &at("program", "4:9", "y")),
+        );
+        let moved = ran(
+            0,
+            "",
+            &(at("rewritten", "13:25", "f(x)") + &at("rewritten", "9:1", "y")),
+        );
+        assert_eq!(pair(&program, &moved), 0);
+        let text = ran(
+            0,
+            "",
+            &(at("rewritten", "13:25", "g(x)") + &at("rewritten", "9:1", "y")),
+        );
+        assert_eq!(pair(&program, &text), 4, "the source text of a `dbg`");
+        let value = ran(
+            0,
+            "",
+            &(at("rewritten", "13:25", "f(x)") + &at("rewritten", "9:1", "y"))
+                .replace("= 1", "= 2"),
+        );
+        assert_eq!(pair(&program, &value), 4, "the value of a `dbg`");
+    }
+
+    /// A line is a `dbg` line only when it starts with a `.sisu` file name, a line and a column,
+    /// and `: `. Any other line compares as written, an `eprint` of the same shape included.
+    #[test]
+    fn dbg_location_should_take_only_the_prefix_of_a_dbg_line() {
+        for (line, length) in [
+            ("program.sisu:3:5: f(x) = 1", 18),
+            ("a.sisu:10:200: x = 1\n", 15),
+            ("program.sisu:3:5 f(x) = 1", 0),
+            ("program.sisu:3: f(x) = 1", 0),
+            ("program.sisu::5: f(x) = 1", 0),
+            ("program.sisu:3:: f(x) = 1", 0),
+            ("a b.sisu:3:5: x = 1", 0),
+            ("sisu: panic at program.sisu:3:5: overflow", 0),
+            ("plain", 0),
+            ("", 0),
+            ("program.sisu:3", 0),
+            ("a.sisu:", 0),
+            ("x.sisu:3:", 0),
+            ("x.sisu:3:5", 0),
+            ("x.sisu:3:5:", 0),
+            ("x.sisu:3:5: ", 12),
+        ] {
+            assert_eq!(dbg_location(line.as_bytes()), length, "{line:?}");
+        }
+    }
+
     #[test]
     fn pair_rejects_a_different_panic_message() {
         let program = ran(101, "", "sisu: panic at input.sisu:3:5: integer overflow\n");
@@ -1042,6 +1135,31 @@ mod tests {
             "{}",
             g.program
         );
+    }
+
+    /// Seed 2950's program runs `dbg` eight times, and a rewrite moves some of its lines. The
+    /// lines of the two runs differ as written. Property 4 holds when `unlocated` takes the
+    /// `<file>:<line>:<col>: ` off each. The text and the value of each line are the same, since
+    /// no rewrite changes the argument of a `dbg`.
+    #[test]
+    fn a_seed_with_dbg_should_keep_property_4_across_its_rewrites() {
+        let g = generate(&seed(2950));
+        let copy = Generated {
+            program: g.rewritten.clone(),
+            ..generate(&seed(2950))
+        };
+        let (program, rewritten) = (o0_run(&g), o0_run(&copy));
+        let lines = program
+            .stderr
+            .split(|&b| b == b'\n')
+            .filter(|line| dbg_location(line) > 0)
+            .count();
+        assert_eq!(lines, 8, "{}", g.program);
+        assert_ne!(
+            program.stderr, rewritten.stderr,
+            "a rewrite should move a line"
+        );
+        assert_eq!(pair(&program, &rewritten), 0);
     }
 
     /// How many of `g`'s known answers are panics.

@@ -1,0 +1,27 @@
+// GIVEN an `Owner` whose `mut` field holds the only reference to an `Inner`, and an `Inner`
+//       whose written `to_string` clears that field
+// WHEN `main` passes the `Owner` through `dbg`
+// THEN `dbg` writes `Owner(item: inner)`: it holds the `Inner` while its `to_string` runs
+// AND standard output holds `7`, which the `to_string` prints
+// AND no read of freed memory happens, and nothing leaks
+class Owner {
+    mut item: Inner?
+}
+
+class Inner {
+    owner: Owner
+    n: i64
+    fn to_string(self) -> string {
+        self.owner.item = None
+        print(self.n)
+        "inner"
+    }
+}
+
+fn main() {
+    let o = Owner(item: None)
+    o.item = Inner(owner: o, n: 7)
+    // The field is read here only so that it is not unused: a `dbg` does not count as a read.
+    let _ = o.item == None
+    dbg(o)
+}

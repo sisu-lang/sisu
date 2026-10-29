@@ -39,6 +39,7 @@ use self::array::element_of;
 use self::enums::{Component, EnumLayout};
 use self::layout::{ClassLayout, HeapBlock, tbaa_tag};
 use self::rc::Helper;
+use crate::conformance::Written;
 use crate::mir::{
     self, BlockId, Const, Operand, Place, Projection, Rvalue, Side, Statement, Terminator,
 };
@@ -131,6 +132,8 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             components: enums::components(&program.enums),
             helpers: RefCell::new(FxHashMap::default()),
             pending: RefCell::new(Vec::new()),
+            written: RefCell::new(Written::default()),
+            class_held: RefCell::new(FxHashMap::default()),
             target_data,
             path,
             source,
@@ -279,6 +282,10 @@ struct Codegen<'ctx, 'src> {
     helpers: RefCell<FxHashMap<(Helper, Type), FunctionValue<'ctx>>>,
     /// The helpers declared but not yet defined; `define_helpers` empties it.
     pending: RefCell<Vec<(Helper, Type)>>,
+    /// The types whose `Display` helper reaches a written `to_string`, settled so far.
+    written: RefCell<Written>,
+    /// The types that hold a class, settled so far; see `show::holds_class`.
+    class_held: RefCell<FxHashMap<Type, bool>>,
     /// The target's layout: the sizes and alignments of classes.
     target_data: TargetData,
     /// The input path as given, and its text: panic messages name a position in it.
@@ -790,6 +797,13 @@ impl<'ctx> Codegen<'ctx, '_> {
             } => {
                 let (value, ty) = self.operand(operand);
                 self.print(*stream, ty, value);
+                return None;
+            }
+            Rvalue::Dbg {
+                at, text, operand, ..
+            } => {
+                let (value, ty) = self.operand(operand);
+                self.dbg(*at, text, ty, value);
                 return None;
             }
         };

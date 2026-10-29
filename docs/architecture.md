@@ -392,7 +392,9 @@ sink in `show.rs`: generated `sisu_show.<type>` helpers call `sisu_show_int`,
 `sisu_show_str`, `sisu_show_quoted`, `sisu_show_open`, `sisu_show_sep`,
 `sisu_show_close` and the other `sisu_show_*` functions. One sink writes into
 the buffer of standard output, and another builds the block that becomes a
-string. The `sisu_print_*` functions write into a buffer that the runtime owns,
+string. `sisu_show_pretty` starts a pretty sink over one of them, for
+`{x:#}` and `dbg`: it records the text, and `sisu_show_pretty_finish` lays
+it out over lines into that sink. The `sisu_print_*` functions write into a buffer that the runtime owns,
 and `main` calls `sisu_flush_stdout` before it returns. The `sisu_eprint_*`
 functions write each value at once, in one write to standard error. The
 runtime counts the blocks that are allocated and not yet freed. A program

@@ -843,7 +843,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             Helper::Drop | Helper::Unique => {
                 unreachable!("an enum should never be queued for a `drop` or `unique` helper")
             }
-            Helper::Show | Helper::ShowComponent => {
+            Helper::Show(_) | Helper::ShowComponent(_) => {
                 unreachable!("`define_helpers` should define every `show` helper itself")
             }
         }

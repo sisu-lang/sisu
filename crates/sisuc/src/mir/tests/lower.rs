@@ -64,6 +64,32 @@ fn printing_a_compound_local_should_read_it_in_place() {
     assert!(!f.contains("[calls]"), "{f}");
 }
 
+/// `dbg(e)` runs `e` once into a temporary, which the `dbg` statement reads in place and the
+/// addition reads again: the same temporary all three times.
+#[test]
+fn dbg_should_read_the_temporary_that_holds_the_value() {
+    let printed = lowered(
+        "fn g(x: i64) -> i64 { x }\nfn f(x: i64) -> i64 {\n    let y = dbg(g(x)) + 1\n    y\n}",
+    );
+    let body = &printed[printed.find("fn f(").expect("`f` should be printed")..];
+    let temp = body
+        .lines()
+        .find_map(|line| line.trim().strip_suffix(" = call g(x#0)"))
+        .expect("the call of `g` should be assigned to a temporary");
+    for part in [
+        format!("call dbg({temp}, \"g(x)\")"),
+        format!("y#1 = {temp} + 1"),
+    ] {
+        assert!(body.contains(&part), "`{part}` in\n{body}");
+    }
+    has(
+        &printed,
+        "f",
+        &["= call g(x#0)", "call dbg(", "y#1 = _ + 1"],
+    );
+    assert_eq!(body.matches("call g(").count(), 1, "{body}");
+}
+
 /// The value first, then per level the bounds check and `make_unique`, then the store.
 #[test]
 fn element_write_order() {

@@ -236,9 +236,10 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
         ret: Some(Abi::Ptr),
         attrs: NONE,
     },
-    // show.rs: a sink is memory that the runtime reaches through its pointer argument, and a buffer
-    // sink keeps a block of its own, so these rows say no more than that they do not unwind. None
-    // joins the allocator pair: `sisu_show_finish` hands back a block it did not just allocate.
+    // show.rs: a sink is memory that the runtime reaches through its pointer argument, a buffer
+    // sink keeps a block of its own and a pretty sink keeps a record, so these rows say no more
+    // than that they do not unwind. None joins the allocator pair: `sisu_show_finish` hands back
+    // a block it did not just allocate.
     RuntimeFn {
         name: "sisu_show_bool",
         params: &[Abi::Ptr, Abi::Bool],
@@ -308,6 +309,18 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn {
         name: "sisu_show_pad",
         params: &[Abi::Ptr, Abi::I64, Abi::I64, Abi::U8],
+        ret: None,
+        attrs: NOUNWIND,
+    },
+    RuntimeFn {
+        name: "sisu_show_pretty",
+        params: &[Abi::Ptr, Abi::Ptr],
+        ret: None,
+        attrs: NOUNWIND,
+    },
+    RuntimeFn {
+        name: "sisu_show_pretty_finish",
+        params: &[Abi::Ptr],
         ret: None,
         attrs: NOUNWIND,
     },
@@ -452,7 +465,7 @@ pub(super) const PAD_CENTER: u64 = 2;
 
 /// The size of the runtime's text sink, and where it keeps the length and the capacity of its
 /// text. The runtime defines them in `crates/runtime/src/show.rs`, and a test here compares them.
-pub(super) const SINK_SIZE: u64 = 40;
+pub(super) const SINK_SIZE: u64 = 48;
 pub(super) const SINK_LEN: u64 = 24;
 pub(super) const SINK_CAP: u64 = 32;
 

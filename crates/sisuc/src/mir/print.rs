@@ -243,6 +243,15 @@ impl Printer<'_> {
                 format!("call {}({})", stream.name(), self.operand(operand)),
                 *calls,
             ),
+            Rvalue::Dbg {
+                text,
+                operand,
+                calls,
+                ..
+            } => flagged(
+                format!("call dbg({}, {text:?})", self.operand(operand)),
+                *calls,
+            ),
         }
     }
 

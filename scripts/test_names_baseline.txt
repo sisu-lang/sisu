@@ -1014,7 +1014,6 @@ crates/sisuc/src/lexer/mod.rs::pipe_and_range_tokens
 crates/sisuc/src/lexer/mod.rs::quote_at_end_of_file
 crates/sisuc/src/lexer/mod.rs::range_is_not_a_continuation
 crates/sisuc/src/lexer/mod.rs::reports_every_bad_character
-crates/sisuc/src/lexer/mod.rs::reserved_words
 crates/sisuc/src/lexer/mod.rs::safe_brace_fix_removes_the_error
 crates/sisuc/src/lexer/mod.rs::semicolon_before_a_line_start_lexes_clean
 crates/sisuc/src/lexer/mod.rs::semicolon_ends_a_line
@@ -1389,8 +1388,6 @@ crates/sisuc/src/parser.rs::float_fixes
 crates/sisuc/src/parser.rs::float_literal_is_an_expression
 crates/sisuc/src/parser.rs::for_inclusive
 crates/sisuc/src/parser.rs::for_loops
-crates/sisuc/src/parser.rs::format_spec_s_expression
-crates/sisuc/src/parser.rs::format_specs
 crates/sisuc/src/parser.rs::function_span
 crates/sisuc/src/parser.rs::function_with_let
 crates/sisuc/src/parser.rs::if_let_chain
@@ -1445,7 +1442,6 @@ crates/sisuc/src/parser.rs::pattern_forms
 crates/sisuc/src/parser.rs::pattern_spans
 crates/sisuc/src/parser.rs::power_operator
 crates/sisuc/src/parser.rs::redundant_semicolon_fix
-crates/sisuc/src/parser.rs::reserved_errors
 crates/sisuc/src/parser.rs::return_with_value
 crates/sisuc/src/parser.rs::return_without_value_before_brace
 crates/sisuc/src/parser.rs::rising_ranges
@@ -1502,7 +1498,6 @@ crates/sisuc/src/source.rs::render_line_clamps_the_end_of_a_text_that_ends_in_a_
 crates/sisuc/src/source.rs::span_offset_past_u32_max_panics
 crates/sisuc/src/source.rs::span_offsets_reach_u32_max
 crates/sisuc/src/symbol.rs::equal_texts_share_a_symbol
-crates/sisuc/src/tir.rs::each_child_mut_reaches_every_direct_child
 crates/sisuc/src/tir.rs::eprints_to_standard_error
 crates/sisuc/src/tir.rs::exits_finds_a_jump_at_any_depth
 crates/sisuc/src/tir.rs::jumps_print_their_depth_and_value

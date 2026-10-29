@@ -1,0 +1,275 @@
+// GIVEN classes with and without a written `to_string`, a recursive enum, and a `Box` whose
+//       written `to_string` stores into a `mut` field
+// WHEN `main` passes values through `dbg`
+// THEN each call writes `dbg.sisu:<line>:<col>: <source text> = <value>` to standard error
+//      (first: `dbg.sisu:12:13: f(x) = 42`); standard output holds only `print` lines, in order
+// AND a class shows its fields one level deep, and a class cycle ends after one level
+// AND a value is laid out from column 0 after the prefix, and breaks as `{x:#}` does
+// AND an enum with a written `to_string` shows that text, not the fields of a class in its payload
+// AND `dbg` returns its argument, evaluated once, and a counted value is released once
+fn main() {
+    let x = 7
+let y = dbg(f(x)) + 1
+    print(y) // stdout: 43
+
+    // The argument's text is as written, line breaks and indentation included.
+    let m = dbg(f(
+        x + 1
+    ))
+    print(m) // stdout: 48
+
+    // `dbg` runs its argument once: `noisy` prints one line, and its value comes through.
+    let k = dbg(noisy())
+    print(k) // stdout: 5
+
+    // An enum with no class is `{x:#}`'s layout: it fits, or it breaks one child to a line.
+    let small = Expr.Add(Expr.Num(1), Expr.Num(2))
+    dbg(small)
+    let big = Expr.Add(
+        Expr.Mul(Expr.Num(111111), Expr.Add(Expr.Num(222222), Expr.Num(333333))),
+        Expr.Mul(Expr.Num(444444), Expr.Add(Expr.Num(555555), Expr.Num(666666)))
+    )
+    dbg(big)
+
+    // A class shows its fields, and a class in a field shows its name.
+    let tail = Node(value: 1, next: None)
+    let head = Node(value: 3, next: tail)
+    let _ = dbg(head)
+    dbg(tail)
+    print(head.value + tail.value) // stdout: 4
+    print(head.next?.value ?? 0) // stdout: 1
+    let shell = Shell(inner: Core(leaf: Leaf(v: 1)))
+    let _ = dbg(shell)
+    print(shell.inner.leaf.v) // stdout: 1
+
+    // A cycle ends after one level. The loop is broken after, so the program frees it.
+    let ring = Ring(name: "a", next: None)
+    ring.next = ring
+    let _ = dbg(ring)
+    print(ring.next?.name ?? "none") // stdout: a
+    ring.next = None
+
+    // A class in an array, or in the payload of a recursive enum, is shown one level deep too.
+    let nodes = [tail, tail]
+    dbg(nodes)
+    let tree = Tree.Join(Tree.Leaf(tail), Tree.Join(Tree.Leaf(head), Tree.Leaf(tail)))
+    let _ = dbg(tree)
+    let single = Tree.Leaf(tail)
+    dbg(single)
+
+    // A generic class and a class with no fields.
+    let stack = Stack(top: Cell(value: 1), size: 2)
+    let _ = dbg(stack)
+    print(stack.top.value + stack.size) // stdout: 3
+    dbg(Empty())
+
+    // A written `to_string` shows its text, in a field, in an array and as the value.
+    let tag = Tag(id: 5)
+    dbg(tag)
+    let outer = Outer(inner: Inner(v: 1))
+    let _ = dbg(outer)
+    let _ = dbg([outer])
+    print(outer.inner.v) // stdout: 1
+
+    // A written `to_string` with a bound on `Display` always applies. One with a bound on another
+    // interface applies when the bound holds, and else `dbg` shows the fields.
+    let shown = Shown(v: 1)
+    dbg(shown)
+    print(shown.v) // stdout: 1
+    dbg(Gate(v: Count(n: 1)))
+    dbg(Gate(v: "one"))
+    dbg([Gate(v: Count(n: 1)), Gate(v: Count(n: 2))])
+
+    // `dbg` returns its argument: two lines, and the value comes through both.
+    let twice = dbg(dbg(x))
+    print(twice) // stdout: 7
+
+    // A counted value that is used after `dbg` is copied, and released once.
+    let s = "hell" + "o"
+    let t = dbg(s)
+    print(s) // stdout: hello
+    print(t) // stdout: hello
+    let words = ["a" + "b", "c" + "d"]
+    let seen = dbg(words)
+    print(words.len()) // stdout: 2
+    print(seen[1]) // stdout: cd
+
+    // A written `to_string` that stores into a `mut` field frees the old value. `old` is a copy
+    // of the field, so it stays live memory across the `dbg`.
+    let bx = Box(item: B(s: "heap {1}"))
+    let old = bx.item.s
+    let _ = dbg(bx)
+    print(old) // stdout: heap 1
+    print(bx.item.s) // stdout: new
+
+    // The same with the object itself: here a copy that `dbg` did not keep would be a borrow,
+    // and Valgrind would see the read of the string that the `to_string` freed.
+    let b = B(s: "heap {1}")
+    let direct = b.s
+    let _ = dbg(b)
+    print(direct) // stdout: heap 1
+    print(b.s) // stdout: new
+
+    // An enum with a written `to_string` shows that text. It shows no field of the class in its
+    // payload, as it would for an enum with none, also in an array and in an optional.
+    let slot = Slot.Full(Leaf(v: 1))
+    dbg(slot)
+    dbg([slot])
+    let maybe: Slot? = slot
+    dbg(maybe)
+    let seat = Seat.Taken(Cell(value: 2))
+    dbg(seat)
+    let bare = Bare.Full(Leaf(v: 1))
+    dbg(bare)
+}
+
+fn f(x: i64) -> i64 {
+    x * 6
+}
+
+fn noisy() -> i64 {
+    print("noisy") // stdout: noisy
+    5
+}
+
+enum Expr {
+    Num(i64)
+    Add(Expr, Expr)
+    Mul(Expr, Expr)
+}
+
+class Node {
+    value: i64
+    next: Node?
+}
+
+class Leaf {
+    v: i64
+}
+
+class Core {
+    leaf: Leaf
+}
+
+class Shell {
+    inner: Core
+}
+
+class Ring {
+    name: string
+    mut next: Ring?
+}
+
+enum Tree {
+    Leaf(Node)
+    Join(Tree, Tree)
+}
+
+class Cell<T> {
+    value: T
+}
+
+class Stack<T> {
+    top: Cell<T>
+    size: i64
+}
+
+class Empty {}
+
+class Tag {
+    id: i64
+}
+
+extend Tag: Display {
+    fn to_string(self) -> string {
+        "tag-{self.id}"
+    }
+}
+
+class Inner<T> {
+    v: T
+}
+
+// Nothing but `dbg` of an `Outer` reaches this `to_string`.
+extend<T> Inner<T>: Display {
+    fn to_string(self) -> string {
+        "inner!"
+    }
+}
+
+class Outer<T> {
+    inner: Inner<T>
+}
+
+class B {
+    mut s: string
+}
+
+extend B: Display {
+    fn to_string(self) -> string {
+        self.s = "new"
+        "bee"
+    }
+}
+
+class Box {
+    item: B
+}
+
+class Shown<T> {
+    v: T
+}
+
+extend<T: Display> Shown<T>: Display {
+    fn to_string(self) -> string {
+        "shown"
+    }
+}
+
+interface Mark {
+    fn mark(self) -> string
+}
+
+class Count {
+    n: i64
+}
+
+extend Count: Mark {
+    fn mark(self) -> string {
+        "mark {self.n}"
+    }
+}
+
+class Gate<T> {
+    v: T
+}
+
+extend<T: Mark> Gate<T>: Display {
+    fn to_string(self) -> string {
+        "gate {self.v.mark()}"
+    }
+}
+
+enum Slot {
+    Full(Leaf)
+}
+
+extend Slot: Display {
+    fn to_string(self) -> string {
+        "slot"
+    }
+}
+
+enum Seat<T> {
+    Taken(Cell<T>)
+}
+
+extend<T> Seat<T>: Display {
+    fn to_string(self) -> string {
+        "seat"
+    }
+}
+
+enum Bare {
+    Full(Leaf)
+}

@@ -827,7 +827,7 @@ impl Gen<'_> {
             (
                 "display",
                 "Display",
-                "if x.to_string() == \"\" || x.to_string() != \"\" { 3 } else { 3 }",
+                "if x.to_string() == \"\" || \"{x:#}\" != \"\" { 3 } else { 3 }",
             ),
         ] {
             self.w.text(&format!(
@@ -848,6 +848,7 @@ impl Gen<'_> {
             "let _ = lang_display([\"a\"])".to_string(),
             "let _ = lang_display(Choice.Nothing)".to_string(),
             "let _ = 5.to_string() == \"5\" && \"{[1, 2]}\" == [1, 2].to_string()".to_string(),
+            "let _ = \"{[1, 2]:#}\" == [1, 2].to_string()".to_string(),
             "let rank_a = Ranked(r: 1)".to_string(),
             "let rank_b = Ranked(r: 2)".to_string(),
             "let rank_m: Ranked? = rank_b".to_string(),

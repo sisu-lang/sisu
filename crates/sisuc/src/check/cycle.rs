@@ -40,6 +40,16 @@
 //! `Display`: the operand type chooses the edges, and each enum has a generated `Display` node
 //! beside its generated `Eq` node.
 //!
+//! A `dbg` also writes the fields of a class that has no written `Display`, each as `print` writes
+//! it (`Checker::dbg_show`). So each class and each enum has a generated `dbg` node, beside the
+//! `Display` node of the enum. The node of a class has an edge for each field type, as an operand
+//! of `Display`; the node of an enum has the same edges for what its payloads show. An operand adds
+//! only its arguments to that node, so the fields and payloads are read once for the program, not
+//! once for each operand type. An argument that the enum shows also gets the edges of the holder:
+//! a parameter held bare, in an array or an optional, or as a shown argument of an enum
+//! (`Checker::shown_params`). A class or an enum with a written `Display` that always applies
+//! shows its text, so it adds none.
+//!
 //! Each parameter of a function, class, enum or generated node has a second node, for its value
 //! with its outer array and optional levels taken off, since the generated rule takes those off
 //! before any written method runs. An argument feeds a parameter's first node as above, and its
@@ -103,6 +113,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::Checker;
 use crate::ast::angled;
+use crate::conformance::always_written;
 use crate::diagnostic::{DiagnosticKind, Hop};
 use crate::graph::components;
 use crate::source::Span;
@@ -122,6 +133,10 @@ thread_local! {
     /// How many edges the graph of the marks of growing enums held on this thread, 0 when it was
     /// not built.
     pub(super) static MARK_EDGES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many types `dbg_show` has read on this thread, to find what `dbg` shows of an operand.
+    pub(super) static DBG_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many types `shown_params` has read on this thread, to find the arguments `dbg` shows.
+    pub(super) static SHOWN_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The nodes and the edges of the component that the last search for a cycle read.
     pub(super) static SEARCHED: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
@@ -264,6 +279,10 @@ struct Graph {
     eq_first: usize,
     /// The declaration of the generated `Display` node of the first enum.
     display_first: usize,
+    /// The declaration of the generated `dbg` node of the first enum; the others follow.
+    dbg_first: usize,
+    /// The declaration of the generated `dbg` node of the first class; the others follow.
+    dbg_class_first: usize,
     /// The interface whose operators go to the generated `Display` nodes.
     display: tir::InterfaceId,
     /// By interface and enum, whether a written conformance has the enum as its target, and
@@ -279,6 +298,9 @@ struct Graph {
     cores: FxHashMap<Type, Type>,
     /// The types `types` has walked, with the site each was written at.
     walked: FxHashSet<(Span, Type)>,
+    /// The holders and types whose `dbg` edges are added (`Checker::dbg_show`): the first `dbg`
+    /// that shows a type gives the holder its edges, at its site.
+    dbg_edges: FxHashSet<(usize, Type)>,
     assocs: Assocs,
     /// The declaration of the first choice; the others follow.
     choices_first: usize,
@@ -927,6 +949,13 @@ impl Checker<'_> {
             _ if holder >= graph.choices_first => self
                 .head(graph.assocs.choices[holder - graph.choices_first].head)
                 .to_string(),
+            _ if holder >= graph.dbg_class_first => self.classes[holder - graph.dbg_class_first]
+                .name
+                .name
+                .to_string(),
+            _ if holder >= graph.dbg_first => {
+                self.enums[holder - graph.dbg_first].name.name.to_string()
+            }
             _ if holder >= graph.display_first => self.enums[holder - graph.display_first]
                 .name
                 .name
@@ -961,16 +990,21 @@ impl Checker<'_> {
             }
         }
         // The hubs of the interfaces follow, one each, and then the generated `Eq` node of each
-        // enum, which has the enum's parameters, and its generated `Display` node.
+        // enum, which has the enum's parameters, and its generated `Display` node and `dbg` node.
+        // The generated `dbg` node of each class, which has the class's parameters, follows.
         let interface_hubs = declarations;
         let eq_first = interface_hubs + self.interfaces.len();
         let display_first = eq_first + self.enums.len();
+        let dbg_first = display_first + self.enums.len();
+        let dbg_class_first = dbg_first + self.enums.len();
         let counts = self.signatures.iter().map(|s| s.type_params.len());
         let counts = counts.chain(self.classes.iter().map(|c| c.type_params.len()));
         let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
         let counts = counts.chain(std::iter::repeat_n(1, hubs.len() + self.interfaces.len()));
         let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
         let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
+        let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
+        let counts = counts.chain(self.classes.iter().map(|c| c.type_params.len()));
         let counts = counts.chain(assocs.choices.iter().map(|c| c.depths.len()));
         let counts = counts.chain(assocs.hubs.iter().map(|_| 1));
         let mut first = vec![0];
@@ -986,14 +1020,17 @@ impl Checker<'_> {
             interface_hubs,
             eq_first,
             display_first,
+            dbg_first,
+            dbg_class_first,
             display: self.lang.display,
             records: FxHashMap::default(),
             edges: Vec::new(),
             typed: FxHashMap::default(),
             cores: FxHashMap::default(),
             walked: FxHashSet::default(),
+            dbg_edges: FxHashSet::default(),
             assocs,
-            choices_first: display_first + self.enums.len(),
+            choices_first: dbg_class_first + self.classes.len(),
         };
         (graph, hubs, interface_hubs)
     }
@@ -1018,12 +1055,15 @@ impl Checker<'_> {
             interface_hubs: end,
             eq_first: end,
             display_first: end,
+            dbg_first: end,
+            dbg_class_first: end,
             display: self.lang.display,
             records: FxHashMap::default(),
             edges: Vec::new(),
             typed: FxHashMap::default(),
             cores: FxHashMap::default(),
             walked: FxHashSet::default(),
+            dbg_edges: FxHashSet::default(),
             assocs,
             choices_first: end,
         }
@@ -1034,6 +1074,8 @@ impl Checker<'_> {
         let (mut graph, hubs, interface_hubs) = self.graph_frame();
         graph.records = self.written_records();
         let mut exprs = Vec::new();
+        // By enum and parameter, whether `dbg` shows the argument; found at the first `dbg`.
+        let mut shown: Option<Vec<Vec<bool>>> = None;
         for (holder, function) in functions.iter().enumerate() {
             let Some(function) = function.as_ref().filter(|f| !f.type_params.is_empty()) else {
                 continue;
@@ -1087,6 +1129,11 @@ impl Checker<'_> {
                     tir::ExprKind::Print { ref operand, .. } => {
                         graph.operator(holder, operand.ty, self.lang.display, e.span);
                     }
+                    tir::ExprKind::Dbg { ref operand, .. } => {
+                        graph.operator(holder, operand.ty, self.lang.display, e.span);
+                        let shown = shown.get_or_insert_with(|| self.shown_params());
+                        self.dbg_show(&mut graph, shown, holder, operand.ty, e.span);
+                    }
                     tir::ExprKind::Interpolate { ref parts, .. } => {
                         for part in parts {
                             graph.operator(holder, part.ty, self.lang.display, e.span);
@@ -1103,8 +1150,176 @@ impl Checker<'_> {
         }
         self.hub_edges(&mut graph, &hubs, interface_hubs);
         self.generated_edges(&mut graph);
+        if let Some(shown) = &shown {
+            self.dbg_edges(&mut graph, shown);
+        }
         self.declaration_edges(&mut graph, unbuilt);
         graph
+    }
+
+    /// By enum and parameter, whether `dbg` shows the argument of the parameter: it stands bare, in
+    /// an array or in an optional in a payload, or is a shown argument of an enum that a payload
+    /// names. A parameter inside the arguments of a class is not shown: `dbg` writes the field of
+    /// a class as `print` does. Nor is an argument of an enum with a written `Display` that always
+    /// applies, as `dbg_show` stops at it. One worklist runs over the nodes `(enum, parameter)`.
+    /// An argument of an enum in a payload is a node too: it holds when the argument around it
+    /// holds and the parameter it fills holds. A parameter holds when a payload shows it. Each
+    /// part of each payload type is read once, so the pass is linear in the type parameters and
+    /// payloads.
+    fn shown_params(&self) -> Vec<Vec<bool>> {
+        // A node is ready when its `need` is 0: a parameter needs one of the nodes that lead to it,
+        // an argument needs both its holders.
+        let first: Vec<usize> = (self.enums.iter())
+            .scan(0, |at, info| {
+                let first = *at;
+                *at += info.type_params.len();
+                Some(first)
+            })
+            .collect();
+        let params: usize = self.enums.iter().map(|e| e.type_params.len()).sum();
+        let mut need = vec![1_u8; params];
+        let mut then: Vec<Vec<usize>> = vec![Vec::new(); params];
+        let mut ready = Vec::new();
+        let mut stack: Vec<(Type, Option<usize>)> = Vec::new();
+        let written: Vec<bool> = (0..self.enums.len())
+            .map(|e| always_written(&self.conformances, self.lang.display, self.own_type(e)))
+            .collect();
+        for (e, info) in self.enums.iter().enumerate() {
+            let payloads = info
+                .variants
+                .iter()
+                .flat_map(|v| v.fields.iter().copied().flatten());
+            stack.extend(payloads.map(|ty| (ty, None)));
+            while let Some((ty, from)) = stack.pop() {
+                #[cfg(test)]
+                SHOWN_STEPS.set(SHOWN_STEPS.get() + 1);
+                match ty.kind() {
+                    TypeKind::Param(_, i) => match from {
+                        Some(from) => then[from].push(first[e] + i as usize),
+                        None => ready.push(first[e] + i as usize),
+                    },
+                    TypeKind::Array(part) | TypeKind::Optional(part) => stack.push((part, from)),
+                    TypeKind::Enum(id, args) => {
+                        if written[id.0] {
+                            continue;
+                        }
+                        for (j, &arg) in
+                            args.get().iter().enumerate().filter(|(_, a)| a.has_param())
+                        {
+                            let node = need.len();
+                            need.push(1 + u8::from(from.is_some()));
+                            then.push(Vec::new());
+                            then[first[id.0] + j].push(node);
+                            if let Some(from) = from {
+                                then[from].push(node);
+                            }
+                            stack.push((arg, Some(node)));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut done = vec![false; need.len()];
+        while let Some(node) = ready.pop() {
+            if std::mem::replace(&mut done[node], true) {
+                continue;
+            }
+            for &next in &then[node] {
+                need[next] = need[next].saturating_sub(1);
+                if need[next] == 0 {
+                    ready.push(next);
+                }
+            }
+        }
+        (self.enums.iter().enumerate())
+            .map(|(e, info)| done[first[e]..first[e] + info.type_params.len()].to_vec())
+            .collect()
+    }
+
+    /// The enum `e` applied to its own type parameters, as its declaration names it.
+    fn own_type(&self, e: usize) -> Type {
+        let params: Vec<Type> = (self.enums[e].type_params.iter().zip(0..))
+            .map(|(&name, i)| Type::intern(TypeKind::Param(name, i)))
+            .collect();
+        Type::intern(TypeKind::Enum(tir::EnumId(e), TypeArgs::intern(&params)))
+    }
+
+    /// The edges that a `dbg` of an operand of type `ty` adds, inside `holder` at `site`, to those
+    /// of a `print`. Its helper also writes the fields of a class, each as `print` writes it. A
+    /// class or an enum that `ty` holds, through arrays, optionals and the shown arguments of
+    /// enums, passes its arguments to its generated `dbg` node (`dbg_edges`). That node has the
+    /// edges of the fields or payloads in terms of the parameters, so they are read once for the
+    /// program, not once for each operand. A class or an enum with a written `Display` that always
+    /// applies shows its text, so it adds none. A written `Display` with a bound on another
+    /// interface may not apply, and then its fields add their edges, as a conditional conformance
+    /// of an enum does. A holder reads each type once, at its first `dbg`.
+    fn dbg_show(
+        &self,
+        graph: &mut Graph,
+        shown: &[Vec<bool>],
+        holder: usize,
+        ty: Type,
+        site: Span,
+    ) {
+        let mut stack = vec![ty];
+        while let Some(ty) = stack.pop() {
+            let ty = graph.core(ty);
+            // A type with no parameter has fields with none, so it adds no edge.
+            if !ty.has_param()
+                || always_written(&self.conformances, self.lang.display, ty)
+                || !graph.dbg_edges.insert((holder, ty))
+            {
+                continue;
+            }
+            #[cfg(test)]
+            DBG_VISITS.set(DBG_VISITS.get() + 1);
+            match ty.kind() {
+                TypeKind::Enum(id, args) => {
+                    let target = graph.dbg_first + id.0;
+                    graph.args(holder, args.get(), target, site, site, Instance::Type(ty));
+                    let on = shown[id.0].iter();
+                    stack.extend(
+                        args.get()
+                            .iter()
+                            .zip(on)
+                            .filter(|(_, on)| **on)
+                            .map(|(&a, _)| a),
+                    );
+                }
+                TypeKind::Class(id, args) => {
+                    let target = graph.dbg_class_first + id.0;
+                    graph.args(holder, args.get(), target, site, site, Instance::Type(ty));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The edges of the generated `dbg` node of each class and each enum: what `dbg` shows of each
+    /// field or payload type, in terms of the parameters. A class shows each field as `print` does
+    /// (`Graph::operator`), at the field's type. An enum shows each payload type as `dbg_show`
+    /// reads it. An enum that grows gets its growth at the site of its own error, which a cycle
+    /// reports once.
+    fn dbg_edges(&self, graph: &mut Graph, shown: &[Vec<bool>]) {
+        for (c, info) in self.classes.iter().enumerate() {
+            let holder = graph.dbg_class_first + c;
+            for field in &info.fields {
+                if let Some(ty) = field.ty {
+                    graph.operator(holder, ty, self.lang.display, field.ty_span);
+                }
+            }
+        }
+        for (e, info) in self.enums.iter().enumerate() {
+            let holder = graph.dbg_first + e;
+            for variant in &info.variants {
+                for (ty, &span) in variant.fields.iter().zip(&variant.spans) {
+                    if let Some(ty) = *ty {
+                        self.dbg_show(graph, shown, holder, ty, span);
+                    }
+                }
+            }
+        }
     }
 
     /// By interface and enum, whether a written conformance targets the enum, and whether one of
@@ -1806,12 +2021,15 @@ mod tests {
             interface_hubs: 2,
             eq_first: 2,
             display_first: 2,
+            dbg_first: 2,
+            dbg_class_first: 2,
             display: tir::InterfaceId(usize::MAX),
             records: FxHashMap::default(),
             edges: Vec::new(),
             typed: FxHashMap::default(),
             cores: FxHashMap::default(),
             walked: FxHashSet::default(),
+            dbg_edges: FxHashSet::default(),
             assocs: Assocs::default(),
             choices_first: 0,
         }
@@ -1961,12 +2179,15 @@ mod tests {
             interface_hubs: 3,
             eq_first: 4,
             display_first: 6,
+            dbg_first: 6,
+            dbg_class_first: 6,
             display: tir::InterfaceId(usize::MAX),
             records: FxHashMap::default(),
             edges: Vec::new(),
             typed: FxHashMap::default(),
             cores: FxHashMap::default(),
             walked: FxHashSet::default(),
+            dbg_edges: FxHashSet::default(),
             assocs: Assocs::default(),
             choices_first: 0,
         }

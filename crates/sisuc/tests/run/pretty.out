@@ -1,0 +1,88 @@
+Add(Num(1), Mul(Num(2), Num(3)))
+Add(
+    Mul(
+        Add(Num(111111), Num(222222)),
+        Add(Num(333333), Add(Num(444444), Num(555555)))
+    ),
+    Mul(
+        Add(Num(666666), Mul(Num(777777), Num(888888))),
+        Add(Add(Num(999999), Num(101010)), Num(121212))
+    )
+)
+[[100, 101, 102, 103, 104, 105, 10, 11], [200, 201, 202, 203, 204, 205, 20, 21]]
+[
+    [100, 101, 102, 103, 104, 105, 10, 11],
+    [300, 301, 302, 303, 304, 305, 306, 30]
+]
+[
+    [
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+        109,
+        110,
+        111,
+        10,
+        11,
+        12,
+        13
+    ],
+    [200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 20, 21, 22, 23]
+]
+Group(
+    label: "composite",
+    members: [
+        Rect(w: 10, h: 20),
+        Dot,
+        Rect(w: 30, h: 40),
+        Rect(w: 50, h: 60),
+        Rect(w: 70, h: 80)
+    ],
+    note: "drawn by hand"
+)
+Stack<i64>
+[Some(None)]
+42 text
+abcAdd(
+    Mul(
+        Add(Num(111111), Num(222222)),
+        Add(Num(333333), Add(Num(444444), Num(555555)))
+    ),
+    Mul(
+        Add(Num(666666), Mul(Num(777777), Num(888888))),
+        Add(Add(Num(999999), Num(101010)), Num(121212))
+    )
+)
+[Add(Num(1), Mul(Num(2), Num(3)))]
+[Add(
+    Mul(
+        Add(Num(111111), Num(222222)),
+        Add(Num(333333), Add(Num(444444), Num(555555)))
+    ),
+    Mul(
+        Add(Num(666666), Mul(Num(777777), Num(888888))),
+        Add(Add(Num(999999), Num(101010)), Num(121212))
+    )
+)]
+[
+    one
+two
+]
+["a\nb"]
+[
+    "alphabetical",
+    "bibliography",
+    "cartography",
+    "demography",
+    "epigraphy",
+    "filmography"
+]
+42
+Stack<string>
+Some(None)

@@ -171,6 +171,28 @@ fn format_spec_should_default_its_alignment_by_type_and_take_a_precision_for_an_
     );
 }
 
+/// A `#` part keeps its row only if its type may make a group: an array, an enum or a type
+/// parameter. A part that writes one piece has the `tir` of the part without `#`.
+#[test]
+fn a_hash_part_should_keep_its_row_only_if_its_type_may_make_a_group() {
+    let params = "n: i64, s: string, xs: [i64]";
+    for (statement, expected) in [
+        ("print(\"{n:#}\")", "(interp n#0)"),
+        ("print(\"{s:#}\")", "(interp s#1)"),
+        ("print(\"{xs:#}\")", "(interp (fmt xs#2 \"#\"))"),
+        (
+            "print(\"{n:5}{xs:#}\")",
+            "(interp (fmt n#0 \">5\") (fmt xs#2 \"#\"))",
+        ),
+    ] {
+        contains(&body(params, statement), &[expected]);
+    }
+    contains(
+        "fn g<T>(x: T) {\n    print(\"{x:#}\")\n}\nfn main() {}",
+        &["(interp (fmt x#0 \"#\"))"],
+    );
+}
+
 /// A precision on an optional gives E0111 alone, so a part that is reported once gets no second
 /// report. A width, `print`, and a precision after `??` do not give E0111.
 #[test]

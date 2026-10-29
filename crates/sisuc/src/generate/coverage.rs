@@ -13,6 +13,7 @@ use super::item::{MAX_INTERFACES, MAX_KNOWN, MAX_REQUIREMENTS, MOST};
 use super::scope::{Class, Const, Enum, Field, Func, Ty, Var, Variant};
 use super::writer::{Rewrite, Site, Writer, allowed};
 use super::{Answer, BUDGET, Cost, DEPTHS, FUEL, Gen, MAX_BOUND, MAX_NESTING, MAX_SIZE, generate};
+use crate::conformance::holds_class;
 use crate::diagnostic::Severity;
 use crate::front_end::front_end;
 use crate::symbol::Symbol;
@@ -111,7 +112,7 @@ const IDENTITY: &str = "reach: a class is compared with `is` or against `None`";
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 96] = [
+const REACH: [&str; 101] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -204,11 +205,25 @@ const REACH: [&str; 96] = [
     "reach: `print` writes a compound value",
     "reach: `print` runs a written `to_string` inside a value",
     "reach: an interpolation writes a compound part",
+    "reach: a `#` part of a type parameter keeps its row",
+    "reach: a `#` part of a compound type keeps its row",
     "reach: `to_string` runs on a generated `Display`",
     "reach: a top-level optional is printed",
     "reach: a top-level optional is interpolated",
     "reach: an optional is printed through `.to_string()`",
+    "reach: `dbg` may run a written `to_string`",
+    "reach: `dbg` writes a value that runs no written method",
+    "reach: `dbg` shows the fields of a class with no written `Display`",
 ];
+
+/// The local that `operand` reads whole: the one place where its type is known here.
+fn whole_local(operand: &crate::mir::Operand) -> Option<crate::mir::LocalId> {
+    match operand {
+        crate::mir::Operand::Use(l) => Some(*l),
+        crate::mir::Operand::Read(place) if place.projections.is_empty() => Some(place.local),
+        _ => None,
+    }
+}
 
 /// The type under every `?` layer of `ty`.
 fn under_optionals(mut ty: Type) -> Type {
@@ -589,6 +604,7 @@ impl Walk {
     fn built(&mut self, program: tir::Program) {
         let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
         let mir = crate::mir::lowered(&program);
+        let mut held = FxHashMap::default();
         for function in &mir.functions {
             for block in &function.blocks {
                 for stmt in &block.stmts {
@@ -608,18 +624,33 @@ impl Walk {
                         crate::mir::Rvalue::Interpolate { parts, calls, .. } => {
                             (&parts[..], *calls, false)
                         }
+                        crate::mir::Rvalue::Dbg { calls, operand, .. } => {
+                            self.mark(if *calls {
+                                "reach: `dbg` may run a written `to_string`"
+                            } else {
+                                "reach: `dbg` writes a value that runs no written method"
+                            });
+                            let shown = whole_local(operand).is_some_and(|local| {
+                                holds_class(
+                                    (&program.conformances, program.lang.display),
+                                    program.enums.as_slice(),
+                                    function.locals[local.0].ty,
+                                    &mut held,
+                                )
+                            });
+                            if shown {
+                                self.mark(
+                                    "reach: `dbg` shows the fields of a class with no written `Display`",
+                                );
+                            }
+                            continue;
+                        }
                         _ => continue,
                     };
                     // A whole local is all that tells the type here.
                     let compound = operands.iter().any(|operand| {
-                        let local = match operand {
-                            crate::mir::Operand::Use(l) => *l,
-                            crate::mir::Operand::Read(place) if place.projections.is_empty() => {
-                                place.local
-                            }
-                            _ => return false,
-                        };
-                        is_compound(function.locals[local.0].ty)
+                        whole_local(operand)
+                            .is_some_and(|local| is_compound(function.locals[local.0].ty))
                     });
                     if calls {
                         self.mark("reach: an `==` or `print` runs a written method inside a value");
@@ -1494,6 +1525,9 @@ impl Walk {
                 self.mark("ast::ExprKind::Interpolate");
                 for part in parts {
                     self.ast_expr(&part.value);
+                    if let Some(spec) = part.spec {
+                        self.mark(&format!("ast::FormatSpec.pretty = {}", spec.pretty));
+                    }
                     if let Some(align) = part.spec.and_then(|spec| spec.align) {
                         self.mark(match align {
                             ast::Align::Left => "ast::Align::Left",
@@ -2264,6 +2298,10 @@ impl Walk {
                 }
                 self.tir_expr(operand, Parent::Other);
             }
+            tir::ExprKind::Dbg { operand, .. } => {
+                self.mark("tir::ExprKind::Dbg");
+                self.tir_expr(operand, Parent::Other);
+            }
             tir::ExprKind::Panic(message) => {
                 self.mark("tir::ExprKind::Panic");
                 self.tir_expr(message, Parent::Other);
@@ -2325,6 +2363,17 @@ impl Walk {
             }
             tir::ExprKind::Interpolate { parts, formats } => {
                 self.mark("tir::ExprKind::Interpolate");
+                // The checked tree: a `#` row stays for a part of a type parameter, which `mono`
+                // decides for each type argument, and for a part of a compound type.
+                for format in formats.iter().filter(|format| format.pretty) {
+                    let ty = parts[format.part].ty;
+                    if matches!(ty.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)) {
+                        self.mark("reach: a `#` part of a type parameter keeps its row");
+                    }
+                    if is_compound(ty) {
+                        self.mark("reach: a `#` part of a compound type keeps its row");
+                    }
+                }
                 if parts.iter().any(|part| is_compound(part.ty)) {
                     self.mark("reach: an interpolation writes a compound part");
                 }
@@ -5318,6 +5367,7 @@ impl<'f> Lets<'f> {
             | tir::ExprKind::Wrap(x)
             | tir::ExprKind::Convert(x)
             | tir::ExprKind::Print { operand: x, .. }
+            | tir::ExprKind::Dbg { operand: x, .. }
             | tir::ExprKind::Panic(x)
             | tir::ExprKind::Len(x)
             | tir::ExprKind::Chars(x)
@@ -5418,6 +5468,7 @@ impl<'f> Lets<'f> {
             tir::ExprKind::Call { .. }
             | tir::ExprKind::InterfaceCall { .. }
             | tir::ExprKind::Print { .. }
+            | tir::ExprKind::Dbg { .. }
             | tir::ExprKind::Panic(_)
             | tir::ExprKind::ReadLine
             | tir::ExprKind::Index { .. }

@@ -1603,7 +1603,6 @@ fn keyword(text: &str) -> Option<TokenKind> {
         "weak" => TokenKind::Reserved("weak"),
         "test" => TokenKind::Reserved("test"),
         "todo" => TokenKind::Todo,
-        "echo" => TokenKind::Reserved("echo"),
         "extern" => TokenKind::Reserved("extern"),
         "as" => TokenKind::Reserved("as"),
         "if" => TokenKind::If,
@@ -1799,10 +1798,10 @@ mod tests {
     }
 
     #[test]
-    fn reserved_words() {
+    fn reserved_words_should_lex_as_reserved_tokens() {
         use TokenKind::{Eof, Reserved};
         let words = [
-            "import", "pub", "record", "type", "weak", "test", "echo", "extern", "as",
+            "import", "pub", "record", "type", "weak", "test", "extern", "as",
         ];
         let mut expected: Vec<_> = words.iter().map(|w| Reserved(w)).collect();
         expected.extend([
@@ -1810,10 +1809,12 @@ mod tests {
             ident("type_"),
             ident("pubx"),
             ident("ask"),
+            // `echo` was reserved for `dbg` and is an ordinary name now.
+            ident("echo"),
         ]);
         expected.push(Eof);
         assert_eq!(
-            kinds(&format!("{} matches type_ pubx ask", words.join(" "))),
+            kinds(&format!("{} matches type_ pubx ask echo", words.join(" "))),
             expected
         );
         // `enum` and `match` are keywords now.

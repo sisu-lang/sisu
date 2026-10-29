@@ -138,8 +138,8 @@ into text, and the whole literal becomes one new `string`.
 _Avoid_: formatting, templating
 
 **Format spec**:
-The `[align][width][.precision]` after a `:` that ends an interpolation, as
-in `{x:>8.2}`.
+The `#`, or the `[align][width][.precision]`, after a `:` that ends an
+interpolation, as in `{x:#}` or `{x:>8.2}`.
 _Avoid_: format string, format specifier
 
 **Shadowing**:

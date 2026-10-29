@@ -105,9 +105,32 @@ fn rising(ranges: &[Range<usize>]) -> bool {
     ranges.is_sorted_by(|a, b| a.start <= b.start && a.end <= b.end)
 }
 
-/// The format spec `text`, written at `at` from its `:`: `[<^>][width][.precision]`, with a
-/// width from 1 to 1000 and a precision from 0 to 30.
+/// The format spec `text`, written at `at` from its `:`: `#`, or `[<^>][width][.precision]`.
+/// A width is from 1 to 1000 and a precision is from 0 to 30.
+/// A single `#` beside those parts, in any place, is an error of its own form.
+/// The spec is read without the `#` first, so a spec that is wrong without it gets that error.
 fn format_spec(text: &str, at: Span) -> Result<FormatSpec, Diagnostic> {
+    if text.matches('#').count() == 1 {
+        let without = text.replacen('#', "", 1);
+        if without.is_empty() {
+            return Ok(FormatSpec {
+                align: None,
+                width: None,
+                precision: None,
+                pretty: true,
+                span: at,
+            });
+        }
+        return Err(match plain_format_spec(&without, at) {
+            Ok(_) => DiagnosticKind::UnsupportedFormatSpec { at, pretty: true }.into(),
+            Err(error) => error,
+        });
+    }
+    plain_format_spec(text, at)
+}
+
+/// The format spec `text` without a `#`: `[<^>][width][.precision]`.
+fn plain_format_spec(text: &str, at: Span) -> Result<FormatSpec, Diagnostic> {
     let align = match text.as_bytes().first() {
         Some(b'<') => Some(Align::Left),
         Some(b'>') => Some(Align::Right),
@@ -126,7 +149,7 @@ fn format_spec(text: &str, at: Span) -> Result<FormatSpec, Diagnostic> {
         None => (None, rest),
     };
     if !rest.is_empty() || width.starts_with('0') {
-        return Err(DiagnosticKind::UnsupportedFormatSpec { at }.into());
+        return Err(DiagnosticKind::UnsupportedFormatSpec { at, pretty: false }.into());
     }
     if precision.is_some_and(str::is_empty) || (width.is_empty() && precision.is_none()) {
         return Err(DiagnosticKind::MalformedFormatSpec { at }.into());
@@ -154,6 +177,7 @@ fn format_spec(text: &str, at: Span) -> Result<FormatSpec, Diagnostic> {
         align,
         width,
         precision,
+        pretty: false,
         span: at,
     })
 }
@@ -3873,15 +3897,19 @@ mod tests {
 
     /// A part with a spec prints as `fmt`, its spec in the order the grammar gives.
     #[test]
-    fn format_spec_s_expression() {
+    fn format_spec_should_print_in_the_order_the_grammar_gives() {
         assert_eq!(
             expr(r#"print("a{x:>8.2}b{y}{z:.1}{w:4}")"#),
             r#"(call print (interp "a" (fmt x ">8.2") "b" y (fmt z ".1") (fmt w "4")))"#
         );
+        assert_eq!(
+            expr(r#"print("{x:#}")"#),
+            r##"(call print (interp (fmt x "#")))"##
+        );
     }
 
     #[test]
-    fn format_specs() {
+    fn format_spec_should_parse_each_part_and_point_each_error_at_the_spec() {
         use crate::ast::Align::{Center, Left, Right};
         let at = Span::new(0, 0);
         for (text, align, width, precision) in [
@@ -3895,11 +3923,16 @@ mod tests {
         ] {
             let spec = format_spec(text, at).expect(text);
             assert_eq!(
-                (spec.align, spec.width, spec.precision),
-                (align, width, precision),
+                (spec.align, spec.width, spec.precision, spec.pretty),
+                (align, width, precision, false),
                 "{text}"
             );
         }
+        let pretty = format_spec("#", at).expect("#");
+        assert_eq!(
+            (pretty.align, pretty.width, pretty.precision, pretty.pretty),
+            (None, None, None, true)
+        );
         // Each error points at the whole spec, its `:` included.
         let (malformed, unsupported, limit) = (
             Code::MalformedFormatSpec,
@@ -3921,6 +3954,14 @@ mod tests {
             ("*>5", unsupported),
             (" 5", unsupported),
             (">{w}", unsupported),
+            ("##", unsupported),
+            ("#x", unsupported),
+            ("#>8", unsupported),
+            (">8#", unsupported),
+            (">#8", unsupported),
+            ("#.2", unsupported),
+            ("#8", unsupported),
+            ("#.", malformed),
             ("1001", limit),
             ("65536", limit),
             ("99999999999999999999", limit),
@@ -3933,6 +3974,28 @@ mod tests {
             let (line, col) = line_col(&src, d.span().start());
             assert_eq!((d.code(), line, col), (code, 2, 14), "{spec}");
             assert_eq!(&src[d.span().range()], format!(":{spec}"), "{spec}");
+        }
+    }
+
+    /// `#` with an alignment, a width or a precision, in any order, is its own form of E0109, which
+    /// has a help; two `#` or a `#` with another character are the form that every unsupported
+    /// spec gets, which has none. The fixture `E0109-pretty` pins the text.
+    #[test]
+    fn format_spec_should_give_the_pretty_form_only_for_a_combined_hash() {
+        let at = Span::new(0, 0);
+        for (text, combined) in [
+            ("#>8", true),
+            (">8#", true),
+            (">#8", true),
+            ("#.2", true),
+            ("#8", true),
+            ("##", false),
+            ("#x", false),
+            ("+", false),
+        ] {
+            let error = format_spec(text, at).expect_err(text);
+            assert_eq!(error.code(), Code::UnsupportedFormatSpec, "{text}");
+            assert_eq!(error.help().is_some(), combined, "{text}");
         }
     }
 
@@ -6898,17 +6961,21 @@ mod tests {
     }
 
     #[test]
-    fn reserved_errors() {
+    fn reserved_words_should_be_errors_where_a_name_goes() {
         // One row per place that wants a name or an expression.
         for (src, line, col) in [
             ("fn main() {\n    let type = 1\n}", 2, 9),
             ("class C {\n    record: i64\n}", 2, 5),
-            ("fn main() {\n    print(echo)\n}", 2, 11),
             ("fn main() {\n    print(p.type)\n}", 2, 13),
             ("import x", 1, 1),
         ] {
             assert_eq!(parse_err(src), (Code::ReservedWord, line, col), "{src}");
         }
+    }
+
+    #[test]
+    fn echo_should_parse_as_a_name() {
+        parse_ok("fn main() {\n    let echo = 1\n    print(echo)\n}");
     }
 
     /// `todo` is a keyword, so where a name goes it is reported as any other keyword is.

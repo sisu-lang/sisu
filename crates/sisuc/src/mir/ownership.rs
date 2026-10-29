@@ -134,7 +134,8 @@ impl Placer<'_> {
             | Rvalue::Sum { base: op, .. }
             | Rvalue::Convert(op)
             | Rvalue::Unary { operand: op, .. }
-            | Rvalue::Print { operand: op, .. } => self.operand(op),
+            | Rvalue::Print { operand: op, .. }
+            | Rvalue::Dbg { operand: op, .. } => self.operand(op),
             Rvalue::Copy(place) | Rvalue::Borrow(place) => self.place(place),
             Rvalue::CopyStr(_) | Rvalue::ReadLine => {}
             Rvalue::Call { args, .. }

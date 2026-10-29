@@ -53,7 +53,8 @@ done
 # bound with &, and a call through each bound, a bounded `largest` over
 # numbers and over a class with a written `Eq` and `Ord`, `==` on an array of
 # such classes, `is` on a class through a bound `T: AnyObject`, and the text of an array,
-# an enum and an interpolated array, which add 0;
+# an enum and an interpolated array, which add 0, and a `dbg` of a class in a
+# branch that never runs;
 # then it calls step(i-1).
 # main prints step(N-1)(0) = N-1. Not fi: f64 is a built-in type.
 large_input() {
@@ -205,7 +206,11 @@ fn step$i(x: i64) -> i64 {
     let kept = if [Disc$i(r: top)] == [Disc$i(r: 0)] { 0 } else { 1 }
     let alias = Bar$i(n: K$i)
     let same = if same$i(alias, alias) { 0 } else { 1 }
-    let shown = shapes.to_string().len() + t.to_string().len() + "{[x, K$i]}".len()
+    let shown = shapes.to_string().len() + t.to_string().len() + "{[x, K$i]}".len() + "{[x, K$i]:#}".len()
+    // The run keeps standard error empty, so this dbg never runs.
+    if shown < 0 {
+        let _ = dbg(q)
+    }
     let generic = t.size() + u.size() - 3 + q.b - K$i + parsed + peeled + gauge + top + kept + same + (if shown > 0 { 0 } else { 1 })
     step$((i - 1))(x + (c?.get() ?? 0) + zero + generic)
 }

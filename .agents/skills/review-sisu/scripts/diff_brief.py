@@ -83,8 +83,8 @@ def log_mismatch(log, repo, base, head):
     if found[2]:
         return f'{log} measured uncommitted changes; commit them and run make mutation-test again'
     measured, want = found[1], commit(repo, head)
-    if measured != want and (measured == commit(repo, base) or not is_ancestor(repo, base, measured)
-                             or not is_ancestor(repo, measured, head)):
+    # In the range means reachable from head and not from base; base need not precede it after a merge of main.
+    if measured != want and (is_ancestor(repo, measured, base) or not is_ancestor(repo, measured, head)):
         return f'{log} measured {measured[:8]}, which is not in {base}..{head} ({want[:8] or "unknown"})'
     return None
 

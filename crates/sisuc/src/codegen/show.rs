@@ -7,6 +7,11 @@
 //! Some rule, a variant without its enum's name and with its labels, a class as its name with its
 //! type arguments, and a written `to_string`'s text as it is.
 //!
+//! `dbg` writes a value the same way into a buffer sink, behind a pretty sink. A second set of
+//! helpers (`Mode::Dbg`, named `@sisu_show.dbg.<type>`) writes a class with no written
+//! `to_string` as its name and its fields, each field in `Mode::Print`. A type that holds no
+//! such class has one helper for both modes (`Codegen::holds_class`).
+//!
 //! An enum whose component has boxes is written in one frame, as `==` compares it
 //! (`define_eq_component`). `@sisu_show_component.<F0>(sink, kind, value)` writes a value of any
 //! member of the component of `F0`. It keeps, for the value it is at, the address of the value
@@ -33,15 +38,18 @@ use inkwell::attributes::AttributeLoc;
 use super::abi::{self, Abi, PAD_CENTER, PAD_LEFT, PAD_RIGHT, SINK_CAP, SINK_LEN, SINK_SIZE};
 use super::enums::{Component, Pending, boxed_enum, nested};
 use super::layout::{BYTES, CAP, LEN};
-use super::rc::{Helper, param};
+use super::rc::{Helper, Mode, param};
 use super::{Codegen, POSITIONED, zeroext};
-use crate::tir::{Align, EnumId, Format, FuncId, Pad, Stream, Type, TypeArgs, TypeKind};
+use crate::conformance::{calls_written, holds_class, prints_by_helper};
+use crate::source::Span;
+use crate::tir::{Align, ClassId, EnumId, Format, FuncId, Pad, Stream, Type, TypeArgs, TypeKind};
 use rustc_hash::FxHashMap;
 use std::rc::Rc;
 
 /// The blocks and phis of a `show_component` helper's loop that each variant uses.
 struct ShowLoop<'ctx> {
     sink: PointerValue<'ctx>,
+    mode: Mode,
     members: Rc<[EnumId]>,
     /// The `kind` of each member, so that a link finds the one it enters at once.
     kinds: FxHashMap<EnumId, u64>,
@@ -63,12 +71,12 @@ impl<'ctx> Codegen<'ctx, '_> {
             Stream::Stdout => {
                 let sink = self.sink_slot();
                 self.show_call("sisu_show_stdout", &[sink.into()]);
-                self.show_value(sink, ty, value, false);
+                self.show_value(sink, ty, value, false, Mode::Print);
                 self.show_call("sisu_show_line_end", &[sink.into()]);
             }
             Stream::Stderr => {
                 let sink = self.buffer_sink();
-                self.show_value(sink, ty, value, false);
+                self.show_value(sink, ty, value, false, Mode::Print);
                 let block = self.finish_buffer_sink(sink);
                 self.print_string(Stream::Stderr, block);
                 self.release(block.into(), Type::STRING);
@@ -79,9 +87,9 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// The string of the evaluated `parts`, each with its type, when one of them is a compound
     /// value: every part is written in turn through one buffer sink, which becomes the result
     /// string with no copy. A width pads the text of its part in place, from the mark taken
-    /// before the part, and a precision is for an `f64`. The parts are evaluated already, so a
-    /// part that returns, breaks or continues has left no buffer behind. The caller releases the
-    /// parts.
+    /// before the part, a precision is for an `f64`, and a `#` part goes through a pretty sink
+    /// over the buffer sink. The parts are evaluated already, so a part that returns, breaks or
+    /// continues has left no buffer behind. The caller releases the parts.
     pub(super) fn interpolate_compound(
         &self,
         parts: &[(BasicValueEnum<'ctx>, Type)],
@@ -104,7 +112,15 @@ impl<'ctx> Codegen<'ctx, '_> {
                     let args = [sink.into(), value.into(), precision.into()];
                     self.show_call("sisu_show_f64_fixed", &args);
                 }
-                _ => self.show_value(sink, ty, value, false),
+                _ if format.is_some_and(|format| format.pretty) => {
+                    // The layout starts at column 0, wherever the text of the parts before it
+                    // ended, and goes into the buffer sink when the value is done.
+                    let pretty = self.sink_slot();
+                    self.show_call("sisu_show_pretty", &[pretty.into(), sink.into()]);
+                    self.show_value(pretty, ty, value, false, Mode::Print);
+                    self.show_call("sisu_show_pretty_finish", &[pretty.into()]);
+                }
+                _ => self.show_value(sink, ty, value, false, Mode::Print),
             }
             if let (Some(Pad { align, width, .. }), Some(mark)) =
                 (format.and_then(|format| format.pad), mark)
@@ -125,6 +141,58 @@ impl<'ctx> Codegen<'ctx, '_> {
             }
         }
         self.finish_buffer_sink(sink)
+    }
+
+    /// `dbg` of the evaluated operand of type `ty`, which it borrows: one line on standard error,
+    /// `<path>:<line>:<col>: <text> = <value>`. The value is laid out as `{x:#}` lays it out,
+    /// from column 0 after the prefix, and a class shows its fields (`Mode::Dbg`). The line
+    /// goes into a buffer sink first, so it reaches standard error in one write.
+    pub(super) fn dbg(&self, at: Span, text: &str, ty: Type, value: BasicValueEnum<'ctx>) {
+        let sink = self.buffer_sink();
+        self.show_text(
+            "sisu_show_str",
+            sink,
+            &format!("{}: {text} = ", self.location(at)),
+        );
+        if prints_by_helper(ty) {
+            let pretty = self.sink_slot();
+            self.show_call("sisu_show_pretty", &[pretty.into(), sink.into()]);
+            self.show_value(pretty, ty, value, false, Mode::Dbg);
+            self.show_call("sisu_show_pretty_finish", &[pretty.into()]);
+        } else {
+            self.show_value(sink, ty, value, false, Mode::Dbg);
+        }
+        let block = self.finish_buffer_sink(sink);
+        self.print_string(Stream::Stderr, block);
+        self.release(block.into(), Type::STRING);
+    }
+
+    /// Whether a value of `ty` holds a class with no written `to_string`: `ty` is one, or an
+    /// array, an optional or an enum payload, at any depth, is. Only such a type is written
+    /// differently by `dbg`.
+    pub(super) fn holds_class(&self, ty: Type) -> bool {
+        holds_class(
+            (&self.program.conformances, self.program.lang.display),
+            self.program.enums.as_slice(),
+            ty,
+            &mut self.class_held.borrow_mut(),
+        )
+    }
+
+    /// Whether the `print` helper for `ty` may call a written `to_string`.
+    fn calls_display(&self, ty: Type) -> bool {
+        prints_by_helper(ty)
+            && calls_written(
+                &self.program.conformances,
+                (
+                    self.program.enums.as_slice(),
+                    self.program.classes.as_slice(),
+                ),
+                ty,
+                self.program.lang.display,
+                false,
+                &mut self.written.borrow_mut(),
+            )
     }
 
     /// A slot in the frame for a sink.
@@ -267,13 +335,15 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// Writes the text of `value`, of type `ty`, which it borrows. A `string` or a `char` is
-    /// `quoted` inside a compound value.
+    /// `quoted` inside a compound value. In `Mode::Dbg`, a class with no written `to_string` in
+    /// it shows its fields.
     pub(super) fn show_value(
         &self,
         sink: PointerValue<'ctx>,
         ty: Type,
         value: BasicValueEnum<'ctx>,
         quoted: bool,
+        mode: Mode,
     ) {
         let args = |value: BasicValueEnum<'ctx>| [sink.into(), value.into()];
         match ty.kind() {
@@ -313,15 +383,15 @@ impl<'ctx> Codegen<'ctx, '_> {
                     ],
                 );
             }
-            TypeKind::Optional(_) => self.show_optional(sink, ty, value, quoted),
+            TypeKind::Optional(_) => self.show_optional(sink, ty, value, (quoted, mode)),
             TypeKind::Enum(..) => {
                 self.call(
-                    self.helper(Helper::Show, ty),
+                    self.helper(Helper::Show(mode), ty),
                     &[sink.into(), self.enum_slot(value).into()],
                 );
             }
             TypeKind::Array(_) | TypeKind::Class(..) => {
-                self.call(self.helper(Helper::Show, ty), &args(value));
+                self.call(self.helper(Helper::Show(mode), ty), &args(value));
             }
             _ => {
                 unreachable!("only a type with a value should be written, never `unit` or `never`")
@@ -337,7 +407,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         sink: PointerValue<'ctx>,
         mut ty: Type,
         mut value: BasicValueEnum<'ctx>,
-        quoted: bool,
+        (quoted, mode): (bool, Mode),
     ) {
         let function = self.current_function();
         let done = self.context.append_basic_block(function, "show.done");
@@ -354,14 +424,14 @@ impl<'ctx> Codegen<'ctx, '_> {
             value = self.optional_value(ty, value, "inner");
             (ty, depth) = (inner, depth + 1);
         }
-        self.show_value(sink, ty, value, quoted);
+        self.show_value(sink, ty, value, quoted, mode);
         self.branch_to(done);
         self.builder.position_at_end(done);
     }
 
-    /// `@sisu_show.<T>(sink, value)`: writes a value of an array, a class or an enum type.
-    /// The value is the pointer of an array or an object, or the address of an enum.
-    pub(super) fn define_show(&self, function: FunctionValue<'ctx>, ty: Type) {
+    /// `@sisu_show.<T>(sink, value)`: writes a value of an array, a class or an enum type, as
+    /// `mode` says. The value is the pointer of an array or an object, or the address of an enum.
+    pub(super) fn define_show(&self, function: FunctionValue<'ctx>, ty: Type, mode: Mode) {
         let entry = self.context.append_basic_block(function, "entry");
         self.builder.position_at_end(entry);
         let sink = param(function);
@@ -370,9 +440,10 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect("a `show` helper should be declared with two parameters")
             .into_pointer_value();
         match ty.kind() {
-            TypeKind::Array(element) => self.show_array(sink, element, value),
-            TypeKind::Class(..) => match self.written_display(ty) {
+            TypeKind::Array(element) => self.show_array(sink, element, value, mode),
+            TypeKind::Class(id, _) => match self.written_display(ty) {
                 Some(method) => self.show_written(sink, method, ty, value.into()),
+                None if mode == Mode::Dbg => self.show_fields(sink, (id, ty), value),
                 None => self.show_text("sisu_show_str", sink, &self.program.type_name(ty)),
             },
             TypeKind::Enum(id, _) => match self.written_display(ty) {
@@ -384,16 +455,57 @@ impl<'ctx> Codegen<'ctx, '_> {
                         let first = Type::intern(TypeKind::Enum(members[0], TypeArgs::NONE));
                         let kind = self.kind(*index);
                         self.call(
-                            self.helper(Helper::ShowComponent, first),
+                            self.helper(Helper::ShowComponent(mode), first),
                             &[sink.into(), kind.into(), value.into()],
                         );
                     }
-                    None => self.show_variants(sink, id, value),
+                    None => self.show_variants(sink, id, value, mode),
                 },
             },
             _ => unreachable!("only an array, a class or an enum should have a `show` helper"),
         }
         self.builder.build_return(None).expect(POSITIONED);
+    }
+
+    /// Writes the object `object` of the class `id`, of type `ty`, for `dbg`. It writes the
+    /// name with its type arguments, then the fields in declaration order, each labeled and
+    /// written by the `print` helper. So a class in a field shows its name or its own
+    /// `to_string`, never its fields. A class with no fields writes `Name()`, as its constructor
+    /// reads. The `dbg` that calls the helper borrows the object. A field with no `mut` is stable
+    /// while it is read, and so is one whose helper runs no written method. Such a field is read
+    /// in place.
+    /// A counted `mut` field whose helper may run a written `to_string` is retained before the
+    /// helper runs and released after. So a `to_string` that clears the field cannot free the
+    /// value being shown. The snapshot holds what is below the field too.
+    fn show_fields(
+        &self,
+        sink: PointerValue<'ctx>,
+        (id, ty): (ClassId, Type),
+        object: PointerValue<'ctx>,
+    ) {
+        self.show_text(
+            "sisu_show_open",
+            sink,
+            &format!("{}(", self.program.type_name(ty)),
+        );
+        for (index, field) in self.program.classes[id.0].fields.iter().enumerate() {
+            if index > 0 {
+                self.show_sep(sink);
+            }
+            self.show_text("sisu_show_str", sink, &format!("{}: ", field.name));
+            let value = self.load_value(field.ty, self.field_ptr(id, object, index));
+            let snapshot = field.mutable
+                && field.ty.is_counted(&self.program.enums)
+                && self.calls_display(field.ty);
+            if snapshot {
+                self.retain(value, field.ty);
+            }
+            self.show_value(sink, field.ty, value, true, Mode::Print);
+            if snapshot {
+                self.release(value, field.ty);
+            }
+        }
+        self.show_text("sisu_show_close", sink, ")");
     }
 
     /// Writes the text of `receiver`, of type `ty`, which the written `to_string` `method`
@@ -427,7 +539,13 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// Writes the array at `array`: `[`, each element quoted if it is a `string` or a `char`,
     /// with `sep` between them, and `]`.
-    fn show_array(&self, sink: PointerValue<'ctx>, element: Type, array: PointerValue<'ctx>) {
+    fn show_array(
+        &self,
+        sink: PointerValue<'ctx>,
+        element: Type,
+        array: PointerValue<'ctx>,
+        mode: Mode,
+    ) {
         self.show_text("sisu_show_open", sink, "[");
         let len = self.array_len(array);
         let function = self.current_function();
@@ -451,6 +569,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 element,
                 self.load_element(element, array, index),
                 true,
+                mode,
             );
         });
         self.show_text("sisu_show_close", sink, "]");
@@ -458,7 +577,13 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// Writes the value of the enum `id` at `value`, an enum whose component has no box: its
     /// variant, and the fields of that variant in order.
-    fn show_variants(&self, sink: PointerValue<'ctx>, id: EnumId, value: PointerValue<'ctx>) {
+    fn show_variants(
+        &self,
+        sink: PointerValue<'ctx>,
+        id: EnumId,
+        value: PointerValue<'ctx>,
+        mode: Mode,
+    ) {
         let function = self.current_function();
         let done = self
             .context
@@ -491,7 +616,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                     if let Some(label) = &payload.label {
                         self.show_text("sisu_show_str", sink, &format!("{label}: "));
                     }
-                    self.show_field(sink, (id, variant, field), value);
+                    self.show_field(sink, (id, variant, field), value, mode);
                 }
                 self.show_text("sisu_show_close", sink, ")");
             }
@@ -507,23 +632,33 @@ impl<'ctx> Codegen<'ctx, '_> {
         sink: PointerValue<'ctx>,
         (id, variant, field): (EnumId, usize, usize),
         value: PointerValue<'ctx>,
+        mode: Mode,
     ) {
         let ty = self.program.enums[id.0].variants[variant].fields[field].ty;
         if let TypeKind::Enum(..) = ty.kind() {
             let place = self.payload_place(value, id, variant, field);
-            self.call(self.helper(Helper::Show, ty), &[sink.into(), place.into()]);
+            self.call(
+                self.helper(Helper::Show(mode), ty),
+                &[sink.into(), place.into()],
+            );
         } else {
             self.show_value(
                 sink,
                 ty,
                 self.payload_value(value, id, variant, field),
                 true,
+                mode,
             );
         }
     }
 
     /// `@sisu_show_component.<F0>(sink, kind, value)`: see the module doc.
-    pub(super) fn define_show_component(&self, first: EnumId, function: FunctionValue<'ctx>) {
+    pub(super) fn define_show_component(
+        &self,
+        first: EnumId,
+        function: FunctionValue<'ctx>,
+        mode: Mode,
+    ) {
         let members = self.component(first).expect(
             "only the first member of a component with boxes should get a `show_component` helper",
         );
@@ -592,6 +727,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .collect();
         let show = ShowLoop {
             sink: nth(0).into_pointer_value(),
+            mode,
             members,
             kinds,
             top,
@@ -743,7 +879,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 continue;
             }
             if !self.is_link(id, payload) {
-                self.show_field(show.sink, (id, variant, field), address);
+                self.show_field(show.sink, (id, variant, field), address, show.mode);
                 continue;
             }
             let resume = self.context.append_basic_block(function, "resume");

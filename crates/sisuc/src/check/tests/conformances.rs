@@ -691,6 +691,13 @@ fn growing_and_never_built_declarations_should_give_their_own_error_alone() {
             vec![(Code::InstantiationCycle, (16, 10))],
         ),
         (
+            "a growing enum that a dbg shows",
+            format!(
+                "{nest}fn show<T>(x: Nest<T>) {{\n    dbg(x)\n}}\nfn main() {{\n    let n: Nest<i64> = Nest.End\n    show(n)\n}}"
+            ),
+            vec![(Code::InstantiationCycle, (3, 10))],
+        ),
+        (
             "a growing enum under the bound of a class",
             format!("class C<T: Eq> {{}}\n{nest}enum U {{\n    A(C<Nest<i64>>)\n}}\nfn main() {{}}"),
             vec![(Code::InstantiationCycle, (4, 10))],
@@ -2266,6 +2273,570 @@ fn implicit_print_should_close_an_instantiation_cycle() {
     }
 }
 
+/// The type that grows in the field of `Hold<T>`, which `dbg_cycle_rows` declares first. A cycle
+/// that the field type makes is reported there, whatever the operand that reaches it.
+const FIELD: &str = "W<[T]>";
+
+/// The same type in the field of `Rec<T>`, which follows `Hold<T>`.
+const REC_FIELD: &str = "W<[T]>\n}\nenum Pick";
+
+/// `dbg` shows the fields of a class with no written `to_string`. So a growing value held in a
+/// field, in an array or in an enum payload is a cycle for `dbg`. A class whose field type grows
+/// is reported at the field. A class that only passes its parameter on to a field is reported at
+/// the `dbg`, where the argument grows.
+#[test]
+fn implicit_dbg_should_close_an_instantiation_cycle() {
+    dbg_cycle_rows(&[
+        (
+            "a dbg of a class that grows",
+            "dbg(W(x: [self.x]))",
+            Some("dbg(W(x: [self.x]))"),
+        ),
+        (
+            "a dbg of a class that holds a class that grows",
+            "let _ = dbg(Wrap(v: W(x: [self.x])))",
+            Some("dbg(Wrap(v: W(x: [self.x])))"),
+        ),
+        (
+            "a dbg of an array of such a class",
+            "let _ = dbg([Wrap(v: W(x: [self.x]))])",
+            Some("dbg([Wrap(v: W(x: [self.x]))])"),
+        ),
+        (
+            "a dbg of an enum payload of such a class",
+            "let _ = dbg(Pick.One(Wrap(v: W(x: [self.x]))))",
+            Some("dbg(Pick.One(Wrap(v: W(x: [self.x]))))"),
+        ),
+        (
+            "a dbg of an enum payload that holds the class twice",
+            "let _ = dbg(Pair.Two(Wrap(v: W(x: [self.x])), Wrap(v: W(x: [self.x]))))",
+            Some("dbg(Pair.Two(Wrap(v: W(x: [self.x])), Wrap(v: W(x: [self.x]))))"),
+        ),
+        // `Hold<T>` itself grows nothing: only its field type `W<[T]>` does.
+        (
+            "a dbg of a class whose field type grows",
+            "let _ = dbg(Hold(v: W(x: [self.x])))",
+            Some(FIELD),
+        ),
+        (
+            "a dbg of an array of such a class",
+            "let _ = dbg([Hold(v: W(x: [self.x]))])",
+            Some(FIELD),
+        ),
+        (
+            "a dbg of an optional of such a class",
+            "let _ = dbg(Some(Hold(v: W(x: [self.x]))))",
+            Some(FIELD),
+        ),
+        (
+            "a dbg of an enum payload of such a class",
+            "let _ = dbg(Pick.One(Hold(v: W(x: [self.x]))))",
+            Some(FIELD),
+        ),
+        (
+            "a dbg of a recursive class whose field type grows",
+            "let _ = dbg(Rec(next: None, v: W(x: [self.x])))",
+            Some(REC_FIELD),
+        ),
+        (
+            "a dbg of an array of recursive classes whose field type grows",
+            "let _ = dbg([Rec(next: None, v: W(x: [self.x]))])",
+            Some(REC_FIELD),
+        ),
+        // `Wrap<T>` passes its parameter to the field `W<T>`: the argument grows at the `dbg`.
+        (
+            "a dbg of an enum payload that is a class which passes its parameter on",
+            "let _ = dbg(Pick.One(Wrap(v: W(x: [self.x]))))",
+            Some("dbg(Pick.One(Wrap(v: W(x: [self.x]))))"),
+        ),
+        (
+            "a print of a class whose field type grows",
+            "print(Hold(v: W(x: [self.x])))",
+            None,
+        ),
+        ("a dbg that does not grow", "dbg(self.x)", None),
+    ]);
+}
+
+/// The same through an enum: a payload that holds the class, a recursive enum, and an enum that
+/// shows no argument. A class with a field that grows is reported at its field, however the
+/// enum holds it. A payload that grows, or a class that passes its parameter on, is reported at
+/// the payload. That class inside another enum is reported at its field, which does not grow.
+#[test]
+fn implicit_dbg_should_close_an_instantiation_cycle_through_an_enum() {
+    dbg_cycle_rows(&[
+        (
+            "a dbg of a recursive enum that holds such a class",
+            "let _ = dbg(Tree.Leaf(Hold(v: W(x: [self.x]))))",
+            Some(FIELD),
+        ),
+        (
+            "a dbg of an array of a recursive enum that holds such a class",
+            "let _ = dbg([Tree.Leaf(Hold(v: W(x: [self.x])))])",
+            Some(FIELD),
+        ),
+        (
+            "a dbg of an enum that holds the class in an array",
+            "let _ = dbg(Bag.Many([Hold(v: W(x: [self.x]))]))",
+            Some(FIELD),
+        ),
+        (
+            "a dbg of an enum that holds the class in an optional",
+            "let _ = dbg(Bag.Maybe(Some(Hold(v: W(x: [self.x])))))",
+            Some(FIELD),
+        ),
+        // No payload holds `P`, so `dbg` shows nothing of the argument `Hold<T>`.
+        (
+            "a dbg of an enum that holds no value of the class",
+            "let p: Phantom<i64, Hold<T>> = Phantom.One(1)\n        dbg(p)",
+            None,
+        ),
+        // An argument of an enum inside the argument of another is shown when both show it.
+        (
+            "a dbg of an enum that holds the class in the argument of an argument",
+            "let _ = dbg(Nest.One(Pick.One(Pick.One(Hold(v: W(x: [self.x]))))))",
+            Some(FIELD),
+        ),
+        (
+            "a dbg of an enum that names the class in an argument that is not shown",
+            "let p: NestPhantom<Hold<T>> = NestPhantom.One(Phantom.One(1))\n        dbg(p)",
+            None,
+        ),
+        // The payload type gives the class a longer argument: the growth is at the payload.
+        (
+            "a dbg of an enum whose payload type grows",
+            "let _ = dbg(Grow.One(Wrap(v: W(x: [self.x]))))",
+            Some("Wrap<[U]>"),
+        ),
+        // The class is named in the payload, and its field type grows.
+        (
+            "a dbg of an enum whose payload is such a class",
+            "let _ = dbg(Both.One(Hold(v: W(x: [self.x]))))",
+            Some(FIELD),
+        ),
+        // The class passes its parameter to a field: the enum is reported, at the payload.
+        (
+            "a dbg of an enum whose payload is a class which passes its parameter on",
+            "let _ = dbg(PassOn.One(Wrap(v: W(x: [self.x]))))",
+            Some("Wrap<U>"),
+        ),
+        // The class is in another enum: it is reported at its field type `W<T>`, which does not
+        // grow. The text `W<T>\n}` skips `class W<T>` and starts at that field type.
+        (
+            "a dbg of an enum whose payload holds such a class inside another enum",
+            "let _ = dbg(NestW.One(Pick.One(Wrap(v: W(x: [self.x])))))",
+            Some("W<T>\n}"),
+        ),
+    ]);
+}
+
+/// Checks each row `(name, body, cycle)`: the program whose `Display` of `W<T>` runs `body`
+/// reports an E0140 at the text `cycle`, or checks clean when it is `None`.
+fn dbg_cycle_rows(rows: &[(&str, &str, Option<&str>)]) {
+    let w = "class W<T> {\n    x: T\n}\nclass Wrap<T> {\n    v: W<T>\n}\nclass Hold<T> {\n    v: W<[T]>\n}\nclass Rec<T> {\n    next: Rec<T>?\n    v: W<[T]>\n}\nenum Pick<U> {\n    One(U)\n}\nenum Pair<U> {\n    Two(U, U)\n}\nenum Tree<U> {\n    Leaf(U)\n    Node(Tree<U>, Tree<U>)\n}\nenum Both<U> {\n    One(Hold<U>)\n}\nenum PassOn<U> {\n    One(Wrap<U>)\n}\nenum NestW<U> {\n    One(Pick<Wrap<U>>)\n}\nenum Grow<U> {\n    One(Wrap<[U]>)\n}\nenum Nest<U> {\n    One(Pick<Pick<U>>)\n}\nenum NestPhantom<U> {\n    One(Phantom<i64, Pick<U>>)\n}\nenum Phantom<U, P> {\n    One(U)\n}\nenum Bag<U> {\n    Many([U])\n    Maybe(U?)\n}\n";
+    let main = "fn main() {\n    print(W(x: 1))\n}";
+    let display = |body: &str| {
+        format!(
+            "{w}extend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        {body}\n        \"w\"\n    }}\n}}\n{main}"
+        )
+    };
+    for &(row, body, cycle) in rows {
+        let src = display(body);
+        match cycle {
+            Some(text) => codes_row(
+                row,
+                &src,
+                &[(Code::InstantiationCycle, where_is(&src, text))],
+            ),
+            None => clean_row(row, &src),
+        }
+    }
+}
+
+/// `dbg` shows the text of a class or an enum with a written `Display` that always applies, so it
+/// follows no field or payload of it. The type `Hold<T>` holds a type `W<[T]>`, which grows. A
+/// bound on another interface may fail, or the extension may be for one type argument only. Then
+/// `dbg` shows the fields, so those edges stay.
+#[test]
+fn dbg_should_follow_nothing_of_a_class_or_an_enum_with_an_applicable_written_display() {
+    let decls = "interface Mark {\n    fn mark(self) -> string\n}\nclass W<T> {\n    x: T\n}\nenum Pick<U> {\n    One(U)\n}\n";
+    let text = "fn to_string(self) -> string {\n        \"hold\"\n    }\n";
+    let class = "class Hold<T> {\n    v: W<[T]>\n";
+    let enum_ = "class Plain<T> {\n    v: W<[T]>\n}\nenum Hold<T> {\n    One(Plain<T>)\n";
+    let display = |hold: &str, body: &str| {
+        format!(
+            "{decls}{hold}extend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        {body}\n        \"w\"\n    }}\n}}\nfn main() {{\n    print(W(x: 1))\n}}"
+        )
+    };
+    // The subject and how to make it. A cycle is reported at the field type that grows.
+    let subjects = [
+        ("class", class, "Hold(v: W(x: [self.x]))"),
+        ("enum", enum_, "Hold.One(Plain(v: W(x: [self.x])))"),
+    ];
+    for (subject, open, made) in subjects {
+        let extended =
+            |header: &str| format!("{open}}}\nextend{header} Hold<T>: Display {{\n    {text}}}\n");
+        let shapes = [
+            ("itself", format!("dbg({made})")),
+            ("an array", format!("dbg([{made}])")),
+            ("an optional", format!("dbg(Some({made}))")),
+            ("an enum payload", format!("dbg(Pick.One({made}))")),
+            ("an array in an optional", format!("dbg(Some([{made}]))")),
+        ];
+        let mut writtens = vec![
+            ("an extension with no bound", extended("<T>"), false),
+            (
+                "an extension bounded by Display",
+                extended("<T: Display>"),
+                false,
+            ),
+            (
+                "an extension bounded by another interface",
+                extended("<T: Mark>"),
+                true,
+            ),
+            (
+                "an extension for one type argument",
+                {
+                    // `extend Hold<i64>` has no `T` to bind, so it cannot apply to `Hold<T>`.
+                    format!("{open}}}\nextend Hold<i64>: Display {{\n    {text}}}\n")
+                },
+                true,
+            ),
+            ("no written Display", format!("{open}}}\n"), true),
+        ];
+        if subject == "class" {
+            // Only a class can write the method in its body.
+            writtens.push((
+                "a method of the class",
+                format!("{open}    {text}}}\n"),
+                false,
+            ));
+        }
+        for (written, hold, cycle) in &writtens {
+            for (shape, body) in &shapes {
+                let row = format!("{shape} of {subject} with {written}");
+                let src = display(hold, body);
+                if *cycle {
+                    let at = where_is(&src, FIELD);
+                    codes_row(&row, &src, &[(Code::InstantiationCycle, at)]);
+                } else {
+                    clean_row(&row, &src);
+                }
+            }
+        }
+    }
+}
+
+/// A field or a payload whose type did not check has its own error, and adds no edge.
+#[test]
+fn dbg_should_skip_a_field_and_a_payload_that_did_not_check() {
+    for (row, decl, value) in [
+        (
+            "a field",
+            "class Bad<T> {\n    v: Missing\n    w: T\n}",
+            "Bad(v: 1, w: 2)",
+        ),
+        (
+            "a payload",
+            "enum Bad<T> {\n    A(Missing)\n    B(T)\n}",
+            "Bad.B(1)",
+        ),
+    ] {
+        let src = format!(
+            "{decl}\nfn look<T>(x: Bad<T>) {{\n    dbg(x)\n}}\nfn main() {{\n    look({value})\n}}"
+        );
+        let at = where_is(&src, "Missing");
+        codes_row(row, &src, &[(Code::UnknownType, at)]);
+    }
+}
+
+/// A bare parameter shows the class that it gets, and an enum with a written `Display` that always
+/// applies shows its text. So the argument of the enum is read for the first, not for the second.
+#[test]
+fn dbg_should_read_no_argument_of_an_enum_with_a_written_display() {
+    let reads = |slot: &str| {
+        let src = format!(
+            "class Hold<T> {{\n    v: T\n}}\nenum Slot<U> {{\n    Full(U)\n}}\n{slot}enum Outer<U> {{\n    One(Slot<U>)\n}}\nfn look<T>(x: Outer<Hold<T>>) {{\n    dbg(x)\n}}\nfn main() {{\n    look(Outer.One(Slot.Full(Hold(v: 1))))\n}}"
+        );
+        cycle::DBG_VISITS.set(0);
+        clean(&src);
+        cycle::DBG_VISITS.get()
+    };
+    let written = "extend<U> Slot<U>: Display {\n    fn to_string(self) -> string {\n        \"slot\"\n    }\n}\n";
+    // The operand `Outer<Hold<T>>` and the payload `U` in the node of `Slot`, not `Hold<T>`.
+    assert_eq!(reads(written), 2, "a written Display shows no argument");
+    // The same, and `Hold<T>`, and the payload `Slot<U>` of `Outer` with its argument.
+    assert_eq!(reads(""), 5, "a generated Display shows the argument");
+}
+
+/// The reads of a `dbg` follow its operands and the enums it reaches, not their product. A chain
+/// of `n` generic enums is read once for the program, by the node of each enum. The operands of
+/// many types over one chain, in many functions, each read the same number of types whatever `n`
+/// is. A `dbg` of a type with no parameter reads none of its own.
+#[test]
+fn dbg_should_read_the_types_of_an_operand_once() {
+    // `holders` generic functions, each with `operands` parameters `x{i}: E0<T{i}>?` and a marker
+    // that names `T{i}`, and `calls` calls of `dbg` on each. The enums chain to `n`: `E0<T>` names
+    // a parameter, and `E0<i64>` none.
+    let read = |n: usize, holders: usize, operands: usize, calls: usize, argument: &str| {
+        let mut src = String::new();
+        for k in 0..n {
+            let next = if k + 1 < n {
+                format!("Next(E{}<T>)", k + 1)
+            } else {
+                "Last(T)".to_string()
+            };
+            writeln!(src, "enum E{k}<T> {{\n    {next}\n}}")
+                .expect("writing to a `String` should succeed");
+        }
+        let params = |name: &str| {
+            (0..operands)
+                .map(|i| format!("{name}{i}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        for h in 0..holders {
+            let list = (0..operands)
+                .map(|i| {
+                    format!(
+                        "x{i}: {}?, m{i}: T{i}",
+                        argument.replace('#', &format!("T{i}"))
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            writeln!(src, "fn inspect{h}<{}>({list}) {{", params("T"))
+                .expect("writing to a `String` should succeed");
+            for i in 0..operands {
+                writeln!(src, "    let _ = m{i}").expect("writing to a `String` should succeed");
+                src += &format!("    dbg(x{i})\n").repeat(calls);
+            }
+            src += "}\n";
+        }
+        src += "fn main() {\n    let x: E0<i64>? = None\n";
+        for h in 0..holders {
+            let list = vec!["x, 1"; operands].join(", ");
+            writeln!(src, "    inspect{h}({list})").expect("writing to a `String` should succeed");
+        }
+        src += "}";
+        cycle::DBG_VISITS.set(0);
+        clean(&src);
+        cycle::DBG_VISITS.get()
+    };
+    let one = |n: usize| read(n, 1, 1, 1, "E0<#>");
+    let (short, long) = (30, 60);
+    let chain = one(long) - one(short);
+    assert!(
+        chain >= long - short,
+        "the chain should be read: {chain} types for {} more enums",
+        long - short
+    );
+    assert!(chain <= 3 * (long - short), "{chain} types for the chain");
+    // Many operand types over one chain: the same added reads for a short and a long chain.
+    let operands = |n: usize, calls: usize| read(n, 1, 20, calls, "E0<#>") - one(n);
+    let many = operands(short, 1);
+    assert!(many > 0, "each operand type should be read");
+    assert_eq!(
+        operands(long, 1),
+        many,
+        "20 operand types should not read the chain again"
+    );
+    assert_eq!(
+        operands(short, 5),
+        many,
+        "5 calls of each operand read no more than one"
+    );
+    // A holder reads an operand type once, so each function reads it, but not the chain again.
+    let functions = |n: usize| read(n, 20, 1, 1, "E0<#>") - one(n);
+    assert!(functions(short) > 0, "each function should read the type");
+    assert_eq!(
+        functions(long),
+        functions(short),
+        "20 functions should not read the chain again"
+    );
+    // The chain is read for any `dbg`; an operand with no parameter adds nothing to it.
+    let closed = read(short, 1, 1, 1, "E0<i64>");
+    assert!(
+        closed < one(short),
+        "an operand with no parameter reads less"
+    );
+    assert_eq!(
+        read(short, 5, 5, 5, "E0<i64>"),
+        closed,
+        "an operand with no parameter reads nothing"
+    );
+}
+
+/// A `dbg` adds the edges of its operand's fields once for a function, whatever number of calls
+/// name the type: the calls after the first add what a `print` of the operand adds. The enums
+/// of a chain each hold a class whose field type is a class of its own.
+#[test]
+fn dbg_should_add_the_edges_of_the_fields_once_for_a_function() {
+    let edges = |shown: &str, calls: usize| {
+        let n = 30;
+        let mut src = String::new();
+        for k in 0..n {
+            let next = if k + 1 < n {
+                format!("    Next(E{}<T>, C{k}<T>)\n", k + 1)
+            } else {
+                String::new()
+            };
+            writeln!(
+                src,
+                "class Tag{k}<T> {{\n    x: T\n}}\nclass C{k}<T> {{\n    v: Tag{k}<T>\n}}\nenum E{k}<T> {{\n    End(T)\n{next}}}"
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        src += "fn inspect<T>(x: E0<T>) {\n";
+        src += &format!("    {shown}(x)\n").repeat(calls);
+        src += "}\nfn main() {\n    let x = E0.End(1)\n    inspect(x)\n}";
+        cycle::EDGES.set(0);
+        clean(&src);
+        cycle::EDGES.get()
+    };
+    let extra = |calls: usize| edges("dbg", calls) - edges("print", calls);
+    assert!(extra(1) > 0, "a dbg adds the edges of the fields");
+    assert_eq!(extra(40), extra(1), "40 calls add them once");
+}
+
+/// The edges of a `dbg` follow the operands and the enums, not their product: `n` enums in a chain
+/// give their edges to the `dbg` node of each enum, and an operand of one of `k` types adds the
+/// same edges whatever `n` is.
+#[test]
+fn dbg_should_add_edges_in_proportion_to_the_operands_and_the_enums() {
+    let edges = |n: usize, k: usize| {
+        let mut src = String::new();
+        for i in 0..n {
+            let next = if i + 1 < n {
+                format!("Next(E{}<T>)", i + 1)
+            } else {
+                "Last(T)".to_string()
+            };
+            writeln!(src, "enum E{i}<T> {{\n    {next}\n}}")
+                .expect("writing to a `String` should succeed");
+        }
+        let params: Vec<_> = (0..k).map(|i| format!("T{i}")).collect();
+        let list: Vec<_> = (0..k)
+            .map(|i| format!("x{i}: E0<T{i}>?, m{i}: T{i}"))
+            .collect();
+        writeln!(
+            src,
+            "fn inspect<{}>({}) {{",
+            params.join(", "),
+            list.join(", ")
+        )
+        .expect("writing to a `String` should succeed");
+        for i in 0..k {
+            writeln!(src, "    let _ = m{i}\n    dbg(x{i})")
+                .expect("writing to a `String` should succeed");
+        }
+        src += "}\nfn main() {\n    let x: E0<i64>? = None\n";
+        writeln!(src, "    inspect({})\n}}", vec!["x, 1"; k].join(", "))
+            .expect("writing to a `String` should succeed");
+        cycle::EDGES.set(0);
+        clean(&src);
+        cycle::EDGES.get()
+    };
+    let (short, long) = (30, 60);
+    let chain = edges(long, 1) - edges(short, 1);
+    assert!(
+        chain > 0,
+        "the enums add edges, the `dbg` node of each among them"
+    );
+    assert_eq!(
+        edges(long, 20) - edges(short, 20),
+        chain,
+        "20 operand types should not add the edges of the chain again"
+    );
+}
+
+/// A class has one generated `dbg` node, so the edges of its fields are added once for the
+/// program: whatever number of functions and of operand types name the class, a field adds the
+/// same edges. `fields` fields of the class `C<T>`, and `holders` generic functions with
+/// `operands` parameters of type `C<T{i}>`, each shown by a `dbg`.
+#[test]
+fn dbg_should_add_the_edges_of_the_fields_of_a_class_once_for_the_program() {
+    let edges = |holders: usize, operands: usize, fields: usize| {
+        let mut src = String::from("class C<T> {\n");
+        for f in 0..fields {
+            writeln!(src, "    f{f}: [T]").expect("writing to a `String` should succeed");
+        }
+        src += "}\n";
+        let params: Vec<_> = (0..operands).map(|i| format!("T{i}")).collect();
+        let list: Vec<_> = (0..operands).map(|i| format!("a{i}: C<T{i}>")).collect();
+        for h in 0..holders {
+            writeln!(
+                src,
+                "fn inspect{h}<{}>({}) {{",
+                params.join(", "),
+                list.join(", ")
+            )
+            .expect("writing to a `String` should succeed");
+            for i in 0..operands {
+                writeln!(src, "    dbg(a{i})").expect("writing to a `String` should succeed");
+            }
+            src += "}\n";
+        }
+        let empty: Vec<_> = (0..fields).map(|f| format!("f{f}: []")).collect();
+        writeln!(
+            src,
+            "fn main() {{\n    let c: C<i64> = C({})",
+            empty.join(", ")
+        )
+        .expect("writing to a `String` should succeed");
+        for h in 0..holders {
+            writeln!(src, "    inspect{h}({})", vec!["c"; operands].join(", "))
+                .expect("writing to a `String` should succeed");
+        }
+        src += "}";
+        cycle::EDGES.set(0);
+        clean(&src);
+        cycle::EDGES.get()
+    };
+    let (few, many) = (10, 20);
+    let field_edges = |holders: usize, operands: usize| {
+        edges(holders, operands, many) - edges(holders, operands, few)
+    };
+    let once = field_edges(1, 1);
+    assert!(once > 0, "the fields should add edges");
+    assert_eq!(field_edges(10, 1), once, "10 functions share the fields");
+    assert_eq!(
+        field_edges(1, 10),
+        once,
+        "10 operand types share the fields"
+    );
+    assert_eq!(field_edges(10, 10), once, "100 operands share the fields");
+}
+
+/// The arguments that `dbg` shows are found in one pass over the payloads of the enums: a chain of
+/// `n` parameters that each pass to the next costs the same for each one.
+#[test]
+fn dbg_should_find_the_shown_arguments_in_proportion_to_the_type_parameters() {
+    // `E<T0, .., Tn-1>` holds `T0` and `E<T1, .., Tn-1, T0>`: a parameter becomes shown at a time.
+    let steps = |n: usize| {
+        let params: Vec<_> = (0..n).map(|i| format!("T{i}")).collect();
+        let same = vec!["T"; n].join(", ");
+        let rotated: Vec<_> = (1..=n).map(|i| format!("T{}", i % n)).collect();
+        let closed = vec!["i64"; n].join(", ");
+        let src = format!(
+            "enum E<{}> {{\n    Here(T0)\n    Next(E<{}>)\n}}\nfn look<T>(x: E<{same}>, m: T) {{\n    let _ = m\n    dbg(x)\n}}\nfn main() {{\n    let e: E<{closed}> = E.Here(1)\n    look(e, 1)\n}}",
+            params.join(", "),
+            rotated.join(", ")
+        );
+        cycle::SHOWN_STEPS.set(0);
+        clean(&src);
+        cycle::SHOWN_STEPS.get()
+    };
+    let (a, b, c) = (steps(20), steps(40), steps(60));
+    assert!(a > 0, "the payloads should be read");
+    assert_eq!(
+        c - b,
+        b - a,
+        "each parameter should cost the same: {a} {b} {c}"
+    );
+}
+
 #[test]
 fn implicit_interpolation_should_close_an_instantiation_cycle() {
     let w = "class W<T> {\n    x: T\n}\n";
@@ -2936,7 +3507,7 @@ type Row = (
     Option<&'static str>,
 );
 
-const PRINTED: [Row; 29] = [
+const PRINTED: [Row; 30] = [
     ("print", "", "name: string?", "print(name)", Some("name")),
     ("eprint", "", "name: string?", "eprint(name)", Some("name")),
     (
@@ -2951,6 +3522,13 @@ const PRINTED: [Row; 29] = [
         "",
         "name: string?",
         "print(\"{name:>8}\")",
+        Some("name"),
+    ),
+    (
+        "interpolation with the pretty flag",
+        "",
+        "name: string?",
+        "print(\"{name:#}\")",
         Some("name"),
     ),
     (

@@ -59,6 +59,19 @@ fn printing(op: Operand, calls: bool) -> Statement {
     }
 }
 
+/// `dbg(op)`: a borrowed operand, whose helper calls a written `to_string` when `calls`.
+fn debugging(op: Operand, calls: bool) -> Statement {
+    Statement::Assign {
+        dest: None,
+        value: Rvalue::Dbg {
+            at: Span::new(0, 0),
+            text: "s".to_string(),
+            operand: op,
+            calls,
+        },
+    }
+}
+
 /// `print(op)`, which calls no written method.
 fn show(op: Operand) -> Statement {
     printing(op, false)
@@ -249,6 +262,24 @@ fn read_after_move() {
             literal(s),
             assign(t, Rvalue::Use(Operand::Move(s))),
             show(read(s)),
+            Statement::Release(t),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, s, Rule::Read);
+}
+
+/// A `dbg` reads its operand as `print` does, so a moved-out local is rejected.
+#[test]
+fn dbg_should_be_rejected_when_it_reads_a_moved_out_local() {
+    let mut b = Builder::new("f");
+    let s = b.local("s", Type::STRING);
+    let t = b.local("t", Type::STRING);
+    b.block(
+        vec![
+            literal(s),
+            assign(t, Rvalue::Use(Operand::Move(s))),
+            debugging(read(s), false),
             Statement::Release(t),
         ],
         ret(),
@@ -1597,6 +1628,33 @@ fn borrow_across_a_flagged_print_should_be_rejected() {
             vec![
                 assign(x, Rvalue::Borrow(field(o))),
                 printing(read(o), calls),
+                show(read(x)),
+                Statement::End(x),
+                Statement::Release(o),
+            ],
+            ret(),
+        );
+        (b.finish(), x)
+    };
+    let (flagged, x) = case(true);
+    rejects(&flagged, 0, x, Rule::Borrow);
+    let (plain, _) = case(false);
+    assert_eq!(certify(&plain), Ok(()));
+}
+
+/// A `dbg` whose helper may call a written `to_string` (`calls`) can store through the field, as
+/// a flagged `print` can. A `dbg` that cannot is no clobber.
+#[test]
+fn borrow_across_a_flagged_dbg_should_be_rejected() {
+    let case = |calls: bool| {
+        let mut b = Builder::new("f");
+        let o = b.param("o", object());
+        let x = b.local("b", Type::STRING);
+        b.owner(x, o);
+        b.block(
+            vec![
+                assign(x, Rvalue::Borrow(field(o))),
+                debugging(read(o), calls),
                 show(read(x)),
                 Statement::End(x),
                 Statement::Release(o),

@@ -272,7 +272,9 @@ impl Checker<'_> {
                     ),
                     "the checker should lower an `if` to `If`, an `if let` to `IfSome` or `Match`, and a `match` to `Match`"
                 );
-                if !matches!(checked.ty, Type::UNIT | Type::NEVER) {
+                // `dbg` is meant to be run, so its value may go unused.
+                let dbg = matches!(checked.kind, ExprKind::Dbg { .. });
+                if !dbg && !matches!(checked.ty, Type::UNIT | Type::NEVER) {
                     unused.push(Unused {
                         ty: self.type_name(checked.ty),
                         at: source.span,
