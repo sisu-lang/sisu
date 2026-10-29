@@ -133,8 +133,8 @@ pub(crate) struct Program {
     pub(crate) interfaces: Vec<Interface>,
     /// Every conformance of a class or an enum to an interface. Only the checker sets it.
     pub(crate) conformances: Conformances,
-    /// Where each choice that writes an associated type is written: `mono` reports a walk that it
-    /// cannot end there. Only the checker sets it.
+    /// Where each choice that writes an associated type or a type parameter is written: `mono`
+    /// reports a walk that it cannot end there. Only the checker sets it.
     pub(crate) choice_ats: FxHashMap<ChoicePlace, Span>,
     /// Where the language interfaces are among `interfaces`. Only the checker sets it.
     pub(crate) lang: LangInterfaces,

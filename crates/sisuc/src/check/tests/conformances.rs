@@ -617,6 +617,155 @@ fn growing_and_never_built_declarations_should_give_their_own_error_alone() {
     }
 }
 
+/// An enum that holds the type that a conformance chooses for `T.Item`, and a choice that names
+/// the enum again with a longer type argument, grows without end: the enum is marked before the
+/// first query, and the choice is reported (E0140). The three forms below overflowed the stack.
+#[test]
+fn growth_through_the_choice_of_an_associated_type_should_be_marked_before_the_first_query() {
+    let decls = "interface I {\n    type Item\n}\nclass W<T>: I {\n    type Item = E<W<W<T>>>\n}\nenum E<T: I> {\n    End\n    A(T.Item)\n}\n";
+    let rows = [
+        (
+            "a listed Eq on an enum that holds the grown enum",
+            "enum F: Eq {\n    X(E<W<i64>>)\n}\nfn main() {}",
+        ),
+        (
+            "a comparison of the grown enum",
+            "fn main() {\n    let e: E<W<i64>> = E.End\n    print(e == e)\n}",
+        ),
+        (
+            "a call of a bound that the grown enum must meet",
+            "fn f<T: Eq>(_x: T) {}\nfn main() {\n    let e: E<W<i64>> = E.End\n    f(e)\n}",
+        ),
+        (
+            "a value of the grown enum and no query",
+            "fn main() {\n    let e: E<W<i64>> = E.End\n}",
+        ),
+    ];
+    for (row, rest) in rows {
+        let src = format!("{decls}{rest}");
+        codes_row(
+            row,
+            &src,
+            &[(Code::InstantiationCycle, where_is(&src, "E<W<W<T>>>"))],
+        );
+    }
+}
+
+/// The neighbours of the forms above: each holder of the associated type, each way to name it,
+/// and each shape of choice that grows.
+#[test]
+fn growth_through_the_choice_of_an_associated_type_should_be_reported_for_each_form() {
+    let item = "interface I {\n    type Item\n}\n";
+    let chain = "interface I {\n    type Item\n}\ninterface Nx {\n    type Next: I\n}\n";
+    let list = "enum F: Eq {\n    X(E<W<i64>>)\n}\nfn main() {}";
+    // Each row: the program, and the text of the choice where the error stands.
+    let rows = [
+        (
+            "a class holds the associated type",
+            format!("{item}class W<T>: I {{\n    type Item = H<W<W<T>>>\n}}\nclass H<T: I> {{\n    v: T.Item?\n}}\nfn main() {{}}"),
+            "H<W<W<T>>>",
+        ),
+        (
+            "an enum is the target of the conformance",
+            format!("{item}enum W<T>: I {{\n    One(T)\n    type Item = E<W<W<T>>>\n}}\nenum E<T: I> {{\n    End\n    A(T.Item)\n}}\nfn main() {{}}"),
+            "E<W<W<T>>>",
+        ),
+        (
+            "an array of the associated type",
+            format!("{item}class W<T>: I {{\n    type Item = E<W<W<T>>>\n}}\nenum E<T: I> {{\n    End\n    A([T.Item])\n}}\n{list}"),
+            "E<W<W<T>>>",
+        ),
+        (
+            "an argument of another enum",
+            format!("{item}class W<T>: I {{\n    type Item = E<W<W<T>>>\n}}\nenum Box<U> {{\n    B(U)\n}}\nenum E<T: I> {{\n    End\n    A(Box<T.Item>)\n}}\n{list}"),
+            "E<W<W<T>>>",
+        ),
+        (
+            "a choice with two parameters",
+            format!("{item}class P<A, B>: I {{\n    type Item = E<P<B, P<A, A>>>\n}}\nenum E<T: I> {{\n    End\n    A(T.Item)\n}}\nenum F: Eq {{\n    X(E<P<i64, i64>>)\n}}\nfn main() {{}}"),
+            "E<P<B, P<A, A>>>",
+        ),
+        (
+            "an interface with a type parameter",
+            "interface S<A> {\n    type Item\n}\nclass W<T>: S<i64> {\n    type Item = E<W<W<T>>>\n}\nenum E<T: S<i64>> {\n    End\n    A(T.Item)\n}\nfn main() {}".to_string(),
+            "E<W<W<T>>>",
+        ),
+        (
+            "one conformance grows and another shrinks",
+            format!("{item}class W<T>: I {{\n    type Item = T\n}}\nclass V<T>: I {{\n    type Item = E<V<V<T>>>\n}}\nenum E<T: I> {{\n    End\n    A(T.Item)\n}}\nenum F: Eq {{\n    X(E<W<i64>>)\n}}\nfn main() {{}}"),
+            "E<V<V<T>>>",
+        ),
+        (
+            "two enums hold the associated type and each other",
+            format!("{item}class W<T>: I {{\n    type Item = G<W<W<T>>>\n}}\nenum E<T: I> {{\n    End\n    A(T.Item)\n}}\nenum G<T: I> {{\n    End\n    B(E<T>)\n}}\n{list}"),
+            "G<W<W<T>>>",
+        ),
+        (
+            "an associated type of an associated type",
+            format!("{chain}class X<T>: Nx {{\n    type Next = W<T>\n}}\nclass W<T>: I {{\n    type Item = E<X<X<T>>>\n}}\nenum E<T: Nx> {{\n    End\n    A(T.Next.Item)\n}}\nenum F: Eq {{\n    Y(E<X<i64>>)\n}}\nfn main() {{}}"),
+            "E<X<X<T>>>",
+        ),
+        (
+            // The choice of `Item` passes its parameter on as it is: the type grows by the choice
+            // of `Next` alone, so the cycle shows at the field.
+            "an associated type of an associated type that grows by its base alone",
+            format!("{chain}class X<T>: Nx {{\n    type Next = W<X<X<T>>>\n}}\nclass W<T: Nx>: I {{\n    type Item = E<T>\n}}\nenum E<T: Nx> {{\n    End\n    A(T.Next.Item)\n}}\nenum F: Eq {{\n    Y(E<X<i64>>)\n}}\nfn main() {{}}"),
+            "T.Next.Item",
+        ),
+    ];
+    for (row, src, at) in rows {
+        codes_row(row, &src, &[(Code::InstantiationCycle, where_is(&src, at))]);
+    }
+}
+
+/// A choice that passes the type on as it is, or shorter, or that names no parameter, closes no
+/// cycle, and the enum that holds it stays unmarked.
+#[test]
+fn choice_of_an_associated_type_that_does_not_grow_should_not_be_reported() {
+    let item = "interface I {\n    type Item\n}\n";
+    let chain = "interface I {\n    type Item\n}\ninterface Nx {\n    type Next: I\n}\n";
+    let list = "enum F: Eq {\n    X(E<W<i64>>)\n}\nfn main() {}";
+    let rows = [
+        (
+            "a choice that shrinks the type",
+            format!(
+                "{item}class W<T>: I {{\n    type Item = T\n}}\nenum E<T: I> {{\n    End\n    A(T.Item)\n}}\n{list}"
+            ),
+        ),
+        (
+            "a choice that names the enum at the depth of its target",
+            format!(
+                "{item}class W<T>: I {{\n    type Item = E<W<T>>\n}}\nenum E<T: I> {{\n    End\n    A(T.Item)\n}}\n{list}"
+            ),
+        ),
+        (
+            "a choice that names the enum one level shorter",
+            format!(
+                "{item}class W<T>: I {{\n    type Item = E<T>\n}}\nenum E<T> {{\n    End\n    A(T)\n}}\nfn main() {{}}"
+            ),
+        ),
+        (
+            "a choice that names no parameter",
+            format!(
+                "{item}class W<T>: I {{\n    type Item = i64\n}}\nenum E<T: I> {{\n    End\n    A(T.Item)\n}}\n{list}"
+            ),
+        ),
+        (
+            "an associated type of an associated type that shrinks",
+            format!(
+                "{chain}class X<T>: Nx {{\n    type Next = W<T>\n}}\nclass W<T>: I {{\n    type Item = E<X<T>>\n}}\nenum E<T: Nx> {{\n    End\n    A(T.Next.Item)\n}}\nenum F: Eq {{\n    Y(E<X<i64>>)\n}}\nfn main() {{}}"
+            ),
+        ),
+    ];
+    for (row, src) in rows {
+        let found: Vec<Code> = diags(&src).iter().map(Diagnostic::code).collect();
+        assert!(
+            !found.contains(&Code::InstantiationCycle),
+            "row `{row}`: {found:?}"
+        );
+    }
+}
+
 #[test]
 fn conformance_lists_should_accept_generated_and_by_name_conformances() {
     let main = "fn main() {}";

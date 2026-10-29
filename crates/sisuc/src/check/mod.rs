@@ -423,8 +423,9 @@ struct Checker<'src> {
     /// The type parameters of each conformance that has bounded ones, with their bounds, by
     /// interface and place among the interface's: the class's or the block's.
     conformance_bounds: FxHashMap<(tir::InterfaceId, usize), ParamBounds>,
-    /// Where each choice that writes an associated type is written, by conformance (interface and
-    /// place among the interface's) and place of the associated type among the interface's.
+    /// Where each choice that writes an associated type or a type parameter is written, by
+    /// conformance (interface and place among the interface's) and place of the associated type
+    /// among the interface's.
     choice_ats: FxHashMap<tir::ChoicePlace, Span>,
     /// The choices that `normalize` found to need their own associated type, or too many steps,
     /// each with the first type found for it and why; reported once all bodies are checked (see
@@ -463,6 +464,9 @@ struct Checker<'src> {
     /// no value can be built of it (the never-built error): the generated rule answers `true`
     /// for it with no part query, so its own error is its only diagnostic.
     marked: Vec<bool>,
+    /// Whether the type of a field of a class or a payload of an enum holds an associated type:
+    /// the choices of the associated types matter to the cycles only then. Set before the marks.
+    holds_assoc: bool,
     /// The place among `extensions` of the first block that covers the receiver of the call being
     /// found and whose bounds fail, when `conforming_methods` finds no method for it.
     failed_block: Option<usize>,
@@ -956,6 +960,7 @@ impl<'src> Checker<'src> {
             open: conformance::Open::default(),
             unbuilt: Vec::new(),
             marked: Vec::new(),
+            holds_assoc: false,
             failed_block: None,
             lowered_enums: Vec::new(),
             written: None,

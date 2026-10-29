@@ -132,6 +132,7 @@ impl Checker<'_> {
         pending.extend(self.name_displays(&gives_display, &mut added));
         // The choices of the associated types are recorded: an enum that grows through one is
         // marked, before the first query.
+        self.holds_assoc = self.field_assoc();
         let growing = self.growing_enums();
         for (marked, grows) in self.marked.iter_mut().zip(growing) {
             *marked |= grows;
@@ -1084,7 +1085,7 @@ impl Checker<'_> {
 
     /// The type that `source` chooses for each associated type of `interface`, in order; `None`
     /// for one that it chooses no type for, or whose type failed. Also where each type that holds
-    /// an associated type is written.
+    /// an associated type or a type parameter is written.
     fn chosen(
         &self,
         interface: InterfaceId,
@@ -1095,7 +1096,7 @@ impl Checker<'_> {
             .map(|(k, declared)| {
                 let choice = self.choice(source, declared.name.name)?;
                 let ty = choice.ty?;
-                if ty.has_assoc() {
+                if ty.has_assoc() || ty.has_param() {
                     written.push((k, choice.at));
                 }
                 Some(ty)

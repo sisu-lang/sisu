@@ -3904,6 +3904,14 @@ fn a_chain_of_growing_types_should_be_reported_at_the_choice_once_the_limit_ends
     codes(&ends.replace("type B = T.B.B", "type B = T"), &[]);
 }
 
+/// The same types beside a field that holds an associated type: a loop of names alone
+/// instantiates no class or enum, so the check gives the one error at the choice, and no E0140.
+#[test]
+fn a_chain_of_growing_types_beside_a_field_that_holds_one_should_be_reported_once() {
+    let src = "interface Base {\n    type B: Holder\n}\ninterface Holder: Base {}\nclass Leaf {}\nextend Leaf: Base {\n    type B = Leaf\n}\nextend Leaf: Holder {}\nclass Outer<T> {}\nextend<T: Holder> Outer<T>: Base {\n    type B = W<Outer<Outer<T>>>\n}\nextend<T: Holder> Outer<T>: Holder {}\nclass W<T> {}\nextend<T: Holder> W<T>: Base {\n    type B = T.B.B\n}\nextend<T: Holder> W<T>: Holder {}\nfn get<S: Holder>(_s: S) {\n    let _x: [S.B.B] = []\n}\nclass Keep<S: Holder> {\n    b: [S.B.B]\n}\nfn main() {\n    get(Outer<Leaf>())\n}";
+    codes(src, &[(Code::UnknownType, (17, 14))]);
+}
+
 /// A chain of choices that ends, nested as deep as the limit allows, is clean: `W<T>` chooses the
 /// associated type of `T`, so the associated type of `W<..W<Done>..>` with `levels` levels needs
 /// `levels` choices, one after the other. `Start` chooses that type, and `get` writes its

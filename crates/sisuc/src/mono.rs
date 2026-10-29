@@ -121,7 +121,8 @@ struct Mono {
     out: Program,
     /// The checked program's conformances, which resolve each interface call.
     conformances: Conformances,
-    /// Where the choices that write an associated type are written (`Program::choice_ats`).
+    /// Where the choices that write an associated type or a type parameter are written
+    /// (`Program::choice_ats`).
     choice_ats: FxHashMap<ChoicePlace, Span>,
     /// The loops and the chains that are too long that `subst` has met, with the first type found
     /// for each place. `subst` then gives a stand-in type, and no instance after the first is

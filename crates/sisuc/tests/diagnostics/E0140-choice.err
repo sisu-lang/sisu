@@ -1,0 +1,11 @@
+error[E0140]: `W` instantiates itself without end
+  --> E0140-choice.sisu:6:17
+   |
+ 6 |     type Item = E<W<W<T>>>
+   |                 ^^^^^^^^^^ `E<W<W<T>>>` here
+...
+11 |     A(T.Item)
+   |       ------ which instantiates `T.Item`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140
