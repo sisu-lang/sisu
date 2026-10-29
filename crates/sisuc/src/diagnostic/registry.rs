@@ -743,7 +743,8 @@ pub(crate) enum DiagnosticKind {
     },
     /// An index into the value at `at`, of type `ty`, which is no array.
     CannotIndex { ty: String, at: Span },
-    /// A `sum` at `at` of an array of type `ty`, which is neither `[i64]` nor `[f64]`.
+    /// The method `method` at `at`, called on an array of type `ty`. The prelude gives the method
+    /// to the array types `targets`, and none of them is `ty`.
     SumNeedsNumbers {
         method: String,
         ty: String,
@@ -1411,6 +1412,19 @@ fn listed(names: &[String], last: &str) -> String {
     }
     let rest: Vec<_> = rest.iter().map(|name| format!("`{name}`")).collect();
     format!("{} {last} `{end}`", rest.join(", "))
+}
+
+/// `types` in backticks, each after "an", with "or" before the last one: "an `[i64]`",
+/// "an `[i64]` or an `[f64]`", "an `[i64]`, an `[f64]` or an `[u8]`".
+fn one_of(types: &[String]) -> String {
+    let types: Vec<_> = types.iter().map(|t| format!("an `{t}`")).collect();
+    let (end, rest) = types
+        .split_last()
+        .expect("a list should hold at least one type");
+    if rest.is_empty() {
+        return end.clone();
+    }
+    format!("{} or {end}", rest.join(", "))
 }
 
 /// What a name is defined as.
@@ -3351,16 +3365,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 targets,
                 at,
             } => {
-                // "an `[i64]`", "an `[i64]` or an `[f64]`", "an `[i64]`, an `[f64]` or an `[u8]`".
-                let targets: Vec<_> = targets.iter().map(|t| format!("an `{t}`")).collect();
-                let (end, rest) = targets
-                    .split_last()
-                    .expect("the report should name a type that has the method");
-                let targets = if rest.is_empty() {
-                    end.clone()
-                } else {
-                    format!("{} or {end}", rest.join(", "))
-                };
+                let targets = one_of(&targets);
                 Diagnostic::coded(code, at, format!("`{method}` needs {targets}, found `{ty}`"))
             }
             DiagnosticKind::MethodAsFunction {
@@ -4679,6 +4684,21 @@ fn insert_mut(message: &str, declared: Span) -> Fix {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One, two and three types read as "an `A`", "an `A` or an `B`" and "an `A`, an `B` or an
+    /// `C`".
+    #[test]
+    fn one_of_should_join_types_with_or() {
+        let types = |n: usize| -> Vec<String> {
+            ["[i64]", "[f64]", "[u8]"][..n]
+                .iter()
+                .map(|t| (*t).to_owned())
+                .collect()
+        };
+        assert_eq!(one_of(&types(1)), "an `[i64]`");
+        assert_eq!(one_of(&types(2)), "an `[i64]` or an `[f64]`");
+        assert_eq!(one_of(&types(3)), "an `[i64]`, an `[f64]` or an `[u8]`");
+    }
 
     #[test]
     fn code_parses_both_cases() {

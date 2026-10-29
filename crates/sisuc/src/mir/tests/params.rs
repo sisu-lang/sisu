@@ -730,6 +730,7 @@ fn quiet_candidate(
         b.prelude();
     }
     let n = b.local("n", Type::I64);
+    b.local("s", Type::STRING);
     let mut stmts = vec![assign(
         n,
         Rvalue::Use(Operand::Const(Const::Int(1, Type::I64))),
@@ -747,6 +748,33 @@ fn quiet_candidate(
     stmts.extend(extra);
     b.block(stmts, ret());
     b.finish()
+}
+
+/// The field of a local, as a place that a `take` or a store reads.
+fn slot() -> Place {
+    Place {
+        projections: vec![Projection::Field {
+            index: 0,
+            mutable: true,
+        }],
+        ..whole(LocalId(1))
+    }
+}
+
+/// `dest = take slot`.
+fn take(dest: LocalId) -> Statement {
+    Statement::Take {
+        dest,
+        place: slot(),
+    }
+}
+
+/// `slot = value`.
+fn store(value: Operand) -> Statement {
+    Statement::Store {
+        place: slot(),
+        value,
+    }
 }
 
 /// The call flags of `f`, in order.
@@ -798,7 +826,7 @@ fn quiet_should_visit_each_statement_once() {
 fn quiet_should_mark_only_prelude_functions_without_a_clobber() {
     let clobber = || vec![Statement::MakeUnique(whole(LocalId(0)))];
     // (rows, expected quiet flags of the functions, in order)
-    let rows: [(&str, Vec<Function>, Vec<bool>); 6] = [
+    let rows: Vec<(&str, Vec<Function>, Vec<bool>)> = vec![
         (
             "a clobber",
             vec![quiet_candidate("a", true, &[], clobber())],
@@ -847,6 +875,73 @@ fn quiet_should_mark_only_prelude_functions_without_a_clobber() {
             vec![false, true, false],
         ),
     ];
+    assert_quiet_rows(rows);
+}
+
+/// Only a call that is not quiet, a take into a counted local, a store of a counted value and a
+/// `make_unique` are clobbers: the other statements leave a prelude function quiet.
+#[test]
+fn quiet_should_judge_each_kind_of_statement() {
+    let rows: Vec<(&str, Vec<Function>, Vec<bool>)> = vec![
+        (
+            "a take into a counted local",
+            vec![quiet_candidate("a", true, &[], vec![take(LocalId(1))])],
+            vec![false],
+        ),
+        (
+            "a take into an uncounted local",
+            vec![quiet_candidate("a", true, &[], vec![take(LocalId(0))])],
+            vec![true],
+        ),
+        (
+            "a store of a counted value",
+            vec![quiet_candidate(
+                "a",
+                true,
+                &[],
+                vec![store(Operand::Move(LocalId(1)))],
+            )],
+            vec![false],
+        ),
+        (
+            "a store of an uncounted value",
+            vec![quiet_candidate(
+                "a",
+                true,
+                &[],
+                vec![store(Operand::Const(Const::Int(2, Type::I64)))],
+            )],
+            vec![true],
+        ),
+        (
+            "statements that free or end nothing the caller reads",
+            vec![quiet_candidate(
+                "a",
+                true,
+                &[],
+                vec![
+                    Statement::Release(LocalId(1)),
+                    Statement::ScopeRelease(LocalId(1)),
+                    Statement::Check(whole(LocalId(1))),
+                    Statement::End(LocalId(1)),
+                    Statement::Free(LocalId(1)),
+                    Statement::TakeApart {
+                        scrutinee: LocalId(1),
+                        tokens: Vec::new(),
+                        bindings: Vec::new(),
+                        rest: Vec::new(),
+                    },
+                ],
+            )],
+            vec![true],
+        ),
+    ];
+    assert_quiet_rows(rows);
+}
+
+/// Runs `quiet` over each row's functions: the flags are `expected`, and each call takes the
+/// flag of its callee.
+fn assert_quiet_rows(rows: Vec<(&str, Vec<Function>, Vec<bool>)>) {
     for (row, mut functions, expected) in rows {
         quiet(&mut functions);
         let found: Vec<bool> = functions.iter().map(|f| f.quiet).collect();
