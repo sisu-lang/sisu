@@ -2808,7 +2808,8 @@ fn a_prelude_function_should_report_the_location_it_got_from_its_caller() {
     let header = "define internal i64 @\"sisu.[i64].sum\"(";
     let (at, at_len) = hidden_location(&ir, header);
     let sum = function_body(&ir, header);
-    let overflow = format!("call void @sisu_panic_message(ptr {at}, i64 {at_len}, ptr @panic.msg");
+    let overflow =
+        format!("call void @sisu_panic_message(ptr {at}, i64 {at_len}, ptr @report.text");
     assert!(sum.contains(&overflow), "{overflow} in\n{sum}");
     let bounds = format!("call void @sisu_panic_bounds(ptr {at}, i64 {at_len}, i64 ");
     assert!(sum.contains(&bounds), "{bounds} in\n{sum}");
@@ -3496,7 +3497,7 @@ fn generic_largest_should_emit_the_hand_written_body() {
         // message global and its length are placeholders. So is a loop's metadata number.
         let sited = |body: &str| -> String {
             (body.lines())
-                .map(|line| match line.split_once("(ptr @panic.msg") {
+                .map(|line| match line.split_once("(ptr @report.text") {
                     Some((call, rest)) => {
                         let after = rest.splitn(3, ',').nth(2).unwrap_or_default();
                         format!("{call}(ptr @placeholder,{after}")

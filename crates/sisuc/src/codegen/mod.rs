@@ -704,7 +704,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 if self.mir.functions[func.0].prelude {
                     // The caller's own location when the caller is the prelude's too, and the
                     // call's when it is the user's.
-                    let (at, at_len) = self.panic_site(*span);
+                    let (at, at_len) = self.report_site(*span);
                     args.push(at.into());
                     args.push(at_len.into());
                 }
@@ -1188,11 +1188,12 @@ impl<'ctx> Codegen<'ctx, '_> {
         format!("{}:{line}:{col}", self.path)
     }
 
-    /// A pointer to the bytes of `text`, in a global, and its length. The builder is positioned.
+    /// A pointer to the bytes of `text`, in a global, and its length: the message of a panic, or
+    /// the position that a panic or a `dbg` reports. The builder is positioned.
     fn text(&self, text: &str) -> (PointerValue<'ctx>, IntValue<'ctx>) {
         let ptr = self
             .builder
-            .build_global_string_ptr(text, "panic.msg")
+            .build_global_string_ptr(text, "report.text")
             .expect(POSITIONED);
         let len = self.context.i64_type().const_int(
             u64::try_from(text.len()).expect("a text should be shorter than 2^64 bytes"),
@@ -1201,9 +1202,9 @@ impl<'ctx> Codegen<'ctx, '_> {
         (ptr.as_pointer_value(), len)
     }
 
-    /// The location of a panic at `span`: the position text and its length, which a prelude
-    /// function takes from its caller.
-    fn panic_site(&self, span: Span) -> (PointerValue<'ctx>, IntValue<'ctx>) {
+    /// The position that a panic or a `dbg` at `span` reports: the text and its length. A prelude
+    /// function takes it from its caller.
+    fn report_site(&self, span: Span) -> (PointerValue<'ctx>, IntValue<'ctx>) {
         self.caller
             .get()
             .unwrap_or_else(|| self.text(&self.location(span)))

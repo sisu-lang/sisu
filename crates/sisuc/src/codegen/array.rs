@@ -141,7 +141,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let len = self.array_len(array);
         let outside = self.int_compare(IntPredicate::UGE, index, len);
         self.panic_with(outside, |codegen| {
-            let (at, at_len) = codegen.panic_site(span);
+            let (at, at_len) = codegen.report_site(span);
             (
                 codegen.panic_bounds,
                 vec![at.into(), at_len.into(), index.into(), len.into()],

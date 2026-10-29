@@ -110,7 +110,7 @@ pub(super) fn infer(functions: &[Function], main: FuncId, reuses: &[Vec<bool>]) 
 /// and none has any other clobber. A call inside the component is no clobber. A user
 /// function is never quiet, so no program that calls no prelude function changes. Each
 /// statement of each prelude function is visited once. Each function's component is read once
-/// to find the members, and once for each call.
+/// to find the members, and twice for each call.
 pub(super) fn quiet(functions: &mut [Function]) {
     let calls: Vec<Vec<usize>> = functions.iter().map(callees).collect();
     let component = Component(components(&calls));
@@ -155,8 +155,9 @@ pub(super) fn quiet(functions: &mut [Function]) {
     }
 }
 
-/// The component number of each function. Every read goes through `of`, so that a test counts
-/// the reads and sees a search for the members of a component that scans every function.
+/// The component number of each function. A test counts the reads that go through `of` and sees
+/// a search for the members of a component that scans every function. A read of the field itself
+/// is not counted, so code in this module reads it only through `of`.
 struct Component(Vec<usize>);
 
 impl Component {

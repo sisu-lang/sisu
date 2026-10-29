@@ -150,7 +150,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// reaches standard error in one write.
     pub(super) fn dbg(&self, at: Span, text: &str, ty: Type, value: BasicValueEnum<'ctx>) {
         let sink = self.buffer_sink();
-        let (at, at_len) = self.panic_site(at);
+        let (at, at_len) = self.report_site(at);
         self.show_call("sisu_show_str", &[sink.into(), at.into(), at_len.into()]);
         self.show_text("sisu_show_str", sink, &format!(": {text} = "));
         if prints_by_helper(ty) {

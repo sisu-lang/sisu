@@ -506,7 +506,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// `panic(message)` at `span`: `sisu_panic_message(at, at_len, bytes, len)`, then
     /// `unreachable`. The message is not released: the process exits.
     pub(super) fn panic_value(&self, string: PointerValue<'ctx>, span: Span) {
-        let (at, at_len) = self.panic_site(span);
+        let (at, at_len) = self.report_site(span);
         self.call(
             self.panic_message,
             &[

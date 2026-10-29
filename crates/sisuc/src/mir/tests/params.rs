@@ -792,7 +792,7 @@ fn call_flags(f: &Function) -> Vec<bool> {
 
 /// A chain of prelude functions, each calling the next, is `n` components, and a ring of them is
 /// one: both mark every function quiet and visit each statement once. A function's component is
-/// read once to find the members, and once for each call. The sizes grow by two, so a visit or a
+/// read once to find the members, and twice for each call. The sizes grow by two, so a visit or a
 /// search for the members that repeats for a component would grow faster than the functions.
 #[test]
 fn quiet_should_visit_each_statement_once() {
