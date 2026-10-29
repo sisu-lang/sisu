@@ -1,15 +1,14 @@
 // GIVEN classes with and without a written `to_string`, a recursive enum, and a `Box` whose
 //       written `to_string` stores into a `mut` field
 // WHEN `main` passes values through `dbg`
-// THEN each call writes `dbg.sisu:<line>:<col>: <source text> = <value>` to standard error, and
-//      standard output holds only what `print` writes, in order
+// THEN each call writes `dbg.sisu:<line>:<col>: <source text> = <value>` to standard error, the first
+//      as `dbg.sisu:12:13: f(x) = 42`, and standard output holds only what `print` writes, in order
 // AND a class shows its fields one level deep, and a class cycle ends after one level
 // AND a value is laid out from column 0 after the prefix, and breaks as `{x:#}` does
 // AND an enum with a written `to_string` shows that text, not the fields of a class in its payload
 // AND `dbg` returns its argument, evaluated once, and a counted value is released once
 fn main() {
     let x = 7
-    // The spec's line: 12:13 is the argument of the `dbg`, which prints 42.
 let y = dbg(f(x)) + 1
     print(y) // stdout: 43
 
