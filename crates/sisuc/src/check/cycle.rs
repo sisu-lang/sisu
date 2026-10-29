@@ -695,6 +695,21 @@ impl Graph {
         inner
     }
 
+    /// The declaration that the headline of the cycle `cycle` names, whose edge `label` is the
+    /// label. The label of a choice stands at the type that the choice names, whose holder is the
+    /// choice. The cycle holds the declaration that holds the associated type: it is the holder of
+    /// the last edge before the label that is no part of a choice.
+    fn headline(&self, cycle: &[usize], label: usize) -> usize {
+        let holder = self.edges[label].holder;
+        if holder < self.choices_first {
+            return holder;
+        }
+        (cycle.iter().rev())
+            .map(|&i| self.edges[i].holder)
+            .find(|&holder| holder < self.choices_first)
+            .unwrap_or(holder)
+    }
+
     /// The declaration of the first hub of the choices; the others follow the choices.
     fn hubs_first(&self) -> usize {
         self.choices_first + self.assocs.choices.len()
@@ -1019,14 +1034,7 @@ impl Checker<'_> {
         let mut cycle = cycle;
         cycle.rotate_left(at);
         let (mut through, mut reach) = (Vec::new(), None);
-        // The first use of an associated type on the cycle: its edge runs into the choices.
-        let choice = (cycle.iter())
-            .filter_map(|&i| match edges[i].instance {
-                Some(Instance::Type(ty)) if matches!(ty.kind(), TypeKind::Assoc(..)) => Some(ty),
-                _ => None,
-            })
-            .map(|ty| self.type_name(ty))
-            .next();
+        let choice = self.choice_use(edges, &cycle);
         let label_spelled = self.spell(functions, graph, edge.holder, label_instance);
         // A call that gives two parameters their arguments is one site, shown once.
         let mut shown = FxHashSet::from_iter([edge.site]);
@@ -1069,8 +1077,9 @@ impl Checker<'_> {
                 ));
             }
         }
+        let holder = graph.headline(&cycle, label);
         self.report(DiagnosticKind::InstantiationCycle {
-            name: self.node_owner_name(graph, edge.holder),
+            name: self.node_owner_name(graph, holder),
             at: edge.mark,
             instance: label_spelled,
             through,
@@ -1078,6 +1087,17 @@ impl Checker<'_> {
                 .map(|(interface, by)| (self.interfaces[interface.0].name.name.to_string(), by)),
             choice,
         });
+    }
+
+    /// The first use of an associated type on the cycle, as written: its edge runs into the
+    /// choices.
+    fn choice_use(&self, edges: &[Edge], cycle: &[usize]) -> Option<String> {
+        (cycle.iter())
+            .find_map(|&i| match edges[i].instance {
+                Some(Instance::Type(ty)) if matches!(ty.kind(), TypeKind::Assoc(..)) => Some(ty),
+                _ => None,
+            })
+            .map(|ty| self.type_name(ty))
     }
 
     /// `instance`, at an edge of the declaration `holder`, as the program spells it.
