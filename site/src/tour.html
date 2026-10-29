@@ -29,7 +29,7 @@ A tour of the Sisu language as it works today, one small program at a time.
 {{text programs/run/hello.sisu}}</pre></figure>
       <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
 {{text programs/run/hello.out}}</pre></figure>
-      <p>Braces inside a string insert a value. After a colon comes a format spec: an alignment (<code>&lt;</code>, <code>&gt;</code>, <code>^</code>), a width in characters and a number of decimals. Compile with <code>target/debug/sisu build hello.sisu</code>, then run <code>./hello</code>.</p>
+      <p>Braces inside a string insert a value. After a colon comes a format spec: an alignment (<code>&lt;</code>, <code>&gt;</code>, <code>^</code>), a width in characters and a number of decimals. The spec <code>#</code> lays a value out on several lines when it does not fit on one line. Compile with <code>target/debug/sisu build hello.sisu</code>, then run <code>./hello</code>.</p>
       <!-- source: docs/roadmap.md ("What works today": format specs, interpolation), docs/adr/0001-newline-terminated-statements.md, crates/sisuc/tests/run/format_width.sisu -->
 
       <h2 id="values">let and let mut</h2>
