@@ -1342,8 +1342,7 @@ impl Gen<'_> {
         };
         let precision = (*ty == Ty::F64 && self.pick(3) != 0).then(|| self.upto(6));
         if width == 0 && precision.is_none() {
-            let spec = if self.pick(4) == 0 { ":#" } else { "" };
-            return (spec.to_string(), 0, None);
+            return (["", "", "", ":#"][self.pick(4)].to_string(), 0, None);
         }
         let mut spec = ":".to_string();
         if width > 0 {
