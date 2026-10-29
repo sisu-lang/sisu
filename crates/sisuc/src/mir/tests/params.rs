@@ -40,6 +40,17 @@ fn read_only_parameter_is_borrowed() {
     has(&printed, "main", &["= call len(_)\n    release _"]);
 }
 
+/// `dbg(s)` of a parameter reads it in place, and `len` reads the result in place: `s` stays
+/// borrowed, and the function takes no copy.
+#[test]
+fn dbg_should_keep_a_parameter_borrowed() {
+    let printed = built("fn show(s: string) {\n    print(dbg(s).len())\n}");
+    signature(&printed, "show", "fn show(s#0: borrow string)");
+    let show = function(&printed, "show");
+    assert!(!show.contains("copy"), "{show}");
+    assert!(!show.contains("release"), "{show}");
+}
+
 #[test]
 fn parameter_kept_in_a_local_is_owned() {
     signature(&built(KEEP), "keep", "fn keep(p#0: [i64])");

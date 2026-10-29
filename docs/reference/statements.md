@@ -229,7 +229,7 @@ The rules:
 - A function can use a constant that is declared below it.
 - Functions, classes, enums and constants share one set of names ([E0034](../diagnostics/E0034.md)).
 - A constant cannot take the name of a built-in type, or `Option`, `Result`, `Some`, `Ok` or `Err` ([E0026](../diagnostics/E0026.md)).
-- A constant cannot take the name of a built-in function, such as `print` ([E0034](../diagnostics/E0034.md)). It cannot be named `_` ([E0080](../diagnostics/E0080.md)). The sections [dbg](io.md#dbg) and [Files](errors.md#files) are in development, and they change this rule.
+- A constant cannot take the name of a built-in function, such as `print` or `dbg` ([E0034](../diagnostics/E0034.md)). It cannot be named `_` ([E0080](../diagnostics/E0080.md)). The section [Files](errors.md#files) is in development, and it changes this rule.
 - A constant cannot change ([E0001](../diagnostics/E0001.md)), and a `const` in a function is an error ([E0084](../diagnostics/E0084.md)). Use `let` there.
 
 ```sisu

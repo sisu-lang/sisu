@@ -1,0 +1,10 @@
+error[E0140]: `W<T>.to_string` instantiates itself without end
+  --> E0140-dbg.sisu:11:17
+   |
+11 |         let _ = dbg(Hold(v: W(x: [self.x])))
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Display.to_string` here
+   |
+   = help: a call through `Display` counts as reaching every conformance to `Display`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

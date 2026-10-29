@@ -3273,3 +3273,126 @@ fn generic_largest_should_emit_the_hand_written_body() {
         );
     }
 }
+
+/// The names of the `dbg`-mode show helpers that `ir` defines, such as `Node` for
+/// `@sisu_show.dbg.Node`.
+fn dbg_helpers(ir: &str) -> Vec<&str> {
+    ir.lines()
+        .filter(|line| line.starts_with("define "))
+        .filter_map(|line| line.split_once("@sisu_show.dbg.").map(|(_, rest)| rest))
+        .filter_map(|rest| rest.split_once('(').map(|(name, _)| name))
+        .collect()
+}
+
+/// A program that prints a `[i64]` and `dbg`s a `Node` has a `dbg`-mode helper for `Node` only:
+/// the array holds no class, so `print` and `dbg` share its helper. The helper of `Node` writes
+/// the `next` field by the `print` helper of `Node`, and never calls itself.
+#[test]
+fn dbg_should_make_a_helper_only_for_a_type_that_holds_a_class() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "class Node {\n    value: i64\n    next: Node?\n}\nfn main() {\n    let xs = [1]\n    print(xs)\n    let n = Node(value: 1, next: None)\n    let _ = dbg(n)\n    print(n.value)\n    print(n.next == None)\n}",
+    )
+    .print_to_string()
+    .to_string();
+    assert_eq!(dbg_helpers(&ir), ["Node"], "{ir}");
+    assert_eq!(
+        ir.matches("define internal void @\"sisu_show.[i64]\"(")
+            .count(),
+        1,
+        "{ir}"
+    );
+    let body = definition(&ir, "sisu_show.dbg.Node");
+    let calls =
+        |callee: &str| (body.lines()).any(|line| line.contains("call ") && line.contains(callee));
+    assert!(calls("@sisu_show.Node("), "{body}");
+    assert!(!calls("@sisu_show.dbg.Node("), "{body}");
+}
+
+/// A recursive enum that holds no class is written by one helper, whether `print` or `dbg` asks.
+/// So is a pair of enums that hold each other: no class is behind either of them.
+#[test]
+fn dbg_should_share_the_helper_of_a_recursive_enum_that_holds_no_class() {
+    let context = Context::create();
+    for (row, decls, value) in [
+        (
+            "a list",
+            "enum List {\n    Nil\n    Cons(i64, List)\n}\n",
+            "List.Cons(1, List.Nil)",
+        ),
+        (
+            "a pair of enums",
+            "enum C {\n    D(D)\n}\nenum D {\n    C(C)\n    End\n}\n",
+            "C.D(D.End)",
+        ),
+    ] {
+        let src = format!(
+            "{decls}fn main() {{\n    let value = {value}\n    print(value)\n    let _ = dbg(value)\n}}"
+        );
+        let ir = compiled(&context, &src).print_to_string().to_string();
+        assert!(dbg_helpers(&ir).is_empty(), "{row}: {ir}");
+        assert!(!ir.contains("sisu_show_component.dbg"), "{row}: {ir}");
+    }
+}
+
+/// A recursive enum that holds a class has a `dbg`-mode component helper, which writes the class
+/// by its `dbg` helper.
+#[test]
+fn dbg_should_write_a_class_in_the_payload_of_a_recursive_enum_by_its_helper() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "class Node {\n    value: i64\n}\nenum Tree {\n    Leaf(Node)\n    Join(Tree, Tree)\n}\nfn main() {\n    let leaf = Tree.Leaf(Node(value: 1))\n    let _ = dbg(Tree.Join(leaf, leaf))\n}",
+    )
+    .print_to_string()
+    .to_string();
+    let body = definition(&ir, "sisu_show_component.dbg.Tree");
+    assert!(body.contains("@sisu_show.dbg.Node("), "{body}");
+    assert!(!body.contains("@sisu_show.Node("), "{body}");
+}
+
+/// The `dbg`-mode helper of a class reads a field in place, except a counted `mut` field whose
+/// helper may run a written `to_string`: that one it retains before the field's helper and
+/// releases after. A `mut` field that holds a `[i64]` runs no written method, so nothing is
+/// retained.
+#[test]
+fn dbg_should_retain_only_a_mut_field_whose_helper_may_run_a_written_method() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        &std::fs::read_to_string(format!(
+            "{}/tests/run/dbg_field_snapshot.sisu",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .expect("the run case should be readable"),
+    )
+    .print_to_string()
+    .to_string();
+    let body = definition(&ir, "sisu_show.dbg.Owner");
+    let retain = body
+        .find("@sisu_rc.retain(")
+        .unwrap_or_else(|| panic!("no retain in\n{body}"));
+    let branch = body.find("br ").expect("the helper should branch");
+    let release = body
+        .find("@sisu_rc.release.Inner(")
+        .unwrap_or_else(|| panic!("no release in\n{body}"));
+    let done = body.find("show.done:").expect("the helper should join");
+    assert!(
+        retain < branch,
+        "the retain is before the field is shown:\n{body}"
+    );
+    assert!(
+        done < release,
+        "the release is after the field is shown:\n{body}"
+    );
+
+    let ir = compiled(
+        &context,
+        "class Bag {\n    mut xs: [i64]\n    mut tags: [Tag]\n}\nclass Tag {\n    n: i64\n}\nfn main() {\n    let bag = Bag(xs: [1], tags: [])\n    let _ = dbg(bag)\n    bag.xs = [2]\n    print(bag.xs.len() + bag.tags.len())\n}",
+    )
+    .print_to_string()
+    .to_string();
+    let body = definition(&ir, "sisu_show.dbg.Bag");
+    assert!(!body.contains("@sisu_rc."), "{body}");
+}

@@ -232,7 +232,8 @@ fn rvalue(value: &Rvalue, read: &mut impl FnMut(LocalId)) {
         | Rvalue::Sum { base: op, .. }
         | Rvalue::Convert(op)
         | Rvalue::Unary { operand: op, .. }
-        | Rvalue::Print { operand: op, .. } => operand(op, read),
+        | Rvalue::Print { operand: op, .. }
+        | Rvalue::Dbg { operand: op, .. } => operand(op, read),
         Rvalue::Copy(place) | Rvalue::Borrow(place) => self::place(place, read),
         Rvalue::CopyStr(_) | Rvalue::ReadLine => {}
         // A construction consumes each token it builds into, so it reads it.

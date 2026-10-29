@@ -2266,6 +2266,74 @@ fn implicit_print_should_close_an_instantiation_cycle() {
     }
 }
 
+/// `dbg` shows the fields of a class with no written `to_string`, so a growing value held in a
+/// field, in an array or in an enum payload is a cycle for `dbg`.
+#[test]
+fn implicit_dbg_should_close_an_instantiation_cycle() {
+    let w = "class W<T> {\n    x: T\n}\nclass Wrap<T> {\n    v: W<T>\n}\nclass Hold<T> {\n    v: W<[T]>\n}\nenum Pick<U> {\n    One(U)\n}\n";
+    let main = "fn main() {\n    print(W(x: 1))\n}";
+    let display = |body: &str| {
+        format!(
+            "{w}extend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        {body}\n        \"w\"\n    }}\n}}\n{main}"
+        )
+    };
+    let rows = [
+        (
+            "a dbg of a class that grows",
+            "let _ = dbg(W(x: [self.x]))",
+            Some("dbg(W(x: [self.x]))"),
+        ),
+        (
+            "a dbg of a class that holds a class that grows",
+            "let _ = dbg(Wrap(v: W(x: [self.x])))",
+            Some("dbg(Wrap(v: W(x: [self.x])))"),
+        ),
+        (
+            "a dbg of an array of such a class",
+            "let _ = dbg([Wrap(v: W(x: [self.x]))])",
+            Some("dbg([Wrap(v: W(x: [self.x]))])"),
+        ),
+        (
+            "a dbg of an enum payload of such a class",
+            "let _ = dbg(Pick.One(Wrap(v: W(x: [self.x]))))",
+            Some("dbg(Pick.One(Wrap(v: W(x: [self.x]))))"),
+        ),
+        // `Hold<T>` itself grows nothing: only its field type `W<[T]>` does.
+        (
+            "a dbg of a class whose field type grows",
+            "let _ = dbg(Hold(v: W(x: [self.x])))",
+            Some("dbg(Hold(v: W(x: [self.x])))"),
+        ),
+        (
+            "a dbg of an array of such a class",
+            "let _ = dbg([Hold(v: W(x: [self.x]))])",
+            Some("dbg([Hold(v: W(x: [self.x]))])"),
+        ),
+        (
+            "a dbg of an enum payload of such a class",
+            "let _ = dbg(Pick.One(Hold(v: W(x: [self.x]))))",
+            Some("dbg(Pick.One(Hold(v: W(x: [self.x]))))"),
+        ),
+        (
+            "a print of a class whose field type grows",
+            "print(Hold(v: W(x: [self.x])))",
+            None,
+        ),
+        ("a dbg that does not grow", "let _ = dbg(self.x)", None),
+    ];
+    for (row, body, cycle) in rows {
+        let src = display(body);
+        match cycle {
+            Some(text) => codes_row(
+                row,
+                &src,
+                &[(Code::InstantiationCycle, where_is(&src, text))],
+            ),
+            None => clean_row(row, &src),
+        }
+    }
+}
+
 #[test]
 fn implicit_interpolation_should_close_an_instantiation_cycle() {
     let w = "class W<T> {\n    x: T\n}\n";

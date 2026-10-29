@@ -128,6 +128,11 @@ struct Gen<'a> {
     cost: Cost,
     /// Inside an interpolation, where a line break ends the string.
     one_line: bool,
+    /// Inside the argument of `dbg`, whose text the rewrites leave as it is: the line it writes
+    /// holds that text.
+    frozen: bool,
+    /// How many expressions `Gen::expr` has written.
+    expressions: u64,
     /// What the calls `main` may still make may cost: the budget less what `main`'s own
     /// statements can cost.
     budget: u64,
@@ -167,6 +172,8 @@ impl<'a> Gen<'a> {
             stdin: String::new(),
             cost: Cost::default(),
             one_line: false,
+            frozen: false,
+            expressions: 0,
             budget: BUDGET - FUEL * STATEMENT_MOST,
             jumps: stmt::Jumps::default(),
             blocks: 0,

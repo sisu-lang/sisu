@@ -546,6 +546,14 @@ pub(crate) enum ExprKind {
         stream: Stream,
         operand: Box<Expr>,
     },
+    /// `dbg(operand)`, of the operand's type: it writes `at`'s position, `text` (the operand's
+    /// source as written) and the operand's value to standard error, and yields the value. `at` is
+    /// the operand's span.
+    Dbg {
+        at: Span,
+        text: String,
+        operand: Box<Expr>,
+    },
     /// `panic(message)`, of type `never`; its span starts where the panic reports.
     Panic(Box<Expr>),
     /// `read_line()`, of type `string?`.
@@ -836,6 +844,7 @@ impl Expr {
             | ExprKind::Wrap(operand)
             | ExprKind::Convert(operand)
             | ExprKind::Print { operand, .. }
+            | ExprKind::Dbg { operand, .. }
             // A panic ends the process, so nothing before it needs binding for a release.
             | ExprKind::Panic(operand)
             | ExprKind::Unary { operand, .. } => operand.exits(),
@@ -918,6 +927,7 @@ impl Expr {
             | ExprKind::Wrap(operand)
             | ExprKind::Convert(operand)
             | ExprKind::Print { operand, .. }
+            | ExprKind::Dbg { operand, .. }
             | ExprKind::Panic(operand)
             | ExprKind::Unary { operand, .. }
             | ExprKind::Break {
@@ -1064,6 +1074,7 @@ impl Expr {
             | K::Wrap(e)
             | K::Convert(e)
             | K::Print { operand: e, .. }
+            | K::Dbg { operand: e, .. }
             | K::Panic(e)
             | K::Len(e)
             | K::Chars(e)
@@ -1283,6 +1294,7 @@ impl Printer<'_> {
             ExprKind::Wrap(operand) => self.unary(f, "wrap", operand),
             ExprKind::Convert(operand) => self.unary(f, &expr.ty.to_string(), operand),
             ExprKind::Print { stream, operand } => self.unary(f, stream.name(), operand),
+            ExprKind::Dbg { text, operand, .. } => self.unary(f, &format!("dbg {text:?}"), operand),
             ExprKind::Panic(message) => self.unary(f, "panic", message),
             ExprKind::ReadLine => f.write_str("(read_line)"),
             ExprKind::ArrayLit(elements) => self.list(f, format_args!("array"), elements),

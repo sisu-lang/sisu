@@ -328,12 +328,23 @@ pub(crate) enum Rvalue {
         /// Whether the helper for the operand's type may call a written `to_string`.
         calls: bool,
     },
+    /// `dbg(operand)`: writes the position `at`, the source `text` of the operand and its value
+    /// to standard error. It reads the operand in place and has no result.
+    Dbg {
+        at: Span,
+        text: String,
+        operand: Operand,
+        /// Whether the `dbg` helper for the operand's type may call a written `to_string`: the
+        /// helper also shows the fields of a class (`conformance::calls_written` in `dbg` mode).
+        calls: bool,
+    },
 }
 
 impl Rvalue {
     /// Whether the statement may run a written method, which can store through a `mut` field and
     /// free what a borrow reads: a `Call`, an `Equal` or `Contains` whose helper reaches a
-    /// written `eq`, and a `Print` or `Interpolate` whose helper reaches a written `to_string`.
+    /// written `eq`, and a `Print`, `Dbg` or `Interpolate` whose helper reaches a written
+    /// `to_string`.
     /// Pair removal and the certifier both ask this, so they agree.
     pub(crate) fn may_call_written(&self) -> bool {
         match self {
@@ -341,6 +352,7 @@ impl Rvalue {
             Rvalue::Equal { calls, .. }
             | Rvalue::Contains { calls, .. }
             | Rvalue::Print { calls, .. }
+            | Rvalue::Dbg { calls, .. }
             | Rvalue::Interpolate { calls, .. } => *calls,
             _ => false,
         }

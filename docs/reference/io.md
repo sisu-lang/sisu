@@ -52,7 +52,7 @@ The rules:
 
 `dbg(e)` writes a line about `e` to standard error, and gives the value of `e` unchanged.
 
-```sisu pending
+```sisu
 fn double(n: i64) -> i64 {
     n * 2
 }
@@ -63,15 +63,18 @@ fn main() {
 }
 ```
 
-The program above writes the line `example.sisu:6:17: double(21) = 42` to standard error.
+```stderr
+example.sisu:6:17: double(21) = 42
+```
 
 The rules:
 
 - The line holds the file, the line and the column of the argument, the source text of the argument as written, and the value. The value is laid out as `{x:#}` lays it out ([The `#` flag](strings.md#the--flag)).
 - For an object, `dbg` shows the fields one level deep: `dbg(node)` shows `Node(value: 3, next: Node)`. A field that is a class shows only its text, which is its name or its own `to_string`. So `dbg` follows no reference.
 - A class with a method `to_string` shows that text instead of its fields. The same holds for a class inside an array, a payload or an optional.
-- An argument of the type `unit` or `never` is an error, as for `print`.
-- A local can have the name `dbg`. A top-level item cannot.
+- An argument of the type `unit` is an error ([E0059](../diagnostics/E0059.md)), and so is an argument of the type `never` ([E0061](../diagnostics/E0061.md)), as for `print`.
+- `dbg` runs its argument once and gives its value, so `dbg(f())` calls `f` once. It gives no warning for an optional.
+- A local can have the name `dbg` ([E0034](../diagnostics/E0034.md) for a top-level item).
 
 ## read_line
 

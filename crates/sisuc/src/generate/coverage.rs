@@ -111,7 +111,7 @@ const IDENTITY: &str = "reach: a class is compared with `is` or against `None`";
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 98] = [
+const REACH: [&str; 100] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -210,6 +210,8 @@ const REACH: [&str; 98] = [
     "reach: a top-level optional is printed",
     "reach: a top-level optional is interpolated",
     "reach: an optional is printed through `.to_string()`",
+    "reach: `dbg` runs a written `to_string` inside a value",
+    "reach: `dbg` writes a value that runs no written method",
 ];
 
 /// The type under every `?` layer of `ty`.
@@ -609,6 +611,14 @@ impl Walk {
                         }
                         crate::mir::Rvalue::Interpolate { parts, calls, .. } => {
                             (&parts[..], *calls, false)
+                        }
+                        crate::mir::Rvalue::Dbg { calls, .. } => {
+                            self.mark(if *calls {
+                                "reach: `dbg` runs a written `to_string` inside a value"
+                            } else {
+                                "reach: `dbg` writes a value that runs no written method"
+                            });
+                            continue;
                         }
                         _ => continue,
                     };
@@ -2266,6 +2276,10 @@ impl Walk {
                     self.printed_params.insert(operand.ty);
                     self.both_param(operand.ty);
                 }
+                self.tir_expr(operand, Parent::Other);
+            }
+            tir::ExprKind::Dbg { operand, .. } => {
+                self.mark("tir::ExprKind::Dbg");
                 self.tir_expr(operand, Parent::Other);
             }
             tir::ExprKind::Panic(message) => {
@@ -5321,6 +5335,7 @@ impl<'f> Lets<'f> {
             | tir::ExprKind::Wrap(x)
             | tir::ExprKind::Convert(x)
             | tir::ExprKind::Print { operand: x, .. }
+            | tir::ExprKind::Dbg { operand: x, .. }
             | tir::ExprKind::Panic(x)
             | tir::ExprKind::Len(x)
             | tir::ExprKind::Chars(x)
@@ -5421,6 +5436,7 @@ impl<'f> Lets<'f> {
             tir::ExprKind::Call { .. }
             | tir::ExprKind::InterfaceCall { .. }
             | tir::ExprKind::Print { .. }
+            | tir::ExprKind::Dbg { .. }
             | tir::ExprKind::Panic(_)
             | tir::ExprKind::ReadLine
             | tir::ExprKind::Index { .. }

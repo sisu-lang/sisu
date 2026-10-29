@@ -44,11 +44,20 @@ pub(super) enum Helper {
     /// the token is `null`.
     Reuse,
     /// `@sisu_show.<T>(sink, value)`: writes the text of a value of an array, a class or an
-    /// enum type into a sink (see `codegen/show.rs`).
-    Show,
+    /// enum type into a sink, as `print` writes it or as `dbg` does (see `codegen/show.rs`).
+    Show(Mode),
     /// `@sisu_show_component.<F0>(sink, kind, value)`: writes the text of a value of member
     /// `kind` of an enum component with boxes.
-    ShowComponent,
+    ShowComponent(Mode),
+}
+
+/// What a show helper writes of a class that has no written `to_string`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum Mode {
+    /// The class's name with its type arguments: what `print` writes.
+    Print,
+    /// The name and the fields, each labeled and written in `Print` mode: what `dbg` writes.
+    Dbg,
 }
 
 /// The cycles of classes that hold each other, which `define_drop` frees in a loop. A class
@@ -156,6 +165,14 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// `reuse`, and `name` is a class's or an enum's name, `string`, or `[<element name>]` for an
     /// array (`[Node?]`, `[[i64]]`).
     pub(super) fn helper(&self, kind: Helper, ty: Type) -> FunctionValue<'ctx> {
+        // A type that holds no class is written the same in both modes, by one helper.
+        let kind = match kind {
+            Helper::Show(Mode::Dbg) if !self.holds_class(ty) => Helper::Show(Mode::Print),
+            Helper::ShowComponent(Mode::Dbg) if !self.holds_class(ty) => {
+                Helper::ShowComponent(Mode::Print)
+            }
+            kind => kind,
+        };
         let key = (kind, ty);
         if let Some(function) = self.helpers.borrow().get(&key) {
             return *function;
@@ -187,13 +204,13 @@ impl<'ctx> Codegen<'ctx, '_> {
             ),
             Helper::Free => ("free", takes_object),
             Helper::Reuse => ("reuse", ptr_type.fn_type(&[ptr_type.into()], false)),
-            Helper::Show => (
+            Helper::Show(_) => (
                 "",
                 self.context
                     .void_type()
                     .fn_type(&[ptr_type.into(); 2], false),
             ),
-            Helper::ShowComponent => (
+            Helper::ShowComponent(_) => (
                 "",
                 self.context.void_type().fn_type(
                     &[
@@ -217,8 +234,10 @@ impl<'ctx> Codegen<'ctx, '_> {
             ),
         };
         let symbol = match kind {
-            Helper::Show => format!("sisu_show.{name}"),
-            Helper::ShowComponent => format!("sisu_show_component.{name}"),
+            Helper::Show(Mode::Print) => format!("sisu_show.{name}"),
+            Helper::Show(Mode::Dbg) => format!("sisu_show.dbg.{name}"),
+            Helper::ShowComponent(Mode::Print) => format!("sisu_show_component.{name}"),
+            Helper::ShowComponent(Mode::Dbg) => format!("sisu_show_component.dbg.{name}"),
             _ => format!("sisu_rc.{prefix}.{name}"),
         };
         let function = self
@@ -251,9 +270,9 @@ impl<'ctx> Codegen<'ctx, '_> {
             };
             let function = self.helpers.borrow()[&(kind, ty)];
             match (kind, ty.kind()) {
-                (Helper::Show, _) => self.define_show(function, ty),
-                (Helper::ShowComponent, TypeKind::Enum(id, _)) => {
-                    self.define_show_component(id, function);
+                (Helper::Show(mode), _) => self.define_show(function, ty, mode),
+                (Helper::ShowComponent(mode), TypeKind::Enum(id, _)) => {
+                    self.define_show_component(id, function, mode);
                 }
                 (Helper::Eq, TypeKind::Class(..) | TypeKind::Enum(..))
                     if self.written_eq(ty).is_some() =>
@@ -277,7 +296,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 (Helper::Unique, _) => {
                     unreachable!("only an array type should be queued for a `unique` helper")
                 }
-                (Helper::Walk | Helper::EqComponent | Helper::ShowComponent, _) => {
+                (Helper::Walk | Helper::EqComponent | Helper::ShowComponent(_), _) => {
                     unreachable!("only an enum type should be queued for a component helper")
                 }
                 (Helper::Unbox | Helper::Free | Helper::Reuse, _) => {

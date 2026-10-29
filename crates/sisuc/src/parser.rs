@@ -6961,17 +6961,21 @@ mod tests {
     }
 
     #[test]
-    fn reserved_errors() {
+    fn reserved_words_should_be_errors_where_a_name_goes() {
         // One row per place that wants a name or an expression.
         for (src, line, col) in [
             ("fn main() {\n    let type = 1\n}", 2, 9),
             ("class C {\n    record: i64\n}", 2, 5),
-            ("fn main() {\n    print(echo)\n}", 2, 11),
             ("fn main() {\n    print(p.type)\n}", 2, 13),
             ("import x", 1, 1),
         ] {
             assert_eq!(parse_err(src), (Code::ReservedWord, line, col), "{src}");
         }
+    }
+
+    #[test]
+    fn echo_should_parse_as_a_name() {
+        parse_ok("fn main() {\n    let echo = 1\n    print(echo)\n}");
     }
 
     /// `todo` is a keyword, so where a name goes it is reported as any other keyword is.

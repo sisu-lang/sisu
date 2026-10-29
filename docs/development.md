@@ -414,8 +414,10 @@ must pass five properties, cheapest first:
    a signal or past 10 s, and agree on stdout, stderr and exit code. The
    `--rc-checks` build reports no count fault, and no leak when it exits 0:
    a panic exits at once, before the leak check.
-4. The rewritten copy runs as the program does. Panic locations are left out
-   of the comparison.
+4. The rewritten copy runs as the program does. Panic locations and the
+   `<file>:<line>:<col>: ` that starts each `dbg` line are left out of the
+   comparison; the text and the value of a `dbg` line are compared. So no
+   rewrite changes the argument of a `dbg`.
 5. The program prints the integer answers the generator worked out itself, or
    panics with the overflow or division by zero it expects.
 

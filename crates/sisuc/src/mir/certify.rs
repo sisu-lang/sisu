@@ -334,7 +334,8 @@ impl Clobbers {
                         | Rvalue::Compare { .. }
                         | Rvalue::Equal { .. }
                         | Rvalue::Is { .. }
-                        | Rvalue::Print { .. } => false,
+                        | Rvalue::Print { .. }
+                        | Rvalue::Dbg { .. } => false,
                     },
                     Statement::Take { dest, .. } => function.locals[dest.0].counted,
                     Statement::Store { value, .. } => counted_value(function, value),
@@ -754,7 +755,8 @@ fn rvalue<'a>(
         | Rvalue::LenWords(op)
         | Rvalue::Convert(op)
         | Rvalue::Unary { operand: op, .. }
-        | Rvalue::Print { operand: op, .. } => operand(op, lowered, f),
+        | Rvalue::Print { operand: op, .. }
+        | Rvalue::Dbg { operand: op, .. } => operand(op, lowered, f),
         Rvalue::Copy(place) => self::place(place, Effect::Read, lowered, f),
         Rvalue::Borrow(place) => self::place(place, Effect::ReadInPlace, lowered, f),
         Rvalue::CopyStr(_) | Rvalue::ReadLine => {}

@@ -1,0 +1,8 @@
+error[E0061]: `dbg` never runs: its argument never finishes
+ --> E0061-dbg.sisu:2:9
+  |
+2 |     dbg(panic("x"))
+  |         ^^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0061

@@ -1087,6 +1087,10 @@ impl Checker<'_> {
                     tir::ExprKind::Print { ref operand, .. } => {
                         graph.operator(holder, operand.ty, self.lang.display, e.span);
                     }
+                    tir::ExprKind::Dbg { ref operand, .. } => {
+                        graph.operator(holder, operand.ty, self.lang.display, e.span);
+                        self.dbg_fields(&mut graph, holder, operand.ty, e.span);
+                    }
                     tir::ExprKind::Interpolate { ref parts, .. } => {
                         for part in parts {
                             graph.operator(holder, part.ty, self.lang.display, e.span);
@@ -1105,6 +1109,32 @@ impl Checker<'_> {
         self.generated_edges(&mut graph);
         self.declaration_edges(&mut graph, unbuilt);
         graph
+    }
+
+    /// The edges that a `dbg` of an operand of type `ty` adds to those of a `print`: its helper
+    /// also writes the fields of a class, each as `print` writes it, so each field type of a class
+    /// that `ty` holds through arrays, optionals and enum payloads is an operand of `Display`. A
+    /// class with a written `to_string` adds them too: that is more edges than the helper walks,
+    /// and an instantiation that grows through such a field is reported though `dbg` stops at the
+    /// text. Each enum is read once, so a payload that grows its enum stands for its own error.
+    fn dbg_fields(&self, graph: &mut Graph, holder: usize, ty: Type, site: Span) {
+        let mut seen = FxHashSet::default();
+        let mut stack = vec![ty];
+        while let Some(ty) = stack.pop() {
+            match ty.kind() {
+                TypeKind::Array(part) | TypeKind::Optional(part) => stack.push(part),
+                TypeKind::Enum(id, args) if seen.insert(id) => {
+                    let payloads = (self.enums[id.0].variants.iter()).flat_map(|v| &v.fields);
+                    stack.extend(payloads.flatten().map(|field| field.subst(args.get())));
+                }
+                TypeKind::Class(id, args) => {
+                    for field in self.classes[id.0].fields.iter().filter_map(|f| f.ty) {
+                        graph.operator(holder, field.subst(args.get()), self.lang.display, site);
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     /// By interface and enum, whether a written conformance targets the enum, and whether one of

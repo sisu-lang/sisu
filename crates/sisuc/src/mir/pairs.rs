@@ -300,7 +300,8 @@ fn kind<'a>(function: &Function, stmt: &'a Statement) -> Kind<'a> {
                 | Rvalue::Compare { .. }
                 | Rvalue::Equal { .. }
                 | Rvalue::Is { .. }
-                | Rvalue::Print { .. },
+                | Rvalue::Print { .. }
+                | Rvalue::Dbg { .. },
                 _,
             ) => Kind::Other,
         },
@@ -357,7 +358,8 @@ fn borrowed(stmt: Statement) -> Statement {
                 | Rvalue::Compare { .. }
                 | Rvalue::Equal { .. }
                 | Rvalue::Is { .. }
-                | Rvalue::Print { .. } => {
+                | Rvalue::Print { .. }
+                | Rvalue::Dbg { .. } => {
                     panic!("a pair's copy or chain step should be a copy or a move")
                 }
             };

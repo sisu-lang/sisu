@@ -13,8 +13,8 @@ use std::mem;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::conformance::{
-    Cause, Decide, Holds, Source, Stuck, StuckChoices, find, holds, makes_group, normalize_noting,
-    parts, prints_by_helper,
+    Cause, Decide, Holds, Source, Stuck, StuckChoices, fields_of, find, holds, makes_group,
+    normalize_noting, parts, prints_by_helper,
 };
 use crate::diagnostic::{Diagnostic, DiagnosticKind, UnknownForm};
 use crate::lang::{self, Cx, Dispatch};
@@ -133,8 +133,12 @@ struct Mono {
     input_payloads: Vec<Vec<Type>>,
     /// What decides whether a written conformance holds for a type, in the checked program's ids.
     decide: Decide,
-    /// The `(type, interface)` pairs the record walk has entered, in the checked program's ids.
-    walked: FxHashSet<(Type, InterfaceId)>,
+    /// The field types of the checked program's classes, in its ids: the record walk of a `dbg`
+    /// reads them, as the output's classes name the output's ids.
+    input_fields: Vec<Vec<Type>>,
+    /// The `(type, interface, dbg)` triples the record walk has entered, in the checked program's
+    /// ids.
+    walked: FxHashSet<(Type, InterfaceId, bool)>,
     /// The locals of the function whose body the worklist is lowering; operators that make
     /// temporaries add to them.
     locals: Vec<Local>,
@@ -164,6 +168,11 @@ impl Mono {
                 .enums
                 .iter()
                 .map(|e| (e.variants.iter().flat_map(|v| &v.fields).map(|p| p.ty)).collect())
+                .collect(),
+            input_fields: program
+                .classes
+                .iter()
+                .map(|c| c.fields.iter().map(|f| f.ty).collect())
                 .collect(),
             decide: Decide::default(),
             walked: FxHashSet::default(),
@@ -595,7 +604,7 @@ impl Mono {
                     e.kind = lang::equal(dispatch, negated, lhs, rhs, e.span);
                 } else if !matches!(lhs.kind, K::None) && !matches!(rhs.kind, K::None) {
                     // `x == None` tests presence, and runs no `eq`.
-                    self.walk(ty, eq);
+                    self.walk(ty, eq, false);
                 }
             }
             K::Compare { operands, ops } => {
@@ -607,7 +616,15 @@ impl Mono {
                 // that has one.
                 let ty = self.subst(operand.ty, args);
                 if prints_by_helper(ty) {
-                    self.walk(ty, self.out.lang.display);
+                    self.walk(ty, self.out.lang.display, false);
+                }
+            }
+            K::Dbg { operand, .. } => {
+                // The `dbg` helper also writes the fields of a class with no written `to_string`,
+                // each by the `print` helper.
+                let ty = self.subst(operand.ty, args);
+                if prints_by_helper(ty) {
+                    self.walk(ty, self.out.lang.display, true);
                 }
             }
             K::Interpolate { parts, formats } => {
@@ -634,7 +651,7 @@ impl Mono {
                 for part in parts.iter() {
                     let ty = self.subst(part.ty, args);
                     if prints_by_helper(ty) {
-                        self.walk(ty, self.out.lang.display);
+                        self.walk(ty, self.out.lang.display, false);
                     }
                 }
             }
@@ -645,7 +662,7 @@ impl Mono {
                     let element = array
                         .array_element()
                         .expect("`contains` should take an array");
-                    self.walk(element, self.out.lang.eq);
+                    self.walk(element, self.out.lang.eq, false);
                 }
             }
             _ => {}
@@ -770,6 +787,7 @@ impl Mono {
             | K::Wrap(operand)
             | K::Convert(operand)
             | K::Print { operand, .. }
+            | K::Dbg { operand, .. }
             | K::Panic(operand)
             | K::Len(operand)
             | K::Chars(operand)
@@ -874,11 +892,13 @@ impl Mono {
 
     /// Reaches the written conformances of `interface` that the helper for an operand of the
     /// checked type `ty` may call: the output gets one record for each type in `ty`, through its
-    /// parts, that a written conformance holds for, and the methods are instantiated.
-    fn walk(&mut self, ty: Type, interface: InterfaceId) {
-        let mut stack = vec![ty];
-        while let Some(ty) = stack.pop() {
-            if !self.walked.insert((ty, interface)) {
+    /// parts, that a written conformance holds for, and the methods are instantiated. With `dbg`,
+    /// the helper is the one that `dbg` calls: a class with no written conformance also has its
+    /// field types walked, each as `print` writes it.
+    fn walk(&mut self, ty: Type, interface: InterfaceId, dbg: bool) {
+        let mut stack = vec![(ty, dbg)];
+        while let Some((ty, dbg)) = stack.pop() {
+            if !self.walked.insert((ty, interface, dbg)) {
                 continue;
             }
             #[cfg(test)]
@@ -889,12 +909,21 @@ impl Mono {
                 self.record(ty, interface, k, stands);
                 continue;
             }
+            if dbg && matches!(ty.kind(), TypeKind::Class(..)) {
+                fields_of(
+                    &self.conformances,
+                    self.input_fields.as_slice(),
+                    ty,
+                    |part| stack.push((part, false)),
+                );
+                continue;
+            }
             parts(
                 &self.conformances,
                 self.input_payloads.as_slice(),
                 ty,
                 |part| {
-                    stack.push(part);
+                    stack.push((part, dbg));
                 },
             );
         }
