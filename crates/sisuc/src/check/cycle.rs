@@ -161,9 +161,8 @@ struct Choice {
     /// The type chosen, and where it is written.
     ty: Type,
     at: Span,
-    /// The greatest depth of each parameter of the conformance in its target; `None` for one that
-    /// the target does not name.
-    depths: Vec<Option<i64>>,
+    /// The greatest depth of each parameter of the conformance in its target (`param_depths`).
+    depths: Vec<i64>,
 }
 
 /// The associated types of the interfaces, as the graph reads them.
@@ -446,10 +445,9 @@ impl Graph {
 
     /// The edges of the associated type `ty` of `base`, whose choices are `place` among `growth`,
     /// written at `site` inside `holder`. It is what each choice chooses, with the choice's
-    /// parameters standing for parts of the base: the base feeds each parameter that the
-    /// conformance's target names, less the greatest depth of the parameter in the target, the way
-    /// a hub feeds the methods of a conformance. The type chosen gives the edges on from there
-    /// (`Choice`).
+    /// parameters standing for parts of the base: the base feeds each parameter of the
+    /// conformance, less the greatest depth of the parameter in the target, the way a hub feeds
+    /// the methods of a conformance. The type chosen gives the edges on from there (`Choice`).
     fn choose(&mut self, holder: usize, ty: Type, base: Type, place: usize, site: Span) {
         // A base that passes an associated type of unbounded growth is a cycle of names alone,
         // which instantiates no class or enum: the walk of the choices ends it where the type is
@@ -471,7 +469,6 @@ impl Graph {
                 .into_iter()
                 .enumerate()
             {
-                let Some(depth) = depth else { continue };
                 self.edges.push(Edge {
                     from,
                     to: first + q,
@@ -1225,7 +1222,7 @@ impl Checker<'_> {
                         .expect("the target of a conformance should be a class or an enum type"),
                     ty,
                     at: self.choice_ats[&(interface, index, k)],
-                    depths: depths_and_assoc(conformance.target, conformance.type_params).0,
+                    depths: param_depths(conformance.target, conformance.type_params),
                 });
             }
         }
