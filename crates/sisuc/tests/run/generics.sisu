@@ -8,7 +8,7 @@
 // WHEN `main` uses each of them
 // AND it prints an optional through `.to_string()`, so that the file builds with no warning
 // THEN the stacks, the order and the nested optionals print as the spec lists them
-// AND an `Expr` and a class print their text
+// AND an `Expr` and a class print their text, and a deep `Expr` also laid out by `{e2:#}`
 // AND the prelude's `contains` and `sum` give their answers
 // AND the two conversions print what the annotation chose
 // AND both drains print every item
@@ -208,6 +208,16 @@ fn main() {
     // 4. The generated `Display` of an enum.
     let e = Expr.Add(Expr.Num(1), Expr.Mul(Expr.Num(2), Expr.Num(3)))
     print(e)                                              // Add(Num(1), Mul(Num(2), Num(3)))
+    // The same enum under `#`: a tree of 113 columns breaks, and each `Mul` fits at column 4.
+    let e2 = Expr.Add(
+        Expr.Mul(Expr.Num(100), Expr.Add(Expr.Num(200), Expr.Num(300))),
+        Expr.Mul(
+            Expr.Add(Expr.Num(400), Expr.Num(500)),
+            Expr.Add(Expr.Num(600), Expr.Mul(Expr.Num(700), Expr.Num(800)))
+        )
+    )
+    print(e2)
+    print("{e2:#}")
 
     // 5. A class without `to_string` prints its name, and a class with one prints its text.
     print(Rect(w: 2.0, h: 3.0))                           // Rect

@@ -2936,7 +2936,7 @@ type Row = (
     Option<&'static str>,
 );
 
-const PRINTED: [Row; 29] = [
+const PRINTED: [Row; 30] = [
     ("print", "", "name: string?", "print(name)", Some("name")),
     ("eprint", "", "name: string?", "eprint(name)", Some("name")),
     (
@@ -2951,6 +2951,13 @@ const PRINTED: [Row; 29] = [
         "",
         "name: string?",
         "print(\"{name:>8}\")",
+        Some("name"),
+    ),
+    (
+        "interpolation with the pretty flag",
+        "",
+        "name: string?",
+        "print(\"{name:#}\")",
         Some("name"),
     ),
     (

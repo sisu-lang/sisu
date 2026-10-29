@@ -79,9 +79,9 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// The string of the evaluated `parts`, each with its type, when one of them is a compound
     /// value: every part is written in turn through one buffer sink, which becomes the result
     /// string with no copy. A width pads the text of its part in place, from the mark taken
-    /// before the part, and a precision is for an `f64`. The parts are evaluated already, so a
-    /// part that returns, breaks or continues has left no buffer behind. The caller releases the
-    /// parts.
+    /// before the part, a precision is for an `f64`, and a `#` part goes through a pretty sink
+    /// over the buffer sink. The parts are evaluated already, so a part that returns, breaks or
+    /// continues has left no buffer behind. The caller releases the parts.
     pub(super) fn interpolate_compound(
         &self,
         parts: &[(BasicValueEnum<'ctx>, Type)],
@@ -103,6 +103,14 @@ impl<'ctx> Codegen<'ctx, '_> {
                     let precision = self.context.i8_type().const_int(precision.into(), false);
                     let args = [sink.into(), value.into(), precision.into()];
                     self.show_call("sisu_show_f64_fixed", &args);
+                }
+                _ if format.is_some_and(|format| format.pretty) => {
+                    // The layout starts at column 0, wherever the text of the parts before it
+                    // ended, and goes into the buffer sink when the value is done.
+                    let pretty = self.sink_slot();
+                    self.show_call("sisu_show_pretty", &[pretty.into(), sink.into()]);
+                    self.show_value(pretty, ty, value, false);
+                    self.show_call("sisu_show_pretty_finish", &[pretty.into()]);
                 }
                 _ => self.show_value(sink, ty, value, false),
             }

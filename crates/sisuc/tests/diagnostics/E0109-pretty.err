@@ -1,0 +1,10 @@
+error[E0109]: `#` does not combine with a width, alignment or precision
+ --> E0109-pretty.sisu:3:15
+  |
+3 |     print("{xs:#>8}")
+  |               ^^^^
+  |
+  = help: remove the `#`, or the width, alignment and precision
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0109

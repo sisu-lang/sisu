@@ -10,6 +10,7 @@ use super::array::pair;
 use super::expr::{local, no_member, path, postfix, typed};
 use super::{Checked, Checker, Poisoned, block_expr, type_of};
 use crate::ast::{self, CompareOp, ExprKind};
+use crate::conformance::makes_group;
 use crate::diagnostic::{
     Code, Definition, Diagnostic, DiagnosticKind, MismatchFix, MismatchSource, Operand,
     PrecisionHelp, invisible,
@@ -147,6 +148,8 @@ impl Checker<'_> {
             part: i,
             pad,
             precision,
+            // A part that writes one piece is the same flat.
+            pretty: spec.pretty && makes_group(ty),
         };
         (format, error)
     }

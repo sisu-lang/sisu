@@ -1776,6 +1776,63 @@ fn interpolating_a_compound_part_should_use_one_buffer_sink() {
     assert!(!f.contains("@sisu_show_"), "{f}");
 }
 
+/// A `#` part whose type makes a group is written through a pretty sink over the buffer sink,
+/// started and finished once; a `#` part whose type writes one piece, concrete or an argument of
+/// a type parameter, emits the IR of the same part with no `#`. An array part beside it makes
+/// every interpolation go through a sink.
+#[test]
+fn a_hash_part_should_use_a_pretty_sink_only_when_its_type_makes_a_group() {
+    let context = Context::create();
+    let ir_of = |src: &str, name: &str| {
+        let ir = compiled(&context, src).print_to_string().to_string();
+        definition(&ir, name).to_owned()
+    };
+    // (row, declarations, parameter type, argument, whether a group is laid out)
+    for (row, decls, ty, arg, grouped) in [
+        ("an `i64`", "", "i64", "1", false),
+        ("a class", "class C {}\n", "C", "C()", false),
+        ("an array", "", "[i64]", "[1]", true),
+        (
+            "an enum",
+            "enum E {\n    A\n    B(E)\n}\n",
+            "E",
+            "E.B(E.A)",
+            true,
+        ),
+    ] {
+        for generic in [false, true] {
+            let (params, name) = if generic {
+                ("<T>", format!("\"sisu.f<{ty}>\""))
+            } else {
+                ("", "sisu.f".to_owned())
+            };
+            let param = if generic { "T" } else { ty };
+            let src = |spec: &str| {
+                format!(
+                    "{decls}fn f{params}(x: {param}, ys: [i64]) -> string {{\n    \"[{{x{spec}}}]{{ys}}\"\n}}\nfn main() {{\n    print(f({arg}, [1]))\n}}"
+                )
+            };
+            let (hashed, flat) = (ir_of(&src(":#"), &name), ir_of(&src(""), &name));
+            let row = format!("{row}, generic: {generic}");
+            if grouped {
+                assert_eq!(
+                    hashed.matches("@sisu_show_pretty(").count(),
+                    1,
+                    "{row}: {hashed}"
+                );
+                assert_eq!(
+                    hashed.matches("@sisu_show_pretty_finish(").count(),
+                    1,
+                    "{row}: {hashed}"
+                );
+                assert!(!flat.contains("@sisu_show_pretty"), "{row}: {flat}");
+            } else {
+                assert_eq!(hashed, flat, "{row}");
+            }
+        }
+    }
+}
+
 /// The number of calls of `sisu_show_*` functions that printing `[x]` emits, for an `x` of a
 /// `char` under `layers` optionals that holds `None` in the outermost.
 fn show_calls_of_nested_optionals(layers: usize) -> usize {

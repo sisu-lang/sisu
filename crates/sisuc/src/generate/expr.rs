@@ -1331,8 +1331,9 @@ impl Gen<'_> {
         Info::of(&parts, size, true)
     }
 
-    /// A format spec `[:[align][width][.precision]]`, its width, and its precision; only an
-    /// `f64` takes a precision (E0111).
+    /// A format spec `[:#]` or `[:[align][width][.precision]]`, its width, and its precision;
+    /// only an `f64` takes a precision (E0111). A part with no width and no precision gets `#`
+    /// one time in four; every part here is a scalar or a `string`, so `#` changes nothing.
     fn format_spec(&mut self, ty: &Ty) -> (String, u64, Option<u64>) {
         let width = if self.pick(3) == 0 {
             0
@@ -1341,7 +1342,8 @@ impl Gen<'_> {
         };
         let precision = (*ty == Ty::F64 && self.pick(3) != 0).then(|| self.upto(6));
         if width == 0 && precision.is_none() {
-            return (String::new(), 0, None);
+            let spec = if self.pick(4) == 0 { ":#" } else { "" };
+            return (spec.to_string(), 0, None);
         }
         let mut spec = ":".to_string();
         if width > 0 {

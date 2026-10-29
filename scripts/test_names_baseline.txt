@@ -1389,8 +1389,6 @@ crates/sisuc/src/parser.rs::float_fixes
 crates/sisuc/src/parser.rs::float_literal_is_an_expression
 crates/sisuc/src/parser.rs::for_inclusive
 crates/sisuc/src/parser.rs::for_loops
-crates/sisuc/src/parser.rs::format_spec_s_expression
-crates/sisuc/src/parser.rs::format_specs
 crates/sisuc/src/parser.rs::function_span
 crates/sisuc/src/parser.rs::function_with_let
 crates/sisuc/src/parser.rs::if_let_chain

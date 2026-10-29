@@ -172,12 +172,13 @@ enum Maybe2 {
     Next(Maybe2??)
 }
 
-// `print`, `eprint`, the interpolation and `to_string` write one text. The line of `eprint` goes
-// to the other stream.
+// `print`, `eprint`, the interpolation, the interpolation with `#` and `to_string` write one text
+// when it fits in 80 columns. The line of `eprint` goes to the other stream.
 fn both<T>(x: T) {
     print(x)
     eprint(x)
     print("{x}")
+    print("{x:#}")
     print(x.to_string())
 }
 

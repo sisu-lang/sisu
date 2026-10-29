@@ -13,8 +13,8 @@ use std::mem;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::conformance::{
-    Cause, Decide, Holds, Source, Stuck, StuckChoices, find, holds, normalize_noting, parts,
-    prints_by_helper,
+    Cause, Decide, Holds, Source, Stuck, StuckChoices, find, holds, makes_group, normalize_noting,
+    parts, prints_by_helper,
 };
 use crate::diagnostic::{Diagnostic, DiagnosticKind, UnknownForm};
 use crate::lang::{self, Cx, Dispatch};
@@ -621,6 +621,11 @@ impl Mono {
                             Align::Left
                         };
                         pad.by_type = false;
+                    }
+                    // A part of a type parameter's type is laid out only if its type argument
+                    // makes a group.
+                    if format.pretty {
+                        format.pretty = makes_group(self.subst(parts[format.part].ty, args));
                     }
                 }
                 // The helper for a compound part calls a written `to_string` at each part that

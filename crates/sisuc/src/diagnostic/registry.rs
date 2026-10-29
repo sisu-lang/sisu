@@ -872,12 +872,14 @@ pub(crate) enum DiagnosticKind {
     MathIdiom { written: Span, fix: Option<MathFix> },
     /// The `**` at `at`, which Sisu has no operator for; `fix` is the `pow` call that may mean it.
     PowerOperator { at: Span, fix: Option<PowerFix> },
-    /// The format spec at `at`, its `:` included, which the grammar `[<^>][width][.precision]`
-    /// does not hold: it is empty, an alignment alone, or has a `.` without digits.
+    /// The format spec at `at`, its `:` included, which the grammar `#` or
+    /// `[<^>][width][.precision]` does not hold: it is empty, an alignment alone, or has a `.`
+    /// without digits.
     MalformedFormatSpec { at: Span },
-    /// The format spec at `at`, its `:` included, which asks for more than alignment, width and
-    /// precision: a leading `0`, a sign, a type, a fill, a space or a nested `{`.
-    UnsupportedFormatSpec { at: Span },
+    /// The format spec at `at`, its `:` included, which asks for more than `#`, or alignment,
+    /// width and precision: a leading `0`, a sign, a type, a fill, a space or a nested `{`. When
+    /// `pretty`, it is a `#` beside an alignment, a width or a precision.
+    UnsupportedFormatSpec { at: Span, pretty: bool },
     /// The format spec at `at`, its `:` included, whose width, when `width`, or else precision is
     /// above its limit.
     FormatSpecLimit { at: Span, width: bool },
@@ -3711,13 +3713,19 @@ impl From<DiagnosticKind> for Diagnostic {
                 }
             }
             DiagnosticKind::MalformedFormatSpec { at } => {
-                Diagnostic::coded(code, at, "a format spec is `[<^>][width][.precision]`")
+                Diagnostic::coded(code, at, "a format spec is `#` or `[<^>][width][.precision]`")
             }
-            DiagnosticKind::UnsupportedFormatSpec { at } => Diagnostic::coded(
+            DiagnosticKind::UnsupportedFormatSpec { at, pretty: false } => Diagnostic::coded(
                 code,
                 at,
-                "Sisu's format specs take only alignment, width and precision",
+                "Sisu's format specs take `#`, or an alignment, a width and a precision",
             ),
+            DiagnosticKind::UnsupportedFormatSpec { at, pretty: true } => Diagnostic::coded(
+                code,
+                at,
+                "`#` does not combine with a width, alignment or precision",
+            )
+            .with_help("remove the `#`, or the width, alignment and precision"),
             DiagnosticKind::FormatSpecLimit { at, width } => Diagnostic::coded(
                 code,
                 at,

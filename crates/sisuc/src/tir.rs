@@ -447,12 +447,14 @@ impl Stream {
 }
 
 /// How an interpolation writes its part `part`: padded, and with `precision` decimals for an
-/// `f64`.
+/// `f64`, or laid out to fit 80 columns when `pretty`. A pretty part has no pad and no precision,
+/// and its type makes a group (`conformance::makes_group`), or is a type parameter that may.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Format {
     pub(crate) part: usize,
     pub(crate) pad: Option<Pad>,
     pub(crate) precision: Option<u8>,
+    pub(crate) pretty: bool,
 }
 
 /// Padding to `width` code points, the text aligned by `align`.
@@ -466,9 +468,12 @@ pub(crate) struct Pad {
     pub(crate) by_type: bool,
 }
 
-/// The format as a spec: `>8.2`.
+/// The format as a spec: `>8.2`, or `#`.
 impl fmt::Display for Format {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.pretty {
+            f.write_str("#")?;
+        }
         if let Some(Pad { align, width, .. }) = self.pad {
             write!(f, "{}{width}", align.char())?;
         }
@@ -2523,16 +2528,19 @@ mod tests {
                 part: 1,
                 pad: pad(Align::Center, 4),
                 precision: None,
+                pretty: false,
             },
             Format {
                 part: 2,
                 pad: None,
                 precision: Some(3),
+                pretty: false,
             },
             Format {
                 part: 3,
                 pad: pad(Align::Left, 10),
                 precision: Some(0),
+                pretty: false,
             },
         ];
         let interp = expr(ExprKind::Interpolate { parts, formats }, Type::STRING);

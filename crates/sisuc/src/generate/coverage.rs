@@ -1494,6 +1494,9 @@ impl Walk {
                 self.mark("ast::ExprKind::Interpolate");
                 for part in parts {
                     self.ast_expr(&part.value);
+                    if let Some(spec) = part.spec {
+                        self.mark(&format!("ast::FormatSpec.pretty = {}", spec.pretty));
+                    }
                     if let Some(align) = part.spec.and_then(|spec| spec.align) {
                         self.mark(match align {
                             ast::Align::Left => "ast::Align::Left",
