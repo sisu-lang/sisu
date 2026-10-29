@@ -2412,13 +2412,19 @@ fn implicit_dbg_should_close_an_instantiation_cycle_through_an_enum() {
             "let _ = dbg(Both.One(Hold(v: W(x: [self.x]))))",
             Some(FIELD),
         ),
+        // The class passes its parameter to a field: the enum is reported, at the payload.
+        (
+            "a dbg of an enum whose payload is a class which passes its parameter on",
+            "let _ = dbg(PassOn.One(Wrap(v: W(x: [self.x]))))",
+            Some("Wrap<U>"),
+        ),
     ]);
 }
 
 /// Checks each row `(name, body, cycle)`: the program whose `Display` of `W<T>` runs `body`
 /// reports an E0140 at the text `cycle`, or checks clean when it is `None`.
 fn dbg_cycle_rows(rows: &[(&str, &str, Option<&str>)]) {
-    let w = "class W<T> {\n    x: T\n}\nclass Wrap<T> {\n    v: W<T>\n}\nclass Hold<T> {\n    v: W<[T]>\n}\nclass Rec<T> {\n    next: Rec<T>?\n    v: W<[T]>\n}\nenum Pick<U> {\n    One(U)\n}\nenum Pair<U> {\n    Two(U, U)\n}\nenum Tree<U> {\n    Leaf(U)\n    Node(Tree<U>, Tree<U>)\n}\nenum Both<U> {\n    One(Hold<U>)\n}\nenum Grow<U> {\n    One(Wrap<[U]>)\n}\nenum Nest<U> {\n    One(Pick<Pick<U>>)\n}\nenum NestPhantom<U> {\n    One(Phantom<i64, Pick<U>>)\n}\nenum Phantom<U, P> {\n    One(U)\n}\nenum Bag<U> {\n    Many([U])\n    Maybe(U?)\n}\n";
+    let w = "class W<T> {\n    x: T\n}\nclass Wrap<T> {\n    v: W<T>\n}\nclass Hold<T> {\n    v: W<[T]>\n}\nclass Rec<T> {\n    next: Rec<T>?\n    v: W<[T]>\n}\nenum Pick<U> {\n    One(U)\n}\nenum Pair<U> {\n    Two(U, U)\n}\nenum Tree<U> {\n    Leaf(U)\n    Node(Tree<U>, Tree<U>)\n}\nenum Both<U> {\n    One(Hold<U>)\n}\nenum PassOn<U> {\n    One(Wrap<U>)\n}\nenum Grow<U> {\n    One(Wrap<[U]>)\n}\nenum Nest<U> {\n    One(Pick<Pick<U>>)\n}\nenum NestPhantom<U> {\n    One(Phantom<i64, Pick<U>>)\n}\nenum Phantom<U, P> {\n    One(U)\n}\nenum Bag<U> {\n    Many([U])\n    Maybe(U?)\n}\n";
     let main = "fn main() {\n    print(W(x: 1))\n}";
     let display = |body: &str| {
         format!(

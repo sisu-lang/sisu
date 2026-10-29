@@ -1181,6 +1181,9 @@ impl Checker<'_> {
         let mut then: Vec<Vec<usize>> = vec![Vec::new(); params];
         let mut ready = Vec::new();
         let mut stack: Vec<(Type, Option<usize>)> = Vec::new();
+        let written: Vec<bool> = (0..self.enums.len())
+            .map(|e| always_written(&self.conformances, self.lang.display, self.own_type(e)))
+            .collect();
         for (e, info) in self.enums.iter().enumerate() {
             let payloads = info
                 .variants
@@ -1197,11 +1200,7 @@ impl Checker<'_> {
                     },
                     TypeKind::Array(part) | TypeKind::Optional(part) => stack.push((part, from)),
                     TypeKind::Enum(id, args) => {
-                        if always_written(
-                            &self.conformances,
-                            self.lang.display,
-                            self.own_type(id.0),
-                        ) {
+                        if written[id.0] {
                             continue;
                         }
                         for (j, &arg) in
