@@ -3215,3 +3215,25 @@ fn generic_largest_should_emit_the_hand_written_body() {
         );
     }
 }
+
+/// `tir::layout_enums` boxes a field on every cycle, so the checker cannot give codegen an
+/// enum that holds itself inline. This test unboxes the one field of a recursive enum, so the
+/// walk of `lay_out_enums` must stop on the cycle and not loop.
+#[test]
+#[should_panic(expected = "tir::layout_enums should box a field on every cycle")]
+fn lay_out_enums_should_panic_on_an_enum_that_holds_itself_inline() {
+    let src = "enum L {\n    End\n    A(L)\n}\nfn main() {\n    let _ = L.A(L.End)\n}";
+    let program = parse_ok(src);
+    let (program, diagnostics) = check_alone(&program, src, &[]);
+    let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+    let mut program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
+    let fields = program.enums.iter_mut().flat_map(|e| &mut e.variants);
+    for field in fields.flat_map(|v| &mut v.fields) {
+        assert!(field.boxed, "the checker should box the field of `L.A`");
+        field.boxed = false;
+    }
+    let mir = mir::build(&program);
+    let machine = target_machine(OptLevel::O0).expect("the host is a target");
+    let context = Context::create();
+    compile(&context, &program, &mir, "test.sisu", src, &machine, false);
+}

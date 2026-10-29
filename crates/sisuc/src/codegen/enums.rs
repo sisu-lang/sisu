@@ -209,6 +209,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             "a pointer should fit the 8-byte count word that links a box into a pending list"
         );
         let mut done = vec![false; program.enums.len()];
+        // Whether `(id, true)` is on the stack: an enum that waits for the enums it holds.
+        let mut waiting = vec![false; program.enums.len()];
         for root in 0..program.enums.len() {
             // `(id, true)` once the enums `id` holds inline are queued before it.
             let mut stack = vec![(root, false)];
@@ -219,8 +221,16 @@ impl<'ctx> Codegen<'ctx, '_> {
                 if held_queued {
                     self.lay_out_enum(id);
                     done[id] = true;
+                    waiting[id] = false;
                     continue;
                 }
+                assert!(
+                    !waiting[id],
+                    "tir::layout_enums should box a field on every cycle of inline fields, \
+                     but enum {} holds itself inline",
+                    program.enums[id].name
+                );
+                waiting[id] = true;
                 stack.push((id, true));
                 stack.extend(held_inline(&program.enums[id]).map(|held| (held.0, false)));
             }

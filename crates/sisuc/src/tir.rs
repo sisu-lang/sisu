@@ -333,6 +333,9 @@ pub(crate) enum Rank {
     /// with its own, where `inline_enums` looks, only with arguments that carry none:
     /// `P2<T, Wrap2<i64>>` in `Wrap2`.
     Late,
+    /// Any other field that holds an associated type: `T.Item`. Its choice may name the enum
+    /// that holds it (`Item = E<W<T>>`), a cycle that no declared name shows.
+    Assoc,
     /// Any other field that names a type parameter, never boxed: `Two<T>` in `Wrap2`, or `T`.
     Never,
 }
@@ -714,10 +717,15 @@ impl Type {
 /// Lays out `enums`, whose payload types are final: boxes each payload field that closes a
 /// cycle of the holds-inline graph, and sets each enum's `cycle` and `counted`. The box goes on
 /// the declaring enum's own field rather than one inside a generic type, by a pass per `Rank`,
-/// `Plain`, `Own`, `Open`, then `Late`, each boxing its fields that are on a cycle of what the
-/// passes before it left unboxed. A cycle that `Plain` leaves holds an `Own`, `Open` or `Late`
-/// field, since each of its enums' declarations is named by a generic field of another on it,
-/// so the names close a cycle of declarations. A `Never` field is never boxed. The ranks read
+/// `Plain`, `Own`, `Open`, `Late`, then `Assoc`, each boxing its fields that are on a cycle of
+/// what the passes before it left unboxed. A cycle that `Plain` leaves holds an `Own`, `Open` or
+/// `Late` field, or an `Assoc` field. Without an associated type, each of its enums'
+/// declarations is named by a generic field of another on it, so the names close a cycle of
+/// declarations. The choice of an associated type is a third source of enum names. It can name
+/// the enum that holds it: `Item = E<W<T>>` for `A(T.Item)` in `E`. Only a field that holds an
+/// associated type reads a choice. So a cycle that the earlier passes leave holds an `Assoc`
+/// field, and the last pass boxes each `Assoc` field that stays on a cycle. A `Never` field is
+/// never boxed. The ranks read
 /// names only, so a type argument an enum never holds inline (unused, or only in an array or a
 /// class) still counts: with `enum Two<T, U> { Both(T, T) }`,
 /// `Wrap2<T>.W: Two<T, Wrap2<T>>` is `Own`, and `G<i64>` in `enum G<T> { P(Wrap2<G<T>>) }`
@@ -755,8 +763,8 @@ pub(crate) fn layout_enums(enums: &mut [Enum]) {
         .iter()
         .flat_map(|e| &e.variants)
         .flat_map(|v| &v.fields);
-    if fields.any(|p| matches!(p.rank, Rank::Own | Rank::Open | Rank::Late)) {
-        for rank in [Rank::Own, Rank::Open, Rank::Late] {
+    if fields.any(|p| matches!(p.rank, Rank::Own | Rank::Open | Rank::Late | Rank::Assoc)) {
+        for rank in [Rank::Own, Rank::Open, Rank::Late, Rank::Assoc] {
             let remaining = components(&held(enums, |p| !p.boxed));
             for (e, info) in enums.iter_mut().enumerate() {
                 for p in info.variants.iter_mut().flat_map(|v| &mut v.fields) {

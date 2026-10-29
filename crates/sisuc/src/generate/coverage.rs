@@ -1829,6 +1829,7 @@ impl Walk {
                 tir::Rank::Own => "tir::Rank::Own",
                 tir::Rank::Open => "tir::Rank::Open",
                 tir::Rank::Late => "tir::Rank::Late",
+                tir::Rank::Assoc => "tir::Rank::Assoc",
                 tir::Rank::Never => "tir::Rank::Never",
             });
         }
@@ -3680,10 +3681,19 @@ enum Tree<T> {
     Leaf
     Node(Tree<T>, T, Tree<T>)
 }
+interface I {
+    type Item
+}
+class W: I {
+    type Item = i64
+}
+enum Holder<T: I> {
+    Item(T.Item)
+}
 fn main() {}
 ",
     );
-    for rank in ["Plain", "Own", "Never"] {
+    for rank in ["Plain", "Own", "Never", "Assoc"] {
         assert!(seen.contains(&format!("tir::Rank::{rank}")), "{rank}");
     }
     for rank in ["Open", "Late"] {
