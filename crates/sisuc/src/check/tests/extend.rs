@@ -83,4 +83,13 @@ fn an_unknown_method_of_an_array_should_suggest_a_method_of_a_covering_prelude_b
     };
     assert_eq!(d.code(), Code::NoMember);
     assert_eq!(applied(src, d), "fn main() {\n    let _ = [1].total()\n}");
+    // `total` is the method of `[i64]` and `[f64]` only: no block of it covers a `[string]`, so
+    // the report suggests nothing.
+    let src = "fn main() {\n    let _ = [\"x\"].totl()\n}";
+    let (_, ds) = checked_with(BUILT_INS, src);
+    let [d] = &ds[..] else {
+        panic!("one diagnostic expected: {ds:?}");
+    };
+    assert_eq!(d.code(), Code::NoMember);
+    assert!(d.fixes().is_empty(), "{d:?}");
 }

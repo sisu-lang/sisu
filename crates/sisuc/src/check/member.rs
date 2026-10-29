@@ -409,9 +409,7 @@ impl Checker<'_> {
             return Vec::new();
         };
         let covered = |list: &Vec<(usize, tir::FuncId)>| {
-            list.iter().any(|&(at, _)| {
-                self.extensions[at].interface.is_none() && self.covers(at, ty).is_some()
-            })
+            list.iter().any(|&(at, _)| self.covers(at, ty).is_some())
         };
         (self.extension_methods.iter())
             .filter(|&(&(h, _), list)| h == holder && covered(list))
