@@ -2389,6 +2389,17 @@ fn implicit_dbg_should_close_an_instantiation_cycle_through_an_enum() {
             "let p: Phantom<i64, Hold<T>> = Phantom.One(1)\n        dbg(p)",
             None,
         ),
+        // An argument of an enum inside the argument of another is shown when both show it.
+        (
+            "a dbg of an enum that holds the class in the argument of an argument",
+            "let _ = dbg(Nest.One(Pick.One(Pick.One(Hold(v: W(x: [self.x]))))))",
+            Some(FIELD),
+        ),
+        (
+            "a dbg of an enum that names the class in an argument that is not shown",
+            "let p: NestPhantom<Hold<T>> = NestPhantom.One(Phantom.One(1))\n        dbg(p)",
+            None,
+        ),
         // The payload type gives the class a longer argument: the growth is at the payload.
         (
             "a dbg of an enum whose payload type grows",
@@ -2407,7 +2418,7 @@ fn implicit_dbg_should_close_an_instantiation_cycle_through_an_enum() {
 /// Checks each row `(name, body, cycle)`: the program whose `Display` of `W<T>` runs `body`
 /// reports an E0140 at the text `cycle`, or checks clean when it is `None`.
 fn dbg_cycle_rows(rows: &[(&str, &str, Option<&str>)]) {
-    let w = "class W<T> {\n    x: T\n}\nclass Wrap<T> {\n    v: W<T>\n}\nclass Hold<T> {\n    v: W<[T]>\n}\nclass Rec<T> {\n    next: Rec<T>?\n    v: W<[T]>\n}\nenum Pick<U> {\n    One(U)\n}\nenum Pair<U> {\n    Two(U, U)\n}\nenum Tree<U> {\n    Leaf(U)\n    Node(Tree<U>, Tree<U>)\n}\nenum Both<U> {\n    One(Hold<U>)\n}\nenum Grow<U> {\n    One(Wrap<[U]>)\n}\nenum Phantom<U, P> {\n    One(U)\n}\nenum Bag<U> {\n    Many([U])\n    Maybe(U?)\n}\n";
+    let w = "class W<T> {\n    x: T\n}\nclass Wrap<T> {\n    v: W<T>\n}\nclass Hold<T> {\n    v: W<[T]>\n}\nclass Rec<T> {\n    next: Rec<T>?\n    v: W<[T]>\n}\nenum Pick<U> {\n    One(U)\n}\nenum Pair<U> {\n    Two(U, U)\n}\nenum Tree<U> {\n    Leaf(U)\n    Node(Tree<U>, Tree<U>)\n}\nenum Both<U> {\n    One(Hold<U>)\n}\nenum Grow<U> {\n    One(Wrap<[U]>)\n}\nenum Nest<U> {\n    One(Pick<Pick<U>>)\n}\nenum NestPhantom<U> {\n    One(Phantom<i64, Pick<U>>)\n}\nenum Phantom<U, P> {\n    One(U)\n}\nenum Bag<U> {\n    Many([U])\n    Maybe(U?)\n}\n";
     let main = "fn main() {\n    print(W(x: 1))\n}";
     let display = |body: &str| {
         format!(
@@ -2499,6 +2510,29 @@ fn dbg_should_follow_nothing_of_a_class_or_an_enum_with_an_applicable_written_di
                 }
             }
         }
+    }
+}
+
+/// A field or a payload whose type did not check has its own error, and adds no edge.
+#[test]
+fn dbg_should_skip_a_field_and_a_payload_that_did_not_check() {
+    for (row, decl, value) in [
+        (
+            "a field",
+            "class Bad<T> {\n    v: Missing\n    w: T\n}",
+            "Bad(v: 1, w: 2)",
+        ),
+        (
+            "a payload",
+            "enum Bad<T> {\n    A(Missing)\n    B(T)\n}",
+            "Bad.B(1)",
+        ),
+    ] {
+        let src = format!(
+            "{decl}\nfn look<T>(x: Bad<T>) {{\n    dbg(x)\n}}\nfn main() {{\n    look({value})\n}}"
+        );
+        let at = where_is(&src, "Missing");
+        codes_row(row, &src, &[(Code::UnknownType, at)]);
     }
 }
 
