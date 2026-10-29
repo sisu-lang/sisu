@@ -9,7 +9,7 @@ use super::{
     payload, type_of, wrap,
 };
 use crate::ast::{self, CompareOp, ExprKind};
-use crate::diagnostic::{Diagnostic, DiagnosticKind, Literal, PeelIs};
+use crate::diagnostic::{Diagnostic, DiagnosticKind, Literal, PeelIs, PeelLayers};
 use crate::lang::{self, Dispatch};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
@@ -669,7 +669,9 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         }
         let (l, r) = (self.value(lhs, None), self.value(rhs, None));
-        for (side, checked) in [(lhs, &l), (rhs, &r)] {
+        // Each side peels its own extra layers: peeling one side leaves the other.
+        let layers = [self.extra_layers(&l), self.extra_layers(&r)];
+        for (side, checked, extra) in [(lhs, &l, layers[0]), (rhs, &r, layers[1])] {
             // Once an operand is `Error`, the later one is not held to `is`.
             let Some(ty) = type_of(checked) else { break };
             // The type under every `?` layer.
@@ -683,9 +685,7 @@ impl Checker<'_> {
                 && self.conforms(base, self.lang.any_object, TypeArgs::NONE);
             let nested = matches!(ty.kind(), TypeKind::Optional(p) if matches!(p.kind(), TypeKind::Optional(_)));
             // Peeling a layer helps only when an object is under the rest.
-            if nested && (matches!(base.kind(), TypeKind::Class(..)) || object_param) {
-                // Each side peels its own extra layers: peeling one side leaves the other.
-                let layers = [self.extra_layers(&l), self.extra_layers(&r)];
+            if extra > 0 {
                 let text = |e: &ast::Expr, extra: usize| {
                     let mut text = self.source.file.text(e.span).to_string();
                     for _ in 0..extra {
@@ -700,7 +700,11 @@ impl Checker<'_> {
                     add: None,
                     peel: Some(PeelIs {
                         text: format!("{} is {}", text(lhs, layers[0]), text(rhs, layers[1])),
-                        many: layers.iter().any(|&n| n > 1),
+                        layers: match layers {
+                            [1, 1] => PeelLayers::OfEachSide,
+                            _ if layers.iter().any(|&n| n > 1) => PeelLayers::Extra,
+                            _ => PeelLayers::One,
+                        },
                     }),
                 };
                 self.diagnostics.push(kind.into());

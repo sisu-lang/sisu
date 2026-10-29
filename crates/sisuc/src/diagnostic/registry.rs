@@ -1858,12 +1858,23 @@ impl AddBound {
     }
 }
 
-/// An `is` with the extra layers of its operands taken off, as written. `many` when an operand
-/// has more than one extra layer.
+/// An `is` with the extra layers of its operands taken off, as written, and how many layers the
+/// help says to take off.
 #[derive(Clone)]
 pub(crate) struct PeelIs {
     pub(crate) text: String,
-    pub(crate) many: bool,
+    pub(crate) layers: PeelLayers,
+}
+
+/// The layers that the help of an `is` peels.
+#[derive(Clone, Copy)]
+pub(crate) enum PeelLayers {
+    /// One side has one extra layer; the other has none.
+    One,
+    /// Both sides have one extra layer.
+    OfEachSide,
+    /// A side has more than one extra layer.
+    Extra,
 }
 
 /// The `let` that picks one answer of an ambiguous call: the call as written, the name of the
@@ -2967,8 +2978,12 @@ impl From<DiagnosticKind> for Diagnostic {
                 peel,
             } => {
                 let d = Diagnostic::coded(code, at, format!("`is` needs objects; found `{found}`"));
-                if let Some(PeelIs { text, many }) = peel {
-                    let layers = if many { "the extra layers" } else { "one layer" };
+                if let Some(PeelIs { text, layers }) = peel {
+                    let layers = match layers {
+                        PeelLayers::One => "one layer",
+                        PeelLayers::OfEachSide => "one layer of each side",
+                        PeelLayers::Extra => "the extra layers",
+                    };
                     d.with_help(format!("peel {layers} first: `{text}`"))
                 } else if let Some(add) = add {
                     d.with_help(add.help())
