@@ -66,7 +66,9 @@ impl Checker<'_> {
                     let mut reported = false;
                     if let (Some(spec), Some(found)) = (spec, type_of(&value)) {
                         let (format, error) = self.format(i, part, spec, found);
-                        formats.push(format);
+                        if !format.is_plain() {
+                            formats.push(format);
+                        }
                         reported = error;
                     }
                     if !reported {
@@ -148,7 +150,8 @@ impl Checker<'_> {
             part: i,
             pad,
             precision,
-            // A part that writes one piece is the same flat.
+            // A type that writes one piece is the same flat, so `#` is dropped.
+            // A type parameter keeps `#`: `mono` decides it for each type argument.
             pretty: spec.pretty && makes_group(ty),
         };
         (format, error)

@@ -105,10 +105,10 @@ fn rising(ranges: &[Range<usize>]) -> bool {
     ranges.is_sorted_by(|a, b| a.start <= b.start && a.end <= b.end)
 }
 
-/// The format spec `text`, written at `at` from its `:`: `#`, or `[<^>][width][.precision]` with a
-/// width from 1 to 1000 and a precision from 0 to 30. A single `#` beside those parts, in any
-/// place, is an error of its own form; the spec is read without it first, so that a spec which
-/// is wrong without it gets the error for that.
+/// The format spec `text`, written at `at` from its `:`: `#`, or `[<^>][width][.precision]`.
+/// A width is from 1 to 1000 and a precision is from 0 to 30.
+/// A single `#` beside those parts, in any place, is an error of its own form.
+/// The spec is read without the `#` first, so a spec that is wrong without it gets that error.
 fn format_spec(text: &str, at: Span) -> Result<FormatSpec, Diagnostic> {
     if text.matches('#').count() == 1 {
         let without = text.replacen('#', "", 1);

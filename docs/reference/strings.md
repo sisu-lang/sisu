@@ -223,7 +223,7 @@ The rules:
 - A precision rounds half to even from the exact value of the `f64`, and never uses an exponent. A precision of 0 writes no point. `inf`, `-inf` and `nan` have no decimals.
 - A precision on a value that is not an `f64` is an error ([E0111](../diagnostics/E0111.md)).
 - A width above 1000, or a precision above 30, is an error ([E0110](../diagnostics/E0110.md)).
-- A spec with no width and no precision other than `#`, or a `.` with no digits, is an error ([E0108](../diagnostics/E0108.md)).
+- A spec that is not `#` must hold a width or a precision, and a `.` needs digits. If not, it is an error ([E0108](../diagnostics/E0108.md)).
 - Other parts, such as zero padding, a sign, a fill character, a type letter, or a width from a variable, are errors ([E0109](../diagnostics/E0109.md)).
 - A `:` inside a string or character literal in the expression does not start a spec.
 

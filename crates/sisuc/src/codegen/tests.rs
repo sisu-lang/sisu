@@ -1776,10 +1776,11 @@ fn interpolating_a_compound_part_should_use_one_buffer_sink() {
     assert!(!f.contains("@sisu_show_"), "{f}");
 }
 
-/// A `#` part whose type makes a group is written through a pretty sink over the buffer sink,
-/// started and finished once; a `#` part whose type writes one piece, concrete or an argument of
-/// a type parameter, emits the IR of the same part with no `#`. An array part beside it makes
-/// every interpolation go through a sink.
+/// A `#` part whose type makes a group is written through a pretty sink over the buffer sink.
+/// The sink is started and finished once.
+/// A `#` part whose type writes one piece emits the IR of the same part with no `#`.
+/// That holds for a concrete type and for the argument of a type parameter.
+/// An array part beside it makes every interpolation go through a sink.
 #[test]
 fn a_hash_part_should_use_a_pretty_sink_only_when_its_type_makes_a_group() {
     let context = Context::create();

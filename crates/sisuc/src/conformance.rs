@@ -328,10 +328,12 @@ pub(crate) fn prints_by_helper(ty: Type) -> bool {
     )
 }
 
-/// Whether the text of a value of type `ty` can hold a group, which `{x:#}` may break: an array,
-/// an enum, an optional of one of those or of an optional (the `Some(` of the `Some` rule), and a
-/// type parameter or an associated type, whose argument may be one. A scalar, a `string` and a
-/// class write one piece, and an optional of one of them is transparent.
+/// Whether the text of a value of type `ty` can hold a group, which `{x:#}` may break.
+/// An array, an enum and an optional of an optional (the `Some(` of the `Some` rule) can.
+/// So can an optional of an array or of an enum.
+/// A type parameter or an associated type can, because its argument may be one of these.
+/// A scalar, a `string` and a class write one piece.
+/// An optional of one of those is transparent.
 pub(crate) fn makes_group(mut ty: Type) -> bool {
     while let TypeKind::Optional(inner) = ty.kind() {
         if matches!(inner.kind(), TypeKind::Optional(_)) {

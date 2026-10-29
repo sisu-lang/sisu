@@ -447,8 +447,8 @@ impl Stream {
 }
 
 /// How an interpolation writes its part `part`: padded, and with `precision` decimals for an
-/// `f64`, or laid out to fit 80 columns when `pretty`. A pretty part has no pad and no precision,
-/// and its type makes a group (`conformance::makes_group`), or is a type parameter that may.
+/// `f64`, or laid out to fit 80 columns when `pretty`. A pretty part has no pad and no precision.
+/// Its type makes a group (`conformance::makes_group`), or is a type parameter that may.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Format {
     pub(crate) part: usize,
@@ -466,6 +466,14 @@ pub(crate) struct Pad {
     /// so `align` is only a stand-in: `mono` sets the default of the type argument, a number on
     /// the right and any other value on the left, and clears the flag.
     pub(crate) by_type: bool,
+}
+
+impl Format {
+    /// Whether the part is written plain: no pad, no precision and no layout. The checker and
+    /// `mono` keep no such row, so a part has a row only if its spec changes the text.
+    pub(crate) fn is_plain(&self) -> bool {
+        self.pad.is_none() && self.precision.is_none() && !self.pretty
+    }
 }
 
 /// The format as a spec: `>8.2`, or `#`.

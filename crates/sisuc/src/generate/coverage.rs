@@ -111,7 +111,7 @@ const IDENTITY: &str = "reach: a class is compared with `is` or against `None`";
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 96] = [
+const REACH: [&str; 97] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -204,6 +204,7 @@ const REACH: [&str; 96] = [
     "reach: `print` writes a compound value",
     "reach: `print` runs a written `to_string` inside a value",
     "reach: an interpolation writes a compound part",
+    "reach: an interpolation part keeps the pretty flag",
     "reach: `to_string` runs on a generated `Display`",
     "reach: a top-level optional is printed",
     "reach: a top-level optional is interpolated",
@@ -2327,6 +2328,10 @@ impl Walk {
             }
             tir::ExprKind::Interpolate { parts, formats } => {
                 self.mark("tir::ExprKind::Interpolate");
+                // The checked tree: a part of a type parameter keeps `#` until `mono` decides.
+                if formats.iter().any(|format| format.pretty) {
+                    self.mark("reach: an interpolation part keeps the pretty flag");
+                }
                 if parts.iter().any(|part| is_compound(part.ty)) {
                     self.mark("reach: an interpolation writes a compound part");
                 }

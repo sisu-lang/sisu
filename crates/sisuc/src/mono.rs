@@ -611,7 +611,7 @@ impl Mono {
                 }
             }
             K::Interpolate { parts, formats } => {
-                for format in formats {
+                for format in &mut *formats {
                     // A part of a type parameter's type pads as its type argument's does.
                     if let Some(pad) = format.pad.as_mut().filter(|pad| pad.by_type) {
                         let ty = self.subst(parts[format.part].ty, args);
@@ -628,6 +628,7 @@ impl Mono {
                         format.pretty = makes_group(self.subst(parts[format.part].ty, args));
                     }
                 }
+                formats.retain(|format| !format.is_plain());
                 // The helper for a compound part calls a written `to_string` at each part that
                 // has one.
                 for part in parts.iter() {
@@ -1094,6 +1095,26 @@ mod tests {
                 .iter()
                 .any(|name| name.starts_with("Q<") && name.contains("..."))
         );
+    }
+
+    /// A `#` part of a type parameter keeps its row at a type argument that may make a group and
+    /// loses it at one that writes one piece, so the instance has the `tir` of a part without `#`.
+    #[test]
+    fn a_hash_part_of_a_type_parameter_should_keep_its_row_only_in_an_instance_with_a_group() {
+        let program = instantiated(
+            "fn g<T>(x: T) -> string {\n    \"{x:#}\"\n}\nfn main() {\n    \
+             print(g(1) + g(\"s\") + g([1]))\n}",
+        );
+        let text = program.to_string();
+        for (instance, row) in [("g<i64>", false), ("g<string>", false), ("g<[i64]>", true)] {
+            let rest = text
+                .split_once(&format!("(fn {instance} "))
+                .unwrap_or_else(|| panic!("{instance} in {text}"))
+                .1;
+            let function = rest.split("(fn ").next().unwrap_or(rest);
+            assert_eq!(function.contains("(fmt x#0 \"#\")"), row, "{function}");
+            assert_eq!(function.contains("(fmt"), row, "{function}");
+        }
     }
 
     /// The class name is longer than `NAME_LIMIT`, so the two instances of `g`, of `P` and of
