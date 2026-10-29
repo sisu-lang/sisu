@@ -569,13 +569,13 @@ pub(crate) enum DiagnosticKind {
     /// An `is` whose operand at `at`, of type `found`, is no object. `help` when `==` may
     /// compare it: its type names no type parameter. `add`, for a type parameter in scope, is
     /// the bound that makes it an object. `peel`, for an optional of an optional, is the `is`
-    /// with one layer of that operand taken off, as written.
+    /// with the extra layers of each operand taken off, as written.
     IsNeedsObjects {
         found: String,
         at: Span,
         help: bool,
         add: Option<AddBound>,
-        peel: Option<String>,
+        peel: Option<PeelIs>,
     },
     /// A comparison at `at` of a `left` with a `right`.
     CannotCompare {
@@ -1837,18 +1837,53 @@ pub(crate) enum NoOperatorForm {
     Contains { make: Option<String> },
 }
 
-/// A bound that a type parameter lacks: `param`, then every bound it would have, in order.
+/// Where a missing bound goes.
+#[derive(Clone)]
+pub(crate) enum BoundSite {
+    /// A type parameter, by name.
+    Param(String),
+    /// An associated type, by name, in the `interface` that declares it.
+    Assoc { interface: String, name: String },
+}
+
+/// A bound that a type parameter or an associated type lacks: `site`, then every bound it would
+/// have, in order.
 #[derive(Clone)]
 pub(crate) struct AddBound {
-    pub(crate) param: String,
+    pub(crate) site: BoundSite,
     pub(crate) bounds: Vec<String>,
 }
 
 impl AddBound {
     /// The help that tells what to write.
     fn help(&self) -> String {
-        format!("add a bound: `{}: {}`", self.param, self.bounds.join(" & "))
+        let bounds = self.bounds.join(" & ");
+        match &self.site {
+            BoundSite::Param(param) => format!("add a bound: `{param}: {bounds}`"),
+            BoundSite::Assoc { interface, name } => {
+                format!("add a bound in `{interface}`: `type {name}: {bounds}`")
+            }
+        }
     }
+}
+
+/// An `is` with the extra layers of its operands taken off, as written, and how many layers the
+/// help says to take off.
+#[derive(Clone)]
+pub(crate) struct PeelIs {
+    pub(crate) text: String,
+    pub(crate) layers: PeelLayers,
+}
+
+/// The layers that the help of an `is` peels.
+#[derive(Clone, Copy)]
+pub(crate) enum PeelLayers {
+    /// One side has one extra layer; the other has none.
+    One,
+    /// Both sides have one extra layer.
+    OfEachSide,
+    /// A side has more than one extra layer.
+    Extra,
 }
 
 /// The `let` that picks one answer of an ambiguous call: the call as written, the name of the
@@ -2952,8 +2987,13 @@ impl From<DiagnosticKind> for Diagnostic {
                 peel,
             } => {
                 let d = Diagnostic::coded(code, at, format!("`is` needs objects; found `{found}`"));
-                if let Some(peel) = peel {
-                    d.with_help(format!("peel one layer first: `{peel}`"))
+                if let Some(PeelIs { text, layers }) = peel {
+                    let layers = match layers {
+                        PeelLayers::One => "one layer",
+                        PeelLayers::OfEachSide => "one layer of each side",
+                        PeelLayers::Extra => "the extra layers",
+                    };
+                    d.with_help(format!("peel {layers} first: `{text}`"))
                 } else if let Some(add) = add {
                     d.with_help(add.help())
                 } else if help {

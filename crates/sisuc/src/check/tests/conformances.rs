@@ -4095,7 +4095,7 @@ type Row = (
     Option<&'static str>,
 );
 
-const PRINTED: [Row; 30] = [
+const PRINTED: [Row; 35] = [
     ("print", "", "name: string?", "print(name)", Some("name")),
     ("eprint", "", "name: string?", "eprint(name)", Some("name")),
     (
@@ -4270,11 +4270,22 @@ const PRINTED: [Row; 30] = [
         "print(name == None)",
         None,
     ),
+    ("a Some", "", "", "print(Some(1))", None),
+    ("a Some in parentheses", "", "", "print((Some(1)))", None),
+    ("Option.Some", "", "", "print(Option.Some(1))", None),
+    (
+        "a Some of an optional",
+        "",
+        "",
+        "print(Some(Some(1)))",
+        None,
+    ),
+    ("an interpolated Some", "", "", "print(\"{Some(1)}\")", None),
 ];
 
 /// A top-level optional in `print`, `eprint` or an interpolation, whatever the expression that
-/// gives it, warns once at that expression; an optional inside another value, a text from
-/// `to_string` or `??`, and a `T` that holds an optional when it is instantiated, do not. The
+/// gives it, warns once at that expression; a `Some(x)`, an optional inside another value, a text
+/// from `to_string` or `??`, and a `T` that holds an optional when it is instantiated, do not. The
 /// fixtures `W0015` and `W0015-value` pin the text.
 #[test]
 fn printing_an_optional_should_warn_only_at_the_top_level() {
@@ -4344,6 +4355,37 @@ fn is_should_report_a_bound_parameter_that_is_no_object() {
         let src = format!("fn {signature} -> bool {{\n    a is b\n}}\nfn main() {{}}");
         codes_row(row, &src, &[(Code::IsNeedsObjects, (2, 5))]);
     }
+}
+
+/// `is` with two layers of `?` or more on a side reports once, at the left side, whichever side
+/// has them. The fixtures `E0046-nested`, `E0046-nested-both` and `E0046-nested-triple` pin the
+/// help that peels each side.
+#[test]
+fn is_should_report_once_for_sides_with_extra_layers() {
+    for (row, signature) in [
+        ("both sides", "same(a: Node??, b: Node??)"),
+        ("one side", "same(a: Node??, b: Node?)"),
+        ("the right side", "same(a: Node?, b: Node??)"),
+        ("three layers", "same(a: Node???, b: Node?)"),
+        ("a parameter", "same<T: AnyObject>(a: T??, b: T??)"),
+        ("a side that is no object", "same(a: Node??, b: i64)"),
+    ] {
+        let src =
+            format!("class Node {{}}\nfn {signature} -> bool {{\n    a is b\n}}\nfn main() {{}}");
+        let col = if row == "the right side" { 10 } else { 5 };
+        codes_row(row, &src, &[(Code::IsNeedsObjects, (3, col))]);
+    }
+}
+
+/// A side whose type is unknown does not hide the report on the other side.
+#[test]
+fn is_should_report_a_side_with_extra_layers_beside_an_unknown_side() {
+    let src =
+        "class Node {}\nfn same(a: Node??, b: Missing) -> bool {\n    a is b\n}\nfn main() {}";
+    codes(
+        src,
+        &[(Code::UnknownType, (2, 23)), (Code::IsNeedsObjects, (3, 5))],
+    );
 }
 
 /// The interfaces whose associated types the rows of the next two tests test with `is`.
@@ -4416,6 +4458,56 @@ fn is_should_report_an_associated_type_that_is_no_object() {
             "{ASSOC_OBJECTS}fn same<T: {bound}>(a: T, b: T) -> bool {{\n    {expr}\n}}\nfn main() {{}}"
         );
         codes_row(row, &src, &[(Code::IsNeedsObjects, (line, 5))]);
+    }
+}
+
+/// A report that an associated type lacks a bound gives the help to add it, as for a type
+/// parameter. The fixtures `E0046-assoc` and `E0139-assoc` pin the text.
+#[test]
+fn an_associated_type_with_no_bound_should_get_an_add_bound_help() {
+    let line = ASSOC_OBJECTS.lines().count() + 3;
+    for (row, bound, stmt, code, text) in [
+        (
+            "is",
+            "Plain",
+            "let _ = a.first() is b.first()",
+            Code::IsNeedsObjects,
+            "a.first()",
+        ),
+        (
+            "is, beside another bound",
+            "Equal",
+            "let _ = a.first() is b.first()",
+            Code::IsNeedsObjects,
+            "a.first()",
+        ),
+        (
+            "==",
+            "Plain",
+            "let _ = a.first() == b.first()",
+            Code::ParamLacks,
+            "a.first()",
+        ),
+        (
+            "an argument",
+            "Plain",
+            "need_eq(a.first())",
+            Code::NotConform,
+            "a.first()",
+        ),
+    ] {
+        let src = format!(
+            "{ASSOC_OBJECTS}fn need_eq<U: Eq>(x: U) {{}}\nfn f<T: {bound}>(a: T, b: T) {{\n    {stmt}\n}}\nfn main() {{}}"
+        );
+        let col = 5 + stmt.find(text).expect("the row holds the text");
+        // E0154 points at the bound of `need_eq` too.
+        let bound: &[(usize, usize)] = if code == Code::NotConform {
+            &[(line - 2, 15)]
+        } else {
+            &[]
+        };
+        let d = diagnostic_row(row, &src, code, (line, col, text), bound);
+        assert!(d.help().is_some(), "row `{row}`");
     }
 }
 

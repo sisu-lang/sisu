@@ -3489,6 +3489,7 @@ impl<'a> Parser<'a> {
                     span,
                 },
                 spec: None,
+                bad_spec: false,
             })
         };
         let base = self.depth;
@@ -3497,13 +3498,21 @@ impl<'a> Parser<'a> {
         let end = loop {
             let value = self.child(base, &mut reach, Self::expr)?;
             let mut spec = None;
+            let mut bad_spec = false;
             if let TokenKind::FormatSpec(written) = &self.peek().kind {
                 let at = self.bump().span;
                 spec = format_spec(written, at)
-                    .map_err(|error| self.specs.push(error))
+                    .map_err(|error| {
+                        self.specs.push(error);
+                        bad_spec = true;
+                    })
                     .ok();
             }
-            parts.push(Part { value, spec });
+            parts.push(Part {
+                value,
+                spec,
+                bad_spec,
+            });
             let token = self.peek().clone();
             match token.kind {
                 TokenKind::StrMiddle(value) => parts.extend(text(value, token.span)),

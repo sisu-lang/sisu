@@ -1,0 +1,9 @@
+class Node {
+    value: i64
+}
+
+fn main() {
+    let a: Node??? = None
+    let b: Node? = None
+    print(a is b)
+}

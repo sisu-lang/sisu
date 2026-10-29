@@ -51,7 +51,15 @@ impl Checker<'_> {
         let mut ty = Type::STRING;
         let mut checked = Vec::with_capacity(parts.len());
         let mut formats = Vec::new();
-        for (i, ast::Part { value: part, spec }) in parts.iter().enumerate() {
+        for (
+            i,
+            ast::Part {
+                value: part,
+                spec,
+                bad_spec,
+            },
+        ) in parts.iter().enumerate()
+        {
             let value = self.expr(part, None);
             // Every type interpolates but `unit`; an optional warns.
             match type_of(&value).map(Type::kind) {
@@ -62,8 +70,9 @@ impl Checker<'_> {
                     continue;
                 }
                 _ => {
-                    // A precision error is the one report of the part: it gets no warning.
-                    let mut reported = false;
+                    // A spec error or a precision error is the one report of the part: it gets
+                    // no warning.
+                    let mut reported = *bad_spec;
                     if let (Some(spec), Some(found)) = (spec, type_of(&value)) {
                         let (format, error) = self.format(i, part, spec, found);
                         if !format.is_plain() {
