@@ -601,29 +601,33 @@ impl Graph {
     /// on from there (`Choice`). The base feeds the gate of each choice that it can mean when
     /// `matching` knows them, else the hub of them all.
     fn choose(&mut self, holder: usize, ty: Type, base: Type, hub: usize, site: Span) {
-        let targets: Vec<usize> = match self.matching(ty, base) {
-            Some(choices) => (choices.iter())
-                .map(|&c| self.first[self.gates_first() + c])
-                .collect(),
-            None => vec![self.first[self.hubs_first() + hub]],
-        };
-        if targets.is_empty() {
+        // The node of the base is made only when a choice needs it; making it needs `self`, so
+        // the iterator, which borrows the choices, is asked again after it.
+        let meant = Self::matching(&self.assocs, ty, base);
+        if meant.is_some_and(|mut choices| choices.next().is_none()) {
             return;
         }
         let from = self.node(holder, self.without_unbounded(base));
-        for to in targets {
-            self.edges.push(Edge {
-                from,
-                to,
-                weight: 0,
-                growing: false,
-                out: false,
-                assoc: false,
-                holder,
-                site,
-                mark: site,
-                instance: Some(Instance::Type(ty, None)),
-            });
+        let edge = |to| Edge {
+            from,
+            to,
+            weight: 0,
+            growing: false,
+            out: false,
+            assoc: false,
+            holder,
+            site,
+            mark: site,
+            instance: Some(Instance::Type(ty, None)),
+        };
+        let gates = self.gates_first();
+        match Self::matching(&self.assocs, ty, base) {
+            Some(choices) => {
+                for c in choices {
+                    self.edges.push(edge(self.first[gates + c]));
+                }
+            }
+            None => self.edges.push(edge(self.first[self.hubs_first() + hub])),
         }
     }
 
@@ -633,35 +637,30 @@ impl Graph {
     /// makes it. `None` when the base is no associated type, when a choice of `Link` names any
     /// other type, or when more than `MATCHING_CHOICES` heads and choices must be read: the use
     /// then feeds the hub of all the choices.
-    fn matching(&self, ty: Type, base: Type) -> Option<Vec<usize>> {
+    fn matching(assocs: &Assocs, ty: Type, base: Type) -> Option<impl Iterator<Item = usize>> {
         let (TypeKind::Assoc(_, interface, args, k), TypeKind::Assoc(_, link, _, l)) =
             (ty.kind(), base.kind())
         else {
             return None;
         };
-        let place = self.assocs.first[interface.0] + k as usize;
-        let slot = (self.assocs.slot(place, args))
-            .expect("a use whose place has a hub should have a slot");
-        let heads = self.assocs.heads[self.assocs.first[link.0] + l as usize].as_ref()?;
+        let place = assocs.first[interface.0] + k as usize;
+        let slot =
+            (assocs.slot(place, args)).expect("a use whose place has a hub should have a slot");
+        let heads = assocs.heads[assocs.first[link.0] + l as usize].as_ref()?;
+        let made =
+            move |head: &Head| (assocs.by_head.get(&(place, *head))).map_or(&[][..], Vec::as_slice);
         // One read for each head, and one for each choice that a head makes.
-        let mut read = heads.len();
-        let mut found = Vec::new();
-        for &head in heads {
-            let made = (self.assocs.by_head.get(&(place, head))).map_or(&[][..], Vec::as_slice);
-            read += made.len();
-            // shortcut: above K matching choices a use feeds the whole hub;
-            // raise K if a real program hits it.
-            if read > MATCHING_CHOICES {
-                return None;
-            }
+        let read = heads.len() + heads.iter().map(|head| made(head).len()).sum::<usize>();
+        // shortcut: above K matching choices a use feeds the whole hub;
+        // raise K if a real program hits it.
+        (read <= MATCHING_CHOICES).then(|| {
             // An open use means any choice of the place, a closed one the choices of its slot
             // and those for arguments that hold a parameter.
-            found.extend(made.iter().filter(|&&c| {
-                let choice = &self.assocs.choices[c];
+            (heads.iter().flat_map(made).copied()).filter(move |&c| {
+                let choice = &assocs.choices[c];
                 slot == place || choice.slot == slot || choice.loose
-            }));
-        }
-        Some(found)
+            })
+        })
     }
 
     /// `base` without the links of its chain that have unbounded growth for the arguments of
