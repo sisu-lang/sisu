@@ -498,9 +498,9 @@ fn failed_rule_should_make_its_expression_error() {
         ),
         (
             "compare",
-            "fn main() {\n    let x = 1 < true < 2\n    print(x + 1)\n}".into(),
+            "fn main() {\n    let x = true < false\n    print(x + 1)\n}".into(),
             Code::NoOperator,
-            (2, 17),
+            (2, 13),
         ),
         (
             "equal",
@@ -1626,7 +1626,7 @@ fn less_should_report_no_operator_for_an_unordered_operand() {
 
 /// An operand that fails first leaves the later ones unchecked: one error per operator. The
 /// leader `a` of `[] < a` has no `<`, so it is the operand reported, and the `[]` before it is
-/// not held to its type.
+/// held to its type, which it fits.
 #[test]
 fn operator_should_report_once_after_a_failed_operand() {
     for (operator, code, column) in [
