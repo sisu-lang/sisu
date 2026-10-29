@@ -93,3 +93,44 @@ fn an_unknown_method_of_an_array_should_suggest_a_method_of_a_covering_prelude_b
     assert_eq!(d.code(), Code::NoMember);
     assert!(d.fixes().is_empty(), "{d:?}");
 }
+
+/// A report of an unknown method on an `i64` reads the methods of the prelude's blocks of `i64`,
+/// and not each method of the program's `extend` blocks. Reading all of them costs `n x n` steps
+/// for `n` blocks and `n` reports.
+#[test]
+fn unknown_methods_of_an_i64_should_read_only_the_methods_of_the_prelude() {
+    let steps = |n: usize| {
+        let lines = |line: &dyn Fn(usize) -> String| (0..n).map(line).collect::<Vec<_>>().concat();
+        let blocks = lines(&|i| {
+            format!("class C{i} {{\n    x: i64\n}}\nextend C{i} {{\n    fn m{i}(self) {{}}\n}}\n")
+        });
+        let calls = lines(&|i| format!("    x.u{i}()\n"));
+        let src = format!("{blocks}fn main() {{\n    let x: i64 = 1\n{calls}}}");
+        PRELUDE_NAME_STEPS.set(0);
+        let (_, ds) = checked_with(PRELUDE_SOURCE, &src);
+        assert_eq!(ds.len(), n, "one report for each call");
+        PRELUDE_NAME_STEPS.get()
+    };
+    assert_near_linear(steps(20), steps(40), steps(60));
+}
+
+/// A prelude block of a built-in type that is not plain, or has a `mut self` method, is a mistake
+/// in the prelude: the checker reports it as the internal error, and does not panic elsewhere.
+#[test]
+fn a_prelude_block_of_a_built_in_type_should_be_plain_without_mut_self() {
+    let interface = "interface Sh {\n    fn q(self) -> i64\n}\n";
+    for (head, target) in [("extend", "i64"), ("extend", "[i64]"), ("extend<T>", "[T]")] {
+        for prelude in [
+            format!("{interface}{head} {target}: Sh {{\n    fn q(self) -> i64 {{ 0 }}\n}}\n"),
+            format!("{head} {target} {{\n    fn r(mut self) {{}}\n}}\n"),
+        ] {
+            let panic = std::panic::catch_unwind(|| checked_with(&prelude, "fn main() {}"))
+                .expect_err(&prelude);
+            let message = panic.downcast_ref::<String>().map_or("", String::as_str);
+            assert!(
+                message.starts_with("internal compiler error: the prelude does not check clean"),
+                "{prelude}: {message}"
+            );
+        }
+    }
+}

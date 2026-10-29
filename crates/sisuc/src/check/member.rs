@@ -390,7 +390,7 @@ impl Checker<'_> {
     }
 
     /// The method `name` that an `extend` block of the prelude gives `ty`, an array or an `i64`,
-    /// if any; the method of a class or an enum is `find_method`'s. A method whose block bounds
+    /// if any. The method of a class or an enum is `find_method`'s. A method whose block bounds
     /// fail for `ty` is none.
     pub(super) fn prelude_method(&mut self, ty: Type, name: Symbol) -> Option<tir::FuncId> {
         if !matches!(ty.kind(), TypeKind::Array(_) | TypeKind::I64) {
@@ -408,13 +408,18 @@ impl Checker<'_> {
     /// `i64`: what a report of an unknown method suggests.
     pub(super) fn prelude_method_names(&self, ty: Type) -> Vec<&'static str> {
         let holder = holder_of(ty);
-        let covered = |list: &Vec<(usize, tir::FuncId)>| {
-            list.iter().any(|&(at, _)| self.covers(at, ty).is_some())
-        };
-        (self.extension_methods.iter())
-            .filter(|&(&(h, _), list)| Some(h) == holder && covered(list))
-            .map(|(&(_, name), _)| name.as_str())
-            .collect()
+        let mut names: Vec<&'static str> = (self.builtin_methods.iter())
+            .inspect(|_| {
+                #[cfg(test)]
+                super::PRELUDE_NAME_STEPS.set(super::PRELUDE_NAME_STEPS.get() + 1);
+            })
+            .filter(|&&(h, _, at)| Some(h) == holder && self.covers(at, ty).is_some())
+            .map(|&(_, name, _)| name.as_str())
+            .collect();
+        // Two blocks may give the same name.
+        names.sort_unstable();
+        names.dedup();
+        names
     }
 
     /// Whether the bounds of the block of the method `func`, which a plain block gives or the

@@ -373,6 +373,9 @@ thread_local! {
     /// How many calls the lookups of a class's field by name have made. The tick counts calls of
     /// the one lookup helper, `ClassInfo::field`, and not the steps inside it.
     pub(super) static FIELD_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many methods of the prelude's blocks of built-in types a report of an unknown method
+    /// has read on this thread.
+    pub(super) static PRELUDE_NAME_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many times `conforms` has looked for the conformance of a class or an enum, not
     /// counting an answer it kept.
     pub(super) static CONFORMS_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -445,6 +448,9 @@ struct Checker<'src> {
     /// For each class or enum and method name, the blocks that hold a method of that name, and
     /// the method, so that a method call reads only the blocks that hold its name.
     extension_methods: FxHashMap<(Holder, Symbol), Vec<(usize, tir::FuncId)>>,
+    /// The methods that the prelude's blocks give an array or an `i64`, each with its holder and
+    /// block: the few that a report of an unknown method reads, in place of every block's.
+    builtin_methods: Vec<(Holder, Symbol, usize)>,
     /// The names of the types that a broken `extend` block, or a block of a conformance that
     /// failed, may have given methods to. A method no one finds on them is poisoned.
     broken_extensions: FxHashSet<Symbol>,
@@ -982,6 +988,7 @@ impl<'src> Checker<'src> {
             interface_ids: FxHashMap::default(),
             extensions: Vec::new(),
             extension_methods: FxHashMap::default(),
+            builtin_methods: Vec::new(),
             broken_extensions: FxHashSet::default(),
             broken_extension_methods: FxHashSet::default(),
             candidates: Vec::new(),

@@ -595,7 +595,7 @@ fn dbg_should_report_a_broken_argument_once() {
 /// The `min`, `max` and `clamp` of `i64` are the prelude's: a misspelled name suggests them, and
 /// a wrong count of arguments is the general call-count code.
 #[test]
-fn an_i64_method_should_come_from_the_prelude() {
+fn an_i64_method_of_the_prelude_should_keep_its_suggestion_and_call_count_code() {
     with_prelude();
     for (written, method) in [("mim", "min"), ("maxx", "max"), ("clam", "clamp")] {
         let src = body("n: i64", &format!("let _ = n.{written}(3)"));

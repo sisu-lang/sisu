@@ -62,12 +62,12 @@ impl<'a> Checker<'_> {
         let early = if reported_late {
             None
         } else {
-            self.extend_target(&extend.target)
+            self.extend_target(extend)
         };
         self.body.self_type = Some(early.unwrap_or(UNKNOWN));
         let bounds = self.declare_bounds(0, Vec::new(), &extend.type_params);
         let target = if reported_late {
-            self.extend_target(&extend.target)
+            self.extend_target(extend)
         } else {
             // The checks of the target's arguments waited with no bound of the block in scope.
             self.rescope(queued);
@@ -109,6 +109,9 @@ impl<'a> Checker<'_> {
                     .entry((holder, method.name.name))
                     .or_default()
                     .push((at, func));
+                if matches!(holder, Holder::Array | Holder::I64) {
+                    self.builtin_methods.push((holder, method.name.name, at));
+                }
             }
             let signature = format!("{name}.{}", method.name.name);
             self.signature(method, signature, &extend.type_params, bounds.clone());
@@ -259,9 +262,11 @@ impl<'a> Checker<'_> {
         })
     }
 
-    /// The type that `ty`, the target of an `extend` block, names: a class or an enum, or in the
-    /// prelude an array or `i64`. Reports a target that is not one, and `None` for it.
-    fn extend_target(&mut self, ty: &ast::TypeExpr) -> Option<Type> {
+    /// The type that the target of `extend` names: a class or an enum, or an array or `i64` in a
+    /// plain block of the prelude with no `mut self` method. Reports a target that is not one,
+    /// and `None` for it.
+    fn extend_target(&mut self, extend: &ast::Extend) -> Option<Type> {
+        let ty = &extend.target;
         if self.is_interface_name(ty) {
             let name = match &ty.kind {
                 ast::TypeKind::Applied(applied) => applied.name,
@@ -287,7 +292,13 @@ impl<'a> Checker<'_> {
                 self.cannot_extend_assoc(ty);
                 return None;
             }
-            TypeKind::Array(_) | TypeKind::I64 if ty.bare.in_prelude() => return Some(resolved),
+            TypeKind::Array(_) | TypeKind::I64
+                if ty.bare.in_prelude()
+                    && extend.interface.is_none()
+                    && extend.methods.iter().all(|m| m.mut_self.is_none()) =>
+            {
+                return Some(resolved);
+            }
             TypeKind::Param(..) => CannotExtendForm::TypeParam,
             _ => CannotExtendForm::BuiltIn,
         };
