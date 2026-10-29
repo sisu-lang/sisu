@@ -89,6 +89,8 @@ The program is the entry file and each file that its imports reach. `sisu` reads
 
 Only the entry file's `main` runs. A `main` in another module is an ordinary function, so one file can be a script and a module. Another module can import the entry file.
 
+`sisu check` of an entry file with no `main` checks it as a library: it reports no missing `main`, and a `pub` item that nothing uses gets no warning. `sisu run` and `sisu build` still need `main`.
+
 ## Imports
 
 An `import` line names a module by its path and binds names in this file.
@@ -167,7 +169,7 @@ The rules:
 - A class or record with a private field cannot be built in another module. Another module also cannot change a copy of it with a record update, or take it apart in a pattern. A pattern that binds the whole value works. So the module decides which values exist: an *opaque type*.
 - A `pub` item cannot name a private type in its signature: a parameter, a result, a `pub` field, a payload of a `pub` enum, a type alias, a bound or an associated type. A private field can have a private type. The arguments of a conformance of a `pub` type to a `pub` interface follow the same rule.
 - A method can have the name of a private field when the field's type is not a function type, as `balance` does above.
-- A `pub` item that nothing in the program uses gets the unused-name warning ([W0012](../diagnostics/W0012.md)), as a private one does.
+- In a program with a `main`, a `pub` item that nothing in the program uses gets the unused-name warning ([W0012](../diagnostics/W0012.md)), as a private one does.
 
 ## Names reached through a type
 
@@ -245,11 +247,12 @@ fn main() {
 - The rule looks only at the outermost type of `T`, of `I` and of each argument in `A`. `[User]` and `User?` do not count as types of the program, and neither do the type arguments of `T`: `extend Result<User, MyErr>: Display` is an error.
 - In a program without a `sisu.toml`, every file is in one project. So the rule rejects only a conformance where the type, the interface and every argument come from the prelude or the standard library: `extend IoError: Display` is an error, and `extend IoError: Convert<TotalsError>` is allowed.
 - A conformance can be in any module of its project. A call finds its methods through the value's type when the conformance's file is part of the program, with no import of the interface. Above, `main.sisu` imports `output.user_csv` only to make that file part of the program.
-- A plain `extend T { ... }`, with methods and no interface, must be in `T`'s module, so a type's own methods are always found with the type.
+- A built-in type such as `f64` or `string` follows the same rule. `extend f64: Mul<Vec2>` is allowed when `Vec2` is the program's, so `2.0 * v` works. `extend i64: Display` is an error.
+- A plain `extend T { ... }`, with methods and no interface, must be in `T`'s module, so a type's own methods are always found with the type. Only the prelude has a plain `extend` of a built-in type.
 - A conformance that replaces a generated one, such as a hand-written `Display` or `Eq`, must be in its type's module. Otherwise `a == b` could give another answer when the file is not part of the program.
 
 ## Names in messages
 
 A message from `sisu` writes a type's short name, such as `Account`. When two types of one name meet in one message, both get their module path: `a.Account` and `b.Account`. A panic message writes the file's path from the root: `report/table.sisu:3:5`.
 
-A class's generated `Display` prints only its short name, so moving a file never changes what a program prints. A record's generated `Display` prints every field, private fields too. To hide a field, write the record's own `Display`.
+A class's generated `Display` prints only its short name, so moving a file never changes what a program prints. A record's generated `Display` prints its `pub` fields in order, then `..` when the record has a private field: `Credentials(user: "ann", ..)`, or `Token(..)` when no field is `pub`. It prints the same text in every module. To show a private field, write the record's own `Display`. `dbg` shows every field.

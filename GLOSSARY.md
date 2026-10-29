@@ -364,7 +364,8 @@ through the type: `S.Item`. Inside a conformance, the choice is written
 A block that adds methods to a type declared elsewhere (`extend T { ... }`),
 or one conformance (`extend T: I { ... }`). Only the prelude may extend a
 built-in type. From milestone 11, a block without an interface lives in its
-type's module.
+type's module, and a program may conform a built-in type to an interface
+that it declares, or whose argument it declares.
 
 **Interface value**:
 A value of type `any I`: a value of any type that conforms to `I`, whose
@@ -401,8 +402,14 @@ _Avoid_: lambda, anonymous function, block
 
 **Capture**:
 A copy, made when a closure is created, of an outer local, parameter or
-`self` that the closure's body names. A closure cannot change its captures.
+`self` that the closure's body names. A closure cannot change its captures,
+except a **mutable capture**.
 _Avoid_: upvalue, closed-over variable
+
+**Mutable capture**:
+A capture written `[mut name]` that shares a `let mut` local with the
+closure, in place of a copy. A change made by the closure or by the
+function is seen by both.
 
 **Weak capture**:
 A capture that does not keep its object alive. Inside the closure the name is

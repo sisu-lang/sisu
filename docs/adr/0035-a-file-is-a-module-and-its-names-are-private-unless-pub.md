@@ -43,7 +43,9 @@ and each name is private to its file unless it is `pub`.
 - **A conformance has one home per project.** `extend T: I<A>` is allowed
   only in the project that declares `T`, `I` or a type in `A`, with Rust's
   order rule for type parameters. So two independent projects cannot both
-  conform one type to one interface. A plain `extend T { ... }`, and a
+  conform one type to one interface. The rule covers the built-in types:
+  `extend f64: Mul<Vec2>` is allowed in the project that declares `Vec2`
+  (decided 2026-10-29). A plain `extend T { ... }`, and a
   conformance that replaces a generated one, must be in `T`'s module.
 - **One checker sees the whole program.** A loader parses each reached file
   and builds the module graph. Each module has one scope, its own items and
@@ -96,7 +98,11 @@ offset space.
   types of one name meet in one message. Panic messages write the path from
   the root, so a binary holds no path of the build machine. A class's
   generated `Display` prints its short name, so moving a file never changes
-  what a program prints.
+  what a program prints. A record's generated `Display` prints its `pub`
+  fields and `..` for the others, so a private field never reaches a log
+  (decided 2026-10-29).
+- `sisu check` of an entry file with no `main` checks it as a library, with
+  no warning for an unused `pub` item (decided 2026-10-29).
 - An unused import gets a warning with a safe fix that removes it.
 - Re-exports, project-level visibility, separate compilation, `sisu.toml`
   and dependencies come later. Each one can be added without breaking a
