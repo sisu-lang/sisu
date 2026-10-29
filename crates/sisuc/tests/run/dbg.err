@@ -3,29 +3,33 @@ dbg.sisu:16:17: f(
         x + 1
     ) = 48
 dbg.sisu:22:17: noisy() = 5
-dbg.sisu:27:17: small = Add(Num(1), Num(2))
-dbg.sisu:32:17: big = Add(
+dbg.sisu:27:9: small = Add(Num(1), Num(2))
+dbg.sisu:32:9: big = Add(
     Mul(Num(111111), Add(Num(222222), Num(333333))),
     Mul(Num(444444), Add(Num(555555), Num(666666)))
 )
 dbg.sisu:37:17: head = Node(value: 3, next: Node)
-dbg.sisu:38:17: tail = Node(value: 1, next: None)
+dbg.sisu:38:9: tail = Node(value: 1, next: None)
 dbg.sisu:42:17: shell = Shell(inner: Core)
 dbg.sisu:48:17: ring = Ring(name: "a", next: Ring)
-dbg.sisu:54:17: nodes = [Node(value: 1, next: None), Node(value: 1, next: None)]
+dbg.sisu:54:9: nodes = [Node(value: 1, next: None), Node(value: 1, next: None)]
 dbg.sisu:56:17: tree = Join(
     Leaf(Node(value: 1, next: None)),
     Join(Leaf(Node(value: 3, next: Node)), Leaf(Node(value: 1, next: None)))
 )
-dbg.sisu:58:17: single = Leaf(Node(value: 1, next: None))
+dbg.sisu:58:9: single = Leaf(Node(value: 1, next: None))
 dbg.sisu:62:17: stack = Stack<i64>(top: Cell<i64>, size: 2)
-dbg.sisu:64:17: Empty() = Empty()
-dbg.sisu:68:17: tag = tag-5
+dbg.sisu:64:9: Empty() = Empty()
+dbg.sisu:68:9: tag = tag-5
 dbg.sisu:70:17: outer = Outer<i64>(inner: inner!)
 dbg.sisu:71:17: [outer] = [Outer<i64>(inner: inner!)]
-dbg.sisu:75:25: x = 7
-dbg.sisu:75:21: dbg(x) = 7
-dbg.sisu:80:17: s = hello
-dbg.sisu:84:20: words = ["ab", "cd"]
-dbg.sisu:92:17: bx = Box(item: bee)
-dbg.sisu:100:17: b = bee
+dbg.sisu:77:9: shown = shown
+dbg.sisu:79:9: Gate(v: Count(n: 1)) = gate mark 1
+dbg.sisu:80:9: Gate(v: "one") = Gate<string>(v: "one")
+dbg.sisu:81:9: [Gate(v: Count(n: 1)), Gate(v: Count(n: 2))] = [gate mark 1, gate mark 2]
+dbg.sisu:84:25: x = 7
+dbg.sisu:84:21: dbg(x) = 7
+dbg.sisu:89:17: s = hello
+dbg.sisu:93:20: words = ["ab", "cd"]
+dbg.sisu:101:17: bx = Box(item: bee)
+dbg.sisu:109:17: b = bee

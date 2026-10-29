@@ -3284,15 +3284,15 @@ fn dbg_helpers(ir: &str) -> Vec<&str> {
         .collect()
 }
 
-/// A program that prints a `[i64]` and `dbg`s a `Node` has a `dbg`-mode helper for `Node` only:
-/// the array holds no class, so `print` and `dbg` share its helper. The helper of `Node` writes
+/// A program that prints a `[i64]` and `dbg`s a `Node` has a `dbg`-mode helper for `Node` only.
+/// The array holds no class, so `print` and `dbg` share its helper. The helper of `Node` writes
 /// the `next` field by the `print` helper of `Node`, and never calls itself.
 #[test]
 fn dbg_should_make_a_helper_only_for_a_type_that_holds_a_class() {
     let context = Context::create();
     let ir = compiled(
         &context,
-        "class Node {\n    value: i64\n    next: Node?\n}\nfn main() {\n    let xs = [1]\n    print(xs)\n    let n = Node(value: 1, next: None)\n    let _ = dbg(n)\n    print(n.value)\n    print(n.next == None)\n}",
+        "class Node {\n    value: i64\n    next: Node?\n}\nfn main() {\n    let xs = [1]\n    print(xs)\n    let n = Node(value: 1, next: None)\n    dbg(n)\n    print(n.value)\n    print(n.next == None)\n}",
     )
     .print_to_string()
     .to_string();
@@ -3308,6 +3308,27 @@ fn dbg_should_make_a_helper_only_for_a_type_that_holds_a_class() {
         |callee: &str| (body.lines()).any(|line| line.contains("call ") && line.contains(callee));
     assert!(calls("@sisu_show.Node("), "{body}");
     assert!(!calls("@sisu_show.dbg.Node("), "{body}");
+}
+
+/// A class with a written `to_string` is written by its text, in `print` and in `dbg`. So a value
+/// that holds only such a class has no `dbg` helper of its own: `print` and `dbg` share one.
+#[test]
+fn dbg_should_share_the_helper_of_a_type_that_holds_a_class_with_a_written_to_string() {
+    let context = Context::create();
+    let decls = "class Leaf {\n    v: i64\n}\nextend Leaf: Display {\n    fn to_string(self) -> string {\n        \"leaf\"\n    }\n}\nenum Pick {\n    One(Leaf)\n}\n";
+    for (row, value) in [
+        ("a class", "Leaf(v: 1)"),
+        ("an array", "[Leaf(v: 1)]"),
+        ("an optional", "Some(Leaf(v: 1))"),
+        ("an enum payload", "Pick.One(Leaf(v: 1))"),
+    ] {
+        let src = format!(
+            "{decls}fn main() {{\n    let value = {value}\n    print(value)\n    dbg(value)\n}}"
+        );
+        let ir = compiled(&context, &src).print_to_string().to_string();
+        assert!(dbg_helpers(&ir).is_empty(), "{row}: {ir}");
+        assert!(!ir.contains("sisu_show_component.dbg"), "{row}: {ir}");
+    }
 }
 
 /// A recursive enum that holds no class is written by one helper, whether `print` or `dbg` asks.
@@ -3328,7 +3349,7 @@ fn dbg_should_share_the_helper_of_a_recursive_enum_that_holds_no_class() {
         ),
     ] {
         let src = format!(
-            "{decls}fn main() {{\n    let value = {value}\n    print(value)\n    let _ = dbg(value)\n}}"
+            "{decls}fn main() {{\n    let value = {value}\n    print(value)\n    dbg(value)\n}}"
         );
         let ir = compiled(&context, &src).print_to_string().to_string();
         assert!(dbg_helpers(&ir).is_empty(), "{row}: {ir}");
@@ -3343,7 +3364,7 @@ fn dbg_should_write_a_class_in_the_payload_of_a_recursive_enum_by_its_helper() {
     let context = Context::create();
     let ir = compiled(
         &context,
-        "class Node {\n    value: i64\n}\nenum Tree {\n    Leaf(Node)\n    Join(Tree, Tree)\n}\nfn main() {\n    let leaf = Tree.Leaf(Node(value: 1))\n    let _ = dbg(Tree.Join(leaf, leaf))\n}",
+        "class Node {\n    value: i64\n}\nenum Tree {\n    Leaf(Node)\n    Join(Tree, Tree)\n}\nfn main() {\n    let leaf = Tree.Leaf(Node(value: 1))\n    dbg(Tree.Join(leaf, leaf))\n}",
     )
     .print_to_string()
     .to_string();
@@ -3352,9 +3373,9 @@ fn dbg_should_write_a_class_in_the_payload_of_a_recursive_enum_by_its_helper() {
     assert!(!body.contains("@sisu_show.Node("), "{body}");
 }
 
-/// The `dbg`-mode helper of a class reads a field in place, except a counted `mut` field whose
-/// helper may run a written `to_string`: that one it retains before the field's helper and
-/// releases after. A `mut` field that holds a `[i64]` runs no written method, so nothing is
+/// The `dbg`-mode helper of a class reads a field in place. It retains a counted `mut` field
+/// whose helper may run a written `to_string` before the field's helper, and releases it after.
+/// A `mut` field that holds a `[i64]` runs no written method, so nothing is
 /// retained.
 #[test]
 fn dbg_should_retain_only_a_mut_field_whose_helper_may_run_a_written_method() {

@@ -611,7 +611,7 @@ pub(crate) fn fields_of<F: Fields + ?Sized>(
 /// their parts, and settled by their strongly connected components in completion order, so each
 /// key of a program is decided once (see [`reaches`]).
 ///
-/// With `dbg`, the helper is the one that `dbg` calls: a class with no written conformance also
+/// With `dbg`, the helper is the one that `dbg` calls. A class with no written conformance also
 /// writes its fields, each in `print` mode, so each field type is a part of the class.
 pub(crate) fn calls_written<P: Payloads + ?Sized, F: Fields + ?Sized>(
     conformances: &Conformances,
@@ -626,9 +626,7 @@ pub(crate) fn calls_written<P: Payloads + ?Sized, F: Fields + ?Sized>(
         (ty, interface, dbg),
         |(key, _, dbg), parts_of| {
             // A written `eq` is the whole comparison: the helper compares no part of the type.
-            if head_of(key).is_some()
-                && find(conformances, interface, key, TypeArgs::NONE).is_some()
-            {
+            if has_written(conformances, interface, key) {
                 return true;
             }
             if dbg && matches!(key.kind(), TypeKind::Class(..)) {
@@ -645,17 +643,18 @@ pub(crate) fn calls_written<P: Payloads + ?Sized, F: Fields + ?Sized>(
     )
 }
 
-/// Whether the concrete type `ty` holds a class: it is one, or an array, an optional or an enum
-/// payload (any depth) is. A `dbg` helper of a type that holds none is the `print` helper. The
-/// answers of `held` are the types decided so far, which later queries read.
+/// Whether the concrete type `ty` holds a class with no written `Display`. It does when it is
+/// one, or when an array, an optional or an enum payload (any depth) is. Only such a class is
+/// written with its fields by `dbg`. A `dbg` helper of a type that holds none is the `print`
+/// helper. The answers of `held` are the types decided so far, which later queries read.
 pub(crate) fn holds_class<P: Payloads + ?Sized>(
-    conformances: &Conformances,
+    (conformances, display): (&Conformances, InterfaceId),
     enums: &P,
     ty: Type,
     held: &mut FxHashMap<Type, bool>,
 ) -> bool {
     reaches(held, ty, |key, parts_of| {
-        if matches!(key.kind(), TypeKind::Class(..)) {
+        if matches!(key.kind(), TypeKind::Class(..)) && !has_written(conformances, display, key) {
             return true;
         }
         parts(conformances, enums, key, parts_of);
@@ -663,12 +662,28 @@ pub(crate) fn holds_class<P: Payloads + ?Sized>(
     })
 }
 
+/// Whether `conformances` holds a written conformance to `interface` for the concrete type `ty`.
+fn has_written(conformances: &Conformances, interface: InterfaceId, ty: Type) -> bool {
+    head_of(ty).is_some() && find(conformances, interface, ty, TypeArgs::NONE).is_some()
+}
+
+/// Whether `ty`, a type of a body that may name type parameters, has a written `Display` that
+/// always applies. It does when each bound of the conformance is on `Display`, which always
+/// holds. A bound on another interface may fail for the types that stand for the parameters.
+pub(crate) fn always_written(conformances: &Conformances, display: InterfaceId, ty: Type) -> bool {
+    head_of(ty).is_some()
+        && find_with(conformances, display, ty, TypeArgs::NONE, |c| {
+            (c.bounds.iter().flatten()).all(|bound| bound.interface == display)
+        })
+        .is_some()
+}
+
 /// Whether `start` reaches a leaf through the graph that `step` gives, a key at a time: `step`
 /// answers whether the key is a leaf, and otherwise calls its argument with each key that it
 /// reaches. `settled` holds the answers decided so far. The keys not settled that `start` reaches
 /// are listed once, with their edges, and settled by their strongly connected components in
-/// completion order: a component is true when one of its keys is a leaf or reaches a settled
-/// true. So each key of a program is decided once, whichever order the queries come in, and a
+/// completion order. A component is true when one of its keys is a leaf or reaches a settled
+/// true. So each key of a program is decided once, whichever order the queries come in. A
 /// `false` met under an open query is never kept.
 fn reaches<K: Copy + Eq + std::hash::Hash>(
     settled: &mut FxHashMap<K, bool>,
@@ -2409,11 +2424,16 @@ mod tests {
         ty: Type,
         held: &mut FxHashMap<Type, bool>,
     ) -> bool {
-        holds_class(&program.conformances, program.enums.as_slice(), ty, held)
+        holds_class(
+            (&program.conformances, program.lang.display),
+            program.enums.as_slice(),
+            ty,
+            held,
+        )
     }
 
-    /// `A` reaches `Node` through its own payload, and `B` through `A`, whichever is asked first;
-    /// the pair `C` and `D` reaches no class, whichever is asked first. A walk that kept a
+    /// `A` reaches `Node` through its own payload, and `B` through `A`, whichever is asked first.
+    /// The pair `C` and `D` reaches no class, whichever is asked first. A walk that kept a
     /// `false` it met while the query on the same cycle was open would answer `false` for `B`
     /// after `A`.
     #[test]
@@ -2434,7 +2454,30 @@ mod tests {
         }
     }
 
-    /// A chain of 50 enums that hold each other in a ring is walked once: each type is visited
+    /// A class with a written `Display` shows its text, so it is no class that `dbg` writes with
+    /// fields. A value that holds only such a class holds none, and one that also holds a class
+    /// with no written `Display` does.
+    #[test]
+    fn holds_a_class_should_not_count_a_class_with_a_written_display() {
+        let program = instantiated(
+            "class Leaf {\n    v: i64\n}\nextend Leaf: Display {\n    fn to_string(self) -> string {\n        \"leaf\"\n    }\n}\nclass Plain {\n    v: i64\n}\nenum Pick {\n    One(Leaf)\n}\nenum Both {\n    One(Leaf)\n    Two(Plain)\n}",
+        );
+        let [leaf, plain, pick, both] =
+            ["Leaf", "Plain", "Pick", "Both"].map(|n| named(&program, n));
+        for (row, ty, expected) in [
+            ("a class with a written Display", leaf, false),
+            ("an array of it", Type::array(leaf), false),
+            ("an optional of it", Type::optional(leaf), false),
+            ("an enum payload of it", pick, false),
+            ("a class with none", plain, true),
+            ("an enum that holds one of each", both, true),
+        ] {
+            let mut held = FxHashMap::default();
+            assert_eq!(holds_a_class(&program, ty, &mut held), expected, "{row}");
+        }
+    }
+
+    /// A chain of 50 enums that hold each other in a ring is walked once. Each type is visited
     /// once for the first query, and the other 49 queries visit none.
     #[test]
     fn holds_a_class_should_visit_each_type_once() {

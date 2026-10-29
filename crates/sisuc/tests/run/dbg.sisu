@@ -24,18 +24,18 @@ let y = dbg(f(x)) + 1
 
     // An enum with no class is `{x:#}`'s layout: it fits, or it breaks one child to a line.
     let small = Expr.Add(Expr.Num(1), Expr.Num(2))
-    let _ = dbg(small)
+    dbg(small)
     let big = Expr.Add(
         Expr.Mul(Expr.Num(111111), Expr.Add(Expr.Num(222222), Expr.Num(333333))),
         Expr.Mul(Expr.Num(444444), Expr.Add(Expr.Num(555555), Expr.Num(666666)))
     )
-    let _ = dbg(big)
+    dbg(big)
 
     // A class shows its fields, and a class in a field shows its name.
     let tail = Node(value: 1, next: None)
     let head = Node(value: 3, next: tail)
     let _ = dbg(head)
-    let _ = dbg(tail)
+    dbg(tail)
     print(head.value + tail.value) // stdout: 4
     print(head.next?.value ?? 0) // stdout: 1
     let shell = Shell(inner: Core(leaf: Leaf(v: 1)))
@@ -51,25 +51,34 @@ let y = dbg(f(x)) + 1
 
     // A class in an array, or in the payload of a recursive enum, is shown one level deep too.
     let nodes = [tail, tail]
-    let _ = dbg(nodes)
+    dbg(nodes)
     let tree = Tree.Join(Tree.Leaf(tail), Tree.Join(Tree.Leaf(head), Tree.Leaf(tail)))
     let _ = dbg(tree)
     let single = Tree.Leaf(tail)
-    let _ = dbg(single)
+    dbg(single)
 
     // A generic class and a class with no fields.
     let stack = Stack(top: Cell(value: 1), size: 2)
     let _ = dbg(stack)
     print(stack.top.value + stack.size) // stdout: 3
-    let _ = dbg(Empty())
+    dbg(Empty())
 
     // A written `to_string` shows its text, in a field, in an array and as the value.
     let tag = Tag(id: 5)
-    let _ = dbg(tag)
+    dbg(tag)
     let outer = Outer(inner: Inner(v: 1))
     let _ = dbg(outer)
     let _ = dbg([outer])
     print(outer.inner.v) // stdout: 1
+
+    // A written `to_string` with a bound on `Display` always applies. One with a bound on another
+    // interface applies when the bound holds, and else `dbg` shows the fields.
+    let shown = Shown(v: 1)
+    dbg(shown)
+    print(shown.v) // stdout: 1
+    dbg(Gate(v: Count(n: 1)))
+    dbg(Gate(v: "one"))
+    dbg([Gate(v: Count(n: 1)), Gate(v: Count(n: 2))])
 
     // `dbg` returns its argument: two lines, and the value comes through both.
     let twice = dbg(dbg(x))
@@ -193,4 +202,38 @@ extend B: Display {
 
 class Box {
     item: B
+}
+
+class Shown<T> {
+    v: T
+}
+
+extend<T: Display> Shown<T>: Display {
+    fn to_string(self) -> string {
+        "shown"
+    }
+}
+
+interface Mark {
+    fn mark(self) -> string
+}
+
+class Count {
+    n: i64
+}
+
+extend Count: Mark {
+    fn mark(self) -> string {
+        "mark {self.n}"
+    }
+}
+
+class Gate<T> {
+    v: T
+}
+
+extend<T: Mark> Gate<T>: Display {
+    fn to_string(self) -> string {
+        "gate {self.v.mark()}"
+    }
 }

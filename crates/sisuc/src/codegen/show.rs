@@ -7,10 +7,10 @@
 //! Some rule, a variant without its enum's name and with its labels, a class as its name with its
 //! type arguments, and a written `to_string`'s text as it is.
 //!
-//! `dbg` writes a value the same way into a buffer sink, behind a pretty sink, and a second set
-//! of helpers (`Mode::Dbg`, named `@sisu_show.dbg.<type>`) writes a class that has no written
+//! `dbg` writes a value the same way into a buffer sink, behind a pretty sink. A second set of
+//! helpers (`Mode::Dbg`, named `@sisu_show.dbg.<type>`) writes a class with no written
 //! `to_string` as its name and its fields, each field in `Mode::Print`. A type that holds no
-//! class has one helper for both modes (`Codegen::holds_class`).
+//! such class has one helper for both modes (`Codegen::holds_class`).
 //!
 //! An enum whose component has boxes is written in one frame, as `==` compares it
 //! (`define_eq_component`). `@sisu_show_component.<F0>(sink, kind, value)` writes a value of any
@@ -167,11 +167,12 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.release(block.into(), Type::STRING);
     }
 
-    /// Whether a value of `ty` holds a class: `ty` is one, or an array, an optional or an enum
-    /// payload, at any depth, is. Only such a type is written differently by `dbg`.
+    /// Whether a value of `ty` holds a class with no written `to_string`: `ty` is one, or an
+    /// array, an optional or an enum payload, at any depth, is. Only such a type is written
+    /// differently by `dbg`.
     pub(super) fn holds_class(&self, ty: Type) -> bool {
         holds_class(
-            &self.program.conformances,
+            (&self.program.conformances, self.program.lang.display),
             self.program.enums.as_slice(),
             ty,
             &mut self.class_held.borrow_mut(),
@@ -466,15 +467,16 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.build_return(None).expect(POSITIONED);
     }
 
-    /// Writes the object `object` of the class `id`, of type `ty`, for `dbg`: its name with its
-    /// type arguments, then its fields in declaration order, each labeled and written by the
-    /// `print` helper, so a class in a field shows its name or its own `to_string`, never its
-    /// fields. A class with no fields writes `Name()`, as its constructor reads. The object is
-    /// borrowed by the `dbg` that calls the helper, and a field is stable while it is read: a
-    /// field without `mut`, or one whose helper runs no written method, is read in place. A
-    /// counted `mut` field whose helper may run a written `to_string` is retained before the
-    /// helper runs and released after, so that a `to_string` that clears the field cannot free
-    /// the value being shown. The snapshot holds what is below the field too.
+    /// Writes the object `object` of the class `id`, of type `ty`, for `dbg`. It writes the
+    /// name with its type arguments, then the fields in declaration order, each labeled and
+    /// written by the `print` helper. So a class in a field shows its name or its own
+    /// `to_string`, never its fields. A class with no fields writes `Name()`, as its constructor
+    /// reads. The `dbg` that calls the helper borrows the object. A field with no `mut` is stable
+    /// while it is read, and so is one whose helper runs no written method. Such a field is read
+    /// in place.
+    /// A counted `mut` field whose helper may run a written `to_string` is retained before the
+    /// helper runs and released after. So a `to_string` that clears the field cannot free the
+    /// value being shown. The snapshot holds what is below the field too.
     fn show_fields(
         &self,
         sink: PointerValue<'ctx>,

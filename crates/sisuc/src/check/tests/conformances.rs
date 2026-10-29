@@ -2266,7 +2266,7 @@ fn implicit_print_should_close_an_instantiation_cycle() {
     }
 }
 
-/// `dbg` shows the fields of a class with no written `to_string`, so a growing value held in a
+/// `dbg` shows the fields of a class with no written `to_string`. So a growing value held in a
 /// field, in an array or in an enum payload is a cycle for `dbg`.
 #[test]
 fn implicit_dbg_should_close_an_instantiation_cycle() {
@@ -2280,7 +2280,7 @@ fn implicit_dbg_should_close_an_instantiation_cycle() {
     let rows = [
         (
             "a dbg of a class that grows",
-            "let _ = dbg(W(x: [self.x]))",
+            "dbg(W(x: [self.x]))",
             Some("dbg(W(x: [self.x]))"),
         ),
         (
@@ -2324,7 +2324,7 @@ fn implicit_dbg_should_close_an_instantiation_cycle() {
             "print(Hold(v: W(x: [self.x])))",
             None,
         ),
-        ("a dbg that does not grow", "let _ = dbg(self.x)", None),
+        ("a dbg that does not grow", "dbg(self.x)", None),
     ];
     for (row, body, cycle) in rows {
         let src = display(body);
@@ -2337,6 +2337,153 @@ fn implicit_dbg_should_close_an_instantiation_cycle() {
             None => clean_row(row, &src),
         }
     }
+}
+
+/// `dbg` shows the text of a class with a written `Display` that always applies, so it follows no
+/// field of the class. The field `v` of `Hold<T>` has the type `W<[T]>`, which grows. A bound on
+/// another interface may fail, and then `dbg` shows the fields, so those edges stay.
+#[test]
+fn dbg_should_follow_no_field_of_a_class_with_an_applicable_written_display() {
+    let decls = "interface Mark {\n    fn mark(self) -> string\n}\nclass W<T> {\n    x: T\n}\nenum Pick<U> {\n    One(U)\n}\n";
+    let hold = "class Hold<T> {\n    v: W<[T]>\n";
+    let text = "fn to_string(self) -> string {\n        \"hold\"\n    }\n";
+    let methods = format!("{hold}    {text}}}\n");
+    let extended =
+        |bound: &str| format!("{hold}}}\nextend<T{bound}> Hold<T>: Display {{\n    {text}}}\n");
+    let display = |hold: &str, body: &str| {
+        format!(
+            "{decls}{hold}extend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        {body}\n        \"w\"\n    }}\n}}\nfn main() {{\n    print(W(x: 1))\n}}"
+        )
+    };
+    let made = "Hold(v: W(x: [self.x]))";
+    let shapes = [
+        ("a class", format!("dbg({made})")),
+        ("an array", format!("dbg([{made}])")),
+        ("an optional", format!("dbg(Some({made}))")),
+        ("an enum payload", format!("dbg(Pick.One({made}))")),
+    ];
+    let writtens = [
+        ("a method of the class", methods, false),
+        ("an extension with no bound", extended(""), false),
+        (
+            "an extension bounded by Display",
+            extended(": Display"),
+            false,
+        ),
+        (
+            "an extension bounded by another interface",
+            extended(": Mark"),
+            true,
+        ),
+        ("no written Display", format!("{hold}}}\n"), true),
+    ];
+    for (written, hold, cycle) in &writtens {
+        for (shape, body) in &shapes {
+            let row = format!("{shape} of a class with {written}");
+            let src = display(hold, body);
+            if *cycle {
+                codes_row(
+                    &row,
+                    &src,
+                    &[(Code::InstantiationCycle, where_is(&src, body))],
+                );
+            } else {
+                clean_row(&row, &src);
+            }
+        }
+    }
+}
+
+/// The types of an operand are read once for the program, however many `dbg` calls name it, in
+/// one function or in many. A chain of `n` generic enums is walked for the first call alone. A
+/// `dbg` of a type with no parameter adds no edge, so it reads nothing.
+#[test]
+fn dbg_should_read_the_types_of_an_operand_once() {
+    // `holders` generic functions, each with `calls` calls of `dbg` on an `E0<..>?`, whose
+    // enums chain to `n`: `E0<T>` names the parameter, and `E0<i64>` names none.
+    let read = |n: usize, holders: usize, calls: usize, argument: &str| {
+        let mut src = String::new();
+        for k in 0..n {
+            let next = if k + 1 < n {
+                format!("Next(E{}<T>)", k + 1)
+            } else {
+                "Last(T)".to_string()
+            };
+            writeln!(src, "enum E{k}<T> {{\n    {next}\n}}")
+                .expect("writing to a `String` should succeed");
+        }
+        for h in 0..holders {
+            writeln!(
+                src,
+                "fn inspect{h}<T>(x: {argument}?, marker: T) {{\n    let _ = marker"
+            )
+            .expect("writing to a `String` should succeed");
+            src += &"    dbg(x)\n".repeat(calls);
+            src += "}\n";
+        }
+        src += "fn main() {\n    let x: E0<i64>? = None\n";
+        for h in 0..holders {
+            writeln!(src, "    inspect{h}(x, 1)").expect("writing to a `String` should succeed");
+        }
+        src += "}";
+        cycle::DBG_VISITS.set(0);
+        clean(&src);
+        cycle::DBG_VISITS.get()
+    };
+    let n = 30;
+    let once = read(n, 1, 1, "E0<T>");
+    assert!(
+        once >= n,
+        "the chain should be walked: {once} types for {n} enums"
+    );
+    assert!(once <= 3 * n, "{once} types for {n} enums");
+    assert_eq!(
+        read(n, 1, 40, "E0<T>"),
+        once,
+        "40 calls of the same operand in one function read no more"
+    );
+    assert_eq!(
+        read(n, 40, 1, "E0<T>"),
+        once,
+        "a call in each of 40 functions reads no more"
+    );
+    assert_eq!(
+        read(n, 5, 5, "E0<i64>"),
+        0,
+        "an operand with no parameter reads nothing"
+    );
+}
+
+/// A `dbg` adds the edges of its operand's fields once for a function, whatever number of calls
+/// name the type: the calls after the first add what a `print` of the operand adds. The enums
+/// of a chain each hold a class whose field type is a class of its own.
+#[test]
+fn dbg_should_add_the_edges_of_the_fields_once_for_a_function() {
+    let edges = |shown: &str, calls: usize| {
+        let n = 30;
+        let mut src = String::new();
+        for k in 0..n {
+            let next = if k + 1 < n {
+                format!("    Next(E{}<T>, C{k}<T>)\n", k + 1)
+            } else {
+                String::new()
+            };
+            writeln!(
+                src,
+                "class Tag{k}<T> {{\n    x: T\n}}\nclass C{k}<T> {{\n    v: Tag{k}<T>\n}}\nenum E{k}<T> {{\n    End(T)\n{next}}}"
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        src += "fn inspect<T>(x: E0<T>) {\n";
+        src += &format!("    {shown}(x)\n").repeat(calls);
+        src += "}\nfn main() {\n    let x = E0.End(1)\n    inspect(x)\n}";
+        cycle::EDGES.set(0);
+        clean(&src);
+        cycle::EDGES.get()
+    };
+    let extra = |calls: usize| edges("dbg", calls) - edges("print", calls);
+    assert!(extra(1) > 0, "a dbg adds the edges of the fields");
+    assert_eq!(extra(40), extra(1), "40 calls add them once");
 }
 
 #[test]

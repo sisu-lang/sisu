@@ -98,11 +98,13 @@
 //! of them, each pass reading every name once.
 
 use std::collections::VecDeque;
+use std::rc::Rc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::Checker;
 use crate::ast::angled;
+use crate::conformance::always_written;
 use crate::diagnostic::{DiagnosticKind, Hop};
 use crate::graph::components;
 use crate::source::Span;
@@ -122,6 +124,8 @@ thread_local! {
     /// How many edges the graph of the marks of growing enums held on this thread, 0 when it was
     /// not built.
     pub(super) static MARK_EDGES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many types `dbg_fields` has read on this thread, to find what `dbg` shows of an operand.
+    pub(super) static DBG_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The nodes and the edges of the component that the last search for a cycle read.
     pub(super) static SEARCHED: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
@@ -279,6 +283,11 @@ struct Graph {
     cores: FxHashMap<Type, Type>,
     /// The types `types` has walked, with the site each was written at.
     walked: FxHashSet<(Span, Type)>,
+    /// By operand type, the field types that `dbg` shows of it (`Checker::dbg_fields`).
+    shown: FxHashMap<Type, Rc<[Type]>>,
+    /// The holders and operand types whose field edges are added: one `dbg` of a type gives the
+    /// holder its edges, at its site.
+    dbg_edges: FxHashSet<(usize, Type)>,
     assocs: Assocs,
     /// The declaration of the first choice; the others follow.
     choices_first: usize,
@@ -992,6 +1001,8 @@ impl Checker<'_> {
             typed: FxHashMap::default(),
             cores: FxHashMap::default(),
             walked: FxHashSet::default(),
+            shown: FxHashMap::default(),
+            dbg_edges: FxHashSet::default(),
             assocs,
             choices_first: display_first + self.enums.len(),
         };
@@ -1024,6 +1035,8 @@ impl Checker<'_> {
             typed: FxHashMap::default(),
             cores: FxHashMap::default(),
             walked: FxHashSet::default(),
+            shown: FxHashMap::default(),
+            dbg_edges: FxHashSet::default(),
             assocs,
             choices_first: end,
         }
@@ -1111,30 +1124,57 @@ impl Checker<'_> {
         graph
     }
 
-    /// The edges that a `dbg` of an operand of type `ty` adds to those of a `print`: its helper
-    /// also writes the fields of a class, each as `print` writes it, so each field type of a class
-    /// that `ty` holds through arrays, optionals and enum payloads is an operand of `Display`. A
-    /// class with a written `to_string` adds them too: that is more edges than the helper walks,
-    /// and an instantiation that grows through such a field is reported though `dbg` stops at the
-    /// text. Each enum is read once, so a payload that grows its enum stands for its own error.
+    /// The edges that a `dbg` of an operand of type `ty` adds to those of a `print`. Its helper
+    /// also writes the fields of a class, each as `print` writes it. So each field type of a class
+    /// that `ty` holds, through arrays, optionals and enum payloads, is an operand of `Display`.
+    /// A class with a written `Display` that always applies shows its text, so its fields add
+    /// none. A written `Display` with a bound on another interface may not apply. Its fields
+    /// then add their edges, as a conditional conformance of an enum does. Each enum is read
+    /// once, so a payload that grows its enum stands for its own error. The fields of a type are
+    /// read once for the program. Each holder gets the edges of a type once, at its first `dbg`.
     fn dbg_fields(&self, graph: &mut Graph, holder: usize, ty: Type, site: Span) {
+        // A type with no parameter has fields with none, so its operand adds no edge.
+        if !ty.has_param() || !graph.dbg_edges.insert((holder, ty)) {
+            return;
+        }
+        let fields = (graph.shown)
+            .entry(ty)
+            .or_insert_with(|| self.shown_fields(ty).into());
+        let fields = Rc::clone(fields);
+        for &field in fields.iter() {
+            graph.operator(holder, field, self.lang.display, site);
+        }
+    }
+
+    /// The field types of the classes that `dbg` of `ty` writes, each once, in the order found.
+    fn shown_fields(&self, ty: Type) -> Vec<Type> {
         let mut seen = FxHashSet::default();
+        let mut found = FxHashSet::default();
+        let mut fields = Vec::new();
         let mut stack = vec![ty];
         while let Some(ty) = stack.pop() {
+            #[cfg(test)]
+            DBG_VISITS.set(DBG_VISITS.get() + 1);
             match ty.kind() {
                 TypeKind::Array(part) | TypeKind::Optional(part) => stack.push(part),
                 TypeKind::Enum(id, args) if seen.insert(id) => {
                     let payloads = (self.enums[id.0].variants.iter()).flat_map(|v| &v.fields);
                     stack.extend(payloads.flatten().map(|field| field.subst(args.get())));
                 }
-                TypeKind::Class(id, args) => {
+                TypeKind::Class(id, args)
+                    if !always_written(&self.conformances, self.lang.display, ty) =>
+                {
                     for field in self.classes[id.0].fields.iter().filter_map(|f| f.ty) {
-                        graph.operator(holder, field.subst(args.get()), self.lang.display, site);
+                        let field = field.subst(args.get());
+                        if found.insert(field) {
+                            fields.push(field);
+                        }
                     }
                 }
                 _ => {}
             }
         }
+        fields
     }
 
     /// By interface and enum, whether a written conformance targets the enum, and whether one of
@@ -1842,6 +1882,8 @@ mod tests {
             typed: FxHashMap::default(),
             cores: FxHashMap::default(),
             walked: FxHashSet::default(),
+            shown: FxHashMap::default(),
+            dbg_edges: FxHashSet::default(),
             assocs: Assocs::default(),
             choices_first: 0,
         }
@@ -1997,6 +2039,8 @@ mod tests {
             typed: FxHashMap::default(),
             cores: FxHashMap::default(),
             walked: FxHashSet::default(),
+            shown: FxHashMap::default(),
+            dbg_edges: FxHashSet::default(),
             assocs: Assocs::default(),
             choices_first: 0,
         }
