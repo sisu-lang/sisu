@@ -4,7 +4,7 @@
 use std::fmt::Write as _;
 
 use super::super::lower::{self, COUNTERS, DEDUPED, SEEDED};
-use super::super::params::{FOLLOWED, VISITED, quiet};
+use super::super::params::{FOLLOWED, LOOKED, VISITED, quiet};
 use super::*;
 use crate::tir::{ClassId, FuncId, Program as TirProgram, TypeArgs, TypeKind};
 
@@ -791,8 +791,9 @@ fn call_flags(f: &Function) -> Vec<bool> {
 }
 
 /// A chain of prelude functions, each calling the next, is `n` components, and a ring of them is
-/// one: both mark every function quiet and visit each statement once. The sizes grow by two, so
-/// a visit that repeats for a component would grow faster than the statements.
+/// one: both mark every function quiet and visit each statement once. A function's component is
+/// read once to find the members, and once for each call. The sizes grow by two, so a visit or a
+/// search for the members that repeats for a component would grow faster than the functions.
 #[test]
 fn quiet_should_visit_each_statement_once() {
     for n in [20, 40, 80] {
@@ -808,6 +809,7 @@ fn quiet_should_visit_each_statement_once() {
         ] {
             let statements: usize = functions.iter().map(|f| f.blocks[0].stmts.len()).sum();
             VISITED.set(0);
+            LOOKED.set(0);
             quiet(&mut functions);
             assert!(functions.iter().all(|f| f.quiet), "{shape} of {n}");
             assert!(
@@ -815,6 +817,11 @@ fn quiet_should_visit_each_statement_once() {
                 "{shape} of {n}: each call takes its callee's flag"
             );
             assert_eq!(VISITED.get(), statements, "{shape} of {n}");
+            assert!(
+                LOOKED.get() <= 3 * n,
+                "{shape} of {n}: {} reads",
+                LOOKED.get()
+            );
         }
     }
 }
