@@ -362,8 +362,8 @@ through the type: `S.Item`. Inside a conformance, the choice is written
 
 **`extend`**:
 A block that adds methods to a type declared elsewhere (`extend T { ... }`),
-or one conformance (`extend T: I { ... }`). Only the prelude may extend a
-built-in type. From milestone 11, a block without an interface lives in its
+or one conformance (`extend T: I { ... }`). Only the prelude may write a
+plain `extend` of a built-in type. From milestone 11, a block without an interface lives in its
 type's module, and a program may conform a built-in type to an interface
 that it declares, or whose argument it declares.
 
@@ -409,7 +409,8 @@ _Avoid_: upvalue, closed-over variable
 **Mutable capture**:
 A capture written `[mut name]` that shares a `let mut` local with the
 closure, in place of a copy. A change made by the closure or by the
-function is seen by both.
+function is seen by both. A closure can reach it, so the rules treat it as
+a field of a class object.
 
 **Weak capture**:
 A capture that does not keep its object alive. Inside the closure the name is

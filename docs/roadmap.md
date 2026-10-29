@@ -836,11 +836,16 @@ Each is small once its milestone's main feature exists:
   into Rust's `Fn`, `FnMut` and `FnOnce`, because reference counting keeps
   the captured values alive. A closure captures by value, so it gets a copy
   of a record or an array (ADR 0007), and assigning to a plain capture is a
-  compile error. Swift and Kotlin share every captured variable, which is
-  hidden shared state. Sisu shares one only when the capture list says so
-  (decided 2026-10-29): `tree.walk([mut count] n => count += 1)` shares the
-  `let mut` local `count` through a counted box, so a callback can count or
-  collect without a class to hold the result. A class that stores a closure capturing that same object is a
+  compile error. Swift and Kotlin share a captured variable unless a
+  capture list copies it, which is hidden shared state. Sisu shares one
+  only when the capture list says so (decided 2026-10-29):
+  `tree.walk([mut count] n => count += 1)` shares the `let mut` local
+  `count` through a counted box, so a callback can count or collect
+  without a class to hold the result. A closure can reach the box, so the
+  rules treat it as a field of a class object: a borrowed argument from it
+  is retained first (ADR 0029), a `mut self` method written in Sisu cannot
+  be called on it (exclusivity), and a callback given to a changing method
+  on it cannot write it. A class that stores a closure capturing that same object is a
   cycle, so the closure needs a way to capture weakly, as Swift's
   `[weak self]` does (ADR 0008; see "Weak captures" in "Open decisions").
 - Milestone 9: a closure that does not escape needs no box. A closure passed
@@ -955,8 +960,9 @@ library.
 - Names, fields and methods are private to their module unless marked `pub`;
   `pub mut` lets other modules assign a field. A `pub` type with a private
   field can be built and taken apart only in its own module. A record's
-  generated `Display` prints its `pub` fields and then `..`, so a private
-  field never reaches a log (decided 2026-10-29).
+  generated `Display` prints its `pub` fields, then `..` when it has a
+  private field, so `print` of it shows no private field (decided
+  2026-10-29). `dbg` and a hand-written `Display` still show them.
 - A conformance lives in the project that declares its type, its interface
   or an argument of its interface, as Rust's orphan rule asks. The rule
   covers the built-in types too. A plain `extend T`, and a
@@ -1191,8 +1197,8 @@ These do not make code nicer to write, so they wait:
   another way, for example through a shared object: that needs an
   exclusivity check, as Swift enforces for `inout`. A `mut self` method
   called on a field, `obj.pos.move_by(1, 2)`, needs the same check
-  (ADR 0011). Until then, `self.cells.take()` takes the array out and
-  leaves `[]` (decided 2026-10-29). `inout` parameters stay out (ADR 0007).
+  (ADR 0011). Until then, `self.cells.replace(with: [])` takes the array
+  out and leaves `[]` (decided 2026-10-29). `inout` parameters stay out (ADR 0007).
 - Proving uniqueness at compile time. Roc's Morphic analysis follows each
   array through the whole program to prove that a write holds the only
   reference, so the write needs no count check. A loop now makes its written
@@ -1476,9 +1482,10 @@ accepted.
     `mut self` call would change every copy. Decided 2026-10-29:
     copy-on-write boxes, in a spec of their own after milestone 9 part 4 and
     before milestone 11 part 2. A `mut self` call through `any` first copies
-    a box whose count is above 1, as an array write does (ADR 0007). Then
-    `-> any Iterator<Row>` can return one of two iterators chosen at run
-    time. Later, when a program needs a list of mixed shapes: `any` of an
+    a box whose count is above 1, as an array write does (ADR 0007). With
+    `any` of an interface whose associated types are bound, which that
+    spec also settles, `-> any Iterator<Row>` can return one of two
+    iterators chosen at run time. Later, when a program needs a list of mixed shapes: `any` of an
     interface with an associated type, whose results are erased to `any`
     (Swift SE-0309).
   - An interface may take type parameters as well as associated types. A type
@@ -1507,9 +1514,12 @@ accepted.
     or one of its arguments (decided 2026-10-29): `extend f64: Mul<Vec2>`
     makes `2.0 * v` work, and a JSON library may write
     `extend string: ToJson`. A method such as `"hi".shout()` comes from a
-    one-method interface that the program declares. Scoped extension
-    methods, found only where their module is imported as in C# and Kotlin,
-    stay a later option.
+    one-method interface that the program declares. When two libraries
+    both add `shout` to `string`, `"hi".shout()` is ambiguous, and the
+    qualified call `loud.Shout.shout("hi")` picks one, as Rust's
+    `Trait::method(x)` does (decided 2026-10-29). Scoped extension
+    methods, found only where their module is imported as in C# and
+    Kotlin, stay a later option.
 - **Operators on newtypes.** Without them, `Meters` arithmetic needs
   `a.plus(b)` or `a.value + b.value`, the same boilerplate Rust newtypes
   carry. An opt-in such as Haskell's `deriving` would let a newtype keep its
@@ -1583,10 +1593,12 @@ accepted.
   shared object. Swift checks this at run time and panics. The other choice
   is to leave the place empty or stale during the call, which needs no check
   but lets such a read see the wrong value. Decide in milestone 10. Decided
-  2026-10-29 for moving a value out of a place: the built-in methods
-  `x.take()`, which leaves the type's empty value (`[]`, `""`, `None`), and
-  `x.replace(with: v)`. `self.cells = step(self.cells.take())` then copies
-  nothing and needs no check. The handover with no syntax (see "Later and
+  2026-10-29 for moving a value out of a place: the built-in method
+  `x.replace(with: v)`, as Rust's `mem::replace`, which shows at the call
+  what the place holds meanwhile. `move x` (drop blocks) takes a local
+  only. `self.cells = step(self.cells.replace(with: []))` then needs no
+  check, and `step` copies nothing when the field held the only
+  reference. The handover with no syntax (see "Later and
   stretch goals") waits for a proof of concept.
 - **Names and namespaces.** Resolved for enums in milestone 7
   ([ADR 0019](adr/0019-enums-are-values-named-through-their-enum.md)): a

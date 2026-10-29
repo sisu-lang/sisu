@@ -99,7 +99,7 @@ offset space.
   the root, so a binary holds no path of the build machine. A class's
   generated `Display` prints its short name, so moving a file never changes
   what a program prints. A record's generated `Display` prints its `pub`
-  fields and `..` for the others, so a private field never reaches a log
+  fields and `..` for the others, so `print` shows no private field
   (decided 2026-10-29).
 - `sisu check` of an entry file with no `main` checks it as a library, with
   no warning for an unused `pub` item (decided 2026-10-29).
