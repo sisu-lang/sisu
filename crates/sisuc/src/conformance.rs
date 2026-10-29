@@ -2360,6 +2360,8 @@ mod tests {
         // The fields of the class `C`: one with no choice for its `Item`, and an `i64`.
         let fields: Vec<Vec<Type>> = vec![vec![item, Type::I64]];
         fields_of(&conformances, fields.as_slice(), class, &mut collect);
+        // Only a class has fields.
+        fields_of(&conformances, fields.as_slice(), Type::I64, &mut collect);
         assert_eq!(
             listed,
             [Type::I64, Type::I64],
