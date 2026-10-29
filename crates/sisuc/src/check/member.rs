@@ -396,23 +396,23 @@ impl Checker<'_> {
         if !matches!(ty.kind(), TypeKind::Array(_) | TypeKind::I64) {
             return None;
         }
-        match self.applicable_method(ty, name)? {
-            Declared::Known(func) => Some(func),
-            Declared::Broken => None,
+        // A block of the prelude has no syntax error, so no method of it is broken.
+        if let Some(Declared::Known(func)) = self.applicable_method(ty, name) {
+            Some(func)
+        } else {
+            None
         }
     }
 
     /// The names of the methods that the `extend` blocks of the prelude give `ty`, an array or an
     /// `i64`: what a report of an unknown method suggests.
     pub(super) fn prelude_method_names(&self, ty: Type) -> Vec<&'static str> {
-        let Some(holder) = holder_of(ty) else {
-            return Vec::new();
-        };
+        let holder = holder_of(ty);
         let covered = |list: &Vec<(usize, tir::FuncId)>| {
             list.iter().any(|&(at, _)| self.covers(at, ty).is_some())
         };
         (self.extension_methods.iter())
-            .filter(|&(&(h, _), list)| h == holder && covered(list))
+            .filter(|&(&(h, _), list)| Some(h) == holder && covered(list))
             .map(|(&(_, name), _)| name.as_str())
             .collect()
     }
