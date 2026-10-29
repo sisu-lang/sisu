@@ -986,6 +986,13 @@ fn growth_through_the_choice_of_an_associated_type_should_be_reported_for_each_f
             "E<P<B, P<A, A>>>",
         ),
         (
+            // The type grows through the second parameter alone: `B` is nested one level deeper
+            // than `A`, which is what the edge out of the gate to `B` must carry.
+            "a choice with two parameters that grows through the second one",
+            format!("{item}class P<A, B>: I {{\n    type Item = E<P<A, P<B, B>>>\n}}\nenum E<T: I> {{\n    End\n    A(T.Item)\n}}\nenum F: Eq {{\n    X(E<P<i64, i64>>)\n}}\nfn main() {{}}"),
+            "E<P<A, P<B, B>>>",
+        ),
+        (
             "an interface with a type parameter",
             "interface S<A> {\n    type Item\n}\nclass W<T>: S<i64> {\n    type Item = E<W<W<T>>>\n}\nenum E<T: S<i64>> {\n    End\n    A(T.Item)\n}\nfn main() {}".to_string(),
             "E<W<W<T>>>",
@@ -1321,13 +1328,15 @@ const LINKED: &str = "interface S<A> {\n    type Link: S<A>\n    type Item\n}\n"
 /// `TWO_LINKS` with a `Next` of the class `U` that grows without end, which the issue shows.
 const UNBOUNDED_AND_OTHER: &str = "interface S {\n    type Next: S\n    type Other: S\n    type Item\n}\nclass Z: S {\n    type Next = Z\n    type Other = Z\n    type Item = i64\n}\nclass U<T: S>: S {\n    type Next = U<U<T.Next>>\n    type Other = U<T>\n    type Item = i64\n}\n";
 
-/// A use reads at most `MATCHING_CHOICES` heads of its link. Above that, it feeds all the choices
-/// of the associated type, so a class that the link cannot choose gives the error: the check is
-/// cautious, and its graph stays in proportion to the program.
+/// A use reads at most `MATCHING_CHOICES` heads and choices to find the choices that it can mean.
+/// Above that, it feeds all the choices of the associated type, so a class that the link cannot
+/// choose gives the error: the check is cautious, and its graph stays in proportion to the
+/// program.
 #[test]
-fn use_of_a_link_with_more_heads_than_the_cap_should_feed_every_choice() {
-    // The link `Link` is chosen as one of `n` classes, none of which is `W`.
-    let program = |n: usize| {
+fn use_of_a_link_above_the_cap_should_feed_every_choice() {
+    // `heads` classes `C0`, `C1` and so on are the types that the link `Link` can be, and none of
+    // them is `W`, whose choice of `Item` grows: the filter shows that it is not meant.
+    let heads = |n: usize| {
         let mut src = String::from(
             "interface S {\n    type Link: S\n    type Item\n}\nclass W<T>: S {\n    type Link = C0<T>\n    type Item = E<W<W<T>>>\n}\nenum E<T: S> {\n    End\n    A(T.Link.Item)\n}\n",
         );
@@ -1341,16 +1350,43 @@ fn use_of_a_link_with_more_heads_than_the_cap_should_feed_every_choice() {
         }
         src + "fn main() {}"
     };
-    // 3 heads: the filter shows that `W` is not meant. 70 heads are above the cap of 64.
-    let few = program(3);
-    let found: Vec<Code> = diags(&few).iter().map(Diagnostic::code).collect();
-    assert!(!found.contains(&Code::InstantiationCycle), "{found:?}");
-    let many = program(70);
-    codes_row(
-        "more heads than the cap",
-        &many,
-        &[(Code::InstantiationCycle, where_is(&many, "E<W<W<T>>>"))],
-    );
+    // The link is always `W`, which makes `n` choices of `Item`, one for each of `n` interface
+    // arguments. The class `X` is no head, and its choice of `Item` for the arguments of the use
+    // grows: only the hub of all the choices reaches it.
+    let choices = |n: usize| {
+        let mut src = String::from(
+            "interface S<A> {\n    type Link: S<A>\n    type Item\n}\nclass X<T>: S<K0> {\n    type Link = W<T>\n    type Item = E<X<X<T>>>\n}\nenum E<T: S<K0>> {\n    End\n    A(T.Link.Item)\n}\nclass W<T>: S<K0> {\n    type Link = W<T>\n    type Item = T\n}\n",
+        );
+        for i in 0..n {
+            writeln!(src, "class K{i} {{}}").expect("writing to a `String` should succeed");
+            if i > 0 {
+                writeln!(
+                    src,
+                    "extend<T> W<T>: S<K{i}> {{\n    type Link = W<T>\n    type Item = T\n}}"
+                )
+                .expect("writing to a `String` should succeed");
+            }
+        }
+        src + "fn main() {}"
+    };
+    // A head and a choice each cost one read, and the cap is 64: the rows on each side of it.
+    let rows = [
+        ("3 heads", heads(3), false),
+        ("64 heads", heads(64), false),
+        ("65 heads", heads(65), true),
+        ("70 heads", heads(70), true),
+        ("63 choices and a head", choices(63), false),
+        ("64 choices and a head", choices(64), true),
+        ("80 choices and a head", choices(80), true),
+    ];
+    for (row, src, reported) in rows {
+        let found: Vec<Code> = diags(&src).iter().map(Diagnostic::code).collect();
+        assert_eq!(
+            found.contains(&Code::InstantiationCycle),
+            reported,
+            "row `{row}`: {found:?}"
+        );
+    }
 }
 
 /// A class whose link `Other` can name `W` keeps the error: the graph reads the heads that a link

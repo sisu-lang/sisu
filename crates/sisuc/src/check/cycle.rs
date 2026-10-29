@@ -637,34 +637,24 @@ impl Graph {
         let place = self.assocs.first[interface.0] + k as usize;
         let slot = (self.assocs.slot(place, args))
             .expect("a use whose place has a hub should have a slot");
-        let heads = &self.assocs.heads[self.assocs.first[link.0] + l as usize];
-        let mut read = 0;
+        let heads = self.assocs.heads[self.assocs.first[link.0] + l as usize].as_ref()?;
+        // One read for each head, and one for each choice that a head makes.
+        let mut read = heads.len();
         let mut found = Vec::new();
-        for &head in heads.as_ref()? {
-            read += 1;
-            for &c in self
-                .assocs
-                .by_head
-                .get(&(place, head))
-                .into_iter()
-                .flatten()
-            {
-                read += 1;
-                // shortcut: above K matching choices a use feeds the whole hub;
-                // raise K if a real program hits it.
-                if read > MATCHING_CHOICES {
-                    return None;
-                }
-                let choice = &self.assocs.choices[c];
-                // An open use means any choice of the place, a closed one the choices of its slot
-                // and those for arguments that hold a parameter.
-                if slot == place || choice.slot == slot || choice.loose {
-                    found.push(c);
-                }
-            }
+        for &head in heads {
+            let made = (self.assocs.by_head.get(&(place, head))).map_or(&[][..], Vec::as_slice);
+            read += made.len();
+            // shortcut: above K matching choices a use feeds the whole hub;
+            // raise K if a real program hits it.
             if read > MATCHING_CHOICES {
                 return None;
             }
+            // An open use means any choice of the place, a closed one the choices of its slot
+            // and those for arguments that hold a parameter.
+            found.extend(made.iter().filter(|&&c| {
+                let choice = &self.assocs.choices[c];
+                slot == place || choice.slot == slot || choice.loose
+            }));
         }
         Some(found)
     }
