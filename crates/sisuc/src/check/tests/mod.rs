@@ -548,7 +548,7 @@ fn failed_rule_should_make_its_expression_error() {
             "print unit argument",
             "fn main() {\n    let x = print(print(1))\n    print(x)\n}".into(),
             Code::PrintArgument,
-            (2, 13),
+            (2, 19),
         ),
         (
             "if branches",
@@ -1436,7 +1436,7 @@ fn print_should_take_exactly_one_value() {
         (
             "unit argument",
             "fn g() {}\nfn main() { print(g()) }",
-            (2, 13),
+            (2, 19),
         ),
     ] {
         codes_row(row, src, &[(Code::PrintArgument, at)]);
@@ -3814,13 +3814,16 @@ fn equal_should_spill_a_counted_operand_before_an_exit() {
     );
 }
 
-/// `print` of a call that returns nothing, and a bad argument count, stay on the whole call; an
-/// object and an array print.
+/// `print` of a call that returns nothing is reported at the argument, and a bad argument count on
+/// the whole call; an object and an array print.
 #[test]
-fn print_should_report_a_call_without_a_value_and_a_bad_count_on_the_call() {
+fn print_should_report_a_value_at_the_argument_and_a_count_on_the_call() {
     codes(
         "class P {\n    x: i64\n}\nfn nothing() {}\nfn main() {\n    print(P(x: 1))\n    print(nothing())\n    print([1])\n    print(1, 2)\n}",
-        &[(Code::PrintArgument, (7, 5)), (Code::PrintArgument, (9, 5))],
+        &[
+            (Code::PrintArgument, (7, 11)),
+            (Code::PrintArgument, (9, 5)),
+        ],
     );
 }
 
