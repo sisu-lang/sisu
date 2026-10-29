@@ -477,6 +477,11 @@ fn a_wrong_count_of_method_arguments_should_be_the_general_count_error() {
         "fn f(xs: [i64]) { print(xs.contains()) }\nfn main() {}",
         &[(Code::ArgumentCount, (1, 25))],
     );
+    // A bound that fails does not change the count error of the call.
+    codes(
+        "class Node {}\nfn f(xs: [Node]) { print(xs.contains()) }\nfn main() {}",
+        &[(Code::ArgumentCount, (2, 26))],
+    );
 }
 
 #[test]
