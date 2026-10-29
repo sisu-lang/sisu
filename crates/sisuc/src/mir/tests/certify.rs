@@ -1643,7 +1643,7 @@ fn borrow_across_a_flagged_print_should_be_rejected() {
 }
 
 /// A `dbg` whose helper may call a written `to_string` (`calls`) can store through the field, as
-/// a flagged `print` can; one that cannot is no clobber.
+/// a flagged `print` can. A `dbg` that cannot is no clobber.
 #[test]
 fn borrow_across_a_flagged_dbg_should_be_rejected() {
     let case = |calls: bool| {

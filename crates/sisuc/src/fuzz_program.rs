@@ -438,8 +438,8 @@ fn judge_pair(program: &Run, rewritten: &Run) -> Result<(), Failure> {
 const PANIC: &str = "sisu: panic at ";
 
 /// `run`'s stderr, with the `<file>:<line>:<col>: ` taken out of the line of each `dbg` and of a
-/// panic: the panic's only from the last line, and only when the run exited 101, so any other line
-/// compares as written.
+/// panic. The panic's is only from the last line, and only when the run exited 101. Any other
+/// line compares as written.
 fn unlocated(run: &Run) -> Vec<u8> {
     let stderr = &run.stderr;
     let body = stderr.strip_suffix(b"\n").unwrap_or(stderr);
@@ -467,7 +467,7 @@ fn unlocated(run: &Run) -> Vec<u8> {
 
 /// The length of the `<file>.sisu:<line>:<col>: ` that starts `line` when `dbg` wrote it, else 0.
 /// The file name holds no space, so a panic's line or a line of text that `eprint` wrote does not
-/// start with one: a generated program's text holds no `:`.
+/// start with one. A generated program's text holds no `:`.
 fn dbg_location(line: &[u8]) -> usize {
     let digits = |from: usize| {
         line[from..]
@@ -1130,8 +1130,8 @@ mod tests {
         );
     }
 
-    /// Seed 2950's program runs `dbg` eight times, and a rewrite moves some of its lines: the
-    /// lines of the two runs differ as written, and property 4 holds when `unlocated` takes the
+    /// Seed 2950's program runs `dbg` eight times, and a rewrite moves some of its lines. The
+    /// lines of the two runs differ as written. Property 4 holds when `unlocated` takes the
     /// `<file>:<line>:<col>: ` off each. The text and the value of each line are the same, since
     /// no rewrite changes the argument of a `dbg`.
     #[test]

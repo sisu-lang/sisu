@@ -546,9 +546,9 @@ pub(crate) enum ExprKind {
         stream: Stream,
         operand: Box<Expr>,
     },
-    /// `dbg(operand)`, of the operand's type: it writes `at`'s position, `text` (the operand's
-    /// source as written) and the operand's value to standard error, and yields the value. `at` is
-    /// the operand's span.
+    /// `dbg(operand)`, of the operand's type. It writes `at`'s position, `text` (the operand's
+    /// source as written) and the operand's value to standard error, and yields the value. `at`
+    /// is the operand's span.
     Dbg {
         at: Span,
         text: String,

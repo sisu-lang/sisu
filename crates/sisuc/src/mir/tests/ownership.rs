@@ -31,7 +31,7 @@ fn assign_from_own_call() {
 }
 
 /// `dbg(s)` of a `string` that is used afterwards reads a copy into its result, which `dbg` reads
-/// in place; at the last use of `s` the result takes `s` itself, with no copy.
+/// in place. At the last use of `s`, the result takes `s` itself, with no copy.
 #[test]
 fn dbg_should_copy_a_string_used_afterwards_and_move_it_at_its_last_use() {
     let printed = built(

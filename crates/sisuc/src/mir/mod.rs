@@ -334,7 +334,7 @@ pub(crate) enum Rvalue {
         at: Span,
         text: String,
         operand: Operand,
-        /// Whether the `dbg` helper for the operand's type may call a written `to_string`: the
+        /// Whether the `dbg` helper for the operand's type may call a written `to_string`. The
         /// helper also shows the fields of a class (`conformance::calls_written` in `dbg` mode).
         calls: bool,
     },

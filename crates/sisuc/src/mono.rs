@@ -133,7 +133,7 @@ struct Mono {
     input_payloads: Vec<Vec<Type>>,
     /// What decides whether a written conformance holds for a type, in the checked program's ids.
     decide: Decide,
-    /// The field types of the checked program's classes, in its ids: the record walk of a `dbg`
+    /// The field types of the checked program's classes, in its ids. The record walk of a `dbg`
     /// reads them, as the output's classes name the output's ids.
     input_fields: Vec<Vec<Type>>,
     /// The `(type, interface, dbg)` triples the record walk has entered, in the checked program's
@@ -893,7 +893,7 @@ impl Mono {
     /// Reaches the written conformances of `interface` that the helper for an operand of the
     /// checked type `ty` may call: the output gets one record for each type in `ty`, through its
     /// parts, that a written conformance holds for, and the methods are instantiated. With `dbg`,
-    /// the helper is the one that `dbg` calls: a class with no written conformance also has its
+    /// the helper is the one that `dbg` calls. A class with no written conformance also has its
     /// field types walked, each as `print` writes it.
     fn walk(&mut self, ty: Type, interface: InterfaceId, dbg: bool) {
         let mut stack = vec![(ty, dbg)];
@@ -1239,7 +1239,7 @@ mod tests {
     }
 
     /// `dbg` of an `Outer<i64>` shows its field `inner`, an `Inner<i64>` whose written
-    /// `to_string` nothing else calls: the output holds the record of that `to_string`, whether
+    /// `to_string` nothing else calls. The output holds the record of that `to_string`, whether
     /// `dbg` takes the object, an array of it or an optional of it. `print` of the object writes
     /// only its name, so it makes no record.
     #[test]
@@ -1248,9 +1248,9 @@ mod tests {
         for (shown, records) in [
             ("print(o)", 0),
             ("print([o])", 0),
-            ("let _ = dbg(o)", 1),
-            ("let _ = dbg([o])", 1),
-            ("let _ = dbg(Some(o))", 1),
+            ("dbg(o)", 1),
+            ("dbg([o])", 1),
+            ("dbg(Some(o))", 1),
         ] {
             let program = instantiated(&format!(
                 "{decls}fn main() {{\n    let o = Outer(inner: Inner(v: 1))\n    {shown}\n    print(o.inner.v)\n}}"

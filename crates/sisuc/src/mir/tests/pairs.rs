@@ -351,8 +351,8 @@ fn copy_should_stay_across_a_written_to_string() {
     assert!(!f.contains("[calls]"), "{f}");
 }
 
-/// A `dbg` shows the fields of a class, so it reaches the written `to_string` of `Box`'s `item`
-/// where a `print` of the same `Box` writes the class's name and runs none. The copy `old` of the
+/// A `dbg` shows the fields of a class, so it reaches the written `to_string` of `Box`'s `item`.
+/// A `print` of the same `Box` writes the class's name and runs none. The copy `old` of the
 /// string that the `to_string` replaces stays a copy across the `dbg`, and the `dbg` is flagged.
 #[test]
 fn copy_should_stay_across_a_dbg_that_runs_a_written_to_string() {
