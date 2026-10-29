@@ -470,7 +470,8 @@ fn unlocated(run: &Run) -> Vec<u8> {
 /// start with one. A generated program's text holds no `:`.
 fn dbg_location(line: &[u8]) -> usize {
     let digits = |from: usize| {
-        line[from..]
+        line.get(from..)
+            .unwrap_or_default()
             .iter()
             .take_while(|b| b.is_ascii_digit())
             .count()
@@ -920,6 +921,12 @@ mod tests {
             ("sisu: panic at program.sisu:3:5: overflow", 0),
             ("plain", 0),
             ("", 0),
+            ("program.sisu:3", 0),
+            ("a.sisu:", 0),
+            ("x.sisu:3:", 0),
+            ("x.sisu:3:5", 0),
+            ("x.sisu:3:5:", 0),
+            ("x.sisu:3:5: ", 12),
         ] {
             assert_eq!(dbg_location(line.as_bytes()), length, "{line:?}");
         }
