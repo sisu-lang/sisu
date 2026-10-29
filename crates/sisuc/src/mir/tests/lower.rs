@@ -450,7 +450,7 @@ fn every_kind_of_node_should_lower() {
             "_ = c#5",
             "branch _ bb6 bb5",
             "_ = false",
-            "_ = contains(use xs#2, 2)",
+            "_ = call [i64].contains(use xs#2, 2)",
             "_ = array[4; 2]",
             "_ = call [i64].sum(move _)",
             "_ = len_words s#3",

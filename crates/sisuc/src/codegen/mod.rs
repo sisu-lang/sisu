@@ -753,14 +753,6 @@ impl<'ctx> Codegen<'ctx, '_> {
                 self.len(base.into_pointer_value(), ty).into()
             }
             Rvalue::LenWords(op) => self.len_words(self.pointer(op)).into(),
-            Rvalue::Contains { base, value, .. } => {
-                let (array, base_ty) = self.operand(base);
-                let (needle, needle_ty) = self.operand(value);
-                let hit = self.contains(element_of(base_ty), array.into_pointer_value(), needle);
-                self.release(array, base_ty);
-                self.release(needle, needle_ty);
-                hit.into()
-            }
             Rvalue::Convert(op) => self.convert(ty(), self.operand(op).0),
             Rvalue::Math { op, operands } => {
                 let values: Vec<_> = operands.iter().map(|o| self.operand(o).0).collect();

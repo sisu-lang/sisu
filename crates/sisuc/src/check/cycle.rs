@@ -917,7 +917,9 @@ impl Checker<'_> {
             let Some(instance) = e.instance else {
                 continue;
             };
-            if !shown.insert(e.site) {
+            // No report points into the prelude: a step inside one of its functions is left out,
+            // and the sites in the user's file show the cycle.
+            if e.mark.in_prelude() || !shown.insert(e.site) {
                 continue;
             }
             if let Instance::Required(interface, ..) = instance {
@@ -1139,11 +1141,6 @@ impl Checker<'_> {
                         for part in parts {
                             graph.operator(holder, part.ty, self.lang.display, e.span);
                         }
-                    }
-                    tir::ExprKind::Contains { ref base, .. } => {
-                        let element =
-                            (base.ty.array_element()).expect("`contains` should take an array");
-                        graph.operator(holder, element, self.lang.eq, e.span);
                     }
                     _ => {}
                 }

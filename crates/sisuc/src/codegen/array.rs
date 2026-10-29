@@ -282,41 +282,6 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
     }
 
-    /// Whether some element of `array`, whose element type is `element`, is `==` to `needle`,
-    /// stopping at the first that is.
-    pub(super) fn contains(
-        &self,
-        element: Type,
-        array: PointerValue<'ctx>,
-        needle: BasicValueEnum<'ctx>,
-    ) -> IntValue<'ctx> {
-        let function = self.current_function();
-        let found = self.context.append_basic_block(function, "contains.found");
-        let end = self.context.append_basic_block(function, "contains.end");
-        self.count_loop(self.array_len(array), |index| {
-            let same = self.equal(element, self.load_element(element, array, index), needle);
-            let next = self.context.append_basic_block(function, "contains.next");
-            self.builder
-                .build_conditional_branch(same, found, next)
-                .expect(POSITIONED);
-            self.builder.position_at_end(next);
-        });
-        let missed = self.current_block();
-        self.branch_to(end);
-        self.builder.position_at_end(found);
-        self.branch_to(end);
-        self.builder.position_at_end(end);
-        let bool_type = self.context.bool_type();
-        self.phi(
-            bool_type,
-            &[
-                (bool_type.const_zero(), missed),
-                (bool_type.const_int(1, false), found),
-            ],
-        )
-        .into_int_value()
-    }
-
     /// The body of `@sisu_rc.drop.[T]`, `@sisu_rc.eq.[T]` or `@sisu_rc.unique.[T]`, `T`
     /// being `element`.
     pub(super) fn define_array_helper(

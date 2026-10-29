@@ -1431,18 +1431,16 @@ impl Checker<'_> {
     }
 
     /// The report that `ty`, the type of the operand at `at`, has no `op`, which `interface` (`Eq`
-    /// or `Ord`) gives; `contains` when the operand is an element of the array that `contains`
-    /// searches. It is E0139 when the part that fails (`failing_leaf`) is a type parameter, with
-    /// the help to bound it. Else it is `NoOperator`, which names the part, and helps only when
-    /// the part has no conformance at all, a class or an enum that does not write one. A part
-    /// with a conformance whose bound fails says which bound.
+    /// or `Ord`) gives. It is E0139 when the part that fails (`failing_leaf`) is a type
+    /// parameter, with the help to bound it. Else it is `NoOperator`, which names the part, and
+    /// helps only when the part has no conformance at all, a class or an enum that does not write
+    /// one. A part with a conformance whose bound fails says which bound.
     pub(super) fn missing_operator(
         &mut self,
         at: Span,
         ty: Type,
         op: &str,
         interface: InterfaceId,
-        contains: bool,
     ) -> DiagnosticKind {
         let leaf = self.failing_leaf(ty, interface, TypeArgs::NONE);
         if matches!(leaf.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)) {
@@ -1450,7 +1448,6 @@ impl Checker<'_> {
                 ty: self.type_name(ty),
                 op: op.to_string(),
                 at,
-                contains,
                 add: self.add_bound(leaf, interface),
             };
         }
@@ -1462,24 +1459,19 @@ impl Checker<'_> {
         let make = (record.is_none()
             && matches!(leaf.kind(), TypeKind::Class(..) | TypeKind::Enum(..)))
         .then(|| self.type_name(leaf));
-        let form = if contains {
-            NoOperatorForm::Contains { make }
-        } else {
-            let object =
-                matches!(ty.kind(), TypeKind::Optional(inner) if inner == leaf) || ty == leaf;
-            match make {
-                Some(make)
-                    if object
-                        && matches!(leaf.kind(), TypeKind::Class(..))
-                        && interface == self.lang.eq =>
-                {
-                    NoOperatorForm::Identity { make }
-                }
-                make => NoOperatorForm::Operator {
-                    make,
-                    interface: self.interfaces[interface.0].name.name.to_string(),
-                },
+        let object = matches!(ty.kind(), TypeKind::Optional(inner) if inner == leaf) || ty == leaf;
+        let form = match make {
+            Some(make)
+                if object
+                    && matches!(leaf.kind(), TypeKind::Class(..))
+                    && interface == self.lang.eq =>
+            {
+                NoOperatorForm::Identity { make }
             }
+            make => NoOperatorForm::Operator {
+                make,
+                interface: self.interfaces[interface.0].name.name.to_string(),
+            },
         };
         DiagnosticKind::NoOperator {
             ty: self.type_name(ty),
@@ -1608,7 +1600,9 @@ impl Checker<'_> {
             self.probe_associated(ty, bound.interface, args);
             return true;
         }
-        let add = self.add_bound(ty, bound.interface);
+        // The bound goes to the type parameter inside `ty` that makes it fail: `T` for `[T?]`.
+        let leaf = self.failing_leaf(ty, bound.interface, args);
+        let add = self.add_bound(leaf, bound.interface);
         // A class or an enum may conform, when the types that stand for its parameters do.
         let needs = find(&self.conformances, bound.interface, ty, args)
             .map(|(k, stands)| self.failed_bound(bound.interface, k, stands));

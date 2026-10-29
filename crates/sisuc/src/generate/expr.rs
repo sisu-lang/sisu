@@ -761,7 +761,9 @@ impl Gen<'_> {
         self.w.text(").contains(");
         let value = self.expr(&element, MAX_SIZE);
         self.w.text("))");
-        Info::of(&[receiver, value], 0, true)
+        // A call of the prelude's `contains`, which runs the element's `eq`: not pure for every
+        // type (see `PURE_PRELUDE`).
+        Info::of(&[receiver, value], 0, false)
     }
 
     /// `[a, b, ...]`, of one element at least if `synth`, each one of its own type then.

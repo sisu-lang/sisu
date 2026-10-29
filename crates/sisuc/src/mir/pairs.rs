@@ -291,7 +291,6 @@ fn kind<'a>(function: &Function, stmt: &'a Statement) -> Kind<'a> {
                 | Rvalue::FromChars(_)
                 | Rvalue::Len(_)
                 | Rvalue::LenWords(_)
-                | Rvalue::Contains { .. }
                 | Rvalue::Convert(_)
                 | Rvalue::Math { .. }
                 | Rvalue::Unary { .. }
@@ -348,7 +347,6 @@ fn borrowed(stmt: Statement) -> Statement {
                 | Rvalue::FromChars(_)
                 | Rvalue::Len(_)
                 | Rvalue::LenWords(_)
-                | Rvalue::Contains { .. }
                 | Rvalue::Convert(_)
                 | Rvalue::Math { .. }
                 | Rvalue::Unary { .. }

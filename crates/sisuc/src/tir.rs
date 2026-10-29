@@ -588,11 +588,6 @@ pub(crate) enum ExprKind {
     Words(Box<Expr>),
     /// `string(base)`: a new string that encodes the `[char]` `base`.
     FromChars(Box<Expr>),
-    /// `base.contains(value)`, by `==`.
-    Contains {
-        base: Box<Expr>,
-        value: Box<Expr>,
-    },
     /// `operands[0].op(operands[1..])`: a method of `f64` or `i64`, with the receiver first.
     Math {
         op: MathOp,
@@ -869,10 +864,6 @@ impl Expr {
             | ExprKind::Index {
                 base: lhs,
                 index: rhs,
-            }
-            | ExprKind::Contains {
-                base: lhs,
-                value: rhs,
             } => lhs.exits() || rhs.exits(),
             ExprKind::If {
                 cond,
@@ -955,10 +946,6 @@ impl Expr {
             | ExprKind::Index {
                 base: lhs,
                 index: rhs,
-            }
-            | ExprKind::Contains {
-                base: lhs,
-                value: rhs,
             } => {
                 f(lhs);
                 f(rhs);
@@ -1095,7 +1082,6 @@ impl Expr {
             | K::Return(Some(e)) => e.exprs(out),
             K::ArrayFill { value: a, len: b }
             | K::Index { base: a, index: b }
-            | K::Contains { base: a, value: b }
             | K::Binary { lhs: a, rhs: b, .. }
             | K::Concat { lhs: a, rhs: b }
             | K::Equal { lhs: a, rhs: b, .. }
@@ -1313,7 +1299,6 @@ impl Printer<'_> {
             ExprKind::Bytes(base) => self.unary(f, "bytes", base),
             ExprKind::Words(base) => self.unary(f, "words", base),
             ExprKind::FromChars(base) => self.unary(f, "string", base),
-            ExprKind::Contains { base, value } => self.binary(f, "contains", base, value),
             ExprKind::Math { op, operands } => {
                 self.list(f, format_args!("math {}", op.name()), operands)
             }
@@ -3093,13 +3078,6 @@ mod tests {
                 ExprKind::Index {
                     base: n(1),
                     index: n(2),
-                },
-                2,
-            ),
-            (
-                ExprKind::Contains {
-                    base: n(1),
-                    value: n(2),
                 },
                 2,
             ),

@@ -5,7 +5,7 @@
 //! emitting into that block, and a block is created only when an edge reaches it, so every
 //! block is reachable from the entry. The order, which the ownership pass reads off the blocks:
 //! - `Call`, `New`, `Variant`, `ArrayLit` and `Math` evaluate their arguments left to right, and
-//!   `Interpolate` its parts; `Index` evaluates base then index; `Contains` base then value;
+//!   `Interpolate` its parts; `Index` evaluates base then index;
 //!   `ArrayFill` value then length; `Equal`, `Is`, `Concat`, arithmetic and a string comparison
 //!   lhs then rhs.
 //! - `If` and `IfSome` evaluate the condition or scrutinee, then one branch. `Match` evaluates
@@ -796,12 +796,6 @@ impl<'a> Lowering<'a> {
             ExprKind::Bytes(base) => return self.borrowing(e, base, dest, Rvalue::Bytes),
             ExprKind::Words(base) => return self.borrowing(e, base, dest, Rvalue::Words),
             ExprKind::FromChars(base) => return self.borrowing(e, base, dest, Rvalue::FromChars),
-            ExprKind::Contains { base, value } => {
-                let element = (base.ty.array_element()).expect("`contains` should take an array");
-                let calls = self.calls_eq(element);
-                let [base, value] = self.pair(base, value)?;
-                Rvalue::Contains { base, value, calls }
-            }
             ExprKind::Math { op, operands } => Rvalue::Math {
                 op: *op,
                 operands: self.operands(&operands.iter().collect::<Vec<_>>())?,
@@ -1339,7 +1333,6 @@ fn leaves_locals(expr: &Expr) -> bool {
         | ExprKind::Bytes(_)
         | ExprKind::Words(_)
         | ExprKind::FromChars(_)
-        | ExprKind::Contains { .. }
         | ExprKind::Math { .. }
         | ExprKind::Interpolate { .. }
         | ExprKind::Concat { .. }
@@ -1505,10 +1498,6 @@ fn expr_mentions(e: &Expr, found: &mut Mentions) {
         | ExprKind::Index {
             base: lhs,
             index: rhs,
-        }
-        | ExprKind::Contains {
-            base: lhs,
-            value: rhs,
         } => {
             mentions(lhs, found);
             mentions(rhs, found);

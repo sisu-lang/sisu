@@ -1041,3 +1041,74 @@ fn quiet_should_see_a_clobber_that_the_ownership_pass_adds() {
     finish(&mut after, &TirProgram::default());
     assert!(!after[0].quiet, "the counted store is a clobber after it");
 }
+
+/// A class whose written `eq` replaces a `mut` field, and one whose `eq` stores its argument.
+const EQ_CLASSES: &str = "class Holder: Eq {\n    mut items: [string]\n    fn eq(self, other: Self) -> bool {\n        self.items = [\"y\"]\n        true\n    }\n}\n\
+    class Keeper: Eq {\n    mut last: Keeper?\n    name: string\n    fn eq(self, other: Self) -> bool {\n        self.last = other\n        true\n    }\n}\n";
+
+/// `contains` of the prelude loops over `self`, which a `for` reads in place, so `self` is
+/// borrowed. Its `x` is decided for each instance: a generated `Eq` reads it in place, so it is
+/// borrowed for a `string`; the written `eq` of `Keeper` stores `other`, so it is owned there.
+#[test]
+fn the_prelude_contains_should_borrow_its_array_and_decide_its_value_for_each_instance() {
+    let printed = built(&format!(
+        "{EQ_CLASSES}fn main() {{\n    let ks = [Keeper(last: None, name: \"k{{1}}\")]\n    \
+         print(ks.contains(ks[0]))\n    print([\"a\"].contains(\"b\"))\n    print([1].contains(1))\n}}"
+    ));
+    signature(
+        &printed,
+        "[string].contains",
+        "fn [string].contains(self#0: borrow [string], x#1: borrow string)",
+    );
+    signature(
+        &printed,
+        "[i64].contains",
+        "fn [i64].contains(self#0: borrow [i64], x#1: i64)",
+    );
+    signature(
+        &printed,
+        "[Keeper].contains",
+        "fn [Keeper].contains(self#0: borrow [Keeper], x#1: Keeper)",
+    );
+}
+
+/// A function of the user's that passes its `string` parameters to `contains<string>` keeps both
+/// borrowed: the call reads them in place.
+#[test]
+fn a_function_that_calls_contains_should_keep_its_parameters_borrowed() {
+    let printed = built(
+        "fn has(xs: [string], s: string) -> bool { xs.contains(s) }\nfn main() {\n    print(has([\"a\"], \"b\"))\n}",
+    );
+    signature(
+        &printed,
+        "has",
+        "fn has(xs#0: borrow [string], s#1: borrow string)",
+    );
+}
+
+/// The `==` in the body of `contains<T>` is an `Equal` whose `calls` flag follows the instance:
+/// it prints ` [calls]` for `[Holder]`, whose generated `Eq` reaches the written `eq` of `Holder`,
+/// and not for `string`. For `Holder` itself the `==` is a `Call` of its `eq`, which has no marker.
+#[test]
+fn the_equal_in_contains_should_carry_the_calls_flag_of_its_instance() {
+    let printed = built(&format!(
+        "{EQ_CLASSES}fn main() {{\n    let h = Holder(items: [\"{{1}}\"])\n    print([[h]].contains([h]))\n    \
+         print([h].contains(h))\n    print([\"a\"].contains(\"b\"))\n}}"
+    ));
+    let nested = function(&printed, "[[Holder]].contains");
+    assert!(
+        nested.contains(" == ") && nested.contains(" [calls]"),
+        "{nested}"
+    );
+    let strings = function(&printed, "[string].contains");
+    assert!(
+        strings.contains(" == ") && !strings.contains("[calls]"),
+        "{strings}"
+    );
+    let holder = function(&printed, "[Holder].contains");
+    assert!(holder.contains("= call Holder.eq("), "{holder}");
+    assert!(
+        !holder.contains(" == ") && !holder.contains("[calls]"),
+        "{holder}"
+    );
+}

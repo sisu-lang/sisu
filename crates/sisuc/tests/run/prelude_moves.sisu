@@ -1,11 +1,13 @@
-// GIVEN `min`, `max` and `clamp` on `i64`, and `sum` on `[i64]` and `[f64]`, which the prelude
-// writes
+// GIVEN `min`, `max` and `clamp` on `i64`, `sum` on `[i64]` and `[f64]`, and `contains` on an
+// array of a type with `Eq`, which the prelude writes
 // AND `min`, `max` and `clamp` on `f64`, which stay built in
 // WHEN `main` calls each `i64` method on literals, on the extremes of `i64` and on values that
 // `-O2` cannot fold
 // AND it calls `clamp` with `lo` above `hi`, and with operands that print when they run
 // AND it calls `sum` on an `[i64]`, on an `[f64]`, on an empty `[f64]` and on `[0.1, 0.2, 0.3]`
 // AND it calls each `f64` method on zeros of both signs and on a NaN
+// AND it calls `contains` on `[i64]`, `[string]`, `[f64]` with a NaN, `[i64?]` with `None`,
+// `[Circle]` with a written `eq`, `[Keeper]` with an `eq` that keeps its argument, and `[]`
 // THEN each `i64` method gives the smaller, the larger or the clamped value, and `clamp` gives
 // `hi` when `lo` is above it
 // AND the operands of `clamp` run in order, receiver first
@@ -14,6 +16,10 @@
 // AND `sum` adds the elements in order, an empty `[f64]` sums to `0.0`, not `-0.0`, and the
 // additions of `[0.1, 0.2, 0.3]` give `0.6000000000000001`, which another order would not
 // AND `sum` leaves the array it reads alive
+// AND `contains` is true at the first element that is `==` to its argument; a NaN is not `==` to a
+// NaN; `None` is found in an `[i64?]`; a written `eq` decides for a class; an empty array has
+// nothing
+// AND `contains` leaves the array and the counted strings alive, and releases each once
 // o2-calls: main same_int 2
 fn same_int(n: i64, depth: i64) -> i64 {
     if depth == 0 { n } else { -same_int(-n, depth - 1) }
@@ -23,6 +29,24 @@ fn same_int(n: i64, depth: i64) -> i64 {
 fn noisy(n: i64) -> i64 {
     print("noisy {n}")
     n
+}
+
+// A written `eq` that compares the radius: two circles are `==`, though they are two objects.
+class Circle: Eq {
+    radius: i64
+    fn eq(self, other: Self) -> bool {
+        self.radius == other.radius
+    }
+}
+
+// A written `eq` that keeps its parameter: `other` is owned, so `contains<Keeper>`'s `x` is owned.
+class Keeper: Eq {
+    mut _last: Keeper?
+    name: string
+    fn eq(self, other: Self) -> bool {
+        self._last = other
+        true
+    }
 }
 
 fn main() {
@@ -79,4 +103,27 @@ fn main() {
     print(no_floats.sum())              // 0.0: not -0.0
     print([-0.0].sum())                 // 0.0: the sum starts at 0.0, and 0.0 + -0.0 is 0.0
     print([0.1, 0.2, 0.3].sum())        // 0.6000000000000001: (0.1 + 0.2) + 0.3
+
+    // `contains`.
+    print([1, 2, 3].contains(2))        // true
+    print([1, 2, 3].contains(4))        // false
+    let none_found: [i64] = []
+    print(none_found.contains(1))       // false: nothing to find in `[]`
+    let names = ["a {1}", "b {2}"]
+    print(names.contains("b {2}"))      // true: the strings are counted, and `names` stays alive
+    print(names.contains(names[0]))     // true: an element of the array itself
+    print(names.contains("c"))          // false
+    print(names.len())                  // 2: `names` is still there
+    print([f64.nan].contains(f64.nan))  // false: a NaN is not `==` to a NaN
+    print([1.5, f64.nan].contains(1.5)) // true
+    let maybe: [i64?] = [1, None]
+    print(maybe.contains(None))         // true
+    print(maybe.contains(2))            // false
+    let circles = [Circle(radius: 1), Circle(radius: 2)]
+    print(circles.contains(Circle(radius: 2))) // true: the written `eq`, not the identity
+    print(circles.contains(Circle(radius: 3))) // false
+    let k1 = Keeper(_last: None, name: "k{1}")
+    let k2 = Keeper(_last: None, name: "k{2}")
+    print([k1].contains(k2))            // true: `eq` stores `k2`, which stays alive
+    print(k1.name + k2.name)            // k1k2
 }

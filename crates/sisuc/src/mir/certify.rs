@@ -325,7 +325,6 @@ impl Clobbers {
                         | Rvalue::FromChars(_)
                         | Rvalue::Len(_)
                         | Rvalue::LenWords(_)
-                        | Rvalue::Contains { .. }
                         | Rvalue::Convert(_)
                         | Rvalue::Math { .. }
                         | Rvalue::Unary { .. }
@@ -799,12 +798,7 @@ fn rvalue<'a>(
             consumed(value, lowered, f);
             operand(len, lowered, f);
         }
-        Rvalue::Concat { lhs, rhs }
-        | Rvalue::Contains {
-            base: lhs,
-            value: rhs,
-            ..
-        } => {
+        Rvalue::Concat { lhs, rhs } => {
             consumed(lhs, lowered, f);
             consumed(rhs, lowered, f);
         }

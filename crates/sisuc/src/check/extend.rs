@@ -92,7 +92,7 @@ impl<'a> Checker<'_> {
         let failed = unused || matches!(interface, Some(None));
         let usable = target.filter(|_| !failed);
         let receiver = usable.unwrap_or(UNKNOWN);
-        let holder = usable.and_then(holder_of);
+        let holder = usable.and_then(method_holder);
         self.body.self_type = Some(receiver);
         self.body.assoc = std::rc::Rc::clone(&assoc);
         let name = self.type_name(receiver);
@@ -152,7 +152,7 @@ impl<'a> Checker<'_> {
                 duplicate: false,
             });
             self.record_block_bounds(at);
-        } else if let Some(holder) = target.and_then(holder_of) {
+        } else if let Some(holder) = target.and_then(method_holder) {
             // The methods of a failed block may have given the target methods.
             let name = self.holder_name(holder);
             self.broken_extensions.insert(name);
@@ -436,14 +436,23 @@ impl<'a> Checker<'_> {
     }
 }
 
-/// The class, enum, array or `i64` that `ty` is: what holds its methods.
+/// The class or enum that `ty` is: what holds its conformances. Only these have any, so the
+/// walks of the conformances never meet a built-in type here.
 pub(super) fn holder_of(ty: Type) -> Option<Holder> {
     match ty.kind() {
         TypeKind::Class(id, _) => Some(Holder::Class(id)),
         TypeKind::Enum(id, _) => Some(Holder::Enum(id)),
+        _ => None,
+    }
+}
+
+/// `holder_of`, or the array or `i64` that `ty` is: what holds its methods, which the prelude's
+/// `extend` blocks give.
+pub(super) fn method_holder(ty: Type) -> Option<Holder> {
+    match ty.kind() {
         TypeKind::Array(_) => Some(Holder::Array),
         TypeKind::I64 => Some(Holder::I64),
-        _ => None,
+        _ => holder_of(ty),
     }
 }
 

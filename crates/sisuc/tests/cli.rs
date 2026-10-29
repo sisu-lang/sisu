@@ -559,6 +559,63 @@ fn emit_tir_should_print_the_prelude_functions_that_the_program_reaches() {
     }
 }
 
+/// GIVEN a program whose `main` prints `[1].contains(1)`
+/// WHEN it is built with `--emit tir`
+/// THEN `main` calls `[i64].contains`
+/// AND the output holds the instance `[i64].contains`, and no other prelude function
+#[test]
+fn emit_tir_should_show_the_prelude_functions_a_program_reaches() {
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .args([
+            "build",
+            "--emit",
+            "tir",
+            "-e",
+            "fn main() { print([1].contains(1)) }",
+        ])
+        .output()
+        .expect("sisu starts");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<_> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "{stdout}");
+    assert!(
+        lines[0].starts_with("(fn main () unit")
+            && lines[0].contains("(call [i64].contains (array 1) 1)"),
+        "{stdout}"
+    );
+    assert!(
+        lines[1].starts_with("(fn [i64].contains ((self#0 [i64]) (x#1 i64)) bool"),
+        "{stdout}"
+    );
+}
+
+/// GIVEN a program whose `main` prints `[1].contains(1)`
+/// WHEN it is built with `--emit mir`
+/// THEN `main` holds `call [i64].contains(_, 1)`, and the output holds the instance, whose
+/// `self` is borrowed and whose body compares the elements with `==`
+#[test]
+fn emit_mir_should_show_the_prelude_functions_a_program_reaches() {
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .args([
+            "build",
+            "--emit",
+            "mir",
+            "-e",
+            "fn main() { print([1].contains(1)) }",
+        ])
+        .output()
+        .expect("sisu starts");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("call [i64].contains(_0, 1)"), "{stdout}");
+    assert!(
+        stdout.contains("fn [i64].contains(self#0: borrow [i64], x#1: i64) -> bool {"),
+        "{stdout}"
+    );
+    assert!(stdout.contains(" == "), "{stdout}");
+}
+
 /// GIVEN a program that runs `x += 2` on a mutable variable
 /// WHEN it is built with `--emit ast`
 /// THEN the output has the node `(+= x 2)` and no `=` node

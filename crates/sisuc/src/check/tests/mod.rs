@@ -478,6 +478,7 @@ fn if_with_failed_and_never_branches_is_error() {
 fn failed_rule_should_make_its_expression_error() {
     const MISMATCH: Code = Code::Mismatch;
     const F: &str = "fn f(a: i64) -> i64 { a }\n";
+    with_prelude();
     let rows: [(&str, String, Code, (usize, usize)); 15] = [
         (
             "unary",
@@ -524,7 +525,7 @@ fn failed_rule_should_make_its_expression_error() {
         (
             "contains of a class",
             "class C {}\nfn main() {\n    let x = [C()].contains(C())\n    print(x + 1)\n}".into(),
-            Code::NoOperator,
+            Code::NotConform,
             (3, 13),
         ),
         (

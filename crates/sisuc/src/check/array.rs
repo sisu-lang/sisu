@@ -1,8 +1,7 @@
 //! Array expressions: literals and their element join, `[v; n]`, indexing and methods.
 
 use super::expr::{fits, literal_type, no_member, none_literal, path, rank, typed};
-use super::interface::Operation;
-use super::{Checked, Checker, Poisoned, UNKNOWN, as_optional, payload, type_of, wrap};
+use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, payload, type_of, wrap};
 use crate::ast;
 use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Literal};
 use crate::source::Span;
@@ -10,7 +9,7 @@ use crate::tir::{self, Type, TypeKind};
 
 /// The methods of an array that the compiler writes, with their parameter counts. The prelude's
 /// `extend` blocks give an array its other methods.
-pub(super) const METHODS: [(&str, usize); 2] = [("len", 0), ("contains", 1)];
+pub(super) const METHODS: [(&str, usize); 1] = [("len", 0)];
 
 impl Checker<'_> {
     /// `[a, b, ...]`. With an expected `[E]` or `[E]?`, each element is checked against `E`.
@@ -255,23 +254,26 @@ impl Checker<'_> {
         None
     }
 
-    /// `receiver.method(args)` on `receiver`, an array of type `ty`, written at `at`. The
-    /// `METHODS`: `len()`, and `contains(x)`, whose argument is checked as an element, which has
-    /// `==` unless its type names a type parameter. A method that no block of the prelude gives
-    /// `ty`, but one gives another array type, is E0069.
+    /// `receiver.method(args)` on `receiver`, an array of type `ty`, when no block of the prelude
+    /// gives `ty` the method: `len()`, which the compiler writes; a method of a block of the
+    /// prelude whose bounds fail for `ty` (`unmet_block_bound`); or no method, which is E0069 when
+    /// a block gives the method to another array type.
     pub(super) fn array_method(
         &mut self,
         span: Span,
-        (receiver, at): (Checked, Span),
+        receiver: Checked,
         ty: Type,
         method: &ast::Ident,
         args: &[ast::Arg],
     ) -> Checked {
-        let TypeKind::Array(element) = ty.kind() else {
-            unreachable!("`method_call` should pass an array type to `array_method`");
-        };
         let name = method.name.as_str();
-        let Some(&(_, arity)) = METHODS.iter().find(|(m, _)| *m == name) else {
+        let built_in = METHODS.iter().find(|(m, _)| *m == name);
+        if built_in.is_none()
+            && let Some(Declared::Known(func)) = self.own_method(ty, method.name)
+        {
+            return self.unmet_block_bound(span, func, ty, args);
+        }
+        let Some(&(_, arity)) = built_in else {
             let prelude = self.prelude_method_names(ty);
             let targets = self.prelude_targets(method.name);
             let d = if !prelude.contains(&name) && !targets.is_empty() {
@@ -297,48 +299,52 @@ impl Checker<'_> {
             };
             return self.rejected(d.into(), args);
         }
-        match name {
-            "len" => {
-                let kind = receiver.ok().map(|r| tir::ExprKind::Len(Box::new(r)));
-                typed(span, Type::I64, false, kind)
-            }
-            _ if self.operation(element, self.lang.eq) == Operation::Missing => {
-                // The report goes before the labels and the argument's own, which it waits for.
-                // The argument comes first, as the second side of `==` does: when it failed, its
-                // own error stands alone for a concrete element, and when its type is not the
-                // element, or the contents of an optional element, that mismatch is the mistake,
-                // whatever the element is. A bound helps only for an argument that is an element.
-                let first = self.diagnostics.len();
-                self.labels(args);
-                let (argument, mismatched) = self.operand(&args[0].value, Some(element));
-                // An argument with no type has failed, but a type parameter keeps its report
-                // beside the error of such an argument.
-                let failed = type_of(&argument).is_none() && !element.has_param();
-                if mismatched || failed {
-                    return Err(Poisoned::error());
-                }
-                let d = self.missing_operator(at, element, "==", self.lang.eq, true);
-                self.diagnostics.insert(first, d.into());
-                Err(Poisoned::error())
-            }
-            _ => {
-                let labeled = self.labels(args);
-                let (value, mismatched) = self.operand(&args[0].value, Some(element));
-                match (receiver, value) {
-                    (Ok(base), Ok(value)) if !labeled => {
-                        Ok(
-                            self.spilled(span, Type::BOOL, vec![base, value], |operands| {
-                                let (base, value) = pair(operands);
-                                tir::ExprKind::Contains { base, value }
-                            }),
-                        )
-                    }
-                    _ => Err(Poisoned::of(
-                        (!labeled && !mismatched).then_some(Type::BOOL),
-                    )),
-                }
-            }
+        let kind = receiver.ok().map(|r| tir::ExprKind::Len(Box::new(r)));
+        typed(span, Type::I64, false, kind)
+    }
+
+    /// A call at `span` of the method `func` of a block of the prelude that covers the array type
+    /// `ty` and whose bounds fail for it: E0154 at the call, with no label in the prelude. A call
+    /// with the wrong number of arguments is the call-count error. An argument that is not of the
+    /// type the method wants is the mistake before the bound, as it is for `==`: a conformance
+    /// would not make the program right. So is an argument that failed on its own, unless a type
+    /// parameter is in what the method wants. The bound is reported after the arguments.
+    fn unmet_block_bound(
+        &mut self,
+        span: Span,
+        func: tir::FuncId,
+        ty: Type,
+        args: &[ast::Arg],
+    ) -> Checked {
+        let sig = &self.signatures[func.0];
+        let (name, params) = (sig.name.clone(), sig.params.clone());
+        let extension = sig
+            .extension
+            .expect("a method whose block bounds fail should have a block");
+        if params.len() != args.len() {
+            let d = DiagnosticKind::ArgumentCount {
+                name,
+                want: params.len(),
+                found: args.len(),
+                at: span,
+            };
+            return self.rejected(d.into(), args);
         }
+        let stands = self.owner_args(func, ty).get().to_vec();
+        self.labels(args);
+        let mut own_mistake = false;
+        for (arg, param) in args.iter().zip(params) {
+            let want = param.and_then(|param| self.subst(param, &stands));
+            let (argument, mismatched) = self.operand(&arg.value, want);
+            // An argument with no type has failed, but a type parameter keeps its report beside
+            // the error of such an argument.
+            let failed = type_of(&argument).is_none() && !want.is_some_and(Type::has_param);
+            own_mistake |= mismatched || failed;
+        }
+        if !own_mistake {
+            self.report_block_bound(extension, ty, span);
+        }
+        Err(Poisoned::error())
     }
 
     /// Reports `d` for a method call that cannot be checked, and its arguments' own errors.

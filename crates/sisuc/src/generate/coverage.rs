@@ -90,13 +90,12 @@ const EXCLUDED: [(&str, &str); 15] = [
 
 /// The receivers of the built-in methods `check/number.rs` does not list, by their typed
 /// tree's variant.
-const RECEIVERS: [(&str, &[&str]); 6] = [
+const RECEIVERS: [(&str, &[&str]); 5] = [
     ("tir::ExprKind::Len", &["String", "Array"]),
     ("tir::ExprKind::Chars", &["String"]),
     ("tir::ExprKind::Bytes", &["String"]),
     ("tir::ExprKind::Words", &["String"]),
     ("tir::ExprKind::FromChars", &["Array"]),
-    ("tir::ExprKind::Contains", &["Array"]),
 ];
 
 /// The scalar conversions, from and to, as `convert` in `check/string.rs` takes them: `i64(e)`
@@ -603,7 +602,7 @@ impl Walk {
         }
     }
 
-    /// The keys that the built mir shows: an `==`, `contains`, `print` or interpolation on a
+    /// The keys that the built mir shows: an `==`, `print` or interpolation on a
     /// compound value that may run a written method inside it, and one that cannot. The mir is
     /// that of the program `mono` instantiates, as lowering makes it: `build` sets the same flags
     /// and costs far more.
@@ -620,9 +619,6 @@ impl Walk {
                     let (operands, calls, printed) = match value {
                         crate::mir::Rvalue::Equal { lhs, calls, .. } => {
                             (std::slice::from_ref(lhs), *calls, false)
-                        }
-                        crate::mir::Rvalue::Contains { base, calls, .. } => {
-                            (std::slice::from_ref(base), *calls, false)
                         }
                         crate::mir::Rvalue::Print { operand, calls, .. } => {
                             (std::slice::from_ref(operand), *calls, true)
@@ -2225,8 +2221,19 @@ impl Walk {
                     self.mark(&key);
                 }
                 let name = &self.function_names[func.0];
-                if matches!(name.rsplit('.').next(), Some("eq" | "less")) {
+                let (operator, contains) = (
+                    matches!(name.rsplit('.').next(), Some("eq" | "less")),
+                    func.0 >= self.user_funcs && name.ends_with(".contains"),
+                );
+                if operator {
                     self.mark("reach: an operator calls a written `eq` or `less`");
+                }
+                // The prelude's `contains` compares with `==`: on a type parameter, it needs
+                // the bound.
+                if contains
+                    && matches!(args[0].ty.kind(), TypeKind::Array(element) if element.has_param())
+                {
+                    self.mark("reach: an operator runs on a bounded type parameter");
                 }
                 if self.generic_blocks.contains(&func.0) {
                     self.mark("reach: a generic `extend` block is called");
@@ -2341,13 +2348,6 @@ impl Walk {
             tir::ExprKind::Words(base) => self.receiver_call("tir::ExprKind::Words", base),
             tir::ExprKind::FromChars(base) => {
                 self.receiver_call("tir::ExprKind::FromChars", base);
-            }
-            tir::ExprKind::Contains { base, value } => {
-                self.receiver_call("tir::ExprKind::Contains", base);
-                if matches!(base.ty.kind(), TypeKind::Array(element) if element.has_param()) {
-                    self.mark("reach: an operator runs on a bounded type parameter");
-                }
-                self.tir_expr(value, Parent::Other);
             }
             tir::ExprKind::Math { op, operands } => self.math(e, *op, operands, parent),
             tir::ExprKind::Unary { op, operand } => {
@@ -5218,7 +5218,8 @@ fn bound(name: Option<&str>) -> bool {
 
 /// The prelude's functions that have no effect and cannot panic, so that a call of one with pure
 /// arguments is pure: `i64`'s `min`, `max` and `clamp`, and the `sum` of an `[f64]`, which
-/// `Math` and `Sum` nodes were. The `sum` of an `[i64]` may overflow.
+/// `Math` and `Sum` nodes were. The `sum` of an `[i64]` may overflow. `contains` is not here: it
+/// runs the `eq` of its element type, which a program may write with effects.
 const PURE_PRELUDE: [&str; 4] = ["i64.min", "i64.max", "i64.clamp", "[f64].sum"];
 
 /// For each function of `program`: whether a call of it is pure, if its arguments are.
@@ -5406,7 +5407,6 @@ impl<'f> Lets<'f> {
             | tir::ExprKind::Unary { operand: x, .. } => self.expr(x),
             tir::ExprKind::ArrayFill { value: a, len: b }
             | tir::ExprKind::Index { base: a, index: b }
-            | tir::ExprKind::Contains { base: a, value: b }
             | tir::ExprKind::Concat { lhs: a, rhs: b }
             | tir::ExprKind::Equal { lhs: a, rhs: b, .. }
             | tir::ExprKind::Is { lhs: a, rhs: b } => {
@@ -5530,8 +5530,7 @@ impl<'f> Lets<'f> {
             | tir::ExprKind::Bytes(x)
             | tir::ExprKind::Words(x)
             | tir::ExprKind::FromChars(x) => self.pure(x, reads),
-            tir::ExprKind::Contains { base: a, value: b }
-            | tir::ExprKind::Concat { lhs: a, rhs: b }
+            tir::ExprKind::Concat { lhs: a, rhs: b }
             | tir::ExprKind::Equal { lhs: a, rhs: b, .. }
             | tir::ExprKind::Is { lhs: a, rhs: b } => self.pure(a, reads) && self.pure(b, reads),
             tir::ExprKind::If {
@@ -6741,7 +6740,7 @@ fn the_walk_should_mark_the_operator_keys() {
             vec![bounded],
         ),
         (
-            "fn f<T: Eq>(xs: [T], x: T) -> bool { xs.contains(x) }\nfn main() { print(f([1], 1)) }",
+            "fn f<T: Eq>(xs: [T], x: T) -> bool { xs.contains(x) }\nfn main() { print(f([[1]], [1])) }",
             vec![bounded, plain],
         ),
         (
@@ -6761,8 +6760,13 @@ fn the_walk_should_mark_the_operator_keys() {
             vec![inside],
         ),
         (
-            "fn main() {\n    let a = [Ranked(r: 1)]\n    print(a.contains(Ranked(r: 1)))\n}",
+            "fn main() {\n    let a = [[Ranked(r: 1)]]\n    print(a.contains([Ranked(r: 1)]))\n}",
             vec![inside],
+        ),
+        // The `==` in `contains<Ranked>` is a call of the written `eq`: no `Equal` carries a flag.
+        (
+            "fn main() {\n    let a = [Ranked(r: 1)]\n    print(a.contains(Ranked(r: 1)))\n}",
+            vec![],
         ),
         (
             "fn main() {\n    let a = [1]\n    let b = [2]\n    print(a == b)\n}",

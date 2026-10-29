@@ -67,7 +67,7 @@ pub(crate) use lower::lower;
 pub(crate) use print::print;
 
 /// The mir of `program` as lowering leaves it under the assumed flags, before any pass: enough
-/// to see which `Equal` and `Contains` may call a written method, and much cheaper than `build`.
+/// to see which `Equal` may call a written method, and much cheaper than `build`.
 #[cfg(test)]
 pub(crate) fn lowered(program: &tir::Program) -> Program {
     lower(program, &params::assumed(program))
@@ -282,12 +282,6 @@ pub(crate) enum Rvalue {
     Len(Operand),
     /// `s.words().len()`, which counts the words without building them.
     LenWords(Operand),
-    Contains {
-        base: Operand,
-        value: Operand,
-        /// Whether the helper for the element may call a written `eq`.
-        calls: bool,
-    },
     /// The operand converted to the destination's type.
     Convert(Operand),
     Math {
@@ -348,7 +342,7 @@ pub(crate) enum Rvalue {
 
 impl Rvalue {
     /// Whether the statement may run a written method, which can store through a `mut` field and
-    /// free what a borrow reads: a `Call` that is not quiet, an `Equal` or `Contains` whose helper
+    /// free what a borrow reads: a `Call` that is not quiet, an `Equal` whose helper
     /// reaches a written `eq`, and a `Print`, `Dbg` or `Interpolate` whose helper reaches a
     /// written `to_string`.
     /// Pair removal and the certifier both ask this, so they agree.
@@ -356,7 +350,6 @@ impl Rvalue {
         match self {
             Rvalue::Call { quiet, .. } => !*quiet,
             Rvalue::Equal { calls, .. }
-            | Rvalue::Contains { calls, .. }
             | Rvalue::Print { calls, .. }
             | Rvalue::Dbg { calls, .. }
             | Rvalue::Interpolate { calls, .. } => *calls,

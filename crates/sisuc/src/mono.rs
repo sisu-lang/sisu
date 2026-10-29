@@ -659,16 +659,6 @@ impl Mono {
                     }
                 }
             }
-            K::Contains { base, .. } => {
-                let array = self.subst(base.ty, args);
-                // A stand-in type is no array: `run` reports the failure.
-                if !self.failed() {
-                    let element = array
-                        .array_element()
-                        .expect("`contains` should take an array");
-                    self.walk(element, self.out.lang.eq, false);
-                }
-            }
             _ => {}
         }
         e.ty = self.ty(e.ty, args);
@@ -806,7 +796,6 @@ impl Mono {
             | K::Return(Some(operand)) => self.expr(operand, args),
             K::ArrayFill { value: a, len: b }
             | K::Index { base: a, index: b }
-            | K::Contains { base: a, value: b }
             | K::Binary { lhs: a, rhs: b, .. }
             | K::Concat { lhs: a, rhs: b }
             | K::Equal { lhs: a, rhs: b, .. }
@@ -1365,11 +1354,17 @@ mod tests {
                      _ => [x, x].len()\n    }\n}\n\
              fn main() {\n    print(fill([Box(v: 2)], 3))\n}",
         );
-        // `[1, 2].sum()` and `2.min(3)` reach the prelude's `sum` and `min`, and no other
-        // function of the prelude.
+        // `[1, 2].sum()`, `2.min(3)` and `[1].contains(1)` reach the prelude's `sum`, `min` and
+        // `contains`, and no other function of the prelude.
         assert_eq!(
             function_names(&program),
-            ["main", "fill<i64>", "[i64].sum", "i64.min"]
+            [
+                "main",
+                "fill<i64>",
+                "[i64].sum",
+                "i64.min",
+                "[i64].contains"
+            ]
         );
         assert_eq!(class_names(&program), ["Box<i64>"]);
         let enums: Vec<&str> = program.enums.iter().map(|e| e.name.as_str()).collect();
@@ -1893,7 +1888,7 @@ mod tests {
     /// receiver does, stop the walk of the body: no panic on a stand-in type, and one report. Each
     /// row is a statement that drops its value (a warning), before a `print` so that the value of
     /// the block is no part of it. A construction and a variant read their class or enum from the
-    /// type, which a stand-in is not, and a search reads the element from the array type.
+    /// type, which a stand-in is not.
     #[test]
     fn mono_should_stop_a_body_whose_expression_names_a_choice_that_needs_itself() {
         for (row, body) in [
@@ -1901,7 +1896,6 @@ mod tests {
             ("a call", "s.first().size()"),
             ("a construction", "Holder(value: s.first())"),
             ("a variant", "Maybe.Just(s.first())"),
-            ("a search", "[s.first()].contains(s.first())"),
         ] {
             let src = format!(
                 "{LOOPING}fn run<S: Source>(s: S) {{\n    {body}\n    print(1)\n}}\nfn main() {{\n    run(Leaf())\n}}"

@@ -229,7 +229,7 @@ impl Checker<'_> {
     /// prelude writes. `None` when the type has no such method.
     fn idiom_of(&self, name: Symbol, ty: Type) -> Option<Idiom> {
         match ty.kind() {
-            TypeKind::Array(_) if matches!(name.as_str(), "len" | "contains") => {
+            TypeKind::Array(_) if name.as_str() == "len" => {
                 return Some(Idiom::Built);
             }
             _ if number::method(ty, name.as_str()).is_some() => return Some(Idiom::Built),
@@ -255,28 +255,13 @@ impl Checker<'_> {
 
     /// Checks the arguments after the receiver of an idiom call of the method `name`, each once.
     /// `receiver` is the receiver's type. For a number, whether the method takes them (see
-    /// `number_arguments`). For an array: `contains` takes one of the element's type, or an
-    /// integer literal that fits it, that checked cleanly, and `len` none.
+    /// `number_arguments`). For an array: `len` takes none.
     fn idiom_arguments(&mut self, name: &str, receiver: Type, rest: &[ast::Arg]) -> bool {
         if let Some((_, params)) = number::method(receiver, name) {
             return self.number_arguments(receiver, params, rest);
         }
-        let TypeKind::Array(element) = receiver.kind() else {
-            unreachable!("an idiom receiver should be a number with the method or an array");
-        };
-        let [value] = rest else {
-            self.stray(rest);
-            return rest.is_empty() && name != "contains";
-        };
-        let checked = self.expr(&value.value, Some(UNKNOWN));
-        name == "contains"
-            && checked.is_ok_and(|checked| {
-                checked.ty == element
-                    || matches!(
-                        (&value.value.kind, element),
-                        (ExprKind::Int { value, .. }, Type::U8) if u8::try_from(*value).is_ok()
-                    )
-            })
+        self.stray(rest);
+        rest.is_empty()
     }
 
     /// Checks `args`, the arguments of a call of the method `func`, each once. `first` is the
@@ -473,7 +458,7 @@ impl Checker<'_> {
                 return self.invoke(span, func, Some(receiver), site, args);
             }
             Some(ty) if matches!(ty.kind(), TypeKind::Array(_)) => {
-                return self.array_method(span, (receiver, receiver_expr.span), ty, method, args);
+                return self.array_method(span, receiver, ty, method, args);
             }
             Some(Type::STRING) => return self.string_method(span, receiver, method, args),
             Some(ty @ (Type::I64 | Type::F64)) => {

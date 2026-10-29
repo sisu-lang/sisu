@@ -3,7 +3,7 @@
 use rustc_hash::FxHashMap;
 
 use super::expr::{if_some, local, no_member, path};
-use super::extend::holder_of;
+use super::extend::{holder_of, method_holder};
 use super::generic::{Site, named_params};
 use super::unused_names::Used;
 use super::{Checked, Checker, Declared, Holder, Poisoned, UNKNOWN, as_optional, type_of, wrap};
@@ -200,7 +200,7 @@ impl Checker<'_> {
     /// the name `name`, if any; a broken one for a method that a syntax error took. The first in
     /// source order wins, and two are reported (E0034) elsewhere.
     pub(super) fn own_method(&self, ty: Type, name: Symbol) -> Option<Declared<tir::FuncId>> {
-        let holder = holder_of(ty)?;
+        let holder = method_holder(ty)?;
         let body = match holder {
             Holder::Class(c) => self.classes[c.0].methods.get(&name),
             Holder::Enum(e) => self.enums[e.0].methods.get(&name),
@@ -230,7 +230,7 @@ impl Checker<'_> {
     pub(super) fn conforming_methods(&mut self, ty: Type, name: Symbol) {
         self.candidates.clear();
         self.failed_block = None;
-        let Some(holder) = holder_of(ty) else {
+        let Some(holder) = method_holder(ty) else {
             return;
         };
         let key = (holder, name);
@@ -411,7 +411,7 @@ impl Checker<'_> {
     /// The names of the methods that the `extend` blocks of the prelude give `ty`, an array or an
     /// `i64`: what a report of an unknown method suggests.
     pub(super) fn prelude_method_names(&self, ty: Type) -> Vec<&'static str> {
-        let holder = holder_of(ty);
+        let holder = method_holder(ty);
         let mut names: Vec<&'static str> = (self.builtin_methods.iter())
             .inspect(|_| {
                 #[cfg(test)]

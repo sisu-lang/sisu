@@ -205,10 +205,6 @@ impl Printer<'_> {
             Rvalue::FromChars(operand) => format!("string {}", self.operand(operand)),
             Rvalue::Len(operand) => format!("len {}", self.operand(operand)),
             Rvalue::LenWords(operand) => format!("len_words {}", self.operand(operand)),
-            Rvalue::Contains { base, value, calls } => flagged(
-                format!("contains({}, {})", self.operand(base), self.operand(value)),
-                *calls,
-            ),
             Rvalue::Convert(operand) => format!("convert {}", self.operand(operand)),
             Rvalue::Math { op, operands } => format!("math {}({})", op.name(), self.list(operands)),
             Rvalue::Unary { op, operand, .. } => format!("{op}{}", self.operand(operand)),

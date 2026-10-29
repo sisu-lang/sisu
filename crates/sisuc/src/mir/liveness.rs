@@ -257,11 +257,6 @@ fn rvalue(value: &Rvalue, read: &mut impl FnMut(LocalId)) {
             ..
         }
         | Rvalue::Concat { lhs, rhs }
-        | Rvalue::Contains {
-            base: lhs,
-            value: rhs,
-            ..
-        }
         | Rvalue::Binary { lhs, rhs, .. }
         | Rvalue::Compare { lhs, rhs, .. }
         | Rvalue::Equal { lhs, rhs, .. }

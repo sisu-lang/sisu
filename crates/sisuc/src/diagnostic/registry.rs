@@ -435,8 +435,7 @@ pub(crate) enum DiagnosticKind {
         via: Option<(String, Span)>,
     },
     /// The operator `op` on the operand at `at`, of the concrete type `ty`, which has none: the
-    /// interface of the operator is missing from `ty`, or from the part `leaf` of it. For a
-    /// `contains` on the array at `at`, `ty` is the element type.
+    /// interface of the operator is missing from `ty`, or from the part `leaf` of it.
     NoOperator {
         ty: String,
         op: String,
@@ -1142,13 +1141,11 @@ pub(crate) enum DiagnosticKind {
     /// The type argument at `at`, `ty`, which no parameter may take: `unit` or `never`.
     TypeArgument { ty: String, at: Span },
     /// The operator `op` on the operand at `at`, whose type `ty` names a type parameter, which
-    /// has no operators; `contains` when `op` is the `==` of a `contains` on the array at `at`,
-    /// whose element type is `ty`.
+    /// has no operators.
     ParamLacks {
         ty: String,
         op: String,
         at: Span,
-        contains: bool,
         /// The bound that gives the operator, when the type parameter that lacks it is in scope.
         add: Option<AddBound>,
     },
@@ -1852,8 +1849,6 @@ pub(crate) enum NoOperatorForm {
         make: Option<String>,
         interface: String,
     },
-    /// A `contains` on an array whose element type has no `==`.
-    Contains { make: Option<String> },
 }
 
 /// Where a missing bound goes.
@@ -2539,11 +2534,6 @@ impl From<DiagnosticKind> for Diagnostic {
                         format!("`{ty}` has no `{op}`{}", since.unwrap_or_default()),
                         format!("this has type `{ty}`"),
                         make.map(|make| format!("make `{make}` conform to `{interface}`")),
-                    ),
-                    NoOperatorForm::Contains { make } => (
-                        format!("`contains` needs `==` on `{ty}`{}", since.unwrap_or_default()),
-                        "`contains` compares elements with `==`".to_string(),
-                        make.map(|make| format!("make `{make}` conform to `Eq`")),
                     ),
                 };
                 let d = Diagnostic::coded(code, at, message).with_label(label);
@@ -4459,15 +4449,10 @@ impl From<DiagnosticKind> for Diagnostic {
                 ty,
                 op,
                 at,
-                contains,
                 add,
             } => {
-                let d = Diagnostic::coded(code, at, format!("`{ty}` has no `{op}`"));
-                let d = if contains {
-                    d.with_label("`contains` compares elements with `==`")
-                } else {
-                    d.with_label(format!("this has type `{ty}`"))
-                };
+                let d = Diagnostic::coded(code, at, format!("`{ty}` has no `{op}`"))
+                    .with_label(format!("this has type `{ty}`"));
                 match add {
                     Some(add) => d.with_help(add.help()),
                     None => d,

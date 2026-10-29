@@ -53,3 +53,16 @@ extend [f64] {
         total
     }
 }
+
+// Whether an array holds an element `==` to `x`: the elements are compared in order, and the
+// search ends at the first that is. A NaN is not `==` to a NaN, so it is never found.
+extend<T: Eq> [T] {
+    fn contains(self, x: T) -> bool {
+        for e in self {
+            if e == x {
+                return true
+            }
+        }
+        false
+    }
+}
