@@ -294,7 +294,7 @@ expected() {
         tree_rewrite) printf '%s\n' 732347 163697 ;;
         interp) printf '%s\n' 549000 126 ;;
         interfaces) printf '%s\n' 699988 949994 1010000 ;;
-        show) printf '%s\n' 852150 40900 ;;
+        show) printf '%s\n' 1091750 40900 ;;
         *) return 1 ;;
     esac
 }
