@@ -343,6 +343,9 @@ thread_local! {
     /// The most steps `conforms` may count on this thread: the step that passes it panics, so a
     /// test of a query that would take too many steps fails at once.
     pub(super) static CONFORMS_BUDGET: std::cell::Cell<usize> = const { std::cell::Cell::new(usize::MAX) };
+    /// The depth at which `conforms` stops on this thread. A test lowers it: a query that goes
+    /// `CONFORMS_DEPTH_LIMIT` deep takes about a second in a debug build.
+    pub(super) static CONFORMS_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(interface::CONFORMS_DEPTH_LIMIT) };
     /// How many times `failing_leaf` has read a class or an enum for the part that fails, not
     /// counting an answer it kept.
     pub(super) static LEAF_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -454,11 +457,8 @@ struct Checker<'src> {
     leaves: FxHashMap<(Type, tir::InterfaceId, TypeArgs), (Option<Type>, bool)>,
     /// How many parts the walks of `failing_leaf` have cut short, for a part that was being read.
     leaf_cuts: usize,
-    /// How many queries for the payloads of an enum are open, one inside the other
-    /// (`payloads_conform`).
-    conforms_depth: usize,
-    /// The enums whose queries went past `CONFORMS_DEPTH_LIMIT` and were reported.
-    too_deep: FxHashSet<tir::EnumId>,
+    /// The classes and enums whose queries went past `CONFORMS_DEPTH_LIMIT` and were reported.
+    too_deep: FxHashSet<Holder>,
     /// The language interfaces, found by name once the prelude's names are collected.
     lang: tir::LangInterfaces,
     /// The state of the root query of `conforms` that is open, if one is.
@@ -961,7 +961,6 @@ impl<'src> Checker<'src> {
             conformed: FxHashMap::default(),
             leaves: FxHashMap::default(),
             leaf_cuts: 0,
-            conforms_depth: 0,
             too_deep: FxHashSet::default(),
             lang: tir::LangInterfaces::default(),
             open: conformance::Open::default(),

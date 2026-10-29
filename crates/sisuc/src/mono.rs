@@ -13,8 +13,8 @@ use std::mem;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::conformance::{
-    Cause, Decide, Holds, Source, Stuck, StuckChoices, find, holds, normalize_noting, parts,
-    prints_by_helper,
+    Cause, Decide, Holds, Source, Stuck, StuckChoices, ensure_stack, find, holds, normalize_noting,
+    parts, prints_by_helper,
 };
 use crate::diagnostic::{Diagnostic, DiagnosticKind, UnknownForm};
 use crate::lang::{self, Cx, Dispatch};
@@ -370,7 +370,7 @@ impl Mono {
         if let Some(&done) = self.types.get(&ty) {
             return done;
         }
-        let done = match ty.kind() {
+        let done = ensure_stack(|| match ty.kind() {
             TypeKind::Class(id, args) => {
                 Type::intern(TypeKind::Class(self.class(id, args), TypeArgs::NONE))
             }
@@ -383,7 +383,7 @@ impl Mono {
                 panic!("`subst` should replace every type parameter before `mono` maps a type")
             }
             _ => ty,
-        };
+        });
         self.types.insert(ty, done);
         done
     }
@@ -1801,5 +1801,44 @@ mod tests {
             );
             assert_eq!(stuck_places(broken), [40], "{row}");
         }
+    }
+
+    /// #242: a type that nests deeper than a 256 KiB stack allows recursing into is decided for
+    /// `Eq` by the checker and by `mono` on a stack that grows. The chain `E0<T>` ... `E159<T>`
+    /// holds `E(i + 1)<W<W<W<T>>>>`, so `E159` holds `W` nested 159 * 3 = 477 times, with a written
+    /// `Eq` on `W<T: Eq>` that asks the bound of each level.
+    #[test]
+    fn deep_wrapped_types_should_be_decided_without_overflowing_a_small_stack() {
+        // The checker needs more than 64 KiB for a body. 256 KiB holds about 200 levels of the
+        // walk.
+        const STACK: usize = 256 * 1024;
+        let (n, k) = (160, 3);
+        let mut src = String::from(
+            "class W<T> {\n    value: T\n}\nextend<T: Eq> W<T>: Eq {\n    fn eq(self, other: Self) -> bool {\n        self.value == other.value\n    }\n}\n",
+        );
+        for i in 0..n - 1 {
+            let (open, close) = ("W<".repeat(k), ">".repeat(k));
+            writeln!(
+                src,
+                "enum E{i}<T> {{\n    End\n    A(E{}<{open}T{close}>)\n}}",
+                i + 1
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        writeln!(src, "enum E{}<T> {{\n    End\n    A(T)\n}}", n - 1)
+            .expect("writing to a `String` should succeed");
+        src.push_str("fn main() {\n    let e: E0<i64> = E0.End\n    print(e == e)\n}\n");
+        // The parser needs more than 64 KiB for a statement, so it runs here, not on the thread.
+        let parsed = parse_ok(&src);
+        std::thread::Builder::new()
+            .stack_size(STACK)
+            .spawn(move || {
+                let (program, diagnostics) = check_alone(&parsed, &src, &[]);
+                let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+                instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
+            })
+            .expect("the thread should start")
+            .join()
+            .expect("the walks should not overflow the stack");
     }
 }

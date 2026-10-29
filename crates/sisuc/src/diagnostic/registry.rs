@@ -193,7 +193,7 @@ codes! {
     TypeArguments = "E0137",
     TypeArgument = "E0138",
     ParamLacks = "E0139",
-    InstantiationCycle = "E0140",
+    InstantiationCycle | ConformanceTooDeep = "E0140",
     BreakValueNotLoop = "E0141",
     LabelClash = "E0142",
     LabelReused = "E0143",
@@ -1155,6 +1155,15 @@ pub(crate) enum DiagnosticKind {
         /// The interface whose hub the cycle passes: a call through it counts as reaching every
         /// conformance to it.
         reach: Option<String>,
+    },
+    /// The check of `interface` for the type `root`, which stopped after `limit` nested types:
+    /// the class or enum `holder`, named at `at`, is the one that the check was too deep for.
+    ConformanceTooDeep {
+        interface: String,
+        root: String,
+        limit: usize,
+        holder: String,
+        at: Span,
     },
 }
 
@@ -4424,6 +4433,19 @@ impl From<DiagnosticKind> for Diagnostic {
                     None => d,
                 }
             }
+            DiagnosticKind::ConformanceTooDeep {
+                interface,
+                root,
+                limit,
+                holder,
+                at,
+            } => Diagnostic::coded(
+                code,
+                at,
+                format!("the check of `{interface}` for `{root}` stopped after {limit} nested types"),
+            )
+            .with_label(format!("`{holder}` is {limit} types deep here"))
+            .with_help("a type that nests this deep may instantiate itself without end"),
             DiagnosticKind::NanComparison { at, negated, fix } => {
                 let always = if negated { "true" } else { "false" };
                 let d = Diagnostic::coded(

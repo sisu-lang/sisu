@@ -7,9 +7,9 @@ use std::rc::Rc;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::extend::holder_of;
-use super::{BindingKind, Body, Checker, Choice, Choices, Declared, Definition};
+use super::{BindingKind, Body, Checker, Choice, Choices, Declared, Definition, Holder};
 use crate::ast;
-use crate::conformance::{CHOICE_DEPTH_LIMIT, Entered, Generated, find, generated};
+use crate::conformance::{CHOICE_DEPTH_LIMIT, Entered, Generated, ensure_stack, find, generated};
 use crate::diagnostic::{
     AddBound, Definition as Kind, DiagnosticKind, NoOperatorForm, NotConformForm, NotInterface,
     UnknownForm, WideKind,
@@ -25,13 +25,22 @@ use crate::tir::{ClassId, EnumId, FuncId, InterfaceId, Type, TypeArgs, TypeKind}
 /// arguments, doubles the number at each level of inheritance, so the walk stops here (E0157).
 pub(super) const BOUND_CLOSURE_LIMIT: usize = 256;
 
-/// How many queries for the payloads of an enum may be open one inside the other. A declaration
-/// that instantiates itself with a longer type argument each time, through a path that the graph
-/// of instantiations does not see (`check/cycle.rs`), makes a query that has no end, and the call
-/// stack would overflow. The query stops here and reports E0140. A program with no such
-/// declaration nests far less: each level is an enum that holds the next one in a payload, and
-/// 1024 of them is far above a program written by hand.
-pub(super) const CONFORMS_DEPTH_LIMIT: usize = 1024;
+/// How many class or enum keys a query for a conformance may hold open, one inside the other. A
+/// declaration that instantiates itself with a longer type argument each time, through a path that
+/// the graph of instantiations does not see (`check/cycle.rs`), makes a query that has no end.
+/// The query stops here and reports E0140. The stack of the open keys is on the heap, and the walk
+/// grows the call stack as it needs (`ensure_stack`), so the value follows the memory that a
+/// query may use, not the call stack: 2^18 keys take about 40 MB, and `mono` makes the same
+/// number of instances for a program that nests that deep, which is far above any program.
+pub(super) const CONFORMS_DEPTH_LIMIT: usize = 1 << 18;
+
+/// `CONFORMS_DEPTH_LIMIT`; a test may lower it (`CONFORMS_DEPTH`).
+fn depth_limit() -> usize {
+    #[cfg(test)]
+    return super::CONFORMS_DEPTH.get();
+    #[cfg(not(test))]
+    CONFORMS_DEPTH_LIMIT
+}
 
 /// How deep a type that `probe_associated` follows may nest its arguments: as many levels as a
 /// walk of `normalize` follows choices, so the probe finds what `mono` would meet.
@@ -1111,21 +1120,28 @@ impl Checker<'_> {
         self.broken_extensions.insert(self.holder_name(holder));
     }
 
-    /// Reports once for the enum `id` that a query of `conforms` went `CONFORMS_DEPTH_LIMIT` deep
-    /// into: it instantiates itself without end (E0140). The report stands at its name, as the
-    /// walk has no use to point at.
-    fn too_deep(&mut self, id: EnumId) {
-        if !self.too_deep.insert(id) {
+    /// Reports once for the class or enum `holder` that a query of `conforms` was
+    /// `CONFORMS_DEPTH_LIMIT` keys deep for (E0140). The report stands at its name, as the walk
+    /// has no use to point at. It names the interface and the type of the root of the query.
+    fn too_deep(&mut self, holder: Holder) {
+        if !self.too_deep.insert(holder) {
             return;
         }
-        let name = &self.enums[id.0].name;
-        let (name, at) = (name.name.to_string(), name.span);
-        self.report(DiagnosticKind::InstantiationCycle {
-            instance: name.clone(),
-            name,
+        let name = match holder {
+            Holder::Class(id) => &self.classes[id.0].name,
+            Holder::Enum(id) => &self.enums[id.0].name,
+        };
+        let (holder, at) = (name.name.to_string(), name.span);
+        let (root, interface, args) = self
+            .open
+            .root()
+            .expect("a query that is too deep should have a root");
+        self.report(DiagnosticKind::ConformanceTooDeep {
+            interface: self.bound_text(interface, args),
+            root: self.type_name(root),
+            limit: depth_limit(),
+            holder,
             at,
-            through: Vec::new(),
-            reach: None,
         });
     }
 
@@ -1187,7 +1203,7 @@ impl Checker<'_> {
         if interface == self.lang.display {
             return generated(self.lang, ty, interface) == Generated::Holds;
         }
-        match ty.kind() {
+        ensure_stack(|| match ty.kind() {
             TypeKind::Param(_, place) => {
                 let place = place as usize;
                 self.param_interfaces(place).contains(&(interface, args))
@@ -1200,7 +1216,7 @@ impl Checker<'_> {
                 Generated::Element(part) => self.conforms(part, interface, args),
                 Generated::Fails | Generated::Payloads(..) => false,
             },
-        }
+        })
     }
 
     /// `conforms` for the class or enum `ty`. It decides the key (`ty`, `interface`, `args`) as
@@ -1237,7 +1253,14 @@ impl Checker<'_> {
                 super::CONFORMS_BUDGET.get()
             );
         }
-        let answer = self.conforms_expanded(ty, interface, args);
+        let answer = if self.open.depth() > depth_limit() {
+            // The query holds, as it does for a marked enum: the report of `too_deep` is its only
+            // diagnostic.
+            self.too_deep(holder_of(ty).expect("a key of this walk should be a class or an enum"));
+            true
+        } else {
+            self.conforms_expanded(ty, interface, args)
+        };
         let mut done = self.open.leave(key, answer);
         if self.open.is_idle() {
             done.extend(self.open.settle());
@@ -1287,26 +1310,11 @@ impl Checker<'_> {
     /// Whether each payload type of each variant of the enum `id`, with `own` for its
     /// parameters, conforms to `interface`. An enum that grows, or that no value can be built of,
     /// holds with no part query: its own error is its only diagnostic. A payload that is an
-    /// error, or whose associated type has no choice, has its report already, so it holds. So does
-    /// an enum whose query is `CONFORMS_DEPTH_LIMIT` deep: it has the report of `too_deep`.
+    /// error, or whose associated type has no choice, has its report already, so it holds.
     fn payloads_conform(&mut self, id: EnumId, own: TypeArgs, interface: InterfaceId) -> bool {
         if self.marked[id.0] {
             return true;
         }
-        if self.conforms_depth >= CONFORMS_DEPTH_LIMIT {
-            // The query holds, as it does for a marked enum: its own error is its only
-            // diagnostic.
-            self.too_deep(id);
-            return true;
-        }
-        self.conforms_depth += 1;
-        let holds = self.payloads_hold(id, own, interface);
-        self.conforms_depth -= 1;
-        holds
-    }
-
-    /// `payloads_conform` for an enum that is not marked and not too deep.
-    fn payloads_hold(&mut self, id: EnumId, own: TypeArgs, interface: InterfaceId) -> bool {
         for slot in self.payload_slots(id) {
             let Some(payload) = self.payload_type(id, slot) else {
                 continue;
@@ -1499,7 +1507,7 @@ impl Checker<'_> {
         interface: InterfaceId,
         seen: &mut FxHashSet<(Type, InterfaceId, TypeArgs)>,
     ) -> Option<Type> {
-        if self.marked[id.0] || self.too_deep.contains(&id) {
+        if self.marked[id.0] || self.too_deep.contains(&Holder::Enum(id)) {
             return None;
         }
         self.payload_slots(id).into_iter().find_map(|slot| {
@@ -1517,56 +1525,58 @@ impl Checker<'_> {
         args: TypeArgs,
         seen: &mut FxHashSet<(Type, InterfaceId, TypeArgs)>,
     ) -> Option<Type> {
-        match ty.kind() {
-            TypeKind::Param(..) | TypeKind::Assoc(..) => {
-                (!self.conforms(ty, interface, args)).then_some(ty)
-            }
-            TypeKind::Class(..) | TypeKind::Enum(..) => {
-                let broken = holder_of(ty).is_some_and(|holder| {
-                    self.broken_extensions.contains(&self.holder_name(holder))
-                });
-                if broken {
-                    return None;
+        ensure_stack(|| {
+            match ty.kind() {
+                TypeKind::Param(..) | TypeKind::Assoc(..) => {
+                    (!self.conforms(ty, interface, args)).then_some(ty)
                 }
-                if !seen.insert((ty, interface, args)) {
-                    self.leaf_cuts += 1;
-                    return None;
-                }
-                // The answer for a type with no type parameter changes with no body. A part that
-                // was found fails on its own, wherever the walk began, and `None` with no part cut
-                // short does not depend on where it began: both are kept, so a type that was read
-                // before costs nothing more. A `None` after a cut holds only while an ancestor is
-                // in progress, so it is not kept.
-                let key = (ty, interface, args);
-                if let Some(&(kept, true)) = self.leaves.get(&key) {
-                    return kept;
-                }
-                #[cfg(test)]
-                super::LEAF_STEPS.set(super::LEAF_STEPS.get() + 1);
-                let cuts = self.leaf_cuts;
-                let found = if let Some((k, stands)) = find(&self.conformances, interface, ty, args)
-                {
-                    (!self.record_holds(interface, k, stands)).then_some(ty)
-                } else {
-                    match generated(self.lang, ty, interface) {
-                        Generated::Holds => None,
-                        Generated::Fails | Generated::Element(_) => Some(ty),
-                        Generated::Payloads(id, own) => {
-                            self.payloads_leaf(id, own, interface, seen)
-                        }
+                TypeKind::Class(..) | TypeKind::Enum(..) => {
+                    let broken = holder_of(ty).is_some_and(|holder| {
+                        self.broken_extensions.contains(&self.holder_name(holder))
+                    });
+                    if broken {
+                        return None;
                     }
-                };
-                if !ty.has_param() && (self.leaf_cuts == cuts || found.is_some()) {
-                    self.leaves.insert(key, (found, true));
+                    if !seen.insert((ty, interface, args)) {
+                        self.leaf_cuts += 1;
+                        return None;
+                    }
+                    // The answer for a type with no type parameter changes with no body. A part
+                    // that was found fails on its own, wherever the walk began, and `None` with no
+                    // part cut short does not depend on where it began: both are kept, so a type
+                    // that was read before costs nothing more. A `None` after a cut holds only
+                    // while an ancestor is in progress, so it is not kept.
+                    let key = (ty, interface, args);
+                    if let Some(&(kept, true)) = self.leaves.get(&key) {
+                        return kept;
+                    }
+                    #[cfg(test)]
+                    super::LEAF_STEPS.set(super::LEAF_STEPS.get() + 1);
+                    let cuts = self.leaf_cuts;
+                    let found =
+                        if let Some((k, stands)) = find(&self.conformances, interface, ty, args) {
+                            (!self.record_holds(interface, k, stands)).then_some(ty)
+                        } else {
+                            match generated(self.lang, ty, interface) {
+                                Generated::Holds => None,
+                                Generated::Fails | Generated::Element(_) => Some(ty),
+                                Generated::Payloads(id, own) => {
+                                    self.payloads_leaf(id, own, interface, seen)
+                                }
+                            }
+                        };
+                    if !ty.has_param() && (self.leaf_cuts == cuts || found.is_some()) {
+                        self.leaves.insert(key, (found, true));
+                    }
+                    found
                 }
-                found
+                _ => match generated(self.lang, ty, interface) {
+                    Generated::Holds => None,
+                    Generated::Fails | Generated::Payloads(..) => Some(ty),
+                    Generated::Element(part) => self.leaf(part, interface, args, seen),
+                },
             }
-            _ => match generated(self.lang, ty, interface) {
-                Generated::Holds => None,
-                Generated::Fails | Generated::Payloads(..) => Some(ty),
-                Generated::Element(part) => self.leaf(part, interface, args, seen),
-            },
-        }
+        })
     }
 
     /// `interface` with `args`, as a program writes a bound.
