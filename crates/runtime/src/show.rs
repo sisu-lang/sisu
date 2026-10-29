@@ -4,8 +4,10 @@
 //! events later. A flat sink writes `sep` as `, ` and nothing more.
 //!
 //! A sink is a stack slot of `SINK_SIZE` bytes that generated code owns. One kind writes to the
-//! runtime's standard output buffer, so `print` needs no buffer for the text. The other builds a
+//! runtime's standard output buffer, so `print` needs no buffer for the text. Another builds a
 //! block that is the result string: `header` bytes that the sink never touches, then the text.
+//! The third, the pretty sink, records the pieces and the events of a value, and
+//! `sisu_show_pretty_finish` lays them out to fit 80 columns in the sink that it wraps.
 //! The runtime neither builds nor reads a Sisu object (ADR 0009) and does not know the string
 //! layout (ADR 0014); generated code writes the header of the block in place after
 //! `sisu_show_finish`.
@@ -18,7 +20,7 @@ use crate::{float, sisu_alloc, sisu_realloc, stdout_panic, text, with_stdout};
 
 /// The size in bytes of a [`Sink`]. Generated code allocates this much for a sink, and
 /// `codegen/abi.rs` checks that its own type for a sink measures the same.
-pub const SINK_SIZE: usize = 40;
+pub const SINK_SIZE: usize = 48;
 /// The offset in bytes of a sink's text length, which generated code reads after
 /// `sisu_show_finish`.
 pub const SINK_LEN: usize = 24;
@@ -30,6 +32,12 @@ pub const SINK_CAP: usize = 32;
 const STDOUT: usize = 0;
 /// The sink writes to a block it owns.
 const BUFFER: usize = 1;
+/// The sink records pieces and group events for a layout.
+const PRETTY: usize = 2;
+/// The columns a line may fill before a group breaks.
+const WIDTH: usize = 80;
+/// The columns that a broken group indents its children by.
+const INDENT: usize = 4;
 /// The text capacity of a new buffer sink, in bytes. It doubles when the text outgrows it.
 const FIRST_CAPACITY: usize = 64;
 /// The alignment of a buffer sink's block, the string header's.
@@ -40,7 +48,7 @@ const BLOCK_ALIGN: usize = 8;
 #[derive(Debug)]
 #[repr(C)]
 pub struct Sink {
-    /// `STDOUT` or `BUFFER`.
+    /// `STDOUT`, `BUFFER` or `PRETTY`.
     kind: usize,
     /// The block of a buffer sink.
     block: *mut u8,
@@ -50,6 +58,8 @@ pub struct Sink {
     len: usize,
     /// The bytes of text that the block has room for, after the header.
     cap: usize,
+    /// What a pretty sink has recorded, and the sink it lays out into; `None` for the others.
+    pretty: Option<Box<Recorder>>,
 }
 
 /// The size of a block with `header` bytes and `cap` bytes of text. A size that overflows is a
@@ -64,6 +74,10 @@ impl Sink {
     /// Writes `bytes` to the sink.
     fn put(&mut self, bytes: &[u8]) {
         if bytes.is_empty() {
+            return;
+        }
+        if let Some(recorder) = self.pretty.as_deref_mut() {
+            recorder.record(Event::Text, bytes);
             return;
         }
         if self.kind == STDOUT {
@@ -115,7 +129,7 @@ impl Sink {
     /// part. Interpolation pads a part of a buffer sink: standard output has taken its text
     /// already, so a standard output sink cannot pad.
     fn pad(&mut self, mark: usize, width: usize, align: u8) {
-        if self.kind == STDOUT || mark > self.len {
+        if self.kind != BUFFER || mark > self.len {
             std::process::abort();
         }
         // `sisu_pad` writes at most `width` bytes after the text, so make room for as many.
@@ -129,6 +143,23 @@ impl Sink {
         // room for `width` more after `len`, so `len - mark + width` bytes are writable there.
         let padded = unsafe { sisu_pad(text, self.len - mark, width, align) };
         self.len = mark + padded;
+    }
+
+    /// Writes `count` spaces.
+    fn spaces(&mut self, count: usize) {
+        const BLANKS: [u8; 64] = [b' '; 64];
+        for _ in 0..count / BLANKS.len() {
+            self.put(&BLANKS);
+        }
+        self.put(&BLANKS[..count % BLANKS.len()]);
+    }
+
+    /// Writes the text of a group event: a pretty sink records it, another sink writes it.
+    fn group_text(&mut self, event: fn(Span) -> Event, bytes: &[u8]) {
+        match self.pretty.as_deref_mut() {
+            Some(recorder) => recorder.record(event, bytes),
+            None => self.put(bytes),
+        }
     }
 
     /// Ends the line: a standard output sink writes the newline and the line's end, a buffer
@@ -188,12 +219,263 @@ fn put_literal(sink: &mut Sink, text: &str, quote: char) {
     sink.put(quote_text);
 }
 
+/// A run of recorded text: `len` bytes at `at` in the recorder's text.
+#[derive(Clone, Copy, Debug)]
+struct Span {
+    at: usize,
+    len: usize,
+}
+
+/// What a pretty sink records, in the order of the calls.
+#[derive(Clone, Copy, Debug)]
+enum Event {
+    /// Text that is part of a value.
+    Text(Span),
+    /// The text that starts a group.
+    Open(Span),
+    /// The place between two parts of a group.
+    Sep,
+    /// The text that ends a group.
+    Close(Span),
+}
+
+/// The events of a pretty sink, the bytes of their text, and the sink to lay them out into. The
+/// text is copied at once, since the caller may free a piece when its call returns.
+#[derive(Debug)]
+struct Recorder {
+    /// The sink that `sisu_show_pretty_finish` lays the text out into.
+    inner: *mut Sink,
+    text: Vec<u8>,
+    events: Vec<Event>,
+    /// The events read through `event`, which a test checks against the layout's two passes.
+    #[cfg(test)]
+    reads: std::cell::Cell<usize>,
+}
+
+impl Recorder {
+    fn new(inner: *mut Sink) -> Self {
+        Self {
+            inner,
+            text: Vec::new(),
+            events: Vec::new(),
+            #[cfg(test)]
+            reads: std::cell::Cell::new(0),
+        }
+    }
+
+    /// Records `bytes`, a copy of them, as the event that `event` makes.
+    fn record(&mut self, event: fn(Span) -> Event, bytes: &[u8]) {
+        let span = Span {
+            at: self.text.len(),
+            len: bytes.len(),
+        };
+        self.text.extend_from_slice(bytes);
+        self.events.push(event(span));
+    }
+
+    /// The event `i`. Both passes of the layout read an event only through this function.
+    fn event(&self, i: usize) -> Event {
+        #[cfg(test)]
+        self.reads.set(self.reads.get() + 1);
+        self.events[i]
+    }
+
+    /// The recorded text of `span`.
+    fn bytes(&self, span: Span) -> &[u8] {
+        &self.text[span.at..span.at + span.len]
+    }
+
+    /// The width that each group needs on one line, at the index of its `Open`: its flat width,
+    /// and 1 more when a `,` follows it. One pass from the last event to the first, with a stack
+    /// of the widths of the groups still open, since a group can hold 1,000,000 levels. A text
+    /// piece that holds a line break has no flat width, so it is `usize::MAX`, and every group
+    /// around it needs more than a line.
+    fn group_needs(&self) -> Vec<usize> {
+        let mut needs = vec![0; self.events.len()];
+        // The width so far of the group that the pass is inside, and of each group around it,
+        // with whether a `Sep` follows that group.
+        let mut width = 0usize;
+        let mut outer: Vec<(usize, bool)> = Vec::new();
+        let mut sep_follows = false;
+        for i in (0..self.events.len()).rev() {
+            let event = self.event(i);
+            match event {
+                Event::Text(span) => width = width.saturating_add(flat_width(self.bytes(span))),
+                Event::Sep => width = width.saturating_add(2),
+                Event::Close(span) => {
+                    outer.push((width, sep_follows));
+                    width = flat_width(self.bytes(span));
+                }
+                Event::Open(span) => {
+                    width = width.saturating_add(flat_width(self.bytes(span)));
+                    let (around, comma) = outer.pop().expect("an open should have a close");
+                    needs[i] = width.saturating_add(usize::from(comma));
+                    width = width.saturating_add(around);
+                }
+            }
+            sep_follows = matches!(event, Event::Sep);
+        }
+        needs
+    }
+}
+
+/// The Unicode scalar values in `bytes`; a byte that continues a code point is not one.
+fn chars(bytes: &[u8]) -> usize {
+    bytes.iter().filter(|&&byte| byte & 0xC0 != 0x80).count()
+}
+
+/// The width of `bytes` on one line, or `usize::MAX` when they hold a line break.
+fn flat_width(bytes: &[u8]) -> usize {
+    if bytes.contains(&b'\n') {
+        usize::MAX
+    } else {
+        chars(bytes)
+    }
+}
+
+/// The column after `bytes` written at column `col`: counted from the last line break in them.
+fn column_after(col: usize, bytes: &[u8]) -> usize {
+    match bytes.iter().rposition(|&byte| byte == b'\n') {
+        Some(at) => chars(&bytes[at + 1..]),
+        None => col.saturating_add(chars(bytes)),
+    }
+}
+
+/// Where a layout writes.
+trait Output {
+    fn text(&mut self, bytes: &[u8]);
+    fn spaces(&mut self, count: usize);
+}
+
+impl Output for Sink {
+    fn text(&mut self, bytes: &[u8]) {
+        self.put(bytes);
+    }
+
+    fn spaces(&mut self, count: usize) {
+        Sink::spaces(self, count);
+    }
+}
+
+/// A group that the layout has opened and not closed.
+struct Frame {
+    /// The group has a line for each child.
+    broken: bool,
+    /// The line break before the first child is written.
+    started: bool,
+    /// The columns before the group's own lines: four per enclosing broken group.
+    indent: usize,
+}
+
+/// The second pass of the layout: the events from the first to the last, with a stack of the
+/// groups that are open, and the column of the text written so far. The layout starts at column
+/// 0, wherever the text lands.
+struct Layout<'a, O: Output> {
+    out: &'a mut O,
+    col: usize,
+    frames: Vec<Frame>,
+}
+
+impl<O: Output> Layout<'_, O> {
+    fn text(&mut self, bytes: &[u8]) {
+        self.out.text(bytes);
+        self.col = column_after(self.col, bytes);
+    }
+
+    fn line_break(&mut self, indent: usize) {
+        self.out.text(b"\n");
+        self.out.spaces(indent);
+        self.col = indent;
+    }
+
+    /// Starts the line of the next child of the group that is open, if it is broken. A group with
+    /// no child writes no line break.
+    fn start_child(&mut self) {
+        if let Some(frame) = self.frames.last_mut()
+            && frame.broken
+            && !frame.started
+        {
+            frame.started = true;
+            let indent = frame.indent + INDENT;
+            self.line_break(indent);
+        }
+    }
+
+    /// Opens a group that needs `need` columns on one line. It stays flat when it fits from the
+    /// column it starts at, or when the group around it is flat.
+    fn open(&mut self, bytes: &[u8], need: usize) {
+        self.start_child();
+        let (inside_flat, indent) = self.frames.last().map_or((false, 0), |frame| {
+            let step = if frame.broken { INDENT } else { 0 };
+            (!frame.broken, frame.indent + step)
+        });
+        let broken = !inside_flat && self.col.saturating_add(need) > WIDTH;
+        self.frames.push(Frame {
+            broken,
+            started: false,
+            indent,
+        });
+        self.text(bytes);
+    }
+
+    fn sep(&mut self) {
+        let broken_child_indent = self
+            .frames
+            .last()
+            .filter(|frame| frame.broken)
+            .map(|frame| frame.indent + INDENT);
+        if let Some(indent) = broken_child_indent {
+            self.start_child();
+            self.text(b",");
+            self.line_break(indent);
+        } else {
+            self.text(b", ");
+        }
+    }
+
+    fn close(&mut self, bytes: &[u8]) {
+        let frame = self.frames.pop().expect("a close should have an open");
+        if frame.broken && frame.started {
+            self.line_break(frame.indent);
+        }
+        self.text(bytes);
+    }
+}
+
+/// Lays the events of `recorder` out into `out` to fit 80 columns. Each group is its open text,
+/// its children and its close text. Flat, the children are on one line, joined by `, `. Broken,
+/// each child has a line, four columns in from the group, and all but the last end in `,`; the
+/// close text has a line at the group's own indentation. Groups are decided from the outermost:
+/// one stays flat when its column, its flat width and a following `,` fit in 80 columns, and a
+/// flat group's children are flat. A group with no child is always flat. Widths count Unicode
+/// scalar values. Two passes, each a loop over the events, so the work is linear in the events,
+/// the text recorded and the text written.
+fn lay_out(recorder: &Recorder, out: &mut impl Output) {
+    let needs = recorder.group_needs();
+    let mut layout = Layout {
+        out,
+        col: 0,
+        frames: Vec::new(),
+    };
+    for (i, &need) in needs.iter().enumerate() {
+        match recorder.event(i) {
+            Event::Text(span) => {
+                layout.start_child();
+                layout.text(recorder.bytes(span));
+            }
+            Event::Open(span) => layout.open(recorder.bytes(span), need),
+            Event::Sep => layout.sep(),
+            Event::Close(span) => layout.close(recorder.bytes(span)),
+        }
+    }
+}
+
 /// The sink at `sink`.
 ///
 /// # Safety
 ///
-/// `sink` points to a sink that a `sisu_show_stdout` or `sisu_show_buffer` call started, and
-/// nothing else uses it for `'a`.
+/// `sink` points to a sink that a `sisu_show_stdout`, `sisu_show_buffer` or `sisu_show_pretty`
+/// call started, and nothing else uses it for `'a`.
 #[expect(
     unsafe_code,
     reason = "turns the pointer generated code passes into a reference"
@@ -238,6 +520,7 @@ pub unsafe extern "C" fn sisu_show_stdout(sink: *mut Sink) {
             header: 0,
             len: 0,
             cap: 0,
+            pretty: None,
         });
     }
 }
@@ -265,6 +548,7 @@ pub unsafe extern "C" fn sisu_show_buffer(sink: *mut Sink, header: usize) {
             header,
             len: 0,
             cap: FIRST_CAPACITY,
+            pretty: None,
         });
     }
 }
@@ -301,7 +585,7 @@ pub unsafe extern "C" fn sisu_show_line_end(sink: *mut Sink) {
 }
 
 /// The length of the text of `sink` so far, for `sisu_show_pad` to pad from. A buffer sink
-/// only: standard output has taken its text already.
+/// only: standard output has taken its text already, and `#` takes no width.
 ///
 /// # Safety
 ///
@@ -313,7 +597,9 @@ pub unsafe extern "C" fn sisu_show_line_end(sink: *mut Sink) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sisu_show_mark(sink: *mut Sink) -> usize {
     // SAFETY: the caller promises that `sink` is started.
-    unsafe { sink_at(sink) }.len
+    let sink = unsafe { sink_at(sink) };
+    debug_assert_ne!(sink.kind, PRETTY, "a pretty sink takes no width");
+    sink.len
 }
 
 /// Pads the text written since `mark`, a result of `sisu_show_mark` on the same buffer sink, to
@@ -331,6 +617,57 @@ pub unsafe extern "C" fn sisu_show_mark(sink: *mut Sink) -> usize {
 pub unsafe extern "C" fn sisu_show_pad(sink: *mut Sink, mark: usize, width: usize, align: u8) {
     // SAFETY: the caller promises that `sink` is started.
     unsafe { sink_at(sink) }.pad(mark, width, align);
+}
+
+/// Starts a pretty sink at `sink` over `inner`. The sink records the pieces and the group events
+/// that it gets, as a flat sink would write them, and copies the bytes of each piece before the
+/// call returns. `sisu_show_pretty_finish` lays them out into `inner`, which has taken no text
+/// from the pretty sink until then. A pretty sink takes no `sisu_show_mark` and `sisu_show_pad`:
+/// `#` takes no width.
+///
+/// # Safety
+///
+/// `sink` is writable for `SINK_SIZE` bytes, aligned to 8. `inner` is a started standard output
+/// or buffer sink that is not `sink`.
+#[expect(
+    unsafe_code,
+    reason = "generated code calls this function by its unmangled symbol name and passes raw pointers"
+)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sisu_show_pretty(sink: *mut Sink, inner: *mut Sink) {
+    // SAFETY: the caller promises room for a sink at `sink`.
+    unsafe {
+        sink.write(Sink {
+            kind: PRETTY,
+            block: ptr::null_mut(),
+            header: 0,
+            len: 0,
+            cap: 0,
+            pretty: Some(Box::new(Recorder::new(inner))),
+        });
+    }
+}
+
+/// Ends a pretty sink: lays out what it recorded into its `inner` sink, then frees what it
+/// recorded. The layout starts at column 0, wherever the text in `inner` has got to.
+///
+/// # Safety
+///
+/// `sink` is a started pretty sink, and its `inner` sink is still started and used by nothing
+/// else.
+#[expect(
+    unsafe_code,
+    reason = "generated code calls this function by its unmangled symbol name and passes a raw pointer"
+)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sisu_show_pretty_finish(sink: *mut Sink) {
+    // SAFETY: the caller promises that `sink` is started.
+    let recorder = unsafe { sink_at(sink) }
+        .pretty
+        .take()
+        .expect("a pretty sink should be finished once");
+    // SAFETY: the caller promises that `inner` is started and not shared.
+    lay_out(&recorder, unsafe { sink_at(recorder.inner) });
 }
 
 /// Writes the `len` bytes at `bytes` as they are.
@@ -462,7 +799,7 @@ pub unsafe extern "C" fn sisu_show_bool(sink: *mut Sink, value: bool) {
 }
 
 /// Starts a group: writes the `len` bytes at `bytes`, such as `Add(` or `[`. A pretty sink
-/// starts a part that may break after them.
+/// records a group that may break after them.
 ///
 /// # Safety
 ///
@@ -473,11 +810,13 @@ pub unsafe extern "C" fn sisu_show_bool(sink: *mut Sink, value: bool) {
 )]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sisu_show_open(sink: *mut Sink, bytes: *const u8, len: usize) {
-    // SAFETY: the same promises as `sisu_show_str`.
-    unsafe { sisu_show_str(sink, bytes, len) };
+    // SAFETY: the caller promises that `sink` is started.
+    let sink = unsafe { sink_at(sink) };
+    // SAFETY: the caller promises `len` readable bytes at `bytes`.
+    sink.group_text(Event::Open, unsafe { bytes_at(bytes, len) });
 }
 
-/// Separates two parts of a group: a flat sink writes `, `.
+/// Separates two parts of a group: a flat sink writes `, `, and a pretty sink records the place.
 ///
 /// # Safety
 ///
@@ -489,10 +828,15 @@ pub unsafe extern "C" fn sisu_show_open(sink: *mut Sink, bytes: *const u8, len: 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sisu_show_sep(sink: *mut Sink) {
     // SAFETY: the caller promises that `sink` is started.
-    unsafe { sink_at(sink) }.put(b", ");
+    let sink = unsafe { sink_at(sink) };
+    match sink.pretty.as_deref_mut() {
+        Some(recorder) => recorder.events.push(Event::Sep),
+        None => sink.put(b", "),
+    }
 }
 
-/// Ends a group: writes the `len` bytes at `bytes`, such as `)` or `]`.
+/// Ends a group: writes the `len` bytes at `bytes`, such as `)` or `]`. A pretty sink records them
+/// as the end of its group.
 ///
 /// # Safety
 ///
@@ -503,8 +847,10 @@ pub unsafe extern "C" fn sisu_show_sep(sink: *mut Sink) {
 )]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sisu_show_close(sink: *mut Sink, bytes: *const u8, len: usize) {
-    // SAFETY: the same promises as `sisu_show_str`.
-    unsafe { sisu_show_str(sink, bytes, len) };
+    // SAFETY: the caller promises that `sink` is started.
+    let sink = unsafe { sink_at(sink) };
+    // SAFETY: the caller promises `len` readable bytes at `bytes`.
+    sink.group_text(Event::Close, unsafe { bytes_at(bytes, len) });
 }
 
 #[cfg(test)]
@@ -785,6 +1131,332 @@ mod tests {
         });
         assert_eq!(text, "abc");
         assert_eq!(*marks.borrow(), [0, 3]);
+    }
+
+    /// An event of a pretty sink, as a test plays it.
+    enum Ev {
+        Text(String),
+        Open(String),
+        Sep,
+        Close(String),
+    }
+
+    fn t(text: &str) -> Ev {
+        Ev::Text(text.to_owned())
+    }
+
+    fn o(text: &str) -> Ev {
+        Ev::Open(text.to_owned())
+    }
+
+    fn c(text: &str) -> Ev {
+        Ev::Close(text.to_owned())
+    }
+
+    #[expect(unsafe_code, reason = "the test calls the runtime's C ABI")]
+    fn play(sink: *mut Sink, events: &[Ev]) {
+        for event in events {
+            match event {
+                Ev::Text(text) => raw(sink, text),
+                // SAFETY: `sink` is started, and the text is readable for its length.
+                Ev::Open(text) => unsafe { sisu_show_open(sink, text.as_ptr(), text.len()) },
+                // SAFETY: `sink` is started.
+                Ev::Sep => unsafe { sisu_show_sep(sink) },
+                // SAFETY: `sink` is started, and the text is readable for its length.
+                Ev::Close(text) => unsafe { sisu_show_close(sink, text.as_ptr(), text.len()) },
+            }
+        }
+    }
+
+    /// The text that a pretty sink over a buffer sink with `before` in it lays out for `play`,
+    /// without `before`.
+    #[expect(unsafe_code, reason = "the test calls the runtime's C ABI")]
+    fn laid_out(before: &str, play: impl FnOnce(*mut Sink)) -> String {
+        let all = text_of(|inner| {
+            raw(inner, before);
+            let mut slot = MaybeUninit::<Sink>::uninit();
+            let sink = slot.as_mut_ptr();
+            // SAFETY: `sink` is writable for one sink, and `inner` is a started buffer sink.
+            unsafe { sisu_show_pretty(sink, inner) };
+            play(sink);
+            // SAFETY: `sink` is a started pretty sink over `inner`.
+            unsafe { sisu_show_pretty_finish(sink) };
+        });
+        all.strip_prefix(before)
+            .expect("the layout should keep the text before it")
+            .to_owned()
+    }
+
+    /// `[`, the children `texts`, and `]`, one text piece each.
+    fn list(texts: &[&str]) -> Vec<Ev> {
+        let mut events = vec![o("[")];
+        for (i, text) in texts.iter().enumerate() {
+            if i > 0 {
+                events.push(Ev::Sep);
+            }
+            events.push(t(text));
+        }
+        events.push(c("]"));
+        events
+    }
+
+    /// A group `open`, `children` joined by separators, and `close`.
+    fn grouped(open: &str, children: Vec<Vec<Ev>>, close: &str) -> Vec<Ev> {
+        let mut events = vec![o(open)];
+        for (i, child) in children.into_iter().enumerate() {
+            if i > 0 {
+                events.push(Ev::Sep);
+            }
+            events.extend(child);
+        }
+        events.push(c(close));
+        events
+    }
+
+    /// A row of the layout table: its name, the events, and the text they lay out to.
+    type Row = (&'static str, Vec<Ev>, String);
+
+    /// The rows for the 80-column boundary, at each nesting.
+    fn boundary_rows() -> Vec<Row> {
+        let x78 = "x".repeat(78);
+        let x79 = "x".repeat(79);
+        let ae78 = "ä".repeat(78);
+        let z40 = "z".repeat(40);
+        let z60 = "z".repeat(60);
+        let w73 = "w".repeat(73);
+        let w74 = "w".repeat(74);
+        let a79 = "a".repeat(79);
+        // `[w]` is 2 columns wider than `w`. At column 4 it fits with a `,` after it up to 73
+        // `w`s, and with nothing after it up to 74. The sibling `yy` makes the parent too wide.
+        let with_comma = |w: &str| grouped("(", vec![list(&[w]), vec![t("yy")]], ")");
+        let without_comma = |w: &str| grouped("(", vec![vec![t("yy")], list(&[w])], ")");
+        let paren = |z: &str| grouped("(", vec![vec![t(z)]], ")");
+        vec![
+            (
+                "a short list is flat",
+                list(&["1", "2", "3"]),
+                "[1, 2, 3]".to_owned(),
+            ),
+            (
+                "the groups in a flat group are flat",
+                grouped("[", vec![paren("1"), paren("2")], "]"),
+                "[(1), (2)]".to_owned(),
+            ),
+            ("80 columns is flat", list(&[&x78]), format!("[{x78}]")),
+            (
+                "81 columns breaks",
+                list(&[&x79]),
+                format!("[\n    {x79}\n]"),
+            ),
+            (
+                "a child at column 4 ends at 80 with its comma: flat",
+                with_comma(&w73),
+                format!("(\n    [{w73}],\n    yy\n)"),
+            ),
+            (
+                "a child at column 4 ends at 81 with its comma: broken",
+                with_comma(&w74),
+                format!("(\n    [\n        {w74}\n    ],\n    yy\n)"),
+            ),
+            (
+                "the last child at column 4 ends at 80 with no comma: flat",
+                without_comma(&w74),
+                format!("(\n    yy,\n    [{w74}]\n)"),
+            ),
+            (
+                "a nested group that fits at its indentation stays flat",
+                grouped("[", vec![paren(&z40), paren(&z40)], "]"),
+                format!("[\n    ({z40}),\n    ({z40})\n]"),
+            ),
+            (
+                "three levels: the inner groups fit at column 8",
+                grouped(
+                    "[",
+                    vec![grouped("{", vec![paren(&z60), paren(&z60)], "}")],
+                    "]",
+                ),
+                format!("[\n    {{\n        ({z60}),\n        ({z60})\n    }}\n]"),
+            ),
+            (
+                "an empty group at column 79 stays one line",
+                vec![t(&a79), o("["), c("]")],
+                format!("{a79}[]"),
+            ),
+            (
+                "78 two-byte chars and the brackets are 80 columns: flat",
+                list(&[&ae78]),
+                format!("[{ae78}]"),
+            ),
+        ]
+    }
+
+    /// The rows for the column a group starts at: after a label, and after a line break.
+    fn column_rows() -> Vec<Row> {
+        let y40 = "y".repeat(40);
+        let z68 = "z".repeat(68);
+        let z69 = "z".repeat(69);
+        let w67 = "w".repeat(67);
+        let w68 = "w".repeat(68);
+        // A child group after the label `name: `, so at column 10, with a `,` after it.
+        let labelled = |w: &str| {
+            let child = vec![t("name: "), o("["), t(w), c("]")];
+            grouped("(", vec![child, vec![t("yy")]], ")")
+        };
+        // `[`, a piece that ends a line with 10 `q`s, and a group of `z`s.
+        let after_break = |z: &str| {
+            let piece = format!("{y40}\nqqqqqqqqqq");
+            vec![o("["), t(&piece), o("("), t(z), c(")"), c("]")]
+        };
+        vec![
+            (
+                "a piece with a line break breaks both groups; the column counts from the break",
+                after_break(&z68),
+                format!("[\n    {y40}\nqqqqqqqqqq({z68})\n]"),
+            ),
+            (
+                "a group one column too wide for the column after a line break breaks",
+                after_break(&z69),
+                format!("[\n    {y40}\nqqqqqqqqqq(\n        {z69}\n    )\n]"),
+            ),
+            (
+                "text before a group on its line counts toward its column: flat at 80",
+                labelled(&w67),
+                format!("(\n    name: [{w67}],\n    yy\n)"),
+            ),
+            (
+                "text before a group on its line counts toward its column: broken at 81",
+                labelled(&w68),
+                format!("(\n    name: [\n        {w68}\n    ],\n    yy\n)"),
+            ),
+            (
+                "a piece with a line break inside two groups breaks both",
+                grouped("[", vec![grouped("(", vec![vec![t("a\nb")]], ")")], "]"),
+                "[\n    (\n        a\nb\n    )\n]".to_owned(),
+            ),
+        ]
+    }
+
+    /// The layout breaks a group exactly when its column, its flat width and a following `,` pass
+    /// column 80, at each nesting; counts `char`s and not bytes; counts a column from the last
+    /// line break of a piece; and ignores the text before it in the inner sink. Each row is also
+    /// laid out after 40 bytes of earlier text, and must give the same text.
+    #[test]
+    fn layout_should_break_a_group_only_past_column_80() {
+        for (name, events, want) in boundary_rows().into_iter().chain(column_rows()) {
+            assert_eq!(laid_out("", |s| play(s, &events)), want, "{name}");
+            let earlier = "e".repeat(40);
+            assert_eq!(
+                laid_out(&earlier, |s| play(s, &events)),
+                want,
+                "{name}, after 40 bytes of text"
+            );
+        }
+    }
+
+    /// The recorder copies each piece: a buffer that is overwritten and freed after its call and
+    /// before the finish does not change the text. Miri flags a read of the freed buffer.
+    #[test]
+    fn layout_should_keep_a_copy_of_each_piece() {
+        let got = laid_out("", |s| {
+            let mut piece = b"abc".to_vec();
+            play(s, &[o("[")]);
+            // SAFETY: `s` is started, and `piece` is readable for its length.
+            #[expect(unsafe_code, reason = "the test calls the runtime's C ABI")]
+            unsafe {
+                sisu_show_str(s, piece.as_ptr(), piece.len());
+            }
+            piece.fill(b'Z');
+            drop(piece);
+            play(s, &[c("]")]);
+        });
+        assert_eq!(got, "[abc]");
+    }
+
+    /// Where a layout of 1,000,000 groups writes: it counts the line breaks and drops the text,
+    /// since all the groups break and the indentation alone is terabytes.
+    #[derive(Default)]
+    struct Counted {
+        line_breaks: usize,
+    }
+
+    impl Output for Counted {
+        fn text(&mut self, bytes: &[u8]) {
+            self.line_breaks += usize::from(bytes == b"\n");
+        }
+
+        fn spaces(&mut self, _count: usize) {}
+    }
+
+    /// `Sink::spaces` writes exactly `count` blanks, across the 64-blank chunks it writes them in.
+    #[test]
+    fn spaces_should_write_exactly_count_blanks() {
+        for count in [0, 1, 63, 64, 65, 128, 200] {
+            let got = text_of(|s| {
+                // SAFETY: `s` is a started sink that nothing else uses.
+                #[expect(unsafe_code, reason = "the test turns the pointer into a reference")]
+                unsafe { sink_at(s) }.spaces(count);
+            });
+            assert_eq!(got, " ".repeat(count), "{count} blanks");
+        }
+    }
+
+    /// The events read and the line breaks written when `recorder` is laid out.
+    fn lay_out_counted(recorder: &Recorder) -> (usize, usize) {
+        let mut out = Counted::default();
+        lay_out(recorder, &mut out);
+        (recorder.reads.get(), out.line_breaks)
+    }
+
+    /// The two passes read each event exactly twice, through `Recorder::event`, whatever the
+    /// shape: a small nesting and a wide group first, so that a rescan of a group's children is
+    /// seen at once and not as a hang at a million levels. Then nested groups lay out with no
+    /// recursion: a thread with a small stack lays out a million levels.
+    #[test]
+    fn layout_should_read_each_event_twice() {
+        const LEVELS: usize = if cfg!(miri) { 2_000 } else { 1_000_000 };
+        let mut wide = Recorder::new(ptr::null_mut());
+        wide.record(Event::Open, b"[");
+        for i in 0..300 {
+            if i > 0 {
+                wide.events.push(Event::Sep);
+            }
+            wide.record(Event::Open, b"(");
+            wide.record(Event::Text, b"z");
+            wide.record(Event::Close, b")");
+        }
+        wide.record(Event::Close, b"]");
+        let mut nested = Recorder::new(ptr::null_mut());
+        for _ in 0..300 {
+            nested.record(Event::Open, b"[");
+        }
+        nested.record(Event::Text, b"x");
+        for _ in 0..300 {
+            nested.record(Event::Close, b"]");
+        }
+        for (name, recorder) in [("wide", &wide), ("nested", &nested)] {
+            let (reads, _) = lay_out_counted(recorder);
+            assert_eq!(reads, 2 * recorder.events.len(), "{name}");
+        }
+        let (events, reads, line_breaks) = std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(|| {
+                let mut recorder = Recorder::new(ptr::null_mut());
+                for _ in 0..LEVELS {
+                    recorder.record(Event::Open, b"[");
+                }
+                recorder.record(Event::Text, b"x");
+                for _ in 0..LEVELS {
+                    recorder.record(Event::Close, b"]");
+                }
+                let (reads, line_breaks) = lay_out_counted(&recorder);
+                (recorder.events.len(), reads, line_breaks)
+            })
+            .expect("the thread should start")
+            .join()
+            .expect("the layout should not overflow the stack");
+        assert_eq!(events, 2 * LEVELS + 1);
+        assert_eq!(reads, 2 * events, "each event is read once per pass");
+        assert_eq!(line_breaks, 2 * LEVELS, "every group should break");
     }
 
     /// The sink is `SINK_SIZE` bytes and keeps `len` and `cap` where generated code reads them,
