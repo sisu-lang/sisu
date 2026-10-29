@@ -11,8 +11,8 @@ use super::{BindingKind, Body, Checker, Choice, Choices, Declared, Definition, H
 use crate::ast;
 use crate::conformance::{CHOICE_DEPTH_LIMIT, Entered, Generated, ensure_stack, find, generated};
 use crate::diagnostic::{
-    AddBound, Definition as Kind, DiagnosticKind, NoOperatorForm, NotConformForm, NotInterface,
-    UnknownForm, WideKind,
+    AddBound, BoundSite, Definition as Kind, DiagnosticKind, NoOperatorForm, NotConformForm,
+    NotInterface, UnknownForm, WideKind,
 };
 use crate::graph::components;
 use crate::lang::Dispatch;
@@ -1430,10 +1430,10 @@ impl Checker<'_> {
 
     /// The report that `ty`, the type of the operand at `at`, has no `op`, which `interface` (`Eq`
     /// or `Ord`) gives; `contains` when the operand is an element of the array that `contains`
-    /// searches. It is E0139 when the part that fails (`failing_leaf`) is a type parameter, and
-    /// then `bound_help` adds the help to bound it. Else it is `NoOperator`, which names the
-    /// part, and helps only when the part has no conformance at all, a class or an enum that does
-    /// not write one. A part with a conformance whose bound fails says which bound.
+    /// searches. It is E0139 when the part that fails (`failing_leaf`) is a type parameter, with
+    /// the help to bound it. Else it is `NoOperator`, which names the part, and helps only when
+    /// the part has no conformance at all, a class or an enum that does not write one. A part
+    /// with a conformance whose bound fails says which bound.
     pub(super) fn missing_operator(
         &mut self,
         at: Span,
@@ -1441,19 +1441,15 @@ impl Checker<'_> {
         op: &str,
         interface: InterfaceId,
         contains: bool,
-        bound_help: bool,
     ) -> DiagnosticKind {
         let leaf = self.failing_leaf(ty, interface, TypeArgs::NONE);
         if matches!(leaf.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)) {
-            let add = bound_help
-                .then(|| self.add_bound(leaf, interface))
-                .flatten();
             return DiagnosticKind::ParamLacks {
                 ty: self.type_name(ty),
                 op: op.to_string(),
                 at,
                 contains,
-                add,
+                add: self.add_bound(leaf, interface),
             };
         }
         let record = find(&self.conformances, interface, leaf, TypeArgs::NONE);
@@ -1696,25 +1692,41 @@ impl Checker<'_> {
         }
     }
 
-    /// The bound that would make the type parameter `ty` conform to `interface`, written with the
-    /// bounds it has: `None` unless `ty` is a type parameter in scope and `interface` takes no
-    /// type parameters.
+    /// The bound that would make `ty` conform to `interface`, written with the bounds it has:
+    /// `None` unless `ty` is a type parameter in scope, or an associated type that the user's
+    /// program declares, and `interface` takes no type parameters.
     pub(super) fn add_bound(&self, ty: Type, interface: InterfaceId) -> Option<AddBound> {
-        let TypeKind::Param(name, place) = ty.kind() else {
-            return None;
-        };
-        if self.body.type_param(name) != Some(place as usize)
-            || self.interfaces[interface.0].type_params.len() != 1
-        {
+        if self.interfaces[interface.0].type_params.len() != 1 {
             return None;
         }
-        let have = self.body.bounds.get(place as usize).into_iter().flatten();
-        let mut bounds: Vec<String> = have.map(|b| self.bound_text(b.interface, b.args)).collect();
+        let (site, have): (_, &[Bound]) = match ty.kind() {
+            TypeKind::Param(name, place) if self.body.type_param(name) == Some(place as usize) => (
+                BoundSite::Param(name.to_string()),
+                self.body
+                    .bounds
+                    .get(place as usize)
+                    .map_or(&[], Vec::as_slice),
+            ),
+            // No help edits the prelude.
+            TypeKind::Assoc(_, owner, _, k) => {
+                let info = &self.interfaces[owner.0].assoc[k as usize];
+                if info.name.span.in_prelude() {
+                    return None;
+                }
+                let site = BoundSite::Assoc {
+                    interface: self.interfaces[owner.0].name.name.to_string(),
+                    name: info.name.name.to_string(),
+                };
+                (site, &info.bounds)
+            }
+            _ => return None,
+        };
+        let mut bounds: Vec<String> = have
+            .iter()
+            .map(|b| self.bound_text(b.interface, b.args))
+            .collect();
         bounds.push(self.bound_text(interface, TypeArgs::NONE));
-        Some(AddBound {
-            param: name.to_string(),
-            bounds,
-        })
+        Some(AddBound { site, bounds })
     }
 
     /// Checks that each argument of the applied type `ty`, written at `ats`, meets the bounds

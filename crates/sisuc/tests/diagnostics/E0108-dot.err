@@ -1,4 +1,4 @@
-error[E0108]: a format spec is `[<^>][width][.precision]`
+error[E0108]: a format spec is `#` or `[<^>][width][.precision]`
  --> E0108-dot.sisu:3:14
   |
 3 |     print("{x:8.}")

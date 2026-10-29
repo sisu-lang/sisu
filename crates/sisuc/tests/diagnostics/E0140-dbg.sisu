@@ -1,0 +1,18 @@
+class W<T> {
+    x: T
+}
+
+class Hold<T> {
+    v: W<[T]>
+}
+
+extend<T> W<T>: Display {
+    fn to_string(self) -> string {
+        let _ = dbg(Hold(v: W(x: [self.x])))
+        "w"
+    }
+}
+
+fn main() {
+    print(W(x: 1))
+}

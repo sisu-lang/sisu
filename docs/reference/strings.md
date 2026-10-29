@@ -206,7 +206,7 @@ fn main() {
 }
 ```
 
-A spec is `[align][width][.precision]`. A spec needs a width or a precision. The align is optional.
+A spec is `#`, or `[align][width][.precision]`. The next section explains `#`. A spec without `#` needs a width or a precision. The align is optional.
 
 | Part | Form | Meaning |
 | --- | --- | --- |
@@ -223,8 +223,8 @@ The rules:
 - A precision rounds half to even from the exact value of the `f64`, and never uses an exponent. A precision of 0 writes no point. `inf`, `-inf` and `nan` have no decimals.
 - A precision on a value that is not an `f64` is an error ([E0111](../diagnostics/E0111.md)).
 - A width above 1000, or a precision above 30, is an error ([E0110](../diagnostics/E0110.md)).
-- A spec with no width and no precision, or a `.` with no digits, is an error ([E0108](../diagnostics/E0108.md)).
-- Other parts, such as zero padding, a sign, a fill character, a type letter, or a width from a variable, are errors ([E0109](../diagnostics/E0109.md)). The section [The `#` flag](#the--flag) is in development, and it changes this rule.
+- A spec that is not `#` must hold a width or a precision, and a `.` needs digits. If not, it is an error ([E0108](../diagnostics/E0108.md)).
+- Other parts, such as zero padding, a sign, a fill character, a type letter, or a width from a variable, are errors ([E0109](../diagnostics/E0109.md)).
 - A `:` inside a string or character literal in the expression does not start a spec.
 
 ```sisu
@@ -249,17 +249,42 @@ fn main() {
 
 `{x:#}` lays a value out on several lines when it does not fit on one line. A value that fits stays on one line. A part that does not fit breaks into one element per line.
 
-```sisu pending
+```sisu
+enum Expr {
+    Num(i64)
+    Add(Expr, Expr)
+}
+
 fn main() {
     let xs = [1, 2, 3]
-    print("{xs:#}")                    // [1, 2, 3]
-    print("{7:#}")                     // 7
+    print("{xs:#}")
+    print("{7:#}")
+    let sum = Expr.Add(Expr.Add(Expr.Num(100000), Expr.Num(200000)), Expr.Num(300000))
+    print("{sum}")
+    let long = Expr.Add(sum, Expr.Add(sum, Expr.Add(sum, Expr.Num(400000))))
+    print("{long:#}")
 }
+```
+
+```output
+[1, 2, 3]
+7
+Add(Add(Num(100000), Num(200000)), Num(300000))
+Add(
+    Add(Add(Num(100000), Num(200000)), Num(300000)),
+    Add(
+        Add(Add(Num(100000), Num(200000)), Num(300000)),
+        Add(Add(Add(Num(100000), Num(200000)), Num(300000)), Num(400000))
+    )
+)
 ```
 
 The rules:
 
 - A hand-written `to_string` gives one piece of text that the layout does not break.
-- `#` does not combine with a width, an alignment or a precision. `{x:#>8}` is an error.
+- The layout starts at column 0. Text before the part on its line does not count, so a line can pass 80 columns.
+- A part is on one line when its text fits in 80 columns. A part that does not fit puts each element on its own line, four spaces further in. Its closing bracket goes on its own line.
+- Each element is laid out the same way, from the column where it starts in the layout.
+- `#` does not combine with a width, an alignment or a precision. `{x:#>8}` is an error ([E0109](../diagnostics/E0109.md)).
 - `#` on an `i64`, a `u8`, an `f64`, a `bool`, a `char` or a `string` changes nothing.
 - There is no function for it: `print("{x:#}")` is the one way.

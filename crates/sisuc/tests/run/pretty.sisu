@@ -1,0 +1,115 @@
+// GIVEN an `Expr` enum, a `Shape` enum with labeled payloads, a `Stack<T>` class, a `Poem` class
+// whose written `to_string` holds a line break, and a generic `laid` that interpolates `{x:#}`
+// WHEN `main` interpolates values with the `#` flag
+// THEN a value that fits in 80 columns stays on one line, an array of exactly 80 columns included
+// AND a group that does not fit breaks into one element per line, four spaces deeper, and each
+//     group inside it is decided at the column where it starts
+// AND a child that a comma follows breaks one column earlier than the last child
+// AND a scalar, a `string` and a class are as `{x}` writes them
+// AND the layout of `"abc{x:#}"` is `abc` before the first line of `"{x:#}"`
+// AND a written `to_string` with a line break breaks every group around it
+// AND a `string` that holds `\n` is escaped and breaks nothing
+// AND `laid` lays out the value of its type argument, and a scalar or a class as it is
+class Stack<T> {
+    _items: [T]
+}
+
+class Poem {
+    _n: i64
+}
+
+extend Poem: Display {
+    fn to_string(self) -> string {
+        "one\ntwo"
+    }
+}
+
+enum Expr {
+    Num(i64)
+    Add(Expr, Expr)
+    Mul(Expr, Expr)
+}
+
+enum Shape {
+    Dot
+    Rect(w: i64, h: i64)
+    Group(label: string, members: [Shape], note: string)
+}
+
+fn laid<T>(x: T) -> string {
+    "{x:#}"
+}
+
+fn main() {
+    // The spec's tree is 32 columns: it stays flat.
+    let small = Expr.Add(Expr.Num(1), Expr.Mul(Expr.Num(2), Expr.Num(3)))
+    print("{small:#}")
+
+    // A tree of 191 columns: the top breaks, and so does each `Mul`, whose text is over 76
+    // columns; each `Add` below fits at its column.
+    let big = Expr.Add(
+        Expr.Mul(
+            Expr.Add(Expr.Num(111111), Expr.Num(222222)),
+            Expr.Add(Expr.Num(333333), Expr.Add(Expr.Num(444444), Expr.Num(555555)))
+        ),
+        Expr.Mul(
+            Expr.Add(Expr.Num(666666), Expr.Mul(Expr.Num(777777), Expr.Num(888888))),
+            Expr.Add(Expr.Add(Expr.Num(999999), Expr.Num(101010)), Expr.Num(121212))
+        )
+    )
+    print("{big:#}")
+
+    // The text of an array of arrays is 80 columns: flat. With one more digit it is 81: broken.
+    let at_80 = [[100, 101, 102, 103, 104, 105, 10, 11], [200, 201, 202, 203, 204, 205, 20, 21]]
+    let at_81 = [[100, 101, 102, 103, 104, 105, 10, 11], [300, 301, 302, 303, 304, 305, 306, 30]]
+    print("{at_80:#}")
+    print("{at_81:#}")
+
+    // Two inner arrays of 76 columns, each at column 4: the first has a comma after it, so it
+    // is one column too wide (81) and breaks; the last is 80 and stays flat.
+    let at_76 = [
+        [100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 10, 11, 12, 13],
+        [200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 20, 21, 22, 23]
+    ]
+    print("{at_76:#}")
+
+    // An enum with labeled payloads: the array under `members:` starts at column 13.
+    let shape = Shape.Group(
+        label: "composite",
+        members: [
+            Shape.Rect(w: 10, h: 20),
+            Shape.Dot,
+            Shape.Rect(w: 30, h: 40),
+            Shape.Rect(w: 50, h: 60),
+            Shape.Rect(w: 70, h: 80)
+        ],
+        note: "drawn by hand"
+    )
+    print("{shape:#}")
+
+    // A class, a nested optional, and a scalar and a `string`: as `{x}` writes them.
+    let middle: i64? = None
+    let nested: i64?? = middle
+    let n = 42
+    let s = "text"
+    let stack = Stack(_items: [1, 2])
+    print("{stack:#}")
+    print("{[nested]:#}")
+    print("{n:#} {s:#}")
+
+    // The layout starts at column 0 after `abc`, and the text after the part follows its last line.
+    print("abc{big:#}")
+    print("[{small:#}]")
+    print("[{big:#}]")
+
+    // A written `to_string` with a line break breaks the array; the break of a `string` is escaped.
+    print("{[Poem(_n: 1)]:#}")
+    print("{["a\nb"]:#}")
+
+    // `laid` of four types: an array of strings over 80 columns, a scalar, a class and a nested
+    // optional.
+    print(laid(["alphabetical", "bibliography", "cartography", "demography", "epigraphy", "filmography"]))
+    print(laid(n))
+    print(laid(Stack(_items: ["a"])))
+    print(laid(nested))
+}

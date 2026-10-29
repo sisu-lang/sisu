@@ -13,8 +13,8 @@ use std::mem;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::conformance::{
-    Cause, Decide, Holds, Source, Stuck, StuckChoices, ensure_stack, find, holds, normalize_noting,
-    parts, prints_by_helper,
+    Cause, Decide, Holds, Source, Stuck, StuckChoices, ensure_stack, fields_of, find, holds,
+    makes_group, normalize_noting, parts, prints_by_helper,
 };
 use crate::diagnostic::{Diagnostic, DiagnosticKind, UnknownForm};
 use crate::lang::{self, Cx, Dispatch};
@@ -133,8 +133,12 @@ struct Mono {
     input_payloads: Vec<Vec<Type>>,
     /// What decides whether a written conformance holds for a type, in the checked program's ids.
     decide: Decide,
-    /// The `(type, interface)` pairs the record walk has entered, in the checked program's ids.
-    walked: FxHashSet<(Type, InterfaceId)>,
+    /// The field types of the checked program's classes, in its ids. The record walk of a `dbg`
+    /// reads them, as the output's classes name the output's ids.
+    input_fields: Vec<Vec<Type>>,
+    /// The `(type, interface, dbg)` triples the record walk has entered, in the checked program's
+    /// ids.
+    walked: FxHashSet<(Type, InterfaceId, bool)>,
     /// The locals of the function whose body the worklist is lowering; operators that make
     /// temporaries add to them.
     locals: Vec<Local>,
@@ -164,6 +168,11 @@ impl Mono {
                 .enums
                 .iter()
                 .map(|e| (e.variants.iter().flat_map(|v| &v.fields).map(|p| p.ty)).collect())
+                .collect(),
+            input_fields: program
+                .classes
+                .iter()
+                .map(|c| c.fields.iter().map(|f| f.ty).collect())
                 .collect(),
             decide: Decide::default(),
             walked: FxHashSet::default(),
@@ -595,7 +604,7 @@ impl Mono {
                     e.kind = lang::equal(dispatch, negated, lhs, rhs, e.span);
                 } else if !matches!(lhs.kind, K::None) && !matches!(rhs.kind, K::None) {
                     // `x == None` tests presence, and runs no `eq`.
-                    self.walk(ty, eq);
+                    self.walk(ty, eq, false);
                 }
             }
             K::Compare { operands, ops } => {
@@ -607,11 +616,19 @@ impl Mono {
                 // that has one.
                 let ty = self.subst(operand.ty, args);
                 if prints_by_helper(ty) {
-                    self.walk(ty, self.out.lang.display);
+                    self.walk(ty, self.out.lang.display, false);
+                }
+            }
+            K::Dbg { operand, .. } => {
+                // The `dbg` helper also writes the fields of a class with no written `to_string`,
+                // each by the `print` helper.
+                let ty = self.subst(operand.ty, args);
+                if prints_by_helper(ty) {
+                    self.walk(ty, self.out.lang.display, true);
                 }
             }
             K::Interpolate { parts, formats } => {
-                for format in formats {
+                for format in &mut *formats {
                     // A part of a type parameter's type pads as its type argument's does.
                     if let Some(pad) = format.pad.as_mut().filter(|pad| pad.by_type) {
                         let ty = self.subst(parts[format.part].ty, args);
@@ -622,13 +639,19 @@ impl Mono {
                         };
                         pad.by_type = false;
                     }
+                    // A part of a type parameter's type is laid out only if its type argument
+                    // makes a group.
+                    if format.pretty {
+                        format.pretty = makes_group(self.subst(parts[format.part].ty, args));
+                    }
                 }
+                formats.retain(|format| !format.is_plain());
                 // The helper for a compound part calls a written `to_string` at each part that
                 // has one.
                 for part in parts.iter() {
                     let ty = self.subst(part.ty, args);
                     if prints_by_helper(ty) {
-                        self.walk(ty, self.out.lang.display);
+                        self.walk(ty, self.out.lang.display, false);
                     }
                 }
             }
@@ -639,7 +662,7 @@ impl Mono {
                     let element = array
                         .array_element()
                         .expect("`contains` should take an array");
-                    self.walk(element, self.out.lang.eq);
+                    self.walk(element, self.out.lang.eq, false);
                 }
             }
             _ => {}
@@ -764,6 +787,7 @@ impl Mono {
             | K::Wrap(operand)
             | K::Convert(operand)
             | K::Print { operand, .. }
+            | K::Dbg { operand, .. }
             | K::Panic(operand)
             | K::Len(operand)
             | K::Chars(operand)
@@ -868,11 +892,13 @@ impl Mono {
 
     /// Reaches the written conformances of `interface` that the helper for an operand of the
     /// checked type `ty` may call: the output gets one record for each type in `ty`, through its
-    /// parts, that a written conformance holds for, and the methods are instantiated.
-    fn walk(&mut self, ty: Type, interface: InterfaceId) {
-        let mut stack = vec![ty];
-        while let Some(ty) = stack.pop() {
-            if !self.walked.insert((ty, interface)) {
+    /// parts, that a written conformance holds for, and the methods are instantiated. With `dbg`,
+    /// the helper is the one that `dbg` calls. A class with no written conformance also has its
+    /// field types walked, each as `print` writes it.
+    fn walk(&mut self, ty: Type, interface: InterfaceId, dbg: bool) {
+        let mut stack = vec![(ty, dbg)];
+        while let Some((ty, dbg)) = stack.pop() {
+            if !self.walked.insert((ty, interface, dbg)) {
                 continue;
             }
             #[cfg(test)]
@@ -883,12 +909,21 @@ impl Mono {
                 self.record(ty, interface, k, stands);
                 continue;
             }
+            if dbg && matches!(ty.kind(), TypeKind::Class(..)) {
+                fields_of(
+                    &self.conformances,
+                    self.input_fields.as_slice(),
+                    ty,
+                    |part| stack.push((part, false)),
+                );
+                continue;
+            }
             parts(
                 &self.conformances,
                 self.input_payloads.as_slice(),
                 ty,
                 |part| {
-                    stack.push(part);
+                    stack.push((part, dbg));
                 },
             );
         }
@@ -1091,6 +1126,26 @@ mod tests {
         );
     }
 
+    /// A `#` part of a type parameter keeps its row at a type argument that may make a group and
+    /// loses it at one that writes one piece, so the instance has the `tir` of a part without `#`.
+    #[test]
+    fn a_hash_part_of_a_type_parameter_should_keep_its_row_only_in_an_instance_with_a_group() {
+        let program = instantiated(
+            "fn g<T>(x: T) -> string {\n    \"{x:#}\"\n}\nfn main() {\n    \
+             print(g(1) + g(\"s\") + g([1]))\n}",
+        );
+        let text = program.to_string();
+        for (instance, row) in [("g<i64>", false), ("g<string>", false), ("g<[i64]>", true)] {
+            let rest = text
+                .split_once(&format!("(fn {instance} "))
+                .unwrap_or_else(|| panic!("{instance} in {text}"))
+                .1;
+            let function = rest.split("(fn ").next().unwrap_or(rest);
+            assert_eq!(function.contains("(fmt x#0 \"#\")"), row, "{function}");
+            assert_eq!(function.contains("(fmt"), row, "{function}");
+        }
+    }
+
     /// The class name is longer than `NAME_LIMIT`, so the two instances of `g`, of `P` and of
     /// `P.m` agree in their first `NAME_LIMIT` bytes and differ only in their last argument.
     #[test]
@@ -1181,6 +1236,41 @@ mod tests {
         };
         assert_eq!(records("print(missing(Circle(r: 1)))"), 0);
         assert_eq!(records("print(same(Circle(r: 1), Circle(r: 2)))"), 1);
+    }
+
+    /// `dbg` of an `Outer<i64>` shows its field `inner`, an `Inner<i64>` whose written
+    /// `to_string` nothing else calls. The output holds the record of that `to_string`, whether
+    /// `dbg` takes the object, an array of it or an optional of it. `print` of the object writes
+    /// only its name, so it makes no record.
+    #[test]
+    fn dbg_should_make_a_record_for_a_written_to_string_in_a_field_but_print_should_not() {
+        let decls = "class Inner<T> {\n    v: T\n}\nextend<T> Inner<T>: Display {\n    fn to_string(self) -> string {\n        \"inner\"\n    }\n}\nclass Outer<T> {\n    inner: Inner<T>\n}\n";
+        for (shown, records) in [
+            ("print(o)", 0),
+            ("print([o])", 0),
+            ("dbg(o)", 1),
+            ("dbg([o])", 1),
+            ("dbg(Some(o))", 1),
+        ] {
+            let program = instantiated(&format!(
+                "{decls}fn main() {{\n    let o = Outer(inner: Inner(v: 1))\n    {shown}\n    print(o.inner.v)\n}}"
+            ));
+            assert_eq!(program.conformances.iter().count(), records, "{shown}");
+        }
+    }
+
+    /// An enum `Slot` with a written `to_string` shows that text, so `dbg` of it, of an array of
+    /// it or of an enum that holds it makes the record of that `to_string` alone, and none of the
+    /// `to_string` of `Inner`, the class in its payload.
+    #[test]
+    fn dbg_should_make_no_record_below_an_enum_with_a_written_to_string() {
+        let decls = "class Inner<T> {\n    v: T\n}\nextend<T> Inner<T>: Display {\n    fn to_string(self) -> string {\n        \"inner\"\n    }\n}\nenum Slot<T> {\n    Full(Inner<T>)\n}\nextend<T> Slot<T>: Display {\n    fn to_string(self) -> string {\n        \"slot\"\n    }\n}\nenum Pick<T> {\n    One(Slot<T>)\n}\n";
+        for shown in ["dbg(s)", "dbg([s])", "dbg(Some(s))", "dbg(Pick.One(s))"] {
+            let program = instantiated(&format!(
+                "{decls}fn main() {{\n    let s = Slot.Full(Inner(v: 1))\n    {shown}\n}}"
+            ));
+            assert_eq!(program.conformances.iter().count(), 1, "{shown}");
+        }
     }
 
     #[test]

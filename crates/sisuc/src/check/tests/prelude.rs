@@ -158,11 +158,12 @@ fn eprint_lowers() {
 /// reported (the call for a count, the argument otherwise). An object and an array print.
 #[test]
 fn eprint_should_report_the_argument_errors_of_print() {
-    let class = "class P {\n    x: i64\n}\n";
+    let class = "class P {\n    x: i64\n}\nfn nothing() {}\n";
     for (statement, code, pos) in [
-        ("eprint()", Code::PrintArgument, (5, 5)),
-        ("eprint(1, 2)", Code::PrintArgument, (5, 5)),
-        ("eprint(panic(\"x\"))", Code::PrintNever, (5, 12)),
+        ("eprint()", Code::PrintArgument, (6, 5)),
+        ("eprint(1, 2)", Code::PrintArgument, (6, 5)),
+        ("eprint(nothing())", Code::PrintArgument, (6, 12)),
+        ("eprint(panic(\"x\"))", Code::PrintNever, (6, 12)),
     ] {
         codes(
             &format!("{class}fn main() {{\n    {statement}\n}}"),
@@ -520,4 +521,74 @@ fn ok_should_name_nothing_when_no_result_declares_it() {
             (Code::FunctionNotFound, (5, 13)),
         ],
     );
+}
+
+/// `dbg(e)` is a node that holds the argument's source text as written, and has its type.
+#[test]
+fn dbg_should_lower_to_a_node_with_the_source_text() {
+    contains(
+        "fn f(x: i64) -> i64 {\n    x\n}\nfn main() {\n    let y = dbg(f(1 +   2)) + 1\n    print(y)\n}",
+        &["(dbg \"f(1 +   2)\" (call f (+ 1 2)))"],
+    );
+}
+
+/// `dbg(e)` has the type of `e`, checked against the expected type as `e` alone is, and gives no
+/// warning, an optional included.
+#[test]
+fn dbg_should_check_clean_with_the_type_of_its_argument() {
+    for (row, statements) in [
+        ("a sum", "let y = dbg(f(1)) + 1\n    print(y)"),
+        ("an expected u8", "let b: u8 = dbg(200)\n    print(b)"),
+        (
+            "an expected array",
+            "let xs: [u8] = dbg([1, 2])\n    print(xs)",
+        ),
+        (
+            "an optional",
+            "let name: string? = None\n    let _ = dbg(name)",
+        ),
+        ("a local named dbg", "let dbg = 1\n    print(dbg)"),
+        ("a statement", "dbg(f(1))\n    dbg(dbg(2))\n    print(1)"),
+    ] {
+        let src = format!("fn f(x: i64) -> i64 {{\n    x\n}}\nfn main() {{\n    {statements}\n}}");
+        clean_row(row, &src);
+    }
+}
+
+/// `dbg` reports an argument that has no value, never finishes or is not one as `print` does.
+#[test]
+fn dbg_should_report_the_argument_errors_of_print() {
+    for (statement, code, pos) in [
+        ("dbg(greet())", Code::PrintArgument, (3, 9)),
+        ("dbg(panic(\"x\"))", Code::PrintNever, (3, 9)),
+        ("dbg()", Code::PrintArgument, (3, 5)),
+        ("dbg(1, 2)", Code::PrintArgument, (3, 5)),
+    ] {
+        let src = format!("fn greet() {{}}\nfn main() {{\n    {statement}\n}}");
+        codes_row(statement, &src, &[(code, pos)]);
+    }
+}
+
+/// No top-level function, class or constant takes the name `dbg`.
+#[test]
+fn dbg_should_be_a_prelude_name() {
+    for (item, col) in [
+        ("fn dbg() {}", 4),
+        ("class dbg {}", 7),
+        ("const dbg = 1", 7),
+    ] {
+        let src = format!("{item}\nfn main() {{}}");
+        diagnostic(&src, Code::DefinedTwice, (1, col, "dbg"), &[]);
+    }
+}
+
+/// An argument that fails to check is reported once, and `dbg` adds no error of its own.
+#[test]
+fn dbg_should_report_a_broken_argument_once() {
+    for (statement, code, pos) in [
+        ("dbg(missing)", Code::BindingNotFound, (2, 9)),
+        ("dbg(1 + \"a\")", Code::Mismatch, (2, 9)),
+    ] {
+        codes_row(statement, &body("", statement), &[(code, pos)]);
+    }
 }

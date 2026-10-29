@@ -265,21 +265,31 @@ impl<'a> Lowering<'a> {
     /// Whether comparing values of `ty` may call a written `eq`: the type, or a part of it, has
     /// a written `Eq`. The answer is kept for the program (`calls_written`).
     fn calls_eq(&mut self, ty: Type) -> bool {
-        self.calls_interface(ty, self.program.lang.eq)
+        self.calls_interface(ty, self.program.lang.eq, false)
     }
 
     /// Whether printing a value of `ty` may call a written `to_string`: the type, or a part of
     /// it, has a written `Display`.
     fn calls_display(&mut self, ty: Type) -> bool {
-        prints_by_helper(ty) && self.calls_interface(ty, self.program.lang.display)
+        prints_by_helper(ty) && self.calls_interface(ty, self.program.lang.display, false)
     }
 
-    fn calls_interface(&mut self, ty: Type, interface: tir::InterfaceId) -> bool {
+    /// Whether `dbg` of a value of `ty` may call a written `to_string`. It may when the type, or
+    /// a part of it, has a written `Display`, or a class with none has such a field.
+    fn calls_dbg(&mut self, ty: Type) -> bool {
+        self.calls_interface(ty, self.program.lang.display, true)
+    }
+
+    fn calls_interface(&mut self, ty: Type, interface: tir::InterfaceId, dbg: bool) -> bool {
         calls_written(
             &self.program.conformances,
-            self.program.enums.as_slice(),
+            (
+                self.program.enums.as_slice(),
+                self.program.classes.as_slice(),
+            ),
             ty,
             interface,
+            dbg,
             self.written,
         )
     }
@@ -724,6 +734,24 @@ impl<'a> Lowering<'a> {
                     self.release(Some(temp));
                 }
                 return Some(None);
+            }
+            ExprKind::Dbg { at, text, operand } => {
+                // The operand runs once, into the result; the statement reads it in place.
+                let value = self
+                    .into(operand, dest)?
+                    .expect("the checker should give the argument of `dbg` a value");
+                let calls = self.calls_dbg(operand.ty);
+                self.assign(
+                    Type::UNIT,
+                    None,
+                    Rvalue::Dbg {
+                        at: *at,
+                        text: text.clone(),
+                        operand: Operand::Read(whole(value)),
+                        calls,
+                    },
+                );
+                return Some(Some(value));
             }
             ExprKind::Panic(message) => {
                 let message = self.operand(message)?;
@@ -1301,6 +1329,7 @@ fn leaves_locals(expr: &Expr) -> bool {
         | ExprKind::Variant { .. }
         | ExprKind::Wrap(_)
         | ExprKind::Print { .. }
+        | ExprKind::Dbg { .. }
         | ExprKind::Panic(_)
         | ExprKind::ReadLine
         | ExprKind::ArrayLit(_)
@@ -1459,6 +1488,7 @@ fn expr_mentions(e: &Expr, found: &mut Mentions) {
         | ExprKind::Wrap(operand)
         | ExprKind::Convert(operand)
         | ExprKind::Print { operand, .. }
+        | ExprKind::Dbg { operand, .. }
         | ExprKind::Unary { operand, .. }
         | ExprKind::Panic(operand)
         | ExprKind::Break {

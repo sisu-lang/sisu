@@ -1,8 +1,8 @@
 error[E0059]: the argument of `print` has no value
- --> E0059.sisu:6:5
+ --> E0059.sisu:6:11
   |
 6 |     print(greet())
-  |     ^^^^^^^^^^^^^^
+  |           ^^^^^^^
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0059

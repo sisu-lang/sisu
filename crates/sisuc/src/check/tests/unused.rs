@@ -65,6 +65,10 @@ fn unused_value_should_warn_when_a_statement_drops_it() {
         // A `?.` call lowers to an `if let`, whose value is the call's, as an optional.
         ("a?.k()", &[(5, "a?.k()")]),
         ("\"a\" + \"b\"", &[(5, "\"a\" + \"b\"")]),
+        // `dbg` beside a value that warns: only the other value does.
+        ("if c { dbg(n) } else { f() }", &[(28, "f()")]),
+        // The join wraps the `dbg` in an optional: it still warns of the `None` alone.
+        ("if c { dbg(n) } else { None }", &[(28, "None")]),
     ];
     for (body, expected) in rows {
         let expected: Vec<_> = expected
@@ -88,6 +92,18 @@ fn unused_value_should_not_warn_when_nothing_drops_a_value() {
         // `never` in a branch tail that nothing uses.
         "if c { panic(\"x\") }",
         "let y = if c { 1 } else { 2 }",
+        // `dbg` is meant to be run, so its value is no unused value in any statement position.
+        "dbg(n)",
+        "dbg(f())",
+        "dbg(dbg(n))",
+        "({ dbg(n) })",
+        "if c { dbg(n) } else { dbg(n) }",
+        "if c { dbg(n) }",
+        "if let v = o { dbg(v) } else { dbg(n) }",
+        "while f() > 0 { dbg(n) }",
+        "while let v = o { dbg(v) }",
+        "for x in xs { dbg(x) }",
+        "match n {\n        0 => dbg(n)\n        _ => { dbg(n) }\n    }",
     ] {
         clean(&in_body(body));
     }

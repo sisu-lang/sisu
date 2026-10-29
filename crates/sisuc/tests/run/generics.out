@@ -13,6 +13,11 @@ Some(None)
 None
 5
 Add(Num(1), Mul(Num(2), Num(3)))
+Add(Mul(Num(100), Add(Num(200), Num(300))), Mul(Add(Num(400), Num(500)), Add(Num(600), Mul(Num(700), Num(800)))))
+Add(
+    Mul(Num(100), Add(Num(200), Num(300))),
+    Mul(Add(Num(400), Num(500)), Add(Num(600), Mul(Num(700), Num(800))))
+)
 Rect
 circle of radius 1.5
 true

@@ -1,0 +1,6 @@
+class Node {}
+
+fn main() {
+    let xs: [Node] = []
+    print(xs.contains({ None }))
+}

@@ -1742,7 +1742,7 @@ fn printing_a_compound_value_should_use_the_sink_of_its_stream() {
         assert!(main.contains(wanted), "{wanted} in\n{main}");
     }
     assert_eq!(main.matches("@sisu_show_buffer(").count(), 1, "{main}");
-    // The sink slot is the runtime's `SINK_SIZE` bytes, as five words.
+    // The sink slot is the runtime's `SINK_SIZE` bytes, as six words.
     let words = abi::SINK_SIZE / 8;
     assert!(main.contains(&format!("alloca [{words} x i64]")), "{main}");
 }
@@ -1774,6 +1774,64 @@ fn interpolating_a_compound_part_should_use_one_buffer_sink() {
     let f = definition(&ir, "sisu.f");
     assert!(f.contains("@sisu_write_int("), "{f}");
     assert!(!f.contains("@sisu_show_"), "{f}");
+}
+
+/// A `#` part whose type makes a group is written through a pretty sink over the buffer sink.
+/// The sink is started and finished once.
+/// A `#` part whose type writes one piece emits the IR of the same part with no `#`.
+/// That holds for a concrete type and for the argument of a type parameter.
+/// An array part beside it makes every interpolation go through a sink.
+#[test]
+fn a_hash_part_should_use_a_pretty_sink_only_when_its_type_makes_a_group() {
+    let context = Context::create();
+    let ir_of = |src: &str, name: &str| {
+        let ir = compiled(&context, src).print_to_string().to_string();
+        definition(&ir, name).to_owned()
+    };
+    // (row, declarations, parameter type, argument, whether a group is laid out)
+    for (row, decls, ty, arg, grouped) in [
+        ("an `i64`", "", "i64", "1", false),
+        ("a class", "class C {}\n", "C", "C()", false),
+        ("an array", "", "[i64]", "[1]", true),
+        (
+            "an enum",
+            "enum E {\n    A\n    B(E)\n}\n",
+            "E",
+            "E.B(E.A)",
+            true,
+        ),
+    ] {
+        for generic in [false, true] {
+            let (params, name) = if generic {
+                ("<T>", format!("\"sisu.f<{ty}>\""))
+            } else {
+                ("", "sisu.f".to_owned())
+            };
+            let param = if generic { "T" } else { ty };
+            let src = |spec: &str| {
+                format!(
+                    "{decls}fn f{params}(x: {param}, ys: [i64]) -> string {{\n    \"[{{x{spec}}}]{{ys}}\"\n}}\nfn main() {{\n    print(f({arg}, [1]))\n}}"
+                )
+            };
+            let (hashed, flat) = (ir_of(&src(":#"), &name), ir_of(&src(""), &name));
+            let row = format!("{row}, generic: {generic}");
+            if grouped {
+                assert_eq!(
+                    hashed.matches("@sisu_show_pretty(").count(),
+                    1,
+                    "{row}: {hashed}"
+                );
+                assert_eq!(
+                    hashed.matches("@sisu_show_pretty_finish(").count(),
+                    1,
+                    "{row}: {hashed}"
+                );
+                assert!(!flat.contains("@sisu_show_pretty"), "{row}: {flat}");
+            } else {
+                assert_eq!(hashed, flat, "{row}");
+            }
+        }
+    }
 }
 
 /// The number of calls of `sisu_show_*` functions that printing `[x]` emits, for an `x` of a
@@ -2982,6 +3040,114 @@ fn show_of_a_component_should_find_each_member_in_linear_steps() {
     assert_near_linear(scans(100), scans(200), scans(300));
 }
 
+/// The ring of `n` enums of #245. Each enum links to the next. `main` compares every `End` with
+/// itself, so each enum gets its `walk`, `release` and `eq` helpers.
+fn enum_ring(n: usize) -> String {
+    let enums = (0..n)
+        .map(|i| format!("enum R{i} {{\n    End\n    Link(R{})\n}}\n", (i + 1) % n))
+        .collect::<Vec<_>>()
+        .concat();
+    let compares = (0..n)
+        .map(|i| format!("    print(R{i}.End == R{i}.End)\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    format!("{enums}fn main() {{\n{compares}}}\n")
+}
+
+/// `==` on an enum of a component with boxes finds the index of each member and of each link
+/// in the component. The `walk` helper of each member finds the index of each boxed field the
+/// same way. Each of these is one lookup in the table of the component. A search of the
+/// component for any of them reads a ring of enums quadratically.
+///
+/// The count is exact, so a call site that stops using the lookup helper makes the count fall
+/// and fails the test.
+#[test]
+fn eq_and_walk_of_a_component_should_find_each_member_in_linear_steps() {
+    let scans = |n: usize| {
+        MEMBER_SCANS.set(0);
+        let context = Context::create();
+        compiled(&context, &enum_ring(n));
+        MEMBER_SCANS.get()
+    };
+    // Each enum counts 4. The table counts 1. The `walk` of the enum counts 1 lookup for its
+    // boxed field. Its `eq` counts 1 lookup for the enum itself and 1 for the link.
+    assert_eq!(scans(100), 4 * 100);
+    assert_eq!(scans(200), 4 * 200);
+}
+
+/// The `walk`, `release` and `drain` helper of each member of a component with boxes uses the
+/// type of the heads of the component. A struct type with one element for each member, built
+/// and printed at each use, makes the module quadratic in the size of the ring. The heads type
+/// is an array, so each use prints it in constant size.
+#[test]
+fn drop_of_an_enum_component_should_print_the_heads_type_in_linear_size() {
+    let size = |n: usize| {
+        let context = Context::create();
+        compiled(&context, &enum_ring(n))
+            .print_to_string()
+            .to_bytes()
+            .len()
+    };
+    assert_near_linear(size(100), size(200), size(300));
+}
+
+/// A cycle of `n` classes. Each class is held by a function of its own, so each gets a `drop`.
+fn class_cycle(n: usize) -> String {
+    let classes = (0..n)
+        .map(|i| {
+            format!(
+                "class C{i} {{\n    next: C{}?\n}}\nfn hold{i}(c: C{i}) {{}}\n",
+                (i + 1) % n
+            )
+        })
+        .collect::<Vec<_>>()
+        .concat();
+    format!("{classes}fn main() {{}}\n")
+}
+
+/// `drop` and `drain` of each class of a cycle use the type of the heads of the cycle, as the
+/// helpers of enums do. Each class is dropped in a function of its own, so each gets a `drop`.
+#[test]
+fn drop_of_a_class_cycle_should_print_the_heads_type_in_linear_size() {
+    let size = |n: usize| {
+        let context = Context::create();
+        compiled(&context, &class_cycle(n))
+            .print_to_string()
+            .to_bytes()
+            .len()
+    };
+    assert_near_linear(size(100), size(200), size(300));
+}
+
+/// The slot for the heads of a component is zeroed by one `memset` of constant size. A store of
+/// a zero array would be one store for each member, so the code of `release` would grow with
+/// the ring.
+#[test]
+fn release_of_an_enum_ring_should_zero_the_heads_with_one_memset() {
+    let context = Context::create();
+    let ir = compiled(&context, &enum_ring(10))
+        .print_to_string()
+        .to_string();
+    let release = function_body(&ir, "define internal void @sisu_rc.release.R0(ptr");
+    assert_eq!(
+        release.matches("call void @llvm.memset.").count(),
+        1,
+        "{release}"
+    );
+    assert!(!release.contains("store ["), "{release}");
+}
+
+#[test]
+fn drop_of_a_class_cycle_should_zero_the_heads_with_one_memset() {
+    let context = Context::create();
+    let ir = compiled(&context, &class_cycle(10))
+        .print_to_string()
+        .to_string();
+    let drop = function_body(&ir, "define internal void @sisu_rc.drop.C0(ptr");
+    assert_eq!(drop.matches("call void @llvm.memset.").count(), 1, "{drop}");
+    assert!(!drop.contains("store ["), "{drop}");
+}
+
 /// A `take_apart` finds each place's token and kept value once: a scan of every token, or of
 /// every rest, per binding would visit quadratically many places.
 #[test]
@@ -3214,4 +3380,193 @@ fn generic_largest_should_emit_the_hand_written_body() {
             "at {level}"
         );
     }
+}
+
+/// The names of the `dbg`-mode show helpers that `ir` defines, such as `Node` for
+/// `@sisu_show.dbg.Node`.
+fn dbg_helpers(ir: &str) -> Vec<&str> {
+    ir.lines()
+        .filter(|line| line.starts_with("define "))
+        .filter_map(|line| line.split_once("@sisu_show.dbg.").map(|(_, rest)| rest))
+        .filter_map(|rest| rest.split_once('(').map(|(name, _)| name))
+        .collect()
+}
+
+/// A program that prints a `[i64]` and `dbg`s a `Node` has a `dbg`-mode helper for `Node` only.
+/// The array holds no class, so `print` and `dbg` share its helper. The helper of `Node` writes
+/// the `next` field by the `print` helper of `Node`, and never calls itself.
+#[test]
+fn dbg_should_make_a_helper_only_for_a_type_that_holds_a_class() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "class Node {\n    value: i64\n    next: Node?\n}\nfn main() {\n    let xs = [1]\n    print(xs)\n    let n = Node(value: 1, next: None)\n    dbg(n)\n    print(n.value)\n    print(n.next == None)\n}",
+    )
+    .print_to_string()
+    .to_string();
+    assert_eq!(dbg_helpers(&ir), ["Node"], "{ir}");
+    assert_eq!(
+        ir.matches("define internal void @\"sisu_show.[i64]\"(")
+            .count(),
+        1,
+        "{ir}"
+    );
+    let body = definition(&ir, "sisu_show.dbg.Node");
+    let calls =
+        |callee: &str| (body.lines()).any(|line| line.contains("call ") && line.contains(callee));
+    assert!(calls("@sisu_show.Node("), "{body}");
+    assert!(!calls("@sisu_show.dbg.Node("), "{body}");
+}
+
+/// A class with a written `to_string` is written by its text, in `print` and in `dbg`. So a value
+/// that holds only such a class has no `dbg` helper of its own: `print` and `dbg` share one.
+#[test]
+fn dbg_should_share_the_helper_of_a_type_that_holds_a_class_with_a_written_to_string() {
+    let context = Context::create();
+    let decls = "class Leaf {\n    v: i64\n}\nextend Leaf: Display {\n    fn to_string(self) -> string {\n        \"leaf\"\n    }\n}\nenum Pick {\n    One(Leaf)\n}\n";
+    for (row, value) in [
+        ("a class", "Leaf(v: 1)"),
+        ("an array", "[Leaf(v: 1)]"),
+        ("an optional", "Some(Leaf(v: 1))"),
+        ("an enum payload", "Pick.One(Leaf(v: 1))"),
+    ] {
+        let src = format!(
+            "{decls}fn main() {{\n    let value = {value}\n    print(value)\n    dbg(value)\n}}"
+        );
+        let ir = compiled(&context, &src).print_to_string().to_string();
+        assert!(dbg_helpers(&ir).is_empty(), "{row}: {ir}");
+        assert!(!ir.contains("sisu_show_component.dbg"), "{row}: {ir}");
+    }
+}
+
+/// An enum with a written `to_string` shows that text, so `dbg` writes no field of a class in its
+/// payload. The helper of a value that holds only such an enum is the `print` helper.
+#[test]
+fn dbg_should_share_the_helper_of_an_enum_with_a_written_to_string() {
+    let context = Context::create();
+    let decls = "class Plain {\n    v: i64\n}\nenum Slot {\n    Full(Plain)\n}\nextend Slot: Display {\n    fn to_string(self) -> string {\n        \"slot\"\n    }\n}\nenum Pick {\n    One(Slot)\n}\n";
+    for (row, value) in [
+        ("an enum", "Slot.Full(Plain(v: 1))"),
+        ("an array", "[Slot.Full(Plain(v: 1))]"),
+        ("an optional", "Some(Slot.Full(Plain(v: 1)))"),
+        ("an enum payload", "Pick.One(Slot.Full(Plain(v: 1)))"),
+    ] {
+        let src = format!(
+            "{decls}fn main() {{\n    let value = {value}\n    print(value)\n    dbg(value)\n}}"
+        );
+        let ir = compiled(&context, &src).print_to_string().to_string();
+        assert!(dbg_helpers(&ir).is_empty(), "{row}: {ir}");
+    }
+}
+
+/// A recursive enum that holds no class is written by one helper, whether `print` or `dbg` asks.
+/// So is a pair of enums that hold each other: no class is behind either of them.
+#[test]
+fn dbg_should_share_the_helper_of_a_recursive_enum_that_holds_no_class() {
+    let context = Context::create();
+    for (row, decls, value) in [
+        (
+            "a list",
+            "enum List {\n    Nil\n    Cons(i64, List)\n}\n",
+            "List.Cons(1, List.Nil)",
+        ),
+        (
+            "a pair of enums",
+            "enum C {\n    D(D)\n}\nenum D {\n    C(C)\n    End\n}\n",
+            "C.D(D.End)",
+        ),
+    ] {
+        let src = format!(
+            "{decls}fn main() {{\n    let value = {value}\n    print(value)\n    dbg(value)\n}}"
+        );
+        let ir = compiled(&context, &src).print_to_string().to_string();
+        assert!(dbg_helpers(&ir).is_empty(), "{row}: {ir}");
+        assert!(!ir.contains("sisu_show_component.dbg"), "{row}: {ir}");
+    }
+}
+
+/// A recursive enum that holds a class has a `dbg`-mode component helper, which writes the class
+/// by its `dbg` helper.
+#[test]
+fn dbg_should_write_a_class_in_the_payload_of_a_recursive_enum_by_its_helper() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "class Node {\n    value: i64\n}\nenum Tree {\n    Leaf(Node)\n    Join(Tree, Tree)\n}\nfn main() {\n    let leaf = Tree.Leaf(Node(value: 1))\n    dbg(Tree.Join(leaf, leaf))\n}",
+    )
+    .print_to_string()
+    .to_string();
+    let body = definition(&ir, "sisu_show_component.dbg.Tree");
+    assert!(body.contains("@sisu_show.dbg.Node("), "{body}");
+    assert!(!body.contains("@sisu_show.Node("), "{body}");
+}
+
+/// The `dbg`-mode helper of a class reads a field in place. It retains a counted `mut` field
+/// whose helper may run a written `to_string` before the field's helper, and releases it after.
+/// A `mut` field that holds a `[i64]` runs no written method, so nothing is
+/// retained.
+#[test]
+fn dbg_should_retain_only_a_mut_field_whose_helper_may_run_a_written_method() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        &std::fs::read_to_string(format!(
+            "{}/tests/run/dbg_field_snapshot.sisu",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .expect("the run case should be readable"),
+    )
+    .print_to_string()
+    .to_string();
+    let body = definition(&ir, "sisu_show.dbg.Owner");
+    let retain = body
+        .find("@sisu_rc.retain(")
+        .unwrap_or_else(|| panic!("no retain in\n{body}"));
+    let branch = body.find("br ").expect("the helper should branch");
+    let release = body
+        .find("@sisu_rc.release.Inner(")
+        .unwrap_or_else(|| panic!("no release in\n{body}"));
+    let done = body.find("show.done:").expect("the helper should join");
+    assert!(
+        retain < branch,
+        "the retain is before the field is shown:\n{body}"
+    );
+    assert!(
+        done < release,
+        "the release is after the field is shown:\n{body}"
+    );
+
+    let ir = compiled(
+        &context,
+        "class Bag {\n    mut xs: [i64]\n    mut tags: [Tag]\n}\nclass Tag {\n    n: i64\n}\nfn main() {\n    let bag = Bag(xs: [1], tags: [])\n    let _ = dbg(bag)\n    bag.xs = [2]\n    print(bag.xs.len() + bag.tags.len())\n}",
+    )
+    .print_to_string()
+    .to_string();
+    let body = definition(&ir, "sisu_show.dbg.Bag");
+    assert!(!body.contains("@sisu_rc."), "{body}");
+}
+
+/// `tir::layout_enums` boxes a field on every cycle, so the checker cannot give codegen an
+/// enum that holds itself inline. This test unboxes the one field of a recursive enum, so the
+/// walk of `lay_out_enums` must stop on the cycle and not loop.
+#[test]
+#[should_panic(expected = "tir::layout_enums should box a field on every cycle")]
+fn lay_out_enums_should_panic_on_an_enum_that_holds_itself_inline() {
+    let src = "enum L {\n    End\n    A(L)\n}\nfn main() {\n    let _ = L.A(L.End)\n}";
+    let program = parse_ok(src);
+    let (program, diagnostics) = check_alone(&program, src, &[]);
+    let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+    let mut program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
+    let enums = program.enums.iter_mut().filter(|e| e.name == "L");
+    for field in enums
+        .flat_map(|e| &mut e.variants)
+        .flat_map(|v| &mut v.fields)
+    {
+        assert!(field.boxed, "the checker should box the field of `L.A`");
+        field.boxed = false;
+    }
+    let mir = mir::build(&program);
+    let machine = target_machine(OptLevel::O0).expect("the host is a target");
+    let context = Context::create();
+    compile(&context, &program, &mir, "test.sisu", src, &machine, false);
 }

@@ -2121,9 +2121,7 @@ impl Checker<'_> {
     ) -> Option<Poisoned> {
         let ty = type_of(receiver)?;
         let field = match ty.kind() {
-            TypeKind::Class(id, _) => {
-                (self.classes[id.0].fields.iter()).any(|f| f.name.name == method.name)
-            }
+            TypeKind::Class(id, _) => self.classes[id.0].field(method.name).is_some(),
             TypeKind::Enum(..) => false,
             // A built-in's list is reported once its method is found.
             _ => return None,

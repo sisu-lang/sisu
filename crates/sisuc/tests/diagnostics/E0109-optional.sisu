@@ -1,0 +1,4 @@
+fn main() {
+    let price: f64? = 1.5
+    print("{price:08.2}")
+}

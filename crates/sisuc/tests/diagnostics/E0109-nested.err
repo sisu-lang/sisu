@@ -1,4 +1,4 @@
-error[E0109]: Sisu's format specs take only alignment, width and precision
+error[E0109]: Sisu's format specs take `#`, or an alignment, a width and a precision
  --> E0109-nested.sisu:4:14
   |
 4 |     print("{x:>{w}}")

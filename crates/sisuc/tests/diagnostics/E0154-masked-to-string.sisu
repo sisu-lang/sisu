@@ -1,0 +1,15 @@
+class Node {}
+
+class Own<T> {
+    _value: T
+}
+
+extend<T: Eq> Own<T> {
+    fn to_string<U>(self) -> string {
+        "own"
+    }
+}
+
+fn main() {
+    print(Own(_value: Node()).to_string<i64>())
+}

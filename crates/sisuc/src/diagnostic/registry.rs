@@ -569,13 +569,13 @@ pub(crate) enum DiagnosticKind {
     /// An `is` whose operand at `at`, of type `found`, is no object. `help` when `==` may
     /// compare it: its type names no type parameter. `add`, for a type parameter in scope, is
     /// the bound that makes it an object. `peel`, for an optional of an optional, is the `is`
-    /// with one layer of that operand taken off, as written.
+    /// with the extra layers of each operand taken off, as written.
     IsNeedsObjects {
         found: String,
         at: Span,
         help: bool,
         add: Option<AddBound>,
-        peel: Option<String>,
+        peel: Option<PeelIs>,
     },
     /// A comparison at `at` of a `left` with a `right`.
     CannotCompare {
@@ -872,12 +872,14 @@ pub(crate) enum DiagnosticKind {
     MathIdiom { written: Span, fix: Option<MathFix> },
     /// The `**` at `at`, which Sisu has no operator for; `fix` is the `pow` call that may mean it.
     PowerOperator { at: Span, fix: Option<PowerFix> },
-    /// The format spec at `at`, its `:` included, which the grammar `[<^>][width][.precision]`
-    /// does not hold: it is empty, an alignment alone, or has a `.` without digits.
+    /// The format spec at `at`, its `:` included, which the grammar `#` or
+    /// `[<^>][width][.precision]` does not hold: it is empty, an alignment alone, or has a `.`
+    /// without digits.
     MalformedFormatSpec { at: Span },
-    /// The format spec at `at`, its `:` included, which asks for more than alignment, width and
-    /// precision: a leading `0`, a sign, a type, a fill, a space or a nested `{`.
-    UnsupportedFormatSpec { at: Span },
+    /// The format spec at `at`, its `:` included, which asks for more than `#`, or alignment,
+    /// width and precision: a leading `0`, a sign, a type, a fill, a space or a nested `{`. When
+    /// `pretty`, it is a `#` beside an alignment, a width or a precision.
+    UnsupportedFormatSpec { at: Span, pretty: bool },
     /// The format spec at `at`, its `:` included, whose width, when `width`, or else precision is
     /// above its limit.
     FormatSpecLimit { at: Span, width: bool },
@@ -1189,7 +1191,7 @@ pub(crate) enum Spelled {
     /// A function, a method or a type, or a call of a method of an interface, as written.
     Instance(String),
     /// An operator or a built-in function that calls through a language interface: `==`, `<`,
-    /// `contains` or `print`.
+    /// `contains`, `print` or `dbg`.
     Operator(String),
     /// A part of an interpolation, which calls through `Display`.
     Interpolation,
@@ -1903,18 +1905,53 @@ pub(crate) enum NoOperatorForm {
     Contains { make: Option<String> },
 }
 
-/// A bound that a type parameter lacks: `param`, then every bound it would have, in order.
+/// Where a missing bound goes.
+#[derive(Clone)]
+pub(crate) enum BoundSite {
+    /// A type parameter, by name.
+    Param(String),
+    /// An associated type, by name, in the `interface` that declares it.
+    Assoc { interface: String, name: String },
+}
+
+/// A bound that a type parameter or an associated type lacks: `site`, then every bound it would
+/// have, in order.
 #[derive(Clone)]
 pub(crate) struct AddBound {
-    pub(crate) param: String,
+    pub(crate) site: BoundSite,
     pub(crate) bounds: Vec<String>,
 }
 
 impl AddBound {
     /// The help that tells what to write.
     fn help(&self) -> String {
-        format!("add a bound: `{}: {}`", self.param, self.bounds.join(" & "))
+        let bounds = self.bounds.join(" & ");
+        match &self.site {
+            BoundSite::Param(param) => format!("add a bound: `{param}: {bounds}`"),
+            BoundSite::Assoc { interface, name } => {
+                format!("add a bound in `{interface}`: `type {name}: {bounds}`")
+            }
+        }
     }
+}
+
+/// An `is` with the extra layers of its operands taken off, as written, and how many layers the
+/// help says to take off.
+#[derive(Clone)]
+pub(crate) struct PeelIs {
+    pub(crate) text: String,
+    pub(crate) layers: PeelLayers,
+}
+
+/// The layers that the help of an `is` peels.
+#[derive(Clone, Copy)]
+pub(crate) enum PeelLayers {
+    /// One side has one extra layer; the other has none.
+    One,
+    /// Both sides have one extra layer.
+    OfEachSide,
+    /// A side has more than one extra layer.
+    Extra,
 }
 
 /// The `let` that picks one answer of an ambiguous call: the call as written, the name of the
@@ -3018,8 +3055,13 @@ impl From<DiagnosticKind> for Diagnostic {
                 peel,
             } => {
                 let d = Diagnostic::coded(code, at, format!("`is` needs objects; found `{found}`"));
-                if let Some(peel) = peel {
-                    d.with_help(format!("peel one layer first: `{peel}`"))
+                if let Some(PeelIs { text, layers }) = peel {
+                    let layers = match layers {
+                        PeelLayers::One => "one layer",
+                        PeelLayers::OfEachSide => "one layer of each side",
+                        PeelLayers::Extra => "the extra layers",
+                    };
+                    d.with_help(format!("peel {layers} first: `{text}`"))
                 } else if let Some(add) = add {
                     d.with_help(add.help())
                 } else if help {
@@ -3788,13 +3830,19 @@ impl From<DiagnosticKind> for Diagnostic {
                 }
             }
             DiagnosticKind::MalformedFormatSpec { at } => {
-                Diagnostic::coded(code, at, "a format spec is `[<^>][width][.precision]`")
+                Diagnostic::coded(code, at, "a format spec is `#` or `[<^>][width][.precision]`")
             }
-            DiagnosticKind::UnsupportedFormatSpec { at } => Diagnostic::coded(
+            DiagnosticKind::UnsupportedFormatSpec { at, pretty: false } => Diagnostic::coded(
                 code,
                 at,
-                "Sisu's format specs take only alignment, width and precision",
+                "Sisu's format specs take `#`, or an alignment, a width and a precision",
             ),
+            DiagnosticKind::UnsupportedFormatSpec { at, pretty: true } => Diagnostic::coded(
+                code,
+                at,
+                "`#` does not combine with a width, alignment or precision",
+            )
+            .with_help("remove the `#`, or the width, alignment and precision"),
             DiagnosticKind::FormatSpecLimit { at, width } => Diagnostic::coded(
                 code,
                 at,

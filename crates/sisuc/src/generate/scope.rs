@@ -332,6 +332,9 @@ pub(crate) struct Enum {
     pub(crate) applied: Option<Rc<Applied>>,
 }
 
+/// Every this many `let` locals, one is named `echo`.
+const ECHO_EVERY: usize = 5;
+
 #[derive(Default)]
 pub(crate) struct Scope {
     pub(crate) consts: Vec<Const>,
@@ -359,6 +362,8 @@ pub(crate) struct Scope {
     pub(crate) conditional: usize,
     /// The last number a name took.
     names: usize,
+    /// How many `let` locals `local` has named.
+    lets: usize,
     /// `Generic::result()`, built on first use.
     result: OnceCell<Generic>,
 }
@@ -377,6 +382,19 @@ impl Scope {
     /// number. See [`fresh_name`].
     pub(crate) fn fresh(&mut self, prefix: &str) -> String {
         fresh_name(&mut self.names, prefix)
+    }
+
+    /// The name of a `let` local. Every `ECHO_EVERY`th local is `echo` when no `echo` is in
+    /// scope. The word was reserved before `dbg` and is an ordinary name now. The name still takes
+    /// its number from `fresh`, so the names after it do not move. A count decides, not a draw, so
+    /// no seed's data is read differently.
+    pub(crate) fn local(&mut self) -> String {
+        let name = self.fresh("v");
+        self.lets += 1;
+        if self.lets.is_multiple_of(ECHO_EVERY) && self.vars.iter().all(|var| var.name != "echo") {
+            return "echo".to_string();
+        }
+        name
     }
 
     /// Whether a value of `ty` may hold a class object, which no field or element assignment

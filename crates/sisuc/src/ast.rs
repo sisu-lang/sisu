@@ -584,14 +584,18 @@ pub(crate) enum Bound {
 pub(crate) struct Part {
     pub(crate) value: Expr,
     pub(crate) spec: Option<FormatSpec>,
+    /// Whether the part's spec had an error, which the parser reported.
+    pub(crate) bad_spec: bool,
 }
 
-/// A format spec, `[<^>][width][.precision]`, and its span, from its `:`.
+/// A format spec, `#` or `[<^>][width][.precision]`, and its span, from its `:`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct FormatSpec {
     pub(crate) align: Option<Align>,
     pub(crate) width: Option<u16>,
     pub(crate) precision: Option<u8>,
+    /// The spec is `#`, which has no alignment, width or precision.
+    pub(crate) pretty: bool,
     pub(crate) span: Span,
 }
 
@@ -620,6 +624,9 @@ impl fmt::Display for Part {
             return self.value.fmt(f);
         };
         write!(f, "(fmt {} \"", self.value)?;
+        if spec.pretty {
+            f.write_str("#")?;
+        }
         if let Some(align) = spec.align {
             write!(f, "{}", align.char())?;
         }

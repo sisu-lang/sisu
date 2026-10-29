@@ -294,7 +294,8 @@ impl Walk {
             | Rvalue::Sum { base: operand, .. }
             | Rvalue::Convert(operand)
             | Rvalue::Unary { operand, .. }
-            | Rvalue::Print { operand, .. } => self.operand(operand),
+            | Rvalue::Print { operand, .. }
+            | Rvalue::Dbg { operand, .. } => self.operand(operand),
             Rvalue::Call { args: operands, .. }
             | Rvalue::New { args: operands, .. }
             | Rvalue::Variant { args: operands, .. }

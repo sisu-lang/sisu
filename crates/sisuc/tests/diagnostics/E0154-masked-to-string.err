@@ -1,0 +1,19 @@
+error[E0152]: `to_string` does not match `Display`'s requirement
+ --> E0154-masked-to-string.sisu:8:8
+  |
+8 |     fn to_string<U>(self) -> string {
+  |        ^^^^^^^^^ found `fn to_string<U>(self) -> string`
+  |
+  = help: `Display` requires `fn to_string(self) -> string`
+
+error[E0154]: `Node` does not conform to `Eq`
+  --> E0154-masked-to-string.sisu:14:11
+   |
+ 7 | extend<T: Eq> Own<T> {
+   |           -- required by this bound
+...
+14 |     print(Own(_value: Node()).to_string<i64>())
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0152, E0154

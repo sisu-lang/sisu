@@ -333,6 +333,9 @@ pub(crate) enum Rank {
     /// with its own, where `inline_enums` looks, only with arguments that carry none:
     /// `P2<T, Wrap2<i64>>` in `Wrap2`.
     Late,
+    /// Any other field that holds an associated type: `T.Item`. Its choice may name the enum
+    /// that holds it (`Item = E<W<T>>`), a cycle that no declared name shows.
+    Assoc,
     /// Any other field that names a type parameter, never boxed: `Two<T>` in `Wrap2`, or `T`.
     Never,
 }
@@ -447,12 +450,14 @@ impl Stream {
 }
 
 /// How an interpolation writes its part `part`: padded, and with `precision` decimals for an
-/// `f64`.
+/// `f64`, or laid out to fit 80 columns when `pretty`. A pretty part has no pad and no precision.
+/// Its type makes a group (`conformance::makes_group`), or is a type parameter that may.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Format {
     pub(crate) part: usize,
     pub(crate) pad: Option<Pad>,
     pub(crate) precision: Option<u8>,
+    pub(crate) pretty: bool,
 }
 
 /// Padding to `width` code points, the text aligned by `align`.
@@ -466,9 +471,20 @@ pub(crate) struct Pad {
     pub(crate) by_type: bool,
 }
 
-/// The format as a spec: `>8.2`.
+impl Format {
+    /// Whether the part is written plain: no pad, no precision and no layout. The checker and
+    /// `mono` keep no such row, so a part has a row only if its spec changes the text.
+    pub(crate) fn is_plain(&self) -> bool {
+        self.pad.is_none() && self.precision.is_none() && !self.pretty
+    }
+}
+
+/// The format as a spec: `>8.2`, or `#`.
 impl fmt::Display for Format {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.pretty {
+            f.write_str("#")?;
+        }
         if let Some(Pad { align, width, .. }) = self.pad {
             write!(f, "{}{width}", align.char())?;
         }
@@ -531,6 +547,14 @@ pub(crate) enum ExprKind {
     /// `print(operand)` or `eprint(operand)`.
     Print {
         stream: Stream,
+        operand: Box<Expr>,
+    },
+    /// `dbg(operand)`, of the operand's type. It writes `at`'s position, `text` (the operand's
+    /// source as written) and the operand's value to standard error, and yields the value. `at`
+    /// is the operand's span.
+    Dbg {
+        at: Span,
+        text: String,
         operand: Box<Expr>,
     },
     /// `panic(message)`, of type `never`; its span starts where the panic reports.
@@ -713,21 +737,27 @@ impl Type {
 
 /// Lays out `enums`, whose payload types are final: boxes each payload field that closes a
 /// cycle of the holds-inline graph, and sets each enum's `cycle` and `counted`. The box goes on
-/// the declaring enum's own field rather than one inside a generic type, by a pass per `Rank`,
-/// `Plain`, `Own`, `Open`, then `Late`, each boxing its fields that are on a cycle of what the
-/// passes before it left unboxed. A cycle that `Plain` leaves holds an `Own`, `Open` or `Late`
-/// field, since each of its enums' declarations is named by a generic field of another on it,
-/// so the names close a cycle of declarations. A `Never` field is never boxed. The ranks read
-/// names only, so a type argument an enum never holds inline (unused, or only in an array or a
-/// class) still counts: with `enum Two<T, U> { Both(T, T) }`,
+/// the declaring enum's own field rather than one inside a generic type. There is a pass per
+/// `Rank`: `Plain`, `Own`, `Open`, `Late`, then `Assoc`. Each pass boxes its fields that are on
+/// a cycle of what the passes before it left unboxed. A cycle that `Plain` leaves holds an
+/// `Own`, `Open` or `Late` field, or an `Assoc` field. Take a cycle with no associated type.
+/// A generic field of one enum on it names the declaration of the next, so the names close a
+/// cycle of declarations. The choice of an associated type is a third source of enum names. It
+/// can name the enum that holds it: `Item = E<W<T>>` for `A(T.Item)` in `E`. Only a field that
+/// holds an associated type reads a choice. So a cycle that the earlier passes leave holds an
+/// `Assoc` field. The last pass boxes each `Assoc` field that stays on a cycle. A `Never` field
+/// is never boxed. The ranks read names only, so a type argument an enum never holds inline
+/// (unused, or only in an array or a class) still counts: with `enum Two<T, U> { Both(T, T) }`,
 /// `Wrap2<T>.W: Two<T, Wrap2<T>>` is `Own`, and `G<i64>` in `enum G<T> { P(Wrap2<G<T>>) }`
 /// boxes `Wrap2<G<i64>>.W` beside `G<i64>.P`, which alone would break the cycle. And a `Late`
 /// declaring field that names its cycle only through closed names can lose its box to an
 /// `Open` field inside the generic type: with `enum Wrap8<T> { W(P2<T, Y8<T>>) N }` and
 /// `enum Y8<T> { V(P2<T, Wrap8<i64>>) N }`, `G<T>.P: P2<T, Wrap8<G<i64>>>` is `Late`, so the
-/// `Open` pass boxes `Wrap8<G<i64>>.W` and leaves `G<i64>.P` inline. Each of these places a box
-/// where it is not needed, and never leaves a cycle unboxed. Every member of a component with
-/// a box is on that cycle, and counted, though a member may hold its links inline.
+/// `Open` pass boxes `Wrap8<G<i64>>.W` and leaves `G<i64>.P` inline. And a ring of two
+/// instances, `E3<P3<i64, bool>>` and `E3<P3<bool, i64>>` with `Item = E3<P3<B, A>>`, gets a
+/// box on each, where one box breaks the ring. Each of these places a box where it is not
+/// needed, and never leaves a cycle unboxed. Every member of a component with a box is on that
+/// cycle, and counted, though a member may hold its links inline.
 pub(crate) fn layout_enums(enums: &mut [Enum]) {
     // The holds-inline graph over the fields `keep` picks.
     let held = |enums: &[Enum], keep: fn(&Payload) -> bool| -> Vec<Vec<usize>> {
@@ -755,8 +785,8 @@ pub(crate) fn layout_enums(enums: &mut [Enum]) {
         .iter()
         .flat_map(|e| &e.variants)
         .flat_map(|v| &v.fields);
-    if fields.any(|p| matches!(p.rank, Rank::Own | Rank::Open | Rank::Late)) {
-        for rank in [Rank::Own, Rank::Open, Rank::Late] {
+    if fields.any(|p| matches!(p.rank, Rank::Own | Rank::Open | Rank::Late | Rank::Assoc)) {
+        for rank in [Rank::Own, Rank::Open, Rank::Late, Rank::Assoc] {
             let remaining = components(&held(enums, |p| !p.boxed));
             for (e, info) in enums.iter_mut().enumerate() {
                 for p in info.variants.iter_mut().flat_map(|v| &mut v.fields) {
@@ -823,6 +853,7 @@ impl Expr {
             | ExprKind::Wrap(operand)
             | ExprKind::Convert(operand)
             | ExprKind::Print { operand, .. }
+            | ExprKind::Dbg { operand, .. }
             // A panic ends the process, so nothing before it needs binding for a release.
             | ExprKind::Panic(operand)
             | ExprKind::Unary { operand, .. } => operand.exits(),
@@ -905,6 +936,7 @@ impl Expr {
             | ExprKind::Wrap(operand)
             | ExprKind::Convert(operand)
             | ExprKind::Print { operand, .. }
+            | ExprKind::Dbg { operand, .. }
             | ExprKind::Panic(operand)
             | ExprKind::Unary { operand, .. }
             | ExprKind::Break {
@@ -1051,6 +1083,7 @@ impl Expr {
             | K::Wrap(e)
             | K::Convert(e)
             | K::Print { operand: e, .. }
+            | K::Dbg { operand: e, .. }
             | K::Panic(e)
             | K::Len(e)
             | K::Chars(e)
@@ -1270,6 +1303,7 @@ impl Printer<'_> {
             ExprKind::Wrap(operand) => self.unary(f, "wrap", operand),
             ExprKind::Convert(operand) => self.unary(f, &expr.ty.to_string(), operand),
             ExprKind::Print { stream, operand } => self.unary(f, stream.name(), operand),
+            ExprKind::Dbg { text, operand, .. } => self.unary(f, &format!("dbg {text:?}"), operand),
             ExprKind::Panic(message) => self.unary(f, "panic", message),
             ExprKind::ReadLine => f.write_str("(read_line)"),
             ExprKind::ArrayLit(elements) => self.list(f, format_args!("array"), elements),
@@ -2523,16 +2557,19 @@ mod tests {
                 part: 1,
                 pad: pad(Align::Center, 4),
                 precision: None,
+                pretty: false,
             },
             Format {
                 part: 2,
                 pad: None,
                 precision: Some(3),
+                pretty: false,
             },
             Format {
                 part: 3,
                 pad: pad(Align::Left, 10),
                 precision: Some(0),
+                pretty: false,
             },
         ];
         let interp = expr(ExprKind::Interpolate { parts, formats }, Type::STRING);
@@ -2837,7 +2874,7 @@ mod tests {
         clippy::too_many_lines,
         reason = "one row per node kind, so the table reads in one place"
     )]
-    fn each_child_mut_reaches_every_direct_child() {
+    fn each_child_mut_should_reach_every_direct_child() {
         let n = |k| Box::new(int(k));
         let ints = |ks: [i64; 2]| ks.map(int).into();
         let valued = |k| Block {
@@ -2956,6 +2993,14 @@ mod tests {
             (
                 ExprKind::Print {
                     stream: Stream::Stdout,
+                    operand: n(1),
+                },
+                1,
+            ),
+            (
+                ExprKind::Dbg {
+                    at: Span::new(0, 0),
+                    text: "x".to_string(),
                     operand: n(1),
                 },
                 1,

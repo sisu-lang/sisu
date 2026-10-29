@@ -52,7 +52,7 @@ impl Checker<'_> {
             self.stray(args);
             return Err(Poisoned::error());
         }
-        if let Some(checked) = self.prelude_call(span, callee, args) {
+        if let Some(checked) = self.prelude_call(span, callee, args, site.expected) {
             return checked;
         }
         if let Some(to @ (Type::I64 | Type::U8 | Type::F64 | Type::CHAR | Type::STRING)) =

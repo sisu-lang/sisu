@@ -351,6 +351,28 @@ fn copy_should_stay_across_a_written_to_string() {
     assert!(!f.contains("[calls]"), "{f}");
 }
 
+/// A `dbg` shows the fields of a class, so it reaches the written `to_string` of `Box`'s `item`.
+/// A `print` of the same `Box` writes the class's name and runs none. The copy `old` of the
+/// string that the `to_string` replaces stays a copy across the `dbg`, and the `dbg` is flagged.
+#[test]
+fn copy_should_stay_across_a_dbg_that_runs_a_written_to_string() {
+    let decls = "class B {\n    mut s: string\n}\nextend B: Display {\n    fn to_string(self) -> string {\n        self.s = \"new\"\n        \"B\"\n    }\n}\nclass Box {\n    item: B\n}\n";
+    let main = |shown: &str| {
+        format!(
+            "{decls}fn main() {{\n    let bx = Box(item: B(s: \"heap {{1}}\"))\n    let old = bx.item.s\n    {shown}\n    print(old)\n    print(bx.item.s)\n}}"
+        )
+    };
+    let f = function(&built(&main("let _ = dbg(bx)")), "main");
+    let copy = f
+        .lines()
+        .find(|l| l.contains("old#") && l.contains(" = "))
+        .unwrap_or_else(|| panic!("no binding of `old` in\n{f}"));
+    assert!(copy.contains("= copy "), "{copy}\n{f}");
+    assert!(f.contains("call dbg(") && f.contains(" [calls]"), "{f}");
+    let f = function(&built(&main("print(bx)")), "main");
+    assert!(!f.contains("[calls]"), "{f}");
+}
+
 /// `A` meets `B`'s `Holder` through `B`, so the cycle `A` - `B` reaches a written `eq` whichever
 /// of the two a comparison asks first.
 #[test]

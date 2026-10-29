@@ -9,8 +9,8 @@ use rustc_hash::FxHashMap;
 use crate::graph::components;
 use crate::symbol::Symbol;
 use crate::tir::{
-    ChoicePlace, Conformance, Conformances, Enum, EnumId, InterfaceId, LangInterfaces, Type,
-    TypeArgs, TypeKind, head_of,
+    ChoicePlace, Class, ClassId, Conformance, Conformances, Enum, EnumId, InterfaceId,
+    LangInterfaces, Type, TypeArgs, TypeKind, head_of,
 };
 
 #[cfg(test)]
@@ -352,6 +352,25 @@ pub(crate) fn prints_by_helper(ty: Type) -> bool {
     )
 }
 
+/// Whether the text of a value of type `ty` can hold a group, which `{x:#}` may break.
+/// An array, an enum and an optional of an optional (the `Some(` of the `Some` rule) can.
+/// So can an optional of an array or of an enum.
+/// A type parameter or an associated type can, because its argument may be one of these.
+/// A scalar, a `string` and a class write one piece.
+/// An optional of one of those is transparent.
+pub(crate) fn makes_group(mut ty: Type) -> bool {
+    while let TypeKind::Optional(inner) = ty.kind() {
+        if matches!(inner.kind(), TypeKind::Optional(_)) {
+            return true;
+        }
+        ty = inner;
+    }
+    matches!(
+        ty.kind(),
+        TypeKind::Array(_) | TypeKind::Enum(..) | TypeKind::Param(..) | TypeKind::Assoc(..)
+    )
+}
+
 /// How an interface holds for a concrete type, in the ids of the program that `mono` reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Holds {
@@ -561,10 +580,51 @@ fn record_holds<P: Payloads + ?Sized>(
 }
 
 /// The types whose `Eq` or `Display` reaches a written method, settled for a program: the keys
-/// `calls_written` has decided.
+/// `calls_written` has decided. The flag of a key is whether a `dbg` helper writes the type.
 #[derive(Debug, Default)]
 pub(crate) struct Written {
-    settled: FxHashMap<(Type, InterfaceId), bool>,
+    settled: FxHashMap<(Type, InterfaceId, bool), bool>,
+}
+
+/// The field types of each class, declared: what [`calls_written`] and [`holds_class`] read of a
+/// class to find what `dbg` shows of it. The output of `mono` has `Class`es; `mono` also keeps the
+/// field types of the input.
+pub(crate) trait Fields {
+    /// Calls `each` with the type of each field of the class `id`.
+    fn each(&self, id: ClassId, each: &mut dyn FnMut(Type));
+}
+
+impl Fields for [Class] {
+    fn each(&self, id: ClassId, each: &mut dyn FnMut(Type)) {
+        for field in &self[id.0].fields {
+            each(field.ty);
+        }
+    }
+}
+
+impl Fields for [Vec<Type>] {
+    fn each(&self, id: ClassId, each: &mut dyn FnMut(Type)) {
+        for &ty in &self[id.0] {
+            each(ty);
+        }
+    }
+}
+
+/// The field types of the class `ty`, with its arguments in place of its parameters, as `dbg`
+/// shows them: in `print` mode. Nothing for any other type.
+pub(crate) fn fields_of<F: Fields + ?Sized>(
+    conformances: &Conformances,
+    classes: &F,
+    ty: Type,
+    mut each: impl FnMut(Type),
+) {
+    if let TypeKind::Class(id, args) = ty.kind() {
+        classes.each(id, &mut |field| {
+            if let Some(part) = normalize(conformances, field.subst(args.get())) {
+                each(part);
+            }
+        });
+    }
 }
 
 /// Whether the helper for `interface` on the concrete type `ty` may call a written method:
@@ -573,22 +633,99 @@ pub(crate) struct Written {
 /// `conformances` is a leaf, and the key of any other type reaches the keys of its parts. A key
 /// is true exactly when it reaches a leaf. The keys that are not settled yet are listed once, with
 /// their parts, and settled by their strongly connected components in completion order, so each
-/// key of a program is decided once.
-pub(crate) fn calls_written<P: Payloads + ?Sized>(
+/// key of a program is decided once (see [`reaches`]).
+///
+/// With `dbg`, the helper is the one that `dbg` calls. A class with no written conformance also
+/// writes its fields, each in `print` mode, so each field type is a part of the class.
+pub(crate) fn calls_written<P: Payloads + ?Sized, F: Fields + ?Sized>(
     conformances: &Conformances,
-    enums: &P,
+    (enums, classes): (&P, &F),
     ty: Type,
     interface: InterfaceId,
+    dbg: bool,
     written: &mut Written,
 ) -> bool {
-    if let Some(&answer) = written.settled.get(&(ty, interface)) {
+    reaches(
+        &mut written.settled,
+        (ty, interface, dbg),
+        |(key, _, dbg), parts_of| {
+            // A written `eq` is the whole comparison: the helper compares no part of the type.
+            if has_written(conformances, interface, key) {
+                return true;
+            }
+            if dbg && matches!(key.kind(), TypeKind::Class(..)) {
+                fields_of(conformances, classes, key, |part| {
+                    parts_of((part, interface, false));
+                });
+            } else {
+                parts(conformances, enums, key, |part| {
+                    parts_of((part, interface, dbg));
+                });
+            }
+            false
+        },
+    )
+}
+
+/// Whether the concrete type `ty` holds a class with no written `Display`. It does when it is
+/// one, or when an array, an optional or an enum payload (any depth) is. Only such a class is
+/// written with its fields by `dbg`. A class or an enum with a written `Display` shows that text,
+/// so the walk stops at it. A `dbg` helper of a type that holds none is the `print` helper. The
+/// answers of `held` are the types decided so far, which later queries read.
+pub(crate) fn holds_class<P: Payloads + ?Sized>(
+    (conformances, display): (&Conformances, InterfaceId),
+    enums: &P,
+    ty: Type,
+    held: &mut FxHashMap<Type, bool>,
+) -> bool {
+    reaches(held, ty, |key, parts_of| {
+        if has_written(conformances, display, key) {
+            return false;
+        }
+        if matches!(key.kind(), TypeKind::Class(..)) {
+            return true;
+        }
+        parts(conformances, enums, key, parts_of);
+        false
+    })
+}
+
+/// Whether `conformances` holds a written conformance to `interface` for the concrete type `ty`.
+fn has_written(conformances: &Conformances, interface: InterfaceId, ty: Type) -> bool {
+    head_of(ty).is_some() && find(conformances, interface, ty, TypeArgs::NONE).is_some()
+}
+
+/// Whether `ty`, a type of a body that may name type parameters, has a written `Display` that
+/// always applies. It does when each bound of the conformance is on `Display`, which always
+/// holds. A bound on another interface may fail for the types that stand for the parameters.
+pub(crate) fn always_written(conformances: &Conformances, display: InterfaceId, ty: Type) -> bool {
+    head_of(ty).is_some()
+        && find_with(conformances, display, ty, TypeArgs::NONE, |c| {
+            (c.bounds.iter().flatten()).all(|bound| bound.interface == display)
+        })
+        .is_some()
+}
+
+/// Whether `start` reaches a leaf through the graph that `step` gives, a key at a time: `step`
+/// answers whether the key is a leaf, and otherwise calls its argument with each key that it
+/// reaches. `settled` holds the answers decided so far. The keys not settled that `start` reaches
+/// are listed once, with their edges, and settled by their strongly connected components in
+/// completion order. A component is true when one of its keys is a leaf or reaches a settled
+/// true. So each key of a program is decided once, whichever order the queries come in. A
+/// `false` met under an open query is never kept.
+fn reaches<K: Copy + Eq + std::hash::Hash>(
+    settled: &mut FxHashMap<K, bool>,
+    start: K,
+    mut step: impl FnMut(K, &mut dyn FnMut(K)) -> bool,
+) -> bool {
+    if let Some(&answer) = settled.get(&start) {
         return answer;
     }
     // The new keys, with the edges to the new keys they reach and whether they are a leaf or
     // reach a settled `true`.
-    let mut keys: Vec<Type> = vec![ty];
-    let mut at: FxHashMap<Type, usize> = FxHashMap::default();
-    at.insert(ty, 0);
+    let mut keys: Vec<K> = vec![start];
+    let mut at: FxHashMap<K, usize> = FxHashMap::default();
+    at.insert(start, 0);
     let mut edges: Vec<Vec<usize>> = Vec::new();
     let mut yes: Vec<bool> = Vec::new();
     let mut next = 0;
@@ -597,24 +734,20 @@ pub(crate) fn calls_written<P: Payloads + ?Sized>(
         next += 1;
         #[cfg(test)]
         CALLS_KEYS.set(CALLS_KEYS.get() + 1);
-        let leaf =
-            head_of(key).is_some() && find(conformances, interface, key, TypeArgs::NONE).is_some();
         let mut reach = Vec::new();
-        let mut settled_true = leaf;
-        // A written `eq` is the whole comparison: the helper compares no part of the type.
-        if !leaf {
-            parts(conformances, enums, key, |part| {
-                if let Some(&answer) = written.settled.get(&(part, interface)) {
-                    settled_true |= answer;
-                    return;
-                }
-                let index = *at.entry(part).or_insert_with(|| {
-                    keys.push(part);
-                    keys.len() - 1
-                });
-                reach.push(index);
+        let mut settled_true = false;
+        let leaf = step(key, &mut |part| {
+            if let Some(&answer) = settled.get(&part) {
+                settled_true |= answer;
+                return;
+            }
+            let index = *at.entry(part).or_insert_with(|| {
+                keys.push(part);
+                keys.len() - 1
             });
-        }
+            reach.push(index);
+        });
+        settled_true |= leaf;
         edges.push(reach);
         yes.push(settled_true);
     }
@@ -628,15 +761,15 @@ pub(crate) fn calls_written<P: Payloads + ?Sized>(
     for members in &members {
         let answer = members.iter().any(|&m| yes[m])
             || members.iter().any(|&m| {
-                edges[m].iter().any(|&n| {
-                    component[n] != component[m] && written.settled[&(keys[n], interface)]
-                })
+                edges[m]
+                    .iter()
+                    .any(|&n| component[n] != component[m] && settled[&keys[n]])
             });
         for &m in members {
-            written.settled.insert((keys[m], interface), answer);
+            settled.insert(keys[m], answer);
         }
     }
-    written.settled[&(ty, interface)]
+    settled[&start]
 }
 
 /// `ty` with every associated type replaced whose base is a class or an enum: by the type that
@@ -2267,7 +2400,16 @@ mod tests {
         parts(&conformances, enums, Type::array(Type::I64), &mut collect);
         parts(&conformances, enums, enum_type, &mut collect);
         parts(&conformances, enums, class, &mut collect);
-        assert_eq!(listed, [Type::I64], "a payload with no choice has no part");
+        // The fields of the class `C`: one with no choice for its `Item`, and an `i64`.
+        let fields: Vec<Vec<Type>> = vec![vec![item, Type::I64]];
+        fields_of(&conformances, fields.as_slice(), class, &mut collect);
+        // Only a class has fields.
+        fields_of(&conformances, fields.as_slice(), Type::I64, &mut collect);
+        assert_eq!(
+            listed,
+            [Type::I64, Type::I64],
+            "a payload or a field with no choice has no part"
+        );
         assert_eq!(
             holds(&mut cx, &source, enum_type, interface, TypeArgs::NONE),
             Holds::Generated
@@ -2282,5 +2424,161 @@ mod tests {
             holds(&mut cx, &source, param, interface, TypeArgs::NONE),
             Holds::No
         );
+    }
+
+    /// The program of `src` as `mono` instantiates it, with an empty `main` added.
+    fn instantiated(src: &str) -> crate::tir::Program {
+        let src = format!("{src}\nfn main() {{}}");
+        let (program, diagnostics) =
+            crate::check::check_alone(&crate::parser::parse_ok(&src), &src, &[]);
+        let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+        crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"))
+    }
+
+    /// The type of the enum or class `name` of `program`, which takes no type argument.
+    fn named(program: &crate::tir::Program, name: &str) -> Type {
+        if let Some(id) = program.enums.iter().position(|e| e.name == name) {
+            return tree(id, &[]);
+        }
+        let id = (program.classes.iter())
+            .position(|c| c.name == name)
+            .unwrap_or_else(|| panic!("no type {name}"));
+        class(id, &[])
+    }
+
+    /// `holds_class` on `ty`, from the answers `held`.
+    fn holds_a_class(
+        program: &crate::tir::Program,
+        ty: Type,
+        held: &mut FxHashMap<Type, bool>,
+    ) -> bool {
+        holds_class(
+            (&program.conformances, program.lang.display),
+            program.enums.as_slice(),
+            ty,
+            held,
+        )
+    }
+
+    /// `A` reaches `Node` through its own payload, and `B` through `A`, whichever is asked first.
+    /// The pair `C` and `D` reaches no class, whichever is asked first. A walk that kept a
+    /// `false` it met while the query on the same cycle was open would answer `false` for `B`
+    /// after `A`.
+    #[test]
+    fn holds_a_class_should_not_depend_on_the_query_order() {
+        let program = instantiated(
+            "class Node {\n    v: i64\n}\nenum A {\n    B(B)\n    N(Node)\n}\nenum B {\n    A(A)\n}\nenum C {\n    D(D)\n}\nenum D {\n    C(C)\n    End\n}",
+        );
+        let [a, b, c, d] = ["A", "B", "C", "D"].map(|name| named(&program, name));
+        for (first, second) in [(a, b), (b, a)] {
+            let mut held = FxHashMap::default();
+            assert!(holds_a_class(&program, first, &mut held));
+            assert!(holds_a_class(&program, second, &mut held));
+        }
+        for (first, second) in [(c, d), (d, c)] {
+            let mut held = FxHashMap::default();
+            assert!(!holds_a_class(&program, first, &mut held));
+            assert!(!holds_a_class(&program, second, &mut held));
+        }
+    }
+
+    /// A class or an enum with a written `Display` shows its text, so `dbg` writes no field of it.
+    /// A value that holds only such types holds none, and one that also holds a class with no
+    /// written `Display` does.
+    #[test]
+    fn holds_a_class_should_not_count_a_class_or_an_enum_with_a_written_display() {
+        let program = instantiated(
+            "class Leaf {\n    v: i64\n}\nextend Leaf: Display {\n    fn to_string(self) -> string {\n        \"leaf\"\n    }\n}\nclass Plain {\n    v: i64\n}\nenum Pick {\n    One(Leaf)\n}\nenum Both {\n    One(Leaf)\n    Two(Plain)\n}\nenum Slot {\n    Full(Plain)\n}\nextend Slot: Display {\n    fn to_string(self) -> string {\n        \"slot\"\n    }\n}\nenum Row {\n    One(Slot)\n    Two(Plain)\n}\nenum Held {\n    One(Slot)\n}",
+        );
+        let [leaf, plain, pick, both, slot, row, held] =
+            ["Leaf", "Plain", "Pick", "Both", "Slot", "Row", "Held"].map(|n| named(&program, n));
+        for (row, ty, expected) in [
+            ("a class with a written Display", leaf, false),
+            ("an array of it", Type::array(leaf), false),
+            ("an optional of it", Type::optional(leaf), false),
+            ("an enum payload of it", pick, false),
+            ("a class with none", plain, true),
+            ("an enum that holds one of each", both, true),
+            ("an enum with a written Display", slot, false),
+            ("an array of it", Type::array(slot), false),
+            ("an enum that holds only it", held, false),
+            ("an enum that holds it and a class with none", row, true),
+        ] {
+            let mut held = FxHashMap::default();
+            assert_eq!(holds_a_class(&program, ty, &mut held), expected, "{row}");
+        }
+    }
+
+    /// A chain of 50 enums that hold each other in a ring is walked once. Each type is visited
+    /// once for the first query, and the other 49 queries visit none.
+    #[test]
+    fn holds_a_class_should_visit_each_type_once() {
+        use std::fmt::Write as _;
+        let n = 50;
+        let mut src = String::new();
+        for k in 0..n {
+            let end = if k == n - 1 { "\n    End" } else { "" };
+            writeln!(src, "enum E{k} {{\n    Next(E{}){end}\n}}", (k + 1) % n)
+                .expect("writing to a `String` should succeed");
+        }
+        let program = instantiated(&src);
+        let mut held = FxHashMap::default();
+        CALLS_KEYS.set(0);
+        assert!(!holds_a_class(&program, named(&program, "E0"), &mut held));
+        assert_eq!(CALLS_KEYS.get(), n);
+        for k in 1..n {
+            assert!(!holds_a_class(
+                &program,
+                named(&program, &format!("E{k}")),
+                &mut held
+            ));
+        }
+        assert_eq!(
+            CALLS_KEYS.get(),
+            n,
+            "the other queries read the answers kept"
+        );
+    }
+
+    /// `calls_written` for `Display` of `ty`, in `print` mode or in `dbg` mode.
+    fn calls_display(program: &crate::tir::Program, ty: Type, dbg: bool) -> bool {
+        calls_written(
+            &program.conformances,
+            (program.enums.as_slice(), program.classes.as_slice()),
+            ty,
+            program.lang.display,
+            dbg,
+            &mut Written::default(),
+        )
+    }
+
+    /// The `to_string` of `Leaf` is written. `dbg` of an `Outer` shows its field `inner`, a
+    /// `Leaf`, by that text, so it may run it where `print` of an `Outer` does not. A `Shell`
+    /// holds the `Outer` in a field, which `dbg` shows by its name, so it runs nothing.
+    #[test]
+    fn calls_written_should_follow_the_fields_of_one_class_only_for_dbg() {
+        let program = instantiated(
+            "class Leaf {\n    v: i64\n}\nextend Leaf: Display {\n    fn to_string(self) -> string {\n        \"leaf\"\n    }\n}\nclass Outer {\n    inner: Leaf\n}\nclass Shell {\n    outer: Outer\n}\nenum Pick {\n    One(Outer)\n}\nenum Slot {\n    Full(Outer)\n}\nextend Slot: Display {\n    fn to_string(self) -> string {\n        \"slot\"\n    }\n}",
+        );
+        let outer = named(&program, "Outer");
+        let shell = named(&program, "Shell");
+        let pick = named(&program, "Pick");
+        for (row, ty, print, dbg) in [
+            ("a class that holds a written one", outer, false, true),
+            ("an array of it", Type::array(outer), false, true),
+            ("an optional of it", Type::optional(outer), false, true),
+            ("an enum payload", pick, false, true),
+            ("a class that holds that class", shell, false, false),
+            ("a written one itself", named(&program, "Leaf"), true, true),
+            (
+                "an enum with a written one",
+                named(&program, "Slot"),
+                true,
+                true,
+            ),
+        ] {
+            assert_eq!(calls_display(&program, ty, false), print, "{row}, print");
+            assert_eq!(calls_display(&program, ty, true), dbg, "{row}, dbg");
+        }
     }
 }

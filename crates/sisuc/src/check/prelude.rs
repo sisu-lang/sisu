@@ -1,6 +1,6 @@
-//! The prelude: the functions every file sees without an import, `print`, `eprint`, `panic`
-//! and `read_line`. No top-level function, class or constant takes one of their names. `todo`, a
-//! keyword that panics as `panic` does, is checked here too.
+//! The prelude: the functions every file sees without an import, `print`, `eprint`, `panic`,
+//! `read_line` and `dbg`. No top-level function, class or constant takes one of their names.
+//! `todo`, a keyword that panics as `panic` does, is checked here too.
 
 use super::array::pair;
 use super::expr::{path, typed};
@@ -12,7 +12,7 @@ use crate::symbol::Symbol;
 use crate::tir::{self, Stream, Type, TypeKind};
 
 /// The prelude's names.
-pub(super) const PRELUDE: [&str; 4] = ["print", "eprint", "panic", "read_line"];
+pub(super) const PRELUDE: [&str; 5] = ["print", "eprint", "panic", "read_line", "dbg"];
 
 /// Whether the prelude function `name` takes arguments: only `read_line` takes none.
 pub(super) fn takes_arguments(name: &str) -> bool {
@@ -31,10 +31,12 @@ impl Checker<'_> {
         span: Span,
         callee: &ast::Ident,
         args: &[ast::Arg],
+        expected: Option<Type>,
     ) -> Option<Checked> {
         match callee.name.as_str() {
             "print" => Some(self.print(span, args, Stream::Stdout)),
             "eprint" => Some(self.print(span, args, Stream::Stderr)),
+            "dbg" => Some(self.dbg(span, args, expected)),
             // The panic is the callee's, not the parentheses' around the call.
             "panic" => Some(self.panic(Span::new(callee.span.start(), span.end()), args)),
             "read_line" => Some(self.read_line(span, args)),
@@ -44,50 +46,95 @@ impl Checker<'_> {
 
     /// `print(x)` or `eprint(x)`, by `stream`.
     fn print(&mut self, span: Span, args: &[ast::Arg], stream: Stream) -> Checked {
-        let function = stream.name();
+        let (arg, checked, labeled) = match self.shown(span, args, stream.name(), None) {
+            Ok(shown) => shown,
+            Err(failed) => return failed,
+        };
+        self.warn_if_optional(&arg.value, &checked);
+        let kind = checked
+            .ok()
+            .filter(|_| !labeled)
+            .map(|operand| tir::ExprKind::Print {
+                stream,
+                operand: Box::new(operand),
+            });
+        typed(span, Type::UNIT, labeled, kind)
+    }
+
+    /// `dbg(x)`, of the type of `x`, which it checks against `expected`. It does not warn when
+    /// `x` is an optional: `dbg` is meant to be run.
+    fn dbg(&mut self, span: Span, args: &[ast::Arg], expected: Option<Type>) -> Checked {
+        let (arg, checked, labeled) = match self.shown(span, args, "dbg", expected) {
+            Ok(shown) => shown,
+            Err(failed) => return failed,
+        };
+        let Some(ty) = type_of(&checked) else {
+            return Err(Poisoned::error());
+        };
+        let kind = checked
+            .ok()
+            .filter(|_| !labeled)
+            .map(|operand| tir::ExprKind::Dbg {
+                at: arg.value.span,
+                text: self.source.file.text(arg.value.span).to_string(),
+                operand: Box::new(operand),
+            });
+        typed(span, ty, labeled, kind)
+    }
+
+    /// The argument of a call of `function` (`print`, `eprint` or `dbg`) at `span`, checked with
+    /// `expected`, with whether the arguments had a label. Every type shows through `Display` but
+    /// `unit` and `never`. `Err` is the call's own result when its argument is wrong, which this
+    /// has reported.
+    fn shown<'a>(
+        &mut self,
+        span: Span,
+        args: &'a [ast::Arg],
+        function: &'static str,
+        expected: Option<Type>,
+    ) -> Result<(&'a ast::Arg, Checked, bool), Checked> {
         // Not `value()`: a `unit` argument needs this code, not "expression has no value".
-        let wrong = |problem| {
+        let wrong = |problem, at| {
             DiagnosticKind::PrintArgument {
                 function,
                 problem,
-                at: span,
+                at,
             }
             .into()
         };
         let labeled = self.labels(args);
         let [arg] = args else {
-            self.diagnostics.push(wrong(PrintProblem::Count));
+            self.diagnostics.push(wrong(PrintProblem::Count, span));
             self.stray(args);
-            return Err(Poisoned::error());
+            return Err(Err(Poisoned::error()));
         };
-        let checked = self.expr(&arg.value, None);
-        self.warn_if_optional(&arg.value, &checked);
-        // Every type prints through `Display` but `unit` and `never`.
+        let checked = self.expr(&arg.value, expected);
         let error = match type_of(&checked) {
-            Some(Type::UNIT) => wrong(PrintProblem::NoValue),
+            Some(Type::UNIT) => wrong(PrintProblem::NoValue, arg.value.span),
             Some(Type::NEVER) => DiagnosticKind::PrintNever {
                 function,
                 at: arg.value.span,
             }
             .into(),
-            _ => {
-                let kind = checked
-                    .ok()
-                    .filter(|_| !labeled)
-                    .map(|operand| tir::ExprKind::Print {
-                        stream,
-                        operand: Box::new(operand),
-                    });
-                return typed(span, Type::UNIT, labeled, kind);
-            }
+            _ => return Ok((arg, checked, labeled)),
         };
         self.diagnostics.push(error);
-        Err(Poisoned::error())
+        Err(Err(Poisoned::error()))
     }
 
     /// Warns when `checked`, the check of the printed `value`, is an optional: the text may be
     /// `None`. Only the type of `value` itself counts, not a type that it holds.
     pub(super) fn warn_if_optional(&mut self, value: &ast::Expr, checked: &Checked) {
+        // `Some(x)` is never `None`.
+        if matches!(
+            checked,
+            Ok(tir::Expr {
+                kind: tir::ExprKind::Wrap(_),
+                ..
+            })
+        ) {
+            return;
+        }
         if matches!(
             type_of(checked).map(Type::kind),
             Some(TypeKind::Optional(_))

@@ -84,6 +84,9 @@ pub(crate) fn arithmetic_value(ty: &Ty, op: usize, l: i64, r: i64) -> Result<i64
         .ok_or("integer overflow")
 }
 
+/// Every this many expressions, the value of one goes through `dbg`.
+const DBG_EVERY: u64 = 37;
+
 /// The types a `const` can have.
 const CONSTANT: [Ty; 6] = Ty::VALUES;
 
@@ -249,6 +252,17 @@ impl Gen<'_> {
     pub(crate) fn expr(&mut self, ty: &Ty, max: u64) -> Info {
         let synth = std::mem::take(&mut self.synth) && ty.inferred();
         let typed = std::mem::take(&mut self.typed);
+        // Now and then the value goes through `dbg`. The count reads no byte of the data, so no
+        // other choice of any seed moves. `dbg` has the type of its argument, which is on one
+        // line and which no rewrite changes. So the line `dbg` writes is the same in the program
+        // and in its rewritten copy.
+        self.expressions += 1;
+        let debugged = self.expressions.is_multiple_of(DBG_EVERY) && *ty != Ty::Unit;
+        let (one_line, frozen) = (self.one_line, self.frozen);
+        if debugged {
+            self.one_line = true;
+            self.frozen = true;
+        }
         debug_assert!(!synth || ty.least() <= max, "no {ty} fits {max}");
         debug_assert!(ty.floor() <= max, "no {ty} fits {max}");
         let u8 = synth && *ty == Ty::U8;
@@ -269,11 +283,20 @@ impl Gen<'_> {
         }
         let rule = rules[self.pick(rules.len())];
         let start = self.w.mark();
+        if debugged {
+            self.w.text("dbg(");
+        }
         self.nesting += 1;
         self.bare = typed && matches!(rule, Rule::Literal);
         let mut info = self.rule(rule, ty, max, synth);
         self.bare = false;
         self.nesting -= 1;
+        if debugged {
+            self.w.text(")");
+            (self.one_line, self.frozen) = (one_line, frozen);
+            // It writes to standard error.
+            info = Info::of(&[info], info.size, false);
+        }
         // A value of a type without a size counts none, whatever its parts held.
         if !ty.sized() {
             info.size = 0;
@@ -308,6 +331,11 @@ impl Gen<'_> {
             return;
         }
         let pick = self.rewrite_pick(count);
+        // `dbg` writes its argument's text, which no rewrite may change. The picks above are
+        // made all the same, so the rewrites after it stay where they were.
+        if self.frozen {
+            return;
+        }
         match rewrites
             .nth(pick)
             .expect("the pick should be below the count")
@@ -1331,8 +1359,9 @@ impl Gen<'_> {
         Info::of(&parts, size, true)
     }
 
-    /// A format spec `[:[align][width][.precision]]`, its width, and its precision; only an
-    /// `f64` takes a precision (E0111).
+    /// A format spec `[:#]` or `[:[align][width][.precision]]`, its width, and its precision;
+    /// only an `f64` takes a precision (E0111). A part with no width and no precision gets `#`
+    /// one time in four; every part here is a scalar or a `string`, so `#` changes nothing.
     fn format_spec(&mut self, ty: &Ty) -> (String, u64, Option<u64>) {
         let width = if self.pick(3) == 0 {
             0
@@ -1341,7 +1370,7 @@ impl Gen<'_> {
         };
         let precision = (*ty == Ty::F64 && self.pick(3) != 0).then(|| self.upto(6));
         if width == 0 && precision.is_none() {
-            return (String::new(), 0, None);
+            return (["", "", "", ":#"][self.pick(4)].to_string(), 0, None);
         }
         let mut spec = ":".to_string();
         if width > 0 {
@@ -1516,7 +1545,11 @@ impl Gen<'_> {
     pub(crate) fn swap(&mut self, cond: Range<usize>, arms: &[Range<usize>]) {
         let [a, b] = arms else { return };
         let plain = !self.w.out.rewritten[cond.clone()].starts_with("let ");
-        if plain && allowed(Rewrite::Swap, &Site::default()) && self.rewrite_pick(8) == 7 {
+        if plain
+            && allowed(Rewrite::Swap, &Site::default())
+            && self.rewrite_pick(8) == 7
+            && !self.frozen
+        {
             self.w.swap_arms(cond, a.clone(), b.clone());
         }
     }
@@ -2084,6 +2117,61 @@ mod tests {
                 "{l}{op}{r} on a {ty}"
             );
         }
+    }
+
+    /// The text between the parentheses of each `dbg(` call in `text`, the calls inside a
+    /// call's argument included. A generated string holds no parenthesis, and no name ends in
+    /// `dbg`.
+    fn dbg_arguments(text: &str) -> Vec<&str> {
+        let mut found = Vec::new();
+        for (at, _) in text.match_indices("dbg(") {
+            let start = at + "dbg(".len();
+            let mut depth = 1;
+            for (i, c) in text[start..].char_indices() {
+                depth += i32::from(c == '(') - i32::from(c == ')');
+                if depth == 0 {
+                    found.push(&text[start..start + i]);
+                    break;
+                }
+            }
+        }
+        found
+    }
+
+    /// No rewrite changes the argument of a `dbg`, since the line it writes holds that text. Each
+    /// call in a program is in its rewritten copy as written. 300 seeds hold about 100 calls.
+    /// Their arguments hold the sites that a rewrite would take.
+    #[test]
+    fn a_dbg_argument_should_stay_as_written_in_the_rewritten_copy() {
+        let mut calls = 0;
+        let mut rewritten_programs = 0;
+        for n in 0..300 {
+            let g = crate::generate::generate(&crate::generate::coverage::seed(n));
+            let arguments = dbg_arguments(&g.program);
+            calls += arguments.len();
+            rewritten_programs += usize::from(!arguments.is_empty() && g.rewritten != g.program);
+            for argument in arguments {
+                let call = format!("dbg({argument})");
+                assert!(
+                    g.rewritten.contains(&call),
+                    "seed {n}: {call}\n{}",
+                    g.rewritten
+                );
+            }
+        }
+        assert!(calls >= 100, "{calls} calls");
+        assert!(rewritten_programs >= 50, "{rewritten_programs} programs");
+    }
+
+    /// `echo` was reserved before `dbg`, and now is an ordinary name. Some locals take it, and the
+    /// programs that name one still check, as a local never takes the name of one in scope.
+    #[test]
+    fn a_generated_local_should_sometimes_be_named_echo() {
+        let named = (0..100)
+            .map(|n| crate::generate::generate(&crate::generate::coverage::seed(n)).program)
+            .filter(|program| program.contains("let echo") || program.contains("let mut echo"))
+            .count();
+        assert!(named >= 20, "{named} programs of 100 name a local echo");
     }
 
     #[test]

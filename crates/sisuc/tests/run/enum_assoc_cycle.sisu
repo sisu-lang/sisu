@@ -1,0 +1,267 @@
+// GIVEN generic enums whose payload is an associated type of their parameter, and whose
+// conformances choose a type that names the enum again (`Item = E<W<T>>` for `A(T.Item)`)
+// WHEN the program builds, compares, takes apart and drops values of them
+// THEN the build ends, each value is correct, and each box is freed once
+//
+// Each shape closes a cycle that no declared type name shows, so `tir::layout_enums` must find
+// it from the chosen type. Values are built in loops, so Valgrind and `--rc-checks` see each box
+// freed once.
+interface I { type Item }
+interface Chain { type Next: Link }
+interface Link { type Item }
+
+// The direct shape: `E1<W1<i64>>.A` holds an `E1<W1<i64>>`.
+class W1<T>: I { type Item = E1<W1<T>> }
+enum E1<T: I> {
+    End
+    A(T.Item)
+}
+
+// A chain of associated types: `T.Next.Item`.
+class W2<T>: Chain { type Next = V2<T> }
+class V2<T>: Link { type Item = E2<W2<T>> }
+enum E2<T: Chain> {
+    End
+    A(T.Next.Item)
+}
+
+// A ring of two instances: `E3<P3<i64, bool>>` holds `E3<P3<bool, i64>>`, and back.
+class P3<A, B>: I { type Item = E3<P3<B, A>> }
+enum E3<T: I> {
+    End
+    A(T.Item)
+}
+
+// The choice names `Self`.
+class W4<T>: I { type Item = E4<Self> }
+enum E4<T: I> {
+    End
+    A(T.Item)
+}
+
+// The payload is optional.
+class W5<T>: I { type Item = E5<W5<T>> }
+enum E5<T: I> {
+    End
+    A(T.Item?)
+}
+
+// The projection is an argument of another enum, which stays unboxed.
+enum Wrap<T> {
+    N
+    X(T)
+}
+class W6<T>: I { type Item = E6<W6<T>> }
+enum E6<T: I> {
+    End
+    A(Wrap<T.Item>)
+}
+
+// The choice wraps the enum.
+class W7<T>: I { type Item = Wrap<E7<W7<T>>> }
+enum E7<T: I> {
+    End
+    A(T.Item)
+}
+
+// Two enums: the choice names `F`, and `F` holds `E8`.
+class W8<T>: I { type Item = F8<W8<T>> }
+enum F8<T: I> {
+    N
+    B(E8<T>)
+}
+enum E8<T: I> {
+    End
+    A(T.Item)
+}
+
+// An enum that conforms and chooses itself.
+enum K9: I {
+    type Item = E9<K9>
+    Z
+}
+enum E9<T: I> {
+    End
+    A(T.Item)
+}
+
+fn depth1(e: E1<W1<i64>>) -> i64 {
+    match e {
+        E1.End => 0
+        E1.A(x) => 1 + depth1(x)
+    }
+}
+
+fn depth2(e: E2<W2<i64>>) -> i64 {
+    match e {
+        E2.End => 0
+        E2.A(x) => 1 + depth2(x)
+    }
+}
+
+fn depth3(e: E3<P3<i64, bool>>) -> i64 {
+    match e {
+        E3.End => 0
+        E3.A(x) => match x {
+            E3.End => 1
+            E3.A(y) => 2 + depth3(y)
+        }
+    }
+}
+
+fn depth4(e: E4<W4<i64>>) -> i64 {
+    match e {
+        E4.End => 0
+        E4.A(x) => 1 + depth4(x)
+    }
+}
+
+fn depth5(e: E5<W5<i64>>) -> i64 {
+    match e {
+        E5.End => 0
+        E5.A(x) => match x {
+            None => 1
+            Some(y) => 1 + depth5(y)
+        }
+    }
+}
+
+fn depth6(e: E6<W6<i64>>) -> i64 {
+    match e {
+        E6.End => 0
+        E6.A(w) => match w {
+            Wrap.N => 1
+            Wrap.X(y) => 1 + depth6(y)
+        }
+    }
+}
+
+fn depth7(e: E7<W7<i64>>) -> i64 {
+    match e {
+        E7.End => 0
+        E7.A(w) => match w {
+            Wrap.N => 1
+            Wrap.X(y) => 1 + depth7(y)
+        }
+    }
+}
+
+fn depth8(e: E8<W8<i64>>) -> i64 {
+    match e {
+        E8.End => 0
+        E8.A(f) => match f {
+            F8.N => 1
+            F8.B(y) => 1 + depth8(y)
+        }
+    }
+}
+
+fn depth9(e: E9<K9>) -> i64 {
+    match e {
+        E9.End => 0
+        E9.A(x) => 1 + depth9(x)
+    }
+}
+
+fn main() {
+    // Each class and variant is built, so no unused-name warning shows.
+    let _w1 = W1<i64>()
+    let _w2 = W2<i64>()
+    let _v2 = V2<i64>()
+    let _p3 = P3<i64, bool>()
+    let _w4 = W4<i64>()
+    let _w5 = W5<i64>()
+    let _w6 = W6<i64>()
+    let _w7 = W7<i64>()
+    let _w8 = W8<i64>()
+    let _k9 = K9.Z
+
+    let e1: E1<W1<i64>> = E1.End
+    let g1: E1<W1<i64>> = E1.A(E1.A(e1))
+    print(depth1(g1))                       // 2
+    print(g1 == g1)                         // true
+    print(g1 == e1)                         // false: the tags differ
+    print(g1 == E1.A(E1.A(E1.End)))         // true: equal at depth 2
+    print(g1 == E1.A(e1))                   // false: unequal at depth 2
+
+    let e2: E2<W2<i64>> = E2.End
+    let g2: E2<W2<i64>> = E2.A(E2.A(e2))
+    print(depth2(g2))                       // 2
+    print(g2 == E2.A(E2.A(E2.End)))         // true
+    print(g2 == E2.A(e2))                   // false
+
+    // Values change between `E3<P3<i64, bool>>` and `E3<P3<bool, i64>>`.
+    let e3: E3<P3<i64, bool>> = E3.End
+    let f3: E3<P3<bool, i64>> = E3.End
+    let a3: E3<P3<bool, i64>> = E3.A(e3)
+    let b3: E3<P3<i64, bool>> = E3.A(a3)
+    let c3: E3<P3<bool, i64>> = E3.A(b3)
+    let d3: E3<P3<i64, bool>> = E3.A(c3)
+    print(depth3(d3))                       // 4
+    print(d3 == d3)                         // true
+    print(d3 == b3)                         // false: the depth differs
+    print(c3 == f3)                         // false: the tags differ
+
+    let e4: E4<W4<i64>> = E4.End
+    let g4: E4<W4<i64>> = E4.A(E4.A(e4))
+    print(depth4(g4))                       // 2
+    print(g4 == E4.A(E4.A(E4.End)))         // true
+    print(g4 == E4.A(e4))                   // false
+
+    let e5: E5<W5<i64>> = E5.End
+    let g5: E5<W5<i64>> = E5.A(E5.A(e5))
+    let n5: E5<W5<i64>> = E5.A(None)
+    print(depth5(g5))                       // 2
+    print(depth5(n5))                       // 1
+    print(g5 == E5.A(E5.A(E5.End)))         // true
+    print(g5 == E5.A(None))                 // false: a null box against a full one
+    print(n5 == E5.A(None))                 // true: both null
+
+    let e6: E6<W6<i64>> = E6.End
+    let h6: E6<W6<i64>> = E6.A(Wrap.X(e6))
+    let g6: E6<W6<i64>> = E6.A(Wrap.X(h6))
+    print(depth6(g6))                       // 2
+    print(g6 == h6)                         // false: unequal at depth 2
+    let n6: E6<W6<i64>> = E6.A(Wrap.N)
+    print(depth6(n6))                       // 1
+    print(n6 == E6.A(Wrap.N))               // true
+    print(g6 == E6.A(Wrap.X(e6)))           // false
+
+    let e7: E7<W7<i64>> = E7.End
+    let h7: E7<W7<i64>> = E7.A(Wrap.X(e7))
+    let g7: E7<W7<i64>> = E7.A(Wrap.X(h7))
+    print(depth7(g7))                       // 2
+    print(g7 == g7)                         // true
+    let n7: E7<W7<i64>> = E7.A(Wrap.N)
+    print(depth7(n7))                       // 1
+    print(n7 == E7.A(Wrap.N))               // true
+    print(g7 == E7.A(Wrap.X(e7)))           // false
+
+    let e8: E8<W8<i64>> = E8.End
+    let h8: E8<W8<i64>> = E8.A(F8.B(e8))
+    let g8: E8<W8<i64>> = E8.A(F8.B(h8))
+    print(depth8(g8))                       // 2
+    print(g8 == g8)                         // true
+    let n8: E8<W8<i64>> = E8.A(F8.N)
+    print(depth8(n8))                       // 1
+    print(n8 == g8)                         // false
+    print(g8 == E8.A(F8.B(e8)))             // false
+
+    let e9: E9<K9> = E9.End
+    let g9: E9<K9> = E9.A(E9.A(e9))
+    print(depth9(g9))                       // 2
+    print(g9 == E9.A(E9.A(E9.End)))         // true
+    print(g9 == E9.A(e9))                   // false
+
+    // Make and drop many chains: each box is freed once, and the memory stays flat.
+    let mut i = 0
+    let mut n = 0
+    while i < 1000 {
+        let x: E3<P3<bool, i64>> = E3.A(d3)
+        let y: E3<P3<i64, bool>> = E3.A(x)
+        let z: E1<W1<i64>> = E1.A(E1.A(g1))
+        n = n + depth3(y) + depth1(z)
+        i = i + 1
+    }
+    print(n)                                // 1000 * (6 + 4) = 10000
+}

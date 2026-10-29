@@ -498,9 +498,9 @@ fn failed_rule_should_make_its_expression_error() {
         ),
         (
             "compare",
-            "fn main() {\n    let x = 1 < true < 2\n    print(x + 1)\n}".into(),
+            "fn main() {\n    let x = true < false\n    print(x + 1)\n}".into(),
             Code::NoOperator,
-            (2, 17),
+            (2, 13),
         ),
         (
             "equal",
@@ -548,7 +548,7 @@ fn failed_rule_should_make_its_expression_error() {
             "print unit argument",
             "fn main() {\n    let x = print(print(1))\n    print(x)\n}".into(),
             Code::PrintArgument,
-            (2, 13),
+            (2, 19),
         ),
         (
             "if branches",
@@ -1436,7 +1436,7 @@ fn print_should_take_exactly_one_value() {
         (
             "unit argument",
             "fn g() {}\nfn main() { print(g()) }",
-            (2, 13),
+            (2, 19),
         ),
     ] {
         codes_row(row, src, &[(Code::PrintArgument, at)]);
@@ -1626,7 +1626,7 @@ fn less_should_report_no_operator_for_an_unordered_operand() {
 
 /// An operand that fails first leaves the later ones unchecked: one error per operator. The
 /// leader `a` of `[] < a` has no `<`, so it is the operand reported, and the `[]` before it is
-/// not held to its type.
+/// held to its type, which it fits.
 #[test]
 fn operator_should_report_once_after_a_failed_operand() {
     for (operator, code, column) in [
@@ -1957,6 +1957,61 @@ fn class_cycle_search_reads_linearly() {
         FIELD_READS.get()
     };
     assert_near_linear(reads(100), reads(200), reads(300));
+}
+
+/// A class of `n` fields and a generic method `g`. Its `main` makes one object `c`. Then it runs
+/// the statement `statement(i)` for each `i` below `n`.
+fn field_program(n: usize, statement: impl Fn(usize) -> String) -> String {
+    let lines = |line: &dyn Fn(usize) -> String| (0..n).map(line).collect::<Vec<_>>().concat();
+    let fields = lines(&|i| format!("    mut f{i}: i64\n"));
+    let labels = (0..n)
+        .map(|i| format!("f{i}: 0"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let body = lines(&|i| format!("    {}\n", statement(i)));
+    format!(
+        "class C {{\n{fields}    fn g<T>(self) {{}}\n}}\nfn main() {{\n    let c = C({labels})\n{body}}}\n"
+    )
+}
+
+/// How many calls of the field lookup helper happened while `src` was checked.
+fn field_lookups(src: &str) -> usize {
+    FIELD_LOOKUPS.set(0);
+    assert!(checked(src).0.is_some(), "{src}");
+    FIELD_LOOKUPS.get()
+}
+
+/// Each read of a field is one lookup in the field index of its class. A scan of the fields
+/// costs `n(n + 1) / 2` steps for `n` reads, which is 2080 for 64. Quadratic cost shows at 2
+/// fields, and 64 is more than 10x that.
+#[test]
+fn field_reads_should_look_up_each_field_in_one_step() {
+    let src = field_program(64, |i| format!("c.f{i}"));
+    assert_eq!(field_lookups(&src), 64);
+}
+
+/// Each assignment to a field is one lookup, as each read is.
+#[test]
+fn field_assignments_should_look_up_each_field_in_one_step() {
+    let src = field_program(64, |i| format!("c.f{i} = {i}"));
+    assert_eq!(field_lookups(&src), 64);
+}
+
+/// Each call of a generic method checks whether the class has a field of the method's name. That
+/// is one lookup, and not a scan of the fields. A scan costs `n x n` steps for `n` calls.
+#[test]
+fn generic_method_calls_should_look_up_the_fields_in_one_step() {
+    let src = field_program(64, |_| "c.g<i64>()".to_owned());
+    assert_eq!(field_lookups(&src), 64);
+}
+
+/// A call of a name that is a field reports a field-not-method error with one lookup.
+#[test]
+fn calls_of_a_field_should_look_up_the_field_in_one_step() {
+    let src = field_program(64, |i| format!("c.f{i}()"));
+    FIELD_LOOKUPS.set(0);
+    assert!(checked(&src).0.is_none());
+    assert_eq!(FIELD_LOOKUPS.get(), 64);
 }
 
 #[test]
@@ -3759,13 +3814,16 @@ fn equal_should_spill_a_counted_operand_before_an_exit() {
     );
 }
 
-/// `print` of a call that returns nothing, and a bad argument count, stay on the whole call; an
-/// object and an array print.
+/// `print` of a call that returns nothing is reported at the argument, and a bad argument count on
+/// the whole call; an object and an array print.
 #[test]
-fn print_should_report_a_call_without_a_value_and_a_bad_count_on_the_call() {
+fn print_should_report_a_value_at_the_argument_and_a_count_on_the_call() {
     codes(
         "class P {\n    x: i64\n}\nfn nothing() {}\nfn main() {\n    print(P(x: 1))\n    print(nothing())\n    print([1])\n    print(1, 2)\n}",
-        &[(Code::PrintArgument, (7, 5)), (Code::PrintArgument, (9, 5))],
+        &[
+            (Code::PrintArgument, (7, 11)),
+            (Code::PrintArgument, (9, 5)),
+        ],
     );
 }
 

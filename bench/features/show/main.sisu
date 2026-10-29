@@ -1,5 +1,6 @@
 // GIVEN 400 rounds, an `Expr` tree of depth 7, 60 enum values and arrays of 8 `Circle`s
 // WHEN each round writes the text of the tree and of the array of enum values
+// AND it lays out a tree of depth 5 with `{x:#}`
 // AND it compares two arrays of `Circle`s, as a whole and element by element
 // AND the helper calls a method for each pair, as the written `eq` compares the radius only
 // THEN it prints the length of all the texts
@@ -7,6 +8,7 @@
 // AND both numbers depend on all the work
 const ROUNDS = 400
 const DEPTH = 7
+const LAID_DEPTH = 5
 
 enum Expr {
     Num(i64)
@@ -75,6 +77,7 @@ fn main() {
     for round in 0..ROUNDS {
         text_len += tree(DEPTH, round).to_string().len()
         text_len += colors(60, round).to_string().len()
+        text_len += "{tree(LAID_DEPTH, round):#}".len()
         let other = circles(round % 4)
         if base == other {
             equal += 1

@@ -474,6 +474,22 @@ fn main() {
         }
     }
 
+    /// A spec with an error is the one report of its part: an optional there gets no warning.
+    #[test]
+    fn a_bad_format_spec_on_an_optional_should_give_no_warning() {
+        use Code::{FormatSpecLimit, MalformedFormatSpec, UnsupportedFormatSpec};
+        for (spec, expected) in [
+            ("08.2", UnsupportedFormatSpec),
+            ("+", UnsupportedFormatSpec),
+            ("2000", FormatSpecLimit),
+            ("8.", MalformedFormatSpec),
+        ] {
+            let src =
+                format!("fn main() {{\n    let p: f64? = 1.5\n    print(\"{{p:{spec}}}\")\n}}\n");
+            assert_eq!(codes(&src), [(expected, (3, 14))], "spec {spec}");
+        }
+    }
+
     #[test]
     fn call_to_broken_function_checks_arguments() {
         let src = "fn f() {\n    let = 1\n}\nfn main() {\n    f(nope)\n}\n";
@@ -1426,5 +1442,34 @@ fn main() {
             names(&program),
             [vec![], vec![], vec!["main", "first<i64>"]]
         );
+    }
+
+    /// `Wrap<T.Item>` holds the associated type in an argument, and `Item` chooses the enum
+    /// that holds it. The box goes on the field of the enum that is declared, not on the one
+    /// inside `Wrap`. The instance whose `Item` is another enum, with no cycle, stays inline.
+    #[test]
+    fn mono_should_box_an_associated_type_field_that_names_its_enum() {
+        let src = "interface I { type Item }\n\
+            class W<T>: I { type Item = E<W<T>> }\n\
+            enum L {\n    Z\n}\n\
+            class Q: I { type Item = L }\n\
+            enum Wrap<T> {\n    N\n    X(T)\n}\n\
+            enum E<T: I> {\n    End\n    A(Wrap<T.Item>)\n}\n\
+            fn main() {\n    let _w = W<i64>()\n    let _q = Q()\n    let _z: L = L.Z\n    let _k: E<Q> = E.End\n    let _n: Wrap<i64> = Wrap.N\n    let e: E<W<i64>> = E.End\n    let g: E<W<i64>> = E.A(Wrap.X(e))\n    print(g == e)\n}";
+        let (program, diagnostics) = front_end(src);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let program = program.expect("the program should check");
+        let field = |enum_name: &str, variant: &str| {
+            let e = (program.enums.iter())
+                .find(|e| e.name == enum_name)
+                .unwrap_or_else(|| panic!("the program should hold the enum {enum_name}"));
+            let v = (e.variants.iter())
+                .find(|v| v.name == variant)
+                .expect("the enum should hold the variant");
+            (v.fields[0].boxed, v.fields[0].rank)
+        };
+        assert_eq!(field("E<W<i64>>", "A"), (true, tir::Rank::Assoc));
+        assert_eq!(field("E<Q>", "A"), (false, tir::Rank::Assoc));
+        assert_eq!(field("Wrap<E<W<i64>>>", "X"), (false, tir::Rank::Never));
     }
 }

@@ -285,7 +285,7 @@ impl Gen<'_> {
     fn let_stmt(&mut self) {
         let ty = self.any_type();
         let mutable = self.pick(2) == 1;
-        let name = self.scope.fresh("v");
+        let name = self.scope.local();
         let keyword = if mutable { "let mut" } else { "let" };
         self.w.text(&format!("{keyword} {name}"));
         // A value of a type the checker infers needs one where it is not written.

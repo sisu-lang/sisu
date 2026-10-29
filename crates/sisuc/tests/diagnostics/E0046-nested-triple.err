@@ -1,0 +1,10 @@
+error[E0046]: `is` needs objects; found `Node???`
+ --> E0046-nested-triple.sisu:8:11
+  |
+8 |     print(a is b)
+  |           ^
+  |
+  = help: peel the extra layers first: `((a ?? None) ?? None) is b`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0046

@@ -99,6 +99,7 @@ impl Walk {
             | ExprKind::Wrap(operand)
             | ExprKind::Convert(operand)
             | ExprKind::Print { operand, .. }
+            | ExprKind::Dbg { operand, .. }
             | ExprKind::Len(operand)
             | ExprKind::Chars(operand)
             | ExprKind::Bytes(operand)

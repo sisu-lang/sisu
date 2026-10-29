@@ -10,6 +10,7 @@ use super::array::pair;
 use super::expr::{local, no_member, path, postfix, typed};
 use super::{Checked, Checker, Poisoned, block_expr, type_of};
 use crate::ast::{self, CompareOp, ExprKind};
+use crate::conformance::makes_group;
 use crate::diagnostic::{
     Code, Definition, Diagnostic, DiagnosticKind, MismatchFix, MismatchSource, Operand,
     PrecisionHelp, invisible,
@@ -50,7 +51,15 @@ impl Checker<'_> {
         let mut ty = Type::STRING;
         let mut checked = Vec::with_capacity(parts.len());
         let mut formats = Vec::new();
-        for (i, ast::Part { value: part, spec }) in parts.iter().enumerate() {
+        for (
+            i,
+            ast::Part {
+                value: part,
+                spec,
+                bad_spec,
+            },
+        ) in parts.iter().enumerate()
+        {
             let value = self.expr(part, None);
             // Every type interpolates but `unit`; an optional warns.
             match type_of(&value).map(Type::kind) {
@@ -61,11 +70,14 @@ impl Checker<'_> {
                     continue;
                 }
                 _ => {
-                    // A precision error is the one report of the part: it gets no warning.
-                    let mut reported = false;
+                    // A spec error or a precision error is the one report of the part: it gets
+                    // no warning.
+                    let mut reported = *bad_spec;
                     if let (Some(spec), Some(found)) = (spec, type_of(&value)) {
                         let (format, error) = self.format(i, part, spec, found);
-                        formats.push(format);
+                        if !format.is_plain() {
+                            formats.push(format);
+                        }
                         reported = error;
                     }
                     if !reported {
@@ -147,6 +159,9 @@ impl Checker<'_> {
             part: i,
             pad,
             precision,
+            // `#` gives the same text for a type that writes one piece, so the checker drops it.
+            // A type parameter keeps `#`: `mono` decides it for each type argument.
+            pretty: spec.pretty && makes_group(ty),
         };
         (format, error)
     }

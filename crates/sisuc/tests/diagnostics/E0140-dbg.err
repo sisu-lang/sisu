@@ -1,0 +1,13 @@
+error[E0140]: `Hold` instantiates itself without end
+  --> E0140-dbg.sisu:6:8
+   |
+ 6 |     v: W<[T]>
+   |        ^^^^^^ `Display.to_string` here
+...
+11 |         let _ = dbg(Hold(v: W(x: [self.x])))
+   |                 ---------------------------- which instantiates `Hold<T>`
+   |
+   = help: a call through `Display` counts as reaching every conformance to `Display`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

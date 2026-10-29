@@ -414,7 +414,7 @@ Each item is cheap when its milestone lands and expensive to retrofit:
 
 | Milestone | Add | Why |
 | --- | --- | --- |
-| 4 | Reserve the keywords that later milestones bring: `import` and `pub` (planned for milestone 2, it did not land), `enum`, `match`, `record`, `type`, `weak`, `const`, `test` and `todo`. Landed in milestone 4, stage 1 (`E0083`); it also reserves `echo`, `interface`, `extern` and `as`, and `const` became a keyword with top-level constants | A program that names a variable `match` would break when that keyword lands |
+| 4 | Reserve the keywords that later milestones bring: `import` and `pub` (planned for milestone 2, it did not land), `enum`, `match`, `record`, `type`, `weak`, `const`, `test` and `todo`. Landed in milestone 4, stage 1 (`E0083`); it also reserves `echo`, `interface`, `extern` and `as`, and `const` became a keyword with top-level constants. Milestone 8 released `echo` for an ordinary name, when `dbg` took its place | A program that names a variable `match` would break when that keyword lands |
 | 4 | `let mut` replaces `var`; a class field is bare, set once by the constructor, or `mut` (ADR 0011). `var` stays reserved, so using it is error `E0013`, "there is no `var` in Sisu", with the help "Sisu declares a variable with `let mut`" (on a field, "a field that can change is marked `mut`"). | Every program and test changes, so it is cheapest before strings and enums add more code |
 | 4 | Top-level `const NAME = expr`, where `expr` uses only literals, operators and other constants; the checker folds it to a value. Planned for milestone 3, it did not land. | Named limits, such as a sieve size, without global variables |
 | 4 | String interpolation `"x = {x}"`. `print(x)` and `"{x}"` go through one internal operation per type that turns a value into text. Milestone 8's `Display` interface replaces that operation, so neither is rewritten. | The biggest single win for real programs |
@@ -789,9 +789,10 @@ Each is small once its milestone's main feature exists:
 
 - Milestone 8: type aliases, `type Index = Map<string, [i64]>`. An alias is
   another name for the same type, so it adds no type safety; for a distinct
-  type, use a newtype (milestone 10). Also `dbg(x)`, which prints `x` with its
-  file and line on standard error and returns `x`, so it can wrap any
-  expression while debugging. It needs the `Display`-like interface.
+  type, use a newtype (milestone 10). Done in milestone 8, stage 6: `dbg(x)`,
+  which prints `x` with its file, line, column and source text on standard
+  error and returns `x`, so it can wrap any expression while debugging. It
+  shows a class one level deep, and lays a value out as `{x:#}` does.
 - Milestone 8: `Eq` and `Ord` interfaces in the prelude; milestone 11:
   `Hash`, with `Map` and `Set`. `Map` keys need `Hash`, and `sort` needs
   `Ord`. `Hash` has the shape
@@ -835,9 +836,19 @@ Each is small once its milestone's main feature exists:
   function pointer: codegen passes it a null environment. There is no split
   into Rust's `Fn`, `FnMut` and `FnOnce`, because reference counting keeps
   the captured values alive. A closure captures by value, so it gets a copy
-  of a record or an array (ADR 0007), and assigning to a captured `let mut` is a
-  compile error. Swift and Kotlin share the variable instead, which is hidden
-  shared state. A class that stores a closure capturing that same object is a
+  of a record or an array (ADR 0007), and assigning to a plain capture is a
+  compile error. Swift and Kotlin share a captured variable, which is
+  hidden shared state; only Swift's capture list copies one. Sisu shares one
+  only when the capture list says so (decided 2026-10-29). In
+  `tree.walk([mut count] n => count += 1)`, the closure shares the
+  `let mut` local `count`, which lives in a counted cell on the heap. A
+  callback can then count or collect without a class to hold the result.
+  A closure can reach the cell, so the rules treat it as a field of a
+  class object. A borrowed argument from it is retained first (ADR 0029).
+  A `mut self` method written in Sisu cannot be called on it
+  (exclusivity). A callback given to a changing method on it cannot
+  write a field or a counted cell. A class that stores a closure
+  capturing that same object is a
   cycle, so the closure needs a way to capture weakly, as Swift's
   `[weak self]` does (ADR 0008; see "Weak captures" in "Open decisions").
 - Milestone 9: a closure that does not escape needs no box. A closure passed
@@ -951,10 +962,17 @@ library.
   own import.
 - Names, fields and methods are private to their module unless marked `pub`;
   `pub mut` lets other modules assign a field. A `pub` type with a private
-  field can be built and taken apart only in its own module.
+  field can be built and taken apart only in its own module. A record's
+  generated `Display` prints its `pub` fields, then `..` when it has a
+  private field, so `print` of it shows no private field (decided
+  2026-10-29). `dbg` and a hand-written `Display` still show them.
 - A conformance lives in the project that declares its type, its interface
-  or an argument of its interface, as Rust's orphan rule asks. A plain `extend T`, and a
+  or an argument of its interface, as Rust's orphan rule asks. The rule
+  covers the built-in types too. A plain `extend T`, and a
   conformance that replaces a generated one, live in `T`'s module.
+- `sisu check` of an entry file with no `main` checks it as a library: no
+  missing-`main` error, and an unused `pub` item does not warn (decided
+  2026-10-29). `sisu run` and `sisu build` still need `main`.
 - Modules may import each other in a cycle. The checker sees the whole
   program at once, with one scope per module, so this costs nothing.
 - Codegen puts the whole program into one LLVM module. Each generated name,
@@ -976,7 +994,13 @@ library.
 ## Concurrency (after milestone 12)
 
 Status: proposal, 2026-10-10, revised after a review by gpt-6.1-sol. The
-memory model is ADR 0010 (proposed). Concurrency needs generics for
+memory model is ADR 0010 (proposed). The model gets a design session of its
+own before a spec (the user, 2026-10-29), and this section is input to that
+session, not a decision. The session takes two findings from the
+2026-10-29 review. First, an accepted socket cannot cross into a task, so
+the usual server loop that accepts and then spawns does not compile
+(ADR 0027's third program). Second, large read-only data is copied into
+each task until `Shared<T>` exists. Concurrency needs generics for
 `Channel<T>` (milestone 8) and closures for `spawn` (milestone 9).
 
 The model takes isolation from Elixir and typed channels from Go:
@@ -1177,8 +1201,8 @@ These do not make code nicer to write, so they wait:
   another way, for example through a shared object: that needs an
   exclusivity check, as Swift enforces for `inout`. A `mut self` method
   called on a field, `obj.pos.move_by(1, 2)`, needs the same check
-  (ADR 0011). Until then, copy the field into a local, set the field to `[]`,
-  and assign it back. `inout` parameters stay out (ADR 0007).
+  (ADR 0011). Until then, `self.cells.exchange(with: [])` takes the array
+  out and leaves `[]` (decided 2026-10-29). `inout` parameters stay out (ADR 0007).
 - Proving uniqueness at compile time. Roc's Morphic analysis follows each
   array through the whole program to prove that a write holds the only
   reference, so the write needs no count check. A loop now makes its written
@@ -1457,6 +1481,17 @@ accepted.
     interface with a generic method, with `Self` outside the receiver, or
     with an associated type can be a bound but not an `any` type. The first
     two follow Rust's dyn-compatibility rule.
+  - An interface with a `mut self` requirement can be `any` only when it is
+    class-only (milestone 9 part 4): copies of a record share one box, so a
+    `mut self` call would change every copy. Decided 2026-10-29:
+    copy-on-write boxes, in a spec of their own after milestone 9 part 4 and
+    before milestone 11 part 2. A `mut self` call through `any` first copies
+    a box whose count is above 1, as an array write does (ADR 0007). With
+    `any` of an interface whose associated types are bound, which that
+    spec also settles, `-> any Iterator<Row>` can return one of two
+    iterators chosen at run time. Later, when a program needs a list of
+    mixed shapes, `any` can also take an interface with an associated
+    type, whose results are erased to `any` (Swift SE-0309).
   - An interface may take type parameters as well as associated types. A type
     parameter fits when a type conforms several ways (`Convert<T>`); an
     associated type fits when it has one answer, as Rust and Swift use them.
@@ -1477,9 +1512,19 @@ accepted.
   - An `extend` block adds to a type declared elsewhere, as Swift's
     extensions do (agreed 2026-10-15). `extend string { ... }` holds extra
     methods. `extend string: Display { ... }` holds exactly `Display`'s
-    methods: one interface per block. For now only the prelude may extend
-    the built-in types; letting programs use `extend` later breaks no
-    program.
+    methods: one interface per block. Only the prelude may write a plain
+    `extend` of a built-in type. From milestone 11, a program may conform a
+    built-in type to an interface when the program declares the interface
+    or one of its arguments (decided 2026-10-29). When milestone 10 gives
+    operators their interfaces, `extend f64: Mul<Vec2>` makes `2.0 * v`
+    work, and a JSON library may write
+    `extend string: ToJson`. A method such as `"hi".shout()` comes from a
+    one-method interface that the program declares. When two libraries
+    both add `shout` to `string`, `"hi".shout()` is ambiguous, and the
+    qualified call `loud.Shout.shout("hi")` picks one, as Rust's
+    `Trait::method(x)` does (decided 2026-10-29). Scoped extension
+    methods, found only where their module is imported as in C# and
+    Kotlin, stay a later option.
 - **Operators on newtypes.** Without them, `Meters` arithmetic needs
   `a.plus(b)` or `a.value + b.value`, the same boilerplate Rust newtypes
   carry. An opt-in such as Haskell's `deriving` would let a newtype keep its
@@ -1496,12 +1541,16 @@ accepted.
 - **What a string is.** Resolved by
   [ADR 0014](adr/0014-strings-are-utf-8-values.md): UTF-8, always valid, a
   value shared until written, `len()` in bytes and no `s[i]`.
-- **Substring views.** A `split` or `trim` that returns views into the parent's
-  bytes would copy nothing, but a view keeps the parent alive. Decide after
-  generics; Swift's separate `Substring` type is the leading candidate.
-  Compatibility cost: if milestone 5's `split` returns `[string]`, a later
-  `Substring` either changes its return type or adds a second method. Milestone
-  5's `words()` returns `[string]`.
+- **Substring views.** Decided by the slices design (2026-10-26), with no
+  separate `Substring` type: `s[a..b]` gives a `string` that shares the
+  parent's bytes. The compiler copies a small part that can outlive its
+  parent. Positions are bytes. ADR 0014 still calls this open until that
+  design's plan updates it. Decided 2026-10-29: the methods that cut a
+  string (`find`, `split`, `split_once`, `trim`, `starts_with`,
+  `strip_prefix`, `char_positions`) come early, so a program seldom
+  computes a position. A position found in `chars()` counts characters,
+  and `s[..i]` counts bytes. On `"päivä=1"`, a character position used
+  as a byte position gives the wrong part, `"päiv"`, with no panic.
 - **Small-string optimisation.** Store short strings inside the variable's
   slot, as Swift and C++ do. Programs cannot observe it. Decide when a
   benchmark asks for it: the array of records with short and long strings
@@ -1549,7 +1598,14 @@ accepted.
   call. The call must not reach that place another way, such as through a
   shared object. Swift checks this at run time and panics. The other choice
   is to leave the place empty or stale during the call, which needs no check
-  but lets such a read see the wrong value. Decide in milestone 10.
+  but lets such a read see the wrong value. Decide in milestone 10. Decided
+  2026-10-29 for moving a value out of a place: the built-in method
+  `x.exchange(with: v)`, as C++'s `std::exchange`, which shows at the call
+  what the place holds meanwhile. `move x` (drop blocks) takes a local
+  only. `self.cells = step(self.cells.exchange(with: []))` then needs no
+  check, and `step` copies nothing when the field held the only
+  reference. The handover with no syntax (see "Later and
+  stretch goals") waits for a proof of concept.
 - **Names and namespaces.** Resolved for enums in milestone 7
   ([ADR 0019](adr/0019-enums-are-values-named-through-their-enum.md)): a
   variant is built as `Shape.Circle`, a pattern uses the bare name, and the

@@ -138,8 +138,8 @@ into text, and the whole literal becomes one new `string`.
 _Avoid_: formatting, templating
 
 **Format spec**:
-The `[align][width][.precision]` after a `:` that ends an interpolation, as
-in `{x:>8.2}`.
+The `#`, or the `[align][width][.precision]`, after a `:` that ends an
+interpolation, as in `{x:#}` or `{x:>8.2}`.
 _Avoid_: format string, format specifier
 
 **Shadowing**:
@@ -362,9 +362,11 @@ through the type: `S.Item`. Inside a conformance, the choice is written
 
 **`extend`**:
 A block that adds methods to a type declared elsewhere (`extend T { ... }`),
-or one conformance (`extend T: I { ... }`). Only the prelude may extend a
-built-in type. From milestone 11, a block without an interface lives in its
-type's module.
+or one conformance (`extend T: I { ... }`). Only the prelude may write a
+plain `extend` of a built-in type. From milestone 11, a block without an
+interface lives in its type's module. A program may then conform a built-in
+type to an interface when it declares the interface or one of its
+arguments.
 
 **Interface value**:
 A value of type `any I`: a value of any type that conforms to `I`, whose
@@ -400,9 +402,17 @@ locals around it. It has no name.
 _Avoid_: lambda, anonymous function, block
 
 **Capture**:
-A copy, made when a closure is created, of an outer local, parameter or
-`self` that the closure's body names. A closure cannot change its captures.
+An outer local, parameter or `self` that a closure's body names. A plain
+capture is a copy made when the closure is created, and the closure cannot
+change it. A **mutable capture** shares the local instead.
 _Avoid_: upvalue, closed-over variable
+
+**Mutable capture**:
+A capture written `[mut name]` that shares a `let mut` local with the
+closure, in place of a copy. A change made by the closure or by the
+function is seen by both. The local lives in a counted cell on the heap.
+A closure can reach it, so the rules treat it as a field of a class
+object.
 
 **Weak capture**:
 A capture that does not keep its object alive. Inside the closure the name is

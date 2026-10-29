@@ -829,6 +829,13 @@ fn growing_and_never_built_declarations_should_give_their_own_error_alone() {
             vec![(Code::InstantiationCycle, (16, 10))],
         ),
         (
+            "a growing enum that a dbg shows",
+            format!(
+                "{nest}fn show<T>(x: Nest<T>) {{\n    dbg(x)\n}}\nfn main() {{\n    let n: Nest<i64> = Nest.End\n    show(n)\n}}"
+            ),
+            vec![(Code::InstantiationCycle, (3, 10))],
+        ),
+        (
             "a growing enum under the bound of a class",
             format!("class C<T: Eq> {{}}\n{nest}enum U {{\n    A(C<Nest<i64>>)\n}}\nfn main() {{}}"),
             vec![(Code::InstantiationCycle, (4, 10))],
@@ -1752,17 +1759,38 @@ fn to_string_with_type_arguments_should_report_the_list() {
     }
 }
 
-/// A masked method with a type parameter of its own does not take the list in the check of the
-/// type arguments, so the generated `to_string` reports it: the list is reported once. (The method
-/// does not match `Display`, which is its own error.)
+/// A list of type arguments after `to_string` goes to a written method that has type parameters
+/// of its own, even when the bounds of its block fail: the failed bound is reported, as it is for
+/// a call with an argument, not "takes no type arguments", which is true for the generated one
+/// only. The method does not match `Display`, which is its own error.
 #[test]
-fn to_string_with_type_arguments_should_report_the_list_of_a_masked_generic_method() {
-    let src = "class Node {}\nclass Own<T> {\n    _value: T\n}\nextend<T: Eq> Own<T> {\n    fn to_string<U>(self) -> string { \"own\" }\n}\nfn main() {\n    print(Own(_value: Node()).to_string<i64>())\n}";
-    let at = where_is(src, "<i64>");
-    codes(
-        src,
-        &[(Code::ConformanceBody, (6, 8)), (Code::TypeArguments, at)],
-    );
+fn to_string_with_type_arguments_should_report_the_failed_bound_of_a_masked_generic_method() {
+    let head = "class Node {}\nclass Own<T> {\n    _value: T\n}\n";
+    for (row, block, call) in [
+        (
+            "a plain block",
+            "extend<T: Eq> Own<T> {\n    fn to_string<U>(self) -> string { \"own\" }\n}\n",
+            "Own(_value: Node()).to_string<i64>()",
+        ),
+        (
+            "a plain block with two type parameters",
+            "extend<T: Eq> Own<T> {\n    fn to_string<U, V>(self) -> string { \"own\" }\n}\n",
+            "Own(_value: Node()).to_string<i64>()",
+        ),
+        (
+            "a Display block",
+            "extend<T: Eq> Own<T>: Display {\n    fn to_string<U>(self) -> string { \"own\" }\n}\n",
+            "Own(_value: Node()).to_string<i64>()",
+        ),
+    ] {
+        let src = format!("{head}{block}fn main() {{\n    print({call})\n}}");
+        let at = where_is(&src, call);
+        codes_row(
+            row,
+            &src,
+            &[(Code::ConformanceBody, (6, 8)), (Code::NotConform, at)],
+        );
+    }
 }
 
 /// The text of a `to_string` is the one of the type's `Display`: a written method whose bounds
@@ -2457,7 +2485,9 @@ fn operators_should_lower_to_the_spec_formulas() {
 fn operators_should_report_a_missing_bound() {
     let decls = "class Node {}\nclass Box<T> {\n    v: T\n}\nenum Wrap<T> {\n    One(T)\n}\n";
     // Each row: the function after the declarations, the text where the error stands, and the
-    // code. The help text of each is pinned in the fixtures `E0139-*`.
+    // code. The help text of each is pinned in the fixtures `E0139-*`. A row with operands of two
+    // types is the mistake of the operands: see
+    // `comparisons_should_report_operands_of_two_types_before_a_missing_operator`.
     let rows = [
         (
             "order on a bare parameter",
@@ -2475,19 +2505,19 @@ fn operators_should_report_a_missing_bound() {
             "equality of two parameters",
             "fn f<T, U>(a: T, b: U) -> bool { a == b }",
             "a == b",
-            Code::ParamLacks,
+            Code::CannotCompare,
         ),
         (
             "order of two parameters",
             "fn f<T, U>(a: T, b: U) -> bool { a < b < a }",
-            "a < b",
-            Code::ParamLacks,
+            "b < a",
+            Code::Mismatch,
         ),
         (
             "contains of another parameter",
             "fn f<T, U>(a: [T], b: U) -> bool { a.contains(b) }",
-            "a.contains(b)",
-            Code::ParamLacks,
+            "b)",
+            Code::Mismatch,
         ),
         (
             "equality of arrays of a parameter",
@@ -2861,6 +2891,570 @@ fn implicit_print_should_close_an_instantiation_cycle() {
             None => clean_row(row, &src),
         }
     }
+}
+
+/// The type that grows in the field of `Hold<T>`, which `dbg_cycle_rows` declares first. A cycle
+/// that the field type makes is reported there, whatever the operand that reaches it.
+const FIELD: &str = "W<[T]>";
+
+/// The same type in the field of `Rec<T>`, which follows `Hold<T>`.
+const REC_FIELD: &str = "W<[T]>\n}\nenum Pick";
+
+/// `dbg` shows the fields of a class with no written `to_string`. So a growing value held in a
+/// field, in an array or in an enum payload is a cycle for `dbg`. A class whose field type grows
+/// is reported at the field. A class that only passes its parameter on to a field is reported at
+/// the `dbg`, where the argument grows.
+#[test]
+fn implicit_dbg_should_close_an_instantiation_cycle() {
+    dbg_cycle_rows(&[
+        (
+            "a dbg of a class that grows",
+            "dbg(W(x: [self.x]))",
+            Some("dbg(W(x: [self.x]))"),
+        ),
+        (
+            "a dbg of a class that holds a class that grows",
+            "let _ = dbg(Wrap(v: W(x: [self.x])))",
+            Some("dbg(Wrap(v: W(x: [self.x])))"),
+        ),
+        (
+            "a dbg of an array of such a class",
+            "let _ = dbg([Wrap(v: W(x: [self.x]))])",
+            Some("dbg([Wrap(v: W(x: [self.x]))])"),
+        ),
+        (
+            "a dbg of an enum payload of such a class",
+            "let _ = dbg(Pick.One(Wrap(v: W(x: [self.x]))))",
+            Some("dbg(Pick.One(Wrap(v: W(x: [self.x]))))"),
+        ),
+        (
+            "a dbg of an enum payload that holds the class twice",
+            "let _ = dbg(Pair.Two(Wrap(v: W(x: [self.x])), Wrap(v: W(x: [self.x]))))",
+            Some("dbg(Pair.Two(Wrap(v: W(x: [self.x])), Wrap(v: W(x: [self.x]))))"),
+        ),
+        // `Hold<T>` itself grows nothing: only its field type `W<[T]>` does.
+        (
+            "a dbg of a class whose field type grows",
+            "let _ = dbg(Hold(v: W(x: [self.x])))",
+            Some(FIELD),
+        ),
+        (
+            "a dbg of an array of such a class",
+            "let _ = dbg([Hold(v: W(x: [self.x]))])",
+            Some(FIELD),
+        ),
+        (
+            "a dbg of an optional of such a class",
+            "let _ = dbg(Some(Hold(v: W(x: [self.x]))))",
+            Some(FIELD),
+        ),
+        (
+            "a dbg of an enum payload of such a class",
+            "let _ = dbg(Pick.One(Hold(v: W(x: [self.x]))))",
+            Some(FIELD),
+        ),
+        (
+            "a dbg of a recursive class whose field type grows",
+            "let _ = dbg(Rec(next: None, v: W(x: [self.x])))",
+            Some(REC_FIELD),
+        ),
+        (
+            "a dbg of an array of recursive classes whose field type grows",
+            "let _ = dbg([Rec(next: None, v: W(x: [self.x]))])",
+            Some(REC_FIELD),
+        ),
+        // `Wrap<T>` passes its parameter to the field `W<T>`: the argument grows at the `dbg`.
+        (
+            "a dbg of an enum payload that is a class which passes its parameter on",
+            "let _ = dbg(Pick.One(Wrap(v: W(x: [self.x]))))",
+            Some("dbg(Pick.One(Wrap(v: W(x: [self.x]))))"),
+        ),
+        (
+            "a print of a class whose field type grows",
+            "print(Hold(v: W(x: [self.x])))",
+            None,
+        ),
+        ("a dbg that does not grow", "dbg(self.x)", None),
+    ]);
+}
+
+/// The same through an enum: a payload that holds the class, a recursive enum, and an enum that
+/// shows no argument. A class with a field that grows is reported at its field, however the
+/// enum holds it. A payload that grows, or a class that passes its parameter on, is reported at
+/// the payload. That class inside another enum is reported at its field, which does not grow.
+#[test]
+fn implicit_dbg_should_close_an_instantiation_cycle_through_an_enum() {
+    dbg_cycle_rows(&[
+        (
+            "a dbg of a recursive enum that holds such a class",
+            "let _ = dbg(Tree.Leaf(Hold(v: W(x: [self.x]))))",
+            Some(FIELD),
+        ),
+        (
+            "a dbg of an array of a recursive enum that holds such a class",
+            "let _ = dbg([Tree.Leaf(Hold(v: W(x: [self.x])))])",
+            Some(FIELD),
+        ),
+        (
+            "a dbg of an enum that holds the class in an array",
+            "let _ = dbg(Bag.Many([Hold(v: W(x: [self.x]))]))",
+            Some(FIELD),
+        ),
+        (
+            "a dbg of an enum that holds the class in an optional",
+            "let _ = dbg(Bag.Maybe(Some(Hold(v: W(x: [self.x])))))",
+            Some(FIELD),
+        ),
+        // No payload holds `P`, so `dbg` shows nothing of the argument `Hold<T>`.
+        (
+            "a dbg of an enum that holds no value of the class",
+            "let p: Phantom<i64, Hold<T>> = Phantom.One(1)\n        dbg(p)",
+            None,
+        ),
+        // An argument of an enum inside the argument of another is shown when both show it.
+        (
+            "a dbg of an enum that holds the class in the argument of an argument",
+            "let _ = dbg(Nest.One(Pick.One(Pick.One(Hold(v: W(x: [self.x]))))))",
+            Some(FIELD),
+        ),
+        (
+            "a dbg of an enum that names the class in an argument that is not shown",
+            "let p: NestPhantom<Hold<T>> = NestPhantom.One(Phantom.One(1))\n        dbg(p)",
+            None,
+        ),
+        // The payload type gives the class a longer argument: the growth is at the payload.
+        (
+            "a dbg of an enum whose payload type grows",
+            "let _ = dbg(Grow.One(Wrap(v: W(x: [self.x]))))",
+            Some("Wrap<[U]>"),
+        ),
+        // The class is named in the payload, and its field type grows.
+        (
+            "a dbg of an enum whose payload is such a class",
+            "let _ = dbg(Both.One(Hold(v: W(x: [self.x]))))",
+            Some(FIELD),
+        ),
+        // The class passes its parameter to a field: the enum is reported, at the payload.
+        (
+            "a dbg of an enum whose payload is a class which passes its parameter on",
+            "let _ = dbg(PassOn.One(Wrap(v: W(x: [self.x]))))",
+            Some("Wrap<U>"),
+        ),
+        // The class is in another enum: it is reported at its field type `W<T>`, which does not
+        // grow. The text `W<T>\n}` skips `class W<T>` and starts at that field type.
+        (
+            "a dbg of an enum whose payload holds such a class inside another enum",
+            "let _ = dbg(NestW.One(Pick.One(Wrap(v: W(x: [self.x])))))",
+            Some("W<T>\n}"),
+        ),
+    ]);
+}
+
+/// Checks each row `(name, body, cycle)`: the program whose `Display` of `W<T>` runs `body`
+/// reports an E0140 at the text `cycle`, or checks clean when it is `None`.
+fn dbg_cycle_rows(rows: &[(&str, &str, Option<&str>)]) {
+    let w = "class W<T> {\n    x: T\n}\nclass Wrap<T> {\n    v: W<T>\n}\nclass Hold<T> {\n    v: W<[T]>\n}\nclass Rec<T> {\n    next: Rec<T>?\n    v: W<[T]>\n}\nenum Pick<U> {\n    One(U)\n}\nenum Pair<U> {\n    Two(U, U)\n}\nenum Tree<U> {\n    Leaf(U)\n    Node(Tree<U>, Tree<U>)\n}\nenum Both<U> {\n    One(Hold<U>)\n}\nenum PassOn<U> {\n    One(Wrap<U>)\n}\nenum NestW<U> {\n    One(Pick<Wrap<U>>)\n}\nenum Grow<U> {\n    One(Wrap<[U]>)\n}\nenum Nest<U> {\n    One(Pick<Pick<U>>)\n}\nenum NestPhantom<U> {\n    One(Phantom<i64, Pick<U>>)\n}\nenum Phantom<U, P> {\n    One(U)\n}\nenum Bag<U> {\n    Many([U])\n    Maybe(U?)\n}\n";
+    let main = "fn main() {\n    print(W(x: 1))\n}";
+    let display = |body: &str| {
+        format!(
+            "{w}extend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        {body}\n        \"w\"\n    }}\n}}\n{main}"
+        )
+    };
+    for &(row, body, cycle) in rows {
+        let src = display(body);
+        match cycle {
+            Some(text) => codes_row(
+                row,
+                &src,
+                &[(Code::InstantiationCycle, where_is(&src, text))],
+            ),
+            None => clean_row(row, &src),
+        }
+    }
+}
+
+/// `dbg` shows the text of a class or an enum with a written `Display` that always applies, so it
+/// follows no field or payload of it. The type `Hold<T>` holds a type `W<[T]>`, which grows. A
+/// bound on another interface may fail, or the extension may be for one type argument only. Then
+/// `dbg` shows the fields, so those edges stay.
+#[test]
+fn dbg_should_follow_nothing_of_a_class_or_an_enum_with_an_applicable_written_display() {
+    let decls = "interface Mark {\n    fn mark(self) -> string\n}\nclass W<T> {\n    x: T\n}\nenum Pick<U> {\n    One(U)\n}\n";
+    let text = "fn to_string(self) -> string {\n        \"hold\"\n    }\n";
+    let class = "class Hold<T> {\n    v: W<[T]>\n";
+    let enum_ = "class Plain<T> {\n    v: W<[T]>\n}\nenum Hold<T> {\n    One(Plain<T>)\n";
+    let display = |hold: &str, body: &str| {
+        format!(
+            "{decls}{hold}extend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        {body}\n        \"w\"\n    }}\n}}\nfn main() {{\n    print(W(x: 1))\n}}"
+        )
+    };
+    // The subject and how to make it. A cycle is reported at the field type that grows.
+    let subjects = [
+        ("class", class, "Hold(v: W(x: [self.x]))"),
+        ("enum", enum_, "Hold.One(Plain(v: W(x: [self.x])))"),
+    ];
+    for (subject, open, made) in subjects {
+        let extended =
+            |header: &str| format!("{open}}}\nextend{header} Hold<T>: Display {{\n    {text}}}\n");
+        let shapes = [
+            ("itself", format!("dbg({made})")),
+            ("an array", format!("dbg([{made}])")),
+            ("an optional", format!("dbg(Some({made}))")),
+            ("an enum payload", format!("dbg(Pick.One({made}))")),
+            ("an array in an optional", format!("dbg(Some([{made}]))")),
+        ];
+        let mut writtens = vec![
+            ("an extension with no bound", extended("<T>"), false),
+            (
+                "an extension bounded by Display",
+                extended("<T: Display>"),
+                false,
+            ),
+            (
+                "an extension bounded by another interface",
+                extended("<T: Mark>"),
+                true,
+            ),
+            (
+                "an extension for one type argument",
+                {
+                    // `extend Hold<i64>` has no `T` to bind, so it cannot apply to `Hold<T>`.
+                    format!("{open}}}\nextend Hold<i64>: Display {{\n    {text}}}\n")
+                },
+                true,
+            ),
+            ("no written Display", format!("{open}}}\n"), true),
+        ];
+        if subject == "class" {
+            // Only a class can write the method in its body.
+            writtens.push((
+                "a method of the class",
+                format!("{open}    {text}}}\n"),
+                false,
+            ));
+        }
+        for (written, hold, cycle) in &writtens {
+            for (shape, body) in &shapes {
+                let row = format!("{shape} of {subject} with {written}");
+                let src = display(hold, body);
+                if *cycle {
+                    let at = where_is(&src, FIELD);
+                    codes_row(&row, &src, &[(Code::InstantiationCycle, at)]);
+                } else {
+                    clean_row(&row, &src);
+                }
+            }
+        }
+    }
+}
+
+/// A field or a payload whose type did not check has its own error, and adds no edge.
+#[test]
+fn dbg_should_skip_a_field_and_a_payload_that_did_not_check() {
+    for (row, decl, value) in [
+        (
+            "a field",
+            "class Bad<T> {\n    v: Missing\n    w: T\n}",
+            "Bad(v: 1, w: 2)",
+        ),
+        (
+            "a payload",
+            "enum Bad<T> {\n    A(Missing)\n    B(T)\n}",
+            "Bad.B(1)",
+        ),
+    ] {
+        let src = format!(
+            "{decl}\nfn look<T>(x: Bad<T>) {{\n    dbg(x)\n}}\nfn main() {{\n    look({value})\n}}"
+        );
+        let at = where_is(&src, "Missing");
+        codes_row(row, &src, &[(Code::UnknownType, at)]);
+    }
+}
+
+/// A bare parameter shows the class that it gets, and an enum with a written `Display` that always
+/// applies shows its text. So the argument of the enum is read for the first, not for the second.
+#[test]
+fn dbg_should_read_no_argument_of_an_enum_with_a_written_display() {
+    let reads = |slot: &str| {
+        let src = format!(
+            "class Hold<T> {{\n    v: T\n}}\nenum Slot<U> {{\n    Full(U)\n}}\n{slot}enum Outer<U> {{\n    One(Slot<U>)\n}}\nfn look<T>(x: Outer<Hold<T>>) {{\n    dbg(x)\n}}\nfn main() {{\n    look(Outer.One(Slot.Full(Hold(v: 1))))\n}}"
+        );
+        cycle::DBG_VISITS.set(0);
+        clean(&src);
+        cycle::DBG_VISITS.get()
+    };
+    let written = "extend<U> Slot<U>: Display {\n    fn to_string(self) -> string {\n        \"slot\"\n    }\n}\n";
+    // The operand `Outer<Hold<T>>` and the payload `U` in the node of `Slot`, not `Hold<T>`.
+    assert_eq!(reads(written), 2, "a written Display shows no argument");
+    // The same, and `Hold<T>`, and the payload `Slot<U>` of `Outer` with its argument.
+    assert_eq!(reads(""), 5, "a generated Display shows the argument");
+}
+
+/// The reads of a `dbg` follow its operands and the enums it reaches, not their product. A chain
+/// of `n` generic enums is read once for the program, by the node of each enum. The operands of
+/// many types over one chain, in many functions, each read the same number of types whatever `n`
+/// is. A `dbg` of a type with no parameter reads none of its own.
+#[test]
+fn dbg_should_read_the_types_of_an_operand_once() {
+    // `holders` generic functions, each with `operands` parameters `x{i}: E0<T{i}>?` and a marker
+    // that names `T{i}`, and `calls` calls of `dbg` on each. The enums chain to `n`: `E0<T>` names
+    // a parameter, and `E0<i64>` none.
+    let read = |n: usize, holders: usize, operands: usize, calls: usize, argument: &str| {
+        let mut src = String::new();
+        for k in 0..n {
+            let next = if k + 1 < n {
+                format!("Next(E{}<T>)", k + 1)
+            } else {
+                "Last(T)".to_string()
+            };
+            writeln!(src, "enum E{k}<T> {{\n    {next}\n}}")
+                .expect("writing to a `String` should succeed");
+        }
+        let params = |name: &str| {
+            (0..operands)
+                .map(|i| format!("{name}{i}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        for h in 0..holders {
+            let list = (0..operands)
+                .map(|i| {
+                    format!(
+                        "x{i}: {}?, m{i}: T{i}",
+                        argument.replace('#', &format!("T{i}"))
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            writeln!(src, "fn inspect{h}<{}>({list}) {{", params("T"))
+                .expect("writing to a `String` should succeed");
+            for i in 0..operands {
+                writeln!(src, "    let _ = m{i}").expect("writing to a `String` should succeed");
+                src += &format!("    dbg(x{i})\n").repeat(calls);
+            }
+            src += "}\n";
+        }
+        src += "fn main() {\n    let x: E0<i64>? = None\n";
+        for h in 0..holders {
+            let list = vec!["x, 1"; operands].join(", ");
+            writeln!(src, "    inspect{h}({list})").expect("writing to a `String` should succeed");
+        }
+        src += "}";
+        cycle::DBG_VISITS.set(0);
+        clean(&src);
+        cycle::DBG_VISITS.get()
+    };
+    let one = |n: usize| read(n, 1, 1, 1, "E0<#>");
+    let (short, long) = (30, 60);
+    let chain = one(long) - one(short);
+    assert!(
+        chain >= long - short,
+        "the chain should be read: {chain} types for {} more enums",
+        long - short
+    );
+    assert!(chain <= 3 * (long - short), "{chain} types for the chain");
+    // Many operand types over one chain: the same added reads for a short and a long chain.
+    let operands = |n: usize, calls: usize| read(n, 1, 20, calls, "E0<#>") - one(n);
+    let many = operands(short, 1);
+    assert!(many > 0, "each operand type should be read");
+    assert_eq!(
+        operands(long, 1),
+        many,
+        "20 operand types should not read the chain again"
+    );
+    assert_eq!(
+        operands(short, 5),
+        many,
+        "5 calls of each operand read no more than one"
+    );
+    // A holder reads an operand type once, so each function reads it, but not the chain again.
+    let functions = |n: usize| read(n, 20, 1, 1, "E0<#>") - one(n);
+    assert!(functions(short) > 0, "each function should read the type");
+    assert_eq!(
+        functions(long),
+        functions(short),
+        "20 functions should not read the chain again"
+    );
+    // The chain is read for any `dbg`; an operand with no parameter adds nothing to it.
+    let closed = read(short, 1, 1, 1, "E0<i64>");
+    assert!(
+        closed < one(short),
+        "an operand with no parameter reads less"
+    );
+    assert_eq!(
+        read(short, 5, 5, 5, "E0<i64>"),
+        closed,
+        "an operand with no parameter reads nothing"
+    );
+}
+
+/// A `dbg` adds the edges of its operand's fields once for a function, whatever number of calls
+/// name the type: the calls after the first add what a `print` of the operand adds. The enums
+/// of a chain each hold a class whose field type is a class of its own.
+#[test]
+fn dbg_should_add_the_edges_of_the_fields_once_for_a_function() {
+    let edges = |shown: &str, calls: usize| {
+        let n = 30;
+        let mut src = String::new();
+        for k in 0..n {
+            let next = if k + 1 < n {
+                format!("    Next(E{}<T>, C{k}<T>)\n", k + 1)
+            } else {
+                String::new()
+            };
+            writeln!(
+                src,
+                "class Tag{k}<T> {{\n    x: T\n}}\nclass C{k}<T> {{\n    v: Tag{k}<T>\n}}\nenum E{k}<T> {{\n    End(T)\n{next}}}"
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        src += "fn inspect<T>(x: E0<T>) {\n";
+        src += &format!("    {shown}(x)\n").repeat(calls);
+        src += "}\nfn main() {\n    let x = E0.End(1)\n    inspect(x)\n}";
+        cycle::EDGES.set(0);
+        clean(&src);
+        cycle::EDGES.get()
+    };
+    let extra = |calls: usize| edges("dbg", calls) - edges("print", calls);
+    assert!(extra(1) > 0, "a dbg adds the edges of the fields");
+    assert_eq!(extra(40), extra(1), "40 calls add them once");
+}
+
+/// The edges of a `dbg` follow the operands and the enums, not their product: `n` enums in a chain
+/// give their edges to the `dbg` node of each enum, and an operand of one of `k` types adds the
+/// same edges whatever `n` is.
+#[test]
+fn dbg_should_add_edges_in_proportion_to_the_operands_and_the_enums() {
+    let edges = |n: usize, k: usize| {
+        let mut src = String::new();
+        for i in 0..n {
+            let next = if i + 1 < n {
+                format!("Next(E{}<T>)", i + 1)
+            } else {
+                "Last(T)".to_string()
+            };
+            writeln!(src, "enum E{i}<T> {{\n    {next}\n}}")
+                .expect("writing to a `String` should succeed");
+        }
+        let params: Vec<_> = (0..k).map(|i| format!("T{i}")).collect();
+        let list: Vec<_> = (0..k)
+            .map(|i| format!("x{i}: E0<T{i}>?, m{i}: T{i}"))
+            .collect();
+        writeln!(
+            src,
+            "fn inspect<{}>({}) {{",
+            params.join(", "),
+            list.join(", ")
+        )
+        .expect("writing to a `String` should succeed");
+        for i in 0..k {
+            writeln!(src, "    let _ = m{i}\n    dbg(x{i})")
+                .expect("writing to a `String` should succeed");
+        }
+        src += "}\nfn main() {\n    let x: E0<i64>? = None\n";
+        writeln!(src, "    inspect({})\n}}", vec!["x, 1"; k].join(", "))
+            .expect("writing to a `String` should succeed");
+        cycle::EDGES.set(0);
+        clean(&src);
+        cycle::EDGES.get()
+    };
+    let (short, long) = (30, 60);
+    let chain = edges(long, 1) - edges(short, 1);
+    assert!(
+        chain > 0,
+        "the enums add edges, the `dbg` node of each among them"
+    );
+    assert_eq!(
+        edges(long, 20) - edges(short, 20),
+        chain,
+        "20 operand types should not add the edges of the chain again"
+    );
+}
+
+/// A class has one generated `dbg` node, so the edges of its fields are added once for the
+/// program: whatever number of functions and of operand types name the class, a field adds the
+/// same edges. `fields` fields of the class `C<T>`, and `holders` generic functions with
+/// `operands` parameters of type `C<T{i}>`, each shown by a `dbg`.
+#[test]
+fn dbg_should_add_the_edges_of_the_fields_of_a_class_once_for_the_program() {
+    let edges = |holders: usize, operands: usize, fields: usize| {
+        let mut src = String::from("class C<T> {\n");
+        for f in 0..fields {
+            writeln!(src, "    f{f}: [T]").expect("writing to a `String` should succeed");
+        }
+        src += "}\n";
+        let params: Vec<_> = (0..operands).map(|i| format!("T{i}")).collect();
+        let list: Vec<_> = (0..operands).map(|i| format!("a{i}: C<T{i}>")).collect();
+        for h in 0..holders {
+            writeln!(
+                src,
+                "fn inspect{h}<{}>({}) {{",
+                params.join(", "),
+                list.join(", ")
+            )
+            .expect("writing to a `String` should succeed");
+            for i in 0..operands {
+                writeln!(src, "    dbg(a{i})").expect("writing to a `String` should succeed");
+            }
+            src += "}\n";
+        }
+        let empty: Vec<_> = (0..fields).map(|f| format!("f{f}: []")).collect();
+        writeln!(
+            src,
+            "fn main() {{\n    let c: C<i64> = C({})",
+            empty.join(", ")
+        )
+        .expect("writing to a `String` should succeed");
+        for h in 0..holders {
+            writeln!(src, "    inspect{h}({})", vec!["c"; operands].join(", "))
+                .expect("writing to a `String` should succeed");
+        }
+        src += "}";
+        cycle::EDGES.set(0);
+        clean(&src);
+        cycle::EDGES.get()
+    };
+    let (few, many) = (10, 20);
+    let field_edges = |holders: usize, operands: usize| {
+        edges(holders, operands, many) - edges(holders, operands, few)
+    };
+    let once = field_edges(1, 1);
+    assert!(once > 0, "the fields should add edges");
+    assert_eq!(field_edges(10, 1), once, "10 functions share the fields");
+    assert_eq!(
+        field_edges(1, 10),
+        once,
+        "10 operand types share the fields"
+    );
+    assert_eq!(field_edges(10, 10), once, "100 operands share the fields");
+}
+
+/// The arguments that `dbg` shows are found in one pass over the payloads of the enums: a chain of
+/// `n` parameters that each pass to the next costs the same for each one.
+#[test]
+fn dbg_should_find_the_shown_arguments_in_proportion_to_the_type_parameters() {
+    // `E<T0, .., Tn-1>` holds `T0` and `E<T1, .., Tn-1, T0>`: a parameter becomes shown at a time.
+    let steps = |n: usize| {
+        let params: Vec<_> = (0..n).map(|i| format!("T{i}")).collect();
+        let same = vec!["T"; n].join(", ");
+        let rotated: Vec<_> = (1..=n).map(|i| format!("T{}", i % n)).collect();
+        let closed = vec!["i64"; n].join(", ");
+        let src = format!(
+            "enum E<{}> {{\n    Here(T0)\n    Next(E<{}>)\n}}\nfn look<T>(x: E<{same}>, m: T) {{\n    let _ = m\n    dbg(x)\n}}\nfn main() {{\n    let e: E<{closed}> = E.Here(1)\n    look(e, 1)\n}}",
+            params.join(", "),
+            rotated.join(", ")
+        );
+        cycle::SHOWN_STEPS.set(0);
+        clean(&src);
+        cycle::SHOWN_STEPS.get()
+    };
+    let (a, b, c) = (steps(20), steps(40), steps(60));
+    assert!(a > 0, "the payloads should be read");
+    assert_eq!(
+        c - b,
+        b - a,
+        "each parameter should cost the same: {a} {b} {c}"
+    );
 }
 
 #[test]
@@ -3338,6 +3932,174 @@ fn operators_should_report_a_failed_operand_alone() {
     }
 }
 
+/// Operands of two types are the mistake in `==` and `!=`, whatever the bounds of the types: a
+/// missing `Eq` is reported only for operands of one type.
+#[test]
+fn equality_should_report_operands_of_two_types_before_a_missing_operator() {
+    let rows = [
+        (
+            "equality of a parameter and a number",
+            "fn f<T>(a: T) -> bool { a == 5 }",
+            vec![(Code::CannotCompare, "a == 5")],
+        ),
+        (
+            "equality of a number and a parameter",
+            "fn f<T>(a: T) -> bool { 5 == a }",
+            vec![(Code::CannotCompare, "5 == a")],
+        ),
+        (
+            "inequality of a parameter and a number",
+            "fn f<T>(a: T) -> bool { a != 5 }",
+            vec![(Code::CannotCompare, "a != 5")],
+        ),
+        (
+            "equality of arrays of two types",
+            "fn f<T>(a: [T], b: [i64]) -> bool { a == b }",
+            vec![(Code::CannotCompare, "a == b")],
+        ),
+        (
+            "equality of arrays of two parameters",
+            "fn f<T, U>(a: [T], b: [U]) -> bool { a == b }",
+            vec![(Code::CannotCompare, "a == b")],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(code, text)| (code, where_is(&src, text)))
+            .collect();
+        codes_row(row, &src, &expected);
+    }
+}
+
+/// Ordered operands of two types are the mistake, whatever the bounds of the types: the missing
+/// `<` is reported only for operands of one type, or for an operand whose own error leaves no type.
+#[test]
+fn comparisons_should_report_operands_of_two_types_before_a_missing_operator() {
+    let rows = [
+        (
+            "order of two parameters that have Ord",
+            "fn f<T: Ord, U: Ord>(a: T, b: U) -> bool { a < b }",
+            vec![(Code::Mismatch, "b }")],
+        ),
+        (
+            "at-least order of two parameters that have Ord",
+            "fn f<T: Ord, U: Ord>(a: T, b: U) -> bool { a >= b }",
+            vec![(Code::Mismatch, "b }")],
+        ),
+        (
+            "a chain with a third operand of another parameter",
+            "fn f<T: Ord, U: Ord>(a: T, b: T, c: U) -> bool { a < b < c }",
+            vec![(Code::Mismatch, "c }")],
+        ),
+        (
+            "order of a number and a parameter that has Ord",
+            "fn f<U: Ord>(a: i64, b: U) -> bool { a < b }",
+            vec![(Code::Mismatch, "b }")],
+        ),
+        (
+            "order of a parameter and a number",
+            "fn f<T>(a: T) -> bool { a < 5 }",
+            vec![(Code::Mismatch, "5")],
+        ),
+        (
+            "order of a number and a parameter",
+            "fn f<T>(a: T) -> bool { 5 < a }",
+            vec![(Code::Mismatch, "5")],
+        ),
+        (
+            "order of two parameters that have no Ord",
+            "fn f<T, U>(a: T, b: U) -> bool { a < b }",
+            vec![(Code::Mismatch, "b }")],
+        ),
+        (
+            "order of an enum with no Ord and a number",
+            "enum L {\n    A\n}\nfn f() -> bool { L.A < 5 }",
+            vec![(Code::Mismatch, "5")],
+        ),
+        (
+            "order of a bool and a number",
+            "fn f() -> bool { true < 5 }",
+            vec![(Code::Mismatch, "5")],
+        ),
+        (
+            "order of a class of a parameter and a number",
+            "class Box<T> {\n    v: T\n}\nfn f<T>(a: Box<T>, n: i64) -> bool { a < n }",
+            vec![(Code::Mismatch, "n }")],
+        ),
+        (
+            "order of arrays of two parameters",
+            "fn f<T, U>(a: [T], b: [U]) -> bool { a < b }",
+            vec![(Code::Mismatch, "b }")],
+        ),
+        (
+            "order of a string and a parameter",
+            "fn f<T>(a: T) -> bool { \"x\" < a }",
+            vec![(Code::Mismatch, "a }")],
+        ),
+        (
+            "order of a parameter that has Ord and a parameter with none",
+            "fn f<T: Ord, U>(a: T, b: U) -> bool { b < a }",
+            vec![(Code::Mismatch, "a }")],
+        ),
+        (
+            "a chain of a parameter and a number",
+            "fn f<T>(a: T, b: T) -> bool { a < b < 5 }",
+            vec![(Code::Mismatch, "5")],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(code, text)| (code, where_is(&src, text)))
+            .collect();
+        codes_row(row, &src, &expected);
+    }
+}
+
+/// The controls of the two tests above for operands of two types: operands of one type, or an
+/// operand with no type, still get the missing operator.
+#[test]
+fn comparisons_should_report_a_missing_operator_for_operands_of_one_type() {
+    let rows = [
+        (
+            "equality of one parameter",
+            "fn f<T>(a: T, b: T) -> bool { a == b }",
+            vec![(Code::ParamLacks, "a == b")],
+        ),
+        (
+            "order of one parameter",
+            "fn f<T>(a: T, b: T) -> bool { a < b }",
+            vec![(Code::ParamLacks, "a < b")],
+        ),
+        (
+            "order of one class with no Ord",
+            "class Node {}\nfn f(n: Node) -> bool { n < n }",
+            vec![(Code::NoOperator, "n < n")],
+        ),
+        (
+            "order of a parameter and an unknown name",
+            "fn f<T>(a: T) -> bool { a < bad }",
+            vec![(Code::ParamLacks, "a <"), (Code::BindingNotFound, "bad")],
+        ),
+        (
+            "equality of a parameter and an unknown name",
+            "fn f<T>(a: T) -> bool { a == bad }",
+            vec![(Code::ParamLacks, "a =="), (Code::BindingNotFound, "bad")],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(code, text)| (code, where_is(&src, text)))
+            .collect();
+        codes_row(row, &src, &expected);
+    }
+}
+
 #[test]
 fn contains_should_report_an_argument_that_is_not_an_element_first() {
     // An argument of another type is the first mistake, as it is for `==`: a conformance to `Eq`
@@ -3385,12 +4147,271 @@ fn contains_should_report_an_argument_that_is_not_an_element_first() {
         (
             "a number for a type parameter",
             "fn f<T>(xs: [T]) -> bool { xs.contains(5) }".to_string(),
-            (Code::ParamLacks, "xs.contains(5)"),
+            (Code::Mismatch, "5"),
+        ),
+        (
+            "another type parameter for a type parameter",
+            "fn f<T, U>(xs: [T], x: U) -> bool { xs.contains(x) }".to_string(),
+            (Code::Mismatch, "x)"),
+        ),
+        (
+            "an optional type parameter for a type parameter",
+            "fn f<T>(xs: [T], x: T?) -> bool { xs.contains(x) }".to_string(),
+            (Code::Mismatch, "x)"),
+        ),
+        (
+            "`None` for a type parameter",
+            "fn f<T>(xs: [T]) -> bool { xs.contains(None) }".to_string(),
+            (Code::Mismatch, "None"),
+        ),
+        (
+            "`None` in a block for classes",
+            format!("{node}fn f(xs: [Node]) -> bool {{ xs.contains({{ None }}) }}"),
+            (Code::Mismatch, "None"),
+        ),
+        (
+            "`None` in a branch for classes",
+            format!(
+                "{node}fn f(xs: [Node], n: Node, c: bool) -> bool {{ xs.contains(if c {{ n }} else {{ None }}) }}"
+            ),
+            (Code::Mismatch, "None"),
+        ),
+        (
+            "an empty array for classes",
+            format!("{node}fn f(xs: [Node]) -> bool {{ xs.contains([]) }}"),
+            (Code::Mismatch, "[]"),
+        ),
+        (
+            "`None` in a block for optional classes",
+            format!("{node}fn f(xs: [Node?]) -> bool {{ xs.contains({{ None }}) }}"),
+            (Code::NoOperator, "xs.contains({ None })"),
+        ),
+        (
+            "an empty array for arrays of classes",
+            format!("{node}fn f(xs: [[Node]]) -> bool {{ xs.contains([]) }}"),
+            (Code::NoOperator, "xs.contains([])"),
+        ),
+        (
+            "a type parameter for optional type parameters",
+            "fn f<T>(xs: [T?], x: T) -> bool { xs.contains(x) }".to_string(),
+            (Code::ParamLacks, "xs.contains(x)"),
         ),
     ];
     for (row, src, (code, text)) in rows {
         let src = format!("{src}\nfn main() {{}}");
         codes_row(row, &src, &[(code, where_is(&src, text))]);
+    }
+}
+
+/// A mismatch inside an operand is the only error: the operands are not one type, so the missing
+/// operator is not reported.
+#[test]
+fn operators_should_report_only_a_mismatch_inside_an_operand() {
+    let rows = [
+        (
+            "equality of arrays of two element types",
+            "fn f() -> bool { [1] == [true] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "inequality of arrays of two element types",
+            "fn f() -> bool { [1] != [true] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "order of arrays of two element types",
+            "fn f() -> bool { [1] < [true] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "order of an array of a parameter and an array of a number",
+            "fn f<T>(a: [T]) -> bool { a < [5] }",
+            vec![(Code::Mismatch, "5]")],
+        ),
+        (
+            "order of nested arrays of two element types",
+            "fn f() -> bool { [[1]] < [[true]] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "a chain with an inner mismatch in the middle operand",
+            "fn f<T>(a: [T]) -> bool { a < [5] < a }",
+            vec![(Code::Mismatch, "5]")],
+        ),
+        (
+            "a chain of three arrays with an inner mismatch in the middle operand",
+            "fn f() -> bool { [1] < [true] < [2] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "arrays of another element type for arrays of numbers",
+            "fn f(xs: [[i64]]) -> bool { xs.contains([true]) }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "an array of a number for arrays of a parameter",
+            "fn f<T>(xs: [[T]]) -> bool { xs.contains([5]) }",
+            vec![(Code::Mismatch, "5]")],
+        ),
+        (
+            "equality of an array of a parameter and an array of a number",
+            "fn f<T>(a: [T]) -> bool { a == [true] }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "order with a branch of another type",
+            "fn f<T>(a: [T], c: bool) -> bool { a < if c { true } else { a } }",
+            vec![(Code::Mismatch, "true")],
+        ),
+        (
+            "order with a branch that holds a number that does not fit",
+            "fn f(a: [u8], c: bool) -> bool { a < if c { [300] } else { a } }",
+            vec![(Code::IntegerDoesNotFit, "300")],
+        ),
+        (
+            "order of bytes and a number that does not fit",
+            "fn f(b: [u8]) -> bool { b < [300] }",
+            vec![(Code::IntegerDoesNotFit, "300")],
+        ),
+        (
+            "order of bytes and a negated number",
+            "fn f(b: [u8]) -> bool { b < [-1] }",
+            vec![(Code::NegatedU8, "-1")],
+        ),
+        (
+            "order of arrays of bytes and a number that does not fit",
+            "fn f(b: [[u8]]) -> bool { b <= [[256]] }",
+            vec![(Code::IntegerDoesNotFit, "256")],
+        ),
+        (
+            "a chain with a number that does not fit in the last operand",
+            "fn f(b: [u8]) -> bool { b < b < [1, 300] }",
+            vec![(Code::IntegerDoesNotFit, "300")],
+        ),
+        (
+            "order of floats and an integer that a float cannot hold",
+            "fn f(a: [f64]) -> bool { a < [9007199254740993] }",
+            vec![(Code::NotExactlyF64, "9007199254740993")],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(code, text)| (code, where_is(&src, text)))
+            .collect();
+        codes_row(row, &src, &expected);
+    }
+}
+
+/// A number that does not fit is a mismatch, as a value of another type is: the call that takes
+/// it has no type, so its use as a `string` gives no second error.
+#[test]
+fn a_call_with_a_number_that_does_not_fit_should_report_only_that_number() {
+    let src =
+        "fn g(x: u8) -> u8 { x }\nfn f() -> bool { let s: string = g(300); true }\nfn main() {}";
+    codes_row(
+        "a call with a number that does not fit, bound to a string",
+        src,
+        &[(Code::IntegerDoesNotFit, where_is(src, "300"))],
+    );
+}
+
+/// An error in an operand that is not about its type does not hide the missing operator: the
+/// operands may still be one type.
+#[test]
+fn operators_should_report_a_missing_operator_beside_an_error_that_is_not_about_the_type() {
+    let node = "class Node {}\n";
+    let rows = [
+        (
+            "order of a class and a block with a wrong binding",
+            format!("{node}fn f(a: Node) -> bool {{ a < {{ let x: i64 = true; a }} }}"),
+            vec![(Code::NoOperator, "a <"), (Code::Mismatch, "true")],
+        ),
+        (
+            "order of a parameter and a block with a wrong binding",
+            "fn f<T>(a: T) -> bool { a < { let x: i64 = true; a } }".to_string(),
+            vec![(Code::ParamLacks, "a <"), (Code::Mismatch, "true")],
+        ),
+        (
+            "equality of a class and a block with a wrong binding",
+            format!("{node}fn f(a: Node) -> bool {{ a == {{ let x: i64 = true; a }} }}"),
+            vec![(Code::NoOperator, "a =="), (Code::Mismatch, "true")],
+        ),
+        (
+            "order of a class and a call with a wrong argument",
+            format!("{node}fn g(x: i64) -> i64 {{ x }}\nfn f(a: Node) -> bool {{ a < g(true) }}"),
+            vec![(Code::NoOperator, "a <"), (Code::Mismatch, "true")],
+        ),
+        (
+            "contains of a parameter and a block with a wrong binding",
+            "fn f<T>(xs: [T], a: T) -> bool { xs.contains({ let x: i64 = true; a }) }".to_string(),
+            vec![(Code::ParamLacks, "xs.contains("), (Code::Mismatch, "true")],
+        ),
+        (
+            "contains of a class and a block with a wrong binding",
+            format!(
+                "{node}fn f(xs: [Node], a: Node) -> bool {{ xs.contains({{ let x: i64 = true; a }}) }}"
+            ),
+            vec![(Code::NoOperator, "xs.contains("), (Code::Mismatch, "true")],
+        ),
+        (
+            "contains of an optional parameter and a block with a wrong binding",
+            "fn f<T>(xs: [T?], a: T) -> bool { xs.contains({ let x: i64 = true; a }) }".to_string(),
+            vec![(Code::ParamLacks, "xs.contains("), (Code::Mismatch, "true")],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(code, text)| (code, where_is(&src, text)))
+            .collect();
+        codes_row(row, &src, &expected);
+    }
+}
+
+/// A warning in an operand is not an error in it: the missing operator is still reported.
+#[test]
+fn operators_should_report_a_missing_operator_beside_a_warning_in_an_operand() {
+    let node = "class Node {}\n";
+    let rows = [
+        (
+            "contains of a parameter",
+            "fn f<T>(xs: [T], x: T) -> bool { xs.contains({ let mut y = x; y }) }".to_string(),
+            vec![
+                (Code::ParamLacks, "xs.contains("),
+                (Code::NeverReassigned, "y = x"),
+            ],
+        ),
+        (
+            "contains of a class",
+            format!(
+                "{node}fn f(xs: [Node], n: Node) -> bool {{ xs.contains({{ let mut y = n; y }}) }}"
+            ),
+            vec![
+                (Code::NoOperator, "xs.contains("),
+                (Code::NeverReassigned, "y = n"),
+            ],
+        ),
+        (
+            "equality of a parameter",
+            "fn f<T>(a: T, b: T) -> bool { a == { let mut y = b; y } }".to_string(),
+            vec![(Code::ParamLacks, "a =="), (Code::NeverReassigned, "y = b")],
+        ),
+        (
+            "order of a parameter",
+            "fn f<T>(a: T, b: T) -> bool { a < { let mut y = b; y } }".to_string(),
+            vec![(Code::ParamLacks, "a <"), (Code::NeverReassigned, "y = b")],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(code, text)| (code, where_is(&src, text)))
+            .collect();
+        codes_row(row, &src, &expected);
     }
 }
 
@@ -3534,7 +4555,7 @@ type Row = (
     Option<&'static str>,
 );
 
-const PRINTED: [Row; 29] = [
+const PRINTED: [Row; 35] = [
     ("print", "", "name: string?", "print(name)", Some("name")),
     ("eprint", "", "name: string?", "eprint(name)", Some("name")),
     (
@@ -3549,6 +4570,13 @@ const PRINTED: [Row; 29] = [
         "",
         "name: string?",
         "print(\"{name:>8}\")",
+        Some("name"),
+    ),
+    (
+        "interpolation with the pretty flag",
+        "",
+        "name: string?",
+        "print(\"{name:#}\")",
         Some("name"),
     ),
     (
@@ -3702,11 +4730,22 @@ const PRINTED: [Row; 29] = [
         "print(name == None)",
         None,
     ),
+    ("a Some", "", "", "print(Some(1))", None),
+    ("a Some in parentheses", "", "", "print((Some(1)))", None),
+    ("Option.Some", "", "", "print(Option.Some(1))", None),
+    (
+        "a Some of an optional",
+        "",
+        "",
+        "print(Some(Some(1)))",
+        None,
+    ),
+    ("an interpolated Some", "", "", "print(\"{Some(1)}\")", None),
 ];
 
 /// A top-level optional in `print`, `eprint` or an interpolation, whatever the expression that
-/// gives it, warns once at that expression; an optional inside another value, a text from
-/// `to_string` or `??`, and a `T` that holds an optional when it is instantiated, do not. The
+/// gives it, warns once at that expression; a `Some(x)`, an optional inside another value, a text
+/// from `to_string` or `??`, and a `T` that holds an optional when it is instantiated, do not. The
 /// fixtures `W0015` and `W0015-value` pin the text.
 #[test]
 fn printing_an_optional_should_warn_only_at_the_top_level() {
@@ -3776,6 +4815,37 @@ fn is_should_report_a_bound_parameter_that_is_no_object() {
         let src = format!("fn {signature} -> bool {{\n    a is b\n}}\nfn main() {{}}");
         codes_row(row, &src, &[(Code::IsNeedsObjects, (2, 5))]);
     }
+}
+
+/// `is` with two layers of `?` or more on a side reports once, at the left side, whichever side
+/// has them. The fixtures `E0046-nested`, `E0046-nested-both` and `E0046-nested-triple` pin the
+/// help that peels each side.
+#[test]
+fn is_should_report_once_for_sides_with_extra_layers() {
+    for (row, signature) in [
+        ("both sides", "same(a: Node??, b: Node??)"),
+        ("one side", "same(a: Node??, b: Node?)"),
+        ("the right side", "same(a: Node?, b: Node??)"),
+        ("three layers", "same(a: Node???, b: Node?)"),
+        ("a parameter", "same<T: AnyObject>(a: T??, b: T??)"),
+        ("a side that is no object", "same(a: Node??, b: i64)"),
+    ] {
+        let src =
+            format!("class Node {{}}\nfn {signature} -> bool {{\n    a is b\n}}\nfn main() {{}}");
+        let col = if row == "the right side" { 10 } else { 5 };
+        codes_row(row, &src, &[(Code::IsNeedsObjects, (3, col))]);
+    }
+}
+
+/// A side whose type is unknown does not hide the report on the other side.
+#[test]
+fn is_should_report_a_side_with_extra_layers_beside_an_unknown_side() {
+    let src =
+        "class Node {}\nfn same(a: Node??, b: Missing) -> bool {\n    a is b\n}\nfn main() {}";
+    codes(
+        src,
+        &[(Code::UnknownType, (2, 23)), (Code::IsNeedsObjects, (3, 5))],
+    );
 }
 
 /// The interfaces whose associated types the rows of the next two tests test with `is`.
@@ -3848,6 +4918,56 @@ fn is_should_report_an_associated_type_that_is_no_object() {
             "{ASSOC_OBJECTS}fn same<T: {bound}>(a: T, b: T) -> bool {{\n    {expr}\n}}\nfn main() {{}}"
         );
         codes_row(row, &src, &[(Code::IsNeedsObjects, (line, 5))]);
+    }
+}
+
+/// A report that an associated type lacks a bound gives the help to add it, as for a type
+/// parameter. The fixtures `E0046-assoc` and `E0139-assoc` pin the text.
+#[test]
+fn an_associated_type_with_no_bound_should_get_an_add_bound_help() {
+    let line = ASSOC_OBJECTS.lines().count() + 3;
+    for (row, bound, stmt, code, text) in [
+        (
+            "is",
+            "Plain",
+            "let _ = a.first() is b.first()",
+            Code::IsNeedsObjects,
+            "a.first()",
+        ),
+        (
+            "is, beside another bound",
+            "Equal",
+            "let _ = a.first() is b.first()",
+            Code::IsNeedsObjects,
+            "a.first()",
+        ),
+        (
+            "==",
+            "Plain",
+            "let _ = a.first() == b.first()",
+            Code::ParamLacks,
+            "a.first()",
+        ),
+        (
+            "an argument",
+            "Plain",
+            "need_eq(a.first())",
+            Code::NotConform,
+            "a.first()",
+        ),
+    ] {
+        let src = format!(
+            "{ASSOC_OBJECTS}fn need_eq<U: Eq>(x: U) {{}}\nfn f<T: {bound}>(a: T, b: T) {{\n    {stmt}\n}}\nfn main() {{}}"
+        );
+        let col = 5 + stmt.find(text).expect("the row holds the text");
+        // E0154 points at the bound of `need_eq` too.
+        let bound: &[(usize, usize)] = if code == Code::NotConform {
+            &[(line - 2, 15)]
+        } else {
+            &[]
+        };
+        let d = diagnostic_row(row, &src, code, (line, col, text), bound);
+        assert!(d.help().is_some(), "row `{row}`");
     }
 }
 

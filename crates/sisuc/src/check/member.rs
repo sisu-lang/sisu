@@ -157,7 +157,7 @@ impl Checker<'_> {
         let d = match ty.kind() {
             TypeKind::Class(class, _) => {
                 let info = &self.classes[class.0];
-                if let Some(index) = info.fields.iter().position(|f| f.name.name == name.name) {
+                if let Some(index) = info.field(name.name) {
                     return Some((class, index, self.field_type(ty, index)));
                 }
                 match self.own_method(ty, name.name) {
@@ -251,7 +251,7 @@ impl Checker<'_> {
                     self.subst_args(bound.args, stands.get()),
                 ));
             } else {
-                self.failed_block.get_or_insert(at);
+                self.failed_block.get_or_insert((at, func));
             }
         }
     }
@@ -288,10 +288,14 @@ impl Checker<'_> {
                 // Every type has a `Display`: when no method `to_string` answers the call, because
                 // there is none or its bounds fail for the receiver, the generated one does. No
                 // other method has a fallback. A written method whose bounds fail keeps its report
-                // when the call has an argument: the call is not the generated one's.
-                let written = masked.is_some() || self.failed_block.is_some();
+                // when the call has an argument: the call is not the generated one's. The same
+                // holds for a list of type arguments, when the written method has type parameters
+                // of its own: the generated `to_string` takes none.
+                let written = masked.or_else(|| self.failed_block.map(|(_, func)| func));
+                let generic = !site.written.is_empty()
+                    && written.is_some_and(|func| self.signatures[func.0].own > 0);
                 if name.name.as_str() == "to_string"
-                    && (nullary || !written)
+                    && ((nullary && !generic) || written.is_none())
                     && !self.has_broken_block(ty)
                     && !self.names_to_string_field(ty)
                 {
@@ -307,7 +311,7 @@ impl Checker<'_> {
                     return None;
                 }
                 // A block covered the receiver, and its bounds fail: the type argument is wrong.
-                if let Some(at) = self.failed_block {
+                if let Some((at, _)) = self.failed_block {
                     self.report_block_bound(at, ty, span);
                     return None;
                 }
@@ -328,7 +332,7 @@ impl Checker<'_> {
         let d = match ty.kind() {
             TypeKind::Class(class, _) => {
                 let info = &self.classes[class.0];
-                if info.fields.iter().any(|f| f.name.name == name.name) {
+                if info.field(name.name).is_some() {
                     DiagnosticKind::FieldNotMethod {
                         name: name.name.to_string(),
                         owner: self.type_name(ty),
@@ -342,7 +346,7 @@ impl Checker<'_> {
             }
             TypeKind::Enum(id, _) => {
                 let info = &self.enums[id.0];
-                if info.variants.iter().any(|v| v.name.name == name.name) {
+                if info.index.contains_key(&name.name) {
                     DiagnosticKind::MemberKind {
                         name: name.name.to_string(),
                         enum_name: self.type_name(ty),

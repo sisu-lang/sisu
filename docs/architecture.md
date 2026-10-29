@@ -165,8 +165,9 @@ conformance chooses: it replaces an associated type of a known type with the
 type its conformance chose. `check/bound.rs` checks a method call on a value
 of type `T`: the name is a requirement of the interfaces of `T`'s bounds, and
 the call becomes an `InterfaceCall` node in `tir`. `conformance.rs` finds the
-conformance that covers a type, for the checker and for `mono`. A type
-argument that does not conform to a bound is an error at the call (E0154).
+conformance that covers a type, for the checker and for `mono`. The walks that
+follow the depth of a type grow the call stack when it is low (`stacker`), so a
+deep type does not overflow it. A type argument that does not conform to a bound is an error at the call (E0154).
 The interfaces `Display`, `Eq`, `Ord` and `AnyObject` are in `lang.sisu`,
 which the front end checks before the prelude. `print`, `eprint`, an
 interpolation and `to_string()` use `Display`, `==` and `!=` use `Eq`, and `<`,
@@ -392,7 +393,9 @@ sink in `show.rs`: generated `sisu_show.<type>` helpers call `sisu_show_int`,
 `sisu_show_str`, `sisu_show_quoted`, `sisu_show_open`, `sisu_show_sep`,
 `sisu_show_close` and the other `sisu_show_*` functions. One sink writes into
 the buffer of standard output, and another builds the block that becomes a
-string. The `sisu_print_*` functions write into a buffer that the runtime owns,
+string. `sisu_show_pretty` starts a pretty sink over one of them, for
+`{x:#}` and `dbg`: it records the text, and `sisu_show_pretty_finish` lays
+it out over lines into that sink. The `sisu_print_*` functions write into a buffer that the runtime owns,
 and `main` calls `sisu_flush_stdout` before it returns. The `sisu_eprint_*`
 functions write each value at once, in one write to standard error. The
 runtime counts the blocks that are allocated and not yet freed. A program
