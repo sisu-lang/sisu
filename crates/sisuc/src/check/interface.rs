@@ -1412,10 +1412,10 @@ impl Checker<'_> {
 
     /// The report that `ty`, the type of the operand at `at`, has no `op`, which `interface` (`Eq`
     /// or `Ord`) gives; `contains` when the operand is an element of the array that `contains`
-    /// searches. It is E0139 when the part that fails (`failing_leaf`) is a type parameter, and
-    /// then `bound_help` adds the help to bound it. Else it is `NoOperator`, which names the
-    /// part, and helps only when the part has no conformance at all, a class or an enum that does
-    /// not write one. A part with a conformance whose bound fails says which bound.
+    /// searches. It is E0139 when the part that fails (`failing_leaf`) is a type parameter, with
+    /// the help to bound it. Else it is `NoOperator`, which names the part, and helps only when
+    /// the part has no conformance at all, a class or an enum that does not write one. A part
+    /// with a conformance whose bound fails says which bound.
     pub(super) fn missing_operator(
         &mut self,
         at: Span,
@@ -1423,19 +1423,15 @@ impl Checker<'_> {
         op: &str,
         interface: InterfaceId,
         contains: bool,
-        bound_help: bool,
     ) -> DiagnosticKind {
         let leaf = self.failing_leaf(ty, interface, TypeArgs::NONE);
         if matches!(leaf.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)) {
-            let add = bound_help
-                .then(|| self.add_bound(leaf, interface))
-                .flatten();
             return DiagnosticKind::ParamLacks {
                 ty: self.type_name(ty),
                 op: op.to_string(),
                 at,
                 contains,
-                add,
+                add: self.add_bound(leaf, interface),
             };
         }
         let record = find(&self.conformances, interface, leaf, TypeArgs::NONE);

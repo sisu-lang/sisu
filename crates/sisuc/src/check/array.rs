@@ -317,7 +317,7 @@ impl Checker<'_> {
                 if mismatched || failed {
                     return Err(Poisoned::error());
                 }
-                let d = self.missing_operator(at, element, "==", self.lang.eq, true, true);
+                let d = self.missing_operator(at, element, "==", self.lang.eq, true);
                 self.diagnostics.insert(first, d.into());
                 Err(Poisoned::error())
             }
