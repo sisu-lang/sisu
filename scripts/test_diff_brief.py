@@ -54,6 +54,13 @@ class LogMismatch(Repo):
     def test_a_summary_on_an_earlier_commit_of_the_range_should_pass(self):
         self.assertIsNone(self.mismatch(self.summary(self.mid)))
 
+    def test_a_summary_before_a_merge_of_main_should_pass(self):
+        main = subprocess.run(self.git + ['commit-tree', 'HEAD~2^{tree}', '-p', self.base, '-m', 'main'],
+                              capture_output=True, text=True, check=True, env=ENV).stdout.strip()
+        subprocess.run(self.git + ['merge', '-q', '--no-edit', main], check=True, env=ENV)
+        self.base = main
+        self.assertIsNone(self.mismatch(self.summary(self.mid)))
+
     def test_a_summary_on_the_base_should_fail(self):
         self.assertIn(f'measured {self.base[:8]}, which is not in', self.mismatch(self.summary(self.base)))
 
