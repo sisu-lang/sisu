@@ -975,7 +975,7 @@ mod tests {
 
     /// The child of `stdout_sink_should_panic_when_standard_output_is_full`: standard output is
     /// `/dev/full`, and the case in the variable writes to it through a sink. It does nothing
-    /// unless the variable is set.
+    /// unless the variable is set, so it also passes on macOS, which has no `/dev/full`.
     #[expect(
         unsafe_code,
         reason = "the test calls the runtime's C ABI and libc `dup2`"
@@ -1012,6 +1012,10 @@ mod tests {
     /// of the line.
     #[test]
     #[cfg_attr(miri, ignore = "spawns a child process, which Miri cannot")]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "writes to /dev/full, which only Linux has"
+    )]
     fn stdout_sink_should_panic_when_standard_output_is_full() {
         for case in ["piece", "line"] {
             let exe = std::env::current_exe().expect("the test binary should have a path");
