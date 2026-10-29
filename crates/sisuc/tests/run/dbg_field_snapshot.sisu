@@ -23,5 +23,5 @@ fn main() {
     o.item = Inner(owner: o, n: 7)
     // The field is read here only so that it is not unused: a `dbg` does not count as a read.
     let _ = o.item == None
-    let _ = dbg(o)
+    dbg(o)
 }

@@ -547,6 +547,7 @@ fn dbg_should_check_clean_with_the_type_of_its_argument() {
             "let name: string? = None\n    let _ = dbg(name)",
         ),
         ("a local named dbg", "let dbg = 1\n    print(dbg)"),
+        ("a statement", "dbg(f(1))\n    dbg(dbg(2))\n    print(1)"),
     ] {
         let src = format!("fn f(x: i64) -> i64 {{\n    x\n}}\nfn main() {{\n    {statements}\n}}");
         clean_row(row, &src);

@@ -73,7 +73,7 @@ The rules:
 - For an object, `dbg` shows the fields one level deep: `dbg(node)` shows `Node(value: 3, next: Node)`. A field that is a class shows only its text, which is its name or its own `to_string`. So `dbg` follows no reference.
 - A class with a method `to_string` shows that text instead of its fields. The same holds for a class inside an array, a payload or an optional.
 - An argument of the type `unit` is an error ([E0059](../diagnostics/E0059.md)), and so is an argument of the type `never` ([E0061](../diagnostics/E0061.md)), as for `print`.
-- `dbg` runs its argument once and gives its value, so `dbg(f())` calls `f` once. It gives no warning for an optional.
+- `dbg` runs its argument once and gives its value, so `dbg(f())` calls `f` once. It gives no warning for an optional. A statement `dbg(x)` that drops the value gives no warning for an unused value ([W0004](../diagnostics/W0004.md)) either.
 - A local can have the name `dbg` ([E0034](../diagnostics/E0034.md) for a top-level item).
 
 ## read_line
