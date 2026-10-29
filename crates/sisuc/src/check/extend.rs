@@ -119,10 +119,7 @@ impl<'a> Checker<'_> {
                 self.signatures[func.0].conformance = Some((bound.interface, bound.args));
             }
             if let (Some(mut_self), Some(holder)) = (&method.mut_self, holder) {
-                let owner = match holder {
-                    Holder::Class(_) => MethodOwner::Class,
-                    Holder::Enum(_) => MethodOwner::Enum(name.clone()),
-                };
+                let owner = method_owner(holder, &name);
                 self.report(DiagnosticKind::MutSelf {
                     keyword: mut_self.keyword,
                     receiver: mut_self.receiver,
@@ -262,8 +259,8 @@ impl<'a> Checker<'_> {
         })
     }
 
-    /// The type that `ty`, the target of an `extend` block, names: a class or an enum. Reports a
-    /// target that is not one, and `None` for it.
+    /// The type that `ty`, the target of an `extend` block, names: a class or an enum, or in the
+    /// prelude an array or `i64`. Reports a target that is not one, and `None` for it.
     fn extend_target(&mut self, ty: &ast::TypeExpr) -> Option<Type> {
         if self.is_interface_name(ty) {
             let name = match &ty.kind {
@@ -290,6 +287,7 @@ impl<'a> Checker<'_> {
                 self.cannot_extend_assoc(ty);
                 return None;
             }
+            TypeKind::Array(_) | TypeKind::I64 if ty.bare.in_prelude() => return Some(resolved),
             TypeKind::Param(..) => CannotExtendForm::TypeParam,
             _ => CannotExtendForm::BuiltIn,
         };
@@ -301,11 +299,13 @@ impl<'a> Checker<'_> {
         None
     }
 
-    /// The name of the class or enum `holder`.
+    /// The name of the class or enum `holder`; for a built-in type, a name no item can take.
     pub(super) fn holder_name(&self, holder: Holder) -> Symbol {
         match holder {
             Holder::Class(c) => self.classes[c.0].name.name,
             Holder::Enum(e) => self.enums[e.0].name.name,
+            Holder::Array => Symbol::intern("[]"),
+            Holder::I64 => Symbol::intern("i64"),
         }
     }
 
@@ -397,6 +397,7 @@ impl<'a> Checker<'_> {
     /// The method, field or variant `name` of `holder`'s own declaration, and where its name is.
     fn body_definition(&self, holder: Holder, name: Symbol) -> Option<(Span, Definition)> {
         match holder {
+            Holder::Array | Holder::I64 => None,
             Holder::Class(c) => {
                 let info = &self.classes[c.0];
                 match info.methods.get(&name) {
@@ -424,11 +425,24 @@ impl<'a> Checker<'_> {
     }
 }
 
-/// The class or enum that `ty` is.
+/// The class, enum, array or `i64` that `ty` is: what holds its methods.
 pub(super) fn holder_of(ty: Type) -> Option<Holder> {
     match ty.kind() {
         TypeKind::Class(id, _) => Some(Holder::Class(id)),
         TypeKind::Enum(id, _) => Some(Holder::Enum(id)),
+        TypeKind::Array(_) => Some(Holder::Array),
+        TypeKind::I64 => Some(Holder::I64),
         _ => None,
+    }
+}
+
+/// What owns the methods of `holder`, whose type is named `name`, in the report of a `mut self`.
+fn method_owner(holder: Holder, name: &str) -> MethodOwner {
+    match holder {
+        Holder::Class(_) => MethodOwner::Class,
+        Holder::Enum(_) => MethodOwner::Enum(name.to_string()),
+        Holder::Array | Holder::I64 => {
+            unreachable!("the prelude should write no `mut self` on a built-in type")
+        }
     }
 }

@@ -357,7 +357,8 @@ fn interpolation_should_write_an_f64_and_warn_on_an_optional_one() {
 /// One method of each result shape. The declared type proves the result: the same call is a
 /// mismatch against the wrong type, which every row names.
 #[test]
-fn method_types() {
+fn number_method_calls_should_have_the_result_type_of_their_rule() {
+    with_prelude();
     let rows = [
         ("x.sqrt()", "f64", "bool"),
         ("x.pow(2.0)", "f64", "bool"),
@@ -393,7 +394,8 @@ fn method_types() {
 /// The receiver's type is the expected type of each argument, so an integer literal is an
 /// `f64`; the receiver comes first among the operands.
 #[test]
-fn method_literals() {
+fn an_integer_literal_argument_should_take_the_type_of_the_receiver() {
+    with_prelude();
     contains(
         "fn f(x: f64) {\n    print(x.pow(2))\n}\nfn main() {}",
         &["(math pow x#0 2.0)"],
@@ -404,7 +406,7 @@ fn method_literals() {
     );
     contains(
         "fn f(n: i64) {\n    print(n.clamp(0, 1))\n}\nfn main() {}",
-        &["(math clamp n#0 0 1)"],
+        &["(call i64.clamp n#0 0 1)"],
     );
 }
 
@@ -603,7 +605,8 @@ fn f64_constant_in_const() {
 /// member of `math`, `Math` or `f64` (the new code). Each row's fix is applied, and a safe one
 /// leaves a program that checks.
 #[test]
-fn math_idioms() {
+fn math_written_another_way_should_be_reported_with_a_fix_where_it_checks() {
+    with_prelude();
     let program = |expr: &str| {
         format!(
             "fn f(n: i64, x: f64, y: f64, xs: [i64], ys: [f64]) {{\n    let _ = {expr}\n}}\nfn main() {{}}"
@@ -615,6 +618,7 @@ fn math_idioms() {
         ("sqrt(x)", function, "sqrt", Some("x.sqrt()")),
         ("pow(x, 2)", function, "pow", Some("x.pow(2)")),
         ("max(n, 3)", function, "max", Some("n.max(3)")),
+        ("max(n, n)", function, "max", Some("n.max(n)")),
         (
             "math.sqrt(x + 1.0)",
             math,

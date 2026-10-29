@@ -591,3 +591,20 @@ fn dbg_should_report_a_broken_argument_once() {
         codes_row(statement, &body("", statement), &[(code, pos)]);
     }
 }
+
+/// The `min`, `max` and `clamp` of `i64` are the prelude's: a misspelled name suggests them, and
+/// a wrong count of arguments is the general call-count code.
+#[test]
+fn an_i64_method_should_come_from_the_prelude() {
+    with_prelude();
+    for (written, method) in [("mim", "min"), ("maxx", "max"), ("clam", "clamp")] {
+        let src = body("n: i64", &format!("let _ = n.{written}(3)"));
+        suggests(&src, Code::NoMember, (2, 15, written), method);
+    }
+    for call in ["n.min()", "n.max(1, 2)", "n.clamp(1)"] {
+        codes(
+            &body("n: i64", &format!("let _ = {call}")),
+            &[(Code::ArgumentCount, (2, 13))],
+        );
+    }
+}

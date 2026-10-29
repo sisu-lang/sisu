@@ -733,18 +733,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             }
             Rvalue::Convert(op) => self.convert(ty(), self.operand(op).0),
             Rvalue::Math { op, operands } => {
-                // The receiver's type picks the instructions.
-                let mut receiver = None;
-                let values: Vec<_> = operands
-                    .iter()
-                    .map(|operand| {
-                        let (value, ty) = self.operand(operand);
-                        receiver.get_or_insert(ty);
-                        value
-                    })
-                    .collect();
-                let ty = receiver.expect("a method call should have its receiver as an operand");
-                self.math(*op, ty, &values)
+                let values: Vec<_> = operands.iter().map(|o| self.operand(o).0).collect();
+                self.math(*op, &values)
             }
             Rvalue::Unary { op, operand, span } => {
                 let (value, ty) = self.operand(operand);

@@ -163,6 +163,8 @@ fn main() {
 
 The `f64` methods return an `f64`, except the three `is_` methods, which return a `bool`. `min`, `max` and `clamp` return the type of the receiver.
 
+The prelude writes `min`, `max` and `clamp` of `i64` in Sisu, in an `extend i64` block. The compiler writes the methods of `f64`. A program cannot write an `extend` block for `i64`: only the prelude can.
+
 ```sisu
 fn main() {
     print(2.0.sqrt())              // 1.4142135623730951

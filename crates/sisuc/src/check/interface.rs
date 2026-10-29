@@ -1443,7 +1443,9 @@ impl Checker<'_> {
             .filter(|&(k, stands)| !self.record_holds(interface, k, stands))
             .map(|(k, stands)| self.failed_bound(interface, k, stands));
         // A class or an enum with no conformance can get one.
-        let make = (record.is_none() && holder_of(leaf).is_some()).then(|| self.type_name(leaf));
+        let make = (record.is_none()
+            && matches!(leaf.kind(), TypeKind::Class(..) | TypeKind::Enum(..)))
+        .then(|| self.type_name(leaf));
         let form = if contains {
             NoOperatorForm::Contains { make }
         } else {

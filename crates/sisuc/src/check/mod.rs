@@ -93,11 +93,14 @@ type CheckedBlock = Result<tir::Block, Poisoned>;
 /// `never`, so it stands for `Error` there: a `None` it reaches is `Error`, with no diagnostic.
 static UNKNOWN: Type = Type::NEVER;
 
-/// A class or an enum: the holder of a method, or of type parameters.
+/// What holds methods: a class or an enum, or, for the prelude's `extend` blocks, every array
+/// type together, or `i64`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Holder {
     Class(tir::ClassId),
     Enum(tir::EnumId),
+    Array,
+    I64,
 }
 
 /// The type parameters of a declaration with the bounds of each.

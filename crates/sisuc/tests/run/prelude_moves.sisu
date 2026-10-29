@@ -1,0 +1,64 @@
+// GIVEN `min`, `max` and `clamp` on `i64`, which the prelude writes
+// AND `min`, `max` and `clamp` on `f64`, which stay built in
+// WHEN `main` calls each `i64` method on literals, on the extremes of `i64` and on values that
+// `-O2` cannot fold
+// AND it calls `clamp` with `lo` above `hi`, and with operands that print when they run
+// AND it calls each `f64` method on zeros of both signs and on a NaN
+// THEN each `i64` method gives the smaller, the larger or the clamped value, and `clamp` gives
+// `hi` when `lo` is above it
+// AND the operands of `clamp` run in order, receiver first
+// AND each `f64` method gives what IEEE 754 says: a NaN operand gives the other operand and
+// `-0.0` is below `0.0`
+// o2-calls: main same_int 2
+fn same_int(n: i64, depth: i64) -> i64 {
+    if depth == 0 { n } else { -same_int(-n, depth - 1) }
+}
+
+// Prints its name, so the order of the operands of `clamp` shows.
+fn noisy(n: i64) -> i64 {
+    print("noisy {n}")
+    n
+}
+
+fn main() {
+    print(7.min(-3))                    // -3
+    print(7.max(-3))                    // 7
+    print(7.clamp(2, 5))                // 5
+    print((-3).clamp(2, 5))             // 2
+    print(3.clamp(2, 5))                // 3
+    print(7.clamp(5, 2))                // 2: with lo above hi, the result is hi
+    print((-9).clamp(5, 2))             // 2: the same below the range
+
+    let top = 9223372036854775807
+    let bottom = -top - 1
+    print(top.min(bottom))              // -9223372036854775808
+    print(top.max(bottom))              // 9223372036854775807
+    print(top.clamp(bottom, 0))         // 0
+    print(bottom.clamp(0, top))         // 0
+
+    // Values that `-O2` cannot fold.
+    let a = same_int(7, 3)
+    let b = same_int(-3, 3)
+    print(a.min(b))                     // -3
+    print(a.max(b))                     // 7
+    print(a.clamp(b, 5))                // 5
+    print(a.clamp(5, b))                // -3
+
+    // The receiver, then `lo`, then `hi`; `max` runs before `min`, which sees its result.
+    print(noisy(1).clamp(noisy(2), noisy(3)))
+    // noisy 1
+    // noisy 2
+    // noisy 3
+    // 2
+
+    // `f64`.
+    print(1.5.min(0.5))                 // 0.5
+    print(1.5.max(0.5))                 // 1.5
+    print(7.5.clamp(0.0, 5.0))          // 5.0
+    print(7.5.clamp(5.0, 2.0))          // 2.0
+    print((-0.0).max(0.0))              // 0.0
+    print(0.0.min(-0.0))                // -0.0
+    print(f64.nan.min(2.0))             // 2.0
+    print(2.0.max(f64.nan))             // 2.0
+    print(f64.nan.clamp(0.0, 1.0))      // 0.0
+}

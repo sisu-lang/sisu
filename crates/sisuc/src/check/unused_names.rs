@@ -213,6 +213,7 @@ impl Checker<'_> {
         let built = |holder: Holder| match holder {
             Holder::Class(c) => reached.built[c.0],
             Holder::Enum(e) => reached.enum_built[e.0],
+            Holder::Array | Holder::I64 => true,
         };
         let named = |o: Owner| match o {
             Owner::Func(f) => (
@@ -504,6 +505,9 @@ impl Checker<'_> {
                     let bounds = match holder {
                         Holder::Class(c) => &self.classes[c.0].bounds,
                         Holder::Enum(e) => &self.enums[e.0].bounds,
+                        Holder::Array | Holder::I64 => {
+                            unreachable!("only a class or an enum is started by a use")
+                        }
                     };
                     let bounds = bounds.iter().flatten().map(|bound| bound.interface.0);
                     for interface in bounds {

@@ -2509,6 +2509,7 @@ fn a_call_with_written_type_arguments_should_wait_only_for_several_methods() {
     let src = "interface Tag {\n    fn tag<U>(self) -> [U]\n}\ninterface Tag2 {\n    fn tag<V>(self) -> V\n}\nfn id<T>(a: T) -> T {\n    a\n}\nfn f(e: E, c: C1) {\n    let n = id(e.tag<i64>())\n    let m = id(c.tag<i64>())\n}\nfn g<T: Tag>(x: T) {\n    let k = id(x.tag<i64>())\n}\nclass E {\n    x: i64\n    fn tag<U>(self) -> [U] { [] }\n}\nextend E: Tag {\n    fn tag<U>(self) -> [U] { [] }\n}\nextend E: Tag2 {\n    fn tag<V>(self) -> V { panic(\"x\") }\n}\nclass C1 {\n    x: i64\n}\nextend C1: Tag {\n    fn tag<U>(self) -> [U] { [] }\n}\nfn main() {}";
     clean(src);
     // A built-in receiver draws its own report and no wait.
+    with_prelude();
     codes(
         &format!("fn f() {{\n    take(5.max<i64>(2), 3)\n}}\n{decls}"),
         &[(Code::TypeArguments, (2, 15))],

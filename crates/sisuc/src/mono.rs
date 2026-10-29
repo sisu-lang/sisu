@@ -38,8 +38,10 @@ thread_local! {
 /// reaches, and its enums laid out again.
 /// The non-generic declarations come first, in their order; the instantiations follow, in the
 /// order a worklist first reaches them: the non-generic classes' fields and enums' payloads, then
-/// the non-generic functions' bodies, then each instantiation's in turn. A method is reached only
-/// by a call, never with its class.
+/// the user's non-generic functions' bodies, then each instantiation's in turn. A method is
+/// reached only by a call, never with its class. A function of the prelude is reached the same
+/// way, by a call from a body that is in the program, so a program holds only the prelude
+/// functions it uses.
 ///
 /// The checker has accepted the program, but its probe does not follow every associated type
 /// that an instance meets (`probe_associated`): the diagnostics are the E0030 of each choice that
@@ -101,8 +103,8 @@ enum Work {
 }
 
 struct Mono {
-    /// The checked program's generic functions, at their ids; a non-generic one has moved to
-    /// `functions`.
+    /// The checked program's generic functions, and the prelude's functions, at their ids; a
+    /// non-generic function of the user's has moved to `functions`.
     decls: Vec<Option<Function>>,
     /// The checked program's generic classes, at their ids.
     class_decls: Vec<Option<Class>>,
@@ -179,8 +181,10 @@ impl Mono {
             locals: Vec::new(),
             work: VecDeque::new(),
         };
+        let user_funcs = program.prelude.funcs;
         for (i, f) in program.functions.into_iter().enumerate() {
-            if f.type_params.is_empty() {
+            // A function of the prelude joins the program when a body that is in it calls it.
+            if f.type_params.is_empty() && i < user_funcs {
                 let id = FuncId(mono.functions.len());
                 mono.function_ids.insert((FuncId(i), TypeArgs::NONE), id);
                 mono.functions.push(Some(f));
@@ -250,7 +254,7 @@ impl Mono {
                 } => {
                     let mut f = self.decls[decl.0]
                         .clone()
-                        .expect("an instantiated function should be generic");
+                        .expect("an instantiated function should be generic or the prelude's");
                     f.name = name;
                     f.type_params = Vec::new();
                     f.owner_params = 0;
@@ -525,7 +529,7 @@ impl Mono {
         let done = FuncId(self.functions.len());
         let decl = self.decls[id.0]
             .as_ref()
-            .expect("a function reached with arguments should be generic");
+            .expect("a function reached with arguments should be generic or the prelude's");
         let name = self.instance_name(decl, args.get(), done.0);
         self.functions.push(None);
         self.function_ids.insert((id, args), done);
@@ -1362,7 +1366,8 @@ mod tests {
                      _ => [x, x].len()\n    }\n}\n\
              fn main() {\n    print(fill([Box(v: 2)], 3))\n}",
         );
-        assert_eq!(function_names(&program), ["main", "fill<i64>"]);
+        // `2.min(3)` reaches the prelude's `min`, and no other function of the prelude.
+        assert_eq!(function_names(&program), ["main", "fill<i64>", "i64.min"]);
         assert_eq!(class_names(&program), ["Box<i64>"]);
         let enums: Vec<&str> = program.enums.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(enums, ["Shape"]);
@@ -1619,6 +1624,20 @@ mod tests {
             panic!("the argument should be a class: {args:?}");
         };
         assert_eq!(program.classes[id.0].name, "G<i64>");
+    }
+
+    /// The checker sets `instantiates` at a call from the user's file into the prelude, and not at
+    /// the prelude's own calls (`clamp` calls `max`): a program that calls no prelude function
+    /// takes the path that instantiates nothing, and one that calls `min` does not.
+    #[test]
+    fn a_call_into_the_prelude_should_leave_the_path_that_instantiates_nothing() {
+        let before = FAST_PATHS.get();
+        instantiated("fn main() {\n    print(1)\n}");
+        assert_eq!(FAST_PATHS.get(), before + 1);
+        let before = FAST_PATHS.get();
+        let program = instantiated("fn main() {\n    print(5.min(3))\n}");
+        assert_eq!(FAST_PATHS.get(), before);
+        assert_eq!(function_names(&program), ["main", "i64.min"]);
     }
 
     /// Two conformances of one generic interface give two symbols, with the interface's arguments

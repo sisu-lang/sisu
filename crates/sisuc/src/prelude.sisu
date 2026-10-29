@@ -13,3 +13,19 @@ enum Result<T, E> {
     Ok(T)
     Err(E)
 }
+
+// The methods of `i64` that Sisu code writes. `f64`'s are built in.
+extend i64 {
+    fn min(self, other: i64) -> i64 {
+        if self < other { self } else { other }
+    }
+
+    fn max(self, other: i64) -> i64 {
+        if self > other { self } else { other }
+    }
+
+    // With `lo` above `hi`, the result is `hi`.
+    fn clamp(self, lo: i64, hi: i64) -> i64 {
+        self.max(lo).min(hi)
+    }
+}

@@ -11,43 +11,35 @@ use crate::diagnostic::{Definition, DiagnosticKind, MathFix, NanFix};
 use crate::source::Span;
 use crate::tir::{self, MathOp, Type, TypeKind};
 
-/// The receivers of a method.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Receivers {
-    F64,
-    /// `f64` and `i64`.
-    Number,
-}
-
-/// Each method: its operation, its receivers and its parameter count. Every parameter has the
-/// receiver's type. The result is `bool` for the `is_` methods, the receiver's type for `min`,
-/// `max` and `clamp`, and `f64` for the rest.
-const METHODS: [(MathOp, Receivers, usize); 25] = [
-    (MathOp::Abs, Receivers::F64, 0),
-    (MathOp::Sqrt, Receivers::F64, 0),
-    (MathOp::Floor, Receivers::F64, 0),
-    (MathOp::Ceil, Receivers::F64, 0),
-    (MathOp::Trunc, Receivers::F64, 0),
-    (MathOp::Round, Receivers::F64, 0),
-    (MathOp::Sin, Receivers::F64, 0),
-    (MathOp::Cos, Receivers::F64, 0),
-    (MathOp::Tan, Receivers::F64, 0),
-    (MathOp::Asin, Receivers::F64, 0),
-    (MathOp::Acos, Receivers::F64, 0),
-    (MathOp::Atan, Receivers::F64, 0),
-    (MathOp::Atan2, Receivers::F64, 1),
-    (MathOp::Exp, Receivers::F64, 0),
-    (MathOp::Ln, Receivers::F64, 0),
-    (MathOp::Log10, Receivers::F64, 0),
-    (MathOp::Log2, Receivers::F64, 0),
-    (MathOp::Pow, Receivers::F64, 1),
-    (MathOp::Hypot, Receivers::F64, 1),
-    (MathOp::Min, Receivers::Number, 1),
-    (MathOp::Max, Receivers::Number, 1),
-    (MathOp::Clamp, Receivers::Number, 2),
-    (MathOp::IsNan, Receivers::F64, 0),
-    (MathOp::IsFinite, Receivers::F64, 0),
-    (MathOp::IsInfinite, Receivers::F64, 0),
+/// Each method of `f64`: its operation and its parameter count. Every parameter is an `f64`. The
+/// result is `bool` for the `is_` methods and `f64` for the rest. `i64`'s `min`, `max` and
+/// `clamp` are the prelude's.
+const METHODS: [(MathOp, usize); 25] = [
+    (MathOp::Abs, 0),
+    (MathOp::Sqrt, 0),
+    (MathOp::Floor, 0),
+    (MathOp::Ceil, 0),
+    (MathOp::Trunc, 0),
+    (MathOp::Round, 0),
+    (MathOp::Sin, 0),
+    (MathOp::Cos, 0),
+    (MathOp::Tan, 0),
+    (MathOp::Asin, 0),
+    (MathOp::Acos, 0),
+    (MathOp::Atan, 0),
+    (MathOp::Atan2, 1),
+    (MathOp::Exp, 0),
+    (MathOp::Ln, 0),
+    (MathOp::Log10, 0),
+    (MathOp::Log2, 0),
+    (MathOp::Pow, 1),
+    (MathOp::Hypot, 1),
+    (MathOp::Min, 1),
+    (MathOp::Max, 1),
+    (MathOp::Clamp, 2),
+    (MathOp::IsNan, 0),
+    (MathOp::IsFinite, 0),
+    (MathOp::IsInfinite, 0),
 ];
 
 /// The constants on `f64`: `f64.pi` is `PI`.
@@ -62,27 +54,21 @@ const CONSTANTS: [(&str, f64); 8] = [
     ("epsilon", f64::EPSILON),
 ];
 
-/// The name of the method `name` that some number type has.
+/// The name of the method `name` that `f64` has.
 pub(super) fn method_name(name: &str) -> Option<&'static str> {
     METHODS
         .iter()
-        .map(|(op, ..)| op.name())
+        .map(|(op, _)| op.name())
         .find(|op| *op == name)
 }
 
-/// The operation and parameter count of the method `name` of a receiver of type `ty`, if it has
-/// one.
+/// The operation and parameter count of the method `name` of a receiver of type `ty`, if the
+/// compiler writes one: only `f64` has any.
 pub(super) fn method(ty: Type, name: &str) -> Option<(MathOp, usize)> {
     METHODS
         .iter()
-        .find(|(op, receivers, _)| {
-            op.name() == name
-                && match receivers {
-                    Receivers::F64 => ty == Type::F64,
-                    Receivers::Number => matches!(ty, Type::I64 | Type::F64),
-                }
-        })
-        .map(|&(op, _, params)| (op, params))
+        .find(|(op, _)| ty == Type::F64 && op.name() == name)
+        .copied()
 }
 
 /// The constant that another language's name means: `PI`, `Infinity` and `inf` are `pi` and
@@ -244,10 +230,10 @@ impl Checker<'_> {
             return None;
         };
         let receiver = self.expr(&first.value, Some(UNKNOWN));
-        let Some((ty, params)) = receiver.ok().and_then(|r| {
-            let (_, params) = method(r.ty, name)?;
-            Some((r.ty, params))
-        }) else {
+        let Some((ty, params)) = receiver
+            .ok()
+            .and_then(|r| Some((r.ty, self.built_in_arity(r.ty, name)?)))
+        else {
             self.stray(rest);
             return None;
         };
@@ -327,8 +313,9 @@ impl Checker<'_> {
             .push(DiagnosticKind::NanComparison { at, negated, fix }.into());
     }
 
-    /// `receiver.method(args)` on an `i64` or an `f64`, `ty`. Each argument is checked with
-    /// `ty` as its expected type, so `x.pow(2)` makes the `2` an `f64`.
+    /// `receiver.method(args)` on an `f64`, or on an `i64` that the prelude gives no method of
+    /// that name (see `method_call`), `ty`. Each argument is checked with `ty` as its expected
+    /// type, so `x.pow(2)` makes the `2` an `f64`.
     pub(super) fn number_method(
         &mut self,
         span: Span,
@@ -337,16 +324,14 @@ impl Checker<'_> {
         method: &ast::Ident,
         args: &[ast::Arg],
     ) -> Checked {
-        let float = ty == Type::F64;
-        let methods = || {
-            METHODS
-                .iter()
-                .filter(move |(_, receivers, _)| float || *receivers == Receivers::Number)
-        };
-        let Some(&(op, _, params)) = methods().find(|(op, ..)| op.name() == method.name.as_str())
-        else {
+        // An `i64` reaches here when the prelude gives it no method of the name.
+        let Some((op, params)) = self::method(ty, method.name.as_str()) else {
             let owner = self.type_name(ty);
-            let names = methods().map(|(op, ..)| op.name());
+            let names: Vec<&str> = if ty == Type::F64 {
+                METHODS.iter().map(|(op, _)| op.name()).collect()
+            } else {
+                self.prelude_method_names(ty)
+            };
             return self.rejected(no_member(Definition::Method, owner, method, names), args);
         };
         if args.len() != params {
@@ -365,7 +350,6 @@ impl Checker<'_> {
             .unzip();
         let result = match op {
             MathOp::IsNan | MathOp::IsFinite | MathOp::IsInfinite => Type::BOOL,
-            MathOp::Min | MathOp::Max | MathOp::Clamp => ty,
             _ => Type::F64,
         };
         let failed = labeled || mismatched.contains(&true);

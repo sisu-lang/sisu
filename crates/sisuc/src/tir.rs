@@ -122,9 +122,10 @@ pub(crate) struct Program {
     pub(crate) classes: Vec<Class>,
     pub(crate) enums: Vec<Enum>,
     pub(crate) functions: Vec<Function>,
-    /// Whether the checker recorded a type argument: a written one, or one a call inferred. A
-    /// program with none, and with no generic item of the user's, has nothing for `mono` to
-    /// instantiate. Only the checker sets it.
+    /// Whether the checker recorded a type argument: a written one, or one a call inferred, or
+    /// whether a call from the user's file reaches a function of the prelude. A program with
+    /// none, and with no generic item of the user's, has nothing for `mono` to instantiate. Only
+    /// the checker sets it.
     pub(crate) instantiates: bool,
     /// Where the prelude's items start in each list; the user's come first. Only the checker
     /// sets it.

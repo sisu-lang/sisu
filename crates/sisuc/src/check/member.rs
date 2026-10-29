@@ -204,6 +204,7 @@ impl Checker<'_> {
         let body = match holder {
             super::Holder::Class(c) => self.classes[c.0].methods.get(&name),
             super::Holder::Enum(e) => self.enums[e.0].methods.get(&name),
+            super::Holder::Array | super::Holder::I64 => None,
         };
         if let Some(&body) = body {
             return Some(body);
@@ -386,6 +387,36 @@ impl Checker<'_> {
             Some(Declared::Known(func)) if !self.plain_block_holds(func, ty) => None,
             found => found,
         }
+    }
+
+    /// The method `name` that an `extend` block of the prelude gives `ty`, an array or an `i64`,
+    /// if any; the method of a class or an enum is `find_method`'s. A method whose block bounds
+    /// fail for `ty` is none.
+    pub(super) fn prelude_method(&mut self, ty: Type, name: Symbol) -> Option<tir::FuncId> {
+        if !matches!(ty.kind(), TypeKind::Array(_) | TypeKind::I64) {
+            return None;
+        }
+        match self.applicable_method(ty, name)? {
+            Declared::Known(func) => Some(func),
+            Declared::Broken => None,
+        }
+    }
+
+    /// The names of the methods that the `extend` blocks of the prelude give `ty`, an array or an
+    /// `i64`: what a report of an unknown method suggests.
+    pub(super) fn prelude_method_names(&self, ty: Type) -> Vec<&'static str> {
+        let Some(holder) = holder_of(ty) else {
+            return Vec::new();
+        };
+        let covered = |list: &Vec<(usize, tir::FuncId)>| {
+            list.iter().any(|&(at, _)| {
+                self.extensions[at].interface.is_none() && self.covers(at, ty).is_some()
+            })
+        };
+        (self.extension_methods.iter())
+            .filter(|&(&(h, _), list)| h == holder && covered(list))
+            .map(|(&(_, name), _)| name.as_str())
+            .collect()
     }
 
     /// Whether the bounds of the block of the method `func`, which a plain block gives or the

@@ -267,7 +267,8 @@ impl Checker<'_> {
         };
         let name = method.name.as_str();
         let Some(&(_, arity)) = METHODS.iter().find(|(m, _)| *m == name) else {
-            let names = METHODS.iter().map(|&(m, _)| m);
+            let prelude = self.prelude_method_names(ty);
+            let names = METHODS.iter().map(|&(m, _)| m).chain(prelude);
             let d = no_member(Definition::Method, self.type_name(ty), method, names);
             return self.rejected(d, args);
         };

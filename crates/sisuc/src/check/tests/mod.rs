@@ -11,6 +11,7 @@ mod chars;
 mod conformances;
 mod constants;
 mod enums;
+mod extend;
 mod floats;
 mod for_loops;
 mod generics;

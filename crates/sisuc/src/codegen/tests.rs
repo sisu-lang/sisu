@@ -25,8 +25,24 @@ fn compiled_from<'ctx>(
     rc_checks: bool,
     edit: impl FnOnce(&mut mir::Program),
 ) -> Module<'ctx> {
+    compiled_over(context, "", src, rc_checks, edit)
+}
+
+/// `compiled_from` over the prelude `prelude`, which the program may call.
+fn compiled_over<'ctx>(
+    context: &'ctx Context,
+    prelude: &str,
+    src: &str,
+    rc_checks: bool,
+    edit: impl FnOnce(&mut mir::Program),
+) -> Module<'ctx> {
     let program = parse_ok(src);
-    let (program, diagnostics) = check_alone(&program, src, &[]);
+    let (program, diagnostics) = crate::check::check(
+        &program,
+        &crate::front_end::prelude_program(prelude),
+        src,
+        &[],
+    );
     let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
     let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     let mut mir = mir::build(&program);
@@ -2715,30 +2731,39 @@ fn classification_is_float_compares() {
     assert!(infinite.contains("+inf"), "{infinite}");
 }
 
-/// `i64` `min`, `max` and `clamp` are `select`s over signed compares, with no call.
+/// `i64` `min`, `max` and `clamp` are the prelude's methods, and at `-O2` the inliner makes each
+/// an `llvm.smin.i64` or `llvm.smax.i64` call, with no call of a prelude function left.
 #[test]
-fn integer_min_max_clamp_are_selects() {
+fn integer_min_max_clamp_should_be_smin_and_smax_at_o2() {
     let context = Context::create();
-    let ir = compiled(
+    let module = compiled_over(
         &context,
-        "fn lo(a: i64, b: i64) -> i64 { a.min(b) }\nfn hi(a: i64, b: i64) -> i64 { a.max(b) }\nfn both(a: i64, b: i64, c: i64) -> i64 { a.clamp(b, c) }\nfn main() {\n    print(lo(1, 2) + hi(1, 2) + both(1, 2, 3))\n}",
-    )
-    .print_to_string()
-    .to_string();
-    let lo = function_body(&ir, "define internal i64 @sisu.lo(");
+        crate::front_end::PRELUDE_SOURCE,
+        "fn lo(a: i64, b: i64) -> i64 { a.min(b) }\nfn hi(a: i64, b: i64) -> i64 { a.max(b) }\nfn both(a: i64, b: i64, c: i64) -> i64 { a.clamp(b, c) }\nfn main(args: [string]) {\n    let a = 5 - args.len()\n    let b = args.len() - 7\n    print(lo(a, b) + hi(a, b) + both(a, b, 3 - a))\n}",
+        false,
+        |_| {},
+    );
+    keep_functions(&module, "lo,hi,both");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    let lo = function_body(&ir, "@sisu.lo(");
+    let hi = function_body(&ir, "@sisu.hi(");
+    let both = function_body(&ir, "@sisu.both(");
     assert!(
-        lo.contains("icmp slt i64") && lo.contains("select i1"),
+        lo.contains("@llvm.smin.i64") && !lo.contains("@llvm.smax.i64"),
         "{lo}"
     );
-    let hi = function_body(&ir, "define internal i64 @sisu.hi(");
     assert!(
-        hi.contains("icmp sgt i64") && hi.contains("select i1"),
+        hi.contains("@llvm.smax.i64") && !hi.contains("@llvm.smin.i64"),
         "{hi}"
     );
-    let both = function_body(&ir, "define internal i64 @sisu.both(");
-    assert_eq!(both.matches("select i1").count(), 2, "{both}");
+    assert!(
+        both.contains("@llvm.smin.i64") && both.contains("@llvm.smax.i64"),
+        "{both}"
+    );
     for body in [lo, hi, both] {
-        assert!(!body.contains("call"), "{body}");
+        assert!(!body.contains("@sisu.i64."), "{body}");
     }
 }
 
