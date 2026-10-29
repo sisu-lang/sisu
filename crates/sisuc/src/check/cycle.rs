@@ -1414,10 +1414,14 @@ impl Checker<'_> {
         let mut rules: Vec<Rule> = Vec::new();
         for (interface, conformance) in self.conformances.iter() {
             let target = param_depths(conformance.target, conformance.type_params);
-            let key = closed(conformance.args).then_some(conformance.args);
             for (k, chosen) in conformance.assoc.iter().enumerate() {
-                let Some(chosen) = *chosen else { continue };
+                // A choice that names no parameter has no growth, and no slot of its own: the
+                // slot for arguments with a parameter stands for it.
+                let Some(chosen) = chosen.filter(|ty| ty.has_param()) else {
+                    continue;
+                };
                 let place = assocs.first[interface.0] + k;
+                let key = closed(conformance.args).then_some(conformance.args);
                 let slot = *assocs.slots.entry((place, key)).or_insert_with(|| {
                     assocs.made.push((place, key));
                     growth.push(None);
@@ -1455,6 +1459,9 @@ impl Checker<'_> {
                     weight: 0,
                 });
             }
+        }
+        if rules.is_empty() {
+            return assocs;
         }
         let growth = &mut assocs.growth;
         let unbounded = cyclic(growth, &rules);
