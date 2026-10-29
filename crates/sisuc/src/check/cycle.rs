@@ -635,11 +635,9 @@ impl Graph {
             return None;
         };
         let place = self.assocs.first[interface.0] + k as usize;
-        let slot = self.assocs.slot(place, args)?;
-        let heads = self
-            .assocs
-            .heads
-            .get(self.assocs.first[link.0] + l as usize)?;
+        let slot = (self.assocs.slot(place, args))
+            .expect("a use whose place has a hub should have a slot");
+        let heads = &self.assocs.heads[self.assocs.first[link.0] + l as usize];
         let mut read = 0;
         let mut found = Vec::new();
         for &head in heads.as_ref()? {
@@ -1615,12 +1613,11 @@ impl Checker<'_> {
             let index = seen[interface.0];
             seen[interface.0] += 1;
             let first = assocs.first[interface.0];
-            // A choice that a conformance does not make leaves the heads of the place unknown.
-            for k in conformance.assoc.len()..self.interfaces[interface.0].assoc.len() {
-                assocs.heads[first + k] = None;
-            }
-            for (k, chosen) in conformance.assoc.iter().enumerate() {
+            for k in 0..self.interfaces[interface.0].assoc.len() {
                 let place = first + k;
+                // A choice that the conformance does not make leaves the heads of the place
+                // unknown.
+                let chosen = conformance.assoc.get(k).copied().flatten();
                 match chosen.and_then(head_of) {
                     Some(head) => {
                         if let Some(heads) = &mut assocs.heads[place] {
@@ -1807,30 +1804,18 @@ impl Checker<'_> {
         out
     }
 
-    /// The requirement `method` of `interface` with its own type arguments: `Eq.eq`.
-    fn requirement_name(
-        &self,
-        interface: tir::InterfaceId,
-        method: usize,
-        types: TypeArgs,
-    ) -> String {
-        let info = &self.interfaces[interface.0];
-        let name = info.requirements[method].name.name;
-        let mut out = format!("{}.{name}", info.name.name);
-        write_args(&mut out, types.get(), |head| self.head(head));
-        out
-    }
-
     /// `instance` as the program writes it: `f<[T]>`, `C<[T]>.m<U>`, or a type.
     fn instance_name(&self, functions: &[Option<tir::Function>], instance: Instance) -> String {
         let (func, types) = match instance {
             Instance::Type(ty) => return self.type_name(ty),
             Instance::Required(interface, method, types) => {
-                return self.requirement_name(interface, method, types);
+                let info = &self.interfaces[interface.0];
+                let name = info.requirements[method].name.name;
+                let mut out = format!("{}.{name}", info.name.name);
+                write_args(&mut out, types.get(), |head| self.head(head));
+                return out;
             }
-            Instance::Operator(interface, _) => {
-                return self.requirement_name(interface, 0, TypeArgs::NONE);
-            }
+            Instance::Operator(..) => unreachable!("an operator should be spelled by `spell`"),
             Instance::Call(func, types) => (func, types),
         };
         let function = functions[func.0]

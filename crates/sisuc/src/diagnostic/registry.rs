@@ -1206,7 +1206,6 @@ impl Spelled {
     /// The text of a label at the place of the instantiation.
     fn label(&self) -> String {
         match self {
-            Spelled::Instance(name) => format!("`{name}` here"),
             Spelled::Generated {
                 display, operand, ..
             } => {

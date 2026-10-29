@@ -1079,6 +1079,13 @@ fn growth_through_a_choice_that_may_be_meant_should_be_reported_for_each_form() 
             "E<T.Item>",
         ),
         (
+            // The use is for `S<bool>`, and a conformance for `S<bool>` exists, but the choice of
+            // the class that the link names is made for `S<T>`, which may be `S<bool>`.
+            "a link, and a choice for a parameter beside a conformance for the arguments of the use",
+            "interface S<A> {\n    type Link: S<A>\n    type Item\n}\nclass V<T>: S<bool> {\n    type Link = W<bool>\n    type Item = T\n}\nclass W<T>: S<T> {\n    type Link = W<T>\n    type Item = E<V<V<T>>>\n}\nenum E<T: S<bool>> {\n    End\n    A(T.Link.Item)\n}\nfn main() {}".to_string(),
+            "E<V<V<T>>>",
+        ),
+        (
             "an enum that holds the enum of the associated type, for the same arguments",
             format!("{PARTS}extend<T> W<T>: S<i64> {{\n    type Item = W<T>\n}}\nextend<T> W<T>: S<bool> {{\n    type Item = W<W<T>>\n}}\n{PARTS_ENUM}"),
             "E<T.Item>",
@@ -1289,6 +1296,14 @@ fn choice_of_a_class_that_the_link_cannot_choose_should_not_be_reported() {
                 "{UNBOUNDED_AND_OTHER}{W_ENDS_OTHER}enum E<T: S> {{\n    End\n    A(T.Next.Other.Item)\n}}\n{COMPARED}"
             ),
         ),
+        (
+            // The class `W` is a choice of the link, but its choice for `S<bool>` is not one that
+            // the use for `S<i64>` can mean.
+            "a link that can choose the class, and a choice for other interface arguments",
+            format!(
+                "{LINKED}class W<T>: S<bool> {{\n    type Link = W<T>\n    type Item = E<W<W<T>>>\n}}\nextend<T> W<T>: S<i64> {{\n    type Link = W<T>\n    type Item = T\n}}\nenum E<T: S<i64>> {{\n    End\n    A(T.Link.Item)\n}}\nfn main() {{}}"
+            ),
+        ),
     ];
     for (row, src) in rows {
         let found: Vec<Code> = diags(&src).iter().map(Diagnostic::code).collect();
@@ -1299,8 +1314,44 @@ fn choice_of_a_class_that_the_link_cannot_choose_should_not_be_reported() {
     }
 }
 
+/// An interface with a type parameter, an associated type `Link` that leads to the item, and the
+/// item.
+const LINKED: &str = "interface S<A> {\n    type Link: S<A>\n    type Item\n}\n";
+
 /// `TWO_LINKS` with a `Next` of the class `U` that grows without end, which the issue shows.
 const UNBOUNDED_AND_OTHER: &str = "interface S {\n    type Next: S\n    type Other: S\n    type Item\n}\nclass Z: S {\n    type Next = Z\n    type Other = Z\n    type Item = i64\n}\nclass U<T: S>: S {\n    type Next = U<U<T.Next>>\n    type Other = U<T>\n    type Item = i64\n}\n";
+
+/// A use reads at most `MATCHING_CHOICES` heads of its link. Above that, it feeds all the choices
+/// of the associated type, so a class that the link cannot choose gives the error: the check is
+/// cautious, and its graph stays in proportion to the program.
+#[test]
+fn use_of_a_link_with_more_heads_than_the_cap_should_feed_every_choice() {
+    // The link `Link` is chosen as one of `n` classes, none of which is `W`.
+    let program = |n: usize| {
+        let mut src = String::from(
+            "interface S {\n    type Link: S\n    type Item\n}\nclass W<T>: S {\n    type Link = C0<T>\n    type Item = E<W<W<T>>>\n}\nenum E<T: S> {\n    End\n    A(T.Link.Item)\n}\n",
+        );
+        for i in 0..n {
+            let next = (i + 1) % n;
+            writeln!(
+                src,
+                "class C{i}<T>: S {{\n    type Link = C{next}<T>\n    type Item = i64\n}}"
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        src + "fn main() {}"
+    };
+    // 3 heads: the filter shows that `W` is not meant. 70 heads are above the cap of 64.
+    let few = program(3);
+    let found: Vec<Code> = diags(&few).iter().map(Diagnostic::code).collect();
+    assert!(!found.contains(&Code::InstantiationCycle), "{found:?}");
+    let many = program(70);
+    codes_row(
+        "more heads than the cap",
+        &many,
+        &[(Code::InstantiationCycle, where_is(&many, "E<W<W<T>>>"))],
+    );
+}
 
 /// A class whose link `Other` can name `W` keeps the error: the graph reads the heads that a link
 /// names directly, not the head that each turn of the cycle gives. `W` ends `Other` with `Z`, so
