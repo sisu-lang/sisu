@@ -1103,6 +1103,35 @@ fn growth_through_a_choice_that_may_be_meant_should_be_reported_for_each_form() 
     }
 }
 
+/// The use `T.Link.Item` means the choices of `Item` that the classes and enums named by the
+/// choices of `Link` make. Where a choice of `Link` names a parameter or an associated type, those
+/// classes are not known, and where the use has an interface argument that holds a parameter, any
+/// choice of `Item` may be meant: the use then keeps the edge to every choice. Each row is a true
+/// cycle that a use which drops one of these edges would miss.
+#[test]
+fn growth_through_a_link_that_names_no_class_should_be_reported_for_each_form() {
+    let rows = [
+        (
+            "a link that one class chooses as a parameter",
+            "interface S {\n    type Link: S\n    type Item\n}\nclass Z: S {\n    type Link = Z\n    type Item = i64\n}\nclass V<T: S>: S {\n    type Link = T\n    type Item = i64\n}\nclass W<T: S>: S {\n    type Link = Z\n    type Item = E<V<W<W<T>>>>\n}\nenum E<T: S> {\n    End\n    A(T.Link.Item)\n}\nfn main() {\n    let e: E<V<W<Z>>> = E.End\n    print(e == e)\n}\n",
+            "E<V<W<W<T>>>>",
+        ),
+        (
+            "a link that one class chooses as an associated type",
+            "interface S {\n    type Link: S\n    type Alt: S\n    type Item\n}\nclass Z: S {\n    type Link = Z\n    type Alt = Z\n    type Item = i64\n}\nclass V<T: S>: S {\n    type Link = T.Alt\n    type Alt = Z\n    type Item = i64\n}\nclass W<T: S>: S {\n    type Link = Z\n    type Alt = W<T>\n    type Item = E<V<W<W<T>>>>\n}\nenum E<T: S> {\n    End\n    A(T.Link.Item)\n}\nfn main() {\n    let e: E<V<W<Z>>> = E.End\n    print(e == e)\n}\n",
+            "E<V<W<W<T>>>>",
+        ),
+        (
+            "a use whose interface argument is a parameter",
+            "interface S<A> {\n    type Link: S<A>\n    type Item\n}\nclass W<T>: S<bool> {\n    type Link = W<T>\n    type Item = E<W<W<T>>, bool>\n}\nenum E<T: S<U>, U> {\n    End\n    A(T.Link.Item)\n}\nfn main() {\n    let e: E<W<i64>, bool> = E.End\n    print(e == e)\n}\n",
+            "E<W<W<T>>, bool>",
+        ),
+    ];
+    for (row, src, at) in rows {
+        codes_row(row, src, &[(Code::InstantiationCycle, where_is(src, at))]);
+    }
+}
+
 /// An interface with an associated type `Next` that one conformance grows without end (`U`),
 /// beside the conformance `Z` that does not. A base `T.Next` is then of unbounded growth for the
 /// graph, which stands for the choices of every conformance, whatever type it is for.
@@ -1422,7 +1451,7 @@ fn enum_that_holds_the_choice_of_a_link_that_cannot_grow_should_not_be_marked() 
 fn uses_of_a_link_with_many_choices_should_cost_edges_in_proportion_to_the_program() {
     // `n` classes that each choose `Link` as the next class and make a choice of `Item`, so that
     // a use `T.Link.Item` can mean `n` choices, and `n` enums that each hold one such use: with
-    // a gate for each match the edges are `n` times `n`. The sizes are three times the cap and
+    // a gate for each match the edges are `n` times `n`. The sizes are ten times the cap and
     // more, so that the fall back is what keeps them in line.
     let edges = |n: usize| {
         let mut src = String::from(
@@ -1442,7 +1471,7 @@ fn uses_of_a_link_with_many_choices_should_cost_edges_in_proportion_to_the_progr
         assert!(!found.contains(&Code::InstantiationCycle), "{found:?}");
         cycle::EDGES.get()
     };
-    assert_near_linear(edges(200), edges(400), edges(600));
+    assert_near_linear(edges(640), edges(1280), edges(1920));
 }
 
 #[test]
