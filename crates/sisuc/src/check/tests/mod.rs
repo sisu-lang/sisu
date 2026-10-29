@@ -2546,6 +2546,7 @@ fn method_as_function_should_offer_self_for_an_enum_and_a_generic_class() {
 /// argument is checked without that parameter's type, so no error comes from that type.
 #[test]
 fn method_as_function_should_prefer_self_when_the_first_argument_fits_its_method() {
+    with_prelude();
     let head = "class P {\n    fn pick(self, p: P?) -> i64 { 0 }\n    fn merge(self, o: P) -> i64 { 0 }\n    fn max(self, k: f64) -> f64 { k }\n    fn len(self, xs: [u8]) -> i64 { 0 }\n    fn sum(self, xs: [f64]) -> f64 { 0.0 }\n    fn go(self, other: P, p: P?, a: f64, b: f64, x: i64) {\n        print(";
     let tail = ")\n    }\n}\nfn main() {}";
     for (call, fixed) in [

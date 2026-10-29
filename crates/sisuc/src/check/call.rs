@@ -229,10 +229,7 @@ impl Checker<'_> {
     /// prelude writes. `None` when the type has no such method.
     fn idiom_of(&self, name: Symbol, ty: Type) -> Option<Idiom> {
         match ty.kind() {
-            TypeKind::Array(element)
-                if matches!(name.as_str(), "len" | "contains")
-                    || name.as_str() == "sum" && matches!(element, Type::I64 | Type::F64) =>
-            {
+            TypeKind::Array(_) if matches!(name.as_str(), "len" | "contains") => {
                 return Some(Idiom::Built);
             }
             _ if number::method(ty, name.as_str()).is_some() => return Some(Idiom::Built),
@@ -259,7 +256,7 @@ impl Checker<'_> {
     /// Checks the arguments after the receiver of an idiom call of the method `name`, each once.
     /// `receiver` is the receiver's type. For a number, whether the method takes them (see
     /// `number_arguments`). For an array: `contains` takes one of the element's type, or an
-    /// integer literal that fits it, that checked cleanly, and `len` and `sum` none.
+    /// integer literal that fits it, that checked cleanly, and `len` none.
     fn idiom_arguments(&mut self, name: &str, receiver: Type, rest: &[ast::Arg]) -> bool {
         if let Some((_, params)) = number::method(receiver, name) {
             return self.number_arguments(receiver, params, rest);
