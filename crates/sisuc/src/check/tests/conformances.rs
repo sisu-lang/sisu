@@ -3690,6 +3690,16 @@ fn operators_should_report_only_a_mismatch_inside_an_operand() {
             "fn f(b: [u8]) -> bool { b < b < [1, 300] }",
             vec![(Code::IntegerDoesNotFit, "300")],
         ),
+        (
+            "order of floats and an integer that a float cannot hold",
+            "fn f(a: [f64]) -> bool { a < [9007199254740993] }",
+            vec![(Code::NotExactlyF64, "9007199254740993")],
+        ),
+        (
+            "a call with a number that does not fit, bound to a string",
+            "fn g(x: u8) -> u8 { x }\nfn f() -> bool { let s: string = g(300); true }",
+            vec![(Code::IntegerDoesNotFit, "300")],
+        ),
     ];
     for (row, src, expected) in rows {
         let src = format!("{src}\nfn main() {{}}");
@@ -3726,6 +3736,23 @@ fn operators_should_report_a_missing_operator_beside_an_error_that_is_not_about_
             "order of a class and a call with a wrong argument",
             format!("{node}fn g(x: i64) -> i64 {{ x }}\nfn f(a: Node) -> bool {{ a < g(true) }}"),
             vec![(Code::NoOperator, "a <"), (Code::Mismatch, "true")],
+        ),
+        (
+            "contains of a parameter and a block with a wrong binding",
+            "fn f<T>(xs: [T], a: T) -> bool { xs.contains({ let x: i64 = true; a }) }".to_string(),
+            vec![(Code::ParamLacks, "xs.contains("), (Code::Mismatch, "true")],
+        ),
+        (
+            "contains of a class and a block with a wrong binding",
+            format!(
+                "{node}fn f(xs: [Node], a: Node) -> bool {{ xs.contains({{ let x: i64 = true; a }}) }}"
+            ),
+            vec![(Code::NoOperator, "xs.contains("), (Code::Mismatch, "true")],
+        ),
+        (
+            "contains of an optional parameter and a block with a wrong binding",
+            "fn f<T>(xs: [T?], a: T) -> bool { xs.contains({ let x: i64 = true; a }) }".to_string(),
+            vec![(Code::ParamLacks, "xs.contains("), (Code::Mismatch, "true")],
         ),
     ];
     for (row, src, expected) in rows {
