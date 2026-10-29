@@ -58,8 +58,9 @@ thread_local! {
     static TYPE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many token places and rest places a `take_apart` has visited on this thread.
     static TAKE_APART_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many steps the lookups of a component have taken on this thread: the enums that
-    /// `components` builds the table from, and one for each lookup of a member's position.
+    /// How many steps the lookups of a component have taken on this thread. The tick counts the
+    /// enums that `components` builds the table from. It also counts each call of the one lookup
+    /// helper, `member_position`, and not the steps inside it.
     static MEMBER_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 

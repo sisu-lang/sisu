@@ -2982,8 +2982,8 @@ fn show_of_a_component_should_find_each_member_in_linear_steps() {
     assert_near_linear(scans(100), scans(200), scans(300));
 }
 
-/// The ring of `n` enums of #245: each links to the next, and `main` compares every `End`
-/// with itself, so each enum gets its `walk`, `release` and `eq` helpers.
+/// The ring of `n` enums of #245. Each enum links to the next. `main` compares every `End` with
+/// itself, so each enum gets its `walk`, `release` and `eq` helpers.
 fn enum_ring(n: usize) -> String {
     let enums = (0..n)
         .map(|i| format!("enum R{i} {{\n    End\n    Link(R{})\n}}\n", (i + 1) % n))
@@ -2998,7 +2998,11 @@ fn enum_ring(n: usize) -> String {
 
 /// `==` on an enum of a component with boxes finds the index of each member and of each link
 /// in the component. The `walk` helper of each member finds the index of each boxed field the
-/// same way. A search of the component for each of them reads a ring of enums quadratically.
+/// same way. Each of these is one lookup in the table of the component. A search of the
+/// component for any of them reads a ring of enums quadratically.
+///
+/// The count is exact, so a call site that stops using the lookup helper makes the count fall
+/// and fails the test.
 #[test]
 fn eq_and_walk_of_a_component_should_find_each_member_in_linear_steps() {
     let scans = |n: usize| {
@@ -3007,7 +3011,10 @@ fn eq_and_walk_of_a_component_should_find_each_member_in_linear_steps() {
         compiled(&context, &enum_ring(n));
         MEMBER_SCANS.get()
     };
-    assert_near_linear(scans(100), scans(200), scans(300));
+    // Each enum counts 4. The table counts 1. The `walk` of the enum counts 1 lookup for its
+    // boxed field. Its `eq` counts 1 lookup for the enum itself and 1 for the link.
+    assert_eq!(scans(100), 4 * 100);
+    assert_eq!(scans(200), 4 * 200);
 }
 
 /// The `walk`, `release` and `drain` helper of each member of a component with boxes uses the

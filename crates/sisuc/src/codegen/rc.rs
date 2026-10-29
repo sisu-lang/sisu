@@ -322,8 +322,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             return;
         };
         let heads_type = self.heads_type(members.len());
-        let heads = self.entry_alloca(heads_type.into(), "heads");
-        self.store(heads, heads_type.const_zero().into());
+        let heads = self.entry_alloca_heads(heads_type);
         if members.len() > 1 {
             let head = self.head(heads_type, heads, self.class_cycles.position(id));
             self.store(head, param(drop).into());

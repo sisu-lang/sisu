@@ -161,14 +161,22 @@ impl<'ctx> Codegen<'ctx, '_> {
         &self.enums[id.0]
     }
 
-    /// The index of `member` in its component, read from the table that `components` builds.
-    fn member_position(&self, member: EnumId) -> usize {
+    /// The index of `member` among `members`, the members of one component, read from the table
+    /// that `components` builds.
+    ///
+    /// It checks in constant time that `member` is in that component. The `unsafe` index of
+    /// `head` relies on this check.
+    fn member_position(&self, members: &Rc<[EnumId]>, member: EnumId) -> usize {
         #[cfg(test)]
         super::MEMBER_SCANS.set(super::MEMBER_SCANS.get() + 1);
-        self.components[member.0]
+        let component = self.components[member.0]
             .as_ref()
-            .expect("an enum that a component links to should be in a component with boxes")
-            .index
+            .expect("an enum that a component links to should be in a component with boxes");
+        assert!(
+            Rc::ptr_eq(&component.members, members),
+            "the checker should box only a field whose enum is in the declaring enum's component"
+        );
+        component.index
     }
 
     /// Builds every enum's layout. First it names each enum's type and its payload structs, so
@@ -873,8 +881,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             return;
         };
         let heads_type = self.heads_type(members.len());
-        let heads = self.entry_alloca(heads_type.into(), "heads");
-        self.store(heads, heads_type.const_zero().into());
+        let heads = self.entry_alloca_heads(heads_type);
         let walk = self.helper(
             Helper::Walk,
             Type::intern(TypeKind::Enum(id, TypeArgs::NONE)),
@@ -902,6 +909,25 @@ impl<'ctx> Codegen<'ctx, '_> {
             .array_type(members)
     }
 
+    /// A new frame slot for the heads of a component, with every head `null`.
+    ///
+    /// One `memset` of constant size zeroes it. A store of a constant of `heads_type` would
+    /// become one store for each member, in each helper that makes the slot.
+    pub(super) fn entry_alloca_heads(&self, heads_type: ArrayType<'ctx>) -> PointerValue<'ctx> {
+        let heads = self.entry_alloca(heads_type.into(), "heads");
+        let size = self.target_data.get_abi_size(&heads_type);
+        let align = self.target_data.get_abi_alignment(&heads_type);
+        self.builder
+            .build_memset(
+                heads,
+                align,
+                self.context.i8_type().const_zero(),
+                self.context.i64_type().const_int(size, false),
+            )
+            .expect("the alignment of an array of pointers should be a power of two");
+        heads
+    }
+
     /// The address of the head of member `index`'s list in `heads`, of type `heads_type`.
     #[expect(
         unsafe_code,
@@ -920,10 +946,12 @@ impl<'ctx> Codegen<'ctx, '_> {
             i32_type.const_zero(),
             i32_type.const_int(u64::from(index), false),
         ];
-        // SAFETY: the first index steps over the one array that `heads` points to, and the
-        // second is below its length, because every caller passes the index of a member of the
-        // component that `heads_type` counts. So the index list is valid for the array type and
-        // `inbounds` is sound.
+        // SAFETY: the first index steps over the one array that `heads` points to. The second is
+        // below its length, because every caller passes the index of a member of the component
+        // that `heads_type` counts. `member_position` asserts this for an index found from an
+        // enum. The other callers take the index from an `enumerate` over the members, or from
+        // `ClassCycles`, which indexes a class in its own cycle. So the index list is valid for
+        // the array type and `inbounds` is sound.
         unsafe {
             self.builder
                 .build_in_bounds_gep(heads_type, heads, &indexes, "head")
@@ -984,7 +1012,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.builder.position_at_end(live);
             self.decrement(boxed, last, next);
             self.builder.position_at_end(last);
-            let index = self.member_position(boxed_enum(payload.ty));
+            let index = self.member_position(&members, boxed_enum(payload.ty));
             let head = self.head(heads_type, heads, index);
             let old = self
                 .builder
@@ -1255,7 +1283,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 Helper::EqComponent,
                 Type::intern(TypeKind::Enum(members[0], TypeArgs::NONE)),
             );
-            let args = [self.member_index(id).into(), a.into(), b.into()];
+            let args = [self.member_index(&members, id).into(), a.into(), b.into()];
             let equal = self.call_component(component, &args);
             self.builder.build_return(Some(&equal)).expect(POSITIONED);
             return;
@@ -1448,8 +1476,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// The `kind` of `member` in its component: its index, as an `i32`.
-    pub(super) fn member_index(&self, member: EnumId) -> IntValue<'ctx> {
-        self.kind(self.member_position(member))
+    pub(super) fn member_index(&self, members: &Rc<[EnumId]>, member: EnumId) -> IntValue<'ctx> {
+        self.kind(self.member_position(members, member))
     }
 
     /// The `kind` of the member at `index` in a component, as an `i32`.
@@ -1630,7 +1658,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let (inner, value_a, value_b) = self.link_pair(link, a, b, eq.pop, eq.unequal);
         let from = self.current_block();
         let values: [BasicValueEnum<'ctx>; 3] = [
-            self.member_index(inner).into(),
+            self.member_index(&eq.members, inner).into(),
             value_a.into(),
             value_b.into(),
         ];
