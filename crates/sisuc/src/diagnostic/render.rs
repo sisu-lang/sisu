@@ -192,6 +192,33 @@ error[E0001]: cannot assign to `n`
         );
     }
 
+    /// The check that stopped at the depth limit has no fixture: it needs a program of 2^18
+    /// nested types, so this test pins its text.
+    #[test]
+    fn a_conformance_check_that_is_too_deep_should_render_with_its_limit() {
+        let source = "class W<T> {\n    value: T\n}\n";
+        let expected = "\
+error[E0140]: the check of `Eq` for `E0<i64>` stopped after 262144 nested types
+ --> test.sisu:1:7
+  |
+1 | class W<T> {
+  |       ^ `W` is 262144 types deep here
+  |
+  = help: a type that nests this deep may instantiate itself without end";
+        let d: Diagnostic = DiagnosticKind::ConformanceTooDeep {
+            interface: "Eq".to_string(),
+            root: "E0<i64>".to_string(),
+            limit: 262_144,
+            holder: "W".to_string(),
+            at: Span::new(6, 7),
+        }
+        .into();
+        assert_eq!(
+            d.render("test.sisu", source, &LineIndex::new(source), false),
+            expected
+        );
+    }
+
     #[test]
     fn empty_span_at_the_end_of_a_line_renders_one_caret() {
         let source = "fn main() {\n    let y\n}";

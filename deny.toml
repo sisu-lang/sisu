@@ -6,7 +6,8 @@ yanked = "deny"
 
 [licenses]
 # Unicode-3.0: unicode-ident (via syn, a build-time dependency of inkwell).
-allow = ["Apache-2.0", "MIT", "Unicode-3.0"]
+# Apache-2.0 WITH LLVM-exception: ar_archive_writer (a build dependency of psm, via stacker).
+allow = ["Apache-2.0", "Apache-2.0 WITH LLVM-exception", "MIT", "Unicode-3.0"]
 # Workspace crates are `publish = false`; cargo-deny does not check their own license.
 private = { ignore = true }
 
