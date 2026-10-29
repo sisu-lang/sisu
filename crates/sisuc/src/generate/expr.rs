@@ -254,8 +254,8 @@ impl Gen<'_> {
         let typed = std::mem::take(&mut self.typed);
         // Now and then the value goes through `dbg`. The count reads no byte of the data, so no
         // other choice of any seed moves. `dbg` has the type of its argument, which is on one
-        // line and which no rewrite changes: the line `dbg` writes is the same in the program and
-        // in its rewritten copy.
+        // line and which no rewrite changes. So the line `dbg` writes is the same in the program
+        // and in its rewritten copy.
         self.expressions += 1;
         let debugged = self.expressions.is_multiple_of(DBG_EVERY) && *ty != Ty::Unit;
         let (one_line, frozen) = (self.one_line, self.frozen);
@@ -2138,9 +2138,9 @@ mod tests {
         found
     }
 
-    /// No rewrite changes the argument of a `dbg`, since the line it writes holds that text:
-    /// each call in a program is in its rewritten copy as written. 300 seeds hold about 100
-    /// calls, whose arguments hold the sites that a rewrite would take.
+    /// No rewrite changes the argument of a `dbg`, since the line it writes holds that text. Each
+    /// call in a program is in its rewritten copy as written. 300 seeds hold about 100 calls.
+    /// Their arguments hold the sites that a rewrite would take.
     #[test]
     fn a_dbg_argument_should_stay_as_written_in_the_rewritten_copy() {
         let mut calls = 0;
@@ -2161,6 +2161,17 @@ mod tests {
         }
         assert!(calls >= 100, "{calls} calls");
         assert!(rewritten_programs >= 50, "{rewritten_programs} programs");
+    }
+
+    /// `echo` was reserved before `dbg`, and now is an ordinary name. Some locals take it, and the
+    /// programs that name one still check, as a local never takes the name of one in scope.
+    #[test]
+    fn a_generated_local_should_sometimes_be_named_echo() {
+        let named = (0..100)
+            .map(|n| crate::generate::generate(&crate::generate::coverage::seed(n)).program)
+            .filter(|program| program.contains("let echo") || program.contains("let mut echo"))
+            .count();
+        assert!(named >= 20, "{named} programs of 100 name a local echo");
     }
 
     #[test]
