@@ -354,7 +354,9 @@ struct Source<'src> {
     user: source::Source<'src>,
     /// The text the prelude's spans index.
     prelude: source::Source<'src>,
-    /// Where each comment starts.
+    /// Where each comment starts. This list, `quotes` and `breaks` hold the user's file only,
+    /// so for a span of the prelude they find no comment, no literal and one line. Only
+    /// diagnostics read them.
     comments: &'src [usize],
     /// Where each string literal starts, in order.
     quotes: &'src [usize],

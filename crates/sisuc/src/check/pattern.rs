@@ -240,7 +240,14 @@ impl Checker<'_> {
         reachable: &mut [bool],
     ) {
         let source = self.source.holding(close.start());
-        let line_start = |at: usize| source.slice(0..at).rfind('\n').map_or(0, |n| n + 1);
+        // The offsets are absolute: the prelude's text starts at `PRELUDE_BASE`, not at 0.
+        let base = source.start();
+        let line_start = |at: usize| {
+            source
+                .slice(base..at)
+                .rfind('\n')
+                .map_or(base, |n| base + n + 1)
+        };
         // Each entry is an arm's pattern or an alternative in it, in arm order.
         let mut rest = arms.iter().enumerate();
         let mut current = rest.next();

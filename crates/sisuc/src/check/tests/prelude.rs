@@ -863,3 +863,36 @@ fn prelude_should_check_clean_beside_a_user_item_of_any_name_it_uses() {
         }
     }
 }
+
+/// A diagnostic about a `match` in the prelude reads the text around the arms, with offsets
+/// that start at `PRELUDE_BASE`. The check then stops with an internal error, as for every
+/// diagnostic in the prelude, and does not panic on a slice of the user's text.
+#[test]
+fn match_in_the_prelude_should_give_an_internal_error_when_it_is_wrong() {
+    for (row, prelude) in [
+        (
+            "an unreachable arm",
+            "fn probe(n: bool) -> i64 {\n    match n {\n        true => 1\n        false => 2\n        true => 3\n    }\n}\n",
+        ),
+        (
+            "a missing case",
+            "fn probe(n: bool) -> i64 { match n { true => 1 } }\n",
+        ),
+        (
+            "a missing case on its own lines",
+            "fn probe(n: bool) -> i64 {\n    match n {\n        true => 1\n    }\n}\n",
+        ),
+    ] {
+        let caught = std::panic::catch_unwind(|| front_end::checked_with(prelude, "fn main() {}"));
+        let message = caught.expect_err(row);
+        let message = message
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| message.downcast_ref::<&str>().copied())
+            .unwrap_or_default();
+        assert!(
+            message.starts_with("internal compiler error: the prelude does not check clean"),
+            "{row}: {message}"
+        );
+    }
+}
