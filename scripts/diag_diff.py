@@ -1,8 +1,8 @@
-"""Checks every `.sisu` file under DIR with two sisu builds and prints each program whose
+"""Checks every `.sisu` file under each DIR with two sisu builds and prints each program whose
 diagnostics differ: their codes, positions or count, or a crash. A review uses it to show that a
 change accepts no program it should reject and adds no cascade.
 
-Usage: python3 diag_diff.py BASE_SISU HEAD_SISU DIR
+Usage: python3 diag_diff.py BASE_SISU HEAD_SISU DIR...
 Exits 1 when a program differs.
 """
 import json
@@ -42,8 +42,8 @@ def show(ds):
                      for c, _, line, col, s in ds) or 'none'
 
 
-def main(base_sisu, head_sisu, root):
-    paths = sorted(Path(root).rglob('*.sisu'))
+def main(base_sisu, head_sisu, *roots):
+    paths = sorted({p for root in roots for p in Path(root).rglob('*.sisu')})
     with ThreadPoolExecutor() as pool:
         bases = pool.map(lambda p: diagnostics(base_sisu, p), paths)
         heads = pool.map(lambda p: diagnostics(head_sisu, p), paths)
@@ -59,6 +59,6 @@ def main(base_sisu, head_sisu, root):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) != 4:
+    if len(sys.argv) < 4:
         sys.exit(__doc__)
     sys.exit(main(*sys.argv[1:]))

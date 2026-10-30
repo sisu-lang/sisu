@@ -45,6 +45,19 @@ class DiagDiff(unittest.TestCase):
         self.assertEqual(lines[-1], 'diag_diff: 5 programs, 2 changed, 1 newly accepted, '
                                     '1 newly rejected')
 
+    def test_reports_the_programs_of_every_directory_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for sub in ['a', 'b', 'b/c']:
+                os.makedirs(os.path.join(tmp, sub), exist_ok=True)
+                open(os.path.join(tmp, sub, 'same.sisu'), 'w').close()
+            sisu = fake_sisu(tmp, 'sisu', {'same': E0032})
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                status = dd.main(sisu, sisu, os.path.join(tmp, 'a'), os.path.join(tmp, 'b'),
+                                 os.path.join(tmp, 'b', 'c'))
+        self.assertEqual(status, 0)
+        self.assertEqual(out.getvalue(), 'diag_diff: 3 programs, no differences\n')
+
 
 if __name__ == '__main__':
     unittest.main()
