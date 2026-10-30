@@ -24,6 +24,16 @@ pub(crate) const OUTER_BARRED_INNER_HOISTS: &str = "fn f(xs: [i64]) -> [i64] {\n
 /// The `b6_borrow_hoists` row: the loop's only read of `a` is `string(a)`, a B6 borrow.
 pub(crate) const B6: &str = "fn f(xs: [char]) -> [char] {\n    let mut a = xs\n    for j in 0..2 {\n        print(string(a))\n        a[j] = 'x'\n    }\n    a\n}";
 
+/// The `push` row: a push neither writes `a` nor bars it, so nothing is hoisted.
+const PUSH: &str = "fn f(xs: [i64]) -> [i64] {\n    let mut a = xs\n    for i in 0..2 {\n        a.push(i)\n    }\n    a\n}";
+
+/// The `push_and_write` row: the loop also writes an element of `a`, which the push does not bar.
+const PUSH_AND_WRITE: &str = "fn f(xs: [i64]) -> [i64] {\n    let mut a = xs\n    for i in 0..2 {\n        a.push(i)\n        a[0] = i\n    }\n    a\n}";
+
+/// The `push_of_the_array` row: `a` holds `b`, which the next write to `b` must not change, so
+/// the pushed `b` bars its hoist.
+const PUSH_OF_THE_ARRAY: &str = "fn f(xs: [i64]) -> [[i64]] {\n    let mut b = xs\n    let mut a: [[i64]] = []\n    for j in 0..3 {\n        a.push(b)\n        b[j] = j\n    }\n    a\n}";
+
 /// The function `f` of `src` after lowering and the ownership pass, without the hoist.
 fn placed_f(src: &str) -> Function {
     let mut f = lowered_program(src)
@@ -186,6 +196,9 @@ const CASES: &[(&str, &str, &[&[&str]])] = &[
         "fn f(xs: [char]) -> [char] {\n    let mut a = xs\n    let mut keep = ['k']\n    for j in 0..2 {\n        print(string(a))\n        if j == 1 {\n            keep = a\n        }\n        a[j] = 'x'\n    }\n    print(string(keep))\n    a\n}",
         &[&[]],
     ),
+    ("push", PUSH, &[&[]]),
+    ("push_and_write", PUSH_AND_WRITE, &[&["a"]]),
+    ("push_of_the_array", PUSH_OF_THE_ARRAY, &[&[]]),
 ];
 
 #[test]
@@ -371,6 +384,29 @@ fn hand_built_bars() {
     ];
     for (name, stmts, exit, expected) in cases {
         let f = hand_built(stmts, exit);
+        assert_eq!(unique_roots(&f, &f.loops[0]), expected, "{name}");
+    }
+}
+
+/// A push consumes its value as a store does, so a push of a local that moved bars it: with
+/// the push, `s` stays unique inside the loop. Lowering moves a local into a push only at its
+/// last use, so no lowered loop that writes `s` also pushes it by a move; only a hand-built
+/// function reaches this.
+#[test]
+fn a_push_of_a_moved_local_should_bar_it() {
+    let s = LocalId(0);
+    let push = Statement::Push {
+        place: Place {
+            local: LocalId(1),
+            projections: Vec::new(),
+            borrow: false,
+            guard: false,
+        },
+        value: Operand::Move(s),
+        at: Span::new(0, 0),
+    };
+    for (name, stmts, expected) in [("none", Vec::new(), vec![s]), ("push", vec![push], vec![])] {
+        let f = hand_built(stmts, Terminator::Return(None));
         assert_eq!(unique_roots(&f, &f.loops[0]), expected, "{name}");
     }
 }

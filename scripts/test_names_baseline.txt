@@ -96,7 +96,6 @@ crates/sisuc/src/check/tests/arrays.rs::poisoned_argument_is_not_found
 crates/sisuc/src/check/tests/arrays.rs::sum_as_function_on_u8_is_not
 crates/sisuc/src/check/tests/arrays.rs::unknown_element_type
 crates/sisuc/src/check/tests/arrays.rs::unknown_expected_type_is_reported_once
-crates/sisuc/src/check/tests/arrays.rs::unknown_members
 crates/sisuc/src/check/tests/arrays.rs::unknown_name_poisons
 crates/sisuc/src/check/tests/chars.rs::already_converted_groups_what_is_not_one_term
 crates/sisuc/src/check/tests/chars.rs::already_converted_keeps_comments_it_does_not_delete

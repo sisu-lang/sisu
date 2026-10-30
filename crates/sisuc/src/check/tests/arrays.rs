@@ -374,9 +374,9 @@ fn index_a_non_array() {
 }
 
 #[test]
-fn unknown_members() {
+fn unknown_members_should_be_reported() {
     codes(
-        "fn f(xs: [i64]) { xs.push(1) }\nfn main() {}",
+        "fn f(xs: [i64]) { xs.pop(1) }\nfn main() {}",
         &[(Code::NoMember, (1, 22))],
     );
     codes(
@@ -924,5 +924,30 @@ fn each_argument_of_the_idiom_should_be_checked_once() {
         (class_len, vec![(Code::ArgumentNeedsLabel, (5, 9))]),
     ] {
         codes(src, &expected);
+    }
+}
+
+/// A `push` checks its argument as an assignment's value, and takes exactly one.
+#[test]
+fn push_should_check_its_argument_against_the_element_type() {
+    let rows = [
+        (
+            "wrong type",
+            "fn main() {\n    let mut xs = [1]\n    xs.push(\"a\")\n}",
+            vec![(Code::Mismatch, (3, 13))],
+        ),
+        (
+            "no argument",
+            "fn main() {\n    let mut xs = [1]\n    xs.push()\n}",
+            vec![(Code::ArgumentCount, (3, 5))],
+        ),
+        (
+            "two arguments",
+            "fn main() {\n    let mut xs = [1]\n    xs.push(1, 2)\n}",
+            vec![(Code::ArgumentCount, (3, 5))],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        codes_row(row, src, &expected);
     }
 }

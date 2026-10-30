@@ -231,6 +231,7 @@ fn level_0(stmt: &Statement) -> Option<LocalId> {
         | Statement::Assign { .. }
         | Statement::Take { .. }
         | Statement::Store { .. }
+        | Statement::Push { .. }
         | Statement::Release(_)
         | Statement::ScopeRelease(_)
         | Statement::Check(_)
@@ -257,7 +258,9 @@ impl Walk {
             Statement::Take { dest, .. } => {
                 self.barred.push(*dest);
             }
-            Statement::Store { value, .. } => self.operand(value),
+            // A push decides on the count itself, so it neither writes nor bars its array; the
+            // value it consumes may bar its local.
+            Statement::Store { value, .. } | Statement::Push { value, .. } => self.operand(value),
             Statement::Release(local) | Statement::Free(local) => {
                 self.barred.push(*local);
             }

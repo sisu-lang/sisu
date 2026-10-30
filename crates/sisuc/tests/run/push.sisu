@@ -1,0 +1,189 @@
+// GIVEN arrays, a class `Node`, an enum `Shape` with boxed payloads and a generic `Stack<T>`
+// AND `base`, `slot` and `item`, which print their names when they run
+// WHEN `main` pushes onto a local, an element, a field and a field of a temporary object
+// AND it pushes past several growths, onto a shared array, and in every loop form
+// THEN each array prints the elements pushed, in order, and a shared array keeps its old value
+// AND the order of evaluation is the receiver's base, its index, the argument, then the push
+// AND every block is freed exactly once on every path, which Valgrind and `--rc-checks` check
+class Node {
+    mut v: i64
+}
+
+enum Shape {
+    Dot
+    Label(string)
+    Pair(Shape, Shape)
+}
+
+class Stack<T> {
+    mut items: [T]
+    fn push(self, x: T) { self.items.push(x) }
+}
+
+class Bag {
+    mut items: [i64]
+}
+
+class Rows {
+    mut grid: [[i64]]
+}
+
+fn make() -> Bag { Bag(items: [1]) }
+
+fn base(rows: Rows) -> Rows {
+    print("base")
+    rows
+}
+
+fn slot() -> i64 {
+    print("slot")
+    1
+}
+
+fn item() -> i64 {
+    print("item")
+    7
+}
+
+// The argument leaves the function, so the temporary object is released on that path.
+fn leaves(c: bool) -> i64 {
+    make().items.push(match c {
+        true => return 1
+        false => 2
+    })
+    0
+}
+
+fn rows(xs: [i64]) -> [[i64]] {
+    let mut b = xs
+    let mut a: [[i64]] = []
+    for j in 0..3 {
+        a.push(b)
+        b[j] = j
+    }
+    a
+}
+
+fn main() {
+    // A local past several growths, from an empty literal.
+    let mut ints: [i64] = []
+    for i in 0..20 {
+        ints.push(i * i)
+    }
+    print(ints.len())                  // 20
+    print(ints[19])                    // 361
+    let mut bytes: [u8] = []
+    for i in 0..300 {
+        bytes.push(u8(i % 256) ?? 0)
+    }
+    print(bytes.len() + i64(bytes[299])) // 343: 300 + 43
+    let mut floats: [f64] = []
+    for i in 0..5 {
+        floats.push(f64(i) / 2.0)
+    }
+    print(floats)                      // [0.0, 0.5, 1.0, 1.5, 2.0]
+    let mut optionals: [i64?] = []
+    optionals.push(1)
+    optionals.push(None)
+    optionals.push(3)
+    print(optionals)                   // [1, None, 3]
+
+    // Strings built at run time: `saved` shares the array, so the push copies it and retains
+    // each string, and every string is released once.
+    let mut words: [string] = []
+    for i in 0..5 {
+        words.push("{i}")
+    }
+    let saved_words = words
+    words.push("five")
+    print(saved_words)                 // ["0", "1", "2", "3", "4"]
+    print(words)                       // ["0", "1", "2", "3", "4", "five"]
+
+    let mut nodes: [Node] = []
+    nodes.push(Node(v: 1))
+    nodes.push(Node(v: 2))
+    let saved_nodes = nodes
+    nodes.push(Node(v: 3))
+    nodes[0].v = 9
+    print(saved_nodes[0].v)            // 9: the copy holds the same objects
+    print(nodes.len() + saved_nodes.len()) // 5
+
+    let mut shapes: [Shape] = []
+    shapes.push(Shape.Dot)
+    shapes.push(Shape.Label("a" + "b"))
+    shapes.push(Shape.Pair(Shape.Dot, Shape.Label("c" + "d")))
+    let saved_shapes = shapes
+    shapes.push(Shape.Pair(Shape.Dot, Shape.Dot))
+    print(saved_shapes.len())          // 3
+    print(shapes.len())                // 4
+    print(shapes[2] == Shape.Pair(Shape.Dot, Shape.Label("cd"))) // true
+
+    // An element, and the field of a generic class.
+    let mut grid = [[1], [2]]
+    grid[1].push(3)
+    grid[0].push(4)
+    print(grid)                        // [[1, 4], [2, 3]]
+    let stack: Stack<string> = Stack(items: [])
+    stack.push("x" + "y")
+    stack.push("z")
+    print(stack.items)                 // ["xy", "z"]
+
+    // Value semantics: the copy keeps its elements.
+    let mut xs = [1, 2]
+    let saved = xs
+    xs.push(3)
+    print(saved)                       // [1, 2]
+    print(xs)                          // [1, 2, 3]
+
+    // The loop walks the array it started with.
+    let mut doubled = [1, 2, 3]
+    for x in doubled {
+        doubled.push(x)
+    }
+    print(doubled)                     // [1, 2, 3, 1, 2, 3]
+
+    let mut hundred = [0]
+    for i in 1..100 {
+        hundred.push(i)
+    }
+    let mut total = 0
+    for x in hundred {
+        total += x
+    }
+    print(total)                       // 4950
+
+    // The argument reads the array it is pushed onto.
+    let mut grow = [5]
+    grow.push(grow[0])
+    grow.push(grow.len())
+    print(grow)                        // [5, 5, 2]
+
+    // The index reads an array that is not the one that grows.
+    let table = [10, 20, 30, 40]
+    let mut seen = [0]
+    let mut picked = 0
+    while seen.len() < 3 {
+        picked += table[seen.len()]
+        seen.push(picked)
+    }
+    print(picked)                      // 50: table[1] + table[2]
+    print(seen)                        // [0, 20, 50]
+
+    print(rows([9, 9, 9]))             // [[9, 9, 9], [0, 9, 9], [0, 1, 9]]
+
+    // The temporary object is released on a `return`, a `break` and a `continue`.
+    print(leaves(true) + leaves(false)) // 1
+    for i in 0..3 {
+        make().items.push(match i {
+            0 => continue
+            1 => 5
+            _ => break
+        })
+    }
+    print(make().items.len())          // 1
+
+    // The base, the index, the argument, then the push.
+    let rows = Rows(grid: [[0], [0]])
+    base(rows).grid[slot()].push(item())
+    print(rows.grid)                   // [[0], [0, 7]]
+}

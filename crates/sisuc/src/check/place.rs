@@ -6,7 +6,8 @@ use super::{
     BindingKind, Checked, Checker, Declared, Poisoned, UNKNOWN, block_expr, payload, type_of,
 };
 use crate::ast;
-use crate::diagnostic::{DiagnosticKind, Immutable};
+use crate::diagnostic::{Code, DiagnosticKind, Immutable};
+use crate::parser::{goes_through_safe_access, is_place};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, ExprKind, Type, TypeKind};
@@ -16,6 +17,32 @@ use crate::tir::{self, ExprKind, Type, TypeKind};
 struct Path {
     root: Root,
     operands: Vec<tir::Expr>,
+}
+
+/// What a write to a place does to the root's binding, which decides the wording of E0001.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Change {
+    /// `x = v`.
+    Assign,
+    /// `x[i] = v`, where `x` is the root of the place.
+    Element,
+    /// `x.push(v)`.
+    Push,
+}
+
+impl Change {
+    /// E0001 for the root `name`, whose write at `at` its `cause` forbids.
+    fn immutable(self, name: String, at: Span, cause: Immutable) -> DiagnosticKind {
+        match self {
+            Change::Push => DiagnosticKind::PushToImmutable { name, at, cause },
+            Change::Assign | Change::Element => DiagnosticKind::AssignToImmutable {
+                name,
+                at,
+                element: self == Change::Element,
+                cause,
+            },
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -53,7 +80,7 @@ impl Checker<'_> {
         target: &ast::Expr,
         value: &ast::Expr,
     ) -> Result<tir::Stmt, Poisoned> {
-        let place = self.place(span, target, false);
+        let place = self.place(span, target, Change::Assign);
         let value = self.expect(value, place.ty);
         self.assigned(span, place, value)
     }
@@ -71,6 +98,98 @@ impl Checker<'_> {
             }
             _ => Err(Poisoned::typed(Type::UNIT)),
         }
+    }
+
+    /// `receiver.push(arg)` on `receiver`, the checked `receiver_expr`, when it is an array: a
+    /// `unit` block that holds `Push` of the place `receiver_expr` names, after the spills of its
+    /// operands and the value. `None` when the receiver is no array, which the method lookup
+    /// answers. `safe` makes it `receiver?.push(arg)`, which no `push` through `?.` is yet (E0022).
+    /// The receiver is a place only by the parser's rule (`is_place`): any other receiver is a
+    /// temporary, which `place` must never see.
+    pub(super) fn push(
+        &mut self,
+        span: Span,
+        safe: bool,
+        receiver: &Checked,
+        receiver_expr: &ast::Expr,
+        args: &[ast::Arg],
+    ) -> Option<Checked> {
+        let ty = type_of(receiver)?;
+        let TypeKind::Array(element) = ty.kind() else {
+            return None;
+        };
+        let unit = || Err(Poisoned::typed(Type::UNIT));
+        // A receiver that failed has reported itself, and a `push` that no place takes reports
+        // before its arguments, which are checked for their own mistakes only.
+        let not_pushed = |checker: &mut Self, d: Option<DiagnosticKind>| {
+            if let Some(d) = d {
+                checker.report(d);
+            }
+            checker.stray(args);
+            unit()
+        };
+        if receiver.is_err() {
+            return Some(not_pushed(self, None));
+        }
+        if safe || goes_through_safe_access(receiver_expr) {
+            let at = Span::new(receiver_expr.span.start(), span.end());
+            return Some(not_pushed(
+                self,
+                Some(DiagnosticKind::AssignThroughSafeAccess { at }),
+            ));
+        }
+        if !is_place(receiver_expr) {
+            let at = receiver_expr.span;
+            return Some(not_pushed(
+                self,
+                Some(DiagnosticKind::PushToTemporary { at }),
+            ));
+        }
+        // The receiver was checked as a value, which read its fields and checked its operands:
+        // `place` checks them again, so only its own E0001 is new. A `push` reads a field as
+        // little as a write does.
+        self.forget_field_reads(receiver_expr);
+        let start = self.diagnostics.len();
+        let place = self.place(receiver_expr.span, receiver_expr, Change::Push);
+        let mut fresh: Vec<_> = self.diagnostics.drain(start..).collect();
+        fresh.retain(|d| d.code() == Code::AssignToImmutable);
+        self.diagnostics.extend(fresh);
+        let [arg] = args else {
+            let d = DiagnosticKind::ArgumentCount {
+                name: "push".to_string(),
+                want: 1,
+                found: args.len(),
+                at: span,
+            };
+            return Some(self.rejected(d.into(), args));
+        };
+        let labeled = self.labels(args);
+        let (value, mismatched) = self.operand(&arg.value, Some(element));
+        match (place.path, value) {
+            (Some(path), Ok(value)) if place.writable && !labeled && !mismatched => {
+                Some(Ok(self.pushed(span, path.root, path.operands, value)))
+            }
+            _ => Some(unit()),
+        }
+    }
+
+    /// The unit block of `Push` of the place built from `root` and `operands`, after the spill
+    /// of `operands` and `value`, as `write` makes a store.
+    fn pushed(
+        &mut self,
+        span: Span,
+        root: Root,
+        mut operands: Vec<tir::Expr>,
+        value: tir::Expr,
+    ) -> tir::Expr {
+        operands.push(value);
+        let (mut stmts, mut operands) = self.spill(operands);
+        let value = operands
+            .pop()
+            .expect("`spill` should return one operand per input");
+        let place = build(root, operands);
+        stmts.push(tir::Stmt::Push { place, value, span });
+        block_expr(stmts, None, Type::UNIT, span)
     }
 
     /// `x op= e` is `x = x op e`. On any other place, each of its operands is bound to a fresh
@@ -98,7 +217,7 @@ impl Checker<'_> {
             self.body.quiet = outer;
             return result;
         }
-        let place = self.place(span, target, false);
+        let place = self.place(span, target, Change::Assign);
         let Some(ty) = place.ty else {
             // Only its own mistakes are left to report.
             drop(self.expr(value, Some(UNKNOWN)));
@@ -169,7 +288,7 @@ impl Checker<'_> {
             return self.assign(span, target, target);
         }
         // `assign` of `target op value`, whose `op` spans the statement.
-        let place = self.place(span, target, false);
+        let place = self.place(span, target, Change::Assign);
         let want = place.ty;
         let checked = self.binary(
             span,
@@ -254,17 +373,12 @@ impl Checker<'_> {
     /// The constant `name` as the root of a place that `span` assigns, reported, if `name` names
     /// one. The value is still checked against the constant's type. A broken constant poisons
     /// the assignment without a diagnostic.
-    fn constant_place(&mut self, span: Span, name: Symbol, element: bool) -> Option<CheckedPlace> {
+    fn constant_place(&mut self, span: Span, name: Symbol, change: Change) -> Option<CheckedPlace> {
         let Declared::Known(constant) = self.constants.get(&name)? else {
             return Some(CheckedPlace::failed());
         };
         let (declared, ty) = (constant.span, constant.ty);
-        self.report(DiagnosticKind::AssignToImmutable {
-            name: name.to_string(),
-            at: span,
-            element,
-            cause: Immutable::Constant { declared },
-        });
+        self.report(change.immutable(name.to_string(), span, Immutable::Constant { declared }));
         Some(CheckedPlace {
             path: None,
             ty,
@@ -303,14 +417,14 @@ impl Checker<'_> {
         }
     }
 
-    /// The place `target` names, which `span` assigns. `element` when it is the base of an
-    /// index, so the write replaces an element of it.
-    fn place(&mut self, span: Span, target: &ast::Expr, element: bool) -> CheckedPlace {
+    /// The place `target` names, which `span` changes as `change` says: `Element` when it is the
+    /// base of an index, so the write replaces an element of it.
+    fn place(&mut self, span: Span, target: &ast::Expr, change: Change) -> CheckedPlace {
         match &target.kind {
             &ast::ExprKind::Name(name) => {
                 let stamp = self.write_stamp();
                 let Some(b) = self.lookup(name) else {
-                    if let Some(place) = self.constant_place(span, name, element) {
+                    if let Some(place) = self.constant_place(span, name, change) {
                         return place;
                     } else if self.is_function(name) {
                         self.report(DiagnosticKind::AssignToFunction {
@@ -343,12 +457,7 @@ impl Checker<'_> {
                     }
                 };
                 if let Some(cause) = cause {
-                    self.report(DiagnosticKind::AssignToImmutable {
-                        name: name.to_string(),
-                        at: span,
-                        element,
-                        cause,
-                    });
+                    self.report(change.immutable(name.to_string(), span, cause));
                 }
                 CheckedPlace {
                     path: Some(Path {
@@ -373,12 +482,7 @@ impl Checker<'_> {
                 let writable = field.mutable;
                 if !writable {
                     let (name, declared) = (field.name.name.to_string(), field.name.span);
-                    self.report(DiagnosticKind::AssignToImmutable {
-                        name,
-                        at: span,
-                        element,
-                        cause: Immutable::Field { declared },
-                    });
+                    self.report(change.immutable(name, span, Immutable::Field { declared }));
                 }
                 CheckedPlace {
                     path: checked.ok().map(|base| Path {
@@ -390,7 +494,12 @@ impl Checker<'_> {
                 }
             }
             ast::ExprKind::Index { base, index } => {
-                let inner = self.place(span, base, true);
+                let inner_change = if change == Change::Push {
+                    Change::Push
+                } else {
+                    Change::Element
+                };
+                let inner = self.place(span, base, inner_change);
                 let element = self.element(base, inner.ty);
                 let (index, mismatched) = self.operand(index, Some(Type::I64));
                 let path = inner

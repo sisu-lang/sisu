@@ -263,6 +263,9 @@ impl Printer<'_> {
             Statement::Store { place, value } => {
                 format!("{} = {}", self.place(place), self.operand(value))
             }
+            Statement::Push { place, value, .. } => {
+                format!("push {}, {}", self.place(place), self.operand(value))
+            }
             Statement::Release(local) => format!("release {}", self.local(*local)),
             Statement::ScopeRelease(local) => format!("release? {}", self.local(*local)),
             Statement::MakeUnique(place) => format!("make_unique {}", self.place(place)),

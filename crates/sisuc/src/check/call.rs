@@ -415,7 +415,7 @@ impl Checker<'_> {
                         return Err(c.misread_as(at, compare));
                     }
                 }
-                c.method_call(span, checked, receiver, site, args)
+                c.method_call(span, safe, checked, receiver, site, args)
             })
         };
         // The member was found unknown, or the receiver of a path that is no idiom was: a name
@@ -431,10 +431,12 @@ impl Checker<'_> {
         checked
     }
 
-    /// `receiver.method(args)`, `receiver` checked from `receiver_expr`.
+    /// `receiver.method(args)`, `receiver` checked from `receiver_expr`. `safe` when it is
+    /// `receiver?.method(args)`.
     fn method_call(
         &mut self,
         span: Span,
+        safe: bool,
         receiver: Checked,
         receiver_expr: &ast::Expr,
         site: Site<'_>,
@@ -447,6 +449,12 @@ impl Checker<'_> {
             Ok(checked) => return checked,
             Err(receiver) => receiver,
         };
+        // A `push` onto an array writes its place, so it is not a method of the prelude's.
+        if method.name.as_str() == "push"
+            && let Some(checked) = self.push(span, safe, &receiver, receiver_expr, args)
+        {
+            return checked;
+        }
         match type_of(&receiver) {
             // A built-in type, an array and an optional have a `Display` that the compiler writes,
             // and no method of their own named `to_string`.

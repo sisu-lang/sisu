@@ -56,6 +56,17 @@ fn parameter_kept_in_a_local_is_owned() {
     signature(&built(KEEP), "keep", "fn keep(p#0: [i64])");
 }
 
+/// A push writes the copy `a`, not the parameter: `xs` is owned through the `let mut`, as for any
+/// other use of that binding.
+#[test]
+fn parameter_pushed_through_a_local_should_be_owned() {
+    signature(
+        &built("fn f(xs: [i64]) -> [i64] {\n    let mut a = xs\n    a.push(1)\n    a\n}"),
+        "f",
+        "fn f(xs#0: [i64])",
+    );
+}
+
 /// The binding is only read, so only the named-assignment rule makes `p` owned.
 #[test]
 fn parameter_bound_to_a_local_is_owned() {
@@ -885,8 +896,8 @@ fn quiet_should_mark_only_prelude_functions_without_a_clobber() {
     assert_quiet_rows(rows);
 }
 
-/// Only a call that is not quiet, a take into a counted local, a store of a counted value and a
-/// `make_unique` are clobbers: the other statements leave a prelude function quiet.
+/// Only a call that is not quiet, a take into a counted local, a store of a counted value, a
+/// `make_unique` and a `push` are clobbers: the other statements leave a prelude function quiet.
 #[test]
 fn quiet_should_judge_each_kind_of_statement() {
     let rows: Vec<(&str, Vec<Function>, Vec<bool>)> = vec![
@@ -919,6 +930,20 @@ fn quiet_should_judge_each_kind_of_statement() {
                 vec![store(Operand::Const(Const::Int(2, Type::I64)))],
             )],
             vec![true],
+        ),
+        (
+            "a push onto a local",
+            vec![quiet_candidate(
+                "a",
+                true,
+                &[],
+                vec![Statement::Push {
+                    place: whole(LocalId(1)),
+                    value: Operand::Const(Const::Int(2, Type::I64)),
+                    at: Span::new(0, 0),
+                }],
+            )],
+            vec![false],
         ),
         (
             "statements that free or end nothing the caller reads",

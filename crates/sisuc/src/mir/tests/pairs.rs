@@ -240,6 +240,18 @@ fn field_copy_across_make_unique_is_kept() {
     assert!(f.contains("t#2 = copy a#0.0"), "{f}");
 }
 
+/// A `push` decides on the count that the copy holds, as a `make_unique` does, so it clobbers:
+/// with `a` and `b` the same object, it may free the block that `t` borrows.
+#[test]
+fn field_copy_across_a_push_should_be_kept() {
+    let printed = built(
+        "class Box {\n    mut xs: [i64]\n}\n\
+         fn f(a: Box, b: Box) {\n    let t = a.xs\n    b.xs.push(5)\n    print(t[0])\n    print(a.xs[0])\n}",
+    );
+    let f = function(&printed, "f");
+    assert!(f.contains("t#2 = copy a#0.0"), "{f}");
+}
+
 /// Review Focus 4: only the `take` and the counted store through the alias `b` clobber.
 #[test]
 fn string_store_through_an_alias_is_kept() {

@@ -289,7 +289,7 @@ expected() {
         fannkuch_redux) printf '%s\n' 8629 'Pfannkuchen(9) = 30' ;;
         strings) printf '%s\n' 186741 9800 10000 12073291 ;;
         enum_match) printf '%s\n' 457364 816672 ;;
-        shared_arrays) printf '%s\n' 20000 519500 ;;
+        shared_arrays) printf '%s\n' 20000 519500 199990000 6000 5999 ;;
         compare) printf '%s\n' 1494 640 2880 ;;
         tree_rewrite) printf '%s\n' 732347 163697 ;;
         interp) printf '%s\n' 549000 126 ;;

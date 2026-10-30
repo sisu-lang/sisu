@@ -329,3 +329,165 @@ fn compound_assignment_reports_as_a_local_would() {
         }
     }
 }
+
+/// `class Bag` with a `mut` and a plain array field, and a function that makes one.
+const BAG: &str = "class Bag {\n    mut items: [i64]\n    kept: [i64]\n}\nfn make() -> Bag { Bag(items: [1], kept: [1]) }\n";
+
+/// A `push` onto a place that can change checks clean: a `let mut` local, a `mut` field, an element
+/// of either, a call's `mut` field, and an optional element type, which wraps its argument.
+/// The first two rows read `reassigned` and `written`, so neither warns.
+#[test]
+fn push_should_check_clean_onto_a_place_that_can_change() {
+    for (row, src) in [
+        (
+            "let mut local",
+            "fn main() {\n    let mut xs = [1]\n    xs.push(2)\n    print(xs)\n}".to_owned(),
+        ),
+        (
+            "mut field of self",
+            "class Bag {\n    mut items: [i64]\n    fn add(self, x: i64) { self.items.push(x) }\n}\nfn main() {}"
+                .to_owned(),
+        ),
+        (
+            "element of a local",
+            "fn main() {\n    let mut xss = [[1]]\n    xss[0].push(2)\n}".to_owned(),
+        ),
+        (
+            "element of an array in a mut field",
+            "class Rows {\n    mut grid: [[i64]]\n    fn add(self, x: i64) { self.grid[0].push(x) }\n}\nfn main() {}"
+                .to_owned(),
+        ),
+        (
+            "optional element type",
+            "fn main() {\n    let mut xs: [i64?] = [None]\n    xs.push(1)\n    xs.push(None)\n}".to_owned(),
+        ),
+        (
+            "the Stack of the spec",
+            "class Stack<T> {\n    mut items: [T]\n    fn push(self, x: T) { self.items.push(x) }\n}\nfn main() {}"
+                .to_owned(),
+        ),
+        (
+            "mut field of a call",
+            format!("{BAG}fn main() {{\n    make().items.push(2)\n}}"),
+        ),
+    ] {
+        clean_row(row, &src);
+    }
+}
+
+/// The place's operands are bound in source order and spilled as an element write's are: the
+/// base, the indexes, the value, and one `push` that keeps the place.
+#[test]
+fn push_should_lower_to_a_statement_over_its_place() {
+    let rows = [
+        (
+            "fn main() {\n    let mut xs = [1]\n    xs.push(2)\n}".to_owned(),
+            "(push xs#0 2)",
+        ),
+        (
+            "fn main() {\n    let mut xss = [[1]]\n    xss[0].push(2)\n}".to_owned(),
+            "(push (index xss#0 0) 2)",
+        ),
+        (
+            format!("{BAG}fn main() {{\n    make().items.push(2)\n}}"),
+            "(push (. (call make) items) 2)",
+        ),
+        (
+            "fn main() {\n    let mut xs: [i64?] = [None]\n    xs.push(1)\n}".to_owned(),
+            "(push xs#0 (wrap 1))",
+        ),
+        // The object is counted and the argument can exit, so both are bound before it runs.
+        (
+            "class A {\n    mut f: [i64]\n}\nfn g(a: A, c: bool) -> i64 {\n    a.f.push(if c { return 0 } else { 1 })\n    0\n}\nfn main() {}"
+                .to_owned(),
+            "(block (let #2 a#0) (let #3 (if c#1 (block (return 0)) (block 1))) (push (. #2 f) #3))",
+        ),
+    ];
+    for (src, part) in rows {
+        contains(&src, &[part]);
+    }
+}
+
+/// A receiver that cannot change is E0001 at the receiver, and one that is no place is E0021
+/// there. The value of the call is `unit`, so a use of it is E0043.
+#[test]
+fn push_should_report_a_receiver_that_cannot_change() {
+    let rows = [
+        (
+            "let local",
+            "fn main() {\n    let xs = [1]\n    xs.push(2)\n}".to_owned(),
+            vec![(Code::AssignToImmutable, (3, 5))],
+        ),
+        (
+            "field without mut",
+            "class C {\n    items: [i64]\n    fn add(self) { self.items.push(1) }\n}\nfn main() {}"
+                .to_owned(),
+            vec![(Code::AssignToImmutable, (3, 20))],
+        ),
+        (
+            "parameter",
+            "fn f(xs: [i64]) { xs.push(1) }\nfn main() {}".to_owned(),
+            vec![(Code::AssignToImmutable, (1, 19))],
+        ),
+        (
+            "element of a let",
+            "fn main() {\n    let xss = [[1]]\n    xss[0].push(2)\n}".to_owned(),
+            vec![(Code::AssignToImmutable, (3, 5))],
+        ),
+        (
+            "call result",
+            "fn f() -> [i64] { [1] }\nfn main() { f().push(1) }".to_owned(),
+            vec![(Code::AssignToExpression, (2, 13))],
+        ),
+        (
+            "literal",
+            "fn main() { [1].push(2) }".to_owned(),
+            vec![(Code::AssignToExpression, (1, 13))],
+        ),
+        (
+            "element of a call",
+            "fn f() -> [[i64]] { [[1]] }\nfn main() { f()[0].push(1) }".to_owned(),
+            vec![(Code::AssignToExpression, (2, 13))],
+        ),
+        (
+            "element of a call, two levels",
+            "fn make() -> [[i64]] { [[1]] }\nfn main() { make()[0].push(2) }".to_owned(),
+            vec![(Code::AssignToExpression, (2, 13))],
+        ),
+        (
+            "element of a literal",
+            "fn main() { [[1]][0].push(2) }".to_owned(),
+            vec![(Code::AssignToExpression, (1, 13))],
+        ),
+        (
+            "value of the call",
+            "fn main() {\n    let mut xs = [1]\n    let r = xs.push(1)\n}".to_owned(),
+            vec![(Code::NoValue, (3, 13))],
+        ),
+        (
+            "string receiver",
+            "fn main() {\n    let s = \"a\"\n    s.push('a')\n}".to_owned(),
+            vec![(Code::NoMember, (3, 7))],
+        ),
+        (
+            "safe call",
+            "fn f(m: [i64]?) { m?.push(1) }\nfn main() {}".to_owned(),
+            vec![(Code::AssignThroughSafeAccess, (1, 19))],
+        ),
+        // The `?.` reports its receiver, and the failed receiver leaves nothing more to say.
+        (
+            "safe call on an array that is no optional",
+            "fn f(m: [i64]) { m?.push(1) }\nfn main() {}".to_owned(),
+            vec![(Code::SafeAccessNotOptional, (1, 18))],
+        ),
+        (
+            "safe call on a safe access",
+            "class C {\n    mut items: [i64]?\n}\nfn f(c: C?) { c?.items?.push(1) }\nfn main() {}"
+                .to_owned(),
+            vec![(Code::AssignThroughSafeAccess, (4, 15))],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        codes_row(row, &src, &expected);
+    }
+}

@@ -150,7 +150,7 @@ state = "works"
 notes = [["ADR 0017", "docs/adr/0017-floats-follow-ieee-754.md"], ["Roadmap: floats", "docs/roadmap.md"]]
 
 [[area.feature]]
-text = "<code>len</code>, <code>sum</code> and <code>contains</code> on arrays"
+text = "<code>len</code>, <code>sum</code>, <code>contains</code> and <code>push</code> on arrays"
 state = "works"
 notes = [["Roadmap: what works today", "docs/roadmap.md#what-works-today"]]
 

@@ -534,3 +534,10 @@ fn while_should_not_warn_when_the_parser_reports_an_error_in_it() {
         ]
     );
 }
+
+#[test]
+fn while_should_not_warn_when_its_body_pushes_onto_what_its_condition_reads() {
+    clean(&with_main(
+        "fn f() {\n    let mut xs = [1]\n    while xs.len() < 3 { xs.push(1) }\n    print(xs)\n}",
+    ));
+}

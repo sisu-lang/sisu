@@ -9,6 +9,7 @@ use rustc_hash::FxHashMap;
 
 use super::extend::holder_of;
 use super::{Checker, Declared, Holder};
+use crate::ast;
 use crate::diagnostic::{Code, Definition, Diagnostic, DiagnosticKind, UsedBy};
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -157,6 +158,31 @@ impl Checker<'_> {
     pub(super) fn record(&mut self, to: Used, at: Span) {
         if let Some(from) = self.body.owner {
             self.uses.push(Use { from, to, at });
+        }
+    }
+
+    /// Forgets the read of each field in the chain of fields and indexes `place` names, which the
+    /// check of `place` as a value recorded. A write names a field without reading it, and so
+    /// does a `push`. The reads sit at the end of the uses, so the search stops past the chain.
+    pub(super) fn forget_field_reads(&mut self, mut place: &ast::Expr) {
+        loop {
+            match &place.kind {
+                ast::ExprKind::Field { base, .. } => {
+                    let at = place.span;
+                    let found = self
+                        .uses
+                        .iter()
+                        .rev()
+                        .take_while(|u| u.at.start() >= at.start())
+                        .position(|u| u.at == at && matches!(u.to, Used::Field(..)));
+                    if let Some(back) = found {
+                        self.uses.remove(self.uses.len() - 1 - back);
+                    }
+                    place = base;
+                }
+                ast::ExprKind::Index { base, .. } => place = base,
+                _ => return,
+            }
         }
     }
 

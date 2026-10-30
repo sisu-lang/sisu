@@ -220,7 +220,9 @@ impl Walk {
             flow = flow.then(match stmt {
                 tir::Stmt::Let { init: e, .. } | tir::Stmt::Expr(e) => self.walk(e, open, calls),
                 // The place's operands run before the value, as in MIR.
-                tir::Stmt::Assign { place, value } | tir::Stmt::Append { place, value } => {
+                tir::Stmt::Assign { place, value }
+                | tir::Stmt::Append { place, value }
+                | tir::Stmt::Push { place, value, .. } => {
                     let place = self.place(place, open, calls);
                     place.then(self.walk(value, open && !place.recurses, calls))
                 }

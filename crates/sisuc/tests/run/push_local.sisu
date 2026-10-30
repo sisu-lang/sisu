@@ -1,0 +1,13 @@
+fn iterations() -> i64 { 1000 }
+
+// GIVEN a `let mut` array `xs` that nothing else holds
+// WHEN `main` pushes `iterations()` elements onto it
+// THEN each push is in place: the block of the literal, then one reallocation at each doubling
+// AND the length is printed
+fn main() {
+    let mut xs = [0]
+    for i in 0..iterations() {
+        xs.push(i)
+    }
+    print(xs.len())                  // 1001 (1 with no iterations)
+}

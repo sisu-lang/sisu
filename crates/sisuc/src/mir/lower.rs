@@ -41,6 +41,7 @@ use super::{
     Projection, Rvalue, Side, Statement, Terminator,
 };
 use crate::conformance::{Written, calls_written, prints_by_helper};
+use crate::source::Span;
 use crate::tir::{
     self, Block, CompareOp, Expr, ExprKind, FuncId, LocalId, Place, Stmt, Type, TypeKind,
 };
@@ -541,6 +542,7 @@ impl<'a> Lowering<'a> {
                 value,
             } => self.element_write(place, value)?,
             Stmt::Append { place, value } => self.append(place, value)?,
+            Stmt::Push { place, value, span } => self.array_push(place, value, *span)?,
             Stmt::Expr(e) => {
                 let value = self.into(e, None)?;
                 self.discard(value);
@@ -1275,6 +1277,18 @@ impl<'a> Lowering<'a> {
         Some(())
     }
 
+    /// `p.push(value)`, in the order of an element write: a field root's base, the indexes, the
+    /// value, then per level the check and `make_unique`, then the push, then the release of the
+    /// base. The push decides on the count of the array `p` holds.
+    fn array_push(&mut self, place: &Place, value: &Expr, at: Span) -> Option<()> {
+        let (root, indexes, temp) = self.written_root(place, value)?;
+        let value = self.operand(value)?;
+        let place = self.walk(root, &indexes);
+        self.push(Statement::Push { place, value, at });
+        self.release(temp);
+        Some(())
+    }
+
     /// `p += value` on a string field or element, in the spec's order: a copy of `p`, the
     /// value, the walk, the release of `p`'s own reference, the `concat`, the store, then the
     /// release of a field root's base.
@@ -1542,7 +1556,9 @@ fn block_mentions(block: &Block, found: &mut Mentions) {
                 found.found.push(local.0);
                 mentions(init, found);
             }
-            Stmt::Assign { place, value } | Stmt::Append { place, value } => {
+            Stmt::Assign { place, value }
+            | Stmt::Append { place, value }
+            | Stmt::Push { place, value, .. } => {
                 place_mentions(place, found);
                 mentions(value, found);
             }

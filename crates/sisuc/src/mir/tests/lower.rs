@@ -205,6 +205,31 @@ fn append_to_an_element() {
     );
 }
 
+/// A push takes an element write's order: the value, then per level the check and
+/// `make_unique`, then the push itself. The argument that reads the array runs before the push.
+#[test]
+fn push_should_follow_the_order_of_an_element_write() {
+    let printed = lowered(
+        "fn g() -> i64 { 7 }\nfn f(i: i64) {\n    let mut xss = [[1]]\n    xss[i].push(g())\n}",
+    );
+    has(
+        &printed,
+        "f",
+        &[
+            "_ = call g()",
+            "check xss#1[i#0]",
+            "make_unique xss#1",
+            "push xss#1[i#0], _",
+        ],
+    );
+    let printed = lowered("fn f() {\n    let mut xs = [1]\n    xs.push(xs[0])\n}");
+    has(&printed, "f", &["_ = xs#0[0]", "push xs#0, _"]);
+    assert!(
+        !function(&printed, "f").contains("make_unique"),
+        "a push of a local checks its own count: {printed}"
+    );
+}
+
 /// The checker spills `"a"` into a local before the operand that can return, and the return
 /// edge releases it.
 #[test]

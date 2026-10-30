@@ -114,7 +114,7 @@ const IDENTITY: &str = "reach: a class is compared with `is` or against `None`";
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 101] = [
+const REACH: [&str; 102] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -216,6 +216,7 @@ const REACH: [&str; 101] = [
     "reach: `dbg` may run a written `to_string`",
     "reach: `dbg` writes a value that runs no written method",
     "reach: `dbg` shows the fields of a class with no written `Display`",
+    "reach: a `push` appends to an array",
 ];
 
 /// The local that `operand` reads whole: the one place where its type is known here.
@@ -613,6 +614,9 @@ impl Walk {
         for function in &mir.functions {
             for block in &function.blocks {
                 for stmt in &block.stmts {
+                    if matches!(stmt, crate::mir::Statement::Push { .. }) {
+                        self.mark("reach: a `push` appends to an array");
+                    }
                     let crate::mir::Statement::Assign { value, .. } = stmt else {
                         continue;
                     };
@@ -2095,6 +2099,11 @@ impl Walk {
                 }
                 tir::Stmt::Append { place, value } => {
                     self.mark("tir::Stmt::Append");
+                    self.place(place);
+                    self.tir_expr(value, Parent::Other);
+                }
+                tir::Stmt::Push { place, value, .. } => {
+                    self.mark("tir::Stmt::Push");
                     self.place(place);
                     self.tir_expr(value, Parent::Other);
                 }
@@ -4225,6 +4234,92 @@ fn a_mutable_array_counts_its_slots_bases_and_room() {
     );
 }
 
+/// A `Gen` over `data` in `main`, holding `let mut v0: [i64]` of 2 elements with `grow` for
+/// pushes, inside a loop of `bound` runs if any.
+fn with_growth(data: &[u8], grow: u64, bound: Option<u64>) -> Gen<'_> {
+    let mut g = Gen::new(data);
+    let mut var = Var::new(
+        "v0".to_string(),
+        Ty::Array(Box::new(Ty::I64)),
+        true,
+        0,
+        0,
+        0,
+    );
+    (var.len, var.grow, var.size) = (2, grow, 2 + grow);
+    g.scope.vars.push(var);
+    if let Some(bound) = bound {
+        g.cost.enter_loop(bound);
+    }
+    g
+}
+
+/// Each `push` onto an array of numbers adds one slot at each run of every loop around it, and
+/// takes that much of the growth: 3 in all, so 3 pushes outside a loop, and 1 in a loop of 2
+/// runs, which cannot take a second.
+#[test]
+fn a_push_should_take_the_growth_of_its_array_at_each_run() {
+    for (bound, pushes) in [(None, 3), (Some(2), 1)] {
+        for mut state in 0..64 {
+            let data: Vec<u8> = (0..32)
+                .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+                .collect();
+            let mut g = with_growth(&data, 3, bound);
+            while !g.push_targets().is_empty() {
+                g.push_stmt();
+                g.w.line();
+            }
+            let program = &g.w.out.program;
+            assert_eq!(program.matches("v0.push(").count(), pushes, "{program}");
+        }
+    }
+}
+
+/// An array with no growth takes no `push`, while one that a statement declares may.
+#[test]
+fn an_array_without_growth_should_take_no_push() {
+    for mut state in 0..1_024 {
+        let data: Vec<u8> = (0..32)
+            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+            .collect();
+        let mut g = with_growth(&data, 0, None);
+        g.stmts(false);
+        assert!(!g.w.out.program.contains("v0.push("), "{}", g.w.out.program);
+    }
+}
+
+/// The programs of the seeds push onto a local, onto an element of an array, and onto a `mut`
+/// field, which a guard keeps within its cap.
+#[test]
+fn a_push_should_reach_a_local_an_element_and_a_guarded_field() {
+    let (mut local, mut element, mut field) = (false, false, false);
+    for data in seeds() {
+        let program = generate(&data).program;
+        let lines: Vec<&str> = program.lines().map(str::trim_start).collect();
+        for (at, line) in lines.iter().enumerate() {
+            let Some((place, _)) = line.split_once(".push(") else {
+                continue;
+            };
+            if place.ends_with(']') {
+                element = true;
+            } else if place.contains('.') {
+                field = true;
+                let guard = lines[at - 1];
+                assert!(
+                    guard.starts_with("if ") && guard.contains(&format!("{place}.len() < ")),
+                    "{place} is pushed to outside its guard: {guard}"
+                );
+            } else {
+                local = true;
+            }
+        }
+    }
+    assert!(
+        local && element && field,
+        "{local} {element} {field}: a local, an element and a field"
+    );
+}
+
 #[test]
 fn an_index_of_a_local_stays_below_its_length() {
     // `a0` holds 3 `i64`s: `(a0[i])` reads one with `i` from 0 to 2.
@@ -5337,7 +5432,9 @@ impl<'f> Lets<'f> {
     fn stmt(&mut self, stmt: &tir::Stmt) {
         match stmt {
             tir::Stmt::Let { init, .. } | tir::Stmt::Expr(init) => self.expr(init),
-            tir::Stmt::Assign { place, value } | tir::Stmt::Append { place, value } => {
+            tir::Stmt::Assign { place, value }
+            | tir::Stmt::Append { place, value }
+            | tir::Stmt::Push { place, value, .. } => {
                 self.place(place);
                 self.expr(value);
             }
@@ -5888,7 +5985,10 @@ fn known_answers_should_be_integer() {
         let lets = Lets::new(&main.locals, &pure_calls);
         let printed = main.body.stmts.iter().filter_map(|stmt| match stmt {
             tir::Stmt::Expr(e) => Some(e),
-            tir::Stmt::Let { .. } | tir::Stmt::Assign { .. } | tir::Stmt::Append { .. } => None,
+            tir::Stmt::Let { .. }
+            | tir::Stmt::Assign { .. }
+            | tir::Stmt::Append { .. }
+            | tir::Stmt::Push { .. } => None,
         });
         let mut sites = 0;
         for e in printed.chain(main.body.value.as_deref()) {

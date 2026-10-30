@@ -35,6 +35,15 @@ fn first(local: LocalId) -> Place {
     }
 }
 
+/// `push place, value`.
+fn pushing(place: Place, value: Operand) -> Statement {
+    Statement::Push {
+        place,
+        value,
+        at: Span::new(0, 0),
+    }
+}
+
 /// `call f(args)`, with a `unit` result, and `borrowed` the argument flags.
 fn call(args: Vec<Operand>, borrowed: Vec<bool>) -> Statement {
     Statement::Assign {
@@ -420,6 +429,63 @@ fn stored_value_read_in_place() {
         ret(),
     );
     rejects(&b.finish(), 0, s, Rule::Consume);
+}
+
+/// A push writes its place as a store does: a local that moved out holds nothing to push onto.
+#[test]
+fn push_onto_a_moved_out_local_should_be_rejected() {
+    let mut b = Builder::new("f");
+    let a = b.param("a", Type::array(Type::STRING));
+    let t = b.local("t", Type::array(Type::STRING));
+    let s = b.local("s", Type::STRING);
+    b.block(
+        vec![
+            assign(t, Rvalue::Use(Operand::Move(a))),
+            literal(s),
+            pushing(whole(a), Operand::Move(s)),
+            Statement::Release(t),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, a, Rule::Read);
+}
+
+/// A push consumes its value, as a store does: the value is gone after it.
+#[test]
+fn read_of_the_pushed_value_after_the_push_should_be_rejected() {
+    let mut b = Builder::new("f");
+    let a = b.param("a", Type::array(Type::STRING));
+    let s = b.local("s", Type::STRING);
+    b.block(
+        vec![
+            literal(s),
+            pushing(whole(a), Operand::Move(s)),
+            show(read(s)),
+            Statement::Release(a),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, s, Rule::Read);
+}
+
+/// A push writes a borrowed array, which holds no count, so a shared block would be written.
+#[test]
+fn push_onto_a_borrowed_array_should_be_rejected() {
+    let mut b = Builder::new("f");
+    let a = b.param("a", Type::array(Type::STRING));
+    let s = b.local("s", Type::STRING);
+    let c = b.local("c", Type::array(Type::STRING));
+    b.block(
+        vec![
+            assign(c, Rvalue::Borrow(whole(a))),
+            literal(s),
+            pushing(whole(c), Operand::Move(s)),
+            Statement::End(c),
+            Statement::Release(a),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, c, Rule::WriteBorrowed);
 }
 
 /// `a[0] = t` with the old element taken and never released.

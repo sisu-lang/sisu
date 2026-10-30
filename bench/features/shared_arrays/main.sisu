@@ -1,5 +1,7 @@
 // Each round writes into a copy of an array whose original stays live, so
-// every first write must copy; both arrays are read afterwards.
+// every first write must copy; both arrays are read afterwards. Then an array
+// grows from `[]` by pushes, and each round pushes onto an array whose original
+// stays live, so every push copies.
 fn bump(xs: [i64], i: i64) -> [i64] {
     let mut ys = xs
     ys[i % ys.len()] += 1
@@ -17,4 +19,16 @@ fn main() {
     }
     print(total)
     print(base.sum())
+
+    let mut grown: [i64] = []
+    for i in 0..20_000 { grown.push(i) }
+    print(grown.sum())
+    let mut longer = base
+    let mut before = longer
+    for r in 0..5_000 {
+        before = longer
+        longer.push(r)
+    }
+    print(longer.len())
+    print(before.len())
 }

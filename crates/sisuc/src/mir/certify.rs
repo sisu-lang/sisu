@@ -337,7 +337,7 @@ impl Clobbers {
                     },
                     Statement::Take { dest, .. } => function.locals[dest.0].counted,
                     Statement::Store { value, .. } => counted_value(function, value),
-                    Statement::MakeUnique(_) => true,
+                    Statement::MakeUnique(_) | Statement::Push { .. } => true,
                     Statement::Release(_)
                     | Statement::ScopeRelease(_)
                     | Statement::Check(_)
@@ -709,7 +709,7 @@ pub(super) fn statement<'a>(
             self::place(place, Effect::Write, lowered, f);
             f(*dest, Effect::Assign, None);
         }
-        Statement::Store { place, value } => {
+        Statement::Store { place, value } | Statement::Push { place, value, .. } => {
             self::place(place, Effect::Write, lowered, f);
             consumed(value, lowered, f);
         }

@@ -837,6 +837,71 @@ fn string_grow_reallocates_from_the_old_capacity() {
     assert_header_plus_capacity(body, block, old_size);
 }
 
+/// A `push` that cannot fit another element panics at the call, not at its argument: the call
+/// starts at `xs` on line 3, column 5, and its argument at column 13.
+#[test]
+fn push_should_report_array_is_too_large_at_the_call() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "fn main() {\n    let mut xs = [1]\n    xs.push(2)\n    print(xs.len())\n}",
+    )
+    .print_to_string()
+    .to_string();
+    assert_panics_with(&ir, "test.sisu:3:5: array is too large");
+}
+
+/// A full block grows to the larger of one more element and its double capacity, which is capped
+/// at the most elements a block can have: `umin` of the double and that count, then `umax` with
+/// `len + 1`. An `[i64]` block has a 24-byte header and 8-byte elements, and a size that stays
+/// at most `i64::MAX` rounded down to the alignment of 8.
+#[test]
+fn push_should_grow_to_the_larger_of_one_more_and_the_capped_double() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "fn main() {\n    let mut xs = [1]\n    xs.push(2)\n    print(xs.len())\n}",
+    )
+    .print_to_string()
+    .to_string();
+    let body = function_body(&ir, "define internal void @sisu.main(");
+    let lines: Vec<&str> = body.lines().map(str::trim).collect();
+    let largest = (9_223_372_036_854_775_807_u64 - 8 + 1 - 24) / 8;
+    let (capped_at, capped, text) =
+        instruction(&lines, &|t| t.starts_with("call i64 @llvm.umin.i64(i64 "))
+            .unwrap_or_else(|| panic!("no umin in\n{body}"));
+    let operands = text
+        .strip_prefix("call i64 @llvm.umin.i64(i64 ")
+        .and_then(|rest| rest.strip_suffix(')'))
+        .and_then(|rest| rest.split_once(", i64 "))
+        .unwrap_or_else(|| panic!("umin operands in {text:?}"));
+    assert_eq!(operands.1, largest.to_string(), "{body}");
+    let Some((_, double, _)) = instruction(&lines, &|t| {
+        t.starts_with("mul nuw i64 ") && t.ends_with(", 2")
+    }) else {
+        panic!("no double in\n{body}")
+    };
+    assert_eq!(operands.0, double, "{body}");
+    let (extreme_at, _, text) = instruction(&lines, &|t| t.starts_with("call i64 @llvm.umax.i64("))
+        .unwrap_or_else(|| panic!("no umax in\n{body}"));
+    let (min_operand, needed) = text
+        .strip_prefix("call i64 @llvm.umax.i64(i64 ")
+        .and_then(|rest| rest.strip_suffix(')'))
+        .and_then(|rest| rest.split_once(", i64 "))
+        .unwrap_or_else(|| panic!("umax operands in {text:?}"));
+    assert_eq!(min_operand, capped, "{body}");
+    assert!(capped_at < extreme_at, "{body}");
+    let defines = |line: &&str| {
+        line.strip_prefix(needed)
+            .and_then(|rest| rest.strip_prefix(" = add nuw i64 "))
+            .is_some_and(|rest| rest.ends_with(", 1"))
+    };
+    assert!(
+        lines.iter().any(defines),
+        "{needed} is not a length plus 1 in\n{body}"
+    );
+}
+
 /// A class gets no generated `eq` helper: it compares by identity. A class with a written `Eq`
 /// gets the helper that calls its `eq`, which the helper of an array of it calls.
 #[test]
@@ -2360,7 +2425,7 @@ fn binary_should_take_and_and_or_as_the_eager_operations_of_two_computed_bools()
 }
 
 /// A string's length is field 1 of its header, read without a tag; an array's is field 1 of
-/// its own header, the `i64` that carries the "count and length" tag. Each load reads the
+/// its own header, the `i64` that carries the "array header" tag. Each load reads the
 /// field of the pointer its own parameter gave, through the slots it moved through: `len`
 /// picks by the base's type.
 #[test]
@@ -2415,7 +2480,7 @@ fn len_should_read_a_string_by_its_field_and_an_array_by_its_header() {
                 "{ i64, i64, i64 }".to_string(),
                 Some(1),
                 param(1),
-                Some("count and length")
+                Some("array header")
             ),
         ],
         "{ir}"

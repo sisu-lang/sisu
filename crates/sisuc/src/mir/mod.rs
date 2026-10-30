@@ -381,6 +381,15 @@ pub(crate) enum Statement {
         place: Place,
         value: Operand,
     },
+    /// Appends the operand, which it consumes, to the array in `place`: a block that nothing else
+    /// holds and that has room takes the element in place, a full one grows, and a shared one is
+    /// copied first. The place holds the resulting block, so the statement writes it, and it may
+    /// free the old block. `at` is the call, where "array is too large" is reported.
+    Push {
+        place: Place,
+        value: Operand,
+        at: Span,
+    },
     Release(LocalId),
     /// Releases the local if it still owns a reference.
     ScopeRelease(LocalId),

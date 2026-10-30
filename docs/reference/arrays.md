@@ -128,6 +128,7 @@ An array has these methods:
 | `xs.len()` | `i64` | The number of elements |
 | `xs.sum()` | The element type | The sum of the elements of an `[i64]` or an `[f64]` |
 | `xs.contains(x)` | `bool` | `true` when an element is equal to `x`, as `==` tells |
+| `xs.push(x)` | none | Adds `x` after the last element, and writes `xs` |
 
 ```sisu
 fn main() {
@@ -151,6 +152,10 @@ The rules:
 - The argument of `contains` has the element type ([E0032](../diagnostics/E0032.md)). So `None` is valid only when the elements are optional.
 - `contains` needs `==` on the element type, so an array of objects has it only when the class conforms to `Eq`, and an array of a type parameter `T` only with the bound `T: Eq` ([E0154](../diagnostics/E0154.md)). The error stands at the call, and no line of the prelude shows in it.
 - `contains` uses `==`, so `contains(f64.nan)` is always `false` ([Types](types.md#floating-point-numbers)).
+- `push` writes the array, as `xs[i] = x` does, so it needs a place that can change: a `let mut` variable, a `mut` field, or an element of one. A `let` variable, a parameter and a field without `mut` are errors ([E0001](../diagnostics/E0001.md)). A value that is not stored, such as `f().push(1)`, is an error too ([E0021](../diagnostics/E0021.md)).
+- `push` has no value. The argument has the element type, so `push(1)` on an `[i64?]` adds `Some(1)` ([E0032](../diagnostics/E0032.md)), and `push` takes exactly one argument ([E0053](../diagnostics/E0053.md)).
+- A `push` onto an array that another variable holds does not change that variable. Arrays are values ([Arrays are values](#arrays-are-values)).
+- `xs?.push(x)` is not valid yet ([E0022](../diagnostics/E0022.md)).
 - A name that is not one of these methods is an error ([E0063](../diagnostics/E0063.md)).
 - On an optional array, call a method with `?.` ([Optional chaining](operators.md#optional-chaining)).
 
@@ -165,11 +170,18 @@ fn main() {
 
 `xs.push(x)` adds `x` after the last element of `xs`. It writes the array, as `xs[i] = x` does. An array also has the [iterator methods](closures.md#iterator-methods).
 
-```sisu pending
+```sisu
 fn main() {
     let mut xs = [1, 2]
     xs.push(3)
     print(xs.len())                    // 3
+    print(xs)                          // [1, 2, 3]
+}
+```
+
+```sisu pending
+fn main() {
+    let xs = [1, 2, 3]
     print(xs.map(x => x * 2).sum())    // 12
 }
 ```

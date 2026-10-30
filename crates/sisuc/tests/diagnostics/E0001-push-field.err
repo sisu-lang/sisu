@@ -1,0 +1,16 @@
+error[E0001]: cannot change `items`
+ --> E0001-push-field.sisu:7:5
+  |
+2 |     items: [i64]
+  |     ----- declared without `mut` here
+...
+7 |     bag.items.push(4)
+  |     ^^^^^^^^^ `push` changes `items`
+  |
+help: mark the field `mut`
+  |
+2 |     mut items: [i64]
+  |     +++
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0001

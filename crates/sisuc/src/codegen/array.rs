@@ -3,6 +3,7 @@
 //! array nodes and the bodies of the array helpers, which `define_helpers` reaches through
 //! `define_array_helper`.
 
+use inkwell::intrinsics::Intrinsic;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, IntPredicate};
 
@@ -55,9 +56,10 @@ impl<'ctx> Codegen<'ctx, '_> {
         array
     }
 
-    /// The length of `array`, marked `!range [0, 2^63)` and `!noundef`: `alloc_array` is the only
-    /// writer of a length, and no length it gets is negative. A new way to make an array must
-    /// keep this true.
+    /// The length of `array`, marked `!range [0, 2^63)` and `!noundef`: `alloc_array` and
+    /// `array_push` are the only writers of a length, and no length either gets is negative:
+    /// `array_push` stores `len + 1` only after it checked that this many elements fit. A new way
+    /// to make an array or to change its length must keep this true.
     pub(super) fn array_len(&self, array: PointerValue<'ctx>) -> IntValue<'ctx> {
         let i64_type = self.context.i64_type();
         let len = self
@@ -190,6 +192,141 @@ impl<'ctx> Codegen<'ctx, '_> {
         phi.add_incoming(&[(&next, self.current_block())]);
         self.branch_to(head);
         self.builder.position_at_end(done);
+    }
+
+    /// `slot.push(value)`: appends `value`, which it consumes, to the array of type `ty` that
+    /// `slot` holds. A block with count 1 and room for the element takes it in place. A full
+    /// one is reallocated to `max(len + 1, min(2 * cap, largest))` elements, as a string grows.
+    /// A shared one is copied into a block of `len + 1` elements, and the slot's reference to
+    /// the old block is released. A block that grew or was copied is stored back into `slot`. A
+    /// block that has `largest` elements cannot take another: that panics at `span`.
+    pub(super) fn array_push(
+        &self,
+        slot: PointerValue<'ctx>,
+        ty: Type,
+        value: BasicValueEnum<'ctx>,
+        span: Span,
+    ) {
+        let element = element_of(ty);
+        let i64_type = self.context.i64_type();
+        let layout = self.array_layout(element);
+        let largest = i64_type.const_int(layout.largest(), false);
+        let array = self.load_pointer(slot);
+        // A dead block, count below 1, would otherwise pass for a shared one and be copied.
+        self.check_count(array, RC_FAULT_RELEASE);
+        let len = self.array_len(array);
+        let function = self.current_function();
+        let block = |name| self.context.append_basic_block(function, name);
+        let (owned, resize, copy, join) = (
+            block("owned"),
+            block("resize"),
+            block("copy"),
+            block("join"),
+        );
+        let count = self.load_count(array, "count");
+        let one = self.int_compare(IntPredicate::EQ, count, i64_type.const_int(1, false));
+        self.builder
+            .build_conditional_branch(one, owned, copy)
+            .expect(POSITIONED);
+
+        self.builder.position_at_end(owned);
+        let cap = self.array_cap(array);
+        let full = self.int_compare(IntPredicate::UGE, len, cap);
+        self.builder
+            .build_conditional_branch(full, resize, join)
+            .expect(POSITIONED);
+
+        self.builder.position_at_end(resize);
+        let too_large = self.int_compare(IntPredicate::UGE, len, largest);
+        self.panic_if(too_large, span, "array is too large");
+        let needed = self
+            .builder
+            .build_int_nuw_add(len, i64_type.const_int(1, false), "needed")
+            .expect(POSITIONED);
+        // `cap` is at most `largest`, which is below 2^63, so the double fits.
+        let double = self
+            .builder
+            .build_int_nuw_mul(cap, i64_type.const_int(2, false), "double")
+            .expect(POSITIONED);
+        let doubled = self.unsigned_extreme("llvm.umin", double, largest);
+        let new_cap = self.unsigned_extreme("llvm.umax", doubled, needed);
+        let (old_size, align) = self.heap_size(&HeapBlock::Array {
+            layout: &layout,
+            cap,
+        });
+        let (new_size, _) = self.heap_size(&HeapBlock::Array {
+            layout: &layout,
+            cap: new_cap,
+        });
+        let grown = self
+            .builder
+            .build_call(
+                self.realloc(),
+                &[array.into(), old_size.into(), align.into(), new_size.into()],
+                "grown",
+            )
+            .expect(POSITIONED)
+            .try_as_basic_value()
+            .basic()
+            .expect("`sisu_realloc` should return a pointer, as the runtime declares it")
+            .into_pointer_value();
+        self.store_tagged(self.cap_ptr(grown), new_cap.into(), self.header_tag);
+        self.store(slot, grown.into());
+        let grew = self.current_block();
+        self.branch_to(join);
+
+        self.builder.position_at_end(copy);
+        let too_large = self.int_compare(IntPredicate::UGE, len, largest);
+        self.panic_if(too_large, span, "array is too large");
+        let needed = self
+            .builder
+            .build_int_nuw_add(len, i64_type.const_int(1, false), "needed")
+            .expect(POSITIONED);
+        // Releasing the slot's reference never frees the block: its count was above 1.
+        self.add_to_count(array, i64_type.const_int((-1_i64).cast_unsigned(), false));
+        let fresh = self.alloc_array(element, needed, None);
+        self.copy_elements(element, array, fresh, len);
+        self.store(slot, fresh.into());
+        let copied = self.current_block();
+        self.branch_to(join);
+
+        self.builder.position_at_end(join);
+        let result = self
+            .builder
+            .build_phi(self.context.ptr_type(AddressSpace::default()), "array")
+            .expect(POSITIONED);
+        result.add_incoming(&[(&array, owned), (&grown, grew), (&fresh, copied)]);
+        let result = result.as_basic_value().into_pointer_value();
+        self.store_tagged(
+            self.element_ptr(element, result, len),
+            value,
+            self.element_tag,
+        );
+        let new_len = self
+            .builder
+            .build_int_nuw_add(len, i64_type.const_int(1, false), "len")
+            .expect(POSITIONED);
+        self.store_tagged(self.len_ptr(result), new_len.into(), self.header_tag);
+    }
+
+    /// `intrinsic` (`llvm.umin` or `llvm.umax`) of the `i64`s `a` and `b`.
+    fn unsigned_extreme(
+        &self,
+        intrinsic: &str,
+        a: IntValue<'ctx>,
+        b: IntValue<'ctx>,
+    ) -> IntValue<'ctx> {
+        let function = Intrinsic::find(intrinsic)
+            .expect("LLVM should provide the `llvm.umin` and `llvm.umax` intrinsics by name")
+            .get_declaration(&self.module, &[a.get_type().into()])
+            .expect("the `umin` and `umax` intrinsics should be overloaded on any integer width");
+        self.builder
+            .build_call(function, &[a.into(), b.into()], "extreme")
+            .expect(POSITIONED)
+            .try_as_basic_value()
+            .basic()
+            .expect("`umin` and `umax` should return an integer")
+            .into_int_value()
     }
 
     /// The block of an array literal of type `ty`, which takes each of the evaluated `values`.
@@ -411,6 +548,21 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.add_to_count(array, i64_type.const_int((-1_i64).cast_unsigned(), false));
         // The length fit once, so the new block needs no size check.
         let copy = self.alloc_array(element, len, None);
+        self.copy_elements(element, array, copy, len);
+        self.store(slot, copy.into());
+        self.builder.build_return(Some(&copy)).expect(POSITIONED);
+    }
+
+    /// Copies the first `len` elements of the block `from` into the block `to`, which has room
+    /// for them, with `llvm.memcpy`, and retains each counted one.
+    fn copy_elements(
+        &self,
+        element: Type,
+        from: PointerValue<'ctx>,
+        to: PointerValue<'ctx>,
+        len: IntValue<'ctx>,
+    ) {
+        let i64_type = self.context.i64_type();
         let layout = self.array_layout(element);
         let bytes = self
             .builder
@@ -422,19 +574,17 @@ impl<'ctx> Codegen<'ctx, '_> {
         let zero = i64_type.const_zero();
         self.builder
             .build_memcpy(
-                self.element_ptr(element, copy, zero),
+                self.element_ptr(element, to, zero),
                 align,
-                self.element_ptr(element, array, zero),
+                self.element_ptr(element, from, zero),
                 align,
                 bytes,
             )
             .expect("the block's alignment should be a power of two, as each ABI alignment is");
         if element.is_counted(&self.program.enums) {
             self.count_loop(len, |index| {
-                self.retain(self.load_element(element, copy, index), element);
+                self.retain(self.load_element(element, to, index), element);
             });
         }
-        self.store(slot, copy.into());
-        self.builder.build_return(Some(&copy)).expect(POSITIONED);
     }
 }

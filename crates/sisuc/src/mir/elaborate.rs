@@ -66,6 +66,7 @@ pub(super) fn elaborate(function: &mut Function) {
                 Statement::Assign { .. }
                 | Statement::Take { .. }
                 | Statement::Store { .. }
+                | Statement::Push { .. }
                 | Statement::Release(_)
                 | Statement::MakeUnique(_)
                 | Statement::Check(_)

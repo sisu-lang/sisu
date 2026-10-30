@@ -981,3 +981,15 @@ fn prelude_interface_should_not_warn_when_nothing_uses_it() {
     let (_, ds) = check(&parse_ok(src), &prelude, src, &[]);
     assert!(ds.is_empty(), "{ds:?}");
 }
+
+/// A write to a field does not read it, and nor does a `push` onto it.
+#[test]
+fn field_should_warn_when_live_code_only_pushes_onto_it() {
+    judge_unused();
+    diagnostic(
+        "class P {\n    mut xs: [i64]\n}\nfn main() {\n    let p = P(xs: [1])\n    p.xs.push(2)\n}",
+        W0013,
+        (2, 9, "xs"),
+        &[],
+    );
+}

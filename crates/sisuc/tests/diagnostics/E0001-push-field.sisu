@@ -1,0 +1,9 @@
+class Bag {
+    items: [i64]
+}
+
+fn main() {
+    let bag = Bag(items: [1, 2, 3])
+    bag.items.push(4)
+    print(bag.items)
+}

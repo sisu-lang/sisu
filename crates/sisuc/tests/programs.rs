@@ -239,6 +239,14 @@ allocation_counts! {
     (append_field, "1001\nx\n", "1\na\n", 10),
     (append_field_assign, "1001\nx\n", "1\na\n", 10),
     (append_element, "1001\nx\n", "1\na\n", 10),
+    // `xs` holds its array once, so each `push` is in place: the block of the literal, then a
+    // reallocation at each doubling to 1024. Valgrind counts each `realloc` as an allocation.
+    (push_local, "1001\n", "1\n", 10),
+    // `saved` is live across each push, so each push copies once.
+    (push_shared, "1001\n1000\n", "1\n1\n", 1000),
+    // A field or element push is in place too.
+    (push_field, "1001\n", "1\n", 10),
+    (push_element, "1001\n", "1\n", 10),
     // Each interpolation allocates its result and nothing else.
     (interp, "9\ne\n", "1\n-\n", 1000),
     // Formatting and padding write into that result too: no buffer of their own.

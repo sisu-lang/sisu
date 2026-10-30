@@ -390,11 +390,26 @@ pub(crate) struct Block {
 }
 
 /// `Append` is `place += value` on a `string` field or element: its place is never a `Local`.
+/// `Push` is `place.push(value)` on an array: `place` holds the array, and `span` is the call.
 #[derive(Clone, Debug)]
 pub(crate) enum Stmt {
-    Let { local: LocalId, init: Expr },
-    Assign { place: Place, value: Expr },
-    Append { place: Place, value: Expr },
+    Let {
+        local: LocalId,
+        init: Expr,
+    },
+    Assign {
+        place: Place,
+        value: Expr,
+    },
+    Append {
+        place: Place,
+        value: Expr,
+    },
+    Push {
+        place: Place,
+        value: Expr,
+        span: Span,
+    },
     Expr(Expr),
 }
 
@@ -989,7 +1004,9 @@ impl Block {
         for stmt in &mut self.stmts {
             match stmt {
                 Stmt::Let { init: e, .. } | Stmt::Expr(e) => f(e),
-                Stmt::Assign { place, value } | Stmt::Append { place, value } => {
+                Stmt::Assign { place, value }
+                | Stmt::Append { place, value }
+                | Stmt::Push { place, value, .. } => {
                     place.each_expr_mut(f);
                     f(value);
                 }
@@ -1024,9 +1041,9 @@ impl Stmt {
     fn exits(&self) -> bool {
         match self {
             Stmt::Let { init: e, .. } | Stmt::Expr(e) => e.exits(),
-            Stmt::Assign { place, value } | Stmt::Append { place, value } => {
-                place.exits() || value.exits()
-            }
+            Stmt::Assign { place, value }
+            | Stmt::Append { place, value }
+            | Stmt::Push { place, value, .. } => place.exits() || value.exits(),
         }
     }
 }
@@ -1126,7 +1143,9 @@ impl Block {
         for stmt in &self.stmts {
             match stmt {
                 Stmt::Let { init: e, .. } | Stmt::Expr(e) => e.exprs(out),
-                Stmt::Assign { place, value } | Stmt::Append { place, value } => {
+                Stmt::Assign { place, value }
+                | Stmt::Append { place, value }
+                | Stmt::Push { place, value, .. } => {
                     place.exprs(out);
                     value.exprs(out);
                 }
@@ -1229,6 +1248,7 @@ impl Printer<'_> {
             }
             Stmt::Assign { place, value } => self.write(f, "=", place, value),
             Stmt::Append { place, value } => self.write(f, "append", place, value),
+            Stmt::Push { place, value, .. } => self.write(f, "push", place, value),
             Stmt::Expr(expr) => self.expr(f, expr),
         }
     }
@@ -2683,6 +2703,49 @@ mod tests {
         assert_eq!(
             program.to_string(),
             r#"(fn f () unit (block (let mut names#0 (array "a")) (append (index names#0 0) "x")))"#
+        );
+    }
+
+    #[test]
+    fn pushes_should_print() {
+        // fn f() { let mut xs = [1]; xs.push(2) }
+        let ints = Type::array(Type::I64);
+        let push = Stmt::Push {
+            place: Place::Local(LocalId(0)),
+            value: int(2),
+            span: Span::new(0, 0),
+        };
+        let program = Program {
+            classes: vec![],
+            enums: vec![],
+            functions: vec![Function {
+                name: "f".into(),
+                owner: None,
+                conformance: None,
+                method: None,
+                type_params: Vec::new(),
+                owner_params: 0,
+                prelude: false,
+                params: vec![],
+                ret: Type::UNIT,
+                locals: vec![Local {
+                    name: Some("xs".into()),
+                    ty: ints,
+                    mutable: true,
+                }],
+                body: block(vec![
+                    Stmt::Let {
+                        local: LocalId(0),
+                        init: expr(ExprKind::ArrayLit(vec![int(1)]), ints),
+                    },
+                    push,
+                ]),
+            }],
+            ..Program::default()
+        };
+        assert_eq!(
+            program.to_string(),
+            "(fn f () unit (block (let mut xs#0 (array 1)) (push xs#0 2)))"
         );
     }
 

@@ -124,7 +124,7 @@ enums with `match`.
   `n` does not fit, with no panic
 - arrays such as `[i64]` and `[[bool]]`, built with `[1, 2, 3]` or `[0; n]`,
   read and written by index, compared with `==`, and walked with `for x in xs`
-  or `for i in 0..n` (`..=` includes the end); `len`, `sum` and `contains` are methods on them
+  or `for i in 0..n` (`..=` includes the end); `len`, `sum`, `contains` and `push` are methods on them
 - `char`, one Unicode scalar value such as `'ä'`, compared by code point and
   converted with `i64(c)` and `char(n)`, a `char?` that is `None` for a
   surrogate or a value above `0x10FFFF`, with no panic
@@ -888,10 +888,10 @@ Each is small once its milestone's main feature exists:
 - Milestone 10: `mut self` requirements in interfaces arrive with records,
   and milestone 10 decides whether a class's `self` method satisfies one, as
   in Swift.
-- Milestone 10: array `push` and the other methods that change an array take
-  `mut self` (ADR 0011) and arrive with records. `push` grows the block in
-  place when nothing else holds it, doubling its capacity when full, and
-  copies first when it is shared (ADR 0007).
+- Milestone 8: Array `push`: a built-in that grows the block in place when
+  nothing else holds it, doubling its capacity when full, and copies it first
+  when it is shared (ADR 0007). The other methods that change an array take
+  `mut self` (ADR 0011) once methods with `mut self` arrive.
 - Milestone 10: a copy of a record with some fields changed,
   `Point(..p, y: 0)`, as Gleam writes it and as Kotlin's `copy(y = 0)` does.
   It also builds a labeled enum variant from a bound one, which is how a
