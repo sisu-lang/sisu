@@ -4013,6 +4013,31 @@ fn a_call_that_waits_for_a_rejected_parameter_should_report_no_inference_error()
     check_rows_after(REJECT_DECLS, REJECT_WAIT_ROWS);
 }
 
+/// The rows of the test of a call that waits for another parameter, below.
+const OTHER_WAIT_ROWS: &[PartialRow<'static>] = {
+    use Code::{CannotInfer, NotConform};
+    &[
+        (
+            "fn h<T: I, U>(_p: Two<T, i64>, _a: U?) {}\n",
+            "h(Two.P(5, 7), none())",
+            &[(NotConform, "Two.P(5"), (CannotInfer, "none()")],
+        ),
+        (
+            "fn h<T: I, U>(_p: Two<T, i64>, _a: [U?]) {}\n",
+            "h(Two.P(5, 7), [none()])",
+            &[(NotConform, "Two.P(5"), (CannotInfer, "none()")],
+        ),
+    ]
+};
+
+/// The context of a call that waits for `U` holds a hole for `U`, which no bound rejected. The
+/// call cannot bind it, and nothing else reports that, so the call keeps its E0050 after a failed
+/// bound of `T`.
+#[test]
+fn a_call_that_waits_for_another_parameter_should_still_report_its_own_inference_error() {
+    check_rows_after(REJECT_DECLS, OTHER_WAIT_ROWS);
+}
+
 /// The rows of `a_failed_bound_should_come_before_a_mismatch_with_the_expected_type`.
 const REJECT_EXPECTED_ROWS: &[PartialRow<'static>] = {
     use Code::NotConform;

@@ -941,8 +941,9 @@ impl Checker<'_> {
     fn check_early(&mut self, call: &mut Inference, bound: &[usize], at: Span) {
         let Some(early) = &mut call.early else { return };
         let owned = early.owned;
-        let has_bound =
-            |i: usize| i >= owned && early.bounds.get(i - owned).is_some_and(|b| !b.is_empty());
+        let has_bound = |i: usize| {
+            (i.checked_sub(owned).and_then(|k| early.bounds.get(k))).is_some_and(|b| !b.is_empty())
+        };
         if early.waiting.is_empty() && !bound.iter().any(|&i| has_bound(i)) {
             return;
         }
