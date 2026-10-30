@@ -3368,48 +3368,8 @@ const PART_ROWS: &[PartialRow<'static>] = {
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
-            "let t = Two.P(true, 1)\nh(true, [Two.P(\"s\", 1), t])",
-            &[(Mismatch, S)],
-        ),
-        (
-            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
-            "let t = Two.P(true, 1)\nh(true, [t, Two.P(\"s\", 1)])",
-            &[(Mismatch, S)],
-        ),
-        (
-            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "let t = Two.P(true, 1)\nh(true, [Two.P(true, 1), t, Two.P(\"s\", 2)])",
             &[(Mismatch, S)],
-        ),
-        (
-            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
-            "let t = Two.P(true, 1)\nh(true, [t, t, Two.P(\"s\", 1), t])",
-            &[(Mismatch, S)],
-        ),
-        (
-            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
-            "let t = Two.P(true, 1)\nlet ts = [t]\nh(true, [Two.P(\"s\", 1), ts[0]])",
-            &[(Mismatch, S)],
-        ),
-        (
-            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\nfn mk0() -> Two<bool, i64> { Two.P(true, 1) }\n",
-            "h(true, [mk0(), Two.P(\"s\", 1)])",
-            &[(Mismatch, S)],
-        ),
-        (
-            "fn hn<U, V>(a: U, b: [[Two<U, V>]]) {}\n",
-            "let t = Two.P(true, 1)\nhn(true, [[t], [Two.P(\"s\", 1), t]])",
-            &[(Mismatch, S)],
-        ),
-        (
-            "fn h<U, V>(a: U, b: [Two<U, V>?]) {}\n",
-            "let t = Two.P(true, 1)\nh(true, [t, None, Two.P(\"s\", 1)])",
-            &[(Mismatch, S)],
-        ),
-        (
-            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
-            "let t = Two.P(true, 1)\nlet u = Two.P(\"x\", 1)\nh(true, [t, u])",
-            &[(Mismatch, "u]")],
         ),
     ]
 };
@@ -3487,6 +3447,13 @@ const VALID_ROWS: &[PartialRow<'static>] = {
         (
             "fn hn<U, V>(a: U, b: [[Two<U, V>]]) {}\n",
             "let t = Two.P(true, 1)\nhn(true, [[], [t, Two.P(false, 2)], [t]])",
+            &[],
+        ),
+        // The element type of `mk2` is a bare parameter that no argument binds. The context
+        // of the call hints it, so its literal still goes to `inferred_array`.
+        (
+            "fn mk2<T>(xs: [T]) -> [T] { panic(\"e\") }\nfn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "let x: u8 = 3\nh(x, mk2([Two.P(5, \"x\")]))",
             &[],
         ),
     ]

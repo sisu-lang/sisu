@@ -24,15 +24,6 @@ use crate::symbol::Symbol;
 use crate::tir::{Type, TypeArgs, TypeKind};
 use crate::types::HOLE_INDEX;
 
-/// Whether `ty`, an array's element, is an optional, or arrays of them: the shape of element
-/// that `against` cannot wrap an array literal's elements to.
-fn optional_element(mut ty: Type) -> bool {
-    while let TypeKind::Array(inner) = ty.kind() {
-        ty = inner;
-    }
-    matches!(ty.kind(), TypeKind::Optional(_))
-}
-
 /// Whether `ty` is `want`, where a hole of `want` meets any part of `ty`.
 fn meets(ty: Type, want: Type) -> bool {
     if ty == want || want == *HOLE {
@@ -1262,9 +1253,9 @@ impl Checker<'_> {
 
     /// Checks `e` against `pattern`, a parameter's type or an element's: against what the call
     /// binds of it, or, while it names an unbound parameter, on its own, which binds what its
-    /// type fixes. A non-empty array literal is the exception when its array holds optionals
-    /// (see `optional_element`), when it has a `context`, or when the call binds part of its
-    /// element type. Its elements then bind the parameter one by one (see `inferred_array`).
+    /// type fixes. A non-empty array literal is the exception: unless its element type is a
+    /// type parameter that nothing binds or hints, its elements bind the parameters one by one
+    /// (see `inferred_array`).
     /// A value of type `unit` or `never` binds nothing, for `infer_arg` to defer.
     fn infer_value(
         &mut self,
@@ -1281,10 +1272,11 @@ impl Checker<'_> {
 
     /// `infer_value` for a `pattern` that names an unbound parameter, with no walk of
     /// `pattern` to find this out. `context` is the expected type of `e`, if any. A non-empty
-    /// array literal goes to `inferred_array` in the three cases that `infer_value` names. In
-    /// the third, an element that is a local variable takes no context: it is checked on its
-    /// own, and it binds or meets the element type, so the context of the other elements
-    /// stays.
+    /// array literal goes to `inferred_array` unless its element type is a type parameter that
+    /// nothing binds or hints, as `infer_value` says. Any other element type holds a part
+    /// that is known or can be wrapped to. In `inferred_array`, an element that is a local
+    /// variable takes no context: it is checked on its own, and it binds or meets the element
+    /// type, so the context of the other elements stays.
     fn infer_unbound(
         &mut self,
         call: &mut Inference,
@@ -1295,8 +1287,7 @@ impl Checker<'_> {
         if let ast::ExprKind::ArrayLit(elements) = &e.kind
             && !elements.is_empty()
             && let TypeKind::Array(element) = pattern.kind()
-            && (optional_element(element)
-                || context.is_some()
+            && (!matches!(element.kind(), TypeKind::Param(..) | TypeKind::Assoc(..))
                 || self.partial(&call.bindings, element) != *HOLE)
         {
             return self.inferred_array(call, e.span, elements, element, context.is_some());
