@@ -657,3 +657,11 @@ its counted parts.
 A whole program given on the command line with `-e` in place of a file.
 Its diagnostics and panics name the source `<inline>`.
 _Avoid_: snippet, one-liner, script
+
+**Growing proof program**:
+The one Sisu program that grows with the language: Sisu's own lexer in
+`selfhost/lexer.sisu`, and later its parser. Each milestone is done only when
+the program uses the milestone's feature where the feature fits. The tests
+check that it prints the same tokens as `sisu build --emit tokens` for each
+Sisu file of the compiler's tests that lexes without an error.
+_Avoid_: self-hosting (the compiler is still written in Rust), bootstrap

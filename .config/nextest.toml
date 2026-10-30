@@ -154,8 +154,9 @@ setup = "build-runtime"
 # The `bless_` tests, `same_named_cases_should_not_share_an_executable_when_run_at_once` and
 # `run_case_should_check_and_bless_its_err_file` call `support::run`, which runs Valgrind. So do
 # the two tests on invalid UTF-8 and on print buffers, and the seven `o2_calls_marker_` tests.
+# The four `selfhost_valgrind_` tests run the lexer in Sisu under Valgrind on two large inputs.
 [[profile.default.overrides]]
-filter = "binary(programs) & (test(allocation_counts) | test(valgrind_run_should_report_a_leaked_cycle) | test(valgrind_runs_should_refuse_a_mimalloc_build_and_a_stripped_build) | test(read_line_should_return_long_lines_whole_across_buffer_refills) | test(bless_) | test(same_named_cases_should_not_share_an_executable_when_run_at_once) | test(run_case_should_check_and_bless_its_err_file) | test(invalid_utf8_should_become_the_replacement_character_in_input_and_arguments) | test(print_should_allocate_one_buffer_however_much_it_prints) | test(o2_calls_marker_))"
+filter = "binary(programs) & (test(allocation_counts) | test(valgrind_run_should_report_a_leaked_cycle) | test(valgrind_runs_should_refuse_a_mimalloc_build_and_a_stripped_build) | test(read_line_should_return_long_lines_whole_across_buffer_refills) | test(bless_) | test(same_named_cases_should_not_share_an_executable_when_run_at_once) | test(run_case_should_check_and_bless_its_err_file) | test(invalid_utf8_should_become_the_replacement_character_in_input_and_arguments) | test(print_should_allocate_one_buffer_however_much_it_prints) | test(o2_calls_marker_) | test(selfhost_valgrind_))"
 priority = 100
 
 # Each case compiles twice and runs under Valgrind, so these are the longest tests and start

@@ -2768,7 +2768,8 @@ const ALL_TOKENS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/tokens/all_
 /// of its own for the test `test`.
 fn compare_text(test: &str, input: &str) {
     let dir = fixture(test, &[("input.sisu", input)]);
-    selfhost::compare(&dir.join("input.sisu"));
+    let input = dir.join("input.sisu");
+    selfhost::compare(&input, &selfhost::tokens_of(&input));
 }
 
 /// GIVEN `tests/tokens/all_tokens.sisu`, which holds every token kind and each case of the rules
@@ -2776,7 +2777,8 @@ fn compare_text(test: &str, input: &str) {
 /// THEN each prints the tokens that `sisu build --emit tokens` prints for it, byte for byte
 #[test]
 fn selfhost_lexer_should_match_emit_tokens_on_all_tokens() {
-    selfhost::compare(Path::new(ALL_TOKENS));
+    let input = Path::new(ALL_TOKENS);
+    selfhost::compare(input, &selfhost::tokens_of(input));
 }
 
 /// GIVEN `all_tokens.sisu` with each `\n` made `\r\n`
@@ -3044,4 +3046,82 @@ fn selfhost_build_should_rebuild_after_a_build_stops_half_way() {
     assert!(stopped.is_err(), "a build with a warning should stop");
     fs::write(&source, printing("first")).expect("the scratch source should be writable");
     assert_eq!(output_of(&selfhost::build(&source, &cache).o0), "first\n");
+}
+
+/// GIVEN a file from each of `tests/run`, `tests/run-fail`, `tests/diagnostics`, `tests/programs`
+/// and `tests/tokens`, and `selfhost/lexer.sisu`, `prelude.sisu` and `lang.sisu`, which lex
+/// without an error
+/// AND a file of `tests/diagnostics` that has a lexer error
+/// WHEN the corpus check classifies each
+/// THEN the first eight are compared, with tokens, and the last is excluded
+///
+/// The datatest cases of `cases.rs` pass when a file is excluded; this test names the files, so
+/// a classifier that excludes every file, or that compares a file `sisu` rejects, fails here.
+#[test]
+fn selfhost_corpus_should_compare_a_file_from_each_directory() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let compared = [
+        "tests/run/aliasing.sisu",
+        "tests/run-fail/append_recheck.sisu",
+        "tests/diagnostics/assign_function.sisu",
+        "tests/programs/deepchain.sisu",
+        "tests/tokens/all_tokens.sisu",
+        "../../selfhost/lexer.sisu",
+        "src/prelude.sisu",
+        "src/lang.sisu",
+    ];
+    for file in compared {
+        match selfhost::selfhost_outcome(&root.join(file)) {
+            selfhost::Outcome::Compared(tokens) => {
+                assert!(
+                    tokens.ends_with("Eof\n"),
+                    "{file}: no `Eof` ends the tokens"
+                );
+            }
+            selfhost::Outcome::Excluded => panic!("{file} is excluded"),
+        }
+    }
+    assert_eq!(
+        selfhost::selfhost_outcome(&root.join("tests/diagnostics/E0003.sisu")),
+        selfhost::Outcome::Excluded
+    );
+}
+
+/// The lexer's own source, the largest program that the lexer reads here.
+const LEXER_SOURCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../selfhost/lexer.sisu");
+
+/// GIVEN `all_tokens.sisu` as input
+/// WHEN the plain build of the lexer reads it under Valgrind
+/// THEN the run exits 0, so it leaks nothing and makes no memory error, and prints the tokens
+/// that `sisu build --emit tokens` prints
+#[test]
+fn selfhost_valgrind_o0_should_match_emit_tokens_on_all_tokens() {
+    selfhost::compare_under_valgrind(&selfhost::builds().o0, Path::new(ALL_TOKENS));
+}
+
+/// GIVEN `all_tokens.sisu` as input
+/// WHEN the `-O2` build of the lexer reads it under Valgrind
+/// THEN the run exits 0, so it leaks nothing and makes no memory error, and prints the tokens
+/// that `sisu build --emit tokens` prints
+#[test]
+fn selfhost_valgrind_o2_should_match_emit_tokens_on_all_tokens() {
+    selfhost::compare_under_valgrind(&selfhost::builds().o2, Path::new(ALL_TOKENS));
+}
+
+/// GIVEN `selfhost/lexer.sisu` as input
+/// WHEN the plain build of the lexer reads it under Valgrind
+/// THEN the run exits 0, so it leaks nothing and makes no memory error, and prints the tokens
+/// that `sisu build --emit tokens` prints
+#[test]
+fn selfhost_valgrind_o0_should_match_emit_tokens_on_the_lexer() {
+    selfhost::compare_under_valgrind(&selfhost::builds().o0, Path::new(LEXER_SOURCE));
+}
+
+/// GIVEN `selfhost/lexer.sisu` as input
+/// WHEN the `-O2` build of the lexer reads it under Valgrind
+/// THEN the run exits 0, so it leaks nothing and makes no memory error, and prints the tokens
+/// that `sisu build --emit tokens` prints
+#[test]
+fn selfhost_valgrind_o2_should_match_emit_tokens_on_the_lexer() {
+    selfhost::compare_under_valgrind(&selfhost::builds().o2, Path::new(LEXER_SOURCE));
 }

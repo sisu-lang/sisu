@@ -1,0 +1,198 @@
+// The methods on `f64` and `i64`, each run twice: on literals, which `-O2` folds, and on values
+// that come back from `same` or `same_int` at a depth that `-O2` does not know, which it cannot
+// fold. The exact methods print in full; the transcendental ones print through `micro`, as the
+// nearest millionth, since libm may differ in the last bits.
+// args: a
+// o2-calls: main same 13
+// o2-calls: main same_int 4
+fn same(x: f64, depth: i64) -> f64 {
+    if depth == 0 { x } else { -same(-x, depth - 1) }
+}
+
+fn same_int(n: i64, depth: i64) -> i64 {
+    if depth == 0 { n } else { -same_int(-n, depth - 1) }
+}
+
+fn micro(x: f64) {
+    if let n = i64((x * 1e6).round()) {
+        print(n)
+    } else {
+        print("none")
+    }
+}
+
+fn show(x: f64?) {
+    if let v = x {
+        print(v)
+    } else {
+        print("none")
+    }
+}
+
+// Each of these prints its name, so the order of the operands of `clamp` shows.
+fn f(n: i64) -> i64 {
+    print("f")
+    n
+}
+
+fn g(n: i64) -> i64 {
+    print("g")
+    n
+}
+
+fn h(n: i64) -> i64 {
+    print("h")
+    n
+}
+
+fn main(args: [string]) {
+    let d = args.len()
+
+    // On literals.
+    print(2.5.round())                  // 3.0: halves round away from zero
+    print((-2.5).round())               // -3.0
+    print(2.5.floor())                  // 2.0
+    print((-2.5).floor())               // -3.0
+    print(2.5.ceil())                   // 3.0
+    print((-2.5).ceil())                // -2.0
+    print(2.5.trunc())                  // 2.0
+    print((-2.5).trunc())               // -2.0
+    print((-2.5).abs())                 // 2.5
+    print(4.0.sqrt())                   // 2.0
+    print((-1.0).sqrt().is_nan())       // true
+    print(-1.0.sqrt())                  // -1.0: the minus binds looser than the call
+    print((0.0 / 0.0).is_nan())         // true
+    print(2.5.is_nan())                 // false
+    print(2.5.is_finite())              // true
+    print((1.0 / 0.0).is_finite())      // false
+    print((0.0 / 0.0).is_finite())      // false
+    print((1.0 / 0.0).is_infinite())    // true
+    print((-1.0 / 0.0).is_infinite())   // true
+    print(2.5.is_infinite())            // false
+    print((0.0 / 0.0).is_infinite())    // false
+    print(2.5.min(-2.5))                // -2.5
+    print(2.5.max(-2.5))                // 2.5
+    print((0.0 / 0.0).min(2.5))         // 2.5: a `nan` operand gives the other one
+    print(2.5.min(0.0 / 0.0))           // 2.5
+    print((0.0 / 0.0).max(2.5))         // 2.5
+    print(2.5.max(0.0 / 0.0))           // 2.5
+    print((-0.0).min(0.0))              // -0.0: `min` orders -0.0 below 0.0
+    print(0.0.min(-0.0))                // -0.0
+    print((-0.0).max(0.0))              // 0.0
+    print(0.0.max(-0.0))                // 0.0
+    print((-0.0).clamp(0.0, 1.0))       // 0.0
+    print(2.5.clamp(0.0, 1.0))          // 1.0
+    print((-2.5).clamp(0.0, 1.0))       // 0.0
+    print(0.5.clamp(0.0, 1.0))          // 0.5
+    print((0.0 / 0.0).clamp(0.0, 1.0))  // 0.0
+    print(2.5.clamp(1.0, 0.0))          // 0.0: with lo above hi, the result is hi
+    micro(1.0.sin())                    // 841471
+    micro(1.0.cos())                    // 540302
+    micro(1.0.tan())                    // 1557408
+    micro(0.5.asin())                   // 523599
+    micro(0.5.acos())                   // 1047198
+    micro(1.0.atan())                   // 785398
+    micro(1.0.atan2(2.0))               // 463648
+    micro(1.0.exp())                    // 2718282
+    micro(10.0.ln())                    // 2302585
+    micro(1000.0.log10())               // 3000000
+    micro(8.0.log2())                   // 3000000
+    micro(2.0.pow(0.5))                 // 1414214
+    micro(3.0.hypot(4.0))               // 5000000
+    micro((-1.0).sqrt())                // none: `nan` is not a whole number
+    micro(0.0.ln())                     // none: -inf is out of range
+    print(7.min(-3))                    // -3
+    print(7.max(-3))                    // 7
+    print(7.clamp(2, 5))                // 5
+    print((-3).clamp(2, 5))             // 2
+    print(3.clamp(2, 5))                // 3
+    print(7.clamp(5, 2))                // 2: with lo above hi, the result is hi, and nothing panics
+    let has: f64? = 2.25
+    show(has?.sqrt())                   // 1.5
+    let nothing: f64? = None
+    show(nothing?.sqrt())               // none
+
+    // The same on values that `-O2` cannot fold.
+    let a = same(2.5, d)
+    let b = same(-2.5, d)
+    let z = same(0.0, d)
+    let nz = same(-0.0, d)
+    let one = same(1.0, d)
+    let four = same(4.0, d)
+    let nan = z / z
+    let inf = 1.0 / z
+    print(a.round())                    // 3.0
+    print(b.round())                    // -3.0
+    print(a.floor())                    // 2.0
+    print(b.floor())                    // -3.0
+    print(a.ceil())                     // 3.0
+    print(b.ceil())                     // -2.0
+    print(a.trunc())                    // 2.0
+    print(b.trunc())                    // -2.0
+    print(b.abs())                      // 2.5
+    print(four.sqrt())                  // 2.0
+    print((-one).sqrt().is_nan())       // true
+    print(-one.sqrt())                  // -1.0
+    print(nan.is_nan())                 // true
+    print(a.is_nan())                   // false
+    print(a.is_finite())                // true
+    print(inf.is_finite())              // false
+    print(nan.is_finite())              // false
+    print(inf.is_infinite())            // true
+    print((-inf).is_infinite())         // true
+    print(a.is_infinite())              // false
+    print(nan.is_infinite())            // false
+    print(a.min(b))                     // -2.5
+    print(a.max(b))                     // 2.5
+    print(nan.min(a))                   // 2.5
+    print(a.min(nan))                   // 2.5
+    print(nan.max(a))                   // 2.5
+    print(a.max(nan))                   // 2.5
+    print(nz.min(z))                    // -0.0
+    print(z.min(nz))                    // -0.0
+    print(nz.max(z))                    // 0.0
+    print(z.max(nz))                    // 0.0
+    print(nz.clamp(z, one))             // 0.0
+    print(a.clamp(z, one))              // 1.0
+    print(b.clamp(z, one))              // 0.0
+    print(nan.clamp(z, one))            // 0.0
+    print(a.clamp(one, z))              // 0.0
+    let half = same(0.5, d)
+    let two = same(2.0, d)
+    let ten = same(10.0, d)
+    let thousand = same(1000.0, d)
+    let eight = same(8.0, d)
+    let three = same(3.0, d)
+    micro(one.sin())                    // 841471
+    micro(one.cos())                    // 540302
+    micro(one.tan())                    // 1557408
+    micro(half.asin())                  // 523599
+    micro(half.acos())                  // 1047198
+    micro(one.atan())                   // 785398
+    micro(one.atan2(two))               // 463648
+    micro(one.exp())                    // 2718282
+    micro(ten.ln())                     // 2302585
+    micro(thousand.log10())             // 3000000
+    micro(eight.log2())                 // 3000000
+    micro(two.pow(half))                // 1414214
+    micro(three.hypot(four))            // 5000000
+    micro((-one).sqrt())                // none
+    micro(z.ln())                       // none
+    let p = same_int(7, d)
+    let q = same_int(-3, d)
+    let r = same_int(5, d)
+    let s = same_int(2, d)
+    print(p.min(q))                     // -3
+    print(p.max(q))                     // 7
+    print(p.clamp(s, r))                // 5
+    print(q.clamp(s, r))                // 2
+    print(r.clamp(q, p))                // 5
+    print(p.clamp(r, s))                // 2
+    let has_run: f64? = same(2.25, d)
+    show(has_run?.sqrt())               // 1.5
+    let nothing_run: f64? = None
+    show(nothing_run?.sqrt())           // none
+
+    // The operands of `clamp` run left to right.
+    print(f(1).clamp(g(2), h(3)))       // f, g, h, then 2
+}

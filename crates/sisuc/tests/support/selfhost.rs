@@ -1,13 +1,13 @@
 //! The lexer in Sisu, `selfhost/lexer.sisu`. This module builds it, and a cache shares the builds
 //! between the test binaries and the test processes of one run. It also compares the output of the
-//! lexer with the output of `sisu build --emit tokens`.
+//! lexer with the output of `sisu build --emit tokens`, in the corpus check and under Valgrind.
 
 use std::collections::hash_map::DefaultHasher;
 use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::hash::Hasher;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 use std::sync::OnceLock;
 use std::time::UNIX_EPOCH;
 
@@ -116,32 +116,60 @@ fn stamp(source: &Path, plan: &[(&str, Vec<&str>)]) -> String {
     stamp
 }
 
-/// The standard output of `sisu build --emit tokens <path>`, which must exit 0.
-pub(crate) fn tokens_of(path: &Path) -> String {
+/// What the corpus check does with one file.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Outcome {
+    /// `sisu build --emit tokens` exited 0, warnings allowed. These are the tokens it printed.
+    Compared(String),
+    /// It exited 1 with a diagnostic code: the file does not lex, so no lexer need print tokens.
+    Excluded,
+}
+
+/// Runs `sisu build --emit tokens` on `path` and classifies the file. Any other result fails the
+/// check, with the exit status of `sisu`: a panic, a signal, or an exit 1 with no diagnostic code
+/// is a fault in `sisu`, not a file the lexer may skip.
+pub(crate) fn selfhost_outcome(path: &Path) -> Outcome {
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
         .args(["build", "--emit", "tokens"])
         .arg(path)
         .output()
         .expect("sisu starts");
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "{}: {}",
-        path.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).expect("the tokens should be UTF-8")
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    match out.status.code() {
+        Some(0) => {
+            Outcome::Compared(String::from_utf8(out.stdout).expect("the tokens should be UTF-8"))
+        }
+        Some(1) if stderr.contains("error[E") => Outcome::Excluded,
+        _ => panic!(
+            "{}: `sisu build --emit tokens` ended with {}:\n{stderr}",
+            path.display(),
+            out.status
+        ),
+    }
+}
+
+/// The standard output of `sisu build --emit tokens <path>`, which must exit 0.
+pub(crate) fn tokens_of(path: &Path) -> String {
+    match selfhost_outcome(path) {
+        Outcome::Compared(tokens) => tokens,
+        Outcome::Excluded => panic!("{}: the file does not lex", path.display()),
+    }
+}
+
+/// Runs `exe`, a build of the lexer, with the file `input` on its standard input.
+fn run_lexer(exe: &Path, input: &Path, valgrind: bool) -> Output {
+    let stdin = fs::read(input).expect("the input should be readable");
+    Invocation::new(stdin, Vec::new()).run(exe, valgrind)
 }
 
 /// Runs each build of the lexer with the file `input` on its standard input. Each must exit 0 with
-/// nothing on standard error. Each must print what `tokens_of(input)` holds, byte for byte. A
-/// mismatch names the input and its first differing line.
-pub(crate) fn compare(input: &Path) {
-    let expected = tokens_of(input);
-    let stdin = fs::read(input).expect("the input should be readable");
+/// nothing on standard error. Each must print `expected`, the tokens of `input` from
+/// `sisu build --emit tokens`, byte for byte. A mismatch names the input and its first differing
+/// line.
+pub(crate) fn compare(input: &Path, expected: &str) {
     let builds = builds();
     for exe in [&builds.o2, &builds.o0, &builds.rc_checks] {
-        let out = Invocation::new(stdin.clone(), Vec::new()).run(exe, false);
+        let out = run_lexer(exe, input, false);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(
             out.status.code(),
@@ -157,14 +185,35 @@ pub(crate) fn compare(input: &Path) {
             exe.display(),
             input.display()
         );
-        if let Some(difference) = first_difference(&expected, &String::from_utf8_lossy(&out.stdout))
-        {
-            panic!(
-                "{} on {}: the tokens differ from `sisu build --emit tokens`, at {difference}",
-                exe.display(),
-                input.display()
-            );
-        }
+        assert_same_tokens(exe, input, expected, &out);
+    }
+}
+
+/// Runs `exe`, a build of the lexer, under Valgrind with the file `input` on its standard input.
+/// It must exit 0, so it leaks nothing and makes no memory error, and print the tokens that
+/// `sisu build --emit tokens` prints. A failure shows the standard error of Valgrind.
+pub(crate) fn compare_under_valgrind(exe: &Path, input: &Path) {
+    let out = run_lexer(exe, input, true);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{} on {}: {stderr}",
+        exe.display(),
+        input.display()
+    );
+    assert_same_tokens(exe, input, &tokens_of(input), &out);
+}
+
+/// Panics, naming the first differing line, unless the standard output of `out` is `expected`.
+fn assert_same_tokens(exe: &Path, input: &Path, expected: &str, out: &Output) {
+    if let Some(difference) = first_difference(expected, &String::from_utf8_lossy(&out.stdout)) {
+        panic!(
+            "{} on {}: the tokens differ from `sisu build --emit tokens`, at {difference}\n{}",
+            exe.display(),
+            input.display(),
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 }
 

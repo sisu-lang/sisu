@@ -1,0 +1,214 @@
+// Class layout: codegen sorts a class's fields by alignment, largest first, so a field's place in
+// memory is not its place in the source. Each function proves one property of that layout through
+// what the program prints; `eval_order.sisu`'s `Moved` covers constructor evaluation order.
+class Box: Eq {
+    v: i64
+    fn eq(self, other: Self) -> bool { self.v == other.v }
+}
+
+// Property 1, a tight sorted layout: sorting moves these fields, so a field stored through the
+// wrong element overlaps a neighbour. In memory they sit as `n`, `s`, `on`, `xs`, `oxs`, `obj`
+// (align 8), `c`, `oc` (align 4), then `a`, `u`, `ou` (align 1).
+class M: Eq {
+    mut a: bool
+    mut u: u8
+    mut c: char
+    mut n: i64
+    mut s: string
+    mut on: i64?
+    mut oc: char?
+    mut ou: u8?
+    mut xs: [i64]
+    mut oxs: [i64]?
+    mut obj: Box?
+
+    fn eq(self, other: Self) -> bool {
+        self.a == other.a && self.u == other.u && self.c == other.c && self.n == other.n &&
+            self.s == other.s && self.on == other.on && self.oc == other.oc &&
+            self.ou == other.ou && self.xs == other.xs && self.oxs == other.oxs &&
+            self.obj == other.obj
+    }
+}
+
+// Property 5, a chain field among mixed alignments: in memory `next` comes first and `flag` last.
+class L: Eq {
+    flag: bool
+    next: L?
+    n: i64
+
+    fn eq(self, other: Self) -> bool {
+        self.flag == other.flag && self.next == other.next && self.n == other.n
+    }
+}
+
+fn base() -> M {
+    M(a: true, u: 7, c: 'x', n: 100, s: "str", on: 200, oc: 'y', ou: 9, xs: [1, 2, 3], oxs: [4, 5], obj: Box(v: 300))
+}
+
+// The counted optionals: `oxs`'s length and first element, or `none`, then `obj?.v ?? -1`.
+fn show_counted(m: M) {
+    if let o = m.oxs {
+        print(o.len())                // length of oxs
+        print(o[0])                   // first element of oxs
+    } else {
+        print("none")                 // oxs is None
+    }
+    print(m.obj?.v ?? -1)             // obj
+}
+
+// Every field, in declared order; an optional scalar shows `?? sentinel` and `== None`.
+fn show(m: M) {
+    print(m.a)                        // a
+    print(m.u)                        // u
+    print(m.c)                        // c
+    print(m.n)                        // n
+    print(m.s)                        // s
+    print(m.on ?? -1)                 // on
+    print(m.on == None)               // on is None
+    print(m.oc ?? '-')                // oc
+    print(m.oc == None)               // oc is None
+    print(m.ou ?? 0)                  // ou
+    print(m.ou == None)               // ou is None
+    print(m.xs.len())                 // length of xs
+    for x in m.xs {
+        print(x)                      // each element of xs
+    }
+    show_counted(m)
+}
+
+// Property 2, distinct values in every field, after construction and after assigning each.
+fn construct_and_assign() {
+    let m = base()
+    show(m) // true, 7, x, 100, str, 200, false, y, false, 9, false, 3, 1, 2, 3, 2, 4, 300
+    m.a = false
+    m.u = 70
+    m.c = 'z'
+    m.n = 1000
+    m.s = "new"
+    m.on = 2000
+    m.oc = 'w'
+    m.ou = 90
+    m.xs = [10, 20]
+    m.oxs = [40, 50, 60]
+    m.obj = Box(v: 3000)
+    show(m) // false, 70, z, 1000, new, 2000, false, w, false, 90, false, 2, 10, 20, 3, 40, 3000
+}
+
+// Property 2, through an array: objects are shared, so a field write through `ms[0]` shows
+// through `copy`; an array field is copied on write, so `saved` keeps its old element.
+fn through_an_array() {
+    let ms = [base(), base()]
+    let copy = ms
+    ms[0].a = false
+    print(copy[0].a)                  // false
+    ms[0].u = 71
+    print(copy[0].u)                  // 71
+    ms[0].c = 'q'
+    print(copy[0].c)                  // q
+    ms[0].oc = 'r'
+    print(copy[0].oc ?? '-')          // r
+    ms[0].ou = 91
+    print(copy[0].ou ?? 0)            // 91
+    ms[0].n = 1001
+    print(copy[0].n)                  // 1001
+    let saved = ms[0].xs
+    ms[0].xs[1] = 99
+    print(saved[1])                   // 2
+    print(ms[0].xs[1])                // 99
+    print(copy[0].xs[1])              // 99
+    // The neighbours of each written field are intact, and `ms[1]` is untouched.
+    show(ms[0]) // false, 71, q, 1001, str, 200, false, r, false, 91, false, 3, 1, 99, 3, 2, 4, 300
+    show(ms[1]) // true, 7, x, 100, str, 200, false, y, false, 9, false, 3, 1, 2, 3, 2, 4, 300
+}
+
+// Property 3, each counted optional goes value, then `None`, then a new value.
+fn counted_optionals() {
+    let m = base()
+    show_counted(m)                   // 2, 4, 300
+    m.oxs = None
+    show_counted(m)                   // none, 300
+    m.obj = None
+    show_counted(m)                   // none, -1
+    m.oxs = [6, 7, 8]
+    show_counted(m)                   // 3, 6, -1
+    m.obj = Box(v: 301)
+    show_counted(m)                   // 3, 6, 301
+}
+
+// Property 3, the optional scalars go to `None`: `?? sentinel` gives the sentinel, `== None` is
+// true, and the fields around them are intact.
+fn none_scalars() {
+    let m = base()
+    m.on = None
+    m.oc = None
+    m.ou = None
+    show(m) // true, 7, x, 100, str, -1, true, -, true, 0, true, 3, 1, 2, 3, 2, 4, 300
+}
+
+// Property 4, two objects built separately that differ only in one field are unequal, and an
+// identical pair is equal.
+fn equality() {
+    print(base() == base())           // true
+    let d = base()
+    d.a = false
+    print(d == base())                // false: a
+    let d = base()
+    d.u = 8
+    print(d == base())                // false: u
+    let d = base()
+    d.c = 'w'
+    print(d == base())                // false: c
+    let d = base()
+    d.n = 101
+    print(d == base())                // false: n
+    let d = base()
+    d.s = "stR"
+    print(d == base())                // false: s
+    let d = base()
+    d.on = 201
+    print(d == base())                // false: on
+    let d = base()
+    d.oc = 'z'
+    print(d == base())                // false: oc
+    let d = base()
+    d.ou = 10
+    print(d == base())                // false: ou
+    let d = base()
+    d.xs = [1, 2, 4]
+    print(d == base())                // false: xs
+    let d = base()
+    d.oxs = [4, 6]
+    print(d == base())                // false: oxs
+    let d = base()
+    d.obj = Box(v: 302)
+    print(d == base())                // false: obj
+}
+
+// The sum of `n` along a chain.
+fn sum(l: L?) -> i64 {
+    if let x = l { x.n + sum(x.next) } else { 0 }
+}
+
+// Three nodes deep; `last` is the `n` of the deepest.
+fn chain(last: i64) -> L {
+    L(flag: true, next: L(flag: false, next: L(flag: true, next: None, n: last), n: 20), n: 100)
+}
+
+// Property 5: the drop loop walks the chain through its moved field, and the written `eq` reads
+// it. Both chains are dropped when the function returns.
+fn chains() {
+    let a = chain(3)
+    let b = chain(3)
+    print(sum(a))                     // 123
+    print(a == b)                     // true
+    print(a == chain(4))              // false: the deepest `n` differs
+}
+
+fn main() {
+    construct_and_assign()
+    through_an_array()
+    counted_optionals()
+    none_scalars()
+    equality()
+    chains()
+}

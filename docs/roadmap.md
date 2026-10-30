@@ -684,7 +684,11 @@ stretch goal into steps.
 - Milestone 8 starts it, with tokens as an enum and the lexer over the
   `chars()` of its input, read from standard input (milestone 5). It waits
   for generics and interfaces, which make the token type and its printing
-  read well.
+  read well. Done in milestone 8, part 7: `selfhost/lexer.sisu` exists, and
+  the tests check it (see "The growing proof program" in
+  [Developing Sisu](development.md#the-growing-proof-program)). It uses
+  generics (`Stack<T>` over a linked class, `take_while<C: CharClass>`) and
+  interfaces (`CharClass`, the generated `Display` of `Kind`).
 - From then on, a milestone is done only when the program uses its feature
   where the feature fits: generics and interfaces (8), closures and iterator
   methods (9), records (10), modules (11) and `Result` for lexer errors (12).
@@ -696,10 +700,30 @@ stretch goal into steps.
   `--emit ast` the same way.
 - Milestone 8's spec settles where the program lives and how the tests run
   it.
+- The lexer in Sisu found these gaps. Each has a `// gap:` comment in
+  `selfhost/lexer.sisu` at the workaround, and the program changes when the
+  gap closes:
+  - Milestone 11: `char` classification (`is_ascii_digit`,
+    `is_ascii_alphabetic`, ...) in the prelude, as Sisu code. The lexer tests
+    ranges of `char` until then.
+  - Milestone 11, then 12: `os.exit(code)` (milestone 11) and `main` that
+    returns an error (milestone 12). The lexer sets no exit code, so it panics
+    with exit code 101 where it cannot go on.
+  - Milestone 10: tuples. `match (brace, resumed)` replaces the nested `if`s
+    of the lexer.
+  - Milestone 10: default parameters. A default for a field of a record lets
+    `Statement` list only the fields that differ.
+  - The slices design (see "Substring views" in "Open decisions"), with no
+    milestone yet: a slice of a `[char]` or a `string` lets the lexer take the
+    text of a token without a push of each `char`.
+  - The attributes foundation (see "Attribute syntax" in "Open decisions"),
+    with no milestone yet: an attribute such as `@discardable` on a function
+    lets `text.next()` stand alone, without `let _ =`.
 
-Once the lexer exists, CodSpeed gets two benchmarks from it: one runs the
-lexer on a fixed corpus of `.sisu` files, whose output prep checks against
-`sisu build --emit tokens`, and one builds the lexer at `-O2`. The focused
+CodSpeed has two benchmarks of the lexer (done in milestone 8, part 7):
+`selfhost_lexer` runs the lexer on a fixed corpus of `.sisu` files, whose
+output prep checks against `sisu build --emit tokens`, and
+`build_selfhost_lexer` builds the lexer at `-O2`. The focused
 benchmarks stay, because the program changes in every milestone, and its
 numbers compare only between commits that leave it unchanged.
 
