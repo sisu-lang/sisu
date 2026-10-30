@@ -2884,7 +2884,7 @@ fn assoc_program(decls: &str, call: &str) -> (String, usize) {
 /// nested type, through the bound's interface arguments, in an array or an optional, binds the
 /// parameter itself: its argument does not wait, so it is a local, a literal or a call.
 #[test]
-fn an_argument_should_bind_a_parameter_that_its_type_names_outside_an_associated_type() {
+fn an_argument_should_bind_a_parameter_named_outside_an_associated_type() {
     for (decls, call) in [
         ("fn h<T: I>(_p: Two<T, T.Item>) {}\n", "h(Two.P(W(), 7))"),
         ("fn h<T: I>(_p: Two<T.Item, T>) {}\n", "h(Two.P(7, W()))"),
@@ -2950,6 +2950,32 @@ fn an_associated_type_argument_should_report_its_own_mistake() {
         (
             "fn h<T: I>(_p: Two<T.Item, T>) {}\n",
             "h(Two.P(7, 5))",
+            7,
+            Code::NotConform,
+        ),
+        // After a failed bound, no later argument is checked against the type that does not
+        // exist, in an array of optionals, in a second parameter, or in one that waits.
+        (
+            "fn h<T: I>(_p: [Two<T, T.Item>?]) {}\n",
+            "h([None, Two.P(5, 7)])",
+            14,
+            Code::NotConform,
+        ),
+        (
+            "fn h<T: I>(_p: [Two<T, T.Item>?]) {}\n",
+            "h([Two.P(5, 7), Two.P(W(), 8)])",
+            8,
+            Code::NotConform,
+        ),
+        (
+            "fn h<T: I>(_p: Two<T, T.Item>, _q: Two<T, T.Item>) {}\n",
+            "h(Two.P(5, 7), Two.P(W(), 8))",
+            7,
+            Code::NotConform,
+        ),
+        (
+            "fn h<T: I, U>(_p: Two<T, T.Item>, _a: Two<T, U>, _b: Two<T.Item, U>) {}\n",
+            "h(Two.P(5, 7), Two.P(W(), 1), Two.P(1, 1))",
             7,
             Code::NotConform,
         ),

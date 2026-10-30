@@ -79,7 +79,8 @@ fn names_outside_assoc(ty: Type, param: usize) -> bool {
 
 /// Marks in `outside` each type parameter that `ty` names other than under an associated type,
 /// and in `inside` each that it names under one, as the base or an interface argument of it.
-/// Each is by its place. Unlike `mark_params`, this walk is not counted in `MARKED`.
+/// Each is by its place. One walk finds both: `names_outside_assoc` for each place would cost
+/// the number of places times the size of `ty`.
 fn mark_by_assoc(ty: Type, under: bool, inside: &mut [bool], outside: &mut [bool]) {
     if !ty.has_param() {
         return;
@@ -480,6 +481,15 @@ struct Inference {
     /// The bounds that the call checks as soon as a parameter is bound, when its parameter
     /// types write an associated type through some parameter.
     early: Option<Early>,
+}
+
+impl Inference {
+    /// Whether a bound failed that the call checks early. The call fails, and no argument is
+    /// checked against a type that names an associated type of the parameter it bound: the
+    /// type does not exist.
+    fn bound_failed(&self) -> bool {
+        self.early.as_ref().is_some_and(|early| early.failed)
+    }
 }
 
 /// The bounds a call checks as soon as the parameter they bound is bound: an argument that waits
@@ -985,10 +995,6 @@ impl Checker<'_> {
         fit: &[bool],
     ) {
         for _ in 0..2 {
-            // The call fails, and the arguments that wait are checked for their own mistakes.
-            if call.early.as_ref().is_some_and(|early| early.failed) {
-                return;
-            }
             for (i, arg) in args.iter().enumerate() {
                 if ranks[i] == 2 && call.slots[i].is_none() {
                     self.infer_waiting(call, i, &arg.value, sig.params[i], fit[i]);
@@ -1012,7 +1018,9 @@ impl Checker<'_> {
         param: Option<Type>,
         fit: bool,
     ) {
-        if param.is_some_and(|param| waits_for_assoc(&call.bindings, param)) {
+        // After a failed bound the arguments that wait are checked for their own mistakes only.
+        if call.bound_failed() || param.is_some_and(|param| waits_for_assoc(&call.bindings, param))
+        {
             return;
         }
         if !fit || param.is_none_or(|param| self.known_in(call, param).is_some()) {
@@ -1120,6 +1128,9 @@ impl Checker<'_> {
         );
         match type_of(&checked) {
             Some(Type::UNIT | Type::NEVER) | None => checked,
+            // The pattern may name an associated type that does not exist. The bound check
+            // reported that, and no mismatch with the pattern can be written.
+            Some(_) if call.bound_failed() => checked,
             Some(ty) if !self.bind_param(call, pattern, ty, e.span) => {
                 let want = self.printed(&call.bindings, pattern);
                 let d = self.mismatch(e.span, Some(e), want, ty);
@@ -1168,7 +1179,9 @@ impl Checker<'_> {
                     }
                     checked
                 } else {
-                    quiet = quiet || slots.iter().flatten().any(|c| type_of(c).is_none());
+                    quiet = quiet
+                        || call.bound_failed()
+                        || slots.iter().flatten().any(|c| type_of(c).is_none());
                     // Only its own diagnostics matter.
                     drop(self.value(e, quiet.then_some(UNKNOWN)));
                     quiet = true;
