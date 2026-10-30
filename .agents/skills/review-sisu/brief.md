@@ -144,18 +144,23 @@ vague or generic error, or with none.
   condition in the spec, the plan or "Focus".
 - A defect the diff adds blocks. A defect the old code had too is a nit.
 - Check cheap claims yourself: build, run the tests, write a probe
-  program. To build a commit, export it as "Export a commit to build it"
+  program. When "Focus" lists a prebuilt `sisu` for a commit, run it and
+  do not build that commit. Build only what Focus does not list, such as
+  a prototype of a fix. To build a commit, export it as "Export a commit to build it"
   in `CODING_STANDARDS.md` says. Keep two export directories in your
   scratch directory, `base` and `head`; for another commit, empty one and
   export into it again. Build both with one
   `CARGO_TARGET_DIR=<scratch directory>/target`, and copy `sisu` out of
   it to `base-sisu` after the base build, because the head build
   overwrites it. Each new directory costs a full build, about 7 GB.
+- When "Focus" lists lines removed from the tests, find for each one its
+  keeper or its reason, as "A deleted test names its keeper" in
+  `CODING_STANDARDS.md` says. A removal with neither blocks.
 - For each new regression test, revert the fix, or apply the mutation
   that the test names, in your copy, and run the test. A test that still
   passes does not prove its name.
-- To compare diagnostics before and after a change, build the base and
-  the head, write probe programs into one directory, and run
+- To compare diagnostics before and after a change, take the base and
+  the head `sisu` from "Focus", or build them, write probe programs into one directory, and run
   `python3 scripts/diag_diff.py BASE_SISU HEAD_SISU DIR`. It prints
   each program the head newly accepts, newly rejects or reports
   differently, with the codes and positions of both.
