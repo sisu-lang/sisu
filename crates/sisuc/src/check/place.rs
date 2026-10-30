@@ -328,11 +328,21 @@ impl Checker<'_> {
         value: tir::Expr,
     ) -> tir::Expr {
         let mut operands = path.operands;
-        operands.push(value);
-        let (mut stmts, mut operands) = self.spill(operands);
-        let value = operands
-            .pop()
-            .expect("`spill` should return one operand per input");
+        let mut stmts;
+        let mut value = value;
+        if some {
+            // The value runs after the test that the optional holds an array, which mir puts
+            // in front of it, so it stays in the `Push`. Only the path is bound, where an exit
+            // in the value comes after a counted operand.
+            let exits = value.exits();
+            (stmts, operands) = self.spill_before(operands, exits);
+        } else {
+            operands.push(value);
+            (stmts, operands) = self.spill(operands);
+            value = operands
+                .pop()
+                .expect("`spill` should return one operand per input");
+        }
         let mut place = build(path.root, operands);
         if some {
             place = tir::Place::Some(Box::new(place));

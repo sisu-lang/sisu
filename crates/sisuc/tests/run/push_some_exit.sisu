@@ -1,0 +1,129 @@
+// GIVEN optional arrays held by a field, by a field of a field, by an element of a field, and by
+// a field of an optional object, each holding `None` in one run and an array in another
+// AND a push through `?.` whose argument is `if leave { return 5 } else { arg(n) }`, or the
+// same with `break` or with `continue`, where `arg` prints that it ran
+// WHEN each push runs with `leave` false and with `leave` true
+// THEN an absent array runs nothing: its argument does not print, and nothing exits
+// AND a present array takes the argument when `leave` is false, and leaves before the push
+// when `leave` is true
+// AND an index that is out of bounds panics before the argument runs
+// AND every block is freed exactly once on every path, which Valgrind and `--rc-checks` check
+class Items {
+    mut items: [i64]?
+}
+class Holder {
+    mut a: Items
+    mut o: [i64]?
+    mut gs: [[i64]?]
+    mut next: Holder?
+}
+fn arg(n: i64) -> i64 {
+    print("arg {n}")
+    n
+}
+fn holder(o: [i64]?) -> Holder {
+    Holder(a: Items(items: o), o: o, gs: [o, None], next: None)
+}
+fn on_field(h: Holder, leave: bool) -> i64 {
+    h.o?.push(if leave { return 1 } else { arg(10) })
+    0
+}
+fn on_nested_field(h: Holder, leave: bool) -> i64 {
+    h.a.items?.push(if leave { return 2 } else { arg(20) })
+    0
+}
+fn on_element(h: Holder, at: i64, leave: bool) -> i64 {
+    h.gs[at]?.push(if leave { return 3 } else { arg(30) })
+    0
+}
+fn on_guard(h: Holder?, leave: bool) -> i64 {
+    h?.o?.push(if leave { return 4 } else { arg(40) })
+    0
+}
+fn on_chain(h: Holder, leave: bool) -> i64 {
+    h.next?.o?.push(if leave { return 5 } else { arg(50) })
+    0
+}
+fn on_local(gs: [[i64]?], leave: bool) -> i64 {
+    let mut local = gs
+    local[0]?.push(if leave { return 6 } else { arg(60) })
+    local[0]?.len() ?? 0
+}
+fn breaks(h: Holder, leave: bool) -> i64 {
+    let mut ran = 0
+    for i in 0..3 {
+        h.o?.push(if leave { break } else { arg(70 + i) })
+        ran += 1
+    }
+    ran
+}
+fn continues(h: Holder, leave: bool) -> i64 {
+    let mut ran = 0
+    for i in 0..3 {
+        h.o?.push(if leave { continue } else { arg(80 + i) })
+        ran += 1
+    }
+    ran
+}
+fn show(label: string, result: i64, array: [i64]?) {
+    if let items = array {
+        print("{label}: {result} {items}")
+    } else {
+        print("{label}: {result} none")
+    }
+}
+fn main() {
+    // A field root.
+    let none = holder(None)
+    show("field none", on_field(none, false), none.o)
+    show("field none leave", on_field(none, true), none.o)
+    let some = holder([1])
+    show("field some", on_field(some, false), some.o)
+    show("field some leave", on_field(some, true), some.o)
+
+    // A field of a field.
+    show("nested none", on_nested_field(none, false), none.a.items)
+    show("nested none leave", on_nested_field(none, true), none.a.items)
+    let nested = holder([1])
+    show("nested some", on_nested_field(nested, false), nested.a.items)
+    show("nested some leave", on_nested_field(nested, true), nested.a.items)
+
+    // An element of a field: `None` in slot 1, an array in slot 0.
+    let slots = holder([1])
+    show("element none", on_element(slots, 1, false), slots.gs[1])
+    show("element none leave", on_element(slots, 1, true), slots.gs[1])
+    show("element some", on_element(slots, 0, false), slots.gs[0])
+    show("element some leave", on_element(slots, 0, true), slots.gs[0])
+
+    // A guarded root, and a chain.
+    show("guard none", on_guard(none, false), none.o)
+    show("guard none leave", on_guard(none, true), none.o)
+    show("guard some", on_guard(some, false), some.o)
+    show("guard some leave", on_guard(some, true), some.o)
+    print(on_guard(None, true))
+    let chained = holder([1])
+    chained.next = holder(None)
+    show("chain none", on_chain(chained, false), chained.next?.o)
+    show("chain none leave", on_chain(chained, true), chained.next?.o)
+    chained.next = holder([2])
+    show("chain some", on_chain(chained, false), chained.next?.o)
+    show("chain some leave", on_chain(chained, true), chained.next?.o)
+
+    // A local root, the control.
+    print(on_local([None], false))
+    print(on_local([None], true))
+    print(on_local([[1]], false))
+    print(on_local([[1]], true))
+
+    // `break` and `continue` in the argument.
+    let loops = holder(None)
+    print(breaks(loops, false))
+    print(breaks(loops, true))
+    print(continues(loops, false))
+    print(continues(loops, true))
+    let pushed = holder([1])
+    print(breaks(pushed, false))
+    print(breaks(pushed, true))
+    print(continues(pushed, true))
+    print(pushed.o ?? [])
+}

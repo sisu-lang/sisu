@@ -1271,7 +1271,22 @@ impl Checker<'_> {
     /// last exiting one to a fresh local, in source order, so each read of them comes after
     /// every exit. The bindings, and the operands with those reads in place.
     pub(super) fn spill(&mut self, operands: Vec<tir::Expr>) -> (Vec<tir::Stmt>, Vec<tir::Expr>) {
-        let last_exit = operands.iter().rposition(tir::Expr::exits);
+        self.spill_before(operands, false)
+    }
+
+    /// `spill` of `operands` that an expression after them follows, which exits when
+    /// `later_exits`: then each operand is bound if one of them is counted, as that expression is
+    /// the last exit. The expression itself is not an operand and stays where it is.
+    pub(super) fn spill_before(
+        &mut self,
+        operands: Vec<tir::Expr>,
+        later_exits: bool,
+    ) -> (Vec<tir::Stmt>, Vec<tir::Expr>) {
+        let last_exit = if later_exits {
+            Some(operands.len())
+        } else {
+            operands.iter().rposition(tir::Expr::exits)
+        };
         let first_counted = operands
             .iter()
             .position(|e| e.ty.may_be_counted(&self.lowered_enums));

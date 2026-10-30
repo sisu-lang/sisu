@@ -1,0 +1,42 @@
+field none: 0 none
+field none leave: 0 none
+arg 10
+field some: 0 [1, 10]
+field some leave: 1 [1, 10]
+nested none: 0 none
+nested none leave: 0 none
+arg 20
+nested some: 0 [1, 20]
+nested some leave: 2 [1, 20]
+element none: 0 none
+element none leave: 0 none
+arg 30
+element some: 0 [1, 30]
+element some leave: 3 [1, 30]
+guard none: 0 none
+guard none leave: 0 none
+arg 40
+guard some: 0 [1, 10, 40]
+guard some leave: 4 [1, 10, 40]
+0
+chain none: 0 none
+chain none leave: 0 none
+arg 50
+chain some: 0 [2, 50]
+chain some leave: 5 [2, 50]
+0
+0
+arg 60
+2
+6
+3
+3
+3
+3
+arg 70
+arg 71
+arg 72
+3
+0
+0
+[1, 70, 71, 72]

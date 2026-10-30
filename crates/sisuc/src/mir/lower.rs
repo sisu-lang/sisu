@@ -1216,7 +1216,8 @@ impl<'a> Lowering<'a> {
 
     /// The root of a written element place, and its index operands from the root outwards,
     /// each pinned against the indexes after it and `value`. A field root's base is read into
-    /// a temporary, never borrowed; the caller releases it after the store.
+    /// a temporary, never borrowed; the caller releases it after the store. The exception is a
+    /// `value` that exits (see below).
     fn written_root<'p>(&mut self, place: &'p Place, value: &Expr) -> Option<WrittenRoot<'p>> {
         let mut indexes = Vec::new();
         let mut root = place;
@@ -1227,6 +1228,17 @@ impl<'a> Lowering<'a> {
         indexes.reverse();
         let (root, temp) = match root {
             Place::Local(local) => (whole(*local), None),
+            // A value that exits would leak a temporary at the exit. The checker has bound the
+            // base of such a place to a local of its own, which nothing writes and which the exit
+            // releases, so the place reads it in place (`spill_before`).
+            Place::Field { base, index } if value.exits() => {
+                let ExprKind::Local(local) = base.kind else {
+                    unreachable!("the checker should bind the base of a place whose value exits")
+                };
+                let mut root = whole(local);
+                root.projections.push(self.field(base.ty, *index));
+                (root, None)
+            }
             Place::Field { base, index } => {
                 let temp = self.temp_of(base)?;
                 let mut root = whole(temp);
