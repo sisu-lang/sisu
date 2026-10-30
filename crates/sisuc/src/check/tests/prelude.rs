@@ -474,6 +474,39 @@ fn dbg_should_wait_for_its_context_when_its_argument_does() {
     }
 }
 
+/// `dbg(e)` passes its context to `e`, so `f(dbg(e))` gets the context that `f(e)` gets and
+/// reports the same diagnostics. Only the codes are compared: the spans of the two programs
+/// differ by the width of `dbg(`.
+#[test]
+fn dbg_should_give_a_call_the_diagnostics_of_its_argument() {
+    with_prelude();
+    for (param, arg) in [
+        ("[T]", "[]"),
+        ("[T]", "dbg([])"),
+        ("[[T]]", "[[]]"),
+        ("[[T]]", "dbg([[]])"),
+        ("T?", "None"),
+        ("T?", "Some(None)"),
+        ("Result<T, bool>", "Ok(1)"),
+        ("Result<T, bool>", "dbg(Ok(1))"),
+        ("Result<[f64], T>", "Err(1)"),
+        ("Result<[T], bool>", "Ok([])"),
+    ] {
+        let program = |arg: &str| {
+            let src = format!(
+                "fn f<T>(x: {param}) -> i64 {{ 0 }}\nfn main() {{\n    let v = f({arg})\n}}"
+            );
+            (
+                src.clone(),
+                diags(&src).iter().map(Diagnostic::code).collect::<Vec<_>>(),
+            )
+        };
+        let (_, plain) = program(arg);
+        let (src, through_dbg) = program(&format!("dbg({arg})"));
+        assert_eq!(through_dbg, plain, "row `{param}`, `{arg}`: {src}");
+    }
+}
+
 /// A user's `class dbg` is rejected, but `dbg(...)` is still the prelude's call: the class
 /// does not add an `E0050` for the `[]` beside the `E0034`.
 #[test]

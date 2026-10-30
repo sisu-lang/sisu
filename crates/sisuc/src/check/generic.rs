@@ -1070,7 +1070,21 @@ impl Checker<'_> {
     // A waiting call inside a waiting call gets no context: a context that holds a hole binds
     // nothing, so the inner call has nothing to bind from. For `f<T>(r: Result<Result<T, bool>,
     // string>)`, `f(Ok(Ok(1)))` reports E0050 for `T` at the inner `Ok`.
+    // `dbg(x)` binds nothing and passes its context to `x`, so it gets the context of `x`.
     fn call_context(&mut self, call: &Inference, e: &ast::Expr, param: Type) -> Option<Type> {
+        if let ast::ExprKind::Call {
+            callee,
+            types,
+            args,
+            ..
+        } = &e.kind
+            && types.is_empty()
+            && callee.name.as_str() == "dbg"
+            && let [arg] = &args[..]
+            && arg.label.is_none()
+        {
+            return self.call_context(call, &arg.value, param);
+        }
         // A waiting call is a generic one, so its shape needs no `generic` check.
         let (shape, _) = self.call_shape(e)?;
         let partial = (!shape.some).then(|| self.partial(&call.bindings, param))?;
