@@ -1,0 +1,17 @@
+interface I {
+    type Item
+}
+
+enum Two<A, B> {
+    P(A, B)
+}
+
+class W: I {
+    type Item = i64
+}
+
+fn h<T: I>(_p: Two<T, T.Item>) {}
+
+fn main() {
+    h(Two.P(W(), "x"))
+}

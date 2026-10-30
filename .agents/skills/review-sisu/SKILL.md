@@ -48,6 +48,7 @@ git -C <repository root> show origin/main:.agents/skills/review-sisu/scripts/dif
 
 - `<target>` is the path of a spec or a plan, or `<base>..<head>` for a diff. Write a branch as `origin/main..<branch>`. The script writes a diff's range as full SHAs, and copies a spec or a plan to `RUN/target-<round>.md`, which the reviewer reads.
 - Repeat `--doc` for each document the reviewer reads with the target; leave it out when there is none.
+- For a diff, build `sisu` at the base and the head first, so that no reviewer builds them: `git -C <repository root> show origin/main:.agents/skills/review-sisu/scripts/build_sisu.sh | bash -s -- <repository root> RUN <base> <head>`. In a later round, build the round's head; earlier builds stay in `RUN/bin`. The brief lists each build there, and each line that the diff removes from the tests.
 - For a diff, pass the `LOG=` file of a `make mutation-test` run as `--mutation-log`, and the output of `make coverage BASE=<base> > RUN/coverage.txt` as `--coverage`. Leave out each one that did not run. The script stops when the log measured uncommitted changes or a commit outside the range. A log from an earlier commit of the range is correct: a task runs mutation tests once, and the brief lists the commits after it.
 - The script drops a skill line it cannot find. Tell the user in the report.
 
@@ -94,7 +95,7 @@ Rules for ruling:
 
 ### 5. Fix and review again
 
-Fix the accepted findings in the target. Fix the class, not only the repro: for each finding, list the neighbouring cases (the same rule in each position the language allows it), try each one, and fix the cause so that all of them are right. A brief for a fix round asks for that list and its results. A fix to code keeps `make test`
+Fix the accepted findings in the target. Fix the class, not only the repro: for each finding, list the neighbouring cases (the same rule in each position the language allows it), try each one, and fix the cause so that all of them are right. A brief for a fix round asks for that list and its results, and for the command and its output behind each claim about what `sisu` does. A fix to code keeps `make test`
 passing, and a fix that changes behavior adds a test that fails without
 it.
 

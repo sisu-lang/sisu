@@ -14,11 +14,14 @@ REPO and each --doc are written as absolute paths: the reviewer runs in REPO, an
 the main checkout's gitignored docs/superpowers/ is not in a worktree.
   --focus  a file whose text goes under "# Focus"; without it, Focus is "none"
   --mutation-log  the log of `make mutation-test LOG=...` for the diff; Focus names it by its absolute
-           path, so the reviewer checks its summary line. Fails when the file does not exist, when
-           its summary line names uncommitted changes, or a commit outside the range. A log measured
+           path, so the reviewer checks its summary line. Fails when the file does not exist, or
+           when its summary line names a commit outside the range. A log measured
            at an earlier commit of the range is accepted, and Focus lists the commits after it,
            because a task runs mutation tests once and later commits are not mutated.
   --coverage  the output of `make coverage` for the diff; Focus names it
+For a diff, Focus also lists each line the diff removes from the tests with no identical line
+added back, and each test file it deletes, and each sisu build in OUT's bin/<sha>/ that
+build_sisu.sh wrote.
   --round  the review round, 1 by default; a later round keeps the "# Re-review" section and
            needs --prior, the earlier reports, and --rulings, the caller's rulings on them
 The template comes from origin/main, so a branch that started before a change to the review
@@ -69,10 +72,10 @@ def is_ancestor(repo, a, b):
 
 
 def summary(log):
-    """The match of the last `mutation-test:` summary line of `log`: the measured SHA, and whether the
-    tree had uncommitted changes; or None."""
+    """The match of the last `mutation-test:` summary line of `log`, whose group 1 is the measured SHA,
+    or None."""
     lines = [line for line in log.read_text().splitlines() if line.startswith('mutation-test: ')]
-    return re.search(r'\(HEAD ([0-9a-f]{40})( with uncommitted changes)?\)$', lines[-1]) if lines else None
+    return re.search(r'\(HEAD ([0-9a-f]{40})\)$', lines[-1]) if lines else None
 
 
 def log_mismatch(log, repo, base, head):
@@ -80,13 +83,45 @@ def log_mismatch(log, repo, base, head):
     found = summary(log)
     if not found:
         return f'no summary line ending "(HEAD <sha>)" in {log}'
-    if found[2]:
-        return f'{log} measured uncommitted changes; commit them and run make mutation-test again'
     measured, want = found[1], commit(repo, head)
     # In the range means reachable from head and not from base; base need not precede it after a merge of main.
     if measured != want and (is_ancestor(repo, measured, base) or not is_ancestor(repo, measured, head)):
         return f'{log} measured {measured[:8]}, which is not in {base}..{head} ({want[:8] or "unknown"})'
     return None
+
+
+# Test files whose removed lines Focus lists. Blessed output is left out: golden_diff.py checks a rewording.
+TESTS = [':(glob)**/tests/**', ':(glob)**/tests.rs', ':(glob)scripts/test_*.py']
+EXPECTED = [':(exclude,glob)**/*.err', ':(exclude,glob)**/*.json', ':(exclude,glob)**/*.out']
+SHOWN = 40
+
+
+def removed_tests(repo, base, head):
+    """Each line that base..head removes from a test file with no identical line added back to any
+    test file, as "path:line: text", then each deleted test file. Blank lines and comments are left out."""
+    deleted = git(repo, 'diff', '--name-only', '--diff-filter=D', base, head, '--', *TESTS).splitlines()
+    diff = git(repo, 'diff', '--unified=0', '--no-color', '--diff-filter=MR', base, head, '--', *TESTS, *EXPECTED)
+    # A removed line is named by its base path and line, so a renamed file reads as the base has it.
+    removed, added, old, new, number = [], set(), None, None, 0
+    for line in diff.splitlines():
+        if line.startswith('diff --git'):
+            new = None
+        elif new is None:
+            if line.startswith('--- a/'):
+                old = line[6:]
+            elif line.startswith('+++ b/'):
+                new = line[6:]
+        elif line.startswith('@@'):
+            number = int(re.match(r'@@ -(\d+)', line)[1])
+        elif line.startswith('-'):
+            removed.append((old, new, number, line[1:].strip()))
+            number += 1
+        elif line.startswith('+'):
+            added.add(line[1:].strip())
+    lines = [f'{o}:{n}: {text[:100]}' for o, p, n, text in removed
+             if re.search(r'\w', text) and text not in added
+             and not text.startswith('//') and not (p.endswith('.py') and text.startswith('#'))]
+    return lines + [f'{p}: deleted' for p in deleted]
 
 
 def drop_line(t, start):
@@ -135,6 +170,14 @@ def main():
                 if later else ''))
         if a.coverage:
             focus_lines.append(f'Coverage result: {Path(a.coverage).resolve()}')
+        if removed := removed_tests(repo, *shas):
+            more = [f'- and {len(removed) - SHOWN} more: see the diff'] if len(removed) > SHOWN else []
+            focus_lines.append('Removed from the tests, with no identical line added back. For each, find its '
+                               'keeper or the reason:\n' + '\n'.join([f'- {r}' for r in removed[:SHOWN]] + more))
+        builds = sorted((out.parent / 'bin').glob('*/sisu'))
+        if builds:
+            focus_lines.append('Prebuilt sisu, one for each commit:\n' + '\n'.join(
+                f'- {b.parent.name[:8]} {git(repo, "log", "-1", "--format=%s", b.parent.name)}: {b}' for b in builds))
     else:
         target = out.parent / f'target-{a.round}{Path(a.target).suffix}'
 

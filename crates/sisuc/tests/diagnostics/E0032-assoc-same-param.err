@@ -1,0 +1,8 @@
+error[E0032]: expected `Two<W, i64>`, found `Two<W, string>`
+  --> E0032-assoc-same-param.sisu:16:7
+   |
+16 |     h(Two.P(W(), "x"))
+   |       ^^^^^^^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032
