@@ -69,7 +69,7 @@ class LogMismatch(Repo):
 
     def test_a_summary_on_uncommitted_changes_should_fail(self):
         why = self.mismatch(f'mutation-test: PASS: 2 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.head} with uncommitted changes)\n')
-        self.assertIn('measured uncommitted changes', why)
+        self.assertIn('no summary line', why)
 
     def test_a_log_without_a_summary_should_fail(self):
         self.assertIn('no summary line', self.mismatch('coverage\nmutants still running\n'))
@@ -156,6 +156,56 @@ class Brief(Repo):
     def test_a_second_round_without_rulings_should_fail(self):
         with self.assertRaises(SystemExit):
             self.brief('HEAD~1..HEAD', '--round', '2')
+
+class RemovedTests(unittest.TestCase):
+    """removed_tests and the Focus lists of a diff brief, on a repository whose head edits its tests."""
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.repo)
+        self.git = ['git', '-C', str(self.repo), '-c', 'user.name=t', '-c', 'user.email=t@t']
+        subprocess.run(self.git[:3] + ['init', '-q'], check=True, env=ENV)
+        self.write({'src/tests.rs': 'fn kept() {}\n// old note\n(1, "row one"),\n(2, "row two"),\n}\n',
+                    'tests/gone.sisu': 'fn main() {}\n', 'tests/a.err': 'error[E0032]\n',
+                    'src/lib.rs': 'fn dropped() {}\n'})
+        self.base = self.commit('base')
+        # Row two goes, row one moves below the brace, the note changes; none of the rest is in a test.
+        self.write({'src/tests.rs': 'fn kept() {}\n// new note\n}\n(1, "row one"),\n', 'tests/a.err': 'error[E0050]\n',
+                    'src/lib.rs': ''})
+        (self.repo / 'tests/gone.sisu').unlink()
+        self.head = self.commit('head')
+
+    def write(self, files):
+        for name, text in files.items():
+            (self.repo / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / name).write_text(text)
+
+    def commit(self, message):
+        subprocess.run(self.git + ['add', '-A'], check=True, env=ENV)
+        subprocess.run(self.git + ['commit', '-q', '-m', message], check=True, env=ENV)
+        return subprocess.run(self.git[:3] + ['rev-parse', 'HEAD'], capture_output=True, text=True,
+                              check=True, env=ENV).stdout.strip()
+
+    def test_removed_tests_should_list_a_dropped_row_and_a_deleted_file_only(self):
+        with mock.patch.dict(os.environ, ENV, clear=True):
+            removed = diff_brief.removed_tests(self.repo, self.base, self.head)
+        self.assertEqual(removed, ['src/tests.rs:4: (2, "row two"),', 'tests/gone.sisu: deleted'])
+
+    def test_a_diff_brief_should_list_removed_tests_and_prebuilt_sisu(self):
+        run_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, run_dir)
+        build = run_dir / 'bin' / self.head / 'sisu'
+        build.parent.mkdir(parents=True)
+        build.write_text('')
+        out = run_dir / 'brief.md'
+        with mock.patch.dict(os.environ, ENV, clear=True), \
+             mock.patch.object(sys, 'argv', ['diff_brief.py', str(self.repo), 'HEAD~1..HEAD', str(out)]), \
+             mock.patch('sys.stderr'), mock.patch('sys.stdout'):
+            diff_brief.main()
+        focus = out.read_text().split('# Focus', 1)[1]
+        self.assertIn('- src/tests.rs:4: (2, "row two"),\n- tests/gone.sisu: deleted', focus)
+        self.assertIn(f'- {self.head[:8]} head: {build}', focus)
+
 
 if __name__ == '__main__':
     unittest.main()

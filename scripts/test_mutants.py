@@ -125,11 +125,13 @@ class Mutants(unittest.TestCase):
         self.assertEqual(run.returncode, 1)
         self.assertIn('(cargo mutants exit 4, see the output above)', self.last_line())
 
-    def test_uncommitted_rust_should_show_in_the_summary(self):
+    def test_uncommitted_rust_should_fail_without_running_cargo(self):
         self.rust_commit()
         self.write_rust('fn main() { let _x = 1; }\n')
         run = self.mutate(caught=1)
-        self.assertTrue(self.last_line().endswith(f'(HEAD {self.head()} with uncommitted changes)'))
+        self.assertEqual(run.returncode, 1)
+        self.assertEqual(self.last_line(), 'mutation-test: FAIL: uncommitted Rust changes; commit them, then run again')
+        self.assertFalse(self.seen('seen'))
 
     def test_cargo_should_run_niced_with_two_jobs_by_default(self):
         self.rust_commit()

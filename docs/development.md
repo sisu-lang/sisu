@@ -200,8 +200,9 @@ $ make mutation-test BASE=feat/m3-writes    # changes since the stage below
 $ scripts/mutants.sh HEAD~1 --list          # list the mutants, test none
 ```
 
-The diff includes uncommitted edits. A new file counts once `git add` tracks
-it.
+Commit first: the script refuses uncommitted Rust changes with
+`mutation-test: FAIL: uncommitted Rust changes`, because a review takes the
+log of a commit only.
 
 The script runs `cargo mutants` under `nice -n 19`, 2 mutants at a time.
 `-j` or `CARGO_MUTANTS_JOBS` sets another number. `.cargo/mutants.toml` sets
@@ -209,9 +210,7 @@ The script runs `cargo mutants` under `nice -n 19`, 2 mutants at a time.
 costs time.
 
 The last line is the summary: `mutation-test: PASS` or `mutation-test: FAIL`,
-then `N caught, N unviable, N missed, N timeouts`, then `(HEAD <sha>)`, or
-`(HEAD <sha> with uncommitted changes)` when the working tree has uncommitted
-Rust changes. PASS needs no missed mutant; a mutant that hangs the tests until
+then `N caught, N unviable, N missed, N timeouts`, then `(HEAD <sha>)`. PASS needs no missed mutant; a mutant that hangs the tests until
 cargo-mutants' timeout counts as caught. A mutant proven equivalent goes into
 `exclude_re` in `.cargo/mutants.toml`, with the proof in a comment, so later
 runs skip it. A diff that changes no `.rs` file passes at once, with nothing

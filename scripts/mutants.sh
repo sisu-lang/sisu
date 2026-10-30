@@ -11,7 +11,8 @@
 # It runs under nice -n 19 with 2 mutants at a time unless -j or CARGO_MUTANTS_JOBS says otherwise.
 # The last line is a summary that starts "mutation-test: PASS" or "mutation-test: FAIL".
 # A summary of a run that measured a commit ends "(HEAD <sha>)"; NOT RUN lines and the
-# lines of a refused argument do not.
+# lines of a refused argument or of a refused tree do not.
+# It refuses uncommitted Rust changes, because a review takes the log of a commit only.
 # PASS needs no missed mutant; a timeout counts as caught.
 # A run that tests no mutant, for example when the diff holds none, passes with "no mutant tested".
 # A diff that changes no .rs file passes without running cargo mutants.
@@ -44,7 +45,6 @@ trap cleanup EXIT
 
 # The summary names the commit it measured, so a log is checked by its last line alone.
 head=$(git rev-parse HEAD)
-git diff --quiet HEAD -- '*.rs' || head+=' with uncommitted changes'
 base=${1:-$(git merge-base main HEAD)}
 [[ $# -gt 0 ]] && shift
 not_run=
@@ -61,6 +61,12 @@ for arg in "$@"; do
       ;;
   esac
 done
+# Refused before cargo starts: an hour of mutants on uncommitted code gives a log no review takes.
+if [[ -z $not_run ]] && ! git diff --quiet HEAD -- '*.rs'; then
+  verdict="mutation-test: FAIL: uncommitted Rust changes; commit them, then run again"
+  echo "$verdict"
+  exit 1
+fi
 # Mutation testing changes Rust code only, so a diff without any has nothing to mutate.
 if git diff --quiet "$base" -- '*.rs'; then
   verdict="mutation-test: PASS: no Rust changes since $base"
