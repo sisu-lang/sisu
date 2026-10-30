@@ -118,7 +118,7 @@ def coverage_mismatch(path, repo, head):
         return f'no coverage line ending "(HEAD <sha>)" in {path}'
     measured, want = found[1], commit(repo, head)
     if found[2]:
-        return f'{path} measured uncommitted changes on {measured[:8]}; commit them, then run again'
+        return f'{path} measured uncommitted changes on {measured[:8]}, or HEAD changed during the run; run make coverage again at the head on a clean tree'
     if measured != want:
         return f'{path} measured {measured[:8]}, not the head {want[:8] or "unknown"}; run make coverage again at the head'
     return None
