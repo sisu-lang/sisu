@@ -583,7 +583,7 @@ fn closure(
     receiver: Type,
 ) -> Vec<(&'static str, Vec<Type>)> {
     let program = parse_ok(src);
-    let mut checker = Checker::new(&program, src);
+    let mut checker = Checker::new(&program, src, "");
     let items: Vec<&ast::Item> = program.items.iter().collect();
     checker.collect_names(&items, items.len(), &program.broken);
     checker.interface_signatures(&items);

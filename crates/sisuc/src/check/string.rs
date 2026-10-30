@@ -134,7 +134,7 @@ impl Checker<'_> {
             let help = match ty.kind() {
                 _ if ty == Type::I64 => Some(PrecisionHelp::Convert(part.span)),
                 TypeKind::Optional(inner) if inner == Type::F64 => {
-                    let written = self.source.file.slice(part.span.range());
+                    let written = self.source.slice(part.span.range());
                     Some(PrecisionHelp::Default {
                         // `??` binds looser than a call, a field or an index; any other part
                         // needs parentheses before it.
@@ -143,7 +143,7 @@ impl Checker<'_> {
                         } else {
                             format!("({written})")
                         },
-                        spec: self.source.file.slice(spec.span.range()).to_string(),
+                        spec: self.source.slice(spec.span.range()).to_string(),
                     })
                 }
                 _ => None,
@@ -493,7 +493,7 @@ impl Checker<'_> {
     fn literal_name(&self, e: &ast::Expr) -> Option<String> {
         (matches!(e.kind, ExprKind::Str(_))
             && self.source.quotes.binary_search(&e.span.start()).is_ok())
-        .then(|| literal(self.source.file.text(e.span)))
+        .then(|| literal(self.source.text(e.span)))
     }
 }
 

@@ -61,7 +61,7 @@ impl Checker<'_> {
                 at: receiver.span,
                 access: None,
                 peel: Some(Peel {
-                    receiver: self.source.file.text(receiver.span).to_string(),
+                    receiver: self.source.text(receiver.span).to_string(),
                     left: self.type_name(payload),
                     member: name.name.to_string(),
                 }),
@@ -560,7 +560,7 @@ impl Checker<'_> {
         let unique =
             candidate_results(rets).find_map(|(_, ret)| ret.filter(|ret| counts[ret] == 1));
         let annotate = unique.filter(|_| !open).map(|ret| Annotate {
-            call: self.source.file.text(span).to_string(),
+            call: self.source.text(span).to_string(),
             binding: self.let_binding(span).unwrap_or_else(|| "x".to_string()),
             ty: self.type_name(ret),
         });

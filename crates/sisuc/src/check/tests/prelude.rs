@@ -692,6 +692,41 @@ fn dbg_should_lower_to_a_node_with_the_source_text() {
     );
 }
 
+/// A `dbg` in a function of the prelude holds the text of its argument, which the checker reads
+/// from the prelude's text and not from the user's file: a span of the prelude lies outside the
+/// user's text. The program calls the function, which a prelude with a method, a free function, a
+/// class method, or a string literal in the body gives.
+#[test]
+fn dbg_in_a_prelude_function_should_hold_the_text_of_its_argument() {
+    for (prelude, main, part) in [
+        (
+            "extend i64 {\n    fn probe(self) -> i64 {\n        dbg(self)\n        self\n    }\n}\n",
+            "fn main() {\n    print(5.probe())\n}",
+            "(dbg \"self\"",
+        ),
+        (
+            "fn probe(n: i64) -> i64 {\n    dbg(n +   1)\n    n\n}\n",
+            "fn main() {\n    print(probe(5))\n}",
+            "(dbg \"n +   1\"",
+        ),
+        (
+            "class Probe {\n    n: i64\n    fn probe(self) -> i64 {\n        dbg(self.n)\n        self.n\n    }\n}\n",
+            "fn main() {\n    print(Probe(n: 5).probe())\n}",
+            "(dbg \"self.n\"",
+        ),
+        (
+            "fn probe() -> string {\n    dbg(\"text\")\n}\n",
+            "fn main() {\n    print(probe())\n}",
+            "(dbg \"\\\"text\\\"\"",
+        ),
+    ] {
+        let (program, ds) = front_end::checked_with(prelude, main);
+        assert!(ds.is_empty(), "{prelude}: {ds:?}");
+        let printed = program.expect("no errors").to_string();
+        assert!(printed.contains(part), "{part} in {printed}");
+    }
+}
+
 /// `dbg(e)` has the type of `e`, checked against the expected type as `e` alone is, and gives no
 /// warning, an optional included.
 #[test]

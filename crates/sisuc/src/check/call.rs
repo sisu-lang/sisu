@@ -247,7 +247,7 @@ impl Checker<'_> {
     /// loop label, and the call starts the value of an unlabeled `break`: the fix then writes
     /// the label there, unless it wraps the receiver in parentheses.
     fn label_starts_receiver(&self, callee: &ast::Ident, first: &ast::Arg) -> bool {
-        let text = self.source.file.rest(first.value.span.start());
+        let text = self.source.rest(first.value.span.start());
         let end = text
             .find(|c: char| !(c.is_alphanumeric() || c == '_'))
             .unwrap_or(text.len());
@@ -407,7 +407,7 @@ impl Checker<'_> {
                         deferred = false;
                         c.stray(args);
                         let at = receiver.span.to(method.span);
-                        let text = c.source.file;
+                        let text = c.source;
                         let compare = (arity == 0).then(|| {
                             let rest = text.slice(at.end()..first.span.end());
                             format!("{}(){rest}", text.text(at))
@@ -614,11 +614,6 @@ impl Checker<'_> {
         args: &[ast::Arg],
     ) -> Checked {
         self.record(Used::Func(func), span);
-        // A call from the user's file into the prelude needs the prelude's function in the
-        // program: `mono` roots only the user's functions (see `tir::Program::instantiates`).
-        if self.signatures[func.0].span.in_prelude() && !span.in_prelude() {
-            self.instantiates = true;
-        }
         // A method that meets a requirement uses the interfaces that it meets.
         if let Some(interfaces) = self.meets.get(&func).cloned() {
             for interface in interfaces {

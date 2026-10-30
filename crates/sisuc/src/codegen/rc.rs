@@ -576,7 +576,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             }
         }
         let args: Vec<_> = values.iter().map(|&value| value.into()).collect();
-        self.call_value(method, &args)
+        self.call_written(method, &args)
             .expect("a written `eq` should return a `bool`")
             .into_int_value()
     }

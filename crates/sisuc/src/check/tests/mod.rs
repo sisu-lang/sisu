@@ -4135,10 +4135,10 @@ fn suggestions_keep_to_their_kind() {
 }
 
 #[test]
-fn with_body_restores_the_outer_body() {
+fn with_body_should_restore_the_outer_body() {
     let src = "";
     let program = parse_ok(src);
-    let mut checker = Checker::new(&program, src);
+    let mut checker = Checker::new(&program, src, "");
     checker.body.ret = Some(Type::I64);
     let (inner, finished) = checker.with_body(Body::default(), |c| {
         assert_eq!(c.body.ret, None);
