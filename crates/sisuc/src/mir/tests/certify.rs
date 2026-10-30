@@ -2935,6 +2935,18 @@ fn violation_message_names_where_and_what() {
     certified(&b.finish());
 }
 
+/// The message of a write through `Some` that no test proves names the missing proof.
+#[test]
+#[should_panic(
+    expected = "mir certifier: fn f, bb0, xs#0: a write through `Some` that no presence test on a chain of present edges proves"
+)]
+fn unproved_write_message_should_name_the_missing_proof() {
+    let mut b = Builder::new("f");
+    let xs = b.param("xs", Type::optional(Type::array(Type::I64)));
+    b.block(released(vec![push_one(some(xs))], &[xs]), ret());
+    certified(&b.finish());
+}
+
 /// Every range of a pseudo-random array, and of a falling one, against a scan: its least
 /// value, and the positions whose values lie in a range.
 #[test]
