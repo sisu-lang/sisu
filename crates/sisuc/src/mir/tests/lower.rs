@@ -259,12 +259,12 @@ fn push_through_a_safe_access_should_test_the_optional_again_after_its_argument(
 }
 
 /// A `push` through a chain of optional objects is lowered in steps in proportion to the chain.
-/// Each `?.` is an `if let` that binds its object, so the chain is one arm after another, and a
-/// scope that an arm leaves is popped: a later arm releases no entry of an earlier one. The
-/// counters are the arms lowered with the scope entries their exits release (`ARM_STEPS`) and the
-/// expressions that the pin rule walks (`WALKED`). Other traversals of the chain are not counted
-/// here: the passes after lowering, which run on the mir (`certify` counts its own walks), the
-/// `owners` map (one entry per borrowed binding) and the printer.
+/// Each `?.` is an `if let` that binds its object, so the chain lowers one arm for each link
+/// (`ARM_STEPS`), and the pin rule walks the expressions of the chain once (`WALKED`). The counts
+/// follow the shape of the typed tree, so this guards the shape that the checker gives the chain.
+/// A change to lowering that repeats work without a tick does not change them. Other traversals
+/// of the chain are not counted here: the passes after lowering, which run on the mir (`certify`
+/// counts its own walks), the `owners` map (one entry per borrowed binding) and the printer.
 #[test]
 fn push_through_a_chain_of_objects_should_lower_in_linear_steps() {
     let steps = |objects: usize| {

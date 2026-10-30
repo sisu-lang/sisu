@@ -470,8 +470,6 @@ impl<'a> Lowering<'a> {
     /// newest first, without popping them.
     fn release_scope(&mut self, mark: usize) {
         for i in (mark..self.scope.len()).rev() {
-            #[cfg(test)]
-            ARM_STEPS.set(ARM_STEPS.get() + 1);
             let (local, borrowed) = self.scope[i];
             self.push(if borrowed {
                 Statement::End(local)
@@ -1508,8 +1506,7 @@ fn mentions(e: &Expr, found: &mut Mentions) {
 thread_local! {
     /// How many expressions `mentions` has walked on this thread.
     pub(super) static WALKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many arms of an `if`, an `if let` or a `match` lowering has lowered on this thread,
-    /// and how many scope entries their exits have released.
+    /// How many arms of an `if`, an `if let` or a `match` lowering has lowered on this thread.
     pub(super) static ARM_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many guard-membership records `is_guarded` has read on this thread: one flag per
     /// question about a source local.
