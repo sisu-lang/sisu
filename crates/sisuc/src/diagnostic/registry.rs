@@ -1847,8 +1847,8 @@ pub(crate) enum NotConformForm {
 pub(crate) enum PreludeBound {
     /// The type itself fails the bound.
     Call,
-    /// A part of the type fails the bound: `part` does not conform to `interface`.
-    Since { part: String, interface: String },
+    /// A part of the type fails the bound: `part` does not conform to the interface.
+    Since { part: String },
 }
 
 /// What the report of a missing operator (`NoOperator`) says besides the missing operator.
@@ -2435,7 +2435,7 @@ impl From<DiagnosticKind> for Diagnostic {
                             Some(PreludeBound::Call) => {
                                 d.with_label("required by the bound of this call")
                             }
-                            Some(PreludeBound::Since { part, interface }) => d.with_label(format!(
+                            Some(PreludeBound::Since { part }) => d.with_label(format!(
                                 "required by the bound of this call, since `{part}` does not conform to `{interface}`"
                             )),
                             None => d,

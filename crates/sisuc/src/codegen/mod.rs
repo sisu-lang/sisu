@@ -404,8 +404,9 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// `Call`: `func` applied to the evaluated `args`; `None` for a `unit` result. The caller
     /// adds the two location arguments of a prelude function. The helpers of `to_string`, `eq`
-    /// and `less` do not, as they call a written method, which the prelude has none of: the
-    /// count of `args` is checked so that the first prelude conformance fails here.
+    /// and `less` do not add them, because they call a written method. The prelude writes none
+    /// of these methods. The count of `args` is checked, so the first prelude conformance fails
+    /// here.
     fn call_value(
         &self,
         func: FuncId,

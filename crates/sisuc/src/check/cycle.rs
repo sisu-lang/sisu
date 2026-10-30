@@ -29,8 +29,9 @@
 //! the edges grow with the program, and a path through the hub stands for an edge from `P` to
 //! `Q` for each call and conformance, which a pair of edges for each would make a product.
 //!
-//! The operators `==` and `<` call a written `eq` or `less` through a helper that is not a call
-//! in the typed tree, so each one in a generic body adds an edge, by the type of its operand. An
+//! The operators `==` and `<` call a written `eq` or `less` through a helper. The helper is not
+//! a call in the typed tree, so each operator in a generic body adds an edge, by the type of its
+//! operand. An
 //! array or an optional passes its element or its contents, which the generated rule does at no
 //! cost. An enum with no written conformance to the interface passes its arguments to
 //! the enum's generated `Eq` node, a declaration of its own that has the enum's parameters and an
@@ -918,8 +919,8 @@ impl Checker<'_> {
                 continue;
             };
             // No report points into the prelude: a step inside one of its functions is left out,
-            // and the sites in the user's file show the cycle. Its interface still explains the
-            // help, as it did when `contains` was built in.
+            // and the sites in the user's file show the cycle. Its interface still gives the help
+            // about a call through the interface.
             if e.mark.in_prelude() {
                 if let Instance::Required(interface, ..) = instance {
                     reach.get_or_insert(interface);

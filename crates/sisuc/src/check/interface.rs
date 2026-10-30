@@ -1620,7 +1620,6 @@ impl Checker<'_> {
             if part_fails {
                 PreludeBound::Since {
                     part: self.type_name(leaf),
-                    interface: self.bound_text(bound.interface, args),
                 }
             } else {
                 PreludeBound::Call
