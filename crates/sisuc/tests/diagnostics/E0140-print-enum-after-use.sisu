@@ -1,0 +1,15 @@
+class W<T> {
+    v: T
+}
+extend<T: Display> W<T>: Display {
+    fn to_string(self) -> string {
+        print(E.Has(W(v: [self.v])))
+        ""
+    }
+}
+enum E<T> {
+    Has(W<T>)
+}
+fn main() {
+    print(W(v: 1))
+}

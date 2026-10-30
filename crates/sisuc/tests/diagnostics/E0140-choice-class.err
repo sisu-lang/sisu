@@ -1,0 +1,13 @@
+error[E0140]: `C` instantiates itself without end
+  --> E0140-choice-class.sisu:8:17
+   |
+ 8 |     type Item = C<W<W<T>>>
+   |                 ^^^^^^^^^^ `C<W<W<T>>>` here
+...
+12 |     f: [T.Item]
+   |        -------- which instantiates `T.Item`
+   |
+   = help: the check is cautious: `T.Item` counts as each choice that a conformance makes, unless the check can show that it is impossible
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

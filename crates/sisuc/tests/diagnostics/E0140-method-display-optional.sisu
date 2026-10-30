@@ -1,0 +1,12 @@
+class W<T> {
+    v: T
+}
+extend<T: Display> W<T>: Display {
+    fn to_string(self) -> string {
+        let a: W<[T]>? = W(v: [self.v])
+        a.to_string()
+    }
+}
+fn main() {
+    print(W(v: 1))
+}

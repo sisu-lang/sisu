@@ -2,7 +2,7 @@ error[E0140]: `E` instantiates itself without end
   --> E0140-display-node.sisu:8:9
    |
  8 |     One(W<[U]>)
-   |         ^^^^^^ `Display.to_string` here
+   |         ^^^^^^ the `to_string` of `E` shows `W<[U]>` here
 ...
 17 |         print(E.One(W(x: [self.x])))
    |         ---------------------------- which instantiates `E<T>`

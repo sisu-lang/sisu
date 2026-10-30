@@ -77,7 +77,14 @@
 //! parameter in the conformance's target, so that a use and a choice add one edge each, not one
 //! for each pair. The type chosen gives the edges that a field type gives. The choice
 //! `type Item = E<W<W<T>>>` of `W<T>` gives the enum `E<T: I>` that holds `T.Item` an edge back to
-//! itself of weight 1. A link of the base whose associated type has unbounded growth for the
+//! itself of weight 1. A use `P.Link.Item` whose base is an associated type means only the
+//! choices of `Item` made by the classes and enums that the choices of `Link` name, since `P.Link`
+//! is one of those types (`Assocs::heads`). Such a use feeds the gate of each of those choices
+//! instead of the hub: a node of its own for each choice, which the hub feeds too, and which feeds
+//! the choice's parameters. A use reads at most `MATCHING_CHOICES` heads and choices; above that,
+//! or when a choice of `Link` names a parameter, an associated type or any other type, the use
+//! feeds the hub. The graph does not follow the head from one turn of a cycle to the next. A
+//! link of the base whose associated type has unbounded growth for the
 //! arguments of its use adds no weight: the edge is made from the base without that link, and the
 //! other links keep their growth. The link may be a cycle of names alone, which instantiates no
 //! class or enum, and its weight there would report a program that has its own error. It may also
@@ -111,10 +118,10 @@ use std::collections::VecDeque;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::Checker;
+use super::{Checker, Lowered};
 use crate::ast::angled;
 use crate::conformance::always_written;
-use crate::diagnostic::{DiagnosticKind, Hop};
+use crate::diagnostic::{DiagnosticKind, Hop, Spelled};
 use crate::graph::components;
 use crate::source::Span;
 use crate::tir::{self, Type, TypeArgs, TypeKind, head_of};
@@ -124,6 +131,8 @@ use crate::types::{Head, write_args, write_method};
 thread_local! {
     /// How many edges the last instantiation graph on this thread held.
     pub(super) static EDGES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many heads and calls of `Graph::matching` have been read on this thread.
+    pub(super) static MATCHING_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many edges Bellman–Ford has relaxed on this thread.
     pub(super) static BELLMAN_FORD_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many nodes the search for a cycle has read to gather the nodes of the components.
@@ -145,16 +154,52 @@ thread_local! {
 /// of the graph can take back.
 const UNBOUNDED: i64 = 1 << 32;
 
+/// The most heads and choices that one use of an associated type reads to find the choices that it
+/// can mean (`Graph::matching`). Above it, the use feeds the hub of all the choices, so the edges
+/// of the graph stay in proportion to the program.
+const MATCHING_CHOICES: usize = 64;
+
+/// The interface that `instance` calls through, if it calls through one.
+fn calls_through(instance: Instance) -> Option<tir::InterfaceId> {
+    match instance {
+        Instance::Required(interface, ..) | Instance::Operator(interface, _) => Some(interface),
+        Instance::Call(..) | Instance::Type(..) => None,
+    }
+}
+
 /// An instantiation, which a diagnostic writes as the program does.
 #[derive(Clone, Copy)]
 enum Instance {
-    /// A call of the function, with its type arguments, a method's owner's first.
-    Call(tir::FuncId, TypeArgs),
-    /// A generic class or enum, as a type.
-    Type(Type),
+    /// A call of the function, with its type arguments, a method's owner's first. With a
+    /// `Spelling`, the program wrote an operator and the typed tree lowered it to this call.
+    Call(tir::FuncId, TypeArgs, Option<Spelling>),
+    /// A generic class or enum, as a type. With a `Spelling`, the program wrote an operator or a
+    /// method call that reaches the type's generated node.
+    Type(Type, Option<Spelling>),
     /// A call of a requirement of an interface, by the requirement's place, with its own type
     /// arguments.
     Required(tir::InterfaceId, usize, TypeArgs),
+    /// A call through a language interface that the program spells as an operator, an
+    /// interpolation or a generated `==` or `to_string`, and not as a call of the method.
+    Operator(tir::InterfaceId, Written),
+}
+
+/// A language interface and how the program spells a call through it.
+type Spelling = (tir::InterfaceId, Written);
+
+/// How the program spells a call through a language interface that is not a call of its method.
+/// A call of the method through a bound, as `x.eq(y)` writes it, is a `Required` instance.
+#[derive(Clone, Copy)]
+enum Written {
+    /// An operator or built-in function, as written: `==`, `<`, `contains` or `print`.
+    Op(&'static str),
+    /// A part of an interpolation.
+    Interpolation,
+    /// The generated `==` or `to_string` of an enum, for the payload type given.
+    Generated(Type),
+    /// A call of the method, as `x.eq(y)` or `x.to_string()` writes it on a type whose conformance
+    /// the compiler writes. The typed tree lowers it to the node of the operator.
+    Method,
 }
 
 /// An edge of the graph, from an instantiation at `site` inside the declaration `holder`; or,
@@ -186,13 +231,16 @@ struct Edge {
 /// conformance's parameters, as a hub is: the base of the associated type feeds them, and the
 /// type chosen gives the edges.
 struct Choice {
-    /// The class or enum that the conformance has as its target, which a diagnostic names.
-    head: Head,
     /// The type chosen, and where it is written.
     ty: Type,
     at: Span,
     /// The greatest depth of each parameter of the conformance in its target (`param_depths`).
     depths: Vec<i64>,
+    /// The slot of the choice (`Assocs::slot`).
+    slot: usize,
+    /// Whether the choice is made for interface arguments that hold a parameter: any use of its
+    /// place may mean it.
+    loose: bool,
 }
 
 /// The associated types of the interfaces, as the graph reads them. A place is an associated
@@ -222,6 +270,11 @@ struct Assocs {
     hubs: Vec<Hub>,
     /// By place and slot, the hub that a use feeds, if a choice can be meant.
     hub_at: Vec<Option<usize>>,
+    /// By place, the classes and enums that its choices name as the type chosen, or `None` when a
+    /// choice names any other type (a parameter, an associated type, an array) or is missing.
+    heads: Vec<Option<Vec<Head>>>,
+    /// By place and head, the choices that a conformance of the head makes for the place.
+    by_head: FxHashMap<(usize, Head), Vec<usize>>,
 }
 
 /// A node that stands for a set of choices, or for hubs that do, so that the uses of an
@@ -395,7 +448,14 @@ impl Graph {
 
     /// An edge into the hub declaration `hub` from the node `from`, for the operator or call at
     /// `site` inside `holder`: it hands on an operand of the receiver's type.
-    fn receive(&mut self, holder: usize, from: usize, hub: usize, site: Span, instance: Instance) {
+    fn receive(
+        &mut self,
+        holder: usize,
+        from: usize,
+        hub: usize,
+        (site, mark): (Span, Span),
+        instance: Instance,
+    ) {
         self.edges.push(Edge {
             from,
             to: self.first[hub],
@@ -405,7 +465,7 @@ impl Graph {
             assoc: false,
             holder,
             site,
-            mark: site,
+            mark,
             instance: Some(instance),
         });
     }
@@ -428,42 +488,60 @@ impl Graph {
 
     /// The edges of an operator of the language interface `interface` on an operand of type `ty`
     /// inside `holder`, at `site`: see the module doc. An operand that names no parameter adds
-    /// none.
-    fn operator(&mut self, holder: usize, ty: Type, interface: tir::InterfaceId, site: Span) {
+    /// none. A diagnostic underlines `mark` and spells the call as `written`, or as a call of the
+    /// method when there is none.
+    fn operator(
+        &mut self,
+        holder: usize,
+        ty: Type,
+        interface: tir::InterfaceId,
+        (site, mark): (Span, Span),
+        written: Option<Written>,
+    ) {
         let ty = self.core(ty);
         if !ty.has_param() {
             return;
         }
-        let instance = Instance::Required(interface, 0, TypeArgs::NONE);
+        let instance = written.map_or(
+            Instance::Required(interface, 0, TypeArgs::NONE),
+            |written| Instance::Operator(interface, written),
+        );
+        // A generated node keeps the type as its label: only the program's own spelling replaces
+        // it.
+        let spelling = match written {
+            Some(Written::Generated(_)) => None,
+            written => Some((interface, written.unwrap_or(Written::Method))),
+        };
         let hub = self.interface_hubs + interface.0;
         match ty.kind() {
             TypeKind::Param(_, i) => {
                 let from = self.second(holder, i as usize);
-                self.receive(holder, from, hub, site, instance);
+                self.receive(holder, from, hub, (site, mark), instance);
             }
             TypeKind::Enum(id, args) => {
-                let (written, unconditional) = self
+                let (listed, unconditional) = self
                     .records
                     .get(&(interface, id))
                     .copied()
                     .unwrap_or_default();
-                if !written || !unconditional {
+                if !listed || !unconditional {
                     let first = if interface == self.display {
                         self.display_first
                     } else {
                         self.eq_first
                     };
                     let target = first + id.0;
-                    self.args(holder, args.get(), target, site, site, Instance::Type(ty));
+                    let instance = Instance::Type(ty, spelling);
+                    self.args(holder, args.get(), target, site, mark, instance);
                 }
-                if written {
+                if listed {
                     let from = self.node(holder, ty);
-                    self.receive(holder, from, hub, site, instance);
+                    self.receive(holder, from, hub, (site, mark), instance);
                 }
             }
             _ => {
                 let from = self.node(holder, ty);
-                self.receive(holder, from, hub, site, instance);
+                self.receive(holder, from, hub, (site, mark), instance);
             }
         }
     }
@@ -537,18 +615,24 @@ impl Graph {
         }
     }
 
-    /// The edge of the associated type `ty` of `base`, written at `site` inside `holder`, whose
+    /// The edges of the associated type `ty` of `base`, written at `site` inside `holder`, whose
     /// choices the hub `hub` stands for. It is what each choice chooses, with the choice's
-    /// parameters standing for parts of the base: the base feeds the hub of the choices (`Hub`),
-    /// which feeds each parameter of the conformance, less the greatest depth of the parameter in
-    /// the target, the way a hub feeds the methods of a conformance. The type chosen gives the
-    /// edges on from there (`Choice`).
+    /// parameters standing for parts of the base: the base feeds the choices (`Hub`), which feed
+    /// each parameter of the conformance, less the greatest depth of the parameter in the
+    /// target, the way a hub feeds the methods of a conformance. The type chosen gives the edges
+    /// on from there (`Choice`). The base feeds the gate of each choice that it can mean when
+    /// `matching` knows them, else the hub of them all.
     fn choose(&mut self, holder: usize, ty: Type, base: Type, hub: usize, site: Span) {
-        let base = self.without_unbounded(base);
-        let from = self.node(holder, base);
-        self.edges.push(Edge {
+        // The node of the base is made only when a choice needs it; making it needs `self`, so
+        // the iterator, which borrows the choices, is asked again after it.
+        let meant = Self::matching(&self.assocs, ty, base);
+        if meant.is_some_and(|mut choices| choices.next().is_none()) {
+            return;
+        }
+        let from = self.node(holder, self.without_unbounded(base));
+        let edge = |to| Edge {
             from,
-            to: self.first[self.hubs_first() + hub],
+            to,
             weight: 0,
             growing: false,
             out: false,
@@ -556,8 +640,60 @@ impl Graph {
             holder,
             site,
             mark: site,
-            instance: Some(Instance::Type(ty)),
-        });
+            instance: Some(Instance::Type(ty, None)),
+        };
+        let gates = self.gates_first();
+        match Self::matching(&self.assocs, ty, base) {
+            Some(choices) => {
+                for c in choices {
+                    self.edges.push(edge(self.first[gates + c]));
+                }
+            }
+            None => self.edges.push(edge(self.first[self.hubs_first() + hub])),
+        }
+    }
+
+    /// The choices of the associated type `ty` that a use with the base `base` can mean, when the
+    /// base is itself an associated type `P.Link`: `P.Link` is a type that a choice of `Link`
+    /// names, so a choice of `ty` is meant only if a conformance of that type's class or enum
+    /// makes it. `None` when the base is no associated type, when a choice of `Link` names any
+    /// other type, or when more than `MATCHING_CHOICES` heads and choices must be read: the use
+    /// then feeds the hub of all the choices.
+    fn matching(assocs: &Assocs, ty: Type, base: Type) -> Option<impl Iterator<Item = usize>> {
+        let (TypeKind::Assoc(_, interface, args, k), TypeKind::Assoc(_, link, _, l)) =
+            (ty.kind(), base.kind())
+        else {
+            return None;
+        };
+        let place = assocs.first[interface.0] + k as usize;
+        let slot =
+            (assocs.slot(place, args)).expect("a use whose place has a hub should have a slot");
+        let heads = assocs.heads[assocs.first[link.0] + l as usize].as_ref()?;
+        #[cfg(test)]
+        MATCHING_READS.set(MATCHING_READS.get() + 1);
+        let made = move |head: &Head| {
+            #[cfg(test)]
+            MATCHING_READS.set(MATCHING_READS.get() + 1);
+            (assocs.by_head.get(&(place, *head))).map_or(&[][..], Vec::as_slice)
+        };
+        // One read for each head, and one for each choice that a head makes. The count stops at
+        // the cap, so that a use reads at most `MATCHING_CHOICES` and one more.
+        let within = heads.len() <= MATCHING_CHOICES
+            && (heads.iter())
+                .try_fold(heads.len(), |read, head| {
+                    Some(read + made(head).len()).filter(|&read| read <= MATCHING_CHOICES)
+                })
+                .is_some();
+        // shortcut: above K matching choices a use feeds the whole hub;
+        // raise K if a real program hits it.
+        within.then(|| {
+            // An open use means any choice of the place, a closed one the choices of its slot
+            // and those for arguments that hold a parameter.
+            (heads.iter().flat_map(made).copied()).filter(move |&c| {
+                let choice = &assocs.choices[c];
+                slot == place || choice.slot == slot || choice.loose
+            })
+        })
     }
 
     /// `base` without the links of its chain that have unbounded growth for the arguments of
@@ -584,31 +720,59 @@ impl Graph {
         inner
     }
 
+    /// The declaration that the headline of the cycle `cycle` names, whose edge `label` is the
+    /// label. The label of a choice stands at the type that the choice names, whose holder is the
+    /// choice. The cycle holds the declaration that holds the associated type: it is the holder of
+    /// the last edge before the label that is no part of a choice.
+    fn headline(&self, cycle: &[usize], label: usize) -> usize {
+        let holder = self.edges[label].holder;
+        if holder < self.choices_first {
+            return holder;
+        }
+        (cycle.iter().rev())
+            .map(|&i| self.edges[i].holder)
+            .find(|&holder| holder < self.choices_first)
+            .unwrap_or(holder)
+    }
+
     /// The declaration of the first hub of the choices; the others follow the choices.
     fn hubs_first(&self) -> usize {
         self.choices_first + self.assocs.choices.len()
     }
 
-    /// The edges out of each hub of the choices: to each choice it stands for, minus the greatest
-    /// depth of each parameter in the conformance's target, and to the hubs it reaches.
+    /// The declaration of the gate of the first choice; the others follow the hubs of the choices.
+    fn gates_first(&self) -> usize {
+        self.hubs_first() + self.assocs.hubs.len()
+    }
+
+    /// The edges out of each hub of the choices: to the gate of each choice it stands for, at no
+    /// cost, and to the hubs it reaches; and out of each gate: to each parameter of its choice,
+    /// minus the greatest depth of the parameter in the conformance's target. A use that can mean
+    /// only some choices of a hub feeds their gates (`Graph::choose`).
     fn feed(&mut self) {
         for (h, hub) in self.assocs.hubs.iter().enumerate() {
             let from = self.first[self.hubs_first() + h];
             for &c in &hub.choices {
-                let first = self.first[self.choices_first + c];
-                for (q, depth) in self.assocs.choices[c].depths.iter().enumerate() {
-                    self.edges.push(Self::hub_edge(
-                        from,
-                        first + q,
-                        -depth,
-                        self.choices_first + c,
-                    ));
-                }
+                let to = self.first[self.gates_first() + c];
+                self.edges
+                    .push(Self::hub_edge(from, to, 0, self.choices_first + c));
             }
             for &other in &hub.hubs {
                 let to = self.first[self.hubs_first() + other];
                 self.edges
                     .push(Self::hub_edge(from, to, 0, self.hubs_first() + other));
+            }
+        }
+        for (c, choice) in self.assocs.choices.iter().enumerate() {
+            let from = self.first[self.gates_first() + c];
+            let first = self.first[self.choices_first + c];
+            for (q, depth) in choice.depths.iter().enumerate() {
+                self.edges.push(Self::hub_edge(
+                    from,
+                    first + q,
+                    -depth,
+                    self.choices_first + c,
+                ));
             }
         }
     }
@@ -664,7 +828,14 @@ impl Graph {
                 _ => continue,
             };
             let mark = spans.get(&ty).copied().unwrap_or(site);
-            self.args(holder, args.get(), target, site, mark, Instance::Type(ty));
+            self.args(
+                holder,
+                args.get(),
+                target,
+                site,
+                mark,
+                Instance::Type(ty, None),
+            );
             stack.extend(args.get());
         }
     }
@@ -881,6 +1052,9 @@ impl Checker<'_> {
                 .expect("a cycle of positive weight should hold a step of positive weight")
         });
         let edge = &edges[label];
+        let label_instance = edge
+            .instance
+            .expect("a labeled edge should be an instantiation");
         if !reported.insert(edge.site) {
             return;
         }
@@ -892,20 +1066,23 @@ impl Checker<'_> {
         let mut cycle = cycle;
         cycle.rotate_left(at);
         let (mut through, mut reach) = (Vec::new(), None);
+        let choice = self.choice_use(edges, &cycle);
+        let label_spelled = self.spell(functions, graph, edge.holder, label_instance);
         // A call that gives two parameters their arguments is one site, shown once.
         let mut shown = FxHashSet::from_iter([edge.site]);
-        if let Some(Instance::Required(interface, ..)) = edge.instance {
-            reach = Some(interface);
+        if let Some(interface) = calls_through(label_instance) {
+            reach = Some((interface, label_spelled.clone()));
         }
         // A call through a hub, until the edge out of the hub says which method it may run.
-        let mut calling: Option<(Span, tir::InterfaceId)> = None;
+        let mut calling: Option<(Span, tir::InterfaceId, Option<Spelled>)> = None;
         for &i in &cycle[1..] {
             let e = &edges[i];
             if e.out {
-                if let Some((mark, interface)) = calling.take() {
+                if let Some((mark, interface, by)) = calling.take() {
                     through.push((
                         mark,
                         Hop::Calls {
+                            by,
                             // The method that the cycle takes, of all the hub reaches.
                             method: self.method_text(functions, e.holder),
                             interface: self.interfaces[interface.0].name.name.to_string(),
@@ -920,9 +1097,11 @@ impl Checker<'_> {
             if !shown.insert(e.site) {
                 continue;
             }
-            if let Instance::Required(interface, ..) = instance {
-                reach.get_or_insert(interface);
-                calling = Some((e.mark, interface));
+            if let Some(interface) = calls_through(instance) {
+                let spelled = self.spell(functions, graph, e.holder, instance);
+                let by = matches!(instance, Instance::Operator(..)).then(|| spelled.clone());
+                reach.get_or_insert((interface, spelled));
+                calling = Some((e.mark, interface, by));
             } else {
                 through.push((
                     e.mark,
@@ -930,26 +1109,64 @@ impl Checker<'_> {
                 ));
             }
         }
+        let holder = graph.headline(&cycle, label);
         self.report(DiagnosticKind::InstantiationCycle {
-            name: self.node_owner_name(graph, edge.holder),
+            name: self.node_owner_name(graph, holder),
             at: edge.mark,
-            instance: self.instance_name(
-                functions,
-                edge.instance
-                    .expect("a labeled edge should be an instantiation"),
-            ),
+            instance: label_spelled,
             through,
-            reach: reach.map(|interface| self.interfaces[interface.0].name.name.to_string()),
+            reach: reach
+                .map(|(interface, by)| (self.interfaces[interface.0].name.name.to_string(), by)),
+            choice,
         });
     }
 
+    /// The first use of an associated type on the cycle, as written: its edge runs into the
+    /// choices.
+    fn choice_use(&self, edges: &[Edge], cycle: &[usize]) -> Option<String> {
+        (cycle.iter())
+            .find_map(|&i| match edges[i].instance {
+                Some(Instance::Type(ty, _)) if matches!(ty.kind(), TypeKind::Assoc(..)) => Some(ty),
+                _ => None,
+            })
+            .map(|ty| self.type_name(ty))
+    }
+
+    /// `instance`, at an edge of the declaration `holder`, as the program spells it.
+    fn spell(
+        &self,
+        functions: &[Option<tir::Function>],
+        graph: &Graph,
+        holder: usize,
+        instance: Instance,
+    ) -> Spelled {
+        let spelling = match instance {
+            Instance::Operator(interface, written) => Some((interface, written)),
+            Instance::Call(.., spelling) | Instance::Type(_, spelling) => spelling,
+            Instance::Required(..) => None,
+        };
+        let Some((interface, written)) = spelling else {
+            return Spelled::Instance(self.instance_name(functions, instance));
+        };
+        match written {
+            Written::Method => Spelled::Instance(
+                self.instance_name(functions, Instance::Required(interface, 0, TypeArgs::NONE)),
+            ),
+            Written::Op(op) => Spelled::Operator(op.to_string()),
+            Written::Interpolation => Spelled::Interpolation,
+            Written::Generated(operand) => Spelled::Generated {
+                display: interface == self.lang.display,
+                enum_name: self.node_owner_name(graph, holder),
+                operand: self.type_name(operand),
+            },
+        }
+    }
+
     /// The name of the declaration `holder` of the graph, which a diagnostic gives. A generated
-    /// node stands for its enum, and a choice for the target of its conformance.
+    /// node stands for its enum. A choice is never a holder here: `headline` and the spellings
+    /// of a generated call name the declaration that holds it.
     fn node_owner_name(&self, graph: &Graph, holder: usize) -> String {
         match holder.checked_sub(graph.functions) {
-            _ if holder >= graph.choices_first => self
-                .head(graph.assocs.choices[holder - graph.choices_first].head)
-                .to_string(),
             _ if holder >= graph.dbg_class_first => self.classes[holder - graph.dbg_class_first]
                 .name
                 .name
@@ -1008,6 +1225,7 @@ impl Checker<'_> {
         let counts = counts.chain(self.classes.iter().map(|c| c.type_params.len()));
         let counts = counts.chain(assocs.choices.iter().map(|c| c.depths.len()));
         let counts = counts.chain(assocs.hubs.iter().map(|_| 1));
+        let counts = counts.chain(assocs.choices.iter().map(|_| 1));
         let mut first = vec![0];
         for n in counts {
             first.push(first[first.len() - 1] + n);
@@ -1042,7 +1260,8 @@ impl Checker<'_> {
         let counts = (self.classes.iter().map(|c| c.type_params.len()))
             .chain(self.enums.iter().map(|e| e.type_params.len()))
             .chain(assocs.choices.iter().map(|c| c.depths.len()))
-            .chain(assocs.hubs.iter().map(|_| 1));
+            .chain(assocs.hubs.iter().map(|_| 1))
+            .chain(assocs.choices.iter().map(|_| 1));
         let mut first = vec![0];
         for n in counts {
             first.push(first[first.len() - 1] + n);
@@ -1085,14 +1304,17 @@ impl Checker<'_> {
             function.body.exprs(&mut exprs);
             for e in &exprs {
                 match e.kind {
-                    tir::ExprKind::Call { func, types, .. } => graph.args(
-                        holder,
-                        types.get(),
-                        func.0,
-                        e.span,
-                        e.span,
-                        Instance::Call(func, types),
-                    ),
+                    tir::ExprKind::Call { func, types, .. } => {
+                        // An operator that the checker lowered to a call is labeled as written.
+                        let spelling = match self.spellings.get(&e.span) {
+                            Some(&Lowered::Operator(interface, op)) => {
+                                Some((interface, Written::Op(op)))
+                            }
+                            _ => None,
+                        };
+                        let instance = Instance::Call(func, types, spelling);
+                        graph.args(holder, types.get(), func.0, e.span, e.span, instance);
+                    }
                     tir::ExprKind::InterfaceCall {
                         interface,
                         iargs,
@@ -1107,7 +1329,13 @@ impl Checker<'_> {
                         // or an optional, which its generated conformance takes off first.
                         let hub = interface_hubs + interface.0;
                         if [self.lang.eq, self.lang.ord, self.lang.display].contains(&interface) {
-                            graph.operator(holder, iargs.get()[0], interface, e.span);
+                            graph.operator(
+                                holder,
+                                iargs.get()[0],
+                                interface,
+                                (e.span, e.span),
+                                None,
+                            );
                         } else {
                             graph.args(holder, &iargs.get()[..1], hub, e.span, e.span, instance);
                         }
@@ -1116,36 +1344,12 @@ impl Checker<'_> {
                             graph.args(holder, &[*arg], hub, e.span, e.span, instance);
                         }
                     }
-                    // `x == None` tests presence and calls nothing.
-                    tir::ExprKind::Equal {
-                        ref lhs, ref rhs, ..
-                    } if !matches!(lhs.kind, tir::ExprKind::None)
-                        && !matches!(rhs.kind, tir::ExprKind::None) =>
-                    {
-                        graph.operator(holder, lhs.ty, self.lang.eq, e.span);
-                    }
-                    tir::ExprKind::Compare { ref operands, .. } => {
-                        graph.operator(holder, operands[0].ty, self.lang.ord, e.span);
-                    }
-                    tir::ExprKind::Print { ref operand, .. } => {
-                        graph.operator(holder, operand.ty, self.lang.display, e.span);
-                    }
                     tir::ExprKind::Dbg { ref operand, .. } => {
-                        graph.operator(holder, operand.ty, self.lang.display, e.span);
+                        self.operator_edges(&mut graph, holder, e);
                         let shown = shown.get_or_insert_with(|| self.shown_params());
                         self.dbg_show(&mut graph, shown, holder, operand.ty, e.span);
                     }
-                    tir::ExprKind::Interpolate { ref parts, .. } => {
-                        for part in parts {
-                            graph.operator(holder, part.ty, self.lang.display, e.span);
-                        }
-                    }
-                    tir::ExprKind::Contains { ref base, .. } => {
-                        let element =
-                            (base.ty.array_element()).expect("`contains` should take an array");
-                        graph.operator(holder, element, self.lang.eq, e.span);
-                    }
-                    _ => {}
+                    _ => self.operator_edges(&mut graph, holder, e),
                 }
             }
         }
@@ -1156,6 +1360,93 @@ impl Checker<'_> {
         }
         self.declaration_edges(&mut graph, unbuilt);
         graph
+    }
+
+    /// The edges of the operators, `print` and interpolations in the expression `e` inside the
+    /// function `holder`: see the module doc.
+    fn operator_edges(&self, graph: &mut Graph, holder: usize, e: &tir::Expr) {
+        // A method call that the checker lowered to the node of an operator is spelled as the
+        // call: `Eq.eq` or `Display.to_string`, over the whole call.
+        let method = self.spellings.get(&e.span) == Some(&Lowered::Method);
+        let written = |written| (!method).then_some(written);
+        match e.kind {
+            // `x == None` tests presence and calls nothing.
+            tir::ExprKind::Equal {
+                ref lhs,
+                ref rhs,
+                negated,
+            } if !matches!(lhs.kind, tir::ExprKind::None)
+                && !matches!(rhs.kind, tir::ExprKind::None) =>
+            {
+                graph.operator(
+                    holder,
+                    lhs.ty,
+                    self.lang.eq,
+                    (e.span, e.span),
+                    written(Written::Op(if negated { "!=" } else { "==" })),
+                );
+            }
+            tir::ExprKind::Compare {
+                ref operands,
+                ref ops,
+            } => {
+                graph.operator(
+                    holder,
+                    operands[0].ty,
+                    self.lang.ord,
+                    (e.span, e.span),
+                    written(Written::Op(ops[0].text())),
+                );
+            }
+            tir::ExprKind::Print {
+                ref operand,
+                stream,
+            } => {
+                let name = match stream {
+                    tir::Stream::Stdout => "print",
+                    tir::Stream::Stderr => "eprint",
+                };
+                graph.operator(
+                    holder,
+                    operand.ty,
+                    self.lang.display,
+                    (e.span, e.span),
+                    Some(Written::Op(name)),
+                );
+            }
+            tir::ExprKind::Interpolate { ref parts, .. } => {
+                for part in parts {
+                    let mark = if method { e.span } else { part.span };
+                    graph.operator(
+                        holder,
+                        part.ty,
+                        self.lang.display,
+                        (e.span, mark),
+                        written(Written::Interpolation),
+                    );
+                }
+            }
+            tir::ExprKind::Contains { ref base, .. } => {
+                let element = (base.ty.array_element()).expect("`contains` should take an array");
+                graph.operator(
+                    holder,
+                    element,
+                    self.lang.eq,
+                    (e.span, e.span),
+                    Some(Written::Op("contains")),
+                );
+            }
+            tir::ExprKind::Dbg { ref operand, .. } => {
+                graph.operator(
+                    holder,
+                    operand.ty,
+                    self.lang.display,
+                    (e.span, e.span),
+                    Some(Written::Op("dbg")),
+                );
+            }
+            _ => {}
+        }
     }
 
     /// By enum and parameter, whether `dbg` shows the argument of the parameter: it stands bare, in
@@ -1278,7 +1569,14 @@ impl Checker<'_> {
             match ty.kind() {
                 TypeKind::Enum(id, args) => {
                     let target = graph.dbg_first + id.0;
-                    graph.args(holder, args.get(), target, site, site, Instance::Type(ty));
+                    graph.args(
+                        holder,
+                        args.get(),
+                        target,
+                        site,
+                        site,
+                        Instance::Type(ty, None),
+                    );
                     let on = shown[id.0].iter();
                     stack.extend(
                         args.get()
@@ -1290,7 +1588,14 @@ impl Checker<'_> {
                 }
                 TypeKind::Class(id, args) => {
                     let target = graph.dbg_class_first + id.0;
-                    graph.args(holder, args.get(), target, site, site, Instance::Type(ty));
+                    graph.args(
+                        holder,
+                        args.get(),
+                        target,
+                        site,
+                        site,
+                        Instance::Type(ty, None),
+                    );
                 }
                 _ => {}
             }
@@ -1307,7 +1612,13 @@ impl Checker<'_> {
             let holder = graph.dbg_class_first + c;
             for field in &info.fields {
                 if let Some(ty) = field.ty {
-                    graph.operator(holder, ty, self.lang.display, field.ty_span);
+                    graph.operator(
+                        holder,
+                        ty,
+                        self.lang.display,
+                        (field.ty_span, field.ty_span),
+                        None,
+                    );
                 }
             }
         }
@@ -1354,7 +1665,13 @@ impl Checker<'_> {
                 for variant in &info.variants {
                     for (ty, &span) in variant.fields.iter().zip(&variant.spans) {
                         if let Some(ty) = *ty {
-                            graph.operator(holder, ty, interface, span);
+                            graph.operator(
+                                holder,
+                                ty,
+                                interface,
+                                (span, span),
+                                Some(Written::Generated(ty)),
+                            );
                         }
                     }
                 }
@@ -1559,17 +1876,30 @@ impl Checker<'_> {
         }
         // By place, the hubs of its slots that hold a choice, for the hub of the place to reach.
         let mut own: Vec<Vec<usize>> = vec![Vec::new(); assocs.places];
+        assocs.heads = vec![Some(Vec::new()); assocs.places];
         // The place of each conformance among those of its interface.
         let mut seen = vec![0; self.interfaces.len()];
         for (interface, conformance) in self.conformances.iter() {
             let index = seen[interface.0];
             seen[interface.0] += 1;
-            for (k, chosen) in conformance.assoc.iter().enumerate() {
+            let first = assocs.first[interface.0];
+            for k in 0..self.interfaces[interface.0].assoc.len() {
+                let place = first + k;
+                // A choice that the conformance does not make leaves the heads of the place
+                // unknown.
+                let chosen = conformance.assoc.get(k).copied().flatten();
+                match chosen.and_then(head_of) {
+                    Some(head) => {
+                        if let Some(heads) = &mut assocs.heads[place] {
+                            heads.push(head);
+                        }
+                    }
+                    None => assocs.heads[place] = None,
+                }
                 // A choice that names no parameter passes nothing on: no argument changes it.
                 let Some(ty) = chosen.filter(|ty| ty.has_param()) else {
                     continue;
                 };
-                let place = assocs.first[interface.0] + k;
                 let key = closed(conformance.args).then_some(conformance.args);
                 let slot = assocs.slots[&(place, key)];
                 let hub = *assocs.hub_at[slot].get_or_insert_with(|| {
@@ -1577,15 +1907,27 @@ impl Checker<'_> {
                     own[place].push(assocs.hubs.len() - 1);
                     assocs.hubs.len() - 1
                 });
+                let head = head_of(conformance.target)
+                    .expect("the target of a conformance should be a class or an enum type");
                 assocs.hubs[hub].choices.push(assocs.choices.len());
+                assocs
+                    .by_head
+                    .entry((place, head))
+                    .or_default()
+                    .push(assocs.choices.len());
                 assocs.choices.push(Choice {
-                    head: head_of(conformance.target)
-                        .expect("the target of a conformance should be a class or an enum type"),
                     ty,
                     at: self.choice_ats[&(interface, index, k)],
                     depths: param_depths(conformance.target, conformance.type_params),
+                    slot,
+                    loose: key.is_none(),
                 });
             }
+        }
+        // A head that many conformances name is one head.
+        for heads in assocs.heads.iter_mut().flatten() {
+            let mut known = FxHashSet::default();
+            heads.retain(|&head| known.insert(head));
         }
         for i in 0..assocs.made.len() {
             let (place, key) = assocs.made[i];
@@ -1734,7 +2076,7 @@ impl Checker<'_> {
     /// `instance` as the program writes it: `f<[T]>`, `C<[T]>.m<U>`, or a type.
     fn instance_name(&self, functions: &[Option<tir::Function>], instance: Instance) -> String {
         let (func, types) = match instance {
-            Instance::Type(ty) => return self.type_name(ty),
+            Instance::Type(ty, _) => return self.type_name(ty),
             Instance::Required(interface, method, types) => {
                 let info = &self.interfaces[interface.0];
                 let name = info.requirements[method].name.name;
@@ -1742,7 +2084,8 @@ impl Checker<'_> {
                 write_args(&mut out, types.get(), |head| self.head(head));
                 return out;
             }
-            Instance::Call(func, types) => (func, types),
+            Instance::Operator(..) => unreachable!("an operator should be spelled by `spell`"),
+            Instance::Call(func, types, _) => (func, types),
         };
         let function = functions[func.0]
             .as_ref()
@@ -2049,7 +2392,7 @@ mod tests {
         }
         let site = Span::new(0, 1);
         let mut g = graph(1);
-        g.args(0, &[ty], 0, site, site, Instance::Type(ty));
+        g.args(0, &[ty], 0, site, site, Instance::Type(ty, None));
         // A node per `Pair`, an edge from each of its two arguments, and the call's two edges:
         // into the parameter's first node and into its second.
         assert_eq!(g.typed.len(), 20);
@@ -2075,7 +2418,7 @@ mod tests {
             let mut g = graph(n as usize + 1);
             for site in 0..10 {
                 let at = Span::new(site, site + 1);
-                g.args(0, &[ty], 0, at, at, Instance::Type(ty));
+                g.args(0, &[ty], 0, at, at, Instance::Type(ty, None));
             }
             assert_eq!(g.typed.len(), n as usize);
             assert_eq!(g.edges.len(), 2 * n as usize + 2 * 10);
@@ -2101,7 +2444,7 @@ mod tests {
                     0,
                     Span::new(0, 1),
                     Span::new(0, 1),
-                    Instance::Type(ty),
+                    Instance::Type(ty, None),
                 );
                 assert_eq!(g.typed.len(), levels);
                 let mut ty = param(0);
@@ -2131,8 +2474,14 @@ mod tests {
             CORE_STEPS.set(0);
             for site in 0..n {
                 let at = Span::new(site, site + 1);
-                g.args(0, &[ty], 0, at, at, Instance::Type(ty));
-                g.operator(0, ty, tir::InterfaceId(0), at);
+                g.args(0, &[ty], 0, at, at, Instance::Type(ty, None));
+                g.operator(
+                    0,
+                    ty,
+                    tir::InterfaceId(0),
+                    (at, at),
+                    Some(Written::Op("==")),
+                );
             }
             CORE_STEPS.get()
         };
@@ -2145,7 +2494,13 @@ mod tests {
         for site in 0..30 {
             ty = Type::intern(TypeKind::Array(ty));
             let at = Span::new(site, site + 1);
-            g.operator(0, ty, tir::InterfaceId(0), at);
+            g.operator(
+                0,
+                ty,
+                tir::InterfaceId(0),
+                (at, at),
+                Some(Written::Op("==")),
+            );
         }
         assert_eq!(CORE_STEPS.get(), 30);
     }
@@ -2218,7 +2573,7 @@ mod tests {
         let site = Span::new(0, 1);
         let mut g = graph(2);
         let array = Type::intern(TypeKind::Array(Type::intern(TypeKind::Optional(param(1)))));
-        g.args(0, &[array], 0, site, site, Instance::Type(array));
+        g.args(0, &[array], 0, site, site, Instance::Type(array, None));
         // Two edges for the nodes of the optional and the array, then the first node from the
         // argument's own node, and the second from the parameter's second.
         assert_eq!(g.edges.len(), 4);
@@ -2248,7 +2603,7 @@ mod tests {
             if let Some(records) = records {
                 g.records.insert((interface, tir::EnumId(1)), records);
             }
-            g.operator(0, ty, interface, site);
+            g.operator(0, ty, interface, (site, site), Some(Written::Op("==")));
             let into = |node: usize| g.edges.iter().any(|edge| edge.to == node);
             // Parameter 0 of the hub is node 3; of the generated node of enum 1, node 5.
             assert_eq!(into(3), hub, "{row}: the hub");

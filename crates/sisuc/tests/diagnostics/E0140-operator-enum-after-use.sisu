@@ -1,0 +1,14 @@
+class W<T> {
+    v: T
+}
+extend<T: Eq> W<T>: Eq {
+    fn eq(self, other: Self) -> bool {
+        E.Has(W(v: [self.v])) == E.Has(W(v: [other.v]))
+    }
+}
+enum E<T> {
+    Has(W<T>)
+}
+fn main() {
+    print(W(v: 1) == W(v: 1))
+}

@@ -1,0 +1,15 @@
+// A class holds the associated type. The error names `C`, the class that holds the field, and
+// not `W`, the class that makes the choice.
+interface I {
+    type Item
+}
+
+class W<T>: I {
+    type Item = C<W<W<T>>>
+}
+
+class C<T: I> {
+    f: [T.Item]
+}
+
+fn main() {}

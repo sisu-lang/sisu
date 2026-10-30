@@ -1,0 +1,38 @@
+// GIVEN `S`, an interface with the links `Next` and `Other` that lead to `Item`, the class `U`
+// that chooses `Other` as `U` and grows `Next` without end, the class `W` that ends `Other` with
+// `Z` and chooses `Item` as `E<W<W<T>>>`, and the enum `E` that holds `T.Next.Other.Item`
+// WHEN the program compares a value of `E<W<Z>>` with itself, and with the value `End`
+// THEN it builds, because `T.Next.Other` is never a `W`, and prints `true` and `false`
+interface S {
+    type Next: S
+    type Other: S
+    type Item
+}
+class Z: S {
+    type Next = Z
+    type Other = Z
+    type Item = i64
+}
+class U<T: S>: S {
+    type Next = U<U<T.Next>>
+    type Other = U<T>
+    type Item = i64
+}
+class W<T: S>: S {
+    type Next = W<T>
+    type Other = Z
+    type Item = E<W<W<T>>>
+}
+enum E<T: S> {
+    End
+    A(T.Next.Other.Item)
+}
+fn main() {
+    let _z = Z()
+    let _u: U<Z> = U()
+    let _w: W<Z> = W()
+    let e: E<W<Z>> = E.A(7)
+    let end: E<W<Z>> = E.End
+    print(e == e) // true
+    print(e == end) // false
+}
