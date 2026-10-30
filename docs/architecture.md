@@ -114,8 +114,9 @@ and lowers sugar: `while`, `while let` and `for` become loops, `?.` and `??`
 become `if let`, and `x += 1` becomes `x = x + 1`. A `+=` on a string field
 or element, or an assignment that adds to its own field or element place,
 becomes an `Append`. A local keeps `Assign` with `Concat` and appends in place
-through `concat`'s count-1 path. It folds each top-level `const` to a literal
-and replaces every use of its name with that literal. A call to one of the
+through `concat`'s count-1 path. A `push` on an array becomes a `Push`, and
+`xs?.push(x)` becomes a `Push` on a `Some` place, not an `if let`. It folds
+each top-level `const` to a literal and replaces every use of its name with that literal. A call to one of the
 built-in prelude functions, `print`, `eprint`, `panic`, `read_line` and `dbg`,
 has its own rule, and `panic(msg)` and
 `todo` become a `Panic` node of type `never`. A format spec on a part becomes a padding and a precision, and a precision on a

@@ -232,7 +232,12 @@ state = "works"
 notes = [["Roadmap: fuzzing", "docs/roadmap.md#fuzzing"], ["Developing Sisu", "docs/development.md#fuzz-generated-programs"]]
 
 [[area.feature]]
-text = "Lexer and parser in Sisu"
+text = "A lexer written in Sisu, checked against the compiler's lexer"
+state = "works"
+notes = [["Developing Sisu", "docs/development.md#the-growing-proof-program"], ["Roadmap: the growing proof program", "docs/roadmap.md#the-growing-proof-program"]]
+
+[[area.feature]]
+text = "Parser in Sisu"
 state = "planned"
 notes = [["Roadmap: the growing proof program", "docs/roadmap.md#the-growing-proof-program"]]
 
