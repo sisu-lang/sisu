@@ -46,5 +46,8 @@ true
 false
 true
 false
+eq 1
+eq 2
+true
 true
 k1k2

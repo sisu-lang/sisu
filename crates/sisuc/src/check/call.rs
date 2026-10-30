@@ -635,16 +635,7 @@ impl Checker<'_> {
             self.not_generic(site.name.name, site.angles);
         }
         if params.len() != args.len() {
-            self.stray(args);
-            if !self.misread_in(args) {
-                self.report(DiagnosticKind::ArgumentCount {
-                    name,
-                    want: params.len(),
-                    found: args.len(),
-                    at: span,
-                });
-            }
-            return Err(Poisoned::error());
+            return self.wrong_count(span, name, params.len(), args);
         }
         let (checked, types, ret) = if declared.is_empty() {
             let checked = args
@@ -681,6 +672,27 @@ impl Checker<'_> {
             })),
             (_, ret) => Err(Poisoned::of(ret.filter(|_| !failed))),
         }
+    }
+
+    /// A call at `span` of the method `name` that wants `want` arguments and has the wrong count:
+    /// the count is the error, unless a comparison misread as a call explains it.
+    pub(super) fn wrong_count(
+        &mut self,
+        span: Span,
+        name: String,
+        want: usize,
+        args: &[ast::Arg],
+    ) -> Checked {
+        self.stray(args);
+        if !self.misread_in(args) {
+            self.report(DiagnosticKind::ArgumentCount {
+                name,
+                want,
+                found: args.len(),
+                at: span,
+            });
+        }
+        Err(Poisoned::error())
     }
 
     /// Whether one of `args`, checked, holds a comparison misread as a call, which took the

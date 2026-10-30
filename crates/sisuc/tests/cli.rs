@@ -536,14 +536,20 @@ fn emit_ast_should_print_each_function_as_an_s_expression() {
     );
 }
 
-/// GIVEN a program whose `main` prints `5.min(3)`, and one that calls no prelude function
+/// GIVEN a program whose `main` prints `5.min(3)`, one whose `main` prints `[1].contains(1)`, and
+/// one that calls no prelude function
 /// WHEN each is built with `--emit tir`
 /// THEN the first holds `main` and the prelude's `i64.min`, and no other prelude function
-/// AND the second holds `main` alone
+/// AND the second holds `main` and the instance `[i64].contains`, and no other prelude function
+/// AND the third holds `main` alone
 #[test]
 fn emit_tir_should_print_the_prelude_functions_that_the_program_reaches() {
     for (source, want) in [
         ("fn main() { print(5.min(3)) }", vec!["main", "i64.min"]),
+        (
+            "fn main() { print([1].contains(1)) }",
+            vec!["main", "[i64].contains"],
+        ),
         ("fn main() { print(5) }", vec!["main"]),
     ] {
         let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
@@ -557,37 +563,6 @@ fn emit_tir_should_print_the_prelude_functions_that_the_program_reaches() {
             .collect();
         assert_eq!(functions, want, "{source}");
     }
-}
-
-/// GIVEN a program whose `main` prints `[1].contains(1)`
-/// WHEN it is built with `--emit tir`
-/// THEN `main` calls `[i64].contains`
-/// AND the output holds the instance `[i64].contains`, and no other prelude function
-#[test]
-fn emit_tir_should_show_the_prelude_functions_a_program_reaches() {
-    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
-        .args([
-            "build",
-            "--emit",
-            "tir",
-            "-e",
-            "fn main() { print([1].contains(1)) }",
-        ])
-        .output()
-        .expect("sisu starts");
-    assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let lines: Vec<_> = stdout.lines().collect();
-    assert_eq!(lines.len(), 2, "{stdout}");
-    assert!(
-        lines[0].starts_with("(fn main () unit")
-            && lines[0].contains("(call [i64].contains (array 1) 1)"),
-        "{stdout}"
-    );
-    assert!(
-        lines[1].starts_with("(fn [i64].contains ((self#0 [i64]) (x#1 i64)) bool"),
-        "{stdout}"
-    );
 }
 
 /// GIVEN a program whose `main` prints `[1].contains(1)`

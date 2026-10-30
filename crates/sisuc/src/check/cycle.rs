@@ -918,8 +918,15 @@ impl Checker<'_> {
                 continue;
             };
             // No report points into the prelude: a step inside one of its functions is left out,
-            // and the sites in the user's file show the cycle.
-            if e.mark.in_prelude() || !shown.insert(e.site) {
+            // and the sites in the user's file show the cycle. Its interface still explains the
+            // help, as it did when `contains` was built in.
+            if e.mark.in_prelude() {
+                if let Instance::Required(interface, ..) = instance {
+                    reach.get_or_insert(interface);
+                }
+                continue;
+            }
+            if !shown.insert(e.site) {
                 continue;
             }
             if let Instance::Required(interface, ..) = instance {

@@ -1,0 +1,10 @@
+error[E0154]: `Pick` does not conform to `Eq`
+  --> E0154-contains-enum.sisu:10:11
+   |
+10 |     print(picks.contains(Pick.Second))
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by the bound of this call, since `Node` does not conform to `Eq`
+   |
+   = help: make `Node` conform to `Eq`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154

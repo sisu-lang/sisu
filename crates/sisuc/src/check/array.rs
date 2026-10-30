@@ -321,17 +321,11 @@ impl Checker<'_> {
         let extension = sig
             .extension
             .expect("a method whose block bounds fail should have a block");
+        self.labels(args);
         if params.len() != args.len() {
-            let d = DiagnosticKind::ArgumentCount {
-                name,
-                want: params.len(),
-                found: args.len(),
-                at: span,
-            };
-            return self.rejected(d.into(), args);
+            return self.wrong_count(span, name, params.len(), args);
         }
         let stands = self.owner_args(func, ty).get().to_vec();
-        self.labels(args);
         let mut own_mistake = false;
         for (arg, param) in args.iter().zip(params) {
             let want = param.and_then(|param| self.subst(param, &stands));

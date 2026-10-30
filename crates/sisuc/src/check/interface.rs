@@ -1606,13 +1606,32 @@ impl Checker<'_> {
         // A class or an enum may conform, when the types that stand for its parameters do.
         let needs = find(&self.conformances, bound.interface, ty, args)
             .map(|(k, stands)| self.failed_bound(bound.interface, k, stands));
+        // No label points into the prelude: its bound is named on the call instead, and a class or
+        // an enum with no conformance gets the help to write one.
+        let prelude = bound.at.in_prelude();
+        let none = matches!(leaf.kind(), TypeKind::Class(..) | TypeKind::Enum(..))
+            && find(&self.conformances, bound.interface, leaf, args).is_none();
+        let make = (prelude && none).then(|| self.type_name(leaf));
+        let label = (prelude && bound.interface != self.lang.any_object).then(|| {
+            let since =
+                (leaf != ty && (none || matches!(leaf.kind(), TypeKind::Param(..)))).then(|| {
+                    let (leaf, interface) =
+                        (self.type_name(leaf), self.bound_text(bound.interface, args));
+                    format!(", since `{leaf}` does not conform to `{interface}`")
+                });
+            format!(
+                "required by the bound of this call{}",
+                since.unwrap_or_default()
+            )
+        });
         self.report(DiagnosticKind::NotConform {
             ty: self.type_name(ty),
             interface: self.bound_text(bound.interface, args),
             at,
             form: NotConformForm::Bound {
-                // No label points into the prelude.
-                bound: (!bound.at.in_prelude()).then_some(bound.at),
+                bound: (!prelude).then_some(bound.at),
+                label,
+                make,
                 class_only: bound.interface == self.lang.any_object,
                 add,
                 needs,

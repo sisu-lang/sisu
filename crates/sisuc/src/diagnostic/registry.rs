@@ -1826,9 +1826,13 @@ pub(crate) enum NotConformForm {
         needs: Option<(String, Span)>,
     },
     /// A bound of a declaration, written at `bound` (nowhere a user can see for the prelude's),
-    /// needs it. `add` is the bound that a type parameter would need.
+    /// needs it. `add` is the bound that a type parameter would need. A bound of the prelude has
+    /// `label` in its place, and `make` is the class or enum with no conformance, which the help
+    /// shows how to give one.
     Bound {
         bound: Option<Span>,
+        label: Option<String>,
+        make: Option<String>,
         /// Whether the interface is `AnyObject`, which only classes have.
         class_only: bool,
         add: Option<AddBound>,
@@ -2407,6 +2411,8 @@ impl From<DiagnosticKind> for Diagnostic {
                     }
                     NotConformForm::Bound {
                         bound,
+                        label,
+                        make,
                         class_only,
                         add,
                         needs,
@@ -2415,6 +2421,10 @@ impl From<DiagnosticKind> for Diagnostic {
                             d.with_label("only classes conform to `AnyObject`")
                         } else {
                             d
+                        };
+                        let d = match label {
+                            Some(label) => d.with_label(label),
+                            None => d,
                         };
                         let d = match bound {
                             Some(bound) => d.with_secondary(bound, "required by this bound"),
@@ -2426,9 +2436,12 @@ impl From<DiagnosticKind> for Diagnostic {
                             }
                             None => d,
                         };
-                        match add {
-                            Some(add) => d.with_help(add.help()),
-                            None => d,
+                        match (add, make) {
+                            (Some(add), _) => d.with_help(add.help()),
+                            (None, Some(make)) => {
+                                d.with_help(format!("make `{make}` conform to `{interface}`"))
+                            }
+                            (None, None) => d,
                         }
                     }
                 }

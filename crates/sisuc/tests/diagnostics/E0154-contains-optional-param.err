@@ -2,7 +2,7 @@ error[E0154]: `T?` does not conform to `Eq`
  --> E0154-contains-optional-param.sisu:2:5
   |
 2 |     xs.contains(x)
-  |     ^^^^^^^^^^^^^^
+  |     ^^^^^^^^^^^^^^ required by the bound of this call, since `T` does not conform to `Eq`
   |
   = help: add a bound: `T: Eq`
 
