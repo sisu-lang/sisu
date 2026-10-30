@@ -25,7 +25,7 @@ const SEEDS: u64 = 64;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.
-const EXCLUDED: [(&str, &str); 19] = [
+const EXCLUDED: [(&str, &str); 15] = [
     (
         "ast::BrokenKind::Function",
         "only an item with a syntax error is broken",
@@ -85,22 +85,6 @@ const EXCLUDED: [(&str, &str); 19] = [
     (
         "types::Head::Assoc",
         "the key by which `types::write_type` asks for a name, which is no type",
-    ),
-    (
-        "types::Holes::None",
-        "a flag of `types::Names`: which holes a type names, and no program writes a hole",
-    ),
-    (
-        "types::Holes::Open",
-        "a flag of `types::Names`: which holes a type names, and no program writes a hole",
-    ),
-    (
-        "types::Holes::Rejected",
-        "a flag of `types::Names`: which holes a type names, and no program writes a hole",
-    ),
-    (
-        "types::Holes::Both",
-        "a flag of `types::Names`: which holes a type names, and no program writes a hole",
     ),
 ];
 

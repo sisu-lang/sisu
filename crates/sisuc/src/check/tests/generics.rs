@@ -4188,6 +4188,26 @@ const NESTED_REJECT_ROWS: &[PartialRow<'static>] = {
             "let o: Sf? = Sf()\nh(5, o?.m(none()))",
             &[(NotConform, "5")],
         ),
+        // `T` meets `HOLE` in one part of the callee's pattern and `REJECTED` in another: the
+        // rejected part decides, whichever comes first.
+        (
+            "fn same<X>() -> Two<X, X> { panic(\"e\") }\n\
+             fn h<T: I, U>(_p: T, _a: Two<[U], [T]>) {}\n",
+            "h(5, same())",
+            &[(NotConform, "5")],
+        ),
+        (
+            "fn same<X>() -> Two<X, X> { panic(\"e\") }\n\
+             fn h<T: I, U>(_p: T, _a: Two<[T], [U]>) {}\n",
+            "h(5, same())",
+            &[(NotConform, "5")],
+        ),
+        (
+            "fn same<X>() -> Two<X, X> { panic(\"e\") }\n\
+             fn h<T: I, U>(_p: T, _a: Two<U?, T?>) {}\n",
+            "h(5, same())",
+            &[(NotConform, "5")],
+        ),
     ]
 };
 

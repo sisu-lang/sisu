@@ -388,11 +388,13 @@ impl Bindings {
     }
 
     /// Records, for each parameter that `pattern` names, the part of `value`, a context that
-    /// holds a hole, which lies at its place in `pattern`. The first part found stays. A whole
-    /// hole is no part to record. Binds nothing. `partial` gives the part in place of an unbound
-    /// parameter's hole, so an argument that waits for the parameter gets more context. A part
-    /// that holds `REJECTED` and no `HOLE` also tells the call that no argument can bind the
-    /// parameter, so the call does not report it (see `first_unbound_not_rejected`).
+    /// holds a hole, which lies at its place in `pattern`. The first part found stays, but a part
+    /// that holds `REJECTED` and no `HOLE` replaces it. A whole hole is no part to record. Binds
+    /// nothing. `partial` gives the part in place of an unbound parameter's hole, so an argument
+    /// that waits for the parameter gets more context. A part that holds `REJECTED` and no `HOLE`
+    /// tells the call that the context would have bound the parameter if the outer bound had held,
+    /// so the call does not report the parameter (see `first_unbound_not_rejected`). An argument
+    /// can still bind it.
     fn hint(&mut self, pattern: Type, value: Type) {
         if !pattern.has_param() || !value.holds_hole() || is_hole(value) {
             return;
@@ -400,7 +402,10 @@ impl Bindings {
         match (pattern.kind(), value.kind()) {
             (TypeKind::Param(_, i), _) => {
                 self.hints.resize(self.found.len(), None);
-                self.hints[i as usize].get_or_insert(value);
+                let hint = &mut self.hints[i as usize];
+                if hint.is_none() || value.holds_rejected_hole_only() {
+                    *hint = Some(value);
+                }
             }
             (TypeKind::Array(p), TypeKind::Array(v))
             | (TypeKind::Optional(p), TypeKind::Optional(v)) => self.hint(p, v),
@@ -645,9 +650,9 @@ struct Inference<'s> {
     failed: bool,
     /// Whether the context rejected a parameter (see `REJECTED`). The call fails, but the outer
     /// call reported the bound, so this one reports nothing for that parameter. It still reports
-    /// a parameter that the context leaves unbound, unless the hint of that parameter holds a
-    /// rejected part only: such a parameter is as rejected as one that meets `REJECTED` whole,
-    /// but `bind` can bind nothing to it (see `Bindings::first_unbound_not_rejected`).
+    /// a parameter that the context leaves unbound. The field stays false for a parameter whose
+    /// hint holds a rejected part only: `infer_call` does not set it, and it skips the E0050 of
+    /// that parameter (see `Bindings::first_unbound_not_rejected`).
     rejected: bool,
     /// Where each parameter was bound: the argument, or the type argument written for it.
     origin: Vec<Option<Span>>,
