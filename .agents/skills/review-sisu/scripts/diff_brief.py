@@ -22,7 +22,7 @@ the main checkout's gitignored docs/superpowers/ is not in a worktree.
            `git patch-id` as the measured commit; Focus names both.
   --coverage  the output of `make coverage` for the diff; Focus names it. Fails when the file does
            not exist, or when its last `coverage:` line does not name the diff's head commit, or says
-           the run measured uncommitted changes. Unlike a mutation log, coverage of an earlier
+           the run measured uncommitted changes or saw HEAD change. Unlike a mutation log, coverage of an earlier
            commit is refused: it is cheap to run again at the head
 For a diff, Focus also lists each line the diff removes from the tests with no identical line
 added back, and each test file it deletes, and each sisu build in OUT's bin/<sha>/ that

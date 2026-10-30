@@ -10,8 +10,8 @@
 # Before the report it prints `coverage: measured (HEAD <sha>)`, with `with
 # uncommitted changes` when the tracked tree differs from HEAD. The review
 # script (diff_brief.py --coverage) reads that line to check the commit.
-# The script checks the tree and HEAD at the start and at the end of the run: the
-# suffix also comes when HEAD changes during the run.
+# It checks the tree at the start, and the tree and HEAD at the end: the suffix
+# also comes when HEAD changes during the run.
 #   scripts/coverage.sh [base]
 set -euo pipefail
 
@@ -38,8 +38,9 @@ cargo llvm-cov report --lcov --output-path "$out/lcov.info"
 git diff --no-color --no-ext-diff -U0 --src-prefix=a/ --dst-prefix=b/ "$base" >"$out/changes.diff"
 
 # A commit or an edit made during the run means the report does not describe $head.
-# shortcut: the end check sees only the final tree, so an edit made and reverted
-# during the run is not seen; snapshot the tree (git stash create) if that matters.
+# shortcut: the end check sees only the final tree, so it does not see an edit made
+# and reverted during the run; measure an exported copy of HEAD if edits during a
+# run become common.
 [[ $(git rev-parse HEAD) == "$head" ]] || dirty=' with uncommitted changes'
 git diff --quiet HEAD || dirty=' with uncommitted changes'
 echo "coverage: measured (HEAD $head$dirty)"

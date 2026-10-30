@@ -245,8 +245,9 @@ or under `src/**/tests/`. It never fails on low
 coverage. Commit new files, or
 `git add -N` them, so the diff sees them. Before the report, the output has a
 line `coverage: measured (HEAD <sha>)`, with `with uncommitted changes` when the
-tracked tree differs from HEAD. The review script (`diff_brief.py --coverage`)
-refuses coverage of another commit or of uncommitted changes.
+tracked tree differs from HEAD, or when HEAD changes during the run. The review
+script (`diff_brief.py --coverage`) refuses coverage of another commit or of
+uncommitted changes.
 
 Programs that the tests compile link an uninstrumented runtime, whose two
 archives are built in `target/llvm-cov-runtime` and copied next to the
