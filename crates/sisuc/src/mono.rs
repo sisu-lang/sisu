@@ -57,6 +57,7 @@ pub(crate) fn instantiate(mut program: Program) -> Result<Program, Vec<Diagnosti
     if !generic && !program.instantiates {
         #[cfg(test)]
         FAST_PATHS.set(FAST_PATHS.get() + 1);
+        program.fast_path = true;
         // Reaching a generic item records a type argument, and so does a use of any other item
         // of the prelude (see `tir::Program::instantiates`): the prelude's items are then all
         // templates or unused.

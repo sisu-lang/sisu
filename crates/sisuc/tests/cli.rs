@@ -565,6 +565,30 @@ fn emit_tir_should_print_the_prelude_functions_that_the_program_reaches() {
     }
 }
 
+/// GIVEN a program that is `fn main() {}`, and one whose `main` prints `id(1)` for a generic `id`
+/// WHEN each is built with `--emit tir`
+/// THEN the first line of the output is `// mono: fast path` for the first program
+/// AND it is `// mono: instantiated` for the second
+/// AND the exit code is 0 for both
+#[test]
+fn emit_tir_should_say_which_path_mono_took() {
+    for (source, want) in [
+        ("fn main() {}", "// mono: fast path"),
+        (
+            "fn id<T>(x: T) -> T { x }\nfn main() {\n    print(id(1))\n}",
+            "// mono: instantiated",
+        ),
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+            .args(["build", "--emit", "tir", "-e", source])
+            .output()
+            .expect("sisu starts");
+        assert!(out.status.success());
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(stdout.lines().next(), Some(want), "{source}");
+    }
+}
+
 /// GIVEN a program whose `main` prints `[1].contains(1)`
 /// WHEN it is built with `--emit mir`
 /// THEN `main` holds `call [i64].contains(_, 1)`, and the output holds the instance, whose
@@ -641,7 +665,7 @@ fn emit_ast_and_tir_should_print_mut_for_mutable_variables_and_fields() {
     );
     assert_eq!(
         emit("tir"),
-        "(class _P (name i64) (mut hp i64))\n(fn main () unit (block (let mut x#0 1) (= x#0 2) (print x#0)))\n"
+        "// mono: fast path\n(class _P (name i64) (mut hp i64))\n(fn main () unit (block (let mut x#0 1) (= x#0 2) (print x#0)))\n"
     );
 }
 
@@ -1082,7 +1106,7 @@ fn emit_tir_should_print_a_while_loop_as_a_loop_with_a_break() {
     );
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "(fn main () unit (block (let mut i#0 0) (loop (block (if (< i#0 2) (block (= i#0 (+ i#0 1))) (block (break)))))))\n"
+        "// mono: fast path\n(fn main () unit (block (let mut i#0 0) (loop (block (if (< i#0 2) (block (= i#0 (+ i#0 1))) (block (break)))))))\n"
     );
 }
 
