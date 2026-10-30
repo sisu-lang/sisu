@@ -474,36 +474,42 @@ fn dbg_should_wait_for_its_context_when_its_argument_does() {
     }
 }
 
-/// `dbg(e)` passes its context to `e`, so `f(dbg(e))` gets the context that `f(e)` gets and
-/// reports the same diagnostics. Only the codes are compared: the spans of the two programs
-/// differ by the width of `dbg(`.
+/// `dbg(e)` passes its context to `e`, so `f(dbg(e))` and `f([dbg(e)])` get the context that
+/// `f(e)` and `f([e])` get and report the same diagnostics. Each diagnostic is its code and the
+/// source text under its span, so a diagnostic at the wrong place fails. The spans of the two
+/// programs differ by the width of `dbg(`, which is why they are compared as text.
 #[test]
 fn dbg_should_give_a_call_the_diagnostics_of_its_argument() {
     with_prelude();
-    for (param, arg) in [
-        ("[T]", "[]"),
-        ("[T]", "dbg([])"),
-        ("[[T]]", "[[]]"),
-        ("[[T]]", "dbg([[]])"),
-        ("T?", "None"),
-        ("T?", "Some(None)"),
-        ("Result<T, bool>", "Ok(1)"),
-        ("Result<T, bool>", "dbg(Ok(1))"),
-        ("Result<[f64], T>", "Err(1)"),
-        ("Result<[T], bool>", "Ok([])"),
+    for (param, plain, through_dbg) in [
+        ("[T]", "[]", "dbg([])"),
+        ("[T]", "[[]]", "dbg([[]])"),
+        ("[T]", "[[]]", "[dbg([])]"),
+        ("[T]", "[[]]", "[[dbg([])]]"),
+        ("[T]", "[[], []]", "[dbg([]), dbg([])]"),
+        ("[T]", "[[]]", "[dbg(dbg([]))]"),
+        ("[[T]]", "[[]]", "dbg([[]])"),
+        ("T?", "None", "dbg(None)"),
+        ("T?", "Some(None)", "dbg(Some(None))"),
+        ("[T?]", "[None]", "[dbg(None)]"),
+        ("Result<T, bool>", "Ok(1)", "dbg(Ok(1))"),
+        ("[Result<T, bool>]", "[Ok(1)]", "[dbg(Ok(1))]"),
+        ("Result<[f64], T>", "Err(1)", "dbg(Err(1))"),
+        ("Result<[T], bool>", "Ok([])", "dbg(Ok([]))"),
     ] {
         let program = |arg: &str| {
             let src = format!(
                 "fn f<T>(x: {param}) -> i64 {{ 0 }}\nfn main() {{\n    let v = f({arg})\n}}"
             );
-            (
-                src.clone(),
-                diags(&src).iter().map(Diagnostic::code).collect::<Vec<_>>(),
-            )
+            let found: Vec<_> = diags(&src)
+                .iter()
+                .map(|d| (d.code(), src[d.span().range()].to_string()))
+                .collect();
+            (found, src)
         };
-        let (_, plain) = program(arg);
-        let (src, through_dbg) = program(&format!("dbg({arg})"));
-        assert_eq!(through_dbg, plain, "row `{param}`, `{arg}`: {src}");
+        let (plain_found, _) = program(plain);
+        let (found, src) = program(through_dbg);
+        assert_eq!(found, plain_found, "row `{param}`, `{through_dbg}`: {src}");
     }
 }
 
