@@ -112,12 +112,17 @@ become `if let`, and `x += 1` becomes `x = x + 1`. A `+=` on a string field
 or element, or an assignment that adds to its own field or element place,
 becomes an `Append`. A local keeps `Assign` with `Concat` and appends in place
 through `concat`'s count-1 path. It folds each top-level `const` to a literal
-and replaces every use of its name with that literal. A call to a prelude
-function such as `print` or `panic` has its own rule, and `panic(msg)` and
+and replaces every use of its name with that literal. A call to one of the
+built-in prelude functions, `print`, `eprint`, `panic`, `read_line` and `dbg`,
+has its own rule, and `panic(msg)` and
 `todo` become a `Panic` node of type `never`. A format spec on a part becomes a padding and a precision, and a precision on a
-value that is not an `f64` is an error. A method on a number, such as
-`x.sqrt()` or `n.max(m)`, becomes a `Math` node, and a constant such as
-`f64.pi` becomes a literal. `check/enums.rs` declares each enum and rejects an
+value that is not an `f64` is an error. A method on an `f64`, such as
+`x.sqrt()` or `x.max(y)`, becomes a `Math` node, and a constant such as
+`f64.pi` becomes a literal. The prelude file may extend a built-in type, and a
+user's file may not (E0155). So `i64`'s `min`, `max` and `clamp`, the `sum` of
+an `[i64]` or an `[f64]`, and the `contains` of a `[T]` with `T: Eq` are
+functions that the prelude writes in Sisu, and a call of one is a call of that
+function. `check/enums.rs` declares each enum and rejects an
 enum that no value can be built of. `tir::layout_enums` then finds the payload
 fields that close a cycle of enums, the ones that go behind a box, and the
 enums that hold a counted part. In a generic enum the box goes on the declaring
@@ -212,8 +217,10 @@ program. A method of an `extend` block that names an
 interface has the interface between its type and its name,
 `Celsius.Convert<Fahrenheit>.convert`, so two conformances may each hold a
 method of one name. `mir` and codegen see only concrete types, and a program
-with no generic declaration passes through, apart from those method names. `--emit tir` prints the
-program after `mono`.
+with no generic declaration passes through, apart from those method names.
+`mono` starts from the user's functions only. A prelude function joins the
+program when a function that the program has calls it. `--emit tir` prints the
+program after `mono`, with the prelude functions that it reaches.
 
 **mir** (`mir/`). The mid-level IR between `tir` and LLVM IR
 ([ADR 0025](adr/0025-mir-holds-every-count.md)), built on the build path only,
@@ -240,7 +247,9 @@ paths reach and makes one that only owned paths reach a plain release, so
 codegen stores the zero value on a move only for a local that a conditional
 release still tests (for every local under `--rc-checks`).
 Pair removal (`pairs.rs`) then turns a copy that is only borrowed within a block
-into a borrow, and its release into an `end`.
+into a borrow, and its release into an `end`. A call of a prelude function that
+writes and frees nothing its caller can reach is a quiet call (`params::quiet`),
+and a copy can become a borrow across it. A user function is never quiet.
 Debug builds of the compiler end with the certifier (`certify.rs`), which
 checks on every path that each owned reference is moved or released once and
 that nothing writes or changes what a borrow reads.
@@ -259,7 +268,10 @@ parameter. Integer overflow
 and division by zero call `sisu_panic` instead of wrapping
 ([ADR 0003](adr/0003-arithmetic-panics.md)). A `Panic` node, which `panic`
 and `todo` lower to, calls `sisu_panic_message` with its location and
-message, then ends the block with `unreachable`. A `Math` node becomes an LLVM
+message, then ends the block with `unreachable`. Codegen gives each prelude
+function two more last parameters, a pointer and a length: the source location
+of its caller. A panic in the function reports that location, so it names the
+user's call and not a line of the prelude. A `Math` node becomes an LLVM
 intrinsic, except `hypot`, which calls `hypot` from `libm`.
 
 `codegen/abi.rs` declares every runtime function from one table, `RUNTIME`,

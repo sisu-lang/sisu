@@ -76,9 +76,15 @@ _Avoid_: trap, crash, abort
 
 **Prelude**:
 The names visible in every file without an import. Most are declared in Sisu,
-in the prelude file the compiler builds into every program.
-The prelude file, `crates/sisuc/src/prelude.sisu`, declares `Option` and `Result`,
-and it extends `i64` with `min`, `max` and `clamp`, and `[i64]` and `[f64]` with `sum`.
+in the prelude file, `crates/sisuc/src/prelude.sisu`, which the compiler checks
+and builds into every program.
+The file declares `Option` and `Result`. It also extends built-in types: `i64`
+with `min`, `max` and `clamp`, `[i64]` and `[f64]` with `sum`, and `[T]` with
+`contains` when `T: Eq`. A user's file may not extend a built-in type (E0155).
+A panic in a function of the prelude names the call in the user's file.
+The names `print`, `eprint`, `panic`, `read_line` and `dbg` stay built in: the
+checker and codegen write them. The **Language interface**s are in `lang.sisu`,
+which the compiler checks before the prelude.
 
 **RC check**:
 A check that a program built with `--rc-checks` makes on its reference
@@ -548,9 +554,16 @@ _Avoid_: reset, hole
 A read of a local that uses its value without a reference of its own,
 because nothing can release or replace the local before the use ends: the
 length of an array, a field of an object, an element or a field while
-nothing calls a function, writes a counted value or makes an array unique. It
-costs no retain and no release.
+nothing calls a function that is not a **Quiet call**, writes a counted value
+or makes an array unique. It costs no retain and no release.
 _Avoid_: borrow (Rust's checked borrow, which Sisu does not have)
+
+**Quiet call**:
+A call of a prelude function that writes and frees nothing its caller can
+reach, such as `sum`. A copy of an element or a field can become a **Borrowed
+read** across it. A prelude function is not quiet when it runs a written
+method, as `contains` does for a class with a written `eq`.
+_Avoid_: pure call
 
 **Borrowed parameter**:
 A counted parameter that the function only reads, never keeps: the caller
