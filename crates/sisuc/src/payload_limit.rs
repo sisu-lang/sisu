@@ -588,7 +588,7 @@ mod tests {
     #[test]
     fn oversized_should_name_the_prelude_enum_when_the_chain_ends_in_no_user_enum() {
         // The payloads are 8 for `Inner`, 16 for `Middle` and 24 for `Outer`. A value is 8 bytes
-        // more than its payload. Only `Outer` is over the limit of 24, so the walk steps into
+        // more than its payload. Only `Outer` is over the limit of 20, so the walk steps into
         // `Middle` and `Inner`, which are under it, and then holds no enum.
         let base = PRELUDE_BASE as usize;
         let enums = [
@@ -596,7 +596,7 @@ mod tests {
             holding("Middle", base + 1, vec![enum_type(2)]),
             holding("Inner", base + 2, vec![Type::I64]),
         ];
-        let found = oversized_with(&enums, 24);
+        let found = oversized_with(&enums, 20);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "Outer");
         assert_eq!(found[0].holder, None);
