@@ -1,0 +1,11 @@
+class Bag {
+    mut items: [i64]
+}
+
+fn add(bag: Bag?) {
+    bag?.items.push(4)
+}
+
+fn main() {
+    add(Bag(items: [1, 2, 3]))
+}

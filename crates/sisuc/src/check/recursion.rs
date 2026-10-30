@@ -243,6 +243,7 @@ impl Walk {
                 let base = self.place(base, open, calls);
                 base.then(self.walk(index, open && !base.recurses, calls))
             }
+            tir::Place::Some(base) => self.place(base, open, calls),
         }
     }
 }

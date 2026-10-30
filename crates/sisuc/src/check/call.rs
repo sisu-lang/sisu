@@ -379,13 +379,13 @@ impl Checker<'_> {
             checked
         } else {
             // The receiver of a `push` is a place, checked once and held for the call.
-            let scrutinee =
-                if method.name.as_str() == "push" && !safe && self.is_push_place(receiver) {
-                    self.push_receiver(receiver)
-                } else {
-                    self.value_kept(receiver)
-                };
-            self.member_of(span, safe, scrutinee, receiver, method, |c, checked| {
+            let on_place = method.name.as_str() == "push" && self.is_push_place(receiver, safe);
+            let scrutinee = if on_place {
+                self.push_receiver(receiver)
+            } else {
+                self.value_kept(receiver)
+            };
+            let mut call = |c: &mut Self, checked: Checked| -> Checked {
                 if !path && let Some((first, _)) = types.split_first() {
                     if let Some(value) = c.method_args(&checked, receiver, method, first, angles) {
                         c.stray(args);
@@ -423,7 +423,16 @@ impl Checker<'_> {
                     }
                 }
                 c.method_call(span, safe, checked, receiver, site, args)
-            })
+            };
+            match scrutinee {
+                // `?.push` onto an array in a place writes the place: no payload is bound.
+                scrutinee if on_place && safe => match self.safe_push_receiver(receiver, scrutinee)
+                {
+                    Ok(array) => call(self, Ok(array)),
+                    Err(value) => self.member_of(span, safe, value, receiver, method, call),
+                },
+                scrutinee => self.member_of(span, safe, scrutinee, receiver, method, call),
+            }
         };
         // The member was found unknown, or the receiver of a path that is no idiom was: a name
         // or a type, which has no members.

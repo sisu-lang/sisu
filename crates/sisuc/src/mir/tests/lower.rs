@@ -230,6 +230,50 @@ fn push_should_follow_the_order_of_an_element_write() {
     );
 }
 
+/// `xs?.push(f())` tests `xs`, runs the call, tests `xs` again, then pushes. The absent branches
+/// run no call, and the second one releases the argument.
+#[test]
+fn push_through_a_safe_access_should_test_the_optional_again_after_its_argument() {
+    let printed = lowered(
+        "fn name() -> string { \"a\" }\nfn f() {\n    let mut xs: [string]? = [\"a\"]\n    xs?.push(name())\n}",
+    );
+    has(
+        &printed,
+        "f",
+        &[
+            "test_present xs#0 bb2 bb3",
+            "bb2:",
+            "_ = call name()",
+            "test_present xs#0 bb4 bb5",
+            "bb4:",
+            "push (xs#0 as some), move _",
+            "bb5:",
+            "release _",
+        ],
+    );
+    let f = function(&printed, "f");
+    // The first absent branch is a block of its own, which runs nothing.
+    let absent = f.split("bb3:").nth(1).and_then(|rest| rest.lines().nth(1));
+    assert_eq!(absent, Some("    goto bb1"), "{f}");
+    assert_eq!(f.matches("call name()").count(), 1, "{f}");
+}
+
+/// A `push` through a chain of optional objects lowers to code in proportion to the chain: each
+/// `?.` binds its object, and the written path starts at the last one, so no step holds the
+/// path of the steps before it. A path kept from the first object gives a square.
+#[test]
+fn push_through_a_chain_of_objects_should_lower_in_linear_size() {
+    let size = |objects: usize| {
+        let src = format!(
+            "class C {{\n    next: C?\n    mut items: [i64]?\n}}\nfn f(c: C?) {{ c{}?.items?.push(1) }}",
+            "?.next".repeat(objects)
+        );
+        function(&lowered(&src), "f").len()
+    };
+    // 10, 20 and 30 objects, the sizes `n`, `2n` and `3n` that the assertion takes.
+    assert_near_linear(size(10), size(20), size(30));
+}
+
 /// The checker spills `"a"` into a local before the operand that can return, and the return
 /// edge releases it.
 #[test]

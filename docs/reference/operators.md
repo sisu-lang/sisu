@@ -401,7 +401,7 @@ The rules:
 - `a?.b.c` is an error when `b` is not optional, because `a?.b` is an optional ([E0062](../diagnostics/E0062.md)). Write `a?.b?.c`.
 - A method that returns no value has no value through `?.` too ([E0043](../diagnostics/E0043.md)). When `a` is `None`, the method and its arguments do not run.
 - `?.` on a value that is not optional is an error ([E0049](../diagnostics/E0049.md)). Use `.`.
-- An assignment cannot go through `?.` ([E0022](../diagnostics/E0022.md)).
+- An assignment cannot go through `?.` ([E0022](../diagnostics/E0022.md)). A `push` can: `xs?.push(x)` adds `x` when the optional array `xs` holds an array ([Arrays](arrays.md#methods)).
 - A line that starts with `?.` continues the line above it ([Lexical structure](lexical.md#line-continuation)).
 
 ```sisu

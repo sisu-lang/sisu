@@ -1,0 +1,15 @@
+error[E0001]: cannot change `xs`
+ --> E0001-push-optional.sisu:3:5
+  |
+2 |     let xs: [i64]? = [1, 2, 3]
+  |         -- declared with `let` here
+3 |     xs?.push(4)
+  |     ^^ `push` changes `xs`
+  |
+help: declare it with `let mut`
+  |
+2 |     let mut xs: [i64]? = [1, 2, 3]
+  |         +++
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0001

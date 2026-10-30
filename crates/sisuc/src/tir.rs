@@ -426,6 +426,9 @@ pub(crate) enum Place {
         base: Box<Place>,
         index: Expr,
     },
+    /// The value inside the optional that the place `base` stores: a `push` to it goes there
+    /// when it holds one, and does nothing when it does not. Only a `Push` has one.
+    Some(Box<Place>),
 }
 
 #[derive(Debug)]
@@ -1046,6 +1049,7 @@ impl Place {
                 base.each_expr_mut(f);
                 f(index);
             }
+            Place::Some(base) => base.each_expr_mut(f),
         }
     }
 }
@@ -1073,6 +1077,7 @@ impl Place {
             Place::Local(_) => false,
             Place::Field { base, .. } => base.exits(),
             Place::Index { base, index } => base.exits() || index.exits(),
+            Place::Some(base) => base.exits(),
         }
     }
 }
@@ -1183,6 +1188,7 @@ impl Place {
                 base.exprs(out);
                 index.exprs(out);
             }
+            Place::Some(base) => base.exprs(out),
         }
     }
 }
@@ -1526,6 +1532,11 @@ impl Printer<'_> {
                 self.place(f, base)?;
                 f.write_str(" ")?;
                 self.expr(f, index)?;
+                f.write_str(")")
+            }
+            Place::Some(base) => {
+                f.write_str("(some ")?;
+                self.place(f, base)?;
                 f.write_str(")")
             }
         }

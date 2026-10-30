@@ -408,6 +408,47 @@ fn push_should_lower_to_a_statement_over_its_place() {
     }
 }
 
+/// A `?.push` writes the optional the place stores, with a `Some` step. A `?.` that only chains
+/// what an earlier `?.` made optional adds none: the place of `c?.items?.push` over `items:
+/// [i64]` is the field of the object that `?.` binds. The object is bound where it is present.
+#[test]
+fn push_through_a_safe_access_should_lower_to_a_some_step_of_a_stored_optional() {
+    let class = "class C {\n    mut items: [i64]\n    mut maybe: [i64]?\n}\n";
+    for (src, part, absent) in [
+        (
+            "fn main() {\n    let mut xs: [i64]? = [1]\n    xs?.push(2)\n}".to_owned(),
+            "(push (some xs#0) 2)",
+            "",
+        ),
+        (
+            "fn main() {\n    let mut gs: [[i64]?] = [[1]]\n    gs[0]?.push(2)\n}".to_owned(),
+            "(push (some (index gs#0 0)) 2)",
+            "",
+        ),
+        (
+            format!("{class}fn f(c: C?) {{ c?.items?.push(1) }}\nfn main() {{}}"),
+            "(if-some #1 c#0 (block (block (push (. #1 items) 1))) (block))",
+            "(some (. #1 items))",
+        ),
+        (
+            format!("{class}fn f(c: C?) {{ c?.maybe?.push(1) }}\nfn main() {{}}"),
+            "(if-some #1 c#0 (block (block (push (some (. #1 maybe)) 1))) (block))",
+            "",
+        ),
+        (
+            format!("{class}fn f(c: C) {{ c.maybe?.push(1) }}\nfn main() {{}}"),
+            "(push (some (. c#0 maybe)) 1)",
+            "",
+        ),
+    ] {
+        contains(&src, &[part]);
+        assert!(
+            absent.is_empty() || !lowered(&src).contains(absent),
+            "{src}"
+        );
+    }
+}
+
 /// A row of `push_rows`: its name, its source and the diagnostics it gives.
 type PushRow<'a> = (&'a str, &'a str, Vec<(Code, (usize, usize))>);
 
@@ -498,19 +539,108 @@ fn push_should_be_no_method_of_a_string() {
     )]);
 }
 
-/// A `push` through `?.` is E0022 until it is allowed.
+/// A `?.push` onto an optional array writes the place: a `let mut` local, an element, a field of
+/// an object that `?.` takes out of an optional, and a field of `self`. It checks clean, and a
+/// class with a `push` method of its own keeps its `?.` call.
 #[test]
-fn push_should_report_a_safe_access_until_it_is_allowed() {
-    push_rows(&[
+fn push_should_check_clean_through_a_safe_access() {
+    for (row, src) in [
         (
-            "safe call",
-            "fn f(m: [i64]?) { m?.push(1) }\nfn main() {}",
-            vec![(Code::AssignThroughSafeAccess, (1, 19))],
+            "let mut optional array",
+            "fn main() {\n    let mut xs: [i64]? = [1]\n    xs?.push(2)\n    print(xs ?? [])\n}",
         ),
         (
-            "safe call on a safe access",
+            "array field of an optional object, as the fix of E0062 writes it",
+            "class C {\n    mut items: [i64]\n}\nfn f(c: C?) { c?.items?.push(1) }\nfn main() {}",
+        ),
+        (
+            "optional array field of an optional object",
             "class C {\n    mut items: [i64]?\n}\nfn f(c: C?) { c?.items?.push(1) }\nfn main() {}",
-            vec![(Code::AssignThroughSafeAccess, (4, 15))],
+        ),
+        (
+            "optional array field of an object",
+            "class C {\n    mut items: [i64]?\n}\nfn f(c: C) { c.items?.push(1) }\nfn main() {}",
+        ),
+        (
+            "optional array field of self",
+            "class C {\n    mut maybe: [i64]?\n    fn add(self) { self.maybe?.push(1) }\n}\nfn main() {}",
+        ),
+        (
+            "optional element of an array",
+            "fn main() {\n    let mut gs: [[i64]?] = [[1], None]\n    gs[0]?.push(2)\n    print(gs[1] ?? [])\n}",
+        ),
+        (
+            "chain of optional objects",
+            "class C {\n    mut next: C?\n    mut items: [i64]\n}\nfn f(c: C?) { c?.next?.items?.push(1) }\nfn main() {}",
+        ),
+        (
+            "field of a call's optional object",
+            "class C {\n    mut items: [i64]\n}\nfn make() -> C? { None }\nfn main() { make()?.items?.push(1) }",
+        ),
+        (
+            "optional class with a push method of its own",
+            "class Pile {\n    mut n: i64\n    fn push(self, x: i64) { self.n += x }\n}\nfn f(p: Pile?) { p?.push(1) }\nfn main() {}",
+        ),
+    ] {
+        clean_row(row, src);
+    }
+}
+
+/// A place that `?.push` writes reports what a `push` reports, once and at the place: a `let` that
+/// cannot change, a field without `mut`, a receiver that is a temporary, a value that is used and
+/// an argument of the wrong type.
+#[test]
+fn push_should_report_a_mistake_through_a_safe_access() {
+    push_rows(&[
+        (
+            "let optional array",
+            "fn main() {\n    let xs: [i64]? = [1]\n    xs?.push(2)\n}",
+            vec![(Code::AssignToImmutable, (3, 5))],
+        ),
+        (
+            "field without mut",
+            "class C {\n    items: [i64]\n}\nfn f(c: C?) { c?.items?.push(1) }\nfn main() {}",
+            vec![(Code::AssignToImmutable, (4, 15))],
+        ),
+        (
+            "call result",
+            "fn f() -> [i64]? { [1] }\nfn main() { f()?.push(1) }",
+            vec![(Code::AssignToExpression, (2, 13))],
+        ),
+        (
+            "value of the call",
+            "fn main() {\n    let mut xs: [i64]? = [1]\n    let r = xs?.push(1)\n}",
+            vec![(Code::NoValue, (3, 13))],
+        ),
+        (
+            "argument of the wrong type",
+            "fn main() {\n    let mut xs: [i64]? = [1]\n    xs?.push(\"a\")\n}",
+            vec![(Code::Mismatch, (3, 14))],
+        ),
+        (
+            "type arguments",
+            "fn main() {\n    let mut xs: [i64]? = [1]\n    xs?.push<i64>(1)\n}",
+            vec![(Code::TypeArguments, (3, 13))],
+        ),
+        (
+            "object that is no optional",
+            "class C {\n    mut items: [i64]\n}\nfn f(c: C) { c?.items?.push(1) }\nfn main() {}",
+            vec![(Code::SafeAccessNotOptional, (4, 14))],
+        ),
+        (
+            "a `?.` before an array that holds no optional",
+            "fn f(m: [i64]) { m?.push(1) }\nfn main() {}",
+            vec![(Code::SafeAccessNotOptional, (1, 18))],
+        ),
+        (
+            "array field read without `?.`",
+            "class C {\n    mut items: [i64]\n}\nfn f(c: C?) { c?.items.push(1) }\nfn main() {}",
+            vec![(Code::MayBeNone, (4, 15))],
+        ),
+        (
+            "index of an optional array",
+            "class C {\n    mut rows: [[i64]]\n}\nfn f(c: C?) { c?.rows[0]?.push(1) }\nfn main() {}",
+            vec![(Code::MayBeNone, (4, 15))],
         ),
     ]);
 }

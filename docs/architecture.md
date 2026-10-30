@@ -244,7 +244,9 @@ array it holds can skip the copy
 ([ADR 0021](adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md)).
 An array `push` is a statement of its own: it decides on the block's count itself, so
 the hoist neither moves it nor bars its array, and it counts as a clobber for pair
-removal and for the quiet functions of the prelude.
+removal and for the quiet functions of the prelude. A `push` through `?.` onto an optional
+array tests it before its argument and again after the argument, which may have cleared it.
+The certifier (`certify.rs`) proves each `Some` of the written path with such a test.
 Elaboration (`elaborate.rs`) then removes each scope release that only empty
 paths reach and makes one that only owned paths reach a plain release, so
 codegen stores the zero value on a move only for a local that a conditional

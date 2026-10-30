@@ -217,8 +217,8 @@ pub(crate) struct Var {
     /// For a `string`, or a mutable array of them: the chars that `+=` may still add, summed
     /// over every run of each one.
     pub(crate) room: u64,
-    /// For a mutable array: the size that `push` may still add, summed over every run of each
-    /// one. It is part of `size`, and of the size an element can reach.
+    /// For a mutable array, or optional array: the size that `push` may still add, summed over
+    /// every run of each one. It is part of `size`, and of the size an element can reach.
     pub(crate) grow: u64,
     /// How many loops are around its declaration.
     pub(crate) loops: usize,

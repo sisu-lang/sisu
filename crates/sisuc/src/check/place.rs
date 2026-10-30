@@ -1,10 +1,12 @@
 //! Assignment: places, which root may be written, the temps of compound operators, and spills.
 
-use super::expr::{literal_type, local, operator};
+use super::expr::{if_some, literal_type, local, operator};
+use super::member::safe_value;
 use super::operator::Operator;
 use super::unused_names::Used;
 use super::{
-    BindingKind, Checked, Checker, Declared, Poisoned, UNKNOWN, block_expr, payload, type_of,
+    BindingKind, Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, block_expr, payload,
+    type_of,
 };
 use crate::ast;
 use crate::diagnostic::{DiagnosticKind, Immutable};
@@ -53,10 +55,18 @@ enum Root {
     Field(usize),
 }
 
+/// The object that the `?.` of a place's root field takes out of an optional. `bind` holds it
+/// where `scrutinee` has one, and the place starts there.
+struct Guard {
+    bind: tir::LocalId,
+    scrutinee: tir::Expr,
+}
+
 pub(super) struct CheckedPlace {
     /// `None` when a part of the place failed.
     path: Option<Path>,
-    /// The type a value written to it needs; `None` is `Error`.
+    /// The type a value written to it needs, the type of what the place stores; `None` is
+    /// `Error`.
     ty: Option<Type>,
     /// `false` for a root that is a field without `mut`. A name root that cannot be written is
     /// reported but still lowers, as in milestone 2.
@@ -64,6 +74,8 @@ pub(super) struct CheckedPlace {
     /// For a `push`, whose receiver may turn out to be no array: the E0001 of a root that cannot
     /// change, which only an array reports.
     held: Option<DiagnosticKind>,
+    /// The object that a `?.` of the root field takes out of an optional.
+    guard: Option<Guard>,
 }
 
 impl CheckedPlace {
@@ -73,7 +85,19 @@ impl CheckedPlace {
             ty: None,
             writable: false,
             held: None,
+            guard: None,
         }
+    }
+
+    /// The type of the place as a value: a `?.` of its root field makes it an optional.
+    fn value_ty(&self) -> Option<Type> {
+        self.ty.map(|ty| {
+            if self.guard.is_some() {
+                as_optional(ty)
+            } else {
+                ty
+            }
+        })
     }
 }
 
@@ -106,12 +130,13 @@ impl Checker<'_> {
     }
 
     /// Whether a `push` checks its receiver `e` as a place. That holds for a field, or for an
-    /// index of a local or of a field, that no `?.` leads to. The place stamps nothing and
+    /// index of a local or of a field. A `?.` may lead to it only when `safe` says the call is
+    /// `?.push`: `e?.push(x)` holds a value only where `e` does. The place stamps nothing and
     /// reports nothing until the receiver is known to be an array (`push_receiver`).
-    pub(super) fn is_push_place(&mut self, e: &ast::Expr) -> bool {
+    pub(super) fn is_push_place(&mut self, e: &ast::Expr, safe: bool) -> bool {
         // A receiver checked ahead of its turn is a value already.
         is_place(e)
-            && !goes_through_safe_access(e)
+            && (safe || !goes_through_safe_access(e))
             && !self.body.ahead_at.contains_key(&(e.span, false))
             && self.rooted(e)
     }
@@ -146,6 +171,47 @@ impl Checker<'_> {
         (at == receiver.span).then_some(place)
     }
 
+    /// The receiver of `receiver?.push(arg)`, which `push_receiver` checked as `read`. When the
+    /// place holds an array that a `?.` or its own type makes optional, the call writes the place:
+    /// the result is `Ok` of the array, as `?.` hands it to the call, and the place waits for
+    /// `push`. Else the call is a method of whatever the place holds, and the result is `Err` of
+    /// the place read as a value, as a `?.` on a receiver reads it. A class object that the
+    /// root field's `?.` unwraps is bound for that value.
+    pub(super) fn safe_push_receiver(
+        &mut self,
+        receiver: &ast::Expr,
+        read: Checked,
+    ) -> Result<tir::Expr, Checked> {
+        let guarded = self
+            .body
+            .pushed
+            .as_ref()
+            .is_some_and(|(_, place)| place.guard.is_some());
+        let held = type_of(&read).map(|ty| if guarded { as_optional(ty) } else { ty });
+        let in_place = matches!(held.map(Type::kind),
+            Some(TypeKind::Optional(payload)) if matches!(payload.kind(), TypeKind::Array(_)));
+        let read = match read {
+            Ok(mut array) if in_place => {
+                // The array inside the optional that the place stores.
+                if let TypeKind::Optional(payload) = array.ty.kind() {
+                    array.ty = payload;
+                }
+                return Ok(array);
+            }
+            read => read,
+        };
+        let Some(place) = self.take_pushed(receiver) else {
+            return Err(read);
+        };
+        if let Ok(read) = &read {
+            self.read_pushed(read, receiver);
+        }
+        Err(match place.guard {
+            Some(Guard { bind, scrutinee }) => safe_value(receiver.span, bind, Ok(scrutinee), read),
+            None => read,
+        })
+    }
+
     /// Records the reads of the receiver `e` of a `push` that is no array's, whose value is
     /// `read`. The local is read. The field at the root of the place is read. A write reads
     /// neither.
@@ -174,7 +240,8 @@ impl Checker<'_> {
     /// is `place`, if `push_receiver` checked it. The receiver is an array, or its type is
     /// unknown. It gives a `unit` block that holds `Push` of the place, after the spills of its
     /// operands and the value. A receiver that no place takes is reported before the argument.
-    /// `safe` makes it `receiver?.push(arg)`, which is E0022 until a `push` goes through `?.`.
+    /// `safe` makes it `receiver?.push(arg)`: a place of an optional type is pushed to where it
+    /// holds a value, and a root field's `?.` holds its object in `place.guard`.
     pub(super) fn push(
         &mut self,
         span: Span,
@@ -203,18 +270,13 @@ impl Checker<'_> {
             checker.stray(args);
             unit()
         };
-        let through_safe = safe || goes_through_safe_access(receiver_expr);
         // Every place that a `push` names is written, whatever else the call gets wrong.
-        if !through_safe && is_place(receiver_expr) {
+        if is_place(receiver_expr) {
             self.stamp_push(receiver_expr);
         }
         // A receiver that failed has reported itself.
         if receiver.is_err() {
             return not_pushed(self, None);
-        }
-        if through_safe {
-            let at = Span::new(receiver_expr.span.start(), span.end());
-            return not_pushed(self, Some(DiagnosticKind::AssignThroughSafeAccess { at }));
         }
         if !is_place(receiver_expr) {
             let at = receiver_expr.span;
@@ -243,29 +305,44 @@ impl Checker<'_> {
         match value {
             Ok(value) if place.writable => {
                 let path = unread(read);
-                Ok(self.pushed(span, path.root, path.operands, value))
+                // The place stores an optional that `?.` takes the array out of.
+                let some = safe
+                    && place
+                        .ty
+                        .is_some_and(|ty| matches!(ty.kind(), TypeKind::Optional(_)));
+                Ok(self.pushed(span, path, (some, place.guard), value))
             }
             _ => unit(),
         }
     }
 
-    /// The unit block of `Push` of the place built from `root` and `operands`, after the spill
-    /// of `operands` and `value`, as `write` makes a store.
+    /// The unit block of `Push` of the place `path`, after the spill of its operands and
+    /// `value`, as `write` makes a store. With `some`, the place stores an optional and is
+    /// written where it holds a value. A `guard` makes the block the branch where its object is
+    /// present.
     fn pushed(
         &mut self,
         span: Span,
-        root: Root,
-        mut operands: Vec<tir::Expr>,
+        path: Path,
+        (some, guard): (bool, Option<Guard>),
         value: tir::Expr,
     ) -> tir::Expr {
+        let mut operands = path.operands;
         operands.push(value);
         let (mut stmts, mut operands) = self.spill(operands);
         let value = operands
             .pop()
             .expect("`spill` should return one operand per input");
-        let place = build(root, operands);
+        let mut place = build(path.root, operands);
+        if some {
+            place = tir::Place::Some(Box::new(place));
+        }
         stmts.push(tir::Stmt::Push { place, value, span });
-        block_expr(stmts, None, Type::UNIT, span)
+        let block = block_expr(stmts, None, Type::UNIT, span);
+        match guard {
+            Some(Guard { bind, scrutinee }) => if_some(bind, scrutinee, block, None, span),
+            None => block,
+        }
     }
 
     /// `x op= e` is `x = x op e`. On any other place, each of its operands is bound to a fresh
@@ -460,6 +537,7 @@ impl Checker<'_> {
             ty,
             writable: false,
             held: None,
+            guard: None,
         })
     }
 
@@ -581,6 +659,7 @@ impl Checker<'_> {
             ty,
             writable: true,
             held,
+            guard: None,
         }
     }
 
@@ -589,7 +668,9 @@ impl Checker<'_> {
     fn place(&mut self, span: Span, target: &ast::Expr, change: Change) -> CheckedPlace {
         match &target.kind {
             &ast::ExprKind::Name(name) => self.name_place(span, target, name, change),
-            ast::ExprKind::Field { base, name, .. } => {
+            ast::ExprKind::Field {
+                base, name, safe, ..
+            } => {
                 if change != Change::Push {
                     self.stamp_root(base);
                 }
@@ -597,6 +678,26 @@ impl Checker<'_> {
                 let outer = std::mem::replace(&mut self.body.in_target, true);
                 let checked = self.value(base, None);
                 self.body.in_target = outer;
+                let mut guard = None;
+                // Only a `push`'s receiver has one: `?.` takes the object out of its optional,
+                // where the place starts.
+                let checked = if *safe {
+                    match (self.safe_payload(&checked, base, name), checked) {
+                        (Ok(payload), Ok(scrutinee)) => {
+                            let bind = self.fresh(payload);
+                            guard = Some(Guard { bind, scrutinee });
+                            Ok(local(bind, payload, base.span))
+                        }
+                        (Ok(payload), Err(_)) => Err(Poisoned::typed(payload)),
+                        (Err(failed), _) => {
+                            // As `?.` does, report the field and give no type.
+                            self.find_field(failed.ty, base, name, true);
+                            return CheckedPlace::failed();
+                        }
+                    }
+                } else {
+                    checked
+                };
                 let Some((class, index, ty)) = self.find_field(type_of(&checked), base, name, true)
                 else {
                     return CheckedPlace::failed();
@@ -617,6 +718,7 @@ impl Checker<'_> {
                     ty,
                     writable,
                     held,
+                    guard,
                 }
             }
             ast::ExprKind::Index { base, index } => {
@@ -626,7 +728,7 @@ impl Checker<'_> {
                     Change::Element
                 };
                 let inner = self.place(span, base, inner_change);
-                let element = self.element(base, inner.ty);
+                let element = self.element(base, inner.value_ty());
                 let (index, mismatched) = self.operand(index, Some(Type::I64));
                 let path = inner
                     .path
@@ -641,6 +743,7 @@ impl Checker<'_> {
                     ty: element.filter(|_| !mismatched),
                     writable: inner.writable,
                     held: inner.held,
+                    guard: None,
                 }
             }
             _ => unreachable!("the parser should make only a name, a field or an index a place"),
@@ -699,6 +802,9 @@ impl Checker<'_> {
                 let ty = element;
                 let (base, index) = (Box::new(base), Box::new(index));
                 (ExprKind::Index { base, index }, ty)
+            }
+            tir::Place::Some(_) => {
+                unreachable!("only a `push` has a `Some` step, and a `push` reads no place")
             }
         };
         tir::Expr { kind, ty, span }

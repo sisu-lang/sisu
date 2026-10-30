@@ -2157,6 +2157,10 @@ impl Walk {
                 self.place(base);
                 self.tir_expr(index, Parent::Other);
             }
+            tir::Place::Some(base) => {
+                self.mark("tir::Place::Some");
+                self.place(base);
+            }
         }
     }
 
@@ -4385,7 +4389,7 @@ fn an_array_without_growth_should_take_no_push() {
 }
 
 /// The programs of the seeds push onto a local, onto an element of an array and onto a `mut`
-/// field. A guard keeps the field within its cap.
+/// field, and now and then through `?.`. A guard keeps the field within its cap.
 #[test]
 fn a_push_should_reach_a_local_an_element_and_a_guarded_field() {
     let (mut local, mut element, mut field) = (false, false, false);
@@ -4396,13 +4400,21 @@ fn a_push_should_reach_a_local_an_element_and_a_guarded_field() {
             let Some((place, _)) = line.split_once(".push(") else {
                 continue;
             };
+            let (place, through) = place
+                .strip_suffix('?')
+                .map_or((place, false), |place| (place, true));
             if place.ends_with(']') {
                 element = true;
             } else if place.contains('.') {
                 field = true;
                 let guard = lines[at - 1];
+                let length = if through {
+                    format!("({place}?.len() ?? 0) < ")
+                } else {
+                    format!("{place}.len() < ")
+                };
                 assert!(
-                    guard.starts_with("if ") && guard.contains(&format!("{place}.len() < ")),
+                    guard.starts_with("if ") && guard.contains(&length),
                     "{place} is pushed to outside its guard: {guard}"
                 );
             } else {
@@ -4414,6 +4426,54 @@ fn a_push_should_reach_a_local_an_element_and_a_guarded_field() {
         local && element && field,
         "{local} {element} {field}: a local, an element and a field"
     );
+}
+
+/// A push through `?.` onto an optional array local runs for an array and for `None`, and one
+/// onto a field of an optional object runs for an object and for `None`. The guard of the field
+/// reads an absent object as holding no element, so the push runs and does nothing.
+#[test]
+fn a_push_through_an_optional_should_take_the_place_of_its_local() {
+    let object = Ty::class(0, 9);
+    let (mut local, mut field) = (false, false);
+    for mut state in 0..64 {
+        let data: Vec<u8> = (0..32)
+            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+            .collect();
+        let mut g = with_growth(&data, 64, None);
+        g.scope.vars[0].ty = Ty::Optional(Box::new(Ty::Array(Box::new(Ty::I64))));
+        g.scope.classes.push(Class {
+            fields: vec![Field {
+                name: "g0".to_string(),
+                ty: Ty::Array(Box::new(Ty::I64)),
+                mutable: true,
+                cap: 8,
+            }],
+            size: 9,
+            applied: None,
+            inferable: false,
+        });
+        let var = Var::new(
+            "v1".to_string(),
+            Ty::Optional(Box::new(object.clone())),
+            false,
+            0,
+            0,
+            0,
+        );
+        g.scope.vars.push(var);
+        g.push_stmt();
+        let program = &g.w.out.program;
+        local |= program.starts_with("v0?.push(");
+        if program.starts_with("if ") {
+            assert!(
+                program.starts_with("if (v1?.g0?.len() ?? 0) < 8 ")
+                    && program.contains("v1?.g0?.push("),
+                "{program}"
+            );
+            field = true;
+        }
+    }
+    assert!(local && field, "{local} {field}: a local and a field");
 }
 
 #[test]
@@ -5545,6 +5605,7 @@ impl<'f> Lets<'f> {
                 self.place(base);
                 self.expr(index);
             }
+            tir::Place::Some(base) => self.place(base),
         }
     }
 

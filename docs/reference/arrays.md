@@ -155,7 +155,8 @@ The rules:
 - `push` writes the array, as `xs[i] = x` does, so it needs a place that can change: a `let mut` variable, a `mut` field, or an element of one. A `let` variable, a parameter and a field without `mut` are errors ([E0001](../diagnostics/E0001.md)). A value that is not stored, such as `f().push(1)`, is an error too ([E0021](../diagnostics/E0021.md)).
 - `push` has no value. The argument has the element type, so `push(1)` on an `[i64?]` adds `Some(1)` ([E0032](../diagnostics/E0032.md)), and `push` takes exactly one argument ([E0053](../diagnostics/E0053.md)).
 - A `push` onto an array that another variable holds does not change that variable. Arrays are values ([Arrays are values](#arrays-are-values)).
-- `xs?.push(x)` is not valid yet ([E0022](../diagnostics/E0022.md)).
+- `xs?.push(x)` on an optional array adds `x` when `xs` holds an array. When `xs` is `None`, nothing happens and `x` is not computed. The place follows the rules above, so `xs` is a `let mut` variable. `bag?.items?.push(x)` goes through an optional object, and `items` is a `mut` field. The call tests `xs` again after it computes `x`. When `x` made `xs` `None`, the call adds nothing.
+- An assignment cannot go through `?.`: `bag?.items = []` is an error ([E0022](../diagnostics/E0022.md)).
 - A name that is not one of these methods is an error ([E0063](../diagnostics/E0063.md)).
 - On an optional array, call a method with `?.` ([Optional chaining](operators.md#optional-chaining)).
 
@@ -176,6 +177,26 @@ fn main() {
     xs.push(3)
     print(xs.len())                    // 3
     print(xs)                          // [1, 2, 3]
+}
+```
+
+On an optional array, `?.push` adds the element only when the array is there.
+
+```sisu
+class Bag {
+    mut items: [i64]
+}
+
+fn main() {
+    let mut xs: [i64]? = [1]
+    xs?.push(2)
+    print(xs ?? [])                    // [1, 2]
+    let mut none: [i64]? = None
+    none?.push(3)
+    print(none ?? [0])                 // [0]
+    let bag: Bag? = Bag(items: [1])
+    bag?.items?.push(2)
+    print(bag?.items ?? [])            // [1, 2]
 }
 ```
 

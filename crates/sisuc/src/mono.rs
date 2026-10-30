@@ -587,6 +587,7 @@ impl Mono {
                 self.place(base, args);
                 self.expr(index, args);
             }
+            Place::Some(base) => self.place(base, args),
         }
     }
 

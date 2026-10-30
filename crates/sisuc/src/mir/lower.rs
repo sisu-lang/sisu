@@ -541,6 +541,10 @@ impl<'a> Lowering<'a> {
                 place: place @ Place::Index { .. },
                 value,
             } => self.element_write(place, value)?,
+            Stmt::Assign {
+                place: Place::Some(_),
+                ..
+            } => unreachable!("only a `push` should write through `Some`"),
             Stmt::Append { place, value } => self.append(place, value)?,
             Stmt::Push { place, value, span } => self.array_push(place, value, *span)?,
             Stmt::Expr(e) => {
@@ -1228,6 +1232,7 @@ impl<'a> Lowering<'a> {
                 (root, Some(temp))
             }
             Place::Index { .. } => unreachable!("the loop above should stop at the root"),
+            Place::Some(_) => unreachable!("a `Some` should end a written place, never lead it"),
         };
         let later: Vec<&Expr> = indexes.iter().copied().chain([value]).collect();
         let mut ops = Vec::with_capacity(indexes.len());
@@ -1280,13 +1285,67 @@ impl<'a> Lowering<'a> {
     /// `p.push(value)`, in the order of an element write. The order is a field root's base, the
     /// indexes and the value. Then come the check and `make_unique` of each level, the push, and
     /// the release of the base. The push decides on the count of the array `p` holds.
+    ///
+    /// A place that ends in `Some` holds an optional array. The push tests it before the value,
+    /// so an absent array runs nothing, and again after the value, which may have cleared it. The
+    /// second test is the last step before the push: it proves the write (`certify`). When it
+    /// finds `None`, the value is released and the base with it.
     fn array_push(&mut self, place: &Place, value: &Expr, at: Span) -> Option<()> {
+        let (place, some) = match place {
+            Place::Some(array) => (&**array, true),
+            place => (place, false),
+        };
         let (root, indexes, temp) = self.written_root(place, value)?;
+        if !some {
+            let value = self.operand(value)?;
+            let place = self.walk(root, &indexes);
+            self.push(Statement::Push { place, value, at });
+            self.release(temp);
+            return Some(());
+        }
+        let optional = Self::indexed(&root, &indexes);
+        let join = self.new_block();
+        self.if_present(&optional, |lowering| {
+            lowering.release(temp);
+            lowering.goto(join);
+        });
+        // The checker rejects a value that never finishes (E0043), so the join stays reachable.
         let value = self.operand(value)?;
-        let place = self.walk(root, &indexes);
+        self.if_present(&optional, |lowering| {
+            lowering.discard_operand(&value);
+            lowering.release(temp);
+            lowering.goto(join);
+        });
+        let mut place = self.walk(root, &indexes);
+        place.projections.push(Projection::Some);
         self.push(Statement::Push { place, value, at });
         self.release(temp);
+        self.goto(join);
+        self.current = Some(join);
         Some(())
+    }
+
+    /// Ends the block with a test of the optional at `place`. `absent` lowers the branch where it
+    /// holds none, which must leave the block. Lowering goes on in the branch where it holds a
+    /// value, a block that nothing else enters.
+    fn if_present(&mut self, place: &MirPlace, absent: impl FnOnce(&mut Self)) {
+        let (some, none) = (self.new_block(), self.new_block());
+        self.terminate(Terminator::TestPresent {
+            place: place.clone(),
+            some,
+            none,
+        });
+        self.current = Some(none);
+        absent(self);
+        self.current = Some(some);
+    }
+
+    /// Releases the operand of a statement that does not run, when it owns a reference: a
+    /// temporary does, and a read of a source local does not.
+    fn discard_operand(&mut self, operand: &Operand) {
+        if let Operand::Move(local) = operand {
+            self.push(Statement::Release(*local));
+        }
     }
 
     /// `p += value` on a string field or element, in the spec's order: a copy of `p`, the
@@ -1579,5 +1638,6 @@ fn place_mentions(place: &Place, found: &mut Mentions) {
             place_mentions(base, found);
             mentions(index, found);
         }
+        Place::Some(base) => place_mentions(base, found),
     }
 }
