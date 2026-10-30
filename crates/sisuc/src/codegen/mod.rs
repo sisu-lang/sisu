@@ -414,8 +414,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         debug_assert_eq!(
             args.len(),
             self.functions[func.0].count_params() as usize,
-            "a call of `{}` should pass every parameter; a prelude function takes its caller's location too",
-            self.mir.functions[func.0].name
+            "a call should pass every parameter; a prelude function takes its caller's location too"
         );
         self.builder
             .build_call(self.functions[func.0], args, "call")
