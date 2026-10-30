@@ -3,6 +3,8 @@
 
 use super::generics::infers;
 use super::*;
+use crate::front_end::{self, LANG_SOURCE};
+use crate::lexer::{self, TokenKind};
 use crate::source::PRELUDE_BASE;
 
 /// A function `f` over `params`, whose body is `body` from line 2, and an empty `main`.
@@ -636,4 +638,35 @@ fn an_array_sum_of_the_prelude_should_keep_its_suggestion_and_codes() {
         "fn f<T>(xs: [T]) {\n    let _ = xs.sum()\n}\nfn main() {}",
         &[(Code::SumNeedsNumbers, (2, 16))],
     );
+}
+
+/// A user item takes the name of an identifier of the prelude: the prelude's bodies still check
+/// without a diagnostic. `front_end::checked` stops with an internal error on a diagnostic
+/// that points into the prelude, so a call that returns is the proof. A name such as `Option`
+/// gives a diagnostic in the user's file: that is fine.
+#[test]
+fn prelude_should_check_clean_beside_a_user_item_of_any_name_it_uses() {
+    let mut names = Vec::new();
+    for source in [LANG_SOURCE, PRELUDE_SOURCE] {
+        let lexed = lexer::lex(source).expect("the prelude should lex");
+        for token in lexed.tokens {
+            if let TokenKind::Ident(name) = token.kind
+                && !names.contains(&name)
+            {
+                names.push(name);
+            }
+        }
+    }
+    assert!(names.len() > 10, "{names:?}");
+    for name in names {
+        for item in [
+            format!("enum {name} {{ A }}"),
+            format!("class {name} {{}}"),
+            format!("fn {name}() {{}}"),
+            format!("const {name}: i64 = 1"),
+            format!("interface {name} {{}}"),
+        ] {
+            front_end::checked(&format!("{item}\nfn main() {{}}"));
+        }
+    }
 }
