@@ -498,8 +498,7 @@ fn push_should_be_no_method_of_a_string() {
     )]);
 }
 
-/// A `push` through `?.` is E0022 until it is allowed; a receiver that is no optional is
-/// reported by the `?.`, and the failed receiver leaves nothing more to say.
+/// A `push` through `?.` is E0022 until it is allowed.
 #[test]
 fn push_should_report_a_safe_access_until_it_is_allowed() {
     push_rows(&[
@@ -509,14 +508,49 @@ fn push_should_report_a_safe_access_until_it_is_allowed() {
             vec![(Code::AssignThroughSafeAccess, (1, 19))],
         ),
         (
-            "safe call on an array that is no optional",
-            "fn f(m: [i64]) { m?.push(1) }\nfn main() {}",
-            vec![(Code::SafeAccessNotOptional, (1, 18))],
-        ),
-        (
             "safe call on a safe access",
             "class C {\n    mut items: [i64]?\n}\nfn f(c: C?) { c?.items?.push(1) }\nfn main() {}",
             vec![(Code::AssignThroughSafeAccess, (4, 15))],
+        ),
+    ]);
+}
+
+/// A `?.` on a receiver that is no optional is reported by the `?.`, and the failed receiver
+/// leaves nothing more to say about the `push`.
+#[test]
+fn push_should_leave_a_safe_access_on_no_optional_to_its_own_error() {
+    push_rows(&[(
+        "safe call on an array that is no optional",
+        "fn f(m: [i64]) { m?.push(1) }\nfn main() {}",
+        vec![(Code::SafeAccessNotOptional, (1, 18))],
+    )]);
+}
+
+/// Every place that a `push` names is written, whatever else the call gets wrong, so its `let
+/// mut` is reassigned and gets no W0002: a call that is the argument of a generic call, and an
+/// index that is not found, as in an element write.
+#[test]
+fn push_should_write_its_place_whatever_else_it_gets_wrong() {
+    push_rows(&[
+        (
+            "argument of a generic call",
+            "fn f<T>(x: T) {}\nfn main() {\n    let mut xs = [1]\n    f(xs.push(1))\n    print(xs)\n}",
+            vec![(Code::TypeArgument, (4, 7))],
+        ),
+        (
+            "element as the argument of a generic call",
+            "fn f<T>(x: T, y: T) {}\nfn main() {\n    let mut xss = [[1]]\n    f(xss[0].push(1), 2)\n    print(xss)\n}",
+            vec![(Code::NoValue, (4, 7))],
+        ),
+        (
+            "name that is not found",
+            "fn main() {\n    nope.push(1)\n}",
+            vec![(Code::BindingNotFound, (2, 5))],
+        ),
+        (
+            "index that is not found",
+            "fn main() {\n    let mut xss = [[1]]\n    xss[nope].push(1)\n    print(xss)\n}",
+            vec![(Code::BindingNotFound, (3, 9))],
         ),
     ]);
 }
@@ -537,9 +571,12 @@ fn push_should_report_a_mistake_in_its_receiver_once() {
             vec![(Code::AssignToImmutable, (5, 9))],
         ),
         (
-            "receiver and index that cannot change",
-            "fn main() {\n    let xss = [[1]]\n    xss[{\n        let t = 0\n        0\n    }].push(2)\n}",
-            vec![(Code::AssignToImmutable, (3, 5))],
+            "receiver that cannot change, and an assignment in its index",
+            "fn main() {\n    let y = 0\n    let xss = [[1]]\n    xss[{\n        y = 1\n        0\n    }].push(2)\n}",
+            vec![
+                (Code::AssignToImmutable, (4, 5)),
+                (Code::AssignToImmutable, (5, 9)),
+            ],
         ),
     ] {
         judge_unused();
@@ -591,4 +628,19 @@ fn a_class_push_should_not_stamp_its_receiver() {
         "class Pile {\n    mut n: i64\n    fn push(self, x: i64) { self.n += x }\n}\nfn main() {\n    let mut p = Pile(n: 0)\n    p.push(1)\n    print(p.n)\n}",
         &[(Code::NeverReassigned, (6, 13))],
     );
+}
+
+/// A push receiver moves the operands of its place into the value it reads, and back out into
+/// the `Push`: no node of a tree is cloned. A clone at each level of nested receivers copies
+/// every level inside it, so the work grows with the square of the depth.
+#[test]
+fn push_should_not_clone_the_nodes_of_its_receiver() {
+    let mut push = "xss[0].push(1)".to_owned();
+    for _ in 0..8 {
+        push = format!("xss[{{\n{push}\n0\n}}].push(1)");
+    }
+    let src = format!("fn main() {{\n    let mut xss = [[1]]\n{push}\n    print(xss)\n}}");
+    tir::CLONED_EXPRS.set(0);
+    assert!(checked(&src).0.is_some(), "{src}");
+    assert_eq!(tir::CLONED_EXPRS.get(), 0, "{src}");
 }

@@ -17,10 +17,10 @@ impl Checker<'_> {
     /// `None`, a `[]` and an integer literal, and flows into `if` and `if let` branches, a
     /// block's value, array elements, arithmetic and unary `-`; it never wraps.
     pub(super) fn expr(&mut self, e: &ast::Expr, expected: Option<Type>) -> Checked {
-        // An assignment target's chain runs only through field bases, method receivers and
-        // indexed bases; any other expression inside it is an ordinary read.
         #[cfg(test)]
         super::EXPR_CHECKS.set(super::EXPR_CHECKS.get() + 1);
+        // An assignment target's chain runs only through field bases, method receivers and
+        // indexed bases; any other expression inside it is an ordinary read.
         let outer = self.body.in_target;
         self.body.in_target &= matches!(
             e.kind,

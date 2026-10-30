@@ -376,7 +376,7 @@ impl Gen<'_> {
     }
 
     /// The places a `push` may append to. A mutable array takes a `push` when its type holds no
-    /// class object (decision 4) and its growth covers a slot and the smallest element, at each
+    /// class object (decision 4). Its growth must cover a slot and the smallest element, at each
     /// run. The same holds for an element of a mutable array of such arrays. A `mut` array field
     /// takes a guarded `push` when its elements have no size. One more element is then one more
     /// size.

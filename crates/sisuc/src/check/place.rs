@@ -128,16 +128,13 @@ impl Checker<'_> {
 
     /// The receiver of a `push`, checked once as a place. The place waits in `body.pushed` for
     /// `push`, or for the method lookup that finds the receiver is no array. The result is the
-    /// value the place holds.
+    /// value the place holds, which owns the operands of the place.
     pub(super) fn push_receiver(&mut self, receiver: &ast::Expr) -> Checked {
-        let place = self.place(receiver.span, receiver, Change::Push);
+        let mut place = self.place(receiver.span, receiver, Change::Push);
         // A place of type `Error` has reported itself.
-        let read = match (&place.path, place.ty) {
-            (Some(path), Some(_)) => {
-                let operands = path.operands.clone();
-                Ok(self.read(build(path.root, operands), receiver.span))
-            }
-            _ => Err(Poisoned::of(place.ty)),
+        let read = match (place.path.take(), place.ty) {
+            (Some(path), Some(_)) => Ok(self.read(build(path.root, path.operands), receiver.span)),
+            (_, ty) => Err(Poisoned::of(ty)),
         };
         self.body.pushed = Some((receiver.span, place));
         read
@@ -149,47 +146,46 @@ impl Checker<'_> {
         (at == receiver.span).then_some(place)
     }
 
-    /// Records the reads of the receiver `e` of a `push` that is no array's. The local is read.
-    /// The field at the root of the place is read. A write reads neither.
-    pub(super) fn read_pushed(&mut self, place: &CheckedPlace, e: &ast::Expr) {
-        let Some(path) = &place.path else { return };
-        let mut at = e;
-        while let ast::ExprKind::Index { base, .. } = &at.kind {
-            at = base;
-        }
-        match path.root {
-            Root::Local(_) => {
-                if let ast::ExprKind::Name(name) = at.kind
-                    && let Some(b) = self.lookup(name)
-                {
-                    b.read = true;
-                }
+    /// Records the reads of the receiver `e` of a `push` that is no array's, whose value is
+    /// `read`. The local is read. The field at the root of the place is read. A write reads
+    /// neither.
+    pub(super) fn read_pushed(&mut self, read: &tir::Expr, e: &ast::Expr) {
+        match (&e.kind, &read.kind) {
+            (ast::ExprKind::Index { base, .. }, ExprKind::Index { base: read, .. }) => {
+                self.read_pushed(read, base);
             }
-            Root::Field(index) => {
-                if let Some(TypeKind::Class(class, _)) = path.operands.first().map(|o| o.ty.kind())
-                {
-                    self.record(Used::Field(class, index), at.span);
-                }
+            (&ast::ExprKind::Name(name), ExprKind::Local(_)) => {
+                let binding = self.lookup(name);
+                binding
+                    .expect("the root of a checked place should be a binding")
+                    .read = true;
             }
+            (ast::ExprKind::Field { .. }, ExprKind::Field { base, index }) => {
+                let TypeKind::Class(class, _) = base.ty.kind() else {
+                    unreachable!("the base of a checked field should be a class")
+                };
+                self.record(Used::Field(class, *index), e.span);
+            }
+            _ => unreachable!("the read of a push receiver should match its syntax"),
         }
     }
 
-    /// `receiver.push(arg)` on an array, `receiver` the checked `receiver_expr`. It gives a `unit`
-    /// block that holds `Push` of the `place` that `push_receiver` checked, after the spills of
-    /// the operands and the value. A receiver that no place takes is reported before the
-    /// argument. `safe` makes it `receiver?.push(arg)`, which is E0022 until a `push` goes
-    /// through `?.`.
+    /// `receiver.push(arg)`, `receiver` the checked `receiver_expr`. The place of the receiver
+    /// is `place`, if `push_receiver` checked it. The receiver is an array, or its type is
+    /// unknown. It gives a `unit` block that holds `Push` of the place, after the spills of its
+    /// operands and the value. A receiver that no place takes is reported before the argument.
+    /// `safe` makes it `receiver?.push(arg)`, which is E0022 until a `push` goes through `?.`.
     pub(super) fn push(
         &mut self,
         span: Span,
         safe: bool,
-        (receiver, place): (&Checked, Option<CheckedPlace>),
+        (receiver, place): (Checked, Option<CheckedPlace>),
         receiver_expr: &ast::Expr,
         args: &[ast::Arg],
     ) -> Checked {
-        let ty = type_of(receiver).expect("an array receiver should have a type");
-        let TypeKind::Array(element) = ty.kind() else {
-            unreachable!("`method_call` should send `push` here only for an array")
+        let element = match type_of(&receiver).map(Type::kind) {
+            Some(TypeKind::Array(element)) => Some(element),
+            _ => None,
         };
         let unit = || Err(Poisoned::typed(Type::UNIT));
         let not_pushed = |checker: &mut Self, d: Option<DiagnosticKind>| {
@@ -199,10 +195,16 @@ impl Checker<'_> {
             checker.stray(args);
             unit()
         };
+        let through_safe = safe || goes_through_safe_access(receiver_expr);
+        // Every place that a `push` names is written, whatever else the call gets wrong.
+        if !through_safe && is_place(receiver_expr) {
+            self.stamp_push(receiver_expr);
+        }
+        // A receiver that failed has reported itself.
         if receiver.is_err() {
             return not_pushed(self, None);
         }
-        if safe || goes_through_safe_access(receiver_expr) {
+        if through_safe {
             let at = Span::new(receiver_expr.span.start(), span.end());
             return not_pushed(self, Some(DiagnosticKind::AssignThroughSafeAccess { at }));
         }
@@ -212,13 +214,12 @@ impl Checker<'_> {
         }
         // Only a receiver checked ahead of its turn has no place: its call is an argument, whose
         // `unit` is reported.
-        let Some(mut place) = place else {
+        let (Ok(read), Some(mut place)) = (receiver, place) else {
             return not_pushed(self, None);
         };
         if let Some(d) = place.held.take() {
             self.report(d);
         }
-        self.stamp_push(receiver_expr);
         let [arg] = args else {
             let d = DiagnosticKind::ArgumentCount {
                 name: "push".to_string(),
@@ -230,9 +231,10 @@ impl Checker<'_> {
         };
         // A label or a mismatch is reported, and an error withholds the `tir`.
         self.labels(args);
-        let value = self.expect(&arg.value, Some(element));
-        match (place.path, value) {
-            (Some(path), Ok(value)) if place.writable => {
+        let value = self.expect(&arg.value, element);
+        match value {
+            Ok(value) if place.writable => {
+                let path = unread(read);
                 Ok(self.pushed(span, path.root, path.operands, value))
             }
             _ => unit(),
@@ -472,21 +474,18 @@ impl Checker<'_> {
 
     /// Stamps what the place `target` of a `push` writes, as `place` stamps a write. A binding at
     /// the root of a chain of indexes is reassigned. The root of a field's base is written.
-    fn stamp_push(&mut self, mut target: &ast::Expr) {
-        loop {
-            match &target.kind {
-                ast::ExprKind::Index { base, .. } => target = base,
-                ast::ExprKind::Field { base, .. } => return self.stamp_root(base),
-                &ast::ExprKind::Name(name) => {
-                    let stamp = self.write_stamp();
-                    if let Some(b) = self.lookup(name) {
-                        b.written = stamp;
-                        b.reassigned |= b.kind == BindingKind::Var;
-                    }
-                    return;
-                }
-                _ => unreachable!("a push receiver should be a name, a field or an index"),
-            }
+    fn stamp_push(&mut self, target: &ast::Expr) {
+        let mut root = target;
+        while let ast::ExprKind::Index { base, .. } = &root.kind {
+            root = base;
+        }
+        let &ast::ExprKind::Name(name) = &root.kind else {
+            return self.stamp_root(root);
+        };
+        let stamp = self.write_stamp();
+        if let Some(b) = self.lookup(name) {
+            b.written = stamp;
+            b.reassigned |= b.kind == BindingKind::Var;
         }
     }
 
@@ -741,6 +740,26 @@ fn same_index(a: &tir::Expr, b: &tir::Expr) -> bool {
         (ExprKind::Local(a), ExprKind::Local(b)) => a == b,
         (ExprKind::Int(a), ExprKind::Int(b)) => a == b,
         _ => false,
+    }
+}
+
+/// The path of the place that `read` holds, the inverse of `Checker::read`.
+fn unread(read: tir::Expr) -> Path {
+    match read.kind {
+        ExprKind::Local(id) => Path {
+            root: Root::Local(id),
+            operands: Vec::new(),
+        },
+        ExprKind::Field { base, index } => Path {
+            root: Root::Field(index),
+            operands: vec![*base],
+        },
+        ExprKind::Index { base, index } => {
+            let mut path = unread(*base);
+            path.operands.push(*index);
+            path
+        }
+        _ => unreachable!("`push_receiver` should read a place as a local, a field or an index"),
     }
 }
 

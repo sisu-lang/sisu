@@ -459,11 +459,15 @@ impl Checker<'_> {
         // A `push` onto an array writes its place, so it is not a method of the prelude's.
         if method.name.as_str() == "push" {
             let place = self.take_pushed(receiver_expr);
-            if type_of(&receiver).is_some_and(|ty| matches!(ty.kind(), TypeKind::Array(_))) {
-                return self.push(span, safe, (&receiver, place), receiver_expr, args);
-            }
-            if let Some(place) = place {
-                self.read_pushed(&place, receiver_expr);
+            match type_of(&receiver) {
+                // A type that is known and is no array, a class with a `push` method of its own,
+                // reads its receiver and writes nothing.
+                Some(ty) if !matches!(ty.kind(), TypeKind::Array(_)) => {
+                    if let (Ok(read), Some(_)) = (&receiver, place) {
+                        self.read_pushed(read, receiver_expr);
+                    }
+                }
+                _ => return self.push(span, safe, (receiver, place), receiver_expr, args),
             }
         }
         match type_of(&receiver) {

@@ -428,11 +428,31 @@ pub(crate) enum Place {
     },
 }
 
-#[derive(Clone, Debug)]
+#[cfg_attr(not(test), derive(Clone))]
+#[derive(Debug)]
 pub(crate) struct Expr {
     pub(crate) kind: ExprKind,
     pub(crate) ty: Type,
     pub(crate) span: Span,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many expressions have been cloned on this thread, each node of a tree once.
+    pub(crate) static CLONED_EXPRS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// In a test build, a clone counts the nodes it copies.
+#[cfg(test)]
+impl Clone for Expr {
+    fn clone(&self) -> Self {
+        CLONED_EXPRS.set(CLONED_EXPRS.get() + 1);
+        Self {
+            kind: self.kind.clone(),
+            ty: self.ty,
+            span: self.span,
+        }
+    }
 }
 
 /// The stream a `print` writes to.
