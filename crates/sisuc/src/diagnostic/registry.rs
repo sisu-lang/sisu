@@ -1831,7 +1831,7 @@ pub(crate) enum NotConformForm {
     /// shows how to give one.
     Bound {
         bound: Option<Span>,
-        label: Option<String>,
+        label: Option<PreludeBound>,
         make: Option<String>,
         /// Whether the interface is `AnyObject`, which only classes have.
         class_only: bool,
@@ -1840,6 +1840,15 @@ pub(crate) enum NotConformForm {
         /// and where it is.
         needs: Option<(String, Span)>,
     },
+}
+
+/// How the label names a bound of the prelude, on the call.
+#[derive(Clone)]
+pub(crate) enum PreludeBound {
+    /// The type itself fails the bound.
+    Call,
+    /// A part of the type fails the bound: `part` does not conform to `interface`.
+    Since { part: String, interface: String },
 }
 
 /// What the report of a missing operator (`NoOperator`) says besides the missing operator.
@@ -2423,7 +2432,12 @@ impl From<DiagnosticKind> for Diagnostic {
                             d
                         };
                         let d = match label {
-                            Some(label) => d.with_label(label),
+                            Some(PreludeBound::Call) => {
+                                d.with_label("required by the bound of this call")
+                            }
+                            Some(PreludeBound::Since { part, interface }) => d.with_label(format!(
+                                "required by the bound of this call, since `{part}` does not conform to `{interface}`"
+                            )),
                             None => d,
                         };
                         let d = match bound {

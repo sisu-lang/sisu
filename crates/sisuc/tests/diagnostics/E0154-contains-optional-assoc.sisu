@@ -1,0 +1,9 @@
+interface Plain {
+    type Item
+}
+
+fn has<X: Plain>(xs: [X.Item?]) -> bool {
+    xs.contains(None)
+}
+
+fn main() {}

@@ -3668,6 +3668,16 @@ fn contains_should_report_an_element_without_eq_as_not_conforming_at_the_call() 
             "fn has<T>(xs: [T?], x: T?) -> bool { xs.contains(x) }".to_string(),
             "xs.contains(x)",
         ),
+        (
+            "an optional associated type",
+            "interface Plain {\n    type Item\n}\nfn has<X: Plain>(xs: [X.Item?]) -> bool { xs.contains(None) }".to_string(),
+            "xs.contains(None)",
+        ),
+        (
+            "an array of arrays of an associated type",
+            "interface Plain {\n    type Item\n}\nfn has<X: Plain>(xs: [[X.Item]], x: [X.Item]) -> bool { xs.contains(x) }".to_string(),
+            "xs.contains(x)",
+        ),
     ];
     for (row, src, call) in rows {
         let src = format!("{src}\nfn main() {{}}");

@@ -12,7 +12,7 @@ use crate::ast;
 use crate::conformance::{CHOICE_DEPTH_LIMIT, Entered, Generated, ensure_stack, find, generated};
 use crate::diagnostic::{
     AddBound, BoundSite, Definition as Kind, DiagnosticKind, NoOperatorForm, NotConformForm,
-    NotInterface, UnknownForm, WideKind,
+    NotInterface, PreludeBound, UnknownForm, WideKind,
 };
 use crate::graph::components;
 use crate::lang::Dispatch;
@@ -1615,16 +1615,16 @@ impl Checker<'_> {
             && find(&self.conformances, bound.interface, leaf, args).is_none();
         let make = (prelude && none).then(|| self.type_name(leaf));
         let label = (prelude && bound.interface != self.lang.any_object).then(|| {
-            let since =
-                (leaf != ty && (none || matches!(leaf.kind(), TypeKind::Param(..)))).then(|| {
-                    let (leaf, interface) =
-                        (self.type_name(leaf), self.bound_text(bound.interface, args));
-                    format!(", since `{leaf}` does not conform to `{interface}`")
-                });
-            format!(
-                "required by the bound of this call{}",
-                since.unwrap_or_default()
-            )
+            let part_fails = leaf != ty
+                && (none || matches!(leaf.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)));
+            if part_fails {
+                PreludeBound::Since {
+                    part: self.type_name(leaf),
+                    interface: self.bound_text(bound.interface, args),
+                }
+            } else {
+                PreludeBound::Call
+            }
         });
         self.report(DiagnosticKind::NotConform {
             ty: self.type_name(ty),
