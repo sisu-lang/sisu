@@ -482,7 +482,8 @@ impl Gen<'_> {
                     unreachable!("only an optional array takes a `?.` push")
                 };
                 self.w.text(&format!("{name}?.push("));
-                self.pushed(v, &element);
+                // The argument runs only when `v` holds an array.
+                self.conditionally(|g| g.pushed(v, &element));
             }
             Push::Element(v) => {
                 let (name, len) = {

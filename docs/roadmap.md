@@ -711,12 +711,11 @@ stretch goal into steps.
     with exit code 101 where it cannot go on.
   - Milestone 10: tuples. `match (brace, resumed)` replaces the nested `if`s
     of the lexer.
-  - Milestone 10: default parameters. A default for a field of a record lets
-    `Statement` list only the fields that differ.
-  - The slices work, after milestone 8 and before milestone 9 part 1 (see
-    "Substring views" in "Open decisions"): a slice of a `[char]` or a
-    `string` lets the lexer take the text of a token without a push of each
-    `char`.
+  - Milestone 10: default parameters. When the parameters of a constructor
+    can have defaults, `fresh()` lists only the fields that differ.
+  - After milestone 8 and before milestone 9 part 1: slices (see "Substring
+    views" in "Open decisions"). A slice of a `[char]` or a `string` lets the
+    lexer take the text of a token without a push of each `char`.
   - Milestone 11, part 2 (collections): the `@discardable` attribute, on the
     attributes foundation, which lands after milestone 8 (see "Attribute
     syntax" in "Open decisions"). It lets `text.next()` stand alone, without

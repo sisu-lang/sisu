@@ -423,7 +423,7 @@ class Statement {
     }
 }
 
-// gap: a field has no default value, so each `Statement` lists all its fields.
+// gap: the parameters of a constructor have no defaults, so `fresh()` lists every field.
 fn fresh() -> Statement {
     Statement(head: Head.Unseen, annotation: None, tokens: 0, params: false, nested: 0,
         first: Start.Unseen, grouped: false)

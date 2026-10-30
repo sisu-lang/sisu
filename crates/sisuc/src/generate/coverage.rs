@@ -5625,7 +5625,14 @@ impl<'f> Lets<'f> {
             | tir::Stmt::Append { place, value }
             | tir::Stmt::Push { place, value, .. } => {
                 self.place(place);
-                self.expr(value);
+                // Through `?.`, the value runs only when the optional holds one. `Some` is the
+                // outermost of a place: `v?[0].push(e)` does not parse, and `v[0]?.push(e)` is a
+                // `Some` of an `Index`.
+                if matches!(place, tir::Place::Some(_)) {
+                    self.conditionally(|walk| walk.expr(value));
+                } else {
+                    self.expr(value);
+                }
             }
         }
     }

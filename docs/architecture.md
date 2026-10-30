@@ -362,8 +362,9 @@ bounds calls `sisu_panic_bounds`. Codegen tags the loads and stores of an
 array's count, length and capacity, and every count update and check, with
 one TBAA tag, and those of an array element with another, so LLVM knows that
 writing an element changes none of them. A length load also carries `!range`
-and `!noundef`, so LLVM knows that a length is never negative: `alloc_array`
-is the only writer of a length, and no length it gets is negative.
+and `!noundef`, so LLVM knows that a length is never negative. `alloc_array` and
+`array_push` are the only writers of a length. `array_push` stores `len + 1` only
+after it checks that this many elements fit.
 
 A string is one counted block with a header of three `i64`s: the count, the
 length and the capacity, then the UTF-8 bytes. A literal is a private global
