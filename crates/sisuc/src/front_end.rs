@@ -245,9 +245,10 @@ mod tests {
         assert_eq!(names(front_end(src).0), ["main", "id<i64>"]);
     }
 
-    /// A fault in the checker that only an unusual prelude reaches, such as a span read from the
-    /// wrong text, once crashed the compiler with a plain panic. The diagnostics cases are a corpus
-    /// of unusual programs, so each one, as the prelude, must check or give the internal error.
+    /// Only an unusual prelude reaches some faults in the checker. One such fault, a span read
+    /// from the wrong text, once crashed the compiler with a plain panic. The diagnostics cases
+    /// are a corpus of unusual programs, so each one, as the prelude, must check or give the
+    /// internal error.
     #[test]
     fn every_diagnostics_case_as_the_prelude_should_check_or_give_the_prelude_internal_error() {
         let cases = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/diagnostics");
