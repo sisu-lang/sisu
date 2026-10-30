@@ -152,6 +152,12 @@ fn numbers() {
     0b1010
     0o17
     0xdeadBEEF
+    // After a `.`, an upper-case prefix takes its digits too. These rows rest on a gap: the
+    // compiler gives no E0075 after a `.` when the run is too large for an integer. The rows go
+    // when that gap is fixed.
+    t.0XFFFFFFFFFFFFFFFFFFFF
+    t.0B11111111111111111111111111111111111111111111111111111111111111111
+    t.0O7777777777777777777777777
 }
 
 // A line break after a token that can end a statement is a `Newline`. This holds after each kind
@@ -307,7 +313,8 @@ fn k<T: A.B
 fn g<T: A<B>
     & C>() { }
 // A line break after a token that can end a bound's arguments leaves no `Newline`: after a name,
-// `>`, `]`, `?`, `??` or `Self`. The next line goes on with a name, `,`, `>`, `]`, `?` or `??`.
+// `>`, `]`, `?`, `??` or `Self`. The next line goes on with a name, `,`, `>`, `?` or `??`. A line
+// break inside `[ ]` gives no `Newline` at all.
 fn to<T: Convert<Kelvin>
 >(x: T) { }
 fn to<T: Convert<Kelvin>
@@ -316,8 +323,6 @@ fn to<T: Convert<Kelvin
 >>(x: T) { }
 fn to<T: Convert<[i64]
 >>(x: T) { }
-fn to<T: Convert<[i64
-]>>(x: T) { }
 fn to<T: Convert<K?
 >>(x: T) { }
 fn to<T: Convert<K
