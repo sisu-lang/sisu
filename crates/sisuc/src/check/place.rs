@@ -316,10 +316,10 @@ impl Checker<'_> {
         }
     }
 
-    /// The unit block of `Push` of the place `path`, after the spill of its operands and
-    /// `value`, as `write` makes a store. With `some`, the place stores an optional and is
-    /// written where it holds a value. A `guard` makes the block the branch where its object is
-    /// present.
+    /// The unit block of `Push` of the place `path`, after the spill of its operands, and of
+    /// `value` unless `some`, as `write` makes a store. With `some`, the place stores an optional
+    /// and is written where it holds a value. A `guard` makes the block the branch where its
+    /// object is present.
     fn pushed(
         &mut self,
         span: Span,

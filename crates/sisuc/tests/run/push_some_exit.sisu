@@ -6,7 +6,6 @@
 // THEN an absent array runs nothing: its argument does not print, and nothing exits
 // AND a present array takes the argument when `leave` is false, and leaves before the push
 // when `leave` is true
-// AND an index that is out of bounds panics before the argument runs
 // AND every block is freed exactly once on every path, which Valgrind and `--rc-checks` check
 class Items {
     mut items: [i64]?
