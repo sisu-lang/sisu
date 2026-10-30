@@ -523,7 +523,9 @@ fn failing_leaf_should_read_each_type_once() {
 
 #[test]
 fn generated_should_decide_each_type_once() {
-    assert_eq!(steps(&chain(40)), (40, vec![]));
+    // Only the steps: each enum of the chain holds two of the next, so the payload limit adds an
+    // E0160 that this test is not about.
+    assert_eq!(steps(&chain(40)).0, 40);
     // The coinductive hit costs no step of its own.
     let expr = "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n}";
     assert_eq!(steps(&asking(expr, "eq", "Expr")), (1, vec![]));

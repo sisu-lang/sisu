@@ -2,6 +2,7 @@
 
 use super::{Diagnostic, Edit, Fix, Severity, Suggestion};
 use crate::conformance::CHOICE_DEPTH_LIMIT;
+use crate::payload_limit::PAYLOAD_LIMIT_GIB;
 use crate::source::Span;
 
 /// The code table: each code's variant and number. A number is never reused or changed.
@@ -213,6 +214,7 @@ codes! {
     BoundTooWide = "E0157",
     ClassOnly = "E0158",
     NoOperator = "E0159",
+    PayloadTooLarge = "E0160",
     NanComparison = "W0005",
     UnreachableArm = "W0006",
     RedundantSemicolon = "W0007",
@@ -446,6 +448,17 @@ pub(crate) enum DiagnosticKind {
         /// A conformance that the type has already, whose bound fails: the bound as written
         /// there, and where it is.
         needs: Option<(String, Span)>,
+    },
+    /// The enum `name`, declared at `at`, has a payload that can be 4 GiB or more
+    /// (`payload_limit`). A payload must be less than 4 GiB: that is the limit of the language for
+    /// every alignment, and a value of that size can never be on the stack. `instance` is
+    /// whether `name` is an instance of the generic enum declared at `at`. `holder` is the enum
+    /// of the prelude that holds `name` inline, when its payload is the one of 4 GiB or more.
+    PayloadTooLarge {
+        name: String,
+        instance: bool,
+        holder: Option<String>,
+        at: Span,
     },
     /// A call of the method `method` of `receiver`, at `at`, that more than one conformance
     /// could answer: those of `interfaces`. `annotate` is the `let` that picks one.
@@ -2642,6 +2655,37 @@ impl From<DiagnosticKind> for Diagnostic {
                     Some(help) => d.with_help(help),
                     None => d,
                 }
+            }
+            DiagnosticKind::PayloadTooLarge {
+                name,
+                instance,
+                holder,
+                at,
+            } => {
+                // The span is the declaration, which holds the other enums in an instance only.
+                let this = if instance {
+                    "an instance of this enum"
+                } else {
+                    "this enum"
+                };
+                let (message, label) = match holder {
+                    Some(holder) => (
+                        format!(
+                            "enum `{name}` can make the payload of `{holder}` {PAYLOAD_LIMIT_GIB} GiB or more"
+                        ),
+                        format!("`{holder}` holds {this} inline"),
+                    ),
+                    None => (
+                        format!("the payload of enum `{name}` can be {PAYLOAD_LIMIT_GIB} GiB or more"),
+                        format!("{this} holds other enums inline"),
+                    ),
+                };
+                Diagnostic::coded(code, at, message)
+                    .with_label(label)
+                    .with_help(format!(
+                        "a payload must be less than {PAYLOAD_LIMIT_GIB} GiB. Hold a part in a class or an array. \
+                         Such a field adds only the size of a pointer to the payload."
+                    ))
             }
             DiagnosticKind::NotAnInterface { written, at, kind } => Diagnostic::coded(
                 code,

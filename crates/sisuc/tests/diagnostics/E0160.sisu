@@ -1,0 +1,131 @@
+enum E0 {
+    End
+    A(E1, E1)
+}
+enum E1 {
+    End
+    A(E2, E2)
+}
+enum E2 {
+    End
+    A(E3, E3)
+}
+enum E3 {
+    End
+    A(E4, E4)
+}
+enum E4 {
+    End
+    A(E5, E5)
+}
+enum E5 {
+    End
+    A(E6, E6)
+}
+enum E6 {
+    End
+    A(E7, E7)
+}
+enum E7 {
+    End
+    A(E8, E8)
+}
+enum E8 {
+    End
+    A(E9, E9)
+}
+enum E9 {
+    End
+    A(E10, E10)
+}
+enum E10 {
+    End
+    A(E11, E11)
+}
+enum E11 {
+    End
+    A(E12, E12)
+}
+enum E12 {
+    End
+    A(E13, E13)
+}
+enum E13 {
+    End
+    A(E14, E14)
+}
+enum E14 {
+    End
+    A(E15, E15)
+}
+enum E15 {
+    End
+    A(E16, E16)
+}
+enum E16 {
+    End
+    A(E17, E17)
+}
+enum E17 {
+    End
+    A(E18, E18)
+}
+enum E18 {
+    End
+    A(E19, E19)
+}
+enum E19 {
+    End
+    A(E20, E20)
+}
+enum E20 {
+    End
+    A(E21, E21)
+}
+enum E21 {
+    End
+    A(E22, E22)
+}
+enum E22 {
+    End
+    A(E23, E23)
+}
+enum E23 {
+    End
+    A(E24, E24)
+}
+enum E24 {
+    End
+    A(E25, E25)
+}
+enum E25 {
+    End
+    A(E26, E26)
+}
+enum E26 {
+    End
+    A(E27, E27)
+}
+enum E27 {
+    End
+    A(E28, E28)
+}
+enum E28 {
+    End
+    A(E29, E29)
+}
+enum E29 {
+    End
+    A(E30, E30)
+}
+enum E30 {
+    End
+    A(E31, E31)
+}
+enum E31 {
+    End
+    A(i64, i64)
+}
+fn main() {
+    print(E0.End)
+}

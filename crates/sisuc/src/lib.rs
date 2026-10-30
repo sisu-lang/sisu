@@ -19,6 +19,7 @@ mod link;
 mod mir;
 mod mono;
 mod parser;
+mod payload_limit;
 mod report;
 mod run;
 mod source;
