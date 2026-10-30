@@ -470,6 +470,8 @@ impl<'a> Lowering<'a> {
     /// newest first, without popping them.
     fn release_scope(&mut self, mark: usize) {
         for i in (mark..self.scope.len()).rev() {
+            #[cfg(test)]
+            ARM_STEPS.set(ARM_STEPS.get() + 1);
             let (local, borrowed) = self.scope[i];
             self.push(if borrowed {
                 Statement::End(local)
@@ -1119,6 +1121,8 @@ impl<'a> Lowering<'a> {
         dest: Option<LocalId>,
         join: &mut Option<BlockId>,
     ) {
+        #[cfg(test)]
+        ARM_STEPS.set(ARM_STEPS.get() + 1);
         if let Some(value) = self.block(block, dest) {
             if dest.is_none() {
                 self.discard(value);
@@ -1303,6 +1307,8 @@ impl<'a> Lowering<'a> {
             self.release(temp);
             return Some(());
         }
+        // The test reads the element of an indexed place, so a bad index panics here, before the
+        // value runs. A push of an array that is not optional runs the value first.
         let optional = Self::indexed(&root, &indexes);
         let join = self.new_block();
         self.if_present(&optional, |lowering| {
@@ -1502,6 +1508,9 @@ fn mentions(e: &Expr, found: &mut Mentions) {
 thread_local! {
     /// How many expressions `mentions` has walked on this thread.
     pub(super) static WALKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many arms of an `if`, an `if let` or a `match` lowering has lowered on this thread,
+    /// and how many scope entries their exits have released.
+    pub(super) static ARM_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many guard-membership records `is_guarded` has read on this thread: one flag per
     /// question about a source local.
     pub(super) static PROBED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };

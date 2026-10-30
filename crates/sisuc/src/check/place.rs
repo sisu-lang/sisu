@@ -171,12 +171,12 @@ impl Checker<'_> {
         (at == receiver.span).then_some(place)
     }
 
-    /// The receiver of `receiver?.push(arg)`, which `push_receiver` checked as `read`. When the
-    /// place holds an array that a `?.` or its own type makes optional, the call writes the place:
-    /// the result is `Ok` of the array, as `?.` hands it to the call, and the place waits for
-    /// `push`. Else the call is a method of whatever the place holds, and the result is `Err` of
-    /// the place read as a value, as a `?.` on a receiver reads it. A class object that the
-    /// root field's `?.` unwraps is bound for that value.
+    /// The receiver of `receiver?.push(arg)`, which `push_receiver` checked as `read`. The place
+    /// may hold an array that is optional, because its own type or a `?.` of its root field makes
+    /// it so. Then the call writes the place. The result is `Ok` of the array, as `?.` hands it to
+    /// the call, and the place waits for `push`. Else the call is a method of whatever the place
+    /// holds. The result is then `Err` of the place read as a value, as a `?.` reads a receiver.
+    /// The root field's `?.` binds its object for that value.
     pub(super) fn safe_push_receiver(
         &mut self,
         receiver: &ast::Expr,

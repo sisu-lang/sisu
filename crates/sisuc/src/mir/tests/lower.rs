@@ -1,7 +1,7 @@
 use rustc_hash::FxHashMap;
 
 use super::*;
-use crate::mir::lower::{Mentions, WALKED};
+use crate::mir::lower::{ARM_STEPS, Mentions, WALKED};
 use crate::mir::print::EXAMINED;
 
 /// Calls run in source order, and an `i64` is returned by a read, not moved.
@@ -258,20 +258,44 @@ fn push_through_a_safe_access_should_test_the_optional_again_after_its_argument(
     assert_eq!(f.matches("call name()").count(), 1, "{f}");
 }
 
-/// A `push` through a chain of optional objects lowers to code in proportion to the chain: each
-/// `?.` binds its object, and the written path starts at the last one, so no step holds the
-/// path of the steps before it. A path kept from the first object gives a square.
+/// A `push` through a chain of optional objects is lowered in steps in proportion to the chain.
+/// Each `?.` is an `if let` that binds its object, so the chain is one arm after another, and a
+/// scope that an arm leaves is popped: a later arm releases no entry of an earlier one. The
+/// counters are the arms lowered with the scope entries their exits release (`ARM_STEPS`) and the
+/// expressions that the pin rule walks (`WALKED`). Other traversals of the chain are not counted
+/// here: the passes after lowering, which run on the mir (`certify` counts its own walks), the
+/// `owners` map (one entry per borrowed binding) and the printer.
 #[test]
-fn push_through_a_chain_of_objects_should_lower_in_linear_size() {
-    let size = |objects: usize| {
-        let src = format!(
-            "class C {{\n    next: C?\n    mut items: [i64]?\n}}\nfn f(c: C?) {{ c{}?.items?.push(1) }}",
-            "?.next".repeat(objects)
-        );
-        function(&lowered(&src), "f").len()
+fn push_through_a_chain_of_objects_should_lower_in_linear_steps() {
+    let steps = |objects: usize| {
+        let program = checked(&chain(objects));
+        ARM_STEPS.set(0);
+        WALKED.set(0);
+        drop(lowered_of(&program));
+        (ARM_STEPS.get(), WALKED.get())
     };
     // 10, 20 and 30 objects, the sizes `n`, `2n` and `3n` that the assertion takes.
-    assert_near_linear(size(10), size(20), size(30));
+    let [(arms, walked), (arms2, walked2), (arms3, walked3)] = [10, 20, 30].map(steps);
+    assert_near_linear(arms, arms2, arms3);
+    assert_near_linear(walked, walked2, walked3);
+}
+
+/// The place that the `push` of a chain writes has two projections, whatever the length of the
+/// chain: the type of `Place::Field` takes an expression as its base, so the path starts at the
+/// object of the last `?.`.
+#[test]
+fn push_through_a_chain_of_objects_should_write_a_path_of_two_projections() {
+    let f = function(&lowered(&chain(10)), "f");
+    assert_eq!(f.matches("push ").count(), 1, "{f}");
+    assert!(f.contains("push (_.1 as some), 1"), "{f}");
+}
+
+/// `c?.next?. ... ?.items?.push(1)` with `objects` links.
+fn chain(objects: usize) -> String {
+    format!(
+        "class C {{\n    next: C?\n    mut items: [i64]?\n}}\nfn f(c: C?) {{ c{}?.items?.push(1) }}",
+        "?.next".repeat(objects)
+    )
 }
 
 /// The checker spills `"a"` into a local before the operand that can return, and the return

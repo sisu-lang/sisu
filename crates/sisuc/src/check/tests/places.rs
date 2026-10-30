@@ -590,9 +590,9 @@ fn push_should_check_clean_through_a_safe_access() {
     }
 }
 
-/// A place that `?.push` writes reports what a `push` reports, once and at the place: a `let` that
-/// cannot change, a field without `mut`, a receiver that is a temporary, a value that is used and
-/// an argument of the wrong type.
+/// A place that `?.push` writes reports what a `push` reports, once and at the place: a `let` or
+/// a parameter that cannot change, a field without `mut`, a receiver that is a temporary, a value
+/// that is used and an argument of the wrong type.
 #[test]
 fn push_should_report_a_mistake_through_a_safe_access() {
     push_rows(&[
@@ -600,6 +600,16 @@ fn push_should_report_a_mistake_through_a_safe_access() {
             "let optional array",
             "fn main() {\n    let xs: [i64]? = [1]\n    xs?.push(2)\n}",
             vec![(Code::AssignToImmutable, (3, 5))],
+        ),
+        (
+            "parameter optional array",
+            "fn f(m: [i64]?) { m?.push(1) }\nfn main() {}",
+            vec![(Code::AssignToImmutable, (1, 19))],
+        ),
+        (
+            "element of a parameter",
+            "fn f(m: [[i64]?]) { m[0]?.push(1) }\nfn main() {}",
+            vec![(Code::AssignToImmutable, (1, 21))],
         ),
         (
             "field without mut",
@@ -630,11 +640,6 @@ fn push_should_report_a_mistake_through_a_safe_access() {
             "object that is no optional",
             "class C {\n    mut items: [i64]\n}\nfn f(c: C) { c?.items?.push(1) }\nfn main() {}",
             vec![(Code::SafeAccessNotOptional, (4, 14))],
-        ),
-        (
-            "a `?.` before an array that holds no optional",
-            "fn f(m: [i64]) { m?.push(1) }\nfn main() {}",
-            vec![(Code::SafeAccessNotOptional, (1, 18))],
         ),
         (
             "array field read without `?.`",
