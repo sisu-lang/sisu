@@ -679,6 +679,16 @@ impl CompareOp {
     pub(crate) fn is_less(self) -> bool {
         matches!(self, CompareOp::Lt | CompareOp::Le)
     }
+
+    /// The operator as the program writes it.
+    pub(crate) fn text(self) -> &'static str {
+        match self {
+            CompareOp::Lt => "<",
+            CompareOp::Le => "<=",
+            CompareOp::Gt => ">",
+            CompareOp::Ge => ">=",
+        }
+    }
 }
 
 impl fmt::Display for UnaryOp {
@@ -708,12 +718,7 @@ impl fmt::Display for BinaryOp {
 
 impl fmt::Display for CompareOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            CompareOp::Lt => "<",
-            CompareOp::Le => "<=",
-            CompareOp::Gt => ">",
-            CompareOp::Ge => ">=",
-        })
+        f.write_str(self.text())
     }
 }
 

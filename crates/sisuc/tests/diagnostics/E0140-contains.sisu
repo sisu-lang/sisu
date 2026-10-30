@@ -1,13 +1,12 @@
 class W<T> {
-    value: T
+    v: T
 }
-
 extend<T: Eq> W<T>: Eq {
     fn eq(self, other: Self) -> bool {
-        [W(value: [self.value])].contains(W(value: [other.value]))
+        [W(v: [self.v])].contains(W(v: [other.v]))
     }
 }
 
 fn main() {
-    print(W(value: 1) == W(value: 2))
+    print(W(v: 1) == W(v: 1))
 }

@@ -10,7 +10,8 @@ use super::member::Found;
 use super::prelude::PRELUDE;
 use super::unused_names::Used;
 use super::{
-    Checked, Checker, Declared, Poisoned, UNKNOWN, block_expr, built_in_type, own_args, type_of,
+    Checked, Checker, Declared, Lowered, Poisoned, UNKNOWN, block_expr, built_in_type, own_args,
+    type_of,
 };
 use super::{array, number, string};
 use crate::ast::{self, ExprKind};
@@ -508,12 +509,15 @@ impl Checker<'_> {
             return self.rejected(d.into(), args);
         }
         match receiver {
-            Ok(receiver) => Ok(self.spilled(span, Type::STRING, vec![receiver], |parts| {
-                let [part]: [tir::Expr; 1] = parts
-                    .try_into()
-                    .expect("`spilled` should hand its closure one operand per input");
-                lang::to_string(part)
-            })),
+            Ok(receiver) => {
+                self.spellings.insert(span, Lowered::Method);
+                Ok(self.spilled(span, Type::STRING, vec![receiver], |parts| {
+                    let [part]: [tir::Expr; 1] = parts
+                        .try_into()
+                        .expect("`spilled` should hand its closure one operand per input");
+                    lang::to_string(part)
+                }))
+            }
             Err(_) => Err(Poisoned::of(Some(Type::STRING))),
         }
     }
@@ -570,6 +574,9 @@ impl Checker<'_> {
         Ok(match (receiver, other) {
             (Ok(lhs), Ok(rhs)) if !labeled => {
                 let eq = interface == self.lang.eq;
+                // No program shows this label for `less`: only numbers and strings have a
+                // generated `Ord`, and no cycle can pass them.
+                self.spellings.insert(span, Lowered::Method);
                 Ok(self.spilled(span, Type::BOOL, vec![lhs, rhs], |operands| {
                     let [lhs, rhs]: [tir::Expr; 2] = operands
                         .try_into()

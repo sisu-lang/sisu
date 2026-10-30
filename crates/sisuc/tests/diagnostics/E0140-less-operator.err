@@ -1,0 +1,8 @@
+error[E0140]: `W<T>.less` instantiates itself without end
+  --> E0140-less-operator.sisu:18:9
+   |
+18 |         W(v: V(v: self.v)) < W(v: V(v: other.v))
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `<` here
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

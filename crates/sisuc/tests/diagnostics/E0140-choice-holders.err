@@ -1,0 +1,27 @@
+error[E0140]: `E` instantiates itself without end
+  --> E0140-choice-holders.sisu:10:17
+   |
+10 |     type Item = E<V<V<T>>>
+   |                 ^^^^^^^^^^ `E<V<V<T>>>` here
+...
+14 |     Go(T.Item)
+   |        ------ which instantiates `T.Item`
+   |
+   = help: the check is cautious: `T.Item` counts as each choice that a conformance makes, unless the check can show that it is impossible
+
+error[E0140]: `G` instantiates itself without end
+  --> E0140-choice-holders.sisu:22:17
+   |
+22 |     type Item = F<W<W<T>>>
+   |                 ^^^^^^^^^^ `F<W<W<T>>>` here
+...
+26 |     Go(G<T>)
+   |        ---- which instantiates `G<T>`
+...
+30 |     Go(T.Item)
+   |        ------ which instantiates `T.Item`
+   |
+   = help: the check is cautious: `T.Item` counts as each choice that a conformance makes, unless the check can show that it is impossible
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0140

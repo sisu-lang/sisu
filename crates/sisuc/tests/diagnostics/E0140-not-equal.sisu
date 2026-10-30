@@ -1,0 +1,12 @@
+class W<T> {
+    v: T
+}
+extend<T: Eq> W<T>: Eq {
+    fn eq(self, other: Self) -> bool {
+        [W(v: [self.v])] != [W(v: [other.v])]
+    }
+}
+
+fn main() {
+    print(W(v: 1) == W(v: 1))
+}

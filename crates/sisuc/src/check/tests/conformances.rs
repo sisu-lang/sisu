@@ -993,6 +993,13 @@ fn growth_through_the_choice_of_an_associated_type_should_be_reported_for_each_f
             "E<P<B, P<A, A>>>",
         ),
         (
+            // The type grows through the second parameter alone: `B` is nested one level deeper
+            // than `A`, which is what the edge out of the gate to `B` must carry.
+            "a choice with two parameters that grows through the second one",
+            format!("{item}class P<A, B>: I {{\n    type Item = E<P<A, P<B, B>>>\n}}\nenum E<T: I> {{\n    End\n    A(T.Item)\n}}\nenum F: Eq {{\n    X(E<P<i64, i64>>)\n}}\nfn main() {{}}"),
+            "E<P<A, P<B, B>>>",
+        ),
+        (
             "an interface with a type parameter",
             "interface S<A> {\n    type Item\n}\nclass W<T>: S<i64> {\n    type Item = E<W<W<T>>>\n}\nenum E<T: S<i64>> {\n    End\n    A(T.Item)\n}\nfn main() {}".to_string(),
             "E<W<W<T>>>",
@@ -1086,6 +1093,13 @@ fn growth_through_a_choice_that_may_be_meant_should_be_reported_for_each_form() 
             "E<T.Item>",
         ),
         (
+            // The use is for `S<bool>`, and a conformance for `S<bool>` exists, but the choice of
+            // the class that the link names is made for `S<T>`, which may be `S<bool>`.
+            "a link, and a choice for a parameter beside a conformance for the arguments of the use",
+            "interface S<A> {\n    type Link: S<A>\n    type Item\n}\nclass V<T>: S<bool> {\n    type Link = W<bool>\n    type Item = T\n}\nclass W<T>: S<T> {\n    type Link = W<T>\n    type Item = E<V<V<T>>>\n}\nenum E<T: S<bool>> {\n    End\n    A(T.Link.Item)\n}\nfn main() {}".to_string(),
+            "E<V<V<T>>>",
+        ),
+        (
             "an enum that holds the enum of the associated type, for the same arguments",
             format!("{PARTS}extend<T> W<T>: S<i64> {{\n    type Item = W<T>\n}}\nextend<T> W<T>: S<bool> {{\n    type Item = W<W<T>>\n}}\n{PARTS_ENUM}"),
             "E<T.Item>",
@@ -1093,6 +1107,35 @@ fn growth_through_a_choice_that_may_be_meant_should_be_reported_for_each_form() 
     ];
     for (row, src, at) in rows {
         codes_row(row, &src, &[(Code::InstantiationCycle, where_is(&src, at))]);
+    }
+}
+
+/// The use `T.Link.Item` means the choices of `Item` that the classes and enums named by the
+/// choices of `Link` make. Where a choice of `Link` names a parameter or an associated type, those
+/// classes are not known, and where the use has an interface argument that holds a parameter, any
+/// choice of `Item` may be meant: the use then keeps the edge to every choice. Each row is a true
+/// cycle that a use which drops one of these edges would miss.
+#[test]
+fn growth_through_a_link_that_names_no_class_should_be_reported_for_each_form() {
+    let rows = [
+        (
+            "a link that one class chooses as a parameter",
+            "interface S {\n    type Link: S\n    type Item\n}\nclass Z: S {\n    type Link = Z\n    type Item = i64\n}\nclass V<T: S>: S {\n    type Link = T\n    type Item = i64\n}\nclass W<T: S>: S {\n    type Link = Z\n    type Item = E<V<W<W<T>>>>\n}\nenum E<T: S> {\n    End\n    A(T.Link.Item)\n}\nfn main() {\n    let e: E<V<W<Z>>> = E.End\n    print(e == e)\n}\n",
+            "E<V<W<W<T>>>>",
+        ),
+        (
+            "a link that one class chooses as an associated type",
+            "interface S {\n    type Link: S\n    type Alt: S\n    type Item\n}\nclass Z: S {\n    type Link = Z\n    type Alt = Z\n    type Item = i64\n}\nclass V<T: S>: S {\n    type Link = T.Alt\n    type Alt = Z\n    type Item = i64\n}\nclass W<T: S>: S {\n    type Link = Z\n    type Alt = W<T>\n    type Item = E<V<W<W<T>>>>\n}\nenum E<T: S> {\n    End\n    A(T.Link.Item)\n}\nfn main() {\n    let e: E<V<W<Z>>> = E.End\n    print(e == e)\n}\n",
+            "E<V<W<W<T>>>>",
+        ),
+        (
+            "a use whose interface argument is a parameter",
+            "interface S<A> {\n    type Link: S<A>\n    type Item\n}\nclass W<T>: S<bool> {\n    type Link = W<T>\n    type Item = E<W<W<T>>, bool>\n}\nenum E<T: S<U>, U> {\n    End\n    A(T.Link.Item)\n}\nfn main() {\n    let e: E<W<i64>, bool> = E.End\n    print(e == e)\n}\n",
+            "E<W<W<T>>, bool>",
+        ),
+    ];
+    for (row, src, at) in rows {
+        codes_row(row, src, &[(Code::InstantiationCycle, where_is(src, at))]);
     }
 }
 
@@ -1259,6 +1302,187 @@ fn choice_of_an_associated_type_that_does_not_grow_should_not_be_reported() {
             "row `{row}`: {found:?}"
         );
     }
+}
+
+/// An interface with two links that lead to the item, a class `Z` that ends them, and a class `U`
+/// that no program uses and that chooses `Other` as `U` again: the link `Other` is never `W`.
+const TWO_LINKS: &str = "interface S {\n    type Next: S\n    type Other: S\n    type Item\n}\nclass Z: S {\n    type Next = Z\n    type Other = Z\n    type Item = i64\n}\nclass U<T: S>: S {\n    type Next = U<T>\n    type Other = U<T>\n    type Item = i64\n}\n";
+
+/// A class `W` that ends `Other` with `Z` and grows the enum `E` that holds `T.Other.Item`.
+const W_ENDS_OTHER: &str =
+    "class W<T: S>: S {\n    type Next = W<T>\n    type Other = Z\n    type Item = E<W<W<T>>>\n}\n";
+
+const COMPARED: &str = "fn main() {\n    let e: E<W<Z>> = E.End\n    print(e == e)\n}";
+
+/// A use `T.Other.Item` means a choice of `Item` that a class makes, and `T.Other` is a type that
+/// a choice of `Other` names. When no choice of `Other` names the class of a growing choice of
+/// `Item`, the use never means that choice, and the beginning of the link makes no cycle.
+#[test]
+fn choice_of_a_class_that_the_link_cannot_choose_should_not_be_reported() {
+    let rows = [
+        (
+            "an enum holds the associated type of a link",
+            format!(
+                "{TWO_LINKS}{W_ENDS_OTHER}enum E<T: S> {{\n    End\n    A(T.Other.Item)\n}}\n{COMPARED}"
+            ),
+        ),
+        (
+            "a class holds the associated type of a link",
+            format!(
+                "{TWO_LINKS}{W_ENDS_OTHER}class C<T: S> {{\n    f: T.Other.Item\n}}\nfn main() {{}}"
+            )
+            .replace("E<W<W<T>>>", "C<W<W<T>>>"),
+        ),
+        (
+            "a chain of two links, one of which is unbounded for the class that is unused",
+            format!(
+                "{UNBOUNDED_AND_OTHER}{W_ENDS_OTHER}enum E<T: S> {{\n    End\n    A(T.Next.Other.Item)\n}}\n{COMPARED}"
+            ),
+        ),
+        (
+            // The class `W` is a choice of the link, but its choice for `S<bool>` is not one that
+            // the use for `S<i64>` can mean.
+            "a link that can choose the class, and a choice for other interface arguments",
+            format!(
+                "{LINKED}class W<T>: S<bool> {{\n    type Link = W<T>\n    type Item = E<W<W<T>>>\n}}\nextend<T> W<T>: S<i64> {{\n    type Link = W<T>\n    type Item = T\n}}\nenum E<T: S<i64>> {{\n    End\n    A(T.Link.Item)\n}}\nfn main() {{}}"
+            ),
+        ),
+    ];
+    for (row, src) in rows {
+        let found: Vec<Code> = diags(&src).iter().map(Diagnostic::code).collect();
+        assert!(
+            !found.contains(&Code::InstantiationCycle),
+            "row `{row}`: {found:?}"
+        );
+    }
+}
+
+/// An interface with a type parameter, an associated type `Link` that leads to the item, and the
+/// item.
+const LINKED: &str = "interface S<A> {\n    type Link: S<A>\n    type Item\n}\n";
+
+/// `TWO_LINKS` with a `Next` of the class `U` that grows without end, which the issue shows.
+const UNBOUNDED_AND_OTHER: &str = "interface S {\n    type Next: S\n    type Other: S\n    type Item\n}\nclass Z: S {\n    type Next = Z\n    type Other = Z\n    type Item = i64\n}\nclass U<T: S>: S {\n    type Next = U<U<T.Next>>\n    type Other = U<T>\n    type Item = i64\n}\n";
+
+/// A use reads at most `MATCHING_CHOICES` heads and choices to find the choices that it can mean.
+/// Above that, it feeds all the choices of the associated type, so a class that the link cannot
+/// choose gives the error: the check is cautious, and its graph stays in proportion to the
+/// program.
+#[test]
+fn use_of_a_link_above_the_cap_should_feed_every_choice() {
+    // `heads` classes `C0`, `C1` and so on are the types that the link `Link` can be, and none of
+    // them is `W`, whose choice of `Item` grows: the filter shows that it is not meant.
+    let heads = |n: usize| {
+        let mut src = String::from(
+            "interface S {\n    type Link: S\n    type Item\n}\nclass W<T>: S {\n    type Link = C0<T>\n    type Item = E<W<W<T>>>\n}\nenum E<T: S> {\n    End\n    A(T.Link.Item)\n}\n",
+        );
+        for i in 0..n {
+            let next = (i + 1) % n;
+            writeln!(
+                src,
+                "class C{i}<T>: S {{\n    type Link = C{next}<T>\n    type Item = i64\n}}"
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        src + "fn main() {}"
+    };
+    // The link is always `W`, which makes `n` choices of `Item`, one for each of `n` interface
+    // arguments. The class `X` is no head, and its choice of `Item` for the arguments of the use
+    // grows: only the hub of all the choices reaches it.
+    let choices = |n: usize| {
+        let mut src = String::from(
+            "interface S<A> {\n    type Link: S<A>\n    type Item\n}\nclass X<T>: S<K0> {\n    type Link = W<T>\n    type Item = E<X<X<T>>>\n}\nenum E<T: S<K0>> {\n    End\n    A(T.Link.Item)\n}\nclass W<T>: S<K0> {\n    type Link = W<T>\n    type Item = T\n}\n",
+        );
+        for i in 0..n {
+            writeln!(src, "class K{i} {{}}").expect("writing to a `String` should succeed");
+            if i > 0 {
+                writeln!(
+                    src,
+                    "extend<T> W<T>: S<K{i}> {{\n    type Link = W<T>\n    type Item = T\n}}"
+                )
+                .expect("writing to a `String` should succeed");
+            }
+        }
+        src + "fn main() {}"
+    };
+    // A head and a choice each cost one read, and the cap is 64: the rows on each side of it.
+    let rows = [
+        ("3 heads", heads(3), false),
+        ("64 heads", heads(64), false),
+        ("65 heads", heads(65), true),
+        ("70 heads", heads(70), true),
+        ("63 choices and a head", choices(63), false),
+        ("64 choices and a head", choices(64), true),
+        ("80 choices and a head", choices(80), true),
+    ];
+    for (row, src, reported) in rows {
+        let found: Vec<Code> = diags(&src).iter().map(Diagnostic::code).collect();
+        assert_eq!(
+            found.contains(&Code::InstantiationCycle),
+            reported,
+            "row `{row}`: {found:?}"
+        );
+    }
+}
+
+/// A class whose link `Other` can name `W` keeps the error: the graph reads the heads that a link
+/// names directly, not the head that each turn of the cycle gives. `W` ends `Other` with `Z`, so
+/// the second turn never comes back to `W`, and the error is still reported. This pins the known
+/// limit of the head filter.
+#[test]
+fn choice_of_a_class_that_a_link_can_choose_should_be_reported_even_when_the_next_turn_cannot() {
+    let src = format!(
+        "{}{W_ENDS_OTHER}enum E<T: S> {{\n    End\n    A(T.Other.Item)\n}}\n{COMPARED}",
+        TWO_LINKS.replace("type Other = U<T>", "type Other = W<T>")
+    );
+    codes(
+        &src,
+        &[(Code::InstantiationCycle, where_is(&src, "E<W<W<T>>>"))],
+    );
+}
+
+/// The marks of growing enums use the same graph: an enum that holds `T.Other.Item` is not marked
+/// when no choice of `Other` names the growing class, so a query for `Eq` on it reads its
+/// payloads, and finds the class with no `Eq` (E0154).
+#[test]
+fn enum_that_holds_the_choice_of_a_link_that_cannot_grow_should_not_be_marked() {
+    let src = format!(
+        "{TWO_LINKS}{W_ENDS_OTHER}class Plain {{}}\nenum E<T: S> {{\n    End\n    A(T.Other.Item, Plain)\n}}\nfn need_eq<T: Eq>(x: T) {{}}\nfn f(x: E<W<Z>>) {{\n    need_eq(x)\n}}\nfn main() {{}}"
+    );
+    codes(&src, &[(Code::NotConform, argument(&src, "need_eq(x)"))]);
+}
+
+/// The edges of a use that can mean `n` choices stay in proportion to the program, and so do the
+/// reads that find them: above `MATCHING_CHOICES`, the use feeds the hub of all the choices.
+#[test]
+fn uses_of_a_link_with_many_choices_should_cost_edges_in_proportion_to_the_program() {
+    // `n` classes that each choose `Link` as the next class and make a choice of `Item`, so that
+    // a use `T.Link.Item` can mean `n` choices, and `n` enums that each hold one such use: with
+    // a gate for each match the edges are `n` times `n`. The sizes are ten times the cap and
+    // more, so that the fall back is what keeps them in line.
+    let edges = |n: usize| {
+        let mut src = String::from(
+            "interface S {\n    type Link: S\n    type Item\n}\nclass Box<T> {\n    v: T\n}\n",
+        );
+        for i in 0..n {
+            let next = (i + 1) % n;
+            writeln!(
+                src,
+                "class C{i}<T>: S {{\n    type Link = C{next}<T>\n    type Item = Box<T>\n}}\nenum U{i}<T: S> {{\n    End\n    A(T.Link.Item)\n}}"
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        src += "fn main() {}";
+        cycle::EDGES.set(0);
+        cycle::MATCHING_READS.set(0);
+        let found: Vec<Code> = diags(&src).iter().map(Diagnostic::code).collect();
+        assert!(!found.contains(&Code::InstantiationCycle), "{found:?}");
+        (cycle::EDGES.get(), cycle::MATCHING_READS.get())
+    };
+    let (one, two, three) = (edges(640), edges(1280), edges(1920));
+    assert_near_linear(one.0, two.0, three.0);
+    // A use reads at most the cap, so the reads, too, stay in proportion to the program.
+    assert_near_linear(one.1, two.1, three.1);
 }
 
 #[test]
@@ -2349,6 +2573,245 @@ fn where_is(src: &str, needle: &str) -> (usize, usize) {
     )
 }
 
+/// Each way that a program spells a call through a language interface closes a cycle that is
+/// reported at the spelling: an operator, `contains`, `print`, an interpolation (at its part),
+/// or the generated `==` or `to_string` of an enum (at the payload type). The note of a call
+/// through a bound stands at the spelling too. The text of each label is pinned by the
+/// `E0140-*` fixtures.
+#[test]
+fn cycle_through_a_language_interface_should_be_reported_at_the_spelling_of_the_call() {
+    with_prelude();
+    // Each row: the program, where the label stands, and where the note stands, if there is one.
+    let rows = [
+        (
+            "a written `==` on an array of a class",
+            "class W<T> {\n    v: T\n}\nextend<T: Eq> W<T>: Eq {\n    fn eq(self, other: Self) -> bool {\n        [W(v: [self.v])] == [W(v: [other.v])]\n    }\n}\nfn main() {\n    print(W(v: 1) == W(v: 1))\n}\n",
+            "[W(v: [self.v])] == [W(v: [other.v])]",
+            None,
+        ),
+        (
+            "a written `!=`",
+            "class W<T> {\n    v: T\n}\nextend<T: Eq> W<T>: Eq {\n    fn eq(self, other: Self) -> bool {\n        [W(v: [self.v])] != [W(v: [other.v])]\n    }\n}\nfn main() {\n    print(W(v: 1) == W(v: 1))\n}\n",
+            "[W(v: [self.v])] != [W(v: [other.v])]",
+            None,
+        ),
+        (
+            "`contains`",
+            "class W<T> {\n    v: T\n}\nextend<T: Eq> W<T>: Eq {\n    fn eq(self, other: Self) -> bool {\n        [W(v: [self.v])].contains(W(v: [other.v]))\n    }\n}\nfn main() {\n    print(W(v: 1) == W(v: 1))\n}\n",
+            "[W(v: [self.v])].contains(W(v: [other.v]))",
+            None,
+        ),
+        (
+            "`print`",
+            "class W<T> {\n    v: T\n}\nextend<T: Display> W<T>: Display {\n    fn to_string(self) -> string {\n        print(W(v: [self.v]))\n        \"w\"\n    }\n}\nfn main() {\n    print(W(v: 1))\n}\n",
+            "print(W(v: [self.v]))",
+            None,
+        ),
+        (
+            "`eprint`",
+            "class W<T> {\n    v: T\n}\nextend<T: Display> W<T>: Display {\n    fn to_string(self) -> string {\n        eprint(W(v: [self.v]))\n        \"w\"\n    }\n}\nfn main() {\n    print(W(v: 1))\n}\n",
+            "eprint(W(v: [self.v]))",
+            None,
+        ),
+        (
+            "an interpolation",
+            "class W<T> {\n    v: T\n}\nextend<T: Display> W<T>: Display {\n    fn to_string(self) -> string {\n        \"{W(v: [self.v])}\"\n    }\n}\nfn main() {\n    print(W(v: 1))\n}\n",
+            "W(v: [self.v])",
+            None,
+        ),
+        (
+            "the generated `==` of an enum",
+            "class W<T> {\n    v: T\n}\nenum E<T> {\n    Has(W<T>)\n}\nextend<T: Eq> W<T>: Eq {\n    fn eq(self, other: Self) -> bool {\n        E.Has(W(v: [self.v])) == E.Has(W(v: [other.v]))\n    }\n}\nfn main() {\n    print(W(v: 1) == W(v: 1))\n}\n",
+            "W<T>)",
+            Some("E.Has(W(v: [self.v])) == E.Has(W(v: [other.v]))"),
+        ),
+        (
+            "the generated `to_string` of an enum",
+            "class W<T> {\n    v: T\n}\nenum E<T> {\n    Has(W<T>)\n}\nextend<T: Display> W<T>: Display {\n    fn to_string(self) -> string {\n        \"{E.Has(W(v: [self.v]))}\"\n    }\n}\nfn main() {\n    print(W(v: 1))\n}\n",
+            "W<T>)",
+            Some("E.Has(W(v: [self.v]))"),
+        ),
+        (
+            "`==` in a function over a bound",
+            "class W<T> {\n    v: T\n}\nfn same<T: Eq>(x: T) -> bool {\n    x == x\n}\nextend<T: Eq> W<T>: Eq {\n    fn eq(self, other: Self) -> bool {\n        same(W(v: [self.v]))\n    }\n}\nfn main() {\n    print(W(v: 1) == W(v: 1))\n}\n",
+            "same(W(v: [self.v]))",
+            Some("x == x"),
+        ),
+        (
+            "`<` in a function over a bound",
+            "class W<T> {\n    v: T\n}\nclass V<T> {\n    v: T\n}\nfn lt<T: Ord>(x: T, y: T) -> bool {\n    x < y\n}\nextend<T: Ord> V<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\nextend<T: Ord> V<T>: Ord {\n    fn less(self, other: Self) -> bool { true }\n}\nextend<T: Ord> W<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\nextend<T: Ord> W<T>: Ord {\n    fn less(self, other: Self) -> bool {\n        lt(W(v: V(v: self.v)), W(v: V(v: other.v)))\n    }\n}\nfn main() {\n    print(W(v: 1) < W(v: 1))\n}\n",
+            "lt(W(v: V(v: self.v)), W(v: V(v: other.v)))",
+            Some("x < y"),
+        ),
+        (
+            "`<=` in a function over a bound",
+            "class W<T> {\n    v: T\n}\nclass V<T> {\n    v: T\n}\nfn lt<T: Ord>(x: T, y: T) -> bool {\n    x <= y\n}\nextend<T: Ord> V<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\nextend<T: Ord> V<T>: Ord {\n    fn less(self, other: Self) -> bool { true }\n}\nextend<T: Ord> W<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\nextend<T: Ord> W<T>: Ord {\n    fn less(self, other: Self) -> bool {\n        lt(W(v: V(v: self.v)), W(v: V(v: other.v)))\n    }\n}\nfn main() {\n    print(W(v: 1) < W(v: 1))\n}\n",
+            "lt(W(v: V(v: self.v)), W(v: V(v: other.v)))",
+            Some("x <= y"),
+        ),
+        (
+            "`>` in a function over a bound",
+            "class W<T> {\n    v: T\n}\nclass V<T> {\n    v: T\n}\nfn lt<T: Ord>(x: T, y: T) -> bool {\n    x > y\n}\nextend<T: Ord> V<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\nextend<T: Ord> V<T>: Ord {\n    fn less(self, other: Self) -> bool { true }\n}\nextend<T: Ord> W<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\nextend<T: Ord> W<T>: Ord {\n    fn less(self, other: Self) -> bool {\n        lt(W(v: V(v: self.v)), W(v: V(v: other.v)))\n    }\n}\nfn main() {\n    print(W(v: 1) < W(v: 1))\n}\n",
+            "lt(W(v: V(v: self.v)), W(v: V(v: other.v)))",
+            Some("x > y"),
+        ),
+        (
+            "`>=` in a function over a bound",
+            "class W<T> {\n    v: T\n}\nclass V<T> {\n    v: T\n}\nfn lt<T: Ord>(x: T, y: T) -> bool {\n    x >= y\n}\nextend<T: Ord> V<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\nextend<T: Ord> V<T>: Ord {\n    fn less(self, other: Self) -> bool { true }\n}\nextend<T: Ord> W<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\nextend<T: Ord> W<T>: Ord {\n    fn less(self, other: Self) -> bool {\n        lt(W(v: V(v: self.v)), W(v: V(v: other.v)))\n    }\n}\nfn main() {\n    print(W(v: 1) < W(v: 1))\n}\n",
+            "lt(W(v: V(v: self.v)), W(v: V(v: other.v)))",
+            Some("x >= y"),
+        ),
+        (
+            "an interpolation in a function over a bound",
+            "class W<T> {\n    v: T\n}\nfn show<T: Display>(x: T) -> string {\n    \"{x}\"\n}\nextend<T: Display> W<T>: Display {\n    fn to_string(self) -> string {\n        show(W(v: [self.v]))\n    }\n}\nfn main() {\n    print(W(v: 1))\n}\n",
+            "show(W(v: [self.v]))",
+            Some("x}"),
+        ),
+        (
+            "the generated `==` of an enum declared after its use",
+            "class W<T> {\n    v: T\n}\nextend<T: Eq> W<T>: Eq {\n    fn eq(self, other: Self) -> bool {\n        E.Has(W(v: [self.v])) == E.Has(W(v: [other.v]))\n    }\n}\nenum E<T> {\n    Has(W<T>)\n}\nfn main() {\n    print(W(v: 1) == W(v: 1))\n}\n",
+            "E.Has(W(v: [self.v])) == E.Has(W(v: [other.v]))",
+            Some("W<T>)"),
+        ),
+    ];
+    for (row, src, label, note) in rows {
+        let notes: Vec<_> = note.into_iter().map(|note| where_is(src, note)).collect();
+        let expected = [(Code::InstantiationCycle, where_is(src, label), notes)];
+        assert_eq!(found(src), expected, "row `{row}`");
+    }
+}
+
+/// A program with the class `W<T>`, a conformance of `W<T>` to `interface` (`Eq` or `Display`)
+/// whose method has the body `body`, and then the code `after`.
+fn conformance_with(interface: &str, after: &str, body: &str) -> String {
+    let (method, main) = match interface {
+        "Eq" => ("fn eq(self, other: Self) -> bool", "W(v: 1) == W(v: 1)"),
+        _ => ("fn to_string(self) -> string", "W(v: 1)"),
+    };
+    format!(
+        "class W<T> {{\n    v: T\n}}\nextend<T: {interface}> W<T>: {interface} {{\n    {method} {{\n        {body}\n    }}\n}}\n{after}fn main() {{\n    print({main})\n}}\n"
+    )
+}
+
+/// A program with the classes `W<T>` and `V<T>`, which have a written `Eq` and `Ord`; the `less`
+/// of `W<T>` has the body `body`.
+fn ordered_with(body: &str) -> String {
+    let both = |class: &str, less: &str| {
+        format!(
+            "extend<T: Ord> {class}<T>: Eq {{\n    fn eq(self, other: Self) -> bool {{ true }}\n}}\nextend<T: Ord> {class}<T>: Ord {{\n    fn less(self, other: Self) -> bool {{\n        {less}\n    }}\n}}\n"
+        )
+    };
+    let classes = "class W<T> {\n    v: T\n}\nclass V<T> {\n    v: T\n}\n";
+    let (v, w) = (both("V", "true"), both("W", body));
+    format!("{classes}{v}{w}fn main() {{\n    print(W(v: 1) < W(v: 1))\n}}\n")
+}
+
+/// A method call that the checker lowers to the node of an operator is reported at the whole
+/// call. So is a written operator that the checker lowers to a call, or to an edge into the
+/// generated node of an enum that its use precedes. The text of each label is pinned by the
+/// `E0140-*` fixtures.
+#[test]
+fn cycle_through_a_lowered_call_should_be_reported_at_the_spelling_of_the_call() {
+    with_prelude();
+    let (a, b) = ("W(v: [self.v])", "W(v: [other.v])");
+    let (wa, wb) = ("W(v: V(v: self.v))", "W(v: V(v: other.v))");
+    let (e1, e2) = (format!("E.Has({a})"), format!("E.Has({b})"));
+    let after = "enum E<T> {\n    Has(W<T>)\n}\n";
+    // Each row: the program, where the label stands, and where the note stands, if there is one.
+    let rows = [
+        (
+            "`.to_string()` on an array",
+            conformance_with("Display", "", &format!("[{a}].to_string()")),
+            format!("[{a}].to_string()"),
+            None,
+        ),
+        (
+            "`.to_string()` on an optional",
+            conformance_with(
+                "Display",
+                "",
+                &format!("let x: W<[T]>? = {a}\n        x.to_string()"),
+            ),
+            "x.to_string()".to_string(),
+            None,
+        ),
+        (
+            "`.to_string()` on an enum declared after its use",
+            conformance_with("Display", after, &format!("{e1}.to_string()")),
+            format!("{e1}.to_string()"),
+            Some("W<T>)"),
+        ),
+        (
+            "`.eq()` on an array",
+            conformance_with("Eq", "", &format!("[{a}].eq([{b}])")),
+            format!("[{a}].eq([{b}])"),
+            None,
+        ),
+        (
+            "`.eq()` on an optional",
+            conformance_with("Eq", "", &format!("let x: W<[T]>? = {a}\n        x.eq(x)")),
+            "x.eq(x)".to_string(),
+            None,
+        ),
+        (
+            "`.eq()` on an enum declared after its use",
+            conformance_with("Eq", after, &format!("{e1}.eq({e2})")),
+            format!("{e1}.eq({e2})"),
+            Some("W<T>)"),
+        ),
+        (
+            "`==` on a class with a written `eq`",
+            conformance_with("Eq", "", &format!("{a} == {b}")),
+            format!("{a} == {b}"),
+            None,
+        ),
+        (
+            "`!=` on a class with a written `eq`",
+            conformance_with("Eq", "", &format!("{a} != {b}")),
+            format!("{a} != {b}"),
+            None,
+        ),
+        (
+            "`<` on a class with a written `less`",
+            ordered_with(&format!("{wa} < {wb}")),
+            format!("{wa} < {wb}"),
+            None,
+        ),
+        (
+            "a chain on a class with a written `less`",
+            ordered_with(&format!("{wa} < {wb} <= {wa}")),
+            format!("{wa} < {wb} <= {wa}"),
+            None,
+        ),
+        (
+            "`print` of an enum declared after its use",
+            conformance_with("Display", after, &format!("print({e1})\n        \"\"")),
+            format!("print({e1})"),
+            Some("W<T>)"),
+        ),
+        // The prelude's `contains` calls `==` through the `Eq` hub, which reaches `W<T>.eq`
+        // directly: the shorter cycle passes no generated node, so no note marks the payload.
+        (
+            "`contains` on an enum declared after its use",
+            conformance_with("Eq", after, &format!("[{e1}].contains({e2})")),
+            format!("[{e1}].contains({e2})"),
+            None,
+        ),
+    ];
+    for (row, src, label, note) in &rows {
+        let notes: Vec<_> = note.iter().map(|note| where_is(src, note)).collect();
+        let (line, col) = where_is(src, label);
+        // The text of the label pins its end: a label over the receiver alone would differ.
+        diagnostic_row(
+            row,
+            src,
+            Code::InstantiationCycle,
+            (line, col, label),
+            &notes,
+        );
+    }
+}
+
 #[test]
 fn implicit_eq_call_should_close_an_instantiation_cycle() {
     let w = "class W<T> {\n    x: T\n}\n";
@@ -3011,14 +3474,15 @@ fn implicit_interpolation_should_close_an_instantiation_cycle() {
             format!(
                 "{w}extend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        {growing}\n    }}\n}}\n{main}"
             ),
-            Some(growing),
+            // The error stands at the part of the string, not at the whole string.
+            Some("W(x: [self.x])"),
         ),
         (
             "an interpolation of an enum payload, reached through its generated Display",
             format!(
                 "{w}enum Pick<U> {{\n    One(U)\n}}\nextend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        \"{{Pick.One(W(x: [self.x]))}}\"\n    }}\n}}\n{main}"
             ),
-            Some("\"{Pick.One(W(x: [self.x]))}\""),
+            Some("Pick.One(W(x: [self.x]))"),
         ),
         (
             "an interpolation that does not grow",

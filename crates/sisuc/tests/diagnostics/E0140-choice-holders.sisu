@@ -1,0 +1,33 @@
+// The error names the enum that holds the field. In the first cycle an enum is the target of the
+// conformance: the error names `E`, and not `V`. In the second cycle the choice names `F`, which
+// holds `G`, and `G` holds the field: the error names `G`, and not `W` or `F`.
+interface A {
+    type Item
+}
+
+enum V<T>: A {
+    X
+    type Item = E<V<V<T>>>
+}
+
+enum E<T: A> {
+    Go(T.Item)
+}
+
+interface B {
+    type Item
+}
+
+class W<T>: B {
+    type Item = F<W<W<T>>>
+}
+
+enum F<T: B> {
+    Go(G<T>)
+}
+
+enum G<T: B> {
+    Go(T.Item)
+}
+
+fn main() {}

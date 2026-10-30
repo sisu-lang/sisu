@@ -1,0 +1,13 @@
+error[E0140]: `W<T>.eq` instantiates itself without end
+ --> E0140-operator-hop.sisu:9:9
+  |
+5 |     x == x
+  |     ------ `==` here may call `W<T>.eq` through `Eq`
+...
+9 |         same(W(v: [self.v]))
+  |         ^^^^^^^^^^^^^^^^^^^^ `same<W<[T]>>` here
+  |
+  = help: `==` is a call through `Eq`, and a call through `Eq` counts as reaching every conformance to `Eq`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

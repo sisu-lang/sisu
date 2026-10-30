@@ -1,4 +1,4 @@
-error[E0140]: `W` instantiates itself without end
+error[E0140]: `E` instantiates itself without end
   --> E0140-unbounded-base.sisu:18:17
    |
 18 |     type Item = E<W<W<T>>>
@@ -6,6 +6,8 @@ error[E0140]: `W` instantiates itself without end
 ...
 23 |     A(T.Next.Item)
    |       ----------- which instantiates `T.Next.Item`
+   |
+   = help: the check is cautious: `T.Next.Item` counts as each choice that a conformance makes, unless the check can show that it is impossible
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0140

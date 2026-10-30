@@ -1,4 +1,4 @@
-error[E0140]: `W` instantiates itself without end
+error[E0140]: `E` instantiates itself without end
   --> E0140-choice.sisu:6:17
    |
  6 |     type Item = E<W<W<T>>>
@@ -6,6 +6,8 @@ error[E0140]: `W` instantiates itself without end
 ...
 11 |     A(T.Item)
    |       ------ which instantiates `T.Item`
+   |
+   = help: the check is cautious: `T.Item` counts as each choice that a conformance makes, unless the check can show that it is impossible
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0140

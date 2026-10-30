@@ -1,0 +1,31 @@
+// The head filter reads the classes that `Other` names, not the class of each turn: `U` can
+// choose `Other` as `W`, so `T.Other.Item` may mean the choice of `W`, whose own `Other` is `Z`.
+// The check is cautious and reports the cycle.
+interface S {
+    type Next: S
+    type Other: S
+    type Item
+}
+class Z: S {
+    type Next = Z
+    type Other = Z
+    type Item = i64
+}
+class U<T: S>: S {
+    type Next = U<T>
+    type Other = W<T>
+    type Item = i64
+}
+class W<T: S>: S {
+    type Next = W<T>
+    type Other = Z
+    type Item = E<W<W<T>>>
+}
+enum E<T: S> {
+    End
+    A(T.Other.Item)
+}
+fn main() {
+    let e: E<W<Z>> = E.End
+    print(e == e)
+}

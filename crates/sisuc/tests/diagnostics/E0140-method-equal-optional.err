@@ -1,0 +1,10 @@
+error[E0140]: `W<T>.eq` instantiates itself without end
+ --> E0140-method-equal-optional.sisu:7:9
+  |
+7 |         a.eq(a)
+  |         ^^^^^^^ `Eq.eq` here
+  |
+  = help: a call through `Eq` counts as reaching every conformance to `Eq`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

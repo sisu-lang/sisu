@@ -1,8 +1,8 @@
 error[E0140]: `W<T>.eq` instantiates itself without end
- --> E0140-contains.sisu:7:9
+ --> E0140-contains.sisu:6:9
   |
-7 |         [W(value: [self.value])].contains(W(value: [other.value]))
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `[W<[T]>].contains` here
+6 |         [W(v: [self.v])].contains(W(v: [other.v]))
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `[W<[T]>].contains` here
   |
   = help: a call through `Eq` counts as reaching every conformance to `Eq`
 

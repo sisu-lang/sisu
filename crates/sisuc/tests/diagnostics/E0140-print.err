@@ -2,9 +2,9 @@ error[E0140]: `W<T>.to_string` instantiates itself without end
  --> E0140-print.sisu:7:9
   |
 7 |         print(W(x: [self.x]))
-  |         ^^^^^^^^^^^^^^^^^^^^^ `Display.to_string` here
+  |         ^^^^^^^^^^^^^^^^^^^^^ `print` here
   |
-  = help: a call through `Display` counts as reaching every conformance to `Display`
+  = help: `print` is a call through `Display`, and a call through `Display` counts as reaching every conformance to `Display`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0140

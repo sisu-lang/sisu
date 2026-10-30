@@ -1,0 +1,27 @@
+class W<T> {
+    v: T
+}
+class V<T> {
+    v: T
+}
+fn lt<T: Ord>(x: T, y: T) -> bool {
+    x < y
+}
+extend<T: Ord> V<T>: Eq {
+    fn eq(self, other: Self) -> bool { true }
+}
+extend<T: Ord> V<T>: Ord {
+    fn less(self, other: Self) -> bool { true }
+}
+extend<T: Ord> W<T>: Eq {
+    fn eq(self, other: Self) -> bool { true }
+}
+extend<T: Ord> W<T>: Ord {
+    fn less(self, other: Self) -> bool {
+        lt(W(v: V(v: self.v)), W(v: V(v: other.v)))
+    }
+}
+
+fn main() {
+    print(W(v: 1) < W(v: 1))
+}
