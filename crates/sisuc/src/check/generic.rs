@@ -1119,17 +1119,14 @@ impl Checker<'_> {
             // The call reports a context it cannot meet as a mismatch with this type. A bare
             // type parameter has no hint. The user did not write that name at the call. So a
             // safe call under a plain context gets no context there.
-            let hint = ContextHint {
-                at: e.span,
-                want: self.printed(&call.bindings, param),
-                safe: matches!(e.kind, ast::ExprKind::MethodCall { safe: true, .. }),
-            };
-            let bare = matches!(param.kind(), TypeKind::Param(..));
-            let outer = if bare {
-                self.body.context_hint
-            } else {
-                self.body.context_hint.replace(hint)
-            };
+            let outer = self.body.context_hint;
+            if !matches!(param.kind(), TypeKind::Param(..)) {
+                self.body.context_hint = Some(ContextHint {
+                    at: e.span,
+                    want: self.printed(&call.bindings, param),
+                    safe: matches!(e.kind, ast::ExprKind::MethodCall { safe: true, .. }),
+                });
+            }
             if let Some(context) = self.call_context(call, e, param) {
                 self.infer_arg(call, i, e, Some(param), Some(context));
             }

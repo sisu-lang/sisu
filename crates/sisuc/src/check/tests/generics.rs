@@ -3557,9 +3557,9 @@ const SAFE_ROWS: &[PartialRow<'static>] = {
     ]
 };
 
-/// A safe call has an optional value, so a plain context cannot meet it. It gets no such context
-/// unless it has a hint: it is not an argument of a bare type parameter, and not in an array or
-/// another call. A parameter is then left to be reported, as before.
+/// A safe call has an optional value, so a plain context cannot meet it. A safe call has a hint
+/// only as the direct waiting argument of a parameter that is not a bare type parameter. It
+/// must also report no mistake of its own. Without the hint, it reports its unbound parameter.
 #[test]
 fn a_safe_call_that_waits_for_a_plain_context_should_get_no_context() {
     check_partial_rows(SAFE_ROWS);
