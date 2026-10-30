@@ -7,7 +7,7 @@ use std::{fmt, iter};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::enums::VariantInfo;
-use super::expr::{bare_none, int_literal, option_written, rank};
+use super::expr::{bare_none, dbg_argument, int_literal, option_written, rank};
 use super::interface::{Bound, Required};
 use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
@@ -1200,21 +1200,11 @@ impl Checker<'_> {
             self.body.taken.insert((e.span, context), taken);
             return taken;
         }
-        if let ast::ExprKind::Call {
-            callee,
-            types,
-            args,
-            ..
-        } = &e.kind
-            && types.is_empty()
-            && callee.name.as_str() == "dbg"
-            && let [arg] = &args[..]
-            && arg.label.is_none()
-        {
+        if let Some(arg) = dbg_argument(e) {
             // An array literal under `dbg` would take the hole as its type: only a direct
             // argument goes to `inferred_array`.
-            return !matches!(arg.value.kind, ast::ExprKind::ArrayLit(_))
-                && self.takes_context(&arg.value, context);
+            return !matches!(arg.kind, ast::ExprKind::ArrayLit(_))
+                && self.takes_context(arg, context);
         }
         let safe = matches!(e.kind, ast::ExprKind::MethodCall { safe: true, .. });
         match self.call_shape(e) {

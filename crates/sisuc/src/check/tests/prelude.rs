@@ -489,6 +489,12 @@ fn dbg_should_give_a_call_the_diagnostics_of_its_argument() {
         ("[T]", "[[]]", "[[dbg([])]]"),
         ("[T]", "[[], []]", "[dbg([]), dbg([])]"),
         ("[T]", "[[]]", "[dbg(dbg([]))]"),
+        ("[T]", "[[], 1]", "[dbg([]), dbg(1)]"),
+        ("[T]", "[1, []]", "[dbg(1), dbg([])]"),
+        ("[T]", "[[], 1]", "[dbg([]), 1]"),
+        ("[T?]", "[None, 1]", "[dbg(None), dbg(1)]"),
+        ("[T]", "[1, None]", "[dbg(1), dbg(None)]"),
+        ("[T]", "[1, \"s\"]", "[dbg(1), \"s\"]"),
         ("[[T]]", "[[]]", "dbg([[]])"),
         ("T?", "None", "dbg(None)"),
         ("T?", "Some(None)", "dbg(Some(None))"),
@@ -512,6 +518,88 @@ fn dbg_should_give_a_call_the_diagnostics_of_its_argument() {
         let (plain_found, _) = program(plain);
         let (found, src) = program(through_dbg);
         assert_eq!(found, plain_found, "row `{param}`, `{through_dbg}`: {src}");
+    }
+}
+
+/// `dbg(e)` passes its expected type to `e`, so it has the order of `e` among the elements of an
+/// array literal, the branches of an `if` and the operands of `==`. A `dbg([])` is then checked
+/// last, with the type of the others, and gives the diagnostics of `[]`: one error for a literal
+/// of empty arrays, and a mismatch beside another type. Each diagnostic is its code and its
+/// line, as the columns of the two programs differ by the width of `dbg(`.
+#[test]
+fn dbg_should_have_the_order_of_its_argument() {
+    with_prelude();
+    for (plain, through_dbg) in [
+        ("let a = [[], []]", "let a = [dbg([]), dbg([])]"),
+        ("let a = [[], []]", "let a = [dbg(dbg([])), dbg([])]"),
+        ("let a = [None, None]", "let a = [dbg(None), dbg(None)]"),
+        ("let a = [1, None]", "let a = [dbg(1), dbg(None)]"),
+        ("let a = [None, 1]", "let a = [dbg(None), dbg(1)]"),
+        ("let a = [[], 1]", "let a = [dbg([]), dbg(1)]"),
+        ("let a = []", "let a = dbg(dbg([]))"),
+        ("let a: [i64] = []", "let a: [i64] = dbg([])"),
+        (
+            "let a: [[i64]] = [[], [1]]",
+            "let a: [[i64]] = [dbg([]), dbg([1])]",
+        ),
+        (
+            "let a = if true { None } else { 1 }",
+            "let a = if true { dbg(None) } else { 1 }",
+        ),
+        (
+            "let a = if true { 1 } else { None }",
+            "let a = if true { 1 } else { dbg(None) }",
+        ),
+        (
+            "let a = if true { [] } else { 1 }",
+            "let a = if true { dbg([]) } else { 1 }",
+        ),
+        (
+            "let x: i64? = None\n    let a = None == x",
+            "let x: i64? = None\n    let a = dbg(None) == x",
+        ),
+        (
+            "let x: i64? = None\n    let a = x == None",
+            "let x: i64? = None\n    let a = x == dbg(None)",
+        ),
+        (
+            "let x: [i64] = [1]\n    let a = [] == x",
+            "let x: [i64] = [1]\n    let a = dbg([]) == x",
+        ),
+        ("let a = None == []", "let a = dbg(None) == dbg([])"),
+    ] {
+        let program = |statement: &str| {
+            let src = format!("fn main() {{\n    {statement}\n    print(a)\n}}");
+            let found: Vec<_> = diags(&src)
+                .iter()
+                .map(|d| (d.code(), at(&src, d.span()).0))
+                .collect();
+            (found, src)
+        };
+        let (plain_found, _) = program(plain);
+        let (found, src) = program(through_dbg);
+        assert_eq!(found, plain_found, "row `{through_dbg}`: {src}");
+    }
+}
+
+/// A call of `dbg` with a label, a type argument or another count of arguments than one is no
+/// `dbg(x)`, so it keeps the order of a call: its `[]` is checked first, with no expected type,
+/// and gives its own error beside the one of the call.
+#[test]
+fn dbg_of_another_shape_should_keep_the_order_of_a_call() {
+    with_prelude();
+    for (statement, expected) in [
+        (
+            "let _ = [dbg(x: []), 1]",
+            &[Code::LabeledArgument, Code::CannotInfer][..],
+        ),
+        ("let _ = [dbg([], 1), 1]", &[Code::PrintArgument][..]),
+        ("let _ = [dbg(), 1]", &[Code::PrintArgument][..]),
+        ("let _ = [dbg<i64>(1), 1]", &[Code::TypeArguments][..]),
+    ] {
+        let src = body("", statement);
+        let found: Vec<_> = diags(&src).iter().map(Diagnostic::code).collect();
+        assert_eq!(found, expected, "row `{statement}`: {src}");
     }
 }
 
