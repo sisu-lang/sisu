@@ -1,0 +1,23 @@
+interface I {
+    type Item
+}
+
+enum Wrap<T> {
+    N
+    X(T)
+}
+
+class W6<T>: I {
+    type Item = E6<W6<T>>
+}
+
+enum E6<T: I> {
+    End
+    A(Wrap<T.Item>)
+}
+
+fn main() {
+    let e6: E6<W6<i64>> = E6.End
+    let g = E6.A(Wrap.X(e6))
+    print(g == e6)
+}

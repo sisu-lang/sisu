@@ -1,0 +1,11 @@
+error[E0154]: `i64` does not conform to `I`
+  --> E0154-assoc-same-param.sisu:16:7
+   |
+13 | fn h<T: I>(_p: Two<T, T.Item>) {}
+   |         - required by this bound
+...
+16 |     h(Two.P(5, 7))
+   |       ^^^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154

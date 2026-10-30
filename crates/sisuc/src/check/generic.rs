@@ -77,6 +77,50 @@ fn names_outside_assoc(ty: Type, param: usize) -> bool {
     }
 }
 
+/// Marks in `outside` each type parameter that `ty` names other than under an associated type,
+/// and in `inside` each that it names under one, as the base or an interface argument of it.
+/// Each is by its place. One walk finds both: `names_outside_assoc` for each place would cost
+/// the number of places times the size of `ty`.
+fn mark_by_assoc(ty: Type, under: bool, inside: &mut [bool], outside: &mut [bool]) {
+    if !ty.has_param() {
+        return;
+    }
+    match ty.kind() {
+        TypeKind::Param(_, j) => {
+            let marks = if under { inside } else { outside };
+            marks[j as usize] = true;
+        }
+        TypeKind::Array(t) | TypeKind::Optional(t) => mark_by_assoc(t, under, inside, outside),
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+            for &arg in args.get() {
+                mark_by_assoc(arg, under, inside, outside);
+            }
+        }
+        TypeKind::Assoc(base, _, args, _) => {
+            mark_by_assoc(base, true, inside, outside);
+            for &arg in args.get() {
+                mark_by_assoc(arg, true, inside, outside);
+            }
+        }
+        _ => unreachable!("only a kind with a child can name a parameter"),
+    }
+}
+
+/// Whether an argument for `param`, a parameter type of the call, waits for the others:
+/// `param` names a parameter that `bindings` has not bound, and names it only under an
+/// associated type. `bind` binds nothing at an associated type, so that argument cannot bind the
+/// parameter, and the type it must meet is not known until the others do. A parameter that
+/// `param` names elsewhere too is bound by the argument itself, which then does not wait.
+fn waits_for_assoc(bindings: &Bindings, param: Type) -> bool {
+    if !param.has_assoc() {
+        return false;
+    }
+    let count = bindings.found.len();
+    let (mut inside, mut outside) = (vec![false; count], vec![false; count]);
+    mark_by_assoc(param, false, &mut inside, &mut outside);
+    (0..count).any(|j| inside[j] && !outside[j] && bindings.found[j].is_none())
+}
+
 /// Which of the first `len` type parameters `types` name. A type that did not resolve names
 /// nothing.
 pub(super) fn named_params(types: impl Iterator<Item = Option<Type>>, len: usize) -> Vec<bool> {
@@ -439,6 +483,28 @@ struct Inference {
     early: Option<Early>,
 }
 
+impl Inference {
+    /// Whether a bound failed that the call checks early. The call fails, and no argument is
+    /// checked against a type that names an associated type of the parameter it bound: the
+    /// type does not exist.
+    fn bound_failed(&self) -> bool {
+        self.early
+            .as_ref()
+            .is_some_and(|early| early.failed.contains(&true))
+    }
+
+    /// Whether `pattern` names a parameter whose early bound failed. A type built from such a
+    /// parameter asks for the type that the bound rejected.
+    fn names_failed(&self, pattern: Type) -> bool {
+        let Some(early) = &self.early else {
+            return false;
+        };
+        let mut named = vec![false; early.failed.len()];
+        mark_params(pattern, &mut named);
+        iter::zip(named, &early.failed).any(|(named, &failed)| named && failed)
+    }
+}
+
 /// The bounds a call checks as soon as the parameter they bound is bound: an argument that waits
 /// for an associated type of the parameter must not meet a type that has none.
 struct Early {
@@ -453,9 +519,9 @@ struct Early {
     /// The bounds of a parameter that is bound, that name a parameter that is not bound yet, by
     /// the same places: they are checked as soon as the call binds what they name.
     waiting: Vec<(usize, usize)>,
-    /// Whether one failed: an associated type that the call writes through the parameter does not
-    /// exist, so no argument waits for it any more.
-    failed: bool,
+    /// Which parameters have a bound that failed, by place: an associated type that the call
+    /// writes through the parameter does not exist, so no argument waits for it any more.
+    failed: Vec<bool>,
 }
 
 impl Early {
@@ -480,7 +546,7 @@ impl Early {
             bounds: sig.bounds.to_vec(),
             checked: FxHashSet::default(),
             waiting: Vec::new(),
-            failed: false,
+            failed: vec![false; sig.declared.len()],
         })
     }
 }
@@ -743,9 +809,10 @@ impl Checker<'_> {
     }
 
     /// The rank of each argument of the call: 2 for one that waits for context, 1 for one whose
-    /// type comes from its literals' defaults, else 0. An argument for a type that writes an
-    /// associated type through a parameter that is not bound waits for it, whatever the argument
-    /// is. `fit` is cleared where a call in an argument does not fit its declaration.
+    /// type comes from its literals' defaults, else 0. An argument for a type that names an
+    /// unbound parameter only under an associated type waits for it, whatever the argument is
+    /// (see `waits_for_assoc`). `fit` is cleared where a call in an argument does not fit its
+    /// declaration.
     fn rank_arguments(
         &mut self,
         call: &Inference,
@@ -756,8 +823,8 @@ impl Checker<'_> {
         iter::zip(args, fit)
             .enumerate()
             .map(|(i, (arg, fit))| {
-                let writes_assoc = sig.params[i]
-                    .is_some_and(|param| param.has_assoc() && self.known_in(call, param).is_none());
+                let writes_assoc =
+                    sig.params[i].is_some_and(|param| waits_for_assoc(&call.bindings, param));
                 match &arg.value {
                     _ if writes_assoc => 2,
                     e if self.waits(e, fit) => 2,
@@ -849,7 +916,7 @@ impl Checker<'_> {
                 call.early
                     .as_mut()
                     .expect("a call that checks early should say so")
-                    .failed = true;
+                    .failed[i] = true;
             }
         }
     }
@@ -941,10 +1008,6 @@ impl Checker<'_> {
         fit: &[bool],
     ) {
         for _ in 0..2 {
-            // The call fails, and the arguments that wait are checked for their own mistakes.
-            if call.early.as_ref().is_some_and(|early| early.failed) {
-                return;
-            }
             for (i, arg) in args.iter().enumerate() {
                 if ranks[i] == 2 && call.slots[i].is_none() {
                     self.infer_waiting(call, i, &arg.value, sig.params[i], fit[i]);
@@ -954,10 +1017,12 @@ impl Checker<'_> {
     }
 
     /// Checks `e`, the waiting argument at `i` for `param`. It stays unchecked while `param`
-    /// names an unbound parameter, unless it holds a call that reports its own mistake (`fit`
-    /// is false), which is checked on its own, or is a generic call, which is checked against
-    /// what the call binds of `param` (see `call_context`). That call reports a result that
-    /// cannot meet the context as a mismatch with `param`, by `context_hint`.
+    /// names an unbound parameter only under an associated type, whatever `e` is (see
+    /// `waits_for_assoc`). It stays unchecked too while `param` names an unbound parameter,
+    /// unless it holds a call that reports its own mistake (`fit` is false), which is checked on
+    /// its own, or is a generic call, which is checked against what the call binds of `param`
+    /// (see `call_context`). That call reports a result that cannot meet the context as a
+    /// mismatch with `param`, by `context_hint`.
     fn infer_waiting(
         &mut self,
         call: &mut Inference,
@@ -966,6 +1031,11 @@ impl Checker<'_> {
         param: Option<Type>,
         fit: bool,
     ) {
+        // After a failed bound the arguments that wait are checked for their own mistakes only.
+        if call.bound_failed() || param.is_some_and(|param| waits_for_assoc(&call.bindings, param))
+        {
+            return;
+        }
         if !fit || param.is_none_or(|param| self.known_in(call, param).is_some()) {
             self.infer_arg(call, i, e, param, None);
         } else if let Some(param) = param
@@ -1072,16 +1142,22 @@ impl Checker<'_> {
         match type_of(&checked) {
             Some(Type::UNIT | Type::NEVER) | None => checked,
             Some(ty) if !self.bind_param(call, pattern, ty, e.span) => {
-                let want = self.printed(&call.bindings, pattern);
-                let d = self.mismatch(e.span, Some(e), want, ty);
-                self.diagnostics.push(d);
-                mark((checked, true))
+                // A pattern built from a parameter whose bound failed asks for the type that
+                // the bound rejected. The bound check reported that, so no mismatch is written.
+                if call.names_failed(pattern) {
+                    checked
+                } else {
+                    let want = self.printed(&call.bindings, pattern);
+                    let d = self.mismatch(e.span, Some(e), want, ty);
+                    self.diagnostics.push(d);
+                    mark((checked, true))
+                }
             }
             Some(_) => {
                 let want = self.known_in(call, pattern);
                 debug_assert!(
-                    want.is_some(),
-                    "a unified pattern should name only bound parameters"
+                    want.is_some() || call.failed,
+                    "a unified pattern should be known, unless a bound check failed"
                 );
                 mark(self.against(e, checked, want, None))
             }
@@ -1119,7 +1195,9 @@ impl Checker<'_> {
                     }
                     checked
                 } else {
-                    quiet = quiet || slots.iter().flatten().any(|c| type_of(c).is_none());
+                    quiet = quiet
+                        || call.bound_failed()
+                        || slots.iter().flatten().any(|c| type_of(c).is_none());
                     // Only its own diagnostics matter.
                     drop(self.value(e, quiet.then_some(UNKNOWN)));
                     quiet = true;
