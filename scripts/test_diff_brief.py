@@ -35,6 +35,19 @@ class Repo(unittest.TestCase):
         return subprocess.run(self.git[:3] + ['rev-parse', ref], capture_output=True,
                               text=True, check=True, env=ENV).stdout.strip()
 
+    def rebase(self, text):
+        """A side commit off base that writes `f`, and its copy on HEAD, as a rebase leaves it."""
+        tree = subprocess.run(self.git[:3] + ['mktree'], input=f'100644 blob {self.blob(text)}\tf\n',
+                              capture_output=True, text=True, check=True, env=ENV).stdout.strip()
+        side = subprocess.run(self.git + ['commit-tree', tree, '-p', self.base, '-m', 'side'],
+                              capture_output=True, text=True, check=True, env=ENV).stdout.strip()
+        subprocess.run(self.git + ['cherry-pick', side], capture_output=True, check=True, env=ENV)
+        return side
+
+    def blob(self, text):
+        return subprocess.run(self.git[:3] + ['hash-object', '-w', '--stdin'], input=text,
+                              capture_output=True, text=True, check=True, env=ENV).stdout.strip()
+
 
 class LogMismatch(Repo):
     """log_mismatch on logs of the range base..HEAD."""
@@ -74,6 +87,15 @@ class LogMismatch(Repo):
     def test_a_log_without_a_summary_should_fail(self):
         self.assertIn('no summary line', self.mismatch('coverage\nmutants still running\n'))
 
+    def test_a_summary_on_a_commit_that_a_rebase_copied_into_the_range_should_pass(self):
+        self.assertIsNone(self.mismatch(self.summary(self.rebase('x\n'))))
+
+    def test_a_summary_on_a_commit_whose_patch_differs_from_the_range_should_fail(self):
+        side = self.rebase('x\n')
+        (Path(self.repo) / 'f').write_text('y\n')
+        subprocess.run(self.git + ['commit', '-q', '--amend', '-a', '-m', 'changed'], check=True, env=ENV)
+        self.assertIn(f'measured {side[:8]}, which is not in', self.mismatch(self.summary(side)))
+
 
 class Brief(Repo):
     """The brief that main() writes; the test repository has no origin/main, so the script's own template is used."""
@@ -99,6 +121,14 @@ class Brief(Repo):
         log.write_text(f'mutation-test: PASS: 1 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.mid})\n')
         text = self.brief('HEAD~2..HEAD', '--mutation-log', str(log))
         self.assertIn(f'measured at {self.mid[:8]}. Commits after it, not mutated: {self.head[:8]}', text)
+
+    def test_a_mutation_log_before_a_rebase_should_name_the_rebased_commit(self):
+        side = self.rebase('x\n')
+        twin = self.sha('HEAD')
+        log = Path(self.repo) / 'mutation.log'
+        log.write_text(f'mutation-test: PASS: 1 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {side})\n')
+        text = self.brief('HEAD~3..HEAD', '--mutation-log', str(log))
+        self.assertIn(f'measured at {side[:8]}, which a rebase made {twin[:8]}\n', text)
 
     def test_a_coverage_result_should_be_named_in_focus(self):
         coverage = Path(self.repo) / 'coverage.txt'
