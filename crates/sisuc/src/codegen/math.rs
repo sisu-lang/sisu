@@ -1,28 +1,23 @@
-//! The methods on `f64` and `i64`: an LLVM intrinsic each, except `hypot`, which is the one
-//! `libm` call.
+//! The methods on `f64`: an LLVM intrinsic each, except `hypot`, which is the one `libm` call.
 
+use inkwell::FloatPredicate;
 use inkwell::intrinsics::Intrinsic;
-use inkwell::values::{BasicValueEnum, FloatValue, FunctionValue, IntValue};
-use inkwell::{FloatPredicate, IntPredicate};
+use inkwell::values::{BasicValueEnum, FloatValue, FunctionValue};
 
 use super::{Codegen, POSITIONED};
-use crate::tir::{MathOp, Type};
+use crate::tir::MathOp;
 
 impl<'ctx> Codegen<'ctx, '_> {
     /// `operands[0].op(operands[1..])`, the operands evaluated left to right. `min`, `max` and
     /// `clamp` on `f64` are `minimumnum` and `maximumnum`, never `minnum` or `maxnum`: those
     /// leave the sign of a zero result unspecified, and LLVM picks it differently at `-O0` and
-    /// `-O2`. With `lo` above `hi`, `clamp` gives `hi`, as `min(max(x, lo), hi)` does. `ty` is
-    /// the operands' type, `i64` or `f64`.
+    /// `-O2`. With `lo` above `hi`, `clamp` gives `hi`, as `min(max(x, lo), hi)` does. The
+    /// operands are `f64`s: `i64`'s `min`, `max` and `clamp` are the prelude's.
     pub(super) fn math(
         &self,
         op: MathOp,
-        ty: Type,
         operands: &[BasicValueEnum<'ctx>],
     ) -> BasicValueEnum<'ctx> {
-        if ty == Type::I64 {
-            return self.integer_math(op, operands).into();
-        }
         let x = operands[0].into_float_value();
         let f64_type = self.context.f64_type();
         let infinity = f64_type.const_float(f64::INFINITY);
@@ -54,29 +49,6 @@ impl<'ctx> Codegen<'ctx, '_> {
                 };
                 self.intrinsic(name, operands).into()
             }
-        }
-    }
-
-    /// `min`, `max` and `clamp` on `i64`: `select`s over signed compares.
-    fn integer_math(&self, op: MathOp, operands: &[BasicValueEnum<'ctx>]) -> IntValue<'ctx> {
-        let pick = |predicate, a: IntValue<'ctx>, b: IntValue<'ctx>| {
-            let better = self.int_compare(predicate, a, b);
-            self.builder
-                .build_select(better, a, b, "pick")
-                .expect(POSITIONED)
-                .into_int_value()
-        };
-        let min = |a, b| pick(IntPredicate::SLT, a, b);
-        let max = |a, b| pick(IntPredicate::SGT, a, b);
-        let operand = |i: usize| operands[i].into_int_value();
-        match op {
-            MathOp::Min => min(operand(0), operand(1)),
-            MathOp::Max => max(operand(0), operand(1)),
-            MathOp::Clamp => min(max(operand(0), operand(1)), operand(2)),
-            op => unreachable!(
-                "the checker should give an `i64` only `min`, `max` and `clamp`, not `{}`",
-                op.name()
-            ),
         }
     }
 

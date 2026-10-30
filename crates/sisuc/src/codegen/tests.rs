@@ -25,8 +25,30 @@ fn compiled_from<'ctx>(
     rc_checks: bool,
     edit: impl FnOnce(&mut mir::Program),
 ) -> Module<'ctx> {
+    compiled_over(
+        context,
+        crate::front_end::PRELUDE_SOURCE,
+        src,
+        rc_checks,
+        edit,
+    )
+}
+
+/// `compiled_from` over the prelude `prelude`, which the program may call.
+fn compiled_over<'ctx>(
+    context: &'ctx Context,
+    prelude: &str,
+    src: &str,
+    rc_checks: bool,
+    edit: impl FnOnce(&mut mir::Program),
+) -> Module<'ctx> {
     let program = parse_ok(src);
-    let (program, diagnostics) = check_alone(&program, src, &[]);
+    let (program, diagnostics) = crate::check::check(
+        &program,
+        &crate::front_end::prelude_program(prelude),
+        src,
+        &[],
+    );
     let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
     let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     let mut mir = mir::build(&program);
@@ -1263,6 +1285,8 @@ fn print_after_move() -> mir::Function {
                     func: FuncId(0),
                     args: vec![mir::Operand::Move(s)],
                     borrowed: vec![false],
+                    span: Span::new(0, 0),
+                    quiet: false,
                 },
             ),
             assign(
@@ -1343,6 +1367,8 @@ fn assert_root_read_faults(
                 func,
                 borrowed: vec![false; args.len()],
                 args,
+                span: Span::new(0, 0),
+                quiet: false,
             },
         };
         let mut b = mir::tests::Builder::new("main");
@@ -1355,6 +1381,8 @@ fn assert_root_read_faults(
                     func: func(make),
                     args: Vec::new(),
                     borrowed: Vec::new(),
+                    span: Span::new(0, 0),
+                    quiet: false,
                 },
             },
             call(func(take), vec![mir::Operand::Move(r)]),
@@ -2715,31 +2743,153 @@ fn classification_is_float_compares() {
     assert!(infinite.contains("+inf"), "{infinite}");
 }
 
-/// `i64` `min`, `max` and `clamp` are `select`s over signed compares, with no call.
+/// `i64` `min`, `max` and `clamp` are the prelude's methods, and at `-O2` the inliner makes each
+/// an `llvm.smin.i64` or `llvm.smax.i64` call, with no call of a prelude function left.
 #[test]
-fn integer_min_max_clamp_are_selects() {
+fn integer_min_max_clamp_should_be_smin_and_smax_at_o2() {
     let context = Context::create();
-    let ir = compiled(
+    let module = compiled_over(
         &context,
-        "fn lo(a: i64, b: i64) -> i64 { a.min(b) }\nfn hi(a: i64, b: i64) -> i64 { a.max(b) }\nfn both(a: i64, b: i64, c: i64) -> i64 { a.clamp(b, c) }\nfn main() {\n    print(lo(1, 2) + hi(1, 2) + both(1, 2, 3))\n}",
-    )
-    .print_to_string()
-    .to_string();
-    let lo = function_body(&ir, "define internal i64 @sisu.lo(");
+        crate::front_end::PRELUDE_SOURCE,
+        "fn lo(a: i64, b: i64) -> i64 { a.min(b) }\nfn hi(a: i64, b: i64) -> i64 { a.max(b) }\nfn both(a: i64, b: i64, c: i64) -> i64 { a.clamp(b, c) }\nfn main(args: [string]) {\n    let a = 5 - args.len()\n    let b = args.len() - 7\n    print(lo(a, b) + hi(a, b) + both(a, b, 3 - a))\n}",
+        false,
+        |_| {},
+    );
+    keep_functions(&module, "lo,hi,both");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    let lo = function_body(&ir, "@sisu.lo(");
+    let hi = function_body(&ir, "@sisu.hi(");
+    let both = function_body(&ir, "@sisu.both(");
     assert!(
-        lo.contains("icmp slt i64") && lo.contains("select i1"),
+        lo.contains("@llvm.smin.i64") && !lo.contains("@llvm.smax.i64"),
         "{lo}"
     );
-    let hi = function_body(&ir, "define internal i64 @sisu.hi(");
     assert!(
-        hi.contains("icmp sgt i64") && hi.contains("select i1"),
+        hi.contains("@llvm.smax.i64") && !hi.contains("@llvm.smin.i64"),
         "{hi}"
     );
-    let both = function_body(&ir, "define internal i64 @sisu.both(");
-    assert_eq!(both.matches("select i1").count(), 2, "{both}");
+    assert!(
+        both.contains("@llvm.smin.i64") && both.contains("@llvm.smax.i64"),
+        "{both}"
+    );
     for body in [lo, hi, both] {
-        assert!(!body.contains("call"), "{body}");
+        assert!(!body.contains("@sisu.i64."), "{body}");
     }
+}
+
+/// The names of the two hidden last parameters of the function that starts with `header` in
+/// `ir`, a location pointer and its length, after its one array parameter.
+fn hidden_location(ir: &str, header: &str) -> (String, String) {
+    let (_, rest) = ir
+        .split_once(header)
+        .unwrap_or_else(|| panic!("no {header} in\n{ir}"));
+    let (params, _) = rest.split_once(')').expect("the header should close");
+    let names: Vec<&str> = params
+        .split(", ")
+        .map(|param| param.rsplit(' ').next().expect("a parameter has a name"))
+        .collect();
+    let [_, at, at_len] = names[..] else {
+        panic!("the function should take its array and the location: {params}");
+    };
+    assert!(params.contains("ptr") && params.contains("i64"), "{params}");
+    (at.to_string(), at_len.to_string())
+}
+
+/// A prelude function takes its caller's location as two hidden last parameters, a pointer and a
+/// length. Its overflow check and its bounds check pass them to the runtime, and a call from the
+/// user's `main` passes the location of the call.
+#[test]
+fn a_prelude_function_should_report_the_location_it_got_from_its_caller() {
+    let context = Context::create();
+    let module = compiled(&context, "fn main() {\n    print([1, 2].sum())\n}");
+    let ir = module.print_to_string().to_string();
+    let header = "define internal i64 @\"sisu.[i64].sum\"(";
+    let (at, at_len) = hidden_location(&ir, header);
+    let sum = function_body(&ir, header);
+    let overflow =
+        format!("call void @sisu_panic_message(ptr {at}, i64 {at_len}, ptr @report.text");
+    assert!(sum.contains(&overflow), "{overflow} in\n{sum}");
+    let bounds = format!("call void @sisu_panic_bounds(ptr {at}, i64 {at_len}, i64 ");
+    assert!(sum.contains(&bounds), "{bounds} in\n{sum}");
+    // The call starts at the `[` on line 2, column 11 of the source.
+    let location = "test.sisu:2:11";
+    let constant = format!("c\"{location}\\00\"");
+    let global = ir
+        .lines()
+        .find(|l| l.contains(&format!("{constant},")))
+        .and_then(|l| l.split(" = ").next())
+        .unwrap_or_else(|| panic!("no constant {constant} in\n{ir}"));
+    let main = function_body(&ir, "define internal void @sisu.main(");
+    let call = format!(", ptr {global}, i64 {})", location.len());
+    assert!(
+        main.contains("call i64 @\"sisu.[i64].sum\"(ptr ") && main.contains(&call),
+        "{call} in\n{main}"
+    );
+}
+
+/// The prelude's `panic` names the location of the user's call, like its checks do. A location
+/// baked from a span of the prelude would be an internal error.
+#[test]
+fn panic_in_a_prelude_function_should_report_the_location_of_its_caller() {
+    let context = Context::create();
+    let prelude =
+        "extend [i64] {\n    fn probe(self) -> i64 {\n        panic(\"boom\")\n    }\n}\n";
+    let module = compiled_over(
+        &context,
+        prelude,
+        "fn main() {\n    print([1, 2].probe())\n}",
+        false,
+        |_| {},
+    );
+    let ir = module.print_to_string().to_string();
+    let header = "define internal i64 @\"sisu.[i64].probe\"(";
+    let (at, at_len) = hidden_location(&ir, header);
+    let panic = format!("call void @sisu_panic_message(ptr {at}, i64 {at_len}, ");
+    let probe = function_body(&ir, header);
+    assert!(probe.contains(&panic), "{panic} in\n{probe}");
+}
+
+/// The prelude's `dbg` names the location of the user's call. The checker cannot read the text of
+/// a `dbg` in the prelude, so this marks a user function as the prelude's in the mir.
+#[test]
+fn dbg_in_a_prelude_function_should_report_the_location_of_its_caller() {
+    let context = Context::create();
+    let module = compiled_from(
+        &context,
+        "fn probe(xs: [i64]) -> i64 {\n    dbg(xs)\n    1\n}\nfn main() {\n    print(probe([1, 2]))\n}",
+        false,
+        |mir| {
+            let probe = (mir.functions.iter_mut())
+                .find(|f| f.name == "probe")
+                .expect("the program should have `probe`");
+            probe.prelude = true;
+        },
+    );
+    let ir = module.print_to_string().to_string();
+    let header = "define internal i64 @sisu.probe(";
+    let (at, at_len) = hidden_location(&ir, header);
+    let probe = function_body(&ir, header);
+    let shows_location = |line: &&str| {
+        line.contains("@sisu_show_str(") && line.contains(&format!("ptr {at}, i64 {at_len})"))
+    };
+    assert!(
+        probe.lines().any(|line| shows_location(&line)),
+        "a `sisu_show_str` of ({at}, {at_len}) in\n{probe}"
+    );
+}
+
+/// At `-O2` the inliner removes the call of `sum` and its location parameters.
+#[test]
+fn sum_should_be_inlined_at_o2() {
+    let context = Context::create();
+    let module = compiled(&context, "fn main() {\n    print([1, 2].sum())\n}");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    assert!(!ir.contains("[i64].sum"), "{ir}");
+    assert!(!ir.contains("sisu_panic_message"), "{ir}");
 }
 
 /// A swap in a loop, as quicksort's partition does it, makes its array unique once: `-O2` keeps
@@ -3347,7 +3497,7 @@ fn generic_largest_should_emit_the_hand_written_body() {
         // message global and its length are placeholders. So is a loop's metadata number.
         let sited = |body: &str| -> String {
             (body.lines())
-                .map(|line| match line.split_once("(ptr @panic.msg") {
+                .map(|line| match line.split_once("(ptr @report.text") {
                     Some((call, rest)) => {
                         let after = rest.splitn(3, ',').nth(2).unwrap_or_default();
                         format!("{call}(ptr @placeholder,{after}")

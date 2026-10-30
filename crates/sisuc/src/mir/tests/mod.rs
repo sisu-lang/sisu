@@ -1,6 +1,4 @@
 use super::*;
-use crate::check::check_alone;
-use crate::parser::parse_ok;
 
 mod certify;
 mod elaborate;
@@ -65,9 +63,8 @@ fn checked(src: &str) -> tir::Program {
     } else {
         format!("{src}\nfn main() {{}}")
     };
-    let (program, diagnostics) = check_alone(&parse_ok(&src), &src, &[]);
-    let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
-    crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"))
+    let (program, diagnostics) = crate::front_end::front_end(&src);
+    program.unwrap_or_else(|| panic!("{diagnostics:?}"))
 }
 
 /// The mir of `program` as lowering leaves it under the assumed flags, before any pass.
@@ -165,12 +162,19 @@ impl Builder {
                 params: 0,
                 borrowed: Vec::new(),
                 ret: Type::UNIT,
+                prelude: false,
+                quiet: false,
                 locals: Vec::new(),
                 blocks: Vec::new(),
                 loops: Vec::new(),
                 owners: FxHashMap::default(),
             },
         }
+    }
+
+    /// Marks the function as the prelude's: only such a function can be quiet.
+    pub(crate) fn prelude(&mut self) {
+        self.function.prelude = true;
     }
 
     /// A parameter, declared before any other local.
@@ -270,6 +274,8 @@ pub(super) fn fresh(dest: LocalId) -> Statement {
             func: FuncId(0),
             args: Vec::new(),
             borrowed: Vec::new(),
+            span: Span::new(0, 0),
+            quiet: false,
         },
     )
 }

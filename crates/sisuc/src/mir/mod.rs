@@ -67,7 +67,7 @@ pub(crate) use lower::lower;
 pub(crate) use print::print;
 
 /// The mir of `program` as lowering leaves it under the assumed flags, before any pass: enough
-/// to see which `Equal` and `Contains` may call a written method, and much cheaper than `build`.
+/// to see which `Equal` may call a written method, and much cheaper than `build`.
 #[cfg(test)]
 pub(crate) fn lowered(program: &tir::Program) -> Program {
     lower(program, &params::assumed(program))
@@ -88,6 +88,13 @@ pub(crate) struct Function {
     /// reads the value in place and never consumes it. An uncounted parameter is never borrowed.
     pub(crate) borrowed: Vec<bool>,
     pub(crate) ret: Type,
+    /// Whether the prelude writes the function. Codegen gives it two hidden last parameters, the
+    /// location of its caller, which its panics report. They are no locals, so no pass sees them.
+    pub(crate) prelude: bool,
+    /// Whether a call of the function writes and frees nothing its caller can reach: no statement
+    /// of its body is a clobber (see `Rvalue::may_call_written`), a call of a quiet function
+    /// aside. Only a prelude function is quiet; `params::quiet` decides it.
+    pub(crate) quiet: bool,
     /// The parameters, then `tir`'s locals with `tir`'s ids, then the temporaries.
     pub(crate) locals: Vec<Local>,
     /// `blocks[0]` is the entry.
@@ -227,11 +234,15 @@ pub(crate) enum Rvalue {
     /// The payload of an optional that holds one.
     Unwrap(Operand),
     /// `borrowed` holds one flag per argument, the callee's `Function::borrowed`: a borrowed
-    /// argument is read in place, and the caller keeps its reference.
+    /// argument is read in place, and the caller keeps its reference. `span` is where the call
+    /// starts: a prelude callee reports its panics there, and `--emit mir` does not print it.
+    /// `quiet` is the callee's `Function::quiet`.
     Call {
         func: FuncId,
         args: Vec<Operand>,
         borrowed: Vec<bool>,
+        span: Span,
+        quiet: bool,
     },
     New {
         class: ClassId,
@@ -271,17 +282,6 @@ pub(crate) enum Rvalue {
     Len(Operand),
     /// `s.words().len()`, which counts the words without building them.
     LenWords(Operand),
-    /// An overflow panics at `span`.
-    Sum {
-        base: Operand,
-        span: Span,
-    },
-    Contains {
-        base: Operand,
-        value: Operand,
-        /// Whether the helper for the element may call a written `eq`.
-        calls: bool,
-    },
     /// The operand converted to the destination's type.
     Convert(Operand),
     Math {
@@ -342,15 +342,14 @@ pub(crate) enum Rvalue {
 
 impl Rvalue {
     /// Whether the statement may run a written method, which can store through a `mut` field and
-    /// free what a borrow reads: a `Call`, an `Equal` or `Contains` whose helper reaches a
-    /// written `eq`, and a `Print`, `Dbg` or `Interpolate` whose helper reaches a written
-    /// `to_string`.
+    /// free what a borrow reads: a `Call` that is not quiet, an `Equal` whose helper
+    /// reaches a written `eq`, and a `Print`, `Dbg` or `Interpolate` whose helper reaches a
+    /// written `to_string`.
     /// Pair removal and the certifier both ask this, so they agree.
     pub(crate) fn may_call_written(&self) -> bool {
         match self {
-            Rvalue::Call { .. } => true,
+            Rvalue::Call { quiet, .. } => !*quiet,
             Rvalue::Equal { calls, .. }
-            | Rvalue::Contains { calls, .. }
             | Rvalue::Print { calls, .. }
             | Rvalue::Dbg { calls, .. }
             | Rvalue::Interpolate { calls, .. } => *calls,
@@ -510,17 +509,56 @@ pub(crate) fn build(program: &tir::Program) -> Program {
     if cfg!(debug_assertions) {
         modes_checked(&functions);
     }
-    for function in &mut functions {
+    finish(&mut functions, program);
+    Program { functions }
+}
+
+/// The passes that follow `params::rewrite`. The first four add clobbers, so they run for every
+/// function before `params::quiet` decides which functions are quiet from their final bodies.
+/// Pair removal and the certifier run last, for they read each call's `quiet`.
+fn finish(functions: &mut [Function], program: &tir::Program) {
+    for function in &mut *functions {
         reuse::reuse(function, program);
         ownership::place(function);
         hoist::hoist(function);
         elaborate::elaborate(function);
+    }
+    params::quiet(functions);
+    if cfg!(debug_assertions) {
+        quiet_checked(functions);
+    }
+    for function in functions {
         pairs::remove_pairs(function);
         if cfg!(debug_assertions) {
             certified(function);
         }
     }
-    Program { functions }
+}
+
+/// Panics on a call whose `quiet` is not its callee's, and on a quiet function with a clobber
+/// that is not a call of a quiet function.
+fn quiet_checked(functions: &[Function]) {
+    for function in functions {
+        for stmt in function.blocks.iter().flat_map(|block| &block.stmts) {
+            if let Statement::Assign {
+                value: Rvalue::Call { func, quiet, .. },
+                ..
+            } = stmt
+            {
+                let callee = &functions[func.0];
+                assert_eq!(
+                    *quiet, callee.quiet,
+                    "fn {}'s call to {} should carry its callee's quiet flag",
+                    function.name, callee.name
+                );
+            }
+            assert!(
+                !function.quiet || !params::clobbers(function, stmt),
+                "quiet fn {} should hold no clobber but a call of a quiet function",
+                function.name
+            );
+        }
+    }
 }
 
 /// Panics on a call whose flags are not its callee's `borrowed`.

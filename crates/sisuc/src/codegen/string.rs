@@ -506,19 +506,11 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// `panic(message)` at `span`: `sisu_panic_message(at, at_len, bytes, len)`, then
     /// `unreachable`. The message is not released: the process exits.
     pub(super) fn panic_value(&self, string: PointerValue<'ctx>, span: Span) {
-        let at = self.location(span);
-        let at_ptr = self
-            .builder
-            .build_global_string_ptr(&at, "panic.at")
-            .expect(POSITIONED);
-        let at_len = self.context.i64_type().const_int(
-            u64::try_from(at.len()).expect("a location should be shorter than 2^64 bytes"),
-            false,
-        );
+        let (at, at_len) = self.report_site(span);
         self.call(
             self.panic_message,
             &[
-                at_ptr.as_pointer_value().into(),
+                at.into(),
                 at_len.into(),
                 self.string_field(string, BYTES).into(),
                 self.string_len(string).into(),

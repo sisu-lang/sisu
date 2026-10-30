@@ -1,0 +1,143 @@
+// GIVEN `min`, `max` and `clamp` on `i64`, `sum` on `[i64]` and `[f64]`, and `contains` on an
+// array of a type with `Eq`, which the prelude writes
+// AND `min`, `max` and `clamp` on `f64`, which stay built in
+// WHEN `main` calls each `i64` method on literals, on the extremes of `i64` and on values that
+// `-O2` cannot fold
+// AND it calls `clamp` with `lo` above `hi`, and with operands that print when they run
+// AND it calls `sum` on an `[i64]`, on an `[f64]`, on an empty `[f64]` and on `[0.1, 0.2, 0.3]`
+// AND it calls each `f64` method on zeros of both signs and on a NaN
+// AND it calls `contains` on `[i64]`, `[string]`, `[f64]` with a NaN, `[i64?]` with `None`,
+// `[Circle]` with a written `eq`, `[Probe]` with an `eq` that prints, `[Keeper]` with an `eq`
+// that keeps its argument, and `[]`
+// THEN each `i64` method gives the smaller, the larger or the clamped value, and `clamp` gives
+// `hi` when `lo` is above it
+// AND the operands of `clamp` run in order, receiver first
+// AND each `f64` method gives what IEEE 754 says: a NaN operand gives the other operand and
+// `-0.0` is below `0.0`
+// AND `sum` adds the elements in order, an empty `[f64]` sums to `0.0`, not `-0.0`, and the
+// additions of `[0.1, 0.2, 0.3]` give `0.6000000000000001`, which another order would not
+// AND `sum` leaves the array it reads alive
+// AND `contains` is true at the first element that is `==` to its argument; a NaN is not `==` to a
+// NaN; `None` is found in an `[i64?]`; a written `eq` decides for a class; an empty array has
+// nothing
+// AND `contains` stops at the first element that is `==`: the written `eq` of a match at the
+// second of three elements runs for the first two only
+// AND `contains` leaves the array and the counted strings alive, and releases each once
+// o2-calls: main same_int 2
+fn same_int(n: i64, depth: i64) -> i64 {
+    if depth == 0 { n } else { -same_int(-n, depth - 1) }
+}
+
+// Prints its name, so the order of the operands of `clamp` shows.
+fn noisy(n: i64) -> i64 {
+    print("noisy {n}")
+    n
+}
+
+// A written `eq` that compares the radius: two circles are `==`, though they are two objects.
+class Circle: Eq {
+    radius: i64
+    fn eq(self, other: Self) -> bool {
+        self.radius == other.radius
+    }
+}
+
+// A written `eq` that prints its element, so the elements that `contains` compares show.
+class Probe: Eq {
+    n: i64
+    fn eq(self, other: Self) -> bool {
+        print("eq {self.n}")
+        self.n == other.n
+    }
+}
+
+// A written `eq` that keeps its parameter: `other` is owned, so `contains<Keeper>`'s `x` is owned.
+class Keeper: Eq {
+    mut _last: Keeper?
+    name: string
+    fn eq(self, other: Self) -> bool {
+        self._last = other
+        true
+    }
+}
+
+fn main() {
+    print(7.min(-3))                    // -3
+    print(7.max(-3))                    // 7
+    print(7.clamp(2, 5))                // 5
+    print((-3).clamp(2, 5))             // 2
+    print(3.clamp(2, 5))                // 3
+    print(7.clamp(5, 2))                // 2: with lo above hi, the result is hi
+    print((-9).clamp(5, 2))             // 2: the same below the range
+
+    let top = 9223372036854775807
+    let bottom = -top - 1
+    print(top.min(bottom))              // -9223372036854775808
+    print(top.max(bottom))              // 9223372036854775807
+    print(top.clamp(bottom, 0))         // 0
+    print(bottom.clamp(0, top))         // 0
+
+    // Values that `-O2` cannot fold.
+    let a = same_int(7, 3)
+    let b = same_int(-3, 3)
+    print(a.min(b))                     // -3
+    print(a.max(b))                     // 7
+    print(a.clamp(b, 5))                // 5
+    print(a.clamp(5, b))                // -3
+
+    // The receiver, then `lo`, then `hi`; `max` runs before `min`, which sees its result.
+    print(noisy(1).clamp(noisy(2), noisy(3)))
+    // noisy 1
+    // noisy 2
+    // noisy 3
+    // 2
+
+    // `f64`.
+    print(1.5.min(0.5))                 // 0.5
+    print(1.5.max(0.5))                 // 1.5
+    print(7.5.clamp(0.0, 5.0))          // 5.0
+    print(7.5.clamp(5.0, 2.0))          // 2.0
+    print((-0.0).max(0.0))              // 0.0
+    print(0.0.min(-0.0))                // -0.0
+    print(f64.nan.min(2.0))             // 2.0
+    print(2.0.max(f64.nan))             // 2.0
+    print(f64.nan.clamp(0.0, 1.0))      // 0.0
+
+    // `sum` on `[i64]` and `[f64]`.
+    let ints = [1, 2, 3]
+    print(ints.sum())                   // 6
+    print(ints.sum() + ints.sum())      // 12: the array stays alive after a call
+    let none: [i64] = []
+    print(none.sum())                   // 0
+    let floats = [0.5, 1.25]
+    print(floats.sum())                 // 1.75
+    let no_floats: [f64] = []
+    print(no_floats.sum())              // 0.0: not -0.0
+    print([-0.0].sum())                 // 0.0: the sum starts at 0.0, and 0.0 + -0.0 is 0.0
+    print([0.1, 0.2, 0.3].sum())        // 0.6000000000000001: (0.1 + 0.2) + 0.3
+
+    // `contains`.
+    print([1, 2, 3].contains(2))        // true
+    print([1, 2, 3].contains(4))        // false
+    let none_found: [i64] = []
+    print(none_found.contains(1))       // false: nothing to find in `[]`
+    let names = ["a {1}", "b {2}"]
+    print(names.contains("b {2}"))      // true: the strings are counted, and `names` stays alive
+    print(names.contains(names[0]))     // true: an element of the array itself
+    print(names.contains("c"))          // false
+    print(names.len())                  // 2: `names` is still there
+    print([f64.nan].contains(f64.nan))  // false: a NaN is not `==` to a NaN
+    print([1.5, f64.nan].contains(1.5)) // true
+    let maybe: [i64?] = [1, None]
+    print(maybe.contains(None))         // true
+    print(maybe.contains(2))            // false
+    let circles = [Circle(radius: 1), Circle(radius: 2)]
+    print(circles.contains(Circle(radius: 2))) // true: the written `eq`, not the identity
+    print(circles.contains(Circle(radius: 3))) // false
+    let probes = [Probe(n: 1), Probe(n: 2), Probe(n: 3)]
+    print(probes.contains(Probe(n: 2))) // eq 1, eq 2, true: the search ends at the second
+    let k1 = Keeper(_last: None, name: "k{1}")
+    let k2 = Keeper(_last: None, name: "k{2}")
+    print([k1].contains(k2))            // true: `eq` stores `k2`, which stays alive
+    print(k1.name + k2.name)            // k1k2
+}

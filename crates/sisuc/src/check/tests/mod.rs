@@ -11,6 +11,7 @@ mod chars;
 mod conformances;
 mod constants;
 mod enums;
+mod extend;
 mod floats;
 mod for_loops;
 mod generics;
@@ -477,6 +478,7 @@ fn if_with_failed_and_never_branches_is_error() {
 fn failed_rule_should_make_its_expression_error() {
     const MISMATCH: Code = Code::Mismatch;
     const F: &str = "fn f(a: i64) -> i64 { a }\n";
+    with_prelude();
     let rows: [(&str, String, Code, (usize, usize)); 15] = [
         (
             "unary",
@@ -523,7 +525,7 @@ fn failed_rule_should_make_its_expression_error() {
         (
             "contains of a class",
             "class C {}\nfn main() {\n    let x = [C()].contains(C())\n    print(x + 1)\n}".into(),
-            Code::NoOperator,
+            Code::NotConform,
             (3, 13),
         ),
         (
@@ -2545,6 +2547,7 @@ fn method_as_function_should_offer_self_for_an_enum_and_a_generic_class() {
 /// argument is checked without that parameter's type, so no error comes from that type.
 #[test]
 fn method_as_function_should_prefer_self_when_the_first_argument_fits_its_method() {
+    with_prelude();
     let head = "class P {\n    fn pick(self, p: P?) -> i64 { 0 }\n    fn merge(self, o: P) -> i64 { 0 }\n    fn max(self, k: f64) -> f64 { k }\n    fn len(self, xs: [u8]) -> i64 { 0 }\n    fn sum(self, xs: [f64]) -> f64 { 0.0 }\n    fn go(self, other: P, p: P?, a: f64, b: f64, x: i64) {\n        print(";
     let tail = ")\n    }\n}\nfn main() {}";
     for (call, fixed) in [
@@ -4043,7 +4046,8 @@ fn missing_method_suggests_the_closest() {
 }
 
 #[test]
-fn missing_array_method_suggests_the_closest() {
+fn a_missing_array_method_should_suggest_the_closest_name() {
+    with_prelude();
     for (name, candidate) in [("lenn", "len"), ("sm", "sum"), ("contain", "contains")] {
         let src = format!("fn main() {{\n    let xs = [1, 2]\n    print(xs.{name}(1))\n}}");
         suggests(&src, Code::NoMember, (3, 14, name), candidate);

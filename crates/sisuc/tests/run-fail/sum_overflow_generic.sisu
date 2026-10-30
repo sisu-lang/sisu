@@ -1,0 +1,11 @@
+// GIVEN `sum` on `[i64]`, which the prelude writes
+// AND a generic function `total` that calls `xs.sum()` on line 6, column 42
+// WHEN `main` calls `total` with an array whose elements add past the largest `i64`
+// THEN the program panics with "integer overflow" at the start of the `xs.sum()` call inside `total`, line 6 column 42
+// AND the message does not name a line of the prelude
+fn total<T>(xs: [i64], _tag: T) -> i64 { xs.sum() }
+
+fn main() {
+    print("before")
+    print(total([9223372036854775807, 1], "tag"))
+}

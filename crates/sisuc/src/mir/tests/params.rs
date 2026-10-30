@@ -4,9 +4,9 @@
 use std::fmt::Write as _;
 
 use super::super::lower::{self, COUNTERS, DEDUPED, SEEDED};
-use super::super::params::FOLLOWED;
+use super::super::params::{FOLLOWED, LOOKED, VISITED, quiet};
 use super::*;
-use crate::tir::FuncId;
+use crate::tir::{ClassId, FuncId, Program as TirProgram, TypeArgs, TypeKind};
 
 const KEEP: &str = "fn keep(p: [i64]) -> [i64] {\n    let q = p\n    q\n}";
 
@@ -702,4 +702,413 @@ fn written_less_should_borrow_both_operands() {
     assert_eq!(f.matches("= call Circle.less(").count(), 1, "{f}");
     assert!(f.contains("call Circle.less(c2#1, c1#0)"), "{f}");
     assert!(!f.contains("= copy c"), "{f}");
+}
+
+/// `sum` of the prelude loops over `self`, which a `for` reads in place: `self` is borrowed, and
+/// a caller that sums the same array twice copies it nowhere.
+#[test]
+fn the_prelude_sum_should_borrow_its_array() {
+    let printed = built(
+        "fn main() {\n    let xs = [1, 2]\n    print(xs.sum() + xs.sum())\n    print([1.5].sum())\n}",
+    );
+    signature(&printed, "[i64].sum", "fn [i64].sum(self#0: borrow [i64])");
+    signature(&printed, "[f64].sum", "fn [f64].sum(self#0: borrow [f64])");
+    let main = function(&printed, "main");
+    assert!(!main.contains("copy"), "{main}");
+}
+
+/// A function of `name` that does `n = 1`, calls each of `callees` and then runs `extra`: a
+/// prelude function when `prelude`.
+fn quiet_candidate(
+    name: &str,
+    prelude: bool,
+    callees: &[usize],
+    extra: Vec<Statement>,
+) -> Function {
+    let mut b = Builder::new(name);
+    if prelude {
+        b.prelude();
+    }
+    let n = b.local("n", Type::I64);
+    b.local("s", Type::STRING);
+    let mut stmts = vec![assign(
+        n,
+        Rvalue::Use(Operand::Const(Const::Int(1, Type::I64))),
+    )];
+    stmts.extend(callees.iter().map(|&func| Statement::Assign {
+        dest: None,
+        value: Rvalue::Call {
+            func: FuncId(func),
+            args: Vec::new(),
+            borrowed: Vec::new(),
+            span: Span::new(0, 0),
+            quiet: false,
+        },
+    }));
+    stmts.extend(extra);
+    b.block(stmts, ret());
+    b.finish()
+}
+
+/// The field of a local, as a place that a `take` or a store reads.
+fn slot() -> Place {
+    Place {
+        projections: vec![Projection::Field {
+            index: 0,
+            mutable: true,
+        }],
+        ..whole(LocalId(1))
+    }
+}
+
+/// `dest = take slot`.
+fn take(dest: LocalId) -> Statement {
+    Statement::Take {
+        dest,
+        place: slot(),
+    }
+}
+
+/// `slot = value`.
+fn store(value: Operand) -> Statement {
+    Statement::Store {
+        place: slot(),
+        value,
+    }
+}
+
+/// The call flags of `f`, in order.
+fn call_flags(f: &Function) -> Vec<bool> {
+    (f.blocks.iter().flat_map(|block| &block.stmts))
+        .filter_map(|stmt| match stmt {
+            Statement::Assign {
+                value: Rvalue::Call { quiet, .. },
+                ..
+            } => Some(*quiet),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A chain of prelude functions, each calling the next, is `n` components, and a ring of them is
+/// one: both mark every function quiet and visit each statement once. A function's component is
+/// read once to find the members, and twice for each call. The sizes grow by two, so a visit or a
+/// search for the members that repeats for a component would grow faster than the functions.
+#[test]
+fn quiet_should_visit_each_statement_once() {
+    for n in [20, 40, 80] {
+        let chain = (0..n).map(|i| {
+            let next = if i + 1 < n { vec![i + 1] } else { vec![] };
+            quiet_candidate(&format!("f{i}"), true, &next, Vec::new())
+        });
+        let ring =
+            (0..n).map(|i| quiet_candidate(&format!("f{i}"), true, &[(i + 1) % n], Vec::new()));
+        for (shape, mut functions) in [
+            ("chain", chain.collect::<Vec<_>>()),
+            ("ring", ring.collect::<Vec<_>>()),
+        ] {
+            let statements: usize = functions.iter().map(|f| f.blocks[0].stmts.len()).sum();
+            VISITED.set(0);
+            LOOKED.set(0);
+            quiet(&mut functions);
+            assert!(functions.iter().all(|f| f.quiet), "{shape} of {n}");
+            assert!(
+                functions.iter().all(|f| call_flags(f).iter().all(|&q| q)),
+                "{shape} of {n}: each call takes its callee's flag"
+            );
+            assert_eq!(VISITED.get(), statements, "{shape} of {n}");
+            assert!(
+                LOOKED.get() <= 3 * n,
+                "{shape} of {n}: {} reads",
+                LOOKED.get()
+            );
+        }
+    }
+}
+
+/// A function is quiet when it is the prelude's and holds no clobber but calls of quiet
+/// functions. A user function never is, and a function that calls one that is not, or that is
+/// in a component with one, is not either.
+#[test]
+fn quiet_should_mark_only_prelude_functions_without_a_clobber() {
+    let clobber = || vec![Statement::MakeUnique(whole(LocalId(0)))];
+    // (rows, expected quiet flags of the functions, in order)
+    let rows: Vec<(&str, Vec<Function>, Vec<bool>)> = vec![
+        (
+            "a clobber",
+            vec![quiet_candidate("a", true, &[], clobber())],
+            vec![false],
+        ),
+        (
+            "a caller of a clobber",
+            vec![
+                quiet_candidate("a", true, &[1], Vec::new()),
+                quiet_candidate("b", true, &[], clobber()),
+            ],
+            vec![false, false],
+        ),
+        (
+            "a ring with one clobber",
+            vec![
+                quiet_candidate("a", true, &[1], Vec::new()),
+                quiet_candidate("b", true, &[2], clobber()),
+                quiet_candidate("c", true, &[0], Vec::new()),
+            ],
+            vec![false, false, false],
+        ),
+        (
+            "a user function",
+            vec![
+                quiet_candidate("a", false, &[1], Vec::new()),
+                quiet_candidate("b", true, &[], Vec::new()),
+            ],
+            vec![false, true],
+        ),
+        (
+            "a caller of a user function",
+            vec![
+                quiet_candidate("a", true, &[1], Vec::new()),
+                quiet_candidate("b", false, &[], Vec::new()),
+            ],
+            vec![false, false],
+        ),
+        (
+            "a quiet callee beside a loud one",
+            vec![
+                quiet_candidate("a", true, &[1, 2], Vec::new()),
+                quiet_candidate("b", true, &[], Vec::new()),
+                quiet_candidate("c", true, &[], clobber()),
+            ],
+            vec![false, true, false],
+        ),
+    ];
+    assert_quiet_rows(rows);
+}
+
+/// Only a call that is not quiet, a take into a counted local, a store of a counted value and a
+/// `make_unique` are clobbers: the other statements leave a prelude function quiet.
+#[test]
+fn quiet_should_judge_each_kind_of_statement() {
+    let rows: Vec<(&str, Vec<Function>, Vec<bool>)> = vec![
+        (
+            "a take into a counted local",
+            vec![quiet_candidate("a", true, &[], vec![take(LocalId(1))])],
+            vec![false],
+        ),
+        (
+            "a take into an uncounted local",
+            vec![quiet_candidate("a", true, &[], vec![take(LocalId(0))])],
+            vec![true],
+        ),
+        (
+            "a store of a counted value",
+            vec![quiet_candidate(
+                "a",
+                true,
+                &[],
+                vec![store(Operand::Move(LocalId(1)))],
+            )],
+            vec![false],
+        ),
+        (
+            "a store of an uncounted value",
+            vec![quiet_candidate(
+                "a",
+                true,
+                &[],
+                vec![store(Operand::Const(Const::Int(2, Type::I64)))],
+            )],
+            vec![true],
+        ),
+        (
+            "statements that free or end nothing the caller reads",
+            vec![quiet_candidate(
+                "a",
+                true,
+                &[],
+                vec![
+                    Statement::Release(LocalId(1)),
+                    Statement::ScopeRelease(LocalId(1)),
+                    Statement::Check(whole(LocalId(1))),
+                    Statement::End(LocalId(1)),
+                    Statement::Free(LocalId(1)),
+                    Statement::TakeApart {
+                        scrutinee: LocalId(1),
+                        tokens: Vec::new(),
+                        bindings: Vec::new(),
+                        rest: Vec::new(),
+                    },
+                ],
+            )],
+            vec![true],
+        ),
+    ];
+    assert_quiet_rows(rows);
+}
+
+/// Runs `quiet` over each row's functions: the flags are `expected`, and each call takes the
+/// flag of its callee.
+fn assert_quiet_rows(rows: Vec<(&str, Vec<Function>, Vec<bool>)>) {
+    for (row, mut functions, expected) in rows {
+        quiet(&mut functions);
+        let found: Vec<bool> = functions.iter().map(|f| f.quiet).collect();
+        assert_eq!(found, expected, "row `{row}`");
+        let callee = |at: usize| functions[at].quiet;
+        for (at, f) in functions.iter().enumerate() {
+            let calls = call_flags(f);
+            let callees: Vec<usize> = (f.blocks.iter().flat_map(|block| &block.stmts))
+                .filter_map(|stmt| match stmt {
+                    Statement::Assign {
+                        value: Rvalue::Call { func, .. },
+                        ..
+                    } => Some(func.0),
+                    _ => None,
+                })
+                .collect();
+            let wanted: Vec<bool> = callees.into_iter().map(callee).collect();
+            assert_eq!(
+                calls, wanted,
+                "row `{row}`, fn {at}: each call takes its callee's flag"
+            );
+        }
+    }
+}
+
+/// The debug check of `build` rejects a call whose flag is not the flag of its callee.
+#[test]
+#[should_panic(expected = "should carry its callee's quiet flag")]
+fn quiet_check_should_reject_a_call_that_disagrees_with_its_callee() {
+    let mut functions = [
+        quiet_candidate("a", true, &[1], Vec::new()),
+        quiet_candidate("b", true, &[], Vec::new()),
+    ];
+    // `b` is quiet, and the call in `a` still says that it is not.
+    functions[1].quiet = true;
+    quiet_checked(&functions);
+}
+
+/// The debug check of `build` rejects a quiet function that holds a clobber.
+#[test]
+#[should_panic(expected = "should hold no clobber but a call of a quiet function")]
+fn quiet_check_should_reject_a_quiet_function_with_a_clobber() {
+    let clobber = vec![Statement::MakeUnique(whole(LocalId(0)))];
+    let mut functions = [quiet_candidate("a", true, &[], clobber)];
+    functions[0].quiet = true;
+    quiet_checked(&functions);
+}
+
+/// A function whose only clobber the ownership pass adds is not quiet. Lowering never makes
+/// one, for it pairs a counted store with a counted `take`, so the mir is by hand: `s` is stored
+/// into a `mut` field with a `use`, which is no counted store until `place` makes it a move, and
+/// the `take` before it reads into an `i64` local, which is no clobber. `finish` runs `place`
+/// before `quiet`; a `quiet` that ran first would mark `put`.
+#[test]
+fn quiet_should_see_a_clobber_that_the_ownership_pass_adds() {
+    let bag = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE));
+    let put = || {
+        let mut b = Builder::new("put");
+        b.prelude();
+        let this = b.param("bag", bag);
+        let s = b.param("s", Type::STRING);
+        b.borrowed(this);
+        let old = b.local("old", Type::I64);
+        let field = Place {
+            projections: vec![Projection::Field {
+                index: 0,
+                mutable: true,
+            }],
+            ..whole(this)
+        };
+        b.block(
+            vec![
+                Statement::Take {
+                    dest: old,
+                    place: field.clone(),
+                },
+                Statement::Store {
+                    place: field,
+                    value: Operand::Use(s),
+                },
+            ],
+            ret(),
+        );
+        b.finish()
+    };
+    let mut before = [put()];
+    quiet(&mut before);
+    assert!(before[0].quiet, "no clobber before the ownership pass");
+    let mut after = [put()];
+    finish(&mut after, &TirProgram::default());
+    assert!(!after[0].quiet, "the counted store is a clobber after it");
+}
+
+/// A class whose written `eq` replaces a `mut` field, and one whose `eq` stores its argument.
+const EQ_CLASSES: &str = "class Holder: Eq {\n    mut items: [string]\n    fn eq(self, other: Self) -> bool {\n        self.items = [\"y\"]\n        true\n    }\n}\n\
+    class Keeper: Eq {\n    mut last: Keeper?\n    name: string\n    fn eq(self, other: Self) -> bool {\n        self.last = other\n        true\n    }\n}\n";
+
+/// `contains` of the prelude loops over `self`, which a `for` reads in place, so `self` is
+/// borrowed. Its `x` is decided for each instance: a generated `Eq` reads it in place, so it is
+/// borrowed for a `string`; the written `eq` of `Keeper` stores `other`, so it is owned there.
+#[test]
+fn the_prelude_contains_should_borrow_its_array_and_decide_its_value_for_each_instance() {
+    let printed = built(&format!(
+        "{EQ_CLASSES}fn main() {{\n    let ks = [Keeper(last: None, name: \"k{{1}}\")]\n    \
+         print(ks.contains(ks[0]))\n    print([\"a\"].contains(\"b\"))\n    print([1].contains(1))\n}}"
+    ));
+    signature(
+        &printed,
+        "[string].contains",
+        "fn [string].contains(self#0: borrow [string], x#1: borrow string)",
+    );
+    signature(
+        &printed,
+        "[i64].contains",
+        "fn [i64].contains(self#0: borrow [i64], x#1: i64)",
+    );
+    signature(
+        &printed,
+        "[Keeper].contains",
+        "fn [Keeper].contains(self#0: borrow [Keeper], x#1: Keeper)",
+    );
+}
+
+/// A function of the user's that passes its `string` parameters to `contains<string>` keeps both
+/// borrowed: the call reads them in place.
+#[test]
+fn a_function_that_calls_contains_should_keep_its_parameters_borrowed() {
+    let printed = built(
+        "fn has(xs: [string], s: string) -> bool { xs.contains(s) }\nfn main() {\n    print(has([\"a\"], \"b\"))\n}",
+    );
+    signature(
+        &printed,
+        "has",
+        "fn has(xs#0: borrow [string], s#1: borrow string)",
+    );
+}
+
+/// The `==` in the body of `contains<T>` is an `Equal` whose `calls` flag follows the instance:
+/// it prints ` [calls]` for `[Holder]`, whose generated `Eq` reaches the written `eq` of `Holder`,
+/// and not for `string`. For `Holder` itself the `==` is a `Call` of its `eq`, which has no marker.
+#[test]
+fn the_equal_in_contains_should_carry_the_calls_flag_of_its_instance() {
+    let printed = built(&format!(
+        "{EQ_CLASSES}fn main() {{\n    let h = Holder(items: [\"{{1}}\"])\n    print([[h]].contains([h]))\n    \
+         print([h].contains(h))\n    print([\"a\"].contains(\"b\"))\n}}"
+    ));
+    let nested = function(&printed, "[[Holder]].contains");
+    assert!(
+        nested.contains(" == ") && nested.contains(" [calls]"),
+        "{nested}"
+    );
+    let strings = function(&printed, "[string].contains");
+    assert!(
+        strings.contains(" == ") && !strings.contains("[calls]"),
+        "{strings}"
+    );
+    let holder = function(&printed, "[Holder].contains");
+    assert!(holder.contains("= call Holder.eq("), "{holder}");
+    assert!(
+        !holder.contains(" == ") && !holder.contains("[calls]"),
+        "{holder}"
+    );
 }

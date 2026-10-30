@@ -3,10 +3,10 @@
 use rustc_hash::FxHashMap;
 
 use super::expr::{if_some, local, no_member, path};
-use super::extend::holder_of;
+use super::extend::{holder_of, method_holder};
 use super::generic::{Site, named_params};
 use super::unused_names::Used;
-use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, type_of, wrap};
+use super::{Checked, Checker, Declared, Holder, Poisoned, UNKNOWN, as_optional, type_of, wrap};
 use crate::ast;
 use crate::diagnostic::{Annotate, Definition, Diagnostic, DiagnosticKind, Peel};
 use crate::source::Span;
@@ -200,10 +200,11 @@ impl Checker<'_> {
     /// the name `name`, if any; a broken one for a method that a syntax error took. The first in
     /// source order wins, and two are reported (E0034) elsewhere.
     pub(super) fn own_method(&self, ty: Type, name: Symbol) -> Option<Declared<tir::FuncId>> {
-        let holder = holder_of(ty)?;
+        let holder = method_holder(ty)?;
         let body = match holder {
-            super::Holder::Class(c) => self.classes[c.0].methods.get(&name),
-            super::Holder::Enum(e) => self.enums[e.0].methods.get(&name),
+            Holder::Class(c) => self.classes[c.0].methods.get(&name),
+            Holder::Enum(e) => self.enums[e.0].methods.get(&name),
+            Holder::Array | Holder::I64 => None,
         };
         if let Some(&body) = body {
             return Some(body);
@@ -229,7 +230,7 @@ impl Checker<'_> {
     pub(super) fn conforming_methods(&mut self, ty: Type, name: Symbol) {
         self.candidates.clear();
         self.failed_block = None;
-        let Some(holder) = holder_of(ty) else {
+        let Some(holder) = method_holder(ty) else {
             return;
         };
         let key = (holder, name);
@@ -390,6 +391,50 @@ impl Checker<'_> {
             Some(Declared::Known(func)) if !self.plain_block_holds(func, ty) => None,
             found => found,
         }
+    }
+
+    /// The method `name` that an `extend` block of the prelude gives `ty`, an array or an `i64`,
+    /// if any. The method of a class or an enum is `find_method`'s. A method whose block bounds
+    /// fail for `ty` is none.
+    pub(super) fn prelude_method(&mut self, ty: Type, name: Symbol) -> Option<tir::FuncId> {
+        if !matches!(ty.kind(), TypeKind::Array(_) | TypeKind::I64) {
+            return None;
+        }
+        // A block of the prelude has no syntax error, so no method of it is broken.
+        if let Some(Declared::Known(func)) = self.applicable_method(ty, name) {
+            Some(func)
+        } else {
+            None
+        }
+    }
+
+    /// The names of the methods that the `extend` blocks of the prelude give `ty`, an array or an
+    /// `i64`: what a report of an unknown method suggests.
+    pub(super) fn prelude_method_names(&self, ty: Type) -> Vec<&'static str> {
+        let holder = method_holder(ty);
+        let mut names: Vec<&'static str> = (self.builtin_methods.iter())
+            .inspect(|_| {
+                #[cfg(test)]
+                super::PRELUDE_NAME_STEPS.set(super::PRELUDE_NAME_STEPS.get() + 1);
+            })
+            .filter(|&&(h, _, at)| Some(h) == holder && self.covers(at, ty).is_some())
+            .map(|&(_, name, _)| name.as_str())
+            .collect();
+        // Two blocks may give the same name.
+        names.sort_unstable();
+        names.dedup();
+        names
+    }
+
+    /// The array types that the prelude's `extend` blocks give a method `name`, in source order:
+    /// what a receiver needs to have it.
+    pub(super) fn prelude_targets(&self, name: Symbol) -> Vec<Type> {
+        let mut targets: Vec<Type> = (self.builtin_methods.iter())
+            .filter(|&&(holder, method, _)| holder == Holder::Array && method == name)
+            .map(|&(_, _, at)| self.extensions[at].target)
+            .collect();
+        targets.dedup();
+        targets
     }
 
     /// Whether the bounds of the block of the method `func`, which a plain block gives or the

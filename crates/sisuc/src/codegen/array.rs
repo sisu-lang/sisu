@@ -140,12 +140,13 @@ impl<'ctx> Codegen<'ctx, '_> {
     ) {
         let len = self.array_len(array);
         let outside = self.int_compare(IntPredicate::UGE, index, len);
-        self.panic_with(
-            outside,
-            &self.location(span),
-            self.panic_bounds,
-            &[index.into(), len.into()],
-        );
+        self.panic_with(outside, |codegen| {
+            let (at, at_len) = codegen.report_site(span);
+            (
+                codegen.panic_bounds,
+                vec![at.into(), at_len.into(), index.into(), len.into()],
+            )
+        });
     }
 
     /// Runs `body` for each index from 0 up to `len`, which is not negative. `body` may leave
@@ -279,76 +280,6 @@ impl<'ctx> Codegen<'ctx, '_> {
         } else {
             self.array_len(array)
         }
-    }
-
-    /// The elements of `array`, an `[i64]` or an `[f64]` as `ty` says, added in order from
-    /// zero. An `i64` adds with the checked add of `+`, which panics at `span`, and an `f64`
-    /// with `fadd` from `+0.0`, so an empty `[f64]` sums to `0.0` and the order of the additions
-    /// is the order of the elements.
-    pub(super) fn sum(
-        &self,
-        ty: Type,
-        array: PointerValue<'ctx>,
-        span: Span,
-    ) -> BasicValueEnum<'ctx> {
-        let llvm_type = self.array_layout(ty).element;
-        let total = self.entry_alloca(llvm_type, "total");
-        self.store(total, llvm_type.const_zero());
-        self.count_loop(self.array_len(array), |index| {
-            let element = self.load_element(ty, array, index);
-            let so_far = self.load(llvm_type, total);
-            let added = if ty == Type::F64 {
-                self.builder
-                    .build_float_add(so_far.into_float_value(), element.into_float_value(), "sum")
-                    .expect(POSITIONED)
-                    .into()
-            } else {
-                self.checked(
-                    "llvm.sadd.with.overflow",
-                    so_far.into_int_value(),
-                    element.into_int_value(),
-                    span,
-                )
-                .into()
-            };
-            self.store(total, added);
-        });
-        self.load(llvm_type, total)
-    }
-
-    /// Whether some element of `array`, whose element type is `element`, is `==` to `needle`,
-    /// stopping at the first that is.
-    pub(super) fn contains(
-        &self,
-        element: Type,
-        array: PointerValue<'ctx>,
-        needle: BasicValueEnum<'ctx>,
-    ) -> IntValue<'ctx> {
-        let function = self.current_function();
-        let found = self.context.append_basic_block(function, "contains.found");
-        let end = self.context.append_basic_block(function, "contains.end");
-        self.count_loop(self.array_len(array), |index| {
-            let same = self.equal(element, self.load_element(element, array, index), needle);
-            let next = self.context.append_basic_block(function, "contains.next");
-            self.builder
-                .build_conditional_branch(same, found, next)
-                .expect(POSITIONED);
-            self.builder.position_at_end(next);
-        });
-        let missed = self.current_block();
-        self.branch_to(end);
-        self.builder.position_at_end(found);
-        self.branch_to(end);
-        self.builder.position_at_end(end);
-        let bool_type = self.context.bool_type();
-        self.phi(
-            bool_type,
-            &[
-                (bool_type.const_zero(), missed),
-                (bool_type.const_int(1, false), found),
-            ],
-        )
-        .into_int_value()
     }
 
     /// The body of `@sisu_rc.drop.[T]`, `@sisu_rc.eq.[T]` or `@sisu_rc.unique.[T]`, `T`

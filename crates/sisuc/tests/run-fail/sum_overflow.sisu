@@ -1,0 +1,9 @@
+// GIVEN `sum` on `[i64]`, which the prelude writes
+// AND an array whose two elements add past the largest `i64`
+// WHEN `main` calls `.sum()` on that array on line 8, column 11
+// THEN the program panics with "integer overflow" at the start of the user's `[...].sum()` call, line 8 column 11
+// AND the message does not name a line of the prelude
+fn main() {
+    print("before")
+    print([9223372036854775807, 1].sum())
+}

@@ -43,6 +43,8 @@ fn call(args: Vec<Operand>, borrowed: Vec<bool>) -> Statement {
             func: FuncId(0),
             args,
             borrowed,
+            span: Span::new(0, 0),
+            quiet: false,
         },
     }
 }
@@ -1300,6 +1302,41 @@ fn borrow_through_an_element_is_ended_by_a_call() {
         ret(),
     );
     rejects(&b.finish(), 0, x, Rule::Borrow);
+}
+
+/// `call` with a `quiet` callee.
+fn quiet_call() -> Statement {
+    Statement::Assign {
+        dest: None,
+        value: Rvalue::Call {
+            func: FuncId(0),
+            args: Vec::new(),
+            borrowed: Vec::new(),
+            span: Span::new(0, 0),
+            quiet: true,
+        },
+    }
+}
+
+/// The borrow of `borrow_through_an_element_is_ended_by_a_call` across a call of a quiet
+/// function, which replaces no element: the certifier accepts it.
+#[test]
+fn borrow_through_an_element_should_survive_a_quiet_call() {
+    let mut b = Builder::new("f");
+    let xs = b.param("xs", Type::array(Type::STRING));
+    let x = b.local("b", Type::STRING);
+    b.owner(x, xs);
+    b.block(
+        vec![
+            assign(x, Rvalue::Borrow(first(xs))),
+            quiet_call(),
+            show(read(x)),
+            Statement::End(x),
+            Statement::Release(xs),
+        ],
+        ret(),
+    );
+    assert_eq!(certify(&b.finish()), Ok(()));
 }
 
 /// `_t = take p.0`, `b = borrow o.0`, then `p.0 = move s` and `release _t`: when `p` is `o`,

@@ -15,7 +15,7 @@ use super::writer::{Rewrite, Site, Writer, allowed};
 use super::{Answer, BUDGET, Cost, DEPTHS, FUEL, Gen, MAX_BOUND, MAX_NESTING, MAX_SIZE, generate};
 use crate::conformance::holds_class;
 use crate::diagnostic::Severity;
-use crate::front_end::front_end;
+use crate::front_end::{PRELUDE_SOURCE, front_end, prelude_program};
 use crate::symbol::Symbol;
 use crate::types::{Type, TypeKind};
 use crate::{ast, lexer, parser, tir};
@@ -90,14 +90,12 @@ const EXCLUDED: [(&str, &str); 15] = [
 
 /// The receivers of the built-in methods `check/number.rs` does not list, by their typed
 /// tree's variant.
-const RECEIVERS: [(&str, &[&str]); 7] = [
+const RECEIVERS: [(&str, &[&str]); 5] = [
     ("tir::ExprKind::Len", &["String", "Array"]),
     ("tir::ExprKind::Chars", &["String"]),
     ("tir::ExprKind::Bytes", &["String"]),
     ("tir::ExprKind::Words", &["String"]),
     ("tir::ExprKind::FromChars", &["Array"]),
-    ("tir::ExprKind::Sum", &["Array"]),
-    ("tir::ExprKind::Contains", &["Array"]),
 ];
 
 /// The scalar conversions, from and to, as `convert` in `check/string.rs` takes them: `i64(e)`
@@ -377,16 +375,17 @@ fn universe() -> FxHashSet<String> {
     let number =
         syn::parse_file(include_str!("../check/number.rs")).expect("number.rs should parse");
     for row in const_rows(&number, "METHODS") {
-        let [op, receivers, ..] = &row[..] else {
-            panic!("a METHODS row should hold an operation and its receivers");
-        };
-        let receivers: &[&str] = match receivers.as_str() {
-            "F64" => &["F64"],
-            "Number" => &["I64", "F64"],
-            other => panic!("an unknown receiver set `{other}`"),
-        };
-        for receiver in receivers {
-            universe.insert(format!("tir::MathOp::{op} on {receiver}"));
+        universe.insert(format!("tir::MathOp::{} on F64", row[0]));
+    }
+    // The prelude's methods of a built-in type, as the typed tree names them.
+    for item in &prelude_program(PRELUDE_SOURCE).items {
+        if let ast::Item::Extend(extend) = item {
+            for method in &extend.methods {
+                universe.insert(format!(
+                    "prelude method {}.{}",
+                    extend.target, method.name.name
+                ));
+            }
         }
     }
     for row in const_rows(&number, "CONSTANTS") {
@@ -556,6 +555,8 @@ struct Walk {
     picked: FxHashSet<usize>,
     /// The functions, classes and enums of the typed tree, by id.
     function_names: Vec<String>,
+    /// How many of the typed tree's functions are the source's: the prelude's follow them.
+    user_funcs: usize,
     class_names: Vec<String>,
     enum_names: Vec<String>,
 }
@@ -601,7 +602,7 @@ impl Walk {
         }
     }
 
-    /// The keys that the built mir shows: an `==`, `contains`, `print` or interpolation on a
+    /// The keys that the built mir shows: an `==`, `print` or interpolation on a
     /// compound value that may run a written method inside it, and one that cannot. The mir is
     /// that of the program `mono` instantiates, as lowering makes it: `build` sets the same flags
     /// and costs far more.
@@ -618,9 +619,6 @@ impl Walk {
                     let (operands, calls, printed) = match value {
                         crate::mir::Rvalue::Equal { lhs, calls, .. } => {
                             (std::slice::from_ref(lhs), *calls, false)
-                        }
-                        crate::mir::Rvalue::Contains { base, calls, .. } => {
-                            (std::slice::from_ref(base), *calls, false)
                         }
                         crate::mir::Rvalue::Print { operand, calls, .. } => {
                             (std::slice::from_ref(operand), *calls, true)
@@ -1925,17 +1923,20 @@ impl Walk {
             .filter(|(_, f)| f.owner_params > 0 && f.name.contains('<'))
             .map(|(i, _)| i)
             .collect();
-        // The functions of the typed tree are the source's in order, after any the prelude adds.
-        let skip = (program.functions.len())
-            .checked_sub(self.signatures.len())
-            .expect("the typed tree should hold every function the source writes");
+        // The functions of the typed tree are the source's in order, then the prelude's.
+        assert!(
+            program.prelude.funcs >= self.signatures.len(),
+            "the typed tree should hold every function the source writes"
+        );
+        self.user_funcs = program.prelude.funcs;
         self.bounds_of = vec![Vec::new(); program.functions.len()];
         for (at, (name, bounds)) in self.signatures.iter().enumerate() {
-            let function = &program.functions[skip + at];
+            let function = &program.functions[at];
             assert_eq!(function.name.rsplit('.').next(), Some(name.as_str()));
-            self.bounds_of[skip + at].clone_from(bounds);
+            self.bounds_of[at].clone_from(bounds);
         }
-        for (at, function) in program.functions.iter().enumerate() {
+        // The prelude's bodies are not walked: they are no generated code.
+        for (at, function) in program.functions[..self.user_funcs].iter().enumerate() {
             self.tir_bounds.clone_from(&self.bounds_of[at]);
             self.printed_params.clear();
             self.compared_params.clear();
@@ -2215,9 +2216,24 @@ impl Walk {
                 self.mark("tir::ExprKind::Call");
                 // An operator on a class or an enum with a written conformance is a call of its
                 // method.
+                if func.0 >= self.user_funcs {
+                    let key = format!("prelude method {}", self.function_names[func.0]);
+                    self.mark(&key);
+                }
                 let name = &self.function_names[func.0];
-                if matches!(name.rsplit('.').next(), Some("eq" | "less")) {
+                let (operator, contains) = (
+                    matches!(name.rsplit('.').next(), Some("eq" | "less")),
+                    func.0 >= self.user_funcs && name.ends_with(".contains"),
+                );
+                if operator {
                     self.mark("reach: an operator calls a written `eq` or `less`");
+                }
+                // The prelude's `contains` compares with `==`: on a type parameter, it needs
+                // the bound.
+                if contains
+                    && matches!(args[0].ty.kind(), TypeKind::Array(element) if element.has_param())
+                {
+                    self.mark("reach: an operator runs on a bounded type parameter");
                 }
                 if self.generic_blocks.contains(&func.0) {
                     self.mark("reach: a generic `extend` block is called");
@@ -2332,14 +2348,6 @@ impl Walk {
             tir::ExprKind::Words(base) => self.receiver_call("tir::ExprKind::Words", base),
             tir::ExprKind::FromChars(base) => {
                 self.receiver_call("tir::ExprKind::FromChars", base);
-            }
-            tir::ExprKind::Sum(base) => self.receiver_call("tir::ExprKind::Sum", base),
-            tir::ExprKind::Contains { base, value } => {
-                self.receiver_call("tir::ExprKind::Contains", base);
-                if matches!(base.ty.kind(), TypeKind::Array(element) if element.has_param()) {
-                    self.mark("reach: an operator runs on a bounded type parameter");
-                }
-                self.tir_expr(value, Parent::Other);
             }
             tir::ExprKind::Math { op, operands } => self.math(e, *op, operands, parent),
             tir::ExprKind::Unary { op, operand } => {
@@ -5208,10 +5216,26 @@ fn bound(name: Option<&str>) -> bool {
         .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
+/// The prelude's functions that have no effect and cannot panic, so that a call of one with pure
+/// arguments is pure: `i64`'s `min`, `max` and `clamp`, and the `sum` of an `[f64]`, which
+/// `Math` and `Sum` nodes were. The `sum` of an `[i64]` may overflow. `contains` is not here: it
+/// runs the `eq` of its element type, which a program may write with effects.
+const PURE_PRELUDE: [&str; 4] = ["i64.min", "i64.max", "i64.clamp", "[f64].sum"];
+
+/// For each function of `program`: whether a call of it is pure, if its arguments are.
+fn pure_calls(program: &tir::Program) -> Vec<bool> {
+    (program.functions.iter().enumerate())
+        .map(|(at, f)| at >= program.prelude.funcs && PURE_PRELUDE.contains(&f.name.as_str()))
+        .collect()
+}
+
 /// The `let r<n>` statements of a function of a rewritten copy, each checked against the Let
 /// rewrite's condition (decision 2) from the typed tree alone.
 struct Lets<'f> {
     locals: &'f [tir::Local],
+    /// For each function of the typed tree: whether a call of it has no effect and cannot panic
+    /// (see `PURE_PRELUDE`).
+    pure_calls: &'f [bool],
     /// The values of the `r<n>` whose value is a known integer.
     values: FxHashMap<usize, i64>,
     /// While the use of an `r<n>` is sought: the local.
@@ -5227,9 +5251,10 @@ struct Lets<'f> {
 }
 
 impl<'f> Lets<'f> {
-    fn new(locals: &'f [tir::Local]) -> Self {
+    fn new(locals: &'f [tir::Local], pure_calls: &'f [bool]) -> Self {
         Lets {
             locals,
+            pure_calls,
             values: FxHashMap::default(),
             sought: None,
             found: None,
@@ -5379,11 +5404,9 @@ impl<'f> Lets<'f> {
             | tir::ExprKind::Bytes(x)
             | tir::ExprKind::Words(x)
             | tir::ExprKind::FromChars(x)
-            | tir::ExprKind::Sum(x)
             | tir::ExprKind::Unary { operand: x, .. } => self.expr(x),
             tir::ExprKind::ArrayFill { value: a, len: b }
             | tir::ExprKind::Index { base: a, index: b }
-            | tir::ExprKind::Contains { base: a, value: b }
             | tir::ExprKind::Concat { lhs: a, rhs: b }
             | tir::ExprKind::Equal { lhs: a, rhs: b, .. }
             | tir::ExprKind::Is { lhs: a, rhs: b } => {
@@ -5470,8 +5493,8 @@ impl<'f> Lets<'f> {
             | tir::ExprKind::None => true,
             tir::ExprKind::Local(local) => reads || !self.locals[local.0].mutable,
             tir::ExprKind::Field { base, .. } => reads && self.pure(base, reads),
-            tir::ExprKind::Call { .. }
-            | tir::ExprKind::InterfaceCall { .. }
+            tir::ExprKind::Call { func, args, .. } => self.pure_calls[func.0] && all(args),
+            tir::ExprKind::InterfaceCall { .. }
             | tir::ExprKind::Print { .. }
             | tir::ExprKind::Dbg { .. }
             | tir::ExprKind::Panic(_)
@@ -5481,9 +5504,7 @@ impl<'f> Lets<'f> {
             | tir::ExprKind::Break { .. }
             | tir::ExprKind::Continue { .. }
             | tir::ExprKind::Return(_) => false,
-            // An `i64` sum may overflow, and so may an `i64` negation or arithmetic whose value
-            // is not known.
-            tir::ExprKind::Sum(x) => !int && self.pure(x, reads),
+            // An `i64` negation or arithmetic whose value is not known may overflow.
             tir::ExprKind::Unary { op, operand } => {
                 (!int || *op == tir::UnaryOp::Not || self.value(e).is_some())
                     && self.pure(operand, reads)
@@ -5509,8 +5530,7 @@ impl<'f> Lets<'f> {
             | tir::ExprKind::Bytes(x)
             | tir::ExprKind::Words(x)
             | tir::ExprKind::FromChars(x) => self.pure(x, reads),
-            tir::ExprKind::Contains { base: a, value: b }
-            | tir::ExprKind::Concat { lhs: a, rhs: b }
+            tir::ExprKind::Concat { lhs: a, rhs: b }
             | tir::ExprKind::Equal { lhs: a, rhs: b, .. }
             | tir::ExprKind::Is { lhs: a, rhs: b } => self.pure(a, reads) && self.pure(b, reads),
             tir::ExprKind::If {
@@ -5591,7 +5611,7 @@ impl<'f> Lets<'f> {
 }
 
 #[test]
-fn every_rewrite_meets_its_condition() {
+fn every_rewrite_should_meet_its_condition() {
     // Each condition is checked on the rewritten copy itself, apart from the flags the
     // generator chose it by. A `C<n>` that does not fold, or folds through an overflowing step,
     // fails to check (E0086, E0088), so checking clean covers the Const rewrite.
@@ -5605,8 +5625,9 @@ fn every_rewrite_meets_its_condition() {
         };
         walk.ast(&ast);
         misplaced.extend(walk.misplaced);
+        let pure_calls = pure_calls(&program);
         for f in &program.functions {
-            let mut lets = Lets::new(&f.locals);
+            let mut lets = Lets::new(&f.locals, &pure_calls);
             lets.block(&f.body);
             lets_seen += lets.checked;
             broken.extend(lets.broken.into_iter().map(|b| format!("{}: {b}", f.name)));
@@ -5640,10 +5661,10 @@ fn refused(rewrite: Rewrite, site: &Site) {
 }
 
 #[test]
-fn let_binding_skips_a_mutated_name() {
+fn let_binding_should_skip_a_mutated_name() {
     // `print({ n = 2; n })`: a `let` before the statement would read `n` before it is 2.
     // `allowed` sees only an impure site; that the generator marks a `mut` local impure is
-    // `every_rewrite_meets_its_condition`'s to check.
+    // `every_rewrite_should_meet_its_condition`'s to check.
     refused(Rewrite::Let, &Site { pure: false, ..ANY });
 }
 
@@ -5660,10 +5681,10 @@ fn let_binding_skips_a_short_circuit() {
 }
 
 #[test]
-fn let_binding_skips_a_field_read() {
+fn let_binding_should_skip_a_field_read() {
     // `print({ p.x = 2; p.x })`: a field is a read of what may be assigned, as a `mut` local is.
     // `allowed` sees only an impure site; that the generator marks a field read impure is
-    // `every_rewrite_meets_its_condition`'s to check.
+    // `every_rewrite_should_meet_its_condition`'s to check.
     refused(Rewrite::Let, &Site { pure: false, ..ANY });
 }
 
@@ -5827,7 +5848,7 @@ fn rewrites_are_rare() {
 }
 
 #[test]
-fn known_answers_are_integer() {
+fn known_answers_should_be_integer() {
     // Decision 11: a known answer depends on no inexact value. A known function's parameters,
     // locals and result are integers, and each call of it takes integer literals.
     let mut calls = 0;
@@ -5863,7 +5884,8 @@ fn known_answers_are_integer() {
             .iter()
             .find(|f| f.name == "main")
             .expect("a program should have `main`");
-        let lets = Lets::new(&main.locals);
+        let pure_calls = pure_calls(&program);
+        let lets = Lets::new(&main.locals, &pure_calls);
         let printed = main.body.stmts.iter().filter_map(|stmt| match stmt {
             tir::Stmt::Expr(e) => Some(e),
             tir::Stmt::Let { .. } | tir::Stmt::Assign { .. } | tir::Stmt::Append { .. } => None,
@@ -6120,7 +6142,7 @@ fn without_unused(source: &str) -> (String, usize) {
         lexer::lex(source).expect("a generated program should lex"),
         false,
     );
-    let prelude = crate::front_end::prelude_program(crate::front_end::PRELUDE_SOURCE);
+    let prelude = prelude_program(PRELUDE_SOURCE);
     let (_, diagnostics) =
         crate::check::check(&parsed.program, &prelude, source, &parsed.diagnostics);
     let unused: FxHashSet<usize> = (diagnostics.iter())
@@ -6718,7 +6740,7 @@ fn the_walk_should_mark_the_operator_keys() {
             vec![bounded],
         ),
         (
-            "fn f<T: Eq>(xs: [T], x: T) -> bool { xs.contains(x) }\nfn main() { print(f([1], 1)) }",
+            "fn f<T: Eq>(xs: [T], x: T) -> bool { xs.contains(x) }\nfn main() { print(f([[1]], [1])) }",
             vec![bounded, plain],
         ),
         (
@@ -6738,8 +6760,13 @@ fn the_walk_should_mark_the_operator_keys() {
             vec![inside],
         ),
         (
-            "fn main() {\n    let a = [Ranked(r: 1)]\n    print(a.contains(Ranked(r: 1)))\n}",
+            "fn main() {\n    let a = [[Ranked(r: 1)]]\n    print(a.contains([Ranked(r: 1)]))\n}",
             vec![inside],
+        ),
+        // The `==` in `contains<Ranked>` is a call of the written `eq`: no `Equal` carries a flag.
+        (
+            "fn main() {\n    let a = [Ranked(r: 1)]\n    print(a.contains(Ranked(r: 1)))\n}",
+            vec![],
         ),
         (
             "fn main() {\n    let a = [1]\n    let b = [2]\n    print(a == b)\n}",

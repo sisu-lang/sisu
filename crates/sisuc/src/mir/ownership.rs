@@ -131,7 +131,6 @@ impl Placer<'_> {
             | Rvalue::FromChars(op)
             | Rvalue::Len(op)
             | Rvalue::LenWords(op)
-            | Rvalue::Sum { base: op, .. }
             | Rvalue::Convert(op)
             | Rvalue::Unary { operand: op, .. }
             | Rvalue::Print { operand: op, .. }
@@ -154,11 +153,6 @@ impl Placer<'_> {
                 ..
             }
             | Rvalue::Concat { lhs, rhs }
-            | Rvalue::Contains {
-                base: lhs,
-                value: rhs,
-                ..
-            }
             | Rvalue::Binary { lhs, rhs, .. }
             | Rvalue::Compare { lhs, rhs, .. }
             | Rvalue::Equal { lhs, rhs, .. }

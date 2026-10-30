@@ -229,7 +229,6 @@ fn rvalue(value: &Rvalue, read: &mut impl FnMut(LocalId)) {
         | Rvalue::FromChars(op)
         | Rvalue::Len(op)
         | Rvalue::LenWords(op)
-        | Rvalue::Sum { base: op, .. }
         | Rvalue::Convert(op)
         | Rvalue::Unary { operand: op, .. }
         | Rvalue::Print { operand: op, .. }
@@ -258,11 +257,6 @@ fn rvalue(value: &Rvalue, read: &mut impl FnMut(LocalId)) {
             ..
         }
         | Rvalue::Concat { lhs, rhs }
-        | Rvalue::Contains {
-            base: lhs,
-            value: rhs,
-            ..
-        }
         | Rvalue::Binary { lhs, rhs, .. }
         | Rvalue::Compare { lhs, rhs, .. }
         | Rvalue::Equal { lhs, rhs, .. }

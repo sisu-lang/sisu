@@ -1,0 +1,6 @@
+class Node {}
+
+fn main() {
+    let groups = [[Node()]]
+    print(groups.contains([]))
+}

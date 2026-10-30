@@ -179,7 +179,7 @@ impl Checker<'_> {
             None => match owner.and_then(super::extend::holder_of) {
                 Some(Holder::Class(c)) => Rc::clone(&self.classes[c.0].assoc),
                 Some(Holder::Enum(e)) => Rc::clone(&self.enums[e.0].assoc),
-                None => Rc::default(),
+                Some(Holder::Array | Holder::I64) | None => Rc::default(),
             },
         }
     }

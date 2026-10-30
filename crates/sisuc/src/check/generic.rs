@@ -1968,7 +1968,6 @@ impl Checker<'_> {
             ty: self.type_name(ty),
             op: op.to_string(),
             at,
-            contains: false,
             add: None,
         }
         .into()

@@ -402,33 +402,36 @@ fn len_is_not_a_field() {
 }
 
 #[test]
-fn sum_and_contains() {
+fn sum_and_contains_should_check_to_a_call_and_a_node() {
+    with_prelude();
     contains(
         "fn f(xs: [i64]) -> i64 { xs.sum() }\nfn main() {}",
-        &["(sum xs#0)"],
+        &["(call [i64].sum xs#0)"],
     );
     contains(
         "fn f(xs: [u8?]) -> bool { xs.contains(5) }\nfn main() {}",
-        &["(contains xs#0 (wrap 5u8))"],
+        &["(call [T].contains<u8?> xs#0 (wrap 5u8))"],
     );
     contains(
         "fn f(m: [i64]?) -> bool? { m?.contains(1) }\nfn main() {}",
-        &["(contains #1 1)"],
+        &["(call [T].contains<i64> #1 1)"],
     );
 }
 
 #[test]
-fn contains_spills_for_an_exit_in_its_value() {
+fn contains_should_spill_its_base_for_an_exit_in_its_value() {
+    with_prelude();
     contains(
         "fn f(xs: [[i64]], c: bool) -> bool { xs.contains(if c { return false } else { [1] }) }\nfn main() {}",
         &[
-            "(block (let #2 xs#0) (let #3 (if c#1 (block (return false)) (block (array 1)))) (contains #2 #3))",
+            "(block (let #2 xs#0) (let #3 (if c#1 (block (return false)) (block (array 1)))) (call [T].contains<[i64]> #2 #3))",
         ],
     );
 }
 
 #[test]
-fn sum_needs_numbers() {
+fn sum_of_an_array_that_is_not_numbers_should_need_numbers() {
+    with_prelude();
     codes(
         "fn f(xs: [bool]) { print(xs.sum()) }\nfn main() {}",
         &[(Code::SumNeedsNumbers, (1, 29))],
@@ -436,7 +439,8 @@ fn sum_needs_numbers() {
 }
 
 #[test]
-fn contains_argument_is_an_element() {
+fn contains_should_report_an_argument_that_is_not_an_element() {
+    with_prelude();
     codes(
         "fn f(xs: [i64]) { print(xs.contains(true)) }\nfn main() {}",
         &[(Code::Mismatch, (1, 37))],
@@ -446,7 +450,8 @@ fn contains_argument_is_an_element() {
 /// A failed `contains` is `Error` when its argument is the problem, so a use of the result
 /// adds no error. A poisoned receiver with a good argument still has type `bool`.
 #[test]
-fn contains_poison() {
+fn contains_should_be_an_error_only_when_its_argument_is_the_problem() {
+    with_prelude();
     codes(
         "fn f(xs: [i64]) {\n    let b = xs.contains(true)\n    print(b + 1)\n}\nfn main() {}",
         &[(Code::Mismatch, (2, 25))],
@@ -462,7 +467,8 @@ fn contains_poison() {
 }
 
 #[test]
-fn method_argument_counts() {
+fn a_wrong_count_of_method_arguments_should_be_the_general_count_error() {
+    with_prelude();
     codes(
         "fn f(xs: [i64]) { print(xs.sum(1)) }\nfn main() {}",
         &[(Code::ArgumentCount, (1, 25))],
@@ -471,6 +477,25 @@ fn method_argument_counts() {
         "fn f(xs: [i64]) { print(xs.contains()) }\nfn main() {}",
         &[(Code::ArgumentCount, (1, 25))],
     );
+    // A bound that fails does not change the count error of the call.
+    codes(
+        "class Node {}\nfn f(xs: [Node]) { print(xs.contains()) }\nfn main() {}",
+        &[(Code::ArgumentCount, (2, 26))],
+    );
+}
+
+#[test]
+fn a_misread_comparison_should_explain_a_wrong_method_argument_count() {
+    with_prelude();
+    // For a method whose bound fails as for one whose bound holds.
+    for (element, col) in [("i64", 53), ("Node", 54)] {
+        codes(
+            &format!(
+                "class Node {{}}\nfn f(a: i64, b: i64, xs: [{element}]) {{ print(xs.contains(a < b, a > (b), 1)) }}\nfn main() {{}}"
+            ),
+            &[(Code::TypeArguments, (2, col))],
+        );
+    }
 }
 
 #[test]
@@ -603,7 +628,8 @@ fn len_as_function_is_the_idiom() {
 }
 
 #[test]
-fn contains_as_function_is_the_idiom() {
+fn contains_written_as_a_function_should_offer_the_method_call() {
+    with_prelude();
     assert_eq!(
         idiom(
             "fn f(xs: [i64]) -> bool { contains(xs, 2) }\nfn main() {}",
@@ -676,7 +702,8 @@ fn idiom_leaves_postfix_receivers_unwrapped() {
 /// An array whose own check failed is not known to be one, so the call falls back to "cannot
 /// find function"; an argument whose check failed makes the fix unsafe.
 #[test]
-fn poisoned_operands_and_the_idiom() {
+fn a_poisoned_operand_should_leave_the_idiom_unsafe_or_unfound() {
+    with_prelude();
     codes(
         "fn f(x: i64) -> [i64] { [x] }\nfn main() {\n    print(len(f(nope)))\n}",
         &[
@@ -697,7 +724,8 @@ fn poisoned_operands_and_the_idiom() {
 
 /// The rewrite would delete a comment between the name and the array, or after the array.
 #[test]
-fn idiom_over_a_comment_is_unsafe() {
+fn the_idiom_should_be_unsafe_over_a_comment() {
+    with_prelude();
     for (src, pos) in [
         (
             "fn f(xs: [i64]) -> i64 {\n    len( // the list\n        xs)\n}\nfn main() {}",
@@ -716,7 +744,8 @@ fn idiom_over_a_comment_is_unsafe() {
 }
 
 #[test]
-fn wrong_arity_is_unsafe() {
+fn the_idiom_should_be_unsafe_with_a_wrong_number_of_arguments() {
+    with_prelude();
     assert_eq!(
         idiom(
             "fn f(xs: [i64]) -> i64 { len(xs, 1) }\nfn main() {}",
@@ -740,7 +769,8 @@ fn wrong_arity_is_unsafe() {
 }
 
 #[test]
-fn wrong_type_is_unsafe() {
+fn the_idiom_should_be_unsafe_with_an_argument_of_the_wrong_type() {
+    with_prelude();
     assert_eq!(
         idiom(
             "fn f(xs: [i64]) -> bool { contains(xs, true) }\nfn main() {}",
@@ -754,7 +784,8 @@ fn wrong_type_is_unsafe() {
 }
 
 #[test]
-fn literal_on_u8_array_is_safe() {
+fn the_idiom_should_be_safe_with_a_literal_that_fits_a_u8_array() {
+    with_prelude();
     assert_eq!(
         idiom(
             "fn f(bs: [u8]) -> bool { contains(bs, 1) }\nfn main() {}",
@@ -768,7 +799,8 @@ fn literal_on_u8_array_is_safe() {
 }
 
 #[test]
-fn u8_argument_is_safe_and_i64_is_not() {
+fn the_idiom_should_be_safe_for_a_u8_argument_and_unsafe_for_an_i64_one() {
+    with_prelude();
     for (param, col, safe) in [("n: i64", 34, false), ("n: u8", 33, true)] {
         let src = format!("fn f(bs: [u8], {param}) -> bool {{ contains(bs, n) }}\nfn main() {{}}");
         assert_eq!(idiom(&src, (1, col, "contains")).0, safe, "{param}");
@@ -776,21 +808,24 @@ fn u8_argument_is_safe_and_i64_is_not() {
 }
 
 #[test]
-fn literal_out_of_u8_range_is_unsafe() {
-    assert_eq!(
-        idiom(
-            "fn f(bs: [u8]) -> bool { contains(bs, 256) }\nfn main() {}",
-            (1, 26, "contains")
-        ),
-        (
-            false,
-            "fn f(bs: [u8]) -> bool { bs.contains(256) }\nfn main() {}".to_owned()
-        )
+fn the_idiom_should_be_unsafe_with_a_literal_out_of_u8_range() {
+    with_prelude();
+    // The argument is checked against the method's parameter, as for any method of the prelude,
+    // so the literal that does not fit is reported beside the idiom.
+    let src = "fn f(bs: [u8]) -> bool { contains(bs, 256) }\nfn main() {}";
+    codes(
+        src,
+        &[
+            (Code::MethodAsFunction, (1, 26)),
+            (Code::IntegerDoesNotFit, (1, 39)),
+        ],
     );
+    assert!(!diags(src)[0].fixes()[0].safe());
 }
 
 #[test]
-fn sum_as_function_is_the_idiom() {
+fn sum_written_as_a_function_should_offer_the_method_call() {
+    with_prelude();
     assert_eq!(
         idiom(
             "fn f(xs: [i64]) -> i64 { sum(xs) }\nfn main() {}",
@@ -843,7 +878,8 @@ fn labeled_argument_is_not_the_idiom() {
 /// Every argument of an idiom call, or of the call it falls back to, is checked exactly once: the
 /// complete ordered list of diagnostics.
 #[test]
-fn each_argument_is_checked_once() {
+fn each_argument_of_the_idiom_should_be_checked_once() {
+    with_prelude();
     let class_len =
         "class len {\n    xs: [i64]\n}\nfn f(xs: [i64]) {\n    len(xs)\n}\nfn main() {}";
     for (src, expected) in [

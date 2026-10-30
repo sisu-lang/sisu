@@ -95,11 +95,14 @@ type CheckedBlock = Result<tir::Block, Poisoned>;
 /// `never`, so it stands for `Error` there: a `None` it reaches is `Error`, with no diagnostic.
 static UNKNOWN: Type = Type::NEVER;
 
-/// A class or an enum: the holder of a method, or of type parameters.
+/// What holds methods: a class or an enum, or, for the prelude's `extend` blocks, every array
+/// type together, or `i64`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Holder {
     Class(tir::ClassId),
     Enum(tir::EnumId),
+    Array,
+    I64,
 }
 
 /// The type parameters of a declaration with the bounds of each.
@@ -372,6 +375,9 @@ thread_local! {
     /// How many calls the lookups of a class's field by name have made. The tick counts calls of
     /// the one lookup helper, `ClassInfo::field`, and not the steps inside it.
     pub(super) static FIELD_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many methods of the prelude's blocks of built-in types a report of an unknown method
+    /// has read on this thread.
+    pub(super) static PRELUDE_NAME_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many times `conforms` has looked for the conformance of a class or an enum, not
     /// counting an answer it kept.
     pub(super) static CONFORMS_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -447,6 +453,9 @@ struct Checker<'src> {
     /// For each class or enum and method name, the blocks that hold a method of that name, and
     /// the method, so that a method call reads only the blocks that hold its name.
     extension_methods: FxHashMap<(Holder, Symbol), Vec<(usize, tir::FuncId)>>,
+    /// The methods that the prelude's blocks give an array or an `i64`, each with its holder and
+    /// block. A report of an unknown method reads these, not the methods of every block.
+    builtin_methods: Vec<(Holder, Symbol, usize)>,
     /// The names of the types that a broken `extend` block, or a block of a conformance that
     /// failed, may have given methods to. A method no one finds on them is poisoned.
     broken_extensions: FxHashSet<Symbol>,
@@ -999,6 +1008,7 @@ impl<'src> Checker<'src> {
             interface_ids: FxHashMap::default(),
             extensions: Vec::new(),
             extension_methods: FxHashMap::default(),
+            builtin_methods: Vec::new(),
             broken_extensions: FxHashSet::default(),
             broken_extension_methods: FxHashSet::default(),
             candidates: Vec::new(),
@@ -1750,7 +1760,7 @@ impl Checker<'_> {
     ) -> Option<tir::Function> {
         let sig = &self.signatures[id.0];
         let (name, param_types, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
-        let conformance = sig.conformance;
+        let (conformance, prelude) = (sig.conformance, sig.span.in_prelude());
         // The parameters of a method's owner: its class's, or its `extend` block's.
         let owner_params = sig.type_params.len() - sig.own;
         let mut fresh = Body {
@@ -1842,6 +1852,7 @@ impl Checker<'_> {
             method: owner.map(|_| f.name.name.to_string()),
             type_params,
             owner_params,
+            prelude,
             params,
             ret: ret?,
             locals,

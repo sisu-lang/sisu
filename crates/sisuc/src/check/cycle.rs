@@ -29,10 +29,11 @@
 //! the edges grow with the program, and a path through the hub stands for an edge from `P` to
 //! `Q` for each call and conformance, which a pair of edges for each would make a product.
 //!
-//! The operators `==` and `<` and `contains` call a written `eq` or `less` through a helper that
-//! is not a call in the typed tree, so each one in a generic body adds an edge, by the type of its
-//! operand. An array or an optional passes its element or its contents, which the generated rule
-//! does at no cost. An enum with no written conformance to the interface passes its arguments to
+//! The operators `==` and `<` call a written `eq` or `less` through a helper. The helper is not
+//! a call in the typed tree, so each operator in a generic body adds an edge, by the type of its
+//! operand. An
+//! array or an optional passes its element or its contents, which the generated rule does at no
+//! cost. An enum with no written conformance to the interface passes its arguments to
 //! the enum's generated `Eq` node, a declaration of its own that has the enum's parameters and an
 //! edge for each payload type, chosen by the same rule. Any other type goes to the interface's
 //! hub, as the receiver of a call through a bound does. An enum with only conditional
@@ -191,7 +192,7 @@ type Spelling = (tir::InterfaceId, Written);
 /// A call of the method through a bound, as `x.eq(y)` writes it, is a `Required` instance.
 #[derive(Clone, Copy)]
 enum Written {
-    /// An operator or built-in function, as written: `==`, `<`, `contains` or `print`.
+    /// An operator or built-in function, as written: `==`, `<`, `print` or `dbg`.
     Op(&'static str),
     /// A part of an interpolation.
     Interpolation,
@@ -1070,6 +1071,8 @@ impl Checker<'_> {
         let label_spelled = self.spell(functions, graph, edge.holder, label_instance);
         // A call that gives two parameters their arguments is one site, shown once.
         let mut shown = FxHashSet::from_iter([edge.site]);
+        // The last call in the user's file, which a step inside the prelude came through.
+        let mut entered = label_spelled.clone();
         if let Some(interface) = calls_through(label_instance) {
             reach = Some((interface, label_spelled.clone()));
         }
@@ -1094,11 +1097,21 @@ impl Checker<'_> {
             let Some(instance) = e.instance else {
                 continue;
             };
+            // No report points into the prelude: a step inside one of its functions is left out,
+            // and the sites in the user's file show the cycle. Its interface still gives the help
+            // about a call through the interface, spelled as the user's call into the prelude.
+            if e.mark.in_prelude() {
+                if let Some(interface) = calls_through(instance) {
+                    reach.get_or_insert_with(|| (interface, entered.clone()));
+                }
+                continue;
+            }
             if !shown.insert(e.site) {
                 continue;
             }
+            let spelled = self.spell(functions, graph, e.holder, instance);
+            entered = spelled.clone();
             if let Some(interface) = calls_through(instance) {
-                let spelled = self.spell(functions, graph, e.holder, instance);
                 let by = matches!(instance, Instance::Operator(..)).then(|| spelled.clone());
                 reach.get_or_insert((interface, spelled));
                 calling = Some((e.mark, interface, by));
@@ -1425,16 +1438,6 @@ impl Checker<'_> {
                         written(Written::Interpolation),
                     );
                 }
-            }
-            tir::ExprKind::Contains { ref base, .. } => {
-                let element = (base.ty.array_element()).expect("`contains` should take an array");
-                graph.operator(
-                    holder,
-                    element,
-                    self.lang.eq,
-                    (e.span, e.span),
-                    Some(Written::Op("contains")),
-                );
             }
             tir::ExprKind::Dbg { ref operand, .. } => {
                 graph.operator(

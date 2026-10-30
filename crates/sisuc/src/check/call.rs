@@ -225,18 +225,16 @@ impl Checker<'_> {
             .and_then(|ty| self.subst(ty, owner))
     }
 
-    /// How the method `name` belongs to a receiver of type `ty`: a built-in array or number
-    /// method, or a method of a class or an enum. `None` when the type has no such method.
+    /// How the method `name` belongs to a receiver of type `ty`: a built-in array or `f64`
+    /// method, or a method of a class, an enum, an array or an `i64` that the program or the
+    /// prelude writes. `None` when the type has no such method.
     fn idiom_of(&self, name: Symbol, ty: Type) -> Option<Idiom> {
         match ty.kind() {
-            TypeKind::Array(element)
-                if matches!(name.as_str(), "len" | "contains")
-                    || name.as_str() == "sum" && matches!(element, Type::I64 | Type::F64) =>
-            {
+            TypeKind::Array(_) if name.as_str() == "len" => {
                 return Some(Idiom::Built);
             }
             _ if number::method(ty, name.as_str()).is_some() => return Some(Idiom::Built),
-            TypeKind::Class(..) | TypeKind::Enum(..) => {}
+            TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Array(_) | TypeKind::I64 => {}
             _ => return None,
         }
         match self.own_method(ty, name) {
@@ -258,28 +256,13 @@ impl Checker<'_> {
 
     /// Checks the arguments after the receiver of an idiom call of the method `name`, each once.
     /// `receiver` is the receiver's type. For a number, whether the method takes them (see
-    /// `number_arguments`). For an array: `contains` takes one of the element's type, or an
-    /// integer literal that fits it, that checked cleanly, and `len` and `sum` none.
+    /// `number_arguments`). For an array: `len` takes none.
     fn idiom_arguments(&mut self, name: &str, receiver: Type, rest: &[ast::Arg]) -> bool {
         if let Some((_, params)) = number::method(receiver, name) {
             return self.number_arguments(receiver, params, rest);
         }
-        let TypeKind::Array(element) = receiver.kind() else {
-            unreachable!("an idiom receiver should be a number with the method or an array");
-        };
-        let [value] = rest else {
-            self.stray(rest);
-            return rest.is_empty() && name != "contains";
-        };
-        let checked = self.expr(&value.value, Some(UNKNOWN));
-        name == "contains"
-            && checked.is_ok_and(|checked| {
-                checked.ty == element
-                    || matches!(
-                        (&value.value.kind, element),
-                        (ExprKind::Int { value, .. }, Type::U8) if u8::try_from(*value).is_ok()
-                    )
-            })
+        self.stray(rest);
+        rest.is_empty()
     }
 
     /// Checks `args`, the arguments of a call of the method `func`, each once. `first` is the
@@ -322,6 +305,24 @@ impl Checker<'_> {
             takes &= want.is_some_and(|want| checked.is_ok_and(|checked| fits(want, checked.ty)));
         }
         takes
+    }
+
+    /// The parameter count of the built-in method `name` of `ty`, if `ty` has one: a method of
+    /// the prelude's `extend` of an array type or `i64`, or one the compiler writes.
+    pub(super) fn built_in_arity(&self, ty: Type, name: &str) -> Option<usize> {
+        if matches!(ty.kind(), TypeKind::Array(_) | TypeKind::I64)
+            && let Some(Declared::Known(func)) = self.own_method(ty, Symbol::intern(name))
+        {
+            return Some(self.signatures[func.0].params.len());
+        }
+        match ty.kind() {
+            TypeKind::Array(_) => (array::METHODS.iter())
+                .find(|(method, _)| *method == name)
+                .map(|&(_, params)| params),
+            TypeKind::String => string::METHODS.contains(&name).then_some(0),
+            TypeKind::F64 => number::method(ty, name).map(|(_, params)| params),
+            _ => None,
+        }
     }
 
     /// Whether `member` of `base`, a path, is a value, whose `<` and `>` were comparisons when
@@ -398,7 +399,7 @@ impl Checker<'_> {
                     // were comparisons, of the method's result: the help calls one that takes
                     // no arguments. An unknown one is reported as unknown.
                     let arity =
-                        type_of(&checked).and_then(|ty| built_in_arity(ty, method.name.as_str()));
+                        type_of(&checked).and_then(|ty| c.built_in_arity(ty, method.name.as_str()));
                     if let Some(arity) = arity
                         && types.len() > 1
                         && c.could_be_value(first)
@@ -452,8 +453,13 @@ impl Checker<'_> {
             Some(ty) if method.name.as_str() == "to_string" && generated_display_only(ty) => {
                 return self.generated_display(span, receiver, site, args, false);
             }
+            // A method of the prelude's `extend` of an array type or `i64` answers before the
+            // methods the compiler writes.
+            Some(ty) if let Some(func) = self.prelude_method(ty, method.name) => {
+                return self.invoke(span, func, Some(receiver), site, args);
+            }
             Some(ty) if matches!(ty.kind(), TypeKind::Array(_)) => {
-                return self.array_method(span, (receiver, receiver_expr.span), ty, method, args);
+                return self.array_method(span, receiver, ty, method, args);
             }
             Some(Type::STRING) => return self.string_method(span, receiver, method, args),
             Some(ty @ (Type::I64 | Type::F64)) => {
@@ -608,6 +614,11 @@ impl Checker<'_> {
         args: &[ast::Arg],
     ) -> Checked {
         self.record(Used::Func(func), span);
+        // A call from the user's file into the prelude needs the prelude's function in the
+        // program: `mono` roots only the user's functions (see `tir::Program::instantiates`).
+        if self.signatures[func.0].span.in_prelude() && !span.in_prelude() {
+            self.instantiates = true;
+        }
         // A method that meets a requirement uses the interfaces that it meets.
         if let Some(interfaces) = self.meets.get(&func).cloned() {
             for interface in interfaces {
@@ -631,16 +642,7 @@ impl Checker<'_> {
             self.not_generic(site.name.name, site.angles);
         }
         if params.len() != args.len() {
-            self.stray(args);
-            if !self.misread_in(args) {
-                self.report(DiagnosticKind::ArgumentCount {
-                    name,
-                    want: params.len(),
-                    found: args.len(),
-                    at: span,
-                });
-            }
-            return Err(Poisoned::error());
+            return self.wrong_count(span, name, params.len(), args);
         }
         let (checked, types, ret) = if declared.is_empty() {
             let checked = args
@@ -677,6 +679,27 @@ impl Checker<'_> {
             })),
             (_, ret) => Err(Poisoned::of(ret.filter(|_| !failed))),
         }
+    }
+
+    /// A call at `span` of the method `name` that wants `want` arguments and has the wrong count:
+    /// the count is the error, unless a comparison misread as a call explains it.
+    pub(super) fn wrong_count(
+        &mut self,
+        span: Span,
+        name: String,
+        want: usize,
+        args: &[ast::Arg],
+    ) -> Checked {
+        self.stray(args);
+        if !self.misread_in(args) {
+            self.report(DiagnosticKind::ArgumentCount {
+                name,
+                want,
+                found: args.len(),
+                at: span,
+            });
+        }
+        Err(Poisoned::error())
     }
 
     /// Whether one of `args`, checked, holds a comparison misread as a call, which took the
@@ -912,18 +935,6 @@ fn misplaced(
             label,
             fields.iter().map(|field| field.as_str()),
         ))
-    }
-}
-
-/// The parameter count of the built-in method `name` of `ty`, if `ty` has one.
-fn built_in_arity(ty: Type, name: &str) -> Option<usize> {
-    match ty.kind() {
-        TypeKind::Array(_) => (array::METHODS.iter())
-            .find(|(method, _)| *method == name)
-            .map(|&(_, params)| params),
-        TypeKind::String => string::METHODS.contains(&name).then_some(0),
-        TypeKind::I64 | TypeKind::F64 => number::method(ty, name).map(|(_, params)| params),
-        _ => None,
     }
 }
 

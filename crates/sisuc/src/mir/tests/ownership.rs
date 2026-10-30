@@ -61,20 +61,21 @@ fn two_reads_in_one_call() {
     has(&printed, "f", &["_ = copy x#0", "call g(move _, move x#0)"]);
 }
 
-/// `Contains` evaluates its base, then its value: only the value's read may move.
+/// `contains` borrows both of its operands, the base and then the value, so a call whose value
+/// is an element of the base takes no copy: neither read consumes `xs`.
 #[test]
-fn contains_base_then_value() {
+fn contains_should_borrow_its_base_and_its_value() {
     let printed = built("fn f(xs: [[i64]]) -> bool { xs.contains(xs[0]) }");
     has(
         &printed,
         "f",
         &[
-            "_ = copy xs#0",
-            "_ = move xs#0",
-            "= copy _[0]",
-            "contains(move _, move _)",
+            "_ = borrow xs#0",
+            "_ = borrow xs#0[0]",
+            "call [[i64]].contains(_, _)",
         ],
     );
+    assert!(!function(&printed, "f").contains("copy"), "{printed}");
 }
 
 /// A variant's arguments are evaluated left to right: only the last one's read may move.

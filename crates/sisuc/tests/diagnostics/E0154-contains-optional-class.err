@@ -1,0 +1,10 @@
+error[E0154]: `Node?` does not conform to `Eq`
+ --> E0154-contains-optional-class.sisu:5:11
+  |
+5 |     print(xs.contains(None))
+  |           ^^^^^^^^^^^^^^^^^ required by the bound of this call, since `Node` does not conform to `Eq`
+  |
+  = help: make `Node` conform to `Eq`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154

@@ -463,7 +463,7 @@ impl Checker<'_> {
             && !mismatched
         {
             let ord = self.lang.ord;
-            let d = self.missing_operator(at, param, &op(i), ord, false);
+            let d = self.missing_operator(at, param, &op(i), ord);
             // A type with no `<` makes the chain `Error`, as a mismatch does.
             mismatched |= matches!(d, DiagnosticKind::NoOperator { .. });
             self.diagnostics.insert(report, d.into());
@@ -646,7 +646,7 @@ impl Checker<'_> {
                     continue;
                 }
                 let op = if negated { "!=" } else { "==" };
-                let d = self.missing_operator(side.span, ty, op, eq, false);
+                let d = self.missing_operator(side.span, ty, op, eq);
                 self.report(d);
                 return Err(Poisoned::error());
             }

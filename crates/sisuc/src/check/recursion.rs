@@ -105,7 +105,6 @@ impl Walk {
             | ExprKind::Bytes(operand)
             | ExprKind::Words(operand)
             | ExprKind::FromChars(operand)
-            | ExprKind::Sum(operand)
             | ExprKind::Unary { operand, .. } => self.walk(operand, open, calls),
             ExprKind::Binary {
                 op: BinaryOp::And | BinaryOp::Or,
@@ -127,10 +126,6 @@ impl Walk {
             | ExprKind::Index {
                 base: lhs,
                 index: rhs,
-            }
-            | ExprKind::Contains {
-                base: lhs,
-                value: rhs,
             } => self.all([&**lhs, &**rhs], open, calls),
             // Each link after the first may stop the chain, so the third and later operands may
             // not run.

@@ -1,0 +1,14 @@
+class Pair<T> {
+    first: T
+}
+
+extend<T: Ord> Pair<T>: Eq {
+    fn eq(self, other: Self) -> bool {
+        self.first == other.first
+    }
+}
+
+fn main() {
+    let pairs: [Pair<bool>?] = [None]
+    print(pairs.contains(None))
+}

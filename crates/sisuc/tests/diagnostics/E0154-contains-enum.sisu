@@ -1,0 +1,11 @@
+class Node {}
+
+enum Pick {
+    First(Node)
+    Second
+}
+
+fn main() {
+    let picks = [Pick.Second]
+    print(picks.contains(Pick.Second))
+}

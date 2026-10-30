@@ -218,7 +218,21 @@ mod tests {
             let program = program.expect("the program should check");
             program.functions.into_iter().map(|f| f.name).collect()
         };
-        assert_eq!(names(checked(src).0), ["id", "main"]);
+        // The prelude's functions follow the user's in the checked program, and `mono` drops the
+        // ones that nothing calls.
+        assert_eq!(
+            names(checked(src).0),
+            [
+                "id",
+                "main",
+                "i64.min",
+                "i64.max",
+                "i64.clamp",
+                "[i64].sum",
+                "[f64].sum",
+                "[T].contains"
+            ]
+        );
         assert_eq!(names(front_end(src).0), ["main", "id<i64>"]);
     }
 
@@ -1202,11 +1216,13 @@ fn main() {
         assert_eq!(d.secondary(), []);
     }
 
-    /// A prelude that extends a built-in type is an internal error.
+    /// A prelude may extend a built-in type: an array type or `i64`. A user's file may not.
     #[test]
-    #[should_panic(expected = "internal compiler error: the prelude does not check clean")]
-    fn prelude_should_be_an_internal_error_when_it_extends_a_built_in_type() {
-        front_end_with("extend i64 {}", "fn main() {}");
+    fn prelude_should_check_clean_when_it_extends_a_built_in_type() {
+        let prelude = "extend i64 {}\nextend [i64] {}\nextend<T> [T] {}";
+        let (program, diagnostics) = front_end_with(prelude, "fn main() {}");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert!(program.is_some());
     }
 
     /// A broken interface poisons its name for every use, as a broken class does, and so does a
@@ -1401,6 +1417,37 @@ fn main() {
         let (program, _) = front_end("fn id<T>(x: T) -> T { x }\nfn main() {}");
         let program = program.expect("the program should check");
         assert_eq!(names(&program), [vec![], vec![], vec!["main"]]);
+    }
+
+    /// `mono` roots the user's functions only. A function of the prelude joins the program when
+    /// a body in it calls the function, and then so do the functions that it calls: `id` takes
+    /// the path that instantiates, and no prelude function comes with it.
+    #[test]
+    fn mono_should_add_only_the_prelude_functions_that_a_call_reaches() {
+        for (src, want) in [
+            (
+                "fn id<T>(x: T) -> T { x }\nfn main() {\n    print(id(1))\n}",
+                vec!["main", "id<i64>"],
+            ),
+            (
+                "fn main() {\n    print(5.min(3))\n}",
+                vec!["main", "i64.min"],
+            ),
+            (
+                "fn main() {\n    print(5.max(3))\n}",
+                vec!["main", "i64.max"],
+            ),
+            // `clamp` calls `min` and `max`, in the order its body writes them.
+            (
+                "fn main() {\n    print(5.clamp(1, 3))\n}",
+                vec!["main", "i64.clamp", "i64.min", "i64.max"],
+            ),
+        ] {
+            let (program, diagnostics) = front_end(src);
+            assert!(diagnostics.is_empty(), "{diagnostics:?}");
+            let program = program.expect("the program should check");
+            assert_eq!(names(&program)[2], want, "{src}");
+        }
     }
 
     /// A type argument that a type alone writes, with no call of a generic item, is enough to make

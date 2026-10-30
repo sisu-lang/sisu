@@ -536,6 +536,61 @@ fn emit_ast_should_print_each_function_as_an_s_expression() {
     );
 }
 
+/// GIVEN a program whose `main` prints `5.min(3)`, one whose `main` prints `[1].contains(1)`, and
+/// one that calls no prelude function
+/// WHEN each is built with `--emit tir`
+/// THEN the first holds `main` and the prelude's `i64.min`, and no other prelude function
+/// AND the second holds `main` and the instance `[i64].contains`, and no other prelude function
+/// AND the third holds `main` alone
+#[test]
+fn emit_tir_should_print_the_prelude_functions_that_the_program_reaches() {
+    for (source, want) in [
+        ("fn main() { print(5.min(3)) }", vec!["main", "i64.min"]),
+        (
+            "fn main() { print([1].contains(1)) }",
+            vec!["main", "[i64].contains"],
+        ),
+        ("fn main() { print(5) }", vec!["main"]),
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+            .args(["build", "--emit", "tir", "-e", source])
+            .output()
+            .expect("sisu starts");
+        assert!(out.status.success());
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let functions: Vec<_> = (stdout.lines())
+            .filter_map(|line| line.strip_prefix("(fn ")?.split_whitespace().next())
+            .collect();
+        assert_eq!(functions, want, "{source}");
+    }
+}
+
+/// GIVEN a program whose `main` prints `[1].contains(1)`
+/// WHEN it is built with `--emit mir`
+/// THEN `main` holds `call [i64].contains(_, 1)`, and the output holds the instance, whose
+/// `self` is borrowed and whose body compares the elements with `==`
+#[test]
+fn emit_mir_should_show_the_prelude_functions_a_program_reaches() {
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .args([
+            "build",
+            "--emit",
+            "mir",
+            "-e",
+            "fn main() { print([1].contains(1)) }",
+        ])
+        .output()
+        .expect("sisu starts");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("call [i64].contains(_0, 1)"), "{stdout}");
+    assert!(
+        stdout.contains("fn [i64].contains(self#0: borrow [i64], x#1: i64) -> bool {"),
+        "{stdout}"
+    );
+    assert!(stdout.contains(" == "), "{stdout}");
+}
+
 /// GIVEN a program that runs `x += 2` on a mutable variable
 /// WHEN it is built with `--emit ast`
 /// THEN the output has the node `(+= x 2)` and no `=` node

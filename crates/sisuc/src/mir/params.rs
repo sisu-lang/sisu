@@ -102,6 +102,99 @@ pub(super) fn infer(functions: &[Function], main: FuncId, reuses: &[Vec<bool>]) 
         .collect()
 }
 
+/// Sets each function's `quiet` and each call's, over the call graph's components, callees
+/// first. `functions` are placed, hoisted and elaborated: those steps add clobbers.
+///
+/// A prelude function is quiet when no statement of its body is a clobber (`clobbers`), a call
+/// of a quiet function aside. A component is quiet when all its members are prelude functions
+/// and none has any other clobber. A call inside the component is no clobber. A user
+/// function is never quiet, so no program that calls no prelude function changes. Each
+/// statement of each prelude function is visited once. Each function's component is read once
+/// to find the members, and twice for each call.
+pub(super) fn quiet(functions: &mut [Function]) {
+    let calls: Vec<Vec<usize>> = functions.iter().map(callees).collect();
+    let component = Component(components(&calls));
+    let mut members = vec![Vec::new(); component.count()];
+    for id in 0..component.len() {
+        members[component.of(id)].push(id);
+    }
+    let mut quiet = vec![false; functions.len()];
+    for group in &members {
+        let whole = group.iter().all(|&id| {
+            let function = &functions[id];
+            function.prelude
+                && function.blocks.iter().flat_map(|b| &b.stmts).all(|stmt| {
+                    #[cfg(test)]
+                    VISITED.set(VISITED.get() + 1);
+                    match stmt {
+                        Statement::Assign {
+                            value: Rvalue::Call { func, .. },
+                            ..
+                        } => component.of(func.0) == component.of(id) || quiet[func.0],
+                        _ => !clobbers(function, stmt),
+                    }
+                })
+        });
+        for &id in group {
+            quiet[id] = whole;
+        }
+    }
+    for (function, &flag) in functions.iter_mut().zip(&quiet) {
+        function.quiet = flag;
+        for stmt in function.blocks.iter_mut().flat_map(|b| &mut b.stmts) {
+            if let Statement::Assign {
+                value: Rvalue::Call {
+                    func, quiet: at, ..
+                },
+                ..
+            } = stmt
+            {
+                *at = quiet[func.0];
+            }
+        }
+    }
+}
+
+/// The component number of each function. A test counts the reads that go through `of` and sees
+/// a search for the members of a component that scans every function. A read of the field itself
+/// is not counted, so code in this module reads it only through `of`.
+struct Component(Vec<usize>);
+
+impl Component {
+    fn of(&self, id: usize) -> usize {
+        #[cfg(test)]
+        LOOKED.set(LOOKED.get() + 1);
+        self.0[id]
+    }
+
+    const fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn count(&self) -> usize {
+        self.0.iter().max().map_or(0, |&last| last + 1)
+    }
+}
+
+/// Whether `stmt` may free or change what a borrow through a `mut` field or an element reads:
+/// a call that is not quiet, a statement that runs a written method, a `take` into a counted
+/// local, a store of a counted value, and a `make_unique`. These are the clobbers of pair
+/// removal and of the certifier.
+pub(super) fn clobbers(function: &Function, stmt: &Statement) -> bool {
+    match stmt {
+        Statement::Assign { value, .. } => value.may_call_written(),
+        Statement::Take { dest, .. } => function.locals[dest.0].counted,
+        Statement::Store { value, .. } => certify::counted_value(function, value),
+        Statement::MakeUnique(_) => true,
+        Statement::Release(_)
+        | Statement::ScopeRelease(_)
+        | Statement::Check(_)
+        | Statement::End(_)
+        | Statement::TakeApart { .. }
+        | Statement::Free(_) => false,
+    }
+}
+
 /// Sets each function's `borrowed` and each call's flags from `modes`, and drops the scope
 /// releases of borrowed parameters. At a borrowed position, a `use` becomes a borrow site, and a
 /// moved temporary is read in place and released after the call.
@@ -124,6 +217,7 @@ pub(super) fn rewrite(functions: &mut [Function], modes: &[Vec<bool>]) {
                             func,
                             args,
                             borrowed: flags,
+                            ..
                         },
                     ..
                 } = &mut stmt
@@ -181,6 +275,18 @@ const fn named(op: &Operand) -> Option<LocalId> {
         Operand::Use(local) | Operand::Move(local) | Operand::Guarded(local) => Some(local),
         Operand::Read(_) | Operand::Const(_) => None,
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many statements `quiet` has visited on this thread.
+    pub(super) static VISITED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many component numbers `quiet` has read on this thread.
+    pub(super) static LOOKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]

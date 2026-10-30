@@ -144,16 +144,15 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// `dbg` of the evaluated operand of type `ty`, which it borrows: one line on standard error,
-    /// `<path>:<line>:<col>: <text> = <value>`. The value is laid out as `{x:#}` lays it out,
-    /// from column 0 after the prefix, and a class shows its fields (`Mode::Dbg`). The line
-    /// goes into a buffer sink first, so it reaches standard error in one write.
+    /// `<path>:<line>:<col>: <text> = <value>`. In a prelude function the location is its
+    /// caller's. The value is laid out as `{x:#}` lays it out, from column 0 after the prefix,
+    /// and a class shows its fields (`Mode::Dbg`). The line goes into a buffer sink first, so it
+    /// reaches standard error in one write.
     pub(super) fn dbg(&self, at: Span, text: &str, ty: Type, value: BasicValueEnum<'ctx>) {
         let sink = self.buffer_sink();
-        self.show_text(
-            "sisu_show_str",
-            sink,
-            &format!("{}: {text} = ", self.location(at)),
-        );
+        let (at, at_len) = self.report_site(at);
+        self.show_call("sisu_show_str", &[sink.into(), at.into(), at_len.into()]);
+        self.show_text("sisu_show_str", sink, &format!(": {text} = "));
         if prints_by_helper(ty) {
             let pretty = self.sink_slot();
             self.show_call("sisu_show_pretty", &[pretty.into(), sink.into()]);

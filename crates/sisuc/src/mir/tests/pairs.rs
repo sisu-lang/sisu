@@ -168,6 +168,46 @@ fn copy_across_a_call_that_replaces_a_mut_field_is_kept() {
     assert!(f.contains("t#2 = copy b#0.0"), "{f}");
 }
 
+/// `Bag` has no written method, so the copy `ys` of its `mut` field is read only. Calls of the
+/// prelude's `sum` and `min` are quiet: they replace no field, so the copy is a borrow across
+/// them. A call of a function of the user's is no such call: `zs` stays a copy across `one()`.
+/// `contains<string>` is quiet too, since the `==` of two strings calls no written method: the
+/// element `s` is a borrow across it, and the element `t` stays a copy across the user's `has`.
+#[test]
+fn copy_should_become_a_borrow_across_a_quiet_prelude_call() {
+    let printed = built(
+        "class Bag {\n    mut items: [i64]\n}\n\
+         fn one() -> i64 { 1 }\n\
+         fn main() {\n    let xs = [1, 2]\n    let b = Bag(items: xs)\n    let ys = b.items\n\
+             let n = [1].sum() + 5.min(ys[0])\n    print(n)\n\
+             let zs = b.items\n    let m = one() + zs[0]\n    print(m)\n}",
+    );
+    has(
+        &printed,
+        "main",
+        &["ys#2 = borrow b#1.0", "call [i64].sum(", "end ys#2"],
+    );
+    has(&printed, "main", &["zs#4 = copy _.0", "call one()"]);
+
+    let printed = built(
+        "fn has(xs: [string], t: string) -> bool { xs.len() > t.len() }\n\
+         fn main() {\n    let names = [\"a {1}\", \"b\"]\n    let s = names[1]\n\
+             let found = [\"b\"].contains(s)\n    print(found)\n    print(s)\n\
+             let t = names[0]\n    let other = has(names, t)\n    print(other)\n    print(t)\n\
+             print(names.len())\n}",
+    );
+    has(
+        &printed,
+        "main",
+        &[
+            "s#1 = borrow names#0[1]",
+            "call [string].contains(",
+            "end s#1",
+        ],
+    );
+    has(&printed, "main", &["t#3 = copy names#0[0]", "call has("]);
+}
+
 /// Review Focus 1: copy-on-write must still copy, so the copy that is written stays.
 #[test]
 fn copy_of_an_array_that_is_written_is_kept() {
@@ -274,7 +314,6 @@ fn holder_program(compare: &str, live: bool) -> String {
 fn copy_should_stay_across_a_written_eq() {
     for compare in [
         "let same = [h] == [h]",
-        "let same = [h].contains(h)",
         "let same = Wrap.One(h) == Wrap.One(h)",
         // A written `eq` of a part runs from the helper of an enum that holds it: directly, in an
         // array, an optional, an enum payload or a generic enum, whichever way the wrapper is
@@ -283,7 +322,6 @@ fn copy_should_stay_across_a_written_eq() {
         "let same = [Deep.One(Wrap.One(h))] == [Deep.One(Wrap.One(h))]",
         "let same = Lone.One(h) == Lone.One(h)",
         "let same = Gen.One(h) == Gen.One(h)",
-        "let same = [Gen.One(h)].contains(Gen.One(h))",
     ] {
         for live in [false, true] {
             let printed = built(&holder_program(compare, live));
@@ -297,6 +335,46 @@ fn copy_should_stay_across_a_written_eq() {
                 "{compare} (live {live}): {copy}\n{f}"
             );
             assert!(f.contains(" [calls]"), "{compare} (live {live}): {f}");
+        }
+    }
+}
+
+/// `contains<Holder>` and `contains<Gen<Holder>>` run a written `eq` through the `==` in their own
+/// bodies, so a call of one is no quiet call: the copy of `h.items` stays across it, and `main`
+/// holds an ordinary call, which carries no `[calls]` marker (the marker is on an `Equal`).
+#[test]
+fn copy_should_stay_across_a_contains_that_calls_a_written_eq() {
+    for (compare, instance) in [
+        ("let same = [h].contains(h)", "[Holder].contains"),
+        (
+            "let same = [Gen.One(h)].contains(Gen.One(h))",
+            "[Gen<Holder>].contains",
+        ),
+    ] {
+        for live in [false, true] {
+            let program = checked(&holder_program(compare, live));
+            let mir = build(&program);
+            let printed = print(&mir, &program);
+            let f = function(&printed, "main");
+            let copy = f
+                .lines()
+                .find(|l| l.contains("xs#") && l.contains(" = "))
+                .unwrap_or_else(|| panic!("{compare}: no binding of `xs` in\n{f}"));
+            assert!(
+                copy.contains("= copy "),
+                "{compare} (live {live}): {copy}\n{f}"
+            );
+            assert!(
+                f.contains(&format!("call {instance}(")),
+                "{compare} (live {live}): {f}"
+            );
+            assert!(!f.contains(" [calls]"), "{compare} (live {live}): {f}");
+            let callee = mir
+                .functions
+                .iter()
+                .find(|callee| callee.name == instance)
+                .unwrap_or_else(|| panic!("{compare}: no function {instance}"));
+            assert!(!callee.quiet, "{compare}: `{instance}` should not be quiet");
         }
     }
 }

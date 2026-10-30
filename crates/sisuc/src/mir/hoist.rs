@@ -291,7 +291,6 @@ impl Walk {
             | Rvalue::FromChars(operand)
             | Rvalue::Len(operand)
             | Rvalue::LenWords(operand)
-            | Rvalue::Sum { base: operand, .. }
             | Rvalue::Convert(operand)
             | Rvalue::Unary { operand, .. }
             | Rvalue::Print { operand, .. }
@@ -314,11 +313,6 @@ impl Walk {
                 ..
             }
             | Rvalue::Concat { lhs, rhs }
-            | Rvalue::Contains {
-                base: lhs,
-                value: rhs,
-                ..
-            }
             | Rvalue::Binary { lhs, rhs, .. }
             | Rvalue::Compare { lhs, rhs, .. }
             | Rvalue::Equal { lhs, rhs, .. }

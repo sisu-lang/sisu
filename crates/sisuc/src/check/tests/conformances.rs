@@ -2393,6 +2393,7 @@ const CIRCLE: &str = "class Circle: Eq, Ord {\n    r: i64\n    fn eq(self, other
 
 #[test]
 fn operators_should_check_through_eq_and_ord() {
+    with_prelude();
     // Every row uses each value it computes, since a bare expression statement is W0004.
     let src = format!(
         "{CIRCLE}enum Pick {{\n    One(Circle)\n    Two\n}}\nenum Expr: Eq {{\n    Num(i64)\n    Add(Expr, Expr)\n}}\n\
@@ -2483,6 +2484,7 @@ fn operators_should_lower_to_the_spec_formulas() {
 
 #[test]
 fn operators_should_report_a_missing_bound() {
+    with_prelude();
     let decls = "class Node {}\nclass Box<T> {\n    v: T\n}\nenum Wrap<T> {\n    One(T)\n}\n";
     // Each row: the function after the declarations, the text where the error stands, and the
     // code. The help text of each is pinned in the fixtures `E0139-*`. A row with operands of two
@@ -2529,7 +2531,7 @@ fn operators_should_report_a_missing_bound() {
             "contains on an array of a parameter",
             "fn f<T>(a: [T], x: T) -> bool { a.contains(x) }",
             "a.contains(x)",
-            Code::ParamLacks,
+            Code::NotConform,
         ),
         (
             "equality of an enum of a parameter",
@@ -2578,6 +2580,7 @@ fn where_is(src: &str, needle: &str) -> (usize, usize) {
 /// `E0140-*` fixtures.
 #[test]
 fn cycle_through_a_language_interface_should_be_reported_at_the_spelling_of_the_call() {
+    with_prelude();
     // Each row: the program, where the label stands, and where the note stands, if there is one.
     let rows = [
         (
@@ -2709,6 +2712,7 @@ fn ordered_with(body: &str) -> String {
 /// `E0140-*` fixtures.
 #[test]
 fn cycle_through_a_lowered_call_should_be_reported_at_the_spelling_of_the_call() {
+    with_prelude();
     let (a, b) = ("W(v: [self.v])", "W(v: [other.v])");
     let (wa, wb) = ("W(v: V(v: self.v))", "W(v: V(v: other.v))");
     let (e1, e2) = (format!("E.Has({a})"), format!("E.Has({b})"));
@@ -2785,11 +2789,13 @@ fn cycle_through_a_lowered_call_should_be_reported_at_the_spelling_of_the_call()
             format!("print({e1})"),
             Some("W<T>)"),
         ),
+        // The prelude's `contains` calls `==` through the `Eq` hub, which reaches `W<T>.eq`
+        // directly: the shorter cycle passes no generated node, so no note marks the payload.
         (
             "`contains` on an enum declared after its use",
             conformance_with("Eq", after, &format!("[{e1}].contains({e2})")),
             format!("[{e1}].contains({e2})"),
-            Some("W<T>)"),
+            None,
         ),
     ];
     for (row, src, label, note) in &rows {
@@ -3744,6 +3750,7 @@ fn a_written_eq_or_less_whose_block_bounds_fail_should_report_the_bound() {
 
 #[test]
 fn operators_should_report_a_type_with_no_operator() {
+    with_prelude();
     let node = "class Node {}\n";
     let box_wr = "class Box<T> {\n    v: T\n}\nclass Wr<T> {\n    v: T\n}\n\
         extend<T: Display> Box<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\n\
@@ -3794,11 +3801,6 @@ fn operators_should_report_a_type_with_no_operator() {
             "equality of a listed `Eq` that no method meets",
             format!("{node}enum Wrap<T>: Eq {{\n    A(T)\n}}\nfn f(n1: Node, n2: Node) -> bool {{ Wrap.A(n1) == Wrap.A(n2) }}\nfn g() -> bool {{ Wrap.A(1) == Wrap.A(2) }}"),
             "Wrap.A(n1) == Wrap.A(n2)",
-        ),
-        (
-            "contains of a class",
-            format!("{node}fn f(nodes: [Node], n: Node) -> bool {{ nodes.contains(n) }}"),
-            "nodes.contains(n)",
         ),
         (
             "order of an enum",
@@ -3877,6 +3879,7 @@ fn operators_should_report_an_optional_class_with_no_operator() {
 
 #[test]
 fn operators_should_report_a_failed_operand_alone() {
+    with_prelude();
     // The other side has no type, so nothing says that the comparison needs `Eq`: only the
     // operand's own error stands. A type parameter keeps its report, as it always had.
     let node = "class Node {\n    next: Node?\n}\n";
@@ -4100,8 +4103,56 @@ fn comparisons_should_report_a_missing_operator_for_operands_of_one_type() {
     }
 }
 
+/// `contains` is a method of the prelude's `extend<T: Eq> [T]`: an element with no `Eq` is a bound
+/// that fails at the user's call, and no label points into the prelude. The words of each form
+/// are pinned in the fixtures `E0154-contains-*`.
+#[test]
+fn contains_should_report_an_element_without_eq_as_not_conforming_at_the_call() {
+    with_prelude();
+    let node = "class Node {}\n";
+    // Each row: the program, and the call that the error stands at.
+    let rows = [
+        (
+            "a class",
+            format!("{node}fn f(nodes: [Node], n: Node) -> bool {{ nodes.contains(n) }}"),
+            "nodes.contains(n)",
+        ),
+        (
+            "an optional class and `None`",
+            format!("{node}fn f(xs: [Node?]) -> bool {{ xs.contains(None) }}"),
+            "xs.contains(None)",
+        ),
+        (
+            "a type parameter",
+            "fn has<T>(xs: [T], x: T) -> bool { xs.contains(x) }".to_string(),
+            "xs.contains(x)",
+        ),
+        (
+            "an optional type parameter",
+            "fn has<T>(xs: [T?], x: T?) -> bool { xs.contains(x) }".to_string(),
+            "xs.contains(x)",
+        ),
+        (
+            "an optional associated type",
+            "interface Plain {\n    type Item\n}\nfn has<X: Plain>(xs: [X.Item?]) -> bool { xs.contains(None) }".to_string(),
+            "xs.contains(None)",
+        ),
+        (
+            "an array of arrays of an associated type",
+            "interface Plain {\n    type Item\n}\nfn has<X: Plain>(xs: [[X.Item]], x: [X.Item]) -> bool { xs.contains(x) }".to_string(),
+            "xs.contains(x)",
+        ),
+    ];
+    for (row, src, call) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let (line, col) = where_is(&src, call);
+        diagnostic_row(row, &src, Code::NotConform, (line, col, call), &[]);
+    }
+}
+
 #[test]
 fn contains_should_report_an_argument_that_is_not_an_element_first() {
+    with_prelude();
     // An argument of another type is the first mistake, as it is for `==`: a conformance to `Eq`
     // would not make the program right. Only an element and the contents of an optional element
     // are searched for.
@@ -4120,12 +4171,12 @@ fn contains_should_report_an_argument_that_is_not_an_element_first() {
         (
             "a class for optional classes",
             format!("{node}fn f(xs: [Node?], n: Node) -> bool {{ xs.contains(n) }}"),
-            (Code::NoOperator, "xs.contains(n)"),
+            (Code::NotConform, "xs.contains(n)"),
         ),
         (
             "`None` for optional classes",
             format!("{node}fn f(xs: [Node?]) -> bool {{ xs.contains(None) }}"),
-            (Code::NoOperator, "xs.contains(None)"),
+            (Code::NotConform, "xs.contains(None)"),
         ),
         (
             "`None` for classes",
@@ -4184,17 +4235,17 @@ fn contains_should_report_an_argument_that_is_not_an_element_first() {
         (
             "`None` in a block for optional classes",
             format!("{node}fn f(xs: [Node?]) -> bool {{ xs.contains({{ None }}) }}"),
-            (Code::NoOperator, "xs.contains({ None })"),
+            (Code::NotConform, "xs.contains({ None })"),
         ),
         (
             "an empty array for arrays of classes",
             format!("{node}fn f(xs: [[Node]]) -> bool {{ xs.contains([]) }}"),
-            (Code::NoOperator, "xs.contains([])"),
+            (Code::NotConform, "xs.contains([])"),
         ),
         (
             "a type parameter for optional type parameters",
             "fn f<T>(xs: [T?], x: T) -> bool { xs.contains(x) }".to_string(),
-            (Code::ParamLacks, "xs.contains(x)"),
+            (Code::NotConform, "xs.contains(x)"),
         ),
     ];
     for (row, src, (code, text)) in rows {
@@ -4207,6 +4258,7 @@ fn contains_should_report_an_argument_that_is_not_an_element_first() {
 /// operator is not reported.
 #[test]
 fn operators_should_report_only_a_mismatch_inside_an_operand() {
+    with_prelude();
     let rows = [
         (
             "equality of arrays of two element types",
@@ -4321,6 +4373,7 @@ fn a_call_with_a_number_that_does_not_fit_should_report_only_that_number() {
 /// operands may still be one type.
 #[test]
 fn operators_should_report_a_missing_operator_beside_an_error_that_is_not_about_the_type() {
+    with_prelude();
     let node = "class Node {}\n";
     let rows = [
         (
@@ -4346,19 +4399,19 @@ fn operators_should_report_a_missing_operator_beside_an_error_that_is_not_about_
         (
             "contains of a parameter and a block with a wrong binding",
             "fn f<T>(xs: [T], a: T) -> bool { xs.contains({ let x: i64 = true; a }) }".to_string(),
-            vec![(Code::ParamLacks, "xs.contains("), (Code::Mismatch, "true")],
+            vec![(Code::NotConform, "xs.contains("), (Code::Mismatch, "true")],
         ),
         (
             "contains of a class and a block with a wrong binding",
             format!(
                 "{node}fn f(xs: [Node], a: Node) -> bool {{ xs.contains({{ let x: i64 = true; a }}) }}"
             ),
-            vec![(Code::NoOperator, "xs.contains("), (Code::Mismatch, "true")],
+            vec![(Code::NotConform, "xs.contains("), (Code::Mismatch, "true")],
         ),
         (
             "contains of an optional parameter and a block with a wrong binding",
             "fn f<T>(xs: [T?], a: T) -> bool { xs.contains({ let x: i64 = true; a }) }".to_string(),
-            vec![(Code::ParamLacks, "xs.contains("), (Code::Mismatch, "true")],
+            vec![(Code::NotConform, "xs.contains("), (Code::Mismatch, "true")],
         ),
     ];
     for (row, src, expected) in rows {
@@ -4374,13 +4427,14 @@ fn operators_should_report_a_missing_operator_beside_an_error_that_is_not_about_
 /// A warning in an operand is not an error in it: the missing operator is still reported.
 #[test]
 fn operators_should_report_a_missing_operator_beside_a_warning_in_an_operand() {
+    with_prelude();
     let node = "class Node {}\n";
     let rows = [
         (
             "contains of a parameter",
             "fn f<T>(xs: [T], x: T) -> bool { xs.contains({ let mut y = x; y }) }".to_string(),
             vec![
-                (Code::ParamLacks, "xs.contains("),
+                (Code::NotConform, "xs.contains("),
                 (Code::NeverReassigned, "y = x"),
             ],
         ),
@@ -4390,7 +4444,7 @@ fn operators_should_report_a_missing_operator_beside_a_warning_in_an_operand() {
                 "{node}fn f(xs: [Node], n: Node) -> bool {{ xs.contains({{ let mut y = n; y }}) }}"
             ),
             vec![
-                (Code::NoOperator, "xs.contains("),
+                (Code::NotConform, "xs.contains("),
                 (Code::NeverReassigned, "y = n"),
             ],
         ),
@@ -4474,6 +4528,7 @@ fn a_cycle_through_the_generated_eq_of_an_enum_should_name_the_enum() {
 
 #[test]
 fn an_operator_should_reach_a_written_method_through_its_hub_edge() {
+    with_prelude();
     let w = "class W<T> {\n    x: T\n}\n";
     // Each row: the program, and the text of the call that closes an E0140, if any. In each, the
     // only way back from the callee to the method is the hub of the interface that its operator

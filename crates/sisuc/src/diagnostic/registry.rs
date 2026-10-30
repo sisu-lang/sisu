@@ -435,8 +435,7 @@ pub(crate) enum DiagnosticKind {
         via: Option<(String, Span)>,
     },
     /// The operator `op` on the operand at `at`, of the concrete type `ty`, which has none: the
-    /// interface of the operator is missing from `ty`, or from the part `leaf` of it. For a
-    /// `contains` on the array at `at`, `ty` is the element type.
+    /// interface of the operator is missing from `ty`, or from the part `leaf` of it.
     NoOperator {
         ty: String,
         op: String,
@@ -743,8 +742,14 @@ pub(crate) enum DiagnosticKind {
     },
     /// An index into the value at `at`, of type `ty`, which is no array.
     CannotIndex { ty: String, at: Span },
-    /// A `sum` at `at` of an array of type `ty`, which is neither `[i64]` nor `[f64]`.
-    SumNeedsNumbers { ty: String, at: Span },
+    /// The method `method` at `at`, called on an array of type `ty`. The prelude gives the method
+    /// to the array types `targets`, and none of them is `ty`.
+    SumNeedsNumbers {
+        method: String,
+        ty: String,
+        targets: Vec<String>,
+        at: Span,
+    },
     /// A call at `at` of the method `name` of an array, a number, a class or an enum as a
     /// function, with its `receiver`.
     MethodAsFunction {
@@ -1136,13 +1141,11 @@ pub(crate) enum DiagnosticKind {
     /// The type argument at `at`, `ty`, which no parameter may take: `unit` or `never`.
     TypeArgument { ty: String, at: Span },
     /// The operator `op` on the operand at `at`, whose type `ty` names a type parameter, which
-    /// has no operators; `contains` when `op` is the `==` of a `contains` on the array at `at`,
-    /// whose element type is `ty`.
+    /// has no operators.
     ParamLacks {
         ty: String,
         op: String,
         at: Span,
-        contains: bool,
         /// The bound that gives the operator, when the type parameter that lacks it is in scope.
         add: Option<AddBound>,
     },
@@ -1191,7 +1194,7 @@ pub(crate) enum Spelled {
     /// A function, a method or a type, or a call of a method of an interface, as written.
     Instance(String),
     /// An operator or a built-in function that calls through a language interface: `==`, `<`,
-    /// `contains`, `print` or `dbg`.
+    /// `print` or `dbg`.
     Operator(String),
     /// A part of an interpolation, which calls through `Display`.
     Interpolation,
@@ -1474,6 +1477,19 @@ fn listed(names: &[String], last: &str) -> String {
     }
     let rest: Vec<_> = rest.iter().map(|name| format!("`{name}`")).collect();
     format!("{} {last} `{end}`", rest.join(", "))
+}
+
+/// `types` in backticks, each after "an", with "or" before the last one: "an `[i64]`",
+/// "an `[i64]` or an `[f64]`", "an `[i64]`, an `[f64]` or an `[u8]`".
+fn one_of(types: &[String]) -> String {
+    let types: Vec<_> = types.iter().map(|t| format!("an `{t}`")).collect();
+    let (end, rest) = types
+        .split_last()
+        .expect("a list should hold at least one type");
+    if rest.is_empty() {
+        return end.clone();
+    }
+    format!("{} or {end}", rest.join(", "))
 }
 
 /// What a name is defined as.
@@ -1878,9 +1894,13 @@ pub(crate) enum NotConformForm {
         needs: Option<(String, Span)>,
     },
     /// A bound of a declaration, written at `bound` (nowhere a user can see for the prelude's),
-    /// needs it. `add` is the bound that a type parameter would need.
+    /// needs it. `add` is the bound that a type parameter would need. A bound of the prelude has
+    /// `label` in its place, and `make` is the class or enum with no conformance, which the help
+    /// shows how to give one.
     Bound {
         bound: Option<Span>,
+        label: Option<PreludeBound>,
+        make: Option<String>,
         /// Whether the interface is `AnyObject`, which only classes have.
         class_only: bool,
         add: Option<AddBound>,
@@ -1888,6 +1908,15 @@ pub(crate) enum NotConformForm {
         /// and where it is.
         needs: Option<(String, Span)>,
     },
+}
+
+/// How the label names a bound of the prelude, on the call.
+#[derive(Clone)]
+pub(crate) enum PreludeBound {
+    /// The type itself fails the bound.
+    Call,
+    /// A part of the type fails the bound: `part` does not conform to the interface.
+    Since { part: String },
 }
 
 /// What the report of a missing operator (`NoOperator`) says besides the missing operator.
@@ -1901,8 +1930,6 @@ pub(crate) enum NoOperatorForm {
         make: Option<String>,
         interface: String,
     },
-    /// A `contains` on an array whose element type has no `==`.
-    Contains { make: Option<String> },
 }
 
 /// Where a missing bound goes.
@@ -2461,6 +2488,8 @@ impl From<DiagnosticKind> for Diagnostic {
                     }
                     NotConformForm::Bound {
                         bound,
+                        label,
+                        make,
                         class_only,
                         add,
                         needs,
@@ -2469,6 +2498,15 @@ impl From<DiagnosticKind> for Diagnostic {
                             d.with_label("only classes conform to `AnyObject`")
                         } else {
                             d
+                        };
+                        let d = match label {
+                            Some(PreludeBound::Call) => {
+                                d.with_label("required by the bound of this call")
+                            }
+                            Some(PreludeBound::Since { part }) => d.with_label(format!(
+                                "required by the bound of this call, since `{part}` does not conform to `{interface}`"
+                            )),
+                            None => d,
                         };
                         let d = match bound {
                             Some(bound) => d.with_secondary(bound, "required by this bound"),
@@ -2480,9 +2518,12 @@ impl From<DiagnosticKind> for Diagnostic {
                             }
                             None => d,
                         };
-                        match add {
-                            Some(add) => d.with_help(add.help()),
-                            None => d,
+                        match (add, make) {
+                            (Some(add), _) => d.with_help(add.help()),
+                            (None, Some(make)) => {
+                                d.with_help(format!("make `{make}` conform to `{interface}`"))
+                            }
+                            (None, None) => d,
                         }
                     }
                 }
@@ -2588,11 +2629,6 @@ impl From<DiagnosticKind> for Diagnostic {
                         format!("`{ty}` has no `{op}`{}", since.unwrap_or_default()),
                         format!("this has type `{ty}`"),
                         make.map(|make| format!("make `{make}` conform to `{interface}`")),
-                    ),
-                    NoOperatorForm::Contains { make } => (
-                        format!("`contains` needs `==` on `{ty}`{}", since.unwrap_or_default()),
-                        "`contains` compares elements with `==`".to_string(),
-                        make.map(|make| format!("make `{make}` conform to `Eq`")),
                     ),
                 };
                 let d = Diagnostic::coded(code, at, message).with_label(label);
@@ -3408,8 +3444,14 @@ impl From<DiagnosticKind> for Diagnostic {
                 Diagnostic::coded(code, at, format!("cannot index `{ty}`"))
                     .with_help("only arrays can be indexed")
             }
-            DiagnosticKind::SumNeedsNumbers { ty, at } => {
-                Diagnostic::coded(code, at, format!("`sum` needs an `[i64]` or an `[f64]`, found `{ty}`"))
+            DiagnosticKind::SumNeedsNumbers {
+                method,
+                ty,
+                targets,
+                at,
+            } => {
+                let targets = one_of(&targets);
+                Diagnostic::coded(code, at, format!("`{method}` needs {targets}, found `{ty}`"))
             }
             DiagnosticKind::MethodAsFunction {
                 name,
@@ -4502,15 +4544,10 @@ impl From<DiagnosticKind> for Diagnostic {
                 ty,
                 op,
                 at,
-                contains,
                 add,
             } => {
-                let d = Diagnostic::coded(code, at, format!("`{ty}` has no `{op}`"));
-                let d = if contains {
-                    d.with_label("`contains` compares elements with `==`")
-                } else {
-                    d.with_label(format!("this has type `{ty}`"))
-                };
+                let d = Diagnostic::coded(code, at, format!("`{ty}` has no `{op}`"))
+                    .with_label(format!("this has type `{ty}`"));
                 match add {
                     Some(add) => d.with_help(add.help()),
                     None => d,
@@ -4747,6 +4784,21 @@ fn insert_mut(message: &str, declared: Span) -> Fix {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One, two and three types read as "an `A`", "an `A` or an `B`" and "an `A`, an `B` or an
+    /// `C`".
+    #[test]
+    fn one_of_should_join_types_with_or() {
+        let types = |n: usize| -> Vec<String> {
+            ["[i64]", "[f64]", "[u8]"][..n]
+                .iter()
+                .map(|t| (*t).to_owned())
+                .collect()
+        };
+        assert_eq!(one_of(&types(1)), "an `[i64]`");
+        assert_eq!(one_of(&types(2)), "an `[i64]` or an `[f64]`");
+        assert_eq!(one_of(&types(3)), "an `[i64]`, an `[f64]` or an `[u8]`");
+    }
 
     #[test]
     fn code_parses_both_cases() {

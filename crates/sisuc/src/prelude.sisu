@@ -13,3 +13,56 @@ enum Result<T, E> {
     Ok(T)
     Err(E)
 }
+
+// The methods of `i64` that Sisu code writes. `f64`'s are built in.
+extend i64 {
+    fn min(self, other: i64) -> i64 {
+        if self < other { self } else { other }
+    }
+
+    fn max(self, other: i64) -> i64 {
+        if self > other { self } else { other }
+    }
+
+    // With `lo` above `hi`, the result is `hi`.
+    fn clamp(self, lo: i64, hi: i64) -> i64 {
+        self.max(lo).min(hi)
+    }
+}
+
+// The sum of an `[i64]`: the elements added in order from `0`. An overflow panics at the
+// caller's `.sum()`.
+extend [i64] {
+    fn sum(self) -> i64 {
+        let mut total = 0
+        for x in self {
+            total += x
+        }
+        total
+    }
+}
+
+// The sum of an `[f64]`: the elements added in order from `0.0`, so an empty array sums to
+// `0.0`.
+extend [f64] {
+    fn sum(self) -> f64 {
+        let mut total = 0.0
+        for x in self {
+            total += x
+        }
+        total
+    }
+}
+
+// Whether an array holds an element `==` to `x`: the elements are compared in order, and the
+// search ends at the first that is. A NaN is not `==` to a NaN, so it is never found.
+extend<T: Eq> [T] {
+    fn contains(self, x: T) -> bool {
+        for e in self {
+            if e == x {
+                return true
+            }
+        }
+        false
+    }
+}

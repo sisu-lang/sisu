@@ -143,6 +143,7 @@ fn type_arguments_on_a_non_generic_name_should_be_removed() {
 /// are not resolved.
 #[test]
 fn type_arguments_on_a_value_should_report_only_the_value() {
+    with_prelude();
     let src = "fn g(a: i64, b: i64, c: i64, d: i64) { f(a < b, c > (d)) }\nfn f(x: bool) {}\nfn main() {}";
     let d = diagnostic(src, Code::TypeArguments, (1, 42, "a"), &[]);
     assert!(d.help().is_some());
@@ -220,8 +221,14 @@ const MISREAD_DECLS: &str = "enum E { A(bool, bool) }\nclass K {\n    fn m(self,
 /// alone. One that checks, or a list without a comma, does not.
 #[test]
 fn a_failed_list_with_a_comma_should_hide_the_count() {
+    with_prelude();
     let decls = MISREAD_DECLS;
     for (line, expected) in [
+        // A method of the prelude's `extend i64` is a number's method too.
+        (
+            "fn f(a: i64, b: i64) -> bool { h(a.max < b, b > (1)) }",
+            vec![(Code::TypeArguments, (1, 34))],
+        ),
         (
             "fn f(x: f64) -> bool { h(f64.pi < x, x > (1.0)) }",
             vec![(Code::TypeArguments, (1, 26))],
@@ -408,6 +415,7 @@ fn a_misread_comparison_should_hide_only_the_count_of_its_own_list() {
 
 #[test]
 fn values_of_parameter_types_should_have_no_operators() {
+    with_prelude();
     let lacks = |at| vec![(Code::ParamLacks, at)];
     for (src, expected) in [
         ("fn f<T>(a: T, b: T) -> bool { a < b }", lacks((1, 31))),
@@ -422,7 +430,7 @@ fn values_of_parameter_types_should_have_no_operators() {
         ),
         (
             "fn f<T>(xs: [T], a: T) -> bool { xs.contains(a) }",
-            lacks((1, 34)),
+            vec![(Code::NotConform, (1, 34))],
         ),
         (
             "fn f<T>(a: T, b: T) -> [T] { [a; 2] }",
@@ -1148,15 +1156,19 @@ fn named_parameters_should_be_found_in_one_walk() {
     generic::MARKED.set(0);
     checked(&src);
     assert_eq!(generic::MARKED.get(), 0);
-    // `Ok` and `Err`, which the prelude declares, too.
+    // `Ok` and `Err`, which the prelude declares, too. Its `extend i64` names its target in a
+    // walk of its own, which a program with no call adds as well.
     with_prelude();
+    generic::MARKED.set(0);
+    checked("fn main() {}");
+    let blocks = generic::MARKED.get();
     let src = format!(
         "fn id<T>(x: T) -> T {{ x }}\nfn main() {{\n{}}}",
         "    let r: Result<i64, string> = id(Ok())\n".repeat(20),
     );
     generic::MARKED.set(0);
     checked(&src);
-    assert_eq!(generic::MARKED.get(), 0);
+    assert_eq!(generic::MARKED.get(), blocks);
 }
 
 /// A call of a method with type parameters of its own, on a local or a field of one, waits for

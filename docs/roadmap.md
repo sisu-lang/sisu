@@ -800,12 +800,16 @@ Each is small once its milestone's main feature exists:
   `hash(into:)`: a type feeds its fields to the runtime's `Hasher`. Classes
   and `f64` get no `Hash` (see "Open decisions").
 - Milestone 8: a prelude written in Sisu, compiled with every program before
-  modules exist. Array `sum` and `contains` (milestone 3) and the string
-  methods (milestone 4) are built into the checker and codegen today. Once
-  generics exist, each one that Sisu code can express moves into the
-  prelude. What depends on a value's layout, such as an array's length,
-  element access and allocation, stays built in. Milestone 11 turns the
-  prelude into the standard library's first module.
+  modules exist. Done in milestone 8, stage 7: `i64`'s `min`, `max` and
+  `clamp`, array `sum` on an `[i64]` and an `[f64]`, and array `contains` on
+  any element with `Eq` are Sisu code in the prelude, in `extend` blocks of
+  built-in types that only the prelude may write. A prelude function takes its
+  caller's location, so a panic in it names the user's call. The string
+  methods (milestone 4) are still built into the checker and codegen. What
+  depends on a value's layout, such as an array's length, element access and
+  allocation, stays built in, and so do `f64`'s math methods (ADR 0017). So
+  do `print` and `eprint`, which the compiler lowers by type. Milestone 11
+  turns the prelude into the standard library's first module.
 - Milestone 8: two data-oriented changes, ordered around generics (agreed
   2026-10-14, revised 2026-10-16). Interned types now come first in
   milestone 8, before generics, so that generic types are built on the

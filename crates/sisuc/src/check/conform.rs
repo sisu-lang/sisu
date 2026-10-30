@@ -301,6 +301,9 @@ impl Checker<'_> {
             let receiver = Type::intern(match holder {
                 Holder::Class(id) => TypeKind::Class(id, args),
                 Holder::Enum(id) => TypeKind::Enum(id, args),
+                Holder::Array | Holder::I64 => {
+                    unreachable!("only the body of a class or an enum lists conformances")
+                }
             });
             self.body.self_type = Some(receiver);
             self.body.set_type_params(&params);
@@ -329,6 +332,9 @@ impl Checker<'_> {
             Source::Body(Holder::Enum(e)) => {
                 let info = &self.enums[e.0];
                 (info.type_params.clone(), info.bounds.clone())
+            }
+            Source::Body(Holder::Array | Holder::I64) => {
+                unreachable!("only the body of a class or an enum lists conformances")
             }
             Source::Block(b) => {
                 let ext = &self.extensions[b];
@@ -513,6 +519,9 @@ impl Checker<'_> {
                 let methods = match holder {
                     Holder::Class(c) => &self.classes[c.0].methods,
                     Holder::Enum(e) => &self.enums[e.0].methods,
+                    Holder::Array | Holder::I64 => {
+                        unreachable!("only the body of a class or an enum lists conformances")
+                    }
                 };
                 (self.interfaces[interface.0].requirements.iter())
                     .all(|requirement| !methods.contains_key(&requirement.name.name))
@@ -633,6 +642,9 @@ impl Checker<'_> {
         match source {
             Source::Body(Holder::Class(c)) => self.classes[c.0].methods.get(&name).copied(),
             Source::Body(Holder::Enum(e)) => self.enums[e.0].methods.get(&name).copied(),
+            Source::Body(Holder::Array | Holder::I64) => {
+                unreachable!("only the body of a class or an enum lists conformances")
+            }
             Source::Block(b) => {
                 let ext = &self.extensions[b];
                 match ext.methods.get(&name) {
@@ -769,6 +781,9 @@ impl Checker<'_> {
         match source {
             Source::Body(Holder::Class(c)) => &self.classes[c.0].assoc,
             Source::Body(Holder::Enum(e)) => &self.enums[e.0].assoc,
+            Source::Body(Holder::Array | Holder::I64) => {
+                unreachable!("only the body of a class or an enum lists conformances")
+            }
             Source::Block(b) => &self.extensions[b].assoc,
         }
     }

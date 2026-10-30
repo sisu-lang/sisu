@@ -75,8 +75,12 @@ and its bindings stay borrowed.
   callee makes of a borrowed parameter is released before the callee returns,
   and the block's count is what it was when the call began.
 - The certifier starts a borrowed parameter borrowed. Its owner is the caller.
-- Interpolation and `contains` still make a parameter owned. Narrowing that
-  waits for a benchmark that shows the cost.
+- Interpolation still makes a parameter owned. Narrowing that waits for a
+  benchmark that shows the cost. `contains` and `sum` are calls of prelude
+  functions, which loop over `self` with `for`, so their `self` is borrowed.
+  The `x` of `contains` is inferred for each instance: it is borrowed when the
+  `==` of the element type is generated, which reads both operands in place,
+  and owned when the written `eq` stores its argument.
 - In Sisu, the tail rule can make a caller's call a tail call, but it never
   bounds the stack of a recursion until releases move to a local's last use.
 - A function called through a closure keeps owned parameters (milestone 9).
