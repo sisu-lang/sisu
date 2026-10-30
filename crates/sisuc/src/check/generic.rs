@@ -1820,14 +1820,14 @@ impl Checker<'_> {
     /// The shape of a call of `name` with `args` that calls a generic function, constructs a
     /// generic class, or builds `Some`, `Ok` or `Err`, or calls `dbg`.
     fn generic_callee(&self, name: Symbol, args: &[ast::Arg]) -> CallShape {
-        // `dbg<T>(x: T) -> T`: its type is its argument's, so it waits when that argument waits.
+        // `dbg<T>(x: T) -> T`: its type is its argument's, so it waits when that argument waits;
+        // its parameter names `T`, so it is not `open`.
         // It comes first, as `call` runs the prelude's call before it looks up a user's item: a
         // user's `class dbg` or `fn dbg` is rejected, and never the callee.
         if name.as_str() == "dbg" {
             return CallShape {
                 generic: true,
                 shaped: matches!(args, [arg] if arg.label.is_none()),
-                open: false,
                 ..CallShape::default()
             };
         }
