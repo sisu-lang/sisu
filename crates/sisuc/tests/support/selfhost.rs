@@ -1,6 +1,6 @@
-//! The lexer in Sisu, `selfhost/lexer.sisu`: its builds, which a cache shares between the test
-//! binaries and the test processes of one run, and the comparison of its output with the output of
-//! `sisu build --emit tokens`.
+//! The lexer in Sisu, `selfhost/lexer.sisu`. This module builds it, and a cache shares the builds
+//! between the test binaries and the test processes of one run. It also compares the output of the
+//! lexer with the output of `sisu build --emit tokens`.
 
 use std::collections::hash_map::DefaultHasher;
 use std::fmt::Write as _;
@@ -25,7 +25,7 @@ pub(crate) struct Builds {
     pub(crate) rc_checks: PathBuf,
 }
 
-/// The builds of `selfhost/lexer.sisu`, made at most once for a test run: the cache under
+/// The builds of `selfhost/lexer.sisu`, made at most once for a test run. The cache under
 /// `CARGO_TARGET_TMPDIR` holds them, and the test processes of the run share it.
 pub(crate) fn builds() -> &'static Builds {
     static BUILDS: OnceLock<Builds> = OnceLock::new();
@@ -35,6 +35,21 @@ pub(crate) fn builds() -> &'static Builds {
     })
 }
 
+/// The builds that `build` makes: the name of each executable, and the flags that `sisu` gets. Each
+/// build uses the allocator that `VALGRIND_FLAGS` names.
+fn plan() -> [(&'static str, Vec<&'static str>); 3] {
+    let with_valgrind_flags = |flag: Option<&'static str>| {
+        flag.into_iter()
+            .chain(VALGRIND_FLAGS.iter().copied())
+            .collect()
+    };
+    [
+        ("lexer-O0", with_valgrind_flags(None)),
+        ("lexer-O2", with_valgrind_flags(Some("-O2"))),
+        ("lexer-rc", with_valgrind_flags(Some("--rc-checks"))),
+    ]
+}
+
 /// The builds of `source` in `cache`. Builds in the cache from the same source, by the same
 /// `sisu` and runtime, are reused. A process that finds the cache locked waits: the lock stops two
 /// test processes from building into it at once.
@@ -42,13 +57,14 @@ pub(crate) fn build(source: &Path, cache: &Path) -> Builds {
     fs::create_dir_all(cache).expect("the cache directory should be creatable");
     let lock = File::create(cache.join("lock")).expect("the lock file should be creatable");
     lock.lock().expect("the cache lock should be held");
+    let plan = plan();
     let builds = Builds {
-        o0: cache.join("lexer-O0"),
-        o2: cache.join("lexer-O2"),
-        rc_checks: cache.join("lexer-rc"),
+        o0: cache.join(plan[0].0),
+        o2: cache.join(plan[1].0),
+        rc_checks: cache.join(plan[2].0),
     };
     let stamp_path = cache.join("stamp");
-    let stamp = stamp(source);
+    let stamp = stamp(source, &plan);
     if fs::read_to_string(&stamp_path).ok().as_ref() != Some(&stamp) {
         // The stamp goes first and returns last, so that a run that stops half way rebuilds.
         drop(fs::remove_file(&stamp_path));
@@ -57,16 +73,8 @@ pub(crate) fn build(source: &Path, cache: &Path) -> Builds {
             .file_stem()
             .and_then(|name| name.to_str())
             .expect("the source name should be UTF-8");
-        for (exe, flag) in [
-            (&builds.o0, None),
-            (&builds.o2, Some("-O2")),
-            (&builds.rc_checks, Some("--rc-checks")),
-        ] {
-            let flags: Vec<&str> = flag
-                .into_iter()
-                .chain(VALGRIND_FLAGS.iter().copied())
-                .collect();
-            let stderr = compile(dir, name, exe, &flags);
+        for (file, flags) in &plan {
+            let stderr = compile(dir, name, &cache.join(file), flags);
             assert!(
                 stderr.is_empty(),
                 "{} gives warnings with {flags:?}:\n{}",
@@ -79,13 +87,16 @@ pub(crate) fn build(source: &Path, cache: &Path) -> Builds {
     builds
 }
 
-/// What the builds depend on: a hash of `source`, and the size and modification time of `sisu` and
-/// of the two runtime archives beside it. A change to the runtime relinks no `sisu`, so the
-/// archives count on their own.
-fn stamp(source: &Path) -> String {
+/// What the builds depend on. It holds a hash of `source` and the name and flags of each build in
+/// `plan`. It also holds the size and modification time of `sisu` and of the two runtime archives
+/// beside it. A change to the runtime relinks no `sisu`, so the archives count on their own.
+fn stamp(source: &Path, plan: &[(&str, Vec<&str>)]) -> String {
     let mut hasher = DefaultHasher::new();
     hasher.write(&fs::read(source).expect("the source should be readable"));
     let mut stamp = format!("{:016x}\n", hasher.finish());
+    for (file, flags) in plan {
+        writeln!(stamp, "{file} {flags:?}").expect("writing to a `String` should never fail");
+    }
     let sisu = Path::new(env!("CARGO_BIN_EXE_sisu"));
     for file in [
         sisu.to_path_buf(),
@@ -122,9 +133,9 @@ pub(crate) fn tokens_of(path: &Path) -> String {
     String::from_utf8(out.stdout).expect("the tokens should be UTF-8")
 }
 
-/// Checks that each build of the lexer, with the file `input` on its standard input, exits 0 with
-/// nothing on standard error and prints what `tokens_of(input)` holds, byte for byte. A mismatch
-/// names the input and its first differing line.
+/// Runs each build of the lexer with the file `input` on its standard input. Each must exit 0 with
+/// nothing on standard error. Each must print what `tokens_of(input)` holds, byte for byte. A
+/// mismatch names the input and its first differing line.
 pub(crate) fn compare(input: &Path) {
     let expected = tokens_of(input);
     let stdin = fs::read(input).expect("the input should be readable");

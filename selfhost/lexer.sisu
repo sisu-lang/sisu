@@ -7,8 +7,8 @@
 // keeps the tokens in an array, and it decides at each line break whether a `Newline` follows.
 // The second pass judges each run of `;` (ADR 0028) and prints the tokens.
 
-// One variant for each `TokenKind` of the compiler's lexer, named as `TokenKind::name()` names
-// it, so that the generated `Display` prints the kind as the dump does.
+// One variant for each `TokenKind` of the compiler's lexer. A variant has the name that
+// `TokenKind::name()` gives it, so the generated `Display` prints the kind as the dump does.
 enum Kind {
     Ident
     Underscore
@@ -212,15 +212,14 @@ class DigitOrSeparator: CharClass {
     }
 }
 
-// Moves the cursor past the chars that `predicate` accepts, and gives the place it stops at.
-fn take_while<C: CharClass>(text: Text, predicate: C) -> i64 {
+// Moves the cursor past the chars that `predicate` accepts.
+fn take_while<C: CharClass>(text: Text, predicate: C) {
     while let c = text.peek(0) {
         if !predicate.has(c) {
             break
         }
         let _ = text.next()
     }
-    text.at
 }
 
 // gap: the exit code of a panic is 101, and a program cannot set another one.
@@ -564,7 +563,7 @@ fn float_rest(text: Text) -> bool {
     let mut float = false
     if text.peek(0) == '.' && is_digit(text.peek(1) ?? ' ') {
         let _ = text.next()
-        let _ = take_while(text, DigitOrSeparator())
+        take_while(text, DigitOrSeparator())
         float = true
     }
     if text.peek(0) == 'e' || text.peek(0) == 'E' {
@@ -572,7 +571,7 @@ fn float_rest(text: Text) -> bool {
         if text.peek(0) == '+' || text.peek(0) == '-' {
             let _ = text.next()
         }
-        let _ = take_while(text, DigitOrSeparator())
+        take_while(text, DigitOrSeparator())
         float = true
     }
     float
@@ -589,8 +588,8 @@ class Lexer {
     tracker: Tracker
     // How many `;` that separate statements end the tokens, which the tracker has not read.
     mut trailing: i64
-    // Whether the top-level item so far is a `fn`, `class`, `enum`, `interface` or `extend`, which
-    // ends at its `}` rather than at a line break, as a `const` does.
+    // Whether the top-level item so far is a `fn`, `class`, `enum`, `interface` or `extend`. Such
+    // an item ends at its `}`. A `const` ends at a line break.
     mut self_ending: bool
     // The kind of the last token that is not a `;`.
     mut last_code: Kind
@@ -653,8 +652,8 @@ class Lexer {
         self.tokens.push(Token(kind: kind, line: line, col: col, text: spelled))
     }
 
-    // Whether a line break here ends a statement: the token before the `;`s that end the tokens
-    // can end one, and the innermost open bracket is a block's `{`.
+    // Whether a line break here ends a statement. The token before the `;`s that end the tokens
+    // must be one that can end a statement. The innermost open bracket must be a block's `{`.
     fn ends_statement(self) -> bool {
         let n = self.tokens.len()
         if n <= self.trailing || !self.in_block() {
@@ -707,8 +706,8 @@ class Lexer {
 
     fn name(self, text: Text) {
         let start = text.at
-        let end = take_while(text, NameChar())
-        let word = text.slice(start, end)
+        take_while(text, NameChar())
+        let word = text.slice(start, text.at)
         self.push(keyword(word), text, start, word)
     }
 
@@ -716,8 +715,8 @@ class Lexer {
         let start = text.at
         let first = text.cs[start]
         let _ = text.next()
-        // A digit run after a `.` is a tuple index or a fraction that the parser reads: neither a
-        // fraction nor an exponent goes on after it.
+        // A digit run after a `.` is a tuple index or a fraction. The parser reads it. No fraction
+        // and no exponent goes on after it.
         let after_dot = self.last_code == Kind.Dot || self.last_code == Kind.QuestionDot
         let p = text.peek(0)
         let prefixed = first == '0' &&
@@ -725,9 +724,9 @@ class Lexer {
         let mut float = false
         if prefixed {
             let _ = text.next()
-            let _ = take_while(text, NameChar())
+            take_while(text, NameChar())
         } else {
-            let _ = take_while(text, DigitOrSeparator())
+            take_while(text, DigitOrSeparator())
             if !after_dot {
                 float = float_rest(text)
             }
@@ -739,20 +738,20 @@ class Lexer {
     fn char_literal(self, text: Text) {
         let start = text.at
         let _ = text.next()
-        let mut closed = false
-        while !closed {
+        loop {
             let c = text.next() ?? panic(unexpected(text, start))
             if c == '\'' {
-                closed = true
-            } else if c == '\\' {
+                break
+            }
+            if c == '\\' {
                 skip_escape(text, start)
             }
         }
         self.push(Kind.Char, text, start, text.slice(start, text.at))
     }
 
-    // The text of a string literal from its `"`, or, when `resumed`, from the `}` that ends an
-    // interpolation in it, to the closing `"` or to the `{` that opens an interpolation.
+    // The text of a string literal. It starts at the `"`, or, when `resumed`, at the `}` that ends
+    // an interpolation. It ends at the closing `"` or at the `{` that opens an interpolation.
     fn string_part(self, text: Text, resumed: bool) {
         let start = text.at
         let _ = text.next()
@@ -761,15 +760,16 @@ class Lexer {
             self.interps -= 1
         }
         let mut brace = false
-        let mut done = false
-        while !done {
+        loop {
             let c = text.next() ?? panic(unexpected(text, start))
             if c == '"' {
-                done = true
-            } else if c == '{' {
+                break
+            }
+            if c == '{' {
                 brace = true
-                done = true
-            } else if c == '\\' {
+                break
+            }
+            if c == '\\' {
                 skip_escape(text, start)
             }
         }
@@ -792,21 +792,20 @@ class Lexer {
     fn format_spec(self, text: Text) {
         let start = text.at
         let mut pairs = 0
-        let mut done = false
-        while !done {
+        loop {
             let c = text.peek(0) ?? panic(unexpected(text, start))
             if c == '"' {
                 panic(unexpected(text, start))
-            } else if c == '}' && pairs == 0 {
-                done = true
-            } else {
-                if c == '{' {
-                    pairs += 1
-                } else if c == '}' {
-                    pairs -= 1
-                }
-                let _ = text.next()
             }
+            if c == '}' && pairs == 0 {
+                break
+            }
+            if c == '{' {
+                pairs += 1
+            } else if c == '}' {
+                pairs -= 1
+            }
+            let _ = text.next()
         }
         self.push(Kind.FormatSpec, text, start, text.slice(start, text.at))
     }

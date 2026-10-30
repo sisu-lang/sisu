@@ -2881,6 +2881,17 @@ fn selfhost_lexer_should_match_emit_tokens_on_a_newline_pending_at_the_end() {
     );
 }
 
+/// GIVEN a `;` that is the first token of the input, with a name after it
+/// WHEN each build of the lexer reads it
+/// THEN the `;` prints nothing, as in `sisu build --emit tokens`
+#[test]
+fn selfhost_lexer_should_match_emit_tokens_on_a_semicolon_at_the_start() {
+    compare_text(
+        "selfhost_lexer_should_match_emit_tokens_on_a_semicolon_at_the_start",
+        "; x\n",
+    );
+}
+
 /// GIVEN a `let` with the type `Box<i64>`, whose `>` ends the line, and a `let` after it
 /// WHEN each build of the lexer reads it
 /// THEN a `Newline` follows the `>`, as in `sisu build --emit tokens`
@@ -3015,4 +3026,22 @@ fn selfhost_build_should_rebuild_when_its_source_changes() {
     assert_eq!(output_of(&selfhost::build(&source, &cache).o2), "first\n");
     fs::write(&source, printing("second")).expect("the scratch source should be writable");
     assert_eq!(output_of(&selfhost::build(&source, &cache).o2), "second\n");
+}
+
+/// GIVEN a scratch copy of a program that prints `first`, built into a scratch cache
+/// AND the copy changed to print `second` and to give a warning, so the next build stops half way
+/// WHEN the copy goes back to print `first` and the build runs again in the cache
+/// THEN the new build prints `first`, as the old stamp does not hide the half-made builds
+#[test]
+fn selfhost_build_should_rebuild_after_a_build_stops_half_way() {
+    let name = "selfhost_build_should_rebuild_after_a_build_stops_half_way";
+    let dir = fixture(name, &[("lexer.sisu", &printing("first"))]);
+    let (source, cache) = (dir.join("lexer.sisu"), dir.join("cache"));
+    selfhost::build(&source, &cache);
+    let unused = format!("fn unused() {{}}\n{}", printing("second"));
+    fs::write(&source, unused).expect("the scratch source should be writable");
+    let stopped = panic::catch_unwind(AssertUnwindSafe(|| selfhost::build(&source, &cache)));
+    assert!(stopped.is_err(), "a build with a warning should stop");
+    fs::write(&source, printing("first")).expect("the scratch source should be writable");
+    assert_eq!(output_of(&selfhost::build(&source, &cache).o0), "first\n");
 }
