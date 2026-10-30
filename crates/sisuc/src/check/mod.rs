@@ -360,6 +360,8 @@ struct Source<'src> {
 thread_local! {
     /// How many class fields the class-cycle search has read on this thread.
     pub(super) static FIELD_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many expressions `Checker::expr` has checked on this thread.
+    pub(super) static EXPR_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many nested loops the walk that wraps a widened loop's values has entered.
     pub(super) static WRAP_LOOPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many type parameter names have been indexed or looked up on this thread.
@@ -726,6 +728,9 @@ struct Body {
     /// The target of the compound assignment being checked, whose reads are not reads: they
     /// only give the value back to the target.
     quiet: Option<Span>,
+    /// The receiver of a `push` that `push_receiver` checked as a place, at its span, until the
+    /// method call takes it.
+    pushed: Option<(Span, place::CheckedPlace)>,
     /// Whether the body has a `todo`, which keeps its parameters from W0014.
     todo: bool,
     /// Work ranking arguments did ahead of its turn, innermost last, by the span it was done

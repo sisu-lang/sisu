@@ -38,6 +38,19 @@ impl Checker<'_> {
         member: impl FnOnce(&mut Self, Checked) -> Checked,
     ) -> Checked {
         let scrutinee = self.value_kept(receiver);
+        self.member_of(span, safe, scrutinee, receiver, name, member)
+    }
+
+    /// `member` of the checked `scrutinee`, the receiver `receiver`.
+    pub(super) fn member_of(
+        &mut self,
+        span: Span,
+        safe: bool,
+        scrutinee: Checked,
+        receiver: &ast::Expr,
+        name: &ast::Ident,
+        member: impl FnOnce(&mut Self, Checked) -> Checked,
+    ) -> Checked {
         if !safe {
             return member(self, scrutinee);
         }

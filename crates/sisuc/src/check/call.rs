@@ -378,7 +378,14 @@ impl Checker<'_> {
         {
             checked
         } else {
-            self.member(span, safe, receiver, method, |c, checked| {
+            // The receiver of a `push` is a place, checked once and held for the call.
+            let scrutinee =
+                if method.name.as_str() == "push" && !safe && self.is_push_place(receiver) {
+                    self.push_receiver(receiver)
+                } else {
+                    self.value_kept(receiver)
+                };
+            self.member_of(span, safe, scrutinee, receiver, method, |c, checked| {
                 if !path && let Some((first, _)) = types.split_first() {
                     if let Some(value) = c.method_args(&checked, receiver, method, first, angles) {
                         c.stray(args);
@@ -450,10 +457,14 @@ impl Checker<'_> {
             Err(receiver) => receiver,
         };
         // A `push` onto an array writes its place, so it is not a method of the prelude's.
-        if method.name.as_str() == "push"
-            && let Some(checked) = self.push(span, safe, &receiver, receiver_expr, args)
-        {
-            return checked;
+        if method.name.as_str() == "push" {
+            let place = self.take_pushed(receiver_expr);
+            if type_of(&receiver).is_some_and(|ty| matches!(ty.kind(), TypeKind::Array(_))) {
+                return self.push(span, safe, (&receiver, place), receiver_expr, args);
+            }
+            if let Some(place) = place {
+                self.read_pushed(&place, receiver_expr);
+            }
         }
         match type_of(&receiver) {
             // A built-in type, an array and an optional have a `Display` that the compiler writes,

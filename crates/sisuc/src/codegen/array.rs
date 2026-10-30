@@ -56,10 +56,10 @@ impl<'ctx> Codegen<'ctx, '_> {
         array
     }
 
-    /// The length of `array`, marked `!range [0, 2^63)` and `!noundef`: `alloc_array` and
-    /// `array_push` are the only writers of a length, and no length either gets is negative:
-    /// `array_push` stores `len + 1` only after it checked that this many elements fit. A new way
-    /// to make an array or to change its length must keep this true.
+    /// The length of `array`, marked `!range [0, 2^63)` and `!noundef`. `alloc_array` and
+    /// `array_push` are the only writers of a length. Neither writes a negative one. `array_push`
+    /// stores `len + 1` only after it checks that this many elements fit. A new write of a length
+    /// must keep this true.
     pub(super) fn array_len(&self, array: PointerValue<'ctx>) -> IntValue<'ctx> {
         let i64_type = self.context.i64_type();
         let len = self

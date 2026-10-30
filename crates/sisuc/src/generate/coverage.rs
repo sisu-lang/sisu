@@ -4056,6 +4056,26 @@ fn with_strings(data: &[u8], len: u64, base: u64, room: u64, bound: Option<u64>)
     g
 }
 
+/// The checker reads the element of `s0[i] op= e` before `e`. That read may panic. So a later
+/// operand runs after an effect, even when `e` is a literal. A rewrite that moves a `let` into
+/// `e` then breaks the condition of the Let rewrite.
+#[test]
+fn an_element_compound_should_count_as_an_effect_before_its_value() {
+    let mut seen = 0;
+    for mut state in 0..256 {
+        let data: Vec<u8> = (0..32)
+            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+            .collect();
+        let mut g = with_strings(&data, 3, 2, 100, None);
+        g.compound();
+        if g.w.out.program.starts_with("s0[") {
+            seen += 1;
+            assert!(g.effect, "{}", g.w.out.program);
+        }
+    }
+    assert!(seen > 0, "no input should fail to compound an element");
+}
+
 #[test]
 fn an_element_takes_at_most_its_base() {
     // `s0` holds 3 strings of 2 chars at most: 9 in all, but `s0[i] = e` may write 2 chars only.
@@ -4254,9 +4274,9 @@ fn with_growth(data: &[u8], grow: u64, bound: Option<u64>) -> Gen<'_> {
     g
 }
 
-/// Each `push` onto an array of numbers adds one slot at each run of every loop around it, and
-/// takes that much of the growth: 3 in all, so 3 pushes outside a loop, and 1 in a loop of 2
-/// runs, which cannot take a second.
+/// Each `push` onto an array of numbers adds one slot at each run of every loop around it. It
+/// takes that much of the growth. The growth is 3 in all, so 3 pushes fit outside a loop. Only 1
+/// fits in a loop of 2 runs.
 #[test]
 fn a_push_should_take_the_growth_of_its_array_at_each_run() {
     for (bound, pushes) in [(None, 3), (Some(2), 1)] {
@@ -4280,10 +4300,10 @@ fn a_push_should_take_the_growth_of_its_array_at_each_run() {
     }
 }
 
-/// A mutable array of a type with no class object gets growth for pushes when it fits within the
-/// most size, and none otherwise.
+/// A mutable array of a type with no class object gets growth for pushes. Its most size, growth
+/// included, stays within `MAX_SIZE`. Some arrays get growth, and the full ones get none.
 #[test]
-fn a_mutable_array_should_get_growth_only_where_it_fits() {
+fn a_mutable_array_should_get_growth_within_the_most_size() {
     let (mut with, mut without) = (0, 0);
     for element in [Ty::String, Ty::I64, Ty::Array(Box::new(Ty::String))] {
         for mut state in 0..1_024 {
@@ -4294,14 +4314,20 @@ fn a_mutable_array_should_get_growth_only_where_it_fits() {
             let ty = Ty::Array(Box::new(element.clone()));
             g.array_let("v0".to_string(), ty, &element);
             let var = &g.scope.vars[0];
-            let fits = var.len + var.len * var.base + var.room + super::stmt::GROW <= MAX_SIZE;
-            assert_eq!(
-                var.grow,
-                if fits { super::stmt::GROW } else { 0 },
+            assert!(var.size <= MAX_SIZE, "{}", g.w.out.program);
+            assert!(
+                [0, super::stmt::GROW].contains(&var.grow),
                 "{}",
                 g.w.out.program
             );
-            if fits {
+            // The size covers the growth beside the elements the array holds now.
+            let held = var.len + var.len * var.base + var.room;
+            assert!(held + var.grow <= var.size, "{}", g.w.out.program);
+            // An array that leaves twice the growth free always gets it.
+            if held + 2 * super::stmt::GROW <= MAX_SIZE {
+                assert_eq!(var.grow, super::stmt::GROW, "{}", g.w.out.program);
+            }
+            if var.grow > 0 {
                 with += 1;
             } else {
                 without += 1;
@@ -4336,6 +4362,15 @@ fn a_push_onto_an_element_should_stay_below_the_length() {
     assert_eq!(seen, [true; 3]);
 }
 
+/// A `push` is planned only where the growth covers the smallest value of the element. Seeds 1818
+/// and 4814 once asked for a `Result<bool, string>` in no room.
+#[test]
+fn a_push_should_get_room_for_the_smallest_value_of_its_element() {
+    for n in [1818, 4814] {
+        checked(&generate(&seed(n)).program);
+    }
+}
+
 /// An array with no growth takes no `push`, while one that a statement declares may.
 #[test]
 fn an_array_without_growth_should_take_no_push() {
@@ -4349,8 +4384,8 @@ fn an_array_without_growth_should_take_no_push() {
     }
 }
 
-/// The programs of the seeds push onto a local, onto an element of an array, and onto a `mut`
-/// field, which a guard keeps within its cap.
+/// The programs of the seeds push onto a local, onto an element of an array and onto a `mut`
+/// field. A guard keeps the field within its cap.
 #[test]
 fn a_push_should_reach_a_local_an_element_and_a_guarded_field() {
     let (mut local, mut element, mut field) = (false, false, false);

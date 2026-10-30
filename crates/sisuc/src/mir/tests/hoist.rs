@@ -388,9 +388,9 @@ fn hand_built_bars() {
     }
 }
 
-/// A push consumes its value as a store does, so a push of a local that moved bars it: with
-/// the push, `s` stays unique inside the loop. Lowering moves a local into a push only at its
-/// last use, so no lowered loop that writes `s` also pushes it by a move; only a hand-built
+/// A push consumes its value as a store does, so a push of a moved local bars that local. Without
+/// the push, `s` stays unique inside the loop. Lowering moves a local into a push only at its last
+/// use. So no lowered loop that writes `s` also pushes it by a move, and only a hand-built
 /// function reaches this.
 #[test]
 fn a_push_of_a_moved_local_should_bar_it() {

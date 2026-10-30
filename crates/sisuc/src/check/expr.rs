@@ -19,6 +19,8 @@ impl Checker<'_> {
     pub(super) fn expr(&mut self, e: &ast::Expr, expected: Option<Type>) -> Checked {
         // An assignment target's chain runs only through field bases, method receivers and
         // indexed bases; any other expression inside it is an ordinary read.
+        #[cfg(test)]
+        super::EXPR_CHECKS.set(super::EXPR_CHECKS.get() + 1);
         let outer = self.body.in_target;
         self.body.in_target &= matches!(
             e.kind,

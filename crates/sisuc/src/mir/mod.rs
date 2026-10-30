@@ -381,9 +381,9 @@ pub(crate) enum Statement {
         place: Place,
         value: Operand,
     },
-    /// Appends the operand, which it consumes, to the array in `place`: a block that nothing else
-    /// holds and that has room takes the element in place, a full one grows, and a shared one is
-    /// copied first. The place holds the resulting block, so the statement writes it, and it may
+    /// Appends the operand, which it consumes, to the array in `place`. A block that nothing else
+    /// holds takes the element in place when it has room. A full block grows. A shared block is
+    /// copied first. The place holds the resulting block, so the statement writes it. It may
     /// free the old block. `at` is the call, where "array is too large" is reported.
     Push {
         place: Place,

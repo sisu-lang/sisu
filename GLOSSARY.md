@@ -104,7 +104,7 @@ _Avoid_: spec, manual
 A growable sequence of values of one type, written `[T]`, stored side by side
 in one block. An array is a value: binding it, passing it or storing it
 behaves as a copy.
-Growth methods arrive in milestone 10.
+`push` adds an element. The other methods that change an array come later.
 _Avoid_: list, vector
 
 **Copy-on-write**:

@@ -240,8 +240,8 @@ fn field_copy_across_make_unique_is_kept() {
     assert!(f.contains("t#2 = copy a#0.0"), "{f}");
 }
 
-/// A `push` decides on the count that the copy holds, as a `make_unique` does, so it clobbers:
-/// with `a` and `b` the same object, it may free the block that `t` borrows.
+/// A `push` decides on the count that the copy holds, as a `make_unique` does, so it clobbers.
+/// With `a` and `b` the same object, it may free the block that `t` borrows.
 #[test]
 fn field_copy_across_a_push_should_be_kept() {
     let printed = built(

@@ -375,20 +375,26 @@ impl Gen<'_> {
             && matches!(&var.ty, Ty::Array(element) if !self.scope.contains_class(element))
     }
 
-    /// The places a `push` may append to: a mutable array of a type that holds no class object
-    /// (decision 4) with growth for one more element at each run; the same for an element of a
-    /// mutable array of such arrays; and a `mut` array field of such a type whose elements have no
-    /// size, so that one more element is one more size.
+    /// The places a `push` may append to. A mutable array takes a `push` when its type holds no
+    /// class object (decision 4) and its growth covers a slot and the smallest element, at each
+    /// run. The same holds for an element of a mutable array of such arrays. A `mut` array field
+    /// takes a guarded `push` when its elements have no size. One more element is then one more
+    /// size.
     pub(crate) fn push_targets(&self) -> Vec<Push> {
         let mut targets = Vec::new();
         for (v, var) in self.scope.vars.iter().enumerate() {
-            let fits = var.grow >= self.cost.times_since(var.loops).max(1);
+            // What one run of a `push` may add, and whether it covers a slot and `element`.
+            let covers = |element: &Ty| {
+                let room = var.grow / self.cost.times_since(var.loops).max(1);
+                room > element.floor()
+            };
             match &var.ty {
-                Ty::Array(element)
-                    if var.assignable && fits && !self.scope.contains_class(element) =>
-                {
-                    targets.push(Push::Local(v));
-                    if has_elements(var) && matches!(**element, Ty::Array(_)) {
+                Ty::Array(element) if var.assignable && !self.scope.contains_class(element) => {
+                    if covers(element) {
+                        targets.push(Push::Local(v));
+                    }
+                    if has_elements(var) && matches!(&**element, Ty::Array(inner) if covers(inner))
+                    {
                         targets.push(Push::Element(v));
                     }
                 }
@@ -409,9 +415,9 @@ impl Gen<'_> {
     }
 
     /// `v.push(e)`, `v[i].push(e)` or `if v.g.len() < cap { v.g.push(e) }`. A push adds `e` and
-    /// its slot to the array's size, which comes out of the growth of the local that holds it, at
-    /// each run of every loop since its declaration. A field has no growth: its guard keeps its
-    /// length, which is its size, within its cap.
+    /// its slot to the size of the array. That size comes out of the growth of the local that
+    /// holds the array, at each run of every loop since its declaration. A field has no growth.
+    /// Its guard keeps its length, which is its size, within its cap.
     pub(crate) fn push_stmt(&mut self) {
         let targets = self.push_targets();
         match targets[self.pick(targets.len())] {
@@ -464,7 +470,9 @@ impl Gen<'_> {
     fn pushed(&mut self, v: usize, element: &Ty) {
         const MOST: u64 = 64;
         let times = self.cost.times_since(self.scope.vars[v].loops);
-        let max = (self.scope.vars[v].grow / times.max(1) - 1).min(MOST);
+        // The growth covers the slot and the smallest value (`push_targets`).
+        let most = self.scope.vars[v].grow / times.max(1) - 1;
+        let max = most.min(MOST).max(element.floor());
         let (room, grow) = {
             let var = &mut self.scope.vars[v];
             (std::mem::take(&mut var.room), std::mem::take(&mut var.grow))
@@ -1105,8 +1113,8 @@ impl Gen<'_> {
     }
 }
 
-/// A place a `push` may append to (`Gen::push_targets`): a local, an element of one, or a `mut`
-/// field of the class object a local holds, as its local, class and field.
+/// A place a `push` may append to (`Gen::push_targets`). It is a local, an element of one, or a
+/// `mut` field of the class object a local holds, as its local, class and field.
 #[derive(Clone, Copy)]
 pub(crate) enum Push {
     Local(usize),

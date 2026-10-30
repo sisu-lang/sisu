@@ -837,8 +837,8 @@ fn string_grow_reallocates_from_the_old_capacity() {
     assert_header_plus_capacity(body, block, old_size);
 }
 
-/// A `push` that cannot fit another element panics at the call, not at its argument: the call
-/// starts at `xs` on line 3, column 5, and its argument at column 13.
+/// A `push` that cannot fit another element panics at the call, not at its argument. The call
+/// starts at `xs` on line 3, column 5. Its argument starts at column 13.
 #[test]
 fn push_should_report_array_is_too_large_at_the_call() {
     let context = Context::create();
@@ -851,10 +851,10 @@ fn push_should_report_array_is_too_large_at_the_call() {
     assert_panics_with(&ir, "test.sisu:3:5: array is too large");
 }
 
-/// A full block grows to the larger of one more element and its double capacity, which is capped
-/// at the most elements a block can have: `umin` of the double and that count, then `umax` with
-/// `len + 1`. An `[i64]` block has a 24-byte header and 8-byte elements, and a size that stays
-/// at most `i64::MAX` rounded down to the alignment of 8.
+/// A full block grows to the larger of one more element and its double capacity. The double is
+/// capped at the most elements a block can have. So the IR takes `umin` of the double and that
+/// count, then `umax` with `len + 1`. An `[i64]` block has a 24-byte header and 8-byte elements.
+/// Its size stays at most `i64::MAX` rounded down to the alignment of 8.
 #[test]
 fn push_should_grow_to_the_larger_of_one_more_and_the_capped_double() {
     let context = Context::create();

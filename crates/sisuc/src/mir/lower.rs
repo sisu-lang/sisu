@@ -1277,9 +1277,9 @@ impl<'a> Lowering<'a> {
         Some(())
     }
 
-    /// `p.push(value)`, in the order of an element write: a field root's base, the indexes, the
-    /// value, then per level the check and `make_unique`, then the push, then the release of the
-    /// base. The push decides on the count of the array `p` holds.
+    /// `p.push(value)`, in the order of an element write. The order is a field root's base, the
+    /// indexes and the value. Then come the check and `make_unique` of each level, the push, and
+    /// the release of the base. The push decides on the count of the array `p` holds.
     fn array_push(&mut self, place: &Place, value: &Expr, at: Span) -> Option<()> {
         let (root, indexes, temp) = self.written_root(place, value)?;
         let value = self.operand(value)?;

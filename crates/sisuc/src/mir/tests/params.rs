@@ -896,8 +896,9 @@ fn quiet_should_mark_only_prelude_functions_without_a_clobber() {
     assert_quiet_rows(rows);
 }
 
-/// Only a call that is not quiet, a take into a counted local, a store of a counted value, a
-/// `make_unique` and a `push` are clobbers: the other statements leave a prelude function quiet.
+/// These statements are clobbers: a call that is not quiet, a take into a counted local, a store
+/// of a counted value, a `make_unique` and a `push`. The other statements leave a prelude
+/// function quiet.
 #[test]
 fn quiet_should_judge_each_kind_of_statement() {
     let rows: Vec<(&str, Vec<Function>, Vec<bool>)> = vec![

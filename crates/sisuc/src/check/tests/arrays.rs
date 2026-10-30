@@ -927,27 +927,28 @@ fn each_argument_of_the_idiom_should_be_checked_once() {
     }
 }
 
-/// A `push` checks its argument as an assignment's value, and takes exactly one.
+/// A `push` checks its argument as an assignment's value.
 #[test]
 fn push_should_check_its_argument_against_the_element_type() {
-    let rows = [
-        (
-            "wrong type",
-            "fn main() {\n    let mut xs = [1]\n    xs.push(\"a\")\n}",
-            vec![(Code::Mismatch, (3, 13))],
-        ),
+    codes(
+        "fn main() {\n    let mut xs = [1]\n    xs.push(\"a\")\n}",
+        &[(Code::Mismatch, (3, 13))],
+    );
+}
+
+/// A `push` takes exactly one argument.
+#[test]
+fn push_should_take_exactly_one_argument() {
+    for (row, src) in [
         (
             "no argument",
             "fn main() {\n    let mut xs = [1]\n    xs.push()\n}",
-            vec![(Code::ArgumentCount, (3, 5))],
         ),
         (
             "two arguments",
             "fn main() {\n    let mut xs = [1]\n    xs.push(1, 2)\n}",
-            vec![(Code::ArgumentCount, (3, 5))],
         ),
-    ];
-    for (row, src, expected) in rows {
-        codes_row(row, src, &expected);
+    ] {
+        codes_row(row, src, &[(Code::ArgumentCount, (3, 5))]);
     }
 }
