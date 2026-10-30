@@ -334,7 +334,7 @@ This table lists each feature or path and the benchmark that measures it:
 | Text scanned from `bytes()` into a boxed tree, rewritten and evaluated | interp |
 | Calls through a bound, static at two conforming classes, and an associated type read through a bound | interfaces |
 | Printing compound values; `==` through a written `Eq` | show |
-| Lexing as a real program does it: `read_line`, `chars()`, an enum of tokens with a generated `Display`, `Stack<T>` over a linked class, an interface bound, and `push` onto arrays, on a fixed corpus of `.sisu` files | selfhost_lexer |
+| Lexing as a real program does it: `read_line`, `chars()`, an enum of tokens with a generated `Display`, `Stack<T>` over a linked class, an interface bound, and `push` onto arrays, on a fixed input of `.sisu` source | selfhost_lexer |
 | The front end | check_binary_trees, check_large |
 | An `-O2` build | build_hello, build_binary_trees, build_selfhost_lexer, build_large_20; build_large on `main` only |
 

@@ -61,6 +61,10 @@ jobs:
         uses: ./.github/actions/install-llvm
       - id: prep
         continue-on-error: true
+        # Prep runs programs and the compiler. A hang must not use the six hours of the job. Prep
+        # takes about a minute with a warm cache; 30 minutes leaves room for a cold build, and the
+        # benchmark step (60 minutes) and the summary still run after a timeout.
+        timeout-minutes: 30
         if: steps.llvm.outcome == 'success'
         run: scripts/codspeed-prep.sh
       - id: bench

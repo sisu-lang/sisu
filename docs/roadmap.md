@@ -713,15 +713,17 @@ stretch goal into steps.
     of the lexer.
   - Milestone 10: default parameters. A default for a field of a record lets
     `Statement` list only the fields that differ.
-  - The slices design (see "Substring views" in "Open decisions"), with no
-    milestone yet: a slice of a `[char]` or a `string` lets the lexer take the
-    text of a token without a push of each `char`.
-  - The attributes foundation (see "Attribute syntax" in "Open decisions"),
-    with no milestone yet: an attribute such as `@discardable` on a function
-    lets `text.next()` stand alone, without `let _ =`.
+  - The slices work, after milestone 8 and before milestone 9 part 1 (see
+    "Substring views" in "Open decisions"): a slice of a `[char]` or a
+    `string` lets the lexer take the text of a token without a push of each
+    `char`.
+  - Milestone 11, part 2 (collections): the `@discardable` attribute, on the
+    attributes foundation, which lands after milestone 8 (see "Attribute
+    syntax" in "Open decisions"). It lets `text.next()` stand alone, without
+    `let _ =`.
 
 CodSpeed has two benchmarks of the lexer (done in milestone 8, part 7):
-`selfhost_lexer` runs the lexer on a fixed corpus of `.sisu` files, whose
+`selfhost_lexer` runs the lexer on a fixed input of `.sisu` source, whose
 output prep checks against `sisu build --emit tokens`, and
 `build_selfhost_lexer` builds the lexer at `-O2`. The focused
 benchmarks stay, because the program changes in every milestone, and its

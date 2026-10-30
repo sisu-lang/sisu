@@ -1,0 +1,4416 @@
+// Every token kind, every reserved word, and every case of the rules of the lexer, one row each.
+// The file lexes with no error. It gives a warning (W0007) for each redundant `;`, and it need not
+// check: no test builds it. Tests compare the tokens of `sisu build --emit tokens` with the tokens
+// of `selfhost/lexer.sisu`. A row that the program lexes in another way fails there.
+// A rule row has a comment that names its rule, so a reader who deletes a row sees what it guarded.
+
+// Names: a name is an ASCII letter or `_`, then ASCII letters, digits and `_`.
+// Keywords: each one, and `_` alone, which is `Underscore`.
+class Names {
+    let mut x1 = _y_2
+    var _
+    todo
+    fn f() { return }
+    const K = true
+    for a in b { loop { break } }
+    if a { continue } else { while false { } }
+    match None { Some(self) => Self, _ => x is y }
+    interface I { }
+    extend Names { }
+    enum E { }
+}
+
+// Reserved words: each one is `Reserved`, and `var` and `todo` are not.
+import pub record type weak test extern as
+
+// Operators and punctuation: each one, by longest match.
+fn operators() {
+    a + b - c * d / e % f
+    a += b -= c *= d /= e %= f
+    a == b != c < d <= e > f >= g && h || !i
+    a = (b, c) -> d => e | f
+    a.b..c..=d[e]
+    a?.b ?? c ? d
+    a: b
+    // `**=` is `**` then `=`: the longest match takes two chars, and `=` starts the next token.
+    a **= b
+    a ** b
+    // A lone `&` joins the bounds of a type parameter.
+    fn bounded<T: A & B>() { }
+}
+
+// Literals: an integer, a float, a char, a string.
+fn literals() {
+    1 2.5 'a' "b"
+    // A `//` in a string is text, not a comment.
+    "a // b"
+    // An escape in a char literal: the char after the `\` is part of it, so `'\''` ends at the
+    // second `'`.
+    '\'' '\\' '\n' '\u{e4}'
+    // An escape in string text is consumed whole.
+    "a\tb \"quoted\" \{braced\} \u{e4} \\"
+}
+
+// Interpolation: `StrHead` runs from the `"` to the `{`, `StrMiddle` from a `}` to the next
+// `{`, and `StrTail` from a `}` to the `"`.
+fn interpolation() {
+    "head {a} tail"
+    "{a}{b}"
+    "x {a} y {b} z"
+    // A string literal inside an interpolation.
+    "a { "b" + "c" } d"
+    "a { "b {c} d" } e"
+    // A format spec runs from its `:` to the `}` that ends the interpolation, not including it.
+    "{x:>8.2}"
+    // A `{` in a spec opens a pair, and its `}` is part of the spec.
+    "{x:>{w}}"
+    "{x:\{}}"
+    // A `\` in a spec is an ordinary char: it does not hide the `}`.
+    "{x:\}"
+    // A `:` inside a bracket of the interpolation is a `Colon`, not a spec.
+    "{f(a: 1)}"
+    "{xs[a: b]}"
+    // After `\\` the `{` opens an interpolation, and after `\{` it does not.
+    "\\{x}"
+    "\{x\}"
+    // `\u{` is an escape: its `{` opens nothing.
+    "\u{e4}\u{1F600}"
+    "\u{e4}{x}"
+    // A `}` or `:` of a char literal or a string inside the interpolation does not end it.
+    "{ c == '}' }"
+    "{ "a:b" }"
+    "{ ':' }"
+}
+
+// Columns count chars, not bytes. The token after a char that takes two bytes, or a tab, sits one
+// column right of it.
+fn columns() {
+    "ä" + x
+    'ä' + x
+    "ä{a}ö{b}ä" + x
+    a	b "ä"	c
+}
+
+// A `.` or `?.` at the start of a line continues the line above it, also after blank lines and
+// comment lines.
+fn continuation() {
+    a
+        .b()
+    a
+
+        .b()
+    a
+        // A comment line comes between.
+        .b()
+    a
+
+
+        // Blank lines and a comment line.
+
+        ?.b()
+    // `..` and `..=` start a range, so they do not continue the line.
+    a
+        ..b
+    a
+        ..=b
+}
+
+// No `Newline` inside `(` or `[`, also after a token that could end a statement.
+fn brackets() {
+    f(a
+        , b)
+    g([a
+        , b
+    ])
+    // A `{` inside them opens a block, and its line breaks end statements again.
+    h(a, { b
+        c })
+}
+
+// Where a number ends.
+fn numbers() {
+    // A tuple index: a digit run after `.` or `?.` has no fraction and no exponent.
+    t.0.1
+    x?.0
+    t.0e10
+    x?.0E2
+    // A `.` that a `.` or a name follows ends an integer.
+    1..2
+    1.abs()
+    1.e5
+    // A fraction and an exponent.
+    1.5e-3
+    1.5E+3
+    1e10
+    2.5
+    // A digit separator goes on in a fraction, and in an exponent.
+    1.5_0
+    1_000
+    1.5e1_0
+    // A prefixed number takes every ASCII letter, digit and `_`.
+    0xFF_ff
+    0b1010
+    0o17
+    0xdeadBEEF
+    // After a `.`, an upper-case prefix takes its digits too. These rows rest on a gap: the
+    // compiler gives no E0075 after a `.` when the run is too large for an integer. The rows go
+    // when that gap is fixed.
+    t.0XFFFFFFFFFFFFFFFFFFFF
+    t.0B11111111111111111111111111111111111111111111111111111111111111111
+    t.0O7777777777777777777777777
+}
+
+// A line break after a token that can end a statement is a `Newline`. This holds after each kind
+// of such token, `_`, `Self` and `?` among them.
+fn endings() {
+    a
+    1
+    1.5
+    'c'
+    "s"
+    "{a}"
+    true
+    false
+    return
+    todo
+    break
+    continue
+    None
+    self
+    Self
+    _
+    a?
+    f()
+    xs[0]
+    if a { }
+    // After any other token the statement goes on.
+    a +
+        b
+    f(
+        a,
+    )
+}
+
+// A `;` in a block separates two statements on a line.
+fn separators() {
+    x; y
+    // A `;` at the end of a line, and a `;` at the start, are redundant.
+    x;
+    ; y
+    // A run of `;` is one: the first decides, and the others print nothing.
+    x;;
+    x;;; y
+    // A `;` after `{` or before `}` is redundant.
+    if a {; x }
+    if a { x; }
+    // A `;` before `else` is redundant: a `}` ends the line, `else` goes on with it.
+    if a { }; else { }
+    if a { }
+    ; else { }
+    // A `;` that joins two lines into a different statement stays, also when a line break stands
+    // before it.
+    a +; b
+    a +
+        ; b
+    // A `;` in `(` and `[` is a `Semicolon` token, as in `[value; length]`.
+    [0; 3]
+    f(a; b)
+    // A `.` after the run continues the line when nothing else ends the statement, so the `;`
+    // separates.
+    x;
+        .f()
+    x; .f()
+    x; ?.f()
+    // A `;` that follows no end of a statement stays before a `.` too.
+    a +; .f()
+    a +; ?.f()
+    // A `;` at the start of a line stays when it joins nothing: it is before a `.`, and the line
+    // above it ends.
+    x
+        ; .f()
+    x
+        ; ?.f()
+    // After a `.`, the digits of a number are an integer, also with a `;` between.
+    t.;0.5
+}
+
+// A `;` between top-level items. After a `fn`, `class`, `enum`, `interface` or `extend` item
+// the `;` is redundant: the `}` ends the item.
+fn first() {};fn main() {}
+class C { };class D { }
+enum E { };enum F { }
+// After a `const` the `;` separates it from the item after it.
+const X = 1; fn main() {}
+// A run before a `const` after one of those items is redundant too.
+fn first() {};const X = 1
+// `interface` ends an item too. A run before it is redundant, and so is a run after it. But
+// `const` before it makes the run a separator.
+fn first() {};interface I { }
+const A = 1
+interface I { }; fn main() { }
+const A = 1; interface I { }
+// `extend` is the same.
+fn first() {};extend C { }
+const A = 1
+extend C { }; fn main() { }
+const A = 1; extend C { }
+// A `;` cuts an item's header, and no item starts with `{`: it stays. After a `}` it separates.
+fn first(); { }
+const A = 1; { }
+fn first() { }; { }
+// A `;` between two methods of a class separates them: the item is not at the top level.
+class C { fn f() {}; fn g() {} }
+
+// A `>` or `??` that closes a type annotation ends the statement, so a line break after it is a
+// `Newline`. After a comparison it does not.
+fn annotations() {
+    let b: Box<i64>
+    let c = 1
+    x: i64??
+    y: Pair<A, Box<B>>
+    z = a >
+        b
+    w = a ??
+        b
+    // A `;` after such a `>` or `??` separates, and after a token that goes on with the type it
+    // stays.
+    let d: Box<i64>; let e = 2
+    x: i64??; y
+    x: a +; b
+    // A `;` ends the statement, and with it the annotation before it.
+    let f: Box<i64>; g ??
+        h
+    // A `>=` after a type annotation starts its value, so a `>` that ends the line compares.
+    a: b >= c < d >
+        e
+    // A loop keyword ends what the label's `:` started: `for` and `loop` too.
+    outer: for a in b ??
+        c { }
+    outer: loop ??
+        x { }
+    // The annotation of a loop label does not start a type.
+    outer: while a < b && c >
+        d { break outer }
+}
+
+// A line break inside an open bound list goes on with the line.
+fn first<T: A &
+    B, U
+    : C
+    & D>() { }
+class Pair<A, B
+    : E> { }
+interface Source {
+    type Item: A
+        & B
+    type Other: C
+}
+extend<T: A
+    & B> Stack<T> { }
+// A bound's arguments keep the list open: a `.` in its name, and the `<` and `>` around them.
+fn k<T: A.B
+    & C>() { }
+fn g<T: A<B>
+    & C>() { }
+// A line break after a token that can end a bound's arguments leaves no `Newline`: after a name,
+// `>`, `]`, `?`, `??` or `Self`. The next line goes on with a name, `,`, `>`, `?` or `??`. A line
+// break inside `[ ]` gives no `Newline` at all.
+fn to<T: Convert<Kelvin>
+>(x: T) { }
+fn to<T: Convert<Kelvin>
+, U>(x: T) { }
+fn to<T: Convert<Kelvin
+>>(x: T) { }
+fn to<T: Convert<[i64]
+>>(x: T) { }
+fn to<T: Convert<K?
+>>(x: T) { }
+fn to<T: Convert<K
+?>>(x: T) { }
+fn to<T: Convert<K??
+>>(x: T) { }
+fn to<T: Convert<K
+??>>(x: T) { }
+fn to<T: Convert<Self
+>>(x: T) { }
+fn to<A
+    B>() { }
+// The `=` of `type X = ...` in an interface starts the type of its choice, so a `>` that ends the
+// line closes it.
+interface Chooser {
+    type X = Box<i64>
+    y
+}
+
+// The `->` starts the type of a method's result, so a `>` that ends the line closes it.
+interface Boxes {
+    fn f(self) -> Box<i64>
+    fn g(self) -> Box<i64>
+}
+
+// A bracket gives its tokens a statement of their own, and the statement around it goes on after
+// the bracket closes. So a `??` that ends a line after `( )`, `[ ]`, a block or an interpolation
+// still sees the type of the header.
+fn h1() -> Box<i64> { g(x) ??
+    y }
+fn h2() -> Box<i64> { [x] ??
+    y }
+fn h3() -> Box<i64> { if a { b } ??
+    y }
+fn h4() -> Box<i64> { "{x}" ??
+    y }
+fn h5() -> Box<i64> { x: A "{y}" ??
+    z }
+// The `}` that ends the body of a `fn`, `class`, `enum`, `interface` or `extend` ends the item.
+// The next item can start on the same line.
+fn f() { } class C<T: A
+    & B> { }
+// A block in the body of a class is no `(`: its `}` ends the method too.
+class D { fn f() { } fn g<T: A
+    & B>() { } }
+// The `}` of an `if` ends no item, so the statement goes on, and a `fn` after it is no header.
+fn i() {
+    if a { } fn f<T: A
+        & B>() { }
+}
+
+// A bound list is open only where a header or a `type X:` opens it. It ends at its own `>`, so a
+// name after that starts a statement.
+class C<T: Convert<K>>: Shape
+foo
+// A `??` that ends a bound closes a list that no `<` of its own opened.
+fn t<T: K??
+>() { }
+// Only `type` opens a list at a `:`, with one name before the `:`, and not at a `->`.
+pub Item: A
+    & B
+type X -> A
+    & B
+type 1: A
+    & B
+type X Y: A
+    & B
+// A `<` opens a list only as the third token of a header, or the second of an `extend`. It opens
+// none in a statement that is no header.
+fn h() {
+    a b < c
+        & d
+}
+fn q() -> Foo<A
+    & B> { }
+class A extend<T: B
+    & C> { }
+// The `=` of `type X = ...` starts a type only as its third token, and only in a `type`. Another
+// token at that place, such as `>=`, starts none.
+type X >= Box<i64>
+    y
+type X: A = Box<i64>
+    y
+x y = Box<i64>
+    z
+
+// A `}` ends the line, and `else` on the next line is a statement of its own.
+fn branches() {
+    if a { }
+    else { }
+}
+// The lexer of Sisu, written in Sisu. It reads standard input and prints the tokens that
+// `sisu build --emit tokens` prints for the same text, one `line:col Kind text` line each.
+// A test compares the two outputs byte for byte. The program follows the clean path only: on text
+// that the compiler's lexer reports an error for, its output is not specified.
+//
+// It has two passes. The first reads each line with `read_line` and walks its `chars()` once. It
+// keeps the tokens in an array, and it decides at each line break whether a `Newline` follows.
+// The second pass judges each run of `;` (ADR 0028) and prints the tokens.
+
+// One variant for each `TokenKind` of the compiler's lexer. A variant has the name that
+// `TokenKind::name()` gives it, so the generated `Display` prints the kind as the dump does.
+enum Kind {
+    Ident
+    Underscore
+    Int
+    Float
+    Char
+    Str
+    StrHead
+    StrMiddle
+    StrTail
+    FormatSpec
+    Fn
+    Let
+    Mut
+    Var
+    Reserved
+    Todo
+    If
+    Else
+    While
+    For
+    Loop
+    In
+    Return
+    Break
+    Continue
+    Class
+    Const
+    Enum
+    Interface
+    Extend
+    Match
+    NoneKw
+    Is
+    SelfKw
+    SelfType
+    True
+    False
+    Plus
+    Minus
+    Star
+    StarStar
+    Slash
+    Percent
+    PlusEq
+    MinusEq
+    StarEq
+    SlashEq
+    PercentEq
+    EqEq
+    NotEq
+    Lt
+    Le
+    Gt
+    Ge
+    AndAnd
+    Amp
+    OrOr
+    Bang
+    Eq
+    LParen
+    RParen
+    LBrace
+    RBrace
+    Comma
+    Colon
+    Arrow
+    FatArrow
+    Pipe
+    Dot
+    DotDot
+    DotDotEq
+    LBracket
+    RBracket
+    Semicolon
+    Question
+    QuestionDot
+    QuestionQuestion
+    Newline
+    Eof
+}
+
+// A token as the dump prints it: its kind, its position, and its text as written in the source.
+class Token: Display {
+    kind: Kind
+    line: i64
+    col: i64
+    text: string
+
+    fn to_string(self) -> string {
+        match self.kind {
+            Newline | Eof => "{self.line}:{self.col} {self.kind}"
+            _ => "{self.line}:{self.col} {self.kind} {self.text}"
+        }
+    }
+}
+
+class Cell<T> {
+    value: T
+    next: Cell<T>?
+}
+
+class Stack<T> {
+    mut head: Cell<T>?
+    mut size: i64
+
+    fn push(self, x: T) {
+        self.head = Cell(value: x, next: self.head)
+        self.size += 1
+    }
+
+    fn pop(self) -> T? {
+        if let cell = self.head {
+            self.head = cell.next
+            self.size -= 1
+            cell.value
+        } else {
+            None
+        }
+    }
+
+    fn top(self) -> T? {
+        if let cell = self.head {
+            cell.value
+        } else {
+            None
+        }
+    }
+
+    fn len(self) -> i64 {
+        self.size
+    }
+}
+
+// The cursor over one line: the line's chars, its number, and where the next char is.
+class Text {
+    cs: [char]
+    line: i64
+    mut at: i64
+
+    fn peek(self, k: i64) -> char? {
+        let i = self.at + k
+        if i < self.cs.len() {
+            self.cs[i]
+        } else {
+            None
+        }
+    }
+
+    // gap: no marker says that a caller may drop this result, so a call that skips the char is
+    // `let _ = text.next()`.
+    fn next(self) -> char? {
+        let c = self.peek(0)
+        self.at += 1
+        c
+    }
+
+    // The chars from `from` up to, but not including, `to`, as a string.
+    // gap: a `[char]` has no slice, so the text of a token is pushed char by char.
+    fn slice(self, from: i64, to: i64) -> string {
+        let mut part: [char] = []
+        let mut i = from
+        while i < to {
+            part.push(self.cs[i])
+            i += 1
+        }
+        string(part)
+    }
+}
+
+interface CharClass {
+    fn has(self, c: char) -> bool
+}
+
+// gap: a `char` has no classification methods, so these two read the ranges.
+fn is_digit(c: char) -> bool {
+    match c {
+        '0'..='9' => true
+        _ => false
+    }
+}
+
+fn is_alpha(c: char) -> bool {
+    match c {
+        'a'..='z' | 'A'..='Z' => true
+        _ => false
+    }
+}
+
+// ASCII letters, digits and `_`: what a name takes after its first char, and what a prefixed
+// number takes after its prefix.
+class NameChar: CharClass {
+    fn has(self, c: char) -> bool {
+        is_alpha(c) || is_digit(c) || c == '_'
+    }
+}
+
+class DigitOrSeparator: CharClass {
+    fn has(self, c: char) -> bool {
+        is_digit(c) || c == '_'
+    }
+}
+
+// Moves the cursor past the chars that `predicate` accepts.
+fn take_while<C: CharClass>(text: Text, predicate: C) {
+    while let c = text.peek(0) {
+        if !predicate.has(c) {
+            break
+        }
+        let _ = text.next()
+    }
+}
+
+// gap: the exit code of a panic is 101, and a program cannot set another one.
+fn unexpected(text: Text, at: i64) -> string {
+    "lexer.sisu: unexpected input at {text.line}:{at + 1}"
+}
+
+fn keyword(word: string) -> Kind {
+    match word {
+        "fn" => Kind.Fn
+        "let" => Kind.Let
+        "mut" => Kind.Mut
+        "var" => Kind.Var
+        "import" | "pub" | "record" | "type" | "weak" | "test" | "extern" | "as" => Kind.Reserved
+        "todo" => Kind.Todo
+        "if" => Kind.If
+        "else" => Kind.Else
+        "while" => Kind.While
+        "for" => Kind.For
+        "loop" => Kind.Loop
+        "in" => Kind.In
+        "return" => Kind.Return
+        "break" => Kind.Break
+        "continue" => Kind.Continue
+        "class" => Kind.Class
+        "const" => Kind.Const
+        "enum" => Kind.Enum
+        "interface" => Kind.Interface
+        "extend" => Kind.Extend
+        "match" => Kind.Match
+        "None" => Kind.NoneKw
+        "is" => Kind.Is
+        "self" => Kind.SelfKw
+        "Self" => Kind.SelfType
+        "true" => Kind.True
+        "false" => Kind.False
+        "_" => Kind.Underscore
+        _ => Kind.Ident
+    }
+}
+
+// Moves the cursor past the next char when it is `want`.
+fn eat(text: Text, want: char) -> bool {
+    if text.peek(0) == want {
+        let _ = text.next()
+        true
+    } else {
+        false
+    }
+}
+
+// The operator or punctuation that starts with `c`, by longest match.
+fn symbol(c: char, text: Text) -> Kind? {
+    match c {
+        '+' => if eat(text, '=') { Kind.PlusEq } else { Kind.Plus }
+        '-' => if eat(text, '=') {
+            Kind.MinusEq
+        } else if eat(text, '>') {
+            Kind.Arrow
+        } else {
+            Kind.Minus
+        }
+        '*' => if eat(text, '=') {
+            Kind.StarEq
+        } else if eat(text, '*') {
+            Kind.StarStar
+        } else {
+            Kind.Star
+        }
+        '/' => if eat(text, '=') { Kind.SlashEq } else { Kind.Slash }
+        '%' => if eat(text, '=') { Kind.PercentEq } else { Kind.Percent }
+        '=' => if eat(text, '=') {
+            Kind.EqEq
+        } else if eat(text, '>') {
+            Kind.FatArrow
+        } else {
+            Kind.Eq
+        }
+        '!' => if eat(text, '=') { Kind.NotEq } else { Kind.Bang }
+        '<' => if eat(text, '=') { Kind.Le } else { Kind.Lt }
+        '>' => if eat(text, '=') { Kind.Ge } else { Kind.Gt }
+        '&' => if eat(text, '&') { Kind.AndAnd } else { Kind.Amp }
+        '|' => if eat(text, '|') { Kind.OrOr } else { Kind.Pipe }
+        '(' => Kind.LParen
+        ')' => Kind.RParen
+        '{' => Kind.LBrace
+        '}' => Kind.RBrace
+        ',' => Kind.Comma
+        ':' => Kind.Colon
+        '.' => if eat(text, '.') {
+            if eat(text, '=') { Kind.DotDotEq } else { Kind.DotDot }
+        } else {
+            Kind.Dot
+        }
+        '[' => Kind.LBracket
+        ']' => Kind.RBracket
+        ';' => Kind.Semicolon
+        '?' => if eat(text, '.') {
+            Kind.QuestionDot
+        } else if eat(text, '?') {
+            Kind.QuestionQuestion
+        } else {
+            Kind.Question
+        }
+        _ => None
+    }
+}
+
+// The opener that a closer closes.
+fn opened_by(kind: Kind) -> char? {
+    match kind {
+        RParen => '('
+        RBracket => '['
+        RBrace => '{'
+        _ => None
+    }
+}
+
+fn opener(kind: Kind) -> char? {
+    match kind {
+        LParen => '('
+        LBracket => '['
+        LBrace => '{'
+        _ => None
+    }
+}
+
+// Whether a line break after a token of this kind ends a statement (Go's rule).
+fn can_end_statement(kind: Kind) -> bool {
+    match kind {
+        Ident | Underscore | Int | Float | Char | Str | StrTail | True | False | Return | Todo |
+        Break | Continue | NoneKw | SelfKw | SelfType | Question | RParen | RBracket |
+        RBrace => true
+        _ => false
+    }
+}
+
+// Whether a token of this kind starts a header, which a `}` ends.
+fn declares(kind: Kind) -> bool {
+    match kind {
+        Fn | Class | Enum | Interface | Extend => true
+        _ => false
+    }
+}
+
+// Whether a line break may follow a token of this kind inside an open bound list.
+fn ends_in_list(kind: Kind) -> bool {
+    match kind {
+        Ident | Gt | RBracket | Question | QuestionQuestion | SelfType => true
+        _ => false
+    }
+}
+
+// Whether a line that starts with a token of this kind goes on with an open bound list. A `.`
+// that goes on is `QuestionDot` or `Dot`, which every line continues.
+fn goes_on_in_list(kind: Kind) -> bool {
+    match kind {
+        Ident | Comma | Colon | RBracket | Question | QuestionQuestion | Amp | Gt => true
+        _ => false
+    }
+}
+
+// What the first token of a statement was, and whether the statement may take a bound list.
+enum Head {
+    Unseen
+    Plain
+    Declaration
+}
+
+enum Start {
+    Unseen
+    TypeWord
+    Other
+}
+
+// What the tokens of a statement so far, outside its closed brackets, show. The compiler's lexer
+// keeps the same facts in its `Statement`.
+class Statement {
+    mut head: Head
+    // After its last `:` or `->` that no `=` follows, how many more `>` than `<` there are.
+    mut annotation: i64?
+    mut tokens: i64
+    // Whether a bound list is open, and how many `<` of a bound's arguments are open in it.
+    mut params: bool
+    mut nested: i64
+    mut first: Start
+    grouped: bool
+
+    // Counts a token of `kind` into the bound list that is open, and tells whether the list was
+    // open before it.
+    fn keep_list_open(self, kind: Kind) -> bool {
+        let opened = self.params
+        let stays = match kind {
+            Ident | Comma | Colon | Amp | Lt | LBracket | RBracket | Dot | Question |
+            QuestionQuestion | SelfType => true
+            Gt => self.nested > 0
+            _ => false
+        }
+        self.params = opened && stays
+        opened
+    }
+}
+
+// gap: a field has no default value, so each `Statement` lists all its fields.
+fn fresh() -> Statement {
+    Statement(head: Head.Unseen, annotation: None, tokens: 0, params: false, nested: 0,
+        first: Start.Unseen, grouped: false)
+}
+
+// Reads the tokens in order and keeps the statement that they end in, one for each open
+// bracket.
+class Tracker {
+    mut current: Statement
+    enclosing: Stack<Statement>
+    mut prev: Kind
+
+    // Whether a `>` or `??` that ends the tokens closes a type annotation.
+    fn annotates(self) -> bool {
+        self.current.annotation == 0
+    }
+
+    fn feed(self, kind: Kind, text: string) {
+        let s = self.current
+        if s.first == Start.Unseen {
+            s.first = if kind == Kind.Reserved && text == "type" {
+                Start.TypeWord
+            } else {
+                Start.Other
+            }
+        }
+        if s.head == Head.Unseen {
+            s.head = if declares(kind) { Head.Declaration } else { Head.Plain }
+        }
+        s.tokens += 1
+        let opened = s.keep_list_open(kind)
+        match kind {
+            LBrace | LParen | LBracket | StrHead => {
+                let block = kind == Kind.LBrace
+                self.enclosing.push(s)
+                let head = if block { Head.Unseen } else { s.head }
+                let first = if block { Start.Unseen } else { s.first }
+                self.current = Statement(head: head, annotation: None, tokens: 0, params: false,
+                    nested: 0, first: first, grouped: !block)
+            }
+            RBrace | RParen | RBracket | StrTail => {
+                let around = self.enclosing.pop() ?? fresh()
+                // The `}` that ends the body of a declaration ends the item.
+                let ends_item = kind == Kind.RBrace && around.head == Head.Declaration
+                self.current = if ends_item && !around.grouped { fresh() } else { around }
+            }
+            Newline | Semicolon => {
+                self.current = fresh()
+            }
+            Colon | Arrow => {
+                s.annotation = 0
+                if kind == Kind.Colon {
+                    self.open_bounds(s, opened)
+                }
+            }
+            Eq | Ge | While | For | Loop => {
+                // The `=` of `type Item = ...` starts the type of an associated type's choice.
+                let chooses = kind == Kind.Eq && s.tokens == 3 && s.first == Start.TypeWord
+                s.annotation = if chooses { 0 } else { None }
+            }
+            Gt => {
+                if let a = s.annotation {
+                    s.annotation = a + 1
+                }
+                if s.params {
+                    s.nested -= 1
+                }
+            }
+            Lt => {
+                if let a = s.annotation {
+                    s.annotation = a - 1
+                }
+                if s.params {
+                    s.nested += 1
+                } else {
+                    s.params = s.head == Head.Declaration && opens_list(self.prev, s.tokens)
+                }
+            }
+            _ => {}
+        }
+        self.prev = kind
+    }
+
+    // Reads the `:` that was just counted. In an open list it starts the bounds of a parameter.
+    // Outside one, the `:` of a `type Item:` opens the list of its bounds.
+    fn open_bounds(self, s: Statement, in_list: bool) {
+        let in_bounds = in_list && s.nested == 0
+        if !in_bounds && s.tokens == 3 && self.prev == Kind.Ident && s.first == Start.TypeWord {
+            s.params = true
+        }
+    }
+}
+
+// Whether a `<` after `prev`, the `tokens`th token of a header, opens its type-parameter list.
+fn opens_list(prev: Kind, tokens: i64) -> bool {
+    match prev {
+        Ident => tokens == 3
+        Extend => tokens == 2
+        _ => false
+    }
+}
+
+// A `;` that separates statements, which the second pass judges.
+class Semi {
+    // Where its token stands among the tokens.
+    at: i64
+    // Whether it stands between top-level items, after a `fn`, `class`, `enum`, `interface` or
+    // `extend`.
+    between_items: bool
+    // Whether a `>` or `??` before it closes a type annotation.
+    annotates: bool
+}
+
+// A `Newline` that a line break may leave: the next token can still go on with the line.
+class Pending {
+    line: i64
+    col: i64
+    // Whether an open bound list lets the line go on with a name, `,`, `:`, `&`, `>`, `]` or `?`.
+    params: bool
+}
+
+// Skips the rest of an escape after its `\`: the char after it, and for `\u{...}` the digits
+// through the `}`.
+fn skip_escape(text: Text, start: i64) {
+    let c = text.next() ?? panic(unexpected(text, start))
+    if c == 'u' && text.peek(0) == '{' {
+        while let d = text.next() {
+            if d == '}' {
+                break
+            }
+        }
+    }
+}
+
+// Whether a float literal goes on after its digits: a fraction, an exponent, or both.
+fn float_rest(text: Text) -> bool {
+    let mut float = false
+    if text.peek(0) == '.' && is_digit(text.peek(1) ?? ' ') {
+        let _ = text.next()
+        take_while(text, DigitOrSeparator())
+        float = true
+    }
+    if text.peek(0) == 'e' || text.peek(0) == 'E' {
+        let _ = text.next()
+        if text.peek(0) == '+' || text.peek(0) == '-' {
+            let _ = text.next()
+        }
+        take_while(text, DigitOrSeparator())
+        float = true
+    }
+    float
+}
+
+// The first pass. It reads the lines and keeps their tokens, with the `Newline`s that line breaks
+// leave.
+class Lexer {
+    mut tokens: [Token]
+    mut semis: [Semi]
+    // The open brackets, innermost on top. An interpolation's `{` is the char `"`.
+    open: Stack<char>
+    mut interps: i64
+    tracker: Tracker
+    // How many `;` that separate statements end the tokens, which the tracker has not read.
+    mut trailing: i64
+    // Whether the top-level item so far is a `fn`, `class`, `enum`, `interface` or `extend`. Such
+    // an item ends at its `}`. A `const` ends at a line break.
+    mut self_ending: bool
+    // The kind of the last token that is not a `;`.
+    mut last_code: Kind
+    mut pending: Pending?
+
+    // Whether the innermost open bracket is a block's `{`, or there is none.
+    fn in_block(self) -> bool {
+        match self.open.top() {
+            Some(c) => c == '{'
+            None => true
+        }
+    }
+
+    // Whether a `}` or `:` now ends the expression of the innermost interpolation.
+    fn at_end(self) -> bool {
+        self.open.top() == '"'
+    }
+
+    // Adds a token that the source holds. A `Newline` that the last line break left goes in first,
+    // unless this token goes on with the line.
+    fn push(self, kind: Kind, text: Text, start: i64, spelled: string) {
+        if let p = self.pending {
+            self.pending = None
+            let goes_on = kind == Kind.Dot || kind == Kind.QuestionDot ||
+                p.params && goes_on_in_list(kind)
+            if !goes_on {
+                self.put(Kind.Newline, p.line, p.col, "")
+            }
+        }
+        self.put(kind, text.line, start + 1, spelled)
+    }
+
+    // Adds a token to the tokens, and tells the tracker.
+    fn put(self, kind: Kind, line: i64, col: i64, spelled: string) {
+        let separator = kind == Kind.Semicolon && self.in_block()
+        if self.open.len() == 0 {
+            if declares(kind) {
+                self.self_ending = true
+            } else if kind == Kind.Const {
+                self.self_ending = false
+            }
+        }
+        if separator {
+            let between_items = self.open.len() == 0 && self.self_ending
+            let at = self.tokens.len()
+            self.semis.push(Semi(at: at, between_items: between_items,
+                annotates: self.tracker.annotates()))
+            self.trailing += 1
+        } else {
+            // The `;`s before this token end the statement, whatever the first of them does.
+            if self.trailing > 0 {
+                self.tracker.feed(Kind.Semicolon, ";")
+            }
+            self.tracker.feed(kind, spelled)
+            self.trailing = 0
+        }
+        if kind != Kind.Semicolon {
+            self.last_code = kind
+        }
+        self.tokens.push(Token(kind: kind, line: line, col: col, text: spelled))
+    }
+
+    // Whether a line break here ends a statement. The token before the `;`s that end the tokens
+    // must be one that can end a statement. The innermost open bracket must be a block's `{`.
+    fn ends_statement(self) -> bool {
+        let n = self.tokens.len()
+        if n <= self.trailing || !self.in_block() {
+            return false
+        }
+        let last = self.tokens[n - self.trailing - 1].kind
+        can_end_statement(last) ||
+            (last == Kind.Gt || last == Kind.QuestionQuestion) && self.tracker.annotates()
+    }
+
+    // The end of a line, whose text is `text`. The `Newline` goes at the column after the text.
+    fn line_break(self, text: Text) {
+        if self.interps > 0 {
+            panic(unexpected(text, text.cs.len()))
+        }
+        if self.pending == None && self.ends_statement() {
+            let n = self.tokens.len()
+            let in_list = self.trailing == 0 && ends_in_list(self.tokens[n - 1].kind)
+            let params = in_list && self.tracker.current.params
+            self.pending = Pending(line: text.line, col: text.cs.len() + 1, params: params)
+        }
+    }
+
+    fn lex_line(self, text: Text) {
+        while let c = text.peek(0) {
+            if c == ' ' || c == '\t' || c == '\r' {
+                let _ = text.next()
+            } else if c == '/' && text.peek(1) == '/' {
+                text.at = text.cs.len()
+            } else if is_alpha(c) || c == '_' {
+                self.name(text)
+            } else if is_digit(c) {
+                self.number(text)
+            } else if c == '\'' {
+                self.char_literal(text)
+            } else if c == '"' {
+                self.string_part(text, false)
+            } else if (c == '}' || c == ':') && self.at_end() {
+                if c == '}' {
+                    self.string_part(text, true)
+                } else {
+                    self.format_spec(text)
+                }
+            } else {
+                self.operator(text)
+            }
+        }
+        self.line_break(text)
+    }
+
+    fn name(self, text: Text) {
+        let start = text.at
+        take_while(text, NameChar())
+        let word = text.slice(start, text.at)
+        self.push(keyword(word), text, start, word)
+    }
+
+    fn number(self, text: Text) {
+        let start = text.at
+        let first = text.cs[start]
+        let _ = text.next()
+        // A digit run after a `.` is a tuple index or a fraction. The parser reads it. No fraction
+        // and no exponent goes on after it.
+        let after_dot = self.last_code == Kind.Dot || self.last_code == Kind.QuestionDot
+        let p = text.peek(0)
+        let prefixed = first == '0' &&
+            (p == 'x' || p == 'X' || p == 'b' || p == 'B' || p == 'o' || p == 'O')
+        let mut float = false
+        if prefixed {
+            let _ = text.next()
+            take_while(text, NameChar())
+        } else {
+            take_while(text, DigitOrSeparator())
+            if !after_dot {
+                float = float_rest(text)
+            }
+        }
+        let kind = if float { Kind.Float } else { Kind.Int }
+        self.push(kind, text, start, text.slice(start, text.at))
+    }
+
+    fn char_literal(self, text: Text) {
+        let start = text.at
+        let _ = text.next()
+        loop {
+            let c = text.next() ?? panic(unexpected(text, start))
+            if c == '\'' {
+                break
+            }
+            if c == '\\' {
+                skip_escape(text, start)
+            }
+        }
+        self.push(Kind.Char, text, start, text.slice(start, text.at))
+    }
+
+    // The text of a string literal. It starts at the `"`, or, when `resumed`, at the `}` that ends
+    // an interpolation. It ends at the closing `"` or at the `{` that opens an interpolation.
+    fn string_part(self, text: Text, resumed: bool) {
+        let start = text.at
+        let _ = text.next()
+        if resumed {
+            let _ = self.open.pop()
+            self.interps -= 1
+        }
+        let mut brace = false
+        loop {
+            let c = text.next() ?? panic(unexpected(text, start))
+            if c == '"' {
+                break
+            }
+            if c == '{' {
+                brace = true
+                break
+            }
+            if c == '\\' {
+                skip_escape(text, start)
+            }
+        }
+        // gap: a `match` takes no tuple pattern, so the two flags are two nested `if`s.
+        let kind = if brace {
+            if resumed { Kind.StrMiddle } else { Kind.StrHead }
+        } else {
+            if resumed { Kind.StrTail } else { Kind.Str }
+        }
+        if brace {
+            self.open.push('"')
+            self.interps += 1
+        }
+        self.push(kind, text, start, text.slice(start, text.at))
+    }
+
+    // The format spec after the `:` that ends an interpolation's expression: up to the `}` that
+    // ends the interpolation, which is not part of it. A `{` in the spec opens a pair, and a `\`
+    // is an ordinary char.
+    fn format_spec(self, text: Text) {
+        let start = text.at
+        let mut pairs = 0
+        loop {
+            let c = text.peek(0) ?? panic(unexpected(text, start))
+            if c == '"' {
+                panic(unexpected(text, start))
+            }
+            if c == '}' && pairs == 0 {
+                break
+            }
+            if c == '{' {
+                pairs += 1
+            } else if c == '}' {
+                pairs -= 1
+            }
+            let _ = text.next()
+        }
+        self.push(Kind.FormatSpec, text, start, text.slice(start, text.at))
+    }
+
+    fn operator(self, text: Text) {
+        let start = text.at
+        let c = text.next() ?? panic(unexpected(text, start))
+        let kind = symbol(c, text) ?? panic(unexpected(text, start))
+        if let bracket = opener(kind) {
+            self.open.push(bracket)
+        } else if let bracket = opened_by(kind) {
+            let top = self.open.pop() ?? panic(unexpected(text, start))
+            if top != bracket {
+                panic(unexpected(text, start))
+            }
+        }
+        self.push(kind, text, start, text.slice(start, text.at))
+    }
+
+    // The end of the input: no bracket is open, and a `Newline` that the last line break left
+    // stays.
+    fn finish(self, text: Text) {
+        if self.open.len() > 0 {
+            panic(unexpected(text, text.cs.len()))
+        }
+        if let p = self.pending {
+            self.pending = None
+            self.put(Kind.Newline, p.line, p.col, "")
+        }
+    }
+}
+
+enum Judgement {
+    Separator
+    Redundant
+    Kept
+}
+
+// What becomes of the first `;` of the run `tokens[i..end]`, in statement context. A `;` that
+// separates two statements prints as a `Newline`, a redundant one prints nothing, and any other
+// one prints as a `;`.
+fn judge(tokens: [Token], i: i64, end: i64, semi: Semi) -> Judgement {
+    let first = tokens[i]
+    let has_prev = i > 0
+    let prev = if has_prev { tokens[i - 1].kind } else { Kind.Newline }
+    let has_next = end < tokens.len()
+    let next = if has_next { tokens[end].kind } else { Kind.Eof }
+    let break_before = !has_prev || prev == Kind.Newline || tokens[i - 1].line != first.line
+    let break_after = !has_next || next == Kind.Newline || tokens[end].line != first.line
+    // A `>` or `??` that closes a type annotation ends a statement, as at a line's end.
+    let ends = has_prev && (can_end_statement(prev) ||
+        (prev == Kind.Gt || prev == Kind.QuestionQuestion) && semi.annotates)
+    if next == Kind.Dot || next == Kind.QuestionDot {
+        // Without the `;`, the line break before the `.` would continue the line.
+        if ends && !break_before {
+            Judgement.Separator
+        } else {
+            Judgement.Kept
+        }
+    } else if has_prev && !ends && prev != Kind.LBrace && prev != Kind.Newline && !break_before {
+        // Without the `;`, the lines would join into a different statement.
+        Judgement.Kept
+    } else if next == Kind.Else || break_before || break_after || prev == Kind.LBrace ||
+        next == Kind.RBrace || semi.between_items && starts_item(next) {
+        Judgement.Redundant
+    } else if semi.between_items && prev != Kind.RBrace && next == Kind.LBrace {
+        // The `;` cuts an item's header, and no item starts with `{`.
+        Judgement.Kept
+    } else {
+        Judgement.Separator
+    }
+}
+
+// Whether a token of this kind starts a top-level item, which needs no `;` before it.
+fn starts_item(kind: Kind) -> bool {
+    declares(kind) || kind == Kind.Const
+}
+
+// The second pass: prints the tokens, and the `Eof` after the last one that is not a `Newline`.
+class Printer {
+    mut eof_line: i64
+    mut eof_col: i64
+
+    fn show(self, t: Token) {
+        print(t)
+        if t.kind != Kind.Newline {
+            self.eof_line = t.line
+            self.eof_col = t.col + t.text.chars().len()
+        }
+    }
+}
+
+fn separate(tokens: [Token], semis: [Semi]) {
+    let printer = Printer(eof_line: 1, eof_col: 1)
+    let mut i = 0
+    let mut k = 0
+    while i < tokens.len() {
+        let t = tokens[i]
+        if t.kind == Kind.Semicolon && k < semis.len() && semis[k].at == i {
+            let mut end = i
+            while end < tokens.len() && tokens[end].kind == Kind.Semicolon {
+                end += 1
+            }
+            let verdict = judge(tokens, i, end, semis[k])
+            if verdict == Judgement.Separator {
+                printer.show(Token(kind: Kind.Newline, line: t.line, col: t.col, text: ""))
+            } else if verdict == Judgement.Kept {
+                printer.show(t)
+            }
+            k += end - i
+            i = end
+        } else {
+            printer.show(t)
+            i += 1
+        }
+    }
+    print(Token(kind: Kind.Eof, line: printer.eof_line, col: printer.eof_col, text: ""))
+}
+
+fn main() {
+    let tracker = Tracker(current: fresh(), enclosing: Stack(head: None, size: 0),
+        prev: Kind.Newline)
+    let lexer = Lexer(tokens: [], semis: [], open: Stack(head: None, size: 0), interps: 0,
+        tracker: tracker, trailing: 0, self_ending: false, last_code: Kind.Newline,
+        pending: None)
+    let mut last = Text(cs: [], line: 1, at: 0)
+    let mut line = 0
+    while let row = read_line() {
+        line += 1
+        last = Text(cs: row.chars(), line: line, at: 0)
+        lexer.lex_line(last)
+    }
+    lexer.finish(last)
+    separate(lexer.tokens, lexer.semis)
+}
+// Niches: an empty optional is kept in a spare value of its payload. A `char?` is an `i32` with
+// `None` as 0x110000, a `bool?` is a byte with `None` as 2, and an enum optional uses the tag
+// after the last variant. A nested optional uses the next spare value. Each value is made in
+// each way, kept in an array, read back, and tested with `== None`, `if let` and `match`. A
+// `None` never reads as a value, and no value reads as `None`.
+class Holder<T> {
+    v: T
+}
+
+enum E {
+    A
+    B
+}
+
+// `F` holds a string, so its optional is counted.
+enum F {
+    S(string)
+    N
+    M
+}
+
+enum G {
+    A(f64)
+    B
+    C
+}
+
+// The ways to make a `None`, other than the literal.
+fn nothing<T>() -> T? {
+    None
+}
+
+fn filled<T>() -> T? {
+    let xs: [T?] = [None; 3]
+    xs[2]
+}
+
+fn or_none<T>(x: T?) -> T? {
+    x ?? None
+}
+
+fn through<T>(h: Holder<T?>?) -> T? {
+    h?.v
+}
+
+fn arm<T>(k: i64, x: T) -> T? {
+    match k {
+        0 => None
+        _ => x
+    }
+}
+
+// A string in a new block on each call.
+fn text(n: i64) -> string {
+    "s{n}"
+}
+
+// Each `show` function gives `== None`, then `if let`, then `match`, then a `??`.
+fn show_char(c: char?) -> string {
+    let by_if = if let v = c { "{i64(v)}" } else { "None" }
+    let by_match = match c {
+        None => "None"
+        Some(v) => "{i64(v)}"
+    }
+    "{c == None} {by_if} {by_match} {i64(c ?? '?')}"
+}
+
+fn show_char2(c: char??) -> string {
+    let by_if = if let v = c {
+        if let w = v { "{i64(w)}" } else { "Some(None)" }
+    } else {
+        "None"
+    }
+    let by_match = match c {
+        None => "None"
+        Some(None) => "Some(None)"
+        Some(Some(w)) => "{i64(w)}"
+    }
+    "{c == None} {by_if} {by_match} {i64((c ?? None) ?? '?')}"
+}
+
+fn show_bool(b: bool?) -> string {
+    let by_if = if let v = b { "{v}" } else { "None" }
+    let by_match = match b {
+        None => "None"
+        Some(true) => "true"
+        Some(false) => "false"
+    }
+    "{b == None} {by_if} {by_match} {b ?? true}"
+}
+
+fn show_bool2(b: bool??) -> string {
+    let by_if = if let v = b {
+        if let w = v { "{w}" } else { "Some(None)" }
+    } else {
+        "None"
+    }
+    let by_match = match b {
+        None => "None"
+        Some(None) => "Some(None)"
+        Some(Some(w)) => "{w}"
+    }
+    "{b == None} {by_if} {by_match} {(b ?? None) ?? true}"
+}
+
+fn name_e(e: E) -> string {
+    match e {
+        A => "A"
+        B => "B"
+    }
+}
+
+fn show_e(e: E?) -> string {
+    let by_if = if let v = e { name_e(v) } else { "None" }
+    let by_match = match e {
+        None => "None"
+        A => "A"
+        B => "B"
+    }
+    "{e == None} {by_if} {by_match} {name_e(e ?? E.A)}"
+}
+
+fn show_e2(e: E??) -> string {
+    let by_if = if let v = e {
+        if let w = v { name_e(w) } else { "Some(None)" }
+    } else {
+        "None"
+    }
+    let by_match = match e {
+        None => "None"
+        Some(None) => "Some(None)"
+        Some(Some(w)) => name_e(w)
+    }
+    "{e == None} {by_if} {by_match} {name_e((e ?? None) ?? E.A)}"
+}
+
+fn name_f(f: F) -> string {
+    match f {
+        S(s) => "S({s})"
+        N => "N"
+        M => "M"
+    }
+}
+
+fn show_f(f: F?) -> string {
+    let by_if = if let v = f { name_f(v) } else { "None" }
+    let by_match = match f {
+        None => "None"
+        S(s) => "S({s})"
+        N => "N"
+        M => "M"
+    }
+    "{f == None} {by_if} {by_match} {name_f(f ?? F.N)}"
+}
+
+fn name_g(g: G) -> string {
+    match g {
+        A(x) => "A({x})"
+        B => "B"
+        C => "C"
+    }
+}
+
+fn show_g(g: G?) -> string {
+    let by_if = if let v = g { name_g(v) } else { "None" }
+    let by_match = match g {
+        None => "None"
+        A(x) => "A({x})"
+        B => "B"
+        C => "C"
+    }
+    "{g == None} {by_if} {by_match} {name_g(g ?? G.B)}"
+}
+
+// An `F?` that one branch moves out of `f`. On the other path the end of the scope releases
+// `f`; on this one, `f`'s slot holds its zero value, an `F.S` with no string.
+fn keep_if(keep: bool) -> F? {
+    let f: F? = F.S(text(3))
+    let mut out: F? = None
+    if keep {
+        out = f
+    }
+    out
+}
+
+fn main() {
+    let chars: [char?] = [
+        None,
+        nothing<char>(),
+        filled<char>(),
+        or_none<char>(None),
+        through<char>(None),
+        arm(0, 'a'),
+        char(0x110000),
+        char(-1),
+        char(0xD800),
+        '\0',
+        '\u{10FFFF}',
+        arm(1, '\u{10FFFF}'),
+        or_none<char>('\0'),
+        char(0),
+        char(0x10FFFF),
+        through<char>(Holder<char?>(v: '\u{10FFFF}')),
+    ]
+    print(show_char(chars[0]))                 // true None None 63
+    print(show_char(chars[1]))                 // true None None 63
+    print(show_char(chars[2]))                 // true None None 63
+    print(show_char(chars[3]))                 // true None None 63
+    print(show_char(chars[4]))                 // true None None 63
+    print(show_char(chars[5]))                 // true None None 63
+    print(show_char(chars[6]))                 // true None None 63
+    print(show_char(chars[7]))                 // true None None 63
+    print(show_char(chars[8]))                 // true None None 63
+    print(show_char(chars[9]))                 // false 0 0 0
+    print(show_char(chars[10]))                // false 1114111 1114111 1114111
+    print(show_char(chars[11]))                // false 1114111 1114111 1114111
+    print(show_char(chars[12]))                // false 0 0 0
+    print(show_char(chars[13]))                // false 0 0 0
+    print(show_char(chars[14]))                // false 1114111 1114111 1114111
+    print(show_char(chars[15]))                // false 1114111 1114111 1114111
+
+    // `char(0x110000)` is a `char?` `None`, so as a `char??` it is `Some(None)`.
+    let chars2: [char??] = [
+        None,
+        nothing<char?>(),
+        filled<char?>(),
+        or_none<char?>(None),
+        through<char?>(None),
+        arm(0, Some('a')),
+        Some(None),
+        char(0x110000),
+        Some('\0'),
+        Some('\u{10FFFF}'),
+        arm(1, Some('\0')),
+    ]
+    print(show_char2(chars2[0]))               // true None None 63
+    print(show_char2(chars2[1]))               // true None None 63
+    print(show_char2(chars2[2]))               // true None None 63
+    print(show_char2(chars2[3]))               // true None None 63
+    print(show_char2(chars2[4]))               // true None None 63
+    print(show_char2(chars2[5]))               // true None None 63
+    print(show_char2(chars2[6]))               // false Some(None) Some(None) 63
+    print(show_char2(chars2[7]))               // false Some(None) Some(None) 63
+    print(show_char2(chars2[8]))               // false 0 0 0
+    print(show_char2(chars2[9]))               // false 1114111 1114111 1114111
+    print(show_char2(chars2[10]))              // false 0 0 0
+
+    let bools: [bool?] = [
+        None,
+        nothing<bool>(),
+        filled<bool>(),
+        or_none<bool>(None),
+        through<bool>(None),
+        arm(0, true),
+        false,
+        true,
+        arm(1, false),
+    ]
+    print(show_bool(bools[0]))                 // true None None true
+    print(show_bool(bools[1]))                 // true None None true
+    print(show_bool(bools[2]))                 // true None None true
+    print(show_bool(bools[3]))                 // true None None true
+    print(show_bool(bools[4]))                 // true None None true
+    print(show_bool(bools[5]))                 // true None None true
+    print(show_bool(bools[6]))                 // false false false false
+    print(show_bool(bools[7]))                 // false true true true
+    print(show_bool(bools[8]))                 // false false false false
+
+    let bools2: [bool??] = [
+        None,
+        nothing<bool?>(),
+        filled<bool?>(),
+        or_none<bool?>(None),
+        through<bool?>(None),
+        arm(0, Some(true)),
+        Some(None),
+        Some(false),
+        Some(true),
+    ]
+    print(show_bool2(bools2[0]))               // true None None true
+    print(show_bool2(bools2[1]))               // true None None true
+    print(show_bool2(bools2[2]))               // true None None true
+    print(show_bool2(bools2[3]))               // true None None true
+    print(show_bool2(bools2[4]))               // true None None true
+    print(show_bool2(bools2[5]))               // true None None true
+    print(show_bool2(bools2[6]))               // false Some(None) Some(None) true
+    print(show_bool2(bools2[7]))               // false false false false
+    print(show_bool2(bools2[8]))               // false true true true
+
+    let es: [E?] = [
+        None,
+        nothing<E>(),
+        filled<E>(),
+        or_none<E>(None),
+        through<E>(None),
+        arm(0, E.B),
+        E.A,
+        E.B,
+    ]
+    print(show_e(es[0]))                       // true None None A
+    print(show_e(es[1]))                       // true None None A
+    print(show_e(es[2]))                       // true None None A
+    print(show_e(es[3]))                       // true None None A
+    print(show_e(es[4]))                       // true None None A
+    print(show_e(es[5]))                       // true None None A
+    print(show_e(es[6]))                       // false A A A
+    print(show_e(es[7]))                       // false B B B
+
+    let es2: [E??] = [
+        None,
+        nothing<E?>(),
+        filled<E?>(),
+        or_none<E?>(None),
+        through<E?>(None),
+        arm(0, Some(E.B)),
+        Some(None),
+        Some(E.A),
+        Some(E.B),
+    ]
+    print(show_e2(es2[0]))                     // true None None A
+    print(show_e2(es2[1]))                     // true None None A
+    print(show_e2(es2[2]))                     // true None None A
+    print(show_e2(es2[3]))                     // true None None A
+    print(show_e2(es2[4]))                     // true None None A
+    print(show_e2(es2[5]))                     // true None None A
+    print(show_e2(es2[6]))                     // false Some(None) Some(None) A
+    print(show_e2(es2[7]))                     // false A A A
+    print(show_e2(es2[8]))                     // false B B B
+
+    let fs: [F?] = [
+        None,
+        nothing<F>(),
+        filled<F>(),
+        or_none<F>(None),
+        through<F>(None),
+        arm(0, F.M),
+        F.S(text(1)),
+        F.M,
+    ]
+    print(show_f(fs[0]))                       // true None None N
+    print(show_f(fs[1]))                       // true None None N
+    print(show_f(fs[2]))                       // true None None N
+    print(show_f(fs[3]))                       // true None None N
+    print(show_f(fs[4]))                       // true None None N
+    print(show_f(fs[5]))                       // true None None N
+    print(show_f(fs[6]))                       // false S(s1) S(s1) S(s1)
+    print(show_f(fs[7]))                       // false M M M
+    print(show_f(keep_if(true)))               // false S(s3) S(s3) S(s3)
+    print(show_f(keep_if(false)))              // true None None N
+
+    let gs: [G?] = [
+        None,
+        nothing<G>(),
+        filled<G>(),
+        or_none<G>(None),
+        through<G>(None),
+        arm(0, G.C),
+        G.A(1.5),
+        G.C,
+    ]
+    print(show_g(gs[0]))                       // true None None B
+    print(show_g(gs[1]))                       // true None None B
+    print(show_g(gs[2]))                       // true None None B
+    print(show_g(gs[3]))                       // true None None B
+    print(show_g(gs[4]))                       // true None None B
+    print(show_g(gs[5]))                       // true None None B
+    print(show_g(gs[6]))                       // false A(1.5) A(1.5) A(1.5)
+    print(show_g(gs[7]))                       // false C C C
+
+    // `==` tests presence first, then compares the payloads as the payload type does.
+    let no_bool: bool? = None
+    let no: bool? = false
+    print(no_bool == no)                       // false
+    print(no == no_bool)                       // false
+    let zero: char? = '\0'
+    print(zero == chars[0])                    // false
+    let first: E? = E.A
+    print(first == es[0])                      // false
+    let s1: string? = text(7)
+    let s2: string? = text(7)
+    print(s1 == s2)                            // true
+    let t1: string?? = Some(text(8))
+    let t2: string?? = Some(text(8))
+    print(t1 == t2)                            // true
+    let a1: [i64]? = [1, 2]
+    let a2: [i64]? = [1, 2]
+    print(a1 == a2)                            // true
+    let nan: G? = G.A(f64.nan)
+    print(nan == nan)                          // false
+    let plus: G? = G.A(0.0)
+    let minus: G? = G.A(-0.0)
+    print(plus == minus)                       // true
+}
+// GIVEN an enum `Expr` that holds itself inline under two `?`s (`Pair`) and under three (`Tri`)
+// AND `Expr` has 256 variants, so its tag has no spare value and each `?` is a flag
+// AND the variant after `Lit` has no payload, so a walk that reads a flag as a tag stops at once
+// AND 15 values with `None`, `Some(None)`, `Some(Some(None))` and a value at each layer of a link
+// AND two of them have the absent layer deep in a chain of two `Expr`
+// WHEN each value is printed
+// AND every value of one list is compared with `==` to every value of a second list
+// AND both lists are dropped
+// THEN the padding has 252 variants
+// AND each absent layer prints as `None` under one `Some(` for each layer above it
+// AND `==` is true for the same value only, also when the values differ in layer 2 or 3 alone
+// AND every string is released once
+enum Two<T> {
+    Both(T??, T??)
+}
+
+enum Expr {
+    Lit(string)
+    Nil
+    Pair(Two<Expr>)
+    Tri(Two<Expr?>, i64)
+    Pad0
+    Pad1
+    Pad2
+    Pad3
+    Pad4
+    Pad5
+    Pad6
+    Pad7
+    Pad8
+    Pad9
+    Pad10
+    Pad11
+    Pad12
+    Pad13
+    Pad14
+    Pad15
+    Pad16
+    Pad17
+    Pad18
+    Pad19
+    Pad20
+    Pad21
+    Pad22
+    Pad23
+    Pad24
+    Pad25
+    Pad26
+    Pad27
+    Pad28
+    Pad29
+    Pad30
+    Pad31
+    Pad32
+    Pad33
+    Pad34
+    Pad35
+    Pad36
+    Pad37
+    Pad38
+    Pad39
+    Pad40
+    Pad41
+    Pad42
+    Pad43
+    Pad44
+    Pad45
+    Pad46
+    Pad47
+    Pad48
+    Pad49
+    Pad50
+    Pad51
+    Pad52
+    Pad53
+    Pad54
+    Pad55
+    Pad56
+    Pad57
+    Pad58
+    Pad59
+    Pad60
+    Pad61
+    Pad62
+    Pad63
+    Pad64
+    Pad65
+    Pad66
+    Pad67
+    Pad68
+    Pad69
+    Pad70
+    Pad71
+    Pad72
+    Pad73
+    Pad74
+    Pad75
+    Pad76
+    Pad77
+    Pad78
+    Pad79
+    Pad80
+    Pad81
+    Pad82
+    Pad83
+    Pad84
+    Pad85
+    Pad86
+    Pad87
+    Pad88
+    Pad89
+    Pad90
+    Pad91
+    Pad92
+    Pad93
+    Pad94
+    Pad95
+    Pad96
+    Pad97
+    Pad98
+    Pad99
+    Pad100
+    Pad101
+    Pad102
+    Pad103
+    Pad104
+    Pad105
+    Pad106
+    Pad107
+    Pad108
+    Pad109
+    Pad110
+    Pad111
+    Pad112
+    Pad113
+    Pad114
+    Pad115
+    Pad116
+    Pad117
+    Pad118
+    Pad119
+    Pad120
+    Pad121
+    Pad122
+    Pad123
+    Pad124
+    Pad125
+    Pad126
+    Pad127
+    Pad128
+    Pad129
+    Pad130
+    Pad131
+    Pad132
+    Pad133
+    Pad134
+    Pad135
+    Pad136
+    Pad137
+    Pad138
+    Pad139
+    Pad140
+    Pad141
+    Pad142
+    Pad143
+    Pad144
+    Pad145
+    Pad146
+    Pad147
+    Pad148
+    Pad149
+    Pad150
+    Pad151
+    Pad152
+    Pad153
+    Pad154
+    Pad155
+    Pad156
+    Pad157
+    Pad158
+    Pad159
+    Pad160
+    Pad161
+    Pad162
+    Pad163
+    Pad164
+    Pad165
+    Pad166
+    Pad167
+    Pad168
+    Pad169
+    Pad170
+    Pad171
+    Pad172
+    Pad173
+    Pad174
+    Pad175
+    Pad176
+    Pad177
+    Pad178
+    Pad179
+    Pad180
+    Pad181
+    Pad182
+    Pad183
+    Pad184
+    Pad185
+    Pad186
+    Pad187
+    Pad188
+    Pad189
+    Pad190
+    Pad191
+    Pad192
+    Pad193
+    Pad194
+    Pad195
+    Pad196
+    Pad197
+    Pad198
+    Pad199
+    Pad200
+    Pad201
+    Pad202
+    Pad203
+    Pad204
+    Pad205
+    Pad206
+    Pad207
+    Pad208
+    Pad209
+    Pad210
+    Pad211
+    Pad212
+    Pad213
+    Pad214
+    Pad215
+    Pad216
+    Pad217
+    Pad218
+    Pad219
+    Pad220
+    Pad221
+    Pad222
+    Pad223
+    Pad224
+    Pad225
+    Pad226
+    Pad227
+    Pad228
+    Pad229
+    Pad230
+    Pad231
+    Pad232
+    Pad233
+    Pad234
+    Pad235
+    Pad236
+    Pad237
+    Pad238
+    Pad239
+    Pad240
+    Pad241
+    Pad242
+    Pad243
+    Pad244
+    Pad245
+    Pad246
+    Pad247
+    Pad248
+    Pad249
+    Pad250
+    Pad251
+}
+
+fn lit(s: string) -> Expr { Expr.Lit("lit {s}") }
+
+fn values() -> [Expr] {
+    [
+        // Pair(Both(None, None))
+        Expr.Pair(Two.Both(None, None)),
+        // Pair(Both(Some(None), None))
+        Expr.Pair(Two.Both(Some(None), None)),
+        // Pair(Both(None, Some(None)))
+        Expr.Pair(Two.Both(None, Some(None))),
+        // Pair(Both(Lit("lit a"), Some(None)))
+        Expr.Pair(Two.Both(Some(Some(lit("a"))), Some(None))),
+        // Pair(Both(Lit("lit a"), Lit("lit b")))
+        Expr.Pair(Two.Both(Some(Some(lit("a"))), Some(Some(lit("b"))))),
+        // Pair(Both(Lit("lit a"), Lit("lit c")))
+        Expr.Pair(Two.Both(Some(Some(lit("a"))), Some(Some(lit("c"))))),
+        // The absent layer is the second layer of a link in the inner `Pair`.
+        // Pair(Both(Pair(Both(Some(None), None)), None))
+        Expr.Pair(Two.Both(Some(Some(Expr.Pair(Two.Both(Some(None), None)))), None)),
+        // Pair(Both(Pair(Both(None, None)), None))
+        Expr.Pair(Two.Both(Some(Some(Expr.Pair(Two.Both(None, None)))), None)),
+        // Tri(Both(None, None), 1)
+        Expr.Tri(Two.Both(None, None), 1),
+        // Tri(Both(Some(None), Some(Some(None))), 1)
+        Expr.Tri(Two.Both(Some(None), Some(Some(None))), 1),
+        // Tri(Both(Some(Some(None)), Some(Some(None))), 1)
+        Expr.Tri(Two.Both(Some(Some(None)), Some(Some(None))), 1),
+        // Tri(Both(Some(Some(None)), Lit("lit c")), 1)
+        Expr.Tri(Two.Both(Some(Some(None)), Some(Some(Some(lit("c"))))), 1),
+        // Tri(Both(Some(Some(None)), Lit("lit c")), 2)
+        Expr.Tri(Two.Both(Some(Some(None)), Some(Some(Some(lit("c"))))), 2),
+        // The absent layer is the third layer of a link in the inner `Tri`.
+        // Tri(Both(Tri(Both(Some(Some(None)), None), 3), None), 4)
+        Expr.Tri(Two.Both(Some(Some(Some(Expr.Tri(Two.Both(Some(Some(None)), None), 3)))), None), 4),
+        // Pair(Both(Nil, Nil))
+        Expr.Pair(Two.Both(Some(Some(Expr.Nil)), Some(Some(Expr.Nil)))),
+    ]
+}
+
+// The padding variants make the tag full. With a spare tag value, each `?` would be a tag value,
+// and a walk that stops after the first layer would still read a correct tag, so this test would
+// pass with that bug. Each variant is built, so that none is a warning.
+fn padding() -> [Expr] {
+    [
+        Expr.Pad0,
+        Expr.Pad1,
+        Expr.Pad2,
+        Expr.Pad3,
+        Expr.Pad4,
+        Expr.Pad5,
+        Expr.Pad6,
+        Expr.Pad7,
+        Expr.Pad8,
+        Expr.Pad9,
+        Expr.Pad10,
+        Expr.Pad11,
+        Expr.Pad12,
+        Expr.Pad13,
+        Expr.Pad14,
+        Expr.Pad15,
+        Expr.Pad16,
+        Expr.Pad17,
+        Expr.Pad18,
+        Expr.Pad19,
+        Expr.Pad20,
+        Expr.Pad21,
+        Expr.Pad22,
+        Expr.Pad23,
+        Expr.Pad24,
+        Expr.Pad25,
+        Expr.Pad26,
+        Expr.Pad27,
+        Expr.Pad28,
+        Expr.Pad29,
+        Expr.Pad30,
+        Expr.Pad31,
+        Expr.Pad32,
+        Expr.Pad33,
+        Expr.Pad34,
+        Expr.Pad35,
+        Expr.Pad36,
+        Expr.Pad37,
+        Expr.Pad38,
+        Expr.Pad39,
+        Expr.Pad40,
+        Expr.Pad41,
+        Expr.Pad42,
+        Expr.Pad43,
+        Expr.Pad44,
+        Expr.Pad45,
+        Expr.Pad46,
+        Expr.Pad47,
+        Expr.Pad48,
+        Expr.Pad49,
+        Expr.Pad50,
+        Expr.Pad51,
+        Expr.Pad52,
+        Expr.Pad53,
+        Expr.Pad54,
+        Expr.Pad55,
+        Expr.Pad56,
+        Expr.Pad57,
+        Expr.Pad58,
+        Expr.Pad59,
+        Expr.Pad60,
+        Expr.Pad61,
+        Expr.Pad62,
+        Expr.Pad63,
+        Expr.Pad64,
+        Expr.Pad65,
+        Expr.Pad66,
+        Expr.Pad67,
+        Expr.Pad68,
+        Expr.Pad69,
+        Expr.Pad70,
+        Expr.Pad71,
+        Expr.Pad72,
+        Expr.Pad73,
+        Expr.Pad74,
+        Expr.Pad75,
+        Expr.Pad76,
+        Expr.Pad77,
+        Expr.Pad78,
+        Expr.Pad79,
+        Expr.Pad80,
+        Expr.Pad81,
+        Expr.Pad82,
+        Expr.Pad83,
+        Expr.Pad84,
+        Expr.Pad85,
+        Expr.Pad86,
+        Expr.Pad87,
+        Expr.Pad88,
+        Expr.Pad89,
+        Expr.Pad90,
+        Expr.Pad91,
+        Expr.Pad92,
+        Expr.Pad93,
+        Expr.Pad94,
+        Expr.Pad95,
+        Expr.Pad96,
+        Expr.Pad97,
+        Expr.Pad98,
+        Expr.Pad99,
+        Expr.Pad100,
+        Expr.Pad101,
+        Expr.Pad102,
+        Expr.Pad103,
+        Expr.Pad104,
+        Expr.Pad105,
+        Expr.Pad106,
+        Expr.Pad107,
+        Expr.Pad108,
+        Expr.Pad109,
+        Expr.Pad110,
+        Expr.Pad111,
+        Expr.Pad112,
+        Expr.Pad113,
+        Expr.Pad114,
+        Expr.Pad115,
+        Expr.Pad116,
+        Expr.Pad117,
+        Expr.Pad118,
+        Expr.Pad119,
+        Expr.Pad120,
+        Expr.Pad121,
+        Expr.Pad122,
+        Expr.Pad123,
+        Expr.Pad124,
+        Expr.Pad125,
+        Expr.Pad126,
+        Expr.Pad127,
+        Expr.Pad128,
+        Expr.Pad129,
+        Expr.Pad130,
+        Expr.Pad131,
+        Expr.Pad132,
+        Expr.Pad133,
+        Expr.Pad134,
+        Expr.Pad135,
+        Expr.Pad136,
+        Expr.Pad137,
+        Expr.Pad138,
+        Expr.Pad139,
+        Expr.Pad140,
+        Expr.Pad141,
+        Expr.Pad142,
+        Expr.Pad143,
+        Expr.Pad144,
+        Expr.Pad145,
+        Expr.Pad146,
+        Expr.Pad147,
+        Expr.Pad148,
+        Expr.Pad149,
+        Expr.Pad150,
+        Expr.Pad151,
+        Expr.Pad152,
+        Expr.Pad153,
+        Expr.Pad154,
+        Expr.Pad155,
+        Expr.Pad156,
+        Expr.Pad157,
+        Expr.Pad158,
+        Expr.Pad159,
+        Expr.Pad160,
+        Expr.Pad161,
+        Expr.Pad162,
+        Expr.Pad163,
+        Expr.Pad164,
+        Expr.Pad165,
+        Expr.Pad166,
+        Expr.Pad167,
+        Expr.Pad168,
+        Expr.Pad169,
+        Expr.Pad170,
+        Expr.Pad171,
+        Expr.Pad172,
+        Expr.Pad173,
+        Expr.Pad174,
+        Expr.Pad175,
+        Expr.Pad176,
+        Expr.Pad177,
+        Expr.Pad178,
+        Expr.Pad179,
+        Expr.Pad180,
+        Expr.Pad181,
+        Expr.Pad182,
+        Expr.Pad183,
+        Expr.Pad184,
+        Expr.Pad185,
+        Expr.Pad186,
+        Expr.Pad187,
+        Expr.Pad188,
+        Expr.Pad189,
+        Expr.Pad190,
+        Expr.Pad191,
+        Expr.Pad192,
+        Expr.Pad193,
+        Expr.Pad194,
+        Expr.Pad195,
+        Expr.Pad196,
+        Expr.Pad197,
+        Expr.Pad198,
+        Expr.Pad199,
+        Expr.Pad200,
+        Expr.Pad201,
+        Expr.Pad202,
+        Expr.Pad203,
+        Expr.Pad204,
+        Expr.Pad205,
+        Expr.Pad206,
+        Expr.Pad207,
+        Expr.Pad208,
+        Expr.Pad209,
+        Expr.Pad210,
+        Expr.Pad211,
+        Expr.Pad212,
+        Expr.Pad213,
+        Expr.Pad214,
+        Expr.Pad215,
+        Expr.Pad216,
+        Expr.Pad217,
+        Expr.Pad218,
+        Expr.Pad219,
+        Expr.Pad220,
+        Expr.Pad221,
+        Expr.Pad222,
+        Expr.Pad223,
+        Expr.Pad224,
+        Expr.Pad225,
+        Expr.Pad226,
+        Expr.Pad227,
+        Expr.Pad228,
+        Expr.Pad229,
+        Expr.Pad230,
+        Expr.Pad231,
+        Expr.Pad232,
+        Expr.Pad233,
+        Expr.Pad234,
+        Expr.Pad235,
+        Expr.Pad236,
+        Expr.Pad237,
+        Expr.Pad238,
+        Expr.Pad239,
+        Expr.Pad240,
+        Expr.Pad241,
+        Expr.Pad242,
+        Expr.Pad243,
+        Expr.Pad244,
+        Expr.Pad245,
+        Expr.Pad246,
+        Expr.Pad247,
+        Expr.Pad248,
+        Expr.Pad249,
+        Expr.Pad250,
+        Expr.Pad251,
+    ]
+}
+
+fn main() {
+    // 252
+    print(padding().len())
+    let xs = values()
+    let ys = values()
+    for x in xs {
+        print(x)
+    }
+    // Row i, column j is `T` when value i equals value j: `T` on the diagonal only.
+    for i in 0..15 {
+        let mut row = ""
+        for j in 0..15 {
+            row = if xs[i] == ys[j] { "{row}T" } else { "{row}." }
+        }
+        print(row)
+    }
+}
+// Every type prints at the top level, through `print` and `eprint` (a generic `both` runs
+// both on its argument, and then prints the same value through `"{x}"` and `x.to_string()`), by
+// the rows of the spec's "Printing" table. A `string` or a `char` is
+// bare alone and quoted in an array, a payload or an optional; an optional is transparent, and
+// by the Some rule `Some(` wraps only a `None`; a variant has no enum name and keeps its labels;
+// a class is its name with its type arguments; a written `to_string`'s text is raw wherever the
+// value sits. `printing_optionals.sisu` prints an optional at the top level.
+class Node {}
+
+class Stack<T> {
+    _items: [T]
+}
+
+// A written `to_string`, which prints raw: it holds quotes and no escape is added.
+class Celsius {
+    degrees: f64
+}
+
+extend Celsius: Display {
+    fn to_string(self) -> string {
+        "{self.degrees} \"C\""
+    }
+}
+
+// A `to_string` that prints: the inner line goes out where the outer line has got to.
+class Loud {
+    _n: i64
+}
+
+extend Loud: Display {
+    fn to_string(self) -> string {
+        print("called")
+        "loud"
+    }
+}
+
+// A conditional record: `Node` has no `Eq`, so a `Box<Node>` prints as the generated rule says.
+class Box<T> {
+    _value: T
+}
+
+extend<T: Eq> Box<T>: Display {
+    fn to_string(self) -> string {
+        "boxed"
+    }
+}
+
+// A plain block whose bounds fail for a `Node`: `to_string` falls back to the generated
+// `Display`, which prints the name.
+class Plain<T> {
+    _value: T
+}
+
+extend<T: Eq> Plain<T> {
+    fn to_string(self) -> string {
+        "plain"
+    }
+}
+
+interface Tag<X> {}
+
+class C: Tag<i64> {}
+
+class D: Tag<string> {}
+
+class Label<T> {
+    _value: T
+}
+
+extend<T: Tag<string>> Label<T>: Display {
+    fn to_string(self) -> string {
+        "label"
+    }
+}
+
+enum Expr {
+    Num(i64)
+    Add(Expr, Expr)
+}
+
+enum Shape {
+    Dot
+    Rect(w: i64, h: i64)
+    Named(string, char)
+}
+
+enum Tree {
+    Leaf
+    Node(Tree, Tree)
+}
+
+enum Wrap {
+    Has(Celsius)
+    Many([Tree])
+    Nothing(Tree?)
+}
+
+// An inline `T?` link that holds `None`, as `deeppair.sisu` has with a link that is optional.
+enum Two<T> {
+    Both(T, T?)
+}
+
+enum Pairs {
+    Lit(i64)
+    Pair(Two<Pairs>)
+}
+
+// A written `to_string` on an enum, on a member of a component with boxes, and on a class that
+// keeps its receiver, so that the method owns `self`.
+enum Level {
+    Low
+    High
+}
+
+extend Level: Display {
+    fn to_string(self) -> string {
+        "level"
+    }
+}
+
+enum Ring {
+    End
+    Next(Ring)
+}
+
+extend Ring: Display {
+    fn to_string(self) -> string {
+        "ring"
+    }
+}
+
+enum PA {
+    ToB(PB)
+}
+
+enum PB {
+    ToA(PA)
+    End
+}
+
+extend PB: Display {
+    fn to_string(self) -> string {
+        "pb"
+    }
+}
+
+class Keeper {
+    _n: i64
+}
+
+extend Keeper: Display {
+    fn to_string(self) -> string {
+        let kept = [self]
+        "kept{kept.len()}"
+    }
+}
+
+// Links that are not the last field: two of them wait at once, with labels; and boxed links
+// under one and two `?`.
+enum Tri {
+    Leaf
+    Node(left: Tri, mid: Tri, right: Tri)
+}
+
+enum Maybe {
+    End
+    Next(Maybe?)
+}
+
+enum Maybe2 {
+    End
+    Next(Maybe2??)
+}
+
+// `print`, `eprint`, the interpolation, the interpolation with `#` and `to_string` write one text
+// when it fits in 80 columns. The line of `eprint` goes to the other stream.
+fn both<T>(x: T) {
+    print(x)
+    eprint(x)
+    print("{x}")
+    print("{x:#}")
+    print(x.to_string())
+}
+
+fn via_bound<T: Display>(x: T) -> string {
+    x.to_string()
+}
+
+// The parts are evaluated before the buffer: a `return` in a part leaves the text of `e` to be
+// released and no buffer behind.
+fn tail(stop: bool) -> string {
+    let e = Expr.Add(Expr.Num(1), Expr.Num(2))
+    "{e}{if stop { return "done" } else { 0 }}"
+}
+
+// A part of a type parameter pads as its type argument does: a number on the right, and any
+// other value on the left, when the spec has no alignment.
+fn padded<T>(x: T) -> string {
+    "[{x:5}][{x:>5}][{x:^5}]"
+}
+
+fn deep(n: i64) -> Expr {
+    if n == 0 {
+        Expr.Num(0)
+    } else {
+        Expr.Add(Expr.Num(n), deep(n - 1))
+    }
+}
+
+fn main() {
+    // Scalars print as they always did.
+    both(42)
+    both(2.5)
+    both(true)
+    both('x')
+    both("hi")
+
+    // A `string` and a `char` with each escape, bare alone and quoted in an array.
+    for s in ["a\"b", "it's", "back\\slash", "tab\there", "line\nbreak", "cr\rx", "nul\0y", "\u{1}", "\u{1B}", "\u{7F}", "ä"] {
+        both(s)
+        both([s])
+    }
+    for c in ['"', '\'', '\\', '\n', '\t', '\r', '\0', '\u{1}', 'ä'] {
+        both(c)
+        both([c])
+    }
+
+    // Arrays of each element type.
+    both([1, 2])
+    both([2.5, 0.5])
+    both([true, false])
+    both(["a", "b"])
+    both(['x'])
+    both([[1], [2, 3]])
+    both([Expr.Num(1), Expr.Num(2)])
+    let none: [i64] = []
+    both(none)
+
+    // Optionals inside an array, by the Some rule.
+    let middle: i64? = None
+    let five: i64? = 5
+    let n0: i64?? = None
+    let n1: i64?? = middle
+    let n2: i64?? = five
+    both([n0])                      // [None]
+    both([n1])                      // [Some(None)]
+    both([n2])                      // [5]
+    let m0: i64??? = None
+    let m1: i64??? = n0
+    let m2: i64??? = n1
+    let m3: i64??? = n2
+    both([m0, m1, m2, m3])          // [None, Some(None), Some(Some(None)), 5]
+    let mixed: [i64?] = [1, None]
+    both(mixed)                     // [1, None]
+    let wrapped: [i64??] = [Some(None)]
+    both(wrapped)                     // [Some(None)]
+    let s0: string?? = Some("hi")
+    let s1: string?? = None
+    both([s0])                      // ["hi"]
+    both([s1])                      // [None]
+    let c0: char?? = Some('q')
+    both([c0])                      // ['q']
+    both([Tree.Leaf, Tree.Node(Tree.Leaf, Tree.Leaf)])
+
+    // Classes: a name and its type arguments, never the fields.
+    both(Node())
+    both(Stack(_items: [1, 2]))
+    both(Stack(_items: [["a"]]))
+    both([Node()])
+
+    // A written `to_string`: raw alone, in an array, in a payload and under optionals.
+    let c = Celsius(degrees: 21.5)
+    both(c)
+    both([c])
+    both(Wrap.Has(c))
+    let cs: Celsius?? = Some(c)
+    both([cs])
+    let c1: Celsius? = None
+    let cs1: Celsius?? = c1
+    both([cs1])
+
+    // A written `to_string` that prints.
+    both([Loud(_n: 1)])
+
+    // A conditional record: the bound decides, and its interface arguments too.
+    both(Box(_value: Node()))
+    both(Box(_value: 1))
+    both([Box(_value: 1)])
+    both(Label(_value: C()))
+    both(Label(_value: D()))
+
+    // Variants: no enum name, labels kept, a fieldless one alone and in a payload.
+    both(Expr.Add(Expr.Num(1), Expr.Num(2)))
+    both(Shape.Dot)
+    both(Shape.Rect(w: 2, h: 3))
+    both(Shape.Named("a\"b", 'c'))
+    both([Shape.Rect(w: 2, h: 3), Shape.Dot])
+    both(Tree.Leaf)
+    both(Tree.Node(Tree.Leaf, Tree.Node(Tree.Leaf, Tree.Leaf)))
+    both(Wrap.Many([Tree.Leaf]))
+    both(Wrap.Nothing(None))
+    both(Wrap.Nothing(Tree.Leaf))
+    both(Pairs.Pair(Two.Both(Pairs.Lit(1), None)))
+    both(Pairs.Pair(Two.Both(Pairs.Lit(1), Pairs.Lit(2))))
+
+    // Written `to_string`s on an enum, in a component and in a class that keeps `self`.
+    both(Level.Low)
+    both([Level.High])
+    both(Ring.Next(Ring.End))
+    both(PA.ToB(PB.End))
+    both(PA.ToB(PB.ToA(PA.ToB(PB.End))))
+    both([Keeper(_n: 1)])
+
+    // Links that wait, with labels, and boxed links under `?`.
+    both(Tri.Node(left: Tri.Node(left: Tri.Leaf, mid: Tri.Leaf, right: Tri.Leaf), mid: Tri.Leaf, right: Tri.Node(left: Tri.Leaf, mid: Tri.Leaf, right: Tri.Leaf)))
+    both(Maybe.Next(None))
+    both(Maybe.Next(Maybe.End))
+    both(Maybe.Next(Maybe.Next(Maybe.End)))
+    both(Maybe2.Next(None))
+    let middle2: Maybe2? = None
+    both(Maybe2.Next(middle2))
+    let inner2: Maybe2? = Maybe2.End
+    both(Maybe2.Next(inner2))
+
+    // A type parameter that stands for an optional prints it alone: transparent, by the Some rule.
+    let hi: string? = "hi"
+    let no_string: string? = None
+    let q: char? = 'q'
+    both(hi)                        // hi
+    both(no_string)                 // None
+    both(q)                         // q
+    both(n0)                        // None
+    both(n1)                        // Some(None)
+    both(n2)                        // 5
+    both(m2)                        // Some(Some(None))
+
+    // `to_string` takes an optional, which prints by the Some rule.
+    let ss: string?? = Some("hi")
+    print(n0.to_string())           // None
+    print(n1.to_string())           // Some(None)
+    print(n2.to_string())           // 5
+    print(m0.to_string())           // None
+    print(m1.to_string())           // Some(None)
+    print(m2.to_string())           // Some(Some(None))
+    print(m3.to_string())           // 5
+    print(ss.to_string())           // hi
+
+    // `to_string` of each scalar is the text that `print` writes.
+    let small: u8 = 7
+    print(5.to_string())
+    print((0 - 5).to_string())
+    print(small.to_string())
+    print(2.5.to_string())
+    print(true.to_string())
+    print('x'.to_string())
+    print("hi".to_string())
+    print([1, 2].to_string())
+
+    // `to_string` through a bound, on a number and on an enum.
+    print(via_bound(1))
+    print(via_bound(Expr.Num(1)))
+
+    // The width pads the text of a compound part in place, from where the part starts.
+    let e = Expr.Add(Expr.Num(1), Expr.Num(2))
+    let x = 3.14159
+    print("{e:>30}")
+    print("{e:<30}|")
+    print("{e:^30}|")
+    print("{e:>5}|")
+    print("[{e:>22}]")
+    print("{e} {x:.2}")
+    print("{[1, 2]:>10}|{Node():<6}|{Shape.Dot:>5}|")
+
+    // The default alignment of a width follows the type argument.
+    print(padded(1))
+    print(padded(small))
+    print(padded(2.5))
+    print(padded("a"))
+    print(padded('x'))
+    print(padded(true))
+    print(padded(Expr.Num(1)))
+
+    // A part that leaves evaluates before any text is written.
+    print(tail(false))
+    print(tail(true))
+
+    // A text longer than 128 bytes grows the buffer twice.
+    let long = deep(12).to_string()
+    print(long.len())
+    print(long)
+    print("{deep(12)}!".len())
+
+    // A conditional block whose bounds fail: `to_string` is the generated `Display`.
+    print(Plain(_value: Node()).to_string())
+    print(Plain(_value: 1).to_string())
+    print(Box(_value: Node()).to_string())
+    print(Box(_value: 1).to_string())
+}
+// `==` and the order operators run through `Eq` and `Ord`. A generic body compiles to the same
+// code as the function written for its type: a number keeps its IEEE comparison, and a class with
+// a written `Ord` calls its `less`. Every `Circle` holds a counted `string`, so Valgrind and
+// `--rc-checks` see a part that a helper passes to a written method without its own reference.
+// Results print as scalars and strings only.
+class Circle: Eq, Ord {
+    name: string
+    r: i64
+    fn eq(self, other: Self) -> bool {
+        self.r == other.r
+    }
+    fn less(self, other: Self) -> bool {
+        self.r < other.r
+    }
+}
+
+enum Pick {
+    One(Circle)
+    Nothing
+}
+
+enum Expr: Eq {
+    Num(i64)
+    Add(Expr, Expr)
+}
+
+// An enum with a written `Ord` and the `Eq` that the compiler writes.
+enum Level: Eq, Ord {
+    Low
+    High
+    fn less(self, other: Self) -> bool {
+        self.rank() < other.rank()
+    }
+    fn rank(self) -> i64 {
+        match self {
+            Level.Low => 0
+            Level.High => 1
+        }
+    }
+}
+
+// An enum with a written `Eq`, compared inside an array: the helper calls its `eq`, which says
+// `true` for any pair.
+enum Sign: Eq {
+    Neg
+    Pos
+    fn eq(self, _other: Self) -> bool {
+        true
+    }
+}
+
+// Two enums that hold each other, so that `A`'s `==` walks into `B` through a link; `B` writes its
+// own `eq`, which says `true` for any pair, so the walk calls it instead of looking inside.
+enum A: Eq {
+    X(B)
+    End
+}
+
+enum B: Eq {
+    Y(A)
+    End
+    fn eq(self, _other: Self) -> bool {
+        true
+    }
+}
+
+class Box<T> {
+    value: T
+}
+
+// The opposite of the fields' equality, so that the structural `==` of a class shows.
+extend<T: Eq> Box<T>: Eq {
+    fn eq(self, other: Self) -> bool {
+        self.value != other.value
+    }
+}
+
+// `Tag` is a bound that the output keeps no record of: `mono` decides it in the input's ids.
+interface Tag {}
+
+class C: Tag {}
+
+class Tagged<T> {
+    _value: T
+}
+
+extend<T: Tag> Tagged<T>: Eq {
+    fn eq(self, _other: Self) -> bool {
+        false
+    }
+}
+
+class Score: Eq, Ord {
+    n: i64
+    fn eq(self, other: Self) -> bool {
+        self.n == other.n
+    }
+    fn less(self, other: Self) -> bool {
+        self.n < other.n
+    }
+}
+
+class Slot<T> {
+    value: T
+}
+
+extend<T: Ord> Slot<T>: Eq {
+    fn eq(self, other: Self) -> bool {
+        !(self.value < other.value)
+    }
+}
+
+// A written `eq` that keeps its parameter: `other` is owned, so a helper retains the part first.
+class Keeper: Eq {
+    mut _last: Keeper?
+    name: string
+    fn eq(self, other: Self) -> bool {
+        self._last = other
+        true
+    }
+}
+
+// An `eq` that is not reflexive: the same array or box is not equal to itself.
+class Never: Eq {
+    _n: i64
+    fn eq(self, _other: Self) -> bool {
+        false
+    }
+}
+
+enum Link {
+    Cons(Never, Link)
+    End
+}
+
+fn largest<T: Ord>(xs: [T]) -> T? {
+    let mut best: T? = None
+    for x in xs {
+        if let b = best {
+            if x > b {
+                best = x
+            }
+        } else {
+            best = x
+        }
+    }
+    best
+}
+
+fn le<T: Ord>(a: T, b: T) -> bool {
+    a <= b
+}
+
+fn between<T: Ord>(a: T, b: T, c: T) -> bool {
+    a < b < c
+}
+
+fn same<T: Eq>(a: T, b: T) -> bool {
+    a == b
+}
+
+fn same_items<T: Eq>(a: [T], b: [T]) -> bool {
+    a == b
+}
+
+fn f() -> Circle {
+    print("f")
+    Circle(name: "f{1}", r: 1)
+}
+
+fn g() -> Circle {
+    print("g")
+    Circle(name: "g{2}", r: 2)
+}
+
+fn h() -> Circle {
+    print("h")
+    Circle(name: "h{3}", r: 3)
+}
+
+fn main() {
+    let none: [i64] = []
+    print(largest([3, 9, 2]) ?? -1)                    // 9
+    print(largest(["b", "c", "a"]) ?? "")              // c
+    print(largest([1.5, 0.5, 2.5]) ?? 0.0)             // 2.5
+    print(largest([f64.nan, 1.0, 3.0]) ?? 0.0)         // nan: nothing is greater than a nan
+    print(largest([1.0, f64.nan, 3.0]) ?? 0.0)         // 3.0
+    print((largest([Circle(name: "a{1}", r: 4), Circle(name: "b{2}", r: 7), Circle(name: "c{3}", r: 5)]) ?? Circle(name: "z", r: 0)).name) // b2
+    print(largest(none) ?? -1)                         // -1
+
+    print(le(1.0, 2.0))                                // true
+    print(le(2.0, 2.0))                                // true
+    print(le(f64.nan, 1.0))                            // false: a nan on the left
+    print(le(1.0, f64.nan))                            // false: a nan on the right
+    print(le(Circle(name: "a{1}", r: 1), Circle(name: "b{2}", r: 2))) // true
+    print(le(Circle(name: "a{1}", r: 3), Circle(name: "b{2}", r: 2))) // false
+
+    print(between(1, 2, 3))                            // true
+    print(between("a", "c", "b"))                      // false: a chain of `string`s
+    print(between(1.5, 2.5, 3.5))                      // true
+    print(between(f(), g(), h()))                      // f g h true: a chain of written `less`
+    print(Level.Low < Level.High)                      // true
+    print(Level.High <= Level.Low)                     // false
+    print(Level.Low == Level.Low)                      // true: the enum's generated `Eq`
+    print((largest([Level.Low, Level.High, Level.Low]) ?? Level.Low) == Level.High) // true
+
+    // The names show source order, and the skipped link.
+    print(f() > g())                                   // f g false
+    print(f() <= g())                                  // f g true
+    print(f() < g() < h())                             // f g h true
+    print(g() < f() < h())                             // g f false: the chain skips h
+
+    print([Box(value: 1)].contains(Box(value: 2)))     // true: the written `eq` says they differ
+    print([Box(value: 2)].contains(Box(value: 2)))     // false
+
+    // A shared array or box compared with itself: the written `eq` says `false`.
+    let shared = [Never(_n: 1)]
+    print(shared == shared)                            // false
+    let link = Link.Cons(Never(_n: 1), Link.End)
+    print(link == link)                                // false
+
+    let a = Circle(name: "a{1}", r: 1)
+    let b = Circle(name: "b{2}", r: 2)
+    let c = Circle(name: "c{3}", r: 1)
+    print(same(1, 2))                                  // false
+    print(same("a", "a"))                              // true
+    print(same(1.5, 1.5))                              // true
+    print(same(true, false))                           // false
+    print(same('a', 'a'))                              // true
+    print(same([1, 2], [1, 2]))                        // true
+    print(same("x{1}", "x{1}"))                        // true
+    print(same(a, b))                                  // false
+    print(same(a, c))                                  // true
+    print(same_items([1, 2], [1, 3]))                  // false
+    print(same_items([a, b], [c, b]))                  // true
+    print(same_items([a], [b]))                        // false
+
+    let maybe: Circle? = c
+    let nothing: Circle? = None
+    print(a == maybe)                                  // true: `a` becomes an optional, and the helper calls `eq`
+    print(a == nothing)                                // false: a missing value is not equal, and `eq` is not called
+    print(a == c)                                      // true
+    print(a != c)                                      // false
+    print(a < b)                                       // true
+    print(a >= b)                                      // false
+    print(a < b < b)                                   // false
+    print(a < b <= b)                                  // true
+    print([a] == [c])                                  // true
+    print([a, b] == [c, b])                            // true
+    print([a] == [b])                                  // false
+    print(Pick.One(a) == Pick.One(c))                  // true
+    print(Pick.One(a) == Pick.One(b))                  // false
+    print(Pick.One(a) == Pick.Nothing)                 // false
+    print([a, b].contains(c))                          // true
+    print([b].contains(a))                             // false
+
+    let e1 = Expr.Add(Expr.Num(1), Expr.Num(2))
+    let e2 = Expr.Add(Expr.Num(1), Expr.Num(2))
+    let e3 = Expr.Add(Expr.Num(1), Expr.Num(3))
+    print(e1 == e2)                                    // true
+    print(e1 == e3)                                    // false
+
+    print([Sign.Neg] == [Sign.Pos])                    // true: the written `eq` of the enum
+    print(A.X(B.Y(A.End)) == A.X(B.End))               // true: `B`'s written `eq` ends the walk
+    print(A.X(B.End) == A.End)                         // false: the tags of `A` differ
+
+    print([Tagged(_value: C())] == [Tagged(_value: C())]) // false: the written `eq`, not the fields
+    print([Slot(value: Score(n: 2))] == [Slot(value: Score(n: 1))]) // true: `!(2 < 1)`
+
+    let k1 = Keeper(_last: None, name: "k{1}")
+    let k2 = Keeper(_last: None, name: "k{2}")
+    print([k1] == [k2])                                // true
+    print([k1].contains(k2))                           // true
+    print(k1.name + k2.name)                           // k1k2
+}
+// Patterns on optionals. At an optional position, `Some(p)` and `None` match the optional
+// itself, a variant, literal or range pattern matches the value inside, an `|` applies the rule
+// to each alternative, and a name or `_` covers the whole optional. Only the top of an `if let`
+// or `while let` unwraps. Counted payloads are matched and released, from owned scrutinees and
+// from borrowed ones, also under the box of a recursive optional field and through a `Some` on
+// a path under a box.
+class Node {
+    n: i64
+}
+
+class Pile {
+    mut n: i64
+
+    fn pop(self) -> string? {
+        if self.n == 0 {
+            return None
+        }
+        self.n = self.n - 1
+        "item {self.n}"
+    }
+}
+
+enum Shape {
+    Circle(string)
+    Square(i64)
+}
+
+enum Holder {
+    V(Shape?)
+    W(i64?)
+}
+
+enum E {
+    End
+    Next(E?)
+}
+
+enum D {
+    End
+    Next(D??)
+}
+
+enum K {
+    Leaf
+    Node(K, string?)
+}
+
+enum Chain {
+    Stop
+    Link(i64, Chain)
+}
+
+enum Slot {
+    S(Chain?)
+}
+
+enum Mark {
+    Dot(string)
+    Dash(string)
+    Gap
+}
+
+enum Marks {
+    M(Mark?)
+}
+
+enum T {
+    End
+    Next(T?, string)
+}
+
+fn int_kind(o: i64?) -> string {
+    match o {
+        Some(0) => "zero"
+        Some(n) => "value {n}"
+        None => "none"
+    }
+}
+
+fn literal(o: i64?) -> i64 {
+    match o {
+        0 => 1
+        None => 2
+        _ => 3
+    }
+}
+
+fn ranges(o: i64?) -> i64 {
+    match o {
+        0..=9 => 1
+        10 | 11 => 2
+        Some(_) => 3
+        None => 4
+    }
+}
+
+fn zero_or_none(o: i64?) -> i64 {
+    match o {
+        Some(0) | None => 1
+        _ => 2
+    }
+}
+
+fn whole(o: i64?) -> i64 {
+    match o {
+        Some(n) => n
+        x => x ?? -1
+    }
+}
+
+fn wild(o: i64?) -> i64 {
+    match o {
+        _ => 0
+    }
+}
+
+fn layers(x: i64??) -> i64 {
+    match x {
+        Some(Some(n)) => n
+        Some(None) => -1
+        None => -2
+    }
+}
+
+fn spelled(o: i64?) -> i64 {
+    match o {
+        Option.Some(m) => m
+        Option.None => 0
+    }
+}
+
+fn describe_string(s: string?) -> string {
+    match s {
+        "a" => "the letter a"
+        Some(t) => "string {t}"
+        None => "no string"
+    }
+}
+
+fn describe_node(n: Node?) -> i64 {
+    match n {
+        Some(node) => node.n
+        None => -1
+    }
+}
+
+fn shape(s: Shape?) -> string {
+    match s {
+        Circle(name) => "circle {name}"
+        Square(w) => "square {w}"
+        None => "nothing"
+    }
+}
+
+fn held(h: Holder) -> string {
+    match h {
+        V(None) => "V(None)"
+        V(Circle(r)) => "V(Circle({r}))"
+        V(Some(x)) => "V(Some({shape(x)}))"
+        W(1..=3 | None) => "W small or none"
+        W(z) => "W {z ?? 0}"
+    }
+}
+
+fn payload(h: Holder) -> string {
+    match h {
+        V(x) => shape(x)
+        W(_) => "W"
+    }
+}
+
+fn owned_shape(name: string) -> string {
+    let s: Shape? = Shape.Circle(name)
+    match s {
+        Circle(n) => n
+        _ => "other"
+    }
+}
+
+fn owned_string(text: string) -> string {
+    let s: string? = text
+    match s {
+        Some(t) => t
+        None => "none"
+    }
+}
+
+fn owned_holder(name: string) -> string {
+    let h = Holder.V(Shape.Circle(name))
+    match h {
+        V(Circle(r)) => r
+        _ => "other"
+    }
+}
+
+fn if_lets(s: Shape?, o: i64?) {
+    if let Circle(r) = s {
+        print("if let Circle({r})")
+    } else {
+        print("not a circle")
+    }
+    if let Some(n) = o {
+        print("if let Some({n})")
+    }
+    if let y = o {
+        print("if let y = {y}")
+    }
+}
+
+fn make(i: i64) -> E {
+    match i {
+        0 => E.End
+        1 => E.Next(None)
+        2 => E.Next(E.End)
+        3 => E.Next(E.Next(None))
+        _ => E.Next(E.Next(E.End))
+    }
+}
+
+fn deep(e: E) -> i64 {
+    match e {
+        Next(Some(Next(_))) => 2
+        Next(Some(End)) => 1
+        _ => 0
+    }
+}
+
+fn deep_owned(i: i64) -> i64 {
+    let e = make(i)
+    match e {
+        Next(Some(Next(_))) => 2
+        Next(Some(End)) => 1
+        _ => 0
+    }
+}
+
+fn under_box(e: E) -> bool {
+    match e {
+        Next(Some(Next(x))) => x == E.End
+        _ => false
+    }
+}
+
+fn under_box_owned(i: i64) -> bool {
+    let e = make(i)
+    match e {
+        Next(Some(Next(x))) => x == E.End
+        _ => false
+    }
+}
+
+fn make_d(i: i64) -> D {
+    match i {
+        0 => D.End
+        1 => D.Next(None)
+        2 => D.Next(Some(None))
+        3 => D.Next(Some(D.End))
+        _ => D.Next(Some(D.Next(Some(D.End))))
+    }
+}
+
+fn d_kind(d: D) -> string {
+    match d {
+        Next(Some(Some(Next(_)))) => "Next(Next(_))"
+        Next(Some(Some(End))) => "Next(End)"
+        Next(Some(None)) => "Next(Some(None))"
+        Next(None) => "Next(None)"
+        End => "End"
+    }
+}
+
+fn d_kind_owned(i: i64) -> string {
+    let d = make_d(i)
+    match d {
+        Next(Some(Some(Next(_)))) => "Next(Next(_))"
+        Next(Some(Some(End))) => "Next(End)"
+        Next(Some(None)) => "Next(Some(None))"
+        Next(None) => "Next(None)"
+        End => "End"
+    }
+}
+
+fn inner_name(k: K) -> string {
+    match k {
+        Node(Node(_, Some(t)), _) => t
+        _ => "no inner name"
+    }
+}
+
+fn mark(m: Mark?) -> string {
+    let marks = Marks.M(m)
+    match marks {
+        M(Some(Dot(t) | Dash(t))) => t
+        _ => "gap"
+    }
+}
+
+fn second(i: i64) -> string {
+    let t = if i == 0 { T.End } else { T.Next(T.Next(None, "second"), "first") }
+    match t {
+        Next(Some(Next(_, s)), _) => s
+        _ => "no second"
+    }
+}
+
+fn make_slot(i: i64) -> Slot {
+    match i {
+        0 => Slot.S(None)
+        1 => Slot.S(Chain.Link(1, Chain.Stop))
+        _ => Slot.S(Chain.Link(1, Chain.Link(7, Chain.Stop)))
+    }
+}
+
+// The binding `n` is under a box (the tail of the first link) that is under a `Some`.
+fn second_link(i: i64) -> i64 {
+    let slot = make_slot(i)
+    match slot {
+        S(Some(Link(_, Link(n, _)))) => n
+        _ => -1
+    }
+}
+
+fn main() {
+    let none: i64? = None
+    for o in [Some(0), Some(7), none] {
+        print(int_kind(o))               // zero, value 7, none
+    }
+    for o in [Some(0), none, Some(5)] {
+        print(literal(o))                // 1, 2, 3
+    }
+    for o in [Some(3), Some(11), Some(20), none] {
+        print(ranges(o))                 // 1, 2, 3, 4
+    }
+    for o in [Some(0), none, Some(1)] {
+        print(zero_or_none(o))           // 1, 1, 2
+    }
+    print(whole(Some(4)))                // 4
+    print(whole(none))                   // -1
+    print(wild(Some(4)))                 // 0
+    print(wild(none))                    // 0
+    let nn: i64?? = None
+    let middle: i64?? = Some(None)
+    print(layers(Some(Some(6))))         // 6
+    print(layers(middle))                // -1
+    print(layers(nn))                    // -2
+    print(spelled(Some(8)))              // 8
+    print(spelled(none))                 // 0
+    let no_string: string? = None
+    print(describe_string("a"))          // the letter a
+    print(describe_string("b"))          // string b
+    print(describe_string(no_string))    // no string
+    let no_node: Node? = None
+    print(describe_node(Node(n: 9)))     // 9
+    print(describe_node(no_node))        // -1
+    let no_shape: Shape? = None
+    print(shape(Shape.Circle("red")))    // circle red
+    print(shape(Shape.Square(2)))        // square 2
+    print(shape(no_shape))               // nothing
+    print(held(Holder.V(None)))          // V(None)
+    print(held(Holder.V(Shape.Circle("blue"))))   // V(Circle(blue))
+    print(held(Holder.V(Shape.Square(3))))        // V(Some(square 3))
+    print(held(Holder.W(2)))             // W small or none
+    print(held(Holder.W(None)))          // W small or none
+    print(held(Holder.W(10)))            // W 10
+    print(payload(Holder.V(Shape.Circle("green"))))   // circle green
+    print(payload(Holder.V(None)))       // nothing
+    print(payload(Holder.W(1)))          // W
+    print(owned_shape("owned"))          // owned
+    print(owned_string("owned string"))  // owned string
+    print(owned_holder("owned holder"))  // owned holder
+    if_lets(Shape.Circle("pink"), Some(1))   // if let Circle(pink), if let Some(1), if let y = 1
+    if_lets(Shape.Square(1), none)           // not a circle
+    let pile = Pile(n: 3)
+    while let Some(item) = pile.pop() {
+        print(item)                      // item 2, item 1, item 0
+    }
+    for i in 0..5 {
+        print("{deep(make(i))} {deep_owned(i)} {under_box(make(i))} {under_box_owned(i)}")
+        // 0 0 false false, 0 0 false false, 1 1 false false, 2 2 false false, 2 2 true true
+    }
+    for i in 0..5 {
+        print("{d_kind(make_d(i))} {d_kind_owned(i)}")
+        // End End, Next(None) Next(None), Next(Some(None)) Next(Some(None)), Next(End) Next(End),
+        // Next(Next(_)) Next(Next(_))
+    }
+    print(inner_name(K.Node(K.Node(K.Leaf, "inner"), None)))   // inner
+    print(inner_name(K.Node(K.Node(K.Leaf, None), "outer")))   // no inner name
+    print(mark(Mark.Dot("dot")))         // dot
+    print(mark(Mark.Dash("dash")))       // dash
+    print(mark(Mark.Gap))                // gap
+    print(second(0))                     // no second
+    print(second(1))                     // second
+    for i in 0..3 {
+        print(second_link(i))            // -1, -1, 7
+    }
+}
+// `Option`-shaped enums: two variants, one with no payload and one with one field whose storage
+// has a spare value. Such an enum is its field's storage, with the payload-free variant in the
+// spare value: a `Maybe` is an `i32` with `Nothing` as 0x110000, a `Flag` is a byte with `Unset`
+// as 2, a `Named` is a pointer with `Anon` as `null`, and a `Chain`, whose field is a box, is the
+// box pointer with `End` as `null`. The order of the variants does not change it (`Rev`). Each
+// value is built, matched, compared with `==`, kept in arrays and fields, and released. A `Chain`
+// rewrite builds each new `Next` into the box that `match` took apart.
+enum Maybe {
+    Nothing
+    Just(char)
+}
+
+enum Rev {
+    Just(char)
+    Nothing
+}
+
+enum Flag {
+    Unset
+    Set(bool)
+}
+
+enum Named {
+    Anon
+    Name(string)
+}
+
+enum Chain {
+    End
+    Next(Chain)
+}
+
+enum Color {
+    Red
+    Green
+    Blue
+}
+
+// The niche of a `Color` is its tag, so `Nope` is the tag after `Blue`.
+enum Pick {
+    Nope
+    One(Color)
+}
+
+// The niche of a `Maybe` is a `char`'s, so `Empty` is the next spare value, 0x110001.
+enum Deep {
+    Empty
+    Full(Maybe)
+}
+
+// A generic enum takes the layout of each instance: `Opt<string>` has a niche, `Opt<i64>` not.
+enum Opt<T> {
+    No
+    Yes(T)
+}
+
+// A `Step` holds a `Hop` and a `Hop` holds a `Step`, so the field of `Go` is a box. A `Hop` is
+// that box's pointer with `Stop` as `null`, and its `Step` is the value in the box.
+enum Step {
+    Again(Hop)
+    Land(i64)
+}
+
+enum Hop {
+    Stop
+    Go(Step)
+}
+
+class Holder: Eq {
+    m: Maybe
+    f: Flag
+    n: Named
+    c: Chain
+
+    fn eq(self, other: Self) -> bool {
+        self.m == other.m && self.f == other.f && self.n == other.n && self.c == other.c
+    }
+}
+
+// A string in a new block on each call.
+fn text(n: i64) -> string {
+    "s{n}"
+}
+
+fn show_maybe(m: Maybe) -> string {
+    match m {
+        Nothing => "Nothing"
+        Just(c) => "Just({i64(c)})"
+    }
+}
+
+fn show_rev(r: Rev) -> string {
+    match r {
+        Nothing => "Nothing"
+        Just(c) => "Just({i64(c)})"
+    }
+}
+
+fn show_flag(f: Flag) -> string {
+    match f {
+        Unset => "Unset"
+        Set(b) => "Set({b})"
+    }
+}
+
+fn show_named(n: Named) -> string {
+    match n {
+        Anon => "Anon"
+        Name(s) => "Name({s})"
+    }
+}
+
+fn show_pick(p: Pick) -> string {
+    match p {
+        Nope => "Nope"
+        One(Red) => "One(Red)"
+        One(Green) => "One(Green)"
+        One(Blue) => "One(Blue)"
+    }
+}
+
+fn show_deep(d: Deep) -> string {
+    match d {
+        Empty => "Empty"
+        Full(m) => "Full({show_maybe(m)})"
+    }
+}
+
+fn show_opt(o: Maybe?) -> string {
+    match o {
+        None => "None"
+        Some(m) => "Some({show_maybe(m)})"
+    }
+}
+
+fn depth(c: Chain) -> i64 {
+    match c {
+        End => 0
+        Next(rest) => 1 + depth(rest)
+    }
+}
+
+fn chain(n: i64) -> Chain {
+    let mut c = Chain.End
+    for _ in 0..n {
+        c = Chain.Next(c)
+    }
+    c
+}
+
+fn hops(h: Hop) -> i64 {
+    match h {
+        Stop => 0
+        Go(s) => match s {
+            Again(inner) => 1 + hops(inner)
+            Land(n) => n
+        }
+    }
+}
+
+// Takes an owned `c` apart and builds each `Next` again, in the box it took apart.
+fn rebuild(c: Chain) -> Chain {
+    match c {
+        Next(rest) => Chain.Next(rebuild(rest))
+        End => Chain.End
+    }
+}
+
+// The same rewrite, with one more `Next` at the end.
+fn grow(c: Chain) -> Chain {
+    match c {
+        Next(rest) => Chain.Next(grow(rest))
+        End => Chain.Next(Chain.End)
+    }
+}
+
+// A `Named` that one branch moves out of `n`. On the other path the end of the scope releases
+// `n`; on this one, `n`'s slot holds its zero value, `null`, which is `Anon`.
+fn keep_if(keep: bool) -> Named {
+    let n = Named.Name(text(7))
+    let mut out = Named.Anon
+    if keep {
+        out = n
+    }
+    out
+}
+
+fn main() {
+    let maybes = [Maybe.Nothing, Maybe.Just('\0'), Maybe.Just('a'), Maybe.Just('\u{10FFFF}')]
+    for m in maybes {
+        print(show_maybe(m))
+    }
+    // Nothing
+    // Just(0)
+    // Just(97)
+    // Just(1114111)
+    print(maybes[0] == Maybe.Nothing)              // true
+    print(maybes[1] == Maybe.Nothing)              // false
+    print(maybes[1] == Maybe.Just('\0'))           // true
+    print(maybes[3] == Maybe.Just('\u{10FFFF}'))   // true
+    print(maybes[2] == maybes[3])                  // false
+
+    let revs = [Rev.Nothing, Rev.Just('\0'), Rev.Just('\u{10FFFF}')]
+    for r in revs {
+        print(show_rev(r))
+    }
+    // Nothing
+    // Just(0)
+    // Just(1114111)
+    print(revs[0] == Rev.Nothing)                  // true
+    print(revs[1] == Rev.Nothing)                  // false
+    print(Rev.Nothing == revs[1])                  // false
+    print(revs[2] == Rev.Just('\u{10FFFF}'))       // true
+
+    let flags = [Flag.Unset, Flag.Set(false), Flag.Set(true)]
+    for f in flags {
+        print(show_flag(f))
+    }
+    // Unset
+    // Set(false)
+    // Set(true)
+    print(Flag.Unset == Flag.Set(false))           // false
+    print(Flag.Set(false) == Flag.Unset)           // false
+    print(Flag.Unset == flags[0])                  // true
+    print(flags[1] == Flag.Set(false))             // true
+    print(flags[1] == flags[2])                    // false
+
+    let names = [Named.Anon, Named.Name(text(1)), Named.Name("")]
+    for n in names {
+        print(show_named(n))
+    }
+    // Anon
+    // Name(s1)
+    // Name()
+    print(names[0] == Named.Anon)                  // true
+    print(names[1] == Named.Name(text(1)))         // true: the same text in another block
+    print(names[2] == Named.Anon)                  // false
+    print(show_named(keep_if(true)))               // Name(s7)
+    print(show_named(keep_if(false)))              // Anon
+
+    let chains = [Chain.End, chain(1), chain(3)]
+    for c in chains {
+        print(depth(c))
+    }
+    // 0
+    // 1
+    // 3
+    print(chains[0] == Chain.End)                  // true
+    print(chains[2] == chain(3))                   // true
+    print(chains[2] == chain(2))                   // false
+    print(chain(2) == chains[2])                   // false
+    let mut c = chain(3)
+    c = rebuild(c)
+    print(depth(c))                                // 3
+    c = grow(c)
+    print(depth(c))                                // 4
+    print(c == chain(4))                           // true
+
+    let picks = [Pick.Nope, Pick.One(Color.Red), Pick.One(Color.Green), Pick.One(Color.Blue)]
+    for p in picks {
+        print(show_pick(p))
+    }
+    // Nope
+    // One(Red)
+    // One(Green)
+    // One(Blue)
+    print(picks[0] == Pick.One(Color.Red))         // false
+    print(picks[3] == Pick.One(Color.Blue))        // true
+
+    let deeps = [Deep.Empty, Deep.Full(Maybe.Nothing), Deep.Full(Maybe.Just('z'))]
+    for d in deeps {
+        print(show_deep(d))
+    }
+    // Empty
+    // Full(Nothing)
+    // Full(Just(122))
+    print(deeps[0] == Deep.Full(Maybe.Nothing))    // false
+    print(deeps[1] == Deep.Full(Maybe.Nothing))    // true
+
+    let opts: [Maybe?] = [None, Maybe.Nothing, Maybe.Just('b')]
+    for o in opts {
+        print(show_opt(o))
+    }
+    // None
+    // Some(Nothing)
+    // Some(Just(98))
+    print(opts[0] == None)                         // true
+    print(opts[1] == None)                         // false
+    print(opts[1] == Some(Maybe.Nothing))          // true
+    print(opts[0] == Some(Maybe.Nothing))          // false
+    print(show_maybe(opts[0] ?? Maybe.Just('c')))  // Just(99)
+
+    let words: [Opt<string>] = [Opt.No, Opt.Yes(text(2))]
+    let numbers: [Opt<i64>] = [Opt.No, Opt.Yes(0)]
+    print(words[0] == Opt.No)                      // true
+    print(words[1] == Opt.Yes(text(2)))            // true
+    print(numbers[0] == Opt.Yes(0))                // false
+    print(numbers[1] == Opt.Yes(0))                // true
+
+    let trips = [Hop.Stop, Hop.Go(Step.Land(5)), Hop.Go(Step.Again(Hop.Go(Step.Land(5))))]
+    for t in trips {
+        print(hops(t))
+    }
+    // 0
+    // 5
+    // 6
+    print(trips[0] == Hop.Stop)                    // true
+    print(trips[0] == Hop.Go(Step.Land(0)))        // false
+    print(trips[1] == Hop.Go(Step.Land(5)))        // true
+    print(trips[1] == Hop.Go(Step.Land(6)))        // false
+    print(trips[2] == Hop.Go(Step.Again(Hop.Go(Step.Land(5)))))  // true
+    print(trips[2] == Hop.Go(Step.Again(Hop.Stop)))              // false
+
+    let h = Holder(m: Maybe.Just('h'), f: Flag.Set(true), n: Named.Name(text(3)), c: chain(2))
+    print(show_maybe(h.m))                         // Just(104)
+    print(show_flag(h.f))                          // Set(true)
+    print(show_named(h.n))                         // Name(s3)
+    print(depth(h.c))                              // 2
+    print(h == Holder(m: Maybe.Just('h'), f: Flag.Set(true), n: Named.Name(text(3)), c: chain(2))) // true
+}
+// The methods on `f64` and `i64`, each run twice: on literals, which `-O2` folds, and on values
+// that come back from `same` or `same_int` at a depth that `-O2` does not know, which it cannot
+// fold. The exact methods print in full; the transcendental ones print through `micro`, as the
+// nearest millionth, since libm may differ in the last bits.
+// args: a
+// o2-calls: main same 13
+// o2-calls: main same_int 4
+fn same(x: f64, depth: i64) -> f64 {
+    if depth == 0 { x } else { -same(-x, depth - 1) }
+}
+
+fn same_int(n: i64, depth: i64) -> i64 {
+    if depth == 0 { n } else { -same_int(-n, depth - 1) }
+}
+
+fn micro(x: f64) {
+    if let n = i64((x * 1e6).round()) {
+        print(n)
+    } else {
+        print("none")
+    }
+}
+
+fn show(x: f64?) {
+    if let v = x {
+        print(v)
+    } else {
+        print("none")
+    }
+}
+
+// Each of these prints its name, so the order of the operands of `clamp` shows.
+fn f(n: i64) -> i64 {
+    print("f")
+    n
+}
+
+fn g(n: i64) -> i64 {
+    print("g")
+    n
+}
+
+fn h(n: i64) -> i64 {
+    print("h")
+    n
+}
+
+fn main(args: [string]) {
+    let d = args.len()
+
+    // On literals.
+    print(2.5.round())                  // 3.0: halves round away from zero
+    print((-2.5).round())               // -3.0
+    print(2.5.floor())                  // 2.0
+    print((-2.5).floor())               // -3.0
+    print(2.5.ceil())                   // 3.0
+    print((-2.5).ceil())                // -2.0
+    print(2.5.trunc())                  // 2.0
+    print((-2.5).trunc())               // -2.0
+    print((-2.5).abs())                 // 2.5
+    print(4.0.sqrt())                   // 2.0
+    print((-1.0).sqrt().is_nan())       // true
+    print(-1.0.sqrt())                  // -1.0: the minus binds looser than the call
+    print((0.0 / 0.0).is_nan())         // true
+    print(2.5.is_nan())                 // false
+    print(2.5.is_finite())              // true
+    print((1.0 / 0.0).is_finite())      // false
+    print((0.0 / 0.0).is_finite())      // false
+    print((1.0 / 0.0).is_infinite())    // true
+    print((-1.0 / 0.0).is_infinite())   // true
+    print(2.5.is_infinite())            // false
+    print((0.0 / 0.0).is_infinite())    // false
+    print(2.5.min(-2.5))                // -2.5
+    print(2.5.max(-2.5))                // 2.5
+    print((0.0 / 0.0).min(2.5))         // 2.5: a `nan` operand gives the other one
+    print(2.5.min(0.0 / 0.0))           // 2.5
+    print((0.0 / 0.0).max(2.5))         // 2.5
+    print(2.5.max(0.0 / 0.0))           // 2.5
+    print((-0.0).min(0.0))              // -0.0: `min` orders -0.0 below 0.0
+    print(0.0.min(-0.0))                // -0.0
+    print((-0.0).max(0.0))              // 0.0
+    print(0.0.max(-0.0))                // 0.0
+    print((-0.0).clamp(0.0, 1.0))       // 0.0
+    print(2.5.clamp(0.0, 1.0))          // 1.0
+    print((-2.5).clamp(0.0, 1.0))       // 0.0
+    print(0.5.clamp(0.0, 1.0))          // 0.5
+    print((0.0 / 0.0).clamp(0.0, 1.0))  // 0.0
+    print(2.5.clamp(1.0, 0.0))          // 0.0: with lo above hi, the result is hi
+    micro(1.0.sin())                    // 841471
+    micro(1.0.cos())                    // 540302
+    micro(1.0.tan())                    // 1557408
+    micro(0.5.asin())                   // 523599
+    micro(0.5.acos())                   // 1047198
+    micro(1.0.atan())                   // 785398
+    micro(1.0.atan2(2.0))               // 463648
+    micro(1.0.exp())                    // 2718282
+    micro(10.0.ln())                    // 2302585
+    micro(1000.0.log10())               // 3000000
+    micro(8.0.log2())                   // 3000000
+    micro(2.0.pow(0.5))                 // 1414214
+    micro(3.0.hypot(4.0))               // 5000000
+    micro((-1.0).sqrt())                // none: `nan` is not a whole number
+    micro(0.0.ln())                     // none: -inf is out of range
+    print(7.min(-3))                    // -3
+    print(7.max(-3))                    // 7
+    print(7.clamp(2, 5))                // 5
+    print((-3).clamp(2, 5))             // 2
+    print(3.clamp(2, 5))                // 3
+    print(7.clamp(5, 2))                // 2: with lo above hi, the result is hi, and nothing panics
+    let has: f64? = 2.25
+    show(has?.sqrt())                   // 1.5
+    let nothing: f64? = None
+    show(nothing?.sqrt())               // none
+
+    // The same on values that `-O2` cannot fold.
+    let a = same(2.5, d)
+    let b = same(-2.5, d)
+    let z = same(0.0, d)
+    let nz = same(-0.0, d)
+    let one = same(1.0, d)
+    let four = same(4.0, d)
+    let nan = z / z
+    let inf = 1.0 / z
+    print(a.round())                    // 3.0
+    print(b.round())                    // -3.0
+    print(a.floor())                    // 2.0
+    print(b.floor())                    // -3.0
+    print(a.ceil())                     // 3.0
+    print(b.ceil())                     // -2.0
+    print(a.trunc())                    // 2.0
+    print(b.trunc())                    // -2.0
+    print(b.abs())                      // 2.5
+    print(four.sqrt())                  // 2.0
+    print((-one).sqrt().is_nan())       // true
+    print(-one.sqrt())                  // -1.0
+    print(nan.is_nan())                 // true
+    print(a.is_nan())                   // false
+    print(a.is_finite())                // true
+    print(inf.is_finite())              // false
+    print(nan.is_finite())              // false
+    print(inf.is_infinite())            // true
+    print((-inf).is_infinite())         // true
+    print(a.is_infinite())              // false
+    print(nan.is_infinite())            // false
+    print(a.min(b))                     // -2.5
+    print(a.max(b))                     // 2.5
+    print(nan.min(a))                   // 2.5
+    print(a.min(nan))                   // 2.5
+    print(nan.max(a))                   // 2.5
+    print(a.max(nan))                   // 2.5
+    print(nz.min(z))                    // -0.0
+    print(z.min(nz))                    // -0.0
+    print(nz.max(z))                    // 0.0
+    print(z.max(nz))                    // 0.0
+    print(nz.clamp(z, one))             // 0.0
+    print(a.clamp(z, one))              // 1.0
+    print(b.clamp(z, one))              // 0.0
+    print(nan.clamp(z, one))            // 0.0
+    print(a.clamp(one, z))              // 0.0
+    let half = same(0.5, d)
+    let two = same(2.0, d)
+    let ten = same(10.0, d)
+    let thousand = same(1000.0, d)
+    let eight = same(8.0, d)
+    let three = same(3.0, d)
+    micro(one.sin())                    // 841471
+    micro(one.cos())                    // 540302
+    micro(one.tan())                    // 1557408
+    micro(half.asin())                  // 523599
+    micro(half.acos())                  // 1047198
+    micro(one.atan())                   // 785398
+    micro(one.atan2(two))               // 463648
+    micro(one.exp())                    // 2718282
+    micro(ten.ln())                     // 2302585
+    micro(thousand.log10())             // 3000000
+    micro(eight.log2())                 // 3000000
+    micro(two.pow(half))                // 1414214
+    micro(three.hypot(four))            // 5000000
+    micro((-one).sqrt())                // none
+    micro(z.ln())                       // none
+    let p = same_int(7, d)
+    let q = same_int(-3, d)
+    let r = same_int(5, d)
+    let s = same_int(2, d)
+    print(p.min(q))                     // -3
+    print(p.max(q))                     // 7
+    print(p.clamp(s, r))                // 5
+    print(q.clamp(s, r))                // 2
+    print(r.clamp(q, p))                // 5
+    print(p.clamp(r, s))                // 2
+    let has_run: f64? = same(2.25, d)
+    show(has_run?.sqrt())               // 1.5
+    let nothing_run: f64? = None
+    show(nothing_run?.sqrt())           // none
+
+    // The operands of `clamp` run left to right.
+    print(f(1).clamp(g(2), h(3)))       // f, g, h, then 2
+}
+// A small interpreter. It scans a program text into a boxed tree with a
+// cursor over `bytes()`, simplifies the tree, runs it and counts its nodes.
+// Each round parses the text again, so each round frees one tree and builds
+// the boxes of the next. `simplify` and `simplify_stmt` take an owned tree
+// apart in a `match` and rebuild the nodes that do not fold, so their arms
+// reuse the boxes they take apart. `eval`, `run` and `count` only read the tree.
+const ROUNDS = 1000
+const SPACE: u8 = 32
+const OPEN_PAREN: u8 = 40
+const STAR: u8 = 42
+const PLUS: u8 = 43
+const MINUS: u8 = 45
+const ZERO: u8 = 48
+const NINE: u8 = 57
+const LESS: u8 = 60
+const EQUAL: u8 = 61
+const LOWER_A: u8 = 97
+const LOWER_W: u8 = 119
+const LOWER_Z: u8 = 122
+const CLOSE_BRACE: u8 = 125
+
+enum Expr {
+    Num(i64)
+    Var(i64)
+    Add(Expr, Expr)
+    Sub(Expr, Expr)
+    Mul(Expr, Expr)
+    Less(Expr, Expr)
+    Equal(Expr, Expr)
+}
+
+enum Stmt {
+    Nop
+    Set(i64, Expr)
+    While(Expr, Stmt)
+    If(Expr, Stmt, Stmt)
+    Seq(Stmt, Stmt)
+}
+
+class Parser {
+    src: [u8]
+    mut pos: i64
+
+    // The byte at `i`, or 0 past the end.
+    fn at(self, i: i64) -> u8 {
+        if i < self.src.len() { self.src[i] } else { 0 }
+    }
+
+    fn skip(self) {
+        while self.at(self.pos) == SPACE {
+            self.pos += 1
+        }
+    }
+
+    fn peek(self) -> u8 {
+        self.skip()
+        self.at(self.pos)
+    }
+
+    fn program(self) -> Stmt {
+        let mut s = Stmt.Nop
+        while self.peek() != 0 {
+            s = Stmt.Seq(s, self.stmt())
+        }
+        s
+    }
+
+    fn block(self) -> Stmt {
+        self.skip()
+        self.pos += 1
+        let mut s = Stmt.Nop
+        while self.peek() != CLOSE_BRACE {
+            s = Stmt.Seq(s, self.stmt())
+        }
+        self.pos += 1
+        s
+    }
+
+    // `x = expr`, `while expr block` or `if expr block else block`. `w` starts
+    // a `while`, so no variable is `w`. Another letter that no `=` follows
+    // starts an `if`.
+    fn stmt(self) -> Stmt {
+        let c = self.peek()
+        if c == LOWER_W {
+            self.pos += 5
+            let cond = self.expr()
+            Stmt.While(cond, self.block())
+        } else {
+            self.pos += 1
+            if self.peek() == EQUAL {
+                self.pos += 1
+                Stmt.Set(i64(c) - i64(LOWER_A), self.expr())
+            } else {
+                self.pos += 1
+                let cond = self.expr()
+                let yes = self.block()
+                self.skip()
+                self.pos += 4
+                Stmt.If(cond, yes, self.block())
+            }
+        }
+    }
+
+    fn expr(self) -> Expr {
+        let l = self.sum()
+        let c = self.peek()
+        if c == LESS {
+            self.pos += 1
+            Expr.Less(l, self.sum())
+        } else if c == EQUAL {
+            self.pos += 2
+            Expr.Equal(l, self.sum())
+        } else {
+            l
+        }
+    }
+
+    fn sum(self) -> Expr {
+        let mut l = self.term()
+        let mut c = self.peek()
+        while c == PLUS || c == MINUS {
+            self.pos += 1
+            let r = self.term()
+            l = if c == PLUS { Expr.Add(l, r) } else { Expr.Sub(l, r) }
+            c = self.peek()
+        }
+        l
+    }
+
+    fn term(self) -> Expr {
+        let mut l = self.atom()
+        while self.peek() == STAR {
+            self.pos += 1
+            l = Expr.Mul(l, self.atom())
+        }
+        l
+    }
+
+    fn atom(self) -> Expr {
+        let c = self.peek()
+        if ZERO <= c <= NINE {
+            let mut n = 0
+            while ZERO <= self.at(self.pos) <= NINE {
+                n = n * 10 + i64(self.at(self.pos)) - i64(ZERO)
+                self.pos += 1
+            }
+            Expr.Num(n)
+        } else if c == OPEN_PAREN {
+            self.pos += 1
+            let e = self.expr()
+            self.pos += 1
+            e
+        } else if LOWER_A <= c <= LOWER_Z {
+            self.pos += 1
+            Expr.Var(i64(c) - i64(LOWER_A))
+        } else {
+            Expr.Num(0)
+        }
+    }
+}
+
+fn simplify(e: Expr) -> Expr {
+    match e {
+        Add(l, Num(0)) => simplify(l)
+        Add(Num(0), r) => simplify(r)
+        Mul(l, Num(1)) => simplify(l)
+        Mul(Num(1), r) => simplify(r)
+        Add(Num(a), Num(b)) => Expr.Num(a + b)
+        Sub(Num(a), Num(b)) => Expr.Num(a - b)
+        Mul(Num(a), Num(b)) => Expr.Num(a * b)
+        Add(l, r) => Expr.Add(simplify(l), simplify(r))
+        Sub(l, r) => Expr.Sub(simplify(l), simplify(r))
+        Mul(l, r) => Expr.Mul(simplify(l), simplify(r))
+        Less(l, r) => Expr.Less(simplify(l), simplify(r))
+        Equal(l, r) => Expr.Equal(simplify(l), simplify(r))
+        Num(n) => Expr.Num(n)
+        Var(v) => Expr.Var(v)
+    }
+}
+
+fn simplify_stmt(s: Stmt) -> Stmt {
+    match s {
+        Nop => Stmt.Nop
+        Set(x, e) => Stmt.Set(x, simplify(e))
+        While(c, b) => Stmt.While(simplify(c), simplify_stmt(b))
+        If(c, a, b) => Stmt.If(simplify(c), simplify_stmt(a), simplify_stmt(b))
+        Seq(a, b) => Stmt.Seq(simplify_stmt(a), simplify_stmt(b))
+    }
+}
+
+fn eval(e: Expr, vars: [i64]) -> i64 {
+    match e {
+        Num(n) => n
+        Var(v) => vars[v]
+        Add(a, b) => eval(a, vars) + eval(b, vars)
+        Sub(a, b) => eval(a, vars) - eval(b, vars)
+        Mul(a, b) => eval(a, vars) * eval(b, vars)
+        Less(a, b) => if eval(a, vars) < eval(b, vars) { 1 } else { 0 }
+        Equal(a, b) => if eval(a, vars) == eval(b, vars) { 1 } else { 0 }
+    }
+}
+
+fn run(s: Stmt, vars: [i64]) -> [i64] {
+    let mut vs = vars
+    match s {
+        Nop => {}
+        Set(x, e) => vs[x] = eval(e, vs)
+        While(c, b) => {
+            while eval(c, vs) != 0 {
+                vs = run(b, vs)
+            }
+        }
+        If(c, a, b) => {
+            if eval(c, vs) != 0 {
+                vs = run(a, vs)
+            } else {
+                vs = run(b, vs)
+            }
+        }
+        Seq(a, b) => {
+            vs = run(a, vs)
+            vs = run(b, vs)
+        }
+    }
+    vs
+}
+
+fn size(e: Expr) -> i64 {
+    match e {
+        Num(_) => 1
+        Var(_) => 1
+        Add(a, b) => 1 + size(a) + size(b)
+        Sub(a, b) => 1 + size(a) + size(b)
+        Mul(a, b) => 1 + size(a) + size(b)
+        Less(a, b) => 1 + size(a) + size(b)
+        Equal(a, b) => 1 + size(a) + size(b)
+    }
+}
+
+fn count(s: Stmt) -> i64 {
+    match s {
+        Nop => 1
+        Set(_, e) => 1 + size(e)
+        While(c, b) => 1 + size(c) + count(b)
+        If(c, a, b) => 1 + size(c) + count(a) + count(b)
+        Seq(a, b) => 1 + count(a) + count(b)
+    }
+}
+
+fn main() {
+    let mut text = "a = 0 b = z + 0 while a < 4 \{ b = b * 3 + a a = a + 1 \} "
+    text += "c = 1 * (2 + 3) d = 0 if c == 5 \{ d = c * 1 + 0 * 7 \} else \{ d = 99 \} "
+    text += "e = 10 f = 0 g = 0 while 0 < e \{ f = f + e - 2 * 3 g = g + (e == 4) e = e - 3 \} "
+    text += "h = 1 i = 0 while i < 5 \{ if i == 2 \{ h = h * 10 \} else \{ h = h + i \} i = i + 1 \} "
+    text += "j = (h + 0) * (1 * z) - h k = 0 + (4 * 5) + z"
+    let mut sum = 0
+    let mut nodes = 0
+    for r in 0..ROUNDS {
+        let s = simplify_stmt(Parser(src: text.bytes(), pos: 0).program())
+        let mut vars = [0; 26]
+        vars[25] = r % 10
+        let out = run(s, vars)
+        for v in out {
+            sum += v
+        }
+        if r == ROUNDS - 1 {
+            nodes = count(s)
+        }
+    }
+    print(sum)
+    print(nodes)
+}
+// Class layout: codegen sorts a class's fields by alignment, largest first, so a field's place in
+// memory is not its place in the source. Each function proves one property of that layout through
+// what the program prints; `eval_order.sisu`'s `Moved` covers constructor evaluation order.
+class Box: Eq {
+    v: i64
+    fn eq(self, other: Self) -> bool { self.v == other.v }
+}
+
+// Property 1, a tight sorted layout: sorting moves these fields, so a field stored through the
+// wrong element overlaps a neighbour. In memory they sit as `n`, `s`, `on`, `xs`, `oxs`, `obj`
+// (align 8), `c`, `oc` (align 4), then `a`, `u`, `ou` (align 1).
+class M: Eq {
+    mut a: bool
+    mut u: u8
+    mut c: char
+    mut n: i64
+    mut s: string
+    mut on: i64?
+    mut oc: char?
+    mut ou: u8?
+    mut xs: [i64]
+    mut oxs: [i64]?
+    mut obj: Box?
+
+    fn eq(self, other: Self) -> bool {
+        self.a == other.a && self.u == other.u && self.c == other.c && self.n == other.n &&
+            self.s == other.s && self.on == other.on && self.oc == other.oc &&
+            self.ou == other.ou && self.xs == other.xs && self.oxs == other.oxs &&
+            self.obj == other.obj
+    }
+}
+
+// Property 5, a chain field among mixed alignments: in memory `next` comes first and `flag` last.
+class L: Eq {
+    flag: bool
+    next: L?
+    n: i64
+
+    fn eq(self, other: Self) -> bool {
+        self.flag == other.flag && self.next == other.next && self.n == other.n
+    }
+}
+
+fn base() -> M {
+    M(a: true, u: 7, c: 'x', n: 100, s: "str", on: 200, oc: 'y', ou: 9, xs: [1, 2, 3], oxs: [4, 5], obj: Box(v: 300))
+}
+
+// The counted optionals: `oxs`'s length and first element, or `none`, then `obj?.v ?? -1`.
+fn show_counted(m: M) {
+    if let o = m.oxs {
+        print(o.len())                // length of oxs
+        print(o[0])                   // first element of oxs
+    } else {
+        print("none")                 // oxs is None
+    }
+    print(m.obj?.v ?? -1)             // obj
+}
+
+// Every field, in declared order; an optional scalar shows `?? sentinel` and `== None`.
+fn show(m: M) {
+    print(m.a)                        // a
+    print(m.u)                        // u
+    print(m.c)                        // c
+    print(m.n)                        // n
+    print(m.s)                        // s
+    print(m.on ?? -1)                 // on
+    print(m.on == None)               // on is None
+    print(m.oc ?? '-')                // oc
+    print(m.oc == None)               // oc is None
+    print(m.ou ?? 0)                  // ou
+    print(m.ou == None)               // ou is None
+    print(m.xs.len())                 // length of xs
+    for x in m.xs {
+        print(x)                      // each element of xs
+    }
+    show_counted(m)
+}
+
+// Property 2, distinct values in every field, after construction and after assigning each.
+fn construct_and_assign() {
+    let m = base()
+    show(m) // true, 7, x, 100, str, 200, false, y, false, 9, false, 3, 1, 2, 3, 2, 4, 300
+    m.a = false
+    m.u = 70
+    m.c = 'z'
+    m.n = 1000
+    m.s = "new"
+    m.on = 2000
+    m.oc = 'w'
+    m.ou = 90
+    m.xs = [10, 20]
+    m.oxs = [40, 50, 60]
+    m.obj = Box(v: 3000)
+    show(m) // false, 70, z, 1000, new, 2000, false, w, false, 90, false, 2, 10, 20, 3, 40, 3000
+}
+
+// Property 2, through an array: objects are shared, so a field write through `ms[0]` shows
+// through `copy`; an array field is copied on write, so `saved` keeps its old element.
+fn through_an_array() {
+    let ms = [base(), base()]
+    let copy = ms
+    ms[0].a = false
+    print(copy[0].a)                  // false
+    ms[0].u = 71
+    print(copy[0].u)                  // 71
+    ms[0].c = 'q'
+    print(copy[0].c)                  // q
+    ms[0].oc = 'r'
+    print(copy[0].oc ?? '-')          // r
+    ms[0].ou = 91
+    print(copy[0].ou ?? 0)            // 91
+    ms[0].n = 1001
+    print(copy[0].n)                  // 1001
+    let saved = ms[0].xs
+    ms[0].xs[1] = 99
+    print(saved[1])                   // 2
+    print(ms[0].xs[1])                // 99
+    print(copy[0].xs[1])              // 99
+    // The neighbours of each written field are intact, and `ms[1]` is untouched.
+    show(ms[0]) // false, 71, q, 1001, str, 200, false, r, false, 91, false, 3, 1, 99, 3, 2, 4, 300
+    show(ms[1]) // true, 7, x, 100, str, 200, false, y, false, 9, false, 3, 1, 2, 3, 2, 4, 300
+}
+
+// Property 3, each counted optional goes value, then `None`, then a new value.
+fn counted_optionals() {
+    let m = base()
+    show_counted(m)                   // 2, 4, 300
+    m.oxs = None
+    show_counted(m)                   // none, 300
+    m.obj = None
+    show_counted(m)                   // none, -1
+    m.oxs = [6, 7, 8]
+    show_counted(m)                   // 3, 6, -1
+    m.obj = Box(v: 301)
+    show_counted(m)                   // 3, 6, 301
+}
+
+// Property 3, the optional scalars go to `None`: `?? sentinel` gives the sentinel, `== None` is
+// true, and the fields around them are intact.
+fn none_scalars() {
+    let m = base()
+    m.on = None
+    m.oc = None
+    m.ou = None
+    show(m) // true, 7, x, 100, str, -1, true, -, true, 0, true, 3, 1, 2, 3, 2, 4, 300
+}
+
+// Property 4, two objects built separately that differ only in one field are unequal, and an
+// identical pair is equal.
+fn equality() {
+    print(base() == base())           // true
+    let d = base()
+    d.a = false
+    print(d == base())                // false: a
+    let d = base()
+    d.u = 8
+    print(d == base())                // false: u
+    let d = base()
+    d.c = 'w'
+    print(d == base())                // false: c
+    let d = base()
+    d.n = 101
+    print(d == base())                // false: n
+    let d = base()
+    d.s = "stR"
+    print(d == base())                // false: s
+    let d = base()
+    d.on = 201
+    print(d == base())                // false: on
+    let d = base()
+    d.oc = 'z'
+    print(d == base())                // false: oc
+    let d = base()
+    d.ou = 10
+    print(d == base())                // false: ou
+    let d = base()
+    d.xs = [1, 2, 4]
+    print(d == base())                // false: xs
+    let d = base()
+    d.oxs = [4, 6]
+    print(d == base())                // false: oxs
+    let d = base()
+    d.obj = Box(v: 302)
+    print(d == base())                // false: obj
+}
+
+// The sum of `n` along a chain.
+fn sum(l: L?) -> i64 {
+    if let x = l { x.n + sum(x.next) } else { 0 }
+}
+
+// Three nodes deep; `last` is the `n` of the deepest.
+fn chain(last: i64) -> L {
+    L(flag: true, next: L(flag: false, next: L(flag: true, next: None, n: last), n: 20), n: 100)
+}
+
+// Property 5: the drop loop walks the chain through its moved field, and the written `eq` reads
+// it. Both chains are dropped when the function returns.
+fn chains() {
+    let a = chain(3)
+    let b = chain(3)
+    print(sum(a))                     // 123
+    print(a == b)                     // true
+    print(a == chain(4))              // false: the deepest `n` differs
+}
+
+fn main() {
+    construct_and_assign()
+    through_an_array()
+    counted_optionals()
+    none_scalars()
+    equality()
+    chains()
+}

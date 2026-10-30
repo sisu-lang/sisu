@@ -259,14 +259,20 @@ pull requests only). On `main` it reports totals only. It never turns a check
 red.
 
 CodSpeed measures Sisu against itself in simulation mode. The benchmarks are
-in `codspeed.yml`: the `fib`, `sieve`, `binary_trees`, `quicksort`, `nbody`,
-`mandelbrot` and `fannkuch_redux` programs at reduced inputs, the `strings`,
-`enum_match`, `shared_arrays`, `compare`, `tree_rewrite`, `interp`,
-`interfaces`, `show` and `selfhost_lexer` programs from `bench/features/`, and
-the compiler on `bench/hello` (an `-O2` build), on `bench/binary_trees`
-(`check` and an `-O2` build), on `selfhost/lexer.sisu` (an `-O2` build) and on
-a generated 200-section input that uses most of the
-language. The `-O2` build of that input comes in two sizes:
+in `codspeed.yml`:
+
+- the `fib`, `sieve`, `binary_trees`, `quicksort`, `nbody`, `mandelbrot` and
+  `fannkuch_redux` programs, at reduced inputs;
+- the `strings`, `enum_match`, `shared_arrays`, `compare`, `tree_rewrite`,
+  `interp`, `interfaces` and `show` programs from `bench/features/`;
+- the lexer in Sisu: `selfhost_lexer` runs the `-O2` build of
+  `selfhost/lexer.sisu` on `bench/features/selfhost_lexer/input.sisu`, and
+  `build_selfhost_lexer` is an `-O2` build of `selfhost/lexer.sisu`;
+- the compiler on `bench/hello` (an `-O2` build), on `bench/binary_trees`
+  (`check` and an `-O2` build) and on a generated 200-section input that uses
+  most of the language.
+
+The `-O2` build of that input comes in two sizes:
 20 sections on every run (`build_large_20`) and 200 sections on pushes to
 `main` only (`build_large`, in `codspeed-main.yml`). Pull request reports show
 `build_large` as skipped, with its result from the baseline run.
@@ -548,9 +554,9 @@ The check is a set of tests:
   error and is excluded. Any other result fails the case with the exit status
   of `sisu`.
 - `selfhost_corpus_should_compare_a_file_from_each_directory` in `programs.rs`
-  names files that must be compared and a file that must be excluded. A case
-  that is excluded passes, so this test makes sure that the check cannot pass
-  with nothing compared.
+  names files that must be compared, with the lexer run on each, and a file
+  that must be excluded. An excluded case passes, so this test makes sure that
+  the check cannot pass with nothing compared.
 - `all_tokens.sisu` in `crates/sisuc/tests/tokens/` holds every kind of token,
   every reserved word and each rule of the lexer. A unit test in the lexer fails
   when a kind has no token in it.
@@ -566,11 +572,11 @@ example, when a top-level `type` makes a `;` run behave as `const` does, the
 change goes into `separate` and into the program together.
 
 CodSpeed has two benchmarks of the lexer. `selfhost_lexer` runs the `-O2`
-build on the files in `bench/features/selfhost_lexer/corpus/`.
+build once on `bench/features/selfhost_lexer/input.sisu`.
 `scripts/codspeed-prep.sh` fails when its output differs from the tokens that
-`sisu build --emit tokens` prints for these files. `build_selfhost_lexer` is an
-`-O2` build of the lexer. The corpus is fixed: do not change a file in it, so
-that the numbers compare between commits.
+`sisu build --emit tokens` prints for that file. `build_selfhost_lexer` is an
+`-O2` build of the lexer. The input is fixed: do not change it, so that the
+numbers compare between commits.
 
 ## Compile and run a program
 

@@ -2772,15 +2772,6 @@ fn compare_text(test: &str, input: &str) {
     selfhost::compare(&input, &selfhost::tokens_of(&input));
 }
 
-/// GIVEN `tests/tokens/all_tokens.sisu`, which holds every token kind and each case of the rules
-/// WHEN each build of `selfhost/lexer.sisu` reads it on standard input
-/// THEN each prints the tokens that `sisu build --emit tokens` prints for it, byte for byte
-#[test]
-fn selfhost_lexer_should_match_emit_tokens_on_all_tokens() {
-    let input = Path::new(ALL_TOKENS);
-    selfhost::compare(input, &selfhost::tokens_of(input));
-}
-
 /// GIVEN `all_tokens.sisu` with each `\n` made `\r\n`
 /// WHEN each build of the lexer reads it
 /// THEN the tokens are those of `sisu build --emit tokens`, and each `Newline` sits on its `\r`
@@ -3052,11 +3043,13 @@ fn selfhost_build_should_rebuild_after_a_build_stops_half_way() {
 /// and `tests/tokens`, and `selfhost/lexer.sisu`, `prelude.sisu` and `lang.sisu`, which lex
 /// without an error
 /// AND a file of `tests/diagnostics` that has a lexer error
-/// WHEN the corpus check classifies each
-/// THEN the first eight are compared, with tokens, and the last is excluded
+/// WHEN the corpus check runs on each
+/// THEN the lexer builds print the tokens of `sisu` for each of the first eight, and the last is
+/// excluded
 ///
-/// The datatest cases of `cases.rs` pass when a file is excluded; this test names the files, so
-/// a classifier that excludes every file, or that compares a file `sisu` rejects, fails here.
+/// The datatest cases of `cases.rs` pass when a file is excluded, and when the check compares
+/// nothing; this test names the files, so a check that compares no build, a classifier that
+/// excludes every file, or one that compares a file `sisu` rejects, fails here.
 #[test]
 fn selfhost_corpus_should_compare_a_file_from_each_directory() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -3071,19 +3064,15 @@ fn selfhost_corpus_should_compare_a_file_from_each_directory() {
         "src/lang.sisu",
     ];
     for file in compared {
-        match selfhost::selfhost_outcome(&root.join(file)) {
-            selfhost::Outcome::Compared(tokens) => {
-                assert!(
-                    tokens.ends_with("Eof\n"),
-                    "{file}: no `Eof` ends the tokens"
-                );
-            }
-            selfhost::Outcome::Excluded => panic!("{file} is excluded"),
-        }
+        let builds = selfhost::check(&root.join(file));
+        assert!(
+            builds.is_some_and(|builds| builds > 0),
+            "{file}: no build of the lexer was compared"
+        );
     }
     assert_eq!(
-        selfhost::selfhost_outcome(&root.join("tests/diagnostics/E0003.sisu")),
-        selfhost::Outcome::Excluded
+        selfhost::check(&root.join("tests/diagnostics/E0003.sisu")),
+        None
     );
 }
 

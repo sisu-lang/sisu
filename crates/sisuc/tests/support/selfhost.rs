@@ -118,7 +118,7 @@ fn stamp(source: &Path, plan: &[(&str, Vec<&str>)]) -> String {
 
 /// What the corpus check does with one file.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Outcome {
+enum Outcome {
     /// `sisu build --emit tokens` exited 0, warnings allowed. These are the tokens it printed.
     Compared(String),
     /// It exited 1 with a diagnostic code: the file does not lex, so no lexer need print tokens.
@@ -128,7 +128,7 @@ pub(crate) enum Outcome {
 /// Runs `sisu build --emit tokens` on `path` and classifies the file. Any other result fails the
 /// check, with the exit status of `sisu`: a panic, a signal, or an exit 1 with no diagnostic code
 /// is a fault in `sisu`, not a file the lexer may skip.
-pub(crate) fn selfhost_outcome(path: &Path) -> Outcome {
+fn selfhost_outcome(path: &Path) -> Outcome {
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
         .args(["build", "--emit", "tokens"])
         .arg(path)
@@ -145,6 +145,16 @@ pub(crate) fn selfhost_outcome(path: &Path) -> Outcome {
             path.display(),
             out.status
         ),
+    }
+}
+
+/// The corpus check of one file: classifies it, and for a compared file runs each build of the
+/// lexer on it (see `compare`). It returns how many builds printed the tokens of `sisu`, or `None`
+/// for an excluded file, so a test can name the files that it expects to be compared.
+pub(crate) fn check(path: &Path) -> Option<usize> {
+    match selfhost_outcome(path) {
+        Outcome::Compared(tokens) => Some(compare(path, &tokens)),
+        Outcome::Excluded => None,
     }
 }
 
@@ -165,10 +175,11 @@ fn run_lexer(exe: &Path, input: &Path, valgrind: bool) -> Output {
 /// Runs each build of the lexer with the file `input` on its standard input. Each must exit 0 with
 /// nothing on standard error. Each must print `expected`, the tokens of `input` from
 /// `sisu build --emit tokens`, byte for byte. A mismatch names the input and its first differing
-/// line.
-pub(crate) fn compare(input: &Path, expected: &str) {
+/// line. It returns the number of builds that it ran.
+pub(crate) fn compare(input: &Path, expected: &str) -> usize {
     let builds = builds();
-    for exe in [&builds.o2, &builds.o0, &builds.rc_checks] {
+    let all = [&builds.o2, &builds.o0, &builds.rc_checks];
+    for exe in all {
         let out = run_lexer(exe, input, false);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(
@@ -187,6 +198,7 @@ pub(crate) fn compare(input: &Path, expected: &str) {
         );
         assert_same_tokens(exe, input, expected, &out);
     }
+    all.len()
 }
 
 /// Runs `exe`, a build of the lexer, under Valgrind with the file `input` on its standard input.

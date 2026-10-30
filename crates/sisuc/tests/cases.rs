@@ -120,10 +120,7 @@ fn every_program_certifies(path: &Path) -> datatest_stable::Result<()> {
     reason = "datatest-stable accepts only test functions that return a `Result`"
 )]
 fn selfhost_lexer(path: &Path) -> datatest_stable::Result<()> {
-    if let support::selfhost::Outcome::Compared(tokens) = support::selfhost::selfhost_outcome(path)
-    {
-        support::selfhost::compare(path, &tokens);
-    }
+    support::selfhost::check(path);
     Ok(())
 }
 
