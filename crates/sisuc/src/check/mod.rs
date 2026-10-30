@@ -733,6 +733,8 @@ struct Body {
     ahead: Vec<((Span, bool), Option<generic::Ahead>)>,
     /// Where in `ahead` the last work kept for each span and kind is.
     ahead_at: FxHashMap<(Span, bool), usize>,
+    /// What `takes_context` answered for each `Some(...)` and context, by the span of the call.
+    taken: FxHashMap<(Span, Type), bool>,
 }
 
 impl Body {

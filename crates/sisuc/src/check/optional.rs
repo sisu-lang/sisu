@@ -32,7 +32,9 @@ impl Checker<'_> {
         let (arg, found) = match site.expected.map(|ty| (ty, ty.kind())) {
             // An expected `T?` fixes `T`, so a literal in the argument takes that type: the
             // generic call would type an `if` of integer literals by their default first.
-            Some((want, TypeKind::Optional(payload))) if site.written.is_empty() => {
+            Some((want, TypeKind::Optional(payload)))
+                if site.written.is_empty() && !want.holds_hole() =>
+            {
                 (mark(self.operand(&args[0].value, Some(payload))), want)
             }
             _ => {
