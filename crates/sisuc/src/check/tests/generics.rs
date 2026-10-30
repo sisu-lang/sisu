@@ -2838,7 +2838,7 @@ fn some_should_be_checked_once_a_later_waiting_call_binds_its_parameter() {
 /// enum or not at all, and gives it a generic call. The second argument is a call that waits for
 /// the `U` that the third gives, and then binds `T`.
 #[test]
-fn an_argument_for_an_associated_type_should_wait_for_the_argument_that_binds_its_base() {
+fn an_associated_type_argument_should_wait_for_the_argument_that_binds_its_base() {
     const DECLS: &str = "interface I {\n    type Item\n}\n\
         enum Wrap<T> {\n    N\n    X(T)\n}\n\
         class Box<T> {\n    value: T\n}\n\
@@ -2859,5 +2859,102 @@ fn an_argument_for_an_associated_type_should_wait_for_the_argument_that_binds_it
              let some: Wrap<i64>? = None\n    let n: i64? = 1\n    f({arg}, pair(w), n)\n}}"
         );
         clean_row(param, &src);
+    }
+}
+
+/// The declarations of the tests below: `W` and `P` choose `Item` for the interfaces `I` and
+/// `Holds<i64>`.
+const ASSOC_DECLS: &str = "interface I {\n    type Item\n}\n\
+    interface Holds<Y> {\n    type Item\n}\n\
+    enum Wrap<T> {\n    N\n    X(T)\n}\n\
+    enum Two<A, B> {\n    P(A, B)\n}\n\
+    class W: I {\n    type Item = i64\n}\n\
+    class P: Holds<i64> {\n    type Item = string\n}\n";
+
+/// The `main` of `ASSOC_DECLS` and `decls` that holds `call`, and the line of `call`.
+fn assoc_program(decls: &str, call: &str) -> (String, usize) {
+    let line = (ASSOC_DECLS.lines().count() + decls.lines().count()) + 2;
+    (
+        format!("{ASSOC_DECLS}{decls}fn main() {{\n    {call}\n}}"),
+        line,
+    )
+}
+
+/// A parameter type that names a parameter outside an associated type too, in either order, in a
+/// nested type, through the bound's interface arguments, in an array or an optional, binds the
+/// parameter itself: its argument does not wait, so it is a local, a literal or a call.
+#[test]
+fn an_argument_should_bind_a_parameter_that_its_type_names_outside_an_associated_type() {
+    for (decls, call) in [
+        ("fn h<T: I>(_p: Two<T, T.Item>) {}\n", "h(Two.P(W(), 7))"),
+        ("fn h<T: I>(_p: Two<T.Item, T>) {}\n", "h(Two.P(7, W()))"),
+        (
+            "fn h<T: I>(_p: Wrap<Two<T.Item, Wrap<T>>>) {}\n",
+            "h(Wrap.X(Two.P(7, Wrap.X(W()))))",
+        ),
+        (
+            "fn h<S: Holds<U>, U>(_s: S, _p: Two<S.Item, U>) {}\n",
+            "h(P(), Two.P(\"a\", 4))",
+        ),
+        (
+            "fn h<T: I>(_p: Two<T, T.Item>) {}\n",
+            "let p = Two.P(W(), 7)\n    h(p)",
+        ),
+        (
+            "fn h<T: I>(_p: [Two<T, T.Item>]) {}\n",
+            "h([Two.P(W(), 7)])",
+        ),
+        ("fn h<T: I>(_p: Two<T, T.Item>?) {}\n", "h(Two.P(W(), 7))"),
+    ] {
+        let (src, _) = assoc_program(decls, call);
+        clean_row(&format!("{decls}{call}"), &src);
+    }
+}
+
+/// An argument that disagrees with the type its parameter fixes is reported at the argument,
+/// and a parameter that only an associated type names stays uninferred. A parameter bound to a
+/// type that does not conform reports its bound alone.
+#[test]
+fn an_associated_type_argument_should_report_its_own_mistake() {
+    for (decls, call, col, code) in [
+        (
+            "fn h<T: I>(_p: Two<T, T.Item>) {}\n",
+            "h(Two.P(W(), \"x\"))",
+            7,
+            Code::Mismatch,
+        ),
+        (
+            "fn h<T: I>(_p: Two<T.Item, T>) {}\n",
+            "h(Two.P(\"x\", W()))",
+            7,
+            Code::Mismatch,
+        ),
+        (
+            "fn h<S: Holds<U>, U>(_s: S, _p: Two<S.Item, U>) {}\n",
+            "h(P(), Two.P(5, 4))",
+            12,
+            Code::Mismatch,
+        ),
+        (
+            "fn h<S: Holds<U>, U>(_s: S, _w: Wrap<S.Item>) {}\n",
+            "h(P(), Wrap.X(\"a\"))",
+            5,
+            Code::CannotInfer,
+        ),
+        (
+            "fn h<T: I>(_p: Two<T, T.Item>) {}\n",
+            "h(Two.P(5, 7))",
+            7,
+            Code::NotConform,
+        ),
+        (
+            "fn h<T: I>(_p: Two<T.Item, T>) {}\n",
+            "h(Two.P(7, 5))",
+            7,
+            Code::NotConform,
+        ),
+    ] {
+        let (src, line) = assoc_program(decls, call);
+        codes_row(&format!("{decls}{call}"), &src, &[(code, (line, col))]);
     }
 }

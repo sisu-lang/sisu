@@ -1,10 +1,12 @@
-// GIVEN `W<T>`, a class that chooses `Wrap<T>` as its associated type `Item`; `pick`, whose
-// parameters `a: Wrap<T.Item>`, `_b: Two<T, U>` and `_c: U` write `T.Item` before `T` is bound; and
-// `second`, whose parameter `p: Two<T.Item, U>` follows a bound `T`, with `U` still unbound
-// WHEN `pick` runs on a `Wrap.X` call, a `pair` call that gets its `E` from `_c`, and an optional,
-// and `second` runs on a `W<i64>` and a `Two.P` call
-// THEN `a` waits for the `T` that `b` binds, so `pick` returns `Wrap<Wrap<i64>>` and prints 7
+// GIVEN `W<T>`, a class that chooses `Wrap<T>` as its associated type `Item`
+// AND `pick`, whose parameter `a: Wrap<T.Item>` names `T` only under `Item`, before `b` binds it
+// AND `second`, whose parameter `p: Two<T.Item, U>` follows a bound `T`, with `U` unbound
+// AND `item_of`, whose parameter `p: Two<T, T.Item>` also names `T` outside `Item`
+// WHEN `pick` runs on a `Wrap.X` call, on a `pair` call that gets its `E` from `_c`, and on `n`
+// AND `second` runs on a `W<i64>` and a `Two.P` call, and `item_of` runs on a local `Two.P`
+// THEN `a` waits for the `T` that `b` binds, so `pick` returns a `Wrap<Wrap<i64>>` and prints 7
 // AND `p` gets its context at once, so `U` is `i64` and `second` prints 4
+// AND `p` of `item_of` binds `T` itself, so a local `Two.P` is a valid argument and it prints 3
 interface I {
     type Item
 }
@@ -36,6 +38,12 @@ fn second<T: I, U>(_t: T, p: Two<T.Item, U>) -> U {
     }
 }
 
+fn item_of<T: I>(p: Two<T, T.Item>) -> T.Item {
+    match p {
+        Two.P(_, i) => i
+    }
+}
+
 fn main() {
     let w: W<i64> = W()
     let n: i64? = 1
@@ -47,6 +55,11 @@ fn main() {
         }
         Wrap.N => print(0) // not reached
     }
-    let item: Wrap<i64> = Wrap.N
-    print(second(w, Two.P(item, 4))) // 4
+    let empty: Wrap<i64> = Wrap.N
+    print(second(w, Two.P(empty, 4))) // 4
+    let local = Two.P(w, Wrap.X(3))
+    match item_of(local) {
+        Wrap.X(v) => print(v) // 3
+        Wrap.N => print(0) // not reached
+    }
 }

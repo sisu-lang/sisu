@@ -77,6 +77,49 @@ fn names_outside_assoc(ty: Type, param: usize) -> bool {
     }
 }
 
+/// Marks in `outside` each type parameter that `ty` names other than under an associated type,
+/// and in `inside` each that it names under one, as the base or an interface argument of it.
+/// Each is by its place. Unlike `mark_params`, this walk is not counted in `MARKED`.
+fn mark_by_assoc(ty: Type, under: bool, inside: &mut [bool], outside: &mut [bool]) {
+    if !ty.has_param() {
+        return;
+    }
+    match ty.kind() {
+        TypeKind::Param(_, j) => {
+            let marks = if under { inside } else { outside };
+            marks[j as usize] = true;
+        }
+        TypeKind::Array(t) | TypeKind::Optional(t) => mark_by_assoc(t, under, inside, outside),
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+            for &arg in args.get() {
+                mark_by_assoc(arg, under, inside, outside);
+            }
+        }
+        TypeKind::Assoc(base, _, args, _) => {
+            mark_by_assoc(base, true, inside, outside);
+            for &arg in args.get() {
+                mark_by_assoc(arg, true, inside, outside);
+            }
+        }
+        _ => unreachable!("only a kind with a child can name a parameter"),
+    }
+}
+
+/// Whether an argument for `param`, a parameter type of the call, waits for the others:
+/// `param` names a parameter that `bindings` has not bound, and names it only under an
+/// associated type. `bind` binds nothing at an associated type, so that argument cannot bind the
+/// parameter, and the type it must meet is not known until the others do. A parameter that
+/// `param` names elsewhere too is bound by the argument itself, which then does not wait.
+fn waits_for_assoc(bindings: &Bindings, param: Type) -> bool {
+    if !param.has_assoc() {
+        return false;
+    }
+    let count = bindings.found.len();
+    let (mut inside, mut outside) = (vec![false; count], vec![false; count]);
+    mark_by_assoc(param, false, &mut inside, &mut outside);
+    (0..count).any(|j| inside[j] && !outside[j] && bindings.found[j].is_none())
+}
+
 /// Which of the first `len` type parameters `types` name. A type that did not resolve names
 /// nothing.
 pub(super) fn named_params(types: impl Iterator<Item = Option<Type>>, len: usize) -> Vec<bool> {
@@ -567,22 +610,6 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether `ty`, a parameter type of the call, writes an associated type whose base the call
-    /// has not bound yet. No argument for such a type can bind that base, so the argument waits.
-    fn assoc_unknown(&self, call: &Inference, ty: Type) -> bool {
-        if !ty.has_assoc() {
-            return false;
-        }
-        match ty.kind() {
-            TypeKind::Assoc(..) => self.known_in(call, ty).is_none(),
-            TypeKind::Array(t) | TypeKind::Optional(t) => self.assoc_unknown(call, t),
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
-                args.get().iter().any(|&t| self.assoc_unknown(call, t))
-            }
-            _ => unreachable!("only a kind with a child can hold an associated type"),
-        }
-    }
-
     /// `bindings.partial(ty)`, with the associated types of known types replaced.
     fn partial(&self, bindings: &Bindings, ty: Type) -> Type {
         let partial = bindings.partial(ty);
@@ -759,9 +786,9 @@ impl Checker<'_> {
     }
 
     /// The rank of each argument of the call: 2 for one that waits for context, 1 for one whose
-    /// type comes from its literals' defaults, else 0. An argument for a type that writes an
-    /// associated type through a parameter that is not bound waits for it, whatever the argument
-    /// is, as `infer_waiting` says. `fit` is cleared where a call in an argument does not fit its
+    /// type comes from its literals' defaults, else 0. An argument for a type that names an
+    /// unbound parameter only under an associated type waits for it, whatever the argument is
+    /// (see `waits_for_assoc`). `fit` is cleared where a call in an argument does not fit its
     /// declaration.
     fn rank_arguments(
         &mut self,
@@ -773,8 +800,8 @@ impl Checker<'_> {
         iter::zip(args, fit)
             .enumerate()
             .map(|(i, (arg, fit))| {
-                let writes_assoc = sig.params[i]
-                    .is_some_and(|param| param.has_assoc() && self.known_in(call, param).is_none());
+                let writes_assoc =
+                    sig.params[i].is_some_and(|param| waits_for_assoc(&call.bindings, param));
                 match &arg.value {
                     _ if writes_assoc => 2,
                     e if self.waits(e, fit) => 2,
@@ -971,12 +998,12 @@ impl Checker<'_> {
     }
 
     /// Checks `e`, the waiting argument at `i` for `param`. It stays unchecked while `param`
-    /// writes an associated type that the call cannot name yet, whatever `e` is: no argument
-    /// for `param` can bind the base of that type. It stays unchecked too while `param` names an
-    /// unbound parameter, unless it holds a call that reports its own mistake (`fit` is false),
-    /// which is checked on its own, or is a generic call, which is checked against what the call
-    /// binds of `param` (see `call_context`). That call reports a result that cannot meet the
-    /// context as a mismatch with `param`, by `context_hint`.
+    /// names an unbound parameter only under an associated type, whatever `e` is (see
+    /// `waits_for_assoc`). It stays unchecked too while `param` names an unbound parameter,
+    /// unless it holds a call that reports its own mistake (`fit` is false), which is checked on
+    /// its own, or is a generic call, which is checked against what the call binds of `param`
+    /// (see `call_context`). That call reports a result that cannot meet the context as a
+    /// mismatch with `param`, by `context_hint`.
     fn infer_waiting(
         &mut self,
         call: &mut Inference,
@@ -985,7 +1012,7 @@ impl Checker<'_> {
         param: Option<Type>,
         fit: bool,
     ) {
-        if param.is_some_and(|param| self.assoc_unknown(call, param)) {
+        if param.is_some_and(|param| waits_for_assoc(&call.bindings, param)) {
             return;
         }
         if !fit || param.is_none_or(|param| self.known_in(call, param).is_some()) {
@@ -1102,8 +1129,8 @@ impl Checker<'_> {
             Some(_) => {
                 let want = self.known_in(call, pattern);
                 debug_assert!(
-                    want.is_some(),
-                    "a unified pattern should name only bound parameters"
+                    want.is_some() || call.failed,
+                    "a unified pattern should be known, unless a bound check failed"
                 );
                 mark(self.against(e, checked, want, None))
             }
