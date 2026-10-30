@@ -687,6 +687,9 @@ struct Body {
     break_hint: Option<(Span, Span)>,
     /// The waiting generic call that the outer call is checking as an argument.
     context_hint: Option<generic::ContextHint>,
+    /// The argument of a generic call now checked, when its expected type may hold a hole that
+    /// stands for a parameter whose bound failed (see `generic::Bindings::reject`).
+    rejected_context: Option<Span>,
     /// Set by a `break` or `continue` outside a loop; `scoped_block` reads it per statement.
     invalid_jump: bool,
     /// Where each loop label is declared that a failed jump or a reused loop label names, which

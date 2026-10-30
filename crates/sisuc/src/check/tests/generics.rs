@@ -3771,3 +3771,327 @@ fn nested_some_context_should_cost_one_step_for_each_level() {
     assert!(steps(1) > 0, "the counter should count the walk");
     assert_near_linear(steps(10), steps(20), steps(30));
 }
+
+/// The declarations that the rows of the failed bound tests share. `J` is an interface that no type
+/// conforms to, and `V` conforms to `K<i64>` only. `none` and `two` are calls that only their
+/// context can bind.
+const REJECT_DECLS: &str = "interface J {\n}\n\
+    interface K<X> {\n}\n\
+    class V: K<i64> {\n}\n\
+    class Plain {\n}\n\
+    fn none<T>() -> T? { None }\n\
+    fn two<A, B>() -> Two<A, B> { panic(\"e\") }\n";
+
+/// A row of `PartialRow`, with the declarations that it follows written before its own.
+type SharedRow<'a> = (String, &'a str, &'a [(Code, &'a str)]);
+
+/// `check_partial_rows`, with `shared` before the declarations of each row.
+fn check_rows_after(shared: &str, rows: &[PartialRow<'_>]) {
+    let rows: Vec<SharedRow<'_>> = rows
+        .iter()
+        .map(|&(decls, body, expected)| (format!("{shared}{decls}"), body, expected))
+        .collect();
+    let rows: Vec<PartialRow<'_>> = rows
+        .iter()
+        .map(|(decls, body, expected)| (decls.as_str(), *body, *expected))
+        .collect();
+    check_partial_rows(&rows);
+}
+
+/// The rows of `a_failed_bound_should_not_check_a_later_argument_against_the_rejected_type`.
+const REJECT_ROWS: &[PartialRow<'static>] = {
+    use Code::{Mismatch, NotConform};
+    const P: &str = "Two.P(5";
+    &[
+        // The first argument binds `T` to `i64`. `I` has no conformance for it.
+        (
+            "fn h<T: I>(_p: Two<T, i64>, _a: T) {}\n",
+            "h(Two.P(5, 7), W())",
+            &[(NotConform, P)],
+        ),
+        (
+            "fn h<T: I>(_p: Two<T, T.Item>, _a: T) {}\n",
+            "h(Two.P(5, 7), W())",
+            &[(NotConform, P)],
+        ),
+        (
+            "fn h<T: I, U>(_p: Two<T, i64>, _a: Two<T, U>) {}\n",
+            "h(Two.P(5, 7), Two.P(W(), 1))",
+            &[(NotConform, P)],
+        ),
+        // The parameter is in an array, an optional and a nested call.
+        (
+            "fn h<T: I>(_p: Two<T, i64>, _a: [T]) {}\n",
+            "h(Two.P(5, 7), [W(), W()])",
+            &[(NotConform, P)],
+        ),
+        (
+            "fn h<T: I>(_p: Two<T, i64>, _a: [[T]]) {}\n",
+            "h(Two.P(5, 7), [[W()], [W()]])",
+            &[(NotConform, P)],
+        ),
+        (
+            "fn h<T: I>(_p: Two<T, i64>, _a: [T?]) {}\n",
+            "h(Two.P(5, 7), [Some(W()), None])",
+            &[(NotConform, P)],
+        ),
+        (
+            "fn h<T: I>(_p: Two<T, i64>, _a: T?) {}\n",
+            "h(Two.P(5, 7), Some(W()))",
+            &[(NotConform, P)],
+        ),
+        (
+            "fn h<T: I>(_p: Two<T, i64>, _a: T) {}\n",
+            "h(Two.P(5, 7), id(W()))",
+            &[(NotConform, P)],
+        ),
+        // Two arguments after it, and one that is wrong in its own right.
+        (
+            "fn h<T: I>(_p: Two<T, i64>, _a: T, _b: T) {}\n",
+            "h(Two.P(5, 7), W(), \"s\")",
+            &[(NotConform, P)],
+        ),
+        (
+            "fn h<T: I>(_p: Two<T, i64>, _a: T, _b: bool) {}\n",
+            "h(Two.P(5, 7), W(), 1)",
+            &[(NotConform, P), (Mismatch, "1)")],
+        ),
+        // Each bound that fails is reported, and each parameter that has one is rejected.
+        (
+            "fn h<T: I, U: J>(_p: Two<T, U>, _a: T, _b: U) {}\n",
+            "h(Two.P(5, true), W(), false)",
+            &[(NotConform, P), (NotConform, P)],
+        ),
+        (
+            "fn h<T: I & J>(_p: Two<T, i64>, _a: T) {}\n",
+            "h(Two.P(5, 7), W())",
+            &[(NotConform, P), (NotConform, P)],
+        ),
+        (
+            "fn h<T: I & J>(_p: Two<T, i64>, _a: T) {}\n",
+            "h(Two.P(W(), 7), W())",
+            &[(NotConform, "Two.P(W")],
+        ),
+        // A second bound of the rejected parameter waits for `U`. It is not checked when `U` binds.
+        (
+            "fn h<T: I & K<U>, U>(_a: T, _b: U) {}\n",
+            "let a = 5\nlet b = \"s\"\nh(a, b)",
+            &[(NotConform, "a")],
+        ),
+        // The bound names another parameter.
+        (
+            "fn h<T: K<U>, U>(_a: T, _b: U, _c: Two<T, U>) {}\n",
+            "h(5, \"s\", Two.P(V(), \"t\"))",
+            &[(NotConform, "Two.P(V")],
+        ),
+        // The type argument is written.
+        (
+            "fn h<T: I>(_p: Two<T, i64>, _a: T) {}\n",
+            "h<i64>(Two.P(5, 7), W())",
+            &[(NotConform, "i64")],
+        ),
+        (
+            "fn f<T: Eq>(_a: T, _b: T) {}\n",
+            "f(Plain(), 5)",
+            &[(NotConform, "Plain()")],
+        ),
+        // A method, a method of a generic class, a safe call, a construction and a variant.
+        (
+            "class Bx {\n    fn m<T: I>(self, _p: Two<T, i64>, _a: T) {}\n}\n",
+            "Bx().m(Two.P(5, 7), W())",
+            &[(NotConform, P)],
+        ),
+        (
+            "class Gr<X> {\n    x: X\n    fn m<U: I>(self, _p: Two<U, i64>, _a: U) {}\n}\n",
+            "Gr(x: true).m(Two.P(5, 7), W())",
+            &[(NotConform, P)],
+        ),
+        (
+            "class Sf {\n    fn m<T: I>(self, _p: Two<T, i64>, _a: T) {}\n}\n",
+            "let o: Sf? = Sf()\no?.m(Two.P(5, 7), W())",
+            &[(NotConform, P)],
+        ),
+        (
+            "class Hold<T: I> {\n    p: Two<T, i64>\n    a: T\n}\n",
+            "Hold(p: Two.P(5, 7), a: W())",
+            &[(NotConform, P)],
+        ),
+        (
+            "enum En<T: I> {\n    V(Two<T, i64>, T)\n}\n",
+            "En.V(Two.P(5, 7), W())",
+            &[(NotConform, P)],
+        ),
+    ]
+};
+
+/// A parameter whose bound fails is rejected: no argument after it is asked for the type that the
+/// bound rejected, so the failed bound is the call's only error for that parameter.
+#[test]
+fn a_failed_bound_should_not_check_a_later_argument_against_the_rejected_type() {
+    check_rows_after(REJECT_DECLS, REJECT_ROWS);
+}
+
+/// The rows of `an_argument_after_a_failed_bound_should_report_the_part_that_is_wrong`.
+const REJECT_PART_ROWS: &[PartialRow<'static>] = {
+    use Code::{Mismatch, NotConform};
+    const P: &str = "Two.P(5";
+    const S: &str = "\"s\"";
+    &[
+        // `U` is not rejected: the first argument that binds it fixes it.
+        (
+            "fn h<T: I, U>(_p: Two<T, T.Item>, _a: U, _b: Two<U, T.Item>) {}\n",
+            "h(Two.P(5, 7), true, Two.P(\"s\", 3))",
+            &[(NotConform, P), (Mismatch, S)],
+        ),
+        (
+            "fn h<T: I, S: I, U>(_p: Two<T, T.Item>, _s: S, _a: U, _b: Two<U, S.Item>) {}\n",
+            "h(Two.P(5, 7), W(), true, Two.P(\"s\", 2))",
+            &[(NotConform, P), (Mismatch, S)],
+        ),
+        (
+            "fn h<T: I, U>(_p: Two<T, i64>, _a: Two<T, U>, _b: U) {}\n",
+            "h(Two.P(5, 7), Two.P(W(), 1), \"s\")",
+            &[(NotConform, P), (Mismatch, S)],
+        ),
+        (
+            "fn h<T: I, U>(_p: Two<T, i64>, _a: [Two<T, U>], _b: U) {}\n",
+            "h(Two.P(5, 7), [Two.P(W(), 1), Two.P(W(), 2)], \"s\")",
+            &[(NotConform, P), (Mismatch, S)],
+        ),
+        // The part that is not the rejected parameter must still meet the parameter's type.
+        (
+            "fn h<T: I>(_p: Two<T, i64>, _a: Two<T, bool>) {}\n",
+            "let t = Two.P(W(), 1)\nh(Two.P(5, 7), t)",
+            &[(NotConform, P), (Mismatch, "t)")],
+        ),
+        (
+            "fn h<T: I>(_p: Two<T, i64>, _a: Two<T, bool>) {}\n",
+            "h(Two.P(5, 7), mk(W(), 1))",
+            &[(NotConform, P), (Mismatch, "1))")],
+        ),
+    ]
+};
+
+/// A rejected parameter meets every type. The other parts of the argument, and the other
+/// parameters of the call, are still checked.
+#[test]
+fn an_argument_after_a_failed_bound_should_report_the_part_that_is_wrong() {
+    check_rows_after(REJECT_DECLS, REJECT_PART_ROWS);
+}
+
+/// The rows of `a_call_that_waits_for_a_rejected_parameter_should_report_no_inference_error`.
+const REJECT_WAIT_ROWS: &[PartialRow<'static>] = {
+    use Code::NotConform;
+    &[
+        (
+            "fn h<T: I>(_p: T, _a: T?) {}\n",
+            "h(5, none())",
+            &[(NotConform, "5")],
+        ),
+        (
+            "fn h<T: I>(_p: T, _a: [T?]) {}\n",
+            "h(5, [none()])",
+            &[(NotConform, "5")],
+        ),
+        (
+            "fn h<T: I>(_p: T, _a: Two<T, i64>) {}\n",
+            "h(5, two())",
+            &[(NotConform, "5")],
+        ),
+        (
+            "fn h<T: I>(_p: T, _a: Two<T, T>) {}\n",
+            "h(5, two())",
+            &[(NotConform, "5")],
+        ),
+    ]
+};
+
+/// The context of a call that waits holds a hole for a rejected parameter. The call cannot bind
+/// what the hole leaves, and the failed bound is the cause, so the call adds no E0050.
+#[test]
+fn a_call_that_waits_for_a_rejected_parameter_should_report_no_inference_error() {
+    check_rows_after(REJECT_DECLS, REJECT_WAIT_ROWS);
+}
+
+/// The rows of `a_failed_bound_should_come_before_a_mismatch_with_the_expected_type`.
+const REJECT_EXPECTED_ROWS: &[PartialRow<'static>] = {
+    use Code::NotConform;
+    const P: &str = "Two.P(5";
+    &[
+        (
+            "fn h<T: I>(_p: Two<T, i64>) -> T? { None }\n",
+            "let x: W? = h(Two.P(5, 7))",
+            &[(NotConform, P)],
+        ),
+        (
+            "fn h<T: I>(_p: Two<T, T.Item>) -> T? { None }\n",
+            "let x: W? = h(Two.P(5, 7))",
+            &[(NotConform, P)],
+        ),
+        (
+            "fn h<T: I>(_p: Two<T, i64>, a: T) -> T { a }\n",
+            "let x: i64 = h(Two.P(5, 7), W())",
+            &[(NotConform, P)],
+        ),
+        (
+            "fn h<T: I>(_p: Two<T, i64>, a: [T]) -> [T] { a }\n",
+            "let x: [W] = h(Two.P(5, 7), [W()])",
+            &[(NotConform, P)],
+        ),
+        (
+            "fn h<T: I>(_p: Two<T, i64>, a: T) -> Two<T, T> { Two.P(a, a) }\n",
+            "let x: Two<W, W> = h(Two.P(5, 7), W())",
+            &[(NotConform, P)],
+        ),
+        (
+            "class Sf {\n    fn m<T: I>(self, _p: Two<T, i64>, _a: T) -> T? { None }\n}\n",
+            "let o: Sf? = Sf()\nlet x: W? = o?.m(Two.P(5, 7), W())",
+            &[(NotConform, P)],
+        ),
+    ]
+};
+
+/// An expected type does not bind the parameter of a call whose bound failed: the failed bound is
+/// reported, and the mismatch with the expected type is not.
+#[test]
+fn a_failed_bound_should_come_before_a_mismatch_with_the_expected_type() {
+    check_rows_after(REJECT_DECLS, REJECT_EXPECTED_ROWS);
+}
+
+/// The rows of `a_bound_that_holds_should_leave_the_arguments_after_it_checked`.
+const HELD_BOUND_ROWS: &[PartialRow<'static>] = {
+    use Code::{Mismatch, NotConform};
+    &[
+        // `W` binds `T` first, so the pair is what is wrong.
+        (
+            "fn h<T: I>(_a: T, _p: Two<T, i64>) {}\n",
+            "h(W(), Two.P(5, 7))",
+            &[(Mismatch, "5")],
+        ),
+        // The expected type binds `T` for the whole call, and the bound fails at the call.
+        (
+            "fn mkb<T: I>() -> Two<T, i64>? { None }\n",
+            "let x: Two<i64, i64>? = mkb()",
+            &[(NotConform, "mkb()")],
+        ),
+        // The receiver binds `T`, and no bound of the method is there to fail. The associated
+        // type is still replaced.
+        (
+            "class Gi<T: I> {\n    x: T\n    fn m(self, _a: T.Item) {}\n}\n",
+            "Gi(x: W()).m(5)\nGi(x: W()).m(\"s\")",
+            &[(Mismatch, "\"s\"")],
+        ),
+        (
+            "fn h<T: I>(_p: Two<T, i64>, _a: T) {}\n",
+            "h(Two.P(W(), 7), W())\nh(Two.P(W(), 7), 5)",
+            &[(Mismatch, "5)")],
+        ),
+    ]
+};
+
+/// A bound that holds, or one that no argument rejects, changes nothing for the arguments after
+/// it.
+#[test]
+fn a_bound_that_holds_should_leave_the_arguments_after_it_checked() {
+    check_rows_after(REJECT_DECLS, HELD_BOUND_ROWS);
+}
