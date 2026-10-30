@@ -312,16 +312,13 @@ fn judge_site(g: &Generated, site: &BoundSite) -> Result<(), Failure> {
         broken = g.program.clone() + generate::NO_BOUND_CLASS;
     }
     let (_, diagnostics) = front_end::front_end(&broken);
-    let errors: Vec<&Diagnostic> = diagnostics
+    let mut errors = diagnostics
         .iter()
         .filter(|d| d.severity() == Severity::Error)
-        .collect();
-    let what = if errors.is_empty() {
+        .peekable();
+    let what = if errors.peek().is_none() {
         "reports no error"
-    } else if errors
-        .iter()
-        .all(|d| d.code().as_str() == "E0154" && d.span().start() == site.at.start)
-    {
+    } else if errors.all(|d| d.code().as_str() == "E0154" && d.span().start() == site.at.start) {
         return Ok(());
     } else {
         "reports an error that is not E0154 at the argument"
@@ -1318,94 +1315,189 @@ mod tests {
         );
     }
 
-    /// Property 6 for every bound site of the seeds `from..from + 4`, which the replacement of that
-    /// site must break and nothing else. A few seeds for each test, so that each stays within its
-    /// time budget and nextest runs them in parallel.
+    #[test]
+    fn property_6_should_fail_when_another_e0154_is_not_at_the_site() {
+        // The second call breaks the bound as well, so the checker reports E0154 twice.
+        let failure = judge_bounds(&eq_site("    let _ = f(NoBound())\n", "NoBound()"))
+            .expect_err("an E0154 at another argument should fail");
+        assert_eq!(failure.property, 6);
+        assert!(
+            failure.detail.contains("not E0154 at the argument"),
+            "{}",
+            failure.detail
+        );
+    }
+
+    /// Property 6 for every bound site of the seeds `from..from + 2`, which the replacement of that
+    /// site must break and nothing else. Two seeds for each test, so that each stays within its
+    /// time budget (the slowest takes 0.8 s alone) and nextest runs them in parallel. The 32 tests
+    /// together take the 64 seeds that `coverage::seeds` gives.
     fn seeds_should_report_only_their_bound(from: u64) {
-        for n in from..from + 4 {
+        const _: () = assert!(coverage::SEEDS == 64, "add or drop a test of two seeds");
+        for n in from..from + 2 {
             judge_bounds(&generate(&seed(n)))
                 .unwrap_or_else(|f| panic!("seed {n}: property {}: {}", f.property, f.detail));
         }
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_0_to_3_should_report_only_their_bound() {
+    fn the_bound_sites_of_seeds_0_and_1_should_report_only_their_bound() {
         seeds_should_report_only_their_bound(0);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_4_to_7_should_report_only_their_bound() {
+    fn the_bound_sites_of_seeds_2_and_3_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(2);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_4_and_5_should_report_only_their_bound() {
         seeds_should_report_only_their_bound(4);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_8_to_11_should_report_only_their_bound() {
+    fn the_bound_sites_of_seeds_6_and_7_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(6);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_8_and_9_should_report_only_their_bound() {
         seeds_should_report_only_their_bound(8);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_12_to_15_should_report_only_their_bound() {
+    fn the_bound_sites_of_seeds_10_and_11_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(10);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_12_and_13_should_report_only_their_bound() {
         seeds_should_report_only_their_bound(12);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_16_to_19_should_report_only_their_bound() {
+    fn the_bound_sites_of_seeds_14_and_15_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(14);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_16_and_17_should_report_only_their_bound() {
         seeds_should_report_only_their_bound(16);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_20_to_23_should_report_only_their_bound() {
+    fn the_bound_sites_of_seeds_18_and_19_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(18);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_20_and_21_should_report_only_their_bound() {
         seeds_should_report_only_their_bound(20);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_24_to_27_should_report_only_their_bound() {
+    fn the_bound_sites_of_seeds_22_and_23_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(22);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_24_and_25_should_report_only_their_bound() {
         seeds_should_report_only_their_bound(24);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_28_to_31_should_report_only_their_bound() {
+    fn the_bound_sites_of_seeds_26_and_27_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(26);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_28_and_29_should_report_only_their_bound() {
         seeds_should_report_only_their_bound(28);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_32_to_35_should_report_only_their_bound() {
+    fn the_bound_sites_of_seeds_30_and_31_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(30);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_32_and_33_should_report_only_their_bound() {
         seeds_should_report_only_their_bound(32);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_36_to_39_should_report_only_their_bound() {
+    fn the_bound_sites_of_seeds_34_and_35_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(34);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_36_and_37_should_report_only_their_bound() {
         seeds_should_report_only_their_bound(36);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_40_to_43_should_report_only_their_bound() {
+    fn the_bound_sites_of_seeds_38_and_39_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(38);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_40_and_41_should_report_only_their_bound() {
         seeds_should_report_only_their_bound(40);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_44_to_47_should_report_only_their_bound() {
+    fn the_bound_sites_of_seeds_42_and_43_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(42);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_44_and_45_should_report_only_their_bound() {
         seeds_should_report_only_their_bound(44);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_48_to_51_should_report_only_their_bound() {
+    fn the_bound_sites_of_seeds_46_and_47_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(46);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_48_and_49_should_report_only_their_bound() {
         seeds_should_report_only_their_bound(48);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_52_to_55_should_report_only_their_bound() {
+    fn the_bound_sites_of_seeds_50_and_51_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(50);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_52_and_53_should_report_only_their_bound() {
         seeds_should_report_only_their_bound(52);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_56_to_59_should_report_only_their_bound() {
+    fn the_bound_sites_of_seeds_54_and_55_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(54);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_56_and_57_should_report_only_their_bound() {
         seeds_should_report_only_their_bound(56);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_60_to_63_should_report_only_their_bound() {
+    fn the_bound_sites_of_seeds_58_and_59_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(58);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_60_and_61_should_report_only_their_bound() {
         seeds_should_report_only_their_bound(60);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_62_and_63_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(62);
     }
 
     /// How many of `g`'s known answers are panics.

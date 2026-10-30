@@ -21,7 +21,7 @@ use crate::types::{Type, TypeKind};
 use crate::{ast, lexer, parser, tir};
 
 /// How many seeds, and how many bytes each holds.
-const SEEDS: u64 = 64;
+pub(crate) const SEEDS: u64 = 64;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.

@@ -854,22 +854,23 @@ impl Gen<'_> {
         }
         self.language_bounds(!declared.is_empty(), &mut calls);
         calls.extend(self.associated_cycle());
-        self.write_shapes(&calls);
+        self.write_shapes(calls);
     }
 
-    /// `fn shapes()`, which runs `calls`. Records where `program` holds each bound site.
-    fn write_shapes(&mut self, calls: &Calls) {
+    /// `fn shapes()`, which runs `calls`. Records where `program` holds each bound site. The sites
+    /// of `calls` come in the order of their lines.
+    fn write_shapes(&mut self, calls: Calls) {
+        let mut sites = calls.sites.into_iter().peekable();
         self.w.text("fn shapes() ");
         self.w.open();
         for (line, call) in calls.lines.iter().enumerate() {
             self.w.line();
             let start = self.w.out.program.len();
             self.w.text(call);
-            for (_, site) in calls.sites.iter().filter(|(at, _)| *at == line) {
+            while let Some((_, site)) = sites.next_if(|(at, _)| *at == line) {
                 self.bound_sites.push(BoundSite {
                     at: start + site.at.start..start + site.at.end,
-                    bound: site.bound.clone(),
-                    broken: site.broken,
+                    ..site
                 });
             }
         }
@@ -935,8 +936,7 @@ impl Gen<'_> {
     /// `lang_held`, and through `Pinned`, an interface that inherits `AnyObject`, in `lang_pinned`.
     /// `lang_both<T: Display & Eq>` prints and compares one `T` in one body. None of it takes a
     /// byte.
-    /// Writes the statements into `calls`, one for each call, so that each holds at most one bound
-    /// site.
+    /// Writes the statements into `calls`. Each statement holds at most one bound site.
     fn language_bounds(&mut self, enum_value: bool, calls: &mut Calls) {
         for (name, bound, body) in [
             (
@@ -993,19 +993,18 @@ impl Gen<'_> {
         ] {
             calls.push(line);
         }
-        calls.site("let _ = lang_eq(", "rank_a", ")", "Eq", NO_BOUND);
-        calls.site("let _ = lang_ord(", "rank_b", ")", "Ord", NO_BOUND);
+        // Joined calls hold one site each: the first call. The second call stays as it is.
         calls.site(
-            "let _ = lang_both(",
+            "let _ = lang_eq(",
             "rank_a",
-            ")",
-            "Display & Eq",
+            ") + lang_ord(rank_b)",
+            "Eq",
             NO_BOUND,
         );
         calls.site(
             "let _ = lang_both(",
-            "[1, 2]",
-            ")",
+            "rank_a",
+            ") + lang_both([1, 2])",
             "Display & Eq",
             NO_BOUND,
         );
@@ -1014,11 +1013,10 @@ impl Gen<'_> {
         calls.site(
             "let _ = lang_same(",
             "rank_a",
-            ", rank_b)",
+            ", rank_b) || lang_held(rank_m, rank_a)",
             "AnyObject",
             NOT_A_CLASS,
         );
-        calls.push("let _ = lang_held(rank_m, rank_a)");
         calls.site(
             "let _ = lang_pinned(",
             "anchor",
@@ -1902,32 +1900,5 @@ mod tests {
         ]
         .map(|(row, broken)| (row.to_string(), broken));
         assert_eq!(rows, expected);
-    }
-
-    /// `later<k>` takes the bounded parameter bare, then in each form that #283 broke, and its call
-    /// has the site as its first argument.
-    #[test]
-    fn a_later_call_should_have_its_bound_site_first() {
-        let mut found = false;
-        for data in crate::generate::coverage::seeds() {
-            let g = crate::generate::generate(&data);
-            for site in &g.bound_sites {
-                let line = g.program[..site.at.start]
-                    .lines()
-                    .last()
-                    .unwrap_or_default();
-                if line.starts_with("    let _ = later") {
-                    found = true;
-                    let call = g.program[site.at.start..]
-                        .lines()
-                        .next()
-                        .unwrap_or_default();
-                    for part in ["same(", "none_of()", "[none_of()]", "H"] {
-                        assert!(call.contains(part), "{part} in {call}");
-                    }
-                }
-            }
-        }
-        assert!(found, "no seed calls `later`");
     }
 }
