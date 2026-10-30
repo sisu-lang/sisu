@@ -705,7 +705,9 @@ impl Gen<'_> {
     /// generic interface twice), with a plain `extend` block; a generic function `via<n>` whose
     /// bound is the interface and that calls every requirement through it, including those of the
     /// interfaces it inherits; a generic class `H<n>` with the interface as the bound of its
-    /// parameter; and, when two interfaces are declared, a class that conforms to both and a
+    /// parameter; a generic function `later<n>`, with the interface as its bound, which takes `T`
+    /// bare and inside other types (`Gen::later`), and the helpers `same` and `none_of`, which
+    /// its call nests; and, when two interfaces are declared, a class that conforms to both and a
     /// function with both as bounds. A generic interface is conformed to with `i64`, and the class
     /// with `string` as well. And `fn shapes()`, which calls each method on a value of each type
     /// and the generic functions with both types, and builds the class. A call on a type with two
@@ -717,6 +719,13 @@ impl Gen<'_> {
             interface: k,
             arg: declared[k].generic.then_some("i64"),
         };
+        if !declared.is_empty() {
+            // The helpers whose calls `later` nests in its arguments.
+            self.w.text("fn same<X>(x: X) -> X { x }");
+            self.w.line();
+            self.w.text("fn none_of<X>() -> X? { None }");
+            self.w.line();
+        }
         for (k, shape) in declared.iter().enumerate() {
             let single = [once(k)];
             let all = requirements_of(declared, &conformed_closure(declared, &single));
@@ -779,6 +788,8 @@ impl Gen<'_> {
             calls.push(format!("let h{k} = H{k}(v: {})", values[0]));
             calls.push(format!("print(h{k}.v.plain())"));
             calls.extend(self.generic_extension(k, declared, &values[0]));
+            let bound = once(k).written(declared);
+            calls.push(self.later(k, &bound, &values));
         }
         // Two interfaces in one bound: a class that conforms to both.
         if declared.len() >= 2 {
@@ -800,6 +811,32 @@ impl Gen<'_> {
         }
         self.w.close();
         self.w.line();
+    }
+
+    /// `fn later<k><T: bound>(_a: T, ...)`, whose other four parameters are `[T]`, `T?`, `H<k><T>`
+    /// and `[T?]`, in an order that the draws choose. Gives the statement of `shapes` that calls
+    /// it with `value`, one of `values`, for `_a`. The other arguments name `T` in each way that
+    /// #283 broke: a call nested in an argument (`same`), a call whose type comes only from its
+    /// context (`none_of`) and a type that holds `T` (`H<k>(v: value)`, `[none_of()]`).
+    fn later(&mut self, k: usize, bound: &str, values: &[String]) -> String {
+        let value = &values[self.pick(values.len())];
+        let mut rest = vec![
+            ("_b: [T]".to_string(), format!("[same({value})]")),
+            ("_c: T?".to_string(), "none_of()".to_string()),
+            (format!("_d: H{k}<T>"), format!("H{k}(v: {value})")),
+            ("_e: [T?]".to_string(), "[none_of()]".to_string()),
+        ];
+        for at in 0..rest.len() {
+            let swap = at + self.pick(rest.len() - at);
+            rest.swap(at, swap);
+        }
+        let (params, args): (Vec<String>, Vec<String>) = rest.into_iter().unzip();
+        self.w.text(&format!(
+            "fn later{k}<T: {bound}>(_a: T, {}) -> i64 {{ 1 }}",
+            params.join(", ")
+        ));
+        self.w.line();
+        format!("let _ = later{k}({value}, {})", args.join(", "))
     }
 
     /// The generic functions `lang_eq<T: Eq>`, `lang_ord<T: Ord>` and `lang_display<T: Display>`,
@@ -1599,5 +1636,36 @@ mod tests {
         let source = crate::generate::generate(&[]).plain;
         assert!(source.contains("    shapes()\n"), "{source}");
         assert!(source.contains("fn shapes() {"), "{source}");
+    }
+
+    /// `later<k>` takes the bounded parameter bare, then in each form that #283 broke, and the
+    /// helpers it calls are declared once.
+    #[test]
+    fn a_program_with_interfaces_should_call_later_with_the_forms_that_name_t() {
+        let mut found = false;
+        for data in crate::generate::coverage::seeds() {
+            let source = crate::generate::generate(&data).program;
+            if !source.contains("fn later0<") {
+                continue;
+            }
+            found = true;
+            for part in [
+                "fn same<X>(x: X) -> X { x }",
+                "fn none_of<X>() -> X? { None }",
+            ] {
+                assert_eq!(source.matches(part).count(), 1, "{part} in {source}");
+            }
+            for part in ["_b: [T]", "_c: T?", "_d: H0<T>", "_e: [T?]"] {
+                assert!(source.contains(part), "{part} in {source}");
+            }
+            let call = source
+                .lines()
+                .find(|line| line.starts_with("    let _ = later0("))
+                .unwrap_or_else(|| panic!("a call of `later0` in {source}"));
+            for part in ["same(", "none_of()", "[none_of()]", "H0(v: "] {
+                assert!(call.contains(part), "{part} in {call}");
+            }
+        }
+        assert!(found, "no seed declares `later0`");
     }
 }

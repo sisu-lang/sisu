@@ -114,7 +114,7 @@ const IDENTITY: &str = "reach: a class is compared with `is` or against `None`";
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 101] = [
+const REACH: [&str; 102] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -198,6 +198,7 @@ const REACH: [&str; 101] = [
     "reach: a declaration names a generated conformance",
     "reach: a class gets `Display` through a `to_string` method",
     "reach: a bound names a language interface",
+    "reach: a bounded type parameter is named bare, then inside other types",
     "reach: an operator runs on a bounded type parameter",
     "reach: one function prints and compares a type parameter",
     "reach: `is` runs on a type parameter",
@@ -559,6 +560,35 @@ struct Walk {
     user_funcs: usize,
     class_names: Vec<String>,
     enum_names: Vec<String>,
+}
+
+/// Whether the first parameter of `f` is a bare type parameter with a bound, and a later one names
+/// it inside another type: `[T]`, `T?` or `H<T>`.
+fn names_bounded_then_inside(f: &ast::Function) -> bool {
+    fn bare(ty: &ast::TypeExpr, name: &str) -> bool {
+        ty.optional == 0 && matches!(&ty.kind, ast::TypeKind::Name(n) if n.as_str() == name)
+    }
+    fn names(ty: &ast::TypeExpr, name: &str) -> bool {
+        match &ty.kind {
+            ast::TypeKind::Name(n) => n.as_str() == name,
+            ast::TypeKind::Applied(applied) => applied.args.iter().any(|arg| names(arg, name)),
+            ast::TypeKind::Array(element) => names(element, name),
+            ast::TypeKind::Member { base, .. } => names(base, name),
+            ast::TypeKind::SelfType => false,
+        }
+    }
+    let Some((first, later)) = f.params.split_first() else {
+        return false;
+    };
+    (f.type_params.iter())
+        .filter(|p| !p.bounds.is_empty())
+        .map(|p| p.name.name.as_str())
+        .any(|name| {
+            bare(&first.ty, name)
+                && later
+                    .iter()
+                    .any(|p| !bare(&p.ty, name) && names(&p.ty, name))
+        })
 }
 
 /// The text of the bounds of each of `params`.
@@ -964,6 +994,9 @@ impl Walk {
         self.func = f.name.name.as_str().to_string();
         self.in_generic = !f.type_params.is_empty();
         self.bounds(&f.type_params);
+        if names_bounded_then_inside(f) {
+            self.mark("reach: a bounded type parameter is named bare, then inside other types");
+        }
         self.params.clear();
         for param in &f.params {
             self.type_expr(&param.ty);
@@ -5993,6 +6026,35 @@ fn the_walk_should_mark_what_bounds_hold() {
         ),
         [false, false, false]
     );
+}
+
+/// The walk marks a function whose first parameter is a bare bounded type parameter and whose
+/// later parameter names it inside another type, and no other.
+#[test]
+fn the_walk_should_mark_a_bounded_type_parameter_named_bare_then_inside_other_types() {
+    let key = "reach: a bounded type parameter is named bare, then inside other types";
+    for (function, expected) in [
+        ("fn f<T: Eq>(a: T, b: [T]) {}", true),
+        ("fn f<T: Eq>(a: T, b: T?) {}", true),
+        ("fn f<T: Eq>(a: T, b: i64, c: [T?]) {}", true),
+        ("fn f<T: Eq, U>(a: U, b: T) {}", false),
+        ("fn f<T, U: Eq>(a: U, b: [T], c: Box<U>) {}", true),
+        // No bound.
+        ("fn f<T>(a: T, b: [T]) {}", false),
+        // The bound is on another parameter.
+        ("fn f<T, U: Eq>(a: T, b: [T], c: U) {}", false),
+        // Only bare.
+        ("fn f<T: Eq>(a: T, b: T) {}", false),
+        // Not first.
+        ("fn f<T: Eq>(a: [T], b: T) {}", false),
+        ("fn f<T: Eq>(a: i64, b: T, c: [T]) {}", false),
+        // Never inside another type.
+        ("fn f<T: Eq>(a: T, b: i64) {}", false),
+        ("fn f<T: Eq>() {}", false),
+    ] {
+        let program = format!("class Box<T> {{ v: T }}\n{function}\nfn main() {{}}\n");
+        assert_eq!(marked(&program).contains(key), expected, "{function}");
+    }
 }
 
 /// A call through a bound that writes interface arguments is no call through an inherited bound,
