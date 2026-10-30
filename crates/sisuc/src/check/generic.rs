@@ -560,7 +560,8 @@ pub(super) struct GenericSig<'a> {
     pub(super) params: &'a [Option<Type>],
     pub(super) ret: Option<Type>,
     /// The bounds of the parameters after the receiver's, in order; a parameter past the end has
-    /// none. The call checks each as soon as its parameter is bound (see `Early`).
+    /// none. The call checks each as soon as its parameter is bound, and at no other time (see
+    /// `Early`).
     pub(super) bounds: &'a [Vec<Bound>],
 }
 
@@ -587,7 +588,7 @@ pub(super) struct ContextHint {
 }
 
 /// A generic call while its arguments bind its callee's parameters.
-struct Inference {
+struct Inference<'s> {
     bindings: Bindings,
     /// Each argument once checked, in source order.
     slots: Vec<Option<Checked>>,
@@ -604,32 +605,33 @@ struct Inference {
     origin: Vec<Option<Span>>,
     /// The bounds that the call checks as soon as a parameter is bound; none when the callee has
     /// no bound and no parameter type writes an associated type.
-    early: Option<Early>,
+    early: Option<Early<'s>>,
 }
 
 /// The bounds a call checks as soon as the parameter they bound is bound. An argument that waits
 /// for an associated type of the parameter must not meet a type that has none. A parameter whose
 /// bound fails is rejected at once (see `Bindings::reject`), so no later argument is checked
-/// against the type that the bound rejected.
-struct Early {
+/// against the type that the bound rejected. This is the only check of a bound: each binding of a
+/// parameter reaches `check_early`, from the type arguments that the call writes, or from
+/// `report_fresh` for an argument, the expected type and `blame_arguments`. A receiver's
+/// parameters have no bound of the method to check, and `poison_broken_params` fails the call.
+struct Early<'s> {
     /// Whether a parameter type writes an associated type, which `Checker::known_in` replaces.
     assoc: bool,
     /// How many of the callee's parameters its receiver binds.
     owned: usize,
     /// The bounds of the parameters after the receiver's, as `GenericSig::bounds`.
-    bounds: Vec<Vec<Bound>>,
-    /// The bounds already checked, by the place of their parameter and their own place.
-    checked: FxHashSet<(usize, usize)>,
+    bounds: &'s [Vec<Bound>],
     /// The bounds of a parameter that is bound, that name a parameter that is not bound yet, by
     /// the same places: they are checked as soon as the call binds what they name.
     waiting: Vec<(usize, usize)>,
 }
 
-impl Early {
+impl<'s> Early<'s> {
     /// The bounds `sig`'s call checks early: none unless the callee has a bound or a parameter
     /// type writes an associated type. The second needs no bound of the callee's when the
     /// receiver binds the parameter that the type writes it through.
-    fn of(sig: &GenericSig<'_>) -> Option<Early> {
+    fn of(sig: &GenericSig<'s>) -> Option<Early<'s>> {
         let assoc = sig.params.iter().flatten().any(|param| param.has_assoc());
         if !assoc && sig.bounds.iter().all(Vec::is_empty) {
             return None;
@@ -637,8 +639,7 @@ impl Early {
         Some(Early {
             assoc,
             owned: sig.owner.len(),
-            bounds: sig.bounds.to_vec(),
-            checked: FxHashSet::default(),
+            bounds: sig.bounds,
             waiting: Vec::new(),
         })
     }
@@ -719,7 +720,7 @@ impl Checker<'_> {
 
     /// `known` for `ty`, a parameter type of the call or a part of one: only a call whose
     /// parameter types write an associated type has any to replace.
-    fn known_in(&self, call: &Inference, ty: Type) -> Option<Type> {
+    fn known_in(&self, call: &Inference<'_>, ty: Type) -> Option<Type> {
         match call.early {
             Some(Early { assoc: true, .. }) => self.known(&call.bindings, ty),
             _ => call.bindings.known(ty),
@@ -887,9 +888,6 @@ impl Checker<'_> {
             }
             return None;
         };
-        if !self.check_call_bounds(span, sig, &call, list) {
-            return None;
-        }
         self.instantiates = true;
         let checked = call
             .slots
@@ -909,7 +907,7 @@ impl Checker<'_> {
     /// declaration.
     fn rank_arguments(
         &mut self,
-        call: &Inference,
+        call: &Inference<'_>,
         sig: &GenericSig<'_>,
         args: &[ast::Arg],
         fit: &mut [bool],
@@ -929,42 +927,6 @@ impl Checker<'_> {
             .collect()
     }
 
-    /// Whether the arguments `list` of the call at `span` meet the bounds of `sig`, once every
-    /// argument is checked. A parameter whose argument fails is reported once, at the place that
-    /// bound the parameter (`origin`). `check_early` checks each bound when its parameter is
-    /// bound: every binding goes through `report_fresh`, also the one that `blame_arguments`
-    /// makes. So a call that has not failed has no bound left to check here. This stays for a
-    /// new way to bind a parameter that would skip `check_early`.
-    fn check_call_bounds(
-        &mut self,
-        span: Span,
-        sig: &GenericSig<'_>,
-        call: &Inference,
-        list: TypeArgs,
-    ) -> bool {
-        debug_assert!(
-            !list.get().iter().any(|ty| ty.holds_hole()),
-            "a call that rejected no parameter should bind none to the hole"
-        );
-        let owned = sig.owner.len();
-        let mut holds = true;
-        for (k, bounds) in sig.bounds.iter().enumerate() {
-            for (j, &bound) in bounds.iter().enumerate() {
-                // Checked already, as soon as its parameter was bound.
-                if call
-                    .early
-                    .as_ref()
-                    .is_some_and(|e| e.checked.contains(&(owned + k, j)))
-                {
-                    continue;
-                }
-                let at = call.origin[owned + k].unwrap_or(span);
-                holds &= self.check_bound(at, list.get()[owned + k], bound, list.get());
-            }
-        }
-        holds
-    }
-
     /// Checks the bounds of the parameters `bound`, which a binding has just bound. An associated
     /// type that a parameter type writes through the parameter exists only if the bound holds. A
     /// bound whose arguments name a parameter that is not bound yet waits, and is checked as soon
@@ -974,7 +936,7 @@ impl Checker<'_> {
     /// for their own mistakes, not against the type that the bound rejected. All the due bounds
     /// are checked first, so that each bound that fails is reported, also two of one parameter. A
     /// bound of a parameter that is rejected already has nothing to check.
-    fn check_early(&mut self, call: &mut Inference, bound: &[usize], at: Span) {
+    fn check_early(&mut self, call: &mut Inference<'_>, bound: &[usize], at: Span) {
         let Some(early) = &mut call.early else { return };
         let owned = early.owned;
         let has_bound = |i: usize| {
@@ -1019,11 +981,6 @@ impl Checker<'_> {
                     .map(|t| t.filter(|&t| t != *REJECTED).unwrap_or(UNKNOWN))
                     .collect()
             });
-            let early = call
-                .early
-                .as_mut()
-                .expect("a call that checks early should say so");
-            early.checked.insert((i, j));
             let at = call.origin[i].unwrap_or(at);
             if !self.check_bound(at, ty, bound, with) {
                 call.failed = true;
@@ -1058,7 +1015,7 @@ impl Checker<'_> {
     /// an argument was rejected already, or when every argument fits.
     fn blame_arguments(
         &mut self,
-        call: &mut Inference,
+        call: &mut Inference<'_>,
         sig: &GenericSig<'_>,
         args: &[ast::Arg],
         ret: Type,
@@ -1125,7 +1082,7 @@ impl Checker<'_> {
     /// parameter bound, so it binds nothing new, and a third sweep would find nothing.
     fn sweep_waiting(
         &mut self,
-        call: &mut Inference,
+        call: &mut Inference<'_>,
         sig: &GenericSig<'_>,
         args: &[ast::Arg],
         ranks: &[u8],
@@ -1151,7 +1108,7 @@ impl Checker<'_> {
     /// that name at the call.
     fn infer_waiting(
         &mut self,
-        call: &mut Inference,
+        call: &mut Inference<'_>,
         i: usize,
         e: &ast::Expr,
         param: Option<Type>,
@@ -1195,14 +1152,14 @@ impl Checker<'_> {
     // with `g<T>(c: Two<T, bool>, d: Result<T, string>)` reports E0050 at `mk2`. `g(mk(), mk2())`
     // with the parameters in the other order checks. To remove this, check a call again after
     // a later call binds its parameter (#217).
-    fn call_context(&mut self, call: &Inference, e: &ast::Expr, param: Type) -> Option<Type> {
+    fn call_context(&mut self, call: &Inference<'_>, e: &ast::Expr, param: Type) -> Option<Type> {
         let partial = self.partial_context(call, e, param)?;
         self.takes_context(e, partial).then_some(partial)
     }
 
     /// `call_context` before `takes_context`. It gives what the call binds of `param`. It gives
     /// nothing if `e` is of a kind that cannot take it, or if that says no more than a hole.
-    fn partial_context(&self, call: &Inference, e: &ast::Expr, param: Type) -> Option<Type> {
+    fn partial_context(&self, call: &Inference<'_>, e: &ast::Expr, param: Type) -> Option<Type> {
         use ast::ExprKind as K;
         // An array literal takes the context from its elements, one by one (`inferred_array`).
         // That needs an array type to name them. For a type parameter it would take a hole.
@@ -1286,7 +1243,7 @@ impl Checker<'_> {
     /// still meets what the call binds of `param`.
     fn infer_arg(
         &mut self,
-        call: &mut Inference,
+        call: &mut Inference<'_>,
         i: usize,
         e: &ast::Expr,
         param: Option<Type>,
@@ -1317,7 +1274,7 @@ impl Checker<'_> {
     /// A value of type `unit` or `never` binds nothing, for `infer_arg` to defer.
     fn infer_value(
         &mut self,
-        call: &mut Inference,
+        call: &mut Inference<'_>,
         e: &ast::Expr,
         pattern: Type,
         context: Option<Type>,
@@ -1336,7 +1293,7 @@ impl Checker<'_> {
     /// parameter there unbound, and E0050 reports it.
     fn infer_unbound(
         &mut self,
-        call: &mut Inference,
+        call: &mut Inference<'_>,
         e: &ast::Expr,
         pattern: Type,
         context: Option<Type>,
@@ -1383,7 +1340,7 @@ impl Checker<'_> {
     /// which is reported at once, and binds nothing.
     fn inferred_array(
         &mut self,
-        call: &mut Inference,
+        call: &mut Inference<'_>,
         span: Span,
         elements: &[ast::Expr],
         element: Type,
@@ -1448,7 +1405,13 @@ impl Checker<'_> {
 
     /// `Bindings::unify`, reporting at `at` each parameter it binds to a type that no type
     /// parameter takes.
-    fn bind_param(&mut self, call: &mut Inference, pattern: Type, value: Type, at: Span) -> bool {
+    fn bind_param(
+        &mut self,
+        call: &mut Inference<'_>,
+        pattern: Type,
+        value: Type,
+        at: Span,
+    ) -> bool {
         let unified = call.bindings.unify(pattern, value);
         self.report_fresh(call, at);
         unified
@@ -1456,7 +1419,7 @@ impl Checker<'_> {
 
     /// Reports at `at` each parameter the last binding bound to a type that no type parameter
     /// takes.
-    fn report_fresh(&mut self, call: &mut Inference, at: Span) {
+    fn report_fresh(&mut self, call: &mut Inference<'_>, at: Span) {
         for &i in &call.bindings.fresh {
             #[cfg(test)]
             VISITS.set(VISITS.get() + 1);
