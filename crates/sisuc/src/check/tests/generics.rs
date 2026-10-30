@@ -2800,10 +2800,12 @@ fn nested_waiting_call_that_cannot_fit_should_mismatch_once_at_the_outer_call() 
 }
 
 /// `Some(...)` checks its argument against the payload of its expected type with no binding,
-/// so a hole in a context would reach its diagnostics and its type. It gets no context: the
-/// call waits, as before, and `f` reports its `T`. A leak would give a mismatch or a panic.
+/// so a hole in a context would reach its diagnostics and its type. When the argument is a call,
+/// the call binds `T` from the context, and `Some(Ok(1))` binds `T`. When it is `None` or `[]`,
+/// the context fixes nothing: the call waits, as before, and `f` reports its `T`. A leak would
+/// give a mismatch or a panic.
 #[test]
-fn some_should_get_no_context_from_a_partly_bound_parameter() {
+fn some_should_bind_from_a_call_but_not_from_none_or_an_empty_array() {
     with_prelude();
     for (decls, call) in [
         ("fn f<T>(x: T?) -> T { panic(\"e\") }\n", "f(Some(None))"),
@@ -2811,16 +2813,15 @@ fn some_should_get_no_context_from_a_partly_bound_parameter() {
             "fn f<T>(x: T?) -> T { panic(\"e\") }\n",
             "f(Option.Some(None))",
         ),
-        (
-            "fn f<T>(x: Result<T, string>?) -> T { panic(\"e\") }\n",
-            "f(Some(Ok(1)))",
-        ),
         ("fn f<T>(x: [T]?) -> T { panic(\"e\") }\n", "f(Some([]))"),
     ] {
         let src = format!("{decls}fn main() {{\n    let y = {call}\n    print(y)\n}}");
         let line = decls.lines().count() + 2;
         codes(&src, &[(Code::CannotInfer, (line, 13))]);
     }
+    let src = "fn f<T>(x: Result<T, string>?) -> T { panic(\"e\") }\n\
+               fn main() {\n    let y = f(Some(Ok(1)))\n    print(y)\n}";
+    assert_eq!(call_types(src, "f"), ["i64", "i64"]);
 }
 
 /// `mk()` gets a context and binds `T`, which a `Some([])` before it waited for: the sweep
@@ -2983,7 +2984,7 @@ fn an_associated_type_argument_should_report_its_own_mistake() {
         (
             "fn h<T: I, S: I, U, V>(_p: Two<T, T.Item>, _s: S, _a: U, _b: Two<Two<U, V>, i64>) {}\n",
             "h(Two.P(5, 7), W(), true, Two.P(Two.P(\"s\", 1), 2))",
-            &[(Code::NotConform, 7), (Code::Mismatch, 31)],
+            &[(Code::NotConform, 7), (Code::Mismatch, 43)],
         ),
         (
             "fn h<T: I, U>(_p: Two<T, T.Item>, _a: Wrap<U>, _b: Wrap<U>) {}\n",
@@ -2999,4 +3000,410 @@ fn an_associated_type_argument_should_report_its_own_mistake() {
             .collect();
         codes_row(&format!("{decls}{call}"), &src, &expected);
     }
+}
+
+/// The declarations of the tests below. `Two`, `Box` and `G` build a type from two parts, by an
+/// enum variant, a class and a method; `mk` and `id` are generic calls, and `pr` leaves `F` to
+/// its context. `W` chooses `Item` for the interface `I`.
+const PARTIAL_DECLS: &str = "enum Two<A, B> {\n    P(A, B)\n}\n\
+    class Box<A, B> {\n    a: A\n    b: B\n}\n\
+    class C {\n    fn m<A, B>(self, a: A, b: B) -> Two<A, B> {\n        Two.P(a, b)\n    }\n}\n\
+    class G<T> {\n    fn pair<B>(self, a: T, b: B) -> Two<T, B> {\n        Two.P(a, b)\n    }\n}\n\
+    fn mk<A, B>(a: A, b: B) -> Two<A, B> { Two.P(a, b) }\n\
+    fn okr<E>(x: E) -> Result<E, i64> { Ok(x) }\n\
+    fn id<T>(x: T) -> T { x }\n\
+    fn pr<E, F>(x: E) -> Two<E, F>? { None }\n\
+    interface I {\n    type Item\n}\n\
+    class W: I {\n    type Item = i64\n}\n";
+
+/// A row of `an_argument_for_a_partly_bound_parameter_should_report_its_own_mistake`: the
+/// declarations after `PARTIAL_DECLS`, the lines of `main`, and the codes with the text of the
+/// last line that each is reported at.
+type PartialRow<'a> = (&'a str, &'a str, &'a [(Code, &'a str)]);
+
+/// The rows of the test below.
+const PARTIAL_ROWS: &[PartialRow<'static>] = {
+    use Code::{CannotInfer, FieldOutOfOrder, Mismatch, NotConform};
+    const S: &str = "\"s\"";
+    const X: &str = "\"x\"";
+    &[
+        // A call, a construction, a call of a function, and the same under `?`, an array, `Some`
+        // and a second level of each.
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "h(true, Two.P(\"s\", 1))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Box<U, V>) {}\n",
+            "h(true, Box(a: \"s\", b: 1))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "h(true, mk(\"s\", 1))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "h(true, Two.P(\"s\", 1))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "h(true, [Two.P(\"s\", 1)])",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "h(true, [Two.P(true, 1), Two.P(\"s\", 2)])",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "h(true, Some(Two.P(\"s\", 1)))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<Two<U, V>, i64>) {}\n",
+            "h(true, Two.P(Two.P(\"s\", 1), 2))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<Two<U, V>, i64>) {}\n",
+            "h(true, mk(mk(\"s\", 1), 2))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>?]) {}\n",
+            "h(true, [Some(Two.P(\"s\", 1))])",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Result<U, V>) {}\n",
+            "h(true, okr(\"s\"))",
+            &[(Mismatch, S)],
+        ),
+        // The shape of the argument is wrong: the whole argument is reported.
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "h(true, Some(Two.P(\"s\", 1)))",
+            &[(Mismatch, "Some(")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "h(true, Two.P(\"s\", 1))",
+            &[(Mismatch, "Two.P(")],
+        ),
+        // The literals take the bound type, a `u8`, as they do for a parameter that is bound.
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "let x: u8 = 3\nh(x, Two.P(5, \"x\"))",
+            &[],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "let x: u8 = 3\nh(x, [Two.P(5, \"x\")])",
+            &[],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "let x: u8 = 3\nh(x, Some(Two.P(5, \"x\")))",
+            &[],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<Two<U, V>, i64>) {}\n",
+            "let x: u8 = 3\nh(x, Two.P(Two.P(5, \"x\"), 2))",
+            &[],
+        ),
+        // A call that waits for a result it cannot fix by itself is reported as before.
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "h(true, pr(\"s\"))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "h(true, pr(true))",
+            &[(CannotInfer, "pr(")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "h(true, C().m(\"s\", 1))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "h(true, Option.Some(Two.P(\"s\", 1)))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h2<U, V>(a: U, b: Two<U, V>, c: Two<U, V>) {}\n",
+            "h2(true, Two.P(true, 1), Two.P(true, \"x\"))",
+            &[(Mismatch, X)],
+        ),
+        // An `if` and an element that is not a call get no context, as before.
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "h(true, if true { Two.P(\"s\", 1) } else { Two.P(true, 2) })",
+            &[(Mismatch, "if"), (Mismatch, "true, 2)")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "let t = Two.P(true, 3)\nh(true, [Two.P(true, 1), t, Two.P(\"s\", 2)])",
+            &[(Mismatch, "Two.P(\"s\"")],
+        ),
+        // A call that returns its argument, and a call in a call, pass the context on.
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "h(true, id(Two.P(\"s\", 1)))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "h(true, id(Some(Two.P(\"s\", 1))))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "h(true, Some(id(Two.P(\"s\", 1))))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [[Two<U, V>]]) {}\n",
+            "h(true, [[Two.P(\"s\", 1)]])",
+            &[(Mismatch, S)],
+        ),
+        // A context that fixes nothing leaves the parameter to be reported.
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "h(true, Two.P(true, None))",
+            &[(CannotInfer, "Two.P(")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "h(true, Some(None))",
+            &[(CannotInfer, "h(")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "h(true, [])",
+            &[(CannotInfer, "h(")],
+        ),
+        // The neighbours: a receiver that fixes the type, a safe call, labels out of order.
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "h(true, G<string>().pair(\"s\", 1))",
+            &[(Mismatch, "G<")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "h(true, G<bool>().pair(true, 1))",
+            &[],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "let c: C? = C()\nh(true, c?.m(\"s\", 1))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "let c: C? = C()\nh(true, c?.m(true, 1))",
+            &[],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Box<U, V>) {}\n",
+            "h(true, Box(b: 1, a: \"s\"))",
+            &[(FieldOutOfOrder, "b: 1")],
+        ),
+        // Two levels of `Some`, and arrays of arrays with an optional inside.
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>??) {}\n",
+            "h(true, Some(Some(Two.P(\"s\", 1))))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>??) {}\n",
+            "h(true, id(Some(Some(Two.P(\"s\", 1)))))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>??) {}\n",
+            "h(true, Some(Some(None)))",
+            &[(CannotInfer, "h(")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [[Two<U, V>?]]) {}\n",
+            "h(true, [[None, Some(Two.P(\"s\", 1))]])",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [[Two<U, V>?]]) {}\n",
+            "h(true, [[Some(Two.P(true, 1)), None], [Some(Two.P(false, \"x\"))]])",
+            &[(Mismatch, X)],
+        ),
+        // An array literal for a parameter that is optional, and `Some` of one, get no context.
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]?) {}\n",
+            "h(true, Some([Two.P(\"s\", 1)]))",
+            &[(Mismatch, "Some(")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]?) {}\n",
+            "h(true, [Two.P(\"s\", 1)])",
+            &[(Mismatch, "[Two.P")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]?) {}\n",
+            "h(true, Some([Two.P(true, 1)]))",
+            &[],
+        ),
+        // The call returns a type with a fixed part, which a hole of the context meets, as an
+        // enum, an array, an optional or a class. The argument that binds the rest is blamed.
+        (
+            "fn fix<A>(x: A) -> Two<i64, A> { Two.P(1, x) }\nfn h<U, V>(c: V, b: Two<U, V>) {}\n",
+            "h(true, fix(\"s\"))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn fix<A>(x: A) -> [Two<i64, A>] { [] }\nfn h<U, V>(c: V, b: [Two<U, V>]) {}\n",
+            "h(true, fix(\"s\"))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn fix<A>(x: A) -> Two<i64, A>? { None }\nfn h<U, V>(c: V, b: Two<U, V>?) {}\n",
+            "h(true, fix(\"s\"))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn fix<A>(x: A) -> Box<i64, A> { Box(a: 1, b: x) }\nfn h<U, V>(c: V, b: Box<U, V>) {}\n",
+            "h(true, fix(\"s\"))",
+            &[(Mismatch, S)],
+        ),
+        // A call that returns an array or an optional of the pair gets the context too.
+        (
+            "fn mk_array<A, B>(a: A, b: B) -> [Two<A, B>] { [] }\nfn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "h(true, mk_array(\"s\", 1))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn mk_array<A, B>(a: A, b: B) -> [Two<A, B>] { [] }\nfn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "let x: u8 = 3\nh(x, mk_array(5, \"x\"))",
+            &[],
+        ),
+        (
+            "fn mk_some<A, B>(a: A, b: B) -> Two<A, B>? { None }\nfn h<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "h(true, mk_some(\"s\", 1))",
+            &[(Mismatch, S)],
+        ),
+        // The context that blamed an argument stays for the arguments that follow.
+        (
+            "fn h<U, V>(a: U, b: Two<U, Two<V, i64>>) {}\n",
+            "h(true, Two.P(\"s\", Two.P(1, \"x\")))",
+            &[(Mismatch, S), (Mismatch, X)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, Two<V, i64>>) {}\n",
+            "h(true, Two.P(true, Two.P(1, \"x\")))",
+            &[(Mismatch, X)],
+        ),
+        // A parameter type that writes an associated type: a call that waits for it, and one
+        // that follows a failed bound.
+        (
+            "fn h<T: I, U>(_a: U, _b: [Two<U, T.Item>], _c: T) {}\n",
+            "h(true, [Two.P(\"s\", 7)], W())",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<T: I, U>(_a: U, _b: Two<U, T.Item>?, _c: T) {}\n",
+            "h(true, Some(Two.P(\"s\", 7)), W())",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<T: I, U, V>(_a: U, _b: Two<U, Two<V, T.Item>>, _c: T) {}\n",
+            "h(true, Two.P(\"s\", Two.P(1, 7)), W())",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<T: I, U, V>(_a: Two<T, T.Item>, _b: U, _c: [Two<U, V>]) {}\n",
+            "h(Two.P(W(), 7), true, [Two.P(\"s\", 1)])",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<T: I, U, V>(_a: Two<T, T.Item>, _b: U, _c: [Two<U, V>]) {}\n",
+            "h(Two.P(W(), 7), true, [Two.P(true, 1)])",
+            &[],
+        ),
+        (
+            "fn h<T: I, U, V>(_a: Two<T, T.Item>, _b: U, _c: Two<U, V>) {}\n",
+            "h(Two.P(5, 7), true, Two.P(\"s\", 1))",
+            &[(NotConform, "Two.P(5"), (Mismatch, S)],
+        ),
+    ]
+};
+
+/// An argument for a parameter that the call binds in part, `b: Two<U, V>` once `a` binds `U`,
+/// is checked against what the call binds, with a hole for the rest. So a mistake is reported at
+/// the part that is wrong, not at the whole argument against a type that names the callee's `V`,
+/// and a valid argument whose literals take the bound type checks. Each row has the declarations
+/// after `PARTIAL_DECLS`, the lines of `main` and the codes with the text that each is reported
+/// at, in the last line. A row with no code checks clean.
+#[test]
+fn an_argument_for_a_partly_bound_parameter_should_report_its_own_mistake() {
+    with_prelude();
+    for &(decls, body, expected) in PARTIAL_ROWS {
+        let src = format!(
+            "{PARTIAL_DECLS}{decls}fn main() {{\n    {}\n}}",
+            body.replace('\n', "\n    ")
+        );
+        let line = PARTIAL_DECLS.lines().count() + decls.lines().count() + 1 + body.lines().count();
+        let last = body.lines().last().expect("a row should have a call");
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|&(code, at)| {
+                let col = 4
+                    + last
+                        .find(at)
+                        .unwrap_or_else(|| panic!("`{at}` in `{last}`"))
+                    + 1;
+                (code, (line, col))
+            })
+            .collect();
+        codes_row(&format!("{decls}{body}"), &src, &expected);
+    }
+}
+
+/// A call that waits inside a call that waits binds the parameter from the inner call's value:
+/// `Ok(Ok(1))` for `Result<Result<T, bool>, string>` binds `T = i64`, and `Ok(Ok("s"))` binds
+/// `T = string`. The outer call gives the inner one its context, with a hole for `T`.
+#[test]
+fn a_waiting_call_inside_a_waiting_call_should_bind_the_parameter() {
+    with_prelude();
+    for (arg, ty) in [("Ok(Ok(1))", "i64"), ("Ok(Ok(\"s\"))", "string")] {
+        let src = format!(
+            "fn f<T>(r: Result<Result<T, bool>, string>) {{}}\nfn main() {{\n    f({arg})\n}}"
+        );
+        assert_eq!(call_types(&src, "f"), [ty, "unit"], "{arg}");
+    }
+}
+
+/// `takes_context` looks at each element of an array literal once, and `inferred_array` asks
+/// `call_context` for the context of each element until one binds the element type. So the work
+/// for an array literal of generic calls for a partly bound parameter grows with the elements,
+/// not with their square. Each element is a call that the context reaches.
+#[test]
+fn array_literal_context_should_cost_one_step_for_each_element() {
+    let steps = |n: usize| {
+        let src = format!(
+            "enum Two<A, B> {{\n    P(A, B)\n}}\n\
+             fn h<U, V>(a: U, b: [Two<U, V>]) {{}}\n\
+             fn main() {{\n    h(true, [{}])\n}}",
+            vec!["Two.P(true, 1)"; n].join(", ")
+        );
+        generic::CONTEXT_STEPS.set(0);
+        clean(&src);
+        generic::CONTEXT_STEPS.get()
+    };
+    assert!(steps(1) > 0, "the counter should count the walk");
+    assert_near_linear(steps(100), steps(200), steps(300));
 }

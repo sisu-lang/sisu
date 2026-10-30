@@ -1,0 +1,57 @@
+// GIVEN `Two<A, B>`, an enum, four functions whose second parameter names the `U` of their first
+// parameter and a `V` that no other argument binds, and `f`, a function for `Result<Result<T,
+// bool>, string>`
+// WHEN each of the four runs with a `u8` for `U` and a `Two.P(5, "x")`, bare, in an array, in
+// `Some` and inside another `Two`, and `f` runs with `Ok(Ok(1))`
+// THEN the `5` is a `u8` and the `"x"` a string, as the `u8` fixes `U`, and `f` takes `T` as
+// `i64`: the program prints `5`, `x`, `x`, `5` and `1`, and Valgrind and `--rc-checks` find every
+// string released once
+enum Two<A, B> {
+    P(A, B)
+}
+
+fn plain<U, V>(_a: U, b: Two<U, V>) -> U {
+    match b {
+        P(u, _) => u
+    }
+}
+
+fn in_array<U, V>(_a: U, b: [Two<U, V>]) -> V {
+    match b[0] {
+        P(_, v) => v
+    }
+}
+
+fn in_some<U, V>(_a: U, b: Two<U, V>?) -> V? {
+    match b {
+        Some(P(_, v)) => Some(v)
+        None => None
+    }
+}
+
+fn nested<U, V>(_a: U, b: Two<Two<U, V>, i64>) -> U {
+    match b {
+        P(P(u, _), _) => u
+    }
+}
+
+fn f<T>(r: Result<Result<T, bool>, string>) -> T? {
+    match r {
+        Ok(Ok(t)) => Some(t)
+        _ => None
+    }
+}
+
+fn main() {
+    let x: u8 = 3
+    // The `5` is a `u8`, as `x` is.
+    print(plain(x, Two.P(5, "x")))
+    // The "x" is a string.
+    print(in_array(x, [Two.P(5, "x")]))
+    // The same, under `Some`.
+    print(in_some(x, Some(Two.P(5, "x"))) ?? "none")
+    // The same, inside another `Two`.
+    print(nested(x, Two.P(Two.P(5, "x"), 2)))
+    // The inner `Ok(1)` binds `T` to the default `i64`.
+    print(f(Ok(Ok(1))) ?? 0)
+}

@@ -1,0 +1,9 @@
+enum Two<A, B> {
+    P(A, B)
+}
+
+fn h<U, V>(a: U, b: Two<U, V>) {}
+
+fn main() {
+    h(true, Two.P("s", 1))
+}
