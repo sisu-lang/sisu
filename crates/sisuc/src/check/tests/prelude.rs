@@ -457,6 +457,35 @@ fn result_should_wait_for_its_context_whatever_its_argument() {
     );
 }
 
+/// `dbg(x)` has the type of `x`, so it needs its context exactly when `x` does: a `Result`
+/// or a generic call around it hands that context to `x`.
+#[test]
+fn dbg_should_wait_for_its_context_when_its_argument_does() {
+    with_prelude();
+    for statement in [
+        "let v: Result<[f64], [char]> = Ok(dbg([]))",
+        "let v: Result<i64, [f64]> = Err(dbg([]))",
+        "let v: Result<[f64], i64> = Ok(dbg(dbg([])))",
+        "let v: [f64] = id(dbg([]))",
+        "let v: Result<i64, string> = Ok(dbg(1))",
+    ] {
+        let src = format!("{}\nfn id<T>(x: T) -> T {{ x }}", body("", statement));
+        clean_row(statement, &src);
+    }
+}
+
+/// A user's `class dbg` is rejected, but `dbg(...)` is still the prelude's call: the class
+/// does not add an `E0050` for the `[]` beside the `E0034`.
+#[test]
+fn dbg_should_stay_the_prelude_call_when_a_class_takes_its_name() {
+    with_prelude();
+    let src = format!(
+        "class dbg {{}}\n{}",
+        body("", "let v: Result<[f64], i64> = Ok(dbg([]))")
+    );
+    codes(&src, &[(Code::DefinedTwice, (1, 7))]);
+}
+
 /// With no annotation, `id(Ok(1))` has no context to fix `E`, and `id` cannot infer `T`.
 #[test]
 fn result_should_not_be_inferred_from_its_argument_alone() {

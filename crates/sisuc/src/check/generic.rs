@@ -1341,10 +1341,10 @@ impl Checker<'_> {
     /// call of a generic function or method, or a construction of a generic class or variant,
     /// its type arguments not written, whose arguments fit its declaration and all need
     /// context, or, if they fit, whose parameter types leave one of its own type parameters
-    /// unnamed that the call's type names, which no argument can bind. A name resolves as the
-    /// checker resolves it: a call's callee by its declaration, whatever local takes it. A
-    /// method's receiver, an `if let`'s value and a `match`'s scrutinee are checked here, ahead of
-    /// their turn, and kept for it (see `Ahead`).
+    /// unnamed that the call's type names, which no argument can bind; or a call of `dbg` whose
+    /// argument needs context. A name resolves as the checker resolves it: a call's callee by
+    /// its declaration, whatever local takes it. A method's receiver, an `if let`'s value and a
+    /// `match`'s scrutinee are checked here, ahead of their turn, and kept for it (see `Ahead`).
     // shortcut: a nested generic call scans its arguments again, quadratic in the depth of the
     // nesting; remember the answer by span if deep nests appear.
     pub(super) fn needs_context(&mut self, e: &ast::Expr) -> bool {
@@ -1818,8 +1818,19 @@ impl Checker<'_> {
     }
 
     /// The shape of a call of `name` with `args` that calls a generic function, constructs a
-    /// generic class, or builds `Some`, `Ok` or `Err`.
+    /// generic class, or builds `Some`, `Ok` or `Err`, or calls `dbg`.
     fn generic_callee(&self, name: Symbol, args: &[ast::Arg]) -> CallShape {
+        // `dbg<T>(x: T) -> T`: its type is its argument's, so it waits when that argument waits.
+        // It comes first, as `call` runs the prelude's call before it looks up a user's item: a
+        // user's `class dbg` or `fn dbg` is rejected, and never the callee.
+        if name.as_str() == "dbg" {
+            return CallShape {
+                generic: true,
+                shaped: matches!(args, [arg] if arg.label.is_none()),
+                open: false,
+                ..CallShape::default()
+            };
+        }
         match (self.class_ids.get(&name), self.function_ids.get(&name)) {
             (Some(&Declared::Known(class)), _) => {
                 let info = &self.classes[class.0];
