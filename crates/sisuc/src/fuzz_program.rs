@@ -1621,11 +1621,8 @@ mod tests {
             read("broken.sisu"),
             format!("{}class NoBound {{}}\n", g.program)
         );
-        assert!(
-            read("failure.txt").starts_with("property 6: "),
-            "{}",
-            read("failure.txt")
-        );
+        let failure = read("failure.txt");
+        assert!(failure.starts_with("property 6: "), "{failure}");
         assert_eq!(read("program.sisu"), g.program);
     }
 }

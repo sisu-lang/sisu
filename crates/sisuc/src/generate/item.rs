@@ -1786,11 +1786,7 @@ mod tests {
             let g = crate::generate::generate(&data);
             for site in &g.bound_sites {
                 let (before, after) = (&g.program[..site.at.start], &g.program[site.at.end..]);
-                assert!(
-                    before.ends_with('(') || before.ends_with("v: "),
-                    "{before}`{}`",
-                    &g.program[site.at.clone()]
-                );
+                assert!(before.ends_with('(') || before.ends_with("v: "), "{before}");
                 assert!(after.starts_with(')') || after.starts_with(','), "{after}");
                 let row = match site.bound.as_str() {
                     "Display" => panic!("every type conforms to `Display`: it has no site"),

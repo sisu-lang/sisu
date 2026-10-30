@@ -6051,6 +6051,11 @@ fn the_walk_should_mark_a_bounded_type_parameter_named_bare_then_inside_other_ty
         // Never inside another type.
         ("fn f<T: Eq>(a: T, b: i64) {}", false),
         ("fn f<T: Eq>() {}", false),
+        // `Self` is no mention of `T`.
+        (
+            "class Own {\n    fn m<T: Eq>(self, a: T, b: Self) {}\n}",
+            false,
+        ),
     ] {
         let program = format!("class Box<T> {{ v: T }}\n{function}\nfn main() {{}}\n");
         assert_eq!(marked(&program).contains(key), expected, "{function}");
