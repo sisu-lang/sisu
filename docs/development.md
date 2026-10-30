@@ -243,7 +243,10 @@ which runs only when the assert fails. Test code is left out:
 `crates/*/tests/`, and unit-test modules in their own file, `src/**/tests.rs`
 or under `src/**/tests/`. It never fails on low
 coverage. Commit new files, or
-`git add -N` them, so the diff sees them.
+`git add -N` them, so the diff sees them. Before the report, the output has a
+line `coverage: measured (HEAD <sha>)`, with `with uncommitted changes` when the
+tracked tree differs from HEAD. The review script (`diff_brief.py --coverage`)
+refuses coverage of another commit or of uncommitted changes.
 
 Programs that the tests compile link an uninstrumented runtime, whose two
 archives are built in `target/llvm-cov-runtime` and copied next to the

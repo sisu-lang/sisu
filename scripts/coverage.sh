@@ -7,11 +7,18 @@
 # runtime's coverage comes from its unit tests only.
 # git diff leaves out untracked files, so commit new files or `git add -N`
 # them first.
+# Before the report it prints `coverage: measured (HEAD <sha>)`, with `with
+# uncommitted changes` when the tracked tree differs from HEAD. The review
+# script (diff_brief.py --coverage) reads that line to check the commit.
 #   scripts/coverage.sh [base]
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 base=${1:-$(git merge-base main HEAD)}
+# Recorded now, so that a commit made during the run does not change them.
+head=$(git rev-parse HEAD)
+dirty=
+git diff --quiet HEAD || dirty=' with uncommitted changes'
 
 # cargo-llvm-cov passes its target directory to cargo as an argument, so tell
 # the nextest setup script (scripts/build-runtime.sh) where sisu will look.
@@ -29,4 +36,5 @@ cargo llvm-cov report --json --output-path "$out/coverage.json"
 cargo llvm-cov report --lcov --output-path "$out/lcov.info"
 git diff --no-color --no-ext-diff -U0 --src-prefix=a/ --dst-prefix=b/ "$base" >"$out/changes.diff"
 
+echo "coverage: measured (HEAD $head$dirty)"
 python3 scripts/coverage_report.py target/llvm-cov/coverage.json target/llvm-cov/lcov.info target/llvm-cov/changes.diff
