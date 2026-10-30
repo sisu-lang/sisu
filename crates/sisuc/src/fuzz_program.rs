@@ -1166,6 +1166,17 @@ mod tests {
         seed_passes(3, true);
     }
 
+    /// Seeds 0 to 3 do not call `later`, so this seed brings its `U` and `Two` to codegen.
+    #[test]
+    fn seed_59_program_should_pass() {
+        let g = generate(&seed(59));
+        assert!(
+            g.program.contains("let _ = later0("),
+            "seed 59 should call `later0`"
+        );
+        seed_passes(59, false);
+    }
+
     /// `program` end to end, all six builds and properties 1 to 6: it passes and leaves no
     /// directory behind. Of the seeds under 4000 with rewrites, a value site and a panic site
     /// that its run reaches, seed 3934 has the shortest program, so its builds are quick.

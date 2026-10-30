@@ -1840,8 +1840,8 @@ mod tests {
         assert_eq!(pairs.len(), 2, "{pairs:?}");
     }
 
-    /// The draws that order the parameters of `later<k>` reach many of the 5040 orders of the seven
-    /// that follow `_a`, so a draw that stops reaching most of them fails.
+    /// The draws that order the seven parameters after `_a` of `later<k>` reach many orders (the
+    /// seeds hold 64 of the 5040), so a draw that reaches fewer than 16 fails.
     #[test]
     fn later_should_take_its_parameters_in_many_orders() {
         let mut orders = std::collections::BTreeSet::new();
