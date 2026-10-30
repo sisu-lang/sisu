@@ -429,6 +429,28 @@ impl Bindings {
         self.found[i] = Some(*REJECTED);
     }
 
+    /// The first parameter that `ty`, a callee's, names and that is unbound or rejected, which
+    /// `known` has no type for. `None` when `ty` names none.
+    fn unknown_param(&self, ty: Type) -> Option<usize> {
+        if !ty.has_param() {
+            return None;
+        }
+        match ty.kind() {
+            TypeKind::Param(_, i) => match self.found[i as usize] {
+                Some(bound) if bound != *REJECTED => None,
+                _ => Some(i as usize),
+            },
+            TypeKind::Array(inner) | TypeKind::Optional(inner) => self.unknown_param(inner),
+            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+                args.get().iter().find_map(|&arg| self.unknown_param(arg))
+            }
+            TypeKind::Assoc(base, _, args, _) => self
+                .unknown_param(base)
+                .or_else(|| args.get().iter().find_map(|&arg| self.unknown_param(arg))),
+            _ => unreachable!("only a kind with a child can name a parameter"),
+        }
+    }
+
     /// `bind` for each pair, every one of them tried.
     fn bind_all(&mut self, patterns: TypeArgs, values: TypeArgs) -> bool {
         iter::zip(patterns.get(), values.get()).fold(true, |all, (&p, &v)| self.bind(p, v) && all)
@@ -539,6 +561,11 @@ thread_local! {
     /// How many types the walk for the type parameters that types name has visited on this
     /// thread.
     pub(super) static MARKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many entries of the substitution lists of early bound checks have been written on this
+    /// thread.
+    pub(super) static LISTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many due bounds `check_early` has looked at on this thread.
+    pub(super) static EXAMINED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many lookups of `body.ahead` have found an entry on this thread.
     pub(super) static INSPECTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many expressions `takes_context` has looked at on this thread.
@@ -608,6 +635,11 @@ struct Inference<'s> {
     early: Option<Early<'s>>,
 }
 
+/// `found`, a parameter's binding, as a bound sees it: `UNKNOWN` while it is unbound or rejected.
+fn listed(found: Option<Type>) -> Type {
+    found.filter(|&t| t != *REJECTED).unwrap_or(UNKNOWN)
+}
+
 /// The bounds a call checks as soon as the parameter they bound is bound. An argument that waits
 /// for an associated type of the parameter must not meet a type that has none. A parameter whose
 /// bound fails is rejected at once (see `Bindings::reject`), so no later argument is checked
@@ -622,9 +654,16 @@ struct Early<'s> {
     owned: usize,
     /// The bounds of the parameters after the receiver's, as `GenericSig::bounds`.
     bounds: &'s [Vec<Bound>],
+    /// The type of each parameter as a bound sees it: its binding, or `UNKNOWN` while it is
+    /// unbound or rejected. The first check that needs it builds it. Each later binding changes
+    /// only its own entry, so the list is built once for the call.
+    with: Option<Vec<Type>>,
     /// The bounds of a parameter that is bound, that name a parameter that is not bound yet, by
-    /// the same places: they are checked as soon as the call binds what they name.
-    waiting: Vec<(usize, usize)>,
+    /// the place of the first such parameter, which the bound waits for. Each bound has its place
+    /// and its parameter's place. A binding takes only the lists of the parameters that it binds,
+    /// and a bound that still names an unbound parameter goes to the list of that one. So a bound
+    /// moves at most once for each parameter that it names.
+    waiting: FxHashMap<usize, Vec<(usize, usize)>>,
 }
 
 impl<'s> Early<'s> {
@@ -640,7 +679,8 @@ impl<'s> Early<'s> {
             assoc,
             owned: sig.owner.len(),
             bounds: sig.bounds,
-            waiting: Vec::new(),
+            with: None,
+            waiting: FxHashMap::default(),
         })
     }
 }
@@ -927,68 +967,85 @@ impl Checker<'_> {
             .collect()
     }
 
-    /// Checks the bounds of the parameters `bound`, which a binding has just bound. An associated
-    /// type that a parameter type writes through the parameter exists only if the bound holds. A
-    /// bound whose arguments name a parameter that is not bound yet waits, and is checked as soon
-    /// as a binding binds what it names, before any argument that waits for the associated type
-    /// is checked. A bound that fails is reported once, and the call fails. Each parameter whose
-    /// bound failed is then rejected (see `Bindings::reject`). The arguments after it are checked
-    /// for their own mistakes, not against the type that the bound rejected. All the due bounds
-    /// are checked first, so that each bound that fails is reported, also two of one parameter. A
-    /// bound of a parameter that is rejected already has nothing to check.
+    /// Checks the bounds of the parameters `bound`, which a binding has just bound, and the bounds
+    /// that wait for them. An associated type that a parameter type writes through the parameter
+    /// exists only if the bound holds. A bound whose arguments name a parameter that is not bound
+    /// yet waits for it (see `Early::waiting`). It is checked as soon as a binding binds what it
+    /// names, before any argument that waits for the associated type is checked.
+    ///
+    /// A bound that fails is reported once, and the call fails. Each parameter whose bound failed
+    /// is then rejected (see `Bindings::reject`). The arguments after it are checked for their own
+    /// mistakes, not against the type that the bound rejected. All the due bounds are checked
+    /// first, so that each bound that fails is reported, also two of one parameter. A bound of a
+    /// parameter that is rejected already has nothing to check.
+    ///
+    /// The work is linear in the parameters. The substitution list is built once for the call
+    /// (see `Early::with`), and a binding takes only the bounds that wait for its parameters.
     fn check_early(&mut self, call: &mut Inference<'_>, bound: &[usize], at: Span) {
-        let Some(early) = &mut call.early else { return };
-        let owned = early.owned;
-        let has_bound = |i: usize| {
-            (i.checked_sub(owned).and_then(|k| early.bounds.get(k))).is_some_and(|b| !b.is_empty())
-        };
-        if early.waiting.is_empty() && !bound.iter().any(|&i| has_bound(i)) {
+        let Inference {
+            bindings,
+            origin,
+            failed,
+            early,
+            ..
+        } = call;
+        let Some(early) = early else { return };
+        let (owned, bounds) = (early.owned, early.bounds);
+        if let Some(with) = &mut early.with {
+            for &i in bound {
+                #[cfg(test)]
+                LISTED.set(LISTED.get() + 1);
+                with[i] = listed(bindings.found[i]);
+            }
+        }
+        let count =
+            |i: usize| (i.checked_sub(owned).and_then(|k| bounds.get(k))).map_or(0, Vec::len);
+        if early.waiting.is_empty() && bound.iter().all(|&i| count(i) == 0) {
             return;
         }
-        let mut due = std::mem::take(&mut early.waiting);
-        for &i in bound.iter().filter(|&&i| i >= early.owned) {
-            let count = early.bounds.get(i - early.owned).map_or(0, Vec::len);
-            due.extend((0..count).map(|j| (i, j)));
+        let mut due: Vec<(usize, usize)> = Vec::new();
+        for &i in bound {
+            due.extend(early.waiting.remove(&i).into_iter().flatten());
         }
-        let mut with: Option<Vec<Type>> = None;
+        for &i in bound {
+            due.extend((0..count(i)).map(|j| (i, j)));
+        }
         let mut rejected = Vec::new();
         for (i, j) in due {
+            #[cfg(test)]
+            EXAMINED.set(EXAMINED.get() + 1);
             // A bound of a parameter that is rejected already has nothing to check.
-            if call.bindings.found[i] == Some(*REJECTED) {
+            if bindings.found[i] == Some(*REJECTED) {
                 continue;
             }
-            let early = call
-                .early
-                .as_ref()
-                .expect("a call that checks early should say so");
-            let bound = early.bounds[i - early.owned][j];
-            let named = bound.args.get().iter();
-            if !named
-                .into_iter()
-                .all(|&arg| self.known(&call.bindings, arg).is_some())
-            {
-                call.early
-                    .as_mut()
-                    .expect("a call that checks early should say so")
-                    .waiting
-                    .push((i, j));
+            let bound = bounds[i - owned][j];
+            let args = bound.args.get();
+            if let Some(waits_for) = args.iter().find_map(|&arg| bindings.unknown_param(arg)) {
+                early.waiting.entry(waits_for).or_default().push((i, j));
                 continue;
             }
-            let ty = call.bindings.found[i]
-                .expect("a parameter that a binding bound should have a type");
-            let with = with.get_or_insert_with(|| {
-                (call.bindings.found.iter())
-                    .map(|t| t.filter(|&t| t != *REJECTED).unwrap_or(UNKNOWN))
-                    .collect()
+            // An associated type with no conformance for its base never resolves. The bound that
+            // fails for that base reports it, so this bound has nothing to wait for.
+            if !args.iter().all(|&arg| self.known(bindings, arg).is_some()) {
+                continue;
+            }
+            let ty =
+                bindings.found[i].expect("a parameter that a binding bound should have a type");
+            let with = early.with.get_or_insert_with(|| {
+                #[cfg(test)]
+                LISTED.set(LISTED.get() + bindings.found.len());
+                bindings.found.iter().map(|&t| listed(t)).collect()
             });
-            let at = call.origin[i].unwrap_or(at);
-            if !self.check_bound(at, ty, bound, with) {
-                call.failed = true;
+            if !self.check_bound(origin[i].unwrap_or(at), ty, bound, with) {
+                *failed = true;
                 rejected.push(i);
             }
         }
         for i in rejected {
-            call.bindings.reject(i);
+            bindings.reject(i);
+            if let Some(with) = &mut early.with {
+                with[i] = UNKNOWN;
+            }
         }
     }
 

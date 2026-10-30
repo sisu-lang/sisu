@@ -1451,6 +1451,53 @@ fn inference_should_check_each_binding_once() {
     assert_eq!(visits(128), 128);
 }
 
+/// A call whose `n` parameters each have a bound, and whose arguments bind them one by one. Each
+/// binding checks its own bound, so the substitution list that the check reads is built once for
+/// the call and changes one entry for each binding. A list built again for each binding makes the
+/// work grow with the square of `n`.
+#[test]
+fn early_bound_checks_should_build_the_substitution_list_once() {
+    let listed = |n: usize| {
+        let types: Vec<_> = (0..n).map(|i| format!("T{i}: I")).collect();
+        let params: Vec<_> = (0..n).map(|i| format!("_a{i}: T{i}")).collect();
+        let src = format!(
+            "interface I {{\n}}\nclass W: I {{\n}}\n\
+             fn h<{}>({}) {{}}\nfn main() {{\n    let w = W()\n    h({})\n}}",
+            types.join(", "),
+            params.join(", "),
+            vec!["w"; n].join(", ")
+        );
+        generic::LISTED.set(0);
+        clean(&src);
+        generic::LISTED.get()
+    };
+    assert!(listed(1) > 0, "the counter should count the list");
+    assert_near_linear(listed(100), listed(200), listed(300));
+}
+
+/// A call whose `n` parameters each have a bound `K<Z>`, which waits until the last argument binds
+/// `Z`. Each waiting bound moves once to the list of `Z` and is checked once. Taking the whole list
+/// of waiting bounds for each binding makes the work grow with the square of `n`.
+#[test]
+fn waiting_bounds_should_be_looked_at_once_for_each_parameter_they_name() {
+    let examined = |n: usize| {
+        let types: Vec<_> = (0..n).map(|i| format!("T{i}: K<Z>")).collect();
+        let params: Vec<_> = (0..n).map(|i| format!("_a{i}: T{i}")).collect();
+        let src = format!(
+            "interface K<X> {{\n}}\nclass V: K<i64> {{\n}}\n\
+             fn h<Z, {}>({}, _z: Z) {{}}\nfn main() {{\n    let v = V()\n    h({}, 1)\n}}",
+            types.join(", "),
+            params.join(", "),
+            vec!["v"; n].join(", ")
+        );
+        generic::EXAMINED.set(0);
+        clean(&src);
+        generic::EXAMINED.get()
+    };
+    assert!(examined(1) > 0, "the counter should count the bounds");
+    assert_near_linear(examined(100), examined(200), examined(300));
+}
+
 /// An element pattern 20 arrays deep, so a walk of it for each element would show. Once the
 /// first element binds `T`, a later one adds no walk. A `P<i64, bool>` before it binds `T`,
 /// then fails at `bool` and undoes the binding: it adds no walk either.
