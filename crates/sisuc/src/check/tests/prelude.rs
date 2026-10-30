@@ -483,6 +483,7 @@ fn dbg_should_give_a_call_the_diagnostics_of_its_argument() {
     with_prelude();
     for (param, plain, through_dbg) in [
         ("[T]", "[]", "dbg([])"),
+        ("[T]", "[]", "dbg(dbg([]))"),
         ("[T]", "[[]]", "dbg([[]])"),
         ("[T]", "[[]]", "[dbg([])]"),
         ("[T]", "[[]]", "[[dbg([])]]"),
@@ -493,6 +494,7 @@ fn dbg_should_give_a_call_the_diagnostics_of_its_argument() {
         ("T?", "Some(None)", "dbg(Some(None))"),
         ("[T?]", "[None]", "[dbg(None)]"),
         ("Result<T, bool>", "Ok(1)", "dbg(Ok(1))"),
+        ("Result<T, bool>", "Ok(1)", "dbg(dbg(Ok(1)))"),
         ("[Result<T, bool>]", "[Ok(1)]", "[dbg(Ok(1))]"),
         ("Result<[f64], T>", "Err(1)", "dbg(Err(1))"),
         ("Result<[T], bool>", "Ok([])", "dbg(Ok([]))"),
