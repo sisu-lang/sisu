@@ -3301,6 +3301,31 @@ const PART_ROWS: &[PartialRow<'static>] = {
             "let c: C? = C()\nh(true, id(c?.m(\"s\", 1)))",
             &[(Mismatch, S)],
         ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "h(true, dbg(Two.P(\"s\", 1)))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "h(true, dbg(dbg(Two.P(\"s\", 1))))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "h(true, Some(dbg(Two.P(\"s\", 1))))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "h(true, dbg(Some(Two.P(\"s\", 1))))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "h(true, [dbg(Two.P(\"s\", 1))])",
+            &[(Mismatch, S)],
+        ),
     ]
 };
 
@@ -3471,6 +3496,11 @@ const WHOLE_ROWS: &[PartialRow<'static>] = {
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "let c: C? = C()\nh(true, id(c?.m(\"s\", 1)))",
             &[(Mismatch, "id(")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "h(true, dbg([Two.P(\"s\", 1)]))",
+            &[(Mismatch, "dbg(")],
         ),
     ]
 };

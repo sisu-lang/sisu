@@ -1172,8 +1172,9 @@ impl Checker<'_> {
     /// Whether `e` can take `context`, which holds a hole, as its expected type with no hole
     /// reaching a type. A generic call binds its own parameters from it. `Some(x)` and a
     /// non-empty array literal take their type from the context, so each needs the same of
-    /// its parts. A call that is not generic can pass the context on to its argument (as `dbg`
-    /// does), which would put the hole in a type. A safe call has an optional result, so it
+    /// its parts. `dbg(x)` binds nothing and passes the context to `x`, so it takes what `x`
+    /// takes, unless `x` is an array literal. Another call that is not generic could pass the
+    /// hole into a type. A safe call has an optional result, so it
     /// takes an optional context only: for a plain one, its shape is the mistake to report.
     /// The exception is a safe call with a `ContextHint` (see `infer_waiting`). `misfit` and
     /// `report_unbound` report its shape, and `blame_arguments` blames none of its arguments.
@@ -1190,6 +1191,22 @@ impl Checker<'_> {
         if let ast::ExprKind::ArrayLit(elements) = &e.kind {
             return matches!(context.kind(), TypeKind::Array(element)
                 if !elements.is_empty() && elements.iter().all(|e| self.takes_context(e, element)));
+        }
+        if let ast::ExprKind::Call {
+            callee,
+            types,
+            args,
+            ..
+        } = &e.kind
+            && types.is_empty()
+            && callee.name.as_str() == "dbg"
+            && let [arg] = &args[..]
+            && arg.label.is_none()
+        {
+            // An array literal under `dbg` would take the hole as its type: only a direct
+            // argument goes to `inferred_array`.
+            return !matches!(arg.value.kind, ast::ExprKind::ArrayLit(_))
+                && self.takes_context(&arg.value, context);
         }
         let safe = matches!(e.kind, ast::ExprKind::MethodCall { safe: true, .. });
         match self.call_shape(e) {
@@ -1496,10 +1513,11 @@ impl Checker<'_> {
     /// call of a generic function or method, or a construction of a generic class or variant,
     /// its type arguments not written, whose arguments fit its declaration and all need
     /// context, or, if they fit, whose parameter types leave one of its own type parameters
-    /// unnamed that the call's type names, which no argument can bind. A name resolves as the
-    /// checker resolves it: a call's callee by its declaration, whatever local takes it. A
-    /// method's receiver, an `if let`'s value and a `match`'s scrutinee are checked here, ahead of
-    /// their turn, and kept for it (see `Ahead`).
+    /// unnamed that the call's type names, which no argument can bind. A call of `dbg` needs
+    /// context when its argument does. A name resolves as the checker resolves it: a call's
+    /// callee by its declaration, whatever local takes it. A method's receiver, an `if let`'s
+    /// value and a `match`'s scrutinee are checked here, ahead of their turn, and kept for it
+    /// (see `Ahead`).
     // shortcut: a nested generic call scans its arguments again, quadratic in the depth of the
     // nesting; remember the answer by span if deep nests appear.
     pub(super) fn needs_context(&mut self, e: &ast::Expr) -> bool {
@@ -1973,8 +1991,19 @@ impl Checker<'_> {
     }
 
     /// The shape of a call of `name` with `args` that calls a generic function, constructs a
-    /// generic class, or builds `Some`, `Ok` or `Err`.
+    /// generic class, or builds `Some`, `Ok` or `Err`, or calls `dbg`.
     fn generic_callee(&self, name: Symbol, args: &[ast::Arg]) -> CallShape {
+        // `dbg<T>(x: T) -> T`: its type is its argument's, so it waits when that argument waits;
+        // its parameter names `T`, so it is not `open`.
+        // It comes first, as `call` runs the prelude's call before it looks up a user's item: a
+        // user's `class dbg` or `fn dbg` is rejected, and never the callee.
+        if name.as_str() == "dbg" {
+            return CallShape {
+                generic: true,
+                shaped: matches!(args, [arg] if arg.label.is_none()),
+                ..CallShape::default()
+            };
+        }
         match (self.class_ids.get(&name), self.function_ids.get(&name)) {
             (Some(&Declared::Known(class)), _) => {
                 let info = &self.classes[class.0];

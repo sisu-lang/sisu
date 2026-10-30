@@ -3,6 +3,8 @@
 
 use super::generics::infers;
 use super::*;
+use crate::front_end::{self, LANG_SOURCE};
+use crate::lexer::{self, TokenKind};
 use crate::source::PRELUDE_BASE;
 
 /// A function `f` over `params`, whose body is `body` from line 2, and an empty `main`.
@@ -455,6 +457,76 @@ fn result_should_wait_for_its_context_whatever_its_argument() {
     );
 }
 
+/// `dbg(x)` has the type of `x`. So it needs its context exactly when `x` does: a `Result` or
+/// a generic call around it hands that context to `x`.
+#[test]
+fn dbg_should_wait_for_its_context_when_its_argument_does() {
+    with_prelude();
+    for statement in [
+        "let v: Result<[f64], [char]> = Ok(dbg([]))",
+        "let v: Result<i64, [f64]> = Err(dbg([]))",
+        "let v: Result<[f64], i64> = Ok(dbg(dbg([])))",
+        "let v: [f64] = id(dbg([]))",
+        "let v: Result<i64, string> = Ok(dbg(1))",
+    ] {
+        let src = format!("{}\nfn id<T>(x: T) -> T {{ x }}", body("", statement));
+        clean_row(statement, &src);
+    }
+}
+
+/// `dbg(e)` passes its context to `e`, so `f(dbg(e))` and `f([dbg(e)])` get the context that
+/// `f(e)` and `f([e])` get and report the same diagnostics. Each diagnostic is its code and the
+/// source text under its span, so a diagnostic at the wrong place fails. The spans of the two
+/// programs differ by the width of `dbg(`, which is why they are compared as text.
+#[test]
+fn dbg_should_give_a_call_the_diagnostics_of_its_argument() {
+    with_prelude();
+    for (param, plain, through_dbg) in [
+        ("[T]", "[]", "dbg([])"),
+        ("[T]", "[]", "dbg(dbg([]))"),
+        ("[T]", "[[]]", "dbg([[]])"),
+        ("[T]", "[[]]", "[dbg([])]"),
+        ("[T]", "[[]]", "[[dbg([])]]"),
+        ("[T]", "[[], []]", "[dbg([]), dbg([])]"),
+        ("[T]", "[[]]", "[dbg(dbg([]))]"),
+        ("[[T]]", "[[]]", "dbg([[]])"),
+        ("T?", "None", "dbg(None)"),
+        ("T?", "Some(None)", "dbg(Some(None))"),
+        ("[T?]", "[None]", "[dbg(None)]"),
+        ("Result<T, bool>", "Ok(1)", "dbg(Ok(1))"),
+        ("Result<T, bool>", "Ok(1)", "dbg(dbg(Ok(1)))"),
+        ("[Result<T, bool>]", "[Ok(1)]", "[dbg(Ok(1))]"),
+        ("Result<[f64], T>", "Err(1)", "dbg(Err(1))"),
+        ("Result<[T], bool>", "Ok([])", "dbg(Ok([]))"),
+    ] {
+        let program = |arg: &str| {
+            let src = format!(
+                "fn f<T>(x: {param}) -> i64 {{ 0 }}\nfn main() {{\n    let v = f({arg})\n}}"
+            );
+            let found: Vec<_> = diags(&src)
+                .iter()
+                .map(|d| (d.code(), src[d.span().range()].to_string()))
+                .collect();
+            (found, src)
+        };
+        let (plain_found, _) = program(plain);
+        let (found, src) = program(through_dbg);
+        assert_eq!(found, plain_found, "row `{param}`, `{through_dbg}`: {src}");
+    }
+}
+
+/// A user's `class dbg` is rejected, but `dbg(...)` is still the prelude's call: the class
+/// does not add an `E0050` for the `[]` beside the `E0034`.
+#[test]
+fn dbg_should_stay_the_prelude_call_when_a_class_takes_its_name() {
+    with_prelude();
+    let src = format!(
+        "class dbg {{}}\n{}",
+        body("", "let v: Result<[f64], i64> = Ok(dbg([]))")
+    );
+    codes(&src, &[(Code::DefinedTwice, (1, 7))]);
+}
+
 /// With no annotation, `id(Ok(1))` has no context to fix `E`, and `id` cannot infer `T`.
 #[test]
 fn result_should_not_be_inferred_from_its_argument_alone() {
@@ -636,4 +708,35 @@ fn an_array_sum_of_the_prelude_should_keep_its_suggestion_and_codes() {
         "fn f<T>(xs: [T]) {\n    let _ = xs.sum()\n}\nfn main() {}",
         &[(Code::SumNeedsNumbers, (2, 16))],
     );
+}
+
+/// A user item takes the name of an identifier of the prelude: the prelude's bodies still check
+/// without a diagnostic. `front_end::checked` stops with an internal error on a diagnostic
+/// that points into the prelude, so a call that returns is the proof. A name such as `Option`
+/// gives a diagnostic in the user's file: that is fine.
+#[test]
+fn prelude_should_check_clean_beside_a_user_item_of_any_name_it_uses() {
+    let mut names = Vec::new();
+    for source in [LANG_SOURCE, PRELUDE_SOURCE] {
+        let lexed = lexer::lex(source).expect("the prelude should lex");
+        for token in lexed.tokens {
+            if let TokenKind::Ident(name) = token.kind
+                && !names.contains(&name)
+            {
+                names.push(name);
+            }
+        }
+    }
+    assert!(names.len() > 10, "{names:?}");
+    for name in names {
+        for item in [
+            format!("enum {name} {{ A }}"),
+            format!("class {name} {{}}"),
+            format!("fn {name}() {{}}"),
+            format!("const {name}: i64 = 1"),
+            format!("interface {name} {{}}"),
+        ] {
+            front_end::checked(&format!("{item}\nfn main() {{}}"));
+        }
+    }
 }
