@@ -402,12 +402,21 @@ impl<'ctx> Codegen<'ctx, '_> {
         object
     }
 
-    /// `Call`: `func` applied to the evaluated `args`; `None` for a `unit` result.
+    /// `Call`: `func` applied to the evaluated `args`; `None` for a `unit` result. The caller
+    /// adds the two location arguments of a prelude function. The helpers of `to_string`, `eq`
+    /// and `less` do not, as they call a written method, which the prelude has none of: the
+    /// count of `args` is checked so that the first prelude conformance fails here.
     fn call_value(
         &self,
         func: FuncId,
         args: &[BasicMetadataValueEnum<'ctx>],
     ) -> Option<BasicValueEnum<'ctx>> {
+        debug_assert_eq!(
+            args.len(),
+            self.functions[func.0].count_params() as usize,
+            "a call of `{}` should pass every parameter; a prelude function takes its caller's location too",
+            self.mir.functions[func.0].name
+        );
         self.builder
             .build_call(self.functions[func.0], args, "call")
             .expect(POSITIONED)
