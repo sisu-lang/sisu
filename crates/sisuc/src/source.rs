@@ -115,6 +115,11 @@ impl<'a> Source<'a> {
             .expect("a span should lie in the text it indexes")
     }
 
+    /// The offset of the first byte.
+    pub(crate) fn start(&self) -> usize {
+        self.base
+    }
+
     /// The offset just past the last byte.
     pub(crate) fn end(&self) -> usize {
         self.base + self.text.len()

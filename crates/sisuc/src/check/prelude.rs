@@ -80,7 +80,7 @@ impl Checker<'_> {
             .filter(|_| !labeled)
             .map(|operand| tir::ExprKind::Dbg {
                 at: arg.value.span,
-                text: self.source.file.text(arg.value.span).to_string(),
+                text: self.source.text(arg.value.span).to_string(),
                 operand: Box::new(operand),
             });
         typed(span, ty, labeled, kind)

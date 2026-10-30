@@ -1891,8 +1891,8 @@ fn with_probe<R>(
     let lexed = crate::lexer::lex(&src).expect("the source should lex");
     let program = crate::parser::parse(lexed, false).program;
     let prelude = prelude_program("");
-    let mut checker = Checker::new(&program, &src);
-    let items: Vec<&ast::Item> = program.items.iter().chain(&prelude.items).collect();
+    let mut checker = Checker::new(&program, &src, &prelude.text);
+    let items: Vec<&ast::Item> = program.items.iter().chain(&prelude.program.items).collect();
     checker.declare_items(&items, program.items.len(), &program.broken);
     let probe = (checker.signatures.iter())
         .find(|signature| signature.name == "probe")

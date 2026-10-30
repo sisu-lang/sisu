@@ -279,7 +279,9 @@ and `todo` lower to, calls `sisu_panic_message` with its location and
 message, then ends the block with `unreachable`. Codegen gives each prelude
 function two more last parameters, a pointer and a length: the source location
 of its caller. A panic in the function reports that location, so it names the
-user's call and not a line of the prelude. A `Math` node becomes an LLVM
+user's call and not a line of the prelude. The helpers that call a written
+`to_string` or `eq` of a prelude type pass the location `<prelude>`, because
+one helper serves every caller of its type. A `Math` node becomes an LLVM
 intrinsic, except `hypot`, which calls `hypot` from `libm`.
 
 `codegen/abi.rs` declares every runtime function from one table, `RUNTIME`,

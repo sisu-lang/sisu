@@ -7,7 +7,7 @@ use std::{fmt, iter};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::enums::VariantInfo;
-use super::expr::{bare_none, int_literal, option_written, rank};
+use super::expr::{bare_none, dbg_argument, int_literal, option_written, rank};
 use super::interface::{Bound, Required};
 use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
@@ -23,15 +23,6 @@ use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{Type, TypeArgs, TypeKind};
 use crate::types::HOLE_INDEX;
-
-/// Whether `ty`, an array's element, is an optional, or arrays of them: the shape of element
-/// that `against` cannot wrap an array literal's elements to.
-fn optional_element(mut ty: Type) -> bool {
-    while let TypeKind::Array(inner) = ty.kind() {
-        ty = inner;
-    }
-    matches!(ty.kind(), TypeKind::Optional(_))
-}
 
 /// Whether `ty` is `want`, where a hole of `want` meets any part of `ty`.
 fn meets(ty: Type, want: Type) -> bool {
@@ -1181,7 +1172,8 @@ impl Checker<'_> {
     ///
     /// The work is one step for each expression that the walk reaches. `inferred_array` does
     /// not walk the elements of an array literal again after this accepts it. `taken` keeps
-    /// the answer for each `Some(...)`, which the call of `Some` asks for again.
+    /// the answer for each array literal, which `inferred_array` asks for again when it
+    /// refuses the literal, and for each `Some(...)`, which the call of `Some` asks for again.
     fn takes_context(&mut self, e: &ast::Expr, context: Type) -> bool {
         #[cfg(test)]
         CONTEXT_STEPS.set(CONTEXT_STEPS.get() + 1);
@@ -1189,24 +1181,21 @@ impl Checker<'_> {
             return false;
         }
         if let ast::ExprKind::ArrayLit(elements) = &e.kind {
-            return matches!(context.kind(), TypeKind::Array(element)
+            // A literal with an element that takes no context fails after a walk of all it
+            // holds, and `inferred_array` asks for each element again. The answer is kept.
+            if let Some(&taken) = self.body.taken.get(&(e.span, context)) {
+                return taken;
+            }
+            let taken = matches!(context.kind(), TypeKind::Array(element)
                 if !elements.is_empty() && elements.iter().all(|e| self.takes_context(e, element)));
+            self.body.taken.insert((e.span, context), taken);
+            return taken;
         }
-        if let ast::ExprKind::Call {
-            callee,
-            types,
-            args,
-            ..
-        } = &e.kind
-            && types.is_empty()
-            && callee.name.as_str() == "dbg"
-            && let [arg] = &args[..]
-            && arg.label.is_none()
-        {
+        if let Some(arg) = dbg_argument(e) {
             // An array literal under `dbg` would take the hole as its type: only a direct
             // argument goes to `inferred_array`.
-            return !matches!(arg.value.kind, ast::ExprKind::ArrayLit(_))
-                && self.takes_context(&arg.value, context);
+            return !matches!(arg.kind, ast::ExprKind::ArrayLit(_))
+                && self.takes_context(arg, context);
         }
         let safe = matches!(e.kind, ast::ExprKind::MethodCall { safe: true, .. });
         match self.call_shape(e) {
@@ -1264,9 +1253,9 @@ impl Checker<'_> {
 
     /// Checks `e` against `pattern`, a parameter's type or an element's: against what the call
     /// binds of it, or, while it names an unbound parameter, on its own, which binds what its
-    /// type fixes. A non-empty array literal is the exception when its array holds optionals
-    /// (see `optional_element`) or when it has a `context`. Its elements then bind the
-    /// parameter one by one (see `inferred_array`).
+    /// type fixes. A non-empty array literal is the exception: unless its element type is a
+    /// type parameter or an associated type that nothing binds or hints, its elements bind the
+    /// parameters one by one (see `inferred_array`).
     /// A value of type `unit` or `never` binds nothing, for `infer_arg` to defer.
     fn infer_value(
         &mut self,
@@ -1282,7 +1271,12 @@ impl Checker<'_> {
     }
 
     /// `infer_value` for a `pattern` that names an unbound parameter, with no walk of
-    /// `pattern` to find this out. `context` is the expected type of `e`, if any.
+    /// `pattern` to find this out. `context` is the expected type of `e`, if any. A non-empty
+    /// array literal goes to `inferred_array` unless its element type is a type parameter or an
+    /// associated type that nothing binds or hints, as `infer_value` says. Any other element
+    /// type holds a part that is known or can be wrapped to. In `inferred_array`, an element
+    /// that is a local variable takes no context: it is checked on its own, and it binds or
+    /// meets the element type, so the context of the other elements stays.
     fn infer_unbound(
         &mut self,
         call: &mut Inference,
@@ -1293,7 +1287,9 @@ impl Checker<'_> {
         if let ast::ExprKind::ArrayLit(elements) = &e.kind
             && !elements.is_empty()
             && let TypeKind::Array(element) = pattern.kind()
-            && (optional_element(element) || context.is_some())
+            // The `matches!` only skips the walk of `partial`: any other kind is never a hole.
+            && (!matches!(element.kind(), TypeKind::Param(..) | TypeKind::Assoc(..))
+                || self.partial(&call.bindings, element) != *HOLE)
         {
             return self.inferred_array(call, e.span, elements, element, context.is_some());
         }
@@ -1334,8 +1330,9 @@ impl Checker<'_> {
     /// reports it: the first alone, unless an element failed already. Each element gets its own
     /// context, so no hole reaches the type of the array. `accepted` says that `takes_context`
     /// has accepted the literal, so each element takes its context with no new walk. Else
-    /// each element asks `call_context`. An element of type `unit` or `never` has no value,
-    /// which is reported at once, and binds nothing.
+    /// each element asks `call_context`: an element that takes no context, such as a local
+    /// variable, is checked on its own, and the others keep theirs. An element of type `unit`
+    /// or `never` has no value, which is reported at once, and binds nothing.
     fn inferred_array(
         &mut self,
         call: &mut Inference,
@@ -2202,7 +2199,7 @@ impl Checker<'_> {
     /// among them or a name in the rest of `main`, outside its strings and comments, is one.
     pub(super) fn main_type_params(&mut self, main: &ast::Function) {
         let angles = main.angles;
-        let rest = self.source.file.slice(angles.end()..main.span.end());
+        let rest = self.source.slice(angles.end()..main.span.end());
         // What does not lex alone is held to name one.
         let named = lex(rest).map_or(true, |lexed| {
             lexed.tokens.iter().any(|token| {
@@ -2241,12 +2238,7 @@ impl Checker<'_> {
     /// and `first` could be a value: a name that is not a built-in type, with no `?`.
     pub(super) fn misread(&mut self, name: Span, first: Option<&ast::TypeExpr>) -> Poisoned {
         let first = first.filter(|first| self.could_be_value(first));
-        let compare = first.map(|first| {
-            self.source
-                .file
-                .slice(name.start()..first.span.end())
-                .into()
-        });
+        let compare = first.map(|first| self.source.slice(name.start()..first.span.end()).into());
         self.misread_as(name, compare)
     }
 
@@ -2276,7 +2268,7 @@ impl Checker<'_> {
     pub(super) fn misread_as(&mut self, name: Span, compare: Option<String>) -> Poisoned {
         self.body.misread.insert(name.start());
         self.report(DiagnosticKind::TypeArguments {
-            name: self.source.file.slice(name.start()..name.end()).to_string(),
+            name: self.source.slice(name.start()..name.end()).to_string(),
             at: name,
             form: ArgumentsForm::Value { compare },
         });
@@ -2409,7 +2401,7 @@ impl Checker<'_> {
         types: &[ast::TypeExpr],
         angles: Span,
     ) {
-        let text = self.source.file;
+        let text = self.source;
         let instead = types.iter().all(|ty| !self.names_no_type(ty)).then(|| {
             format!(
                 "{}{}.{}",

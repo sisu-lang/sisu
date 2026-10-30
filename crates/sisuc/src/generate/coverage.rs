@@ -379,7 +379,7 @@ fn universe() -> FxHashSet<String> {
         universe.insert(format!("tir::MathOp::{} on F64", row[0]));
     }
     // The prelude's methods of a built-in type, as the typed tree names them.
-    for item in &prelude_program(PRELUDE_SOURCE).items {
+    for item in &prelude_program(PRELUDE_SOURCE).program.items {
         if let ast::Item::Extend(extend) = item {
             for method in &extend.methods {
                 universe.insert(format!(

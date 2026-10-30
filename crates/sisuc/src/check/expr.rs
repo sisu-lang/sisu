@@ -45,7 +45,7 @@ impl Checker<'_> {
             let (x, exact) = (value as f64, (value as f64) as i128 == i128::from(value));
             if !exact {
                 self.report(DiagnosticKind::NotExactlyF64 {
-                    text: self.source.file.text(literal).to_string(),
+                    text: self.source.text(literal).to_string(),
                     nearest: format!("{x:?}"),
                     at,
                 });
@@ -66,7 +66,7 @@ impl Checker<'_> {
                 DiagnosticKind::NegatedU8 { at }.into()
             } else {
                 DiagnosticKind::IntegerDoesNotFit {
-                    text: self.source.file.text(literal).to_string(),
+                    text: self.source.text(literal).to_string(),
                     at,
                 }
                 .into()
@@ -474,13 +474,34 @@ pub(super) fn literal_type(ty: Option<Type>) -> Type {
 }
 
 /// Which side of an `if`, `if let` or `==` with no expected type is checked first, the lower
-/// first: a concrete value is 0, an `int_literal` 1, a `bare_none` or `[]` 2.
+/// first: a concrete value is 0, an `int_literal` 1, a `bare_none` or `[]` 2. `dbg(x)` passes
+/// its expected type to `x`, so it has the rank of `x`.
 pub(super) fn rank(e: &ast::Expr) -> u8 {
+    if let Some(argument) = dbg_argument(e) {
+        return rank(argument);
+    }
     match &e.kind {
         _ if bare_none(e) => 2,
         ExprKind::ArrayLit(elements) if elements.is_empty() => 2,
         _ if int_literal(e) => 1,
         _ => 0,
+    }
+}
+
+/// The argument of `e`, if `e` is a call of `dbg` with one unlabeled argument and no type
+/// argument. No user item can have the name `dbg` (see `generic_callee`), so the name tells.
+pub(super) fn dbg_argument(e: &ast::Expr) -> Option<&ast::Expr> {
+    match &e.kind {
+        ExprKind::Call {
+            callee,
+            types,
+            args,
+            ..
+        } if types.is_empty() && callee.name.as_str() == "dbg" => match &args[..] {
+            [arg] if arg.label.is_none() => Some(&arg.value),
+            _ => None,
+        },
+        _ => None,
     }
 }
 

@@ -403,10 +403,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// `Call`: `func` applied to the evaluated `args`; `None` for a `unit` result. The caller
-    /// adds the two location arguments of a prelude function. The helpers of `to_string`, `eq`
-    /// and `less` do not add them, because they call a written method. The prelude writes none
-    /// of these methods. The count of `args` is checked, so the first prelude conformance fails
-    /// here.
+    /// adds the two location arguments of a prelude function. The helpers of `to_string` and `eq`
+    /// call `call_written` instead. The count of `args` is checked.
     fn call_value(
         &self,
         func: FuncId,
@@ -422,6 +420,25 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect(POSITIONED)
             .try_as_basic_value()
             .basic()
+    }
+
+    /// `call_value` for a helper of `to_string` or `eq`, which calls a written method with its
+    /// own parameters. A prelude method also takes the two location arguments, and a helper has
+    /// no caller to name, so it passes `<prelude>`.
+    // shortcut: a panic in a prelude `to_string` or `eq` names `<prelude>`, not the caller; give
+    // the helpers a location parameter when the prelude writes such a method that can panic.
+    fn call_written(
+        &self,
+        func: FuncId,
+        args: &[BasicMetadataValueEnum<'ctx>],
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let mut args = args.to_vec();
+        if self.mir.functions[func.0].prelude {
+            let (at, at_len) = self.text("<prelude>");
+            args.push(at.into());
+            args.push(at_len.into());
+        }
+        self.call_value(func, &args)
     }
 
     /// `-x` or `!x` on an evaluated operand of type `ty`; negating an `i64` panics at `span` on

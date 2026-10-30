@@ -27,6 +27,7 @@ mod stmt;
 mod string;
 mod unused_names;
 
+use std::ops::Range;
 use std::rc::Rc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -37,6 +38,7 @@ use crate::diagnostic::{
     BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, MainForm, MismatchFix,
     MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
 };
+use crate::front_end::PreludeProgram;
 use crate::payload_limit;
 use crate::source::{self, Span};
 use crate::symbol::Symbol;
@@ -346,15 +348,47 @@ impl LoopFrame {
 }
 
 /// The program's text and the positions the lexer and parser found in it; never changes.
+#[derive(Clone, Copy)]
 struct Source<'src> {
-    /// The text the program's spans index.
-    file: source::Source<'src>,
-    /// Where each comment starts.
+    /// The text the user's spans index.
+    user: source::Source<'src>,
+    /// The text the prelude's spans index.
+    prelude: source::Source<'src>,
+    /// Where each comment starts. This list, `quotes` and `breaks` hold the user's file only,
+    /// so for a span of the prelude they find no comment, no literal and one line. Only
+    /// diagnostics read them.
     comments: &'src [usize],
     /// Where each string literal starts, in order.
     quotes: &'src [usize],
     /// Where each line break is, in order.
     breaks: &'src [usize],
+}
+
+impl<'src> Source<'src> {
+    /// The text that `span` covers.
+    fn text(&self, span: Span) -> &'src str {
+        self.holding(span.start()).text(span)
+    }
+
+    /// The text between the offsets of `range`, which lie in one text.
+    fn slice(&self, range: Range<usize>) -> &'src str {
+        self.holding(range.start).slice(range)
+    }
+
+    /// The text from offset `from` to the end of the text that holds it.
+    fn rest(&self, from: usize) -> &'src str {
+        self.holding(from).rest(from)
+    }
+
+    /// The text that holds offset `at`: the prelude's from `PRELUDE_BASE` on, else the user's.
+    /// A span of the prelude must never index the user's text, or the other way round.
+    fn holding(&self, at: usize) -> source::Source<'src> {
+        if Span::new(at, at).in_prelude() {
+            self.prelude
+        } else {
+            self.user
+        }
+    }
 }
 
 #[cfg(test)]
@@ -739,7 +773,8 @@ struct Body {
     ahead: Vec<((Span, bool), Option<generic::Ahead>)>,
     /// Where in `ahead` the last work kept for each span and kind is.
     ahead_at: FxHashMap<(Span, bool), usize>,
-    /// What `takes_context` answered for each `Some(...)` and context, by the span of the call.
+    /// What `takes_context` answered for each array literal and `Some(...)`, with the context,
+    /// by the span of the expression.
     taken: FxHashMap<(Span, Type), bool>,
 }
 
@@ -812,20 +847,21 @@ impl Body {
 /// holds the parser's diagnostics, sorted by span start: their errors count against a function too.
 /// The items of `prelude` follow those of `program`, so that every id of a user's item is what it
 /// would be without a prelude. The prelude has no broken item, and no diagnostic should point into
-/// it: `front_end` takes one that does for an internal error. `source` is the user's text. The
-/// prelude's `Option` is no item here: it defines the optional type, which has no enum.
+/// it: `front_end` takes one that does for an internal error. `source` is the user's text, and
+/// `prelude` holds the prelude's. The prelude's `Option` is no item here: it defines the optional
+/// type, which has no enum.
 pub(crate) fn check<'src>(
     program: &'src ast::Program,
-    prelude: &'src ast::Program,
+    prelude: &'src PreludeProgram,
     source: &'src str,
     parsed: &[Diagnostic],
 ) -> (Option<tir::Program>, Vec<Diagnostic>) {
-    let mut checker = Checker::new(program, source);
+    let mut checker = Checker::new(program, source, &prelude.text);
     checker.parse_errors = error_spans(parsed);
     let option =
         |item: &&ast::Item| matches!(item, ast::Item::Enum(e) if e.name.name.as_str() == "Option");
     let items: Vec<&ast::Item> = (program.items.iter())
-        .chain(prelude.items.iter().filter(|item| !option(item)))
+        .chain(prelude.program.items.iter().filter(|item| !option(item)))
         .collect();
     let declared = checker.declare_items(&items, program.items.len(), &program.broken);
     checker.fold_constants(&items);
@@ -992,10 +1028,15 @@ fn block_type(checked: &CheckedBlock) -> Option<Type> {
 
 impl<'src> Checker<'src> {
     /// The one way to build a checker; `check` and the tests call it.
-    fn new(program: &'src ast::Program, source: &'src str) -> Checker<'src> {
+    fn new(
+        program: &'src ast::Program,
+        source: &'src str,
+        prelude_text: &'src str,
+    ) -> Checker<'src> {
         Checker {
             source: Source {
-                file: source::Source::new(source, 0),
+                user: source::Source::new(source, 0),
+                prelude: source::Source::new(prelude_text, source::PRELUDE_BASE as usize),
                 comments: &program.comments,
                 quotes: &program.quotes,
                 breaks: &program.breaks,
@@ -1682,7 +1723,7 @@ impl Checker<'_> {
             if matches!(found, Declared::Known(_)) {
                 self.report(DiagnosticKind::InterfaceAsType {
                     name: name.to_string(),
-                    written: Some(self.source.file.slice(ty.bare.range()).to_string()),
+                    written: Some(self.source.slice(ty.bare.range()).to_string()),
                     at: ident().span,
                 });
             }
@@ -1693,6 +1734,7 @@ impl Checker<'_> {
         }
         match declared {
             (Some(Declared::Known(id)), _) => {
+                self.reaches_prelude(id.0 >= self.prelude.classes, ident().span);
                 let list = if args.is_empty() && self.classes[id.0].type_params.is_empty() {
                     TypeArgs::NONE
                 } else {
@@ -1704,6 +1746,7 @@ impl Checker<'_> {
                     .then_some(ty)
             }
             (_, Some(Declared::Known(id))) => {
+                self.reaches_prelude(id.0 >= self.prelude.enums, ident().span);
                 let list = if args.is_empty() && self.enums[id.0].type_params.is_empty() {
                     TypeArgs::NONE
                 } else {

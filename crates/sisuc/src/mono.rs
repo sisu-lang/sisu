@@ -57,8 +57,9 @@ pub(crate) fn instantiate(mut program: Program) -> Result<Program, Vec<Diagnosti
     if !generic && !program.instantiates {
         #[cfg(test)]
         FAST_PATHS.set(FAST_PATHS.get() + 1);
-        // Reaching a generic item records a type argument, so nothing of the prelude's that a
-        // program does not name is used: they are all templates or unused.
+        // Reaching a generic item records a type argument, and so does a use of any other item
+        // of the prelude (see `tir::Program::instantiates`): the prelude's items are then all
+        // templates or unused.
         program.functions.truncate(prelude.funcs);
         program.classes.truncate(prelude.classes);
         program.enums.truncate(prelude.enums);
@@ -1652,6 +1653,55 @@ mod tests {
         let program = instantiated("fn main() {\n    print(5.min(3))\n}");
         assert_eq!(FAST_PATHS.get(), before);
         assert_eq!(function_names(&program), ["main", "i64.min"]);
+    }
+
+    /// The prelude of the tests below: a class and an enum that are not generic, so `mono` roots
+    /// them only when the user's file reaches them.
+    const ITEMS_PRELUDE: &str = "class Probe {\n    n: i64\n}\nenum Light {\n    Red\n    Green\n}\nfn probe() -> i64 { 1 }\n";
+
+    /// The program `front_end_with` gives for `src` over `ITEMS_PRELUDE`, with the fast paths
+    /// that `mono` took while it ran.
+    fn instantiated_over_items(src: &str) -> (Program, usize) {
+        let before = FAST_PATHS.get();
+        let (program, diagnostics) = crate::front_end::front_end_with(ITEMS_PRELUDE, src);
+        let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+        (program, FAST_PATHS.get() - before)
+    }
+
+    /// The user's file reaches a class, an enum variant, a function or a type name of the prelude
+    /// that is not generic, and so leaves the path that instantiates nothing. A program that
+    /// reaches none takes it, and drops all of the prelude's items.
+    #[test]
+    fn a_use_of_a_prelude_item_that_is_not_generic_should_leave_the_path_that_instantiates_nothing()
+    {
+        for (src, kept) in [
+            ("fn main() {\n    print(Probe(n: 1).n)\n}", "Probe"),
+            (
+                "fn main() {\n    match Light.Red {\n        Light.Red => print(1)\n        Light.Green => print(2)\n    }\n}",
+                "Light",
+            ),
+            ("fn main() {\n    print(probe())\n}", "probe"),
+            (
+                "fn main() {\n    let p: Probe? = None\n    print(p == None)\n}",
+                "Probe",
+            ),
+            (
+                "fn main() {\n    let l: [Light] = []\n    print(l.len())\n}",
+                "Light",
+            ),
+        ] {
+            let (program, fast) = instantiated_over_items(src);
+            assert_eq!(fast, 0, "{src}");
+            let names: Vec<&str> = (program.classes.iter().map(|c| c.name.as_str()))
+                .chain(program.enums.iter().map(|e| e.name.as_str()))
+                .chain(function_names(&program))
+                .collect();
+            assert!(names.contains(&kept), "{kept} in {names:?} for {src}");
+        }
+        let (program, fast) = instantiated_over_items("fn main() {\n    print(1)\n}");
+        assert_eq!(fast, 1);
+        assert!(program.classes.is_empty() && program.enums.is_empty());
+        assert_eq!(function_names(&program), ["main"]);
     }
 
     /// Two conformances of one generic interface give two symbols, with the interface's arguments

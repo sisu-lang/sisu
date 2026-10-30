@@ -239,8 +239,15 @@ impl Checker<'_> {
         report: Report,
         reachable: &mut [bool],
     ) {
-        let source = self.source.file;
-        let line_start = |at: usize| source.slice(0..at).rfind('\n').map_or(0, |n| n + 1);
+        let source = self.source.holding(close.start());
+        // The offsets are absolute: the prelude's text starts at `PRELUDE_BASE`, not at 0.
+        let base = source.start();
+        let line_start = |at: usize| {
+            source
+                .slice(base..at)
+                .rfind('\n')
+                .map_or(base, |n| base + n + 1)
+        };
         // Each entry is an arm's pattern or an alternative in it, in arm order.
         let mut rest = arms.iter().enumerate();
         let mut current = rest.next();
@@ -828,7 +835,7 @@ impl Checker<'_> {
             }
             if value > i64::from(u8::MAX) {
                 self.report(DiagnosticKind::IntegerDoesNotFit {
-                    text: self.source.file.text(text).to_string(),
+                    text: self.source.text(text).to_string(),
                     at: text,
                 });
                 return None;
@@ -929,7 +936,7 @@ impl Checker<'_> {
         let want = self.type_name(ty);
         self.report(DiagnosticKind::PatternMismatch {
             want,
-            found: self.source.file.text(at).to_string(),
+            found: self.source.text(at).to_string(),
             at,
         });
     }
@@ -1017,7 +1024,7 @@ impl Checker<'_> {
         mut candidates: impl Iterator<Item = String>,
     ) -> Option<(String, String)> {
         let arm = bound.arm?;
-        let source = self.source.file;
+        let source = self.source;
         let read = iter::once(arm.pattern.span)
             .chain(arm.guard.iter().map(|guard| guard.span))
             .chain([arm.body.span]);
@@ -1172,7 +1179,7 @@ impl Checker<'_> {
                 Some(GuardHelp::InWords)
             } else {
                 self.guard_help(bound, candidates).map(|(fresh, own)| {
-                    let pattern = self.source.file.text(bound.top);
+                    let pattern = self.source.text(bound.top);
                     let start = name.span.start() - bound.top.start();
                     let end = name.span.end() - bound.top.start();
                     GuardHelp::Rewritten(format!(
