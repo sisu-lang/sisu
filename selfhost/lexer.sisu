@@ -1,0 +1,944 @@
+// The lexer of Sisu, written in Sisu. It reads standard input and prints the tokens that
+// `sisu build --emit tokens` prints for the same text, one `line:col Kind text` line each.
+// A test compares the two outputs byte for byte. The program follows the clean path only: on text
+// that the compiler's lexer reports an error for, its output is not specified.
+//
+// It has two passes. The first reads each line with `read_line` and walks its `chars()` once. It
+// keeps the tokens in an array, and it decides at each line break whether a `Newline` follows.
+// The second pass judges each run of `;` (ADR 0028) and prints the tokens.
+
+// One variant for each `TokenKind` of the compiler's lexer, named as `TokenKind::name()` names
+// it, so that the generated `Display` prints the kind as the dump does.
+enum Kind {
+    Ident
+    Underscore
+    Int
+    Float
+    Char
+    Str
+    StrHead
+    StrMiddle
+    StrTail
+    FormatSpec
+    Fn
+    Let
+    Mut
+    Var
+    Reserved
+    Todo
+    If
+    Else
+    While
+    For
+    Loop
+    In
+    Return
+    Break
+    Continue
+    Class
+    Const
+    Enum
+    Interface
+    Extend
+    Match
+    NoneKw
+    Is
+    SelfKw
+    SelfType
+    True
+    False
+    Plus
+    Minus
+    Star
+    StarStar
+    Slash
+    Percent
+    PlusEq
+    MinusEq
+    StarEq
+    SlashEq
+    PercentEq
+    EqEq
+    NotEq
+    Lt
+    Le
+    Gt
+    Ge
+    AndAnd
+    Amp
+    OrOr
+    Bang
+    Eq
+    LParen
+    RParen
+    LBrace
+    RBrace
+    Comma
+    Colon
+    Arrow
+    FatArrow
+    Pipe
+    Dot
+    DotDot
+    DotDotEq
+    LBracket
+    RBracket
+    Semicolon
+    Question
+    QuestionDot
+    QuestionQuestion
+    Newline
+    Eof
+}
+
+// A token as the dump prints it: its kind, its position, and its text as written in the source.
+class Token: Display {
+    kind: Kind
+    line: i64
+    col: i64
+    text: string
+
+    fn to_string(self) -> string {
+        match self.kind {
+            Newline | Eof => "{self.line}:{self.col} {self.kind}"
+            _ => "{self.line}:{self.col} {self.kind} {self.text}"
+        }
+    }
+}
+
+class Cell<T> {
+    value: T
+    next: Cell<T>?
+}
+
+class Stack<T> {
+    mut head: Cell<T>?
+    mut size: i64
+
+    fn push(self, x: T) {
+        self.head = Cell(value: x, next: self.head)
+        self.size += 1
+    }
+
+    fn pop(self) -> T? {
+        if let cell = self.head {
+            self.head = cell.next
+            self.size -= 1
+            cell.value
+        } else {
+            None
+        }
+    }
+
+    fn top(self) -> T? {
+        if let cell = self.head {
+            cell.value
+        } else {
+            None
+        }
+    }
+
+    fn len(self) -> i64 {
+        self.size
+    }
+}
+
+// The cursor over one line: the line's chars, its number, and where the next char is.
+class Text {
+    cs: [char]
+    line: i64
+    mut at: i64
+
+    fn peek(self, k: i64) -> char? {
+        let i = self.at + k
+        if i < self.cs.len() {
+            self.cs[i]
+        } else {
+            None
+        }
+    }
+
+    // gap: no marker says that a caller may drop this result, so a call that skips the char is
+    // `let _ = text.next()`.
+    fn next(self) -> char? {
+        let c = self.peek(0)
+        self.at += 1
+        c
+    }
+
+    // The chars from `from` up to, but not including, `to`, as a string.
+    // gap: a `[char]` has no slice, so the text of a token is pushed char by char.
+    fn slice(self, from: i64, to: i64) -> string {
+        let mut part: [char] = []
+        let mut i = from
+        while i < to {
+            part.push(self.cs[i])
+            i += 1
+        }
+        string(part)
+    }
+}
+
+interface CharClass {
+    fn has(self, c: char) -> bool
+}
+
+// gap: a `char` has no classification methods, so these two read the ranges.
+fn is_digit(c: char) -> bool {
+    match c {
+        '0'..='9' => true
+        _ => false
+    }
+}
+
+fn is_alpha(c: char) -> bool {
+    match c {
+        'a'..='z' | 'A'..='Z' => true
+        _ => false
+    }
+}
+
+// ASCII letters, digits and `_`: what a name takes after its first char, and what a prefixed
+// number takes after its prefix.
+class NameChar: CharClass {
+    fn has(self, c: char) -> bool {
+        is_alpha(c) || is_digit(c) || c == '_'
+    }
+}
+
+class DigitOrSeparator: CharClass {
+    fn has(self, c: char) -> bool {
+        is_digit(c) || c == '_'
+    }
+}
+
+// Moves the cursor past the chars that `predicate` accepts, and gives the place it stops at.
+fn take_while<C: CharClass>(text: Text, predicate: C) -> i64 {
+    while let c = text.peek(0) {
+        if !predicate.has(c) {
+            break
+        }
+        let _ = text.next()
+    }
+    text.at
+}
+
+// gap: the exit code of a panic is 101, and a program cannot set another one.
+fn unexpected(text: Text, at: i64) -> string {
+    "lexer.sisu: unexpected input at {text.line}:{at + 1}"
+}
+
+fn keyword(word: string) -> Kind {
+    match word {
+        "fn" => Kind.Fn
+        "let" => Kind.Let
+        "mut" => Kind.Mut
+        "var" => Kind.Var
+        "import" | "pub" | "record" | "type" | "weak" | "test" | "extern" | "as" => Kind.Reserved
+        "todo" => Kind.Todo
+        "if" => Kind.If
+        "else" => Kind.Else
+        "while" => Kind.While
+        "for" => Kind.For
+        "loop" => Kind.Loop
+        "in" => Kind.In
+        "return" => Kind.Return
+        "break" => Kind.Break
+        "continue" => Kind.Continue
+        "class" => Kind.Class
+        "const" => Kind.Const
+        "enum" => Kind.Enum
+        "interface" => Kind.Interface
+        "extend" => Kind.Extend
+        "match" => Kind.Match
+        "None" => Kind.NoneKw
+        "is" => Kind.Is
+        "self" => Kind.SelfKw
+        "Self" => Kind.SelfType
+        "true" => Kind.True
+        "false" => Kind.False
+        "_" => Kind.Underscore
+        _ => Kind.Ident
+    }
+}
+
+// Moves the cursor past the next char when it is `want`.
+fn eat(text: Text, want: char) -> bool {
+    if text.peek(0) == want {
+        let _ = text.next()
+        true
+    } else {
+        false
+    }
+}
+
+// The operator or punctuation that starts with `c`, by longest match.
+fn symbol(c: char, text: Text) -> Kind? {
+    match c {
+        '+' => if eat(text, '=') { Kind.PlusEq } else { Kind.Plus }
+        '-' => if eat(text, '=') {
+            Kind.MinusEq
+        } else if eat(text, '>') {
+            Kind.Arrow
+        } else {
+            Kind.Minus
+        }
+        '*' => if eat(text, '=') {
+            Kind.StarEq
+        } else if eat(text, '*') {
+            Kind.StarStar
+        } else {
+            Kind.Star
+        }
+        '/' => if eat(text, '=') { Kind.SlashEq } else { Kind.Slash }
+        '%' => if eat(text, '=') { Kind.PercentEq } else { Kind.Percent }
+        '=' => if eat(text, '=') {
+            Kind.EqEq
+        } else if eat(text, '>') {
+            Kind.FatArrow
+        } else {
+            Kind.Eq
+        }
+        '!' => if eat(text, '=') { Kind.NotEq } else { Kind.Bang }
+        '<' => if eat(text, '=') { Kind.Le } else { Kind.Lt }
+        '>' => if eat(text, '=') { Kind.Ge } else { Kind.Gt }
+        '&' => if eat(text, '&') { Kind.AndAnd } else { Kind.Amp }
+        '|' => if eat(text, '|') { Kind.OrOr } else { Kind.Pipe }
+        '(' => Kind.LParen
+        ')' => Kind.RParen
+        '{' => Kind.LBrace
+        '}' => Kind.RBrace
+        ',' => Kind.Comma
+        ':' => Kind.Colon
+        '.' => if eat(text, '.') {
+            if eat(text, '=') { Kind.DotDotEq } else { Kind.DotDot }
+        } else {
+            Kind.Dot
+        }
+        '[' => Kind.LBracket
+        ']' => Kind.RBracket
+        ';' => Kind.Semicolon
+        '?' => if eat(text, '.') {
+            Kind.QuestionDot
+        } else if eat(text, '?') {
+            Kind.QuestionQuestion
+        } else {
+            Kind.Question
+        }
+        _ => None
+    }
+}
+
+// The opener that a closer closes.
+fn opened_by(kind: Kind) -> char? {
+    match kind {
+        RParen => '('
+        RBracket => '['
+        RBrace => '{'
+        _ => None
+    }
+}
+
+fn opener(kind: Kind) -> char? {
+    match kind {
+        LParen => '('
+        LBracket => '['
+        LBrace => '{'
+        _ => None
+    }
+}
+
+// Whether a line break after a token of this kind ends a statement (Go's rule).
+fn can_end_statement(kind: Kind) -> bool {
+    match kind {
+        Ident | Underscore | Int | Float | Char | Str | StrTail | True | False | Return | Todo |
+        Break | Continue | NoneKw | SelfKw | SelfType | Question | RParen | RBracket |
+        RBrace => true
+        _ => false
+    }
+}
+
+// Whether a token of this kind starts a header, which a `}` ends.
+fn declares(kind: Kind) -> bool {
+    match kind {
+        Fn | Class | Enum | Interface | Extend => true
+        _ => false
+    }
+}
+
+// Whether a line break may follow a token of this kind inside an open bound list.
+fn ends_in_list(kind: Kind) -> bool {
+    match kind {
+        Ident | Gt | RBracket | Question | QuestionQuestion | SelfType => true
+        _ => false
+    }
+}
+
+// Whether a line that starts with a token of this kind goes on with an open bound list. A `.`
+// that goes on is `QuestionDot` or `Dot`, which every line continues.
+fn goes_on_in_list(kind: Kind) -> bool {
+    match kind {
+        Ident | Comma | Colon | RBracket | Question | QuestionQuestion | Amp | Gt => true
+        _ => false
+    }
+}
+
+// What the first token of a statement was, and whether the statement may take a bound list.
+enum Head {
+    Unseen
+    Plain
+    Declaration
+}
+
+enum Start {
+    Unseen
+    TypeWord
+    Other
+}
+
+// What the tokens of a statement so far, outside its closed brackets, show. The compiler's lexer
+// keeps the same facts in its `Statement`.
+class Statement {
+    mut head: Head
+    // After its last `:` or `->` that no `=` follows, how many more `>` than `<` there are.
+    mut annotation: i64?
+    mut tokens: i64
+    // Whether a bound list is open, and how many `<` of a bound's arguments are open in it.
+    mut params: bool
+    mut nested: i64
+    mut first: Start
+    grouped: bool
+
+    // Counts a token of `kind` into the bound list that is open, and tells whether the list was
+    // open before it.
+    fn keep_list_open(self, kind: Kind) -> bool {
+        let opened = self.params
+        let stays = match kind {
+            Ident | Comma | Colon | Amp | Lt | LBracket | RBracket | Dot | Question |
+            QuestionQuestion | SelfType => true
+            Gt => self.nested > 0
+            _ => false
+        }
+        self.params = opened && stays
+        opened
+    }
+}
+
+// gap: a field has no default value, so each `Statement` lists all its fields.
+fn fresh() -> Statement {
+    Statement(head: Head.Unseen, annotation: None, tokens: 0, params: false, nested: 0,
+        first: Start.Unseen, grouped: false)
+}
+
+// Reads the tokens in order and keeps the statement that they end in, one for each open
+// bracket.
+class Tracker {
+    mut current: Statement
+    enclosing: Stack<Statement>
+    mut prev: Kind
+
+    // Whether a `>` or `??` that ends the tokens closes a type annotation.
+    fn annotates(self) -> bool {
+        self.current.annotation == 0
+    }
+
+    fn feed(self, kind: Kind, text: string) {
+        let s = self.current
+        if s.first == Start.Unseen {
+            s.first = if kind == Kind.Reserved && text == "type" {
+                Start.TypeWord
+            } else {
+                Start.Other
+            }
+        }
+        if s.head == Head.Unseen {
+            s.head = if declares(kind) { Head.Declaration } else { Head.Plain }
+        }
+        s.tokens += 1
+        let opened = s.keep_list_open(kind)
+        match kind {
+            LBrace | LParen | LBracket | StrHead => {
+                let block = kind == Kind.LBrace
+                self.enclosing.push(s)
+                let head = if block { Head.Unseen } else { s.head }
+                let first = if block { Start.Unseen } else { s.first }
+                self.current = Statement(head: head, annotation: None, tokens: 0, params: false,
+                    nested: 0, first: first, grouped: !block)
+            }
+            RBrace | RParen | RBracket | StrTail => {
+                let around = self.enclosing.pop() ?? fresh()
+                // The `}` that ends the body of a declaration ends the item.
+                let ends_item = kind == Kind.RBrace && around.head == Head.Declaration
+                self.current = if ends_item && !around.grouped { fresh() } else { around }
+            }
+            Newline | Semicolon => {
+                self.current = fresh()
+            }
+            Colon | Arrow => {
+                s.annotation = 0
+                if kind == Kind.Colon {
+                    self.open_bounds(s, opened)
+                }
+            }
+            Eq | Ge | While | For | Loop => {
+                // The `=` of `type Item = ...` starts the type of an associated type's choice.
+                let chooses = kind == Kind.Eq && s.tokens == 3 && s.first == Start.TypeWord
+                s.annotation = if chooses { 0 } else { None }
+            }
+            Gt => {
+                if let a = s.annotation {
+                    s.annotation = a + 1
+                }
+                if s.params {
+                    s.nested -= 1
+                }
+            }
+            Lt => {
+                if let a = s.annotation {
+                    s.annotation = a - 1
+                }
+                if s.params {
+                    s.nested += 1
+                } else {
+                    s.params = s.head == Head.Declaration && opens_list(self.prev, s.tokens)
+                }
+            }
+            _ => {}
+        }
+        self.prev = kind
+    }
+
+    // Reads the `:` that was just counted. In an open list it starts the bounds of a parameter.
+    // Outside one, the `:` of a `type Item:` opens the list of its bounds.
+    fn open_bounds(self, s: Statement, in_list: bool) {
+        let in_bounds = in_list && s.nested == 0
+        if !in_bounds && s.tokens == 3 && self.prev == Kind.Ident && s.first == Start.TypeWord {
+            s.params = true
+        }
+    }
+}
+
+// Whether a `<` after `prev`, the `tokens`th token of a header, opens its type-parameter list.
+fn opens_list(prev: Kind, tokens: i64) -> bool {
+    match prev {
+        Ident => tokens == 3
+        Extend => tokens == 2
+        _ => false
+    }
+}
+
+// A `;` that separates statements, which the second pass judges.
+class Semi {
+    // Where its token stands among the tokens.
+    at: i64
+    // Whether it stands between top-level items, after a `fn`, `class`, `enum`, `interface` or
+    // `extend`.
+    between_items: bool
+    // Whether a `>` or `??` before it closes a type annotation.
+    annotates: bool
+}
+
+// A `Newline` that a line break may leave: the next token can still go on with the line.
+class Pending {
+    line: i64
+    col: i64
+    // Whether an open bound list lets the line go on with a name, `,`, `:`, `&`, `>`, `]` or `?`.
+    params: bool
+}
+
+// Skips the rest of an escape after its `\`: the char after it, and for `\u{...}` the digits
+// through the `}`.
+fn skip_escape(text: Text, start: i64) {
+    let c = text.next() ?? panic(unexpected(text, start))
+    if c == 'u' && text.peek(0) == '{' {
+        while let d = text.next() {
+            if d == '}' {
+                break
+            }
+        }
+    }
+}
+
+// Whether a float literal goes on after its digits: a fraction, an exponent, or both.
+fn float_rest(text: Text) -> bool {
+    let mut float = false
+    if text.peek(0) == '.' && is_digit(text.peek(1) ?? ' ') {
+        let _ = text.next()
+        let _ = take_while(text, DigitOrSeparator())
+        float = true
+    }
+    if text.peek(0) == 'e' || text.peek(0) == 'E' {
+        let _ = text.next()
+        if text.peek(0) == '+' || text.peek(0) == '-' {
+            let _ = text.next()
+        }
+        let _ = take_while(text, DigitOrSeparator())
+        float = true
+    }
+    float
+}
+
+// The first pass. It reads the lines and keeps their tokens, with the `Newline`s that line breaks
+// leave.
+class Lexer {
+    mut tokens: [Token]
+    mut semis: [Semi]
+    // The open brackets, innermost on top. An interpolation's `{` is the char `"`.
+    open: Stack<char>
+    mut interps: i64
+    tracker: Tracker
+    // How many `;` that separate statements end the tokens, which the tracker has not read.
+    mut trailing: i64
+    // Whether the top-level item so far is a `fn`, `class`, `enum`, `interface` or `extend`, which
+    // ends at its `}` rather than at a line break, as a `const` does.
+    mut self_ending: bool
+    // The kind of the last token that is not a `;`.
+    mut last_code: Kind
+    mut pending: Pending?
+
+    // Whether the innermost open bracket is a block's `{`, or there is none.
+    fn in_block(self) -> bool {
+        match self.open.top() {
+            Some(c) => c == '{'
+            None => true
+        }
+    }
+
+    // Whether a `}` or `:` now ends the expression of the innermost interpolation.
+    fn at_end(self) -> bool {
+        self.open.top() == '"'
+    }
+
+    // Adds a token that the source holds. A `Newline` that the last line break left goes in first,
+    // unless this token goes on with the line.
+    fn push(self, kind: Kind, text: Text, start: i64, spelled: string) {
+        if let p = self.pending {
+            self.pending = None
+            let goes_on = kind == Kind.Dot || kind == Kind.QuestionDot ||
+                p.params && goes_on_in_list(kind)
+            if !goes_on {
+                self.put(Kind.Newline, p.line, p.col, "")
+            }
+        }
+        self.put(kind, text.line, start + 1, spelled)
+    }
+
+    // Adds a token to the tokens, and tells the tracker.
+    fn put(self, kind: Kind, line: i64, col: i64, spelled: string) {
+        let separator = kind == Kind.Semicolon && self.in_block()
+        if self.open.len() == 0 {
+            if declares(kind) {
+                self.self_ending = true
+            } else if kind == Kind.Const {
+                self.self_ending = false
+            }
+        }
+        if separator {
+            let between_items = self.open.len() == 0 && self.self_ending
+            let at = self.tokens.len()
+            self.semis.push(Semi(at: at, between_items: between_items,
+                annotates: self.tracker.annotates()))
+            self.trailing += 1
+        } else {
+            // The `;`s before this token end the statement, whatever the first of them does.
+            if self.trailing > 0 {
+                self.tracker.feed(Kind.Semicolon, ";")
+            }
+            self.tracker.feed(kind, spelled)
+            self.trailing = 0
+        }
+        if kind != Kind.Semicolon {
+            self.last_code = kind
+        }
+        self.tokens.push(Token(kind: kind, line: line, col: col, text: spelled))
+    }
+
+    // Whether a line break here ends a statement: the token before the `;`s that end the tokens
+    // can end one, and the innermost open bracket is a block's `{`.
+    fn ends_statement(self) -> bool {
+        let n = self.tokens.len()
+        if n <= self.trailing || !self.in_block() {
+            return false
+        }
+        let last = self.tokens[n - self.trailing - 1].kind
+        can_end_statement(last) ||
+            (last == Kind.Gt || last == Kind.QuestionQuestion) && self.tracker.annotates()
+    }
+
+    // The end of a line, whose text is `text`. The `Newline` goes at the column after the text.
+    fn line_break(self, text: Text) {
+        if self.interps > 0 {
+            panic(unexpected(text, text.cs.len()))
+        }
+        if self.pending == None && self.ends_statement() {
+            let n = self.tokens.len()
+            let in_list = self.trailing == 0 && ends_in_list(self.tokens[n - 1].kind)
+            let params = in_list && self.tracker.current.params
+            self.pending = Pending(line: text.line, col: text.cs.len() + 1, params: params)
+        }
+    }
+
+    fn lex_line(self, text: Text) {
+        while let c = text.peek(0) {
+            if c == ' ' || c == '\t' || c == '\r' {
+                let _ = text.next()
+            } else if c == '/' && text.peek(1) == '/' {
+                text.at = text.cs.len()
+            } else if is_alpha(c) || c == '_' {
+                self.name(text)
+            } else if is_digit(c) {
+                self.number(text)
+            } else if c == '\'' {
+                self.char_literal(text)
+            } else if c == '"' {
+                self.string_part(text, false)
+            } else if (c == '}' || c == ':') && self.at_end() {
+                if c == '}' {
+                    self.string_part(text, true)
+                } else {
+                    self.format_spec(text)
+                }
+            } else {
+                self.operator(text)
+            }
+        }
+        self.line_break(text)
+    }
+
+    fn name(self, text: Text) {
+        let start = text.at
+        let end = take_while(text, NameChar())
+        let word = text.slice(start, end)
+        self.push(keyword(word), text, start, word)
+    }
+
+    fn number(self, text: Text) {
+        let start = text.at
+        let first = text.cs[start]
+        let _ = text.next()
+        // A digit run after a `.` is a tuple index or a fraction that the parser reads: neither a
+        // fraction nor an exponent goes on after it.
+        let after_dot = self.last_code == Kind.Dot || self.last_code == Kind.QuestionDot
+        let p = text.peek(0)
+        let prefixed = first == '0' &&
+            (p == 'x' || p == 'X' || p == 'b' || p == 'B' || p == 'o' || p == 'O')
+        let mut float = false
+        if prefixed {
+            let _ = text.next()
+            let _ = take_while(text, NameChar())
+        } else {
+            let _ = take_while(text, DigitOrSeparator())
+            if !after_dot {
+                float = float_rest(text)
+            }
+        }
+        let kind = if float { Kind.Float } else { Kind.Int }
+        self.push(kind, text, start, text.slice(start, text.at))
+    }
+
+    fn char_literal(self, text: Text) {
+        let start = text.at
+        let _ = text.next()
+        let mut closed = false
+        while !closed {
+            let c = text.next() ?? panic(unexpected(text, start))
+            if c == '\'' {
+                closed = true
+            } else if c == '\\' {
+                skip_escape(text, start)
+            }
+        }
+        self.push(Kind.Char, text, start, text.slice(start, text.at))
+    }
+
+    // The text of a string literal from its `"`, or, when `resumed`, from the `}` that ends an
+    // interpolation in it, to the closing `"` or to the `{` that opens an interpolation.
+    fn string_part(self, text: Text, resumed: bool) {
+        let start = text.at
+        let _ = text.next()
+        if resumed {
+            let _ = self.open.pop()
+            self.interps -= 1
+        }
+        let mut brace = false
+        let mut done = false
+        while !done {
+            let c = text.next() ?? panic(unexpected(text, start))
+            if c == '"' {
+                done = true
+            } else if c == '{' {
+                brace = true
+                done = true
+            } else if c == '\\' {
+                skip_escape(text, start)
+            }
+        }
+        // gap: a `match` takes no tuple pattern, so the two flags are two nested `if`s.
+        let kind = if brace {
+            if resumed { Kind.StrMiddle } else { Kind.StrHead }
+        } else {
+            if resumed { Kind.StrTail } else { Kind.Str }
+        }
+        if brace {
+            self.open.push('"')
+            self.interps += 1
+        }
+        self.push(kind, text, start, text.slice(start, text.at))
+    }
+
+    // The format spec after the `:` that ends an interpolation's expression: up to the `}` that
+    // ends the interpolation, which is not part of it. A `{` in the spec opens a pair, and a `\`
+    // is an ordinary char.
+    fn format_spec(self, text: Text) {
+        let start = text.at
+        let mut pairs = 0
+        let mut done = false
+        while !done {
+            let c = text.peek(0) ?? panic(unexpected(text, start))
+            if c == '"' {
+                panic(unexpected(text, start))
+            } else if c == '}' && pairs == 0 {
+                done = true
+            } else {
+                if c == '{' {
+                    pairs += 1
+                } else if c == '}' {
+                    pairs -= 1
+                }
+                let _ = text.next()
+            }
+        }
+        self.push(Kind.FormatSpec, text, start, text.slice(start, text.at))
+    }
+
+    fn operator(self, text: Text) {
+        let start = text.at
+        let c = text.next() ?? panic(unexpected(text, start))
+        let kind = symbol(c, text) ?? panic(unexpected(text, start))
+        if let bracket = opener(kind) {
+            self.open.push(bracket)
+        } else if let bracket = opened_by(kind) {
+            let top = self.open.pop() ?? panic(unexpected(text, start))
+            if top != bracket {
+                panic(unexpected(text, start))
+            }
+        }
+        self.push(kind, text, start, text.slice(start, text.at))
+    }
+
+    // The end of the input: no bracket is open, and a `Newline` that the last line break left
+    // stays.
+    fn finish(self, text: Text) {
+        if self.open.len() > 0 {
+            panic(unexpected(text, text.cs.len()))
+        }
+        if let p = self.pending {
+            self.pending = None
+            self.put(Kind.Newline, p.line, p.col, "")
+        }
+    }
+}
+
+enum Judgement {
+    Separator
+    Redundant
+    Kept
+}
+
+// What becomes of the first `;` of the run `tokens[i..end]`, in statement context. A `;` that
+// separates two statements prints as a `Newline`, a redundant one prints nothing, and any other
+// one prints as a `;`.
+fn judge(tokens: [Token], i: i64, end: i64, semi: Semi) -> Judgement {
+    let first = tokens[i]
+    let has_prev = i > 0
+    let prev = if has_prev { tokens[i - 1].kind } else { Kind.Newline }
+    let has_next = end < tokens.len()
+    let next = if has_next { tokens[end].kind } else { Kind.Eof }
+    let break_before = !has_prev || prev == Kind.Newline || tokens[i - 1].line != first.line
+    let break_after = !has_next || next == Kind.Newline || tokens[end].line != first.line
+    // A `>` or `??` that closes a type annotation ends a statement, as at a line's end.
+    let ends = has_prev && (can_end_statement(prev) ||
+        (prev == Kind.Gt || prev == Kind.QuestionQuestion) && semi.annotates)
+    if next == Kind.Dot || next == Kind.QuestionDot {
+        // Without the `;`, the line break before the `.` would continue the line.
+        if ends && !break_before {
+            Judgement.Separator
+        } else {
+            Judgement.Kept
+        }
+    } else if has_prev && !ends && prev != Kind.LBrace && prev != Kind.Newline && !break_before {
+        // Without the `;`, the lines would join into a different statement.
+        Judgement.Kept
+    } else if next == Kind.Else || break_before || break_after || prev == Kind.LBrace ||
+        next == Kind.RBrace || semi.between_items && starts_item(next) {
+        Judgement.Redundant
+    } else if semi.between_items && prev != Kind.RBrace && next == Kind.LBrace {
+        // The `;` cuts an item's header, and no item starts with `{`.
+        Judgement.Kept
+    } else {
+        Judgement.Separator
+    }
+}
+
+// Whether a token of this kind starts a top-level item, which needs no `;` before it.
+fn starts_item(kind: Kind) -> bool {
+    declares(kind) || kind == Kind.Const
+}
+
+// The second pass: prints the tokens, and the `Eof` after the last one that is not a `Newline`.
+class Printer {
+    mut eof_line: i64
+    mut eof_col: i64
+
+    fn show(self, t: Token) {
+        print(t)
+        if t.kind != Kind.Newline {
+            self.eof_line = t.line
+            self.eof_col = t.col + t.text.chars().len()
+        }
+    }
+}
+
+fn separate(tokens: [Token], semis: [Semi]) {
+    let printer = Printer(eof_line: 1, eof_col: 1)
+    let mut i = 0
+    let mut k = 0
+    while i < tokens.len() {
+        let t = tokens[i]
+        if t.kind == Kind.Semicolon && k < semis.len() && semis[k].at == i {
+            let mut end = i
+            while end < tokens.len() && tokens[end].kind == Kind.Semicolon {
+                end += 1
+            }
+            let verdict = judge(tokens, i, end, semis[k])
+            if verdict == Judgement.Separator {
+                printer.show(Token(kind: Kind.Newline, line: t.line, col: t.col, text: ""))
+            } else if verdict == Judgement.Kept {
+                printer.show(t)
+            }
+            k += end - i
+            i = end
+        } else {
+            printer.show(t)
+            i += 1
+        }
+    }
+    print(Token(kind: Kind.Eof, line: printer.eof_line, col: printer.eof_col, text: ""))
+}
+
+fn main() {
+    let tracker = Tracker(current: fresh(), enclosing: Stack(head: None, size: 0),
+        prev: Kind.Newline)
+    let lexer = Lexer(tokens: [], semis: [], open: Stack(head: None, size: 0), interps: 0,
+        tracker: tracker, trailing: 0, self_ending: false, last_code: Kind.Newline,
+        pending: None)
+    let mut last = Text(cs: [], line: 1, at: 0)
+    let mut line = 0
+    while let row = read_line() {
+        line += 1
+        last = Text(cs: row.chars(), line: line, at: 0)
+        lexer.lex_line(last)
+    }
+    lexer.finish(last)
+    separate(lexer.tokens, lexer.semis)
+}

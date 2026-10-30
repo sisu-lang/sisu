@@ -16,6 +16,7 @@ mod support;
 
 use scratch_path::{empty_dir, only_cc};
 use support::fixture;
+use support::selfhost;
 
 const PROGRAMS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/programs");
 const RUN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/run");
@@ -2758,4 +2759,260 @@ fn unused_warning_should_match_only_a_diagnostic_first_line() {
     let real = "warning[W0012]: function `probe` is never called\n --> fib.sisu:4:4\n  |\n4 | fn probe() {}\n  |    ^^^^^ never called\n  |\n\nsisu: 1 warning\nsisu: for more on a code, run `sisu explain <code>`: W0012\n";
     assert!(!support::has_unused_warning(quoted));
     assert!(support::has_unused_warning(real));
+}
+
+/// The file of every token kind and every case of the lexer's rules.
+const ALL_TOKENS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/tokens/all_tokens.sisu");
+
+/// Compares the lexer in Sisu with `sisu build --emit tokens` on `input`, which goes into a file
+/// of its own for the test `test`.
+fn compare_text(test: &str, input: &str) {
+    let dir = fixture(test, &[("input.sisu", input)]);
+    selfhost::compare(&dir.join("input.sisu"));
+}
+
+/// GIVEN `tests/tokens/all_tokens.sisu`, which holds every token kind and each case of the rules
+/// WHEN each build of `selfhost/lexer.sisu` reads it on standard input
+/// THEN each prints the tokens that `sisu build --emit tokens` prints for it, byte for byte
+#[test]
+fn selfhost_lexer_should_match_emit_tokens_on_all_tokens() {
+    selfhost::compare(Path::new(ALL_TOKENS));
+}
+
+/// GIVEN `all_tokens.sisu` with each `\n` made `\r\n`
+/// WHEN each build of the lexer reads it
+/// THEN the tokens are those of `sisu build --emit tokens`, and each `Newline` sits on its `\r`
+#[test]
+fn selfhost_lexer_should_match_emit_tokens_on_all_tokens_with_carriage_returns() {
+    let text = fs::read_to_string(ALL_TOKENS).expect("all_tokens.sisu should be readable");
+    compare_text(
+        "selfhost_lexer_should_match_emit_tokens_on_all_tokens_with_carriage_returns",
+        &text.replace('\n', "\r\n"),
+    );
+}
+
+/// GIVEN `all_tokens.sisu` without its final line break
+/// WHEN each build of the lexer reads it
+/// THEN the tokens are those of `sisu build --emit tokens`, and the last `Newline` follows the `}`
+#[test]
+fn selfhost_lexer_should_match_emit_tokens_on_all_tokens_without_a_final_line_break() {
+    let text = fs::read_to_string(ALL_TOKENS).expect("all_tokens.sisu should be readable");
+    compare_text(
+        "selfhost_lexer_should_match_emit_tokens_on_all_tokens_without_a_final_line_break",
+        text.strip_suffix('\n')
+            .expect("all_tokens.sisu should end with a line break"),
+    );
+}
+
+/// GIVEN the input `x\r`, a `\r` that ends the input
+/// WHEN each build of the lexer reads it
+/// THEN the `Newline` is at 1:3, after the `\r`, as in `sisu build --emit tokens`
+#[test]
+fn selfhost_lexer_should_match_emit_tokens_on_a_carriage_return_at_the_end() {
+    compare_text(
+        "selfhost_lexer_should_match_emit_tokens_on_a_carriage_return_at_the_end",
+        "x\r",
+    );
+}
+
+/// GIVEN the input `x\r\n`, a `\r` before a line feed
+/// WHEN each build of the lexer reads it
+/// THEN the `Newline` is at 1:2, on the `\r`, as in `sisu build --emit tokens`
+#[test]
+fn selfhost_lexer_should_match_emit_tokens_on_a_carriage_return_and_a_line_feed() {
+    compare_text(
+        "selfhost_lexer_should_match_emit_tokens_on_a_carriage_return_and_a_line_feed",
+        "x\r\n",
+    );
+}
+
+/// GIVEN the input `x\r\r\n`, two `\r` before a line feed
+/// WHEN each build of the lexer reads it
+/// THEN the `Newline` is at 1:3, on the second `\r`, as in `sisu build --emit tokens`
+#[test]
+fn selfhost_lexer_should_match_emit_tokens_on_two_carriage_returns_and_a_line_feed() {
+    compare_text(
+        "selfhost_lexer_should_match_emit_tokens_on_two_carriage_returns_and_a_line_feed",
+        "x\r\r\n",
+    );
+}
+
+/// GIVEN the input `a\rb\n`, a `\r` inside a line
+/// WHEN each build of the lexer reads it
+/// THEN `b` is at 1:3 and the `Newline` at 1:4, as in `sisu build --emit tokens`
+#[test]
+fn selfhost_lexer_should_match_emit_tokens_on_a_carriage_return_inside_a_line() {
+    compare_text(
+        "selfhost_lexer_should_match_emit_tokens_on_a_carriage_return_inside_a_line",
+        "a\rb\n",
+    );
+}
+
+/// GIVEN an empty input
+/// WHEN each build of the lexer reads it
+/// THEN it prints `1:1 Eof` only, as `sisu build --emit tokens` does
+#[test]
+fn selfhost_lexer_should_match_emit_tokens_on_an_empty_input() {
+    compare_text(
+        "selfhost_lexer_should_match_emit_tokens_on_an_empty_input",
+        "",
+    );
+}
+
+/// GIVEN an input of two comment lines and a blank line, no token
+/// WHEN each build of the lexer reads it
+/// THEN it prints `1:1 Eof` only, as `sisu build --emit tokens` does
+#[test]
+fn selfhost_lexer_should_match_emit_tokens_on_an_input_of_only_comments() {
+    compare_text(
+        "selfhost_lexer_should_match_emit_tokens_on_an_input_of_only_comments",
+        "// one\n\n// two\n",
+    );
+}
+
+/// GIVEN the input `x`, a comment line and a blank line, so a `Newline` stays pending to the end
+/// WHEN each build of the lexer reads it
+/// THEN the `Newline` is printed at 1:2, before the `Eof`, as in `sisu build --emit tokens`
+#[test]
+fn selfhost_lexer_should_match_emit_tokens_on_a_newline_pending_at_the_end() {
+    compare_text(
+        "selfhost_lexer_should_match_emit_tokens_on_a_newline_pending_at_the_end",
+        "x\n// comment\n\n",
+    );
+}
+
+/// GIVEN a `let` with the type `Box<i64>`, whose `>` ends the line, and a `let` after it
+/// WHEN each build of the lexer reads it
+/// THEN a `Newline` follows the `>`, as in `sisu build --emit tokens`
+#[test]
+fn selfhost_lexer_should_match_emit_tokens_on_a_greater_than_that_closes_a_type() {
+    compare_text(
+        "selfhost_lexer_should_match_emit_tokens_on_a_greater_than_that_closes_a_type",
+        "fn f() {\n    let b: Box<i64>\n    let c = 1\n}\n",
+    );
+}
+
+/// GIVEN a field of the type `i64??`, whose `??` ends the line, and a field after it
+/// WHEN each build of the lexer reads it
+/// THEN a `Newline` follows the `??`, as in `sisu build --emit tokens`
+#[test]
+fn selfhost_lexer_should_match_emit_tokens_on_a_question_question_that_closes_a_type() {
+    compare_text(
+        "selfhost_lexer_should_match_emit_tokens_on_a_question_question_that_closes_a_type",
+        "class C {\n    x: i64??\n    y: i64\n}\n",
+    );
+}
+
+/// GIVEN a header whose bound list breaks after `&`
+/// WHEN each build of the lexer reads it
+/// THEN no `Newline` follows the `&` or the name before it, as in `sisu build --emit tokens`
+#[test]
+fn selfhost_lexer_should_match_emit_tokens_on_a_line_break_inside_a_bound_list() {
+    compare_text(
+        "selfhost_lexer_should_match_emit_tokens_on_a_line_break_inside_a_bound_list",
+        "fn f<T: A &\n    B\n    & C>() {}\n",
+    );
+}
+
+/// GIVEN a `}` and an `else` with a `;` between them on one line
+/// WHEN each build of the lexer reads it
+/// THEN the `;` prints nothing, as in `sisu build --emit tokens`
+#[test]
+fn selfhost_lexer_should_match_emit_tokens_on_a_semicolon_before_else() {
+    compare_text(
+        "selfhost_lexer_should_match_emit_tokens_on_a_semicolon_before_else",
+        "fn f() {\n    if a {}; else {}\n}\n",
+    );
+}
+
+/// GIVEN a `}` and an `else` on the next line
+/// WHEN each build of the lexer reads it
+/// THEN a `Newline` follows the `}`, as in `sisu build --emit tokens`
+#[test]
+fn selfhost_lexer_should_match_emit_tokens_on_an_else_at_the_start_of_a_line() {
+    compare_text(
+        "selfhost_lexer_should_match_emit_tokens_on_an_else_at_the_start_of_a_line",
+        "fn f() {\n    if a {}\n    else {}\n}\n",
+    );
+}
+
+/// GIVEN a line that ends with `_`, and a line after it
+/// WHEN each build of the lexer reads it
+/// THEN a `Newline` follows the `_`, as in `sisu build --emit tokens`
+#[test]
+fn selfhost_lexer_should_match_emit_tokens_on_an_underscore_at_the_end_of_a_line() {
+    compare_text(
+        "selfhost_lexer_should_match_emit_tokens_on_an_underscore_at_the_end_of_a_line",
+        "fn f() {\n    _\n    x\n}\n",
+    );
+}
+
+/// GIVEN a line that ends with `Self`, and a line after it
+/// WHEN each build of the lexer reads it
+/// THEN a `Newline` follows the `Self`, as in `sisu build --emit tokens`
+#[test]
+fn selfhost_lexer_should_match_emit_tokens_on_self_at_the_end_of_a_line() {
+    compare_text(
+        "selfhost_lexer_should_match_emit_tokens_on_self_at_the_end_of_a_line",
+        "fn f() {\n    Self\n    x\n}\n",
+    );
+}
+
+/// GIVEN a line that ends with `?`, and a line after it
+/// WHEN each build of the lexer reads it
+/// THEN a `Newline` follows the `?`, as in `sisu build --emit tokens`
+#[test]
+fn selfhost_lexer_should_match_emit_tokens_on_a_question_mark_at_the_end_of_a_line() {
+    compare_text(
+        "selfhost_lexer_should_match_emit_tokens_on_a_question_mark_at_the_end_of_a_line",
+        "fn f() {\n    x?\n    y\n}\n",
+    );
+}
+
+/// The source of a program that prints `word` and nothing else.
+fn printing(word: &str) -> String {
+    format!("fn main() {{\n    print(\"{word}\")\n}}\n")
+}
+
+/// The standard output of `exe` on an empty input, which must exit 0.
+fn output_of(exe: &Path) -> String {
+    let out = support::Invocation::default().run(exe, false);
+    assert_eq!(out.status.code(), Some(0), "{}", exe.display());
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// GIVEN a scratch copy of a program and an empty scratch cache
+/// WHEN the build runs twice in the cache
+/// THEN the second call returns the same paths and leaves each executable's modification time
+/// unchanged
+#[test]
+fn selfhost_build_should_reuse_its_cache() {
+    let name = "selfhost_build_should_reuse_its_cache";
+    let dir = fixture(name, &[("lexer.sisu", &printing("first"))]);
+    let (source, cache) = (dir.join("lexer.sisu"), dir.join("cache"));
+    let modified = |builds: &selfhost::Builds| {
+        [&builds.o0, &builds.o2, &builds.rc_checks].map(|exe| {
+            fs::metadata(exe)
+                .and_then(|metadata| metadata.modified())
+                .expect("a build should have a modification time")
+        })
+    };
+    let first = selfhost::build(&source, &cache);
+    let times = modified(&first);
+    let second = selfhost::build(&source, &cache);
+    assert_eq!(first, second);
+    assert_eq!(times, modified(&second), "the second call built again");
+}
+
+/// GIVEN a scratch copy of a program that prints `first`, built into an empty scratch cache
+/// WHEN the copy changes to print `second` and the build runs again in the cache
+/// THEN the new build prints `second`
+#[test]
+fn selfhost_build_should_rebuild_when_its_source_changes() {
+    let name = "selfhost_build_should_rebuild_when_its_source_changes";
+    let dir = fixture(name, &[("lexer.sisu", &printing("first"))]);
+    let (source, cache) = (dir.join("lexer.sisu"), dir.join("cache"));
+    assert_eq!(output_of(&selfhost::build(&source, &cache).o2), "first\n");
+    fs::write(&source, printing("second")).expect("the scratch source should be writable");
+    assert_eq!(output_of(&selfhost::build(&source, &cache).o2), "second\n");
 }

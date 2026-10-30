@@ -1,0 +1,282 @@
+// Every token kind, every reserved word, and every case of the rules of the lexer, one row each.
+// The file lexes with no error. It gives a warning (W0007) for each redundant `;`, and it need not
+// check: no test builds it. Tests compare the tokens of `sisu build --emit tokens` with the tokens
+// of `selfhost/lexer.sisu`, so a row that the program lexes in another way fails there.
+// A rule row has a comment that names its rule, so a reader who deletes a row sees what it guarded.
+
+// Names: a name is an ASCII letter or `_`, then ASCII letters, digits and `_`.
+// Keywords: each one, and `_` alone, which is `Underscore`.
+class Names {
+    let mut x1 = _y_2
+    var _
+    todo
+    fn f() { return }
+    const K = true
+    for a in b { loop { break } }
+    if a { continue } else { while false { } }
+    match None { Some(self) => Self, _ => x is y }
+    interface I { }
+    extend Names { }
+    enum E { }
+}
+
+// Reserved words: each one is `Reserved`, and `var` and `todo` are not.
+import pub record type weak test extern as
+
+// Operators and punctuation: each one, by longest match.
+fn operators() {
+    a + b - c * d / e % f
+    a += b -= c *= d /= e %= f
+    a == b != c < d <= e > f >= g && h || !i
+    a = (b, c) -> d => e | f
+    a.b..c..=d[e]
+    a?.b ?? c ? d
+    a: b
+    // `**=` is `**` then `=`: the longest match takes two chars, and `=` starts the next token.
+    a **= b
+    a ** b
+    // A lone `&` joins the bounds of a type parameter.
+    fn bounded<T: A & B>() { }
+}
+
+// Literals: an integer, a float, a char, a string.
+fn literals() {
+    1 2.5 'a' "b"
+    // A `//` in a string is text, not a comment.
+    "a // b"
+    // An escape in a char literal: the char after the `\` is part of it, so `'\''` ends at the
+    // second `'`.
+    '\'' '\\' '\n' '\u{e4}'
+    // An escape in string text is consumed whole.
+    "a\tb \"quoted\" \{braced\} \u{e4} \\"
+}
+
+// Interpolation: `StrHead` runs from the `"` to the `{`, `StrMiddle` from a `}` to the next
+// `{`, and `StrTail` from a `}` to the `"`.
+fn interpolation() {
+    "head {a} tail"
+    "{a}{b}"
+    "x {a} y {b} z"
+    // A string literal inside an interpolation.
+    "a { "b" + "c" } d"
+    "a { "b {c} d" } e"
+    // A format spec runs from its `:` to the `}` that ends the interpolation, not including it.
+    "{x:>8.2}"
+    // A `{` in a spec opens a pair, and its `}` is part of the spec.
+    "{x:>{w}}"
+    "{x:\{}}"
+    // A `\` in a spec is an ordinary char: it does not hide the `}`.
+    "{x:\}"
+    // A `:` inside a bracket of the interpolation is a `Colon`, not a spec.
+    "{f(a: 1)}"
+    "{xs[a: b]}"
+    // After `\\` the `{` opens an interpolation, and after `\{` it does not.
+    "\\{x}"
+    "\{x\}"
+    // `\u{` is an escape: its `{` opens nothing.
+    "\u{e4}\u{1F600}"
+    "\u{e4}{x}"
+    // A `}` or `:` of a char literal or a string inside the interpolation does not end it.
+    "{ c == '}' }"
+    "{ "a:b" }"
+    "{ ':' }"
+}
+
+// Columns count chars, not bytes. The token after a char that takes two bytes, or a tab, sits one
+// column right of it.
+fn columns() {
+    "ä" + x
+    'ä' + x
+    "ä{a}ö{b}ä" + x
+    a	b "ä"	c
+}
+
+// A `.` or `?.` at the start of a line continues the line above it, also after blank lines and
+// comment lines.
+fn continuation() {
+    a
+        .b()
+    a
+
+        .b()
+    a
+        // A comment line comes between.
+        .b()
+    a
+
+
+        // Blank lines and a comment line.
+
+        ?.b()
+    // `..` and `..=` start a range, so they do not continue the line.
+    a
+        ..b
+    a
+        ..=b
+}
+
+// No `Newline` inside `(` or `[`, also after a token that could end a statement.
+fn brackets() {
+    f(a
+        , b)
+    g([a
+        , b
+    ])
+    // A `{` inside them opens a block, and its line breaks end statements again.
+    h(a, { b
+        c })
+}
+
+// Where a number ends.
+fn numbers() {
+    // A tuple index: a digit run after `.` or `?.` has no fraction and no exponent.
+    t.0.1
+    x?.0
+    t.0e10
+    x?.0E2
+    // A `.` that a `.` or a name follows ends an integer.
+    1..2
+    1.abs()
+    1.e5
+    // A fraction and an exponent.
+    1.5e-3
+    1.5E+3
+    1e10
+    2.5
+    // A digit separator goes on in a fraction, and in an exponent.
+    1.5_0
+    1_000
+    1.5e1_0
+    // A prefixed number takes every ASCII letter, digit and `_`.
+    0xFF_ff
+    0b1010
+    0o17
+    0xdeadBEEF
+}
+
+// A line break after a token that can end a statement is a `Newline`: after each kind of such
+// token, `_`, `Self` and `?` among them.
+fn endings() {
+    a
+    1
+    1.5
+    'c'
+    "s"
+    "{a}"
+    true
+    false
+    return
+    todo
+    break
+    continue
+    None
+    self
+    Self
+    _
+    a?
+    f()
+    xs[0]
+    if a { }
+    // After any other token the statement goes on.
+    a +
+        b
+    f(
+        a,
+    )
+}
+
+// A `;` in a block separates two statements on a line.
+fn separators() {
+    x; y
+    // A `;` at the end of a line, and a `;` at the start, are redundant.
+    x;
+    ; y
+    // A run of `;` is one: the first decides, and the others print nothing.
+    x;;
+    x;;; y
+    // A `;` after `{` or before `}` is redundant.
+    if a {; x }
+    if a { x; }
+    // A `;` before `else` is redundant: a `}` ends the line, `else` goes on with it.
+    if a { }; else { }
+    if a { }
+    ; else { }
+    // A `;` that joins two lines into a different statement stays.
+    a +; b
+    // A `;` in `(` and `[` is a `Semicolon` token, as in `[value; length]`.
+    [0; 3]
+    f(a; b)
+    // A `.` after the run continues the line when nothing else ends the statement, so the `;`
+    // separates.
+    x;
+        .f()
+    x; .f()
+    // A `;` at the start of a line stays when it joins nothing: it is before a `.`, and the line
+    // above it ends.
+    x
+        ; .f()
+    // After a `.`, the digits of a number are an integer, also with a `;` between.
+    t.;0.5
+}
+
+// A `;` between top-level items. After a `fn`, `class`, `enum`, `interface` or `extend` item
+// the `;` is redundant: the `}` ends the item.
+fn first() {};fn main() {}
+class C { };class D { }
+enum E { };enum F { }
+// After a `const` the `;` separates it from the item after it.
+const X = 1; fn main() {}
+// `interface` ends an item too: a run before it is redundant, and so is a run after it, but
+// `const` before it makes the run a separator.
+fn first() {};interface I { }
+const A = 1
+interface I { }; fn main() { }
+const A = 1; interface I { }
+// `extend` is the same.
+fn first() {};extend C { }
+const A = 1
+extend C { }; fn main() { }
+const A = 1; extend C { }
+// A `;` cuts an item's header, and no item starts with `{`: it stays. After a `}` it separates.
+fn first(); { }
+const A = 1; { }
+fn first() { }; { }
+
+// A `>` or `??` that closes a type annotation ends the statement, so a line break after it is a
+// `Newline`. After a comparison it does not.
+fn annotations() {
+    let b: Box<i64>
+    let c = 1
+    x: i64??
+    y: Pair<A, Box<B>>
+    z = a >
+        b
+    w = a ??
+        b
+    // A `;` after such a `>` separates.
+    let d: Box<i64>; let e = 2
+    // The annotation of a loop label does not start a type.
+    outer: while a < b && c >
+        d { break outer }
+}
+
+// A line break inside an open bound list goes on with the line.
+fn first<T: A &
+    B, U
+    : C
+    & D>() { }
+class Pair<A, B
+    : E> { }
+interface Source {
+    type Item: A
+        & B
+    type Other: C
+}
+extend<T: A
+    & B> Stack<T> { }
+
+// A `}` ends the line, and `else` on the next line is a statement of its own.
+fn branches() {
+    if a { }
+    else { }
+}

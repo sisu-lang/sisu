@@ -7,6 +7,8 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::thread;
 
+pub(crate) mod selfhost;
+
 /// `sisu build <flags> <input> -o <output>`, run from `dir`, after asserting both runtime archives
 /// exist.
 pub(crate) fn sisu(dir: &Path, input: &str, output: &Path, flags: &[&str]) -> Command {

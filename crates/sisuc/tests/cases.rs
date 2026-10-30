@@ -11,7 +11,7 @@
 //! an error, until the day it compiles. An `explanation` case is the Broken program of a
 //! `docs/diagnostics` explanation, whose `sisu` output is under `site/programs/explanations/`.
 //! An `every_program_certifies` case builds the mir of a program in `tests/run`, `tests/run-fail`,
-//! `tests/programs` or `bench`, which a debug build certifies.
+//! `tests/programs`, `bench` or `selfhost`, which a debug build certifies.
 //!
 //! `SISU_BLESS=1` rewrites the `.out`, `.err` and `.json` files of passing cases. It never creates
 //! one.
@@ -179,4 +179,5 @@ datatest_stable::harness! {
     { test = explanation, root = "../../docs/diagnostics", pattern = r"[EW]\d{4}\.md$" },
     { test = every_program_certifies, root = "tests", pattern = r"^(run|run-fail|programs)/[^/]+\.sisu$" },
     { test = every_program_certifies, root = "../../bench", pattern = r"main\.sisu$" },
+    { test = every_program_certifies, root = "../../selfhost", pattern = r"^lexer\.sisu$" },
 }
