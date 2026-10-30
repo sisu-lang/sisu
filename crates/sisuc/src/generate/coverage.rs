@@ -4408,13 +4408,10 @@ fn a_push_should_reach_a_local_an_element_and_a_guarded_field() {
             } else if place.contains('.') {
                 field = true;
                 let guard = lines[at - 1];
-                let length = if through {
-                    format!("({place}?.len() ?? 0) < ")
-                } else {
-                    format!("{place}.len() < ")
-                };
+                // Through `?.`, the guard reads an absent object as holding no element.
+                let length = format!("{place}{}.len()", "?".repeat(usize::from(through)));
                 assert!(
-                    guard.starts_with("if ") && guard.contains(&length),
+                    guard.starts_with("if ") && guard.contains(&length) && guard.contains(" < "),
                     "{place} is pushed to outside its guard: {guard}"
                 );
             } else {

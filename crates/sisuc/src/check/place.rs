@@ -200,9 +200,9 @@ impl Checker<'_> {
             }
             read => read,
         };
-        let Some(place) = self.take_pushed(receiver) else {
-            return Err(read);
-        };
+        let place = self
+            .take_pushed(receiver)
+            .expect("`push_receiver` should have kept the place of a receiver that is a place");
         if let Ok(read) = &read {
             self.read_pushed(read, receiver);
         }
@@ -688,10 +688,14 @@ impl Checker<'_> {
                             guard = Some(Guard { bind, scrutinee });
                             Ok(local(bind, payload, base.span))
                         }
-                        (Ok(payload), Err(_)) => Err(Poisoned::typed(payload)),
-                        (Err(failed), _) => {
+                        (payload, _) => {
                             // As `?.` does, report the field and give no type.
-                            self.find_field(failed.ty, base, name, true);
+                            self.find_field(
+                                payload.err().and_then(|failed| failed.ty),
+                                base,
+                                name,
+                                true,
+                            );
                             return CheckedPlace::failed();
                         }
                     }

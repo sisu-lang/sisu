@@ -2,6 +2,7 @@
 // object, and of an object that an optional object holds
 // AND `named`, which prints its name when it runs, and `clear`, which sets a field to `None`
 // AND a generic class `Pile<T>` whose method pushes onto its optional array field
+// AND a class `Counter` with a `push` method of its own, which is no array's
 // WHEN `main` pushes through `?.` when each optional holds an array, and when one holds `None`
 // AND an argument empties the optional it is pushed onto, and a copy of an array is kept
 // THEN a present array grows in place past several capacities, an absent one does nothing and
@@ -18,6 +19,19 @@ class Cell {
     fn add(self, x: i64) {
         self.maybe?.push(x)
     }
+}
+
+// A class with a `push` method of its own keeps its `?.` call.
+class Counter {
+    mut total: i64
+
+    fn push(self, x: i64) {
+        self.total += x
+    }
+}
+
+class Holder {
+    mut counter: Counter
 }
 
 class Pile<T> {
@@ -108,6 +122,13 @@ fn main() {
     print(kept)                        // kp
     print(strings ?? [])               // ["kp"]
     print(no_strings ?? ["none"])      // ["none"]
+
+    // A method named `push` of a class is called through `?.`, and only when the object is there.
+    let holder: Holder? = Holder(counter: Counter(total: 1))
+    holder?.counter?.push(named("counter", 4))
+    let no_holder: Holder? = None
+    no_holder?.counter?.push(named("no counter", 4))
+    print(holder?.counter?.total ?? 0)  // 5
 
     // The element type is a type parameter of the class.
     let pile: Pile<string> = Pile(things: ["a" + "b"])

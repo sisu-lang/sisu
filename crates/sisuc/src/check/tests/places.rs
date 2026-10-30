@@ -581,6 +581,10 @@ fn push_should_check_clean_through_a_safe_access() {
             "optional class with a push method of its own",
             "class Pile {\n    mut n: i64\n    fn push(self, x: i64) { self.n += x }\n}\nfn f(p: Pile?) { p?.push(1) }\nfn main() {}",
         ),
+        (
+            "class with a push method of its own, in a field of an optional object",
+            "class Pile {\n    mut n: i64\n    fn push(self, x: i64) { self.n += x }\n}\nclass Heap {\n    mut pile: Pile\n}\nfn f(h: Heap?) { h?.pile?.push(1) }\nfn main() {}",
+        ),
     ] {
         clean_row(row, src);
     }
@@ -752,7 +756,8 @@ fn push_should_check_nested_receivers_in_linear_steps() {
 }
 
 /// A `break` in a `push` leaves a `loop` that gives an `i64?`. The widened loop wraps the value.
-/// It does so when the `break` is in the pushed value, and when it is in the index of the array.
+/// It does so when the `break` is in the pushed value, in the pushed value of a `?.push`, and when
+/// it is in the index of the array.
 #[test]
 fn push_should_wrap_a_break_in_its_value_and_in_its_index() {
     contains(
@@ -760,8 +765,23 @@ fn push_should_wrap_a_break_in_its_value_and_in_its_index() {
         &["(push xs#0 (if true (block (break (wrap 1))) (block 2)))"],
     );
     contains(
+        "fn main() {\n    let mut xs: [i64]? = [1]\n    let y: i64? = loop {\n        xs?.push(if true { break 1 } else { 2 })\n        break None\n    }\n    print(y ?? 0)\n}",
+        &["(push (some xs#0) (if true (block (break (wrap 1))) (block 2)))"],
+    );
+    contains(
         "fn main() {\n    let mut xss = [[5]]\n    let z: i64? = loop {\n        xss[if true { break 2 } else { 0 }].push(3)\n        break None\n    }\n    print(z ?? 0)\n}",
         &["(push (index xss#0 (if true (block (break (wrap 2))) (block 0))) 3)"],
+    );
+}
+
+/// A block that holds a `?.push` is asked whether it can leave, and the answer reads through the
+/// `Some` step of the place. The block here is the value that a field appends to, which the check
+/// of an append asks.
+#[test]
+fn push_through_a_safe_access_should_stay_in_the_value_that_a_field_appends() {
+    contains(
+        "class T {\n    mut text: string\n}\nfn f(t: T) {\n    let mut xs: [i64]? = [1]\n    t.text += {\n        xs?.push(1)\n        \"x\"\n    }\n}\nfn main() {}",
+        &["(push (some xs#1) 1)"],
     );
 }
 
