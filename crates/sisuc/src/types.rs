@@ -49,14 +49,25 @@ pub(crate) enum TypeKind {
 /// (see `check::generic`). No declaration has a parameter at this index.
 pub(crate) const HOLE_INDEX: u32 = u32::MAX;
 
+/// The index of the rejected hole, the type parameter that stands for a part of a context whose
+/// bound failed (see `check::generic`). It is a hole too: `Type::holds_hole` is true for it. No
+/// declaration has a parameter at this index.
+pub(crate) const REJECTED_INDEX: u32 = u32::MAX - 1;
+
 /// What a type names, anywhere inside it. Each interned type and list holds its own, so a read
 /// does not walk the type.
 #[derive(Clone, Copy, Debug, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is a separate fact that a different query asks of a type"
+)]
 struct Names {
     /// A type parameter.
     param: bool,
-    /// The hole, the parameter at `HOLE_INDEX`.
-    hole: bool,
+    /// `HOLE_INDEX`.
+    open: bool,
+    /// `REJECTED_INDEX`.
+    rejected: bool,
     /// An associated type.
     assoc: bool,
 }
@@ -65,7 +76,8 @@ impl Names {
     fn or(self, other: Names) -> Names {
         Names {
             param: self.param || other.param,
-            hole: self.hole || other.hole,
+            open: self.open || other.open,
+            rejected: self.rejected || other.rejected,
             assoc: self.assoc || other.assoc,
         }
     }
@@ -81,7 +93,8 @@ impl TypeKind {
         match self {
             TypeKind::Param(_, i) => Names {
                 param: true,
-                hole: i == HOLE_INDEX,
+                open: i == HOLE_INDEX,
+                rejected: i == REJECTED_INDEX,
                 assoc: false,
             },
             TypeKind::Array(ty) | TypeKind::Optional(ty) => ty.names(),
@@ -456,9 +469,16 @@ impl Type {
         self.names().param
     }
 
-    /// Whether the type names the hole (`HOLE_INDEX`), anywhere inside it.
+    /// Whether the type names a hole (`HOLE_INDEX` or `REJECTED_INDEX`), anywhere inside it.
     pub(crate) fn holds_hole(self) -> bool {
-        self.names().hole
+        let names = self.names();
+        names.open || names.rejected
+    }
+
+    /// Whether the type names `REJECTED_INDEX` and not `HOLE_INDEX`, anywhere inside it.
+    pub(crate) fn holds_rejected_hole_only(self) -> bool {
+        let names = self.names();
+        names.rejected && !names.open
     }
 
     /// Whether the type holds an associated type, anywhere inside it.
@@ -727,25 +747,37 @@ mod tests {
     #[test]
     fn flag_queries_should_read_one_entry_whatever_the_depth_of_a_type() {
         let hole = Type::intern(TypeKind::Param(Symbol::intern("_"), HOLE_INDEX));
+        let rejected = Type::intern(TypeKind::Param(Symbol::intern("_"), REJECTED_INDEX));
         let param = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
+        let mixed = Type::intern(TypeKind::Class(
+            ClassId(0),
+            TypeArgs::intern(&[hole, Type::array(rejected)]),
+        ));
         NAMED.set(0);
-        let (holed, named, plain) = (
+        let (holed, rejected, named, plain) = (
             doubled(hole, 20),
+            doubled(rejected, 20),
             doubled(param, 20),
             doubled(Type::I64, 20),
         );
-        assert!(NAMED.get() <= 3 * 21, "{} kinds looked at", NAMED.get());
+        assert!(NAMED.get() <= 4 * 21, "{} kinds looked at", NAMED.get());
         let reads = |query: fn(Type) -> bool, ty: Type| {
             READS.set(0);
             let answer = query(ty);
             (answer, READS.get())
         };
-        for (ty, hole, param) in [
-            (holed, true, true),
-            (named, false, true),
-            (plain, false, false),
+        for (ty, hole, rejected_only, param) in [
+            (holed, true, false, true),
+            (rejected, true, true, true),
+            (mixed, true, false, true),
+            (named, false, false, true),
+            (plain, false, false, false),
         ] {
             assert_eq!(reads(Type::holds_hole, ty), (hole, 1));
+            assert_eq!(
+                reads(Type::holds_rejected_hole_only, ty),
+                (rejected_only, 1)
+            );
             assert_eq!(reads(Type::has_param, ty), (param, 1));
         }
     }

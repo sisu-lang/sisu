@@ -161,7 +161,8 @@ vague or generic error, or with none.
   passes does not prove its name.
 - To compare diagnostics before and after a change, take the base and
   the head `sisu` from "Focus", or build them, write probe programs into one directory, and run
-  `python3 scripts/diag_diff.py BASE_SISU HEAD_SISU DIR`. It prints
+  `python3 scripts/diag_diff.py BASE_SISU HEAD_SISU DIR...`. Add the `probes` directory next to
+  this brief, when it exists: it holds the probes of the earlier rounds. It prints
   each program the head newly accepts, newly rejects or reports
   differently, with the codes and positions of both.
 - When the diff re-blesses expected files by a fixed rewording, run
