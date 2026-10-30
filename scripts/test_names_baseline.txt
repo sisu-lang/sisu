@@ -620,7 +620,6 @@ crates/sisuc/src/codegen/tests.rs::class_layout_comes_from_the_data_layout
 crates/sisuc/src/codegen/tests.rs::classification_is_float_compares
 crates/sisuc/src/codegen/tests.rs::conditional_release_keeps_null_store
 crates/sisuc/src/codegen/tests.rs::division_guards_precede_the_division
-crates/sisuc/src/codegen/tests.rs::drop_frees_with_the_allocated_layout
 crates/sisuc/src/codegen/tests.rs::element_comparison_in_a_loop_retains_nothing
 crates/sisuc/src/codegen/tests.rs::empty_class_allocates_its_count
 crates/sisuc/src/codegen/tests.rs::eprint_calls_the_stderr_functions
@@ -639,8 +638,6 @@ crates/sisuc/src/codegen/tests.rs::hypot_is_declared_on_first_use
 crates/sisuc/src/codegen/tests.rs::len_and_field_of_a_local_skip_base_count
 crates/sisuc/src/codegen/tests.rs::len_and_field_of_a_value_release_the_base
 crates/sisuc/src/codegen/tests.rs::len_of_words_only_counts
-crates/sisuc/src/codegen/tests.rs::len_reads_a_string_by_its_field_and_an_array_by_its_header
-crates/sisuc/src/codegen/tests.rs::literal_allocates_header_and_elements
 crates/sisuc/src/codegen/tests.rs::main_flushes_stdout_before_the_exit_check_and_the_return
 crates/sisuc/src/codegen/tests.rs::make_unique_of_a_moved_array_faults
 crates/sisuc/src/codegen/tests.rs::method_symbols

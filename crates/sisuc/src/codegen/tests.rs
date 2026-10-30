@@ -606,11 +606,24 @@ fn helpers_should_pass_inline_enum_fields_by_address() {
     }
 }
 
+/// The operands of the one `sisu_free` call in `body`, as `(pointer, size, align)`.
+fn free_operands(body: &str) -> (String, String, String) {
+    let line = body
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("call void @sisu_free(ptr "))
+        .unwrap_or_else(|| panic!("no free in\n{body}"));
+    let operands: Vec<&str> = line.trim_end_matches(')').split(", i64 ").collect();
+    let [pointer, size, align] = operands[..] else {
+        panic!("free operands in {line:?}")
+    };
+    (pointer.into(), size.into(), align.into())
+}
+
 /// A drop frees a block with the size and alignment it was allocated with. `sisu_free` hands
 /// both to the allocator, which here ignores them, so Valgrind and the RC checks cannot notice
 /// a wrong value.
 #[test]
-fn drop_frees_with_the_allocated_layout() {
+fn drop_should_free_with_the_allocated_layout() {
     let context = Context::create();
     let ir = compiled(
         &context,
@@ -618,18 +631,6 @@ fn drop_frees_with_the_allocated_layout() {
     )
     .print_to_string()
     .to_string();
-    // The operands of the one `sisu_free` call in `body`, as `(pointer, size, align)`.
-    let free = |body: &str| -> (String, String, String) {
-        let line = body
-            .lines()
-            .find_map(|l| l.trim().strip_prefix("call void @sisu_free(ptr "))
-            .unwrap_or_else(|| panic!("no free in\n{body}"));
-        let operands: Vec<&str> = line.trim_end_matches(')').split(", i64 ").collect();
-        let [pointer, size, align] = operands[..] else {
-            panic!("free operands in {line:?}")
-        };
-        (pointer.into(), size.into(), align.into())
-    };
     // The classes: `P` is 32 bytes aligned to 8 (see `class_layout_comes_from_the_data_layout`),
     // and `S` 24, with its fields sorted (see `class_fields_follow_their_elements`); the block
     // is the drop function's own argument.
@@ -642,18 +643,19 @@ fn drop_frees_with_the_allocated_layout() {
             &ir,
             &format!("define internal void @sisu_rc.drop.{name}(ptr"),
         );
-        let (pointer, size, align) = free(class);
+        let (pointer, size, align) = free_operands(class);
         assert!(
             class.trim_start().starts_with(&format!("{pointer})")),
             "{class}"
         );
         assert_eq!((size.as_str(), align.as_str()), (bytes, "8"), "{class}");
     }
-    // An array: the 16-byte header plus `len` elements, aligned to 8; the element sizes are
-    // those of `literal_allocates_header_and_elements`, recomputed from the length. The literal
-    // of each type in `main` allocates `16 + len * element_size` bytes, the size the drop frees.
+    // An array: the 24-byte header plus `cap` elements, aligned to 8; the element sizes are
+    // those of `literal_should_allocate_header_and_elements`, recomputed from the capacity. The
+    // literal of each type in `main` allocates `24 + len * element_size` bytes, the size the drop
+    // frees.
     for (helper, element_size, len) in [("[i64]", 8, 3), ("[bool]", 1, 2), ("[i64?]", 16, 2)] {
-        let allocated = 16 + len * element_size;
+        let allocated = 24 + len * element_size;
         assert!(
             ir.contains(&format!("call ptr @sisu_alloc(i64 {allocated}, i64 8)")),
             "{helper}: no alloc of {allocated} bytes in\n{ir}"
@@ -662,7 +664,7 @@ fn drop_frees_with_the_allocated_layout() {
             &ir,
             &format!("define internal void @\"sisu_rc.drop.{helper}\"(ptr"),
         );
-        let (pointer, size, align) = free(body);
+        let (pointer, size, align) = free_operands(body);
         assert!(
             body.trim_start().starts_with(&format!("{pointer})")),
             "{body}"
@@ -676,14 +678,86 @@ fn drop_frees_with_the_allocated_layout() {
         };
         let elements = text(&size)
             .strip_prefix("add nuw i64 ")
-            .and_then(|operands| operands.strip_suffix(", 16"))
-            .unwrap_or_else(|| panic!("size {size} is not elements + 16 in\n{body}"));
+            .and_then(|operands| operands.strip_suffix(", 24"))
+            .unwrap_or_else(|| panic!("size {size} is not elements + 24 in\n{body}"));
         let length = text(elements)
             .strip_prefix("mul nuw i64 ")
             .and_then(|operands| operands.strip_suffix(&format!(", {element_size}")))
-            .unwrap_or_else(|| panic!("{elements} is not len * {element_size} in\n{body}"));
+            .unwrap_or_else(|| panic!("{elements} is not cap * {element_size} in\n{body}"));
         assert!(text(length).starts_with("load i64, ptr "), "{body}");
     }
+}
+
+/// A block that has room beyond its length is freed with the size it was allocated with, so
+/// the drop sizes the block from the header's capacity: field 2, not the length in field 1.
+#[test]
+fn array_drop_should_free_the_size_of_its_capacity() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "fn main() {\n    let a = [1, 2, 3]\n    print(a[0])\n}",
+    )
+    .print_to_string()
+    .to_string();
+    let body = function_body(&ir, "define internal void @\"sisu_rc.drop.[i64]\"(ptr");
+    let (_, size, _) = free_operands(body);
+    // The value defined by the instruction `<value> = <text>`.
+    let text = |value: &str| {
+        body.lines()
+            .find_map(|l| l.trim().strip_prefix(&format!("{value} = ")))
+            .unwrap_or_else(|| panic!("no {value} in\n{body}"))
+    };
+    let elements = text(&size)
+        .strip_prefix("add nuw i64 ")
+        .and_then(|operands| operands.split(", ").next())
+        .unwrap_or_else(|| panic!("size {size} is not an add in\n{body}"));
+    let capacity = text(elements)
+        .strip_prefix("mul nuw i64 ")
+        .and_then(|operands| operands.split(", ").next())
+        .unwrap_or_else(|| panic!("{elements} is not a multiplication in\n{body}"));
+    let field = text(capacity)
+        .strip_prefix("load i64, ptr ")
+        .and_then(|operands| operands.split(',').next())
+        .unwrap_or_else(|| panic!("{capacity} is not a load in\n{body}"));
+    assert!(
+        text(field).ends_with("{ i64, i64, i64 }, ptr %0, i32 0, i32 2"),
+        "{field} is not field 2 of the header in\n{body}"
+    );
+}
+
+/// A new block has room for exactly its length: `[v; n]` stores `n` into both the length and
+/// the capacity, whatever `n` is.
+#[test]
+fn alloc_array_should_set_the_capacity_to_the_length() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "fn make(n: i64) -> [i64] { [0; n] }\nfn main() {}",
+    )
+    .print_to_string()
+    .to_string();
+    let body = function_body(&ir, "define internal ptr @sisu.make(i64");
+    // The value stored into field `index` of an array header.
+    let stored = |index: u32| {
+        let field = body
+            .lines()
+            .find_map(|l| {
+                let (value, text) = l.trim().split_once(" = ")?;
+                text.contains(&format!(
+                    "{{ i64, i64, i64 }}, ptr %array, i32 0, i32 {index}"
+                ))
+                .then_some(value)
+            })
+            .unwrap_or_else(|| panic!("no field {index} in\n{body}"));
+        body.lines()
+            .find_map(|l| {
+                let operands = l.trim().strip_prefix("store i64 ")?;
+                let (value, rest) = operands.split_once(", ptr ")?;
+                rest.starts_with(field).then_some(value)
+            })
+            .unwrap_or_else(|| panic!("no store to field {index} in\n{body}"))
+    };
+    assert_eq!(stored(2), stored(1), "{body}");
 }
 
 const STRING_PROGRAM: &str =
@@ -1603,9 +1677,9 @@ fn u8_compare_is_unsigned() {
     assert!(ir.contains("icmp ult i8"), "missing `icmp ult i8` in\n{ir}");
 }
 
-/// A block is the 16-byte header, then the elements at their ABI size.
+/// A block is the 24-byte header, then the elements at their ABI size.
 #[test]
-fn literal_allocates_header_and_elements() {
+fn literal_should_allocate_header_and_elements() {
     let context = Context::create();
     let ir = compiled(
         &context,
@@ -1613,11 +1687,11 @@ fn literal_allocates_header_and_elements() {
     )
     .print_to_string()
     .to_string();
-    // 16 + 3 * 8, 16 + 2 * 1 and 16 + 2 * 16 bytes, aligned to the header's 8.
+    // 24 + 3 * 8, 24 + 2 * 1 and 24 + 2 * 16 bytes, aligned to the header's 8.
     for wanted in [
-        "call ptr @sisu_alloc(i64 40, i64 8)",
-        "call ptr @sisu_alloc(i64 18, i64 8)",
         "call ptr @sisu_alloc(i64 48, i64 8)",
+        "call ptr @sisu_alloc(i64 26, i64 8)",
+        "call ptr @sisu_alloc(i64 56, i64 8)",
     ] {
         assert!(ir.contains(wanted), "missing {wanted:?} in\n{ir}");
     }
@@ -2284,7 +2358,7 @@ fn binary_should_take_and_and_or_as_the_eager_operations_of_two_computed_bools()
 /// field of the pointer its own parameter gave, through the slots it moved through: `len`
 /// picks by the base's type.
 #[test]
-fn len_reads_a_string_by_its_field_and_an_array_by_its_header() {
+fn len_should_read_a_string_by_its_field_and_an_array_by_its_header() {
     let context = Context::create();
     let module = compiled(
         &context,
@@ -2332,7 +2406,7 @@ fn len_reads_a_string_by_its_field_and_an_array_by_its_header() {
                 None
             ),
             (
-                "{ i64, i64 }".to_string(),
+                "{ i64, i64, i64 }".to_string(),
                 Some(1),
                 param(1),
                 Some("count and length")

@@ -88,7 +88,7 @@ Scenario Outline: S5. Only a statement that always leaves makes the next line un
 
 - **A CI loop over found input has a total time bound.** A script or workflow step that loops over input whose count it does not control, such as artifacts, corpus files or test cases, caps the loop's total time. The cap fits the job's `timeout-minutes` with every later step, such as a failure upload, still ahead. A job killed at its limit skips those steps and loses their output.
 
-- **Sizes come from `TargetData`.** Sizes and alignments in generated code are measured with LLVM's `TargetData`, never written as numbers. The 16-byte array header is two `i64`s measured the same way.
+- **Sizes come from `TargetData`.** Sizes and alignments in generated code are measured with LLVM's `TargetData`, never written as numbers. The array header, like the string header, is three `i64`s: `count`, `len` and `cap`, measured the same way.
 
 - **Prefer a crate to hand-written code.** Where a well-maintained crate that `deny.toml` allows does the job, use it, and check it with GitHits first.
 

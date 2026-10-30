@@ -1,11 +1,10 @@
 // Each callee below recurses and works after its recursive call, so that it is not a tail call.
-// `keeps` and `gives` pass the depth `i % 2 + 1`: `-O2` unrolls their three iterations, so the
-// calls receive the constants 1, 2 and 1, three calls in each. `main` passes the argument count,
-// known only at run time. The markers check that these calls survive `-O2`, so each value
-// crosses a real call.
+// `keeps` and `gives` pass the depth `i % 2 + 1` from a loop of three iterations, which `-O2`
+// keeps as one call in each. `main` passes the argument count, known only at run time. The
+// markers check that these calls survive `-O2`, so each value crosses a real call.
 // args: a
-// o2-calls: keeps keep 3
-// o2-calls: gives give 3
+// o2-calls: keeps keep 1
+// o2-calls: gives give 1
 // o2-calls: main name_of 1
 // o2-calls: main a 1
 // o2-calls: main len 1

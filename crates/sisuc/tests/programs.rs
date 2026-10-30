@@ -695,15 +695,15 @@ panic_cases! {
         "fn main() {\n    let n = -1\n    let xs = [0; n]\n    print(xs.len())\n}\n",
         "3:18: array length is negative",
     ),
-    // 16 + 9_223_372_036_854_775_791 bytes is exactly `i64::MAX`, above the largest
+    // 24 + 9_223_372_036_854_775_783 bytes is exactly `i64::MAX`, above the largest
     // size that rounds up to the alignment of 8 within it.
-    length_too_large => fill_case("false", "9_223_372_036_854_775_791", 22),
-    // The smallest length past `largest_array_should_reach_the_allocator_and_abort`'s: 16 +
-    // 9_223_372_036_854_775_785 is `i64::MAX - 6`, which rounds up to 2^63.
-    one_too_large => fill_case("false", "9_223_372_036_854_775_785", 22),
+    length_too_large => fill_case("false", "9_223_372_036_854_775_783", 22),
+    // The smallest length past `largest_array_should_reach_the_allocator_and_abort`'s: 24 +
+    // 9_223_372_036_854_775_777 is `i64::MAX - 6`, which rounds up to 2^63.
+    one_too_large => fill_case("false", "9_223_372_036_854_775_777", 22),
     // 2^62 * 8 bytes overflows the multiply.
     length_overflows => fill_case("0", "4_611_686_018_427_387_904", 18),
-    // (2^61 - 1) * 8 bytes is 2^64 - 8, which fits; adding the 16-byte header wraps.
+    // (2^61 - 1) * 8 bytes is 2^64 - 8, which fits; adding the 24-byte header wraps.
     header_overflows => fill_case("0", "2_305_843_009_213_693_951", 18),
 }
 
@@ -765,8 +765,8 @@ fn fill_case(value: &str, len: &str, col: usize) -> (String, String) {
 /// stays at `-O2`, while a single `xs[0]` read lets it vanish.
 #[test]
 fn largest_array_should_reach_the_allocator_and_abort() {
-    // 16 + 9_223_372_036_854_775_784 bytes is 9_223_372_036_854_775_800.
-    let source = "fn main() {\n    let xs = [false; 9_223_372_036_854_775_784]\n    let mut k = 0\n    for x in xs { if x { k += 1 } }\n    print(k)\n}\n";
+    // 24 + 9_223_372_036_854_775_776 bytes is 9_223_372_036_854_775_800.
+    let source = "fn main() {\n    let xs = [false; 9_223_372_036_854_775_776]\n    let mut k = 0\n    for x in xs { if x { k += 1 } }\n    print(k)\n}\n";
     for o2 in [false, true] {
         let out = Command::new(compile_tmp("largest_array", source, o2))
             .output()

@@ -1,6 +1,6 @@
-//! Arrays at run time. An array is one heap block: a header of two `i64`s, the count and
-//! the length, then the elements. `layout.rs` owns the layout; this module owns the array nodes
-//! and the bodies of the array helpers, which `define_helpers` reaches through
+//! Arrays at run time. An array is one heap block: a header of three `i64`s, the count, the
+//! length and the capacity, then the elements. `layout.rs` owns the layout; this module owns the
+//! array nodes and the bodies of the array helpers, which `define_helpers` reaches through
 //! `define_array_helper`.
 
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, IntValue, PointerValue};
@@ -22,9 +22,10 @@ pub(super) fn element_of(ty: Type) -> Type {
 }
 
 impl<'ctx> Codegen<'ctx, '_> {
-    /// A block with count 1 and length `len`. A literal passes a constant length, and `unique`
-    /// a run-time length that already passed the checks; `[v; n]` gets them at `span`. A length
-    /// taken from an existing string, as `chars()` and `bytes()` do, needs no check.
+    /// A block with count 1, and length and capacity `len`. A literal passes a constant length,
+    /// and `unique` a run-time length that already passed the checks; `[v; n]` gets them at
+    /// `span`. A length taken from an existing string, as `chars()` and `bytes()` do, needs no
+    /// check.
     pub(super) fn alloc_array(
         &self,
         element: Type,
@@ -36,7 +37,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             Some(span) => self.checked_array_size(&layout, len, span),
             None => self.heap_size(&HeapBlock::Array {
                 layout: &layout,
-                len,
+                cap: len,
             }),
         };
         let array = self
@@ -50,6 +51,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         // Tagged like every array count and length (see `header_tag`).
         self.store_count(array, self.context.i64_type().const_int(1, false));
         self.store_tagged(self.len_ptr(array), len.into(), self.header_tag);
+        self.store_tagged(self.cap_ptr(array), len.into(), self.header_tag);
         array
     }
 
@@ -77,6 +79,18 @@ impl<'ctx> Codegen<'ctx, '_> {
         )
         .expect("an empty node should be a metadata node");
         len
+    }
+
+    /// The capacity of `array`: the number of elements its block has room for, which is at
+    /// least the length.
+    fn array_cap(&self, array: PointerValue<'ctx>) -> IntValue<'ctx> {
+        self.load_tagged(
+            self.context.i64_type().into(),
+            self.cap_ptr(array),
+            "cap",
+            self.header_tag,
+        )
+        .into_int_value()
     }
 
     #[expect(
@@ -312,21 +326,20 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// `@sisu_rc.drop.[T]`: releases each counted element in order, then frees the block, its
-    /// size recomputed from the length.
+    /// size recomputed from the capacity.
     fn define_array_drop(&self, element: Type, function: FunctionValue<'ctx>) {
         self.builder
             .position_at_end(self.context.append_basic_block(function, "entry"));
         let array = param(function);
-        let len = self.array_len(array);
         if element.is_counted(&self.program.enums) {
-            self.count_loop(len, |index| {
+            self.count_loop(self.array_len(array), |index| {
                 self.release(self.load_element(element, array, index), element);
             });
         }
         let layout = self.array_layout(element);
         let (size, align) = self.heap_size(&HeapBlock::Array {
             layout: &layout,
-            len,
+            cap: self.array_cap(array),
         });
         self.call(self.free, &[array.into(), size.into(), align.into()]);
         self.builder.build_return(None).expect(POSITIONED);
