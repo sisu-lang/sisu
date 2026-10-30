@@ -899,17 +899,72 @@ fn place<'a>(
     }
 }
 
-/// Whether `a` and `b` name one path: the same local and projections.
+/// The local an operand names, and the projections it reads through.
+fn operand_place(op: &Operand) -> Option<(LocalId, &[Projection])> {
+    match op {
+        Operand::Read(place) => Some((place.local, &place.projections)),
+        Operand::Move(local) | Operand::Use(local) | Operand::Guarded(local) => Some((*local, &[])),
+        Operand::Const(_) => None,
+    }
+}
+
+/// Whether two operands read the same storage: the same local and projections, or the same
+/// constant. A move and a read of one local match; no span counts.
+fn same_operand(a: &Operand, b: &Operand) -> bool {
+    match (operand_place(a), operand_place(b)) {
+        (Some((a, pa)), Some((b, pb))) => a == b && same_projections(pa, pb),
+        (None, None) => a == b,
+        _ => false,
+    }
+}
+
+/// Whether two projection lists reach the same storage. An index matches by its operand, not
+/// by the span where it panics.
+fn same_projections(a: &[Projection], b: &[Projection]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|pair| match pair {
+            (Projection::Index { index: a, .. }, Projection::Index { index: b, .. }) => {
+                same_operand(a, b)
+            }
+            (Projection::Index { .. }, _) | (_, Projection::Index { .. }) => false,
+            (a, b) => a == b,
+        })
+}
+
+/// Whether `a` and `b` name one storage path: the same local and projections.
 fn same_path(a: &Place, b: &Place) -> bool {
-    a.local == b.local && a.projections == b.projections
+    a.local == b.local && same_projections(&a.projections, &b.projections)
+}
+
+/// Whether an index operand in `projections` reads `local`, at any depth.
+fn index_reads(projections: &[Projection], local: LocalId) -> bool {
+    projections.iter().any(|projection| {
+        matches!(projection, Projection::Index { index, .. }
+            if operand_place(index).is_some_and(|(read, inner)| read == local || index_reads(inner, local)))
+    })
+}
+
+/// Whether `stmt` cannot change whether the optionals of `write`'s path hold a value, so a chain
+/// of proofs runs through it. A `check` only panics. A `make_unique` copies a shared block and
+/// changes no value; its own `Some`s have their own proofs. An assignment of a copy or a use
+/// changes only its own local, which is neither the root of the path nor an index local of it.
+fn keeps_proofs(stmt: &Statement, write: &Place) -> bool {
+    match stmt {
+        Statement::Check(_) | Statement::MakeUnique(_) => true,
+        Statement::Assign {
+            dest: Some(dest),
+            value: Rvalue::Use(_) | Rvalue::Copy(_),
+        } => *dest != write.local && !index_reads(&write.projections, *dest),
+        _ => false,
+    }
 }
 
 /// Whether the `push` or `make_unique` of `write` at statement `at` of block `b` has a proof
 /// for each `Some` of its path. The last `Some` is proved by a test of its prefix on the one
 /// edge into the block, the one before it by a test on the one edge into that test's block, and
-/// so on. Each block between a proof and the write holds only `check` and `make_unique`
-/// statements of the path: a join, a call or another statement may change the optional. A
-/// `make_unique` of the path stops the walk, as it proved the same chain.
+/// so on. Each block between a proof and the write holds only statements that `keeps_proofs`
+/// names: a join, a call or any other statement may change an optional. A `make_unique` of the
+/// path stops the walk, as it proved the same chain.
 fn proves(
     function: &Function,
     entries: &[(usize, usize)],
@@ -922,10 +977,12 @@ fn proves(
         .filter(|&k| write.projections[k] == Projection::Some);
     let (mut block, mut end) = (b, at);
     for k in levels {
+        count(1);
         for stmt in function.blocks[block].stmts[..end].iter().rev() {
+            count(1);
             match stmt {
                 Statement::MakeUnique(place) if same_path(place, write) => return true,
-                Statement::Check(place) if same_path(place, write) => {}
+                stmt if keeps_proofs(stmt, write) => {}
                 _ => return false,
             }
         }
@@ -933,14 +990,13 @@ fn proves(
         let (1, from) = entries[block] else {
             return false;
         };
-        let Terminator::TestPresent { place, some, none } = &function.blocks[from].term else {
+        let Terminator::TestPresent { place, some, .. } = &function.blocks[from].term else {
             return false;
         };
         if block == 0
             || some.0 != block
-            || none.0 == block
             || place.local != write.local
-            || place.projections != write.projections[..k]
+            || !same_projections(&place.projections, &write.projections[..k])
         {
             return false;
         }

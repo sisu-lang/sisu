@@ -2085,6 +2085,14 @@ fn items() -> Projection {
     }
 }
 
+/// The field a class `c` holds a second optional array in.
+fn other() -> Projection {
+    Projection::Field {
+        index: 1,
+        mutable: true,
+    }
+}
+
 /// `xs.Some`, the array an optional `xs` holds.
 fn some(xs: LocalId) -> Place {
     path(xs, vec![Projection::Some])
@@ -2275,6 +2283,64 @@ fn unproved_through_some() -> [Optionals; 8] {
     ]
 }
 
+/// The rows where a statement between the test and the write, or before an unproved write,
+/// leaves it unproved: it may change an optional, or it proves nothing of this path.
+fn unproved_by_statements() -> [Optionals; 5] {
+    [
+        (
+            "make_unique of another place, with no test",
+            |b, xs, ys| {
+                let stmts = vec![Statement::MakeUnique(whole(ys)), push_one(some(xs))];
+                b.block(released(stmts, &[xs, ys]), ret());
+            },
+            Some(0),
+        ),
+        (
+            "make_unique of another optional's array before the push",
+            |b, xs, ys| {
+                let stmts = vec![Statement::MakeUnique(some(ys)), push_one(some(xs))];
+                b.block(vec![], test(whole(ys), 1, 2));
+                b.block(released(stmts, &[xs, ys]), ret());
+                b.block(released(vec![], &[xs, ys]), ret());
+            },
+            Some(1),
+        ),
+        (
+            "assignment to the root between the test and the push",
+            |b, xs, ys| {
+                let stmts = vec![
+                    assign(xs, Rvalue::Use(Operand::Move(ys))),
+                    push_one(some(xs)),
+                ];
+                b.block(vec![], test(whole(xs), 1, 2));
+                b.block(released(stmts, &[xs]), ret());
+                b.block(released(vec![], &[xs, ys]), ret());
+            },
+            Some(1),
+        ),
+        (
+            "release between the test and the push",
+            |b, xs, ys| {
+                let stmts = vec![Statement::Release(ys), push_one(some(xs))];
+                b.block(vec![], test(whole(xs), 1, 2));
+                b.block(released(stmts, &[xs]), ret());
+                b.block(released(vec![], &[xs, ys]), ret());
+            },
+            Some(1),
+        ),
+        (
+            "push between the test and the push",
+            |b, xs, ys| {
+                let stmts = vec![push_one(some(xs)), push_one(some(xs))];
+                b.block(vec![], test(whole(xs), 1, 2));
+                b.block(released(stmts, &[xs, ys]), ret());
+                b.block(released(vec![], &[xs, ys]), ret());
+            },
+            Some(1),
+        ),
+    ]
+}
+
 /// A write through `Some` is proved by a `TestPresent` of the path up to it, on a present edge
 /// into a block with no other predecessor. A missing test, the absent edge, a join, a call
 /// between the test and the write and a test of another place each leave it unproved.
@@ -2283,6 +2349,7 @@ fn write_through_some_should_need_a_presence_test_of_its_path() {
     for (label, build, unproved) in proved_through_some()
         .into_iter()
         .chain(unproved_through_some())
+        .chain(unproved_by_statements())
     {
         let mut b = Builder::new("f");
         let xs = b.param("xs", Type::optional(Type::array(Type::I64)));
@@ -2290,6 +2357,41 @@ fn write_through_some_should_need_a_presence_test_of_its_path() {
         build(&mut b, xs, ys);
         certifies_or_leaves_unproved(&b.finish(), xs, unproved, label);
     }
+}
+
+/// The rows of a path that the tests and statements before the write do not name.
+fn unproved_by_another_path() -> [Classes; 2] {
+    [
+        (
+            "make_unique of another path of the same root, with no test of this one",
+            |b, c| {
+                b.block(vec![], test(whole(c), 1, 3));
+                let stmts = vec![
+                    Statement::MakeUnique(some_items(c)),
+                    push_one(path(c, vec![Projection::Some, other(), Projection::Some])),
+                ];
+                b.block(released(stmts, &[c]), ret());
+                b.block(vec![], ret());
+                b.block(released(vec![], &[c]), ret());
+            },
+            Some(1),
+        ),
+        (
+            "tests of another kind of projection",
+            |b, c| {
+                // The test names a field where the write has an index.
+                b.block(vec![], test(whole(c), 1, 3));
+                b.block(vec![], test(some_items(c), 2, 3));
+                let element = path(
+                    c,
+                    vec![Projection::Some, index(read(c), 0), Projection::Some],
+                );
+                b.block(released(vec![push_one(element)], &[c]), ret());
+                b.block(released(vec![], &[c]), ret());
+            },
+            Some(2),
+        ),
+    ]
 }
 
 /// `c.Some.items.Some` has two `Some`: one test for each, on two present edges in a row, and
@@ -2372,12 +2474,204 @@ fn write_through_two_optionals_should_need_a_test_for_each() {
             None,
         ),
     ];
-    for (label, build, unproved) in rows {
+    for (label, build, unproved) in rows.into_iter().chain(unproved_by_another_path()) {
         let mut b = Builder::new("f");
         let c = b.param("c", Type::optional(object()));
         build(&mut b, c);
         certifies_or_leaves_unproved(&b.finish(), c, unproved, label);
     }
+}
+
+/// A chain of proofs runs through the statements Task 4's lowering puts between a test and its
+/// write: the `make_unique` of an ancestor array, the `check` and `make_unique` per index
+/// level of `walk`, and the copy of an argument that ownership places.
+#[test]
+fn proof_chain_should_pass_the_statements_that_keep_the_optionals() {
+    type Row = (&'static str, fn(&mut Builder));
+    let rows: [Row; 3] = [
+        ("make_unique of the ancestor array", |b| {
+            // `groups[0]?.push(2)`: bb0 tests `groups[0]`, then `groups` is made unique.
+            let groups = b.param(
+                "groups",
+                Type::array(Type::optional(Type::array(Type::I64))),
+            );
+            let element = first(groups).projections;
+            let mut item = element.clone();
+            item.push(Projection::Some);
+            b.block(vec![], test(path(groups, element), 1, 2));
+            let stmts = vec![
+                Statement::MakeUnique(whole(groups)),
+                push_one(path(groups, item)),
+            ];
+            b.block(released(stmts, &[groups]), ret());
+            b.block(released(vec![], &[groups]), ret());
+        }),
+        ("check and make_unique per index level", |b| {
+            // `xss?[0].push(1)`: `walk` checks the index, then makes each level unique.
+            let xss = b.param("xss", Type::optional(Type::array(Type::array(Type::I64))));
+            let element = first(xss).projections;
+            let mut item = vec![Projection::Some];
+            item.extend(element);
+            b.block(vec![], test(whole(xss), 1, 2));
+            let stmts = vec![
+                Statement::Check(path(xss, item.clone())),
+                Statement::MakeUnique(some(xss)),
+                push_one(path(xss, item)),
+            ];
+            b.block(released(stmts, &[xss]), ret());
+            b.block(released(vec![], &[xss]), ret());
+        }),
+        ("copy of the argument", |b| {
+            // `xs?.push(s)` with `s` used later: ownership places `t = copy s` before the push.
+            let xs = b.param("xs", Type::optional(Type::array(Type::STRING)));
+            let s = b.param("s", Type::STRING);
+            let t = b.local("t", Type::STRING);
+            b.block(vec![], test(whole(xs), 1, 2));
+            let stmts = vec![
+                assign(t, Rvalue::Copy(whole(s))),
+                pushing(some(xs), Operand::Move(t)),
+            ];
+            b.block(released(stmts, &[xs, s]), ret());
+            b.block(released(vec![], &[xs, s]), ret());
+        }),
+    ];
+    for (label, build) in rows {
+        let mut b = Builder::new("f");
+        build(&mut b);
+        assert_eq!(certify(&b.finish()), Ok(()), "{label}");
+    }
+}
+
+/// The index operand of a row of `proof_of_an_indexed_place_should_follow_its_index_local`,
+/// from its locals `i`, `j` and `ws`.
+type Index = fn(LocalId, LocalId, LocalId) -> Operand;
+
+/// A row of that test: a label, the test's index, the write's index, the write's span, whether
+/// `i` is assigned between them, and the block where the write is unproved, if it is.
+type IndexRow = (&'static str, Index, Index, usize, bool, Option<usize>);
+
+/// A proof names storage, not source: two index places that differ only in the span where they
+/// panic match, as do a read and a move of one local, two with different index locals do not,
+/// and an assignment to an index local between the test and the write, at any depth, leaves the
+/// write unproved.
+#[test]
+fn proof_of_an_indexed_place_should_follow_its_index_local() {
+    let zero = |_, _, _| Operand::Const(Const::Int(0, Type::I64));
+    let nested = |i, _, ws| Operand::Read(path(ws, vec![index(read(i), 0)]));
+    let rows: [IndexRow; 9] = [
+        (
+            "same index and span",
+            |i, _, _| read(i),
+            |i, _, _| read(i),
+            0,
+            false,
+            None,
+        ),
+        (
+            "another span",
+            |i, _, _| read(i),
+            |i, _, _| read(i),
+            7,
+            false,
+            None,
+        ),
+        (
+            "another index local",
+            |_, j, _| read(j),
+            |i, _, _| read(i),
+            0,
+            false,
+            Some(1),
+        ),
+        (
+            "index local assigned",
+            |i, _, _| read(i),
+            |i, _, _| read(i),
+            0,
+            true,
+            Some(1),
+        ),
+        (
+            "moved index",
+            |i, _, _| read(i),
+            |i, _, _| Operand::Move(i),
+            0,
+            false,
+            None,
+        ),
+        ("constant index", zero, zero, 0, false, None),
+        (
+            "constant against local",
+            zero,
+            |i, _, _| read(i),
+            0,
+            false,
+            Some(1),
+        ),
+        ("nested index", nested, nested, 0, false, None),
+        (
+            "nested index local assigned",
+            nested,
+            nested,
+            0,
+            true,
+            Some(1),
+        ),
+    ];
+    for (label, tested, written, span, assigned, unproved) in rows {
+        let mut b = Builder::new("f");
+        let zs = b.param("zs", Type::array(Type::optional(Type::array(Type::I64))));
+        let ws = b.param("ws", Type::array(Type::I64));
+        let i = b.param("i", Type::I64);
+        let j = b.param("j", Type::I64);
+        let at = path(zs, vec![index(tested(i, j, ws), 0)]);
+        let mut to = path(zs, vec![index(written(i, j, ws), span)]);
+        to.projections.push(Projection::Some);
+        let mut stmts = vec![];
+        if assigned {
+            stmts.push(assign(
+                i,
+                Rvalue::Use(Operand::Const(Const::Int(0, Type::I64))),
+            ));
+        }
+        stmts.push(push_one(to));
+        b.block(vec![], test(at, 1, 2));
+        b.block(released(stmts, &[zs, ws]), ret());
+        b.block(released(vec![], &[zs, ws]), ret());
+        certifies_or_leaves_unproved(&b.finish(), zs, unproved, label);
+    }
+}
+
+/// `[index]`, with a span at `at`.
+fn index(index: Operand, at: usize) -> Projection {
+    Projection::Index {
+        index,
+        span: Span::new(at, at + 1),
+    }
+}
+
+/// `n` writes to one path behind a chain of two present edges, all in one block, as a long
+/// `push` run does: a walk that scans back to the chain's start for each write is quadratic.
+/// The reads grow near linearly with `n`.
+#[test]
+fn proof_walk_should_read_linearly() {
+    let reads = |n: usize| {
+        let mut b = Builder::new("f");
+        let c = b.param("c", Type::optional(object()));
+        b.block(vec![], test(whole(c), 1, 3));
+        b.block(vec![], test(some_items(c), 2, 3));
+        let mut stmts: Vec<Statement> = (0..n)
+            .map(|_| Statement::MakeUnique(some_items_some(c)))
+            .collect();
+        stmts.extend([push_one(some_items_some(c)), Statement::Release(c)]);
+        b.block(stmts, ret());
+        b.block(released(vec![], &[c]), ret());
+        let f = b.finish();
+        READS.set(0);
+        assert_eq!(certify(&f), Ok(()));
+        READS.get()
+    };
+    assert_near_linear(reads(100), reads(200), reads(300));
 }
 
 /// A field `push` through `Some` on a borrowed `C?` writes the object both name, as one on a
@@ -2399,6 +2693,13 @@ fn push_through_some_should_write_a_borrowed_optional_class_but_not_a_borrowed_o
     b.block(vec![push_one(some(xs))], ret());
     b.block(vec![], ret());
     rejects(&b.finish(), 1, xs, Rule::WriteBorrowed);
+
+    // A write into the borrowed `C?` itself, not through `Some`, is not into the object.
+    let mut b = Builder::new("f");
+    let c = b.param("c", Type::optional(object()));
+    b.borrowed(c);
+    b.block(vec![Statement::MakeUnique(whole(c))], ret());
+    rejects(&b.finish(), 0, c, Rule::WriteBorrowed);
 }
 
 // One case for each check the cases above leave alone.
