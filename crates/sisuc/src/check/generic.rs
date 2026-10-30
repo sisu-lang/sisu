@@ -1181,7 +1181,8 @@ impl Checker<'_> {
     ///
     /// The work is one step for each expression that the walk reaches. `inferred_array` does
     /// not walk the elements of an array literal again after this accepts it. `taken` keeps
-    /// the answer for each `Some(...)`, which the call of `Some` asks for again.
+    /// the answer for each array literal, which `inferred_array` asks for again when it
+    /// refuses the literal, and for each `Some(...)`, which the call of `Some` asks for again.
     fn takes_context(&mut self, e: &ast::Expr, context: Type) -> bool {
         #[cfg(test)]
         CONTEXT_STEPS.set(CONTEXT_STEPS.get() + 1);
@@ -1189,8 +1190,15 @@ impl Checker<'_> {
             return false;
         }
         if let ast::ExprKind::ArrayLit(elements) = &e.kind {
-            return matches!(context.kind(), TypeKind::Array(element)
+            // A literal with an element that takes no context fails after a walk of all it
+            // holds, and `inferred_array` asks for each element again. The answer is kept.
+            if let Some(&taken) = self.body.taken.get(&(e.span, context)) {
+                return taken;
+            }
+            let taken = matches!(context.kind(), TypeKind::Array(element)
                 if !elements.is_empty() && elements.iter().all(|e| self.takes_context(e, element)));
+            self.body.taken.insert((e.span, context), taken);
+            return taken;
         }
         if let ast::ExprKind::Call {
             callee,
@@ -1265,8 +1273,8 @@ impl Checker<'_> {
     /// Checks `e` against `pattern`, a parameter's type or an element's: against what the call
     /// binds of it, or, while it names an unbound parameter, on its own, which binds what its
     /// type fixes. A non-empty array literal is the exception when its array holds optionals
-    /// (see `optional_element`) or when it has a `context`. Its elements then bind the
-    /// parameter one by one (see `inferred_array`).
+    /// (see `optional_element`), when it has a `context`, or when the call binds part of its
+    /// element type. Its elements then bind the parameter one by one (see `inferred_array`).
     /// A value of type `unit` or `never` binds nothing, for `infer_arg` to defer.
     fn infer_value(
         &mut self,
@@ -1282,7 +1290,11 @@ impl Checker<'_> {
     }
 
     /// `infer_value` for a `pattern` that names an unbound parameter, with no walk of
-    /// `pattern` to find this out. `context` is the expected type of `e`, if any.
+    /// `pattern` to find this out. `context` is the expected type of `e`, if any. A non-empty
+    /// array literal goes to `inferred_array` in the three cases that `infer_value` names. In
+    /// the third, an element that is a local variable takes no context: it is checked on its
+    /// own, and it binds or meets the element type, so the context of the other elements
+    /// stays.
     fn infer_unbound(
         &mut self,
         call: &mut Inference,
@@ -1293,7 +1305,9 @@ impl Checker<'_> {
         if let ast::ExprKind::ArrayLit(elements) = &e.kind
             && !elements.is_empty()
             && let TypeKind::Array(element) = pattern.kind()
-            && (optional_element(element) || context.is_some())
+            && (optional_element(element)
+                || context.is_some()
+                || self.partial(&call.bindings, element) != *HOLE)
         {
             return self.inferred_array(call, e.span, elements, element, context.is_some());
         }
@@ -1334,8 +1348,9 @@ impl Checker<'_> {
     /// reports it: the first alone, unless an element failed already. Each element gets its own
     /// context, so no hole reaches the type of the array. `accepted` says that `takes_context`
     /// has accepted the literal, so each element takes its context with no new walk. Else
-    /// each element asks `call_context`. An element of type `unit` or `never` has no value,
-    /// which is reported at once, and binds nothing.
+    /// each element asks `call_context`: an element that takes no context, such as a local
+    /// variable, is checked on its own, and the others keep theirs. An element of type `unit`
+    /// or `never` has no value, which is reported at once, and binds nothing.
     fn inferred_array(
         &mut self,
         call: &mut Inference,
