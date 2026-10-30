@@ -330,8 +330,11 @@ expected() {
         show) printf '%s\n' 1091750 40900 ;;
         # The tokens of the input from the compiler's lexer, which the lexer in Sisu must match.
         selfhost_lexer)
-            target/release/sisu build --emit tokens bench/features/selfhost_lexer/input.sisu ||
+            target/release/sisu build --emit tokens bench/features/selfhost_lexer/input.sisu \
+                2>"$out/stderr" || {
+                cat "$out/stderr" >&2
                 fail "bench/features/selfhost_lexer/input.sisu does not lex"
+            }
             ;;
         *) return 1 ;;
     esac

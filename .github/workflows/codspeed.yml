@@ -62,8 +62,9 @@ jobs:
       - id: prep
         continue-on-error: true
         # Prep runs programs and the compiler. A hang must not use the six hours of the job. Prep
-        # takes about a minute with a warm cache; 30 minutes leaves room for a cold build, and the
-        # benchmark step (60 minutes) and the summary still run after a timeout.
+        # takes about a minute with a warm cache; 30 minutes leaves room for a cold build. A
+        # timeout fails only this step. The bench step is then skipped (its `if` needs prep to
+        # succeed), and the summary step still runs and names prep.
         timeout-minutes: 30
         if: steps.llvm.outcome == 'success'
         run: scripts/codspeed-prep.sh
