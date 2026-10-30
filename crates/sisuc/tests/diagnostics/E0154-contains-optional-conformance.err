@@ -1,0 +1,11 @@
+error[E0154]: `Pair<bool>?` does not conform to `Eq`
+  --> E0154-contains-optional-conformance.sisu:13:11
+   |
+ 5 | extend<T: Ord> Pair<T>: Eq {
+   |           --- this conformance needs `T: Ord`
+...
+13 |     print(pairs.contains(None))
+   |           ^^^^^^^^^^^^^^^^^^^^ required by the bound of this call
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154

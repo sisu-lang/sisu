@@ -1603,12 +1603,14 @@ impl Checker<'_> {
         // The bound goes to the type parameter inside `ty` that makes it fail: `T` for `[T?]`.
         let leaf = self.failing_leaf(ty, bound.interface, args);
         let add = self.add_bound(leaf, bound.interface);
-        // A class or an enum may conform, when the types that stand for its parameters do.
-        let needs = find(&self.conformances, bound.interface, ty, args)
-            .map(|(k, stands)| self.failed_bound(bound.interface, k, stands));
         // No label points into the prelude: its bound is named on the call instead, and a class or
-        // an enum with no conformance gets the help to write one.
+        // an enum with no conformance gets the help to write one. The conformance that fails is
+        // the one of the part that fails, as for `==`.
         let prelude = bound.at.in_prelude();
+        // A class or an enum may conform, when the types that stand for its parameters do.
+        let owner = if prelude { leaf } else { ty };
+        let needs = find(&self.conformances, bound.interface, owner, args)
+            .map(|(k, stands)| self.failed_bound(bound.interface, k, stands));
         let none = matches!(leaf.kind(), TypeKind::Class(..) | TypeKind::Enum(..))
             && find(&self.conformances, bound.interface, leaf, args).is_none();
         let make = (prelude && none).then(|| self.type_name(leaf));
