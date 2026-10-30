@@ -3491,21 +3491,6 @@ const INFER_ROWS: &[PartialRow<'static>] = {
     use Code::CannotInfer;
     &[
         (
-            "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn h<U, V>(a: U, b: Two<U, V>) {}\n",
-            "let d: D? = D()\nh(true, id(d?.m2(\"s\")))",
-            &[(CannotInfer, "id(")],
-        ),
-        (
-            "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
-            "let d: D? = D()\nh(true, [d?.m2(\"s\")])",
-            &[(CannotInfer, "h(")],
-        ),
-        (
-            "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn hn<U, V>(a: U, b: Two<Two<U, V>, i64>) {}\n",
-            "let d: D? = D()\nhn(true, Two.P(d?.m2(\"s\"), 2))",
-            &[(CannotInfer, "Two.P(")],
-        ),
-        (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, pr(true))",
             &[(CannotInfer, "pr(")],
@@ -3531,11 +3516,6 @@ const INFER_ROWS: &[PartialRow<'static>] = {
             &[(CannotInfer, "h(")],
         ),
         (
-            "fn h3<U, V>(a: U, b: V, c: Two<U, V>) {}\n",
-            "let c: C? = C()\nh3(true, 1, c?.m(\"s\", None))",
-            &[(CannotInfer, "m(")],
-        ),
-        (
             "fn h3<U, V>(a: U, b: V, c: Two<U, V>?) {}\n",
             "let c: C? = C()\nh3(true, 1, c?.m(true, None))",
             &[(CannotInfer, "m(")],
@@ -3548,6 +3528,86 @@ const INFER_ROWS: &[PartialRow<'static>] = {
 #[test]
 fn a_partly_bound_parameter_should_report_cannot_infer_when_the_context_fixes_nothing() {
     check_partial_rows(INFER_ROWS);
+}
+
+/// The rows of `a_safe_call_that_waits_for_a_plain_context_should_get_no_context`.
+const SAFE_ROWS: &[PartialRow<'static>] = {
+    use Code::CannotInfer;
+    &[
+        (
+            "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "let d: D? = D()\nh(true, id(d?.m2(\"s\")))",
+            &[(CannotInfer, "id(")],
+        ),
+        (
+            "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "let d: D? = D()\nh(true, [d?.m2(\"s\")])",
+            &[(CannotInfer, "h(")],
+        ),
+        (
+            "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn hn<U, V>(a: U, b: Two<Two<U, V>, i64>) {}\n",
+            "let d: D? = D()\nhn(true, Two.P(d?.m2(\"s\"), 2))",
+            &[(CannotInfer, "Two.P(")],
+        ),
+        (
+            "fn h3<U, V>(a: U, b: V, c: Two<U, V>) {}\n",
+            "let c: C? = C()\nh3(true, 1, c?.m(\"s\", None))",
+            &[(CannotInfer, "m(")],
+        ),
+    ]
+};
+
+/// A safe call has an optional value, so a plain context cannot meet it. It gets no such context
+/// unless it has a hint: it is not an argument of a bare type parameter, and not in an array or
+/// another call. A parameter is then left to be reported, as before.
+#[test]
+fn a_safe_call_that_waits_for_a_plain_context_should_get_no_context() {
+    check_partial_rows(SAFE_ROWS);
+}
+
+/// The rows of `a_waiting_call_for_a_bare_type_parameter_should_report_its_own_parameter`.
+const BARE_ROWS: &[PartialRow<'static>] = {
+    use Code::CannotInfer;
+    &[
+        (
+            "fn k2<A>() -> Two<string, A> { panic(\"e\") }\nfn ho<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "ho(true, Some(k2()))",
+            &[(CannotInfer, "k2(")],
+        ),
+        (
+            "fn k2<A>() -> Two<string, A> { panic(\"e\") }\nfn hn<U, V>(a: U, b: Two<Two<U, V>, i64>) {}\n",
+            "hn(true, Two.P(k2(), 2))",
+            &[(CannotInfer, "k2(")],
+        ),
+        (
+            "fn k2<A>() -> Two<string, A> { panic(\"e\") }\nfn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "h(true, id(k2()))",
+            &[(CannotInfer, "k2(")],
+        ),
+        (
+            "fn k3<A>() -> Two<string, A>? { panic(\"e\") }\nfn ho<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "ho(true, id(k3()))",
+            &[(CannotInfer, "k3(")],
+        ),
+        (
+            "class K { fn k4<A>(self) -> Two<string, A> { panic(\"e\") } }\nfn ho<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "let kk: K? = K()\nho(true, id(kk?.k4()))",
+            &[(CannotInfer, "k4(")],
+        ),
+        (
+            "class K { fn k4<A>(self) -> Two<string, A> { panic(\"e\") } }\nfn hno<U, V>(a: U, b: Two<Two<U, V>?, i64>) {}\n",
+            "let kk: K? = K()\nhno(true, Two.P(kk?.k4(), 2))",
+            &[(CannotInfer, "k4(")],
+        ),
+    ]
+};
+
+/// A call that waits for a bare type parameter, such as `T` of `id` or `A` of `Two.P`, has no
+/// hint. A mismatch would name a parameter that the user did not write at the call. So the call
+/// reports its own unbound parameter.
+#[test]
+fn a_waiting_call_for_a_bare_type_parameter_should_report_its_own_parameter() {
+    check_partial_rows(BARE_ROWS);
 }
 
 /// The rows of `an_expected_type_with_no_hole_should_give_no_hint`.

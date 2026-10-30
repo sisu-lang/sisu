@@ -1098,7 +1098,8 @@ impl Checker<'_> {
     /// unless it holds a call that reports its own mistake (`fit` is false), which is checked on
     /// its own, or `call_context` gives it a context: it is checked against what the call binds
     /// of `param`. A call reports a result that cannot meet the context as a mismatch with
-    /// `param`, by `context_hint`.
+    /// `param`, by `context_hint`. A bare type parameter has no hint, as the user did not write
+    /// that name at the call.
     fn infer_waiting(
         &mut self,
         call: &mut Inference,
@@ -1114,20 +1115,24 @@ impl Checker<'_> {
         }
         if !fit || param.is_none_or(|param| self.known_in(call, param).is_some()) {
             self.infer_arg(call, i, e, param, None);
-        } else if let Some(param) = param
-            // A safe call that waits reports a mismatch with `param`, which says nothing when it
-            // is a bare type parameter: the call stays unchecked, as before.
-            && let Some(context) =
-                self.call_context(call, e, param, !matches!(param.kind(), TypeKind::Param(..)))
-        {
-            // The call reports a context it cannot meet as a mismatch with this type.
+        } else if let Some(param) = param {
+            // The call reports a context it cannot meet as a mismatch with this type. A bare
+            // type parameter has no hint. The user did not write that name at the call. So a
+            // safe call under a plain context gets no context there.
             let hint = ContextHint {
                 at: e.span,
                 want: self.printed(&call.bindings, param),
                 safe: matches!(e.kind, ast::ExprKind::MethodCall { safe: true, .. }),
             };
-            let outer = self.body.context_hint.replace(hint);
-            self.infer_arg(call, i, e, Some(param), Some(context));
+            let bare = matches!(param.kind(), TypeKind::Param(..));
+            let outer = if bare {
+                self.body.context_hint
+            } else {
+                self.body.context_hint.replace(hint)
+            };
+            if let Some(context) = self.call_context(call, e, param) {
+                self.infer_arg(call, i, e, Some(param), Some(context));
+            }
             self.body.context_hint = outer;
         }
     }
@@ -1145,15 +1150,9 @@ impl Checker<'_> {
     // with `g<T>(c: Two<T, bool>, d: Result<T, string>)` reports E0050 at `mk2`. `g(mk(), mk2())`
     // with the parameters in the other order checks. To remove this, check a call again after
     // a later call binds its parameter (#217).
-    fn call_context(
-        &mut self,
-        call: &Inference,
-        e: &ast::Expr,
-        param: Type,
-        waiting: bool,
-    ) -> Option<Type> {
+    fn call_context(&mut self, call: &Inference, e: &ast::Expr, param: Type) -> Option<Type> {
         let partial = self.partial_context(call, e, param)?;
-        self.takes_context(e, partial, waiting).then_some(partial)
+        self.takes_context(e, partial).then_some(partial)
     }
 
     /// `call_context` before `takes_context`. It gives what the call binds of `param`. It gives
@@ -1179,13 +1178,13 @@ impl Checker<'_> {
     /// its parts. A call that is not generic can pass the context on to its argument (as `dbg`
     /// does), which would put the hole in a type. A safe call has an optional result, so it
     /// takes an optional context only: for a plain one, its shape is the mistake to report.
-    /// A call that waits (`waiting`) is the exception. `blame_arguments` and `report_unbound`
-    /// know it is a safe call (see `is_safe_call`), and they report the shape.
+    /// The exception is a safe call with a `ContextHint` (see `infer_waiting`). `misfit` and
+    /// `report_unbound` report its shape, and `blame_arguments` blames none of its arguments.
     ///
     /// The work is one step for each expression that the walk reaches. `inferred_array` does
     /// not walk the elements of an array literal again after this accepts it. `taken` keeps
     /// the answer for each `Some(...)`, which the call of `Some` asks for again.
-    fn takes_context(&mut self, e: &ast::Expr, context: Type, waiting: bool) -> bool {
+    fn takes_context(&mut self, e: &ast::Expr, context: Type) -> bool {
         #[cfg(test)]
         CONTEXT_STEPS.set(CONTEXT_STEPS.get() + 1);
         if context == *HOLE {
@@ -1193,7 +1192,7 @@ impl Checker<'_> {
         }
         if let ast::ExprKind::ArrayLit(elements) = &e.kind {
             return matches!(context.kind(), TypeKind::Array(element)
-                if !elements.is_empty() && elements.iter().all(|e| self.takes_context(e, element, false)));
+                if !elements.is_empty() && elements.iter().all(|e| self.takes_context(e, element)));
         }
         let safe = matches!(e.kind, ast::ExprKind::MethodCall { safe: true, .. });
         match self.call_shape(e) {
@@ -1204,14 +1203,16 @@ impl Checker<'_> {
                     return taken;
                 }
                 let taken = matches!(context.kind(), TypeKind::Optional(payload)
-                    if self.takes_context(&arg.value, payload, false));
+                    if self.takes_context(&arg.value, payload));
                 self.body.taken.insert((e.span, context), taken);
                 taken
             }
             Some((shape, _)) => {
                 shape.generic
                     && !shape.some
-                    && (waiting || !safe || matches!(context.kind(), TypeKind::Optional(_)))
+                    && (!safe
+                        || matches!(context.kind(), TypeKind::Optional(_))
+                        || self.is_safe_call(e.span))
             }
             None => false,
         }
@@ -1237,7 +1238,7 @@ impl Checker<'_> {
         let unbound = self.known_in(call, pattern).is_none();
         let context = context.or_else(|| {
             unbound
-                .then(|| self.call_context(call, e, pattern, false))
+                .then(|| self.call_context(call, e, pattern))
                 .flatten()
         });
         let checked = self.infer_value(call, e, pattern, context);
@@ -1343,7 +1344,7 @@ impl Checker<'_> {
                     let context = if accepted {
                         self.partial_context(call, e, element)
                     } else {
-                        self.call_context(call, e, element, false)
+                        self.call_context(call, e, element)
                     };
                     let checked = self.infer_unbound(call, e, element, context);
                     // Only a new binding can bind `element`.
