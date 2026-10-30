@@ -1,0 +1,8 @@
+error[E0032]: expected `Wrap<i64>`, found `i64`
+  --> E0032-assoc-late.sisu:29:25
+   |
+29 |     let r = pick(Wrap.X(5), pair(w), n)
+   |                         ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

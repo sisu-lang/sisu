@@ -1,0 +1,30 @@
+interface I {
+    type Item
+}
+
+enum Wrap<T> {
+    N
+    X(T)
+}
+
+class W<T>: I {
+    type Item = Wrap<T>
+}
+
+enum Two<A, B> {
+    P(A, B)
+}
+
+fn pair<E>(x: W<i64>) -> Two<W<i64>, E?> {
+    Two.P(x, None)
+}
+
+fn pick<T: I, U>(a: Wrap<T.Item>, b: Two<T, U>, c: U) -> Wrap<T.Item> {
+    a
+}
+
+fn main() {
+    let w: W<i64> = W()
+    let n: i64? = 1
+    let r = pick(Wrap.X(5), pair(w), n)
+}

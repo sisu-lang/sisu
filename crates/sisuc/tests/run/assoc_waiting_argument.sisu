@@ -1,0 +1,52 @@
+// GIVEN `W<T>`, a class that chooses `Wrap<T>` as its associated type `Item`; `pick`, whose
+// parameters `a: Wrap<T.Item>`, `_b: Two<T, U>` and `_c: U` write `T.Item` before `T` is bound; and
+// `second`, whose parameter `p: Two<T.Item, U>` follows a bound `T`, with `U` still unbound
+// WHEN `pick` runs on a `Wrap.X` call, a `pair` call that gets its `E` from `_c`, and an optional,
+// and `second` runs on a `W<i64>` and a `Two.P` call
+// THEN `a` waits for the `T` that `b` binds, so `pick` returns `Wrap<Wrap<i64>>` and prints 7
+// AND `p` gets its context at once, so `U` is `i64` and `second` prints 4
+interface I {
+    type Item
+}
+
+enum Wrap<T> {
+    N
+    X(T)
+}
+
+class W<T>: I {
+    type Item = Wrap<T>
+}
+
+enum Two<A, B> {
+    P(A, B)
+}
+
+fn pair<E>(x: W<i64>) -> Two<W<i64>, E?> {
+    Two.P(x, None)
+}
+
+fn pick<T: I, U>(a: Wrap<T.Item>, _b: Two<T, U>, _c: U) -> Wrap<T.Item> {
+    a
+}
+
+fn second<T: I, U>(_t: T, p: Two<T.Item, U>) -> U {
+    match p {
+        Two.P(_, u) => u
+    }
+}
+
+fn main() {
+    let w: W<i64> = W()
+    let n: i64? = 1
+    let picked = pick(Wrap.X(Wrap.X(7)), pair(w), n)
+    match picked {
+        Wrap.X(inner) => match inner {
+            Wrap.X(v) => print(v) // 7
+            Wrap.N => print(0) // not reached
+        }
+        Wrap.N => print(0) // not reached
+    }
+    let item: Wrap<i64> = Wrap.N
+    print(second(w, Two.P(item, 4))) // 4
+}

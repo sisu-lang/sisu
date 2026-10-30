@@ -567,6 +567,22 @@ impl Checker<'_> {
         }
     }
 
+    /// Whether `ty`, a parameter type of the call, writes an associated type whose base the call
+    /// has not bound yet. No argument for such a type can bind that base, so the argument waits.
+    fn assoc_unknown(&self, call: &Inference, ty: Type) -> bool {
+        if !ty.has_assoc() {
+            return false;
+        }
+        match ty.kind() {
+            TypeKind::Assoc(..) => self.known_in(call, ty).is_none(),
+            TypeKind::Array(t) | TypeKind::Optional(t) => self.assoc_unknown(call, t),
+            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+                args.get().iter().any(|&t| self.assoc_unknown(call, t))
+            }
+            _ => unreachable!("only a kind with a child can hold an associated type"),
+        }
+    }
+
     /// `bindings.partial(ty)`, with the associated types of known types replaced.
     fn partial(&self, bindings: &Bindings, ty: Type) -> Type {
         let partial = bindings.partial(ty);
@@ -745,7 +761,8 @@ impl Checker<'_> {
     /// The rank of each argument of the call: 2 for one that waits for context, 1 for one whose
     /// type comes from its literals' defaults, else 0. An argument for a type that writes an
     /// associated type through a parameter that is not bound waits for it, whatever the argument
-    /// is. `fit` is cleared where a call in an argument does not fit its declaration.
+    /// is, as `infer_waiting` says. `fit` is cleared where a call in an argument does not fit its
+    /// declaration.
     fn rank_arguments(
         &mut self,
         call: &Inference,
@@ -954,10 +971,12 @@ impl Checker<'_> {
     }
 
     /// Checks `e`, the waiting argument at `i` for `param`. It stays unchecked while `param`
-    /// names an unbound parameter, unless it holds a call that reports its own mistake (`fit`
-    /// is false), which is checked on its own, or is a generic call, which is checked against
-    /// what the call binds of `param` (see `call_context`). That call reports a result that
-    /// cannot meet the context as a mismatch with `param`, by `context_hint`.
+    /// writes an associated type that the call cannot name yet, whatever `e` is: no argument
+    /// for `param` can bind the base of that type. It stays unchecked too while `param` names an
+    /// unbound parameter, unless it holds a call that reports its own mistake (`fit` is false),
+    /// which is checked on its own, or is a generic call, which is checked against what the call
+    /// binds of `param` (see `call_context`). That call reports a result that cannot meet the
+    /// context as a mismatch with `param`, by `context_hint`.
     fn infer_waiting(
         &mut self,
         call: &mut Inference,
@@ -966,6 +985,9 @@ impl Checker<'_> {
         param: Option<Type>,
         fit: bool,
     ) {
+        if param.is_some_and(|param| self.assoc_unknown(call, param)) {
+            return;
+        }
         if !fit || param.is_none_or(|param| self.known_in(call, param).is_some()) {
             self.infer_arg(call, i, e, param, None);
         } else if let Some(param) = param

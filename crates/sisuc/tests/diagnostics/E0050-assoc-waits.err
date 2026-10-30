@@ -1,0 +1,10 @@
+error[E0050]: cannot infer `T` for `E6.A`
+  --> E0050-assoc-waits.sisu:21:13
+   |
+21 |     let g = E6.A(Wrap.X(e6))
+   |             ^^^^
+   |
+   = help: annotate the result, or write the type: `E6<...>.A(...)`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0050

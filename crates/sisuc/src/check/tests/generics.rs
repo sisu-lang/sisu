@@ -2833,3 +2833,31 @@ fn some_should_be_checked_once_a_later_waiting_call_binds_its_parameter() {
                fn main() {\n    let y = g(Some([]), mk())\n    print(y)\n}";
     assert_eq!(call_types(src, "g"), ["i64", "i64"]);
 }
+
+/// Each row writes `T.Item` in the first parameter, through an array, an optional, a class, an
+/// enum or not at all, and gives it a generic call. The second argument is a call that waits for
+/// the `U` that the third gives, and then binds `T`.
+#[test]
+fn an_argument_for_an_associated_type_should_wait_for_the_argument_that_binds_its_base() {
+    const DECLS: &str = "interface I {\n    type Item\n}\n\
+        enum Wrap<T> {\n    N\n    X(T)\n}\n\
+        class Box<T> {\n    value: T\n}\n\
+        class W<T>: I {\n    type Item = Wrap<T>\n}\n\
+        enum Two<A, B> {\n    P(A, B)\n}\n\
+        fn pair<E>(x: W<i64>) -> Two<W<i64>, E?> { Two.P(x, None) }\n\
+        fn id<X>(x: X) -> X { x }\n";
+    for (param, arg) in [
+        ("T.Item", "id(item)"),
+        ("[T.Item]", "id([item])"),
+        ("T.Item?", "id(some)"),
+        ("Box<T.Item>", "Box(value: item)"),
+        ("Wrap<T.Item>", "Wrap.X(item)"),
+    ] {
+        let src = format!(
+            "{DECLS}fn f<T: I, U>(_a: {param}, _b: Two<T, U>, _c: U) {{}}\n\
+             fn main() {{\n    let w: W<i64> = W()\n    let item: Wrap<i64> = Wrap.N\n    \
+             let some: Wrap<i64>? = None\n    let n: i64? = 1\n    f({arg}, pair(w), n)\n}}"
+        );
+        clean_row(param, &src);
+    }
+}
