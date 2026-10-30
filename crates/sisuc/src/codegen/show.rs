@@ -522,7 +522,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.retain(receiver, ty);
         }
         let text = self
-            .call_value(method, &[receiver.into()])
+            .call_written(method, &[receiver.into()])
             .expect("a written `to_string` should return a `string`")
             .into_pointer_value();
         self.show_call(

@@ -433,7 +433,7 @@ impl Checker<'_> {
     pub(super) fn too_wide_assoc(&mut self, ty: Type, at: Span) {
         self.body.wide_assoc.insert(ty);
         if self.wide_reported.insert(at) {
-            let text = self.source.file.text(at);
+            let text = self.source.text(at);
             self.report(DiagnosticKind::BoundTooWide {
                 kind: WideKind::Bound,
                 written: format!("{}: {text}", self.type_name(ty)),

@@ -248,10 +248,9 @@ impl Checker<'_> {
         }
         let wrap = !postfix(&first.value);
         let (open, close) = if wrap { ("(", ")") } else { ("", "") };
-        let text = self.source.file.slice(receiver.range());
+        let text = self.source.slice(receiver.range());
         let tail = rest.last().map_or("", |last| {
             self.source
-                .file
                 .slice(rest[0].value.span.start()..last.value.span.end())
         });
         Some(MathFix::Method {

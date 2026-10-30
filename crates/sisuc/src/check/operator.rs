@@ -706,7 +706,7 @@ impl Checker<'_> {
             // Peeling a layer helps only when an object is under the rest.
             if extra > 0 {
                 let text = |e: &ast::Expr, extra: usize| {
-                    let mut text = self.source.file.text(e.span).to_string();
+                    let mut text = self.source.text(e.span).to_string();
                     for _ in 0..extra {
                         text = format!("({text} ?? None)");
                     }

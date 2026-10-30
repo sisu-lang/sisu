@@ -489,6 +489,12 @@ fn dbg_should_give_a_call_the_diagnostics_of_its_argument() {
         ("[T]", "[[]]", "[[dbg([])]]"),
         ("[T]", "[[], []]", "[dbg([]), dbg([])]"),
         ("[T]", "[[]]", "[dbg(dbg([]))]"),
+        ("[T]", "[[], 1]", "[dbg([]), dbg(1)]"),
+        ("[T]", "[1, []]", "[dbg(1), dbg([])]"),
+        ("[T]", "[[], 1]", "[dbg([]), 1]"),
+        ("[T?]", "[None, 1]", "[dbg(None), dbg(1)]"),
+        ("[T]", "[1, None]", "[dbg(1), dbg(None)]"),
+        ("[T]", "[1, \"s\"]", "[dbg(1), \"s\"]"),
         ("[[T]]", "[[]]", "dbg([[]])"),
         ("T?", "None", "dbg(None)"),
         ("T?", "Some(None)", "dbg(Some(None))"),
@@ -512,6 +518,88 @@ fn dbg_should_give_a_call_the_diagnostics_of_its_argument() {
         let (plain_found, _) = program(plain);
         let (found, src) = program(through_dbg);
         assert_eq!(found, plain_found, "row `{param}`, `{through_dbg}`: {src}");
+    }
+}
+
+/// `dbg(e)` passes its expected type to `e`, so it has the order of `e` among the elements of an
+/// array literal, the branches of an `if` and the operands of `==`. A `dbg([])` is then checked
+/// last, with the type of the others, and gives the diagnostics of `[]`: one error for a literal
+/// of empty arrays, and a mismatch beside another type. Each diagnostic is its code and its
+/// line, as the columns of the two programs differ by the width of `dbg(`.
+#[test]
+fn dbg_should_have_the_order_of_its_argument() {
+    with_prelude();
+    for (plain, through_dbg) in [
+        ("let a = [[], []]", "let a = [dbg([]), dbg([])]"),
+        ("let a = [[], []]", "let a = [dbg(dbg([])), dbg([])]"),
+        ("let a = [None, None]", "let a = [dbg(None), dbg(None)]"),
+        ("let a = [1, None]", "let a = [dbg(1), dbg(None)]"),
+        ("let a = [None, 1]", "let a = [dbg(None), dbg(1)]"),
+        ("let a = [[], 1]", "let a = [dbg([]), dbg(1)]"),
+        ("let a = []", "let a = dbg(dbg([]))"),
+        ("let a: [i64] = []", "let a: [i64] = dbg([])"),
+        (
+            "let a: [[i64]] = [[], [1]]",
+            "let a: [[i64]] = [dbg([]), dbg([1])]",
+        ),
+        (
+            "let a = if true { None } else { 1 }",
+            "let a = if true { dbg(None) } else { 1 }",
+        ),
+        (
+            "let a = if true { 1 } else { None }",
+            "let a = if true { 1 } else { dbg(None) }",
+        ),
+        (
+            "let a = if true { [] } else { 1 }",
+            "let a = if true { dbg([]) } else { 1 }",
+        ),
+        (
+            "let x: i64? = None\n    let a = None == x",
+            "let x: i64? = None\n    let a = dbg(None) == x",
+        ),
+        (
+            "let x: i64? = None\n    let a = x == None",
+            "let x: i64? = None\n    let a = x == dbg(None)",
+        ),
+        (
+            "let x: [i64] = [1]\n    let a = [] == x",
+            "let x: [i64] = [1]\n    let a = dbg([]) == x",
+        ),
+        ("let a = None == []", "let a = dbg(None) == dbg([])"),
+    ] {
+        let program = |statement: &str| {
+            let src = format!("fn main() {{\n    {statement}\n    print(a)\n}}");
+            let found: Vec<_> = diags(&src)
+                .iter()
+                .map(|d| (d.code(), at(&src, d.span()).0))
+                .collect();
+            (found, src)
+        };
+        let (plain_found, _) = program(plain);
+        let (found, src) = program(through_dbg);
+        assert_eq!(found, plain_found, "row `{through_dbg}`: {src}");
+    }
+}
+
+/// A call of `dbg` with a label, a type argument or another count of arguments than one is no
+/// `dbg(x)`, so it keeps the order of a call: its `[]` is checked first, with no expected type,
+/// and gives its own error beside the one of the call.
+#[test]
+fn dbg_of_another_shape_should_keep_the_order_of_a_call() {
+    with_prelude();
+    for (statement, expected) in [
+        (
+            "let _ = [dbg(x: []), 1]",
+            &[Code::LabeledArgument, Code::CannotInfer][..],
+        ),
+        ("let _ = [dbg([], 1), 1]", &[Code::PrintArgument][..]),
+        ("let _ = [dbg(), 1]", &[Code::PrintArgument][..]),
+        ("let _ = [dbg<i64>(1), 1]", &[Code::TypeArguments][..]),
+    ] {
+        let src = body("", statement);
+        let found: Vec<_> = diags(&src).iter().map(Diagnostic::code).collect();
+        assert_eq!(found, expected, "row `{statement}`: {src}");
     }
 }
 
@@ -602,6 +690,41 @@ fn dbg_should_lower_to_a_node_with_the_source_text() {
         "fn f(x: i64) -> i64 {\n    x\n}\nfn main() {\n    let y = dbg(f(1 +   2)) + 1\n    print(y)\n}",
         &["(dbg \"f(1 +   2)\" (call f (+ 1 2)))"],
     );
+}
+
+/// A `dbg` in a function of the prelude holds the text of its argument, which the checker reads
+/// from the prelude's text and not from the user's file: a span of the prelude lies outside the
+/// user's text. The program calls the function, which a prelude with a method, a free function, a
+/// class method, or a string literal in the body gives.
+#[test]
+fn dbg_in_a_prelude_function_should_hold_the_text_of_its_argument() {
+    for (prelude, main, part) in [
+        (
+            "extend i64 {\n    fn probe(self) -> i64 {\n        dbg(self)\n        self\n    }\n}\n",
+            "fn main() {\n    print(5.probe())\n}",
+            "(dbg \"self\"",
+        ),
+        (
+            "fn probe(n: i64) -> i64 {\n    dbg(n +   1)\n    n\n}\n",
+            "fn main() {\n    print(probe(5))\n}",
+            "(dbg \"n +   1\"",
+        ),
+        (
+            "class Probe {\n    n: i64\n    fn probe(self) -> i64 {\n        dbg(self.n)\n        self.n\n    }\n}\n",
+            "fn main() {\n    print(Probe(n: 5).probe())\n}",
+            "(dbg \"self.n\"",
+        ),
+        (
+            "fn probe() -> string {\n    dbg(\"text\")\n}\n",
+            "fn main() {\n    print(probe())\n}",
+            "(dbg \"\\\"text\\\"\"",
+        ),
+    ] {
+        let (program, ds) = front_end::checked_with(prelude, main);
+        assert!(ds.is_empty(), "{prelude}: {ds:?}");
+        let printed = program.expect("no errors").to_string();
+        assert!(printed.contains(part), "{part} in {printed}");
+    }
 }
 
 /// `dbg(e)` has the type of `e`, checked against the expected type as `e` alone is, and gives no
@@ -738,5 +861,38 @@ fn prelude_should_check_clean_beside_a_user_item_of_any_name_it_uses() {
         ] {
             front_end::checked(&format!("{item}\nfn main() {{}}"));
         }
+    }
+}
+
+/// A diagnostic about a `match` in the prelude reads the text around the arms, with offsets
+/// that start at `PRELUDE_BASE`. The check then stops with an internal error, as for every
+/// diagnostic in the prelude, and does not panic on a slice of the user's text.
+#[test]
+fn match_in_the_prelude_should_give_an_internal_error_when_it_is_wrong() {
+    for (row, prelude) in [
+        (
+            "an unreachable arm",
+            "fn probe(n: bool) -> i64 {\n    match n {\n        true => 1\n        false => 2\n        true => 3\n    }\n}\n",
+        ),
+        (
+            "a missing case",
+            "fn probe(n: bool) -> i64 { match n { true => 1 } }\n",
+        ),
+        (
+            "a missing case on its own lines",
+            "fn probe(n: bool) -> i64 {\n    match n {\n        true => 1\n    }\n}\n",
+        ),
+    ] {
+        let caught = std::panic::catch_unwind(|| front_end::checked_with(prelude, "fn main() {}"));
+        let message = caught.expect_err(row);
+        let message = message
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| message.downcast_ref::<&str>().copied())
+            .unwrap_or_default();
+        assert!(
+            message.starts_with("internal compiler error: the prelude does not check clean"),
+            "{row}: {message}"
+        );
     }
 }

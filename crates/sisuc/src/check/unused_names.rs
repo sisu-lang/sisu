@@ -152,9 +152,28 @@ struct Slots {
 }
 
 impl Checker<'_> {
+    /// When `of_prelude` holds and `at` lies in the user's file, the user's file reaches an item
+    /// of the prelude, which `mono` roots only for such a program: it needs that item in the
+    /// program (see `tir::Program::instantiates`).
+    pub(super) fn reaches_prelude(&mut self, of_prelude: bool, at: Span) {
+        if of_prelude && !at.in_prelude() {
+            self.instantiates = true;
+        }
+    }
+
     /// Records a use of `to` at `at` by the body being checked, when that is a function's, a
     /// method's or a constant's.
+    ///
+    /// A use from the user's file of a function, a class or an enum variant of the prelude
+    /// needs that item in the program (see `reaches_prelude`).
     pub(super) fn record(&mut self, to: Used, at: Span) {
+        let of_prelude = match to {
+            Used::Func(func) => func.0 >= self.prelude.funcs,
+            Used::Class(class) => class.0 >= self.prelude.classes,
+            Used::Variant(id, _) => id.0 >= self.prelude.enums,
+            Used::Field(..) | Used::Const(_) | Used::Interface(_) => false,
+        };
+        self.reaches_prelude(of_prelude, at);
         if let Some(from) = self.body.owner {
             self.uses.push(Use { from, to, at });
         }
@@ -607,6 +626,6 @@ impl Checker<'_> {
 
     /// The source text at `span`.
     fn text(&self, span: Span) -> &str {
-        self.source.file.text(span)
+        self.source.text(span)
     }
 }
