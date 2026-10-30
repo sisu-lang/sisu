@@ -2285,8 +2285,17 @@ fn unproved_through_some() -> [Optionals; 8] {
 
 /// The rows where a statement between the test and the write, or before an unproved write,
 /// leaves it unproved: it may change an optional, or it proves nothing of this path.
-fn unproved_by_statements() -> [Optionals; 5] {
+fn unproved_by_statements() -> [Optionals; 6] {
     [
+        (
+            // The first write would stop the walk of the second, and has no proof itself.
+            "make_unique of the path with no test, then a push",
+            |b, xs, ys| {
+                let stmts = vec![Statement::MakeUnique(some(xs)), push_one(some(xs))];
+                b.block(released(stmts, &[xs, ys]), ret());
+            },
+            Some(0),
+        ),
         (
             "make_unique of another place, with no test",
             |b, xs, ys| {
@@ -2650,12 +2659,13 @@ fn index(index: Operand, at: usize) -> Projection {
     }
 }
 
-/// `n` writes to one path behind a chain of two present edges, all in one block, as a long
-/// `push` run does: a walk that scans back to the chain's start for each write is quadratic.
-/// The reads grow near linearly with `n`.
+/// `n` writes behind a chain of proofs, all in one block, as a long `push` run does: a walk
+/// that scans back to the chain's start for each write is quadratic. Both inputs read near
+/// linearly with `n`: `n` writes to one path behind two present edges, and `n` writes to
+/// `n` different elements of an array behind one test.
 #[test]
 fn proof_walk_should_read_linearly() {
-    let reads = |n: usize| {
+    let one_path = |n: usize| {
         let mut b = Builder::new("f");
         let c = b.param("c", Type::optional(object()));
         b.block(vec![], test(whole(c), 1, 3));
@@ -2666,12 +2676,37 @@ fn proof_walk_should_read_linearly() {
         stmts.extend([push_one(some_items_some(c)), Statement::Release(c)]);
         b.block(stmts, ret());
         b.block(released(vec![], &[c]), ret());
-        let f = b.finish();
-        READS.set(0);
-        assert_eq!(certify(&f), Ok(()));
-        READS.get()
+        b.finish()
     };
-    assert_near_linear(reads(100), reads(200), reads(300));
+    let elements = |n: usize| {
+        let mut b = Builder::new("f");
+        let xs = b.param("xs", Type::optional(Type::array(Type::array(Type::I64))));
+        b.block(vec![], test(whole(xs), 1, 2));
+        let mut stmts: Vec<Statement> = (0..n)
+            .map(|k| {
+                let at = i64::try_from(k).expect("a count should fit");
+                let element = Projection::Index {
+                    index: Operand::Const(Const::Int(at, Type::I64)),
+                    span: Span::new(0, 0),
+                };
+                Statement::MakeUnique(path(xs, vec![Projection::Some, element]))
+            })
+            .collect();
+        stmts.push(Statement::Release(xs));
+        b.block(stmts, ret());
+        b.block(released(vec![], &[xs]), ret());
+        b.finish()
+    };
+    let builds: [&dyn Fn(usize) -> Function; 2] = [&one_path, &elements];
+    for build in builds {
+        let reads = |n: usize| {
+            let f = build(n);
+            READS.set(0);
+            assert_eq!(certify(&f), Ok(()));
+            READS.get()
+        };
+        assert_near_linear(reads(100), reads(200), reads(300));
+    }
 }
 
 /// A field `push` through `Some` on a borrowed `C?` writes the object both name, as one on a

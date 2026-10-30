@@ -931,19 +931,6 @@ fn same_projections(a: &[Projection], b: &[Projection]) -> bool {
         })
 }
 
-/// Whether `a` and `b` name one storage path: the same local and projections.
-fn same_path(a: &Place, b: &Place) -> bool {
-    a.local == b.local && same_projections(&a.projections, &b.projections)
-}
-
-/// Whether an index operand in `projections` reads `local`, at any depth.
-fn index_reads(projections: &[Projection], local: LocalId) -> bool {
-    projections.iter().any(|projection| {
-        matches!(projection, Projection::Index { index, .. }
-            if operand_place(index).is_some_and(|(read, inner)| read == local || index_reads(inner, local)))
-    })
-}
-
 /// Whether `stmt` cannot change whether the optionals of `write`'s path hold a value, so a chain
 /// of proofs runs through it. A `check` only panics. A `make_unique` copies a shared block and
 /// changes no value; its own `Some`s have their own proofs. An assignment of a copy or a use
@@ -954,7 +941,7 @@ fn keeps_proofs(stmt: &Statement, write: &Place) -> bool {
         Statement::Assign {
             dest: Some(dest),
             value: Rvalue::Use(_) | Rvalue::Copy(_),
-        } => *dest != write.local && !index_reads(&write.projections, *dest),
+        } => *dest != write.local && !indexed_by(write, *dest),
         _ => false,
     }
 }
@@ -963,8 +950,9 @@ fn keeps_proofs(stmt: &Statement, write: &Place) -> bool {
 /// for each `Some` of its path. The last `Some` is proved by a test of its prefix on the one
 /// edge into the block, the one before it by a test on the one edge into that test's block, and
 /// so on. Each block between a proof and the write holds only statements that `keeps_proofs`
-/// names: a join, a call or any other statement may change an optional. A `make_unique` of the
-/// path stops the walk, as it proved the same chain.
+/// names: a join, a call or any other statement may change an optional. A `make_unique` that
+/// matches the write up to its last `Some` stops the walk: it has its own proof of each of
+/// those `Some`s, and the walk has checked every statement after it.
 fn proves(
     function: &Function,
     entries: &[(usize, usize)],
@@ -972,6 +960,11 @@ fn proves(
     at: usize,
     write: &Place,
 ) -> bool {
+    let last = write
+        .projections
+        .iter()
+        .rposition(|projection| *projection == Projection::Some)
+        .expect("a write with a proof to check should hold a `Some`");
     let levels = (0..write.projections.len())
         .rev()
         .filter(|&k| write.projections[k] == Projection::Some);
@@ -981,7 +974,16 @@ fn proves(
         for stmt in function.blocks[block].stmts[..end].iter().rev() {
             count(1);
             match stmt {
-                Statement::MakeUnique(place) if same_path(place, write) => return true,
+                Statement::MakeUnique(place)
+                    if place.local == write.local
+                        && place.projections.len() > last
+                        && same_projections(
+                            &place.projections[..=last],
+                            &write.projections[..=last],
+                        ) =>
+                {
+                    return true;
+                }
                 stmt if keeps_proofs(stmt, write) => {}
                 _ => return false,
             }
@@ -1007,7 +1009,8 @@ fn proves(
 
 /// Checks the proof of every `push` and `make_unique` through `Some` in the reachable blocks,
 /// and reports the first that has none. The walks cost the statements and the path lengths of
-/// the writes: a `make_unique` of a path stops the walks of the writes after it.
+/// the writes: a `make_unique` that matches a write up to its last `Some` stops the walk of
+/// that write.
 fn proved(function: &Function, tree: &Tree) -> Result<(), Violation> {
     // The number of edges into each block, and the block the last one comes from.
     let mut entries = vec![(0, NONE); function.blocks.len()];
