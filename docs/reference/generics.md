@@ -304,7 +304,7 @@ The rules:
 - In the body, a value of type `T` can do what its bounds give it. These are the methods of the interfaces and the operators that they map to.
 - `Eq` gives `==` and `!=`. `Ord` gives `<`, `<=`, `>` and `>=`. An array, an optional or an enum of `T` has `==` when `T` has `Eq`. A call of `a.eq(b)` or `a.less(b)` on a `T` works the same way.
 - Anything else is an error where the body is written. The help suggests the bound that is missing.
-- A type argument that does not conform to a bound is an error at the call.
+- A type argument that does not conform to a bound is an error at the call. The call reports it once. The arguments after it are not checked against the type that failed, so they add no error for it.
 - Every type parameter can print, with no bound. `print(x)`, `"{x}"` and `x.to_string()` work on a `T`.
 - Every class conforms to `AnyObject`. So does an `any` value of a class-only interface (next rule). Nothing else does. `T: AnyObject` lets the body use `is` on values of type `T`, and lets a class declare a [weak field](values.md#weak-fields) of type `T?`. An associated type with the bound `AnyObject` (`type Item: AnyObject`) allows `is` on values of type `T.Item` in the same way.
 - An interface that inherits `AnyObject` is class-only. Its `any` values support `is` too, and a class can hold one in a weak field.

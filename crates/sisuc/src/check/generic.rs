@@ -22,11 +22,11 @@ use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{Type, TypeArgs, TypeKind};
-use crate::types::HOLE_INDEX;
+use crate::types::{HOLE_INDEX, REJECTED_INDEX};
 
 /// Whether `ty` is `want`, where a hole of `want` meets any part of `ty`.
 fn meets(ty: Type, want: Type) -> bool {
-    if ty == want || want == *HOLE {
+    if ty == want || is_hole(want) {
         return true;
     }
     if !want.holds_hole() {
@@ -234,9 +234,24 @@ struct CallShape {
 /// The hole, `_`: the type of a part that a context has not fixed yet (see `Bindings::partial`).
 /// No declaration has a parameter of this name, and its index (`HOLE_INDEX`) is out of range for
 /// `found`, so a hole that leaks into `known` or `subst` panics at once and does not give a
-/// wrong type.
+/// wrong type. `found` never holds it: `bind` keeps it out.
 static HOLE: LazyLock<Type> =
     LazyLock::new(|| Type::intern(TypeKind::Param(Symbol::intern("_"), HOLE_INDEX)));
+
+/// The rejected hole, `_`: the type of a part of a context that a failed bound has rejected. It
+/// is a hole too, but it says why the part is not fixed: the outer call reported the bound, so a
+/// call that meets it in its own context reports nothing for that part (see `Bindings::bind`).
+/// Its index (`REJECTED_INDEX`) is out of range for `found`, as the index of `HOLE` is. `found`
+/// holds it for one reason only: a parameter that is rejected (see `Bindings::reject`). A call
+/// that has a rejected parameter fails, and does not use its list of types (see
+/// `Bindings::finish`).
+static REJECTED: LazyLock<Type> =
+    LazyLock::new(|| Type::intern(TypeKind::Param(Symbol::intern("_"), REJECTED_INDEX)));
+
+/// Whether `ty` is a whole hole: `HOLE` or `REJECTED`, not a type that holds one.
+fn is_hole(ty: Type) -> bool {
+    ty == *HOLE || ty == *REJECTED
+}
 
 /// What `Bindings::resolve` puts for a parameter that is unbound.
 #[derive(Clone, Copy)]
@@ -250,7 +265,9 @@ enum Unbound {
 }
 
 /// A callee's type parameters as a call binds them: `found[i]` is parameter `i`'s type once
-/// the receiver, an argument or the expected type fixes it.
+/// the receiver, an argument or the expected type fixes it. A parameter whose bound failed is
+/// rejected: `found[i]` is `REJECTED`, which no argument replaces. The rest of the call meets
+/// such a parameter as one that is unbound and that nothing binds.
 pub(super) struct Bindings {
     found: Vec<Option<Type>>,
     /// The parameters the last `unify` or `constrain` bound: the only ones whose types need
@@ -302,10 +319,15 @@ impl Bindings {
     }
 
     /// Binds each unbound parameter `pattern` names where it meets `value`, recording it in
-    /// `fresh`; whether all of `pattern` meets it. Only the hole itself meets any part of
-    /// `pattern`, and binds nothing: the context has not fixed it. A parameter of `pattern` also
-    /// meets a part that holds a hole, and binds nothing. The rest of `pattern` must meet the
-    /// structure of `value`, as it does when `value` has no hole.
+    /// `fresh`; whether all of `pattern` meets it. `HOLE` meets any part of `pattern`, and binds
+    /// nothing: the context has not fixed it. A parameter of `pattern` also meets a part that
+    /// holds a hole, and binds nothing. The rest of `pattern` must meet the structure of `value`,
+    /// as it does when `value` has no hole.
+    ///
+    /// `REJECTED` meets any part of `pattern` too, and rejects each parameter that part names: a
+    /// parameter that meets it is bound to `REJECTED`, as an argument would bind a type, so that
+    /// `unify` undoes it when the rest fails. A parameter that is rejected meets every type and
+    /// binds nothing.
     fn bind(&mut self, pattern: Type, value: Type) -> bool {
         if !pattern.has_param() && !value.holds_hole() {
             return pattern == value;
@@ -313,16 +335,32 @@ impl Bindings {
         match (pattern.kind(), value.kind()) {
             _ if value == *HOLE => true,
             (TypeKind::Param(_, i), _) => {
-                if value.holds_hole() {
+                if value.holds_hole() && value != *REJECTED {
                     return true;
                 }
                 let i = i as usize;
                 if let Some(bound) = self.found[i] {
-                    return bound == value;
+                    return bound == value || bound == *REJECTED || value == *REJECTED;
                 }
                 self.found[i] = Some(value);
                 self.fresh.push(i);
                 self.kept += 1;
+                true
+            }
+            // The pattern is not a parameter: each parameter in it is rejected, as it is where
+            // the pattern is a parameter.
+            _ if value == *REJECTED => {
+                match pattern.kind() {
+                    TypeKind::Array(p) | TypeKind::Optional(p) => {
+                        self.bind(p, value);
+                    }
+                    TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+                        for &p in args.get() {
+                            self.bind(p, value);
+                        }
+                    }
+                    _ => {}
+                }
                 true
             }
             (TypeKind::Array(p), TypeKind::Array(v))
@@ -341,17 +379,24 @@ impl Bindings {
     }
 
     /// Records, for each parameter that `pattern` names, the part of `value`, a context that
-    /// holds a hole, which lies at its place in `pattern`. The first part found stays.
-    /// Binds nothing, as `bind` keeps a hole out of `found`. `partial` gives the part in place
-    /// of a bare hole, so an argument that waits for the parameter gets more context.
+    /// holds a hole, which lies at its place in `pattern`. The first part found stays, but a part
+    /// that holds `REJECTED` and no `HOLE` replaces it. A whole hole is no part to record. Binds
+    /// nothing. `partial` gives the part in place of an unbound parameter's hole, so an argument
+    /// that waits for the parameter gets more context. A part that holds `REJECTED` and no `HOLE`
+    /// tells the call that the context would have bound the parameter if the outer bound had held,
+    /// so the call does not report the parameter (see `first_unbound_not_rejected`). An argument
+    /// can still bind it.
     fn hint(&mut self, pattern: Type, value: Type) {
-        if !pattern.has_param() || !value.holds_hole() || value == *HOLE {
+        if !pattern.has_param() || !value.holds_hole() || is_hole(value) {
             return;
         }
         match (pattern.kind(), value.kind()) {
             (TypeKind::Param(_, i), _) => {
                 self.hints.resize(self.found.len(), None);
-                self.hints[i as usize].get_or_insert(value);
+                let hint = &mut self.hints[i as usize];
+                if hint.is_none() || value.holds_rejected_hole_only() {
+                    *hint = Some(value);
+                }
             }
             (TypeKind::Array(p), TypeKind::Array(v))
             | (TypeKind::Optional(p), TypeKind::Optional(v)) => self.hint(p, v),
@@ -369,34 +414,71 @@ impl Bindings {
         }
     }
 
+    /// Rejects parameter `i`, whose bound failed. It is bound to `REJECTED`, so that no argument
+    /// binds it again and it meets every type. `known` and `printed` treat it as unbound, and
+    /// `partial` gives `REJECTED` for it, so a call in an argument that waits for it knows that
+    /// the fault is reported. No argument waits for it (see `waits_for_assoc`). Without this,
+    /// each later argument would be checked against the type that the bound rejected.
+    fn reject(&mut self, i: usize) {
+        debug_assert!(
+            self.found[i].is_some(),
+            "a parameter should be bound before its bound fails"
+        );
+        self.found[i] = Some(*REJECTED);
+    }
+
+    /// The first parameter that `ty`, a callee's, names and that is unbound or rejected, which
+    /// `known` has no type for. `None` when `ty` names none.
+    fn unknown_param(&self, ty: Type) -> Option<usize> {
+        if !ty.has_param() {
+            return None;
+        }
+        match ty.kind() {
+            TypeKind::Param(_, i) => match self.found[i as usize] {
+                Some(bound) if bound != *REJECTED => None,
+                _ => Some(i as usize),
+            },
+            TypeKind::Array(inner) | TypeKind::Optional(inner) => self.unknown_param(inner),
+            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+                args.get().iter().find_map(|&arg| self.unknown_param(arg))
+            }
+            TypeKind::Assoc(base, _, args, _) => self
+                .unknown_param(base)
+                .or_else(|| args.get().iter().find_map(|&arg| self.unknown_param(arg))),
+            _ => unreachable!("only a kind with a child can name a parameter"),
+        }
+    }
+
     /// `bind` for each pair, every one of them tried.
     fn bind_all(&mut self, patterns: TypeArgs, values: TypeArgs) -> bool {
         iter::zip(patterns.get(), values.get()).fold(true, |all, (&p, &v)| self.bind(p, v) && all)
     }
 
     /// `ty`, a callee's, with its parameters' bindings in their place; `None` while it names
-    /// one that is unbound.
+    /// one that is unbound or rejected.
     pub(super) fn known(&self, ty: Type) -> Option<Type> {
         self.resolve(ty, Unbound::Fail)
     }
 
-    /// As `known`, with a hole for each unbound parameter, so it always gives a type: the
-    /// context that a call gives to an argument that waits for it. A hole must not reach
-    /// `found`, which `bind` keeps out.
+    /// As `known`, with a hole for each parameter that is not known, so it always gives a type:
+    /// the context that a call gives to an argument that waits for it. An unbound parameter gives
+    /// its hint, else `HOLE`; a rejected one gives `REJECTED`. `bind` and `reject` put only
+    /// `REJECTED` in `found`.
     fn partial(&self, ty: Type) -> Type {
         self.resolve(ty, Unbound::Hole)
             .expect("a hole should stand for each unbound parameter")
     }
 
-    /// As `known`, with each unbound parameter by the callee's name, so it always gives a type.
-    /// For a diagnostic: a repeated name shows that two places must be one type.
+    /// As `known`, with each unbound or rejected parameter by the callee's name, so it always
+    /// gives a type. For a diagnostic: a repeated name shows that two places must be one type.
     fn printed(&self, ty: Type) -> Type {
         self.resolve(ty, Unbound::Keep)
             .expect("a parameter should stand for itself while it is unbound")
     }
 
     /// The walk of `known`, `partial` and `printed`: `unbound` says what an unbound parameter
-    /// becomes.
+    /// becomes. A rejected parameter, which `found` binds to `REJECTED`, is unbound here, but
+    /// `partial` keeps `REJECTED` for it. An associated type whose base is rejected is rejected.
     fn resolve(&self, ty: Type, unbound: Unbound) -> Option<Type> {
         #[cfg(test)]
         if !matches!(unbound, Unbound::Keep) {
@@ -407,15 +489,16 @@ impl Bindings {
         }
         Some(match ty.kind() {
             TypeKind::Param(_, i) => match (self.found[i as usize], unbound) {
-                (Some(bound), _) => bound,
-                (None, Unbound::Fail) => return None,
-                (None, Unbound::Hole) => self
+                (Some(bound), _) if bound != *REJECTED => bound,
+                (Some(rejected), Unbound::Hole) => rejected,
+                (_, Unbound::Fail) => return None,
+                (_, Unbound::Hole) => self
                     .hints
                     .get(i as usize)
                     .copied()
                     .flatten()
                     .unwrap_or(*HOLE),
-                (None, Unbound::Keep) => ty,
+                (_, Unbound::Keep) => ty,
             },
             TypeKind::Array(element) => Type::array(self.resolve(element, unbound)?),
             TypeKind::Optional(payload) => Type::optional(self.resolve(payload, unbound)?),
@@ -427,9 +510,10 @@ impl Bindings {
             }
             TypeKind::Assoc(base, interface, args, k) => {
                 let base = self.resolve(base, unbound)?;
-                // A hole stands for the whole type, which its base fixes.
+                // A hole stands for the whole type, which its base fixes. A rejected base
+                // rejects it.
                 if base.holds_hole() {
-                    return Some(*HOLE);
+                    return Some(if base == *REJECTED { base } else { *HOLE });
                 }
                 let args = self.resolve_all(args, unbound)?;
                 Type::intern(TypeKind::Assoc(base, interface, args, k))
@@ -447,7 +531,26 @@ impl Bindings {
         list.map(|list| TypeArgs::intern(&list))
     }
 
-    /// Every parameter's binding; `Err` holds the first unbound one's index.
+    /// The first parameter from `from` on that is unbound and that is not rejected-only: its
+    /// hint holds no `REJECTED`, or holds `HOLE` as well. A parameter whose hint holds
+    /// `REJECTED` and no `HOLE` would have been bound had the outer bound held, so the call
+    /// reports nothing for it. It reads one flag of each hint, so it costs nothing to the call
+    /// that binds every parameter: only the error path runs it.
+    fn first_unbound_not_rejected(&self, from: usize) -> Option<usize> {
+        (from..self.found.len()).find(|&i| {
+            self.found[i].is_none()
+                && !self
+                    .hints
+                    .get(i)
+                    .copied()
+                    .flatten()
+                    .is_some_and(Type::holds_rejected_hole_only)
+        })
+    }
+
+    /// Every parameter's binding; `Err` holds the first unbound one's index. A rejected parameter
+    /// is bound, to `REJECTED`: the list holds it, and only a call that has failed may have one,
+    /// so no call uses that list.
     pub(super) fn finish(&self) -> Result<TypeArgs, usize> {
         let list = self
             .found
@@ -473,6 +576,11 @@ thread_local! {
     /// How many types the walk for the type parameters that types name has visited on this
     /// thread.
     pub(super) static MARKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many entries of the substitution lists of early bound checks have been written on this
+    /// thread.
+    pub(super) static LISTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many due bounds `check_early` has looked at on this thread.
+    pub(super) static EXAMINED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many lookups of `body.ahead` have found an entry on this thread.
     pub(super) static INSPECTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many expressions `takes_context` has looked at on this thread.
@@ -494,7 +602,8 @@ pub(super) struct GenericSig<'a> {
     pub(super) params: &'a [Option<Type>],
     pub(super) ret: Option<Type>,
     /// The bounds of the parameters after the receiver's, in order; a parameter past the end has
-    /// none. The call checks them once it has inferred the arguments.
+    /// none. The call checks each as soon as its parameter is bound, and at no other time (see
+    /// `Early`).
     pub(super) bounds: &'a [Vec<Bound>],
 }
 
@@ -521,85 +630,74 @@ pub(super) struct ContextHint {
 }
 
 /// A generic call while its arguments bind its callee's parameters.
-struct Inference {
+struct Inference<'s> {
     bindings: Bindings,
     /// Each argument once checked, in source order.
     slots: Vec<Option<Checked>>,
     /// The arguments of type `unit` or `never`, which bind only what no other argument does.
     last: Vec<(usize, Type)>,
-    /// Whether a parameter was bound to a type that no parameter takes.
+    /// Whether a parameter was bound to a type that no parameter takes, or its bound failed: the
+    /// call reported it.
     failed: bool,
+    /// Whether the context rejected a parameter (see `REJECTED`). The call fails, but the outer
+    /// call reported the bound, so this one reports nothing for that parameter. It still reports
+    /// a parameter that the context leaves unbound. The field stays false for a parameter whose
+    /// hint holds a rejected part only: `infer_call` does not set it, and it skips the E0050 of
+    /// that parameter (see `Bindings::first_unbound_not_rejected`).
+    rejected: bool,
     /// Where each parameter was bound: the argument, or the type argument written for it.
     origin: Vec<Option<Span>>,
-    /// The bounds that the call checks as soon as a parameter is bound, when its parameter
-    /// types write an associated type through some parameter.
-    early: Option<Early>,
+    /// The bounds that the call checks as soon as a parameter is bound; none when the callee has
+    /// no bound and no parameter type writes an associated type.
+    early: Option<Early<'s>>,
 }
 
-impl Inference {
-    /// Whether a bound failed that the call checks early. The call fails, and no argument is
-    /// checked against a type that names an associated type of the parameter it bound: the
-    /// type does not exist.
-    fn bound_failed(&self) -> bool {
-        self.early
-            .as_ref()
-            .is_some_and(|early| early.failed.contains(&true))
-    }
-
-    /// Whether `pattern` names a parameter whose early bound failed. A type built from such a
-    /// parameter asks for the type that the bound rejected.
-    fn names_failed(&self, pattern: Type) -> bool {
-        let Some(early) = &self.early else {
-            return false;
-        };
-        let mut named = vec![false; early.failed.len()];
-        mark_params(pattern, &mut named);
-        iter::zip(named, &early.failed).any(|(named, &failed)| named && failed)
-    }
+/// `found`, a parameter's binding, as a bound sees it: `UNKNOWN` while it is unbound or rejected.
+fn listed(found: Option<Type>) -> Type {
+    found.filter(|&t| t != *REJECTED).unwrap_or(UNKNOWN)
 }
 
-/// The bounds a call checks as soon as the parameter they bound is bound: an argument that waits
-/// for an associated type of the parameter must not meet a type that has none.
-struct Early {
+/// The bounds a call checks as soon as the parameter they bound is bound. An argument that waits
+/// for an associated type of the parameter must not meet a type that has none. A parameter whose
+/// bound fails is rejected at once (see `Bindings::reject`), so no later argument is checked
+/// against the type that the bound rejected. This is the only check of a bound: each binding of a
+/// parameter reaches `check_early`, from the type arguments that the call writes, or from
+/// `report_fresh` for an argument, the expected type and `blame_arguments`. A receiver's
+/// parameters have no bound of the method to check, and `poison_broken_params` fails the call.
+struct Early<'s> {
+    /// Whether a parameter type writes an associated type, which `Checker::known_in` replaces.
+    assoc: bool,
     /// How many of the callee's parameters its receiver binds.
     owned: usize,
-    /// Which parameters a parameter type writes an associated type through, by place.
-    through: Vec<bool>,
     /// The bounds of the parameters after the receiver's, as `GenericSig::bounds`.
-    bounds: Vec<Vec<Bound>>,
-    /// The bounds already checked, by the place of their parameter and their own place.
-    checked: FxHashSet<(usize, usize)>,
+    bounds: &'s [Vec<Bound>],
+    /// The type of each parameter as a bound sees it: its binding, or `UNKNOWN` while it is
+    /// unbound or rejected. The first check that needs it builds it. Each later binding changes
+    /// only its own entry, so the list is built once for the call.
+    with: Option<Vec<Type>>,
     /// The bounds of a parameter that is bound, that name a parameter that is not bound yet, by
-    /// the same places: they are checked as soon as the call binds what they name.
-    waiting: Vec<(usize, usize)>,
-    /// Which parameters have a bound that failed, by place: an associated type that the call
-    /// writes through the parameter does not exist, so no argument waits for it any more.
-    failed: Vec<bool>,
+    /// the place of the first such parameter, which the bound waits for. Each bound has its place
+    /// and its parameter's place. A binding takes only the lists of the parameters that it binds,
+    /// and a bound that still names an unbound parameter goes to the list of that one. So a bound
+    /// moves at most once for each parameter that it names.
+    waiting: FxHashMap<usize, Vec<(usize, usize)>>,
 }
 
-impl Early {
-    /// The bounds `sig`'s call checks early: none unless a parameter type writes an associated
-    /// type.
-    fn of(sig: &GenericSig<'_>) -> Option<Early> {
-        if !sig.params.iter().flatten().any(|param| param.has_assoc()) {
+impl<'s> Early<'s> {
+    /// The bounds `sig`'s call checks early: none unless the callee has a bound or a parameter
+    /// type writes an associated type. The second needs no bound of the callee's when the
+    /// receiver binds the parameter that the type writes it through.
+    fn of(sig: &GenericSig<'s>) -> Option<Early<'s>> {
+        let assoc = sig.params.iter().flatten().any(|param| param.has_assoc());
+        if !assoc && sig.bounds.iter().all(Vec::is_empty) {
             return None;
         }
-        let mut through = vec![false; sig.declared.len()];
-        for param in sig
-            .params
-            .iter()
-            .flatten()
-            .filter(|param| param.has_assoc())
-        {
-            mark_params(*param, &mut through);
-        }
         Some(Early {
+            assoc,
             owned: sig.owner.len(),
-            through,
-            bounds: sig.bounds.to_vec(),
-            checked: FxHashSet::default(),
-            waiting: Vec::new(),
-            failed: vec![false; sig.declared.len()],
+            bounds: sig.bounds,
+            with: None,
+            waiting: FxHashMap::default(),
         })
     }
 }
@@ -679,10 +777,10 @@ impl Checker<'_> {
 
     /// `known` for `ty`, a parameter type of the call or a part of one: only a call whose
     /// parameter types write an associated type has any to replace.
-    fn known_in(&self, call: &Inference, ty: Type) -> Option<Type> {
+    fn known_in(&self, call: &Inference<'_>, ty: Type) -> Option<Type> {
         match call.early {
-            None => call.bindings.known(ty),
-            Some(_) => self.known(&call.bindings, ty),
+            Some(Early { assoc: true, .. }) => self.known(&call.bindings, ty),
+            _ => call.bindings.known(ty),
         }
     }
 
@@ -717,6 +815,8 @@ impl Checker<'_> {
     /// An argument of type `unit` or `never` binds only what none of the others binds. Returns
     /// the arguments in source order, the type arguments and the call's type. Returns `None`,
     /// reported, when a parameter is left unbound or bound to a type that no parameter takes.
+    /// A parameter that is left unbound, and whose context holds a rejected part only, is not
+    /// reported: the failed bound of the outer call is the fault (see `Bindings::hint`).
     /// Then an argument that needs context and has none is checked against `UNKNOWN`, for its
     /// own mistakes only. What ranking the arguments checked ahead (see `Ahead`) and left unused
     /// is dropped.
@@ -756,6 +856,7 @@ impl Checker<'_> {
             slots: args.iter().map(|_| None).collect(),
             last: Vec::new(),
             failed: false,
+            rejected: false,
             origin: vec![None; sig.declared.len()],
             early: Early::of(sig),
         };
@@ -795,7 +896,7 @@ impl Checker<'_> {
             let met = (ranks.contains(&2) && call.bindings.unify(ret, want))
                 || call.bindings.constrain(ret, payload(want));
             misfit = self.misfit(span, ret, want, met).then_some(ret);
-            if !met && written.is_empty() {
+            if !met && written.is_empty() && !call.failed {
                 self.blame_arguments(&mut call, sig, args, ret, want, span);
             }
             self.report_fresh(&mut call, span);
@@ -821,21 +922,21 @@ impl Checker<'_> {
         // the call fails after it.
         let unchecked = call.slots.iter().any(Option::is_none);
         let list = match call.bindings.finish() {
-            Ok(list) if !call.failed && !broken && !unchecked => Some(list),
+            Ok(list) if !call.failed && !call.rejected && !broken && !unchecked => Some(list),
             Ok(_) => None,
-            Err(i) => {
+            Err(first) => {
                 // An argument that failed, or a parameter's or the return type that did, may be
                 // what would have bound it, and an `UNKNOWN` context is one that failed.
                 let errored = call.slots.iter().flatten().any(|c| type_of(c).is_none())
                     || sig.params.contains(&None)
                     || sig.ret.is_none();
                 if !errored && !call.failed && expected != Some(UNKNOWN) {
-                    self.report_unbound(
-                        span,
-                        sig,
-                        i,
-                        misfit.map(|ret| self.printed(&call.bindings, ret)),
-                    );
+                    // A parameter that meets a rejected part only is rejected as well: the
+                    // failed bound of the outer call is its only fault.
+                    if let Some(i) = call.bindings.first_unbound_not_rejected(first) {
+                        let found = misfit.map(|ret| self.printed(&call.bindings, ret));
+                        self.report_unbound(span, sig, i, found);
+                    }
                 }
                 None
             }
@@ -850,9 +951,6 @@ impl Checker<'_> {
             }
             return None;
         };
-        if !self.check_call_bounds(span, sig, &call, list) {
-            return None;
-        }
         self.instantiates = true;
         let checked = call
             .slots
@@ -872,7 +970,7 @@ impl Checker<'_> {
     /// declaration.
     fn rank_arguments(
         &mut self,
-        call: &Inference,
+        call: &Inference<'_>,
         sig: &GenericSig<'_>,
         args: &[ast::Arg],
         fit: &mut [bool],
@@ -892,88 +990,84 @@ impl Checker<'_> {
             .collect()
     }
 
-    /// Whether the arguments `list` of the call at `span` meet the bounds of `sig`. A parameter
-    /// whose argument fails is reported once, at the place that bound the parameter (`origin`).
-    fn check_call_bounds(
-        &mut self,
-        span: Span,
-        sig: &GenericSig<'_>,
-        call: &Inference,
-        list: TypeArgs,
-    ) -> bool {
-        let owned = sig.owner.len();
-        let mut holds = true;
-        for (k, bounds) in sig.bounds.iter().enumerate() {
-            for (j, &bound) in bounds.iter().enumerate() {
-                // Checked already, as soon as its parameter was bound.
-                if call
-                    .early
-                    .as_ref()
-                    .is_some_and(|e| e.checked.contains(&(owned + k, j)))
-                {
-                    continue;
-                }
-                let at = call.origin[owned + k].unwrap_or(span);
-                holds &= self.check_bound(at, list.get()[owned + k], bound, list.get());
+    /// Checks the bounds of the parameters `bound`, which a binding has just bound, and the bounds
+    /// that wait for them. An associated type that a parameter type writes through the parameter
+    /// exists only if the bound holds. A bound whose arguments name a parameter that is not bound
+    /// yet waits for it (see `Early::waiting`). It is checked as soon as a binding binds what it
+    /// names, before any argument that waits for the associated type is checked.
+    ///
+    /// A bound that fails is reported once, and the call fails. Each parameter whose bound failed
+    /// is then rejected (see `Bindings::reject`). The arguments after it are checked for their own
+    /// mistakes, not against the type that the bound rejected. All the due bounds are checked
+    /// first, so that each bound that fails is reported, also two of one parameter. A bound of a
+    /// parameter that is rejected already has nothing to check.
+    ///
+    /// The work is linear in the parameters. The substitution list is built once for the call
+    /// (see `Early::with`), and a binding takes only the bounds that wait for its parameters.
+    fn check_early(&mut self, call: &mut Inference<'_>, bound: &[usize], at: Span) {
+        let Inference {
+            bindings,
+            origin,
+            failed,
+            early,
+            ..
+        } = call;
+        let Some(early) = early else { return };
+        let (owned, bounds) = (early.owned, early.bounds);
+        if let Some(with) = &mut early.with {
+            for &i in bound {
+                #[cfg(test)]
+                LISTED.set(LISTED.get() + 1);
+                with[i] = listed(bindings.found[i]);
             }
         }
-        holds
-    }
-
-    /// Checks the bounds of the parameters `bound`, which a binding has just bound, when a
-    /// parameter type writes an associated type through the parameter: the type it stands for
-    /// exists only if the bound holds. A bound whose arguments name a parameter that is not bound
-    /// yet waits, and is checked as soon as a binding binds what it names, before any argument
-    /// that waits for the associated type is checked. A bound that fails is reported once, and
-    /// the call fails.
-    fn check_early(&mut self, call: &mut Inference, bound: &[usize], at: Span) {
-        let Some(early) = &mut call.early else { return };
-        let mut due = std::mem::take(&mut early.waiting);
-        for &i in bound
-            .iter()
-            .filter(|&&i| i >= early.owned && early.through[i])
-        {
-            let count = early.bounds.get(i - early.owned).map_or(0, Vec::len);
-            due.extend((0..count).map(|j| (i, j)));
+        let count =
+            |i: usize| (i.checked_sub(owned).and_then(|k| bounds.get(k))).map_or(0, Vec::len);
+        if early.waiting.is_empty() && bound.iter().all(|&i| count(i) == 0) {
+            return;
         }
-        let mut with: Option<Vec<Type>> = None;
+        let mut due: Vec<(usize, usize)> = Vec::new();
+        for &i in bound {
+            due.extend(early.waiting.remove(&i).into_iter().flatten());
+        }
+        for &i in bound {
+            due.extend((0..count(i)).map(|j| (i, j)));
+        }
+        let mut rejected = Vec::new();
         for (i, j) in due {
-            let early = call
-                .early
-                .as_ref()
-                .expect("a call that checks early should say so");
-            let bound = early.bounds[i - early.owned][j];
-            let named = bound.args.get().iter();
-            if !named
-                .into_iter()
-                .all(|&arg| self.known(&call.bindings, arg).is_some())
-            {
-                call.early
-                    .as_mut()
-                    .expect("a call that checks early should say so")
-                    .waiting
-                    .push((i, j));
+            #[cfg(test)]
+            EXAMINED.set(EXAMINED.get() + 1);
+            // A bound of a parameter that is rejected already has nothing to check.
+            if bindings.found[i] == Some(*REJECTED) {
                 continue;
             }
-            let ty = call.bindings.found[i]
-                .expect("a parameter that a binding bound should have a type");
-            let with = with.get_or_insert_with(|| {
-                (call.bindings.found.iter())
-                    .map(|t| t.unwrap_or(UNKNOWN))
-                    .collect()
+            let bound = bounds[i - owned][j];
+            let args = bound.args.get();
+            if let Some(waits_for) = args.iter().find_map(|&arg| bindings.unknown_param(arg)) {
+                early.waiting.entry(waits_for).or_default().push((i, j));
+                continue;
+            }
+            // An associated type with no conformance for its base never resolves. The bound that
+            // fails for that base reports it, so this bound has nothing to wait for.
+            if !args.iter().all(|&arg| self.known(bindings, arg).is_some()) {
+                continue;
+            }
+            let ty =
+                bindings.found[i].expect("a parameter that a binding bound should have a type");
+            let with = early.with.get_or_insert_with(|| {
+                #[cfg(test)]
+                LISTED.set(LISTED.get() + bindings.found.len());
+                bindings.found.iter().map(|&t| listed(t)).collect()
             });
-            let early = call
-                .early
-                .as_mut()
-                .expect("a call that checks early should say so");
-            early.checked.insert((i, j));
-            let at = call.origin[i].unwrap_or(at);
-            if !self.check_bound(at, ty, bound, with) {
-                call.failed = true;
-                call.early
-                    .as_mut()
-                    .expect("a call that checks early should say so")
-                    .failed[i] = true;
+            if !self.check_bound(origin[i].unwrap_or(at), ty, bound, with) {
+                *failed = true;
+                rejected.push(i);
+            }
+        }
+        for i in rejected {
+            bindings.reject(i);
+            if let Some(with) = &mut early.with {
+                with[i] = UNKNOWN;
             }
         }
     }
@@ -1001,7 +1095,7 @@ impl Checker<'_> {
     /// an argument was rejected already, or when every argument fits.
     fn blame_arguments(
         &mut self,
-        call: &mut Inference,
+        call: &mut Inference<'_>,
         sig: &GenericSig<'_>,
         args: &[ast::Arg],
         ret: Type,
@@ -1068,7 +1162,7 @@ impl Checker<'_> {
     /// parameter bound, so it binds nothing new, and a third sweep would find nothing.
     fn sweep_waiting(
         &mut self,
-        call: &mut Inference,
+        call: &mut Inference<'_>,
         sig: &GenericSig<'_>,
         args: &[ast::Arg],
         ranks: &[u8],
@@ -1085,7 +1179,8 @@ impl Checker<'_> {
 
     /// Checks `e`, the waiting argument at `i` for `param`. It stays unchecked while `param`
     /// names an unbound parameter only under an associated type, whatever `e` is (see
-    /// `waits_for_assoc`). It stays unchecked too while `param` names an unbound parameter,
+    /// `waits_for_assoc`). A rejected parameter is not unbound there: nothing will bind it, so no
+    /// argument waits for it. It stays unchecked too while `param` names an unbound parameter,
     /// unless it holds a call that reports its own mistake (`fit` is false), which is checked on
     /// its own, or `call_context` gives it a context: it is checked against what the call binds
     /// of `param`. A call reports a result that cannot meet the context as a mismatch with
@@ -1093,15 +1188,13 @@ impl Checker<'_> {
     /// that name at the call.
     fn infer_waiting(
         &mut self,
-        call: &mut Inference,
+        call: &mut Inference<'_>,
         i: usize,
         e: &ast::Expr,
         param: Option<Type>,
         fit: bool,
     ) {
-        // After a failed bound the arguments that wait are checked for their own mistakes only.
-        if call.bound_failed() || param.is_some_and(|param| waits_for_assoc(&call.bindings, param))
-        {
+        if param.is_some_and(|param| waits_for_assoc(&call.bindings, param)) {
             return;
         }
         if !fit || param.is_none_or(|param| self.known_in(call, param).is_some()) {
@@ -1129,7 +1222,8 @@ impl Checker<'_> {
     /// It is what the call binds of `param`, with a hole for each part it does not bind. `e`
     /// gets it when `e` can take it (see `takes_context`) and it says more than a hole. A
     /// generic call binds its own parameters from it. `Some(...)` and an array literal pass it
-    /// to their parts. A call that reports `param` as failed (see `names_failed`) gets none.
+    /// to their parts. A rejected parameter gives `REJECTED`, which rejects the parameter that
+    /// the call binds at that place.
     // shortcut: a waiting `if`, `match` or block gets no context. `expected` flows into its
     // branches, `None`, `[]` and integer literals, and each would need a rule for a hole. Add
     // them one kind at a time when a program needs one. The call gives context in argument
@@ -1138,21 +1232,20 @@ impl Checker<'_> {
     // with `g<T>(c: Two<T, bool>, d: Result<T, string>)` reports E0050 at `mk2`. `g(mk(), mk2())`
     // with the parameters in the other order checks. To remove this, check a call again after
     // a later call binds its parameter (#217).
-    fn call_context(&mut self, call: &Inference, e: &ast::Expr, param: Type) -> Option<Type> {
+    fn call_context(&mut self, call: &Inference<'_>, e: &ast::Expr, param: Type) -> Option<Type> {
         let partial = self.partial_context(call, e, param)?;
         self.takes_context(e, partial).then_some(partial)
     }
 
     /// `call_context` before `takes_context`. It gives what the call binds of `param`. It gives
     /// nothing if `e` is of a kind that cannot take it, or if that says no more than a hole.
-    fn partial_context(&self, call: &Inference, e: &ast::Expr, param: Type) -> Option<Type> {
+    fn partial_context(&self, call: &Inference<'_>, e: &ast::Expr, param: Type) -> Option<Type> {
         use ast::ExprKind as K;
         // An array literal takes the context from its elements, one by one (`inferred_array`).
         // That needs an array type to name them. For a type parameter it would take a hole.
         let literal = matches!(e.kind, K::ArrayLit(_));
         if !(literal && matches!(param.kind(), TypeKind::Array(_))
             || matches!(e.kind, K::Call { .. } | K::MethodCall { .. }))
-            || call.names_failed(param)
         {
             return None;
         }
@@ -1228,7 +1321,7 @@ impl Checker<'_> {
     /// still meets what the call binds of `param`.
     fn infer_arg(
         &mut self,
-        call: &mut Inference,
+        call: &mut Inference<'_>,
         i: usize,
         e: &ast::Expr,
         param: Option<Type>,
@@ -1259,7 +1352,7 @@ impl Checker<'_> {
     /// A value of type `unit` or `never` binds nothing, for `infer_arg` to defer.
     fn infer_value(
         &mut self,
-        call: &mut Inference,
+        call: &mut Inference<'_>,
         e: &ast::Expr,
         pattern: Type,
         context: Option<Type>,
@@ -1276,10 +1369,14 @@ impl Checker<'_> {
     /// associated type that nothing binds or hints, as `infer_value` says. Any other element
     /// type holds a part that is known or can be wrapped to. In `inferred_array`, an element
     /// that is a local variable takes no context: it is checked on its own, and it binds or
-    /// meets the element type, so the context of the other elements stays.
+    /// meets the element type, so the context of the other elements stays. A part of `context`
+    /// may be `REJECTED`, when `pattern` names a rejected parameter there. A call in `e` that
+    /// meets it rejects its own parameter at that place and reports nothing for it: the failed
+    /// bound, which is reported already, is the fault. A part that is only `HOLE` leaves the
+    /// parameter there unbound, and E0050 reports it.
     fn infer_unbound(
         &mut self,
-        call: &mut Inference,
+        call: &mut Inference<'_>,
         e: &ast::Expr,
         pattern: Type,
         context: Option<Type>,
@@ -1301,21 +1398,15 @@ impl Checker<'_> {
         match type_of(&checked) {
             Some(Type::UNIT | Type::NEVER) | None => checked,
             Some(ty) if !self.bind_param(call, pattern, ty, e.span) => {
-                // A pattern built from a parameter whose bound failed asks for the type that
-                // the bound rejected. The bound check reported that, so no mismatch is written.
-                if call.names_failed(pattern) {
-                    checked
-                } else {
-                    let want = self.printed(&call.bindings, pattern);
-                    let d = self.mismatch(e.span, Some(e), want, ty);
-                    self.diagnostics.push(d);
-                    mark((checked, true))
-                }
+                let want = self.printed(&call.bindings, pattern);
+                let d = self.mismatch(e.span, Some(e), want, ty);
+                self.diagnostics.push(d);
+                mark((checked, true))
             }
             Some(_) => {
                 let want = self.known_in(call, pattern);
                 debug_assert!(
-                    want.is_some() || call.failed,
+                    want.is_some() || call.failed || call.rejected,
                     "a unified pattern should be known, unless a bound check failed"
                 );
                 mark(self.against(e, checked, want, None))
@@ -1335,7 +1426,7 @@ impl Checker<'_> {
     /// or `never` has no value, which is reported at once, and binds nothing.
     fn inferred_array(
         &mut self,
-        call: &mut Inference,
+        call: &mut Inference<'_>,
         span: Span,
         elements: &[ast::Expr],
         element: Type,
@@ -1365,7 +1456,8 @@ impl Checker<'_> {
                     checked
                 } else {
                     quiet = quiet
-                        || call.bound_failed()
+                        || call.failed
+                        || call.rejected
                         || slots.iter().flatten().any(|c| type_of(c).is_none());
                     // Only its own diagnostics matter.
                     drop(self.value(e, quiet.then_some(UNKNOWN)));
@@ -1399,7 +1491,13 @@ impl Checker<'_> {
 
     /// `Bindings::unify`, reporting at `at` each parameter it binds to a type that no type
     /// parameter takes.
-    fn bind_param(&mut self, call: &mut Inference, pattern: Type, value: Type, at: Span) -> bool {
+    fn bind_param(
+        &mut self,
+        call: &mut Inference<'_>,
+        pattern: Type,
+        value: Type,
+        at: Span,
+    ) -> bool {
         let unified = call.bindings.unify(pattern, value);
         self.report_fresh(call, at);
         unified
@@ -1407,13 +1505,16 @@ impl Checker<'_> {
 
     /// Reports at `at` each parameter the last binding bound to a type that no type parameter
     /// takes.
-    fn report_fresh(&mut self, call: &mut Inference, at: Span) {
+    fn report_fresh(&mut self, call: &mut Inference<'_>, at: Span) {
         for &i in &call.bindings.fresh {
             #[cfg(test)]
             VISITS.set(VISITS.get() + 1);
             call.origin[i].get_or_insert(at);
             let ty = call.bindings.found[i].expect("a fresh parameter should be bound");
-            if matches!(ty, Type::UNIT | Type::NEVER) {
+            // The context rejected it, and the outer call reported why.
+            if ty == *REJECTED {
+                call.rejected = true;
+            } else if matches!(ty, Type::UNIT | Type::NEVER) {
                 self.report(DiagnosticKind::TypeArgument {
                     ty: self.type_name(ty),
                     at,
@@ -1422,15 +1523,18 @@ impl Checker<'_> {
             }
         }
         if call.early.is_some() {
-            let fresh = call.bindings.fresh.clone();
+            // `check_early` leaves `fresh` as it is.
+            let fresh = std::mem::take(&mut call.bindings.fresh);
             self.check_early(call, &fresh, at);
+            call.bindings.fresh = fresh;
         }
     }
 
-    /// Reports the call at `span` that leaves parameter `param` unbound: E0050, unless its
-    /// result `found` cannot meet the context its caller gave (see `infer_waiting`). Then the
-    /// mismatch is the fault, and it reports the mismatch instead. A result with no value is
-    /// reported as any use of it is.
+    /// Reports the call at `span` that leaves parameter `param` unbound, the first one that is not
+    /// rejected-only (see `Bindings::first_unbound_not_rejected`): E0050, unless its result
+    /// `found` cannot meet the context its caller gave (see `infer_waiting`). Then the mismatch is
+    /// the fault, and it reports the mismatch instead. A result with no value is reported as any
+    /// use of it is.
     fn report_unbound(
         &mut self,
         span: Span,
