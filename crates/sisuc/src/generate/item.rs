@@ -742,14 +742,14 @@ impl Gen<'_> {
     /// bound is the interface and that calls every requirement through it, including those of the
     /// interfaces it inherits; a generic class `H<n>` with the interface as the bound of its
     /// parameter; a generic function `later<n>`, with the interface as its bound, which takes `T`
-    /// bare and inside other types (`Gen::later`), and the helpers `same` and `none_of`, which
-    /// its call nests; and, when two interfaces are declared, a class that conforms to both and a
-    /// function with both as bounds. A generic interface is conformed to with `i64`, and the class
-    /// with `string` as well. And `fn shapes()`, which calls each method on a value of each type
-    /// and the generic functions with both types, and builds the class. A call on a type with two
-    /// conformances to one interface is picked by the type of its result. The methods hold the
-    /// smallest value of their result. Each interface is used, so none is reported. Records the
-    /// bound sites of its calls (property 6).
+    /// bare and inside other types (`Gen::later`), and the helpers `same`, `none_of`, `pair` and
+    /// the class `Two`, which its call uses; and, when two interfaces are declared, a class that
+    /// conforms to both and a function with both as bounds. A generic interface is conformed to
+    /// with `i64`, and the class with `string` as well. And `fn shapes()`, which calls each method
+    /// on a value of each type and the generic functions with both types, and builds the class. A
+    /// call on a type with two conformances to one interface is picked by the type of its result.
+    /// The methods hold the smallest value of their result. Each interface is used, so none is
+    /// reported. Records the bound sites of its calls (property 6).
     fn shapes(&mut self, declared: &[Shape]) {
         let mut calls = Calls::default();
         let once = |k: usize| Conformed {
@@ -757,11 +757,16 @@ impl Gen<'_> {
             arg: declared[k].generic.then_some("i64"),
         };
         if !declared.is_empty() {
-            // The helpers whose calls `later` nests in its arguments.
-            self.w.text("fn same<X>(x: X) -> X { x }");
-            self.w.line();
-            self.w.text("fn none_of<X>() -> X? { None }");
-            self.w.line();
+            // The helpers whose calls `later` uses in its arguments.
+            for item in [
+                "fn same<X>(x: X) -> X { x }",
+                "fn none_of<X>() -> X? { None }",
+                "class Two<A, B> {\n    a: A?\n    b: B?\n}",
+                "fn pair<X>() -> Two<X, X> { Two(a: None, b: None) }",
+            ] {
+                self.w.text(item);
+                self.w.line();
+            }
         }
         for (k, shape) in declared.iter().enumerate() {
             let single = [once(k)];
@@ -872,19 +877,33 @@ impl Gen<'_> {
         self.w.line();
     }
 
-    /// `fn later<k><T: bound>(_a: T, ...)`, whose other four parameters are `[T]`, `T?`, `H<k><T>`
-    /// and `[T?]`, in an order that the draws choose. Gives the statement of `shapes` that calls
-    /// it with `value`, one of `values`, for `_a`, which is the bound site. The other arguments
-    /// name `T` in each way that #283 broke: a call nested in an argument (`same`), a call whose
-    /// type comes only from its context (`none_of`) and a type that holds `T` (`H<k>(v: value)`,
-    /// `[none_of()]`). When `value` breaks the bound, they must report nothing more.
+    /// `fn later<k><T: bound, U>(_a: T, ...)`, whose other seven parameters are `[T]`, `T?`,
+    /// `H<k><T>`, `[T?]`, `T?`, `[T?]` and `Two<..>`, in an order that the draws choose. Gives the
+    /// statement of `shapes` that calls it with `value`, one of `values`, for `_a`, which is the
+    /// bound site. The other arguments name `T` in the ways that #283 broke, each level of the
+    /// fix for it in turn:
+    /// - a value or a bare hole: `[same(value)]`, `H<k>(v: value)`, `none_of()` and `[none_of()]`;
+    /// - a call whose type comes only from its context, in another call: `same(none_of())`;
+    /// - the same in a context that holds `T` in a type: `same([none_of()])`;
+    /// - a call, `pair()`, whose one type parameter meets `T` and the free `U`. A draw puts them
+    ///   in either order: `Two<[T], [U]>` or `Two<[U], [T]>`.
+    ///
+    /// When `value` breaks the bound, they must report nothing more.
     fn later(&mut self, k: usize, bound: &str, values: &[String], calls: &mut Calls) {
         let value = &values[self.pick(values.len())];
+        let pair = if self.pick(2) == 0 {
+            "Two<[T], [U]>"
+        } else {
+            "Two<[U], [T]>"
+        };
         let mut rest = vec![
             ("_b: [T]".to_string(), format!("[same({value})]")),
             ("_c: T?".to_string(), "none_of()".to_string()),
             (format!("_d: H{k}<T>"), format!("H{k}(v: {value})")),
             ("_e: [T?]".to_string(), "[none_of()]".to_string()),
+            ("_f: T?".to_string(), "same(none_of())".to_string()),
+            ("_g: [T?]".to_string(), "same([none_of()])".to_string()),
+            (format!("_h: {pair}"), "pair()".to_string()),
         ];
         for at in 0..rest.len() {
             let swap = at + self.pick(rest.len() - at);
@@ -892,7 +911,7 @@ impl Gen<'_> {
         }
         let (params, args): (Vec<String>, Vec<String>) = rest.into_iter().unzip();
         self.w.text(&format!(
-            "fn later{k}<T: {bound}>(_a: T, {}) -> i64 {{ 1 }}",
+            "fn later{k}<T: {bound}, U>(_a: T, {}) -> i64 {{ 1 }}",
             params.join(", ")
         ));
         self.w.line();
@@ -1745,38 +1764,85 @@ mod tests {
         assert!(source.contains("fn shapes() {"), "{source}");
     }
 
-    /// `later<k>` takes the bounded parameter bare, then in each form that #283 broke, and the
-    /// helpers it calls are declared once.
+    /// `later<k>` takes the bounded parameter bare, then in a form for each level of the fix for
+    /// #283. Each parameter has its own argument, in the same place, and the call has the site
+    /// first. The helpers it calls are declared once, and the draws put `T` and `U` in `Two` in
+    /// both orders.
     #[test]
     fn a_program_with_interfaces_should_call_later_with_the_forms_that_name_t() {
         let mut found = false;
+        let mut pairs = std::collections::BTreeSet::new();
         for data in crate::generate::coverage::seeds() {
-            let source = crate::generate::generate(&data).program;
-            if !source.contains("fn later0<") {
+            let g = crate::generate::generate(&data);
+            for pair in ["Two<[T], [U]>", "Two<[U], [T]>"] {
+                if g.program.contains(&format!("_h: {pair}")) {
+                    pairs.insert(pair);
+                }
+            }
+            if !g.program.contains("fn later0<") {
                 continue;
             }
             found = true;
             for part in [
                 "fn same<X>(x: X) -> X { x }",
                 "fn none_of<X>() -> X? { None }",
+                "class Two<A, B> {",
+                "fn pair<X>() -> Two<X, X> { Two(a: None, b: None) }",
             ] {
-                assert_eq!(source.matches(part).count(), 1, "{part} in {source}");
+                assert_eq!(
+                    g.program.matches(part).count(),
+                    1,
+                    "{part} in {}",
+                    g.program
+                );
             }
-            for part in ["_b: [T]", "_c: T?", "_d: H0<T>", "_e: [T?]"] {
-                assert!(source.contains(part), "{part} in {source}");
-            }
-            let call = source
+            // The site is the first argument of the call.
+            let call = "    let _ = later0(";
+            let site = g
+                .bound_sites
+                .iter()
+                .find(|site| g.program[..site.at.start].ends_with(call))
+                .unwrap_or_else(|| panic!("a bound site in the call of `later0` in {}", g.program));
+            let value = &g.program[site.at.clone()];
+            let args: Vec<&str> = g.program[site.at.end..]
                 .lines()
-                .find(|line| line.starts_with("    let _ = later0("))
-                .unwrap_or_else(|| panic!("a call of `later0` in {source}"));
-            for part in ["same(", "none_of()", "[none_of()]", "H0(v: "] {
-                assert!(call.contains(part), "{part} in {call}");
+                .next()
+                .and_then(|line| line.strip_prefix(", "))
+                .and_then(|line| line.strip_suffix(')'))
+                .unwrap_or_else(|| panic!("the arguments of `later0` in {}", g.program))
+                .split(", ")
+                .collect();
+            let params: Vec<&str> = g
+                .program
+                .lines()
+                .find_map(|line| line.strip_prefix("fn later0<"))
+                .and_then(|line| line.split_once("(_a: T, _"))
+                .and_then(|(_, line)| line.split_once(") -> i64"))
+                .unwrap_or_else(|| panic!("the parameters of `later0` in {}", g.program))
+                .0
+                .split(", _")
+                .collect();
+            assert_eq!(args.len(), 7, "{args:?}");
+            assert_eq!(params.len(), 7, "{params:?}");
+            for (param, arg) in params.iter().zip(&args) {
+                let want = match param.as_bytes()[0] {
+                    b'b' => format!("[same({value})]"),
+                    b'c' => "none_of()".to_string(),
+                    b'd' => format!("H0(v: {value})"),
+                    b'e' => "[none_of()]".to_string(),
+                    b'f' => "same(none_of())".to_string(),
+                    b'g' => "same([none_of()])".to_string(),
+                    b'h' => "pair()".to_string(),
+                    _ => panic!("the parameter {param} in {}", g.program),
+                };
+                assert_eq!(*arg, want, "the argument of {param} in {}", g.program);
             }
         }
         assert!(found, "no seed declares `later0`");
+        assert_eq!(pairs.len(), 2, "{pairs:?}");
     }
 
-    /// The draws that order the parameters of `later<k>` reach many of the 24 orders of the four
+    /// The draws that order the parameters of `later<k>` reach many of the 5040 orders of the seven
     /// that follow `_a`, so a draw that stops reaching most of them fails.
     #[test]
     fn later_should_take_its_parameters_in_many_orders() {
@@ -1785,11 +1851,11 @@ mod tests {
             for line in crate::generate::generate(&data).program.lines() {
                 if let Some((_, params)) = line
                     .strip_prefix("fn later")
-                    .and_then(|rest| rest.split_once("(_a: T, "))
+                    .and_then(|rest| rest.split_once("(_a: T, _"))
                     && let Some((params, _)) = params.split_once(") -> i64")
                 {
-                    let names: Vec<&str> = params.split(", ").map(|p| &p[..2]).collect();
-                    assert_eq!(names.len(), 4, "{line}");
+                    let names: Vec<&str> = params.split(", _").map(|p| &p[..1]).collect();
+                    assert_eq!(names.len(), 7, "{line}");
                     orders.insert(names.join(" "));
                 }
             }
