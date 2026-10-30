@@ -187,7 +187,15 @@ impl Checker<'_> {
             Some(TypeKind::Array(element)) => Some(element),
             _ => None,
         };
-        let unit = || Err(Poisoned::typed(Type::UNIT));
+        // A receiver of unknown type may be a class whose `push` gives a value, so its failure
+        // says nothing about the call's value.
+        let unit = || {
+            Err(if element.is_some() {
+                Poisoned::typed(Type::UNIT)
+            } else {
+                Poisoned::error()
+            })
+        };
         let not_pushed = |checker: &mut Self, d: Option<DiagnosticKind>| {
             if let Some(d) = d {
                 checker.report(d);

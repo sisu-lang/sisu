@@ -428,7 +428,6 @@ pub(crate) enum Place {
     },
 }
 
-#[cfg_attr(not(test), derive(Clone))]
 #[derive(Debug)]
 pub(crate) struct Expr {
     pub(crate) kind: ExprKind,
@@ -442,10 +441,10 @@ thread_local! {
     pub(crate) static CLONED_EXPRS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// In a test build, a clone counts the nodes it copies.
-#[cfg(test)]
+/// A test build counts the nodes a clone copies.
 impl Clone for Expr {
     fn clone(&self) -> Self {
+        #[cfg(test)]
         CLONED_EXPRS.set(CLONED_EXPRS.get() + 1);
         Self {
             kind: self.kind.clone(),

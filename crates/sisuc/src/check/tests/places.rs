@@ -544,8 +544,23 @@ fn push_should_write_its_place_whatever_else_it_gets_wrong() {
         ),
         (
             "name that is not found",
-            "fn main() {\n    nope.push(1)\n}",
-            vec![(Code::BindingNotFound, (2, 5))],
+            "fn main() {\n    let y = nope.push(1)\n}",
+            vec![(Code::BindingNotFound, (2, 13))],
+        ),
+        (
+            "function that is not found",
+            "fn main() {\n    let y = undefined_fn().push(1)\n}",
+            vec![(Code::FunctionNotFound, (2, 13))],
+        ),
+        (
+            "name that is not found, in an argument",
+            "fn main() {\n    print(nope.push(1))\n}",
+            vec![(Code::BindingNotFound, (2, 11))],
+        ),
+        (
+            "field that is not found",
+            "class C {\n    mut n: i64\n}\nfn main() {\n    let c = C(n: 1)\n    let y = c.nope.push(1)\n}",
+            vec![(Code::NoMember, (6, 15))],
         ),
         (
             "index that is not found",
@@ -635,6 +650,7 @@ fn a_class_push_should_not_stamp_its_receiver() {
 /// every level inside it, so the work grows with the square of the depth.
 #[test]
 fn push_should_not_clone_the_nodes_of_its_receiver() {
+    // 8 levels: a clone at any one level breaks the count of 0.
     let mut push = "xss[0].push(1)".to_owned();
     for _ in 0..8 {
         push = format!("xss[{{\n{push}\n0\n}}].push(1)");
