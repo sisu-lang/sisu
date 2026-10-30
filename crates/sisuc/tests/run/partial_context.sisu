@@ -1,11 +1,12 @@
-// GIVEN `Two<A, B>`, an enum, four functions whose second parameter names the `U` of their first
-// parameter and a `V` that no other argument binds, and `f`, a function for `Result<Result<T,
-// bool>, string>`
-// WHEN each of the four runs with a `u8` for `U` and a `Two.P(5, "x")`, bare, in an array, in
-// `Some` and inside another `Two`, and `f` runs with `Ok(Ok(1))`
-// THEN the `5` is a `u8` and the `"x"` a string, as the `u8` fixes `U`, and `f` takes `T` as
-// `i64`: the program prints `5`, `x`, `x`, `5` and `1`, and Valgrind and `--rc-checks` find every
-// string released once
+// GIVEN `Two<A, B>`, an enum
+// AND `plain`, `in_array`, `in_some` and `nested`, functions of a `U` and a `V` that no other
+// argument binds
+// AND `f`, a function for `Result<Result<T, bool>, string>`
+// WHEN each of the four runs with a `u8` for `U` and a `Two.P(5, "x")`, bare or inside another type
+// AND `f` runs with `Ok(Ok(1))`
+// THEN the `5` is a `u8` and the `"x"` is a string, and the program prints `5`, `x`, `x`, `5`
+// and `1`
+// AND Valgrind and `--rc-checks` find every string released once
 enum Two<A, B> {
     P(A, B)
 }

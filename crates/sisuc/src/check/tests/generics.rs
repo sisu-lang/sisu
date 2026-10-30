@@ -2800,12 +2800,11 @@ fn nested_waiting_call_that_cannot_fit_should_mismatch_once_at_the_outer_call() 
 }
 
 /// `Some(...)` checks its argument against the payload of its expected type with no binding,
-/// so a hole in a context would reach its diagnostics and its type. When the argument is a call,
-/// the call binds `T` from the context, and `Some(Ok(1))` binds `T`. When it is `None` or `[]`,
-/// the context fixes nothing: the call waits, as before, and `f` reports its `T`. A leak would
-/// give a mismatch or a panic.
+/// so a hole in a context would reach its diagnostics and its type. When the argument is `None`
+/// or `[]`, the context fixes nothing: the call waits, as before, and `f` reports its `T`. A
+/// leak would give a mismatch or a panic.
 #[test]
-fn some_should_bind_from_a_call_but_not_from_none_or_an_empty_array() {
+fn some_of_none_or_an_empty_array_should_leave_the_parameter_uninferred() {
     with_prelude();
     for (decls, call) in [
         ("fn f<T>(x: T?) -> T { panic(\"e\") }\n", "f(Some(None))"),
@@ -2819,6 +2818,13 @@ fn some_should_bind_from_a_call_but_not_from_none_or_an_empty_array() {
         let line = decls.lines().count() + 2;
         codes(&src, &[(Code::CannotInfer, (line, 13))]);
     }
+}
+
+/// When the argument of `Some(...)` is a call, the call binds its own parameter from the
+/// context. So `Some(Ok(1))` binds `T` of `f` as `i64`.
+#[test]
+fn some_of_a_call_should_bind_from_a_partly_bound_parameter() {
+    with_prelude();
     let src = "fn f<T>(x: Result<T, string>?) -> T { panic(\"e\") }\n\
                fn main() {\n    let y = f(Some(Ok(1)))\n    print(y)\n}";
     assert_eq!(call_types(src, "f"), ["i64", "i64"]);
@@ -3018,19 +3024,42 @@ const PARTIAL_DECLS: &str = "enum Two<A, B> {\n    P(A, B)\n}\n\
     interface I {\n    type Item\n}\n\
     class W: I {\n    type Item = i64\n}\n";
 
-/// A row of `an_argument_for_a_partly_bound_parameter_should_report_its_own_mistake`: the
-/// declarations after `PARTIAL_DECLS`, the lines of `main`, and the codes with the text of the
-/// last line that each is reported at.
+/// A row of a table of the partial-context tests: the declarations after `PARTIAL_DECLS`, the
+/// lines of `main`, and the codes with the text of the last line that each is reported at.
 type PartialRow<'a> = (&'a str, &'a str, &'a [(Code, &'a str)]);
 
-/// The rows of the test below.
-const PARTIAL_ROWS: &[PartialRow<'static>] = {
-    use Code::{CannotInfer, FieldOutOfOrder, Mismatch, NotConform};
+/// Checks each row: the program's codes are exactly these, at the first place the text is found in
+/// the last line of `main`. A row with no code checks clean.
+fn check_partial_rows(rows: &[PartialRow<'_>]) {
+    with_prelude();
+    for &(decls, body, expected) in rows {
+        let src = format!(
+            "{PARTIAL_DECLS}{decls}fn main() {{\n    {}\n}}",
+            body.replace('\n', "\n    ")
+        );
+        let line = PARTIAL_DECLS.lines().count() + decls.lines().count() + 1 + body.lines().count();
+        let last = body.lines().last().expect("a row should have a call");
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|&(code, at)| {
+                let col = 4
+                    + last
+                        .find(at)
+                        .unwrap_or_else(|| panic!("`{at}` in `{last}`"))
+                    + 1;
+                (code, (line, col))
+            })
+            .collect();
+        codes_row(&format!("{decls}{body}"), &src, &expected);
+    }
+}
+
+/// The rows of `a_partly_bound_parameter_should_report_the_part_that_is_wrong`.
+const PART_ROWS: &[PartialRow<'static>] = {
+    use Code::Mismatch;
     const S: &str = "\"s\"";
     const X: &str = "\"x\"";
     &[
-        // A call, a construction, a call of a function, and the same under `?`, an array, `Some`
-        // and a second level of each.
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "h(true, Two.P(\"s\", 1))",
@@ -3086,48 +3115,10 @@ const PARTIAL_ROWS: &[PartialRow<'static>] = {
             "h(true, okr(\"s\"))",
             &[(Mismatch, S)],
         ),
-        // The shape of the argument is wrong: the whole argument is reported.
-        (
-            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
-            "h(true, Some(Two.P(\"s\", 1)))",
-            &[(Mismatch, "Some(")],
-        ),
-        (
-            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
-            "h(true, Two.P(\"s\", 1))",
-            &[(Mismatch, "Two.P(")],
-        ),
-        // The literals take the bound type, a `u8`, as they do for a parameter that is bound.
-        (
-            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
-            "let x: u8 = 3\nh(x, Two.P(5, \"x\"))",
-            &[],
-        ),
-        (
-            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
-            "let x: u8 = 3\nh(x, [Two.P(5, \"x\")])",
-            &[],
-        ),
-        (
-            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
-            "let x: u8 = 3\nh(x, Some(Two.P(5, \"x\")))",
-            &[],
-        ),
-        (
-            "fn h<U, V>(a: U, b: Two<Two<U, V>, i64>) {}\n",
-            "let x: u8 = 3\nh(x, Two.P(Two.P(5, \"x\"), 2))",
-            &[],
-        ),
-        // A call that waits for a result it cannot fix by itself is reported as before.
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, pr(\"s\"))",
             &[(Mismatch, S)],
-        ),
-        (
-            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
-            "h(true, pr(true))",
-            &[(CannotInfer, "pr(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
@@ -3144,18 +3135,6 @@ const PARTIAL_ROWS: &[PartialRow<'static>] = {
             "h2(true, Two.P(true, 1), Two.P(true, \"x\"))",
             &[(Mismatch, X)],
         ),
-        // An `if` and an element that is not a call get no context, as before.
-        (
-            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
-            "h(true, if true { Two.P(\"s\", 1) } else { Two.P(true, 2) })",
-            &[(Mismatch, "if"), (Mismatch, "true, 2)")],
-        ),
-        (
-            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
-            "let t = Two.P(true, 3)\nh(true, [Two.P(true, 1), t, Two.P(\"s\", 2)])",
-            &[(Mismatch, "Two.P(\"s\"")],
-        ),
-        // A call that returns its argument, and a call in a call, pass the context on.
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "h(true, id(Two.P(\"s\", 1)))",
@@ -3176,49 +3155,11 @@ const PARTIAL_ROWS: &[PartialRow<'static>] = {
             "h(true, [[Two.P(\"s\", 1)]])",
             &[(Mismatch, S)],
         ),
-        // A context that fixes nothing leaves the parameter to be reported.
-        (
-            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
-            "h(true, Two.P(true, None))",
-            &[(CannotInfer, "Two.P(")],
-        ),
-        (
-            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
-            "h(true, Some(None))",
-            &[(CannotInfer, "h(")],
-        ),
-        (
-            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
-            "h(true, [])",
-            &[(CannotInfer, "h(")],
-        ),
-        // The neighbours: a receiver that fixes the type, a safe call, labels out of order.
-        (
-            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
-            "h(true, G<string>().pair(\"s\", 1))",
-            &[(Mismatch, "G<")],
-        ),
-        (
-            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
-            "h(true, G<bool>().pair(true, 1))",
-            &[],
-        ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "let c: C? = C()\nh(true, c?.m(\"s\", 1))",
             &[(Mismatch, S)],
         ),
-        (
-            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
-            "let c: C? = C()\nh(true, c?.m(true, 1))",
-            &[],
-        ),
-        (
-            "fn h<U, V>(a: U, b: Box<U, V>) {}\n",
-            "h(true, Box(b: 1, a: \"s\"))",
-            &[(FieldOutOfOrder, "b: 1")],
-        ),
-        // Two levels of `Some`, and arrays of arrays with an optional inside.
         (
             "fn h<U, V>(a: U, b: Two<U, V>??) {}\n",
             "h(true, Some(Some(Two.P(\"s\", 1))))",
@@ -3230,11 +3171,6 @@ const PARTIAL_ROWS: &[PartialRow<'static>] = {
             &[(Mismatch, S)],
         ),
         (
-            "fn h<U, V>(a: U, b: Two<U, V>??) {}\n",
-            "h(true, Some(Some(None)))",
-            &[(CannotInfer, "h(")],
-        ),
-        (
             "fn h<U, V>(a: U, b: [[Two<U, V>?]]) {}\n",
             "h(true, [[None, Some(Two.P(\"s\", 1))]])",
             &[(Mismatch, S)],
@@ -3244,24 +3180,6 @@ const PARTIAL_ROWS: &[PartialRow<'static>] = {
             "h(true, [[Some(Two.P(true, 1)), None], [Some(Two.P(false, \"x\"))]])",
             &[(Mismatch, X)],
         ),
-        // An array literal for a parameter that is optional, and `Some` of one, get no context.
-        (
-            "fn h<U, V>(a: U, b: [Two<U, V>]?) {}\n",
-            "h(true, Some([Two.P(\"s\", 1)]))",
-            &[(Mismatch, "Some(")],
-        ),
-        (
-            "fn h<U, V>(a: U, b: [Two<U, V>]?) {}\n",
-            "h(true, [Two.P(\"s\", 1)])",
-            &[(Mismatch, "[Two.P")],
-        ),
-        (
-            "fn h<U, V>(a: U, b: [Two<U, V>]?) {}\n",
-            "h(true, Some([Two.P(true, 1)]))",
-            &[],
-        ),
-        // The call returns a type with a fixed part, which a hole of the context meets, as an
-        // enum, an array, an optional or a class. The argument that binds the rest is blamed.
         (
             "fn fix<A>(x: A) -> Two<i64, A> { Two.P(1, x) }\nfn h<U, V>(c: V, b: Two<U, V>) {}\n",
             "h(true, fix(\"s\"))",
@@ -3282,51 +3200,16 @@ const PARTIAL_ROWS: &[PartialRow<'static>] = {
             "h(true, fix(\"s\"))",
             &[(Mismatch, S)],
         ),
-        // A call that returns an array or an optional of the pair gets the context too.
         (
             "fn mk_array<A, B>(a: A, b: B) -> [Two<A, B>] { [] }\nfn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "h(true, mk_array(\"s\", 1))",
             &[(Mismatch, S)],
         ),
         (
-            "fn mk_array<A, B>(a: A, b: B) -> [Two<A, B>] { [] }\nfn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
-            "let x: u8 = 3\nh(x, mk_array(5, \"x\"))",
-            &[],
-        ),
-        (
             "fn mk_some<A, B>(a: A, b: B) -> Two<A, B>? { None }\nfn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, mk_some(\"s\", 1))",
             &[(Mismatch, S)],
         ),
-        // A call that returns another class or enum than the context's gets no hint from it, and
-        // a result with a part of another class or enum is not blamed argument by argument.
-        (
-            "fn h<U, V>(a: U, b: Pair<U, Pair<V, i64>>) {}\n",
-            "h(true, Box(a: true, b: Pair(a: 1, b: \"x\")))",
-            &[(Mismatch, "Box(")],
-        ),
-        (
-            "fn h<U, V>(a: U, b: Two<U, Two<V, i64>>) {}\n",
-            "h(true, Other.Q(true, Two.P(1, \"x\")))",
-            &[(Mismatch, "Other.Q(")],
-        ),
-        (
-            "fn h<U, V>(a: U, b: Two<Pair<U, V>, i64>) {}\n",
-            "let x: Box<bool, i64> = Box(a: true, b: 2)\nh(true, G<Box<bool, i64>>().pair(x, \"s\"))",
-            &[(Mismatch, "G<Box")],
-        ),
-        (
-            "fn h<U, V>(a: U, b: Two<Other<U, V>, i64>) {}\n",
-            "let x: Two<bool, i64> = Two.P(true, 2)\nh(true, G<Two<bool, i64>>().pair(x, \"s\"))",
-            &[(Mismatch, "G<Two")],
-        ),
-        // The expected type of a call that has no hole is no hint: its arguments get no context.
-        (
-            "",
-            "let t: Two<u8, i64> = mk(id(5), 1)",
-            &[(Mismatch, "id(5)")],
-        ),
-        // The context that blamed an argument stays for the arguments that follow.
         (
             "fn h<U, V>(a: U, b: Two<U, Two<V, i64>>) {}\n",
             "h(true, Two.P(\"s\", Two.P(1, \"x\")))",
@@ -3347,8 +3230,6 @@ const PARTIAL_ROWS: &[PartialRow<'static>] = {
             "h(true, Two.P(\"s\", Some(Two.P(1, \"x\"))))",
             &[(Mismatch, S), (Mismatch, X)],
         ),
-        // A parameter type that writes an associated type: a call that waits for it, and one
-        // that follows a failed bound.
         (
             "fn h<T: I, U>(_a: U, _b: [Two<U, T.Item>], _c: T) {}\n",
             "h(true, [Two.P(\"s\", 7)], W())",
@@ -3370,47 +3251,308 @@ const PARTIAL_ROWS: &[PartialRow<'static>] = {
             &[(Mismatch, S)],
         ),
         (
-            "fn h<T: I, U, V>(_a: Two<T, T.Item>, _b: U, _c: [Two<U, V>]) {}\n",
-            "h(Two.P(W(), 7), true, [Two.P(true, 1)])",
-            &[],
+            "fn hn<U, V>(a: U, b: Two<Two<U, V>?, i64>) {}\n",
+            "let c: C? = C()\nhn(true, Two.P(c?.m(\"s\", 1), 2))",
+            &[(Mismatch, S)],
         ),
         (
-            "fn h<T: I, U, V>(_a: Two<T, T.Item>, _b: U, _c: Two<U, V>) {}\n",
-            "h(Two.P(5, 7), true, Two.P(\"s\", 1))",
-            &[(NotConform, "Two.P(5"), (Mismatch, S)],
+            "fn h3<U, V>(a: U, b: V, c: Two<U, V>?) {}\n",
+            "let c: C? = C()\nh3(true, 1, c?.m(\"s\", None))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>??) {}\n",
+            "let c: C? = C()\nh(true, Some(c?.m(\"s\", 1)))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>?]) {}\n",
+            "let c: C? = C()\nh(true, [c?.m(\"s\", 1)])",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "let c: C? = C()\nh(true, id(c?.m(\"s\", 1)))",
+            &[(Mismatch, S)],
         ),
     ]
 };
 
 /// An argument for a parameter that the call binds in part, `b: Two<U, V>` once `a` binds `U`,
 /// is checked against what the call binds, with a hole for the rest. So a mistake is reported at
-/// the part that is wrong, not at the whole argument against a type that names the callee's `V`,
-/// and a valid argument whose literals take the bound type checks. Each row has the declarations
-/// after `PARTIAL_DECLS`, the lines of `main` and the codes with the text that each is reported
-/// at, in the last line. A row with no code checks clean.
+/// the part that is wrong, not at the whole argument against a type that names the callee's `V`.
+/// The argument is a call, a construction or a method call. A safe call is one only for an
+/// optional parameter. The same holds under `Some`, in an array and in a call that returns its
+/// argument.
 #[test]
-fn an_argument_for_a_partly_bound_parameter_should_report_its_own_mistake() {
-    with_prelude();
-    for &(decls, body, expected) in PARTIAL_ROWS {
-        let src = format!(
-            "{PARTIAL_DECLS}{decls}fn main() {{\n    {}\n}}",
-            body.replace('\n', "\n    ")
-        );
-        let line = PARTIAL_DECLS.lines().count() + decls.lines().count() + 1 + body.lines().count();
-        let last = body.lines().last().expect("a row should have a call");
-        let expected: Vec<_> = expected
-            .iter()
-            .map(|&(code, at)| {
-                let col = 4
-                    + last
-                        .find(at)
-                        .unwrap_or_else(|| panic!("`{at}` in `{last}`"))
-                    + 1;
-                (code, (line, col))
-            })
-            .collect();
-        codes_row(&format!("{decls}{body}"), &src, &expected);
-    }
+fn a_partly_bound_parameter_should_report_the_part_that_is_wrong() {
+    check_partial_rows(PART_ROWS);
+}
+
+/// The rows of `a_partly_bound_parameter_should_accept_an_argument_that_fits_it`.
+const VALID_ROWS: &[PartialRow<'static>] = {
+    &[
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "let x: u8 = 3\nh(x, Two.P(5, \"x\"))",
+            &[],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "let x: u8 = 3\nh(x, [Two.P(5, \"x\")])",
+            &[],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "let x: u8 = 3\nh(x, Some(Two.P(5, \"x\")))",
+            &[],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<Two<U, V>, i64>) {}\n",
+            "let x: u8 = 3\nh(x, Two.P(Two.P(5, \"x\"), 2))",
+            &[],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "h(true, G<bool>().pair(true, 1))",
+            &[],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "let c: C? = C()\nh(true, c?.m(true, 1))",
+            &[],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]?) {}\n",
+            "h(true, Some([Two.P(true, 1)]))",
+            &[],
+        ),
+        (
+            "fn mk_array<A, B>(a: A, b: B) -> [Two<A, B>] { [] }\nfn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "let x: u8 = 3\nh(x, mk_array(5, \"x\"))",
+            &[],
+        ),
+        (
+            "fn h<T: I, U, V>(_a: Two<T, T.Item>, _b: U, _c: [Two<U, V>]) {}\n",
+            "h(Two.P(W(), 7), true, [Two.P(true, 1)])",
+            &[],
+        ),
+        (
+            "fn hn<U, V>(a: U, b: Two<Two<U, V>?, i64>) {}\n",
+            "let c: C? = C()\nhn(true, Two.P(c?.m(true, 1), 2))",
+            &[],
+        ),
+    ]
+};
+
+/// An argument that fits a parameter bound in part checks. Its literals take the bound type, a
+/// `u8` here, as they do for a parameter that the call binds in full.
+#[test]
+fn a_partly_bound_parameter_should_accept_an_argument_that_fits_it() {
+    check_partial_rows(VALID_ROWS);
+}
+
+/// The rows of `a_partly_bound_parameter_should_report_the_whole_argument_without_context`.
+const WHOLE_ROWS: &[PartialRow<'static>] = {
+    use Code::Mismatch;
+    &[
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "h(true, Some(Two.P(\"s\", 1)))",
+            &[(Mismatch, "Some(")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "h(true, Two.P(\"s\", 1))",
+            &[(Mismatch, "Two.P(")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "h(true, if true { Two.P(\"s\", 1) } else { Two.P(true, 2) })",
+            &[(Mismatch, "if"), (Mismatch, "true, 2)")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "let t = Two.P(true, 3)\nh(true, [Two.P(true, 1), t, Two.P(\"s\", 2)])",
+            &[(Mismatch, "Two.P(\"s\"")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "h(true, G<string>().pair(\"s\", 1))",
+            &[(Mismatch, "G<")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]?) {}\n",
+            "h(true, Some([Two.P(\"s\", 1)]))",
+            &[(Mismatch, "Some(")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]?) {}\n",
+            "h(true, [Two.P(\"s\", 1)])",
+            &[(Mismatch, "[Two.P")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Pair<U, Pair<V, i64>>) {}\n",
+            "h(true, Box(a: true, b: Pair(a: 1, b: \"x\")))",
+            &[(Mismatch, "Box(")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, Two<V, i64>>) {}\n",
+            "h(true, Other.Q(true, Two.P(1, \"x\")))",
+            &[(Mismatch, "Other.Q(")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<Pair<U, V>, i64>) {}\n",
+            "let x: Box<bool, i64> = Box(a: true, b: 2)\nh(true, G<Box<bool, i64>>().pair(x, \"s\"))",
+            &[(Mismatch, "G<Box")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<Other<U, V>, i64>) {}\n",
+            "let x: Two<bool, i64> = Two.P(true, 2)\nh(true, G<Two<bool, i64>>().pair(x, \"s\"))",
+            &[(Mismatch, "G<Two")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "let c: C? = C()\nh(true, c?.m(\"s\", 1))",
+            &[(Mismatch, "c?.m(")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "let c: C? = C()\nh(true, c?.m(true, 1))",
+            &[(Mismatch, "c?.m(")],
+        ),
+        (
+            "fn hn<U, V>(a: U, b: Two<Two<U, V>, i64>) {}\n",
+            "let c: C? = C()\nhn(true, Two.P(c?.m(\"s\", 1), 2))",
+            &[(Mismatch, "Two.P(c")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "let c: C? = C()\nh(true, Some(c?.m(\"s\", 1)))",
+            &[(Mismatch, "Some(")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "let c: C? = C()\nh(true, [c?.m(\"s\", 1)])",
+            &[(Mismatch, "[c?.m(")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "let c: C? = C()\nh(true, id(c?.m(\"s\", 1)))",
+            &[(Mismatch, "id(")],
+        ),
+    ]
+};
+
+/// An argument that gets no context is reported as a whole, as it was before. Its shape is wrong,
+/// as in an optional for a plain parameter, or its kind gets no context: an `if`, a local value
+/// in an array, an array literal for an optional parameter. The call may return another class or
+/// enum than the context. A receiver may fix a part of the type, or the call may be a safe call
+/// for a plain parameter. The reported mistake is then the shape, not a part.
+#[test]
+fn a_partly_bound_parameter_should_report_the_whole_argument_without_context() {
+    check_partial_rows(WHOLE_ROWS);
+}
+
+/// The rows of the test with the name
+/// `a_partly_bound_parameter_should_report_cannot_infer_when_the_context_fixes_nothing`.
+const INFER_ROWS: &[PartialRow<'static>] = {
+    use Code::CannotInfer;
+    &[
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "h(true, pr(true))",
+            &[(CannotInfer, "pr(")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "h(true, Two.P(true, None))",
+            &[(CannotInfer, "Two.P(")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "h(true, Some(None))",
+            &[(CannotInfer, "h(")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "h(true, [])",
+            &[(CannotInfer, "h(")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, V>??) {}\n",
+            "h(true, Some(Some(None)))",
+            &[(CannotInfer, "h(")],
+        ),
+        (
+            "fn h3<U, V>(a: U, b: V, c: Two<U, V>) {}\n",
+            "let c: C? = C()\nh3(true, 1, c?.m(\"s\", None))",
+            &[(CannotInfer, "m(")],
+        ),
+        (
+            "fn h3<U, V>(a: U, b: V, c: Two<U, V>?) {}\n",
+            "let c: C? = C()\nh3(true, 1, c?.m(true, None))",
+            &[(CannotInfer, "m(")],
+        ),
+    ]
+};
+
+/// A context that holds no type for the parameter that is left leaves it to be reported as
+/// cannot infer.
+#[test]
+fn a_partly_bound_parameter_should_report_cannot_infer_when_the_context_fixes_nothing() {
+    check_partial_rows(INFER_ROWS);
+}
+
+/// The rows of `an_expected_type_with_no_hole_should_give_no_hint`.
+const NO_HOLE_ROWS: &[PartialRow<'static>] = {
+    use Code::Mismatch;
+    &[(
+        "",
+        "let t: Two<u8, i64> = mk(id(5), 1)",
+        &[(Mismatch, "id(5)")],
+    )]
+};
+
+/// The expected type of a call that has no hole is no hint: the arguments of the call get no
+/// context from it.
+#[test]
+fn an_expected_type_with_no_hole_should_give_no_hint() {
+    check_partial_rows(NO_HOLE_ROWS);
+}
+
+/// The rows of `an_argument_with_labels_out_of_order_should_report_only_the_order`.
+const ORDER_ROWS: &[PartialRow<'static>] = {
+    use Code::FieldOutOfOrder;
+    &[(
+        "fn h<U, V>(a: U, b: Box<U, V>) {}\n",
+        "h(true, Box(b: 1, a: \"s\"))",
+        &[(FieldOutOfOrder, "b: 1")],
+    )]
+};
+
+/// A construction with its labels out of order reports the order alone.
+#[test]
+fn an_argument_with_labels_out_of_order_should_report_only_the_order() {
+    check_partial_rows(ORDER_ROWS);
+}
+
+/// The rows of `a_failed_bound_should_not_hide_the_part_that_is_wrong`.
+const BOUND_ROWS: &[PartialRow<'static>] = {
+    use Code::{Mismatch, NotConform};
+    const S: &str = "\"s\"";
+    &[(
+        "fn h<T: I, U, V>(_a: Two<T, T.Item>, _b: U, _c: Two<U, V>) {}\n",
+        "h(Two.P(5, 7), true, Two.P(\"s\", 1))",
+        &[(NotConform, "Two.P(5"), (Mismatch, S)],
+    )]
+};
+
+/// A failed bound is reported, and a later argument for a parameter bound in part still reports the
+/// part that is wrong.
+#[test]
+fn a_failed_bound_should_not_hide_the_part_that_is_wrong() {
+    check_partial_rows(BOUND_ROWS);
 }
 
 /// A call that waits inside a call that waits binds the parameter from the inner call's value:
@@ -3427,10 +3569,10 @@ fn a_waiting_call_inside_a_waiting_call_should_bind_the_parameter() {
     }
 }
 
-/// `takes_context` looks at each element of an array literal once, and `inferred_array` asks
+/// `takes_context` looks at each element of an array literal once. `inferred_array` asks
 /// `call_context` for the context of each element until one binds the element type. So the work
-/// for an array literal of generic calls for a partly bound parameter grows with the elements,
-/// not with their square. Each element is a call that the context reaches.
+/// for an array literal of generic calls grows with the elements, not with their square. Each
+/// element is a call that the context reaches.
 #[test]
 fn array_literal_context_should_cost_one_step_for_each_element() {
     let steps = |n: usize| {
@@ -3446,4 +3588,50 @@ fn array_literal_context_should_cost_one_step_for_each_element() {
     };
     assert!(steps(1) > 0, "the counter should count the walk");
     assert_near_linear(steps(100), steps(200), steps(300));
+}
+
+/// An array literal nested `d` deep, for a parameter that is `d` arrays deep. `takes_context`
+/// accepts the whole literal once, and `inferred_array` gives each level its element context
+/// with no new walk. So the work grows with the depth, not with its square.
+#[test]
+fn nested_array_literal_context_should_cost_one_step_for_each_level() {
+    let steps = |depth: usize| {
+        let src = format!(
+            "enum Two<A, B> {{\n    P(A, B)\n}}\n\
+             fn h<U, V>(a: U, b: {}Two<U, V>{}) {{}}\n\
+             fn main() {{\n    h(true, {}Two.P(true, 1){})\n}}",
+            "[".repeat(depth),
+            "]".repeat(depth),
+            "[".repeat(depth),
+            "]".repeat(depth),
+        );
+        generic::CONTEXT_STEPS.set(0);
+        clean(&src);
+        generic::CONTEXT_STEPS.get()
+    };
+    assert!(steps(1) > 0, "the counter should count the walk");
+    assert_near_linear(steps(10), steps(20), steps(30));
+}
+
+/// A chain of `Some(...)` `d` deep, for an optional parameter that is `d` deep. `takes_context`
+/// walks the chain once, and the call of each `Some` asks again with the same context, which
+/// `taken` answers. So the work grows with the depth, not with its square.
+#[test]
+fn nested_some_context_should_cost_one_step_for_each_level() {
+    with_prelude();
+    let steps = |depth: usize| {
+        let src = format!(
+            "enum Two<A, B> {{\n    P(A, B)\n}}\n\
+             fn h<U, V>(a: U, b: Two<U, V>{}) {{}}\n\
+             fn main() {{\n    h(true, {}Two.P(true, 1){})\n}}",
+            "?".repeat(depth),
+            "Some(".repeat(depth),
+            ")".repeat(depth),
+        );
+        generic::CONTEXT_STEPS.set(0);
+        clean(&src);
+        generic::CONTEXT_STEPS.get()
+    };
+    assert!(steps(1) > 0, "the counter should count the walk");
+    assert_near_linear(steps(10), steps(20), steps(30));
 }
