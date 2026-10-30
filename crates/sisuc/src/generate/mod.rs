@@ -51,12 +51,12 @@ pub(crate) struct BoundSite {
     pub(crate) broken: &'static str,
 }
 
-/// A class that conforms to no interface, which `NO_BOUND` makes.
+/// The class that `NO_BOUND` builds. It conforms to no interface.
 pub(crate) const NO_BOUND_CLASS: &str = "class NoBound {}\n";
-/// A value of a class with no conformance: it breaks every bound but `Display`.
+/// A value of that class: it breaks every bound but `Display`.
 const NO_BOUND: &str = "NoBound()";
-/// A value that is no class, which breaks `AnyObject`. It is not `5`, which an expected class
-/// would give the type of that class: the error would be E0032.
+/// A value that is no class, which breaks `AnyObject`. It is not `5`: when another argument gives
+/// `T` a class, `5` takes that class as its type and the error is E0032, not E0154.
 const NOT_A_CLASS: &str = "true";
 
 impl Generated {

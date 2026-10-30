@@ -1776,6 +1776,31 @@ mod tests {
         assert!(found, "no seed declares `later0`");
     }
 
+    /// The draws that order the parameters of `later<k>` reach many of the 24 orders of the four
+    /// that follow `_a`, so a draw that stops reaching most of them fails.
+    #[test]
+    fn later_should_take_its_parameters_in_many_orders() {
+        let mut orders = std::collections::BTreeSet::new();
+        for data in crate::generate::coverage::seeds() {
+            for line in crate::generate::generate(&data).program.lines() {
+                if let Some((_, params)) = line
+                    .strip_prefix("fn later")
+                    .and_then(|rest| rest.split_once("(_a: T, "))
+                    && let Some((params, _)) = params.split_once(") -> i64")
+                {
+                    let names: Vec<&str> = params.split(", ").map(|p| &p[..2]).collect();
+                    assert_eq!(names.len(), 4, "{line}");
+                    orders.insert(names.join(" "));
+                }
+            }
+        }
+        assert!(
+            orders.len() >= 16,
+            "only {} orders: {orders:?}",
+            orders.len()
+        );
+    }
+
     /// Every row of the table of replacements has a site in the programs of the seeds, and a
     /// site is the argument alone: what comes before it opens the argument list or names the
     /// field, and what comes after it ends the argument.
