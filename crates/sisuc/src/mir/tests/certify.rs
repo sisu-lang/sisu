@@ -2067,6 +2067,340 @@ fn store_through_a_borrowed_object_is_accepted() {
     assert_eq!(certify(&b.finish()), Ok(()));
 }
 
+// Writes through `Some`: each `Some` in the path of a `push` or a `make_unique` needs a test.
+
+/// `local` and then `projections`.
+fn path(local: LocalId, projections: Vec<Projection>) -> Place {
+    Place {
+        projections,
+        ..whole(local)
+    }
+}
+
+/// The field a class `c` holds an optional array in.
+fn items() -> Projection {
+    Projection::Field {
+        index: 0,
+        mutable: true,
+    }
+}
+
+/// `xs.Some`, the array an optional `xs` holds.
+fn some(xs: LocalId) -> Place {
+    path(xs, vec![Projection::Some])
+}
+
+/// `c.Some.items`, the optional array of a `C?`.
+fn some_items(c: LocalId) -> Place {
+    path(c, vec![Projection::Some, items()])
+}
+
+/// `c.Some.items.Some`, the array in it.
+fn some_items_some(c: LocalId) -> Place {
+    path(c, vec![Projection::Some, items(), Projection::Some])
+}
+
+/// `push place, 1`.
+fn push_one(place: Place) -> Statement {
+    pushing(place, Operand::Const(Const::Int(1, Type::I64)))
+}
+
+/// `stmts`, then the releases of `owned`.
+fn released(mut stmts: Vec<Statement>, owned: &[LocalId]) -> Vec<Statement> {
+    stmts.extend(owned.iter().map(|&local| Statement::Release(local)));
+    stmts
+}
+
+/// `test place`, with the present edge to `some`.
+fn test(place: Place, some: usize, none: usize) -> Terminator {
+    Terminator::TestPresent {
+        place,
+        some: BlockId(some),
+        none: BlockId(none),
+    }
+}
+
+/// A row of a table over the owned parameters `xs` and `ys`, both `[i64]?`: a label, the
+/// blocks, and the block where the write is unproved, if it is.
+type Optionals = (
+    &'static str,
+    fn(&mut Builder, LocalId, LocalId),
+    Option<usize>,
+);
+
+/// A row of a table over the owned parameter `c`, a `C?`: as `Optionals`.
+type Classes = (&'static str, fn(&mut Builder, LocalId), Option<usize>);
+
+fn certifies_or_leaves_unproved(
+    f: &Function,
+    local: LocalId,
+    unproved: Option<usize>,
+    label: &str,
+) {
+    match unproved {
+        None => assert_eq!(certify(f), Ok(()), "{label}"),
+        Some(block) => assert_eq!(
+            certify(f),
+            Err(Violation {
+                block: BlockId(block),
+                local,
+                rule: Rule::Unproved
+            }),
+            "{label}"
+        ),
+    }
+}
+
+/// The rows where a test proves the write, and so the function certifies.
+fn proved_through_some() -> [Optionals; 3] {
+    [
+        (
+            "push in the present block",
+            |b, xs, ys| {
+                b.block(vec![], test(whole(xs), 1, 2));
+                b.block(released(vec![push_one(some(xs))], &[xs, ys]), ret());
+                b.block(released(vec![], &[xs, ys]), ret());
+            },
+            None,
+        ),
+        (
+            "checks and make_unique of the path between the test and the push",
+            |b, xs, ys| {
+                let stmts = vec![
+                    Statement::Check(some(xs)),
+                    Statement::MakeUnique(some(xs)),
+                    push_one(some(xs)),
+                ];
+                b.block(vec![], test(whole(xs), 1, 2));
+                b.block(released(stmts, &[xs, ys]), ret());
+                b.block(released(vec![], &[xs, ys]), ret());
+            },
+            None,
+        ),
+        (
+            "make_unique in the present block",
+            |b, xs, ys| {
+                b.block(vec![], test(whole(xs), 1, 2));
+                b.block(
+                    released(vec![Statement::MakeUnique(some(xs))], &[xs, ys]),
+                    ret(),
+                );
+                b.block(released(vec![], &[xs, ys]), ret());
+            },
+            None,
+        ),
+    ]
+}
+
+/// The rows where no test proves the write on a chain of present edges.
+fn unproved_through_some() -> [Optionals; 8] {
+    [
+        (
+            "push with no test",
+            |b, xs, ys| {
+                b.block(released(vec![push_one(some(xs))], &[xs, ys]), ret());
+            },
+            Some(0),
+        ),
+        (
+            "make_unique with no test",
+            |b, xs, ys| {
+                b.block(
+                    released(vec![Statement::MakeUnique(some(xs))], &[xs, ys]),
+                    ret(),
+                );
+            },
+            Some(0),
+        ),
+        (
+            "push in the absent block",
+            |b, xs, ys| {
+                b.block(vec![], test(whole(xs), 1, 2));
+                b.block(released(vec![], &[xs, ys]), ret());
+                b.block(released(vec![push_one(some(xs))], &[xs, ys]), ret());
+            },
+            Some(2),
+        ),
+        (
+            "push after the present block joins another block",
+            |b, xs, ys| {
+                b.block(vec![], test(whole(xs), 1, 2));
+                b.block(vec![], goto(3));
+                b.block(vec![], goto(3));
+                b.block(released(vec![push_one(some(xs))], &[xs, ys]), ret());
+            },
+            Some(3),
+        ),
+        (
+            // The test comes last in block order: a check that reads only the last entry
+            // would take it for the one entry.
+            "push in a present block that another block also enters",
+            |b, xs, ys| {
+                b.block(vec![], test(whole(ys), 1, 2));
+                b.block(vec![], goto(3));
+                b.block(vec![], test(whole(xs), 3, 4));
+                b.block(released(vec![push_one(some(xs))], &[xs, ys]), ret());
+                b.block(released(vec![], &[xs, ys]), ret());
+            },
+            Some(3),
+        ),
+        (
+            "push in the entry block, which a present edge also enters",
+            |b, xs, ys| {
+                b.block(vec![push_one(some(xs))], goto(1));
+                b.block(vec![], test(whole(xs), 0, 2));
+                b.block(released(vec![], &[xs, ys]), ret());
+            },
+            Some(0),
+        ),
+        (
+            "call between the test and the push",
+            |b, xs, ys| {
+                let stmts = vec![call(vec![], vec![]), push_one(some(xs))];
+                b.block(vec![], test(whole(xs), 1, 2));
+                b.block(released(stmts, &[xs, ys]), ret());
+                b.block(released(vec![], &[xs, ys]), ret());
+            },
+            Some(1),
+        ),
+        (
+            "test of another place",
+            |b, xs, ys| {
+                b.block(vec![], test(whole(ys), 1, 2));
+                b.block(released(vec![push_one(some(xs))], &[xs, ys]), ret());
+                b.block(released(vec![], &[xs, ys]), ret());
+            },
+            Some(1),
+        ),
+    ]
+}
+
+/// A write through `Some` is proved by a `TestPresent` of the path up to it, on a present edge
+/// into a block with no other predecessor. A missing test, the absent edge, a join, a call
+/// between the test and the write and a test of another place each leave it unproved.
+#[test]
+fn write_through_some_should_need_a_presence_test_of_its_path() {
+    for (label, build, unproved) in proved_through_some()
+        .into_iter()
+        .chain(unproved_through_some())
+    {
+        let mut b = Builder::new("f");
+        let xs = b.param("xs", Type::optional(Type::array(Type::I64)));
+        let ys = b.param("ys", Type::optional(Type::array(Type::I64)));
+        build(&mut b, xs, ys);
+        certifies_or_leaves_unproved(&b.finish(), xs, unproved, label);
+    }
+}
+
+/// `c.Some.items.Some` has two `Some`: one test for each, on two present edges in a row, and
+/// each block between them holds nothing but `check` and `make_unique` statements of the path.
+/// In every row `bb2` writes and `bb3` is the absent block.
+#[test]
+fn write_through_two_optionals_should_need_a_test_for_each() {
+    let rows: [Classes; 7] = [
+        (
+            "both tests",
+            |b, c| {
+                b.block(vec![], test(whole(c), 1, 3));
+                b.block(vec![], test(some_items(c), 2, 3));
+                b.block(released(vec![push_one(some_items_some(c))], &[c]), ret());
+                b.block(released(vec![], &[c]), ret());
+            },
+            None,
+        ),
+        (
+            "no test of c",
+            |b, c| {
+                b.block(vec![], goto(1));
+                b.block(vec![], test(some_items(c), 2, 3));
+                b.block(released(vec![push_one(some_items_some(c))], &[c]), ret());
+                b.block(released(vec![], &[c]), ret());
+            },
+            Some(2),
+        ),
+        (
+            "no test of c.Some.items",
+            |b, c| {
+                b.block(vec![], test(whole(c), 1, 3));
+                b.block(vec![], goto(2));
+                b.block(released(vec![push_one(some_items_some(c))], &[c]), ret());
+                b.block(released(vec![], &[c]), ret());
+            },
+            Some(2),
+        ),
+        (
+            // The test of `c` comes last in block order, as in the table above.
+            "another block also enters the middle block",
+            |b, c| {
+                b.block(vec![], test(whole(c), 4, 1));
+                b.block(vec![], test(some_items(c), 2, 3));
+                b.block(released(vec![push_one(some_items_some(c))], &[c]), ret());
+                b.block(released(vec![], &[c]), ret());
+                b.block(vec![], test(whole(c), 1, 3));
+            },
+            Some(2),
+        ),
+        (
+            "call in the middle block",
+            |b, c| {
+                b.block(vec![], test(whole(c), 1, 3));
+                b.block(vec![call(vec![], vec![])], test(some_items(c), 2, 3));
+                b.block(released(vec![push_one(some_items_some(c))], &[c]), ret());
+                b.block(released(vec![], &[c]), ret());
+            },
+            Some(2),
+        ),
+        (
+            "tests in the wrong order",
+            |b, c| {
+                b.block(vec![], test(some_items(c), 1, 3));
+                b.block(vec![], test(whole(c), 2, 3));
+                b.block(released(vec![push_one(some_items_some(c))], &[c]), ret());
+                b.block(released(vec![], &[c]), ret());
+            },
+            Some(2),
+        ),
+        (
+            "make_unique of the path first",
+            |b, c| {
+                b.block(vec![], test(whole(c), 1, 3));
+                b.block(vec![], test(some_items(c), 2, 3));
+                let stmts = vec![Statement::MakeUnique(some_items_some(c))];
+                b.block(released(stmts, &[c]), ret());
+                b.block(released(vec![], &[c]), ret());
+            },
+            None,
+        ),
+    ];
+    for (label, build, unproved) in rows {
+        let mut b = Builder::new("f");
+        let c = b.param("c", Type::optional(object()));
+        build(&mut b, c);
+        certifies_or_leaves_unproved(&b.finish(), c, unproved, label);
+    }
+}
+
+/// A field `push` through `Some` on a borrowed `C?` writes the object both name, as one on a
+/// borrowed `C` does; a `push` onto the `[i64]?` itself writes a value the borrow does not own.
+#[test]
+fn push_through_some_should_write_a_borrowed_optional_class_but_not_a_borrowed_optional_array() {
+    let mut b = Builder::new("f");
+    let c = b.param("c", Type::optional(object()));
+    b.borrowed(c);
+    b.block(vec![], test(whole(c), 1, 2));
+    b.block(vec![push_one(some_items(c))], ret());
+    b.block(vec![], ret());
+    assert_eq!(certify(&b.finish()), Ok(()));
+
+    let mut b = Builder::new("f");
+    let xs = b.param("xs", Type::optional(Type::array(Type::I64)));
+    b.borrowed(xs);
+    b.block(vec![], test(whole(xs), 1, 2));
+    b.block(vec![push_one(some(xs))], ret());
+    b.block(vec![], ret());
+    rejects(&b.finish(), 1, xs, Rule::WriteBorrowed);
+}
+
 // One case for each check the cases above leave alone.
 
 /// `s` is scoped to `bb1`, which does not dominate `bb2`, where `s` is used.

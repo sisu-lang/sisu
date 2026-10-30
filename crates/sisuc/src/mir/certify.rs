@@ -68,6 +68,9 @@ pub(crate) enum Rule {
     /// borrowed and is not an object. An array or a string with a second holder is copied on
     /// write, but a borrow holds no count, so the write would go into its root's value.
     WriteBorrowed,
+    /// A `push` or a `make_unique` whose path holds a `Some` that no test proves: each needs a
+    /// `TestPresent` of the path up to it, on a chain of present edges back from the write.
+    Unproved,
     /// Rule 6: a `take` and the store to its place are not one pair in one block.
     Take,
     /// The borrow of a local that may be owned ends.
@@ -98,6 +101,9 @@ impl fmt::Display for Rule {
             Rule::Assign => "assigned where it may own a reference",
             Rule::WriteBorrowed => {
                 "a write goes into it while it is borrowed, and it is not an object"
+            }
+            Rule::Unproved => {
+                "a write through `Some` that no presence test on a chain of present edges proves"
             }
             Rule::Take => "a `take` without exactly one store to its place in its block",
             Rule::End => "its borrow ends where it may own a reference",
@@ -180,8 +186,9 @@ pub(super) fn scope_release_states(
 
 /// Builds what the regions share, then runs `each` on the region of each counted local that
 /// `wanted` takes, in order, up to its first error. Only with `clobbers` does a region check
-/// rule 3's clobbers. Only `certify` builds them, so the elaboration, which runs in release
-/// builds too, skips their cost.
+/// rule 3's clobbers, and does `regions` check the proofs of the writes through `Some`. Only
+/// `certify` asks for them, so the elaboration, which runs in release builds too, skips their
+/// cost.
 fn regions(
     function: &Function,
     wanted: impl Fn(LocalId) -> bool,
@@ -191,6 +198,9 @@ fn regions(
     let graph = Graph::new(function);
     let tree = Tree::new(&graph);
     takes(function, &tree)?;
+    if clobbers {
+        proved(function, &tree)?;
+    }
     let mentions = mentions(function, &tree)?;
     let shape = Shape::new(function, &graph, &tree);
     let clobbers = clobbers.then(|| Clobbers::new(function, &tree));
@@ -679,6 +689,8 @@ struct Event {
     block: usize,
     at: usize,
     effect: Effect,
+    /// A write whose path starts with `Some`: into the value an optional holds.
+    through_some: bool,
 }
 
 /// Calls `f` with each local `stmt` mentions, its effect and the place it is the root of. With
@@ -887,6 +899,91 @@ fn place<'a>(
     }
 }
 
+/// Whether `a` and `b` name one path: the same local and projections.
+fn same_path(a: &Place, b: &Place) -> bool {
+    a.local == b.local && a.projections == b.projections
+}
+
+/// Whether the `push` or `make_unique` of `write` at statement `at` of block `b` has a proof
+/// for each `Some` of its path. The last `Some` is proved by a test of its prefix on the one
+/// edge into the block, the one before it by a test on the one edge into that test's block, and
+/// so on. Each block between a proof and the write holds only `check` and `make_unique`
+/// statements of the path: a join, a call or another statement may change the optional. A
+/// `make_unique` of the path stops the walk, as it proved the same chain.
+fn proves(
+    function: &Function,
+    entries: &[(usize, usize)],
+    b: usize,
+    at: usize,
+    write: &Place,
+) -> bool {
+    let levels = (0..write.projections.len())
+        .rev()
+        .filter(|&k| write.projections[k] == Projection::Some);
+    let (mut block, mut end) = (b, at);
+    for k in levels {
+        for stmt in function.blocks[block].stmts[..end].iter().rev() {
+            match stmt {
+                Statement::MakeUnique(place) if same_path(place, write) => return true,
+                Statement::Check(place) if same_path(place, write) => {}
+                _ => return false,
+            }
+        }
+        // The entry block is also entered from outside, so no edge proves anything there.
+        let (1, from) = entries[block] else {
+            return false;
+        };
+        let Terminator::TestPresent { place, some, none } = &function.blocks[from].term else {
+            return false;
+        };
+        if block == 0
+            || some.0 != block
+            || none.0 == block
+            || place.local != write.local
+            || place.projections != write.projections[..k]
+        {
+            return false;
+        }
+        (block, end) = (from, function.blocks[from].stmts.len());
+    }
+    true
+}
+
+/// Checks the proof of every `push` and `make_unique` through `Some` in the reachable blocks,
+/// and reports the first that has none. The walks cost the statements and the path lengths of
+/// the writes: a `make_unique` of a path stops the walks of the writes after it.
+fn proved(function: &Function, tree: &Tree) -> Result<(), Violation> {
+    // The number of edges into each block, and the block the last one comes from.
+    let mut entries = vec![(0, NONE); function.blocks.len()];
+    for (b, block) in function.blocks.iter().enumerate() {
+        if tree.reachable(b) {
+            for to in block.term.successors() {
+                entries[to.0] = (entries[to.0].0 + 1, b);
+            }
+        }
+    }
+    for (b, block) in function.blocks.iter().enumerate() {
+        if !tree.reachable(b) {
+            continue;
+        }
+        for (at, stmt) in block.stmts.iter().enumerate() {
+            let (Statement::Push { place, .. } | Statement::MakeUnique(place)) = stmt else {
+                continue;
+            };
+            if place.projections.contains(&Projection::Some)
+                && !proves(function, &entries, b, at, place)
+            {
+                return Err(Violation {
+                    block: BlockId(b),
+                    local: place.local,
+                    rule: Rule::Unproved,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Each counted local's effects, in block and statement order, over the reachable blocks.
 /// A statement that reads a local in place and then kills it is an error here.
 fn mentions(function: &Function, tree: &Tree) -> Result<Vec<Vec<Event>>, Violation> {
@@ -897,7 +994,11 @@ fn mentions(function: &Function, tree: &Tree) -> Result<Vec<Vec<Event>>, Violati
             continue;
         }
         let mut found = None;
-        let mut note = |at: usize, local: LocalId, effect: Effect, in_place: &mut Vec<LocalId>| {
+        let mut note = |at: usize,
+                        local: LocalId,
+                        effect: Effect,
+                        through_some: bool,
+                        in_place: &mut Vec<LocalId>| {
             if !function.locals[local.0].counted {
                 return;
             }
@@ -924,17 +1025,21 @@ fn mentions(function: &Function, tree: &Tree) -> Result<Vec<Vec<Event>>, Violati
                 block: b,
                 at,
                 effect,
+                through_some,
             });
         };
         for (at, stmt) in block.stmts.iter().enumerate() {
             in_place.clear();
-            statement(stmt, false, &mut |local, effect, _| {
-                note(at, local, effect, &mut in_place);
+            statement(stmt, false, &mut |local, effect, place| {
+                let through_some = place.is_some_and(|place| {
+                    effect == Effect::Write && place.projections.first() == Some(&Projection::Some)
+                });
+                note(at, local, effect, through_some, &mut in_place);
             });
         }
         in_place.clear();
         terminator(&block.term, false, &mut |local, effect, _| {
-            note(block.stmts.len(), local, effect, &mut in_place);
+            note(block.stmts.len(), local, effect, false, &mut in_place);
         });
         if let Some(violation) = found {
             return Err(violation);
@@ -1819,7 +1924,7 @@ impl Region<'_> {
             }
             previous = event.at;
             observe(event, states);
-            states = self.apply(block, event.effect, states)?;
+            states = self.apply(block, event, states)?;
         }
         let end = self.function.blocks[block].stmts.len();
         if (!kills.is_empty() || clobbered(previous, end)) && states & BORROWED != 0 {
@@ -1896,7 +2001,8 @@ impl Region<'_> {
 
     /// One effect on the set, checked against rules 1, 2, 5, a write while borrowed and the end
     /// of a borrow.
-    fn apply(&self, block: usize, effect: Effect, states: States) -> Result<States, Violation> {
+    fn apply(&self, block: usize, event: &Event, states: States) -> Result<States, Violation> {
+        let effect = event.effect;
         let token = self.function.locals[self.local.0].token;
         let misused = match effect {
             Effect::Read
@@ -1942,16 +2048,22 @@ impl Region<'_> {
         if states & bad != 0 {
             return Err(self.violation(block, rule));
         }
-        if effect == Effect::Write
-            && states & BORROWED != 0
-            && !matches!(
-                self.function.locals[self.local.0].ty.kind(),
-                TypeKind::Class(..)
-            )
-        {
+        if effect == Effect::Write && states & BORROWED != 0 && !self.writes_object(event) {
             return Err(self.violation(block, Rule::WriteBorrowed));
         }
         Ok(after)
+    }
+
+    /// Whether the write goes into a class object, which a borrow and its root name alike: the
+    /// local is an object, or an optional one and the path starts with `Some`.
+    fn writes_object(&self, event: &Event) -> bool {
+        match self.function.locals[self.local.0].ty.kind() {
+            TypeKind::Class(..) => true,
+            TypeKind::Optional(payload) => {
+                event.through_some && matches!(payload.kind(), TypeKind::Class(..))
+            }
+            _ => false,
+        }
     }
 
     /// Whether the local is a borrowed parameter, whose borrow lasts the whole body.
