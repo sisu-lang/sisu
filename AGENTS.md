@@ -15,7 +15,7 @@ Once per clone, run `make setup`. It installs LLVM 23 into `.llvm/23`, which `.c
 ## Code rules
 
 - Lint policy lives in the root `Cargo.toml` under `[workspace.lints]`. Every crate opts in with `[lints] workspace = true`. CI fails on any warning.
-- Clippy enforces the code rules (`#[expect]` with a reason, no `unwrap()` outside tests, `// SAFETY:` comments). Fix the code to satisfy a lint; the lint table changes only with the user's agreement.
+- Clippy enforces the code rules (`#[expect]` with a reason, no `unwrap()` outside tests, `// SAFETY:` comments). Fix the code to satisfy a lint. A lint on the shape of code, such as `clippy::struct_excessive_bools` or `clippy::too_many_lines`, is different: when the shape is right, keep it and add `#[expect(<lint>, reason = "...")]`, as the repo does. The lint table changes only with the user's agreement.
 - Reviews: apply `CODING_STANDARDS.md`.
 - Write code to the rules in `CODING_STANDARDS.md` as well as reviewing against them; its Performance section covers allocation and measurement.
 - Before you write, refactor or review Rust, load the `rust-best-practices` skill from [BeautifulRust](https://github.com/morganlinton/BeautifulRust) and follow it. Claude Code installs it with `/plugin marketplace add morganlinton/BeautifulRust`, then `/plugin install beautiful-rust@beautiful-rust`. An agent without plugin support reads `skills/rust-best-practices/SKILL.md` in that repository. When the skill and this file, `CODING_STANDARDS.md` or the lint table do not agree, the Sisu rules apply.

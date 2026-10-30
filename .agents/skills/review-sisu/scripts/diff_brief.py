@@ -17,7 +17,9 @@ the main checkout's gitignored docs/superpowers/ is not in a worktree.
            path, so the reviewer checks its summary line. Fails when the file does not exist, or
            when its summary line names a commit outside the range. A log measured
            at an earlier commit of the range is accepted, and Focus lists the commits after it,
-           because a task runs mutation tests once and later commits are not mutated.
+           because a task runs mutation tests once and later commits are not mutated. A log
+           measured before a rebase is accepted when a commit of the range has the same
+           `git patch-id` as the measured commit; Focus names both.
   --coverage  the output of `make coverage` for the diff; Focus names it
 For a diff, Focus also lists each line the diff removes from the tests with no identical line
 added back, and each test file it deletes, and each sisu build in OUT's bin/<sha>/ that
@@ -78,15 +80,30 @@ def summary(log):
     return re.search(r'\(HEAD ([0-9a-f]{40})\)$', lines[-1]) if lines else None
 
 
+def patch_id(repo, sha):
+    """The stable `git patch-id` of the commit `sha`, or '' for a commit that changes nothing."""
+    shown = subprocess.run(['git', '-C', str(repo), 'show', sha], capture_output=True).stdout
+    return subprocess.run(['git', '-C', str(repo), 'patch-id', '--stable'], input=shown,
+                          capture_output=True).stdout.decode().partition(' ')[0]
+
+
+def in_range(repo, sha, base, head):
+    """The commit of `base`..`head` that is `sha`, or that a rebase made of it (the same patch-id), or ''."""
+    # In the range means reachable from head and not from base; base need not precede it after a merge of main.
+    if sha == commit(repo, head) or (not is_ancestor(repo, sha, base) and is_ancestor(repo, sha, head)):
+        return sha
+    want = patch_id(repo, sha)
+    return next((c for c in git(repo, 'rev-list', f'{base}..{head}').split() if want and patch_id(repo, c) == want), '')
+
+
 def log_mismatch(log, repo, base, head):
     """Why the summary line of `log` does not describe a commit in `base`..`head` of `repo`, or None."""
     found = summary(log)
     if not found:
         return f'no summary line ending "(HEAD <sha>)" in {log}'
-    measured, want = found[1], commit(repo, head)
-    # In the range means reachable from head and not from base; base need not precede it after a merge of main.
-    if measured != want and (is_ancestor(repo, measured, base) or not is_ancestor(repo, measured, head)):
-        return f'{log} measured {measured[:8]}, which is not in {base}..{head} ({want[:8] or "unknown"})'
+    if not in_range(repo, found[1], base, head):
+        want = commit(repo, head)
+        return f'{log} measured {found[1][:8]}, which is not in {base}..{head} ({want[:8] or "unknown"})'
     return None
 
 
@@ -164,10 +181,14 @@ def main():
             if why := log_mismatch(log, repo, shas[0], shas[1]):
                 sys.exit(f'diff_brief: {why}')
             measured = summary(log)[1]
-            later = git(repo, 'rev-list', '--reverse', f'{measured}..{shas[1]}').split()
-            focus_lines.append(f'Mutation-test log: {log}' + (
-                f', measured at {measured[:8]}. Commits after it, not mutated: {" ".join(c[:8] for c in later)}'
-                if later else ''))
+            twin = in_range(repo, measured, *shas)
+            later = git(repo, 'rev-list', '--reverse', f'{twin}..{shas[1]}').split()
+            note = f', measured at {measured[:8]}' if later or twin != measured else ''
+            if twin != measured:
+                note += f', which a rebase made {twin[:8]}'
+            if later:
+                note += f'. Commits after it, not mutated: {" ".join(c[:8] for c in later)}'
+            focus_lines.append(f'Mutation-test log: {log}{note}')
         if a.coverage:
             focus_lines.append(f'Coverage result: {Path(a.coverage).resolve()}')
         if removed := removed_tests(repo, *shas):

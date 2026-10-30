@@ -25,8 +25,8 @@ The caller names one target. Infer its kind; ask when it is unclear.
 ### 1. Set up
 
 1. The repository root is `git rev-parse --show-toplevel` in the checkout that holds the target, which may be a worktree.
-2. `mktemp -d "${TMPDIR:-/tmp}/sisu-review-<name>-XXXX"` makes the run directory, `RUN`, and `mkdir RUN/opus-scratch` makes the Opus reviewer's scratch directory. `<name>` says what is under review, such as `m8p5-task3` or `attributes-final`. Prompts and reports stay there, outside the repository. Shell variables do not survive between tool calls, so write `RUN` as a literal path.
-3. Delete the build directories that have not changed for a day, because a run that never reaches step 6 keeps its builds: `find "${TMPDIR:-/tmp}"/sisu-review-*/ -mindepth 1 -maxdepth 1 -type d -mtime +0 -exec rm -rf {} +`.
+2. `mktemp -d "${TMPDIR:-/tmp}/sisu-review-<name>-XXXX"` makes the run directory, `RUN`, `mkdir RUN/opus-scratch` makes the Opus reviewer's scratch directory, and `mkdir RUN/probes` makes the directory that keeps the probe programs of every round. `<name>` says what is under review, such as `m8p5-task3` or `attributes-final`. Prompts and reports stay there, outside the repository. Shell variables do not survive between tool calls, so write `RUN` as a literal path.
+3. Delete the build directories that have not changed for a day, because a run that never reaches step 6 keeps its builds: `find "${TMPDIR:-/tmp}"/sisu-review-*/ -mindepth 1 -maxdepth 1 -type d ! -name probes -mtime +0 -exec rm -rf {} +`.
 4. Run `git fetch origin` before every review: the brief and its script come from `origin/main`, so a branch that started before a change to the criteria gets the current ones.
 5. For the final diff of a branch, review what will merge. When `git merge-base --is-ancestor origin/main <head>` fails, `main` has moved: bring it in, run `make test` and `make site`, and review the range from `origin/main` to the new head. Rebase onto `origin/main` when the branch's commits replay cleanly. Merge `origin/main` instead when a rebase conflicts in commits that later fix rounds rewrote: one merge resolves the conflict against the final code. A new check on `main`, such as a warning, can fail the branch's own tests with no conflict, so `make test` is part of the merge.
 
@@ -87,7 +87,7 @@ A diagnostic improvement (`CODING_STANDARDS.md`, Reviewing) is deferred without 
 
 Rules for ruling:
 
-1. Check a finding before you rule. Run its repro or read the source it cites. When the claim does not hold, reject it and say what you saw.
+1. Check a finding before you rule. Run its repro or read the source it cites. When the claim does not hold, reject it and say what you saw. Save each repro program you run as `RUN/probes/<round>/<reviewer>-<n>.sisu`.
 2. Severity follows "Reviewing" in `CODING_STANDARDS.md`. A blocking finding is fixed or deferred with the user's agreement; a nit may be rejected.
 3. A ruling must not break a rule in `CODING_STANDARDS.md`.
 4. When two reviewers disagree, rule on the evidence and record the disagreement.
@@ -95,7 +95,7 @@ Rules for ruling:
 
 ### 5. Fix and review again
 
-Fix the accepted findings in the target. Fix the class, not only the repro: for each finding, list the neighbouring cases (the same rule in each position the language allows it), try each one, and fix the cause so that all of them are right. A brief for a fix round asks for that list and its results, and for the command and its output behind each claim about what `sisu` does. A fix to code keeps `make test`
+Fix the accepted findings in the target. Fix the class, not only the repro: for each finding, list the neighbouring cases (the same rule in each position the language allows it), try each one, and fix the cause so that all of them are right. A brief for a fix round asks for that list and its results, and for the command and its output behind each claim about what `sisu` does. Its executor writes each probe program to `RUN/probes/<round>/`, and compares the probes of every round with `python3 scripts/diag_diff.py BASE_SISU HEAD_SISU RUN/probes`, where `BASE_SISU` is the build before the round. A fix to code keeps `make test`
 passing, and a fix that changes behavior adds a test that fails without
 it.
 
@@ -120,8 +120,8 @@ Tell the user:
 3. the fixes you made, and where each deferred finding went;
 4. the questions that wait for the user.
 
-Then delete everything in `RUN` except the briefs and reports, after the
-last round: `find RUN -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +`.
+Then delete everything in `RUN` except the briefs, the reports and `probes`, after the
+last round: `find RUN -mindepth 1 -maxdepth 1 -type d ! -name probes -exec rm -rf {} +`.
 Reviewers build there, about 7 GB a build, and nothing else removes it.
 
 ## Common mistakes
