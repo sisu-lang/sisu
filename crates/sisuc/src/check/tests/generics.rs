@@ -2916,71 +2916,75 @@ fn an_argument_should_bind_a_parameter_named_outside_an_associated_type() {
 /// type that does not conform reports its bound alone.
 #[test]
 fn an_associated_type_argument_should_report_its_own_mistake() {
-    for (decls, call, col, code) in [
+    /// The declarations, the call, and the codes with their columns on the call's line.
+    type Row<'a> = (&'a str, &'a str, &'a [(Code, usize)]);
+    let rows: &[Row<'_>] = &[
         (
             "fn h<T: I>(_p: Two<T, T.Item>) {}\n",
             "h(Two.P(W(), \"x\"))",
-            7,
-            Code::Mismatch,
+            &[(Code::Mismatch, 7)],
         ),
         (
             "fn h<T: I>(_p: Two<T.Item, T>) {}\n",
             "h(Two.P(\"x\", W()))",
-            7,
-            Code::Mismatch,
+            &[(Code::Mismatch, 7)],
         ),
         (
             "fn h<S: Holds<U>, U>(_s: S, _p: Two<S.Item, U>) {}\n",
             "h(P(), Two.P(5, 4))",
-            12,
-            Code::Mismatch,
+            &[(Code::Mismatch, 12)],
         ),
         (
             "fn h<S: Holds<U>, U>(_s: S, _w: Wrap<S.Item>) {}\n",
             "h(P(), Wrap.X(\"a\"))",
-            5,
-            Code::CannotInfer,
+            &[(Code::CannotInfer, 5)],
         ),
         (
             "fn h<T: I>(_p: Two<T, T.Item>) {}\n",
             "h(Two.P(5, 7))",
-            7,
-            Code::NotConform,
+            &[(Code::NotConform, 7)],
         ),
         (
             "fn h<T: I>(_p: Two<T.Item, T>) {}\n",
             "h(Two.P(7, 5))",
-            7,
-            Code::NotConform,
+            &[(Code::NotConform, 7)],
         ),
         // After a failed bound, no later argument is checked against the type that does not
-        // exist, in an array of optionals, in a second parameter, or in one that waits.
+        // exist, in an array of optionals or in a second parameter.
         (
             "fn h<T: I>(_p: [Two<T, T.Item>?]) {}\n",
             "h([None, Two.P(5, 7)])",
-            14,
-            Code::NotConform,
+            &[(Code::NotConform, 14)],
         ),
         (
             "fn h<T: I>(_p: [Two<T, T.Item>?]) {}\n",
             "h([Two.P(5, 7), Two.P(W(), 8)])",
-            8,
-            Code::NotConform,
+            &[(Code::NotConform, 8)],
         ),
         (
             "fn h<T: I>(_p: Two<T, T.Item>, _q: Two<T, T.Item>) {}\n",
             "h(Two.P(5, 7), Two.P(W(), 8))",
-            7,
-            Code::NotConform,
+            &[(Code::NotConform, 7)],
+        ),
+        // A parameter that is not bound yet when the bound fails is still bound by the next
+        // argument, so a later mismatch is reported at it.
+        (
+            "fn h<T: I, U>(_p: Two<T, T.Item>, _a: U, _b: U) {}\n",
+            "h(Two.P(5, 7), 1, \"s\")",
+            &[(Code::NotConform, 7), (Code::Mismatch, 20)],
         ),
         (
-            "fn h<T: I, U>(_p: Two<T, T.Item>, _a: Two<T, U>, _b: Two<T.Item, U>) {}\n",
-            "h(Two.P(5, 7), Two.P(W(), 1), Two.P(1, 1))",
-            7,
-            Code::NotConform,
+            "fn h<T: I, U>(_p: Two<T, T.Item>, _a: Wrap<U>, _b: Wrap<U>) {}\n",
+            "h(Two.P(5, 7), Wrap.X(1), Wrap.X(\"s\"))",
+            &[(Code::NotConform, 7), (Code::Mismatch, 38)],
         ),
-    ] {
+    ];
+    for &(decls, call, expected) in rows {
         let (src, line) = assoc_program(decls, call);
-        codes_row(&format!("{decls}{call}"), &src, &[(code, (line, col))]);
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|&(code, col)| (code, (line, col)))
+            .collect();
+        codes_row(&format!("{decls}{call}"), &src, &expected);
     }
 }

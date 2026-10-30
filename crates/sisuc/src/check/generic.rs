@@ -1128,14 +1128,20 @@ impl Checker<'_> {
         );
         match type_of(&checked) {
             Some(Type::UNIT | Type::NEVER) | None => checked,
-            // The pattern may name an associated type that does not exist. The bound check
-            // reported that, and no mismatch with the pattern can be written.
-            Some(_) if call.bound_failed() => checked,
             Some(ty) if !self.bind_param(call, pattern, ty, e.span) => {
-                let want = self.printed(&call.bindings, pattern);
-                let d = self.mismatch(e.span, Some(e), want, ty);
-                self.diagnostics.push(d);
-                mark((checked, true))
+                // After a failed bound, the pattern may name an associated type that does not
+                // exist. The bound check reported that, so no mismatch with the pattern is written.
+                if call.bound_failed()
+                    && pattern.has_assoc()
+                    && self.known_in(call, pattern).is_none()
+                {
+                    checked
+                } else {
+                    let want = self.printed(&call.bindings, pattern);
+                    let d = self.mismatch(e.span, Some(e), want, ty);
+                    self.diagnostics.push(d);
+                    mark((checked, true))
+                }
             }
             Some(_) => {
                 let want = self.known_in(call, pattern);
