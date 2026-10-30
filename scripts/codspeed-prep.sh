@@ -23,6 +23,36 @@ fail() {
     exit 1
 }
 
+# Compiles $2 into $3 as the benchmark $1. A failed build or any text on
+# standard error (a warning) fails the script, and the text is shown first.
+build() {
+    local b=$1 src=$2 exe=$3
+    target/release/sisu build -O2 "$src" -o "$exe" 2>"$out/stderr" || {
+        cat "$out/stderr" >&2
+        fail "$b failed to compile"
+    }
+    if [[ -s $out/stderr ]]; then
+        cat "$out/stderr" >&2
+        fail "$b printed a warning when it was built"
+    fi
+}
+
+# Runs the command "$2"... as the benchmark $1, with its output in $out/stdout and
+# $out/stderr. A non-zero exit or any text on standard error fails the script, and the
+# text is shown first.
+run() {
+    local b=$1
+    shift
+    "$@" >"$out/stdout" 2>"$out/stderr" || {
+        cat "$out/stderr" >&2
+        fail "$b exited non-zero"
+    }
+    if [[ -s $out/stderr ]]; then
+        cat "$out/stderr" >&2
+        fail "$b printed to stderr"
+    fi
+}
+
 # Copies bench/$1/main.sisu with sed script $2 applied and compiles it.
 reduce() {
     local b=$1 script=$2
@@ -30,7 +60,7 @@ reduce() {
     if cmp -s "bench/$b/main.sisu" "$out/$b/main.sisu"; then
         fail "the reduction of $b no longer applies"
     fi
-    target/release/sisu build -O2 "$out/$b/main.sisu" -o "$out/$b/main" || fail "$b failed to compile"
+    build "$b" "$out/$b/main.sisu" "$out/$b/main"
 }
 reduce fib 's/fib(40)/fib(27)/'
 reduce sieve 's/sieve(50_000_000)/sieve(1_000_000)/'
@@ -41,7 +71,7 @@ reduce mandelbrot 's/let n = 4000/let n = 400/'
 reduce fannkuch_redux 's/fannkuch(10)/fannkuch(9)/'
 # bench/features/ programs are sized for simulation and Sisu-only: no reduction.
 for b in strings enum_match shared_arrays compare tree_rewrite interp interfaces show; do
-    target/release/sisu build -O2 "bench/features/$b/main.sisu" -o "$out/$b/main" || fail "$b failed to compile"
+    build "$b" "bench/features/$b/main.sisu" "$out/$b/main"
 done
 
 # step0 returns its argument. stepi adds 1 through an array, a class and an
@@ -301,8 +331,7 @@ expected() {
 for i in "${!names[@]}"; do
     name=${names[i]}
     read -ra cmd <<<"${execs[i]}"
-    "${cmd[@]}" >"$out/stdout" 2>"$out/stderr" || fail "$name exited non-zero"
-    [[ ! -s $out/stderr ]] || fail "$name printed to stderr"
+    run "$name" "${cmd[@]}"
     case $name in
         check_* | build_*)
             [[ ! -s $out/stdout ]] || fail "$name printed output"
@@ -317,8 +346,7 @@ done
 # Runs the program a build_* benchmark compiled: it prints sections - 1.
 large_program() {
     local name=$1 sections=$2
-    "$out/$name/main" >"$out/stdout" 2>"$out/stderr" || fail "$name's program exited non-zero"
-    [[ ! -s $out/stderr ]] || fail "$name's program printed to stderr"
+    run "$name's program" "$out/$name/main"
     printf '%d\n' $((sections - 1)) | cmp -s - "$out/stdout" || fail "$name's program printed something other than $((sections - 1))"
 }
 large_program build_large "$large_sections"

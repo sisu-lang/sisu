@@ -104,7 +104,10 @@ the checker's are merged in by position. The checker runs only when
 every item has a name. `mono` reports E0030 for an associated type chain that
 the checker's probe did not follow, and the front end then gives no program.
 `sisu check` stops after the checker (`front_end::checked`), because it prints
-no instantiation, so it does not find such a chain.
+no instantiation, so it does not find such a chain. `mono` also reports E0160
+for a payload that can be 4 GiB or more (`payload_limit.rs`) when the checker
+cannot measure it: an enum that holds an instance of a generic enum, or is one.
+The checker finds the error for the other enums, so `sisu check` reports those.
 
 **Checker** (`check/`, `tir.rs`). Resolves every name, types every expression
 and lowers sugar: `while`, `while let` and `for` become loops, `?.` and `??`

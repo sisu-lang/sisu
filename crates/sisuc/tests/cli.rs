@@ -2897,3 +2897,143 @@ fn run_should_report_a_directory_it_cannot_remove_as_a_tool_error() {
         "{stderr}"
     );
 }
+
+/// The enums `E<first>` ... `E31`: each variant `A` holds two of the next enum inline, and `E31`
+/// holds two `i64`. A value of `E<n>` is 2^(36 - n) bytes less 8, so the payload of `E<n>` is
+/// 2^(36 - n) bytes less 16, and `E3` is the first that is over 4 GiB.
+fn enum_chain(first: usize) -> String {
+    use std::fmt::Write as _;
+    let mut source = String::new();
+    for n in first..31 {
+        let next = n + 1;
+        writeln!(source, "enum E{n} {{\n    End\n    A(E{next}, E{next})\n}}")
+            .expect("writing to a `String` should succeed");
+    }
+    source + "enum E31 {\n    End\n    A(i64, i64)\n}\n"
+}
+
+/// The number of lines of `stderr` that start an E0160 error.
+fn e0160_errors(stderr: &str) -> usize {
+    stderr
+        .lines()
+        .filter(|line| line.starts_with("error[E0160]"))
+        .count()
+}
+
+/// GIVEN a chain of 32 enums that each hold two of the next, so that `E3` has a payload of 8 GiB
+/// less 16 bytes and `E0` more than that
+/// WHEN `sisu check` runs on it
+/// THEN it exits 1 with one E0160, at 13:6 on `E3`, the innermost enum over the limit
+#[test]
+fn check_should_report_one_e0160_on_the_innermost_enum_of_a_chain_of_32_enums() {
+    let source = format!("{}fn main() {{\n    print(E0.End)\n}}\n", enum_chain(0));
+    let out = check("payload_chain_check", &source);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert_eq!(e0160_errors(&stderr), 1, "{stderr}");
+    assert!(stderr.contains("payload_chain_check.sisu:13:6"), "{stderr}");
+}
+
+/// GIVEN the chain of 32 enums, and `main` matches on `E0.End`
+/// WHEN it is built to LLVM IR
+/// THEN it exits 1 with one E0160 at 13:6 and the compiler does not panic
+#[test]
+fn build_should_report_e0160_and_not_panic_for_a_chain_of_32_enums_that_main_matches() {
+    let main = "fn main() {\n    match E0.End {\n        E0.End => print(1)\n        E0.A(_, _) => print(2)\n    }\n}\n";
+    let source = format!("{}{main}", enum_chain(0));
+    let out = run_on("payload_chain_match", &source, &["build", "--emit", "ir"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert_eq!(e0160_errors(&stderr), 1, "{stderr}");
+    assert!(stderr.contains("payload_chain_match.sisu:13:6"), "{stderr}");
+    assert!(!stderr.contains("panicked"), "{stderr}");
+}
+
+/// GIVEN the chain of 32 enums, a class with a field of `E0`, an array and an optional of `E0`,
+/// and a `Result<E1, E1>`
+/// WHEN it is built to LLVM IR
+/// THEN it exits 1 with one E0160 at 13:6, and no other enum or type is reported
+#[test]
+fn build_should_report_one_e0160_when_a_class_an_array_an_optional_and_a_result_hold_the_enum() {
+    let main = "class C {\n    e: E0\n}\nfn main() {\n    let c = C(e: E0.End)\n    let xs = [E0.End]\n    let o: E0? = E0.End\n    let r: Result<E1, E1> = Result.Ok(E1.End)\n    print(c.e)\n    print(xs.len())\n    print(o ?? E0.End)\n    print(r)\n}\n";
+    let source = format!("{}{main}", enum_chain(0));
+    let out = run_on("payload_holders", &source, &["build", "--emit", "ir"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert_eq!(e0160_errors(&stderr), 1, "{stderr}");
+    assert_eq!(stderr.matches("error[").count(), 1, "{stderr}");
+    assert!(stderr.contains("payload_holders.sisu:13:6"), "{stderr}");
+}
+
+/// GIVEN `enum P<T> { End; A(T, T) }` and a `let` whose type nests `P` 32 levels deep
+/// WHEN it is checked and then built
+/// THEN the check exits 0, and the build exits 1 with one E0160 at 1:6 on `P`, and no panic
+#[test]
+fn build_should_report_e0160_for_a_generic_enum_that_only_its_instance_makes_large() {
+    let nested = format!("{}i64{}", "P<".repeat(32), ">".repeat(32));
+    let source = format!(
+        "enum P<T> {{\n    End\n    A(T, T)\n}}\nfn main() {{\n    let x: {nested} = P.End\n    print(x)\n}}\n"
+    );
+    let checked = check("payload_generic_check", &source);
+    assert_eq!(checked.status.code(), Some(0), "{checked:?}");
+    let out = run_on("payload_generic", &source, &["build", "--emit", "ir"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert_eq!(e0160_errors(&stderr), 1, "{stderr}");
+    assert!(stderr.contains("payload_generic.sisu:1:6"), "{stderr}");
+    assert!(!stderr.contains("panicked"), "{stderr}");
+}
+
+/// GIVEN `enum P<T> { End; A(T, T) }` and a `let` of `Result<Result<P^28, i64>, i64>`, where `P^28`
+/// is `P` nested 28 levels deep
+/// WHEN it is built to LLVM IR
+/// THEN it exits 1 with one E0160 at 1:6, whose message says that the instance of `P` can make
+/// the payload of the outer `Result` 4 GiB or more, and whose label says that the `Result`
+/// holds an instance of the enum inline
+#[test]
+fn build_should_name_the_result_that_holds_an_instance_of_a_generic_enum() {
+    let pairs = format!("{}i64{}", "P<".repeat(28), ">".repeat(28));
+    let holder = format!("Result<Result<{pairs}, i64>, i64>");
+    let source = format!(
+        "enum P<T> {{\n    End\n    A(T, T)\n}}\nfn main() {{\n    let r: {holder} = Result.Err(1)\n    print(r)\n}}\n"
+    );
+    let out = run_on(
+        "payload_result_instance",
+        &source,
+        &["build", "--emit", "ir"],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert_eq!(e0160_errors(&stderr), 1, "{stderr}");
+    assert!(
+        stderr.contains("payload_result_instance.sisu:1:6"),
+        "{stderr}"
+    );
+    let message = format!("enum `{pairs}` can make the payload of `{holder}` 4 GiB or more");
+    assert!(stderr.contains(&message), "{stderr}");
+    let label = format!("`{holder}` holds an instance of this enum inline");
+    assert!(stderr.contains(&label), "{stderr}");
+}
+
+/// GIVEN a chain of 28 enums, from `E4`, whose payload is 16 bytes under 4 GiB
+/// WHEN it is built to LLVM IR
+/// THEN it exits 0 and prints the IR
+#[test]
+fn build_should_accept_a_chain_whose_payload_is_just_under_the_limit() {
+    let source = format!("{}fn main() {{\n    print(E4.End)\n}}\n", enum_chain(4));
+    let out = run_on("payload_just_under", &source, &["build", "--emit", "ir"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("%sisu.E4 = type"));
+}
+
+/// GIVEN enums that hold themselves behind a box: `Tree` holds two `Tree`, and `Chain` a `Chain`
+/// WHEN it is built to LLVM IR
+/// THEN it exits 0, as a box adds the size of a pointer only
+#[test]
+fn build_should_accept_an_enum_whose_cycle_is_boxed() {
+    let source = "enum Tree {\n    Leaf\n    Node(Tree, Tree, i64, i64)\n}\nenum Chain {\n    Nil\n    Cons(Chain, Tree)\n}\nfn main() {\n    print(Chain.Cons(Chain.Nil, Tree.Leaf))\n}\n";
+    let out = run_on("payload_boxed_cycle", source, &["build", "--emit", "ir"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+}

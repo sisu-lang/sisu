@@ -287,6 +287,11 @@ pub(crate) struct Class {
 #[derive(Debug)]
 pub(crate) struct Enum {
     pub(crate) name: String,
+    /// Where the declaration names the enum. An instance of a generic enum has the span of its
+    /// declaration.
+    pub(crate) span: Span,
+    /// Whether it is an instance of a generic enum, which `mono` makes.
+    pub(crate) instance: bool,
     /// The names of its type parameters, in order; empty when it is not generic.
     pub(crate) type_params: Vec<String>,
     pub(crate) variants: Vec<Variant>,
@@ -2008,6 +2013,8 @@ mod tests {
             classes: vec![],
             enums: vec![Enum {
                 name: "State".into(),
+                span: Span::new(0, 0),
+                instance: false,
                 type_params: Vec::new(),
                 variants: vec![
                     Variant {
@@ -2855,6 +2862,8 @@ mod tests {
             }],
             enums: vec![Enum {
                 name: "Tree".into(),
+                span: Span::new(0, 0),
+                instance: false,
                 type_params: Vec::new(),
                 variants: vec![],
                 counted: false,

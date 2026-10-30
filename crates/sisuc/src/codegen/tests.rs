@@ -2,6 +2,7 @@ use super::*;
 use crate::check::check_alone;
 use crate::mir::tests::assert_near_linear;
 use crate::parser::parse_ok;
+use crate::payload_limit;
 use crate::tir::BinaryOp;
 use inkwell::values::{AnyValue, CallSiteValue, InstructionOpcode, InstructionValue, Operand};
 use std::panic::{self, AssertUnwindSafe};
@@ -67,6 +68,492 @@ fn compiled_over<'ctx>(
         panic!("{e}\n{}", module.print_to_string());
     }
     module
+}
+
+/// A program of enums for `payload_bound_should_cover_the_llvm_layout_of_each_enum`: scalars of
+/// each alignment, strings, arrays, classes, optionals and optionals of optionals, enums that
+/// hold enums, recursive enums with a box, generic enums and the prelude's `Result`.
+const ENUM_LAYOUTS: &str = "class Node {
+    v: i64
+}
+
+enum Scalars {
+    A(u8, i64, f64, bool, char)
+    B(string, [i64], Node)
+    C(u8?, i64?, string?, char?, bool?)
+    D(i64??, [u8]?, Node?)
+    E
+}
+
+enum Mixed {
+    Leaf(Scalars, u8)
+    Two(Scalars, Scalars?)
+    Lone(Inner, u8)
+}
+
+enum Inner {
+    P(Scalars?)
+}
+
+enum List {
+    Nil
+    Cons(i64, List)
+}
+
+enum Tree {
+    Leaf
+    Node(Tree, u8, Tree, f64?)
+}
+
+enum Shaped {
+    No
+    Has(string)
+}
+
+enum Pair<T> {
+    End
+    Both(T, T)
+}
+
+enum Wrap<T> {
+    W(Pair<T>, u8)
+}
+
+enum Tags {
+    A
+    B(u8)
+}
+
+fn main() {
+    let s = Scalars.E
+    let m = Mixed.Leaf(s, 1)
+    let i = Inner.P(None)
+    let l = List.Cons(1, List.Nil)
+    let t = Tree.Node(Tree.Leaf, 1, Tree.Leaf, None)
+    let sh = Shaped.No
+    let w: Wrap<Pair<u8>> = Wrap.W(Pair.End, 1)
+    let r: Result<Scalars, string> = Result.Ok(s)
+    let r2: Result<u8, Mixed> = Result.Err(m)
+    let o: Option<Tags> = None
+    print(i)
+    print(l)
+    print(t)
+    print(sh)
+    print(w)
+    print(r)
+    print(r2)
+    print(o)
+}
+";
+
+/// 300 variants, so that the tag is two bytes.
+const MANY_VARIANTS: &str = "enum Many {
+    V0
+    V1
+    V2
+    V3
+    V4
+    V5
+    V6
+    V7
+    V8
+    V9
+    V10
+    V11
+    V12
+    V13
+    V14
+    V15
+    V16
+    V17
+    V18
+    V19
+    V20
+    V21
+    V22
+    V23
+    V24
+    V25
+    V26
+    V27
+    V28
+    V29
+    V30
+    V31
+    V32
+    V33
+    V34
+    V35
+    V36
+    V37
+    V38
+    V39
+    V40
+    V41
+    V42
+    V43
+    V44
+    V45
+    V46
+    V47
+    V48
+    V49
+    V50
+    V51
+    V52
+    V53
+    V54
+    V55
+    V56
+    V57
+    V58
+    V59
+    V60
+    V61
+    V62
+    V63
+    V64
+    V65
+    V66
+    V67
+    V68
+    V69
+    V70
+    V71
+    V72
+    V73
+    V74
+    V75
+    V76
+    V77
+    V78
+    V79
+    V80
+    V81
+    V82
+    V83
+    V84
+    V85
+    V86
+    V87
+    V88
+    V89
+    V90
+    V91
+    V92
+    V93
+    V94
+    V95
+    V96
+    V97
+    V98
+    V99
+    V100
+    V101
+    V102
+    V103
+    V104
+    V105
+    V106
+    V107
+    V108
+    V109
+    V110
+    V111
+    V112
+    V113
+    V114
+    V115
+    V116
+    V117
+    V118
+    V119
+    V120
+    V121
+    V122
+    V123
+    V124
+    V125
+    V126
+    V127
+    V128
+    V129
+    V130
+    V131
+    V132
+    V133
+    V134
+    V135
+    V136
+    V137
+    V138
+    V139
+    V140
+    V141
+    V142
+    V143
+    V144
+    V145
+    V146
+    V147
+    V148
+    V149
+    V150
+    V151
+    V152
+    V153
+    V154
+    V155
+    V156
+    V157
+    V158
+    V159
+    V160
+    V161
+    V162
+    V163
+    V164
+    V165
+    V166
+    V167
+    V168
+    V169
+    V170
+    V171
+    V172
+    V173
+    V174
+    V175
+    V176
+    V177
+    V178
+    V179
+    V180
+    V181
+    V182
+    V183
+    V184
+    V185
+    V186
+    V187
+    V188
+    V189
+    V190
+    V191
+    V192
+    V193
+    V194
+    V195
+    V196
+    V197
+    V198
+    V199
+    V200
+    V201
+    V202
+    V203
+    V204
+    V205
+    V206
+    V207
+    V208
+    V209
+    V210
+    V211
+    V212
+    V213
+    V214
+    V215
+    V216
+    V217
+    V218
+    V219
+    V220
+    V221
+    V222
+    V223
+    V224
+    V225
+    V226
+    V227
+    V228
+    V229
+    V230
+    V231
+    V232
+    V233
+    V234
+    V235
+    V236
+    V237
+    V238
+    V239
+    V240
+    V241
+    V242
+    V243
+    V244
+    V245
+    V246
+    V247
+    V248
+    V249
+    V250
+    V251
+    V252
+    V253
+    V254
+    V255
+    V256
+    V257
+    V258
+    V259
+    V260
+    V261
+    V262
+    V263
+    V264
+    V265
+    V266
+    V267
+    V268
+    V269
+    V270
+    V271
+    V272
+    V273
+    V274
+    V275
+    V276
+    V277
+    V278
+    V279
+    V280
+    V281
+    V282
+    V283
+    V284
+    V285
+    V286
+    V287
+    V288
+    V289
+    V290
+    V291
+    V292
+    V293
+    V294
+    V295
+    V296
+    V297
+    V298
+    V299
+}
+
+fn main() {
+    print(Many.V0)
+}
+";
+
+/// The name of an enum, its bound, and its largest payload, value size and alignment in LLVM.
+type Compared = (String, payload_limit::Measured, Option<(u64, u64, u64)>);
+
+/// Compiles `src` and returns, for each enum of the program that `payload_limit::measure` bounds,
+/// that enum's name, the size of its largest variant and its value size and alignment in LLVM,
+/// each `None` when the enum is `Option`-shaped, which has no struct of its own.
+fn enum_layouts(src: &str) -> Vec<Compared> {
+    let context = Context::create();
+    let parsed = parse_ok(src);
+    let prelude = crate::front_end::prelude_program(crate::front_end::PRELUDE_SOURCE);
+    let (program, diagnostics) = crate::check::check(&parsed, &prelude, src, &[]);
+    let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+    let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
+    let measured = payload_limit::measure(&program.enums);
+    let mir = mir::build(&program);
+    let machine = target_machine(OptLevel::O0).expect("the host is a target");
+    let module = compile(&context, &program, &mir, "test.sisu", src, &machine, false);
+    let data = machine.get_target_data();
+    let mut found = Vec::new();
+    for (e, bound) in program.enums.iter().zip(measured) {
+        let bound = bound.unwrap_or_else(|| panic!("`{}` should have a bound", e.name));
+        let value = module.get_struct_type(&format!("sisu.{}", e.name));
+        let value = value.expect("every enum should have a named struct type");
+        let laid_out = (!value.is_opaque()).then(|| {
+            // The size of the largest variant: each payload struct has a body.
+            let payload = (e.variants.iter())
+                .map(|v| {
+                    let name = format!("sisu.{}.{}", e.name, v.name);
+                    let payload = module.get_struct_type(&name).expect("a payload struct");
+                    data.get_abi_size(&payload)
+                })
+                .max()
+                .unwrap_or(0);
+            let (size, align) = (data.get_abi_size(&value), data.get_abi_alignment(&value));
+            (payload, size, u64::from(align))
+        });
+        found.push((e.name.clone(), bound, laid_out));
+    }
+    found
+}
+
+#[test]
+fn payload_bound_should_cover_the_llvm_layout_of_each_enum() {
+    let programs = [ENUM_LAYOUTS, MANY_VARIANTS];
+    let mut compared = Vec::new();
+    for src in programs {
+        for (name, bound, laid_out) in enum_layouts(src) {
+            // An `Option`-shaped enum has the storage of its field: the bound is not checked
+            // against a struct. Its holders are, which hold its value.
+            let Some((payload, size, align)) = laid_out else {
+                continue;
+            };
+            compared.push(name.clone());
+            assert!(
+                bound.payload >= payload,
+                "{name}: {bound:?} < payload {payload}"
+            );
+            assert!(bound.value.size >= size, "{name}: {bound:?} < size {size}");
+            assert_eq!(
+                bound.value.align, align,
+                "{name}: the alignment should be exact"
+            );
+        }
+    }
+    // Scalars, strings, arrays, classes and optionals; enums in enums; a box; a tag of two
+    // bytes; generic instances, nested ones too; and the prelude's `Result`.
+    let required = [
+        "Scalars",
+        "Mixed",
+        "List",
+        "Tree",
+        "Tags",
+        "Many",
+        "Pair<u8>",
+        "Wrap<Pair<u8>>",
+        "Pair<Pair<u8>>",
+        "Result<Scalars, string>",
+        "Result<u8, Mixed>",
+    ];
+    for name in required {
+        assert!(
+            compared.iter().any(|n| n == name),
+            "{name} was not compared: {compared:?}"
+        );
+    }
+}
+
+#[test]
+fn payload_bound_should_be_exact_for_enums_with_no_optional_and_no_shape() {
+    let layouts = enum_layouts(ENUM_LAYOUTS);
+    let exact = |name: &str| {
+        let (_, bound, laid_out) = layouts.iter().find(|(n, ..)| n == name).expect("the enum");
+        let (payload, size, _) = laid_out.expect("a struct");
+        (bound.payload, bound.value.size, payload, size)
+    };
+    for name in ["Tags", "List", "Tree"] {
+        let (bound_payload, bound_size, payload, size) = exact(name);
+        assert_eq!((bound_payload, bound_size), (payload, size), "{name}");
+    }
 }
 
 const FIB: &str = "fn fib(n: i64) -> i64 {\n    if n < 2 { n } else { fib(n - 1) + fib(n - 2) }\n}\n\nfn main() {\n    print(fib(30))\n}\n";

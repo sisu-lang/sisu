@@ -18,6 +18,7 @@ use crate::conformance::{
 };
 use crate::diagnostic::{Diagnostic, DiagnosticKind, UnknownForm};
 use crate::lang::{self, Cx, Dispatch};
+use crate::payload_limit;
 use crate::source::Span;
 use crate::tir::{
     Align, Arm, Block, ChoicePlace, Class, ClassId, CompareOp, Conformance, Conformances, Enum,
@@ -296,6 +297,16 @@ impl Mono {
             return Err(self.stuck_diagnostics());
         }
         layout_enums(&mut self.out.enums);
+        debug_assert!(
+            payload_limit::measure(&self.out.enums)
+                .iter()
+                .all(Option::is_some),
+            "every enum should have a size bound after the layout: its types are final and the layout boxes each cycle"
+        );
+        let oversized = payload_limit::diagnostics(&self.out.enums);
+        if !oversized.is_empty() {
+            return Err(oversized);
+        }
         self.out.functions = self
             .functions
             .into_iter()
@@ -504,6 +515,8 @@ impl Mono {
             .expect("an enum reached with arguments should be generic");
         let e = Enum {
             name: self.type_instance_name(&decl.name, args.get(), done.0),
+            span: decl.span,
+            instance: true,
             type_params: Vec::new(),
             variants: Vec::new(),
             counted: false,
@@ -1949,5 +1962,85 @@ mod tests {
             .expect("the thread should start")
             .join()
             .expect("the walks should not overflow the stack");
+    }
+
+    /// The codes and starts of the diagnostics of the whole front end for `src`.
+    fn front_end_reports(src: &str) -> Vec<(crate::diagnostic::Code, usize)> {
+        let found = crate::front_end::front_end(src).1;
+        found.iter().map(|d| (d.code(), d.span().start())).collect()
+    }
+
+    /// `enum P<T> { End; A(T, T) }` nested `levels` deep in the type of a `let`.
+    fn nested_pairs(levels: usize) -> String {
+        let nested = format!("{}i64{}", "P<".repeat(levels), ">".repeat(levels));
+        format!(
+            "enum P<T> {{\n    End\n    A(T, T)\n}}\nfn main() {{\n    let x: {nested} = P.End\n    print(x)\n}}\n"
+        )
+    }
+
+    /// A payload that no declaration shows: each level of `P<P<..P<i64>..>>` doubles it. The
+    /// small program has a warning, and no error.
+    #[test]
+    fn instantiate_should_report_a_generic_enum_that_an_instance_makes_too_large() {
+        // `P` is at byte 5 of line 1.
+        assert_eq!(
+            front_end_reports(&nested_pairs(32)),
+            [(crate::diagnostic::Code::PayloadTooLarge, 5)]
+        );
+        let small = front_end_reports(&nested_pairs(10));
+        assert!(
+            small
+                .iter()
+                .all(|&(code, _)| code != crate::diagnostic::Code::PayloadTooLarge),
+            "{small:?}"
+        );
+    }
+
+    /// A `Result` that holds an instance of `P`, through another `Result`: the error is at the
+    /// declaration of `P`, as for a `Result` that holds the instance directly. The wording is
+    /// in `build_should_name_the_result_that_holds_an_instance_of_a_generic_enum`.
+    #[test]
+    fn instantiate_should_report_e0160_at_the_declaration_of_an_instance_that_a_result_holds() {
+        let pairs = format!("{}i64{}", "P<".repeat(28), ">".repeat(28));
+        let src = format!(
+            "enum P<T> {{\n    End\n    A(T, T)\n}}\nfn main() {{\n    let r: Result<Result<{pairs}, i64>, i64> = Result.Err(1)\n    print(r)\n}}\n"
+        );
+        // `P` is at byte 5 of line 1.
+        assert_eq!(
+            front_end_reports(&src),
+            [(crate::diagnostic::Code::PayloadTooLarge, 5)]
+        );
+    }
+
+    /// Reached by `check` only through `front_end`: the checker sees no instance.
+    #[test]
+    fn checked_should_not_find_the_payload_of_an_instance() {
+        let (program, diagnostics) = crate::front_end::checked(&nested_pairs(32));
+        assert!(program.is_some(), "{diagnostics:?}");
+    }
+
+    /// `Result<F, F>` holds an `F` of 2^32 bytes, though the payload of `F` is 8 bytes less:
+    /// the error names `F`, which the user wrote, and not the prelude's `Result`. `F` holds two
+    /// `E5` and an `i64`, where `E5` starts a chain of 27 enums that each hold two of the next.
+    #[test]
+    fn instantiate_should_name_the_user_enum_that_a_result_holds() {
+        let mut src = String::new();
+        for n in 5..31 {
+            writeln!(
+                src,
+                "enum E{n} {{\n    End\n    A(E{}, E{})\n}}",
+                n + 1,
+                n + 1
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        src.push_str("enum E31 {\n    End\n    A(i64, i64)\n}\n");
+        let at = src.len() + "enum ".len();
+        src.push_str("enum F {\n    End\n    A(E5, E5, i64)\n}\n");
+        src.push_str("fn main() {\n    let r: Result<F, F> = Result.Ok(F.End)\n    print(r)\n}\n");
+        assert_eq!(
+            front_end_reports(&src),
+            [(crate::diagnostic::Code::PayloadTooLarge, at)]
+        );
     }
 }

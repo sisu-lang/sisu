@@ -689,6 +689,8 @@ fn enum_of(variants: Vec<Vec<Type>>) -> tir::Enum {
         .collect();
     tir::Enum {
         name: String::from("E"),
+        span: Span::new(0, 0),
+        instance: false,
         type_params: Vec::new(),
         variants,
         counted: false,

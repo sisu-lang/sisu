@@ -33,6 +33,27 @@ fn optional_element(mut ty: Type) -> bool {
     matches!(ty.kind(), TypeKind::Optional(_))
 }
 
+/// Whether `ty` is `want`, where a hole of `want` meets any part of `ty`.
+fn meets(ty: Type, want: Type) -> bool {
+    if ty == want || want == *HOLE {
+        return true;
+    }
+    if !want.holds_hole() {
+        return false;
+    }
+    match (ty.kind(), want.kind()) {
+        (TypeKind::Array(a), TypeKind::Array(b))
+        | (TypeKind::Optional(a), TypeKind::Optional(b)) => meets(a, b),
+        (TypeKind::Class(a, p), TypeKind::Class(b, v)) if a == b => {
+            iter::zip(p.get(), v.get()).all(|(&p, &v)| meets(p, v))
+        }
+        (TypeKind::Enum(a, p), TypeKind::Enum(b, v)) if a == b => {
+            iter::zip(p.get(), v.get()).all(|(&p, &v)| meets(p, v))
+        }
+        _ => false,
+    }
+}
+
 /// Marks in `named` each type parameter that `ty` names, by its place; `named` has a place for
 /// each type parameter in scope. Each type of `ty` is visited once.
 fn mark_params(ty: Type, named: &mut [bool]) {
@@ -246,6 +267,10 @@ pub(super) struct Bindings {
     fresh: Vec<usize>,
     /// How many parameters `bind` has bound and kept: a change shows a new binding.
     kept: usize,
+    /// For each parameter, the part of a context that holds a hole where `hint` found it (see
+    /// `partial`). A bound parameter ignores it. It stays empty until the first hint, as most
+    /// calls have no context that holds a hole.
+    hints: Vec<Option<Type>>,
 }
 
 impl Bindings {
@@ -256,6 +281,7 @@ impl Bindings {
             found: owner.iter().copied().map(Some).chain(unbound).collect(),
             fresh: Vec::new(),
             kept: 0,
+            hints: Vec::new(),
         }
     }
 
@@ -323,6 +349,35 @@ impl Bindings {
         }
     }
 
+    /// Records, for each parameter that `pattern` names, the part of `value`, a context that
+    /// holds a hole, which lies at its place in `pattern`. The first part found stays.
+    /// Binds nothing, as `bind` keeps a hole out of `found`. `partial` gives the part in place
+    /// of a bare hole, so an argument that waits for the parameter gets more context.
+    fn hint(&mut self, pattern: Type, value: Type) {
+        if !pattern.has_param() || !value.holds_hole() || value == *HOLE {
+            return;
+        }
+        match (pattern.kind(), value.kind()) {
+            (TypeKind::Param(_, i), _) => {
+                self.hints.resize(self.found.len(), None);
+                self.hints[i as usize].get_or_insert(value);
+            }
+            (TypeKind::Array(p), TypeKind::Array(v))
+            | (TypeKind::Optional(p), TypeKind::Optional(v)) => self.hint(p, v),
+            (TypeKind::Class(a, p), TypeKind::Class(b, v)) if a == b => {
+                for (&p, &v) in iter::zip(p.get(), v.get()) {
+                    self.hint(p, v);
+                }
+            }
+            (TypeKind::Enum(a, p), TypeKind::Enum(b, v)) if a == b => {
+                for (&p, &v) in iter::zip(p.get(), v.get()) {
+                    self.hint(p, v);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// `bind` for each pair, every one of them tried.
     fn bind_all(&mut self, patterns: TypeArgs, values: TypeArgs) -> bool {
         iter::zip(patterns.get(), values.get()).fold(true, |all, (&p, &v)| self.bind(p, v) && all)
@@ -363,7 +418,12 @@ impl Bindings {
             TypeKind::Param(_, i) => match (self.found[i as usize], unbound) {
                 (Some(bound), _) => bound,
                 (None, Unbound::Fail) => return None,
-                (None, Unbound::Hole) => *HOLE,
+                (None, Unbound::Hole) => self
+                    .hints
+                    .get(i as usize)
+                    .copied()
+                    .flatten()
+                    .unwrap_or(*HOLE),
                 (None, Unbound::Keep) => ty,
             },
             TypeKind::Array(element) => Type::array(self.resolve(element, unbound)?),
@@ -424,6 +484,8 @@ thread_local! {
     pub(super) static MARKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many lookups of `body.ahead` have found an entry on this thread.
     pub(super) static INSPECTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many expressions `takes_context` has looked at on this thread.
+    pub(super) static CONTEXT_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// A generic callee as a call sees it: a function or method, a class's constructor, or an
@@ -723,6 +785,10 @@ impl Checker<'_> {
         // Whether every call in an argument fits its declaration.
         let mut fit = vec![true; args.len()];
         let ranks = self.rank_arguments(&call, sig, args, &mut fit);
+        // A context that holds a hole gives the arguments below more context (see `hint`).
+        if let (Some(ret), Some(want)) = (sig.ret, expected) {
+            call.bindings.hint(ret, want);
+        }
         for (i, arg) in args.iter().enumerate().filter(|&(i, _)| ranks[i] == 0) {
             self.infer_arg(&mut call, i, &arg.value, sig.params[i], None);
         }
@@ -739,7 +805,7 @@ impl Checker<'_> {
                 || call.bindings.constrain(ret, payload(want));
             misfit = self.misfit(span, ret, want, met).then_some(ret);
             if !met && written.is_empty() {
-                self.blame_arguments(&mut call, sig, args, ret, want);
+                self.blame_arguments(&mut call, sig, args, ret, want, span);
             }
             self.report_fresh(&mut call, span);
         }
@@ -921,15 +987,17 @@ impl Checker<'_> {
         }
     }
 
+    /// Whether the call at `span` is a safe call that is checked against a context.
+    fn is_safe_call(&self, span: Span) -> bool {
+        (self.body.context_hint).is_some_and(|hint| hint.at == span && hint.safe)
+    }
+
     /// Whether the call at `span` is a misfit: `want`, its context, holds a hole, and the result
     /// cannot meet it. `met` says if the return type `ret` met `want`. The result of a safe
     /// call is optional, as is a result whose return type is, so a context that is not optional
     /// cannot meet it, whatever the return type meets.
     fn misfit(&self, span: Span, ret: Type, want: Type, met: bool) -> bool {
-        let safe = self
-            .body
-            .context_hint
-            .is_some_and(|hint| hint.at == span && hint.safe);
+        let safe = self.is_safe_call(span);
         let optional = |ty: Type| matches!(ty.kind(), TypeKind::Optional(_));
         want.holds_hole() && (!met || ((safe || optional(ret)) && !optional(want)))
     }
@@ -947,14 +1015,22 @@ impl Checker<'_> {
         args: &[ast::Arg],
         ret: Type,
         want: Type,
+        span: Span,
     ) {
         let mut context = Bindings::new(sig.declared.len(), sig.owner);
-        if !context.unify(ret, want) && !context.unify(ret, payload(want)) {
+        let met = if context.unify(ret, want) {
+            want
+        } else if context.unify(ret, payload(want)) {
+            payload(want)
+        } else {
             return;
-        }
-        // `unify` lets a `T?` take a value that is not optional, which the result cannot do.
-        let result = self.known(&context, ret);
-        if result != Some(want) && result.map(optional_of) != Some(want) {
+        };
+        // The context has hints of its own, which stay when it replaces the bindings below.
+        context.hint(ret, met);
+        // `unify` lets a `T?` take a value that is not optional, which the result cannot do. The
+        // value of a safe call is always optional, so it cannot meet a context that is not.
+        let result = self.partial(&context, ret);
+        if !meets(optional_of(result), want) && (self.is_safe_call(span) || !meets(result, want)) {
             return;
         }
         // The error of an earlier argument is the call's error, as it is without a context.
@@ -1020,9 +1096,10 @@ impl Checker<'_> {
     /// names an unbound parameter only under an associated type, whatever `e` is (see
     /// `waits_for_assoc`). It stays unchecked too while `param` names an unbound parameter,
     /// unless it holds a call that reports its own mistake (`fit` is false), which is checked on
-    /// its own, or is a generic call, which is checked against what the call binds of `param`
-    /// (see `call_context`). That call reports a result that cannot meet the context as a
-    /// mismatch with `param`, by `context_hint`.
+    /// its own, or `call_context` gives it a context: it is checked against what the call binds
+    /// of `param`. A call reports a result that cannot meet the context as a mismatch with
+    /// `param`, by `context_hint`. A bare type parameter has no hint, as the user did not write
+    /// that name at the call.
     fn infer_waiting(
         &mut self,
         call: &mut Inference,
@@ -1038,40 +1115,83 @@ impl Checker<'_> {
         }
         if !fit || param.is_none_or(|param| self.known_in(call, param).is_some()) {
             self.infer_arg(call, i, e, param, None);
-        } else if let Some(param) = param
-            && let Some(context) = self.call_context(call, e, param)
-        {
-            // The call reports a context it cannot meet as a mismatch with this type.
-            let hint = ContextHint {
-                at: e.span,
-                want: self.printed(&call.bindings, param),
-                safe: matches!(e.kind, ast::ExprKind::MethodCall { safe: true, .. }),
-            };
-            let outer = self.body.context_hint.replace(hint);
-            self.infer_arg(call, i, e, Some(param), Some(context));
+        } else if let Some(param) = param {
+            // The call reports a context it cannot meet as a mismatch with this type. A bare
+            // type parameter has no hint. The user did not write that name at the call. So a
+            // safe call under a plain context gets no context there.
+            let outer = self.body.context_hint;
+            if !matches!(param.kind(), TypeKind::Param(..)) {
+                self.body.context_hint = Some(ContextHint {
+                    at: e.span,
+                    want: self.printed(&call.bindings, param),
+                    safe: matches!(e.kind, ast::ExprKind::MethodCall { safe: true, .. }),
+                });
+            }
+            if let Some(context) = self.call_context(call, e, param) {
+                self.infer_arg(call, i, e, Some(param), Some(context));
+            }
             self.body.context_hint = outer;
         }
     }
 
-    /// The context for `e`, a waiting argument for `param`, when `param` names an unbound
-    /// parameter: what the call binds of `param`, a hole for each part it does not, if `e` is
-    /// a generic call and that says more than a hole. Such a call binds its own parameters
-    /// from it.
-    // shortcut: a waiting `if`, `match`, block or array literal gets no context, as `expected`
-    // flows into its branches and elements, `None`, `[]` and integer literals, and each would
-    // need a rule for a hole. `Some(...)` gets none either: its argument takes the expected
-    // type with no `bind`, as a branch does. Add them one kind at a time when a program needs
-    // one. The call gives context in argument order. The first waiting call that it checks
-    // binds what the context of the next one holds. For `mk2<E>() -> Two<E, bool>` and
-    // `mk<E>() -> Result<i64, E>`, `g(mk2(), mk())` with `g<T>(c: Two<T, bool>,
-    // d: Result<T, string>)` reports E0050 at `mk2`. `g(mk(), mk2())` with the parameters in
-    // the other order checks. To remove this, check a call again after a later call binds its
-    // parameter (#217).
-    // A waiting call inside a waiting call gets no context: a context that holds a hole binds
-    // nothing, so the inner call has nothing to bind from. For `f<T>(r: Result<Result<T, bool>,
-    // string>)`, `f(Ok(Ok(1)))` reports E0050 for `T` at the inner `Ok`.
-    // `dbg(x)` binds nothing and passes its context to `x`, so it gets the context of `x`.
+    /// The context for `e`, an argument for `param`, when `param` names an unbound parameter.
+    /// It is what the call binds of `param`, with a hole for each part it does not bind. `e`
+    /// gets it when `e` can take it (see `takes_context`) and it says more than a hole. A
+    /// generic call binds its own parameters from it. `Some(...)` and an array literal pass it
+    /// to their parts. A call that reports `param` as failed (see `names_failed`) gets none.
+    // shortcut: a waiting `if`, `match` or block gets no context. `expected` flows into its
+    // branches, `None`, `[]` and integer literals, and each would need a rule for a hole. Add
+    // them one kind at a time when a program needs one. The call gives context in argument
+    // order. The first waiting call that it checks binds what the context of the next one
+    // holds. For `mk2<E>() -> Two<E, bool>` and `mk<E>() -> Result<i64, E>`, `g(mk2(), mk())`
+    // with `g<T>(c: Two<T, bool>, d: Result<T, string>)` reports E0050 at `mk2`. `g(mk(), mk2())`
+    // with the parameters in the other order checks. To remove this, check a call again after
+    // a later call binds its parameter (#217).
     fn call_context(&mut self, call: &Inference, e: &ast::Expr, param: Type) -> Option<Type> {
+        let partial = self.partial_context(call, e, param)?;
+        self.takes_context(e, partial).then_some(partial)
+    }
+
+    /// `call_context` before `takes_context`. It gives what the call binds of `param`. It gives
+    /// nothing if `e` is of a kind that cannot take it, or if that says no more than a hole.
+    fn partial_context(&self, call: &Inference, e: &ast::Expr, param: Type) -> Option<Type> {
+        use ast::ExprKind as K;
+        // An array literal takes the context from its elements, one by one (`inferred_array`).
+        // That needs an array type to name them. For a type parameter it would take a hole.
+        let literal = matches!(e.kind, K::ArrayLit(_));
+        if !(literal && matches!(param.kind(), TypeKind::Array(_))
+            || matches!(e.kind, K::Call { .. } | K::MethodCall { .. }))
+            || call.names_failed(param)
+        {
+            return None;
+        }
+        let partial = self.partial(&call.bindings, param);
+        (partial != *HOLE).then_some(partial)
+    }
+
+    /// Whether `e` can take `context`, which holds a hole, as its expected type with no hole
+    /// reaching a type. A generic call binds its own parameters from it. `Some(x)` and a
+    /// non-empty array literal take their type from the context, so each needs the same of
+    /// its parts. `dbg(x)` binds nothing and passes the context to `x`, so it takes what `x`
+    /// takes, unless `x` is an array literal. Another call that is not generic could pass the
+    /// hole into a type. A safe call has an optional result, so it
+    /// takes an optional context only: for a plain one, its shape is the mistake to report.
+    /// The exception is a safe call with a `ContextHint` (see `infer_waiting`). `misfit` and
+    /// `report_unbound` report its shape, and `blame_arguments` blames none of its arguments.
+    ///
+    /// The work is one step for each expression that the walk reaches. `inferred_array` does
+    /// not walk the elements of an array literal again after this accepts it. `taken` keeps
+    /// the answer for each `Some(...)`, which the call of `Some` asks for again.
+    fn takes_context(&mut self, e: &ast::Expr, context: Type) -> bool {
+        #[cfg(test)]
+        CONTEXT_STEPS.set(CONTEXT_STEPS.get() + 1);
+        if context == *HOLE {
+            return false;
+        }
+        if let ast::ExprKind::ArrayLit(elements) = &e.kind {
+            return matches!(context.kind(), TypeKind::Array(element)
+                if !elements.is_empty() && elements.iter().all(|e| self.takes_context(e, element)));
+        }
         if let ast::ExprKind::Call {
             callee,
             types,
@@ -1083,17 +1203,40 @@ impl Checker<'_> {
             && let [arg] = &args[..]
             && arg.label.is_none()
         {
-            return self.call_context(call, &arg.value, param);
+            // An array literal under `dbg` would take the hole as its type: only a direct
+            // argument goes to `inferred_array`.
+            return !matches!(arg.value.kind, ast::ExprKind::ArrayLit(_))
+                && self.takes_context(&arg.value, context);
         }
-        // A waiting call is a generic one, so its shape needs no `generic` check.
-        let (shape, _) = self.call_shape(e)?;
-        let partial = (!shape.some).then(|| self.partial(&call.bindings, param))?;
-        (partial != *HOLE).then_some(partial)
+        let safe = matches!(e.kind, ast::ExprKind::MethodCall { safe: true, .. });
+        match self.call_shape(e) {
+            Some((shape, [arg])) if shape.some && arg.label.is_none() => {
+                // `Some` checks its argument as a generic call, which asks again for the
+                // context of that argument. The answer is the same, so it is kept.
+                if let Some(&taken) = self.body.taken.get(&(e.span, context)) {
+                    return taken;
+                }
+                let taken = matches!(context.kind(), TypeKind::Optional(payload)
+                    if self.takes_context(&arg.value, payload));
+                self.body.taken.insert((e.span, context), taken);
+                taken
+            }
+            Some((shape, _)) => {
+                shape.generic
+                    && !shape.some
+                    && (!safe
+                        || matches!(context.kind(), TypeKind::Optional(_))
+                        || self.is_safe_call(e.span))
+            }
+            None => false,
+        }
     }
 
     /// Checks `e`, the argument at `i` for `param`: against `param` once the call binds what it
     /// names, and otherwise on its own, which binds what its type fixes. `context` is what
     /// `call_context` gave, the expected type of `e` while `param` names an unbound parameter.
+    /// If the caller gives none, this asks `call_context`. So an argument that does not wait
+    /// still meets what the call binds of `param`.
     fn infer_arg(
         &mut self,
         call: &mut Inference,
@@ -1107,6 +1250,11 @@ impl Checker<'_> {
             return;
         };
         let unbound = self.known_in(call, pattern).is_none();
+        let context = context.or_else(|| {
+            unbound
+                .then(|| self.call_context(call, e, pattern))
+                .flatten()
+        });
         let checked = self.infer_value(call, e, pattern, context);
         if unbound && let Some(ty @ (Type::UNIT | Type::NEVER)) = type_of(&checked) {
             call.last.push((i, ty));
@@ -1116,8 +1264,9 @@ impl Checker<'_> {
 
     /// Checks `e` against `pattern`, a parameter's type or an element's: against what the call
     /// binds of it, or, while it names an unbound parameter, on its own, which binds what its
-    /// type fixes. A non-empty array literal for an array of optionals (see `optional_element`)
-    /// is the exception: its elements bind the parameter one by one (see `inferred_array`).
+    /// type fixes. A non-empty array literal is the exception when its array holds optionals
+    /// (see `optional_element`) or when it has a `context`. Its elements then bind the
+    /// parameter one by one (see `inferred_array`).
     /// A value of type `unit` or `never` binds nothing, for `infer_arg` to defer.
     fn infer_value(
         &mut self,
@@ -1144,9 +1293,9 @@ impl Checker<'_> {
         if let ast::ExprKind::ArrayLit(elements) = &e.kind
             && !elements.is_empty()
             && let TypeKind::Array(element) = pattern.kind()
-            && optional_element(element)
+            && (optional_element(element) || context.is_some())
         {
-            return self.inferred_array(call, e.span, elements, element);
+            return self.inferred_array(call, e.span, elements, element, context.is_some());
         }
         let checked = self.expr(e, context);
         debug_assert!(
@@ -1182,14 +1331,18 @@ impl Checker<'_> {
     /// parameter. The elements are checked in the three waves of `rank`, as `infer_value` does,
     /// so a later `None` or integer literal meets the parameter already bound by an earlier
     /// element, and so wraps. A `None` or `[]` with nothing bound is reported as `joined`
-    /// reports it: the first alone, unless an element failed already. An element of type `unit`
-    /// or `never` has no value, which is reported at once, and binds nothing.
+    /// reports it: the first alone, unless an element failed already. Each element gets its own
+    /// context, so no hole reaches the type of the array. `accepted` says that `takes_context`
+    /// has accepted the literal, so each element takes its context with no new walk. Else
+    /// each element asks `call_context`. An element of type `unit` or `never` has no value,
+    /// which is reported at once, and binds nothing.
     fn inferred_array(
         &mut self,
         call: &mut Inference,
         span: Span,
         elements: &[ast::Expr],
         element: Type,
+        accepted: bool,
     ) -> Checked {
         let mut slots: Vec<Option<Checked>> = elements.iter().map(|_| None).collect();
         let mut quiet = false;
@@ -1202,7 +1355,12 @@ impl Checker<'_> {
                     mark(self.operand(e, Some(want)))
                 } else if wave < 2 {
                     let kept = call.bindings.kept;
-                    let checked = self.infer_unbound(call, e, element, None);
+                    let context = if accepted {
+                        self.partial_context(call, e, element)
+                    } else {
+                        self.call_context(call, e, element)
+                    };
+                    let checked = self.infer_unbound(call, e, element, context);
                     // Only a new binding can bind `element`.
                     if call.bindings.kept != kept {
                         bound = self.known_in(call, element);
