@@ -390,7 +390,9 @@ impl Bindings {
     /// Records, for each parameter that `pattern` names, the part of `value`, a context that
     /// holds a hole, which lies at its place in `pattern`. The first part found stays. A whole
     /// hole is no part to record. Binds nothing. `partial` gives the part in place of an unbound
-    /// parameter's hole, so an argument that waits for the parameter gets more context.
+    /// parameter's hole, so an argument that waits for the parameter gets more context. A part
+    /// that holds `REJECTED` and no `HOLE` also tells the call that no argument can bind the
+    /// parameter, so the call does not report it (see `first_unbound_not_rejected`).
     fn hint(&mut self, pattern: Type, value: Type) {
         if !pattern.has_param() || !value.holds_hole() || is_hole(value) {
             return;
@@ -533,6 +535,23 @@ impl Bindings {
         list.map(|list| TypeArgs::intern(&list))
     }
 
+    /// The first parameter from `from` on that is unbound and that is not rejected-only: its
+    /// hint holds no `REJECTED`, or holds `HOLE` as well. A parameter whose hint holds
+    /// `REJECTED` and no `HOLE` would have been bound had the outer bound held, so the call
+    /// reports nothing for it. It reads one flag of each hint, so it costs nothing to the call
+    /// that binds every parameter: only the error path runs it.
+    fn first_unbound_not_rejected(&self, from: usize) -> Option<usize> {
+        (from..self.found.len()).find(|&i| {
+            self.found[i].is_none()
+                && !self
+                    .hints
+                    .get(i)
+                    .copied()
+                    .flatten()
+                    .is_some_and(Type::holds_rejected_hole_only)
+        })
+    }
+
     /// Every parameter's binding; `Err` holds the first unbound one's index. A rejected parameter
     /// is bound, to `REJECTED`: the list holds it, and only a call that has failed may have one,
     /// so no call uses that list.
@@ -626,7 +645,9 @@ struct Inference<'s> {
     failed: bool,
     /// Whether the context rejected a parameter (see `REJECTED`). The call fails, but the outer
     /// call reported the bound, so this one reports nothing for that parameter. It still reports
-    /// a parameter that the context leaves unbound.
+    /// a parameter that the context leaves unbound, unless the hint of that parameter holds a
+    /// rejected part only: such a parameter is as rejected as one that meets `REJECTED` whole,
+    /// but `bind` can bind nothing to it (see `Bindings::first_unbound_not_rejected`).
     rejected: bool,
     /// Where each parameter was bound: the argument, or the type argument written for it.
     origin: Vec<Option<Span>>,
@@ -798,6 +819,8 @@ impl Checker<'_> {
     /// An argument of type `unit` or `never` binds only what none of the others binds. Returns
     /// the arguments in source order, the type arguments and the call's type. Returns `None`,
     /// reported, when a parameter is left unbound or bound to a type that no parameter takes.
+    /// A parameter that is left unbound, and whose context holds a rejected part only, is not
+    /// reported: the failed bound of the outer call is the fault (see `Bindings::hint`).
     /// Then an argument that needs context and has none is checked against `UNKNOWN`, for its
     /// own mistakes only. What ranking the arguments checked ahead (see `Ahead`) and left unused
     /// is dropped.
@@ -905,15 +928,19 @@ impl Checker<'_> {
         let list = match call.bindings.finish() {
             Ok(list) if !call.failed && !call.rejected && !broken && !unchecked => Some(list),
             Ok(_) => None,
-            Err(i) => {
+            Err(first) => {
                 // An argument that failed, or a parameter's or the return type that did, may be
                 // what would have bound it, and an `UNKNOWN` context is one that failed.
                 let errored = call.slots.iter().flatten().any(|c| type_of(c).is_none())
                     || sig.params.contains(&None)
                     || sig.ret.is_none();
                 if !errored && !call.failed && expected != Some(UNKNOWN) {
-                    let found = misfit.map(|ret| self.printed(&call.bindings, ret));
-                    self.report_unbound(span, sig, i, found);
+                    // A parameter that meets a rejected part only is rejected as well: the
+                    // failed bound of the outer call is its only fault.
+                    if let Some(i) = call.bindings.first_unbound_not_rejected(first) {
+                        let found = misfit.map(|ret| self.printed(&call.bindings, ret));
+                        self.report_unbound(span, sig, i, found);
+                    }
                 }
                 None
             }
@@ -1501,10 +1528,11 @@ impl Checker<'_> {
         }
     }
 
-    /// Reports the call at `span` that leaves parameter `param` unbound: E0050, unless its
-    /// result `found` cannot meet the context its caller gave (see `infer_waiting`). Then the
-    /// mismatch is the fault, and it reports the mismatch instead. A result with no value is
-    /// reported as any use of it is.
+    /// Reports the call at `span` that leaves parameter `param` unbound, the first one that is not
+    /// rejected-only (see `Bindings::first_unbound_not_rejected`): E0050, unless its result
+    /// `found` cannot meet the context its caller gave (see `infer_waiting`). Then the mismatch is
+    /// the fault, and it reports the mismatch instead. A result with no value is reported as any
+    /// use of it is.
     fn report_unbound(
         &mut self,
         span: Span,

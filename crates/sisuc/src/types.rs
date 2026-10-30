@@ -54,14 +54,38 @@ pub(crate) const HOLE_INDEX: u32 = u32::MAX;
 /// declaration has a parameter at this index.
 pub(crate) const REJECTED_INDEX: u32 = u32::MAX - 1;
 
+/// Which holes a type names, anywhere inside it: one flag for each would make `Names` hold too
+/// many bools.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Holes {
+    #[default]
+    None,
+    /// `HOLE_INDEX` only.
+    Open,
+    /// `REJECTED_INDEX` only.
+    Rejected,
+    /// Both.
+    Both,
+}
+
+impl Holes {
+    fn or(self, other: Holes) -> Holes {
+        match (self, other) {
+            (Holes::None, holes) | (holes, Holes::None) => holes,
+            (a, b) if a == b => a,
+            _ => Holes::Both,
+        }
+    }
+}
+
 /// What a type names, anywhere inside it. Each interned type and list holds its own, so a read
 /// does not walk the type.
 #[derive(Clone, Copy, Debug, Default)]
 struct Names {
     /// A type parameter.
     param: bool,
-    /// A hole, the parameter at `HOLE_INDEX` or at `REJECTED_INDEX`.
-    hole: bool,
+    /// Which holes.
+    holes: Holes,
     /// An associated type.
     assoc: bool,
 }
@@ -70,7 +94,7 @@ impl Names {
     fn or(self, other: Names) -> Names {
         Names {
             param: self.param || other.param,
-            hole: self.hole || other.hole,
+            holes: self.holes.or(other.holes),
             assoc: self.assoc || other.assoc,
         }
     }
@@ -86,7 +110,11 @@ impl TypeKind {
         match self {
             TypeKind::Param(_, i) => Names {
                 param: true,
-                hole: i >= REJECTED_INDEX,
+                holes: match i {
+                    HOLE_INDEX => Holes::Open,
+                    REJECTED_INDEX => Holes::Rejected,
+                    _ => Holes::None,
+                },
                 assoc: false,
             },
             TypeKind::Array(ty) | TypeKind::Optional(ty) => ty.names(),
@@ -463,7 +491,12 @@ impl Type {
 
     /// Whether the type names a hole (`HOLE_INDEX` or `REJECTED_INDEX`), anywhere inside it.
     pub(crate) fn holds_hole(self) -> bool {
-        self.names().hole
+        self.names().holes != Holes::None
+    }
+
+    /// Whether the type names `REJECTED_INDEX` and not `HOLE_INDEX`, anywhere inside it.
+    pub(crate) fn holds_rejected_hole_only(self) -> bool {
+        self.names().holes == Holes::Rejected
     }
 
     /// Whether the type holds an associated type, anywhere inside it.
@@ -734,6 +767,10 @@ mod tests {
         let hole = Type::intern(TypeKind::Param(Symbol::intern("_"), HOLE_INDEX));
         let rejected = Type::intern(TypeKind::Param(Symbol::intern("_"), REJECTED_INDEX));
         let param = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
+        let mixed = Type::intern(TypeKind::Class(
+            ClassId(0),
+            TypeArgs::intern(&[hole, Type::array(rejected)]),
+        ));
         NAMED.set(0);
         let (holed, rejected, named, plain) = (
             doubled(hole, 20),
@@ -747,13 +784,18 @@ mod tests {
             let answer = query(ty);
             (answer, READS.get())
         };
-        for (ty, hole, param) in [
-            (holed, true, true),
-            (rejected, true, true),
-            (named, false, true),
-            (plain, false, false),
+        for (ty, hole, rejected_only, param) in [
+            (holed, true, false, true),
+            (rejected, true, true, true),
+            (mixed, true, false, true),
+            (named, false, false, true),
+            (plain, false, false, false),
         ] {
             assert_eq!(reads(Type::holds_hole, ty), (hole, 1));
+            assert_eq!(
+                reads(Type::holds_rejected_hole_only, ty),
+                (rejected_only, 1)
+            );
             assert_eq!(reads(Type::has_param, ty), (param, 1));
         }
     }

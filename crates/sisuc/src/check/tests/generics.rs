@@ -4154,6 +4154,40 @@ const NESTED_REJECT_ROWS: &[PartialRow<'static>] = {
             "let n = 5\nh(n, Two.P(none(), 1))",
             &[(NotConform, "n")],
         ),
+        // A context that holds `REJECTED` inside, and no `HOLE`, rejects each parameter that a
+        // call in an argument binds there: no type stands for the part, so the call reports
+        // nothing for it.
+        (
+            "fn any<X>() -> X { panic(\"e\") }\nfn h<T: I>(_p: T, _a: [T]) {}\n",
+            "h(5, any())",
+            &[(NotConform, "5")],
+        ),
+        (
+            "fn any<X>() -> X { panic(\"e\") }\nfn h<T: I>(_p: T, _a: Two<T, i64>) {}\n",
+            "h(5, any())",
+            &[(NotConform, "5")],
+        ),
+        (
+            "fn any<X>() -> X { panic(\"e\") }\nfn h<T: I>(_p: T, _a: [[T]]) {}\n",
+            "h(5, [any()])",
+            &[(NotConform, "5")],
+        ),
+        (
+            "fn h<T: I>(_p: T, _a: [T?]) {}\n",
+            "h(5, id([none()]))",
+            &[(NotConform, "5")],
+        ),
+        (
+            "fn any<X>() -> X { panic(\"e\") }\nfn h<T: I>(_p: T, _a: [T]) {}\n",
+            "h(5, dbg(any()))",
+            &[(NotConform, "5")],
+        ),
+        (
+            "class Sf {\n    fn m<X>(self, x: X?) -> X? { None }\n}\n\
+             fn h<T: I>(_p: T, _a: [T?]?) {}\n",
+            "let o: Sf? = Sf()\nh(5, o?.m(none()))",
+            &[(NotConform, "5")],
+        ),
     ]
 };
 
@@ -4219,6 +4253,30 @@ const UNBOUND_NEXT_ROWS: &[PartialRow<'static>] = {
             "fn h<T: I, U>(_p: T, _a: Two<T, U>) {}\n",
             "h(5, id(two()))",
             &[(NotConform, "5"), (CannotInfer, "two()")],
+        ),
+        // `A` of `two` sits in `[T]`, a part that holds `REJECTED` and no `HOLE`; `B` sits at `U`.
+        // The call keeps the E0050 of the parameter that is not rejected-only, whichever comes
+        // first.
+        (
+            "fn h<T: I, U>(_p: T, _a: Two<[T], U>) {}\n",
+            "h(5, two())",
+            &[(NotConform, "5"), (CannotInfer, "two()")],
+        ),
+        (
+            "fn h<T: I, U>(_p: T, _a: Two<U, [T]>) {}\n",
+            "h(5, two())",
+            &[(NotConform, "5"), (CannotInfer, "two()")],
+        ),
+        // A part that holds both holes is not rejected-only.
+        (
+            "fn h<T: I, U>(_p: T, _a: Two<[T], U>?) {}\n",
+            "h(5, none())",
+            &[(NotConform, "5"), (CannotInfer, "none()")],
+        ),
+        (
+            "fn any<X>() -> X { panic(\"e\") }\nfn h<T: I, U>(_p: T, _a: [T], _b: U?) {}\n",
+            "h(5, any(), none())",
+            &[(NotConform, "5"), (CannotInfer, "none()")],
         ),
     ]
 };
