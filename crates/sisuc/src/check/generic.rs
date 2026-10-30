@@ -1070,7 +1070,21 @@ impl Checker<'_> {
     // A waiting call inside a waiting call gets no context: a context that holds a hole binds
     // nothing, so the inner call has nothing to bind from. For `f<T>(r: Result<Result<T, bool>,
     // string>)`, `f(Ok(Ok(1)))` reports E0050 for `T` at the inner `Ok`.
+    // `dbg(x)` binds nothing and passes its context to `x`, so it gets the context of `x`.
     fn call_context(&mut self, call: &Inference, e: &ast::Expr, param: Type) -> Option<Type> {
+        if let ast::ExprKind::Call {
+            callee,
+            types,
+            args,
+            ..
+        } = &e.kind
+            && types.is_empty()
+            && callee.name.as_str() == "dbg"
+            && let [arg] = &args[..]
+            && arg.label.is_none()
+        {
+            return self.call_context(call, &arg.value, param);
+        }
         // A waiting call is a generic one, so its shape needs no `generic` check.
         let (shape, _) = self.call_shape(e)?;
         let partial = (!shape.some).then(|| self.partial(&call.bindings, param))?;
@@ -1341,10 +1355,11 @@ impl Checker<'_> {
     /// call of a generic function or method, or a construction of a generic class or variant,
     /// its type arguments not written, whose arguments fit its declaration and all need
     /// context, or, if they fit, whose parameter types leave one of its own type parameters
-    /// unnamed that the call's type names, which no argument can bind. A name resolves as the
-    /// checker resolves it: a call's callee by its declaration, whatever local takes it. A
-    /// method's receiver, an `if let`'s value and a `match`'s scrutinee are checked here, ahead of
-    /// their turn, and kept for it (see `Ahead`).
+    /// unnamed that the call's type names, which no argument can bind. A call of `dbg` needs
+    /// context when its argument does. A name resolves as the checker resolves it: a call's
+    /// callee by its declaration, whatever local takes it. A method's receiver, an `if let`'s
+    /// value and a `match`'s scrutinee are checked here, ahead of their turn, and kept for it
+    /// (see `Ahead`).
     // shortcut: a nested generic call scans its arguments again, quadratic in the depth of the
     // nesting; remember the answer by span if deep nests appear.
     pub(super) fn needs_context(&mut self, e: &ast::Expr) -> bool {
@@ -1818,8 +1833,19 @@ impl Checker<'_> {
     }
 
     /// The shape of a call of `name` with `args` that calls a generic function, constructs a
-    /// generic class, or builds `Some`, `Ok` or `Err`.
+    /// generic class, or builds `Some`, `Ok` or `Err`, or calls `dbg`.
     fn generic_callee(&self, name: Symbol, args: &[ast::Arg]) -> CallShape {
+        // `dbg<T>(x: T) -> T`: its type is its argument's, so it waits when that argument waits;
+        // its parameter names `T`, so it is not `open`.
+        // It comes first, as `call` runs the prelude's call before it looks up a user's item: a
+        // user's `class dbg` or `fn dbg` is rejected, and never the callee.
+        if name.as_str() == "dbg" {
+            return CallShape {
+                generic: true,
+                shaped: matches!(args, [arg] if arg.label.is_none()),
+                ..CallShape::default()
+            };
+        }
         match (self.class_ids.get(&name), self.function_ids.get(&name)) {
             (Some(&Declared::Known(class)), _) => {
                 let info = &self.classes[class.0];
