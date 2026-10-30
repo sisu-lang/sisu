@@ -482,8 +482,12 @@ fn a_wrong_count_of_method_arguments_should_be_the_general_count_error() {
         "class Node {}\nfn f(xs: [Node]) { print(xs.contains()) }\nfn main() {}",
         &[(Code::ArgumentCount, (2, 26))],
     );
-    // A comparison misread as a call explains the count, for a method whose bound fails as for
-    // one whose bound holds.
+}
+
+#[test]
+fn a_misread_comparison_should_explain_a_wrong_method_argument_count() {
+    with_prelude();
+    // For a method whose bound fails as for one whose bound holds.
     for (element, col) in [("i64", 53), ("Node", 54)] {
         codes(
             &format!(
