@@ -494,6 +494,8 @@ impl Checker<'_> {
         let mut lowered: Vec<tir::Enum> = (self.enums.iter().enumerate())
             .map(|(e, info)| tir::Enum {
                 name: info.name.name.to_string(),
+                span: info.name.span,
+                instance: false,
                 type_params: info.type_params.iter().map(Symbol::to_string).collect(),
                 variants: (info.variants.iter())
                     .map(|v| tir::Variant {

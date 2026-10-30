@@ -37,6 +37,7 @@ use crate::diagnostic::{
     BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, MainForm, MismatchFix,
     MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
 };
+use crate::payload_limit;
 use crate::source::{self, Span};
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
@@ -824,6 +825,9 @@ pub(crate) fn check<'src>(
     let declared = checker.declare_items(&items, program.items.len(), &program.broken);
     checker.fold_constants(&items);
     checker.lowered_enums = checker.lower_enums();
+    checker
+        .diagnostics
+        .extend(payload_limit::diagnostics(&checker.lowered_enums));
     checker.holds_table = checker.holds_table();
     checker.check_main(&declared);
     // Every body is checked, so this collects into a `Vec` before it gives up on a `None`.

@@ -341,7 +341,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .and_then(|bits| self.context.custom_width_int_type(bits).ok())
             .expect("an ABI alignment should be a positive number of bytes that LLVM has an integer type for");
         let units = u32::try_from(size.div_ceil(u64::from(align)))
-            .expect("a payload should be smaller than 2^32 units of its alignment");
+            .expect("a payload should be smaller than 2^32 units of its alignment, as `payload_limit` reports before codegen a payload that can be 4 GiB or more");
         ty.set_body(&[tag, unit.array_type(units).into()], false);
     }
 
