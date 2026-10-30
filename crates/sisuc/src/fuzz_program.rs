@@ -3,7 +3,9 @@
 //! panics on a breach of a property (ADR 0033). Properties 1 and 2 are that the program checks
 //! clean and compiles to a module LLVM verifies; property 3 is that every build exits 0 or 101,
 //! and all three the same way; property 4 is that the rewritten copy runs as the program does;
-//! property 5 is that the program prints the known integer answers.
+//! property 5 is that the program prints the known integer answers; property 6 is that a copy of
+//! the program where one argument breaks the bound of its type parameter gets E0154 at that
+//! argument and no other error.
 
 use std::cell::RefCell;
 use std::fmt::Write as _;
@@ -18,8 +20,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::codegen::OptLevel;
-use crate::generate::{self, Answer, Generated, Known};
+use crate::diagnostic::{Diagnostic, Severity};
+use crate::generate::{self, Answer, BoundSite, Generated, Known};
 use crate::report::{Format, Reporter};
+use crate::source::LineIndex;
 use crate::tir::Program;
 use crate::{Backend, compile, fresh_names, front_end, fuzz, run};
 
@@ -78,6 +82,18 @@ struct Run {
 struct Failure {
     property: u8,
     detail: String,
+    /// The broken copy of a failed property 6, for the dump.
+    broken: Option<String>,
+}
+
+impl Failure {
+    fn new(property: u8, detail: String) -> Failure {
+        Failure {
+            property,
+            detail,
+            broken: None,
+        }
+    }
 }
 
 /// The input `program` is judging on this thread, for the panic hook.
@@ -87,6 +103,8 @@ struct Current {
     dir: PathBuf,
     /// Set by a property failure before its panic: the property line and the failed builds.
     failure: Option<(String, String)>,
+    /// The broken copy that failed property 6.
+    broken: Option<String>,
 }
 
 thread_local! {
@@ -118,6 +136,7 @@ fn program_in(data: &[u8], runtime: &Path, tmp: &Path) {
         generated,
         dir,
         failure: None,
+        broken: None,
     }));
     let judged = CURRENT.with_borrow(|current| {
         let current = current
@@ -128,10 +147,11 @@ fn program_in(data: &[u8], runtime: &Path, tmp: &Path) {
     if let Err((failure, builds)) = judged {
         let property = failure.property;
         CURRENT.with_borrow_mut(|current| {
-            current
+            let current = current
                 .as_mut()
-                .expect("`program` should have set the input")
-                .failure = Some((format!("property {property}: {}", failure.detail), builds));
+                .expect("`program` should have set the input");
+            current.failure = Some((format!("property {property}: {}", failure.detail), builds));
+            current.broken = failure.broken;
         });
         panic!("program fuzzer: property {property} failed");
     }
@@ -199,6 +219,7 @@ fn leave_record(current: &Current, info: &PanicHookInfo<'_>) {
         let dump = Path::new(&dump);
         let failure = format!("{first}\n{builds}");
         let written = fs::create_dir_all(dump).and_then(|()| {
+            let broken = current.broken.as_deref().map(|text| ("broken.sisu", text));
             [
                 ("program.sisu", program.as_str()),
                 ("rewritten.sisu", rewritten.as_str()),
@@ -206,6 +227,7 @@ fn leave_record(current: &Current, info: &PanicHookInfo<'_>) {
                 ("failure.txt", failure.as_str()),
             ]
             .into_iter()
+            .chain(broken)
             .try_for_each(|(name, text)| fs::write(dump.join(name), text))
         });
         if let Err(e) = written {
@@ -230,11 +252,13 @@ fn section(out: &mut String, name: &str, text: &[u8]) {
     }
 }
 
-/// Properties 1 to 5 for `g`, built in `dir`. A failure comes with the record of the builds
+/// Properties 1 to 6 for `g`, built in `dir`. A failure comes with the record of the builds
 /// that showed it.
 fn judge(g: &Generated, runtime: &Path, dir: &Path) -> Result<(), (Failure, String)> {
     let program = checked("program", &g.program).map_err(|f| (f, String::new()))?;
     let rewritten = checked("rewritten", &g.rewritten).map_err(|f| (f, String::new()))?;
+    // Only checks, so before the builds that take most of the time.
+    judge_bounds(g).map_err(|f| (f, String::new()))?;
     let stdin = dir.join("stdin.txt");
     fs::write(&stdin, &g.stdin).expect("the fuzzer should write the stdin to its own directory");
     let runs = judge_source("program", &g.program, &program, runtime, dir, &stdin)?;
@@ -266,19 +290,73 @@ fn judge_source(
     }
 }
 
+/// `diagnostics` of `source`, named `name`, in text form.
+fn render(name: &str, source: &str, diagnostics: &[Diagnostic]) -> String {
+    let mut out = Vec::new();
+    let mut reporter = Reporter::new(&mut out, Format::Text, false);
+    reporter.diagnostics(&format!("{name}.sisu"), source, diagnostics);
+    reporter.finish();
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Property 6: in the copy of the program where `site` breaks the bound of its type parameter, the
+/// checker reports an error, each error is E0154, and each starts at the replaced argument. Any
+/// other error is a cascade, as #283 was. Warnings do not count: a program with an error has none
+/// of its own.
+fn judge_site(g: &Generated, site: &BoundSite) -> Result<(), Failure> {
+    #[cfg_attr(not(test), expect(unused_mut, reason = "only a test forces a failure"))]
+    let mut broken = g.broken(site);
+    #[cfg(test)]
+    if FORCE.get() == Some(Force::Conforming) {
+        // The argument as it was, which conforms: the property must fail.
+        broken = g.program.clone() + generate::NO_BOUND_CLASS;
+    }
+    let (_, diagnostics) = front_end::front_end(&broken);
+    let errors: Vec<&Diagnostic> = diagnostics
+        .iter()
+        .filter(|d| d.severity() == Severity::Error)
+        .collect();
+    let what = if errors.is_empty() {
+        "reports no error"
+    } else if errors
+        .iter()
+        .all(|d| d.code().as_str() == "E0154" && d.span().start() == site.at.start)
+    {
+        return Ok(());
+    } else {
+        "reports an error that is not E0154 at the argument"
+    };
+    let (line, col) = LineIndex::new(&broken).line_col(&broken, site.at.start);
+    let replaced = &g.program[site.at.clone()];
+    Err(Failure {
+        broken: Some(broken.clone()),
+        ..Failure::new(
+            6,
+            format!(
+                "the checker {what}, where `{}` replaces `{replaced}` at {line}:{col}, \
+                 to break the bound `{}`\n{}",
+                site.broken,
+                site.bound,
+                render("broken", &broken, &diagnostics),
+            ),
+        )
+    })
+}
+
+/// Property 6 for every bound site of `g`.
+fn judge_bounds(g: &Generated) -> Result<(), Failure> {
+    g.bound_sites
+        .iter()
+        .try_for_each(|site| judge_site(g, site))
+}
+
 /// Properties 1 and 2: `source` checks with no error, W0010 or W0011, and its MIR certifies and its
 /// module verifies, without and with `--rc-checks` (`fuzz::assert_compiles` panics if not).
 fn checked(name: &str, source: &str) -> Result<Program, Failure> {
     let (program, diagnostics) = front_end::front_end(source);
     let failure = |what: String| {
-        let mut out = Vec::new();
-        let mut reporter = Reporter::new(&mut out, Format::Text, false);
-        reporter.diagnostics(&format!("{name}.sisu"), source, &diagnostics);
-        reporter.finish();
-        Failure {
-            property: 1,
-            detail: format!("{what}\n{}", String::from_utf8_lossy(&out)),
-        }
+        let rendered = render(name, source, &diagnostics);
+        Failure::new(1, format!("{what}\n{rendered}"))
     };
     let Some(program) = program else {
         return Err(failure(format!("the checker rejects the {name}")));
@@ -392,12 +470,7 @@ fn exit(status: ExitStatus) -> Exit {
 /// Property 3: each build exits 0 or with a Sisu panic, 101, so the `--rc-checks` build reports
 /// no count fault or leak (102); and the three agree on exit, stdout and stderr exactly.
 fn judge_builds(runs: &[Run; 3]) -> Result<(), Failure> {
-    let fail = |detail: String| {
-        Err(Failure {
-            property: 3,
-            detail,
-        })
-    };
+    let fail = |detail: String| Err(Failure::new(3, detail));
     for ((build, _), run) in BUILDS.iter().zip(runs) {
         if !matches!(run.exit, Exit::Code(0 | 101)) {
             return fail(format!("the {build} build exits with {:?}", run.exit));
@@ -426,10 +499,10 @@ fn judge_pair(program: &Run, rewritten: &Run) -> Result<(), Failure> {
         ("stderr", unlocated(program) != unlocated(rewritten)),
     ];
     match differs.iter().find(|(_, differs)| *differs) {
-        Some((what, _)) => Err(Failure {
-            property: 4,
-            detail: format!("the program and its rewritten copy differ in {what}"),
-        }),
+        Some((what, _)) => Err(Failure::new(
+            4,
+            format!("the program and its rewritten copy differ in {what}"),
+        )),
         None => Ok(()),
     }
 }
@@ -498,12 +571,7 @@ fn dbg_location(line: &[u8]) -> usize {
 /// panics with the expected message, while a run that does not reach it panics before it.
 /// Only those exact lines are read, so another line that starts with `@` changes nothing.
 fn judge_known(run: &Run, known: &[Known]) -> Result<(), Failure> {
-    let fail = |detail: String| {
-        Err(Failure {
-            property: 5,
-            detail,
-        })
-    };
+    let fail = |detail: String| Err(Failure::new(5, detail));
     let stdout = String::from_utf8_lossy(&run.stdout);
     let stderr = String::from_utf8_lossy(&run.stderr);
     let mut lines = stdout.lines();
@@ -556,6 +624,8 @@ enum Force {
     Stdout,
     /// The build step panics, as a compiler bug would.
     CompilerPanic,
+    /// Each bound site's replacement conforms to its bound.
+    Conforming,
 }
 
 #[cfg(test)]
@@ -565,6 +635,7 @@ thread_local! {
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Range;
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::process::ExitStatusExt;
     use std::path::{Path, PathBuf};
@@ -575,10 +646,11 @@ mod tests {
     use super::dbg_location;
     use super::{
         Answer, BUILDS, Exit, FORCE, Force, Known, LIMIT, Run, build, builds, checked, judge,
-        judge_builds, judge_known, judge_pair, judge_source, program, program_in, run,
+        judge_bounds, judge_builds, judge_known, judge_pair, judge_source, program, program_in,
+        run,
     };
     use crate::fresh_names;
-    use crate::generate::{Generated, coverage, generate};
+    use crate::generate::{BoundSite, Generated, coverage, generate};
 
     /// A directory of the test's own, removed when dropped.
     struct Scratch(PathBuf);
@@ -791,7 +863,7 @@ mod tests {
 
     /// Either copy failing to check fails property 1, before anything is built.
     #[test]
-    fn a_rejected_program_fails_property_1() {
+    fn a_rejected_program_should_fail_property_1() {
         let clean = "fn main() {\n    print(1)\n}\n";
         let rejected = "fn main() {\n    print(x)\n}\n";
         for (program, rewritten) in [(rejected, clean), (clean, rejected)] {
@@ -800,6 +872,7 @@ mod tests {
                 rewritten: rewritten.to_string(),
                 stdin: String::new(),
                 known: Vec::new(),
+                bound_sites: Vec::new(),
                 cost: 0,
                 plain: String::new(),
                 made: Vec::new(),
@@ -1096,7 +1169,7 @@ mod tests {
         seed_passes(3, true);
     }
 
-    /// `program` end to end, all six builds and properties 1 to 5: it passes and leaves no
+    /// `program` end to end, all six builds and properties 1 to 6: it passes and leaves no
     /// directory behind. Of the seeds under 4000 with rewrites, a value site and a panic site
     /// that its run reaches, seed 3934 has the shortest program, so its builds are quick.
     #[test]
@@ -1160,6 +1233,179 @@ mod tests {
             "a rewrite should move a line"
         );
         assert_eq!(pair(&program, &rewritten), 0);
+    }
+
+    /// A program with one bound site: the argument at `at`, which `broken` replaces.
+    fn with_site(program: &str, at: Range<usize>, broken: &'static str) -> Generated {
+        Generated {
+            program: program.to_string(),
+            rewritten: String::new(),
+            stdin: String::new(),
+            known: Vec::new(),
+            bound_sites: vec![BoundSite {
+                at,
+                bound: "Eq".to_string(),
+                broken,
+            }],
+            cost: 0,
+            plain: String::new(),
+            made: Vec::new(),
+        }
+    }
+
+    /// `fn f<T: Eq>` called with `1`, in a program of `tail` more lines of `main`, and its site.
+    fn eq_site(tail: &str, broken: &'static str) -> Generated {
+        let program =
+            format!("fn f<T: Eq>(x: T) -> i64 {{ 1 }}\nfn main() {{\n    let _ = f(1)\n{tail}}}\n");
+        let at = program.find("(1)").expect("the program should call `f`") + 1;
+        with_site(&program, at..at + 1, broken)
+    }
+
+    #[test]
+    fn property_6_should_hold_when_only_the_site_breaks_its_bound() {
+        judge_bounds(&eq_site("", "NoBound()")).expect("one E0154 at the argument should pass");
+    }
+
+    #[test]
+    fn property_6_should_fail_when_the_replacement_conforms() {
+        let failure = judge_bounds(&eq_site("", "2")).expect_err("no error should fail");
+        assert_eq!(failure.property, 6);
+        assert!(
+            failure.detail.contains("reports no error"),
+            "{}",
+            failure.detail
+        );
+        // The line and column of the argument, the replaced text and the bound.
+        assert!(
+            failure
+                .detail
+                .contains("`2` replaces `1` at 3:15, to break the bound `Eq`"),
+            "{}",
+            failure.detail
+        );
+        assert_eq!(
+            failure.broken.as_deref(),
+            Some(
+                "fn f<T: Eq>(x: T) -> i64 { 1 }\nfn main() {\n    let _ = f(2)\n}\nclass NoBound {}\n"
+            )
+        );
+    }
+
+    #[test]
+    fn property_6_should_fail_when_another_error_follows_the_one_at_the_site() {
+        let failure = judge_bounds(&eq_site("    let _: i64 = \"s\"\n", "NoBound()"))
+            .expect_err("a second error elsewhere should fail");
+        assert_eq!(failure.property, 6);
+        assert!(
+            failure.detail.contains("not E0154 at the argument"),
+            "{}",
+            failure.detail
+        );
+        // The diagnostics are in the detail, E0154 as well as the other one.
+        assert!(failure.detail.contains("E0154"), "{}", failure.detail);
+        assert!(failure.detail.contains("E0032"), "{}", failure.detail);
+    }
+
+    #[test]
+    fn property_6_should_fail_when_the_error_at_the_site_is_not_e0154() {
+        let failure = judge_bounds(&eq_site("", "nothing"))
+            .expect_err("an unknown name at the site should fail");
+        assert_eq!(failure.property, 6);
+        assert!(
+            failure.detail.contains("not E0154 at the argument"),
+            "{}",
+            failure.detail
+        );
+    }
+
+    /// Property 6 for every bound site of the seeds `from..from + 4`, which the replacement of that
+    /// site must break and nothing else. A few seeds for each test, so that each stays within its
+    /// time budget and nextest runs them in parallel.
+    fn seeds_should_report_only_their_bound(from: u64) {
+        for n in from..from + 4 {
+            judge_bounds(&generate(&seed(n)))
+                .unwrap_or_else(|f| panic!("seed {n}: property {}: {}", f.property, f.detail));
+        }
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_0_to_3_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(0);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_4_to_7_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(4);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_8_to_11_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(8);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_12_to_15_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(12);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_16_to_19_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(16);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_20_to_23_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(20);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_24_to_27_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(24);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_28_to_31_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(28);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_32_to_35_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(32);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_36_to_39_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(36);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_40_to_43_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(40);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_44_to_47_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(44);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_48_to_51_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(48);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_52_to_55_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(52);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_56_to_59_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(56);
+    }
+
+    #[test]
+    fn the_bound_sites_of_seeds_60_to_63_should_report_only_their_bound() {
+        seeds_should_report_only_their_bound(60);
     }
 
     /// How many of `g`'s known answers are panics.
@@ -1343,5 +1589,43 @@ mod tests {
         let g = generate(&seed(0));
         assert_record(&stderr, "compiler panic\n==> program\n", &g, &scratch.0);
         assert!(stderr.contains("cannot write "), "{stderr}");
+    }
+
+    /// A failed property 6 leaves the broken copy in the dump, and no build ran. Seed 6 has
+    /// bound sites; the forced replacement of its first conforms, so the property fails.
+    #[test]
+    fn a_failed_bound_should_leave_the_broken_copy_in_the_dump() {
+        if env::var_os(CHILD).is_some() {
+            on_stack(|| {
+                FORCE.set(Some(Force::Conforming));
+                program(&seed(6), &runtime());
+            });
+            return;
+        }
+        let scratch = Scratch::new();
+        let out = child(
+            "a_failed_bound_should_leave_the_broken_copy_in_the_dump",
+            &scratch.0,
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{stderr}");
+        let g = generate(&seed(6));
+        assert_record(&stderr, "property 6: ", &g, &scratch.0);
+        let dump = scratch.0.join("dump");
+        let read = |name: &str| {
+            fs::read_to_string(dump.join(name))
+                .unwrap_or_else(|e| panic!("the dump should hold {name}: {e}"))
+        };
+        // The program as it is, since the forced replacement conforms.
+        assert_eq!(
+            read("broken.sisu"),
+            format!("{}class NoBound {{}}\n", g.program)
+        );
+        assert!(
+            read("failure.txt").starts_with("property 6: "),
+            "{}",
+            read("failure.txt")
+        );
+        assert_eq!(read("program.sisu"), g.program);
     }
 }

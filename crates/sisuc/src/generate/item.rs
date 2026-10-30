@@ -6,7 +6,9 @@ use super::expr::{CHARS, OPS, arithmetic_value};
 use super::scope::{Class, Const, Enum, Field, Func, Ty, Var, Variant};
 use super::stmt::Jumps;
 use super::writer::Piece;
-use super::{Answer, Cost, DEPTHS, Gen, Known, MAX_NESTING, MAX_SIZE};
+use super::{
+    Answer, BoundSite, Cost, DEPTHS, Gen, Known, MAX_NESTING, MAX_SIZE, NO_BOUND, NOT_A_CLASS,
+};
 
 /// The most items before `main`.
 const MAX_ITEMS: usize = 8;
@@ -55,6 +57,40 @@ struct KnownSite {
     function: String,
     call: String,
     answer: Result<i64, &'static str>,
+}
+
+/// The statements of `shapes`, and the bound sites in them.
+#[derive(Default)]
+struct Calls {
+    lines: Vec<String>,
+    /// The line each site is in, and the site, whose `at` is in that line.
+    sites: Vec<(usize, BoundSite)>,
+}
+
+impl Calls {
+    fn push(&mut self, line: impl Into<String>) {
+        self.lines.push(line.into());
+    }
+
+    fn extend(&mut self, lines: impl IntoIterator<Item = String>) {
+        self.lines.extend(lines);
+    }
+
+    /// The statement `before`, `arg` and `after`, where `arg` is a bound site: the first argument
+    /// of a call that no other argument precedes to name the parameter. `bound` is the bound of
+    /// that parameter, and `broken` replaces `arg` to break it.
+    fn site(&mut self, before: &str, arg: &str, after: &str, bound: &str, broken: &'static str) {
+        let at = before.len()..before.len() + arg.len();
+        self.sites.push((
+            self.lines.len(),
+            BoundSite {
+                at,
+                bound: bound.to_string(),
+                broken,
+            },
+        ));
+        self.push(format!("{before}{arg}{after}"));
+    }
 }
 
 /// A declared interface, as `shapes` needs it.
@@ -712,9 +748,10 @@ impl Gen<'_> {
     /// with `string` as well. And `fn shapes()`, which calls each method on a value of each type
     /// and the generic functions with both types, and builds the class. A call on a type with two
     /// conformances to one interface is picked by the type of its result. The methods hold the
-    /// smallest value of their result. Each interface is used, so none is reported.
+    /// smallest value of their result. Each interface is used, so none is reported. Records the
+    /// bound sites of its calls (property 6).
     fn shapes(&mut self, declared: &[Shape]) {
-        let mut calls = Vec::new();
+        let mut calls = Calls::default();
         let once = |k: usize| Conformed {
             interface: k,
             arg: declared[k].generic.then_some("i64"),
@@ -768,28 +805,37 @@ impl Gen<'_> {
                 calls.push(format!("print({var}.plain())"));
                 values.push(var);
             }
-            self.via(&format!("via{k}"), &once(k).written(declared), &all);
+            let bound = once(k).written(declared);
+            self.via(&format!("via{k}"), &bound, &all);
             for var in &values {
-                calls.push(format!("via{k}({var})"));
+                calls.site(&format!("via{k}("), var, ")", &bound, NO_BOUND);
             }
             if let Some(assoc) = &shape.assoc {
                 self.via_assoc(k, declared);
                 for var in &values {
-                    calls.push(format!("let _ = pick{k}({var}, {})", assoc.value(var)));
+                    let (before, after) = (
+                        format!("let _ = pick{k}("),
+                        format!(", {})", assoc.value(var)),
+                    );
+                    calls.site(&before, var, &after, &bound, NO_BOUND);
                 }
             }
-            self.w
-                .text(&format!("class H{k}<T: {}> ", once(k).written(declared)));
+            self.w.text(&format!("class H{k}<T: {bound}> "));
             self.w.open();
             self.w.line();
             self.w.text("v: T");
             self.w.close();
             self.w.line();
-            calls.push(format!("let h{k} = H{k}(v: {})", values[0]));
+            calls.site(
+                &format!("let h{k} = H{k}(v: "),
+                &values[0],
+                ")",
+                &bound,
+                NO_BOUND,
+            );
             calls.push(format!("print(h{k}.v.plain())"));
-            calls.extend(self.generic_extension(k, declared, &values[0]));
-            let bound = once(k).written(declared);
-            calls.push(self.later(k, &bound, &values));
+            self.generic_extension(k, declared, &values[0], &mut calls);
+            self.later(k, &bound, &values, &mut calls);
         }
         // Two interfaces in one bound: a class that conforms to both.
         if declared.len() >= 2 {
@@ -798,16 +844,29 @@ impl Gen<'_> {
             let all = requirements_of(declared, &conformed_closure(declared, &roots));
             self.conforming_type(true, "QBoth", &roots, declared, true);
             self.via("both", &format!("{a} & {b}"), &all);
-            calls.push("let qboth = QBoth(v: 1)".to_string());
-            calls.push("both(qboth)".to_string());
+            calls.push("let qboth = QBoth(v: 1)");
+            calls.site("both(", "qboth", ")", &format!("{a} & {b}"), NO_BOUND);
         }
-        calls.extend(self.language_bounds(!declared.is_empty()));
+        self.language_bounds(!declared.is_empty(), &mut calls);
         calls.extend(self.associated_cycle());
+        self.write_shapes(&calls);
+    }
+
+    /// `fn shapes()`, which runs `calls`. Records where `program` holds each bound site.
+    fn write_shapes(&mut self, calls: &Calls) {
         self.w.text("fn shapes() ");
         self.w.open();
-        for call in &calls {
+        for (line, call) in calls.lines.iter().enumerate() {
             self.w.line();
+            let start = self.w.out.program.len();
             self.w.text(call);
+            for (_, site) in calls.sites.iter().filter(|(at, _)| *at == line) {
+                self.bound_sites.push(BoundSite {
+                    at: start + site.at.start..start + site.at.end,
+                    bound: site.bound.clone(),
+                    broken: site.broken,
+                });
+            }
         }
         self.w.close();
         self.w.line();
@@ -815,10 +874,11 @@ impl Gen<'_> {
 
     /// `fn later<k><T: bound>(_a: T, ...)`, whose other four parameters are `[T]`, `T?`, `H<k><T>`
     /// and `[T?]`, in an order that the draws choose. Gives the statement of `shapes` that calls
-    /// it with `value`, one of `values`, for `_a`. The other arguments name `T` in each way that
-    /// #283 broke: a call nested in an argument (`same`), a call whose type comes only from its
-    /// context (`none_of`) and a type that holds `T` (`H<k>(v: value)`, `[none_of()]`).
-    fn later(&mut self, k: usize, bound: &str, values: &[String]) -> String {
+    /// it with `value`, one of `values`, for `_a`, which is the bound site. The other arguments
+    /// name `T` in each way that #283 broke: a call nested in an argument (`same`), a call whose
+    /// type comes only from its context (`none_of`) and a type that holds `T` (`H<k>(v: value)`,
+    /// `[none_of()]`). When `value` breaks the bound, they must report nothing more.
+    fn later(&mut self, k: usize, bound: &str, values: &[String], calls: &mut Calls) {
         let value = &values[self.pick(values.len())];
         let mut rest = vec![
             ("_b: [T]".to_string(), format!("[same({value})]")),
@@ -836,7 +896,14 @@ impl Gen<'_> {
             params.join(", ")
         ));
         self.w.line();
-        format!("let _ = later{k}({value}, {})", args.join(", "))
+        let after = format!(", {})", args.join(", "));
+        calls.site(
+            &format!("let _ = later{k}("),
+            value,
+            &after,
+            bound,
+            NO_BOUND,
+        );
     }
 
     /// The generic functions `lang_eq<T: Eq>`, `lang_ord<T: Ord>` and `lang_display<T: Display>`,
@@ -849,7 +916,9 @@ impl Gen<'_> {
     /// `lang_held`, and through `Pinned`, an interface that inherits `AnyObject`, in `lang_pinned`.
     /// `lang_both<T: Display & Eq>` prints and compares one `T` in one body. None of it takes a
     /// byte.
-    fn language_bounds(&mut self, enum_value: bool) -> Vec<String> {
+    /// Writes the statements into `calls`, one for each call, so that each holds at most one bound
+    /// site.
+    fn language_bounds(&mut self, enum_value: bool, calls: &mut Calls) {
         for (name, bound, body) in [
             (
                 "eq",
@@ -876,38 +945,72 @@ impl Gen<'_> {
             "class Ranked: Eq, Ord {\n    r: i64\n    fn eq(self, other: Self) -> bool { self.r == other.r }\n    fn less(self, other: Self) -> bool { self.r < other.r }\n}\nenum Choice {\n    One(Ranked)\n    Nothing\n}\ninterface Pinned: AnyObject {}\nclass Anchor: Pinned {}\nfn lang_same<T: AnyObject>(a: T, b: T) -> bool { a is b }\nfn lang_held<T: AnyObject>(a: T?, b: T) -> bool { a is b }\nfn lang_pinned<T: Pinned>(a: T, b: T) -> bool { a is b }\nfn lang_both<T: Display & Eq>(x: T) -> i64 {\n    print(x)\n    if x == x { 4 } else { 4 }\n}",
         );
         self.w.line();
-        let mut calls = vec![
-            "let _ = lang_eq([1, 2])".to_string(),
-            "let _ = lang_eq(\"a\")".to_string(),
-            "let _ = lang_ord(1.5)".to_string(),
-            "let _ = lang_ord('c')".to_string(),
-            "let _ = lang_display(true)".to_string(),
-            "let _ = lang_display([\"a\"])".to_string(),
-            "let _ = lang_display(Choice.Nothing)".to_string(),
-            "let _ = 5.to_string() == \"5\" && \"{[1, 2]}\" == [1, 2].to_string()".to_string(),
-            "let _ = \"{[1, 2]:#}\" == [1, 2].to_string()".to_string(),
-            "let rank_a = Ranked(r: 1)".to_string(),
-            "let rank_b = Ranked(r: 2)".to_string(),
-            "let rank_m: Ranked? = rank_b".to_string(),
-            "let _ = rank_a == rank_b || rank_a != rank_b".to_string(),
-            "let _ = rank_a < rank_b && rank_a >= rank_b".to_string(),
-            "let _ = [rank_a] == [rank_b]".to_string(),
-            "let _ = rank_m == rank_m".to_string(),
-            "let _ = rank_m == None".to_string(),
-            "let _ = Choice.One(rank_a) == Choice.One(rank_b)".to_string(),
-            "let _ = [rank_a].contains(rank_b)".to_string(),
-            "let _ = rank_a.eq(rank_b) || rank_a.less(rank_b)".to_string(),
-            "let _ = lang_eq(rank_a) + lang_ord(rank_b)".to_string(),
-            "let _ = lang_both(rank_a) + lang_both([1, 2])".to_string(),
-            "let anchor = Anchor()".to_string(),
-            "let _ = lang_same(rank_a, rank_b) || lang_held(rank_m, rank_a)".to_string(),
-            "let _ = lang_pinned(anchor, anchor)".to_string(),
-            "let _ = 5.eq(5) || 1.5.less(2.5)".to_string(),
-        ];
-        if enum_value {
-            calls.push("let _ = lang_eq(N0.A)".to_string());
+        for (function, arg, bound) in [
+            ("lang_eq", "[1, 2]", "Eq"),
+            ("lang_eq", "\"a\"", "Eq"),
+            ("lang_ord", "1.5", "Ord"),
+            ("lang_ord", "'c'", "Ord"),
+        ] {
+            calls.site(&format!("let _ = {function}("), arg, ")", bound, NO_BOUND);
         }
-        calls
+        // `Display` alone has no site: every type conforms to it.
+        for line in [
+            "let _ = lang_display(true)",
+            "let _ = lang_display([\"a\"])",
+            "let _ = lang_display(Choice.Nothing)",
+            "let _ = 5.to_string() == \"5\" && \"{[1, 2]}\" == [1, 2].to_string()",
+            "let _ = \"{[1, 2]:#}\" == [1, 2].to_string()",
+            "let rank_a = Ranked(r: 1)",
+            "let rank_b = Ranked(r: 2)",
+            "let rank_m: Ranked? = rank_b",
+            "let _ = rank_a == rank_b || rank_a != rank_b",
+            "let _ = rank_a < rank_b && rank_a >= rank_b",
+            "let _ = [rank_a] == [rank_b]",
+            "let _ = rank_m == rank_m",
+            "let _ = rank_m == None",
+            "let _ = Choice.One(rank_a) == Choice.One(rank_b)",
+            "let _ = [rank_a].contains(rank_b)",
+            "let _ = rank_a.eq(rank_b) || rank_a.less(rank_b)",
+        ] {
+            calls.push(line);
+        }
+        calls.site("let _ = lang_eq(", "rank_a", ")", "Eq", NO_BOUND);
+        calls.site("let _ = lang_ord(", "rank_b", ")", "Ord", NO_BOUND);
+        calls.site(
+            "let _ = lang_both(",
+            "rank_a",
+            ")",
+            "Display & Eq",
+            NO_BOUND,
+        );
+        calls.site(
+            "let _ = lang_both(",
+            "[1, 2]",
+            ")",
+            "Display & Eq",
+            NO_BOUND,
+        );
+        calls.push("let anchor = Anchor()");
+        // `lang_held` has no site: its first argument, a `T?`, names `T` before its second.
+        calls.site(
+            "let _ = lang_same(",
+            "rank_a",
+            ", rank_b)",
+            "AnyObject",
+            NOT_A_CLASS,
+        );
+        calls.push("let _ = lang_held(rank_m, rank_a)");
+        calls.site(
+            "let _ = lang_pinned(",
+            "anchor",
+            ", anchor)",
+            "Pinned",
+            NOT_A_CLASS,
+        );
+        calls.push("let _ = 5.eq(5) || 1.5.less(2.5)");
+        if enum_value {
+            calls.site("let _ = lang_eq(", "N0.A", ")", "Eq", NO_BOUND);
+        }
     }
 
     /// Declares the interface `Nest`, the class `NestW<T>` and the enum `NestE<T: Nest>`. The
@@ -968,7 +1071,7 @@ impl Gen<'_> {
     /// `shapes` that use them, with `value`, a value of a type that conforms to `k`: the
     /// conformance holds through the bound of `via<k>`. Its methods call nothing, so no cycle
     /// goes through them, and each interface has one block, so no two conformances overlap.
-    fn generic_extension(&mut self, k: usize, declared: &[Shape], value: &str) -> Vec<String> {
+    fn generic_extension(&mut self, k: usize, declared: &[Shape], value: &str, calls: &mut Calls) {
         let class = format!("R{k}");
         self.w.text(&format!("class {class}<T> "));
         self.w.open();
@@ -1010,12 +1113,16 @@ impl Gen<'_> {
         self.w.text("fn solo(self) -> i64 { 1 }");
         self.w.close();
         self.w.line();
-        vec![
-            format!("let w{k} = {class}(v: {value})"),
-            format!("via{k}(w{k})"),
-            format!("print(w{k}.top().plain())"),
-            format!("print({class}(v: 1).solo())"),
-        ]
+        calls.push(format!("let w{k} = {class}(v: {value})"));
+        calls.site(
+            &format!("via{k}("),
+            &format!("w{k}"),
+            ")",
+            &bound.written(declared),
+            NO_BOUND,
+        );
+        calls.push(format!("print(w{k}.top().plain())"));
+        calls.push(format!("print({class}(v: 1).solo())"));
     }
 
     /// A class `ty` or an enum, if not `class`, that conforms to the interfaces `roots`: in its
@@ -1667,5 +1774,73 @@ mod tests {
             }
         }
         assert!(found, "no seed declares `later0`");
+    }
+
+    /// Every row of the table of replacements has a site in the programs of the seeds, and a
+    /// site is the argument alone: what comes before it opens the argument list or names the
+    /// field, and what comes after it ends the argument.
+    #[test]
+    fn the_seeds_should_hold_a_bound_site_for_each_replacement() {
+        let mut rows = std::collections::BTreeSet::new();
+        for data in crate::generate::coverage::seeds() {
+            let g = crate::generate::generate(&data);
+            for site in &g.bound_sites {
+                let (before, after) = (&g.program[..site.at.start], &g.program[site.at.end..]);
+                assert!(
+                    before.ends_with('(') || before.ends_with("v: "),
+                    "{before}`{}`",
+                    &g.program[site.at.clone()]
+                );
+                assert!(after.starts_with(')') || after.starts_with(','), "{after}");
+                let row = match site.bound.as_str() {
+                    "Display" => panic!("every type conforms to `Display`: it has no site"),
+                    bound @ ("Eq" | "Ord" | "AnyObject" | "Pinned" | "Display & Eq") => bound,
+                    bound if bound.contains(" & ") => "two interfaces",
+                    bound if bound.contains('<') => "generic interface",
+                    _ => "interface",
+                };
+                rows.insert((row.to_string(), site.broken));
+            }
+        }
+        let rows: Vec<(String, &str)> = rows.into_iter().collect();
+        let expected = [
+            ("AnyObject", "true"),
+            ("Display & Eq", "NoBound()"),
+            ("Eq", "NoBound()"),
+            ("Ord", "NoBound()"),
+            ("Pinned", "true"),
+            ("generic interface", "NoBound()"),
+            ("interface", "NoBound()"),
+            ("two interfaces", "NoBound()"),
+        ]
+        .map(|(row, broken)| (row.to_string(), broken));
+        assert_eq!(rows, expected);
+    }
+
+    /// `later<k>` takes the bounded parameter bare, then in each form that #283 broke, and its call
+    /// has the site as its first argument.
+    #[test]
+    fn a_later_call_should_have_its_bound_site_first() {
+        let mut found = false;
+        for data in crate::generate::coverage::seeds() {
+            let g = crate::generate::generate(&data);
+            for site in &g.bound_sites {
+                let line = g.program[..site.at.start]
+                    .lines()
+                    .last()
+                    .unwrap_or_default();
+                if line.starts_with("    let _ = later") {
+                    found = true;
+                    let call = g.program[site.at.start..]
+                        .lines()
+                        .next()
+                        .unwrap_or_default();
+                    for part in ["same(", "none_of()", "[none_of()]", "H"] {
+                        assert!(call.contains(part), "{part} in {call}");
+                    }
+                }
+            }
+        }
+        assert!(found, "no seed calls `later`");
     }
 }

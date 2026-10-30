@@ -1,5 +1,5 @@
 //! Fuzzes generated programs: each input's bytes become a well-typed Sisu program, built three
-//! ways with its rewritten copy, run, and judged against properties 1 to 5 (ADR 0033).
+//! ways with its rewritten copy, run, and judged against properties 1 to 6 (ADR 0033).
 #![no_main]
 use std::path::PathBuf;
 use std::sync::OnceLock;

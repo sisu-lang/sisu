@@ -26,6 +26,8 @@ pub(crate) struct Generated {
     pub(crate) stdin: String,
     /// The known sites `main` prints, in the order it prints them (decision 3).
     pub(crate) known: Vec<Known>,
+    /// The bound sites of `program`, in the order it holds them (property 6).
+    pub(crate) bound_sites: Vec<BoundSite>,
     /// The program's cost, as decision 5 counts it.
     #[cfg(test)]
     pub(crate) cost: u64,
@@ -35,6 +37,36 @@ pub(crate) struct Generated {
     /// The rewrites `rewritten` holds.
     #[cfg(test)]
     pub(crate) made: Vec<writer::Rewrite>,
+}
+
+/// An argument of a call of a bounded generic function or class, whose parameter is a bare type
+/// parameter `T` that no earlier argument names. Replaced by `broken`, it breaks the bound of `T`,
+/// and the checker must report that and nothing else (property 6).
+pub(crate) struct BoundSite {
+    /// Where `program` holds the argument.
+    pub(crate) at: std::ops::Range<usize>,
+    /// The bound of `T`, as the program writes it.
+    pub(crate) bound: String,
+    /// The text that does not conform to the bound.
+    pub(crate) broken: &'static str,
+}
+
+/// A class that conforms to no interface, which `NO_BOUND` makes.
+pub(crate) const NO_BOUND_CLASS: &str = "class NoBound {}\n";
+/// A value of a class with no conformance: it breaks every bound but `Display`.
+const NO_BOUND: &str = "NoBound()";
+/// A value that is no class, which breaks `AnyObject`. It is not `5`, which an expected class
+/// would give the type of that class: the error would be E0032.
+const NOT_A_CLASS: &str = "true";
+
+impl Generated {
+    /// `program` with the argument of `site` replaced by `site.broken`, and `NO_BOUND_CLASS`
+    /// at its end.
+    pub(crate) fn broken(&self, site: &BoundSite) -> String {
+        let mut text = self.program.clone();
+        text.replace_range(site.at.clone(), site.broken);
+        text + NO_BOUND_CLASS
+    }
 }
 
 pub(crate) struct Known {
@@ -100,6 +132,7 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
         rewritten: g.w.out.rewritten,
         stdin: g.stdin,
         known,
+        bound_sites: g.bound_sites,
         #[cfg(test)]
         cost,
         #[cfg(test)]
@@ -156,6 +189,8 @@ struct Gen<'a> {
     effect: bool,
     /// Whether `main` holds a `return`.
     returns: bool,
+    /// The bound sites of `program`, in order.
+    bound_sites: Vec<BoundSite>,
     /// Where `program` holds the known sites' text, in order.
     #[cfg(test)]
     known_text: Vec<std::ops::Range<usize>>,
@@ -183,6 +218,7 @@ impl<'a> Gen<'a> {
             ru: Unstructured::new(&[]),
             effect: false,
             returns: false,
+            bound_sites: Vec::new(),
             #[cfg(test)]
             known_text: Vec::new(),
         }
