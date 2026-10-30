@@ -4116,6 +4116,33 @@ const NESTED_REJECT_ROWS: &[PartialRow<'static>] = {
             "h(Two.P(5, 7), id(none()))",
             &[(NotConform, "Two.P(5")],
         ),
+        // A bare `T` is the whole context, so the call meets `REJECTED` itself. It rejects each
+        // parameter that its result names, and meets a part that names none.
+        (
+            "fn h<T: I>(_p: T, _a: T) {}\n",
+            "h(5, none())",
+            &[(NotConform, "5")],
+        ),
+        (
+            "fn arr<X>() -> [X] { panic(\"e\") }\nfn h<T: I>(_p: T, _a: T) {}\n",
+            "h(5, arr())",
+            &[(NotConform, "5")],
+        ),
+        (
+            "fn h<T: I>(_p: T, _a: T) {}\n",
+            "h(5, two())",
+            &[(NotConform, "5")],
+        ),
+        (
+            "fn bx<A, B>() -> Box<A, B> { panic(\"e\") }\nfn h<T: I>(_p: T, _a: T) {}\n",
+            "h(5, bx())",
+            &[(NotConform, "5")],
+        ),
+        (
+            "fn two_i<A>() -> Two<A, i64> { panic(\"e\") }\nfn h<T: I>(_p: T, _a: T) {}\n",
+            "h(5, two_i())",
+            &[(NotConform, "5")],
+        ),
         // `Some`, a variant and a safe call pass the context on to their parts.
         (
             "fn h<T: I>(_p: T, _a: T?) {}\n",
@@ -4227,6 +4254,67 @@ const NO_BLAME_ROWS: &[PartialRow<'static>] = {
 #[test]
 fn a_call_that_rejected_a_parameter_should_blame_no_argument_for_its_expected_type() {
     check_rows_after(REJECT_DECLS, NO_BLAME_ROWS);
+}
+
+/// Classes that conform to `K` for a type that holds the parameter of a bound: the arguments of
+/// the bound name the parameter in an array, an optional, an enum and a class.
+const WAIT_SHAPE_DECLS: &str = "class Va: K<[i64]> {\n}\n\
+    class Vo: K<i64?> {\n}\n\
+    class Vt: K<Two<i64, bool>> {\n}\n\
+    class Vc: K<Box<i64, bool>> {\n}\n";
+
+/// The rows of `a_bound_that_names_a_parameter_in_a_larger_type_should_wait_for_it`.
+const WAIT_SHAPE_ROWS: &[PartialRow<'static>] = {
+    use Code::NotConform;
+    &[
+        // The first argument binds `T`, and the bound waits for `U`, which the last binds.
+        ("fn h<T: K<[U]>, U>(_a: T, _b: U) {}\n", "h(Va(), 1)", &[]),
+        ("fn h<T: K<U?>, U>(_a: T, _b: U) {}\n", "h(Vo(), 1)", &[]),
+        (
+            "fn h<T: K<Two<U, bool>>, U>(_a: T, _b: U) {}\n",
+            "h(Vt(), 1)",
+            &[],
+        ),
+        (
+            "fn h<T: K<Box<U, bool>>, U>(_a: T, _b: U) {}\n",
+            "h(Vc(), 1)",
+            &[],
+        ),
+        // The bound fails once `U` is bound, and is reported at the argument for `T`.
+        (
+            "fn h<T: K<[U]>, U>(_a: T, _b: U) {}\n",
+            "h(Plain(), 1)",
+            &[(NotConform, "Plain()")],
+        ),
+    ]
+};
+
+/// A bound waits for the first parameter that its arguments name, wherever they name it. It is
+/// checked when the call binds that parameter, and not before.
+#[test]
+fn a_bound_that_names_a_parameter_in_a_larger_type_should_wait_for_it() {
+    check_rows_after(
+        &format!("{REJECT_DECLS}{WAIT_SHAPE_DECLS}"),
+        WAIT_SHAPE_ROWS,
+    );
+}
+
+/// The rows of `a_bound_that_names_an_associated_type_of_a_rejected_parameter_should_add_no_error`.
+const REJECTED_BASE_ROWS: &[PartialRow<'static>] = {
+    use Code::NotConform;
+    &[(
+        "fn h<T: I, U: K<T.Item>>(_p: Two<T, U>) {}\n",
+        "h(Two.P(Plain(), V()))",
+        &[(NotConform, "Two.P(Plain")],
+    )]
+};
+
+/// One argument binds `T` and `U` together, and the bound of `T` fails. The bound of `U` names
+/// `T.Item`, which has no type, as `Plain` has no conformance. The failed bound of `T` is the
+/// only error: the bound of `U` has nothing to wait for.
+#[test]
+fn a_bound_that_names_an_associated_type_of_a_rejected_parameter_should_add_no_error() {
+    check_rows_after(REJECT_DECLS, REJECTED_BASE_ROWS);
 }
 
 /// The rows of `a_failed_bound_should_come_before_a_mismatch_with_the_expected_type`.
