@@ -4425,6 +4425,42 @@ fn a_push_should_reach_a_local_an_element_and_a_guarded_field() {
     );
 }
 
+/// A mutable optional array of a type with no class object gets the growth of `?.push`, when the
+/// size it may reach leaves room for it within `MAX_SIZE`. No other local gets it.
+#[test]
+fn an_optional_array_should_get_growth_only_where_it_fits() {
+    let g = Gen::new(&[0; 8]);
+    let optional = |element: Ty| Ty::Optional(Box::new(Ty::Array(Box::new(element))));
+    let growth = super::stmt::GROW;
+    for (row, ty, mutable, size, expected) in [
+        ("holds nothing", optional(Ty::I64), true, 0, growth),
+        (
+            "leaves room for the growth",
+            optional(Ty::I64),
+            true,
+            MAX_SIZE - growth,
+            growth,
+        ),
+        (
+            "leaves one too little",
+            optional(Ty::I64),
+            true,
+            MAX_SIZE - growth + 1,
+            0,
+        ),
+        ("cannot change", optional(Ty::I64), false, 0, 0),
+        ("holds class objects", optional(Ty::class(0, 9)), true, 0, 0),
+        ("is no optional", Ty::Array(Box::new(Ty::I64)), true, 0, 0),
+        ("is no array", Ty::Optional(Box::new(Ty::I64)), true, 0, 0),
+    ] {
+        assert_eq!(
+            g.optional_growth(&ty, mutable, size),
+            expected,
+            "row `{row}`"
+        );
+    }
+}
+
 /// A push through `?.` onto an optional array local runs for an array and for `None`, and one
 /// onto a field of an optional object runs for an object and for `None`. The guard of the field
 /// reads an absent object as holding no element, so the push runs and does nothing.

@@ -311,17 +311,7 @@ impl Gen<'_> {
             (_, false) if ty.sized() => (MAX_SIZE, 0),
             _ => (0, 0),
         };
-        // A mutable optional array takes `?.push`, whether it holds an array or `None`.
-        let grow = match &ty {
-            Ty::Optional(payload)
-                if mutable
-                    && matches!(&**payload, Ty::Array(element) if !self.scope.contains_class(element))
-                    && base + room + GROW <= MAX_SIZE =>
-            {
-                GROW
-            }
-            _ => 0,
-        };
+        let grow = self.optional_growth(&ty, mutable, base);
         self.typed = written;
         let init = self.expr(&ty, base);
         let base = if mutable { base } else { init.size };
@@ -379,6 +369,22 @@ impl Gen<'_> {
         var.grow = grow;
         var.len = len;
         self.scope.vars.push(var);
+    }
+
+    /// The growth that `?.push` may take from a local of type `ty` whose first value reaches
+    /// `size`: a mutable optional array of a type with no class object, when `size` leaves room
+    /// for it within `MAX_SIZE`. It pushes whether the optional holds an array or `None`.
+    pub(crate) fn optional_growth(&self, ty: &Ty, mutable: bool, size: u64) -> u64 {
+        match ty {
+            Ty::Optional(payload)
+                if mutable
+                    && matches!(&**payload, Ty::Array(element) if !self.scope.contains_class(element))
+                    && size + GROW <= MAX_SIZE =>
+            {
+                GROW
+            }
+            _ => 0,
+        }
     }
 
     /// Whether an element of `var` may take an assignment: a mutable array with an element,
