@@ -4006,8 +4006,8 @@ const REJECT_WAIT_ROWS: &[PartialRow<'static>] = {
     ]
 };
 
-/// The context of a call that waits holds a hole for a rejected parameter. The call cannot bind
-/// what the hole leaves, and the failed bound is the cause, so the call adds no E0050.
+/// The context of a call that waits holds `REJECTED` for a rejected parameter. The call rejects its
+/// own parameter there, and the failed bound is the cause, so the call adds no E0050.
 #[test]
 fn a_call_that_waits_for_a_rejected_parameter_should_report_no_inference_error() {
     check_rows_after(REJECT_DECLS, REJECT_WAIT_ROWS);
@@ -4030,12 +4030,156 @@ const OTHER_WAIT_ROWS: &[PartialRow<'static>] = {
     ]
 };
 
-/// The context of a call that waits for `U` holds a hole for `U`, which no bound rejected. The
+/// The context of a call that waits for `U` holds `HOLE` for `U`, which no bound rejected. The
 /// call cannot bind it, and nothing else reports that, so the call keeps its E0050 after a failed
 /// bound of `T`.
 #[test]
 fn a_call_that_waits_for_another_parameter_should_still_report_its_own_inference_error() {
     check_rows_after(REJECT_DECLS, OTHER_WAIT_ROWS);
+}
+
+/// The rows of `a_rejected_part_of_a_context_should_reject_the_parameter_of_a_nested_call`.
+const NESTED_REJECT_ROWS: &[PartialRow<'static>] = {
+    use Code::NotConform;
+    &[
+        // A call that has not failed itself passes the context on: `id` gives it to `none`.
+        (
+            "fn h<T: I>(_p: T, _a: T?) {}\n",
+            "h(5, id(none()))",
+            &[(NotConform, "5")],
+        ),
+        (
+            "class Gm {\n    fn m<X>(self, x: X) -> X { x }\n}\n\
+             fn h<T: I>(_p: T, _a: T?) {}\n",
+            "h(5, Gm().m(none()))",
+            &[(NotConform, "5")],
+        ),
+        (
+            "fn h<T: I>(_p: T, _a: [T?]) {}\n",
+            "h(5, [id(none())])",
+            &[(NotConform, "5")],
+        ),
+        (
+            "fn h<T: I>(_p: T, _a: Two<T, i64>) {}\n",
+            "h(5, id(two()))",
+            &[(NotConform, "5")],
+        ),
+        (
+            "fn h<T: I>(_p: Two<T, i64>, _a: T?) {}\n",
+            "h(Two.P(5, 7), id(none()))",
+            &[(NotConform, "Two.P(5")],
+        ),
+        // `Some`, a variant and a safe call pass the context on to their parts.
+        (
+            "fn h<T: I>(_p: T, _a: T?) {}\n",
+            "h(5, Some(none()))",
+            &[(NotConform, "5")],
+        ),
+        (
+            "fn h<T: I>(_p: T, _a: Two<T, i64>) {}\n",
+            "let n = 5\nh(n, Two.P(none(), 1))",
+            &[(NotConform, "n")],
+        ),
+    ]
+};
+
+/// A context holds `REJECTED` where a parameter's bound failed. A call in an argument that gets it
+/// rejects its own parameter at that place, however many calls the context passes through, and
+/// reports nothing for it: the failed bound is the fault.
+#[test]
+fn a_rejected_part_of_a_context_should_reject_the_parameter_of_a_nested_call() {
+    check_rows_after(REJECT_DECLS, NESTED_REJECT_ROWS);
+}
+
+/// The rows of `an_unbound_part_next_to_a_rejected_one_should_keep_its_inference_error`.
+const UNBOUND_NEXT_ROWS: &[PartialRow<'static>] = {
+    use Code::{CannotInfer, NotConform};
+    &[
+        // `B` of `two_p` sits at `U`, which no bound rejected.
+        (
+            "class P {}\n\
+             fn two_p<B>() -> Two<P, B> { panic(\"e\") }\n\
+             fn h<T: I, U>(_a: T, _b: Two<T, U>) {}\n",
+            "h(P(), two_p())",
+            &[(NotConform, "P()"), (CannotInfer, "two_p()")],
+        ),
+        (
+            "fn h<T: I, U>(_p: T, _a: Two<T, U>?) {}\n",
+            "h(5, dbg(none()))",
+            &[(NotConform, "5"), (CannotInfer, "none()")],
+        ),
+        (
+            "fn g<A, B>(_x: B?) -> A? { None }\n\
+             fn h<T: I>(_p: T, _a: T?) {}\n",
+            "h(5, g(none()))",
+            &[(NotConform, "5"), (CannotInfer, "none()")],
+        ),
+        (
+            "fn h<T: I, U>(_p: T, _a: U?) {}\n",
+            "h(5, id(none()))",
+            &[(NotConform, "5"), (CannotInfer, "none()")],
+        ),
+        (
+            "fn h<T: I, U>(_p: T, _a: U?) {}\n",
+            "h(5, none())",
+            &[(NotConform, "5"), (CannotInfer, "none()")],
+        ),
+        // One call has a rejected parameter and an unbound one, in both orders: `A` is rejected
+        // and `B` is not, or the reverse.
+        (
+            "fn h<T: I, U>(_p: T, _a: Two<T, U>) {}\n",
+            "h(5, two())",
+            &[(NotConform, "5"), (CannotInfer, "two()")],
+        ),
+        (
+            "fn h<T: I, U>(_p: T, _a: Two<U, T>) {}\n",
+            "h(5, two())",
+            &[(NotConform, "5"), (CannotInfer, "two()")],
+        ),
+        (
+            "fn h<T: I, U>(_p: T, _a: [Two<T, U>]) {}\n",
+            "h(5, [two()])",
+            &[(NotConform, "5"), (CannotInfer, "two()")],
+        ),
+        (
+            "fn h<T: I, U>(_p: T, _a: Two<T, U>) {}\n",
+            "h(5, id(two()))",
+            &[(NotConform, "5"), (CannotInfer, "two()")],
+        ),
+    ]
+};
+
+/// A part of a context that no bound rejected is `HOLE`, not `REJECTED`. A nested call that it
+/// leaves with a parameter unbound still reports E0050, next to the failed bound. So does a call
+/// that has a rejected parameter and an unbound one.
+#[test]
+fn an_unbound_part_next_to_a_rejected_one_should_keep_its_inference_error() {
+    check_rows_after(REJECT_DECLS, UNBOUND_NEXT_ROWS);
+}
+
+/// The rows of `a_call_that_rejected_a_parameter_should_blame_no_argument_for_its_expected_type`.
+const NO_BLAME_ROWS: &[PartialRow<'static>] = {
+    use Code::NotConform;
+    &[
+        (
+            "fn h<T: I, U>(p: Two<T, U>) -> Two<T, U> { p }\n",
+            "let x: Two<Plain, bool> = h(Two.P(5, 7))",
+            &[(NotConform, "Two.P(5")],
+        ),
+        (
+            "fn h<T: I, U>(p: Two<T, U>) -> Two<T, U> { p }\n",
+            "let x: Two<W, bool> = h(Two.P(5, 7))",
+            &[(NotConform, "Two.P(5")],
+        ),
+    ]
+};
+
+/// The expected type does not meet the result of a call whose parameter `T` is rejected, as `U`
+/// is `i64` and the expected type says `bool`. The failed bound is the fault: the call blames no
+/// argument, and so reports the bound once.
+#[test]
+fn a_call_that_rejected_a_parameter_should_blame_no_argument_for_its_expected_type() {
+    check_rows_after(REJECT_DECLS, NO_BLAME_ROWS);
 }
 
 /// The rows of `a_failed_bound_should_come_before_a_mismatch_with_the_expected_type`.
