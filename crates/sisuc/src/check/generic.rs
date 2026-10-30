@@ -488,7 +488,20 @@ impl Inference {
     /// checked against a type that names an associated type of the parameter it bound: the
     /// type does not exist.
     fn bound_failed(&self) -> bool {
-        self.early.as_ref().is_some_and(|early| early.failed)
+        self.early
+            .as_ref()
+            .is_some_and(|early| early.failed.contains(&true))
+    }
+
+    /// Whether `pattern` names a parameter whose early bound failed. A type built from such a
+    /// parameter asks for the type that the bound rejected.
+    fn names_failed(&self, pattern: Type) -> bool {
+        let Some(early) = &self.early else {
+            return false;
+        };
+        let mut named = vec![false; early.failed.len()];
+        mark_params(pattern, &mut named);
+        iter::zip(named, &early.failed).any(|(named, &failed)| named && failed)
     }
 }
 
@@ -506,9 +519,9 @@ struct Early {
     /// The bounds of a parameter that is bound, that name a parameter that is not bound yet, by
     /// the same places: they are checked as soon as the call binds what they name.
     waiting: Vec<(usize, usize)>,
-    /// Whether one failed: an associated type that the call writes through the parameter does not
-    /// exist, so no argument waits for it any more.
-    failed: bool,
+    /// Which parameters have a bound that failed, by place: an associated type that the call
+    /// writes through the parameter does not exist, so no argument waits for it any more.
+    failed: Vec<bool>,
 }
 
 impl Early {
@@ -533,7 +546,7 @@ impl Early {
             bounds: sig.bounds.to_vec(),
             checked: FxHashSet::default(),
             waiting: Vec::new(),
-            failed: false,
+            failed: vec![false; sig.declared.len()],
         })
     }
 }
@@ -903,7 +916,7 @@ impl Checker<'_> {
                 call.early
                     .as_mut()
                     .expect("a call that checks early should say so")
-                    .failed = true;
+                    .failed[i] = true;
             }
         }
     }
@@ -1129,12 +1142,9 @@ impl Checker<'_> {
         match type_of(&checked) {
             Some(Type::UNIT | Type::NEVER) | None => checked,
             Some(ty) if !self.bind_param(call, pattern, ty, e.span) => {
-                // After a failed bound, the pattern may name an associated type that does not
-                // exist. The bound check reported that, so no mismatch with the pattern is written.
-                if call.bound_failed()
-                    && pattern.has_assoc()
-                    && self.known_in(call, pattern).is_none()
-                {
+                // A pattern built from a parameter whose bound failed asks for the type that
+                // the bound rejected. The bound check reported that, so no mismatch is written.
+                if call.names_failed(pattern) {
                     checked
                 } else {
                     let want = self.printed(&call.bindings, pattern);

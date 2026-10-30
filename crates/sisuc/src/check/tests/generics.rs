@@ -2966,12 +2966,24 @@ fn an_associated_type_argument_should_report_its_own_mistake() {
             "h(Two.P(5, 7), Two.P(W(), 8))",
             &[(Code::NotConform, 7)],
         ),
+        // An argument for a type built from the parameter whose bound failed is not checked.
+        (
+            "fn h<T: I, U>(_p: Two<T, T.Item>, _a: Two<T, U>, _b: Two<T.Item, U>) {}\n",
+            "h(Two.P(5, 7), Two.P(W(), 1), Two.P(1, 1))",
+            &[(Code::NotConform, 7)],
+        ),
         // A parameter that is not bound yet when the bound fails is still bound by the next
         // argument, so a later mismatch is reported at it.
         (
             "fn h<T: I, U>(_p: Two<T, T.Item>, _a: U, _b: U) {}\n",
             "h(Two.P(5, 7), 1, \"s\")",
             &[(Code::NotConform, 7), (Code::Mismatch, 20)],
+        ),
+        // A pattern that names no parameter with a failed bound still reports its mismatch.
+        (
+            "fn h<T: I, S: I, U, V>(_p: Two<T, T.Item>, _s: S, _a: U, _b: Two<Two<U, V>, i64>) {}\n",
+            "h(Two.P(5, 7), W(), true, Two.P(Two.P(\"s\", 1), 2))",
+            &[(Code::NotConform, 7), (Code::Mismatch, 31)],
         ),
         (
             "fn h<T: I, U>(_p: Two<T, T.Item>, _a: Wrap<U>, _b: Wrap<U>) {}\n",
