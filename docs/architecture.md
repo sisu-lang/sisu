@@ -341,18 +341,19 @@ on a tag or a value that the tests become, and after the last arm a call to
 `llvm.trap`: the checker has proved that some arm matches, and a checker bug
 must not become undefined behaviour.
 
-An array is one counted heap block too: a header of three `i64`s, the count, the
-length and the capacity, then the elements. A new block's capacity is its length. Each array type gets the same helpers, such as
+An array is one counted heap block too: a header of three `i64`s, the count,
+the length and the capacity, then the elements. A new block's capacity is its
+length. Each array type gets the same helpers, such as
 `sisu_rc.release.[i64]`, plus `sisu_rc.unique.[i64]`, which copies the block
 before a write when another holder shares it. A loop makes the arrays it
 writes unique once, before it starts, when nothing in the loop shares them,
 so the writes inside it skip the count check (ADR 0021). An index out of
 bounds calls `sisu_panic_bounds`. Codegen tags the loads and stores of an
-array's count, length and capacity, and every count update and check, with one TBAA
-tag, and those of an array element with another, so LLVM knows that writing
-an element changes none of them. A length load also carries `!range` and
-`!noundef`, so LLVM knows that a length is never negative: `alloc_array` is
-the only writer of a length, and no length it gets is negative.
+array's count, length and capacity, and every count update and check, with
+one TBAA tag, and those of an array element with another, so LLVM knows that
+writing an element changes none of them. A length load also carries `!range`
+and `!noundef`, so LLVM knows that a length is never negative: `alloc_array`
+is the only writer of a length, and no length it gets is negative.
 
 A string is one counted block with a header of three `i64`s: the count, the
 length and the capacity, then the UTF-8 bytes. A literal is a private global

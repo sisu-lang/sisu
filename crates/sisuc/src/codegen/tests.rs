@@ -619,6 +619,13 @@ fn free_operands(body: &str) -> (String, String, String) {
     (pointer.into(), size.into(), align.into())
 }
 
+/// The text of the instruction `<value> = <text>` in `body`.
+fn defined<'a>(body: &'a str, value: &str) -> &'a str {
+    body.lines()
+        .find_map(|l| l.trim().strip_prefix(&format!("{value} = ")))
+        .unwrap_or_else(|| panic!("no {value} in\n{body}"))
+}
+
 /// A drop frees a block with the size and alignment it was allocated with. `sisu_free` hands
 /// both to the allocator, which here ignores them, so Valgrind and the RC checks cannot notice
 /// a wrong value.
@@ -670,26 +677,23 @@ fn drop_should_free_with_the_allocated_layout() {
             "{body}"
         );
         assert_eq!(align, "8", "{body}");
-        // The value defined by the instruction `<value> = <text>`.
-        let text = |value: &str| {
-            body.lines()
-                .find_map(|l| l.trim().strip_prefix(&format!("{value} = ")))
-                .unwrap_or_else(|| panic!("no {value} in\n{body}"))
-        };
-        let elements = text(&size)
+        let elements = defined(body, &size)
             .strip_prefix("add nuw i64 ")
             .and_then(|operands| operands.strip_suffix(", 24"))
             .unwrap_or_else(|| panic!("size {size} is not elements + 24 in\n{body}"));
-        let length = text(elements)
+        let length = defined(body, elements)
             .strip_prefix("mul nuw i64 ")
             .and_then(|operands| operands.strip_suffix(&format!(", {element_size}")))
             .unwrap_or_else(|| panic!("{elements} is not cap * {element_size} in\n{body}"));
-        assert!(text(length).starts_with("load i64, ptr "), "{body}");
+        assert!(
+            defined(body, length).starts_with("load i64, ptr "),
+            "{body}"
+        );
     }
 }
 
-/// A block that has room beyond its length is freed with the size it was allocated with, so
-/// the drop sizes the block from the header's capacity: field 2, not the length in field 1.
+/// A block can have room beyond its length. It is freed with the size it was allocated with.
+/// So the drop sizes the block from the header's capacity, which is field 2, not field 1.
 #[test]
 fn array_drop_should_free_the_size_of_its_capacity() {
     let context = Context::create();
@@ -700,27 +704,21 @@ fn array_drop_should_free_the_size_of_its_capacity() {
     .print_to_string()
     .to_string();
     let body = function_body(&ir, "define internal void @\"sisu_rc.drop.[i64]\"(ptr");
-    let (_, size, _) = free_operands(body);
-    // The value defined by the instruction `<value> = <text>`.
-    let text = |value: &str| {
-        body.lines()
-            .find_map(|l| l.trim().strip_prefix(&format!("{value} = ")))
-            .unwrap_or_else(|| panic!("no {value} in\n{body}"))
-    };
-    let elements = text(&size)
+    let (block, size, _) = free_operands(body);
+    let elements = defined(body, &size)
         .strip_prefix("add nuw i64 ")
         .and_then(|operands| operands.split(", ").next())
         .unwrap_or_else(|| panic!("size {size} is not an add in\n{body}"));
-    let capacity = text(elements)
+    let capacity = defined(body, elements)
         .strip_prefix("mul nuw i64 ")
         .and_then(|operands| operands.split(", ").next())
         .unwrap_or_else(|| panic!("{elements} is not a multiplication in\n{body}"));
-    let field = text(capacity)
+    let field = defined(body, capacity)
         .strip_prefix("load i64, ptr ")
         .and_then(|operands| operands.split(',').next())
         .unwrap_or_else(|| panic!("{capacity} is not a load in\n{body}"));
     assert!(
-        text(field).ends_with("{ i64, i64, i64 }, ptr %0, i32 0, i32 2"),
+        defined(body, field).ends_with(&format!("{{ i64, i64, i64 }}, ptr {block}, i32 0, i32 2")),
         "{field} is not field 2 of the header in\n{body}"
     );
 }
@@ -737,6 +735,14 @@ fn alloc_array_should_set_the_capacity_to_the_length() {
     .print_to_string()
     .to_string();
     let body = function_body(&ir, "define internal ptr @sisu.make(i64");
+    // The pointer that the one allocation returns.
+    let block = body
+        .lines()
+        .find_map(|l| {
+            let (value, text) = l.trim().split_once(" = ")?;
+            text.starts_with("call ptr @sisu_alloc(").then_some(value)
+        })
+        .unwrap_or_else(|| panic!("no allocation in\n{body}"));
     // The value stored into field `index` of an array header.
     let stored = |index: u32| {
         let field = body
@@ -744,7 +750,7 @@ fn alloc_array_should_set_the_capacity_to_the_length() {
             .find_map(|l| {
                 let (value, text) = l.trim().split_once(" = ")?;
                 text.contains(&format!(
-                    "{{ i64, i64, i64 }}, ptr %array, i32 0, i32 {index}"
+                    "{{ i64, i64, i64 }}, ptr {block}, i32 0, i32 {index}"
                 ))
                 .then_some(value)
             })

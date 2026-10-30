@@ -48,7 +48,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .basic()
             .expect("`sisu_alloc` should return a pointer, as the runtime declares it")
             .into_pointer_value();
-        // Tagged like every array count and length (see `header_tag`).
+        // Tagged like every array count, length and capacity (see `header_tag`).
         self.store_count(array, self.context.i64_type().const_int(1, false));
         self.store_tagged(self.len_ptr(array), len.into(), self.header_tag);
         self.store_tagged(self.cap_ptr(array), len.into(), self.header_tag);
@@ -404,9 +404,10 @@ impl<'ctx> Codegen<'ctx, '_> {
         let len = self.array_len(array);
         // The slot's reference moves to the copy. Releasing it never frees the old block: its
         // count was above 1. Releasing it before the copy exists, not after, leaves the copy's
-        // count and length as the last stores, so that LLVM can forward them past an inlined
-        // `unique` instead of loading them again. With the TBAA tags, that drops the second
-        // count and bounds checks of a swap; see `a_barred_partition_makes_its_array_unique_once`.
+        // count, length and capacity as the last stores, so that LLVM can forward them past an
+        // inlined `unique` instead of loading them again. With the TBAA tags, that drops the
+        // second count and bounds checks of a swap; see
+        // `a_barred_partition_makes_its_array_unique_once`.
         self.add_to_count(array, i64_type.const_int((-1_i64).cast_unsigned(), false));
         // The length fit once, so the new block needs no size check.
         let copy = self.alloc_array(element, len, None);
