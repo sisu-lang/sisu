@@ -250,8 +250,8 @@ fn largest_held(enums: &[Enum], measured: &[Option<Measured>], id: usize) -> Opt
 /// another mistake. One report for each declaration: instances of a generic enum share one. An
 /// enum of the prelude is no place for the user to change, so the report names the user's enum
 /// that its largest field holds. When that chain reaches no user's enum, the report names the
-/// prelude's enum, and `checked_with` treats a report in the prelude as an internal error. The
-/// reports are in the order of the enums.
+/// prelude's enum. On the checker path, `checked_with` treats a report in the prelude as an
+/// internal error. The reports are in the order of the enums.
 pub(crate) fn oversized(enums: &[Enum]) -> Vec<Oversized> {
     oversized_with(enums, PAYLOAD_LIMIT)
 }
@@ -586,17 +586,19 @@ mod tests {
     }
 
     #[test]
-    fn oversized_should_name_the_innermost_prelude_enum_when_no_user_enum_ends_the_chain() {
-        // The payloads are 16 for `Inner`, 24 for `Middle` and 32 for `Outer`: all are over 16.
+    fn oversized_should_name_the_prelude_enum_when_the_chain_ends_in_no_user_enum() {
+        // The payloads are 8 for `Inner`, 16 for `Middle` and 24 for `Outer`. A value is 8 bytes
+        // more than its payload. Only `Outer` is over the limit of 24, so the walk steps into
+        // `Middle` and `Inner`, which are under it, and then holds no enum.
         let base = PRELUDE_BASE as usize;
         let enums = [
             holding("Outer", base, vec![enum_type(1)]),
             holding("Middle", base + 1, vec![enum_type(2)]),
-            holding("Inner", base + 2, vec![Type::I64, Type::I64]),
+            holding("Inner", base + 2, vec![Type::I64]),
         ];
-        let found = oversized_with(&enums, 16);
+        let found = oversized_with(&enums, 24);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].name, "Inner");
+        assert_eq!(found[0].name, "Outer");
         assert_eq!(found[0].holder, None);
     }
 
