@@ -4265,14 +4265,75 @@ fn a_push_should_take_the_growth_of_its_array_at_each_run() {
                 .flat_map(|_| splitmix64(&mut state).to_le_bytes())
                 .collect();
             let mut g = with_growth(&data, 3, bound);
-            while !g.push_targets().is_empty() {
+            // One more than the growth allows, so that a push that takes nothing fails here.
+            for _ in 0..4 {
+                if g.push_targets().is_empty() {
+                    break;
+                }
                 g.push_stmt();
                 g.w.line();
             }
             let program = &g.w.out.program;
             assert_eq!(program.matches("v0.push(").count(), pushes, "{program}");
+            assert!(g.push_targets().is_empty(), "{program}");
         }
     }
+}
+
+/// A mutable array of a type with no class object gets growth for pushes when it fits within the
+/// most size, and none otherwise.
+#[test]
+fn a_mutable_array_should_get_growth_only_where_it_fits() {
+    let (mut with, mut without) = (0, 0);
+    for element in [Ty::String, Ty::I64, Ty::Array(Box::new(Ty::String))] {
+        for mut state in 0..1_024 {
+            let data: Vec<u8> = (0..8)
+                .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+                .collect();
+            let mut g = Gen::new(&data);
+            let ty = Ty::Array(Box::new(element.clone()));
+            g.array_let("v0".to_string(), ty, &element);
+            let var = &g.scope.vars[0];
+            let fits = var.len + var.len * var.base + var.room + super::stmt::GROW <= MAX_SIZE;
+            assert_eq!(
+                var.grow,
+                if fits { super::stmt::GROW } else { 0 },
+                "{}",
+                g.w.out.program
+            );
+            if fits {
+                with += 1;
+            } else {
+                without += 1;
+            }
+        }
+    }
+    assert!(with > 0 && without > 0, "{with} {without}");
+}
+
+/// A push onto an element of an array of arrays stays below the length the array holds at least.
+#[test]
+fn a_push_onto_an_element_should_stay_below_the_length() {
+    let mut seen = [false; 3];
+    for mut state in 0..1_024 {
+        let data: Vec<u8> = (0..32)
+            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+            .collect();
+        let mut g = with_growth(&data, 64, None);
+        let var = &mut g.scope.vars[0];
+        var.ty = Ty::Array(Box::new(Ty::Array(Box::new(Ty::I64))));
+        var.len = 3;
+        g.push_stmt();
+        for (at, seen) in seen.iter_mut().enumerate() {
+            *seen |= g.w.out.program.contains(&format!("v0[{at}].push("));
+        }
+        assert!(
+            !g.w.out.program.contains("v0[3].push("),
+            "{}",
+            g.w.out.program
+        );
+    }
+    assert_eq!(seen, [true; 3]);
 }
 
 /// An array with no growth takes no `push`, while one that a statement declares may.

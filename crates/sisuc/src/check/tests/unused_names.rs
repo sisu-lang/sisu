@@ -993,3 +993,16 @@ fn field_should_warn_when_live_code_only_pushes_onto_it() {
         &[],
     );
 }
+
+/// A `push` onto an element names the field of the array it goes through without reading it, and
+/// reads the fields of the index: `b` is only pushed onto and warns, `c` is read and does not.
+#[test]
+fn field_should_warn_when_live_code_only_pushes_onto_one_of_its_elements() {
+    judge_unused();
+    diagnostic(
+        "class P {\n    mut b: [[i64]]\n    c: i64\n}\nfn main() {\n    let p = P(b: [[1]], c: 0)\n    p.b[p.c].push(2)\n}",
+        W0013,
+        (2, 9, "b"),
+        &[],
+    );
+}

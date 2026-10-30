@@ -396,7 +396,6 @@ impl Gen<'_> {
                     for (f, field) in self.scope.classes[*id].fields.iter().enumerate() {
                         if matches!(&field.ty, Ty::Array(element) if !element.sized())
                             && field.mutable
-                            && field.cap > 0
                             && !self.scope.contains_class(&field.ty)
                         {
                             targets.push(Push::Field(v, *id, f));
@@ -1119,7 +1118,7 @@ pub(crate) enum Push {
 const OPS: [&str; 4] = [" += ", " -= ", " /= ", " %= "];
 
 /// The size that `push` may add to a mutable array (`Var::grow`), at each run of each loop.
-const GROW: u64 = 64;
+pub(crate) const GROW: u64 = 64;
 
 /// The sizes a mutable `string` or optional may have, and the room of a `string`.
 const SIZES: [u64; 4] = [0, 16, 64, MAX_SIZE / 2];

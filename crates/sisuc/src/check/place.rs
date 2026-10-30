@@ -163,10 +163,11 @@ impl Checker<'_> {
             };
             return Some(self.rejected(d.into(), args));
         };
-        let labeled = self.labels(args);
-        let (value, mismatched) = self.operand(&arg.value, Some(element));
+        // A label or a mismatch is reported, and an error withholds the `tir`.
+        self.labels(args);
+        let value = self.expect(&arg.value, Some(element));
         match (place.path, value) {
-            (Some(path), Ok(value)) if place.writable && !labeled && !mismatched => {
+            (Some(path), Ok(value)) if place.writable => {
                 Some(Ok(self.pushed(span, path.root, path.operands, value)))
             }
             _ => Some(unit()),
