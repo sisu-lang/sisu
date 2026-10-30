@@ -3007,6 +3007,8 @@ fn an_associated_type_argument_should_report_its_own_mistake() {
 /// its context. `W` chooses `Item` for the interface `I`.
 const PARTIAL_DECLS: &str = "enum Two<A, B> {\n    P(A, B)\n}\n\
     class Box<A, B> {\n    a: A\n    b: B\n}\n\
+    class Pair<A, B> {\n    a: A\n    b: B\n}\n\
+    enum Other<A, B> {\n    Q(A, B)\n}\n\
     class C {\n    fn m<A, B>(self, a: A, b: B) -> Two<A, B> {\n        Two.P(a, b)\n    }\n}\n\
     class G<T> {\n    fn pair<B>(self, a: T, b: B) -> Two<T, B> {\n        Two.P(a, b)\n    }\n}\n\
     fn mk<A, B>(a: A, b: B) -> Two<A, B> { Two.P(a, b) }\n\
@@ -3296,6 +3298,34 @@ const PARTIAL_ROWS: &[PartialRow<'static>] = {
             "h(true, mk_some(\"s\", 1))",
             &[(Mismatch, S)],
         ),
+        // A call that returns another class or enum than the context's gets no hint from it, and
+        // a result with a part of another class or enum is not blamed argument by argument.
+        (
+            "fn h<U, V>(a: U, b: Pair<U, Pair<V, i64>>) {}\n",
+            "h(true, Box(a: true, b: Pair(a: 1, b: \"x\")))",
+            &[(Mismatch, "Box(")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, Two<V, i64>>) {}\n",
+            "h(true, Other.Q(true, Two.P(1, \"x\")))",
+            &[(Mismatch, "Other.Q(")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<Pair<U, V>, i64>) {}\n",
+            "let x: Box<bool, i64> = Box(a: true, b: 2)\nh(true, G<Box<bool, i64>>().pair(x, \"s\"))",
+            &[(Mismatch, "G<Box")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<Other<U, V>, i64>) {}\n",
+            "let x: Two<bool, i64> = Two.P(true, 2)\nh(true, G<Two<bool, i64>>().pair(x, \"s\"))",
+            &[(Mismatch, "G<Two")],
+        ),
+        // The expected type of a call that has no hole is no hint: its arguments get no context.
+        (
+            "",
+            "let t: Two<u8, i64> = mk(id(5), 1)",
+            &[(Mismatch, "id(5)")],
+        ),
         // The context that blamed an argument stays for the arguments that follow.
         (
             "fn h<U, V>(a: U, b: Two<U, Two<V, i64>>) {}\n",
@@ -3306,6 +3336,16 @@ const PARTIAL_ROWS: &[PartialRow<'static>] = {
             "fn h<U, V>(a: U, b: Two<U, Two<V, i64>>) {}\n",
             "h(true, Two.P(true, Two.P(1, \"x\")))",
             &[(Mismatch, X)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Box<U, Box<V, i64>>) {}\n",
+            "h(true, Box(a: \"s\", b: Box(a: 1, b: \"x\")))",
+            &[(Mismatch, S), (Mismatch, X)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: Two<U, Two<V, i64>?>) {}\n",
+            "h(true, Two.P(\"s\", Some(Two.P(1, \"x\"))))",
+            &[(Mismatch, S), (Mismatch, X)],
         ),
         // A parameter type that writes an associated type: a call that waits for it, and one
         // that follows a failed bound.
