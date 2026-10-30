@@ -3373,6 +3373,51 @@ const PART_ROWS: &[PartialRow<'static>] = {
             "h(true, [dbg(Two.P(\"s\", 1))])",
             &[(Mismatch, S)],
         ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "let t = Two.P(true, 1)\nh(true, [Two.P(\"s\", 1), t])",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "let t = Two.P(true, 1)\nh(true, [t, Two.P(\"s\", 1)])",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "let t = Two.P(true, 1)\nh(true, [t, t, Two.P(\"s\", 1), t])",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "let t = Two.P(true, 1)\nlet ts = [t]\nh(true, [Two.P(\"s\", 1), ts[0]])",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\nfn mk0() -> Two<bool, i64> { Two.P(true, 1) }\n",
+            "h(true, [mk0(), Two.P(\"s\", 1)])",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn hn<U, V>(a: U, b: [[Two<U, V>]]) {}\n",
+            "let t = Two.P(true, 1)\nhn(true, [[t], [Two.P(\"s\", 1), t]])",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>?]) {}\n",
+            "let t = Two.P(true, 1)\nh(true, [t, None, Two.P(\"s\", 1)])",
+            &[(Mismatch, S)],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "let t = Two.P(true, 1)\nlet u = Two.P(\"x\", 1)\nh(true, [t, u])",
+            &[(Mismatch, "u]")],
+        ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "let t = Two.P(true, 1)\nh(true, [Two.P(true, 1), t, Two.P(\"s\", 2)])",
+            &[(Mismatch, S)],
+        ),
     ]
 };
 
@@ -3381,7 +3426,8 @@ const PART_ROWS: &[PartialRow<'static>] = {
 /// the part that is wrong, not at the whole argument against a type that names the callee's `V`.
 /// The argument is a call, a construction or a method call. A safe call is one only for an
 /// optional parameter. The same holds under `Some`, in an array and in a call that returns its
-/// argument.
+/// argument. An array element that takes no context, such as a local variable, does not stop
+/// the others from taking it.
 #[test]
 fn a_partly_bound_parameter_should_report_the_part_that_is_wrong() {
     check_partial_rows(PART_ROWS);
@@ -3440,6 +3486,23 @@ const VALID_ROWS: &[PartialRow<'static>] = {
             "let c: C? = C()\nhn(true, Two.P(c?.m(true, 1), 2))",
             &[],
         ),
+        (
+            "fn h<U, V>(a: U, b: [Two<U, V>?]) {}\nfn mk0() -> Two<bool, i64> { Two.P(true, 1) }\n",
+            "let t = Two.P(true, 1)\nh(true, [None, t, Two.P(false, 2), mk0()])",
+            &[],
+        ),
+        (
+            "fn hn<U, V>(a: U, b: [[Two<U, V>]]) {}\n",
+            "let t = Two.P(true, 1)\nhn(true, [[], [t, Two.P(false, 2)], [t]])",
+            &[],
+        ),
+        // The element type of `mk2` is a bare parameter that no argument binds. The context
+        // of the call hints it, so its literal still goes to `inferred_array`.
+        (
+            "fn mk2<T>(xs: [T]) -> [T] { panic(\"e\") }\nfn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "let x: u8 = 3\nh(x, mk2([Two.P(5, \"x\")]))",
+            &[],
+        ),
     ]
 };
 
@@ -3473,11 +3536,6 @@ const WHOLE_ROWS: &[PartialRow<'static>] = {
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "h(true, if true { Two.P(\"s\", 1) } else { Two.P(true, 2) })",
             &[(Mismatch, "if"), (Mismatch, "true, 2)")],
-        ),
-        (
-            "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
-            "let t = Two.P(true, 3)\nh(true, [Two.P(true, 1), t, Two.P(\"s\", 2)])",
-            &[(Mismatch, "Two.P(\"s\"")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
@@ -3537,7 +3595,7 @@ const WHOLE_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "let c: C? = C()\nh(true, [c?.m(\"s\", 1)])",
-            &[(Mismatch, "[c?.m(")],
+            &[(Mismatch, "c?.m(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
@@ -3553,8 +3611,8 @@ const WHOLE_ROWS: &[PartialRow<'static>] = {
 };
 
 /// An argument that gets no context is reported as a whole, as it was before. Its shape may be
-/// wrong, as in an optional for a plain parameter. Its kind may get no context: an `if`, a local
-/// value in an array, an array literal for an optional parameter. The call may return another
+/// wrong, as in an optional for a plain parameter. Its kind may get no context: an `if`, an
+/// array literal for an optional parameter. The call may return another
 /// class or enum than the context. A receiver may fix a part of the type. A safe call, waiting
 /// or not, may be for a plain parameter. The reported mistake is then the shape, not a part.
 #[test]
@@ -3785,6 +3843,37 @@ fn nested_array_literal_context_should_cost_one_step_for_each_level() {
              fn main() {{\n    h(true, {}Two.P(true, 1){})\n}}",
             "[".repeat(depth),
             "]".repeat(depth),
+            "[".repeat(depth),
+            "]".repeat(depth),
+        );
+        generic::CONTEXT_STEPS.set(0);
+        clean(&src);
+        generic::CONTEXT_STEPS.get()
+    };
+    assert!(steps(1) > 0, "the counter should count the walk");
+    assert_near_linear(steps(10), steps(20), steps(30));
+}
+
+/// As the test above, but each level also holds a local variable, which takes no context. So
+/// `takes_context` refuses each literal after a walk of the literal inside it, and
+/// `inferred_array` asks for the context of each element again. `taken` keeps the answer for
+/// each literal, so the work grows with the depth, not with its square.
+#[test]
+fn nested_array_literal_with_local_variables_should_cost_one_step_for_each_level() {
+    let steps = |depth: usize| {
+        let body: String = (0..depth)
+            .map(|level| match level {
+                0 => "    let t0 = Two.P(true, 1)\n".to_string(),
+                _ => format!("    let t{level} = [t{}]\n", level - 1),
+            })
+            .collect();
+        let literal = (1..depth).fold("[Two.P(true, 1), t0]".to_string(), |inner, level| {
+            format!("[{inner}, t{level}]")
+        });
+        let src = format!(
+            "enum Two<A, B> {{\n    P(A, B)\n}}\n\
+             fn h<U, V>(a: U, b: {}Two<U, V>{}) {{}}\n\
+             fn main() {{\n{body}    h(true, {literal})\n}}",
             "[".repeat(depth),
             "]".repeat(depth),
         );

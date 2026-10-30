@@ -9,8 +9,7 @@ use super::{Body, Checker, Choice, Choices, Declared, Holder, own_args};
 use crate::ast;
 use crate::conformance::{self, find, find_with};
 use crate::diagnostic::{ConformanceForm, DiagnosticKind, NotConformForm, Ungenerated};
-use crate::front_end::LANG_SOURCE;
-use crate::source::{PRELUDE_BASE, Source as Text, Span};
+use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Conformances, InterfaceId, Type, TypeKind};
 
@@ -1126,11 +1125,11 @@ impl Checker<'_> {
         let mut out = String::new();
         let mut from = requirement.span.start();
         for (at, text) in changed {
-            out.push_str(self.source_slice(from..at.start()));
+            out.push_str(self.source.slice(from..at.start()));
             out.push_str(&text);
             from = at.end();
         }
-        out.push_str(self.source_slice(from..requirement.span.end()));
+        out.push_str(self.source.slice(from..requirement.span.end()));
         out
     }
 
@@ -1156,19 +1155,9 @@ impl Checker<'_> {
         (chosen, written)
     }
 
-    /// The source text at `span`: the program's, or, for a span in the prelude, the language
-    /// interfaces', the only declarations of the prelude that a diagnostic quotes (a requirement
-    /// of `Eq` that a class lacks). They come first in the prelude, so their spans index
-    /// `LANG_SOURCE` from `PRELUDE_BASE`.
+    /// The source text at `span`: the program's or the prelude's. A diagnostic quotes the
+    /// prelude's text only for a requirement of a language interface (`Eq`) that a class lacks.
     fn source_text(&self, span: Span) -> &str {
-        self.source_slice(span.range())
-    }
-
-    /// The source text between the offsets of `range`, as `source_text` reads it.
-    fn source_slice(&self, range: std::ops::Range<usize>) -> &str {
-        if range.start >= PRELUDE_BASE as usize {
-            return Text::new(LANG_SOURCE, PRELUDE_BASE as usize).slice(range);
-        }
-        self.source.file.slice(range)
+        self.source.text(span)
     }
 }

@@ -252,10 +252,7 @@ impl<'a> Checker<'_> {
     /// Whether `name` is written in `extend` after its type parameters, outside strings and
     /// comments. Text that does not lex alone is held to name it.
     fn names_in_block(&self, extend: &ast::Extend, name: Symbol) -> bool {
-        let rest = self
-            .source
-            .file
-            .slice(extend.angles.end()..extend.span.end());
+        let rest = self.source.slice(extend.angles.end()..extend.span.end());
         lex(rest).map_or(true, |lexed| {
             (lexed.tokens.iter())
                 .any(|token| matches!(token.kind, TokenKind::Ident(n) if n == name))

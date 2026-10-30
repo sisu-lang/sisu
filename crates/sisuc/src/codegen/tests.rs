@@ -3338,24 +3338,22 @@ fn panic_in_a_prelude_function_should_report_the_location_of_its_caller() {
     assert!(probe.contains(&panic), "{panic} in\n{probe}");
 }
 
-/// The prelude's `dbg` names the location of the user's call. The checker cannot read the text of
-/// a `dbg` in the prelude, so this marks a user function as the prelude's in the mir.
+/// The prelude's `dbg` names the location of the user's call. The checker reads the text of the
+/// argument from the prelude's text, which a prelude span indexes.
 #[test]
 fn dbg_in_a_prelude_function_should_report_the_location_of_its_caller() {
     let context = Context::create();
-    let module = compiled_from(
+    let prelude =
+        "extend [i64] {\n    fn probe(self) -> i64 {\n        dbg(self)\n        1\n    }\n}\n";
+    let module = compiled_over(
         &context,
-        "fn probe(xs: [i64]) -> i64 {\n    dbg(xs)\n    1\n}\nfn main() {\n    print(probe([1, 2]))\n}",
+        prelude,
+        "fn main() {\n    print([1, 2].probe())\n}",
         false,
-        |mir| {
-            let probe = (mir.functions.iter_mut())
-                .find(|f| f.name == "probe")
-                .expect("the program should have `probe`");
-            probe.prelude = true;
-        },
+        |_| {},
     );
     let ir = module.print_to_string().to_string();
-    let header = "define internal i64 @sisu.probe(";
+    let header = "define internal i64 @\"sisu.[i64].probe\"(";
     let (at, at_len) = hidden_location(&ir, header);
     let probe = function_body(&ir, header);
     let shows_location = |line: &&str| {
@@ -3365,6 +3363,96 @@ fn dbg_in_a_prelude_function_should_report_the_location_of_its_caller() {
         probe.lines().any(|line| shows_location(&line)),
         "a `sisu_show_str` of ({at}, {at_len}) in\n{probe}"
     );
+}
+
+/// A class and an enum of the prelude that are not generic, each with a written `to_string` and
+/// `eq`: the user's file builds them.
+const WRITTEN_PRELUDE: &str = "class Probe: Display, Eq {\n    n: i64\n    fn to_string(self) -> string { \"probe\" }\n    fn eq(self, other: Self) -> bool { self.n == other.n }\n}\nenum Light: Display, Eq {\n    Red\n    Green\n    fn to_string(self) -> string { \"light\" }\n    fn eq(self, other: Self) -> bool { true }\n}\n";
+
+/// The text that a helper passes as the location of a prelude method: a helper is shared by all
+/// callers of its type, so it has no caller to name.
+const HELPER_LOCATION: &str = "<prelude>";
+
+/// The user's file builds a class and an enum of the prelude, and prints them. The helper that
+/// writes each calls the written `to_string`, which takes the two location parameters of a
+/// prelude function. The helper passes them, with the text `<prelude>`.
+#[test]
+fn a_show_helper_should_pass_a_location_to_a_written_to_string_of_the_prelude() {
+    let context = Context::create();
+    let module = compiled_over(
+        &context,
+        WRITTEN_PRELUDE,
+        "fn main() {\n    print(Probe(n: 1))\n    print([Light.Red])\n    print(\"{Light.Green}\")\n}",
+        false,
+        |_| {},
+    );
+    let ir = module.print_to_string().to_string();
+    assert!(ir.contains(&format!("c\"{HELPER_LOCATION}\\00\"")), "{ir}");
+    let length = HELPER_LOCATION.len();
+    for (helper, method) in [
+        (
+            "define internal void @sisu_show.Probe(",
+            "@sisu.Probe.to_string(",
+        ),
+        (
+            "define internal void @sisu_show.Light(",
+            "@sisu.Light.to_string(",
+        ),
+    ] {
+        let body = function_body(&ir, helper);
+        let call = body
+            .lines()
+            .find(|line| line.contains(method))
+            .unwrap_or_else(|| panic!("a call of {method} in\n{body}"));
+        assert!(
+            call.contains("ptr @report.text") && call.contains(&format!("i64 {length})")),
+            "{call}"
+        );
+    }
+}
+
+/// As the test above, for the helper that compares two arrays of values whose `eq` the prelude
+/// writes.
+#[test]
+fn an_eq_helper_should_pass_a_location_to_a_written_eq_of_the_prelude() {
+    let context = Context::create();
+    let module = compiled_over(
+        &context,
+        WRITTEN_PRELUDE,
+        "fn main() {\n    print([Probe(n: 1)] == [Probe(n: 1)])\n    print([Light.Red] == [Light.Green])\n}",
+        false,
+        |_| {},
+    );
+    let ir = module.print_to_string().to_string();
+    let length = HELPER_LOCATION.len();
+    for (helper, method) in [
+        ("define internal i1 @sisu_rc.eq.Probe(", "@sisu.Probe.eq("),
+        ("define internal i1 @sisu_rc.eq.Light(", "@sisu.Light.eq("),
+    ] {
+        let body = function_body(&ir, helper);
+        let call = body
+            .lines()
+            .find(|line| line.contains(method))
+            .unwrap_or_else(|| panic!("a call of {method} in\n{body}"));
+        assert!(
+            call.contains("ptr @report.text") && call.contains(&format!("i64 {length})")),
+            "{call}"
+        );
+    }
+}
+
+/// A class and an enum of the prelude that the user's file names in a type only, with no
+/// construction, still need their layout in the program.
+#[test]
+fn a_prelude_class_or_enum_named_only_by_a_type_should_compile() {
+    let context = Context::create();
+    for src in [
+        "fn f(p: Probe?) -> i64 { 1 }\nfn main() {\n    let p: Probe? = None\n    print(f(p))\n}",
+        "fn main() {\n    let q: [Probe] = []\n    print(q.len())\n}",
+        "fn main() {\n    let l: [Light] = []\n    print(l.len())\n}",
+    ] {
+        compiled_over(&context, WRITTEN_PRELUDE, src, false, |_| {});
+    }
 }
 
 /// At `-O2` the inliner removes the call of `sum` and its location parameters.

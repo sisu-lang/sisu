@@ -87,17 +87,26 @@ pub(crate) fn checked_with(prelude: &str, source: &str) -> (Option<tir::Program>
     (program.filter(|_| !failed), diagnostics)
 }
 
-/// The syntax tree of `LANG_SOURCE` followed by `prelude`, whose spans start at `PRELUDE_BASE`.
-/// Every prelude, an empty one included, declares the language interfaces.
-pub(crate) fn prelude_program(prelude: &str) -> ast::Program {
-    let source = format!("{LANG_SOURCE}\n{prelude}");
-    let lexed =
-        lexer::lex_at(&source, PRELUDE_BASE as usize).unwrap_or_else(|d| internal_error(&d));
+/// The prelude as the checker reads it: its syntax tree, and the text that its spans index.
+pub(crate) struct PreludeProgram {
+    pub(crate) program: ast::Program,
+    /// `LANG_SOURCE`, a line break and the prelude, whose first byte has offset `PRELUDE_BASE`.
+    pub(crate) text: String,
+}
+
+/// The syntax tree of `LANG_SOURCE` followed by `prelude`, whose spans start at `PRELUDE_BASE`,
+/// with their text. Every prelude, an empty one included, declares the language interfaces.
+pub(crate) fn prelude_program(prelude: &str) -> PreludeProgram {
+    let text = format!("{LANG_SOURCE}\n{prelude}");
+    let lexed = lexer::lex_at(&text, PRELUDE_BASE as usize).unwrap_or_else(|d| internal_error(&d));
     let parsed = parser::parse(lexed, true);
     if let Some(d) = parsed.diagnostics.first() {
         internal_error(d);
     }
-    parsed.program
+    PreludeProgram {
+        program: parsed.program,
+        text,
+    }
 }
 
 /// Whether a span of `d` lies in the prelude: its primary span, a label, or a fix's edit.

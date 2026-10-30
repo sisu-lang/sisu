@@ -465,7 +465,6 @@ crates/sisuc/src/check/tests/mod.rs::while_let_needs_optional
 crates/sisuc/src/check/tests/mod.rs::while_true_without_break_is_never
 crates/sisuc/src/check/tests/mod.rs::widening_leaves_a_never_value_unwrapped
 crates/sisuc/src/check/tests/mod.rs::widening_walk_enters_only_crossed_loops
-crates/sisuc/src/check/tests/mod.rs::with_body_restores_the_outer_body
 crates/sisuc/src/check/tests/mod.rs::wraps_a_value_beside_an_optional_call
 crates/sisuc/src/check/tests/mod.rs::wraps_a_value_where_optional_expected
 crates/sisuc/src/check/tests/mod.rs::wraps_an_if_let_binding_beside_none
