@@ -3024,8 +3024,9 @@ const PARTIAL_DECLS: &str = "enum Two<A, B> {\n    P(A, B)\n}\n\
     interface I {\n    type Item\n}\n\
     class W: I {\n    type Item = i64\n}\n";
 
-/// A row of a table of the partial-context tests: the declarations after `PARTIAL_DECLS`, the
-/// lines of `main`, and the codes with the text of the last line that each is reported at.
+/// A row of a table of the partial-context tests. It has the declarations after `PARTIAL_DECLS`
+/// and the lines of `main`. It also has the codes, each with the text of the last line where it
+/// is reported.
 type PartialRow<'a> = (&'a str, &'a str, &'a [(Code, &'a str)]);
 
 /// Checks each row: the program's codes are exactly these, at the first place the text is found in
@@ -3060,6 +3061,31 @@ const PART_ROWS: &[PartialRow<'static>] = {
     const S: &str = "\"s\"";
     const X: &str = "\"x\"";
     &[
+        (
+            "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn h<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "let d: D? = D()\nh(true, d?.m2(\"s\"))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn h<U, V>(a: U, b: Two<U, V>?) {}\n",
+            "let d: D? = D()\nh(true, id(d?.m2(\"s\")))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn h<U, V>(a: U, b: [Two<U, V>?]) {}\n",
+            "let d: D? = D()\nh(true, [d?.m2(\"s\")])",
+            &[(Mismatch, S)],
+        ),
+        (
+            "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn h<U, V>(a: U, b: Two<U, V>??) {}\n",
+            "let d: D? = D()\nh(true, Some(d?.m2(\"s\")))",
+            &[(Mismatch, S)],
+        ),
+        (
+            "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn hn<U, V>(a: U, b: Two<Two<U, V>?, i64>) {}\n",
+            "let d: D? = D()\nhn(true, Two.P(d?.m2(\"s\"), 2))",
+            &[(Mismatch, S)],
+        ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "h(true, Two.P(\"s\", 1))",
@@ -3357,6 +3383,11 @@ const WHOLE_ROWS: &[PartialRow<'static>] = {
     use Code::Mismatch;
     &[
         (
+            "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "let d: D? = D()\nh(true, d?.m2(\"s\"))",
+            &[(Mismatch, "d?.m2(")],
+        ),
+        (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "h(true, Some(Two.P(\"s\", 1)))",
             &[(Mismatch, "Some(")],
@@ -3444,11 +3475,11 @@ const WHOLE_ROWS: &[PartialRow<'static>] = {
     ]
 };
 
-/// An argument that gets no context is reported as a whole, as it was before. Its shape is wrong,
-/// as in an optional for a plain parameter, or its kind gets no context: an `if`, a local value
-/// in an array, an array literal for an optional parameter. The call may return another class or
-/// enum than the context. A receiver may fix a part of the type, or the call may be a safe call
-/// for a plain parameter. The reported mistake is then the shape, not a part.
+/// An argument that gets no context is reported as a whole, as it was before. Its shape may be
+/// wrong, as in an optional for a plain parameter. Its kind may get no context: an `if`, a local
+/// value in an array, an array literal for an optional parameter. The call may return another
+/// class or enum than the context. A receiver may fix a part of the type. A safe call, waiting
+/// or not, may be for a plain parameter. The reported mistake is then the shape, not a part.
 #[test]
 fn a_partly_bound_parameter_should_report_the_whole_argument_without_context() {
     check_partial_rows(WHOLE_ROWS);
@@ -3459,6 +3490,21 @@ fn a_partly_bound_parameter_should_report_the_whole_argument_without_context() {
 const INFER_ROWS: &[PartialRow<'static>] = {
     use Code::CannotInfer;
     &[
+        (
+            "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn h<U, V>(a: U, b: Two<U, V>) {}\n",
+            "let d: D? = D()\nh(true, id(d?.m2(\"s\")))",
+            &[(CannotInfer, "id(")],
+        ),
+        (
+            "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
+            "let d: D? = D()\nh(true, [d?.m2(\"s\")])",
+            &[(CannotInfer, "h(")],
+        ),
+        (
+            "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn hn<U, V>(a: U, b: Two<Two<U, V>, i64>) {}\n",
+            "let d: D? = D()\nhn(true, Two.P(d?.m2(\"s\"), 2))",
+            &[(CannotInfer, "Two.P(")],
+        ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, pr(true))",
@@ -3569,10 +3615,10 @@ fn a_waiting_call_inside_a_waiting_call_should_bind_the_parameter() {
     }
 }
 
-/// `takes_context` looks at each element of an array literal once. `inferred_array` asks
-/// `call_context` for the context of each element until one binds the element type. So the work
-/// for an array literal of generic calls grows with the elements, not with their square. Each
-/// element is a call that the context reaches.
+/// `takes_context` looks at each element of an array literal once. `inferred_array` then gives
+/// each element its context with no new walk. So the work for an array literal of generic calls
+/// grows with the elements, not with their square. Each element is a call that the context
+/// reaches.
 #[test]
 fn array_literal_context_should_cost_one_step_for_each_element() {
     let steps = |n: usize| {

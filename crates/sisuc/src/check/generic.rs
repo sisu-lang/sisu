@@ -805,7 +805,7 @@ impl Checker<'_> {
                 || call.bindings.constrain(ret, payload(want));
             misfit = self.misfit(span, ret, want, met).then_some(ret);
             if !met && written.is_empty() {
-                self.blame_arguments(&mut call, sig, args, ret, want);
+                self.blame_arguments(&mut call, sig, args, ret, want, span);
             }
             self.report_fresh(&mut call, span);
         }
@@ -987,15 +987,17 @@ impl Checker<'_> {
         }
     }
 
+    /// Whether the call at `span` is a safe call that is checked against a context.
+    fn is_safe_call(&self, span: Span) -> bool {
+        (self.body.context_hint).is_some_and(|hint| hint.at == span && hint.safe)
+    }
+
     /// Whether the call at `span` is a misfit: `want`, its context, holds a hole, and the result
     /// cannot meet it. `met` says if the return type `ret` met `want`. The result of a safe
     /// call is optional, as is a result whose return type is, so a context that is not optional
     /// cannot meet it, whatever the return type meets.
     fn misfit(&self, span: Span, ret: Type, want: Type, met: bool) -> bool {
-        let safe = self
-            .body
-            .context_hint
-            .is_some_and(|hint| hint.at == span && hint.safe);
+        let safe = self.is_safe_call(span);
         let optional = |ty: Type| matches!(ty.kind(), TypeKind::Optional(_));
         want.holds_hole() && (!met || ((safe || optional(ret)) && !optional(want)))
     }
@@ -1013,6 +1015,7 @@ impl Checker<'_> {
         args: &[ast::Arg],
         ret: Type,
         want: Type,
+        span: Span,
     ) {
         let mut context = Bindings::new(sig.declared.len(), sig.owner);
         let met = if context.unify(ret, want) {
@@ -1024,9 +1027,10 @@ impl Checker<'_> {
         };
         // The context has hints of its own, which stay when it replaces the bindings below.
         context.hint(ret, met);
-        // `unify` lets a `T?` take a value that is not optional, which the result cannot do.
+        // `unify` lets a `T?` take a value that is not optional, which the result cannot do. The
+        // value of a safe call is always optional, so it cannot meet a context that is not.
         let result = self.partial(&context, ret);
-        if !meets(result, want) && !meets(optional_of(result), want) {
+        if !meets(optional_of(result), want) && (self.is_safe_call(span) || !meets(result, want)) {
             return;
         }
         // The error of an earlier argument is the call's error, as it is without a context.
@@ -1111,7 +1115,10 @@ impl Checker<'_> {
         if !fit || param.is_none_or(|param| self.known_in(call, param).is_some()) {
             self.infer_arg(call, i, e, param, None);
         } else if let Some(param) = param
-            && let Some(context) = self.call_context(call, e, param, true)
+            // A safe call that waits reports a mismatch with `param`, which says nothing when it
+            // is a bare type parameter: the call stays unchecked, as before.
+            && let Some(context) =
+                self.call_context(call, e, param, !matches!(param.kind(), TypeKind::Param(..)))
         {
             // The call reports a context it cannot meet as a mismatch with this type.
             let hint = ContextHint {
@@ -1149,12 +1156,12 @@ impl Checker<'_> {
         self.takes_context(e, partial, waiting).then_some(partial)
     }
 
-    /// `call_context` before `takes_context`: what the call binds of `param`, if `e` is a kind of
-    /// expression that can take it and it says more than a hole.
+    /// `call_context` before `takes_context`. It gives what the call binds of `param`. It gives
+    /// nothing if `e` is of a kind that cannot take it, or if that says no more than a hole.
     fn partial_context(&self, call: &Inference, e: &ast::Expr, param: Type) -> Option<Type> {
         use ast::ExprKind as K;
-        // An array literal takes the context from its elements, one by one (`inferred_array`),
-        // which needs an array type to name them: for a type parameter it would take a hole.
+        // An array literal takes the context from its elements, one by one (`inferred_array`).
+        // That needs an array type to name them. For a type parameter it would take a hole.
         let literal = matches!(e.kind, K::ArrayLit(_));
         if !(literal && matches!(param.kind(), TypeKind::Array(_))
             || matches!(e.kind, K::Call { .. } | K::MethodCall { .. }))
@@ -1172,7 +1179,8 @@ impl Checker<'_> {
     /// its parts. A call that is not generic can pass the context on to its argument (as `dbg`
     /// does), which would put the hole in a type. A safe call has an optional result, so it
     /// takes an optional context only: for a plain one, its shape is the mistake to report.
-    /// A call that waits (`waiting`) is the exception: it reports that mismatch itself.
+    /// A call that waits (`waiting`) is the exception. `blame_arguments` and `report_unbound`
+    /// know it is a safe call (see `is_safe_call`), and they report the shape.
     ///
     /// The work is one step for each expression that the walk reaches. `inferred_array` does
     /// not walk the elements of an array literal again after this accepts it. `taken` keeps
@@ -1241,9 +1249,9 @@ impl Checker<'_> {
 
     /// Checks `e` against `pattern`, a parameter's type or an element's: against what the call
     /// binds of it, or, while it names an unbound parameter, on its own, which binds what its
-    /// type fixes. A non-empty array literal for an array of optionals (see `optional_element`),
-    /// or one with a `context`, is the exception: its elements bind the parameter one by one
-    /// (see `inferred_array`).
+    /// type fixes. A non-empty array literal is the exception when its array holds optionals
+    /// (see `optional_element`) or when it has a `context`. Its elements then bind the
+    /// parameter one by one (see `inferred_array`).
     /// A value of type `unit` or `never` binds nothing, for `infer_arg` to defer.
     fn infer_value(
         &mut self,
