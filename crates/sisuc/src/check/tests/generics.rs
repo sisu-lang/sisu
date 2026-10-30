@@ -4274,21 +4274,35 @@ fn a_failed_bound_should_come_before_a_mismatch_with_the_expected_type() {
     check_rows_after(REJECT_DECLS, REJECT_EXPECTED_ROWS);
 }
 
+/// The rows of `a_bound_that_the_expected_type_binds_should_give_one_error_when_it_fails`.
+const EXPECTED_BOUND_ROWS: &[PartialRow<'static>] = {
+    use Code::NotConform;
+    &[
+        // The expected type binds `T` for the whole call, and the bound fails at the call.
+        (
+            "fn mkb<T: I>() -> Two<T, i64>? { None }\n",
+            "let x: Two<i64, i64>? = mkb()",
+            &[(NotConform, "mkb()")],
+        ),
+    ]
+};
+
+/// A parameter that the expected type binds, and no argument, is checked at the call. When its
+/// bound fails, the call reports E0154 alone, at the call.
+#[test]
+fn a_bound_that_the_expected_type_binds_should_give_one_error_when_it_fails() {
+    check_rows_after(REJECT_DECLS, EXPECTED_BOUND_ROWS);
+}
+
 /// The rows of `a_bound_that_holds_should_leave_the_arguments_after_it_checked`.
 const HELD_BOUND_ROWS: &[PartialRow<'static>] = {
-    use Code::{Mismatch, NotConform};
+    use Code::Mismatch;
     &[
         // `W` binds `T` first, so the pair is what is wrong.
         (
             "fn h<T: I>(_a: T, _p: Two<T, i64>) {}\n",
             "h(W(), Two.P(5, 7))",
             &[(Mismatch, "5")],
-        ),
-        // The expected type binds `T` for the whole call, and the bound fails at the call.
-        (
-            "fn mkb<T: I>() -> Two<T, i64>? { None }\n",
-            "let x: Two<i64, i64>? = mkb()",
-            &[(NotConform, "mkb()")],
         ),
         // The receiver binds `T`, and no bound of the method is there to fail. The associated
         // type is still replaced.
