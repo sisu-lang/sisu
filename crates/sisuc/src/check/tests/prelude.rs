@@ -457,8 +457,8 @@ fn result_should_wait_for_its_context_whatever_its_argument() {
     );
 }
 
-/// `dbg(x)` has the type of `x`, so it needs its context exactly when `x` does: a `Result`
-/// or a generic call around it hands that context to `x`.
+/// `dbg(x)` has the type of `x`. So it needs its context exactly when `x` does: a `Result` or
+/// a generic call around it hands that context to `x`.
 #[test]
 fn dbg_should_wait_for_its_context_when_its_argument_does() {
     with_prelude();

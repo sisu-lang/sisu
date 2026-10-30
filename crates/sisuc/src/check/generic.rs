@@ -1355,10 +1355,11 @@ impl Checker<'_> {
     /// call of a generic function or method, or a construction of a generic class or variant,
     /// its type arguments not written, whose arguments fit its declaration and all need
     /// context, or, if they fit, whose parameter types leave one of its own type parameters
-    /// unnamed that the call's type names, which no argument can bind; or a call of `dbg` whose
-    /// argument needs context. A name resolves as the checker resolves it: a call's callee by
-    /// its declaration, whatever local takes it. A method's receiver, an `if let`'s value and a
-    /// `match`'s scrutinee are checked here, ahead of their turn, and kept for it (see `Ahead`).
+    /// unnamed that the call's type names, which no argument can bind. A call of `dbg` needs
+    /// context when its argument does. A name resolves as the checker resolves it: a call's
+    /// callee by its declaration, whatever local takes it. A method's receiver, an `if let`'s
+    /// value and a `match`'s scrutinee are checked here, ahead of their turn, and kept for it
+    /// (see `Ahead`).
     // shortcut: a nested generic call scans its arguments again, quadratic in the depth of the
     // nesting; remember the answer by span if deep nests appear.
     pub(super) fn needs_context(&mut self, e: &ast::Expr) -> bool {

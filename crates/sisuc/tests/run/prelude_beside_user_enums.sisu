@@ -1,4 +1,5 @@
-// GIVEN the user enums `e`, `x`, `total`, `other`, `lo` and `hi`, the names of locals and parameters in the prelude
+// GIVEN user enums named `e`, `x`, `total`, `other`, `lo` and `hi`
+// AND the prelude has locals and parameters with those names
 // WHEN the program calls `contains`, `sum`, `min`, `max` and `clamp`, whose prelude bodies use those names
 // THEN each body runs as if the enums were not there, and the program prints the results
 enum e {
