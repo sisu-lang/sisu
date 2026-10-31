@@ -2062,7 +2062,7 @@ fn a_nested_optional_at_a_lifted_place_should_make_the_call_an_optional() {
         "let v: i64?? = h(1, Some(Some(2)))\n    print((v ?? None) ?? 0)",
         "let v: u8?? = h(1, Some(Some(2)))\n    print((v ?? None) ?? 0)",
         "let v: i64?? = h(1, opt(Some(2)))\n    print((v ?? None) ?? 0)",
-        // A call that returns `T?` is a nested optional, so it is an optional at a place `T?` too.
+        // A context with more optionals than `q` makes meets its payload, so `T = i64?`.
         "let v: i64??? = q(1, Some(Some(2)))\n    print(((v ?? None) ?? None) ?? 0)",
         // A safe call flattens only the optional that it adds, so `m?.o(Some(2))` is an `i64??`.
         "let m: Mk? = Some(Mk(n: 1))\n    let v: i64? = h(1, m?.o(Some(2)))\n    print(v ?? 0)",
@@ -2098,6 +2098,18 @@ fn a_call_that_returns_an_optional_parameter_should_meet_a_nested_optional_conte
         "let w: i64?? = q(1, Some(Some(2)))\n    print((w ?? None) ?? 0)",
         "let w: i64?? = q(1, opt(Some(2)))\n    print((w ?? None) ?? 0)",
         "let w: i64??? = q(1, opt(Some(2)))\n    print(((w ?? None) ?? None) ?? 0)",
+        // An optional at a place `T` proves only that `T` is an optional, so the call makes two
+        // optionals at least. A context with more optionals meets its payload.
+        "let v: i64??? = q(Some(1), Some(2))\n    print(v != None)",
+        "let v: i64???? = q(Some(1), Some(Some(2)))\n    print(v != None)",
+        "let v: i64???? = q(Some(1), Some(Some(Some(2))))\n    print(v != None)",
+        "let v: i64???? = q(Some(1), opt(Some(2)))\n    print(v != None)",
+        "let v: i64??? = q(opt(1), Some(2))\n    print(v != None)",
+        "let m: Mk? = Some(Mk(n: 1))\n    let v: i64??? = q(m?.o(1), Some(2))\n    print(v != None)",
+        // A call that returns `T` and has an optional at a place `T` meets its context whole.
+        // Main accepted both rows.
+        "let v: i64??? = h(opt(1), opt(Some(2)))\n    print(v != None)",
+        "let m: Mk? = Some(Mk(n: 1))\n    let v: i64??? = h(m?.o(1), opt(Some(2)))\n    print(v != None)",
     ] {
         clean_row(row, &places_main(row));
     }

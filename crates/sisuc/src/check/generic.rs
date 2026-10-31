@@ -390,8 +390,8 @@ impl Makes {
     }
 
     /// Whether the argument `ranked` at place `i` is `nested` at a place of the parameter's
-    /// optional (`T?`). It makes the parameter an optional, as `passes_optional` does. But it
-    /// proves only that: when the context is an optional of an optional, the payload of the
+    /// optional (`T?`). It makes the parameter an optional, as `passes_optional` does. Both prove
+    /// only that: when the context has more optionals than the call makes, the payload of the
     /// context is the optional already (see `Checker::infer_call`).
     fn passes_lifted(&self, i: usize, ranked: Ranked) -> bool {
         self.lifted(i) && ranked.nested
@@ -1266,7 +1266,7 @@ impl Checker<'_> {
         }
         // Whether every call in an argument fits its declaration.
         let mut fit = vec![true; args.len()];
-        let (ranks, holds, (through, lifted)) = self.rank_arguments(&call, sig, args, &mut fit);
+        let (ranks, holds, (through, layers)) = self.rank_arguments(&call, sig, args, &mut fit);
         // A context that holds a hole gives the arguments below more context (see `hint`).
         if let (Some(ret), Some(want)) = (sig.ret, expected) {
             call.bindings.hint(ret, want);
@@ -1277,14 +1277,15 @@ impl Checker<'_> {
         let mut misfit = None;
         if let (Some(ret), Some(want)) = (sig.ret, expected.filter(|&ty| ty != UNKNOWN)) {
             // The return type meets `want` whole if it can and an argument waits for it, or
-            // makes the optional itself and has the type of the return type (`through`):
+            // makes the optional itself and has the type of the return type (`through`), or the
+            // arguments prove that the call makes optionals (`layers`) and `want` has no more:
             // `let x: i64? = pick(5, None)` binds `T = i64?`, and so does `id(Some(1))`. Else it
             // meets the payload of an optional `want`, and the call's value is wrapped:
             // `y ?? id(2)` on an `i64?` `y` gives the `i64` that `y ?? 2` gives. What of it
             // cannot meet either is reported where the value is used, unless the context fits
             // alone: then the arguments that contradict it are reported, each at its own place.
             // Type arguments that the call writes are its own.
-            let whole = through || ranks.contains(&2) || lifted > 0 && !wider_than(want, lifted);
+            let whole = through || ranks.contains(&2) || layers > 0 && !wider_than(want, layers);
             let met = (whole && call.bindings.unify(ret, want))
                 || call.bindings.constrain(ret, payload(want));
             misfit = self.misfit(span, ret, want, met).then_some(ret);
@@ -1372,12 +1373,17 @@ impl Checker<'_> {
     /// declaration.
     ///
     /// Also whether an argument of rank 1 makes the parameter that the return type names an
-    /// optional by its own type (see `Makes::passes_optional`), and how many optionals the call
-    /// has at least when one does so only as a nested optional at a place `T?` (see
-    /// `Makes::passes_lifted`): 1 for a return type `T`, 2 for `T?`, else 0. The context meets the
-    /// return type whole for the first. For the second it does so only when it has no more
+    /// optional by its own type, for a return type `T` (see `Makes::passes_optional`): the
+    /// context then meets the return type whole. And how many optionals the call makes at least,
+    /// as the other arguments of rank 1 prove (see `Makes::makes_optional`): 1 for a return type
+    /// `T`, 2 for `T?`, else 0. The context meets the return type whole when it has no more
     /// optionals than that. Else its payload meets the return type, and `T` is an optional
     /// already (`let v: i64?? = h(1, Some(Some(2)))`).
+    // shortcut: for a return type `T`, an optional at a place of `T` forces the context to meet
+    // the return type whole, whatever the context is. `let v: i64?? = first([None, Some(1)])`
+    // binds `T = i64??` (a run test pins it), so a rule by the count would change its value, and
+    // `h(Some(1), Some(2))` at `i64??` for `fn h<T>(a: T, b: T?) -> T` is an error (as before);
+    // upgrade if such a call must meet the payload when the argument at the `T?` place needs it.
     fn rank_arguments(
         &mut self,
         call: &Inference<'_>,
@@ -1386,7 +1392,7 @@ impl Checker<'_> {
         fit: &mut [bool],
     ) -> (Vec<u8>, Vec<bool>, (bool, usize)) {
         let makes = Makes::of(sig.ret, sig.params.iter().copied());
-        let (mut through, mut lifted) = (false, 0);
+        let (mut through, mut layers) = (false, 0);
         let (ranks, holds) = iter::zip(args, fit)
             .enumerate()
             .map(|(i, (arg, fit))| {
@@ -1399,9 +1405,10 @@ impl Checker<'_> {
                 match ranked.rank {
                     Rank::Waits => (2, false),
                     Rank::Literal => {
-                        through |= makes.passes_optional(i, ranked);
-                        if makes.passes_lifted(i, ranked) {
-                            lifted = if makes.wraps() { 2 } else { 1 };
+                        if makes.passes_optional(i, ranked) && !makes.wraps() {
+                            through = true;
+                        } else if makes.makes_optional(i, ranked) {
+                            layers = if makes.wraps() { 2 } else { 1 };
                         }
                         (1, ranked.holds_optional)
                     }
@@ -1409,7 +1416,7 @@ impl Checker<'_> {
                 }
             })
             .unzip();
-        (ranks, holds, (through, lifted))
+        (ranks, holds, (through, layers))
     }
 
     /// Checks the bounds of the parameters `bound`, which a binding has just bound, and the bounds
@@ -1961,7 +1968,8 @@ impl Checker<'_> {
     /// rejected-only (see `Bindings::first_unbound_not_rejected`): E0050, unless its result
     /// `found` cannot meet the context its caller gave (see `infer_waiting`). Then the mismatch is
     /// the fault, and it reports the mismatch instead. A call that returns `unit` or `never` never
-    /// gets here: it names no type parameter in its return type, so it does not wait for a context.
+    /// gets here: it names no type parameter in its return type, and no type parameter can be
+    /// `unit` (E0138), so it does not wait for a context.
     fn report_unbound(
         &mut self,
         span: Span,
