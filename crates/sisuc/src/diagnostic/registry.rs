@@ -903,9 +903,9 @@ pub(crate) enum DiagnosticKind {
     /// without digits.
     MalformedFormatSpec { at: Span },
     /// The format spec at `at`, its `:` included, which asks for more than `#`, or alignment,
-    /// width and precision: a leading `0`, a sign, a type, a fill, a space or a nested `{`. When
-    /// `pretty`, it is a `#` beside an alignment, a width or a precision.
-    UnsupportedFormatSpec { at: Span, pretty: bool },
+    /// width and precision: a leading `0`, a sign, a type, a fill, a space or a nested `{`. `form`
+    /// says which of these forms it is.
+    UnsupportedFormatSpec { at: Span, form: SpecForm },
     /// The format spec at `at`, its `:` included, whose width, when `width`, or else precision is
     /// above its limit.
     FormatSpecLimit { at: Span, width: bool },
@@ -1701,6 +1701,19 @@ pub(crate) enum MismatchSource {
     Binding { name: String, at: Span },
     /// The `break` at the span, the first of its `loop` whose value set the loop's type.
     Break(Span),
+}
+
+/// The form of an `UnsupportedFormatSpec`, which sets its message and help.
+#[derive(Clone, Copy)]
+pub(crate) enum SpecForm {
+    /// Any spec that the other forms do not name.
+    Plain,
+    /// A `#` beside an alignment, a width or a precision.
+    Pretty,
+    /// `?` alone, which Rust uses for the debug form.
+    Debug,
+    /// `#?` alone, which Rust uses for the debug form over lines.
+    PrettyDebug,
 }
 
 /// What helps a precision on a part that is not an `f64`.
@@ -3901,17 +3914,29 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::MalformedFormatSpec { at } => {
                 Diagnostic::coded(code, at, "a format spec is `#` or `[<^>][width][.precision]`")
             }
-            DiagnosticKind::UnsupportedFormatSpec { at, pretty: false } => Diagnostic::coded(
-                code,
-                at,
-                "Sisu's format specs take `#`, or an alignment, a width and a precision",
-            ),
-            DiagnosticKind::UnsupportedFormatSpec { at, pretty: true } => Diagnostic::coded(
-                code,
-                at,
-                "`#` does not combine with a width, alignment or precision",
-            )
-            .with_help("remove the `#`, or the width, alignment and precision"),
+            DiagnosticKind::UnsupportedFormatSpec { at, form: SpecForm::Plain } => {
+                Diagnostic::coded(
+                    code,
+                    at,
+                    "Sisu's format specs take `#`, or an alignment, a width and a precision",
+                )
+            }
+            DiagnosticKind::UnsupportedFormatSpec { at, form: SpecForm::Pretty } => {
+                Diagnostic::coded(
+                    code,
+                    at,
+                    "`#` does not combine with a width, alignment or precision",
+                )
+                .with_help("remove the `#`, or the width, alignment and precision")
+            }
+            DiagnosticKind::UnsupportedFormatSpec { at, form: SpecForm::Debug } => {
+                Diagnostic::coded(code, at, "Sisu's format specs have no `?`")
+                    .with_help("delete the `?`: Sisu shows a value with its `Display`")
+            }
+            DiagnosticKind::UnsupportedFormatSpec { at, form: SpecForm::PrettyDebug } => {
+                Diagnostic::coded(code, at, "Sisu's format specs have no `#?`")
+                    .with_help("write `#` alone to lay the value out over lines")
+            }
             DiagnosticKind::FormatSpecLimit { at, width } => Diagnostic::coded(
                 code,
                 at,
