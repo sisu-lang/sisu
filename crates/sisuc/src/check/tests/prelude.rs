@@ -833,6 +833,53 @@ fn an_array_sum_of_the_prelude_should_keep_its_suggestion_and_codes() {
     );
 }
 
+/// A method of the prelude that no block gives the array, written as a function, is the
+/// missing-method error of the method call `xs.sum()` and not a missing function. A number or a
+/// name that is no array method keeps E0052; an array that has the method keeps the method-call
+/// fix.
+#[test]
+fn a_method_written_as_a_function_should_report_the_array_that_lacks_it() {
+    with_prelude();
+    for (row, params, call, code) in [
+        (
+            "an array of u8",
+            "xs: [u8]",
+            "sum(xs)",
+            Code::SumNeedsNumbers,
+        ),
+        (
+            "an optional array",
+            "xs: [u8]?",
+            "sum(xs)",
+            Code::SumNeedsNumbers,
+        ),
+        ("a number", "xs: [u8]", "sum(5)", Code::FunctionNotFound),
+        (
+            "an unknown name",
+            "xs: [u8]",
+            "total(xs)",
+            Code::FunctionNotFound,
+        ),
+        (
+            "an array that has it",
+            "xs: [i64]",
+            "sum(xs)",
+            Code::MethodAsFunction,
+        ),
+    ] {
+        let src = body(params, &format!("let _ = {call}"));
+        codes_row(row, &src, &[(code, (2, 13))]);
+    }
+    // The other arguments are still checked, once.
+    codes(
+        &body("xs: [u8]", "let _ = sum(xs, missing)"),
+        &[
+            (Code::SumNeedsNumbers, (2, 13)),
+            (Code::BindingNotFound, (2, 21)),
+        ],
+    );
+}
+
 /// A user item takes the name of an identifier of the prelude: the prelude's bodies still check
 /// without a diagnostic. `front_end::checked` stops with an internal error on a diagnostic
 /// that points into the prelude, so a call that returns is the proof. A name such as `Option`

@@ -179,6 +179,7 @@ impl Checker<'_> {
             });
             return Err(Poisoned::error());
         }
+        self.reject_array_lacking(callee, first_checked.as_ref(), rest)?;
         let at_start = self.starts_break_value(callee.span);
         let functions = self
             .function_ids
@@ -201,6 +202,41 @@ impl Checker<'_> {
             suggestion,
         });
         // No `labels`: the name may have meant a class, whose constructor takes them.
+        self.stray(rest);
+        Err(Poisoned::error())
+    }
+
+    /// Reports the call `callee(first, rest...)` when `first` is an array, or an optional one, that
+    /// no block of the prelude gives the method `callee`, as `sum(xs)` on a `[u8]`: no idiom found
+    /// the method, but it is the one that the array lacks, as for `xs.sum()`. `Err` when it did.
+    fn reject_array_lacking(
+        &mut self,
+        callee: &ast::Ident,
+        first: Option<&Checked>,
+        rest: &[ast::Arg],
+    ) -> Result<(), Poisoned> {
+        let Some(Ok(first)) = first else {
+            return Ok(());
+        };
+        let ty = match first.ty.kind() {
+            TypeKind::Optional(payload) => payload,
+            _ => first.ty,
+        };
+        let name = callee.name.as_str();
+        let targets = self.prelude_targets(callee.name);
+        if !matches!(ty.kind(), TypeKind::Array(_))
+            || targets.is_empty()
+            || self.prelude_method_names(ty).contains(&name)
+        {
+            return Ok(());
+        }
+        self.report(DiagnosticKind::SumNeedsNumbers {
+            method: name.to_string(),
+            ty: self.type_name(ty),
+            targets: targets.into_iter().map(|t| self.type_name(t)).collect(),
+            at: callee.span,
+            function: true,
+        });
         self.stray(rest);
         Err(Poisoned::error())
     }

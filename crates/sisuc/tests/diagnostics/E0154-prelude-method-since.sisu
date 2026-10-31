@@ -1,0 +1,11 @@
+class Node {}
+
+fn found(nodes: [Node?], n: Node?) -> bool {
+    nodes.contains(n)
+}
+
+fn generic<T>(nodes: [T?], n: T?) -> bool {
+    nodes.contains(n)
+}
+
+fn main() {}

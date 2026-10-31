@@ -2,7 +2,7 @@ error[E0154]: `[X.Item]` does not conform to `Eq`
  --> E0154-contains-nested-assoc.sisu:6:5
   |
 6 |     xs.contains(x)
-  |     ^^^^^^^^^^^^^^ required by the bound of this call, since `X.Item` does not conform to `Eq`
+  |     ^^^^^^^^^^^^^^ `contains` needs `T: Eq`, and `X.Item` does not conform to `Eq`
   |
   = help: add a bound in `Plain`: `type Item: Eq`
 

@@ -8,7 +8,7 @@ use super::interface::Bound;
 use super::{Checker, Choices, Declared, Definition, DiagnosticKind, Holder, Symbol, UNKNOWN};
 use crate::ast;
 use crate::conformance::{bind, overlap};
-use crate::diagnostic::{CannotExtendForm, Earlier, Owner as MethodOwner};
+use crate::diagnostic::{BlockNeed, CannotExtendForm, Earlier, Owner as MethodOwner};
 use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
@@ -212,14 +212,24 @@ impl<'a> Checker<'_> {
     }
 
     /// Reports the first bound of the block `extension` that fails for a receiver of type `ty`,
-    /// at the call that starts at `span`: the receiver's type arguments do not meet it.
-    pub(super) fn report_block_bound(&mut self, extension: usize, ty: Type, span: Span) {
+    /// at the call of `method` that starts at `span`: the receiver's type arguments do not meet it.
+    pub(super) fn report_block_bound(
+        &mut self,
+        extension: usize,
+        ty: Type,
+        span: Span,
+        method: &str,
+    ) {
         let stands = self
             .covers(extension, ty)
             .expect("a block that fails its bounds should cover the receiver");
         let (i, bound) = (self.first_failed_bound(extension, stands))
             .expect("a block that fails its bounds should have a bound that fails");
-        self.check_bound(span, stands.get()[i], bound, stands.get());
+        let need = BlockNeed {
+            method: method.to_string(),
+            param: self.extensions[extension].type_params[i].to_string(),
+        };
+        self.check_bound_of(span, stands.get()[i], bound, stands.get(), Some(need));
     }
 
     /// Reports each type parameter of `extend` that its target, `target`, does not name. The fix

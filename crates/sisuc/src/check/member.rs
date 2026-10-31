@@ -319,12 +319,12 @@ impl Checker<'_> {
                 if let Some(func) = masked {
                     let at = (self.signatures[func.0].extension)
                         .expect("a method whose block bounds fail should have a block");
-                    self.report_block_bound(at, ty, span);
+                    self.report_block_bound(at, ty, span, name.name.as_str());
                     return None;
                 }
                 // A block covered the receiver, and its bounds fail: the type argument is wrong.
                 if let Some((at, _)) = self.failed_block {
-                    self.report_block_bound(at, ty, span);
+                    self.report_block_bound(at, ty, span, name.name.as_str());
                     return None;
                 }
             }

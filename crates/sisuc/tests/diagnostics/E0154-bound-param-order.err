@@ -1,0 +1,20 @@
+error[E0154]: `Mix<T>` does not conform to `Eq`
+  --> E0154-bound-param-order.sisu:16:10
+   |
+13 | fn need<U: Eq>(u: U) {}
+   |            -- required by this bound
+...
+16 |     need(a)
+   |          ^
+
+error[E0154]: `Flip<T>` does not conform to `Eq`
+  --> E0154-bound-param-order.sisu:20:10
+   |
+13 | fn need<U: Eq>(u: U) {}
+   |            -- required by this bound
+...
+20 |     need(a)
+   |          ^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0154

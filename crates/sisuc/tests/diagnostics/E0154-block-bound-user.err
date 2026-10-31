@@ -1,0 +1,11 @@
+error[E0154]: `Node` does not conform to `Eq`
+  --> E0154-block-bound-user.sisu:14:5
+   |
+ 7 | extend<T: Eq> Box<T> {
+   |           -- required by this bound
+...
+14 |     box.has(n)
+   |     ^^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154

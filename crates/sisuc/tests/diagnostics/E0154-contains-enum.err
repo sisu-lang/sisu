@@ -2,7 +2,7 @@ error[E0154]: `Pick` does not conform to `Eq`
   --> E0154-contains-enum.sisu:10:11
    |
 10 |     print(picks.contains(Pick.Second))
-   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by the bound of this call, since `Node` does not conform to `Eq`
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^ `contains` needs `T: Eq`, and `Node` does not conform to `Eq`
    |
    = help: make `Node` conform to `Eq`
 

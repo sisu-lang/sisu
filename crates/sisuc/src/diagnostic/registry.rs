@@ -764,12 +764,14 @@ pub(crate) enum DiagnosticKind {
     /// An index into the value at `at`, of type `ty`, which is no array.
     CannotIndex { ty: String, at: Span },
     /// The method `method` at `at`, called on an array of type `ty`. The prelude gives the method
-    /// to the array types `targets`, and none of them is `ty`.
+    /// to the array types `targets`, and none of them is `ty`. `function` is whether the call
+    /// writes the method as a function, `method(xs)`, and the help then says it is a method.
     SumNeedsNumbers {
         method: String,
         ty: String,
         targets: Vec<String>,
         at: Span,
+        function: bool,
     },
     /// A call at `at` of the method `name` of an array, a number, a class or an enum as a
     /// function, with its `receiver`.
@@ -1948,9 +1950,20 @@ pub(crate) enum NotConformForm {
 #[derive(Clone)]
 pub(crate) enum PreludeBound {
     /// The type itself fails the bound.
-    Call,
+    Call { need: Option<BlockNeed> },
     /// A part of the type fails the bound: `part` does not conform to the interface.
-    Since { part: String },
+    Since {
+        part: String,
+        need: Option<BlockNeed>,
+    },
+}
+
+/// The method of a prelude block that has the bound, and the type parameter of the block that the
+/// bound is on. The label names them when the call is of that method.
+#[derive(Clone)]
+pub(crate) struct BlockNeed {
+    pub method: String,
+    pub param: String,
 }
 
 /// What the report of a missing operator (`NoOperator`) says besides the missing operator.
@@ -2504,11 +2517,22 @@ impl From<DiagnosticKind> for Diagnostic {
                             d
                         };
                         let d = match label {
-                            Some(PreludeBound::Call) => {
+                            Some(PreludeBound::Call { need: None }) => {
                                 d.with_label("required by the bound of this call")
                             }
-                            Some(PreludeBound::Since { part }) => d.with_label(format!(
+                            Some(PreludeBound::Call { need: Some(need) }) => d.with_label(format!(
+                                "`{}` needs `{}: {interface}`",
+                                need.method, need.param
+                            )),
+                            Some(PreludeBound::Since { part, need: None }) => d.with_label(format!(
                                 "required by the bound of this call, since `{part}` does not conform to `{interface}`"
+                            )),
+                            Some(PreludeBound::Since {
+                                part,
+                                need: Some(need),
+                            }) => d.with_label(format!(
+                                "`{}` needs `{}: {interface}`, and `{part}` does not conform to `{interface}`",
+                                need.method, need.param
                             )),
                             None => d,
                         };
@@ -3489,9 +3513,16 @@ impl From<DiagnosticKind> for Diagnostic {
                 ty,
                 targets,
                 at,
+                function,
             } => {
                 let targets = one_of(&targets);
-                Diagnostic::coded(code, at, format!("`{method}` needs {targets}, found `{ty}`"))
+                let d =
+                    Diagnostic::coded(code, at, format!("`{method}` needs {targets}, found `{ty}`"));
+                if function {
+                    d.with_help(format!("`{method}` is a method of {targets}, not a function"))
+                } else {
+                    d
+                }
             }
             DiagnosticKind::MethodAsFunction {
                 name,

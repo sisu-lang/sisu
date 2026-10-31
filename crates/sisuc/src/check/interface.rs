@@ -11,8 +11,8 @@ use super::{BindingKind, Body, Checker, Choice, Choices, Declared, Definition, H
 use crate::ast;
 use crate::conformance::{CHOICE_DEPTH_LIMIT, Entered, Generated, ensure_stack, find, generated};
 use crate::diagnostic::{
-    AddBound, BoundSite, Definition as Kind, DiagnosticKind, NoOperatorForm, NotConformForm,
-    NotInterface, PreludeBound, UnknownForm, WideKind,
+    AddBound, BlockNeed, BoundSite, Definition as Kind, DiagnosticKind, NoOperatorForm,
+    NotConformForm, NotInterface, PreludeBound, UnknownForm, WideKind,
 };
 use crate::graph::components;
 use crate::lang::Dispatch;
@@ -1499,9 +1499,10 @@ impl Checker<'_> {
         }
     }
 
-    /// The first payload part of the enum `id`, with `own` for its parameters, that fails
-    /// `interface` on its own; `None` when each holds. It ends where `payloads_conform` did: at a
-    /// marked enum, and at an enum whose query was too deep, whose payloads no query read.
+    /// The payload part of the enum `id`, with `own` for its parameters, that fails `interface` on
+    /// its own, the first that is not a type parameter, else the first parameter; `None` when each
+    /// holds. It ends where `payloads_conform` did: at a marked enum, and at an enum whose query
+    /// was too deep, whose payloads no query read.
     fn payloads_leaf(
         &mut self,
         id: EnumId,
@@ -1512,11 +1513,26 @@ impl Checker<'_> {
         if self.marked[id.0] || self.too_deep.contains(&Holder::Enum(id)) {
             return None;
         }
-        self.payload_slots(id).into_iter().find_map(|slot| {
-            let payload = self.payload_type(id, slot)?;
-            let part = self.subst(payload, own.get())?;
-            self.leaf(part, interface, TypeArgs::NONE, seen)
-        })
+        // A type parameter fails only for want of a bound, which the program can add. A part that
+        // fails whatever the bounds is the better answer, so the first of those wins, in any order
+        // of the slots; the first parameter is the answer only when no other part fails.
+        let mut param = None;
+        for slot in self.payload_slots(id) {
+            let Some(payload) = self.payload_type(id, slot) else {
+                continue;
+            };
+            let Some(part) = self.subst(payload, own.get()) else {
+                continue;
+            };
+            let Some(found) = self.leaf(part, interface, TypeArgs::NONE, seen) else {
+                continue;
+            };
+            if !matches!(found.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)) {
+                return Some(found);
+            }
+            param = param.or(Some(found));
+        }
+        param
     }
 
     /// `failing_leaf` for one type; `None` when it holds, or is already being read.
@@ -1595,6 +1611,19 @@ impl Checker<'_> {
     /// Checks that `ty` meets `bound`, whose arguments name the parameters that `with` gives
     /// types to. Reports it at `at` when not.
     pub(super) fn check_bound(&mut self, at: Span, ty: Type, bound: Bound, with: &[Type]) -> bool {
+        self.check_bound_of(at, ty, bound, with, None)
+    }
+
+    /// `check_bound` for a bound of a block, where the call is of the method that `need` names:
+    /// the label of a bound of the prelude says that the method needs it.
+    pub(super) fn check_bound_of(
+        &mut self,
+        at: Span,
+        ty: Type,
+        bound: Bound,
+        with: &[Type],
+        need: Option<BlockNeed>,
+    ) -> bool {
         let args = self.subst_args(bound.args, with);
         if self.conforms(ty, bound.interface, args) {
             self.probe_associated(ty, bound.interface, args);
@@ -1620,9 +1649,10 @@ impl Checker<'_> {
             if part_fails {
                 PreludeBound::Since {
                     part: self.type_name(leaf),
+                    need,
                 }
             } else {
-                PreludeBound::Call
+                PreludeBound::Call { need }
             }
         });
         self.report(DiagnosticKind::NotConform {

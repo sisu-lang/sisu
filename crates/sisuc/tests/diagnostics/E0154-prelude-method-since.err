@@ -1,0 +1,18 @@
+error[E0154]: `Node?` does not conform to `Eq`
+ --> E0154-prelude-method-since.sisu:4:5
+  |
+4 |     nodes.contains(n)
+  |     ^^^^^^^^^^^^^^^^^ `contains` needs `T: Eq`, and `Node` does not conform to `Eq`
+  |
+  = help: make `Node` conform to `Eq`
+
+error[E0154]: `T?` does not conform to `Eq`
+ --> E0154-prelude-method-since.sisu:8:5
+  |
+8 |     nodes.contains(n)
+  |     ^^^^^^^^^^^^^^^^^ `contains` needs `T: Eq`, and `T` does not conform to `Eq`
+  |
+  = help: add a bound: `T: Eq`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0154

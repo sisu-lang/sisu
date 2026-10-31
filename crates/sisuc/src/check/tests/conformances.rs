@@ -2567,6 +2567,42 @@ fn operators_should_report_a_missing_bound() {
     codes(&src, &[(Code::NotConform, line_col(&src, start))]);
 }
 
+/// A part that fails on its own (a class with no `Eq`) beats a type parameter that a bound could
+/// fix, wherever the part stands among the payloads. The help text of each row is pinned in the
+/// fixtures `E0159-param-order` and `E0154-bound-param-order`.
+#[test]
+fn equality_should_report_a_part_that_cannot_hold_before_a_type_parameter() {
+    with_prelude();
+    let decls = "class Node {}\nenum Mix<T> {\n    A(T)\n    B(Node)\n}\nenum Flip<T> {\n    B(Node)\n    A(T)\n}\nenum Deep<T> {\n    A(Mix<T>)\n    C(T)\n}\nenum Only<T> {\n    A(T)\n    B(i64)\n}\n";
+    let rows = [
+        ("parameter first", "a: Mix<T>, b: Mix<T>", Code::NoOperator),
+        ("parameter last", "a: Flip<T>, b: Flip<T>", Code::NoOperator),
+        (
+            "part nested in a payload",
+            "a: Deep<T>, b: Deep<T>",
+            Code::NoOperator,
+        ),
+        (
+            "optional of a parameter",
+            "a: [Mix<T>?], b: [Mix<T>?]",
+            Code::NoOperator,
+        ),
+        (
+            "only a parameter fails",
+            "a: Only<T>, b: Only<T>",
+            Code::ParamLacks,
+        ),
+    ];
+    for (row, params, code) in rows {
+        let src = format!("{decls}fn f<T>({params}) -> bool {{ a == b }}\nfn main() {{}}");
+        codes_row(row, &src, &[(code, where_is(&src, "a == b"))]);
+    }
+    // A bound that the parameter has: the class is still the part that fails.
+    let src =
+        format!("{decls}fn f<T: Eq>(a: Mix<T>, b: Mix<T>) -> bool {{ a == b }}\nfn main() {{}}");
+    codes(&src, &[(Code::NoOperator, where_is(&src, "a == b"))]);
+}
+
 /// The position of the first `needle` in `src`.
 fn where_is(src: &str, needle: &str) -> (usize, usize) {
     line_col(

@@ -272,7 +272,7 @@ impl Checker<'_> {
         if built_in.is_none()
             && let Some(Declared::Known(func)) = self.own_method(ty, method.name)
         {
-            return self.unmet_block_bound(span, func, ty, args);
+            return self.unmet_block_bound(span, func, ty, method, args);
         }
         let Some(&(_, arity)) = built_in else {
             let prelude = self.prelude_method_names(ty);
@@ -283,6 +283,7 @@ impl Checker<'_> {
                     ty: self.type_name(ty),
                     targets: targets.into_iter().map(|t| self.type_name(t)).collect(),
                     at: method.span,
+                    function: false,
                 }
                 .into()
             } else {
@@ -315,6 +316,7 @@ impl Checker<'_> {
         span: Span,
         func: tir::FuncId,
         ty: Type,
+        method: &ast::Ident,
         args: &[ast::Arg],
     ) -> Checked {
         let sig = &self.signatures[func.0];
@@ -337,7 +339,7 @@ impl Checker<'_> {
             own_mistake |= mismatched || failed;
         }
         if !own_mistake {
-            self.report_block_bound(extension, ty, span);
+            self.report_block_bound(extension, ty, span, method.name.as_str());
         }
         Err(Poisoned::error())
     }
