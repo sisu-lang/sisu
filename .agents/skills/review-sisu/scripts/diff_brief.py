@@ -17,7 +17,7 @@ the main checkout's gitignored docs/superpowers/ is not in a worktree.
            path, so the reviewer checks its summary line. Fails when the file does not exist, or
            when its summary line names a commit outside the range. A log measured
            at an earlier commit of the range is accepted, and Focus lists the commits after it,
-           because a task runs mutation tests once and later commits are not mutated. A log
+           because later commits (such as a fix round's) are not mutated. A log
            measured before a rebase is accepted when a commit of the range has the same
            `git patch-id` as the measured commit; Focus names both.
   --coverage  the output of `make coverage` for the diff; Focus names it. Fails when the file does
