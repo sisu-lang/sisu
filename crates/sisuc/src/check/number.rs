@@ -326,7 +326,7 @@ impl Checker<'_> {
         // An `i64` reaches here when the prelude gives it no method of the name.
         let Some((op, params)) = self::method(ty, method.name.as_str()) else {
             if self.rejected_methods.contains(&method.name) {
-                return self.call_of_rejected_method(args);
+                return self.call_of_rejected_method(method, args);
             }
             let owner = self.type_name(ty);
             let names: Vec<&str> = if ty == Type::F64 {

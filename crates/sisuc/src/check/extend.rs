@@ -157,8 +157,9 @@ impl<'a> Checker<'_> {
         }
     }
 
-    /// Records what a failed block may have given: methods to its target, when the target is a
-    /// type that the checker can take, and else methods of its names to any type.
+    /// Records what a failed block may have given. When the target is a type that the checker
+    /// can take, the block may have given methods to that type. Else it may have given methods of
+    /// its names to any type.
     fn record_failed_block(&mut self, extend: &ast::Extend, target: Option<Type>) {
         if let Some(holder) = target.and_then(method_holder) {
             let name = self.holder_name(holder);

@@ -1,0 +1,8 @@
+// The compiler's own `len` answers, so the list of type arguments keeps its E0137.
+extend string {
+    fn len<T>(self) -> i64 { 0 }
+}
+
+fn main() {
+    print("a".len<i64>())
+}

@@ -321,7 +321,7 @@ impl Checker<'_> {
             "words" => (Type::array(Type::STRING), tir::ExprKind::Words),
             _ => {
                 if self.rejected_methods.contains(&method.name) {
-                    return self.call_of_rejected_method(args);
+                    return self.call_of_rejected_method(method, args);
                 }
                 let owner = self.type_name(Type::STRING);
                 let d = no_member(Definition::Method, owner, method, METHODS);

@@ -276,7 +276,7 @@ impl Checker<'_> {
         }
         let Some(&(_, arity)) = built_in else {
             if self.rejected_methods.contains(&method.name) {
-                return self.call_of_rejected_method(args);
+                return self.call_of_rejected_method(method, args);
             }
             let prelude = self.prelude_method_names(ty);
             let targets = self.prelude_targets(method.name);
@@ -348,9 +348,14 @@ impl Checker<'_> {
         Err(Poisoned::error())
     }
 
-    /// A call of a method that a rejected `extend` block may have given (see
+    /// A call of the method `method` that a rejected `extend` block may have given (see
     /// `Checker.rejected_methods`): poisoned, with no report of its own.
-    pub(super) fn call_of_rejected_method(&mut self, args: &[ast::Arg]) -> Checked {
+    pub(super) fn call_of_rejected_method(
+        &mut self,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+    ) -> Checked {
+        self.body.rejected_calls.insert(method.span);
         self.labels(args);
         self.stray(args);
         Err(Poisoned::error())

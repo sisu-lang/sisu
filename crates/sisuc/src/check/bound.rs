@@ -32,6 +32,10 @@ impl Checker<'_> {
                 method: 0,
             });
         }
+        // A rejected block may have given the type the method (see `Checker.rejected_methods`).
+        if found.is_empty() && self.rejected_methods.contains(&site.name.name) {
+            return self.call_of_rejected_method(site.name, args);
+        }
         let Some(picked) = self.pick_required(ty, site, span, &found) else {
             self.labels(args);
             self.stray(args);

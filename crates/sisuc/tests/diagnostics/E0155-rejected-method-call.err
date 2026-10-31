@@ -40,23 +40,53 @@ error[E0155]: an `extend` block cannot name an associated type in `Wrap<S.Item>`
 34 | extend<S: Source> Wrap<S.Item> {
    |                   ^^^^^^^^^^^^
 
-error[E0062]: `maybe` may be `None`
-  --> E0155-rejected-method-call.sisu:48:11
+error[E0155]: `f64` is a built-in type; only the prelude extends it
+  --> E0155-rejected-method-call.sisu:39:8
    |
-48 |     print(maybe.twice())
+39 | extend f64 {
+   |        ^^^
+
+error[E0155]: `string` is a built-in type; only the prelude extends it
+  --> E0155-rejected-method-call.sisu:43:8
+   |
+43 | extend string {
+   |        ^^^^^^
+
+error[E0155]: `[i64]` is a built-in type; only the prelude extends it
+  --> E0155-rejected-method-call.sisu:47:8
+   |
+47 | extend [i64] {
+   |        ^^^^^
+
+error[E0155]: `[string]` is a built-in type; only the prelude extends it
+  --> E0155-rejected-method-call.sisu:52:8
+   |
+52 | extend [string] {
+   |        ^^^^^^^^
+
+error[E0033]: cannot find binding `missing`
+  --> E0155-rejected-method-call.sisu:64:18
+   |
+64 |     print(x.same(missing))
+   |                  ^^^^^^^
+
+error[E0062]: `maybe` may be `None`
+  --> E0155-rejected-method-call.sisu:81:11
+   |
+81 |     print(maybe.twice())
    |           ^^^^^
    |
    = help: to use the value only when it is present, unwrap it with `if let`
 help: if a `None` result is fine, use `?.`
    |
-48 |     print(maybe?.twice())
+81 |     print(maybe?.twice())
    |                +
 
 error[E0033]: cannot find binding `missing`
-  --> E0155-rejected-method-call.sisu:49:19
+  --> E0155-rejected-method-call.sisu:82:19
    |
-49 |     print(5.twice(missing))
+82 |     print(5.twice(missing))
    |                   ^^^^^^^
 
-sisu: 9 errors
+sisu: 14 errors
 sisu: for more on a code, run `sisu explain <code>`: E0033, E0062, E0155

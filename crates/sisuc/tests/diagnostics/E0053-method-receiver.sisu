@@ -11,6 +11,11 @@ fn first<U>(xs: [U]) {
     print(xs.contains())
 }
 
+enum E {
+    A
+    B
+}
+
 fn main() {
     let n = 3
     print(n.min())
@@ -22,4 +27,8 @@ fn main() {
     let b = Box(value: 1)
     print(b.get())
     print(b.put())
+    let mut xs = [1]
+    xs.push()
+    print(5.to_string(1))
+    print(E.A.eq())
 }

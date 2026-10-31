@@ -472,11 +472,12 @@ impl Checker<'_> {
         };
         // The member was found unknown, or the receiver of a path that is no idiom was: a name
         // or a type, which has no members.
-        let unknown = self.diagnostics[start..].iter().any(|d| match d.code() {
-            Code::NoMember | Code::UnknownVariant => d.span() == method.span,
-            Code::BindingNotFound | Code::TypeAsValue => d.span() == receiver.span,
-            _ => false,
-        });
+        let unknown = self.body.rejected_calls.contains(&method.span)
+            || self.diagnostics[start..].iter().any(|d| match d.code() {
+                Code::NoMember | Code::UnknownVariant => d.span() == method.span,
+                Code::BindingNotFound | Code::TypeAsValue => d.span() == receiver.span,
+                _ => false,
+            });
         if deferred && !unknown {
             self.not_generic(method.name, angles);
         }

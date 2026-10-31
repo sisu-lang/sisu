@@ -500,10 +500,12 @@ struct Checker<'src> {
     broken_extension_methods: FxHashSet<(Holder, Symbol)>,
     /// The names of the methods of each `extend` block whose target the checker rejected. Such a
     /// block may have given any type a method of its name, so a call of that name on any type is
-    /// poisoned, with no report. The set holds names, not types: the target can be a type
-    /// parameter, which stands for every type, or a type that `Holder` does not name, such as
-    /// `f64`, `string` or `bool`. The block's own error is in the program, so a missed report
-    /// of a method with the same name on another type costs nothing.
+    /// poisoned, with no report. The set holds names, not types. The target can be a type
+    /// parameter, which stands for every type. It can also be a type that `Holder` does not
+    /// name, such as `f64`, `string` or `bool`. The block's own error is in the program. So the
+    /// set can hide a report on another type that has a member of the same name: a missing
+    /// method (E0063), a field that is not a method (E0058), or a variant that is not a method
+    /// (E0120). That costs nothing.
     rejected_methods: FxHashSet<Symbol>,
     /// The methods of the conformance blocks that cover the receiver of the call being found, with
     /// the block's interface and its arguments for the receiver: a buffer that `find_method` fills
@@ -775,6 +777,10 @@ struct Body {
     exits: u32,
     /// How many W0005 (a comparison with `f64.nan`) the body has reported.
     nans: u32,
+    /// The method names, by span, of the calls that `call_of_rejected_method` answered. Such a
+    /// call has no report, but its member is unknown: a list of type arguments on it is not
+    /// reported (`method_call_expr`).
+    rejected_calls: FxHashSet<Span>,
     /// The target of the compound assignment being checked, whose reads are not reads: they
     /// only give the value back to the target.
     quiet: Option<Span>,
