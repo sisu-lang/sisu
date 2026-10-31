@@ -1,4 +1,4 @@
-"""Squash-merges a pull request of sisu-lang/sisu when it is safe, then cleans up after it.
+"""Squash-merges a pull request of sisu-lang/sisu when it is safe, and removes its local worktree.
 
 Usage: python3 scripts/merge_pr.py PR [REPO_ROOT]
 
@@ -17,43 +17,64 @@ import time
 
 REPO = "repos/sisu-lang/sisu"
 POLL = float(os.environ.get("MERGE_PR_POLL", "30"))
-CHECKS_LIMIT = 90 * 60
+CHECKS_LIMIT = float(os.environ.get("MERGE_PR_CHECKS_LIMIT", str(90 * 60)))
+NO_CHECKS_LIMIT = min(CHECKS_LIMIT, 10 * 60)
 ISSUES_LIMIT = 120
 CLOSES = re.compile(r"^Closes #(\d+)\s*$", re.M | re.I)
 PASSED = {"success", "skipped", "neutral"}
 
 
+class Stop(Exception):
+    pass
+
+
+def run(args):
+    try:
+        return subprocess.run(args, capture_output=True, text=True, check=True).stdout
+    except subprocess.CalledProcessError as e:
+        raise Stop(f"{' '.join(args[:4])}: {e.stderr.strip() or e}") from None
+
+
 def gh(*args):
-    out = subprocess.run(["gh", "api", *args], capture_output=True, text=True, check=True).stdout
+    out = run(["gh", "api", *args])
     return json.loads(out) if out.strip() else None
 
 
 def wait_for_checks(sha):
-    """Returns the names of the checks that did not pass, after every check ends."""
-    waited = 0.0
+    """Returns the checks that did not pass, after every check ends; stops at the time limit."""
+    start = time.monotonic()
     while True:
-        runs = gh(f"{REPO}/commits/{sha}/check-runs?per_page=100")["check_runs"]
+        page = gh(f"{REPO}/commits/{sha}/check-runs?per_page=100")
+        runs = page["check_runs"]
+        if page["total_count"] > len(runs):
+            raise Stop(f"{page['total_count']} checks, more than one page: merge by hand")
         if runs and all(r["status"] == "completed" for r in runs):
             return [f'{r["name"]}: {r["conclusion"]}' for r in runs if r["conclusion"] not in PASSED]
+        waited = time.monotonic() - start
+        if not runs and waited >= NO_CHECKS_LIMIT:
+            raise Stop("the head has no checks")
         if waited >= CHECKS_LIMIT:
-            return ["the checks did not end in time"]
+            raise Stop("the checks did not end in time")
         time.sleep(POLL)
-        waited += max(POLL, 1)
+
+
+def check_base(pr, sha):
+    if gh(f"{REPO}/compare/{pr['base']['ref']}...{sha}")["behind_by"]:
+        raise Stop(f"{pr['head']['ref']} does not contain {pr['base']['ref']}: merge it, run make test")
 
 
 def wait_for_issues(numbers):
     """Returns `#N state` for each issue, after all close or the time limit."""
-    waited = 0.0
+    start = time.monotonic()
     while True:
         states = {n: gh(f"{REPO}/issues/{n}")["state"] for n in numbers}
-        if all(s == "closed" for s in states.values()) or waited >= ISSUES_LIMIT:
+        if all(s == "closed" for s in states.values()) or time.monotonic() - start >= ISSUES_LIMIT:
             return [f"#{n} {s}" for n, s in states.items()]
         time.sleep(min(POLL, 5))
-        waited += max(min(POLL, 5), 1)
 
 
 def git(root, *args):
-    return subprocess.run(["git", "-C", root, *args], capture_output=True, text=True, check=True).stdout
+    return run(["git", "-C", root, *args])
 
 
 def remove_worktree(root, branch, sha):
@@ -69,33 +90,40 @@ def remove_worktree(root, branch, sha):
         return f"no local worktree for {branch}"
     if git(path, "status", "--porcelain"):
         return f"kept {path}: it has uncommitted changes"
-    git(root, "worktree", "remove", "--force", path)
-    # A separate command: the branch delete writes .git/config, and a long one races the sandbox.
+    # No --force: git checks again for changes when it removes the worktree.
+    git(root, "worktree", "remove", path)
+    # The branch delete writes .git/config. A separate short command lowers the chance that the
+    # sandbox of another command puts its lock file there first.
     git(root, "branch", "-D", branch)
     return f"removed {path} and branch {branch}"
 
 
-def main(argv):
-    number, root = argv[0], argv[1] if len(argv) > 1 else "."
+def merge(number, root):
     pr = gh(f"{REPO}/pulls/{number}")
     if pr["state"] != "open":
-        print(f"merge_pr: FAIL: #{number} is {pr['state']}")
-        return 1
-    sha, branch = pr["head"]["sha"], pr["head"]["ref"]
-    if gh(f"{REPO}/compare/{pr['base']['ref']}...{sha}")["behind_by"]:
-        print(f"merge_pr: FAIL: {branch} does not contain {pr['base']['ref']}: merge it, run make test")
-        return 1
+        raise Stop(f"#{number} is {pr['state']}")
+    sha = pr["head"]["sha"]
+    check_base(pr, sha)
     failed = wait_for_checks(sha)
     if failed:
-        print("merge_pr: FAIL: " + "; ".join(failed))
-        return 1
+        raise Stop("; ".join(failed))
+    # main can move during the wait.
+    check_base(pr, sha)
     merged = gh("-X", "PUT", f"{REPO}/pulls/{number}/merge", "-f", "merge_method=squash",
                 "-f", f"sha={sha}", "-f", f"commit_title={pr['title']} (#{number})")
     print(f"merged #{number} as {merged['sha'][:8]}")
     issues = CLOSES.findall(pr["body"] or "")
     if issues:
         print("issues: " + ", ".join(wait_for_issues(issues)))
-    print(remove_worktree(root, branch, sha))
+    print(remove_worktree(root, pr["head"]["ref"], sha))
+
+
+def main(argv):
+    try:
+        merge(argv[0], argv[1] if len(argv) > 1 else ".")
+    except Stop as e:
+        print(f"merge_pr: FAIL: {e}")
+        return 1
     return 0
 
 
