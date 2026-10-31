@@ -130,6 +130,8 @@ The rules, in order:
   - the operands of a [comparison chain](operators.md#comparison-chains)
   - the elements of an [array literal](arrays.md#array-literals)
   - the branches of an `if` or an `if let`, or the arms of a `match`
+
+  An operand whose value comes only from integer literals counts as an integer literal in its group. Examples are `{ 1 }`, `dbg(1)`, `if c { 4 } else { 5 }` and `id(2)` for `fn id<T>(x: T) -> T`. With an `x: u8`, `id(2) + x` is a `u8`.
 - When a literal has no expected type and is not in a group, it is an `i64`.
 
 These places give an expected type:
