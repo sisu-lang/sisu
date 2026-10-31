@@ -131,7 +131,7 @@ The rules, in order:
   - the elements of an [array literal](arrays.md#array-literals)
   - the branches of an `if` or an `if let`, or the arms of a `match`
 
-  An integer literal under `dbg`, a block, an `if` or a `match` counts as an integer literal in its group. So does a generic call that gives back an integer literal argument. Each integer literal argument of the call must have the type that the call returns. An example is `id(2)` for `fn id<T>(x: T) -> T`. With an `x: u8`, `id(2) + x` is a `u8`. These forms can nest, as in `id({ 2 })`. Other values keep their own types. So with an `x: u8`, `[Some(1), x]` is an error ([E0032](../diagnostics/E0032.md)). So is `k2(1, 2) + x` for `fn k2<T, U>(a: T, b: U) -> U`.
+  An integer literal under `dbg`, a block, an `if` or a `match` counts as an integer literal in its group. So does a generic call that gives back an integer literal argument. Each integer literal argument of the call must have the type that the call returns. An example is `id(2)` for `fn id<T>(x: T) -> T`. With an `x: u8`, `id(2) + x` is a `u8`. These forms can nest, as in `id({ 2 })`. Other values keep their own types. So with an `x: u8`, `[Some(1), x]` is an error ([E0032](../diagnostics/E0032.md)). Only an argument at a place of the returned type parameter gives the call its type. So for `fn k2<T, U>(a: T, b: U) -> U` and an `x: u8`, `k2(1, 2) + x` is a `u8`, and its `1` stays an `i64`.
 - When a literal has no expected type and is not in a group, it is an `i64`.
 
 These places give an expected type:

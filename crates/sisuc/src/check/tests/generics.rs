@@ -1938,6 +1938,140 @@ fn an_optional_argument_should_bind_before_a_plain_literal() {
     }
 }
 
+/// The declarations of the rows that rank a call from the places of its returned parameter. `x` is
+/// a `u8` in `main`.
+const PLACES_DECLS: &str = "fn k2<T, U>(_a: T, b: U) -> U { b }\n\
+    fn h<T>(a: T, _b: T?) -> T { a }\n\
+    fn pick<T>(_a: T, b: T) -> T { b }\n\
+    fn opt<T>(x: T) -> T? { Some(x) }\n\
+    fn id<T>(x: T) -> T { x }\n\
+    fn g<T>(a: T, _xs: [T?]) -> T { a }\n\
+    class Bx<T> {\n    v: T?\n}\n\
+    fn gb<T>(a: T, _b: Bx<T?>) -> T { a }\n";
+
+/// `row` in a `main` that has `x: u8`, after the `PLACES_DECLS`. It is the only statement, so its
+/// text is at the line `decls + 3`.
+fn places_main(row: &str) -> String {
+    format!("{PLACES_DECLS}fn main() {{\n    let x: u8 = 3\n    {row}\n}}")
+}
+
+/// The place of `needle` in `row`, which `places_main` put in `src`.
+fn in_row(src: &str, row: &str, needle: &str) -> (usize, usize) {
+    let start = src.rfind(row).expect("the program should hold the row");
+    let inside = row.find(needle).expect("the row should hold the text");
+    line_col(src, start + inside)
+}
+
+/// Only an argument at a place of the returned type parameter gives a call its type. `k2(a, b)`
+/// returns `b`, so it ranks as `id(b)` ranks, whatever `a` is: a literal, a `u8`, an array, a
+/// string or a `None`. Before, the `1` of `k2(1, 2)` made the call `Concrete` with `U = i64`, and
+/// `[x, k2(1, 2)]` was rejected. The rows with `id` are controls: they passed before. A `k2` row
+/// has the result of its `id` row.
+#[test]
+fn a_call_should_rank_from_the_places_of_its_returned_parameter() {
+    with_prelude();
+    for (row, expected) in [
+        ("print([x, k2(1, 2)])", None),
+        ("print([x, k2(x, 2)])", None),
+        ("print([[x], k2(1, [])])", None),
+        ("print(k2(1, 2) + x)", None),
+        ("print([k2(1, 2), x])", None),
+        ("print([x, k2(1, x)])", None),
+        ("print([x, k2(\"s\", 2)])", None),
+        ("print([k2(1, 2), 2.5])", None),
+        ("print([k2(x, 2), x])", None),
+        ("print([x, k2([1], 2)])", None),
+        ("print([x, k2(1, None)])", None),
+        // A call that returns `T?` does not pass the type of its literal on: `Some(1)` is an
+        // optional `i64`, which a `u8` beside it does not give its type.
+        ("print([Some(1), x])", Some((Code::Mismatch, "x]"))),
+        ("print([opt(1), x])", Some((Code::Mismatch, "x]"))),
+        // The literal at the returned place still has to fit the type that the others give.
+        (
+            "print([x, k2(1, 300)])",
+            Some((Code::IntegerDoesNotFit, "300")),
+        ),
+        // Nothing gives `T`, which the call returns: it is reported.
+        ("print([x, k2(None, 2)])", Some((Code::CannotInfer, "k2"))),
+        // The controls.
+        ("print([x, id(2)])", None),
+        ("print([[x], id([])])", None),
+        ("print(id(2) + x)", None),
+        ("print([id(2), x])", None),
+        ("print([x, id(None)])", None),
+        (
+            "print([x, id(300)])",
+            Some((Code::IntegerDoesNotFit, "300")),
+        ),
+    ] {
+        let src = places_main(row);
+        let found = expected.map(|(code, needle)| (code, in_row(&src, row, needle)));
+        codes_row(row, &src, found.as_slice());
+    }
+}
+
+/// An optional at a place `T?` fills that `?`: it does not make `T` an optional, so the call that
+/// has it does not hold an optional (see `Ranked::holds_optional`). `pick(h(1, Some(2)), Some(3))`
+/// binds `T = i64?` from `Some(3)`, as the reversed order does. Before, the `Some(2)` made the `h`
+/// call hold an optional, `pick` checked it first and bound `T = i64`, and `Some(3)` was rejected
+/// (#325). An optional at a place `[T?]` or `Bx<T?>` fills the same `?`.
+#[test]
+fn an_optional_at_a_lifted_place_should_not_make_the_call_hold_one() {
+    with_prelude();
+    for row in [
+        "print(pick(h(1, Some(2)), Some(3)) ?? 0)",
+        "print(pick(h(1, None), Some(3)) ?? 0)",
+        "print(pick(g(1, [Some(2)]), Some(3)) ?? 0)",
+        "print(pick(gb(1, Bx(v: Some(2))), Some(3)) ?? 0)",
+        // The reversed order and the controls passed before.
+        "print(pick(Some(3), h(1, Some(2))) ?? 0)",
+        "print(pick(Some(3), g(1, [Some(2)])) ?? 0)",
+        "print(pick(Some(3), gb(1, Bx(v: Some(2)))) ?? 0)",
+        "let v: i64? = h(1, Some(2))\n    print(v ?? 0)",
+        "let v: i64? = h(1, None)\n    print(v ?? 0)",
+        "let v: i64? = g(1, [Some(2)])\n    print(v ?? 0)",
+        // A `T` place that holds the optional still does.
+        "print(pick(id(Some(2)), 3) ?? 0)",
+    ] {
+        clean_row(row, &places_main(row));
+    }
+}
+
+/// A value that makes an optional inside its optional is `Ranked::nested`: `Some(Some(2))`,
+/// `opt(Some(2))`, and a `Some` of an `if`, a call or a `dbg` that makes an optional. A call
+/// that returns `T` and has a nested argument at a place `T?` is an optional, for the optional
+/// at that place is the `T` that the call returns. So a context `i64?` meets its return type
+/// whole, and `h(1, Some(Some(2)))` is valid. Before, the context met the payload, `T = i64`, and
+/// the argument was rejected (#325).
+#[test]
+fn a_nested_optional_at_a_lifted_place_should_make_the_call_an_optional() {
+    with_prelude();
+    for row in [
+        "let v: i64? = h(1, Some(Some(2)))\n    print(v ?? 0)",
+        "let v: i64? = h(1, opt(Some(2)))\n    print(v ?? 0)",
+        "let v: i64? = h(1, Some(if x > 0 { Some(2) } else { None }))\n    print(v ?? 0)",
+        "let v: i64? = h(1, Some(h(Some(2), None)))\n    print(v ?? 0)",
+        "let v: i64? = h(1, id(Some(Some(2))))\n    print(v ?? 0)",
+        "let v: i64? = h(1, dbg(Some(Some(2))))\n    print(v ?? 0)",
+        "let v: i64? = h(1, Some(None))\n    print(v ?? 0)",
+        "let v: u8? = h(1, Some(Some(2)))\n    print(v ?? 0)",
+        // Both are optionals, and `Some(2)` fills the `?`.
+        "let v: i64?? = h(1, Some(2))\n    print((v ?? None) ?? 0)",
+        "let v: i64?? = h(Some(1), Some(Some(2)))\n    print((v ?? None) ?? 0)",
+        // The call is an optional beside `pick`, so a plain argument is an optional beside it.
+        "print(pick(h(1, Some(Some(2))), 3) ?? 0)",
+        "print(pick(h(1, Some(Some(2))), Some(3)) ?? 0)",
+        "print(pick(1, h(1, Some(Some(2)))) ?? 0)",
+    ] {
+        clean_row(row, &places_main(row));
+    }
+    // Under an array, `[T?]` does not pass a nested optional on (see `Makes::Through`): the
+    // context meets the payload, as it did before.
+    let row = "let v: i64? = g(1, [Some(Some(2))])\n    print(v ?? 0)";
+    let src = places_main(row);
+    codes(&src, &[(Code::Mismatch, in_row(&src, row, "Some(2)"))]);
+}
+
 /// A context of `i64?` or `u8?` meets the return type whole, and not its payload, when an argument
 /// holds the optional at a place of the returned parameter. The place can be in an array or a
 /// class, also in a call that is the argument. Before, the context met the payload, and
@@ -3108,7 +3242,7 @@ fn waiting_call_that_conflicts_in_a_bound_part_should_mismatch_at_the_call() {
 
 /// A part of the return type that names no parameter, but meets a part of the context that
 /// holds a hole, must still meet its structure: `Result<i64, i64>` against `Result<T, string>`
-/// and `Result<i64, bool>` against `Result<_, string>` clash, so each call is a mismatch and
+/// and `Result<E, bool>` against `Result<_, string>` clash, so each call is a mismatch and
 /// `mk` reports no `E`.
 #[test]
 fn no_parameter_part_should_not_meet_a_value_that_holds_a_hole() {
@@ -3119,8 +3253,8 @@ fn no_parameter_part_should_not_meet_a_value_that_holds_a_hole() {
                fn main() {\n    let x = f(mk())\n    print(x)\n}";
     codes(src, &[(Code::Mismatch, (8, 15))]);
     let src = "fn f<T>(r: Result<T, string>) -> T { panic(\"e\") }\n\
-               fn mk<E>(x: E?) -> Result<i64, bool> { panic(\"e\") }\n\
-               fn main() {\n    let x = f(mk(None))\n    print(x)\n}";
+               fn mk<E>() -> Result<E, bool> { panic(\"e\") }\n\
+               fn main() {\n    let x = f(mk())\n    print(x)\n}";
     codes(src, &[(Code::Mismatch, (4, 15))]);
 }
 
@@ -3149,21 +3283,26 @@ fn safe_call_should_mismatch_a_context_that_is_not_optional() {
     codes(src, &[(Code::Mismatch, (12, 7))]);
 }
 
-/// A waiting call with no value is E0043, as a call with its type written is. It is not a
-/// mismatch of `unit`, and a safe call has no `unit?`.
+/// A call with no value is E0043, as a call with its type written is. It is not a mismatch of
+/// `unit`, and a safe call has no `unit?`. A call whose arguments do not give its type is checked
+/// alone: it reports the `E` that it cannot infer first (`mk(None)`), as `let v = mk(None)` does.
 #[test]
-fn waiting_call_with_no_value_should_report_no_value() {
+fn call_with_no_value_should_report_no_value() {
     with_prelude();
     let maker = "class Maker {\n    n: i64\n    fn make<E>(self, x: E?) {}\n}\n";
-    for (decls, lets, call) in [
-        ("fn mk<E>(x: E?) {}\n", "", "f(mk(None))"),
-        ("fn mk<E>(x: E?) {}\n", "", "f(mk<i64>(None))"),
-        (maker, "let m: Maker? = None\n    ", "f(m?.make(None))"),
-        (maker, "let m: Maker? = None\n    ", "f(m?.make<i64>(None))"),
+    let (fun, m) = ("fn mk<E>(x: E?) {}\n", "let m: Maker? = None\n    ");
+    // The column of the call, or of the method's name for the `E` that it cannot infer.
+    for (decls, lets, call, code, col) in [
+        (fun, "", "f(mk(Some(1)))", Code::NoValue, 7),
+        (fun, "", "f(mk(None))", Code::CannotInfer, 7),
+        (fun, "", "f(mk<i64>(None))", Code::NoValue, 7),
+        (maker, m, "f(m?.make(Some(1)))", Code::NoValue, 7),
+        (maker, m, "f(m?.make(None))", Code::CannotInfer, 10),
+        (maker, m, "f(m?.make<i64>(None))", Code::NoValue, 7),
     ] {
         let src = format!("{decls}fn f<T>(r: [T]) {{}}\nfn main() {{\n    {lets}{call}\n}}");
         let line = decls.lines().count() + 3 + lets.matches('\n').count();
-        codes(&src, &[(Code::NoValue, (line, 7))]);
+        codes_row(call, &src, &[(code, (line, col))]);
     }
 }
 
@@ -4288,6 +4427,7 @@ fn nested_generic_calls_should_rank_each_expression_once() {
     let steps = |(before, open, inner, close): (&str, &str, &str, &str), depth: usize| {
         let src = format!(
             "fn k<T>(a: T, b: T) -> T {{ b }}\nfn id<T>(x: T) -> T {{ x }}\n\
+             fn k2<T, U>(a: T, b: U) -> U {{ b }}\n\
              fn main() {{\n    let c = true\n    let x: u8 = 3\n    {before}{}{inner}{}\n}}",
             open.repeat(depth),
             close.repeat(depth),
@@ -4300,6 +4440,8 @@ fn nested_generic_calls_should_rank_each_expression_once() {
         ("let r: u8 = ", "k(1, ", "1", ")"),
         ("let r: u8? = ", "id(", "1", ")"),
         ("let r: u8? = ", "k(Some(1), ", "None", ")"),
+        // Only the second argument gives the call its type: the first is not walked.
+        ("let r: u8 = ", "k2(x, ", "1", ")"),
     ] {
         assert!(steps(row, 1) > 0, "the counter should count the walk");
         assert_near_linear(steps(row, 20), steps(row, 40), steps(row, 60));
