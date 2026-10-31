@@ -1,0 +1,8 @@
+error[E0156]: `Item` on `T` could come from `Source` or `Feed`
+  --> E0156-alias.sisu:11:18
+   |
+11 | type Both<T> = T.Item
+   |                  ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0156

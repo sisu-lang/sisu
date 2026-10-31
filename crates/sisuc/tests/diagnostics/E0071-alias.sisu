@@ -1,0 +1,17 @@
+type D1<T> = [T]
+type D2<T> = D1<D1<T>>
+type D3<T> = D2<D2<T>>
+type D4<T> = D3<D3<T>>
+type D5<T> = D4<D4<T>>
+type D6<T> = D5<D5<T>>
+type D7<T> = D6<D6<T>>
+type D8<T> = D7<D7<T>>
+type D9<T> = D8<D8<T>>
+type D10<T> = D9<D9<T>>
+type D11<T> = D10<D10<T>>
+
+fn deep(x: D11<i64>) {}
+
+fn main() {
+    print(1)
+}

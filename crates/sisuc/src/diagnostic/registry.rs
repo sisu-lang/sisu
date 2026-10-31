@@ -215,6 +215,8 @@ codes! {
     ClassOnly = "E0158",
     NoOperator = "E0159",
     PayloadTooLarge = "E0160",
+    AliasCycle = "E0161",
+    AliasTooLarge = "E0162",
     NanComparison = "W0005",
     UnreachableArm = "W0006",
     RedundantSemicolon = "W0007",
@@ -379,6 +381,18 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         through: Vec<String>,
     },
+    /// The type alias `name`, at `at`, which refers to itself, `through` the aliases in between.
+    /// `steps` holds each alias of the cycle in order, the alias that it uses, and where it writes
+    /// that alias.
+    AliasCycle {
+        name: String,
+        at: Span,
+        through: Vec<String>,
+        steps: Vec<(String, String, Span)>,
+    },
+    /// The written type `ty`, at `at`, which names more than `limit` distinct types once the type
+    /// aliases in it are replaced.
+    AliasTooLarge { ty: String, at: Span, limit: usize },
     /// The argument `arg`, at `at`, of an inherited interface of `interface`, which is built from
     /// a type parameter.
     InheritedArgument {
@@ -778,8 +792,14 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         receiver: MethodReceiver,
     },
-    /// The token at `at`, where the tree passes `limit` levels.
-    NestingTooDeep { at: Span, limit: usize },
+    /// The token at `at`, where the tree passes `limit` levels. For a type that a type alias makes
+    /// deep, `alias` is the type as written, which names more than `limit` levels, and `at` is
+    /// where it is written.
+    NestingTooDeep {
+        at: Span,
+        limit: usize,
+        alias: Option<String>,
+    },
     /// The first byte at `at` that is not UTF-8, which the text shown in its place replaces.
     InvalidUtf8 { at: Span },
     /// An assignment to the `self` at `at`.
@@ -882,8 +902,13 @@ pub(crate) enum DiagnosticKind {
         arm: bool,
         sites: Vec<(Span, bool)>,
     },
-    /// The built-in type or class `name`, at `at`, read as a value.
-    TypeAsValue { name: String, at: Span },
+    /// The built-in type or class `name`, at `at`, read as a value. A type alias `name` that
+    /// names the type `alias` is read as one that has none: it has no constructor.
+    TypeAsValue {
+        name: String,
+        at: Span,
+        alias: Option<String>,
+    },
     /// The interface `name`, at `at`, read as a value.
     InterfaceAsValue { name: String, at: Span },
     /// The function `name`, at `at`, read as a value. `takes_arguments` when it has parameters.
@@ -1378,6 +1403,7 @@ pub(crate) enum ClashKind {
     Class,
     Enum,
     Interface,
+    Alias,
     BuiltInType,
 }
 
@@ -1390,6 +1416,7 @@ impl ClashKind {
             ClashKind::Class => "class",
             ClashKind::Enum => "enum",
             ClashKind::Interface => "interface",
+            ClashKind::Alias => "type alias",
             ClashKind::BuiltInType => "built-in type",
         }
     }
@@ -1513,6 +1540,21 @@ fn one_of(types: &[String]) -> String {
     format!("{} or {end}", rest.join(", "))
 }
 
+/// `n` with a comma before each group of three digits: `100000` is `100,000`.
+fn thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let first = digits.len() % 3;
+    let groups = (first..digits.len()).step_by(3);
+    let mut out = digits[..first].to_string();
+    for at in groups {
+        if !out.is_empty() {
+            out.push(',');
+        }
+        out.push_str(&digits[at..at + 3]);
+    }
+    out
+}
+
 /// What a name is defined as.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Definition {
@@ -1527,6 +1569,7 @@ pub(crate) enum Definition {
     Variant,
     LoopLabel,
     Interface,
+    Alias,
 }
 
 impl Definition {
@@ -1551,6 +1594,7 @@ impl Definition {
             Definition::Variant => "variant",
             Definition::LoopLabel => "loop label",
             Definition::Interface => "interface",
+            Definition::Alias => "type alias",
         }
     }
 
@@ -1564,7 +1608,8 @@ impl Definition {
             | Definition::Binding
             | Definition::Type
             | Definition::LoopLabel
-            | Definition::Interface => "used",
+            | Definition::Interface
+            | Definition::Alias => "used",
         }
     }
 }
@@ -2686,6 +2731,35 @@ impl From<DiagnosticKind> for Diagnostic {
                 };
                 Diagnostic::coded(code, at, message)
             }
+            DiagnosticKind::AliasCycle {
+                name,
+                at,
+                through,
+                steps,
+            } => {
+                let message = if through.is_empty() {
+                    format!("type alias `{name}` refers to itself")
+                } else {
+                    format!(
+                        "type alias `{name}` refers to itself through {}",
+                        listed(&through, "and")
+                    )
+                };
+                let d = Diagnostic::coded(code, at, message)
+                    .with_help("use an enum or a class for a type that holds itself");
+                steps.into_iter().fold(d, |d, (from, to, span)| {
+                    d.with_secondary(span, format!("`{from}` uses `{to}` here"))
+                })
+            }
+            DiagnosticKind::AliasTooLarge { ty, at, limit } => Diagnostic::coded(
+                code,
+                at,
+                format!(
+                    "the type that `{ty}` names holds more than {} distinct types",
+                    thousands(limit)
+                ),
+            )
+            .with_help("hold an inner part in a field of a class or an enum"),
             DiagnosticKind::InheritedArgument {
                 arg,
                 interface,
@@ -3535,10 +3609,16 @@ impl From<DiagnosticKind> for Diagnostic {
                     edits,
                 })
             }
-            DiagnosticKind::NestingTooDeep { at, limit } => {
+            DiagnosticKind::NestingTooDeep { at, limit, alias: None } => {
                 Diagnostic::coded(code, at, "nesting is too deep")
                     .with_help(format!("the limit is {limit} levels"))
             }
+            DiagnosticKind::NestingTooDeep { at, limit, alias: Some(ty) } => Diagnostic::coded(
+                code,
+                at,
+                format!("the type that `{ty}` names nests deeper than {limit} levels"),
+            )
+            .with_help("hold an inner part in a field of a class or an enum"),
             DiagnosticKind::InvalidUtf8 { at } => {
                 Diagnostic::coded(code, at, "source is not valid UTF-8")
                     .with_help("save the file as UTF-8")
@@ -3815,9 +3895,14 @@ impl From<DiagnosticKind> for Diagnostic {
                     edits,
                 })
             }
-            DiagnosticKind::TypeAsValue { name, at } => {
+            DiagnosticKind::TypeAsValue { name, at, alias: None } => {
                 Diagnostic::coded(code, at, format!("`{name}` is a type, not a value"))
             }
+            DiagnosticKind::TypeAsValue { name, at, alias: Some(ty) } => Diagnostic::coded(
+                code,
+                at,
+                format!("`{name}` is a type alias of `{ty}`, which has no constructor"),
+            ),
             DiagnosticKind::InterfaceAsValue { name, at } => {
                 Diagnostic::coded(code, at, format!("`{name}` is an interface, not a value"))
             }

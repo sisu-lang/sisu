@@ -5,6 +5,7 @@ use std::{fmt, mem};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use super::alias::Through;
 use super::generic::{GenericSig, Site, mismatched};
 use super::interface::Slot;
 use super::unused_names::Used;
@@ -216,7 +217,8 @@ impl Checker<'_> {
 
     /// `Enum.member`, or `Enum.member(args)` when `call` gives the arguments and the span of their
     /// parentheses, where `Enum` is the enum `id`, which `site` writes: the variant `member`
-    /// built, or an error.
+    /// built, or an error. Through an alias, the variant has the type that the alias names, and
+    /// the alias's parameters are the type arguments that the arguments bind.
     pub(super) fn enum_path(
         &mut self,
         span: Span,
@@ -224,6 +226,7 @@ impl Checker<'_> {
         member: &ast::Ident,
         call: Option<(&[ast::Arg], Span)>,
         site: Site<'_>,
+        through: Option<&Through>,
     ) -> Checked {
         let info = &self.enums[id.0];
         let enum_name = info.name.name.as_str();
@@ -264,7 +267,7 @@ impl Checker<'_> {
         let generic = !info.type_params.is_empty();
         let args = match call {
             _ if generic && call.is_some() != v.fields.is_empty() => {
-                return self.generic_variant_args(span, (id, variant), member, call, site);
+                return self.generic_variant_args(span, (id, variant), member, call, site, through);
             }
             None if v.fields.is_empty() => Vec::new(),
             Some((args, _)) if !v.fields.is_empty() => {
@@ -331,15 +334,34 @@ impl Checker<'_> {
         member: &ast::Ident,
         call: Option<(&[ast::Arg], Span)>,
         site: Site<'_>,
+        through: Option<&Through>,
     ) -> Checked {
         let info = &self.enums[id.0];
         let v = &info.variants[variant];
         let enum_name = info.name.name;
         // Built only for a diagnostic.
         let path = format_args!("{enum_name}.{}", member.name);
-        let (declared, fields, labels) =
-            (info.type_params.clone(), v.fields.clone(), v.labels.clone());
-        let bounds = info.bounds.clone();
+        let (declared, bounds, ret, fields) = match through {
+            None => (
+                info.type_params.clone(),
+                info.bounds.clone(),
+                Type::intern(TypeKind::Enum(id, own_args(&info.type_params))),
+                v.fields.clone(),
+            ),
+            // The payload has the types that the alias's arguments for the enum's parameters
+            // make them.
+            Some(through) => {
+                let TypeKind::Enum(_, list) = through.ty.kind() else {
+                    unreachable!("an alias that builds a variant should name an enum");
+                };
+                let fields = v.fields.clone();
+                let fields = (fields.into_iter())
+                    .map(|ty| ty.and_then(|ty| self.subst(ty, list.get())))
+                    .collect();
+                (through.params.clone(), Vec::new(), through.ty, fields)
+            }
+        };
+        let labels = self.enums[id.0].variants[variant].labels.clone();
         let args = call.map_or(&[][..], |(args, _)| args);
         let labeled = if labels.iter().all(Option::is_some) && !labels.is_empty() {
             let names: Vec<_> = labels.iter().flatten().copied().collect();
@@ -363,7 +385,7 @@ impl Checker<'_> {
             declared: &declared,
             owner: &[],
             params: &fields,
-            ret: Some(Type::intern(TypeKind::Enum(id, own_args(&declared)))),
+            ret: Some(ret),
             bounds: &bounds,
         };
         let written = (site.written, site.angles);
@@ -372,11 +394,13 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         };
         let failed = labeled || args.iter().any(mismatched);
+        // The bounds of the enum, on the arguments that the alias's parameters took.
+        let held = through.is_none() || self.bounded_use(ty, span);
         match args.into_iter().collect() {
-            Ok(args) if !failed => Ok(self.spilled(span, ty, args, |args| {
+            Ok(args) if !failed && held => Ok(self.spilled(span, ty, args, |args| {
                 tir::ExprKind::Variant { id, variant, args }
             })),
-            _ => Err(Poisoned::of((!failed).then_some(ty))),
+            _ => Err(Poisoned::of((!failed && held).then_some(ty))),
         }
     }
 

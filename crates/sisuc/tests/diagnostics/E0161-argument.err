@@ -1,0 +1,10 @@
+error[E0161]: type alias `Loop` refers to itself
+ --> E0161-argument.sisu:2:6
+  |
+2 | type Loop = Pairs<Loop>
+  |      ^^^^         ---- `Loop` uses `Loop` here
+  |
+  = help: use an enum or a class for a type that holds itself
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0161

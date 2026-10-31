@@ -1,0 +1,11 @@
+error[E0034]: `Grid` is already a type alias
+ --> E0034-alias.sisu:3:7
+  |
+1 | type Grid = [[char?]]
+  |      ---- first defined here
+2 |
+3 | class Grid {
+  |       ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0034

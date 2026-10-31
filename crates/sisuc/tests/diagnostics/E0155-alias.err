@@ -1,0 +1,8 @@
+error[E0155]: `[[char?]]` is a built-in type; only the prelude extends it
+ --> E0155-alias.sisu:3:8
+  |
+3 | extend Grid {
+  |        ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0155

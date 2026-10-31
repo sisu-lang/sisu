@@ -1,0 +1,25 @@
+class Pair<A, B> {
+    first: A
+    second: B
+}
+
+type B1<T> = Pair<[T], T?>
+type B2<T> = Pair<B1<[T]>, B1<T?>>
+type B3<T> = Pair<B2<[T]>, B2<T?>>
+type B4<T> = Pair<B3<[T]>, B3<T?>>
+type B5<T> = Pair<B4<[T]>, B4<T?>>
+type B6<T> = Pair<B5<[T]>, B5<T?>>
+type B7<T> = Pair<B6<[T]>, B6<T?>>
+type B8<T> = Pair<B7<[T]>, B7<T?>>
+type B9<T> = Pair<B8<[T]>, B8<T?>>
+type B10<T> = Pair<B9<[T]>, B9<T?>>
+type B11<T> = Pair<B10<[T]>, B10<T?>>
+type B12<T> = Pair<B11<[T]>, B11<T?>>
+type B13<T> = Pair<B12<[T]>, B12<T?>>
+type B14<T> = Pair<B13<[T]>, B13<T?>>
+type B15<T> = Pair<B14<[T]>, B14<T?>>
+type B16<T> = Pair<B15<[T]>, B15<T?>>
+
+fn main() {
+    print(1)
+}

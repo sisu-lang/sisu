@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 
 use super::expr::{CHARS, OPS, arithmetic_value};
-use super::scope::{Class, Const, Enum, Field, Func, Ty, Var, Variant};
+use super::scope::{Alias, Class, Const, Enum, Field, Func, Ty, Var, Variant, Wrap};
 use super::stmt::Jumps;
 use super::writer::Piece;
 use super::{
@@ -22,6 +22,8 @@ const SIZES: [u64; 3] = [0, 16, 100];
 pub(crate) const MAX_FIELDS: usize = 3;
 /// The most classes and enums a program declares.
 const MAX_TYPES: usize = 3;
+/// The most type aliases a program declares.
+const MAX_ALIASES: usize = 3;
 /// The most methods of a class.
 const MAX_METHODS: usize = 2;
 /// The most interfaces a program declares, and the most requirements of one.
@@ -347,6 +349,7 @@ impl Gen<'_> {
             }
         }
         self.generics();
+        self.aliases();
         self.fuel += functions;
         let mut items = 0;
         while items < MAX_ITEMS && self.pick(4) != 0 && self.spend(1) {
@@ -429,6 +432,54 @@ impl Gen<'_> {
             })
             .collect();
         (self.cost.of_main(&costs), known)
+    }
+
+    /// `type Al<n> = T` or `type Al<n><T> = [T]`: another name for a type, or for a type over a
+    /// parameter, that later types are now and then written as, and objects and variants built
+    /// through.
+    fn aliases(&mut self) {
+        for id in 0..self.alias_pick(MAX_ALIASES + 1) {
+            let name = format!("Al{id}");
+            self.w.text(&format!("type {name}"));
+            if heads(self.alias_pick(3)) {
+                let wrap = [Wrap::Array, Wrap::Optional, Wrap::Nested][self.alias_pick(3)];
+                self.w.text(&format!("<T> = {}", wrap.body()));
+                self.scope.aliases.push(Alias {
+                    name,
+                    plain: None,
+                    wrap: Some(wrap),
+                });
+            } else {
+                let ty = self.alias_type();
+                self.w.text(&format!(" = {ty}"));
+                self.scope.aliases.push(Alias {
+                    name,
+                    plain: Some(ty),
+                    wrap: None,
+                });
+            }
+            self.w.line();
+        }
+    }
+
+    /// The type of a plain alias: a value type, or a class or an enum declared so far, alone or
+    /// in an array or an optional.
+    fn alias_type(&mut self) -> Ty {
+        let (types, generic) = (self.scope.types.len(), self.scope.generic_types.len());
+        let pick = self.alias_pick(Ty::VALUES.len() + types + generic);
+        let leaf = if pick < Ty::VALUES.len() {
+            Ty::VALUES[pick].clone()
+        } else if pick < Ty::VALUES.len() + types {
+            self.scope.types[pick - Ty::VALUES.len()].clone()
+        } else {
+            self.scope.generic_types[pick - Ty::VALUES.len() - types].clone()
+        };
+        match self.alias_pick(4) {
+            1 => Ty::Array(Box::new(leaf)),
+            2 => Ty::Optional(Box::new(leaf)),
+            3 => Ty::Array(Box::new(Ty::Array(Box::new(leaf)))),
+            _ => leaf,
+        }
     }
 
     /// Writes a known site's text by `write`, which the coverage test leaves out.

@@ -1,0 +1,8 @@
+error[E0105]: `Numbers` is a type alias of `[i64]`, which has no constructor
+ --> E0105-alias.sisu:4:14
+  |
+4 |     let xs = Numbers(1)
+  |              ^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0105

@@ -25,7 +25,7 @@ pub(crate) const SEEDS: u64 = 64;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.
-const EXCLUDED: [(&str, &str); 15] = [
+const EXCLUDED: [(&str, &str); 16] = [
     (
         "ast::BrokenKind::Function",
         "only an item with a syntax error is broken",
@@ -40,6 +40,10 @@ const EXCLUDED: [(&str, &str); 15] = [
     ),
     (
         "ast::BrokenKind::Constant",
+        "only an item with a syntax error is broken",
+    ),
+    (
+        "ast::BrokenKind::Alias",
         "only an item with a syntax error is broken",
     ),
     (
@@ -114,7 +118,12 @@ const IDENTITY: &str = "reach: a class is compared with `is` or against `None`";
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 103] = [
+const REACH: [&str; 108] = [
+    "reach: a type alias takes a parameter",
+    "reach: a type is written as an alias",
+    "reach: a type is written as a generic alias",
+    "reach: an object is built through an alias",
+    "reach: a variant is named through an alias",
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -482,6 +491,8 @@ struct Walk {
     generic_funcs: FxHashSet<String>,
     generic_classes: FxHashSet<String>,
     generic_enums: FxHashSet<String>,
+    /// The type aliases of the program being walked.
+    aliases: FxHashSet<String>,
     /// Whether the function being walked is generic.
     in_generic: bool,
     /// The function being walked, and its parameters.
@@ -712,6 +723,7 @@ impl Walk {
                 ast::Item::Class(_)
                 | ast::Item::Enum(_)
                 | ast::Item::Const(_)
+                | ast::Item::Alias(_)
                 | ast::Item::Interface(_)
                 | ast::Item::Extend(_) => None,
             })
@@ -721,6 +733,7 @@ impl Walk {
             ast::Item::Class(_)
             | ast::Item::Enum(_)
             | ast::Item::Const(_)
+            | ast::Item::Alias(_)
             | ast::Item::Interface(_)
             | ast::Item::Extend(_) => None,
         });
@@ -729,6 +742,7 @@ impl Walk {
             ast::Item::Function(_)
             | ast::Item::Enum(_)
             | ast::Item::Const(_)
+            | ast::Item::Alias(_)
             | ast::Item::Interface(_)
             | ast::Item::Extend(_) => None,
         });
@@ -737,9 +751,11 @@ impl Walk {
             ast::Item::Function(_)
             | ast::Item::Class(_)
             | ast::Item::Const(_)
+            | ast::Item::Alias(_)
             | ast::Item::Interface(_)
             | ast::Item::Extend(_) => None,
         });
+        self.aliases = alias_names(program);
         self.variants = program
             .items
             .iter()
@@ -754,6 +770,7 @@ impl Walk {
                 ast::Item::Function(_)
                 | ast::Item::Class(_)
                 | ast::Item::Const(_)
+                | ast::Item::Alias(_)
                 | ast::Item::Interface(_)
                 | ast::Item::Extend(_) => None,
             })
@@ -764,6 +781,7 @@ impl Walk {
                 ast::BrokenKind::Class => "ast::BrokenKind::Class",
                 ast::BrokenKind::Enum => "ast::BrokenKind::Enum",
                 ast::BrokenKind::Constant => "ast::BrokenKind::Constant",
+                ast::BrokenKind::Alias => "ast::BrokenKind::Alias",
                 ast::BrokenKind::Interface => "ast::BrokenKind::Interface",
                 ast::BrokenKind::Extend => "ast::BrokenKind::Extend",
             });
@@ -779,6 +797,13 @@ impl Walk {
                 ast::Item::Interface(interface) => self.ast_interface(interface),
                 ast::Item::Extend(extend) => self.ast_extend(extend),
                 ast::Item::Enum(e) => self.ast_enum(e),
+                ast::Item::Alias(alias) => {
+                    self.mark("ast::Item::Alias");
+                    if !alias.params.is_empty() {
+                        self.mark("reach: a type alias takes a parameter");
+                    }
+                    self.type_expr(&alias.ty);
+                }
                 ast::Item::Const(c) => {
                     self.mark("ast::Item::Const");
                     if let Some(ty) = &c.ty {
@@ -1019,9 +1044,17 @@ impl Walk {
             _ => self.mark("reach: a type has two or more `?` layers"),
         }
         match &ty.kind {
-            ast::TypeKind::Name(_) => self.mark("ast::TypeKind::Name"),
+            ast::TypeKind::Name(name) => {
+                self.mark("ast::TypeKind::Name");
+                if self.aliases.contains(name.as_str()) {
+                    self.mark("reach: a type is written as an alias");
+                }
+            }
             ast::TypeKind::Applied(applied) => {
                 self.mark("ast::TypeKind::Applied");
+                if self.aliases.contains(applied.name.as_str()) {
+                    self.mark("reach: a type is written as a generic alias");
+                }
                 if applied.name.as_str() == "Option" {
                     self.mark("reach: a type is spelled `Option<..>`");
                 }
@@ -1604,6 +1637,9 @@ impl Walk {
                     self.mark(&format!("reach: `{callee}` builds a `Result`"));
                 }
                 self.generic_call(callee, types.is_empty());
+                if self.aliases.contains(callee) {
+                    self.mark("reach: an object is built through an alias");
+                }
                 self.mark(&format!("prelude {callee}"));
                 if callee == "panic" {
                     self.message(args);
@@ -1648,6 +1684,9 @@ impl Walk {
                 self.mark(&format!("ast::ExprKind::MethodCall.safe = {safe}"));
                 if enum_name(receiver) == Some("Option") && method.name.as_str() == "Some" {
                     self.mark("reach: `Some` builds an optional");
+                }
+                if enum_name(receiver).is_some_and(|n| self.aliases.contains(n)) {
+                    self.mark("reach: a variant is named through an alias");
                 }
                 let built = enum_name(receiver)
                     .and_then(|receiver| self.variants.get(receiver))
@@ -2761,6 +2800,15 @@ fn enum_name(receiver: &ast::Expr) -> Option<&str> {
     }
 }
 
+/// The names of the type aliases of `program`.
+fn alias_names(program: &ast::Program) -> FxHashSet<String> {
+    let aliases = program.items.iter().filter_map(|item| match item {
+        ast::Item::Alias(alias) => Some(alias.name.name.as_str().to_string()),
+        _ => None,
+    });
+    aliases.collect()
+}
+
 /// The name `e` is, if it is one.
 fn name(e: &ast::Expr) -> Option<&str> {
     if let ast::ExprKind::Name(name) = &e.kind {
@@ -3172,7 +3220,7 @@ fn generated_interfaces_should_reach_their_maxima() {
 }
 
 #[test]
-fn main_holds_several_statements() {
+fn main_should_hold_several_statements() {
     // Each top-level statement of `main` takes a share of its fuel, so the first cannot spend
     // it all, and `main` seldom stops before its first.
     let mut counts: Vec<usize> = seeds()
@@ -3190,6 +3238,7 @@ fn main_holds_several_statements() {
                     | ast::Item::Class(_)
                     | ast::Item::Enum(_)
                     | ast::Item::Const(_)
+                    | ast::Item::Alias(_)
                     | ast::Item::Interface(_)
                     | ast::Item::Extend(_) => None,
                 })
@@ -6542,7 +6591,7 @@ fn without_unused(source: &str) -> (String, usize) {
                 cuts.push(i.span.range());
                 interfaces.insert(i.name.name.as_str().to_string());
             }
-            ast::Item::Const(_) | ast::Item::Interface(_) => {}
+            ast::Item::Const(_) | ast::Item::Alias(_) | ast::Item::Interface(_) => {}
         }
     }
     for f in methods

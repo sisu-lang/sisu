@@ -91,8 +91,10 @@ conforms to after its name, `class Circle: Shape`, and may choose an
 associated type, `type Item = i64`. An `extend` block,
 `extend<T> Stack<T>: Eq { ... }`, parses into its type parameters, its target,
 an optional interface and its methods; a broken one keeps the name of its
-target. In a type, `Self` is the conforming type and `S.Item` is an
-associated type. In an expression, a `<` after a name starts type
+target. A `type Name<A, B> = T` item, a type alias, parses into its name, its
+parameter names, which take no bounds, and the type it names; it ends at its
+line, as a `const` does. In a type, `Self` is the conforming type and `S.Item`
+is an associated type. In an expression, a `<` after a name starts type
 arguments only when the tokens up to its `>` read as types and a `(` or `.`
 follows, as in `first<i64>([])`; any other `<` compares. A `>=` that closes a
 list, as in `let s: Stack<i64>= x`, splits into the `>` and the `=`. It rejects an item that nests deeper than
@@ -154,6 +156,16 @@ equality, `is` and `??`), `check/branch.rs` `if` and `if let` and the join of
 their branch types, `check/call.rs` calls, method calls and constructors, and
 `check/member.rs` fields and methods found through `.` and `?.`,
 including the methods of `extend` blocks.
+`check/alias.rs` resolves each type alias before any signature, each after the
+aliases that its body names, so a chain of any length needs no recursion; an
+alias that reaches itself is E0161. An alias is a `Type`, never an item: a use
+is `Type::subst` of the body over the arguments, through one memo for the whole
+check, and the body names its parameters by place, so an alias applied to its own
+parameters is its body. A written type stops at 256 levels (E0071) and at
+100,000 distinct types (E0162). A bound or an associated type in a body that names
+a parameter is checked at each use. A class, an enum, an optional or a number
+type that an alias names answers a constructor, a variant or a member as the
+type does, so later stages see no alias.
 `check/generic.rs` handles type parameters. It checks a generic function,
 class or enum once, at its definition, with each type parameter an opaque
 `TypeKind::Param`. A value of a type parameter can be moved, stored, passed,

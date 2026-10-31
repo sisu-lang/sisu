@@ -1,0 +1,9 @@
+type Grid = [[char?]]
+
+class Grid {
+    cells: i64
+}
+
+fn main() {
+    print(1)
+}

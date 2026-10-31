@@ -86,6 +86,11 @@ The names `print`, `eprint`, `panic`, `read_line` and `dbg` stay built in: the
 checker and codegen write them. The **Language interface**s are in `lang.sisu`,
 which the compiler checks before the prelude.
 
+**Type alias**:
+Another name for a type, declared with `type`: `type Grid = [[char?]]`. A
+`Grid` is a `[[char?]]` everywhere; for a distinct type, use a newtype.
+_Avoid_: typedef
+
 **RC check**:
 A check that a program built with `--rc-checks` makes on its reference
 counts: no retain or release of a count below 1, no read of a string, class

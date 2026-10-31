@@ -190,6 +190,7 @@ impl Checker<'_> {
         if self.body.choosing.contains(&name) {
             let shadows = self.class_ids.contains_key(&name)
                 || self.enum_ids.contains_key(&name)
+                || self.aliases.names.contains_key(&name)
                 || built_in_type(name.as_str()).is_some();
             self.report(DiagnosticKind::UnknownType {
                 name: name.to_string(),
@@ -249,6 +250,10 @@ impl Checker<'_> {
                 form: UnknownForm::ConcreteBase { own },
             });
             return None;
+        }
+        // The parameter of an alias takes no bound: no closure says which interface it means.
+        if self.body.alias.is_some() && matches!(base_ty.kind(), TypeKind::Param(..)) {
+            return self.alias_assoc(ty, base, base_ty, name);
         }
         let closure = self.closure_len(base_ty);
         // A base whose bounds went past the limit is reported already, and unknown.

@@ -1,0 +1,19 @@
+class Heap<T: Ord> {
+    item: T
+}
+
+interface Iter {
+    type Item
+    fn first(self) -> Item
+}
+
+type H<T> = Heap<T>
+type X<T> = T.Item
+
+fn heap(h: H<bool>) {}
+
+fn item(x: X<string>) {}
+
+fn main() {
+    print(1)
+}

@@ -1,0 +1,10 @@
+interface Iter {
+    type Item
+    fn first(self) -> Item
+}
+
+type Wrong<T> = T.Itme
+
+fn main() {
+    print(1)
+}

@@ -1,0 +1,20 @@
+error[E0154]: `bool` does not conform to `Ord`
+  --> E0154-alias.sisu:13:12
+   |
+ 1 | class Heap<T: Ord> {
+   |               --- required by this bound
+...
+13 | fn heap(h: H<bool>) {}
+   |            ^^^^^^^
+
+error[E0154]: `string` does not conform to `Iter`
+  --> E0154-alias.sisu:15:12
+   |
+11 | type X<T> = T.Item
+   |             ------ required by this bound
+...
+15 | fn item(x: X<string>) {}
+   |            ^^^^^^^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0154

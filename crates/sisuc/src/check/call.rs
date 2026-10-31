@@ -3,6 +3,7 @@
 
 use std::fmt;
 
+use super::alias::{Through, Via};
 use super::expr::{fits, no_member, option_written, path, postfix};
 use super::generic::{GenericSig, Site, mark, mismatched};
 use super::interface::LangPath;
@@ -55,13 +56,23 @@ impl Checker<'_> {
         if let Some(checked) = self.prelude_call(span, callee, args, site.expected) {
             return checked;
         }
+        match self.through(callee.name) {
+            Via::Not => {}
+            Via::Error => {
+                self.stray(args);
+                return Err(Poisoned::error());
+            }
+            Via::To(through) => return self.call_through(span, site, args, &through),
+        }
         if let Some(to @ (Type::I64 | Type::U8 | Type::F64 | Type::CHAR | Type::STRING)) =
             built_in_type(callee.name.as_str())
         {
             return self.convert(span, callee.span, to, args);
         }
         match declared {
-            (Some(Declared::Known(class)), _) => self.construct_class(span, class, site, args),
+            (Some(Declared::Known(class)), _) => {
+                self.construct_class(span, class, site, args, None)
+            }
             (_, Some(Declared::Known(func))) => self.invoke(span, func, None, site, args),
             _ if self.interface_ids.contains_key(&callee.name) => {
                 self.report(DiagnosticKind::InterfaceAsValue {
@@ -76,7 +87,7 @@ impl Checker<'_> {
             _ if callee.name.as_str() == "Some" => self.some(span, site, None, args),
             // `Ok` and `Err` are the prelude's, and no user item can take their names.
             _ if let Some((id, _)) = self.result_variant(callee.name) => {
-                self.enum_path(span, id, callee, Some((args, callee.span)), site)
+                self.enum_path(span, id, callee, Some((args, callee.span)), site, None)
             }
             _ => match self.bare_variant(callee.name, callee.span) {
                 Some(d) => {
@@ -86,6 +97,35 @@ impl Checker<'_> {
                 }
                 None => self.unknown_call(site, args),
             },
+        }
+    }
+
+    /// `A(args)`, where the alias `A` names the type `through` says: a class builds an object, as
+    /// the class does with the alias's fixed arguments, and a number, `char` or `string` converts.
+    /// Any other type has no constructor, which is reported.
+    fn call_through(
+        &mut self,
+        span: Span,
+        site: Site<'_>,
+        args: &[ast::Arg],
+        through: &Through,
+    ) -> Checked {
+        match through.ty.kind() {
+            TypeKind::Class(class, _) => {
+                self.construct_class(span, class, site, args, Some(through))
+            }
+            TypeKind::I64 | TypeKind::U8 | TypeKind::F64 | TypeKind::Char | TypeKind::String => {
+                self.convert(span, site.name.span, through.ty, args)
+            }
+            _ => {
+                self.report(DiagnosticKind::TypeAsValue {
+                    name: site.name.name.to_string(),
+                    at: site.name.span,
+                    alias: Some(self.type_name(through.ty)),
+                });
+                self.stray(args);
+                Err(Poisoned::error())
+            }
         }
     }
 
@@ -328,16 +368,26 @@ impl Checker<'_> {
     /// Whether `member` of `base`, a path, is a value, whose `<` and `>` were comparisons when
     /// type arguments follow it: a variant without a payload of an enum `base` names without
     /// type arguments, or a constant of `f64`, or another language's name for one.
-    fn type_member_value(&self, base: &ast::Expr, member: &ast::Ident) -> bool {
+    fn type_member_value(&mut self, base: &ast::Expr, member: &ast::Ident) -> bool {
         let ExprKind::Name(name) = base.kind else {
             return false;
         };
+        let variant = |checker: &Self, id: tir::EnumId| {
+            let info = &checker.enums[id.0];
+            (info.index.get(&member.name))
+                .is_some_and(|&variant| info.variants[variant].fields.is_empty())
+        };
         if let Some(&Declared::Known(id)) = self.enum_ids.get(&name) {
-            let info = &self.enums[id.0];
-            return (info.index.get(&member.name))
-                .is_some_and(|&variant| info.variants[variant].fields.is_empty());
+            return variant(self, id);
         }
-        built_in_type(name.as_str()) == Some(Type::F64)
+        // An alias is the type that it names, unless a local takes the name.
+        if let Via::To(through) = self.through(name)
+            && let TypeKind::Enum(id, _) = through.ty.kind()
+            && self.lookup(name).is_none()
+        {
+            return variant(self, id);
+        }
+        self.built_in_of(name) == Some(Type::F64)
             && number::constant_named(member.name.as_str()).is_some()
     }
 
@@ -655,6 +705,7 @@ impl Checker<'_> {
         let labeled = self.labels(args);
         let sig = &self.signatures[func.0];
         let (name, params, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
+        let shown = sig.param_shown.clone();
         let declared = sig.type_params.clone();
         let bounds = sig.bounds.clone();
         let conforming = sig.conformance.is_some();
@@ -675,7 +726,13 @@ impl Checker<'_> {
             let checked = args
                 .iter()
                 .zip(&params)
-                .map(|(arg, &param)| mark(self.operand(&arg.value, param)))
+                .zip(&shown)
+                .map(|((arg, &param), text)| {
+                    if let (Some(want), Some(text)) = (param, text) {
+                        self.show(arg.value.span, want, text);
+                    }
+                    mark(self.operand(&arg.value, param))
+                })
                 .collect();
             (checked, TypeArgs::NONE, ret)
         } else {
@@ -783,22 +840,42 @@ impl Checker<'_> {
         labeled
     }
 
-    /// `C(f: e, ...)`, a construction of the class `class`, which `site` writes.
+    /// `C(f: e, ...)`, a construction of the class `class`, which `site` writes. Through an alias,
+    /// the object has the type that the alias names, and the alias's parameters are the type
+    /// arguments that the arguments bind.
     fn construct_class(
         &mut self,
         span: Span,
         class: tir::ClassId,
         site: Site<'_>,
         args: &[ast::Arg],
+        through: Option<&Through>,
     ) -> Checked {
         self.record(Used::Class(class), span);
         let info = &self.classes[class.0];
         let name = info.name.name.as_str();
-        let fields: Vec<(Symbol, Option<Type>)> =
-            info.fields.iter().map(|f| (f.name.name, f.ty)).collect();
-        if !info.type_params.is_empty() {
-            let declared = info.type_params.clone();
-            let bounds = info.bounds.clone();
+        let (declared, bounds, ret, fields): (_, _, _, Vec<(Symbol, Option<Type>)>) = match through
+        {
+            None => (
+                info.type_params.clone(),
+                info.bounds.clone(),
+                Type::intern(TypeKind::Class(class, own_args(&info.type_params))),
+                info.fields.iter().map(|f| (f.name.name, f.ty)).collect(),
+            ),
+            // The fields have the types that the alias's arguments for the class's parameters
+            // make them.
+            Some(through) => {
+                let TypeKind::Class(_, list) = through.ty.kind() else {
+                    unreachable!("an alias that builds an object should name a class");
+                };
+                let named: Vec<_> = info.fields.iter().map(|f| (f.name.name, f.ty)).collect();
+                let fields = (named.into_iter())
+                    .map(|(f, ty)| (f, ty.and_then(|ty| self.subst(ty, list.get()))))
+                    .collect();
+                (through.params.clone(), Vec::new(), through.ty, fields)
+            }
+        };
+        if !declared.is_empty() {
             let names: Vec<_> = fields.iter().map(|(f, _)| *f).collect();
             if !self.shaped(span, &name, &names, args) {
                 return Err(Poisoned::error());
@@ -810,7 +887,7 @@ impl Checker<'_> {
                 declared: &declared,
                 owner: &[],
                 params: &params,
-                ret: Some(Type::intern(TypeKind::Class(class, own_args(&declared)))),
+                ret: Some(ret),
                 bounds: &bounds,
             };
             let written = (site.written, site.angles);
@@ -820,14 +897,28 @@ impl Checker<'_> {
                 return Err(Poisoned::error());
             };
             let failed = args.iter().any(mismatched);
+            // The bounds of the class, on the arguments that the alias's parameters took.
+            let held = through.is_none() || self.bounded_use(ty, span);
             return match args.into_iter().collect() {
-                Ok(args) => {
+                Ok(args) if held => {
                     Ok(self.spilled(span, ty, args, |args| tir::ExprKind::New { class, args }))
                 }
+                Ok(_) => Err(Poisoned::error()),
                 Err(_) => Err(Poisoned::of((!failed).then_some(ty))),
             };
         }
-        let ty = Type::intern(TypeKind::Class(class, TypeArgs::NONE));
+        let ty = ret;
+        // A mismatch shows a field's alias as written.
+        let shown: Vec<_> = self.classes[class.0]
+            .fields
+            .iter()
+            .map(|f| f.shown.clone())
+            .collect();
+        for ((arg, text), (_, want)) in args.iter().zip(&shown).zip(&fields) {
+            if let (Some(want), Some(text)) = (want, text) {
+                self.show(arg.value.span, *want, text);
+            }
+        }
         match self.construct(span, &name, &fields, args) {
             Ok(args) => Ok(self.spilled(span, ty, args, |args| tir::ExprKind::New { class, args })),
             Err(failed) => Err(Poisoned::of((!failed).then_some(ty))),
