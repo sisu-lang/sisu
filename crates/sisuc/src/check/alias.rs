@@ -380,7 +380,6 @@ impl Checker<'_> {
         if written.is_empty() {
             return Via::To(through);
         }
-        self.aliases.uses += 1;
         let Some(list) = self.type_args_of(name, &through.params, written, angles, false) else {
             return Via::Error;
         };
@@ -721,7 +720,8 @@ impl Checker<'_> {
     /// context cannot, so the first is the one reported, with the form that the value has: the
     /// call of a conversion, or `Alias<...>.member` with `(...)` when a call follows. The caller
     /// asks only for a value that otherwise checks, so a mistake of the member or of the
-    /// arguments comes first.
+    /// arguments comes first. A context that failed does not hide this report: no context can
+    /// bind these parameters.
     pub(super) fn report_unbound_alias(
         &mut self,
         site: Site<'_>,
@@ -956,10 +956,7 @@ impl Checker<'_> {
         if self.aliases.infos.is_empty() {
             return;
         }
-        let known = |checker: &Self, ty: Option<Type>| match ty {
-            Some(ty) if ty.has_assoc() => checker.normalize(ty),
-            ty => ty,
-        };
+        let known = |checker: &Self, ty: Option<Type>| ty.and_then(|ty| checker.normalize(ty));
         for i in 0..self.signatures.len() {
             let params: Vec<_> = (self.signatures[i].params.iter())
                 .map(|&ty| known(self, ty))

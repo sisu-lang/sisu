@@ -2492,8 +2492,6 @@ impl Checker<'_> {
             (Some(Declared::Known(id)), ..) => Some(self.classes[id.0].type_params.len()),
             (_, Some(Declared::Known(id)), _) => Some(self.signatures[id.0].type_params.len()),
             (.., Some(Declared::Known(id))) => Some(self.enums[id.0].type_params.len()),
-            // An alias counts and resolves the arguments itself (`through_site`).
-            _ if self.aliases.names.contains_key(&n) && self.lookup(n).is_none() => return None,
             _ => None,
         };
         match params {
