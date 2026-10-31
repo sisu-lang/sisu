@@ -1154,14 +1154,14 @@ fn shown_by_dbg_should_label_only_the_fields_that_dbg_shows() {
     // label. A class without a written `Display` keeps its label, and so does a type that its
     // written `Display` does not match.
     let on = |display: &str, payload: &str| {
-        format!(
-            "class W<T> {{\n    v: T\n}}\n{display}enum E<T> {{\n    A({payload})\n}}\nclass Hold<T> {{\n    h: T\n}}\n"
-        )
+        format!("class W<T> {{\n    v: T\n}}\n{display}enum E<T> {{\n    A({payload})\n}}\n")
     };
     let for_i64 =
         "extend W<i64>: Display {\n    fn to_string(self) -> string {\n        \"w\"\n    }\n}\n";
     let bounded = "extend<T: Eq> W<T>: Display {\n    fn to_string(self) -> string {\n        \"w\"\n    }\n}\n";
     let held = "let e: E<i64> = E.A(W(v: 1))\n    dbg(e)";
+    // A bound that fails still skips the type, so the field gets no label. This is accepted.
+    let failing = "interface Mark {}\nextend<T: Mark> W<T>: Display {\n    fn to_string(self) -> string {\n        \"w\"\n    }\n}\n";
     for (display, payload, shown, label, what) in [
         (
             for_i64,
@@ -1192,6 +1192,13 @@ fn shown_by_dbg_should_label_only_the_fields_that_dbg_shows() {
             "dbg(W(v: \"s\"))",
             true,
             "no match, no parameter",
+        ),
+        (
+            failing,
+            "W<T>",
+            "dbg(W(v: \"s\"))",
+            false,
+            "a bound that fails",
         ),
         ("", "W<T>", held, true, "no written Display"),
     ] {
