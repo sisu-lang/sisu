@@ -2,9 +2,9 @@
 //       `match` and a generic call, as the arguments of `Ok` and of `id`
 // WHEN each call has a `u8` or `[u8]` context, or a concrete `u8` argument beside the literal
 // THEN each literal takes the type of the call, as a bare literal does, and the program prints
-//      the value of each line (the comments give them); before, such a literal was checked alone
-//      as an `i64` and the call failed (#313)
+//      the value of each line (the comments give them)
 // AND a literal does not outrank a concrete argument: `pick(dbg(11), x)` has the type of `x`
+// Before, such a literal was checked alone as an `i64` and the call failed (#313).
 fn id<T>(x: T) -> T { x }
 fn pick<T>(a: T, b: T) -> T { [a, b][0] }
 

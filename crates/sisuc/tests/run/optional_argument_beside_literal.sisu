@@ -1,16 +1,19 @@
-// GIVEN generic functions `id` and `pick` (`pick` returns its second argument), a generic
+// GIVEN generic functions `id`, `pick` (it returns its second argument), `k`, `first` and `k2`, a
 //       function `opt` that returns `T?`, a class with a generic method `m`, and an interface
 //       `R` with a generic requirement `r`
 // WHEN an optional value (`Some(2)`, `opt(2)`, an `if` with a `None` branch, a safe call) is an
-//      argument of a generic call beside a plain literal, with no context and with an `i64?`
-//      context, in both orders, and a safe call is the argument of `id`, on a present receiver
-//      and on an absent one
+//      argument of a generic call beside a plain literal, in both orders
+// AND the call has no context or an `i64?` context, and the optional is also inside an array
+// AND a safe call is the argument of `id`, on a present receiver and on an absent one
 // THEN the parameter is the optional type, as it is when the optional comes first, the literal
 //      fits it, and each line prints the value, or 9 for an absent one
 // AND the same holds for a safe call of a method and for one of a bound's requirement
 fn id<T>(x: T) -> T { x }
 fn pick<T>(_a: T, b: T) -> T { b }
 fn opt<T>(x: T) -> T? { Some(x) }
+fn k<T>(a: T, _b: [T]) -> T { a }
+fn first<T>(xs: [T]) -> T { xs[0] }
+fn k2<T, U>(_a: T, b: U) -> U { b }
 
 class B {
     fn m<T>(self, x: T) -> T { x }
@@ -62,4 +65,29 @@ fn main() {
     let none: Q? = None
     let g = via(none)
     print("{g ?? 9}") // 9
+    // An optional inside an array literal binds first as well.
+    let h = pick([1], [Some(12)])
+    print("{h[0] ?? 9}") // 12
+    let i = pick([[1]], [[Some(13)]])
+    print("{i[0][0] ?? 9}") // 13
+    let j = pick([1], id([Some(14)]))
+    print("{j[0] ?? 9}") // 14
+    let l = pick([1], [None, Some(15)])
+    print("{l[0] ?? 9} {l[1] ?? 9}") // 9 15
+    let m = pick([1], [if yes { 16 } else { None }])
+    print("{m[0] ?? 9}") // 16
+    let n = pick([1], [present?.m(17)])
+    print("{n[0] ?? 9}") // 17
+    let o = k(1, [Some(18)])
+    print("{o ?? 9}") // 1
+    let p: i64? = k(1, [Some(19)])
+    print("{p ?? 9}") // 1
+    let r: i64? = first([Some(20)])
+    print("{r ?? 9}") // 20
+    print("{pick([1], [Some(21)]) == [Some(21)]}") // true
+    // The `Some` of `k2(Some(1), [2])` is not returned, so `[Some(22)]` binds first.
+    let t = pick(k2(Some(1), [2]), [Some(22)])
+    print("{t[0] ?? 9}") // 22
+    let u = pick([1], k2(Some(1), [23]))
+    print("{u[0]}") // 23
 }

@@ -159,8 +159,8 @@ The rules:
 - An argument also takes the parts that an earlier argument fixed, with the other parts left open. For `f<A, B>(a: A, p: Two<A, B>)`, `f("s", Two(a: 1, b: true))` reports `1`: expected `string`, found `i64`, because `"s"` gives `string` for `A`. This also applies inside `Some(...)`, an array literal or another generic call.
 - When the argument has the wrong shape as a whole, the error is at the whole argument, and a type parameter that the call has not fixed yet keeps its name. For `take<T>(xs: [T])`, `take(Ok(1))` reports `Ok(1)`: expected `[T]`, found `Result<i64, E>`, because no `E` makes a `Result` an array.
 - An integer literal argument takes the type that the expected type gives its type parameter. This is also true under `dbg`, a block, an `if`, a `match` or another generic call: `let d: u8 = id({ 250 })` is valid.
-- A concrete argument fixes a type parameter before a literal does: in `pick(1, x)` with an `x: u8`, `T` is `u8`. An argument that makes an optional, such as `Some(2)` or `if c { 2 } else { None }`, fixes it before a plain literal: `pick(1, Some(2))` is an `i64?`.
-- In an array literal, or in the branches of an `if` or a `match`, a generic call that waits for its type takes it from the other elements. With an `x: u8`, `[x, id(None)]` is a `[u8?]`.
+- A concrete argument fixes a type parameter before a literal does. In `pick(1, x)` with an `x: u8`, `T` is `u8`. An argument that makes an optional, such as `Some(2)` or `if c { 2 } else { None }`, fixes it before a plain literal. So `pick(1, Some(2))` is an `i64?`. An argument that holds an optional, such as `[Some(2)]`, also comes first. So `pick([1], [Some(2)])` is a `[i64?]`.
+- In an array literal, a generic call that waits for its type takes it from the other elements. In an `if` or a `match`, it takes it from the other branches. With an `x: u8`, `[x, id(None)]` is a `[u8?]`.
 - A `None` or a `[]` alone has no type. When nothing else fixes a type parameter, the call is an error ([E0050](../diagnostics/E0050.md)). Annotate the result, or write the type arguments.
 
 ```sisu

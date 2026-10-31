@@ -1837,16 +1837,21 @@ fn a_method_that_returns_an_optional_should_make_the_call_that_holds_it_optional
     }
 }
 
-/// With no context, the arguments that are optional are checked before a plain literal beside
-/// them, so the parameter is the optional type and the literal fits it. Before, the literal bound
-/// the parameter to `i64` first and the optional was rejected. The order of the arguments, and a
-/// context of `i64?` or `u8?`, make no difference.
+/// With no context, the arguments that hold an optional, also inside an array, are checked before
+/// a plain literal beside them, so the parameter is the optional type and the literal fits it.
+/// Before, the literal bound the parameter to `i64` first and the optional was rejected. The
+/// order of the arguments, and a context of `i64?` or `u8?`, make no difference. A `Some` that
+/// the callee does not return (`k2(Some(1), [2])`) does not make its call hold an optional.
 #[test]
 fn an_optional_argument_should_bind_before_a_plain_literal() {
     with_prelude();
     let decls = "fn pick<T>(a: T, b: T) -> T { a }\n\
         fn pick3<T>(a: T, b: T, c: T) -> T { a }\n\
         fn opt<T>(x: T) -> T? { Some(x) }\n\
+        fn id<T>(x: T) -> T { x }\n\
+        fn k<T>(a: T, b: [T]) -> T { a }\n\
+        fn first<T>(xs: [T]) -> T { xs[0] }\n\
+        fn k2<T, U>(a: T, b: U) -> U { b }\n\
         fn h<T>(a: T, b: T?) -> T { a }\n\
         class Bx {\n    fn pick<T>(self, a: T, b: T) -> T { a }\n}\n";
     // The reversed orders passed before this change: they are controls.
@@ -1869,6 +1874,23 @@ fn an_optional_argument_should_bind_before_a_plain_literal() {
         "let v: u8? = pick(1, Some(2))",
         "let v: u8? = pick3(1, 2, Some(3))",
         "let v: u8? = bx.pick(1, opt(2))",
+        // The optional is inside an array literal, or in a value that passes one on.
+        "let v = pick([1], [Some(2)])",
+        "let v = pick([1], [None, Some(2)])",
+        "let v = pick([[1]], [[Some(2)]])",
+        "let v = pick([1], id([Some(2)]))",
+        "let v = k(1, [Some(2)])",
+        "let v = pick([Some(2)], [1])",
+        "let v = pick([[Some(2)]], [[1]])",
+        "let v: [i64?] = pick([1], [Some(2)])",
+        "let v: [u8?] = pick([1], [Some(2)])",
+        // The context is the optional that the array holds, and the call returns the parameter.
+        "let v: i64? = k(1, [Some(2)])",
+        "let v: i64? = first([Some(1)])",
+        "let v: u8? = first([Some(1)])",
+        // The `Some` is not returned, so the call holds no optional: the array binds first.
+        "let v = pick([1], k2(Some(1), [2]))",
+        "let v = pick(k2(Some(1), [2]), [Some(3)])",
     ] {
         let src =
             format!("{decls}fn main() {{\n    let c = true\n    let bx = Bx()\n    {row}\n}}");

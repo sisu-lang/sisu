@@ -255,12 +255,17 @@ enum Makes {
     /// Its declared return type is an optional: `Some`, or `fn opt<T>(x: T) -> T?`.
     Always,
     /// Its declared return type is a bare type parameter `P`. The call is then an optional when
-    /// one of the arguments at these places is. Each of them has the declared type `P`. Bit `i`
-    /// is set for the place `i`.
+    /// one of the arguments at the first set of places is. Each of them has the declared type
+    /// `P`. It is also an optional when one of the arguments at the second set of places holds an
+    /// optional. Each of them has the declared type `P` in arrays, such as `[P]`. Bit `i` is set
+    /// for the place `i`.
     // shortcut: a place from 64 on does not count, so a callee of 64 parameters or more, with an
     // optional argument from place 64 on, reports "expected `u8`, found `u8?`"; upgrade if a callee
     // with more parameters needs it.
-    Through(u64),
+    // shortcut: an argument at a place of the second set counts when it holds an optional at any
+    // depth, so `first([[Some(1)]])` for `fn first<T>(xs: [T]) -> T` counts, and `T` is `[i64?]`;
+    // upgrade if such a call needs a context that is not an optional.
+    Through(u64, u64),
 }
 
 impl Makes {
@@ -269,21 +274,44 @@ impl Makes {
     fn of(ret: Option<Type>, params: impl Iterator<Item = Option<Type>>) -> Makes {
         match ret.map(|ret| (ret, ret.kind())) {
             Some((_, TypeKind::Optional(_))) => Makes::Always,
-            Some((ret, TypeKind::Param(..))) => Makes::Through(
-                params
-                    .take(u64::BITS as usize)
-                    .enumerate()
-                    .filter(|&(_, param)| param == Some(ret))
-                    .fold(0, |places, (i, _)| places | 1 << i),
-            ),
+            Some((ret, TypeKind::Param(..))) => {
+                let (mut bare, mut inner) = (0, 0);
+                for (i, param) in params.take(u64::BITS as usize).enumerate() {
+                    match param {
+                        Some(param) if param == ret => bare |= 1 << i,
+                        Some(param) if under_arrays(param) == ret => inner |= 1 << i,
+                        _ => {}
+                    }
+                }
+                Makes::Through(bare, inner)
+            }
             _ => Makes::No,
         }
     }
 
     /// Whether the argument at place `i` is of the bare return parameter.
     fn through(&self, i: usize) -> bool {
-        matches!(self, Makes::Through(places) if i < u64::BITS as usize && (places >> i) & 1 == 1)
+        matches!(self, Makes::Through(places, _) if i < u64::BITS as usize && (places >> i) & 1 == 1)
     }
+
+    /// Whether the argument at place `i` is of the return parameter in arrays.
+    fn inside(&self, i: usize) -> bool {
+        matches!(self, Makes::Through(_, places) if i < u64::BITS as usize && (places >> i) & 1 == 1)
+    }
+
+    /// Whether the argument `ranked` at place `i` makes the call an optional: it is one at a
+    /// place of the bare parameter, or it holds one at a place of the parameter in arrays.
+    fn passes_optional(&self, i: usize, ranked: Ranked) -> bool {
+        self.through(i) && ranked.optional || self.inside(i) && ranked.holds_optional
+    }
+}
+
+/// `ty` with its array levels taken off: `P` for `[[P]]`.
+fn under_arrays(mut ty: Type) -> Type {
+    while let TypeKind::Array(element) = ty.kind() {
+        ty = element;
+    }
+    ty
 }
 
 /// The hole, `_`: the type of a part that a context has not fixed yet (see `Bindings::partial`).
@@ -818,10 +846,10 @@ pub(super) enum Rank {
     ///
     /// A generic call ranks `Literal` as its arguments do only if its declared return type names
     /// a type parameter of its own. The arguments bind that parameter. Else the arguments do not
-    /// give the call its type, and the call is `Concrete`, as the call of a callee that is not
-    /// generic is (`len_of([1])` is `i64`; `bx.get(1)` is the `T` of the receiver). Such a call
-    /// whose arguments all wait stays `Waits`: no context binds what they leave, and the call
-    /// reports it.
+    /// give the call its type, and the call is `Concrete`. A call of a callee that is not generic
+    /// is `Concrete` too (`len_of([1])` is `i64`; `bx.get(1)` is the `T` of the receiver). Such a
+    /// call whose arguments all wait stays `Waits`: no context binds what they leave, and the
+    /// call reports it.
     Literal,
     /// Its type cannot come from itself: it needs the context of its call.
     Waits,
@@ -841,6 +869,12 @@ pub(super) struct Ranked {
     /// stops at a `Concrete` part. A `Concrete` value can carry `true` (`opt(x)` with a concrete
     /// `x`), and no reader reads it.
     pub(super) optional: bool,
+    /// Whether the type of the value has an optional that a plain literal in its place would
+    /// not have. It is set where `optional` is. An array literal keeps it from its elements:
+    /// `[Some(2)]` holds an optional, but is not an optional element. So does a call that passes
+    /// on, at a place of its returned parameter, an argument that holds one: `id([Some(2)])`.
+    /// The order of the arguments of a call reads it (see `infer_call`), and joins do not.
+    pub(super) holds_optional: bool,
     /// For a `Literal` value: whether its type is the type of an integer literal it holds, which
     /// is a scalar (see `sibling`). An integer literal is. So is a value that passes such a
     /// literal on as it is: `dbg`, a block, a branch, or a call that returns a type parameter,
@@ -854,16 +888,19 @@ impl Ranked {
     const CONCRETE: Self = Self {
         rank: Rank::Concrete,
         optional: false,
+        holds_optional: false,
         scalar: false,
     };
     const LITERAL: Self = Self {
         rank: Rank::Literal,
         optional: false,
+        holds_optional: false,
         scalar: true,
     };
     const WAITS: Self = Self {
         rank: Rank::Waits,
         optional: false,
+        holds_optional: false,
         scalar: false,
     };
 
@@ -888,7 +925,8 @@ impl Ranked {
 
 /// The rank of a value made of `parts`, each a value that its type comes from. The rank is
 /// `Waits` when every part waits, `Literal` when no part is `Concrete` and one is `Literal`,
-/// else `Concrete`. It is `optional` when a part is, and `scalar` when each `Literal` part is.
+/// else `Concrete`. It is `optional` or `holds_optional` when a part is, and `scalar` when each
+/// `Literal` part is.
 /// It stops at the first `Concrete` part, so the parts after it are not ranked.
 fn combine(parts: impl IntoIterator<Item = Ranked>) -> Ranked {
     let mut found = Ranked::WAITS;
@@ -900,6 +938,7 @@ fn combine(parts: impl IntoIterator<Item = Ranked>) -> Ranked {
             Rank::Waits => {}
         }
         found.optional |= part.optional;
+        found.holds_optional |= part.holds_optional;
         if part.rank == Rank::Literal {
             scalar &= part.scalar;
         }
@@ -1022,7 +1061,7 @@ impl Checker<'_> {
         }
         // Whether every call in an argument fits its declaration.
         let mut fit = vec![true; args.len()];
-        let (ranks, optional, through) = self.rank_arguments(&call, sig, args, &mut fit);
+        let (ranks, holds, through) = self.rank_arguments(&call, sig, args, &mut fit);
         // A context that holds a hole gives the arguments below more context (see `hint`).
         if let (Some(ret), Some(want)) = (sig.ret, expected) {
             call.bindings.hint(ret, want);
@@ -1048,12 +1087,13 @@ impl Checker<'_> {
             }
             self.report_fresh(&mut call, span);
         }
-        // With no context, the first argument of rank 1 binds the parameter, and one that is
-        // `optional` gives the wider type: `pick(1, Some(2))` binds `T = i64?`, where `1` first
-        // would bind `T = i64` and reject `Some(2)`. A literal then fits the optional, as `1`
-        // fits `i64?`. So the arguments that are `optional` are checked before the others.
+        // With no context, the first argument of rank 1 binds the parameter, and one that holds
+        // an optional gives the wider type: `pick(1, Some(2))` binds `T = i64?`, where `1` first
+        // would bind `T = i64` and reject `Some(2)`. So does `pick([1], [Some(2)])`, which binds
+        // `T = [i64?]`. A literal then fits the optional, as `1` fits `i64?`. So the arguments
+        // that hold an optional are checked before the others.
         for first in [true, false] {
-            let wanted = |&(i, _): &(usize, _)| ranks[i] == 1 && optional[i] == first;
+            let wanted = |&(i, _): &(usize, _)| ranks[i] == 1 && holds[i] == first;
             for (i, arg) in args.iter().enumerate().filter(wanted) {
                 self.infer_arg(&mut call, i, &arg.value, sig.params[i], None);
             }
@@ -1119,14 +1159,14 @@ impl Checker<'_> {
 
     /// The rank of each argument of the call: 2 for `Rank::Waits`, 1 for `Rank::Literal`, else 0
     /// for `Rank::Concrete`. An argument for a type that names an unbound parameter only under
-    /// an associated type waits for it, whatever the argument is (see `waits_for_assoc`). Also
-    /// whether each argument of rank 1 is `Ranked::optional`, which sets the order of rank 1
-    /// (see `infer_call`). `fit` is cleared where a call in an argument does not fit its
-    /// declaration. Also whether the return type is a bare type parameter and an argument of
-    /// rank 1 that has exactly that type makes an optional (see `Ranked::optional`): the
-    /// context then meets the return type whole.
-    // shortcut: only an argument of the bare parameter counts; `first([Some(1)])` with a `u8?`
-    // context meets the payload; upgrade if such calls are wanted.
+    /// an associated type waits for it, whatever the argument is (see `waits_for_assoc`).
+    ///
+    /// Also whether each argument of rank 1 is `Ranked::holds_optional`, which sets the order of
+    /// rank 1 (see `infer_call`). `fit` is cleared where a call in an argument does not fit its
+    /// declaration.
+    ///
+    /// Also whether the return type is a bare type parameter, and an argument of rank 1 makes it
+    /// an optional (see `Makes::passes_optional`). The context then meets the return type whole.
     fn rank_arguments(
         &mut self,
         call: &Inference<'_>,
@@ -1136,7 +1176,7 @@ impl Checker<'_> {
     ) -> (Vec<u8>, Vec<bool>, bool) {
         let makes = Makes::of(sig.ret, sig.params.iter().copied());
         let mut through = false;
-        let (ranks, optional) = iter::zip(args, fit)
+        let (ranks, holds) = iter::zip(args, fit)
             .enumerate()
             .map(|(i, (arg, fit))| {
                 let writes_assoc =
@@ -1148,14 +1188,14 @@ impl Checker<'_> {
                 match ranked.rank {
                     Rank::Waits => (2, false),
                     Rank::Literal => {
-                        through |= ranked.optional && makes.through(i);
-                        (1, ranked.optional)
+                        through |= makes.passes_optional(i, ranked);
+                        (1, ranked.holds_optional)
                     }
                     Rank::Concrete => (0, false),
                 }
             })
             .unzip();
-        (ranks, optional, through)
+        (ranks, holds, through)
     }
 
     /// Checks the bounds of the parameters `bound`, which a binding has just bound, and the bounds
@@ -1582,17 +1622,16 @@ impl Checker<'_> {
         }
     }
 
-    /// The array literal `elements` for `[element]`, where `element` names an unbound
-    /// parameter. The elements are checked in the three waves of `Rank` (see `sibling_rank`),
-    /// as `infer_value` does,
-    /// so a later `None` or integer literal meets the parameter already bound by an earlier
-    /// element, and so wraps. A `None` or `[]` with nothing bound is reported as `joined`
-    /// reports it: the first alone, unless an element failed already. Each element gets its own
-    /// context, so no hole reaches the type of the array. `accepted` says that `takes_context`
-    /// has accepted the literal, so each element takes its context with no new walk. Else
-    /// each element asks `call_context`: an element that takes no context, such as a local
-    /// variable, is checked on its own, and the others keep theirs. An element of type `unit`
-    /// or `never` has no value, which is reported at once, and binds nothing.
+    /// The array literal `elements` for `[element]`, where `element` names an unbound parameter.
+    /// The elements are checked in the three waves of `Rank` (see `sibling_rank`), as `infer_value`
+    /// does. So a later `None` or integer literal meets the parameter that an earlier element
+    /// bound, and so wraps. A `None` or `[]` with nothing bound is reported as `joined` reports it:
+    /// the first alone, unless an element failed already. Each element gets its own context, so no
+    /// hole reaches the type of the array. `accepted` says that `takes_context` has accepted the
+    /// literal, so each element takes its context with no new walk. Else each element asks
+    /// `call_context`: an element that takes no context, such as a local variable, is checked on
+    /// its own, and the others keep theirs. An element of type `unit` or `never` has no value,
+    /// which is reported at once, and binds nothing.
     fn inferred_array(
         &mut self,
         call: &mut Inference<'_>,
@@ -1787,12 +1826,16 @@ impl Checker<'_> {
     ///
     /// The value `Waits` when its type cannot come from itself. A bare `[]` or `None` waits, and
     /// so does a payload-free variant of a generic enum. So does a call of a generic function or
-    /// method, or a construction of a generic class or variant, its type arguments not written,
-    /// when its arguments fit its declaration and all wait. Such a call waits also when its
-    /// arguments fit and the parameter types leave one of its own type parameters unnamed that
-    /// the call's type names, which no argument can bind. The value is `Literal` when its type
-    /// comes from the defaults of its integer literals alone, with values that wait: an integer
-    /// literal or arithmetic over them, or such a call. Else it is `Concrete`.
+    /// method, or a construction of a generic class or variant, its type arguments not written.
+    /// Such a call waits when its arguments fit its declaration and all wait.
+    ///
+    /// Such a call waits also in one more case. Its arguments fit, and the parameter types leave
+    /// one of its own type parameters unnamed. The call's type names that parameter, so no
+    /// argument can bind it.
+    ///
+    /// The value is `Literal` when its type comes from the defaults of its integer literals
+    /// alone, with values that wait. These are an integer literal, arithmetic over them, or such
+    /// a call. Else it is `Concrete`.
     ///
     /// A value that passes its context to its parts has the rank of its parts (see `combine`).
     /// An array literal has the rank of its elements. A call of a generic callee, `dbg` among
@@ -1857,6 +1900,7 @@ impl Checker<'_> {
         match &e.kind {
             _ if bare_none(e) => Ranked {
                 optional: true,
+                holds_optional: true,
                 ..Ranked::WAITS
             },
             _ if int_literal(e) => Ranked::LITERAL,
@@ -1889,6 +1933,7 @@ impl Checker<'_> {
                     let safe = matches!(e.kind, K::MethodCall { safe: true, .. });
                     Ranked {
                         optional: ranked.optional || safe,
+                        holds_optional: ranked.holds_optional || safe,
                         ..ranked
                     }
                 }
@@ -1945,13 +1990,15 @@ impl Checker<'_> {
         }
         // An argument is walked here and only here: an `open` call walks none.
         let mut through = false;
+        let mut holds = false;
         let mut passes = true;
         let mut found = if open {
             Ranked::WAITS
         } else {
             combine(args.iter().enumerate().map(|(i, arg)| {
                 let ranked = self.rank_value(&arg.value, fit);
-                through |= ranked.optional && makes.through(i);
+                through |= makes.passes_optional(i, ranked);
+                holds |= ranked.holds_optional && (makes.through(i) || makes.inside(i));
                 passes &= ranked.rank != Rank::Literal || makes.through(i);
                 ranked
             }))
@@ -1962,6 +2009,7 @@ impl Checker<'_> {
         // Only a literal at a place of the returned type parameter passes its type on.
         found.scalar &= passes;
         found.optional = through || matches!(makes, Makes::Always);
+        found.holds_optional = holds || found.optional;
         *fit &= found.rank != Rank::Waits || shaped;
         found
     }
@@ -2384,7 +2432,7 @@ impl Checker<'_> {
             return CallShape {
                 generic: true,
                 shaped: matches!(args, [arg] if arg.label.is_none()),
-                makes: Makes::Through(1),
+                makes: Makes::Through(1, 0),
                 ..CallShape::default()
             };
         }
