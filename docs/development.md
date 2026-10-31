@@ -449,6 +449,15 @@ $ scripts/fuzz.sh --target program --cmin
 $ scripts/fuzz.sh --target program --coverage
 ```
 
+To check one seed of the series that the unit tests generate from, with
+properties 1 to 3, name it in `SISU_FUZZ_SEED`. A failure of property 1 shows
+only the errors, and W0010 or W0011, not the warnings that the property
+allows:
+
+```console
+$ SISU_FUZZ_SEED=72 cargo nextest run -p sisuc --lib seed_from_env --run-ignored only
+```
+
 The script first builds the runtime archive in release mode and points
 `SISU_RUNTIME` at it, since the builds link it. The target's corpus is
 `fuzz/corpus/program`, its failing inputs go to `fuzz/artifacts/program/`,
