@@ -1204,9 +1204,9 @@ impl Checker<'_> {
     /// in the program, and a type that names one once in each body. Each is a type that `mono`
     /// instantiates when the program uses it. The worst input is a branching chain of enums, each
     /// with two ways to the next level, which forms 2^n types at its last level. The search for
-    /// the failing part on the error path (`failing_leaf`) keeps the same two caches, `leaves` and
-    /// `Body.leaves`. It decides each type once in the same way, and it has the same bound (user,
-    /// 2026-10-31).
+    /// the failing part on the error path (`failing_leaf`) keeps two caches split the same way
+    /// (`leaves` and `Body.leaves`). It decides each type once in the same way, and it has the
+    /// same bound (user, 2026-10-31).
     pub(super) fn conforms(&mut self, ty: Type, interface: InterfaceId, args: TypeArgs) -> bool {
         if interface == self.lang.display {
             return generated(self.lang, ty, interface) == Generated::Holds;

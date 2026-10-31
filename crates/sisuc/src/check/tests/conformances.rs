@@ -587,6 +587,46 @@ fn failing_leaf_should_read_a_type_that_names_a_parameter_again_in_the_next_body
     assert_eq!(LEAF_STEPS.get(), 2, "one read for each body that fails");
 }
 
+/// The chain `E0<T>` … `En<T>`, where `Ek` has the variant `A(E(k+1)<T>)` and `En` holds `T`, and
+/// one generic function that compares each of its `n + 1` enums with itself. `T` has no `Eq`, so
+/// each comparison fails.
+fn linear_chain(n: usize) -> String {
+    let mut decls: Vec<String> = (0..n)
+        .map(|k| format!("enum E{k}<T> {{\n    A(E{m}<T>)\n}}\n", m = k + 1))
+        .collect();
+    decls.push(format!("enum E{n}<T> {{\n    A(T)\n}}\n"));
+    let params: Vec<String> = (0..=n).map(|k| format!("a{k}: E{k}<T>")).collect();
+    let lines: Vec<String> = (0..=n)
+        .map(|k| format!("    let _ = a{k} == a{k}\n"))
+        .collect();
+    format!(
+        "{}fn f<T>({}) {{\n{}}}\nfn main() {{}}",
+        decls.concat(),
+        params.join(", "),
+        lines.concat()
+    )
+}
+
+/// A type that names a type parameter and is read inside the walk of another type is kept for the
+/// body: on a linear chain, where one body compares every level, each level is read once, not
+/// once for each level above it.
+#[test]
+fn failing_leaf_should_read_each_level_of_a_linear_chain_once_in_a_body() {
+    let count = |n: usize| {
+        LEAF_STEPS.set(0);
+        let (_, ds) = checked(&linear_chain(n));
+        assert_eq!(
+            ds.iter().filter(|d| d.code() == Code::ParamLacks).count(),
+            n + 1,
+            "each comparison should give its own report"
+        );
+        LEAF_STEPS.get()
+    };
+    let (one, two, three) = (count(20), count(40), count(60));
+    assert_eq!(one, 21, "one read for each enum of the chain");
+    assert_near_linear(one, two, three);
+}
+
 /// The search for the failing part decides each type once, so on the error path it costs steps
 /// in proportion to the types that the chain forms, which is what the query costs when the bound
 /// holds.

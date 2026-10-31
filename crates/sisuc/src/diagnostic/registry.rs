@@ -1965,7 +1965,7 @@ pub(crate) enum PreludeBound {
 #[derive(Clone)]
 pub(crate) struct BlockNeed {
     pub method: String,
-    pub param: String,
+    pub stands: String,
 }
 
 /// What the report of a missing operator (`NoOperator`) says besides the missing operator.
@@ -2524,7 +2524,7 @@ impl From<DiagnosticKind> for Diagnostic {
                             }
                             Some(PreludeBound::Call { need: Some(need) }) => d.with_label(format!(
                                 "`{}` needs `{}: {interface}`",
-                                need.method, need.param
+                                need.method, need.stands
                             )),
                             Some(PreludeBound::Since { part, need: None }) => d.with_label(format!(
                                 "required by the bound of this call, since `{part}` does not conform to `{interface}`"
@@ -2534,7 +2534,7 @@ impl From<DiagnosticKind> for Diagnostic {
                                 need: Some(need),
                             }) => d.with_label(format!(
                                 "`{}` needs `{}: {interface}`, and `{part}` does not conform to `{interface}`",
-                                need.method, need.param
+                                need.method, need.stands
                             )),
                             None => d,
                         };
