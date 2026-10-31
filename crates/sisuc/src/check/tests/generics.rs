@@ -1765,6 +1765,44 @@ fn a_concrete_argument_should_bind_before_a_literal_under_a_transparent_form() {
     codes(&src, &[(Code::Mismatch, (line, 18))]);
 }
 
+/// A call whose declared return type names none of its own type parameters has a type that its
+/// arguments do not give: a method that returns the type parameter of its receiver, or a function
+/// that returns a concrete type. It ranks as a call of a callee that is not generic does, so the
+/// outer call meets it whole (`u8?`), not its literal arguments.
+#[test]
+fn a_call_whose_type_its_arguments_do_not_give_should_rank_concrete() {
+    with_prelude();
+    let decls = "fn id<T>(x: T) -> T { x }\n\
+        fn pick<T>(a: T, b: T) -> T { a }\n\
+        fn len_of<T>(xs: [T]) -> i64 { 0 }\n\
+        class Bx<T> {\n    v: T\n\
+        fn get<U>(self, u: U) -> T { self.v }\n\
+        fn put<U>(self, x: T, u: U) -> T { x }\n}\n\
+        interface G<A> {\n    fn rget<U>(self, u: U) -> A\n}\n\
+        class C {}\n\
+        extend C: G<u8?> {\n    fn rget<U>(self, u: U) -> u8? { Some(4) }\n}\n\
+        fn f<X: G<u8?>>(x: X) -> u8 {\n    let r: u8? = id(x.rget(1))\n    r ?? 0\n}\n";
+    for row in [
+        "let r: u8? = id(bx.get(1))",
+        "let r: u8? = id(bx.get(Some(1)))",
+        "let r: u8? = id(bx.put(1, 5))",
+        "let r: u8 = f(C())",
+        "let r: u8? = pick(bx.get(1), 2)",
+        "let r: i64 = pick(len_of([1]), 2)",
+    ] {
+        let src = format!(
+            "{decls}fn main() {{\n    let v: u8? = Some(3)\n    let bx = Bx(v: v)\n    {row}\n}}"
+        );
+        clean_row(row, &src);
+    }
+    // The call is `i64` whatever its argument is, so it binds before `x`, which is then the one
+    // reported.
+    let src =
+        format!("{decls}fn main() {{\n    let x: u8 = 3\n    let r = pick(len_of([1]), x)\n}}");
+    let line = decls.lines().count() + 3;
+    codes(&src, &[(Code::Mismatch, (line, 31))]);
+}
+
 /// A name that a branch binds hides an outer local of the same name while ranking, as it does
 /// while checking: the call on the branch's local is the one that runs, and the outer local has
 /// no method `m` to be checked against it.

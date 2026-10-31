@@ -231,6 +231,9 @@ struct CallShape {
     some: bool,
     /// How the call makes an optional by itself (see `Ranked::optional`).
     makes: Makes,
+    /// Whether the fitting call's declared return type names none of the callee's own type
+    /// parameters, so that its arguments do not give the call its type (see `Rank`).
+    outside: bool,
 }
 
 /// How a call of a generic callee makes an optional by itself, from its declaration.
@@ -242,8 +245,11 @@ enum Makes {
     /// Its declared return type is an optional: `Some`, or `fn opt<T>(x: T) -> T?`.
     Always,
     /// Its declared return type is a bare type parameter `P`, so the call is an optional when
-    /// one of the arguments at these places is, each of which has the declared type `P`.
-    Through(Vec<usize>),
+    /// one of the arguments at these places is, each of which has the declared type `P`. Bit `i`
+    /// is set for the place `i`.
+    // shortcut: a place from 64 on does not count; upgrade if a callee with more parameters
+    // needs it.
+    Through(u64),
 }
 
 impl Makes {
@@ -254,14 +260,28 @@ impl Makes {
             Some((_, TypeKind::Optional(_))) => Makes::Always,
             Some((ret, TypeKind::Param(..))) => Makes::Through(
                 params
+                    .take(u64::BITS as usize)
                     .enumerate()
                     .filter(|&(_, param)| param == Some(ret))
-                    .map(|(i, _)| i)
-                    .collect(),
+                    .fold(0, |places, (i, _)| places | 1 << i),
             ),
             _ => Makes::No,
         }
     }
+
+    /// Whether the argument at place `i` is of the bare return parameter.
+    fn through(&self, i: usize) -> bool {
+        matches!(self, Makes::Through(places) if i < u64::BITS as usize && (places >> i) & 1 == 1)
+    }
+}
+
+/// Whether `ret`, a callee's declared return type, names none of the type parameters from
+/// `owner` on of the `len` that the callee has: its own. The arguments do not give such a call
+/// its type.
+fn names_no_own(ret: Option<Type>, len: usize, owner: usize) -> bool {
+    ret.is_some_and(|ret| {
+        !ret.has_param() || !named_params(iter::once(Some(ret)), len)[owner..].contains(&true)
+    })
 }
 
 /// The hole, `_`: the type of a part that a context has not fixed yet (see `Bindings::partial`).
@@ -791,9 +811,13 @@ pub(super) enum Rank {
     /// Its type comes from itself.
     Concrete,
     /// Its type comes from the defaults of its integer literals, or from the arguments of a
-    /// generic call that rank so, and it takes the type of the others when they fix one. The
-    /// type of such a call may not come from them at all (`len_of([1])` is `i64`): the call
-    /// ranks as its arguments do.
+    /// generic call that rank so, and it takes the type of the others when they fix one. A
+    /// generic call ranks `Literal` as its arguments do only if its declared return type names a
+    /// type parameter of its own, which the arguments bind. Else the arguments do not give the
+    /// call its type, and it is `Concrete`, as the call of a callee that is not generic is
+    /// (`len_of([1])` is `i64`; `bx.get(1)` is the `T` of the receiver). Such a call whose
+    /// arguments all wait stays `Waits`: no context binds what they leave, and the call reports
+    /// it.
     Literal,
     /// Its type cannot come from itself: it needs the context of its call.
     Waits,
@@ -808,7 +832,8 @@ pub(super) struct Ranked {
     /// a bare type parameter and an argument of that type is `optional`; a block, its tail; an
     /// `if`, an `if let` with `else` or a `match`, when a value branch is `optional`. A context
     /// that is an optional then meets the type of the value whole, not its payload. It is
-    /// complete only for a `Literal` or `Waits` value: ranking stops at a `Concrete` part.
+    /// complete only for a `Literal` or `Waits` value: ranking stops at a `Concrete` part. A
+    /// `Concrete` value can carry `true` (`opt(x)` with a concrete `x`), and no reader reads it.
     optional: bool,
 }
 
@@ -1070,9 +1095,7 @@ impl Checker<'_> {
         args: &[ast::Arg],
         fit: &mut [bool],
     ) -> (Vec<u8>, bool) {
-        let bare = sig
-            .ret
-            .filter(|ret| matches!(ret.kind(), TypeKind::Param(..)));
+        let makes = Makes::of(sig.ret, sig.params.iter().copied());
         let mut through = false;
         let ranks = iter::zip(args, fit)
             .enumerate()
@@ -1086,7 +1109,7 @@ impl Checker<'_> {
                 match ranked.rank {
                     Rank::Waits => 2,
                     Rank::Literal => {
-                        through |= ranked.optional && bare.is_some() && sig.params[i] == bare;
+                        through |= ranked.optional && makes.through(i);
                         1
                     }
                     Rank::Concrete => 0,
@@ -1824,6 +1847,7 @@ impl Checker<'_> {
             shaped,
             open,
             makes,
+            outside,
             ..
         } = shape;
         if !generic {
@@ -1836,12 +1860,13 @@ impl Checker<'_> {
         } else {
             combine(args.iter().enumerate().map(|(i, arg)| {
                 let ranked = self.rank_value(&arg.value, fit);
-                if let Makes::Through(places) = &makes {
-                    through |= ranked.optional && places.contains(&i);
-                }
+                through |= ranked.optional && makes.through(i);
                 ranked
             }))
         };
+        if outside && found.rank == Rank::Literal {
+            return Ranked::CONCRETE;
+        }
         found.optional = through || matches!(makes, Makes::Always);
         *fit &= found.rank != Rank::Waits || shaped;
         found
@@ -1899,6 +1924,7 @@ impl Checker<'_> {
                         open: false,
                         some: true,
                         makes: Makes::Always,
+                        outside: false,
                     }
                 } else {
                     self.generic_method(receiver, method, args, *safe)
@@ -2103,6 +2129,7 @@ impl Checker<'_> {
                     leaves_open_in(sig.params.iter().copied(), ret, &sig.type_params, owner)
                 }),
             makes: Makes::of(sig.ret, sig.params.iter().copied()),
+            outside: shaped && names_no_own(sig.ret, sig.type_params.len(), owner),
             ..CallShape::default()
         }
     }
@@ -2166,6 +2193,8 @@ impl Checker<'_> {
                             leaves_open_in(params, ret, &names, interface.type_params.len())
                         }),
                     makes: Makes::of(requirement.ret, requirement.params.iter().copied()),
+                    outside: shaped
+                        && names_no_own(requirement.ret, names.len(), interface.type_params.len()),
                     ..CallShape::default()
                 }
             }
@@ -2243,7 +2272,7 @@ impl Checker<'_> {
             return CallShape {
                 generic: true,
                 shaped: matches!(args, [arg] if arg.label.is_none()),
-                makes: Makes::Through(vec![0]),
+                makes: Makes::Through(1),
                 ..CallShape::default()
             };
         }
@@ -2271,6 +2300,7 @@ impl Checker<'_> {
                             leaves_open_in(sig.params.iter().copied(), ret, &sig.type_params, 0)
                         }),
                     makes: Makes::of(sig.ret, sig.params.iter().copied()),
+                    outside: shaped && names_no_own(sig.ret, sig.type_params.len(), 0),
                     ..CallShape::default()
                 }
             }
@@ -2282,6 +2312,7 @@ impl Checker<'_> {
                 open: false,
                 some: true,
                 makes: Makes::Always,
+                outside: false,
             },
             (None, None) => self
                 .result_variant(name)
