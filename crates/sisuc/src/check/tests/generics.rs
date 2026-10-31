@@ -1939,9 +1939,9 @@ fn an_optional_argument_should_bind_before_a_plain_literal() {
 }
 
 /// A context of `i64?` or `u8?` meets the return type whole, and not its payload, when an argument
-/// holds the optional at a place of the returned parameter, with no plain literal beside it. The
-/// place can be in an array or a class, also in a call that is the argument. Before, the context
-/// met the payload, and `Some(1)` was rejected.
+/// holds the optional at a place of the returned parameter. The place can be in an array or a
+/// class, also in a call that is the argument. Before, the context met the payload, and
+/// `Some(1)` was rejected.
 #[test]
 fn a_context_should_meet_a_call_whose_argument_holds_an_optional() {
     with_prelude();

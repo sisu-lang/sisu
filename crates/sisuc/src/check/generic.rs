@@ -370,6 +370,9 @@ fn carried_places(params: impl Iterator<Item = Option<Type>>, marked: &[bool]) -
 /// The places among `params` whose type names a type parameter, of `count`, that the declared
 /// return type `ret` names too, other than under an associated type. `ret` is `None` when it
 /// did not resolve: no place is carried then.
+// shortcut: a place `T?` counts, though an optional there only fills the place's own `?`. So
+// `pick(h(1, Some(2)), Some(3))` for `fn h<T>(a: T, b: T?) -> T` is rejected, and the reversed
+// order passes; upgrade with the `T?` limit of `Makes::Through`.
 fn carried(ret: Option<Type>, params: impl Iterator<Item = Option<Type>>, count: usize) -> u64 {
     let Some(ret) = ret.filter(|_| count > 0) else {
         return 0;
@@ -941,12 +944,14 @@ pub(super) struct Ranked {
     /// `x`), and no reader reads it.
     pub(super) optional: bool,
     /// Whether the type of the value has an optional that a plain literal in its place would
-    /// not have. It is set where `optional` is. An array literal keeps it from its elements:
-    /// `[Some(2)]` holds an optional, but is not an optional element. So does a call that has an
-    /// argument that holds one at a place whose declared type names a type parameter that the
-    /// declared return type names too: `id([Some(2)])`, `wrap(Some(2))` for `-> [T]`, and
-    /// `Bx(v: Some(2))`. Not `k2(Some(1), [2])` for `fn k2<T, U>(a: T, b: U) -> U`.
-    /// The order of the arguments of a call reads it (see `infer_call`), and joins do not.
+    /// not have. A `T?` place counts too: `h(1, Some(2))` for `fn h<T>(a: T, b: T?) -> T` holds
+    /// an optional, though it fills the `?` (see `carried`). It is set where `optional` is. An
+    /// array literal keeps it from its elements: `[Some(2)]` holds an optional, but is not an
+    /// optional element. So does a call that has an argument that holds one at a place whose
+    /// declared type names a type parameter that the declared return type names too:
+    /// `id([Some(2)])`, `wrap(Some(2))` for `-> [T]`, and `Bx(v: Some(2))`. Not `k2(Some(1), [2])`
+    /// for `fn k2<T, U>(a: T, b: U) -> U`. The order of the arguments of a call reads it (see
+    /// `infer_call`), and joins do not.
     pub(super) holds_optional: bool,
     /// For a `Literal` value: whether its type is the type of an integer literal it holds, which
     /// is a scalar (see `sibling`). An integer literal is. So is a value that passes such a

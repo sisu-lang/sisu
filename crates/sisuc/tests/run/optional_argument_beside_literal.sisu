@@ -1,17 +1,20 @@
-// GIVEN generic functions `id`, `pick` (it returns its second argument), `k`, `first` and `k2`, a
-//       function `opt` that returns `T?`, a class with a generic method `m`, and an interface
-//       `R` with a generic requirement `r`
+// GIVEN generic functions `id`, `pick` (it returns its second argument), `k`, `first`, `k2`,
+//       `wrap`, `g`, `two`, `mk` and `unbox`, a class `Bx<T>`, a function `opt` that returns `T?`,
+//       a class with a generic method `m`, and an interface `R` with a generic requirement `r`
 // WHEN an optional value (`Some(2)`, `opt(2)`, an `if` with a `None` branch, a safe call) is an
 //      argument of a generic call beside a plain literal, in both orders
 // AND the call has no context or an `i64?` context, and the optional is also inside an array
 // AND a safe call is the argument of `id`, on a present receiver and on an absent one
 // AND a call wraps the optional in an array or a class, as `wrap`, `g`, `two`, `mk` and `unbox` do
 // AND a context of `i64?` or `u8?` meets the call that holds the optional whole
-// AND `first([None, Some(1)])` in an `i64??` context gives the outer `None`
+// AND the context is `i64??`, and the argument of `first` is `[None, Some(1)]`
+// AND a nested literal, as in `id(id(2))` or `id({ 2 })`, is beside a `u8`
 // THEN the parameter is the optional type, as it is when the optional comes first, the literal
 //      fits it, and each line prints the value, or 9 for an absent one
 // AND the same holds for a safe call of a method and for one of a bound's requirement
-// AND the same holds for the wrapped optional, and an integer literal nests in `id({ 2 })`
+// AND the same holds for the wrapped optional
+// AND the context gives the `Some` as the value, and the `i64??` line prints `none`
+// AND each nested-literal line prints 252
 fn id<T>(x: T) -> T { x }
 fn pick<T>(_a: T, b: T) -> T { b }
 fn opt<T>(x: T) -> T? { Some(x) }
