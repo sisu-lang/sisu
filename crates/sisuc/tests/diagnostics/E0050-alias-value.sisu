@@ -9,6 +9,9 @@ class P {
 
 type F<T> = f64
 type S<T> = string
+type N<T> = i64
+type B<T> = u8
+type C<T> = char
 type EU<T> = E
 type PU<T> = P
 
@@ -22,4 +25,8 @@ fn main() {
     print(EU.A)
     print(EU.B(1) == EU.A)
     print(PU(x: 1).x)
+    print(N.max)
+    print(B.max)
+    print(C.max)
+    print(S.len)
 }

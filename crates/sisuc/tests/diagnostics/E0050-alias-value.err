@@ -1,66 +1,98 @@
 error[E0050]: cannot infer `T` for `F`
-  --> E0050-alias-value.sisu:15:16
+  --> E0050-alias-value.sisu:18:16
    |
-15 | const X: f64 = F(3)
+18 | const X: f64 = F(3)
    |                ^
    |
    = help: write the type: `F<...>(...)`
 
 error[E0050]: cannot infer `T` for `F`
-  --> E0050-alias-value.sisu:16:16
+  --> E0050-alias-value.sisu:19:16
    |
-16 | const Y: f64 = F.pi
+19 | const Y: f64 = F.pi
    |                ^
    |
    = help: write the type: `F<...>(...)`
 
 error[E0050]: cannot infer `T` for `F`
-  --> E0050-alias-value.sisu:19:11
+  --> E0050-alias-value.sisu:22:11
    |
-19 |     print(F(3))
+22 |     print(F(3))
    |           ^
    |
    = help: write the type: `F<...>(...)`
 
 error[E0050]: cannot infer `T` for `F`
-  --> E0050-alias-value.sisu:20:11
+  --> E0050-alias-value.sisu:23:11
    |
-20 |     print(F.pi)
+23 |     print(F.pi)
    |           ^
    |
    = help: write the type: `F<...>(...)`
 
 error[E0050]: cannot infer `T` for `S`
-  --> E0050-alias-value.sisu:21:11
+  --> E0050-alias-value.sisu:24:11
    |
-21 |     print(S(3))
+24 |     print(S(3))
    |           ^
    |
    = help: write the type: `S<...>(...)`
 
 error[E0050]: cannot infer `T` for `EU`
-  --> E0050-alias-value.sisu:22:11
+  --> E0050-alias-value.sisu:25:11
    |
-22 |     print(EU.A)
+25 |     print(EU.A)
    |           ^^
    |
    = help: write the type: `EU<...>(...)`
 
 error[E0050]: cannot infer `T` for `EU`
-  --> E0050-alias-value.sisu:23:11
+  --> E0050-alias-value.sisu:26:11
    |
-23 |     print(EU.B(1) == EU.A)
+26 |     print(EU.B(1) == EU.A)
    |           ^^
    |
    = help: write the type: `EU<...>(...)`
 
 error[E0050]: cannot infer `T` for `PU`
-  --> E0050-alias-value.sisu:24:11
+  --> E0050-alias-value.sisu:27:11
    |
-24 |     print(PU(x: 1).x)
+27 |     print(PU(x: 1).x)
    |           ^^
    |
    = help: write the type: `PU<...>(...)`
 
-sisu: 8 errors
+error[E0050]: cannot infer `T` for `N`
+  --> E0050-alias-value.sisu:28:11
+   |
+28 |     print(N.max)
+   |           ^
+   |
+   = help: write the type: `N<...>(...)`
+
+error[E0050]: cannot infer `T` for `B`
+  --> E0050-alias-value.sisu:29:11
+   |
+29 |     print(B.max)
+   |           ^
+   |
+   = help: write the type: `B<...>(...)`
+
+error[E0050]: cannot infer `T` for `C`
+  --> E0050-alias-value.sisu:30:11
+   |
+30 |     print(C.max)
+   |           ^
+   |
+   = help: write the type: `C<...>(...)`
+
+error[E0050]: cannot infer `T` for `S`
+  --> E0050-alias-value.sisu:31:11
+   |
+31 |     print(S.len)
+   |           ^
+   |
+   = help: write the type: `S<...>(...)`
+
+sisu: 12 errors
 sisu: for more on a code, run `sisu explain <code>`: E0050
