@@ -1,6 +1,7 @@
 //! Array expressions: literals and their element join, `[v; n]`, indexing and methods.
 
-use super::expr::{fits, literal_type, no_member, none_literal, path, rank, typed};
+use super::expr::{fits, literal_type, no_member, none_literal, path, typed};
+use super::generic::{Rank, mark};
 use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, payload, type_of, wrap};
 use crate::ast;
 use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Literal};
@@ -57,30 +58,41 @@ impl Checker<'_> {
             self.report(d);
             return Err(Poisoned { ty: None, mismatch });
         }
-        self.joined(span, elements, quiet)
+        self.ranked(|c| c.joined(span, elements, quiet))
     }
 
-    /// The elements of a literal with no expected array type, joined in three waves by `rank`:
-    /// the concrete elements; the integer literals, typed beside the first concrete element;
-    /// then each `None` and `[]`, against the join made optional. The join runs in source
-    /// order as `branches` joins, and a `None` makes the element type optional. With no typed
-    /// element, the first `None` or `[]` cannot be inferred, which `quiet` (the context failed)
-    /// leaves unreported. With `quiet`, each concrete element is a quiet value too (see
-    /// `Body::quiet_at`). An element whose type is `Error` poisons the array.
+    /// The elements of a literal with no expected array type, joined in three waves by
+    /// `sibling_ranked`: the concrete elements; the elements that take a literal's type, typed
+    /// beside the first concrete element; then the elements that wait, against the join. The join
+    /// runs in source order as `branches` joins. An element that makes an optional by itself
+    /// (`Ranked::optional`) makes the element type optional, and is typed against the join made
+    /// optional; an element that waits and is not such is typed against the join as it is. With
+    /// no typed element, the first element that waits cannot be inferred, which `quiet` (the
+    /// context failed) leaves unreported.
+    /// With `quiet`, each concrete element is a quiet value too (see `Body::quiet_at`). An
+    /// element whose type is `Error` poisons the array.
     fn joined(&mut self, span: Span, elements: &[ast::Expr], quiet: bool) -> Checked {
         let mut slots: Vec<Option<Checked>> = elements.iter().map(|_| None).collect();
+        let (ranks, optional): (Vec<Rank>, Vec<bool>) =
+            elements.iter().map(|e| self.sibling_ranked(e)).unzip();
         let outer = self.body.quiet_at;
-        for (slot, e) in slots.iter_mut().zip(elements) {
-            if rank(e) == 0 {
+        for (i, e) in elements.iter().enumerate() {
+            if ranks[i] == Rank::Concrete {
                 self.body.quiet_at = if quiet { Some(e.span) } else { outer };
-                *slot = Some(self.value(e, None));
+                slots[i] = Some(self.value(e, None));
             }
         }
         self.body.quiet_at = outer;
         let literal = literal_type(slots.iter().flatten().next().and_then(type_of));
-        for (slot, e) in slots.iter_mut().zip(elements) {
-            if rank(e) == 1 {
-                *slot = Some(self.value(e, Some(literal)));
+        for (i, e) in elements.iter().enumerate() {
+            if ranks[i] == Rank::Literal {
+                // An `optional` element may be `None`, which the literal's type does not hold.
+                let want = if optional[i] {
+                    as_optional(literal)
+                } else {
+                    literal
+                };
+                slots[i] = Some(self.value(e, Some(want)));
             }
         }
         let mut failed = slots.iter().flatten().any(|c| type_of(c).is_none());
@@ -115,7 +127,11 @@ impl Checker<'_> {
             }
         }
         let Some(joined) = joined.filter(|_| !failed) else {
-            for (i, e) in elements.iter().filter(|e| rank(e) == 2).enumerate() {
+            let waiting = elements
+                .iter()
+                .zip(&ranks)
+                .filter(|&(_, &r)| r == Rank::Waits);
+            for (i, (e, _)) in waiting.enumerate() {
                 let expected = (i > 0 || failed || quiet).then_some(UNKNOWN);
                 // Only its own diagnostics matter.
                 drop(self.value(e, expected));
@@ -123,12 +139,18 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         };
         let want = as_optional(joined);
-        for (slot, e) in slots.iter_mut().zip(elements) {
-            if rank(e) == 2 {
-                *slot = Some(self.value(e, Some(want)));
+        for (i, e) in elements.iter().enumerate() {
+            if ranks[i] == Rank::Waits {
+                // What waits and makes no optional by itself (`Ranked::optional`) may still give a
+                // type that the join does not take, such as `[]`.
+                slots[i] = Some(if optional[i] {
+                    self.value(e, Some(want))
+                } else {
+                    mark(self.operand(e, Some(joined)))
+                });
             }
         }
-        let element = if elements.iter().any(none_literal) {
+        let element = if optional.contains(&true) {
             want
         } else {
             joined

@@ -1,9 +1,9 @@
 //! Operators: arithmetic, comparison, equality, `is` and `??`.
 
 use super::expr::{
-    fits, if_some, int_literal, literal_type, local, none_literal, operator, path, rank, typed,
+    fits, if_some, int_literal, literal_type, local, none_literal, operator, path, typed,
 };
-use super::generic::mismatched;
+use super::generic::{Rank, mismatched};
 use super::interface::Operation;
 use super::{
     Checked, Checker, Lowered, Poisoned, UNKNOWN, as_optional, beyond_one_layer, block_expr,
@@ -75,7 +75,8 @@ impl Checker<'_> {
     ) -> Checked {
         let operands: Vec<_> = operands.iter().collect();
         let op = |i: usize| ops[i.saturating_sub(1)].to_string();
-        let (checked, ty, mismatched) = self.integers(&operands, None, Operator::Compare, &op);
+        let (checked, ty, mismatched) =
+            self.ranked(|c| c.integers(&operands, None, Operator::Compare, &op));
         let operands = checked.into_iter().collect::<Result<Vec<_>, _>>().ok();
         match (operands, ty) {
             (Some(operands), Some(Type::STRING)) => Ok(self.string_chain(span, operands, ops)),
@@ -162,7 +163,7 @@ impl Checker<'_> {
         compound: bool,
     ) -> Checked {
         let Some((tir_op, want)) = operator(op) else {
-            return self.equal(span, op == ast::BinaryOp::Ne, lhs, rhs);
+            return self.ranked(|c| c.equal(span, op == ast::BinaryOp::Ne, lhs, rhs));
         };
         if want == Type::BOOL {
             let lhs = self.operand(lhs, Some(want));
@@ -176,7 +177,7 @@ impl Checker<'_> {
         let start = self.diagnostics.len();
         let op = |_| op.to_string();
         let (checked, ty, mismatched) =
-            self.binary_operands(span, &[lhs, rhs], expected, operator, &op);
+            self.ranked(|c| c.binary_operands(span, &[lhs, rhs], expected, operator, &op));
         if checked.iter().any(|c| type_of(c) == Some(Type::CHAR)) {
             self.report(DiagnosticKind::ArithmeticOnChar { at: op_span });
             return Err(Poisoned::error());
@@ -237,38 +238,40 @@ impl Checker<'_> {
         self.integers(operands, None, operator, op)
     }
 
-    /// The operands of one number operator, checked in source order; the type they share, `None`
-    /// when it is `Error`; and whether one was reported against it. The type is `u8` when
-    /// `expected` is `u8` or `u8?`, and `f64` when it is `f64` or `f64?`. Otherwise the first
-    /// concrete operand (of `rank` 0) is checked first, with no expected type, and gives it: `u8`
-    /// beside a `u8`, `f64` beside an `f64`, `char` beside a `char` in a comparison, else `i64`;
-    /// beside a `char` in arithmetic that `i64` is not passed on, and the later operands are
-    /// checked with no expected type. Where `expected` is neither `i64` nor `i64?`, that operand,
-    /// if it is none of the types the operator takes, is reported against all of them, not against
-    /// `i64`, unless a `string` or `char` rule below reports it, an earlier operand has failed, or
-    /// the first operand in source order is an integer literal. With none, it is `i64`, so
-    /// `None + 1` expects an `i64`. An `f64` after an `i64` or `u8` first operand makes the type
-    /// `f64`, and that operand is reported against it, as an operand before a `string` is in `+`.
-    /// When `expected` is `i64` or `i64?`, an `f64` first operand gives `i64`, not `f64`, and that
-    /// first operand is checked against `expected`, so an `f64` is reported in either order and at
-    /// any depth. Once an operand is `Error`, the later ones are checked against `Error`. An
-    /// operand of `arithmetic` that is a `char` is left unreported, as the poison `typed` `char`:
-    /// its caller reports the operator, so what the operator's type finds wrong with the other
-    /// operands is dropped, in either order. In a comparison, a `char` after a number reports that
-    /// number, as a `char` before one reports the number.
+    /// The operands of one number operator, checked in source order; the type they share,
+    /// `None` when it is `Error`; and whether one was reported against it. The type is `u8`
+    /// when `expected` is `u8` or `u8?`, and `f64` when it is `f64` or `f64?`. Otherwise the
+    /// first concrete operand (of `sibling_rank` `Concrete`) is checked first, with no expected
+    /// type, and gives it: `u8` beside a `u8`, `f64` beside an `f64`, `char` beside a `char` in
+    /// a comparison, else `i64`; beside a `char` in arithmetic that `i64` is not passed on, and
+    /// the later operands are checked with no expected type. Where `expected` is neither `i64`
+    /// nor `i64?`, that operand, if it is none of the types the operator takes, is reported
+    /// against all of them, not against `i64`, unless a `string` or `char` rule below reports
+    /// it, an earlier operand has failed, or the first operand in source order is an integer
+    /// literal. With none, it is `i64`, so `None + 1` expects an `i64`. An `f64` after an `i64`
+    /// or `u8` first operand makes the type `f64`, and that operand is reported against it, as
+    /// an operand before a `string` is in `+`. When `expected` is `i64` or `i64?`, an `f64`
+    /// first operand gives `i64`, not `f64`, and that first operand is checked against
+    /// `expected`, so an `f64` is reported in either order and at any depth. Once an operand is
+    /// `Error`, the later ones are checked against `Error`. An operand of `arithmetic` that is
+    /// a `char` is left unreported, as the poison `typed` `char`: its caller reports the
+    /// operator, so what the operator's type finds wrong with the other operands is dropped, in
+    /// either order. In a comparison, a `char` after a number reports that number, as a `char`
+    /// before one reports the number.
     ///
     /// The type is `string` beside a `string`, in a comparison and in `+`. In `+` a `string`
     /// drives from either side: an operand of another type is reported against `string`, with
-    /// the unsafe fix to interpolate, the one before a `string` included, in place of what its own
-    /// type was found to lack. A `string?` first operand makes the `+` a join and is reported
-    /// against `string`, its label under the other operand only if that is a `string`. If
-    /// operands come before a `string?` leader, they are checked with no expected type, and the
-    /// `string?` is the operand reported, as when it comes first. A join
-    /// after an `Error` is `Error`. An expected `u8` or `f64` is `binary_operands`' to drop.
+    /// the unsafe fix to interpolate, the one before a `string` included, in place of what its
+    /// own type was found to lack. A `string?` first operand makes the `+` a join and is
+    /// reported against `string`, its label under the other operand only if that is a `string`.
+    /// If operands come before a `string?` leader, they are checked with no expected type, and
+    /// the `string?` is the operand reported, as when it comes first. A join after an `Error`
+    /// is `Error`. An expected `u8` or `f64` is `binary_operands`' to drop.
     ///
     /// The first operand whose type names a type parameter is reported, as lacking `op` of its
-    /// index, and makes the type `Error`. In a comparison, a leader that lacks `<` holds the other
-    /// operands to its type, and its report waits: an operand of another type is the first mistake.
+    /// index, and makes the type `Error`. In a comparison, a leader that lacks `<` holds the
+    /// other operands to its type, and its report waits: an operand of another type is the
+    /// first mistake.
     #[expect(
         clippy::too_many_lines,
         reason = "one pass over the operands, so the rules that depend on each other read in one place"
@@ -284,10 +287,11 @@ impl Checker<'_> {
         let compound = operator == (Operator::Plus { compound: true });
         // An `i64` that the context wants holds an `f64` operand to it, in either order.
         let wants_i64 = expected.map(payload) == Some(Type::I64);
+        let ranks: Vec<Rank> = operands.iter().map(|e| self.sibling_rank(e)).collect();
         let mut first = None;
         let mut ty = if literal_type(expected) != Type::I64 {
             Some(literal_type(expected))
-        } else if let Some(k) = operands.iter().position(|e| rank(e) == 0) {
+        } else if let Some(k) = ranks.iter().position(|&r| r == Rank::Concrete) {
             // An `i64` the context wants reaches an operator inside, so a nested `f64` is reported.
             let checked = self.value(operands[k], expected.filter(|_| wants_i64));
             let ty = type_of(&checked).map(|ty| match payload(ty) {
@@ -357,7 +361,7 @@ impl Checker<'_> {
                 Some((_, operand)) => operand,
                 None => self.value(e, (!by_char).then(|| want.unwrap_or(UNKNOWN))),
             };
-            if rank(e) != 0 {
+            if ranks[i] != Rank::Concrete {
                 deferred.extend(self.diagnostics.drain(start..));
             }
             let char_value = type_of(&value) == Some(Type::CHAR);
@@ -453,7 +457,7 @@ impl Checker<'_> {
                 want = None;
             }
             mismatched |= m;
-            failed |= got.is_none() && rank(e) == 0;
+            failed |= got.is_none() && ranks[i] == Rank::Concrete;
             checked.push(operand);
             before = got;
         }
@@ -556,7 +560,7 @@ impl Checker<'_> {
         .into()
     }
 
-    /// `lhs == rhs`, or `!=`. The side of lower `rank` is checked first, the left on a tie
+    /// `lhs == rhs`, or `!=`. The side of lower `sibling_rank` is checked first, the left on a tie
     /// unless it is the only `none_literal`, and the other expects its type made optional,
     /// unless it is one. A side that is the other's type with two or more `?` layers taken off
     /// is held to it. A value converts through one `?` only. A `None` beside a value that is not
@@ -565,7 +569,8 @@ impl Checker<'_> {
     /// an `i64` or a `u8` beside an `f64`, at the side that is not the `f64`. A side that is
     /// `f64.nan` is warned about.
     fn equal(&mut self, span: Span, negated: bool, lhs: &ast::Expr, rhs: &ast::Expr) -> Checked {
-        let swapped = rank(rhs) < rank(lhs) || (none_literal(lhs) && !none_literal(rhs));
+        let swapped = self.sibling_rank(rhs) < self.sibling_rank(lhs)
+            || (none_literal(lhs) && !none_literal(rhs));
         let (first, second) = if swapped { (rhs, lhs) } else { (lhs, rhs) };
         let checked = self.value(first, None);
         let want = type_of(&checked).map_or_else(|| UNKNOWN, as_optional);
