@@ -1,7 +1,6 @@
 //! Interface declarations: their parameters, requirements and inheritance, the bounds that name
 //! them, and the closure of the interfaces a bound inherits.
 
-use std::collections::VecDeque;
 use std::rc::Rc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -14,7 +13,7 @@ use crate::diagnostic::{
     AddBound, BoundSite, Definition as Kind, DiagnosticKind, NoOperatorForm, NotConformForm,
     NotInterface, PreludeBound, UnknownForm, WideKind,
 };
-use crate::graph::components;
+use crate::graph::{components, cycle_through};
 use crate::lang::Dispatch;
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -2478,31 +2477,4 @@ impl Waits {
         }
         out
     }
-}
-
-/// The interfaces on a shortest cycle through `start`, in order, without `start`; empty for an
-/// interface that inherits itself. `start` lies on a cycle of its component in `edges`.
-fn cycle_through(edges: &[Vec<usize>], component: &[usize], start: usize) -> Vec<usize> {
-    let mut parent: FxHashMap<usize, usize> = FxHashMap::default();
-    let mut queue = VecDeque::from([start]);
-    // `start` is reached again through the cycle, so it is not seen at first.
-    while let Some(n) = queue.pop_front() {
-        for &m in &edges[n] {
-            if component[m] == component[start] && !parent.contains_key(&m) {
-                parent.insert(m, n);
-                queue.push_back(m);
-            }
-        }
-        if parent.contains_key(&start) {
-            break;
-        }
-    }
-    let mut path = Vec::new();
-    let mut at = parent[&start];
-    while at != start {
-        path.push(at);
-        at = parent[&at];
-    }
-    path.reverse();
-    path
 }

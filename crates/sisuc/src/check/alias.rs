@@ -3,8 +3,9 @@
 //! body, and no later stage sees an alias.
 //!
 //! Every alias resolves in a pass before the signatures, each after the aliases that its body
-//! names, so a use finds it resolved. The pass keeps its path in a list, and an alias that it meets
-//! again on the path is a cycle. The body has a type parameter by place, with no name, so an alias
+//! names, so a use finds it resolved. The aliases are a graph, and a strongly connected component
+//! of more than one alias, or an alias that writes itself, is a cycle. The body has a type
+//! parameter by place, with no name, so an alias
 //! that is applied to its own parameters in order is its body, and every alias shares one memo of
 //! what it has substituted.
 //! Two limits bound what a use builds: the depth of a type, and the number of distinct types that
@@ -12,7 +13,7 @@
 
 use std::rc::Rc;
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use super::expr::{bare_none, dbg_argument, none_literal, rank};
 use super::generic::{Site, type_meets};
@@ -22,6 +23,7 @@ use super::{
     own_args, tail, value_span,
 };
 use crate::ast;
+use crate::graph::{components, cycle_through};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{InterfaceId, Type, TypeArgs, TypeKind};
@@ -115,8 +117,6 @@ pub(super) struct Aliases {
     pub(super) names: FxHashMap<Symbol, Declared<usize>>,
     /// Every alias in source order, so a second alias of a name has a body of its own.
     pub(super) infos: Vec<AliasInfo>,
-    /// The first alias in source order of each cycle that is reported: one report for each.
-    cycles: FxHashSet<usize>,
     /// What every substitution of an alias body has built, for the whole check.
     memo: SharedMemo,
     /// How many entries the memo held when the outermost written type that resolves began.
@@ -163,14 +163,6 @@ pub(super) struct FieldType {
     pub(super) shown: Option<Rc<str>>,
 }
 
-/// An alias on the path of the walk over the aliases, the aliases that its body writes, and how
-/// many of them the walk has followed.
-struct Step {
-    alias: usize,
-    refs: Vec<(usize, Span)>,
-    next: usize,
-}
-
 impl Checker<'_> {
     /// The aliases that the type `ty` writes and the parameters `params` do not hide, each with
     /// where the name stands, in source order.
@@ -196,54 +188,52 @@ impl Checker<'_> {
         }
     }
 
-    /// Resolves every alias in source order, each after the aliases that its body names, so that
-    /// a use finds its alias resolved and a chain of any length takes no recursion. A cycle is
-    /// reported once, and its aliases are `Error`. An alias that no signature names is resolved
-    /// too, so its errors are reported.
+    /// Resolves every alias, each after the aliases that its body names, so that a use finds its
+    /// alias resolved and a chain of any length takes no recursion. The aliases and the aliases
+    /// that each writes are a graph, whose strongly connected components give both the order and
+    /// the cycles. A cyclic component is reported once, and its aliases are `Error`. An alias that
+    /// no signature names is resolved too, so its errors are reported.
     pub(super) fn resolve_aliases(&mut self) {
-        let mut on_path = vec![false; self.aliases.infos.len()];
-        let mut seen = vec![false; self.aliases.infos.len()];
-        for root in 0..self.aliases.infos.len() {
-            if seen[root] {
+        let count = self.aliases.infos.len();
+        let refs: Vec<Vec<(usize, Span)>> = (0..count)
+            .map(|i| {
+                let info = &self.aliases.infos[i];
+                let mut out = Vec::new();
+                self.alias_refs(&info.ty, &info.params, &mut out);
+                out
+            })
+            .collect();
+        let edges: Vec<Vec<usize>> = (refs.iter())
+            .map(|out| out.iter().map(|&(to, _)| to).collect())
+            .collect();
+        let component = components(&edges);
+        let mut size = vec![0; count];
+        for &c in &component {
+            size[c] += 1;
+        }
+        let mut reported = vec![false; count];
+        for i in 0..count {
+            if size[component[i]] == 1 && !edges[i].contains(&i) {
                 continue;
             }
-            let mut path = vec![self.step(root, &mut seen, &mut on_path)];
-            while let Some(top) = path.last_mut() {
-                let Some(&(next, at)) = top.refs.get(top.next) else {
-                    let done = path
-                        .pop()
-                        .expect("the path should hold the alias to resolve");
-                    on_path[done.alias] = false;
-                    if self.aliases.infos[done.alias].failed {
-                        // On a cycle: `Error` already, but the body may hold other errors.
-                        self.resolve_body(done.alias);
-                    } else {
-                        self.alias_body(done.alias);
-                    }
-                    continue;
-                };
-                top.next += 1;
-                if on_path[next] {
-                    self.alias_cycle(&path, next, at);
-                } else if !seen[next] {
-                    path.push(self.step(next, &mut seen, &mut on_path));
-                }
+            // The first alias of a component in source order carries its report.
+            if !std::mem::replace(&mut reported[component[i]], true) {
+                self.alias_cycle(&refs, (&edges, &component), i);
             }
+            self.aliases.infos[i].failed = true;
+            self.aliases.infos[i].state = State::Done(None);
         }
-    }
-
-    /// The step of the walk at the alias `alias`, which joins the path.
-    fn step(&self, alias: usize, seen: &mut [bool], on_path: &mut [bool]) -> Step {
-        count_visit();
-        seen[alias] = true;
-        on_path[alias] = true;
-        let info = &self.aliases.infos[alias];
-        let mut refs = Vec::new();
-        self.alias_refs(&info.ty, &info.params, &mut refs);
-        Step {
-            alias,
-            refs,
-            next: 0,
+        // A component's number is above that of every component it reaches: its aliases last.
+        let mut order: Vec<usize> = (0..count).collect();
+        order.sort_by_key(|&i| component[i]);
+        for i in order {
+            count_visit();
+            if self.aliases.infos[i].failed {
+                // On a cycle: `Error` already, but the body may hold other errors.
+                self.resolve_body(i);
+            } else {
+                self.alias_body(i);
+            }
         }
     }
 
@@ -294,56 +284,36 @@ impl Checker<'_> {
         self.aliases.infos[id].state = State::Done(None);
     }
 
-    /// Reports the cycle that the walk finds when the alias at the end of `path` writes `again`,
-    /// which is on the path, at `at`: once for the first alias of the cycle in source order.
-    /// Every alias of the cycle is `Error`.
-    fn alias_cycle(&mut self, path: &[Step], again: usize, at: Span) {
-        let from = (path.iter())
-            .position(|step| step.alias == again)
-            .expect("an alias on the path should have a step");
-        let cycle = &path[from..];
-        // Each step writes the next alias at the reference it follows, and the last writes `again`.
-        let via = |k: usize| {
-            if k + 1 == cycle.len() {
-                at
-            } else {
-                cycle[k].refs[cycle[k].next - 1].1
-            }
-        };
-        let first = (0..cycle.len())
-            .min_by_key(|&k| cycle[k].alias)
-            .expect("a cycle should hold an alias");
-        let name = |k: usize| {
-            self.aliases.infos[cycle[k % cycle.len()].alias]
-                .name
-                .clone()
-        };
-        let steps = (first..first + cycle.len())
+    /// Reports the cycle of the component of the alias `first`, the first of the component in
+    /// source order: a shortest cycle through it, which names each alias with the reference that
+    /// leads to the next. `refs` holds each alias's references in order, and `graph` its edges
+    /// and its components.
+    fn alias_cycle(
+        &mut self,
+        refs: &[Vec<(usize, Span)>],
+        graph: (&[Vec<usize>], &[usize]),
+        first: usize,
+    ) {
+        let mut cycle = vec![first];
+        cycle.extend(cycle_through(graph.0, graph.1, first));
+        let name = |k: usize| self.aliases.infos[cycle[k % cycle.len()]].name.clone();
+        let steps = (0..cycle.len())
             .map(|k| {
-                let (from, to) = (name(k).name.to_string(), name(k + 1).name.to_string());
-                (from, to, via(k % cycle.len()))
+                let (from, to) = (cycle[k], cycle[(k + 1) % cycle.len()]);
+                let (_, at) = *refs[from]
+                    .iter()
+                    .find(|&&(next, _)| next == to)
+                    .expect("an alias on a cycle should write the next one");
+                (name(k).name.to_string(), name(k + 1).name.to_string(), at)
             })
             .collect();
-        let through = (first + 1..first + cycle.len())
-            .map(|k| name(k).name.to_string())
-            .collect();
-        let kind = DiagnosticKind::AliasCycle {
-            name: name(first).name.to_string(),
-            at: name(first).span,
+        let through = (1..cycle.len()).map(|k| name(k).name.to_string()).collect();
+        self.report(DiagnosticKind::AliasCycle {
+            name: name(0).name.to_string(),
+            at: name(0).span,
             through,
             steps,
-        };
-        let (aliases, reported) = (
-            cycle.iter().map(|step| step.alias).collect::<Vec<_>>(),
-            self.aliases.cycles.insert(cycle[first].alias),
-        );
-        for alias in aliases {
-            self.aliases.infos[alias].failed = true;
-            self.aliases.infos[alias].state = State::Done(None);
-        }
-        if reported {
-            self.report(kind);
-        }
+        });
     }
 
     /// What `name` stands for as an alias, where a value's name is a class, an enum, an optional or

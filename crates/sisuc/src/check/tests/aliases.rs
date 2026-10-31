@@ -139,6 +139,80 @@ fn a_cycle_of_many_aliases_should_report_once_without_recursion() {
     assert_eq!(d.secondary().len(), n);
 }
 
+/// `type A0 = Pair<A1, A1>`, `type Ak = Pair<A(k+1), A0>` and `type An = A0`: every alias writes
+/// `A0`, so the component holds n cycles through `A0` that share their aliases, and the shortest
+/// is `A0` and `A1`. With `own`, `A0` also writes itself, as `Pair<A1, A0>`.
+fn overlapping(n: usize, own: bool) -> String {
+    let mut src = format!(
+        "class Pair<X, Y> {{}}\ntype A0 = Pair<A1, {}>\n",
+        if own { "A0" } else { "A1" }
+    );
+    for k in 1..n {
+        writeln!(src, "type A{k} = Pair<A{}, A0>", k + 1)
+            .expect("writing to a string should not fail");
+    }
+    format!("{src}type A{n} = A0\nfn main() {{}}")
+}
+
+/// `type A0 = Pair<A1, A2>`, `type A1 = A0` and a long ring `A2` to `An` back to `A0`: the first
+/// cycle that a walk finds by going deep is the long one, and the shortest is `A0` and `A1`.
+fn long_first(n: usize) -> String {
+    let mut src = "class Pair<X, Y> {}\ntype A0 = Pair<A1, A2>\ntype A1 = A0\n".to_string();
+    for k in 2..n {
+        writeln!(src, "type A{k} = Pair<A{}, A{}>", k + 1, k + 1)
+            .expect("writing to a string should not fail");
+    }
+    format!("{src}type A{n} = A0\nfn main() {{}}")
+}
+
+/// A component of overlapping cycles is one report, at the first alias, with a shortest cycle
+/// through it: the report does not name the whole component.
+#[test]
+fn overlapping_alias_cycles_should_report_once_at_a_shortest_cycle() {
+    for (row, src, labels) in [
+        (
+            "a cycle of two aliases is the shortest",
+            overlapping(50, false),
+            2,
+        ),
+        (
+            "an alias that writes itself is the shortest",
+            overlapping(50, true),
+            1,
+        ),
+        (
+            "a short cycle beside a long one that a deep walk finds first",
+            long_first(50),
+            2,
+        ),
+    ] {
+        let (_, ds) = checked(&src);
+        let [d] = &ds[..] else {
+            panic!("{row}: {} diagnostics", ds.len());
+        };
+        assert_eq!(
+            (d.code(), at(&src, d.span())),
+            (Code::AliasCycle, (2, 6)),
+            "{row}"
+        );
+        assert_eq!(d.secondary().len(), labels, "{row}");
+    }
+}
+
+/// Finding the cycle of a component reads each edge once, however many cycles overlap: the steps
+/// grow with the aliases, not with their square. 100 aliases is 10x the smallest size at which a
+/// walk that follows each back edge shows a quadratic count.
+#[test]
+fn the_search_for_an_alias_cycle_should_read_each_edge_once() {
+    let steps = |n| {
+        crate::graph::CYCLE_STEPS.set(0);
+        let (_, ds) = checked(&overlapping(n, false));
+        assert_eq!(ds.len(), 1);
+        crate::graph::CYCLE_STEPS.get()
+    };
+    assert_near_linear(steps(100), steps(200), steps(300));
+}
+
 /// A depth-first resolution that follows each alias by a call would use a frame for each alias of
 /// the chain: 100,000 aliases overflow the stack. The alias that waits for its body takes a place
 /// in a list, so the resolution of a chain has no recursion.
