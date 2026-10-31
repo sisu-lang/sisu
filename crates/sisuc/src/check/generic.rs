@@ -1522,7 +1522,8 @@ impl Checker<'_> {
     /// Such an argument is rejected, as a rule rejects its operand, and the later arguments
     /// meet the context's types in place of the blamed arguments'. Reports nothing, and leaves
     /// the bindings, when the context does not fit `ret` alone as a value of `ret` fits it, when
-    /// an argument was rejected already, or when every argument fits.
+    /// the context fails a bound of a parameter that it binds (see `meets_bounds`), when an
+    /// argument was rejected already, or when every argument fits.
     fn blame_arguments(
         &mut self,
         call: &mut Inference<'_>,
@@ -1592,9 +1593,9 @@ impl Checker<'_> {
     }
 
     /// Whether each parameter that `context` binds meets its bounds (`Checker::conforms`, which
-    /// reports nothing). A bound whose arguments name a parameter that `context` leaves unbound
-    /// is not decided yet, as in `check_early`, and holds here. The work is one query for each
-    /// bound of the callee.
+    /// reports only a query that is too deep). A bound whose arguments name a parameter that
+    /// `context` leaves unbound is not decided yet, as in `check_early`, and holds here. The work
+    /// is one query for each bound of the callee.
     fn meets_bounds(&mut self, sig: &GenericSig<'_>, context: &Bindings) -> bool {
         let with: Vec<Type> = context.found.iter().map(|&t| listed(t)).collect();
         let owned = sig.owner.len();

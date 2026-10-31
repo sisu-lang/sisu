@@ -5082,6 +5082,13 @@ const CONTEXT_BOUND_ROWS: &[PartialRow<'static>] = {
             "let _x: i64 = Bx().m(W())",
             &[(Mismatch, "Bx().m(W())")],
         ),
+        // A context that fails a bound of a parameter that it binds blames no argument, also an
+        // argument whose own parameter it binds right. The call keeps `A = W` and `B = W`.
+        (
+            "fn p3<A: I, B: I>(a: A, b: B) -> Two<A, B> { panic(\"e\") }\n",
+            "let _x: Two<i64, V> = p3(W(), W())",
+            &[(Mismatch, "p3(W(), W())")],
+        ),
         // Control rows: the context passes every bound, or the parameter has none, so the
         // arguments that it contradicts are still blamed.
         (
