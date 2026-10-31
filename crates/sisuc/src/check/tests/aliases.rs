@@ -83,6 +83,10 @@ fn aliases_should_check_clean_where_they_name_a_type() {
             "type Inner<T> = [T]\ntype Outer<T> = Inner<Inner<T>>\nfn f(x: Outer<i64>) -> [[i64]] { x }\nfn main() {}",
         ),
         (
+            "a parameter that has the name of an alias",
+            "type A = B<i64>\ntype B<A> = [A]\nfn f(x: A) -> [i64] { x }\nfn main() {}",
+        ),
+        (
             "a reversed chain, which resolves with no recursion",
             &reversed_chain(2_000),
         ),
@@ -222,10 +226,10 @@ fn a_cyclic_alias_should_report_nothing_for_its_uses() {
     }
 }
 
-/// An alias that names itself resolves in at most two visits, and the walk never follows it
-/// again: without the path, `type A = [A]` would not end.
+/// The walk enters each alias once, also an alias that names itself, and never follows it again:
+/// without the path, `type A = [A]` would not end.
 #[test]
-fn an_alias_that_names_itself_should_resolve_in_two_visits() {
+fn an_alias_that_names_itself_should_be_entered_once() {
     alias::VISITS.set(0);
     alias::VISIT_BUDGET.set(1_000);
     diagnostic(
@@ -234,7 +238,12 @@ fn an_alias_that_names_itself_should_resolve_in_two_visits() {
         (1, 6, "A"),
         &[(1, 11)],
     );
-    assert!(alias::VISITS.get() <= 2, "{} visits", alias::VISITS.get());
+    assert_eq!(alias::VISITS.get(), 1);
+    // Two aliases on one cycle, and a third that no cycle holds.
+    alias::VISITS.set(0);
+    let ds = diags("type A = [B]\ntype B = [A]\ntype C = i64\nfn main() {}");
+    assert_eq!(ds.len(), 1);
+    assert_eq!(alias::VISITS.get(), 3);
 }
 
 /// A class or an enum that holds an alias that names it breaks no cycle: it is a name, not an

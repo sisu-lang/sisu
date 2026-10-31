@@ -967,12 +967,29 @@ mod tests {
         // 12 entries so far: a limit of 15 lets 3 more in, and the walk of 6 types passes it.
         let atoms = TypeArgs::intern(&[Type::BOOL]);
         assert_eq!(ty.subst_shared(atoms, &mut memo, 15), None);
-        assert!(memo.len() <= 16, "{} entries", memo.len());
+        assert_eq!(
+            memo.len(),
+            16,
+            "the walk stops at the first entry past the limit"
+        );
         // Nothing that the cut walk computed after the limit is kept: it is no type.
         assert_eq!(
             ty.subst_shared(atoms, &mut memo, usize::MAX),
             Some(doubled(Type::BOOL, 5))
         );
+    }
+
+    #[test]
+    fn a_shared_substitution_should_fit_a_limit_of_exactly_its_entries() {
+        let param = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
+        let ty = doubled(param, 5);
+        let ints = TypeArgs::intern(&[Type::I64]);
+        // The walk adds one entry for each of the 6 distinct types.
+        assert_eq!(
+            ty.subst_shared(ints, &mut SharedMemo::default(), 6),
+            Some(doubled(Type::I64, 5))
+        );
+        assert_eq!(ty.subst_shared(ints, &mut SharedMemo::default(), 5), None);
     }
 
     #[test]

@@ -1,0 +1,10 @@
+error[E0034]: type `T` is defined twice
+ --> E0034-alias-parameter.sisu:1:14
+  |
+1 | type Pair<T, T> = [T]
+  |           -  ^
+  |           |
+  |           first defined here
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0034
