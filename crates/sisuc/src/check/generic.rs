@@ -382,13 +382,24 @@ impl Makes {
         matches!(self, Makes::Through { lifted, .. } if has_place(*lifted, i))
     }
 
-    /// Whether the argument `ranked` at place `i` makes the parameter an optional: it is one at a
-    /// place of the bare parameter, it holds one at a place that holds the parameter, or it is
-    /// `nested` at a place of the parameter's optional (`T?`).
+    /// Whether the argument `ranked` at place `i` makes the parameter an optional by its own
+    /// type: it is one at a place of the bare parameter, or it holds one at a place that holds
+    /// the parameter.
     fn passes_optional(&self, i: usize, ranked: Ranked) -> bool {
-        self.through(i) && ranked.optional
-            || self.inside(i) && ranked.holds_optional
-            || self.lifted(i) && ranked.nested
+        self.through(i) && ranked.optional || self.inside(i) && ranked.holds_optional
+    }
+
+    /// Whether the argument `ranked` at place `i` is `nested` at a place of the parameter's
+    /// optional (`T?`). It makes the parameter an optional, as `passes_optional` does. But it
+    /// proves only that: when the context is an optional of an optional, the payload of the
+    /// context is the optional already (see `Checker::infer_call`).
+    fn passes_lifted(&self, i: usize, ranked: Ranked) -> bool {
+        self.lifted(i) && ranked.nested
+    }
+
+    /// Whether the argument `ranked` at place `i` makes the parameter an optional, in any way.
+    fn makes_optional(&self, i: usize, ranked: Ranked) -> bool {
+        self.passes_optional(i, ranked) || self.passes_lifted(i, ranked)
     }
 
     /// Whether the argument `ranked` at place `i` makes the call `Ranked::nested`. For a call that
@@ -396,11 +407,23 @@ impl Makes {
     /// that is nested at a place of `P`: the call returns it.
     fn passes_nested(&self, i: usize, ranked: Ranked) -> bool {
         match self {
-            Makes::Through { wraps: true, .. } => self.passes_optional(i, ranked),
+            Makes::Through { wraps: true, .. } => self.makes_optional(i, ranked),
             Makes::Through { wraps: false, .. } => self.through(i) && ranked.nested,
             _ => false,
         }
     }
+}
+
+/// Whether `ty` has more than `layers` optionals on it, one inside the other: `i64??` has more than
+/// 1, and not more than 2.
+fn wider_than(mut ty: Type, layers: usize) -> bool {
+    for _ in 0..=layers {
+        let TypeKind::Optional(inner) = ty.kind() else {
+            return false;
+        };
+        ty = inner;
+    }
+    true
 }
 
 /// Whether `ty` holds `param` other than as itself: under arrays or the type arguments of a class
@@ -1046,10 +1069,11 @@ pub(super) struct Ranked {
     pub(super) holds_optional: bool,
     /// Whether the value is an optional that has an optional payload, which the value makes by
     /// itself: `Some(Some(2))`, `opt(Some(2))` for `fn opt<T>(x: T) -> T?`, and `Some(if c {
-    /// Some(2) } else { None })`. Not `Some(2)`, `None`, an array, a literal or a safe call. An
-    /// optional at a place `T?` of a call that returns `T` makes the call an optional only when
-    /// it is nested (see `Makes::Through`). It is set from the facts of the parts, as `optional`
-    /// is.
+    /// Some(2) } else { None })`. Not `Some(2)`, `None`, an array or a literal. A safe call keeps
+    /// it from its call, as it flattens only the optional that it adds: `m?.o(Some(2))` for
+    /// `fn o<T>(self, x: T) -> T?` is nested. An optional at a place `T?` of a call that returns
+    /// `T` makes the call an optional only when it is nested (see `Makes::Through`). It is set
+    /// from the facts of the parts, as `optional` is.
     nested: bool,
     /// For a `Literal` value: whether its type is the type of an integer literal it holds, which
     /// is a scalar (see `sibling`). An integer literal is. So is a value that passes such a
@@ -1242,7 +1266,7 @@ impl Checker<'_> {
         }
         // Whether every call in an argument fits its declaration.
         let mut fit = vec![true; args.len()];
-        let (ranks, holds, through) = self.rank_arguments(&call, sig, args, &mut fit);
+        let (ranks, holds, (through, lifted)) = self.rank_arguments(&call, sig, args, &mut fit);
         // A context that holds a hole gives the arguments below more context (see `hint`).
         if let (Some(ret), Some(want)) = (sig.ret, expected) {
             call.bindings.hint(ret, want);
@@ -1260,7 +1284,8 @@ impl Checker<'_> {
             // cannot meet either is reported where the value is used, unless the context fits
             // alone: then the arguments that contradict it are reported, each at its own place.
             // Type arguments that the call writes are its own.
-            let met = ((through || ranks.contains(&2)) && call.bindings.unify(ret, want))
+            let whole = through || ranks.contains(&2) || lifted > 0 && !wider_than(want, lifted);
+            let met = (whole && call.bindings.unify(ret, want))
                 || call.bindings.constrain(ret, payload(want));
             misfit = self.misfit(span, ret, want, met).then_some(ret);
             if !met && written.is_empty() && !call.failed {
@@ -1346,17 +1371,22 @@ impl Checker<'_> {
     /// rank 1 (see `infer_call`). `fit` is cleared where a call in an argument does not fit its
     /// declaration.
     ///
-    /// Also whether the return type is a bare type parameter, and an argument of rank 1 makes it
-    /// an optional (see `Makes::passes_optional`). The context then meets the return type whole.
+    /// Also whether an argument of rank 1 makes the parameter that the return type names an
+    /// optional by its own type (see `Makes::passes_optional`), and how many optionals the call
+    /// has at least when one does so only as a nested optional at a place `T?` (see
+    /// `Makes::passes_lifted`): 1 for a return type `T`, 2 for `T?`, else 0. The context meets the
+    /// return type whole for the first. For the second it does so only when it has no more
+    /// optionals than that. Else its payload meets the return type, and `T` is an optional
+    /// already (`let v: i64?? = h(1, Some(Some(2)))`).
     fn rank_arguments(
         &mut self,
         call: &Inference<'_>,
         sig: &GenericSig<'_>,
         args: &[ast::Arg],
         fit: &mut [bool],
-    ) -> (Vec<u8>, Vec<bool>, bool) {
+    ) -> (Vec<u8>, Vec<bool>, (bool, usize)) {
         let makes = Makes::of(sig.ret, sig.params.iter().copied());
-        let mut through = false;
+        let (mut through, mut lifted) = (false, 0);
         let (ranks, holds) = iter::zip(args, fit)
             .enumerate()
             .map(|(i, (arg, fit))| {
@@ -1370,13 +1400,16 @@ impl Checker<'_> {
                     Rank::Waits => (2, false),
                     Rank::Literal => {
                         through |= makes.passes_optional(i, ranked);
+                        if makes.passes_lifted(i, ranked) {
+                            lifted = if makes.wraps() { 2 } else { 1 };
+                        }
                         (1, ranked.holds_optional)
                     }
                     Rank::Concrete => (0, false),
                 }
             })
             .unzip();
-        (ranks, holds, through)
+        (ranks, holds, (through, lifted))
     }
 
     /// Checks the bounds of the parameters `bound`, which a binding has just bound, and the bounds
@@ -1927,8 +1960,8 @@ impl Checker<'_> {
     /// Reports the call at `span` that leaves parameter `param` unbound, the first one that is not
     /// rejected-only (see `Bindings::first_unbound_not_rejected`): E0050, unless its result
     /// `found` cannot meet the context its caller gave (see `infer_waiting`). Then the mismatch is
-    /// the fault, and it reports the mismatch instead. A result with no value is reported as any
-    /// use of it is.
+    /// the fault, and it reports the mismatch instead. A call that returns `unit` or `never` never
+    /// gets here: it names no type parameter in its return type, so it does not wait for a context.
     fn report_unbound(
         &mut self,
         span: Span,
@@ -1938,10 +1971,6 @@ impl Checker<'_> {
     ) {
         let hint = self.body.context_hint.filter(|hint| hint.at == span);
         if let Some((found, hint)) = found.zip(hint) {
-            if matches!(found, Type::UNIT | Type::NEVER) {
-                self.no_value(span, found);
-                return;
-            }
             // The result of a safe call is optional (see `Checker::member`).
             let found = if hint.safe { as_optional(found) } else { found };
             let d = self.mismatch(span, None, hint.want, found);
@@ -2116,7 +2145,7 @@ impl Checker<'_> {
                     Ranked {
                         optional: ranked.optional || safe,
                         holds_optional: ranked.holds_optional || safe,
-                        nested: ranked.nested && !safe,
+                        nested: ranked.nested,
                         ..ranked
                     }
                 }
@@ -2186,7 +2215,7 @@ impl Checker<'_> {
             let carried = |&(i, _): &(usize, _)| has_place(places.carried, i);
             combine(args.iter().enumerate().filter(carried).map(|(i, arg)| {
                 let ranked = self.rank_value(&arg.value, fit);
-                through |= makes.passes_optional(i, ranked);
+                through |= makes.makes_optional(i, ranked);
                 nests |= makes.passes_nested(i, ranked);
                 holds |= ranked.holds_optional && has_place(places.plain, i);
                 passes &= ranked.rank != Rank::Literal || makes.returns(i);

@@ -1947,7 +1947,9 @@ const PLACES_DECLS: &str = "fn k2<T, U>(_a: T, b: U) -> U { b }\n\
     fn id<T>(x: T) -> T { x }\n\
     fn g<T>(a: T, _xs: [T?]) -> T { a }\n\
     class Bx<T> {\n    v: T?\n}\n\
-    fn gb<T>(a: T, _b: Bx<T?>) -> T { a }\n";
+    fn gb<T>(a: T, _b: Bx<T?>) -> T { a }\n\
+    fn q<T>(a: T, _b: T?) -> T? { Some(a) }\n\
+    class Mk {\n    n: i64\n    fn o<T>(self, x: T) -> T? { Some(x) }\n}\n";
 
 /// `row` in a `main` that has `x: u8`, after the `PLACES_DECLS`. It is the only statement, so its
 /// text is at the line `decls + 3`.
@@ -2055,6 +2057,15 @@ fn a_nested_optional_at_a_lifted_place_should_make_the_call_an_optional() {
         "let v: i64? = h(1, dbg(Some(Some(2))))\n    print(v ?? 0)",
         "let v: i64? = h(1, Some(None))\n    print(v ?? 0)",
         "let v: u8? = h(1, Some(Some(2)))\n    print(v ?? 0)",
+        // The context is an optional of an optional, so its payload is the optional that `T`
+        // is. Meeting the context whole would make `T = i64??` and reject the `1`.
+        "let v: i64?? = h(1, Some(Some(2)))\n    print((v ?? None) ?? 0)",
+        "let v: u8?? = h(1, Some(Some(2)))\n    print((v ?? None) ?? 0)",
+        "let v: i64?? = h(1, opt(Some(2)))\n    print((v ?? None) ?? 0)",
+        // A call that returns `T?` is a nested optional, so it is an optional at a place `T?` too.
+        "let v: i64??? = q(1, Some(Some(2)))\n    print(((v ?? None) ?? None) ?? 0)",
+        // A safe call flattens only the optional that it adds, so `m?.o(Some(2))` is an `i64??`.
+        "let m: Mk? = Some(Mk(n: 1))\n    let v: i64? = h(1, m?.o(Some(2)))\n    print(v ?? 0)",
         // Both are optionals, and `Some(2)` fills the `?`.
         "let v: i64?? = h(1, Some(2))\n    print((v ?? None) ?? 0)",
         "let v: i64?? = h(Some(1), Some(Some(2)))\n    print((v ?? None) ?? 0)",
@@ -2070,6 +2081,26 @@ fn a_nested_optional_at_a_lifted_place_should_make_the_call_an_optional() {
     let row = "let v: i64? = g(1, [Some(Some(2))])\n    print(v ?? 0)";
     let src = places_main(row);
     codes(&src, &[(Code::Mismatch, in_row(&src, row, "Some(2)"))]);
+}
+
+/// A call that returns `T?` is an optional of an optional when its argument at a place `T` is an
+/// optional. A context `i64??` meets its return type whole, so `T = i64?`. Before, the context
+/// met the payload, and `opt(Some(2))` was rejected.
+#[test]
+fn a_call_that_returns_an_optional_parameter_should_meet_a_nested_optional_context() {
+    with_prelude();
+    for row in [
+        "let w: i64?? = opt(Some(2))\n    print((w ?? None) ?? 0)",
+        "let w: i64?? = Mk(n: 1).o(Some(2))\n    print((w ?? None) ?? 0)",
+        "let w: i64?? = q(1, Some(2))\n    print((w ?? None) ?? 0)",
+        // A nested optional at the place `T?` makes `T` an optional: the context meets the return
+        // type whole when it has two optionals, and its payload when it has more.
+        "let w: i64?? = q(1, Some(Some(2)))\n    print((w ?? None) ?? 0)",
+        "let w: i64?? = q(1, opt(Some(2)))\n    print((w ?? None) ?? 0)",
+        "let w: i64??? = q(1, opt(Some(2)))\n    print(((w ?? None) ?? None) ?? 0)",
+    ] {
+        clean_row(row, &places_main(row));
+    }
 }
 
 /// A context of `i64?` or `u8?` meets the return type whole, and not its payload, when an argument
@@ -3283,26 +3314,47 @@ fn safe_call_should_mismatch_a_context_that_is_not_optional() {
     codes(src, &[(Code::Mismatch, (12, 7))]);
 }
 
+/// The declarations and the row of a call with no value, in `f`: `f` takes an array, so a call that
+/// waits for its type would get a context from it. The call is at the line `decls + 3`, after
+/// `lets`.
+fn no_value_main(decls: &str, lets: &str, call: &str) -> (String, usize) {
+    let src = format!("{decls}fn f<T>(r: [T]) {{}}\nfn main() {{\n    {lets}{call}\n}}");
+    (src, decls.lines().count() + 3 + lets.matches('\n').count())
+}
+
 /// A call with no value is E0043, as a call with its type written is. It is not a mismatch of
-/// `unit`, and a safe call has no `unit?`. A call whose arguments do not give its type is checked
-/// alone: it reports the `E` that it cannot infer first (`mk(None)`), as `let v = mk(None)` does.
+/// `unit`, and a safe call has no `unit?`.
 #[test]
 fn call_with_no_value_should_report_no_value() {
     with_prelude();
     let maker = "class Maker {\n    n: i64\n    fn make<E>(self, x: E?) {}\n}\n";
     let (fun, m) = ("fn mk<E>(x: E?) {}\n", "let m: Maker? = None\n    ");
-    // The column of the call, or of the method's name for the `E` that it cannot infer.
-    for (decls, lets, call, code, col) in [
-        (fun, "", "f(mk(Some(1)))", Code::NoValue, 7),
-        (fun, "", "f(mk(None))", Code::CannotInfer, 7),
-        (fun, "", "f(mk<i64>(None))", Code::NoValue, 7),
-        (maker, m, "f(m?.make(Some(1)))", Code::NoValue, 7),
-        (maker, m, "f(m?.make(None))", Code::CannotInfer, 10),
-        (maker, m, "f(m?.make<i64>(None))", Code::NoValue, 7),
+    for (decls, lets, call) in [
+        (fun, "", "f(mk(Some(1)))"),
+        (fun, "", "f(mk<i64>(None))"),
+        (maker, m, "f(m?.make(Some(1)))"),
+        (maker, m, "f(m?.make<i64>(None))"),
     ] {
-        let src = format!("{decls}fn f<T>(r: [T]) {{}}\nfn main() {{\n    {lets}{call}\n}}");
-        let line = decls.lines().count() + 3 + lets.matches('\n').count();
-        codes_row(call, &src, &[(code, (line, col))]);
+        let (src, line) = no_value_main(decls, lets, call);
+        codes_row(call, &src, &[(Code::NoValue, (line, 7))]);
+    }
+}
+
+/// A call whose arguments do not give its type is checked alone, with no context. It reports the
+/// `E` that it cannot infer first (`mk(None)`), as `let v = mk(None)` does, and not that it has no
+/// value.
+#[test]
+fn a_call_whose_arguments_do_not_give_its_type_should_report_its_parameter() {
+    with_prelude();
+    let maker = "class Maker {\n    n: i64\n    fn make<E>(self, x: E?) {}\n}\n";
+    let (fun, m) = ("fn mk<E>(x: E?) {}\n", "let m: Maker? = None\n    ");
+    // The column of the call, or of the method's name.
+    for (decls, lets, call, col) in [
+        (fun, "", "f(mk(None))", 7),
+        (maker, m, "f(m?.make(None))", 10),
+    ] {
+        let (src, line) = no_value_main(decls, lets, call);
+        codes_row(call, &src, &[(Code::CannotInfer, (line, col))]);
     }
 }
 
@@ -4440,8 +4492,10 @@ fn nested_generic_calls_should_rank_each_expression_once() {
         ("let r: u8 = ", "k(1, ", "1", ")"),
         ("let r: u8? = ", "id(", "1", ")"),
         ("let r: u8? = ", "k(Some(1), ", "None", ")"),
-        // Only the second argument gives the call its type: the first is not walked.
+        // Only the second argument gives the call its type. The first row nests at that place,
+        // and the second at the place that is not carried, which ranking does not walk.
         ("let r: u8 = ", "k2(x, ", "1", ")"),
+        ("let r: u8 = ", "k2(", "1", ", 1)"),
     ] {
         assert!(steps(row, 1) > 0, "the counter should count the walk");
         assert_near_linear(steps(row, 20), steps(row, 40), steps(row, 60));
