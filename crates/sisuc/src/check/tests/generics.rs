@@ -1861,7 +1861,16 @@ fn an_optional_argument_should_bind_before_a_plain_literal() {
         fn mk<T>(x: T) -> Bx<T> { Bx(v: x) }\n\
         fn unbox<T>(b: Bx<T>) -> T { b.v }\n\
         class Bx<T> {\n    v: T\n}\n\
-        class Holder {\n    fn pick<T>(self, a: T, b: T) -> T { a }\n}\n";
+        fn snd<T>(_a: i64, b: T) -> [T] { [b] }\n\
+        class P2<T> {\n    a: i64\n    b: T\n}\n\
+        fn second<T>(p: P2<T>) -> T { p.b }\n\
+        enum Holds<T> {\n    Full(T)\n}\n\
+        fn get<T>(h: Holds<T>) -> T {\n    match h {\n        Holds.Full(v) => v\n    }\n}\n\
+        interface W {\n    fn wrap<T>(self, x: T) -> [T]\n}\n\
+        class Wc: W {\n    fn wrap<T>(self, x: T) -> [T] { [x] }\n}\n\
+        fn via<X: W>(w: X) -> i64? {\n    let x = pick([1], w.wrap(Some(2)))\n    x[0]\n}\n\
+        class Holder {\n    fn pick<T>(self, a: T, b: T) -> T { a }\n\
+        fn wrap<T>(self, x: T) -> [T] { [x] }\n}\n";
     // The reversed orders passed before this change: they are controls.
     for row in [
         "let v = pick(1, Some(2))",
@@ -1905,6 +1914,14 @@ fn an_optional_argument_should_bind_before_a_plain_literal() {
         "let v = k(1, wrap(Some(2)))",
         "let v: i64? = pick(1, unbox(Bx(v: Some(2))))",
         "let v: u8? = k(1, wrap(Some(2)))",
+        // The optional is at a later place than the first, in a constructor field, in an enum
+        // payload, in a generic method, in a requirement of a bound (in `via`), and in `dbg`.
+        "let v = pick([1], snd(0, Some(2)))",
+        "let v = pick(1, second(P2(a: 0, b: Some(2))))",
+        "let v = pick(1, get(Holds.Full(Some(2))))",
+        "let v = pick([1], holder.wrap(Some(2)))",
+        "let v = via(Wc())",
+        "let v = pick([1], dbg([Some(2)]))",
         // The reversed orders passed before this change: they are controls.
         "let v = pick(wrap(Some(2)), [1])",
         "let v = pick(g([Some(2)]), [1])",
