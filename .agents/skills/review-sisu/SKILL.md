@@ -88,6 +88,7 @@ A diagnostic improvement (`CODING_STANDARDS.md`, Reviewing) is deferred without 
 Rules for ruling:
 
 1. Check a finding before you rule. Run its repro or read the source it cites. When the claim does not hold, reject it and say what you saw. Save each repro program you run as `RUN/probes/<round>/<reviewer>-<n>.sisu`.
+   A fix that a reviewer suggests is a claim too. Check its text, such as the wording of a comment, before it goes into a brief.
 2. Severity follows "Reviewing" in `CODING_STANDARDS.md`. A blocking finding is fixed or deferred with the user's agreement; a nit may be rejected.
 3. A ruling must not break a rule in `CODING_STANDARDS.md`.
 4. When two reviewers disagree, rule on the evidence and record the disagreement.
@@ -98,6 +99,8 @@ Rules for ruling:
 Fix the accepted findings in the target. Fix the class, not only the repro: for each finding, list the neighbouring cases (the same rule in each position the language allows it), try each one, and fix the cause so that all of them are right. A brief for a fix round asks for that list and its results, and for the command and its output behind each claim about what `sisu` does. Its executor writes each probe program to `RUN/probes/<round>/`, and compares the probes of every round with `python3 scripts/diag_diff.py BASE_SISU HEAD_SISU RUN/probes`, where `BASE_SISU` is the build before the round. A fix to code keeps `make test`
 passing, and a fix that changes behavior adds a test that fails without
 it.
+
+When a fix round changes more than 50 lines outside the tests, such as a new algorithm, run one mutation test on the round's head before the re-review: `(cd <worktree> && env CARGO_MUTANTS_JOBS=2 nice -n 19 make mutation-test BASE=<round base> LOG=RUN/mutation-<round>.log)`, with Bash `run_in_background`. `git diff --shortstat <round base> HEAD -- . ':!**/tests/**' ':!**/tests.rs'` gives the count. Put each surviving mutant into the round, with a test that kills it or a reason it is equivalent, and pass the log as `--mutation-log`. A round that changes less, or only tests and comments, runs none.
 
 When you fixed a blocking finding, review again. Write `RUN/focus-<round>.md`
 with the fixes and what you probed, and run the script with
