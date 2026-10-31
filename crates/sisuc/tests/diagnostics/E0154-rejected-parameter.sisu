@@ -15,8 +15,10 @@ fn first_only<T: Source>(pair: Two<T, T.Item>, same: T) {}
 fn then_other<T: Source, U>(pair: Two<T, T.Item>, label: U, other: Two<U, T.Item>) {}
 
 fn main() {
+    // A variable, not a literal: a literal would take its type from the other arguments.
+    let n: i64 = 5
     // `i64` has no `Source`. The call reports this once, and not `Plain()` as well.
-    first_only(Two.Both(5, 7), Plain())
+    first_only(Two.Both(n, 7), Plain())
     // The bound fails here too. `label` and `other` are still checked against each other.
-    then_other(Two.Both(5, 7), true, Two.Both("s", 3))
+    then_other(Two.Both(n, 7), true, Two.Both("s", 3))
 }

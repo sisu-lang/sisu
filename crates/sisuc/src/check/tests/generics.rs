@@ -1677,6 +1677,79 @@ fn literal_like_arguments_should_follow_the_others() {
     ]);
 }
 
+/// The generic functions that the rows of the two tests below call.
+const TRANSPARENT_DECLS: &str = "fn id<T>(x: T) -> T { x }\n\
+    fn pick<T>(a: T, b: T) -> T { a }\n\
+    enum Two<A, B> { P(A, B) }\n\
+    fn mk<A, B>(a: A, b: B) -> Two<A, B> { Two.P(a, b) }\n";
+
+/// A value that passes its context to its parts (`dbg`, a block, an `if`, a `match`, a generic
+/// call, an array literal) ranks as its parts do, so an integer literal under it is typed by the
+/// call that holds it. Each row is one statement of a `main` that has `c: bool` and `x: u8`.
+#[test]
+fn literals_under_a_transparent_form_should_take_the_type_of_the_call() {
+    // `Result`, `Ok` and `dbg` are the prelude's.
+    with_prelude();
+    for row in [
+        "let r: Result<[u8], bool> = Ok(dbg([1]))",
+        "let r: Result<bool, [u8]> = Err(({ [1] }))",
+        "let r: Result<u8, bool> = Ok(dbg(1))",
+        "let r: Result<u8, bool> = Ok({ 1 })",
+        "let r: Result<u8, bool> = Ok(if c { 1 } else { 2 })",
+        "let r: Result<u8, bool> = Ok(match c {\n true => 1\n false => 2\n })",
+        "let r: Result<[u8], bool> = Ok(if c { [1] } else { [2] })",
+        "let r: Result<[u8], bool> = Ok([dbg(1)])",
+        "let r: Result<[u8], bool> = Ok([{ 1 }])",
+        "let r: u8 = id(dbg(1))",
+        "let r: u8 = id({ 1 })",
+        "let r: u8 = id(if c { 1 } else { 2 })",
+        "let r: [u8] = id(dbg([1]))",
+        "let r: u8 = id(id(1))",
+        "let r: u8?? = Some(Some(1))",
+        "let r: Result<u8?, bool> = Ok(Some(1))",
+        "let r: Result<u8??, bool> = Ok(Some(Some(1)))",
+        "let r: Result<u8?, bool> = Ok(if c { 1 } else { None })",
+        // A literal under a call that makes an optional meets the whole optional context.
+        "let r: u8? = id(Some(1))",
+        "let r: u8? = id(dbg(Some(1)))",
+        "let r: u8? = id({ Some(1) })",
+        "let r: u8? = id(if c { Some(1) } else { None })",
+        "let r: u8? = id(if c { 1 } else { None })",
+        "let r: u8? = id(id(Some(1)))",
+        // A literal alone meets the payload, and the call wraps it.
+        "let r: u8? = id(1)",
+        "let y: i64? = None\n    let r: i64 = y ?? id(2)",
+        "let r: Two<u8, i64> = mk(id(5), 1)",
+    ] {
+        let src = format!(
+            "{TRANSPARENT_DECLS}fn main() {{\n    let c = true\n    let x: u8 = 3\n    {row}\n}}"
+        );
+        clean_row(row, &src);
+    }
+}
+
+/// A literal does not outrank a concrete argument, whatever form holds it: the concrete one
+/// binds the parameter first.
+#[test]
+fn a_concrete_argument_should_bind_before_a_literal_under_a_transparent_form() {
+    // `Result`, `Ok` and `dbg` are the prelude's.
+    with_prelude();
+    for row in [
+        "pick(dbg(1), x)",
+        "pick({ 1 }, x)",
+        "pick(x, id(1))",
+        "pick(1, x)",
+    ] {
+        let src = format!(
+            "{TRANSPARENT_DECLS}fn main() {{\n    let x: u8 = 3\n    let r: u8 = {row}\n}}"
+        );
+        clean_row(row, &src);
+    }
+    let src = format!("{TRANSPARENT_DECLS}fn main() {{\n    let r = pick(1, \"s\")\n}}");
+    let line = TRANSPARENT_DECLS.lines().count() + 2;
+    codes(&src, &[(Code::Mismatch, (line, 18))]);
+}
+
 /// A `T?` parameter takes an optional's payload, or a value the call wraps.
 #[test]
 fn an_optional_parameter_should_take_the_payload() {
@@ -2916,6 +2989,28 @@ fn an_associated_type_argument_should_wait_for_the_argument_that_binds_its_base(
     }
 }
 
+/// A variant built from integer literals ranks as a literal does, so it takes its type from a
+/// concrete argument beside it: the mismatch is at the `5`, as for a bare `5`, and not a failed
+/// bound of the `i64` that the pair would bind alone.
+#[test]
+fn a_variant_of_literals_should_take_its_type_from_a_concrete_argument() {
+    for (decls, call, col) in [
+        (
+            "fn h<T: I>(_p: Two<T, T.Item>, _a: T) {}\n",
+            "h(Two.P(5, 7), W())",
+            13,
+        ),
+        ("fn h<T: I>(_a: T, _b: T) {}\n", "h(5, W())", 7),
+    ] {
+        let (src, line) = assoc_program(decls, call);
+        codes_row(
+            &format!("{decls}{call}"),
+            &src,
+            &[(Code::Mismatch, (line, col))],
+        );
+    }
+}
+
 /// The declarations of the tests below: `W` and `P` choose `Item` for the interfaces `I` and
 /// `Holds<i64>`.
 const ASSOC_DECLS: &str = "interface I {\n    type Item\n}\n\
@@ -2923,7 +3018,8 @@ const ASSOC_DECLS: &str = "interface I {\n    type Item\n}\n\
     enum Wrap<T> {\n    N\n    X(T)\n}\n\
     enum Two<A, B> {\n    P(A, B)\n}\n\
     class W: I {\n    type Item = i64\n}\n\
-    class P: Holds<i64> {\n    type Item = string\n}\n";
+    class P: Holds<i64> {\n    type Item = string\n}\n\
+    fn five() -> i64 { 5 }\n";
 
 /// The `main` of `ASSOC_DECLS` and `decls` that holds `call`, and the line of `call`.
 fn assoc_program(decls: &str, call: &str) -> (String, usize) {
@@ -3017,32 +3113,33 @@ fn an_associated_type_argument_should_report_its_own_mistake() {
         ),
         (
             "fn h<T: I>(_p: Two<T, T.Item>, _q: Two<T, T.Item>) {}\n",
-            "h(Two.P(5, 7), Two.P(W(), 8))",
+            // `five()`, not a literal: a literal takes its type from the `W()` that binds `T`.
+            "h(Two.P(five(), 7), Two.P(W(), 8))",
             &[(Code::NotConform, 7)],
         ),
         // An argument for a type built from the parameter whose bound failed is not checked.
         (
             "fn h<T: I, U>(_p: Two<T, T.Item>, _a: Two<T, U>, _b: Two<T.Item, U>) {}\n",
-            "h(Two.P(5, 7), Two.P(W(), 1), Two.P(1, 1))",
+            "h(Two.P(five(), 7), Two.P(W(), 1), Two.P(1, 1))",
             &[(Code::NotConform, 7)],
         ),
         // A parameter that is not bound yet when the bound fails is still bound by the next
         // argument, so a later mismatch is reported at it.
         (
             "fn h<T: I, U>(_p: Two<T, T.Item>, _a: U, _b: U) {}\n",
-            "h(Two.P(5, 7), 1, \"s\")",
-            &[(Code::NotConform, 7), (Code::Mismatch, 20)],
+            "h(Two.P(five(), 7), 1, \"s\")",
+            &[(Code::NotConform, 7), (Code::Mismatch, 25)],
         ),
         // A pattern that names no parameter with a failed bound still reports its mismatch.
         (
             "fn h<T: I, S: I, U, V>(_p: Two<T, T.Item>, _s: S, _a: U, _b: Two<Two<U, V>, i64>) {}\n",
-            "h(Two.P(5, 7), W(), true, Two.P(Two.P(\"s\", 1), 2))",
-            &[(Code::NotConform, 7), (Code::Mismatch, 43)],
+            "h(Two.P(five(), 7), W(), true, Two.P(Two.P(\"s\", 1), 2))",
+            &[(Code::NotConform, 7), (Code::Mismatch, 48)],
         ),
         (
             "fn h<T: I, U>(_p: Two<T, T.Item>, _a: Wrap<U>, _b: Wrap<U>) {}\n",
-            "h(Two.P(5, 7), Wrap.X(1), Wrap.X(\"s\"))",
-            &[(Code::NotConform, 7), (Code::Mismatch, 38)],
+            "h(Two.P(five(), 7), Wrap.X(five()), Wrap.X(\"s\"))",
+            &[(Code::NotConform, 7), (Code::Mismatch, 48)],
         ),
     ];
     for &(decls, call, expected) in rows {
@@ -3750,8 +3847,8 @@ const NO_HOLE_ROWS: &[PartialRow<'static>] = {
     use Code::Mismatch;
     &[(
         "",
-        "let t: Two<u8, i64> = mk(id(5), 1)",
-        &[(Mismatch, "id(5)")],
+        "let n: i64 = 5\nlet t: Two<u8, i64> = mk(id(n), 1)",
+        &[(Mismatch, "id(n)")],
     )]
 };
 
@@ -3937,70 +4034,70 @@ fn check_rows_after(shared: &str, rows: &[PartialRow<'_>]) {
 /// The rows of `a_failed_bound_should_not_check_a_later_argument_against_the_rejected_type`.
 const REJECT_ROWS: &[PartialRow<'static>] = {
     use Code::{Mismatch, NotConform};
-    const P: &str = "Two.P(5";
+    const P: &str = "Two.P(n";
     &[
         // The first argument binds `T` to `i64`. `I` has no conformance for it.
         (
             "fn h<T: I>(_p: Two<T, i64>, _a: T) {}\n",
-            "h(Two.P(5, 7), W())",
+            "let n: i64 = 5\nh(Two.P(n, 7), W())",
             &[(NotConform, P)],
         ),
         (
             "fn h<T: I>(_p: Two<T, T.Item>, _a: T) {}\n",
-            "h(Two.P(5, 7), W())",
+            "let n: i64 = 5\nh(Two.P(n, 7), W())",
             &[(NotConform, P)],
         ),
         (
             "fn h<T: I, U>(_p: Two<T, i64>, _a: Two<T, U>) {}\n",
-            "h(Two.P(5, 7), Two.P(W(), 1))",
+            "let n: i64 = 5\nh(Two.P(n, 7), Two.P(W(), 1))",
             &[(NotConform, P)],
         ),
         // The parameter is in an array, an optional and a nested call.
         (
             "fn h<T: I>(_p: Two<T, i64>, _a: [T]) {}\n",
-            "h(Two.P(5, 7), [W(), W()])",
+            "let n: i64 = 5\nh(Two.P(n, 7), [W(), W()])",
             &[(NotConform, P)],
         ),
         (
             "fn h<T: I>(_p: Two<T, i64>, _a: [[T]]) {}\n",
-            "h(Two.P(5, 7), [[W()], [W()]])",
+            "let n: i64 = 5\nh(Two.P(n, 7), [[W()], [W()]])",
             &[(NotConform, P)],
         ),
         (
             "fn h<T: I>(_p: Two<T, i64>, _a: [T?]) {}\n",
-            "h(Two.P(5, 7), [Some(W()), None])",
+            "let n: i64 = 5\nh(Two.P(n, 7), [Some(W()), None])",
             &[(NotConform, P)],
         ),
         (
             "fn h<T: I>(_p: Two<T, i64>, _a: T?) {}\n",
-            "h(Two.P(5, 7), Some(W()))",
+            "let n: i64 = 5\nh(Two.P(n, 7), Some(W()))",
             &[(NotConform, P)],
         ),
         (
             "fn h<T: I>(_p: Two<T, i64>, _a: T) {}\n",
-            "h(Two.P(5, 7), id(W()))",
+            "let n: i64 = 5\nh(Two.P(n, 7), id(W()))",
             &[(NotConform, P)],
         ),
         // Two arguments after it, and one that is wrong in its own right.
         (
             "fn h<T: I>(_p: Two<T, i64>, _a: T, _b: T) {}\n",
-            "h(Two.P(5, 7), W(), \"s\")",
+            "let n: i64 = 5\nh(Two.P(n, 7), W(), \"s\")",
             &[(NotConform, P)],
         ),
         (
             "fn h<T: I>(_p: Two<T, i64>, _a: T, _b: bool) {}\n",
-            "h(Two.P(5, 7), W(), 1)",
+            "let n: i64 = 5\nh(Two.P(n, 7), W(), 1)",
             &[(NotConform, P), (Mismatch, "1)")],
         ),
         // Each bound that fails is reported, and each parameter that has one is rejected.
         (
             "fn h<T: I, U: J>(_p: Two<T, U>, _a: T, _b: U) {}\n",
-            "h(Two.P(5, true), W(), false)",
+            "let n: i64 = 5\nh(Two.P(n, true), W(), false)",
             &[(NotConform, P), (NotConform, P)],
         ),
         (
             "fn h<T: I & J>(_p: Two<T, i64>, _a: T) {}\n",
-            "h(Two.P(5, 7), W())",
+            "let n: i64 = 5\nh(Two.P(n, 7), W())",
             &[(NotConform, P), (NotConform, P)],
         ),
         (
@@ -4023,7 +4120,7 @@ const REJECT_ROWS: &[PartialRow<'static>] = {
         // The type argument is written.
         (
             "fn h<T: I>(_p: Two<T, i64>, _a: T) {}\n",
-            "h<i64>(Two.P(5, 7), W())",
+            "let n: i64 = 5\nh<i64>(Two.P(n, 7), W())",
             &[(NotConform, "i64")],
         ),
         (
@@ -4034,27 +4131,27 @@ const REJECT_ROWS: &[PartialRow<'static>] = {
         // A method, a method of a generic class, a safe call, a construction and a variant.
         (
             "class Bx {\n    fn m<T: I>(self, _p: Two<T, i64>, _a: T) {}\n}\n",
-            "Bx().m(Two.P(5, 7), W())",
+            "let n: i64 = 5\nBx().m(Two.P(n, 7), W())",
             &[(NotConform, P)],
         ),
         (
             "class Gr<X> {\n    x: X\n    fn m<U: I>(self, _p: Two<U, i64>, _a: U) {}\n}\n",
-            "Gr(x: true).m(Two.P(5, 7), W())",
+            "let n: i64 = 5\nGr(x: true).m(Two.P(n, 7), W())",
             &[(NotConform, P)],
         ),
         (
             "class Sf {\n    fn m<T: I>(self, _p: Two<T, i64>, _a: T) {}\n}\n",
-            "let o: Sf? = Sf()\no?.m(Two.P(5, 7), W())",
+            "let n: i64 = 5\nlet o: Sf? = Sf()\no?.m(Two.P(n, 7), W())",
             &[(NotConform, P)],
         ),
         (
             "class Hold<T: I> {\n    p: Two<T, i64>\n    a: T\n}\n",
-            "Hold(p: Two.P(5, 7), a: W())",
+            "let n: i64 = 5\nHold(p: Two.P(n, 7), a: W())",
             &[(NotConform, P)],
         ),
         (
             "enum En<T: I> {\n    V(Two<T, i64>, T)\n}\n",
-            "En.V(Two.P(5, 7), W())",
+            "let n: i64 = 5\nEn.V(Two.P(n, 7), W())",
             &[(NotConform, P)],
         ),
     ]
@@ -4070,39 +4167,39 @@ fn a_failed_bound_should_not_check_a_later_argument_against_the_rejected_type() 
 /// The rows of `an_argument_after_a_failed_bound_should_report_the_part_that_is_wrong`.
 const REJECT_PART_ROWS: &[PartialRow<'static>] = {
     use Code::{Mismatch, NotConform};
-    const P: &str = "Two.P(5";
+    const P: &str = "Two.P(n";
     const S: &str = "\"s\"";
     &[
         // `U` is not rejected: the first argument that binds it fixes it.
         (
             "fn h<T: I, U>(_p: Two<T, T.Item>, _a: U, _b: Two<U, T.Item>) {}\n",
-            "h(Two.P(5, 7), true, Two.P(\"s\", 3))",
+            "let n: i64 = 5\nh(Two.P(n, 7), true, Two.P(\"s\", 3))",
             &[(NotConform, P), (Mismatch, S)],
         ),
         (
             "fn h<T: I, S: I, U>(_p: Two<T, T.Item>, _s: S, _a: U, _b: Two<U, S.Item>) {}\n",
-            "h(Two.P(5, 7), W(), true, Two.P(\"s\", 2))",
+            "let n: i64 = 5\nh(Two.P(n, 7), W(), true, Two.P(\"s\", 2))",
             &[(NotConform, P), (Mismatch, S)],
         ),
         (
             "fn h<T: I, U>(_p: Two<T, i64>, _a: Two<T, U>, _b: U) {}\n",
-            "h(Two.P(5, 7), Two.P(W(), 1), \"s\")",
+            "let n: i64 = 5\nh(Two.P(n, 7), Two.P(W(), 1), \"s\")",
             &[(NotConform, P), (Mismatch, S)],
         ),
         (
             "fn h<T: I, U>(_p: Two<T, i64>, _a: [Two<T, U>], _b: U) {}\n",
-            "h(Two.P(5, 7), [Two.P(W(), 1), Two.P(W(), 2)], \"s\")",
+            "let n: i64 = 5\nh(Two.P(n, 7), [Two.P(W(), 1), Two.P(W(), 2)], \"s\")",
             &[(NotConform, P), (Mismatch, S)],
         ),
         // The part that is not the rejected parameter must still meet the parameter's type.
         (
             "fn h<T: I>(_p: Two<T, i64>, _a: Two<T, bool>) {}\n",
-            "let t = Two.P(W(), 1)\nh(Two.P(5, 7), t)",
+            "let n: i64 = 5\nlet t = Two.P(W(), 1)\nh(Two.P(n, 7), t)",
             &[(NotConform, P), (Mismatch, "t)")],
         ),
         (
             "fn h<T: I>(_p: Two<T, i64>, _a: Two<T, bool>) {}\n",
-            "h(Two.P(5, 7), mk(W(), 1))",
+            "let n: i64 = 5\nh(Two.P(n, 7), mk(W(), 1))",
             &[(NotConform, P), (Mismatch, "1))")],
         ),
     ]
@@ -4155,13 +4252,13 @@ const OTHER_WAIT_ROWS: &[PartialRow<'static>] = {
     &[
         (
             "fn h<T: I, U>(_p: Two<T, i64>, _a: U?) {}\n",
-            "h(Two.P(5, 7), none())",
-            &[(NotConform, "Two.P(5"), (CannotInfer, "none()")],
+            "let n: i64 = 5\nh(Two.P(n, 7), none())",
+            &[(NotConform, "Two.P(n"), (CannotInfer, "none()")],
         ),
         (
             "fn h<T: I, U>(_p: Two<T, i64>, _a: [U?]) {}\n",
-            "h(Two.P(5, 7), [none()])",
-            &[(NotConform, "Two.P(5"), (CannotInfer, "none()")],
+            "let n: i64 = 5\nh(Two.P(n, 7), [none()])",
+            &[(NotConform, "Two.P(n"), (CannotInfer, "none()")],
         ),
     ]
 };
@@ -4202,8 +4299,8 @@ const NESTED_REJECT_ROWS: &[PartialRow<'static>] = {
         ),
         (
             "fn h<T: I>(_p: Two<T, i64>, _a: T?) {}\n",
-            "h(Two.P(5, 7), id(none()))",
-            &[(NotConform, "Two.P(5")],
+            "let n: i64 = 5\nh(Two.P(n, 7), id(none()))",
+            &[(NotConform, "Two.P(n")],
         ),
         // A bare `T` is the whole context, so the call meets `REJECTED` itself. It rejects each
         // parameter that its result names, and meets a part that names none.
@@ -4404,13 +4501,13 @@ const NO_BLAME_ROWS: &[PartialRow<'static>] = {
     &[
         (
             "fn h<T: I, U>(p: Two<T, U>) -> Two<T, U> { p }\n",
-            "let x: Two<Plain, bool> = h(Two.P(5, 7))",
-            &[(NotConform, "Two.P(5")],
+            "let n: i64 = 5\nlet x: Two<Plain, bool> = h(Two.P(n, 7))",
+            &[(NotConform, "Two.P(n")],
         ),
         (
             "fn h<T: I, U>(p: Two<T, U>) -> Two<T, U> { p }\n",
-            "let x: Two<W, bool> = h(Two.P(5, 7))",
-            &[(NotConform, "Two.P(5")],
+            "let n: i64 = 5\nlet x: Two<W, bool> = h(Two.P(n, 7))",
+            &[(NotConform, "Two.P(n")],
         ),
     ]
 };
@@ -4487,36 +4584,36 @@ fn a_bound_that_names_an_associated_type_of_a_rejected_parameter_should_add_no_e
 /// The rows of `a_failed_bound_should_come_before_a_mismatch_with_the_expected_type`.
 const REJECT_EXPECTED_ROWS: &[PartialRow<'static>] = {
     use Code::NotConform;
-    const P: &str = "Two.P(5";
+    const P: &str = "Two.P(n";
     &[
         (
             "fn h<T: I>(_p: Two<T, i64>) -> T? { None }\n",
-            "let x: W? = h(Two.P(5, 7))",
+            "let n: i64 = 5\nlet x: W? = h(Two.P(n, 7))",
             &[(NotConform, P)],
         ),
         (
             "fn h<T: I>(_p: Two<T, T.Item>) -> T? { None }\n",
-            "let x: W? = h(Two.P(5, 7))",
+            "let n: i64 = 5\nlet x: W? = h(Two.P(n, 7))",
             &[(NotConform, P)],
         ),
         (
             "fn h<T: I>(_p: Two<T, i64>, a: T) -> T { a }\n",
-            "let x: i64 = h(Two.P(5, 7), W())",
+            "let n: i64 = 5\nlet x: i64 = h(Two.P(n, 7), W())",
             &[(NotConform, P)],
         ),
         (
             "fn h<T: I>(_p: Two<T, i64>, a: [T]) -> [T] { a }\n",
-            "let x: [W] = h(Two.P(5, 7), [W()])",
+            "let n: i64 = 5\nlet x: [W] = h(Two.P(n, 7), [W()])",
             &[(NotConform, P)],
         ),
         (
             "fn h<T: I>(_p: Two<T, i64>, a: T) -> Two<T, T> { Two.P(a, a) }\n",
-            "let x: Two<W, W> = h(Two.P(5, 7), W())",
+            "let n: i64 = 5\nlet x: Two<W, W> = h(Two.P(n, 7), W())",
             &[(NotConform, P)],
         ),
         (
             "class Sf {\n    fn m<T: I>(self, _p: Two<T, i64>, _a: T) -> T? { None }\n}\n",
-            "let o: Sf? = Sf()\nlet x: W? = o?.m(Two.P(5, 7), W())",
+            "let n: i64 = 5\nlet o: Sf? = Sf()\nlet x: W? = o?.m(Two.P(n, 7), W())",
             &[(NotConform, P)],
         ),
     ]

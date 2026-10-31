@@ -60,7 +60,7 @@ impl Checker<'_> {
         else_block: Option<&ast::Block>,
         expected: Option<Type>,
     ) -> Checked {
-        // Ranking the `if let` for context may have checked its value (see `waits`).
+        // Ranking the `if let` for context may have checked its value (see `rank_value`).
         let (scrutinee, form, mismatched) = match self.kept(value.span, false) {
             Some((_, Ahead::Let(checked, form, mismatched))) => (checked, form, mismatched),
             _ => self.let_value(Unwrap::IfLet, pattern, value),

@@ -1,0 +1,4 @@
+generic_literal_forms.sisu:17:17: 1 = 1
+generic_literal_forms.sisu:24:40: [7] = [7]
+generic_literal_forms.sisu:29:26: [8, 9] = [8, 9]
+generic_literal_forms.sisu:34:26: 11 = 11
