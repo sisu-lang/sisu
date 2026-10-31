@@ -2198,8 +2198,8 @@ impl Checker<'_> {
         context: Option<Type>,
     ) -> Checked {
         if let Some((elements, element)) = self.literal_elements(call, e, pattern) {
-            // The one walk of `pattern` for the whole literal: a refused literal has no context,
-            // and its levels take their parts of this one (see `inferred_array`).
+            // The walk of `pattern` that the levels of the literal share: a refused literal has
+            // no context, and its levels take their parts of this one (see `inferred_array`).
             let partial = context.or_else(|| self.partial_context(call, e, pattern));
             return self
                 .inferred_array(call, e.span, elements, element, partial, context.is_some())

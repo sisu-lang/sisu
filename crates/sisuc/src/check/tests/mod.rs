@@ -2,7 +2,7 @@ use super::*;
 use crate::diagnostic::explanations::apply;
 use crate::diagnostic::{Code, Fix};
 use crate::front_end::{PRELUDE_SOURCE, prelude_program};
-use crate::mir::tests::assert_near_linear;
+use crate::mir::tests::{assert_near_linear, assert_near_linear_for};
 use crate::parser::parse_ok;
 use crate::source::line_col;
 

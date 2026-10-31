@@ -4560,8 +4560,11 @@ fn a_nested_array_literal_should_resolve_its_type_a_linear_number_of_times() {
             clean(&nested_array_program(depth, end, bottom, setup));
             generic::WALKED.get()
         };
-        assert!(walked(1) > 0, "the counter should count the walks");
-        assert_near_linear(walked(20), walked(40), walked(60));
+        assert!(
+            walked(1) > 0,
+            "{bottom}: the counter should count the walks"
+        );
+        assert_near_linear_for(&format!("{bottom}: "), walked(20), walked(40), walked(60));
     }
 }
 
