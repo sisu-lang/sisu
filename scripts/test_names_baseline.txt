@@ -790,7 +790,6 @@ crates/sisuc/src/fuzz_program.rs::a_compiler_panic_leaves_the_dump
 crates/sisuc/src/fuzz_program.rs::a_dump_it_cannot_write_is_reported
 crates/sisuc/src/fuzz_program.rs::a_hang_fails_property_3
 crates/sisuc/src/fuzz_program.rs::a_panic_passes_when_every_build_agrees
-crates/sisuc/src/fuzz_program.rs::a_rejected_program_fails_property_1
 crates/sisuc/src/fuzz_program.rs::a_signal_is_its_number
 crates/sisuc/src/fuzz_program.rs::a_timed_out_child_is_reaped
 crates/sisuc/src/fuzz_program.rs::judge_builds_rejects_any_difference

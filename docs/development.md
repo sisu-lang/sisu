@@ -404,7 +404,7 @@ input it reads, and a rewritten copy that must print the same
 generator lives in `crates/sisuc/src/generate/`, and the runner that judges
 the program in `crates/sisuc/src/fuzz_program.rs`. Both compile only in tests
 and under the `fuzz` feature, never into the released `sisu`. Each program
-must pass five properties, cheapest first:
+must pass six properties:
 
 1. It checks clean. Warnings are allowed.
 2. Its mir builds and certifies, and LLVM verifies its module, without and
@@ -419,6 +419,14 @@ must pass five properties, cheapest first:
    rewrite changes the argument of a `dbg`.
 5. The program prints the integer answers the generator worked out itself, or
    panics with the overflow or division by zero it expects.
+6. A broken bound gives E0154 and nothing else. For each bound site, an
+   argument of a call of a bounded generic function or class whose parameter
+   is the bare type parameter that no earlier argument names, a copy of the
+   program has that argument replaced by a value that does not conform to the
+   bound, and `class NoBound {}` at its end. The checker, alone, with no
+   build, reports at least one error. Each error is E0154, and each starts at
+   the replaced argument. Any other error is a cascade, as in issue #283.
+   Property 6 runs after property 1, before the builds.
 
 Name the target with `--target`, before the other arguments:
 
@@ -453,7 +461,9 @@ A replay prints the failure to stderr: the failed property as
 rewritten copy and the standard input, each under a `==> <name>` line, then
 each build's exit status, stdout and stderr. It also writes `program.sisu`,
 `rewritten.sisu`, `stdin.txt` and `failure.txt` to
-`fuzz/artifacts/program/<input name>.dump/`. The replays after a fuzz run
+`fuzz/artifacts/program/<input name>.dump/`. A failed property 6 also writes
+`broken.sisu`, the broken copy that failed, which shows the checker's
+diagnostics when you run `sisu check` on it. The replays after a fuzz run
 write the same directories.
 
 `--coverage` works for either target. It runs `cargo fuzz coverage` over the
@@ -512,7 +522,10 @@ resolve it first.
 3. For a compiler or runtime bug, `program.sisu` becomes a `run/` or
    `run-fail/` case, and `stdin.txt`, when it is not empty, its `<name>.in`.
    Check its `.out` by hand, as `CODING_STANDARDS.md` asks, see the case fail,
-   then fix the root cause. A runtime fix also runs `make miri`.
+   then fix the root cause. A runtime fix also runs `make miri`. For property 6,
+   the case is `broken.sisu`, cut down to the call: it becomes a case of
+   `crates/sisuc/tests/diagnostics/`, and the checker's output must be the one
+   E0154 at the replaced argument.
 4. For a generator bug, add a test in `crates/sisuc/src/generate/coverage.rs`
    that fails on it, then fix the generator. Never steer the generator around
    a compiler bug.
