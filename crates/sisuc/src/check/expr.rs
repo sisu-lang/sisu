@@ -391,7 +391,7 @@ impl Checker<'_> {
             Some(Type::NEVER) => return Err(Poisoned::error()),
             Some(ty) => (
                 DiagnosticKind::Mismatch {
-                    want: vec![self.type_name(ty)],
+                    want: vec![self.want_name(span, ty)],
                     got: "None".to_string(),
                     at: span,
                     source: self.expected_from(span),

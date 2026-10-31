@@ -686,7 +686,7 @@ fn emit_ast_should_exit_1_with_e0011_when_a_top_level_item_is_a_let() {
     assert!(at_severity(&stderr, "error") == Some(0), "{stderr}");
     assert!(
         stderr.contains(
-            "error[E0011]: expected `fn`, `class`, `enum`, `interface`, `extend` or `const`, found `let`\n --> parse_error_exits_1.sisu:1:1"
+            "error[E0011]: expected `fn`, `class`, `enum`, `interface`, `extend`, `const` or `type`, found `let`\n --> parse_error_exits_1.sisu:1:1"
         ),
         "{stderr}"
     );

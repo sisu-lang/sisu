@@ -1,0 +1,11 @@
+enum Heap<T: Ord> {
+    One(T)
+    Zero
+}
+
+type H<T> = Heap<T>
+
+fn main() {
+    let a: H<bool> = H.Zero
+    let b = H<bool>.Zero
+}

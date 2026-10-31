@@ -1,0 +1,7 @@
+type M = Option<i64>
+
+extend Option<i64> {}
+
+extend M {}
+
+fn main() {}

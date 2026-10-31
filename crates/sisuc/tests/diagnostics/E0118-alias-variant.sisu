@@ -1,0 +1,29 @@
+enum G<T> {
+    A(T)
+    B
+}
+
+class P<T> {
+    x: T
+}
+
+type GI = G<i64>
+type GP<T> = G<T>
+type PI = P<i64>
+
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn main() {
+    let a = GI.Missing(1)
+    let b = PI.Foo(1)
+    let c = GP<i64>.Missing(1)
+    let d = GP<i64>.B
+    let e = id(PI.Foo(1))
+    let f = id(PI.x)
+    let k = PI.Some<i64>(1)
+    print(None == PI.None)
+    let PI = 3
+    let g = id(PI.x)
+}

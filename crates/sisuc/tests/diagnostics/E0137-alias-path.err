@@ -1,0 +1,32 @@
+error[E0137]: `EE.Nil` is not generic
+  --> E0137-alias-path.sisu:21:13
+   |
+21 |     let a = EE.Nil<i64>(1)
+   |             ^^^^^^
+
+error[E0137]: `O.None` takes no type arguments
+  --> E0137-alias-path.sisu:22:19
+   |
+22 |     let c = O.None<i64>(1)
+   |                   ^^^^^
+
+error[E0105]: `PI` is a type, not a value
+  --> E0137-alias-path.sisu:23:13
+   |
+23 |     let e = PI.Foo<i64>(1)
+   |             ^^
+
+error[E0118]: `G` has no variant `Missing`
+  --> E0137-alias-path.sisu:24:16
+   |
+24 |     let f = GI.Missing<i64>(1)
+   |                ^^^^^^^
+
+error[E0063]: `i64` has no method `Foo`
+  --> E0137-alias-path.sisu:26:16
+   |
+26 |     let g = PI.Foo<i64>(1)
+   |                ^^^
+
+sisu: 5 errors
+sisu: for more on a code, run `sisu explain <code>`: E0063, E0105, E0118, E0137

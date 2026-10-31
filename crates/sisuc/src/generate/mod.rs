@@ -111,8 +111,12 @@ const STATEMENT_MOST: u64 = (MAX_BOUND + 1) * (MAX_BOUND + 1) * (MAX_BOUND + 1);
 pub(crate) fn generate(data: &[u8]) -> Generated {
     // The rewrites and the known sites read the bytes from the end, the program from the start.
     let reversed: Vec<u8> = data.iter().rev().copied().collect();
+    // The aliases read a stream of their own, so that the choices of every other rule stay where
+    // they were, with or without aliases.
+    let rotated: Vec<u8> = data.iter().map(|b| b.rotate_left(3)).collect();
     let mut g = Gen::new(data);
     g.ru = Unstructured::new(&reversed);
+    g.au = Unstructured::new(&rotated);
     let (cost, known) = g.program();
     // Only the tests read the cost.
     #[cfg(not(test))]
@@ -184,6 +188,8 @@ struct Gen<'a> {
     /// What chooses the rewrites and the known sites, apart from `u`, so the program is the
     /// same whatever they are.
     ru: Unstructured<'a>,
+    /// What chooses the type aliases and where they are used, apart from `u` and `ru`.
+    au: Unstructured<'a>,
     /// Whether an expression of the statement being written so far has an effect or may
     /// panic, so one after it may not move before the statement (decision 2).
     effect: bool,
@@ -216,6 +222,7 @@ impl<'a> Gen<'a> {
             typed: false,
             bare: false,
             ru: Unstructured::new(&[]),
+            au: Unstructured::new(&[]),
             effect: false,
             returns: false,
             bound_sites: Vec::new(),
@@ -234,8 +241,21 @@ impl<'a> Gen<'a> {
         self.u.choose_index(n).unwrap_or(0)
     }
 
+    /// One of `0..n`, `n > 0`, for a type alias.
+    fn alias_pick(&mut self, n: usize) -> usize {
+        self.au.choose_index(n).unwrap_or(0)
+    }
+
     /// `ty` as a declaration writes it: each optional is `T?`, or now and then `Option<T>`.
     fn spell(&mut self, ty: &Ty) -> String {
+        // The text is written first, whatever the alias: its choices are those of a program with
+        // no aliases.
+        let plain = self.spell_plain(ty);
+        self.alias_of(ty).unwrap_or(plain)
+    }
+
+    /// `spell` with no alias for `ty` itself.
+    fn spell_plain(&mut self, ty: &Ty) -> String {
         match ty {
             Ty::Optional(payload) => {
                 let payload = self.spell(payload);
@@ -247,6 +267,45 @@ impl<'a> Gen<'a> {
             }
             Ty::Array(element) => format!("[{}]", self.spell(element)),
             _ => ty.to_string(),
+        }
+    }
+
+    /// An alias that makes `ty`, as a declaration writes it, now and then: `Al1`, or `Al2<i64>` for
+    /// an alias of a type over its parameter. The choice is made only when some alias fits, and
+    /// choice 0 is the type itself.
+    fn alias_of(&mut self, ty: &Ty) -> Option<String> {
+        let fitting: Vec<usize> = (0..self.scope.aliases.len())
+            .filter(|&a| {
+                let alias = &self.scope.aliases[a];
+                alias.plain.as_ref() == Some(ty)
+                    || alias.wrap.is_some_and(|wrap| wrap.argument(ty).is_some())
+            })
+            .collect();
+        if fitting.is_empty() {
+            return None;
+        }
+        let pick = self.alias_pick(fitting.len() + 1).checked_sub(1)?;
+        let alias = &self.scope.aliases[fitting[pick]];
+        let name = alias.name.clone();
+        let Some(argument) = alias.wrap.and_then(|wrap| wrap.argument(ty)) else {
+            return Some(name);
+        };
+        Some(format!("{name}<{argument}>"))
+    }
+
+    /// The name that writes `ty` before a `(` or a `.`: an alias of exactly that type, now and
+    /// then, else `name`.
+    fn constructor(&mut self, ty: &Ty, name: String) -> String {
+        let fitting: Vec<String> = (self.scope.aliases.iter())
+            .filter(|alias| alias.plain.as_ref() == Some(ty))
+            .map(|alias| alias.name.clone())
+            .collect();
+        if fitting.is_empty() {
+            return name;
+        }
+        match self.alias_pick(fitting.len() + 1).checked_sub(1) {
+            Some(pick) => fitting[pick].clone(),
+            None => name,
         }
     }
 

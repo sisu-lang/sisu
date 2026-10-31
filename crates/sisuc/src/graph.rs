@@ -1,5 +1,9 @@
 //! Graph algorithms the checker and mir share.
 
+use std::collections::VecDeque;
+
+use rustc_hash::FxHashMap;
+
 /// Each node's strongly connected component of the graph `edges`, by Tarjan's algorithm,
 /// visiting the nodes in order. Components are numbered as they complete, so a component's
 /// number is above that of every other component it reaches. The walk keeps its own stack,
@@ -52,4 +56,64 @@ pub(crate) fn components(edges: &[Vec<usize>]) -> Vec<usize> {
         }
     }
     component
+}
+
+/// The nodes on a shortest cycle through `start`, in order, without `start`; empty for a node
+/// that has an edge to itself. `start` lies on a cycle of its component in `edges`, where
+/// `component` is `components(edges)`. A breadth-first walk inside the component, so the cost is
+/// the component's edges.
+pub(crate) fn cycle_through(edges: &[Vec<usize>], component: &[usize], start: usize) -> Vec<usize> {
+    let mut parent: FxHashMap<usize, usize> = FxHashMap::default();
+    let mut queue = VecDeque::from([start]);
+    // `start` is reached again through the cycle, so it is not seen at first.
+    while let Some(n) = queue.pop_front() {
+        for &m in &edges[n] {
+            #[cfg(test)]
+            CYCLE_STEPS.set(CYCLE_STEPS.get() + 1);
+            if component[m] == component[start] && !parent.contains_key(&m) {
+                parent.insert(m, n);
+                queue.push_back(m);
+            }
+        }
+        if parent.contains_key(&start) {
+            break;
+        }
+    }
+    let mut path = Vec::new();
+    let mut at = parent[&start];
+    while at != start {
+        path.push(at);
+        at = parent[&at];
+    }
+    path.reverse();
+    path
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many edges `cycle_through` has looked at on this thread.
+    pub(crate) static CYCLE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The nodes after `start` on a shortest cycle, in the order that the edges lead through them:
+    /// a two-node cycle, a three-node cycle, and a short cycle beside a long one.
+    #[test]
+    fn cycle_through_should_list_the_nodes_after_start_in_order() {
+        for (row, edges, expected) in [
+            ("two nodes", vec![vec![1], vec![0]], vec![1]),
+            ("three nodes", vec![vec![1], vec![2], vec![0]], vec![1, 2]),
+            (
+                "a short cycle beside a long one",
+                vec![vec![1, 2], vec![0], vec![3], vec![4], vec![0]],
+                vec![1],
+            ),
+        ] {
+            let component = components(&edges);
+            assert_eq!(cycle_through(&edges, &component, 0), expected, "{row}");
+        }
+    }
 }

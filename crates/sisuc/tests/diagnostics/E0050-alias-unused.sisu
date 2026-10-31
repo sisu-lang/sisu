@@ -1,0 +1,8 @@
+type U<T> = i64?
+
+fn main() {
+    let a = U.Some(1)
+    let b = U.None
+    print(a == None)
+    print(b == None)
+}

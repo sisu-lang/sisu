@@ -301,6 +301,7 @@ impl<'a> Checker<'_> {
             });
             return None;
         }
+        let uses = self.aliases.uses;
         let resolved = self.resolve(ty)?;
         let form = match resolved.kind() {
             TypeKind::Class(..) | TypeKind::Enum(..) if !resolved.has_assoc() => {
@@ -322,8 +323,14 @@ impl<'a> Checker<'_> {
             TypeKind::Param(..) => CannotExtendForm::TypeParam,
             _ => CannotExtendForm::BuiltIn,
         };
+        // An alias is the type it names, so the report names that type.
+        let written = if self.aliases.uses > uses {
+            self.type_name(resolved)
+        } else {
+            ty.to_string()
+        };
         self.report(DiagnosticKind::CannotExtend {
-            written: ty.to_string(),
+            written,
             at: ty.bare,
             form,
         });

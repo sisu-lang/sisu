@@ -1,0 +1,14 @@
+error[E0155]: `Option<i64>` is a built-in type; only the prelude extends it
+ --> E0155-option-written.sisu:3:8
+  |
+3 | extend Option<i64> {}
+  |        ^^^^^^^^^^^
+
+error[E0155]: `i64?` is a built-in type; only the prelude extends it
+ --> E0155-option-written.sisu:5:8
+  |
+5 | extend M {}
+  |        ^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0155

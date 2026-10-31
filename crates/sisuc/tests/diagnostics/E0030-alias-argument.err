@@ -1,0 +1,26 @@
+error[E0030]: cannot find type `Missing`
+ --> E0030-alias-argument.sisu:5:13
+  |
+5 |     print(F<Missing>(3))
+  |             ^^^^^^^
+  |
+  = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums and arrays such as `[i64]`
+
+error[E0030]: cannot find type `Missing`
+ --> E0030-alias-argument.sisu:6:13
+  |
+6 |     print(F<Missing>.pi)
+  |             ^^^^^^^
+  |
+  = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums and arrays such as `[i64]`
+
+error[E0030]: cannot find type `Missing`
+ --> E0030-alias-argument.sisu:7:17
+  |
+7 |     print(Pairs<Missing>(1))
+  |                 ^^^^^^^
+  |
+  = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums and arrays such as `[i64]`
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0030

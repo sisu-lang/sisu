@@ -1,0 +1,28 @@
+error[E0032]: expected `i64`, found `string`
+  --> E0032-alias-constructor.sisu:15:22
+   |
+15 |     let a = B(value: "x")
+   |                      ^^^
+
+error[E0032]: expected `string`, found `i64`
+  --> E0032-alias-constructor.sisu:16:27
+   |
+16 |     let b: R<i64> = R.Err(5)
+   |                           ^
+
+error[E0032]: expected `U`, found `u8?`
+  --> E0032-alias-constructor.sisu:18:16
+   |
+18 |     let c: U = U(n)
+   |                ^^^^
+   |
+   = help: a conversion that can fail gives an optional: give a default with `??`, or unwrap it with `if let`
+
+error[E0032]: expected `[T]`, found `string`
+  --> E0032-alias-constructor.sisu:19:26
+   |
+19 |     let d = Items(items: "x")
+   |                          ^^^
+
+sisu: 4 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

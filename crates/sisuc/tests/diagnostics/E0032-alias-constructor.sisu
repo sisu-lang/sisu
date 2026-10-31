@@ -1,0 +1,20 @@
+class Box<T> {
+    value: T
+}
+
+class Bag<T> {
+    items: [T]
+}
+
+type B = Box<i64>
+type R<T> = Result<T, string>
+type U = u8
+type Items<T> = Bag<T>
+
+fn main() {
+    let a = B(value: "x")
+    let b: R<i64> = R.Err(5)
+    let n = 300
+    let c: U = U(n)
+    let d = Items(items: "x")
+}

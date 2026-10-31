@@ -1,0 +1,7 @@
+type A = i64
+
+fn main() {
+    A: loop {
+        break A 1
+    }
+}

@@ -1,0 +1,8 @@
+error[E0030]: `T` has no associated type `Itme`
+ --> E0030-alias.sisu:6:19
+  |
+6 | type Wrong<T> = T.Itme
+  |                   ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0030

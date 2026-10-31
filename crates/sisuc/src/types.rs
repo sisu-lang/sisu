@@ -70,6 +70,9 @@ struct Names {
     rejected: bool,
     /// An associated type.
     assoc: bool,
+    /// How many levels of types nest in it: 0 for a type with no part. A list holds the most of
+    /// its elements'.
+    depth: u32,
 }
 
 impl Names {
@@ -79,6 +82,17 @@ impl Names {
             open: self.open || other.open,
             rejected: self.rejected || other.rejected,
             assoc: self.assoc || other.assoc,
+            depth: self.depth.max(other.depth),
+        }
+    }
+}
+
+impl Names {
+    /// What a type that holds a type with these names names: one level deeper.
+    fn deeper(self) -> Names {
+        Names {
+            depth: self.depth + 1,
+            ..self
         }
     }
 }
@@ -95,14 +109,17 @@ impl TypeKind {
                 param: true,
                 open: i == HOLE_INDEX,
                 rejected: i == REJECTED_INDEX,
-                assoc: false,
+                ..Names::default()
             },
-            TypeKind::Array(ty) | TypeKind::Optional(ty) => ty.names(),
+            TypeKind::Array(ty) | TypeKind::Optional(ty) => ty.names().deeper(),
             TypeKind::Assoc(base, _, args, _) => Names {
                 assoc: true,
-                ..base.names().or(args.names())
+                ..base.names().or(args.names()).deeper()
             },
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args.names(),
+            TypeKind::Class(_, args) | TypeKind::Enum(_, args) if args == TypeArgs::NONE => {
+                Names::default()
+            }
+            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args.names().deeper(),
             TypeKind::I64
             | TypeKind::U8
             | TypeKind::F64
@@ -179,11 +196,11 @@ impl TypeArgs {
     /// The list with `Type::subst` applied to each element. A list without a parameter comes
     /// back as it is.
     pub(crate) fn subst(self, with: &[Type]) -> TypeArgs {
-        self.subst_in(with, &mut FxHashMap::default())
+        self.subst_in(with, &mut FxHashMap::<Type, Type>::default())
     }
 
     /// `subst`, sharing `memo` with the walk that called it.
-    fn subst_in(self, with: &[Type], memo: &mut FxHashMap<Type, Type>) -> TypeArgs {
+    fn subst_in(self, with: &[Type], memo: &mut impl Memo) -> TypeArgs {
         if !self.names().param {
             return self;
         }
@@ -225,6 +242,68 @@ thread_local! {
     pub(crate) static READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The most steps `write_steps` has held at once on this thread.
     static HELD: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The most types `Type::subst` may substitute on this thread: the one that passes it panics,
+    /// so a test of a substitution that would take too many steps fails at once.
+    static SUBSTITUTED_BUDGET: std::cell::Cell<usize> = const { std::cell::Cell::new(usize::MAX) };
+}
+
+/// How many types `Type::subst` has substituted on this thread: those that name a parameter.
+#[cfg(test)]
+pub(crate) fn substituted() -> usize {
+    SUBSTITUTED.get()
+}
+
+/// Sets the count of `substituted` to 0, and the budget after which a substitution panics.
+#[cfg(test)]
+pub(crate) fn start_substituting(budget: usize) {
+    SUBSTITUTED.set(0);
+    SUBSTITUTED_BUDGET.set(budget);
+}
+
+/// What a substitution remembers, so that each distinct type is substituted once.
+trait Memo {
+    fn get(&self, ty: Type) -> Option<Type>;
+    fn put(&mut self, ty: Type, done: Type);
+    /// Whether the walk must stop. What it gives from then on is not kept, nor is it a type.
+    fn over(&self) -> bool {
+        false
+    }
+}
+
+impl Memo for FxHashMap<Type, Type> {
+    fn get(&self, ty: Type) -> Option<Type> {
+        FxHashMap::get(self, &ty).copied()
+    }
+
+    fn put(&mut self, ty: Type, done: Type) {
+        self.insert(ty, done);
+    }
+}
+
+/// What a substitution that many calls share remembers: for each type and list of arguments, the
+/// type it gives.
+pub(crate) type SharedMemo = FxHashMap<(Type, TypeArgs), Type>;
+
+/// A `SharedMemo` for the arguments `with`, which stops the walk once the memo holds `limit`
+/// entries.
+struct Shared<'m> {
+    with: TypeArgs,
+    memo: &'m mut SharedMemo,
+    limit: usize,
+}
+
+impl Memo for Shared<'_> {
+    fn get(&self, ty: Type) -> Option<Type> {
+        self.memo.get(&(ty, self.with)).copied()
+    }
+
+    fn put(&mut self, ty: Type, done: Type) {
+        self.memo.insert((ty, self.with), done);
+    }
+
+    fn over(&self) -> bool {
+        self.memo.len() > self.limit
+    }
 }
 
 /// What `write_steps` writes next: a type, the text that closes one, the arguments of a list
@@ -509,7 +588,30 @@ impl Type {
     /// back as it is. An optional is rebuilt with `Type::optional`, so it never flattens. Each
     /// distinct type inside this one is substituted once, however many paths lead to it.
     pub(crate) fn subst(self, args: &[Type]) -> Type {
-        self.subst_in(args, &mut FxHashMap::default())
+        self.subst_in(args, &mut FxHashMap::<Type, Type>::default())
+    }
+
+    /// `subst` for the list `with`, through `memo`, which the caller keeps from one call to the
+    /// next: a type is substituted once for each list, whatever calls ask. `None` when the memo
+    /// holds more than `limit` entries before the walk is done.
+    pub(crate) fn subst_shared(
+        self,
+        with: TypeArgs,
+        memo: &mut SharedMemo,
+        limit: usize,
+    ) -> Option<Type> {
+        if !self.has_param() {
+            return Some(self);
+        }
+        let mut shared = Shared { with, memo, limit };
+        let done = self.subst_walk(with.get(), &mut shared);
+        (!shared.over()).then_some(done)
+    }
+
+    /// How many levels of types nest in the type: 0 for one with no part, such as `i64` and
+    /// `Node`, and one more than its deepest part for another. A read of one entry.
+    pub(crate) fn depth(self) -> u32 {
+        self.names().depth
     }
 
     /// `subst`, and whether `self` holds an associated type, read with the one look at what the
@@ -521,13 +623,13 @@ impl Type {
             return (self, names.assoc);
         }
         (
-            self.subst_walk(args, &mut FxHashMap::default()),
+            self.subst_walk(args, &mut FxHashMap::<Type, Type>::default()),
             names.assoc,
         )
     }
 
     /// `subst`, with `memo` holding each type that the walk has already substituted.
-    fn subst_in(self, args: &[Type], memo: &mut FxHashMap<Type, Type>) -> Type {
+    fn subst_in(self, args: &[Type], memo: &mut impl Memo) -> Type {
         if !self.has_param() {
             return self;
         }
@@ -535,12 +637,22 @@ impl Type {
     }
 
     /// `subst_in` for a type that names a parameter.
-    fn subst_walk(self, args: &[Type], memo: &mut FxHashMap<Type, Type>) -> Type {
-        if let Some(&done) = memo.get(&self) {
+    fn subst_walk(self, args: &[Type], memo: &mut impl Memo) -> Type {
+        if memo.over() {
+            return self;
+        }
+        if let Some(done) = memo.get(self) {
             return done;
         }
         #[cfg(test)]
-        SUBSTITUTED.set(SUBSTITUTED.get() + 1);
+        {
+            SUBSTITUTED.set(SUBSTITUTED.get() + 1);
+            assert!(
+                SUBSTITUTED.get() <= SUBSTITUTED_BUDGET.get(),
+                "a substitution should stay within its budget of {} types",
+                SUBSTITUTED_BUDGET.get()
+            );
+        }
         let done = match self.kind() {
             TypeKind::Param(_, i) => args[i as usize],
             TypeKind::Array(element) => Type::array(element.subst_in(args, memo)),
@@ -566,7 +678,9 @@ impl Type {
                 unreachable!("only a kind with a child can name a parameter")
             }
         };
-        memo.insert(self, done);
+        if !memo.over() {
+            memo.put(self, done);
+        }
         done
     }
 
@@ -780,6 +894,102 @@ mod tests {
             );
             assert_eq!(reads(Type::has_param, ty), (param, 1));
         }
+        // A walk of `t_20` for its depth would read the entries of every part.
+        for (ty, depth) in [
+            (holed, 20),
+            (rejected, 20),
+            (named, 20),
+            (plain, 20),
+            (mixed, 2),
+        ] {
+            READS.set(0);
+            assert_eq!((ty.depth(), READS.get()), (depth, 1));
+        }
+    }
+
+    /// A type with no part is 0 levels deep, and each array, optional, type argument list and
+    /// associated type adds one over its deepest part.
+    #[test]
+    fn depth_should_count_the_levels_of_a_type() {
+        let class =
+            |args: &[Type]| Type::intern(TypeKind::Class(ClassId(0), TypeArgs::intern(args)));
+        let param = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
+        let item = |base| Type::intern(TypeKind::Assoc(base, InterfaceId(0), TypeArgs::NONE, 0));
+        for (ty, depth) in [
+            (Type::I64, 0),
+            (param, 0),
+            (class(&[]), 0),
+            (Type::array(Type::I64), 1),
+            (Type::optional(Type::array(Type::I64)), 2),
+            (class(&[Type::I64]), 1),
+            (class(&[Type::I64, Type::array(param)]), 2),
+            (Type::array(class(&[class(&[])])), 2),
+            (item(param), 1),
+            (Type::array(item(item(param))), 3),
+        ] {
+            assert_eq!(ty.depth(), depth, "{ty:?}");
+        }
+    }
+
+    /// The memo that the caller owns holds a type once for each list of arguments, so a second
+    /// substitution of the same list visits nothing, and another list is substituted afresh. A
+    /// walk that passes the limit gives `None` and keeps nothing it computed after the limit.
+    #[test]
+    fn shared_subst_should_substitute_once_for_each_list_of_arguments() {
+        let param = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
+        let ty = doubled(param, 5);
+        let (ints, strings) = (
+            TypeArgs::intern(&[Type::I64]),
+            TypeArgs::intern(&[Type::STRING]),
+        );
+        let mut memo = SharedMemo::default();
+        SUBSTITUTED.set(0);
+        assert_eq!(
+            ty.subst_shared(ints, &mut memo, usize::MAX),
+            Some(doubled(Type::I64, 5))
+        );
+        let first = SUBSTITUTED.get();
+        assert_eq!(first, 6, "one visit for each of the 6 distinct types");
+        assert_eq!(
+            ty.subst_shared(ints, &mut memo, usize::MAX),
+            Some(doubled(Type::I64, 5))
+        );
+        assert_eq!(
+            SUBSTITUTED.get(),
+            first,
+            "the second use should read the memo"
+        );
+        assert_eq!(
+            ty.subst_shared(strings, &mut memo, usize::MAX),
+            Some(doubled(Type::STRING, 5))
+        );
+        assert_eq!(SUBSTITUTED.get(), 2 * first);
+        // 12 entries so far: a limit of 15 lets 3 more in, and the walk of 6 types passes it.
+        let atoms = TypeArgs::intern(&[Type::BOOL]);
+        assert_eq!(ty.subst_shared(atoms, &mut memo, 15), None);
+        assert_eq!(
+            memo.len(),
+            16,
+            "the walk stops at the first entry past the limit"
+        );
+        // Nothing that the cut walk computed after the limit is kept: it is no type.
+        assert_eq!(
+            ty.subst_shared(atoms, &mut memo, usize::MAX),
+            Some(doubled(Type::BOOL, 5))
+        );
+    }
+
+    #[test]
+    fn a_shared_substitution_should_fit_a_limit_of_exactly_its_entries() {
+        let param = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
+        let ty = doubled(param, 5);
+        let ints = TypeArgs::intern(&[Type::I64]);
+        // The walk adds one entry for each of the 6 distinct types.
+        assert_eq!(
+            ty.subst_shared(ints, &mut SharedMemo::default(), 6),
+            Some(doubled(Type::I64, 5))
+        );
+        assert_eq!(ty.subst_shared(ints, &mut SharedMemo::default(), 5), None);
     }
 
     #[test]

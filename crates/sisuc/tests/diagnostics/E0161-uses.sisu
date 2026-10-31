@@ -1,0 +1,15 @@
+type A = [A]
+
+const C = A(1)
+const D = A.pi
+
+fn main() {
+    let a = A(1)
+    let b = A.Some(1)
+    let c = A.first()
+    let d = A.Num
+    let e = A.max(1, 2)
+    let f = A.sqrt<i64>(1)
+    let g: u8 = A(1)
+    print(A.None == None)
+}

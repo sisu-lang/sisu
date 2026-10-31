@@ -126,7 +126,7 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0113](E0113.md) | error | variant name not capitalized |
 | [E0114](E0114.md) | error | payload labels mixed |
 | [E0115](E0115.md) | error | enum without variants |
-| [E0116](E0116.md) | error | local named like an enum |
+| [E0116](E0116.md) | error | local named like an enum or an optional type |
 | [E0117](E0117.md) | error | variant without its enum |
 | [E0118](E0118.md) | error | unknown variant |
 | [E0119](E0119.md) | error | variant built the wrong way |
@@ -171,6 +171,8 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0158](E0158.md) | error | only classes conform to `AnyObject` |
 | [E0159](E0159.md) | error | operator on a type that has none |
 | [E0160](E0160.md) | error | enum payload that is too large |
+| [E0161](E0161.md) | error | type alias that refers to itself |
+| [E0162](E0162.md) | error | type that holds too many distinct types |
 | [W0001](W0001.md) | warning | unreachable code |
 | [W0002](W0002.md) | warning | variable that is never reassigned |
 | [W0003](W0003.md) | warning | `todo` left in the program |

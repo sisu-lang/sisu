@@ -1,0 +1,34 @@
+type Grid = [[char?]]
+type Pairs<T> = [[T]]
+
+class Board {
+    mut cells: Grid
+}
+
+fn size(g: Grid) -> i64 {
+    g.len()
+}
+
+fn pick() -> Grid {
+    "x"
+}
+
+fn early() -> Grid {
+    return "x"
+}
+
+fn pass(g: [Grid]) {}
+
+fn each<T>(x: Pairs<T>) {}
+
+fn main() {
+    let a: Grid = "x"
+    let mut g: Grid = [[None]]
+    let board = Board(cells: "z")
+    let other = Board(cells: [[None]])
+    other.cells = "q"
+    g = "w"
+    size("y")
+    pass("v")
+    each<string>("x")
+}

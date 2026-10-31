@@ -1,0 +1,14 @@
+error[E0026]: `i64` is a built-in type
+ --> E0026-alias.sisu:1:6
+  |
+1 | type i64 = u8
+  |      ^^^
+
+error[E0026]: `string` is a built-in type
+ --> E0026-alias.sisu:2:11
+  |
+2 | type Pair<string> = [string]
+  |           ^^^^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0026

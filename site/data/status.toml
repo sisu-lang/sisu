@@ -78,6 +78,11 @@ state = "works"
 notes = [["ADR 0022", "docs/adr/0022-classes-compare-by-identity.md"], ["ADR 0036", "docs/adr/0036-every-type-prints-and-printing-an-optional-warns.md"], ["Roadmap: what works today", "docs/roadmap.md#what-works-today"]]
 
 [[area.feature]]
+text = "Type aliases, such as <code>type Grid = [[char?]]</code>"
+state = "works"
+notes = [["Roadmap: what works today", "docs/roadmap.md#what-works-today"]]
+
+[[area.feature]]
 text = "Interface values, <code>any Shape</code>"
 state = "planned"
 notes = [["Roadmap: open decisions", "docs/roadmap.md#open-decisions"]]

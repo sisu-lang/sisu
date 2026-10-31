@@ -1,0 +1,20 @@
+error[E0154]: `bool` does not conform to `Ord`
+ --> E0154-alias-enum.sisu:9:12
+  |
+1 | enum Heap<T: Ord> {
+  |              --- required by this bound
+...
+9 |     let a: H<bool> = H.Zero
+  |            ^^^^^^^
+
+error[E0154]: `bool` does not conform to `Ord`
+  --> E0154-alias-enum.sisu:10:13
+   |
+ 1 | enum Heap<T: Ord> {
+   |              --- required by this bound
+...
+10 |     let b = H<bool>.Zero
+   |             ^^^^^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0154

@@ -6,8 +6,8 @@ use std::{fmt, iter};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::enums::VariantInfo;
-use super::expr::{bare_hole, bare_none, dbg_argument, int_literal, option_written};
+use super::alias::{Through, Via};
+use super::expr::{bare_hole, dbg_argument, int_literal, option_written};
 use super::interface::{Bound, Required};
 use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
@@ -21,7 +21,7 @@ use crate::diagnostic::{ArgumentsForm, Diagnostic, MainForm, Unwrap};
 use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::symbol::Symbol;
-use crate::tir::{EnumId, Type, TypeArgs, TypeKind};
+use crate::tir::{self, Type, TypeArgs, TypeKind};
 use crate::types::{HOLE_INDEX, REJECTED_INDEX};
 
 /// Whether `ty` is `want`, where a hole of `want` meets any part of `ty`.
@@ -1033,6 +1033,11 @@ impl Bindings {
     }
 }
 
+/// Whether `value` is `pattern` for some types of its `count` parameters.
+pub(super) fn type_meets(count: usize, pattern: Type, value: Type) -> bool {
+    Bindings::new(count, &[]).unify(pattern, value)
+}
+
 #[cfg(test)]
 thread_local! {
     /// How many bindings inference has checked or undone on this thread.
@@ -1082,6 +1087,15 @@ pub(super) struct GenericSig<'a> {
     /// none. The call checks each as soon as its parameter is bound, and at no other time (see
     /// `Early`).
     pub(super) bounds: &'a [Vec<Bound>],
+}
+
+/// The shape of a variant that a call of a generic enum builds: the type that it builds, its
+/// enum's type parameters, or an alias's, the types of its payload and its labels.
+pub(super) struct VariantShape {
+    pub(super) built: Type,
+    pub(super) names: Vec<Symbol>,
+    pub(super) fields: Vec<Option<Type>>,
+    pub(super) labels: Vec<Option<Symbol>>,
 }
 
 /// How a call writes its callee: its name, the type arguments in `angles` (none written when
@@ -2486,7 +2500,7 @@ impl Checker<'_> {
     fn rank_walk(&mut self, e: &ast::Expr, fit: &mut bool) -> Ranked {
         use ast::ExprKind as K;
         match &e.kind {
-            _ if bare_none(e) => Ranked {
+            _ if self.bare_none_written(e) => Ranked {
                 optional: true,
                 holds_optional: true,
                 ..Ranked::WAITS
@@ -2508,7 +2522,7 @@ impl Checker<'_> {
             } => {
                 let waits = self
                     .generic_variant(base, name)
-                    .is_some_and(|(_, _, v)| v.fields.is_empty());
+                    .is_some_and(|v| v.fields.is_empty());
                 if waits {
                     Ranked::WAITS
                 } else {
@@ -2654,29 +2668,29 @@ impl Checker<'_> {
                 ..
             } if types.is_empty() => {
                 let variant = self.generic_variant(receiver, method).filter(|_| !safe);
-                let shape = if let Some((id, names, v)) = variant {
+                let shape = if let Some(v) = variant {
                     // Mixed labels are reported at the declaration.
                     let shaped = !v.fields.is_empty()
                         && (v.labels.iter().all(Option::is_some)
                             || v.labels.iter().all(Option::is_none))
                         && fits(v.fields.iter().copied().zip(v.labels.iter().copied()), args);
                     let open = if shaped {
-                        open_params(v.fields.iter().copied(), names, 0)
+                        open_params(v.fields.iter().copied(), &v.names, 0)
                     } else {
                         Vec::new()
                     };
-                    let built = Type::intern(TypeKind::Enum(id, own_args(names)));
                     CallShape {
                         generic: true,
                         shaped,
                         open: !open.is_empty(),
-                        places: carried_by_construction(v.fields.iter().copied(), names.len()),
-                        wait: open_call(open, Some(built), names.len()),
+                        places: carried_by_construction(v.fields.iter().copied(), v.names.len()),
+                        wait: open_call(open, Some(v.built), v.names.len()),
                         ..CallShape::default()
                     }
                 } else if !safe
                     && method.name.as_str() == "Some"
-                    && option_written(receiver) == Some(false)
+                    && (option_written(receiver) == Some(false)
+                        || matches!(receiver.kind, ast::ExprKind::Name(n) if self.names_option(n)))
                 {
                     // `Option.Some` is `Some`, as `generic_callee` takes it.
                     CallShape {
@@ -2698,7 +2712,10 @@ impl Checker<'_> {
                 types,
                 args,
                 ..
-            } if types.is_empty() => Some((self.generic_callee(callee.name, args), args)),
+            } if types.is_empty() => {
+                let shape = self.generic_callee(callee.name, args);
+                Some((shape, args))
+            }
             _ => None,
         }
     }
@@ -2803,22 +2820,47 @@ impl Checker<'_> {
         index
     }
 
-    /// The variant `base.member` of a generic enum that `base` names without type arguments,
-    /// and the enum's type parameters.
+    /// The variant `base.member` of a generic enum that `base` names without type arguments, as
+    /// a call of it binds the enum's type parameters. Through an alias, they are the alias's
+    /// parameters, and the payload has the types that its arguments for the enum's make.
     pub(super) fn generic_variant(
-        &self,
+        &mut self,
         base: &ast::Expr,
         member: &ast::Ident,
-    ) -> Option<(EnumId, &[Symbol], &VariantInfo)> {
+    ) -> Option<VariantShape> {
         let ast::ExprKind::Name(name) = base.kind else {
             return None;
         };
         let Some(&Declared::Known(id)) = self.enum_ids.get(&name) else {
-            return None;
+            let Via::To(through) = self.through(name) else {
+                return None;
+            };
+            if !self.alias_visible(name) {
+                return None;
+            }
+            let TypeKind::Enum(id, list) = through.ty.kind() else {
+                return None;
+            };
+            let info = &self.enums[id.0];
+            let &variant = info.index.get(&member.name)?;
+            let v = &info.variants[variant];
+            return (!through.params.is_empty()).then(|| VariantShape {
+                built: through.ty,
+                names: through.params.clone(),
+                fields: (v.fields.iter())
+                    .map(|ty| ty.and_then(|ty| self.subst(ty, list.get())))
+                    .collect(),
+                labels: v.labels.clone(),
+            });
         };
         let info = &self.enums[id.0];
         let &variant = info.index.get(&member.name)?;
-        (!info.type_params.is_empty()).then(|| (id, &info.type_params[..], &info.variants[variant]))
+        (!info.type_params.is_empty()).then(|| VariantShape {
+            built: Type::intern(TypeKind::Enum(id, own_args(&info.type_params))),
+            names: info.type_params.clone(),
+            fields: info.variants[variant].fields.clone(),
+            labels: info.variants[variant].labels.clone(),
+        })
     }
 
     /// The shape of `receiver.method(args)`, or of `receiver?.method(args)` with `safe`, a call
@@ -3036,7 +3078,7 @@ impl Checker<'_> {
 
     /// The shape of a call of `name` with `args` that calls a generic function, constructs a
     /// generic class, or builds `Some`, `Ok` or `Err`, or calls `dbg`.
-    fn generic_callee(&self, name: Symbol, args: &[ast::Arg]) -> CallShape {
+    fn generic_callee(&mut self, name: Symbol, args: &[ast::Arg]) -> CallShape {
         // `dbg<T>(x: T) -> T`: its type is its argument's, so it waits when that argument waits;
         // its parameter names `T`, so it is not `open`.
         // It comes first, as `call` runs the prelude's call before it looks up a user's item: a
@@ -3055,8 +3097,11 @@ impl Checker<'_> {
                 ..CallShape::default()
             };
         }
-        match (self.class_ids.get(&name), self.function_ids.get(&name)) {
-            (Some(&Declared::Known(class)), _) => {
+        match (
+            self.class_ids.get(&name).copied(),
+            self.function_ids.get(&name).copied(),
+        ) {
+            (Some(Declared::Known(class)), _) => {
                 let info = &self.classes[class.0];
                 let shaped = fits(info.fields.iter().map(|f| (f.ty, Some(f.name.name))), args);
                 let open = if shaped {
@@ -3077,7 +3122,7 @@ impl Checker<'_> {
                     ..CallShape::default()
                 }
             }
-            (None, Some(&Declared::Known(func))) => {
+            (None, Some(Declared::Known(func))) => {
                 let sig = &self.signatures[func.0];
                 let shaped =
                     sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args);
@@ -3110,6 +3155,10 @@ impl Checker<'_> {
                 places: Places::FIRST,
                 wait: None,
             },
+            // An alias of a generic class, whose parameters its uses bind.
+            (None, None) if let Via::To(through) = self.through(name) => {
+                self.alias_callee(&through, args)
+            }
             (None, None) => self
                 .result_variant(name)
                 .map_or_else(CallShape::default, |(id, v)| {
@@ -3132,6 +3181,32 @@ impl Checker<'_> {
                     }
                 }),
             _ => CallShape::default(),
+        }
+    }
+
+    /// The shape of a call of `through`, the alias of a class that its arguments construct: the
+    /// class's fields, with the types that the alias's arguments for its parameters make them.
+    fn alias_callee(&self, through: &Through, args: &[ast::Arg]) -> CallShape {
+        let TypeKind::Class(class, list) = through.ty.kind() else {
+            return CallShape::default();
+        };
+        let fields: Vec<(Option<Type>, Option<Symbol>)> = (self.classes[class.0].fields.iter())
+            .map(|f| (f.ty, Some(f.name.name)))
+            .map(|(ty, name)| (ty.and_then(|ty| self.subst(ty, list.get())), name))
+            .collect();
+        let shaped = fits(fields.iter().copied(), args);
+        let open = if shaped {
+            open_params(fields.iter().map(|f| f.0), &through.params, 0)
+        } else {
+            Vec::new()
+        };
+        CallShape {
+            generic: !through.params.is_empty(),
+            shaped,
+            open: !open.is_empty(),
+            places: carried_by_construction(fields.iter().map(|f| f.0), through.params.len()),
+            wait: open_call(open, Some(through.ty), through.params.len()),
+            ..CallShape::default()
         }
     }
 
@@ -3249,6 +3324,7 @@ impl Checker<'_> {
             && self.body.type_param(name).is_none()
             && !self.class_ids.contains_key(&name)
             && !self.enum_ids.contains_key(&name)
+            && !self.aliases.names.contains_key(&name)
         {
             self.report(DiagnosticKind::TypeArgument {
                 ty: arg.to_string(),
@@ -3325,6 +3401,7 @@ impl Checker<'_> {
             && built_in_type(n.as_str()).is_none()
             && !self.class_ids.contains_key(&n)
             && !self.enum_ids.contains_key(&n)
+            && !self.aliases.names.contains_key(&n)
             && self.body.type_param(n).is_none()
     }
 
@@ -3372,13 +3449,13 @@ impl Checker<'_> {
         let first = types.first()?;
         let n = name.name;
         let params = match (
-            self.class_ids.get(&n),
-            self.function_ids.get(&n),
-            self.enum_ids.get(&n),
+            self.class_ids.get(&n).copied(),
+            self.function_ids.get(&n).copied(),
+            self.enum_ids.get(&n).copied(),
         ) {
-            (Some(&Declared::Known(id)), ..) => Some(self.classes[id.0].type_params.len()),
-            (_, Some(&Declared::Known(id)), _) => Some(self.signatures[id.0].type_params.len()),
-            (.., Some(&Declared::Known(id))) => Some(self.enums[id.0].type_params.len()),
+            (Some(Declared::Known(id)), ..) => Some(self.classes[id.0].type_params.len()),
+            (_, Some(Declared::Known(id)), _) => Some(self.signatures[id.0].type_params.len()),
+            (.., Some(Declared::Known(id))) => Some(self.enums[id.0].type_params.len()),
             _ => None,
         };
         match params {
@@ -3410,17 +3487,32 @@ impl Checker<'_> {
             return true;
         }
         if let Some(&Declared::Known(id)) = self.enum_ids.get(&name) {
-            // A generic method's list waits for the member's report, which says it is a method.
-            let info = &self.enums[id.0];
-            return match info.methods.get(&method.name) {
-                Some(&Declared::Known(func)) => {
-                    self.signatures[func.0].type_params.len() == info.type_params.len()
-                }
-                _ => true,
-            };
+            return self.enum_path_method(id, method);
         }
-        (built_in_type(name.as_str()).is_some() || matches!(name.as_str(), "math" | "Math"))
+        // An alias is the type that it names, unless a local takes the name.
+        if let Via::To(through) = self.through(name)
+            && self.alias_visible(name)
+        {
+            match through.ty.kind() {
+                TypeKind::Enum(id, _) => return self.enum_path_method(id, method),
+                TypeKind::Optional(_) => return true,
+                _ => {}
+            }
+        }
+        (self.built_in_of(name).is_some() || matches!(name.as_str(), "math" | "Math"))
             && self.lookup(name).is_none()
+    }
+
+    /// Whether `.method` after the enum `id`'s name is a path: a variant, or a method whose type
+    /// arguments wait for the member's report, which says it is a method.
+    fn enum_path_method(&self, id: tir::EnumId, method: &ast::Ident) -> bool {
+        let info = &self.enums[id.0];
+        match info.methods.get(&method.name) {
+            Some(&Declared::Known(func)) => {
+                self.signatures[func.0].type_params.len() == info.type_params.len()
+            }
+            _ => true,
+        }
     }
 
     /// Reports the type arguments in `angles` of `receiver.method<first, ...>`, `receiver`
@@ -3466,7 +3558,10 @@ impl Checker<'_> {
         angles: Span,
     ) {
         let text = self.source;
-        let instead = types.iter().all(|ty| !self.names_no_type(ty)).then(|| {
+        // An alias that takes no parameter has no type arguments to move onto it.
+        let takes_none =
+            matches!(base.kind, ast::ExprKind::Name(name) if self.alias_takes_none(name));
+        let instead = (!takes_none && types.iter().all(|ty| !self.names_no_type(ty))).then(|| {
             format!(
                 "{}{}.{}",
                 text.text(base.span),

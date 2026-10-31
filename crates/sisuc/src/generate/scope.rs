@@ -269,6 +269,52 @@ impl Var {
     }
 }
 
+/// What a generic alias `type Al<n><T> = ...` makes of its parameter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Wrap {
+    /// `[T]`.
+    Array,
+    /// `T?`.
+    Optional,
+    /// `[[T]]`.
+    Nested,
+}
+
+impl Wrap {
+    /// The body of the alias, over `T`.
+    pub(crate) fn body(self) -> &'static str {
+        match self {
+            Wrap::Array => "[T]",
+            Wrap::Optional => "T?",
+            Wrap::Nested => "[[T]]",
+        }
+    }
+
+    /// The type argument `T` of `Al<T>` that makes `ty`, if any does.
+    pub(crate) fn argument(self, ty: &Ty) -> Option<&Ty> {
+        match (self, ty) {
+            (Wrap::Array, Ty::Array(element)) | (Wrap::Optional, Ty::Optional(element)) => {
+                Some(element)
+            }
+            (Wrap::Nested, Ty::Array(inner)) => match &**inner {
+                Ty::Array(element) => Some(element),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
+/// A top-level type alias `Al<n>`: another name for a type, or, with a parameter, for a type over
+/// it.
+pub(crate) struct Alias {
+    pub(crate) name: String,
+    /// The type it names, if it takes no parameter.
+    pub(crate) plain: Option<Ty>,
+    /// What it makes of its parameter, if it takes one.
+    pub(crate) wrap: Option<Wrap>,
+}
+
 /// A top-level `const`.
 pub(crate) struct Const {
     pub(crate) name: String,
@@ -360,6 +406,8 @@ pub(crate) struct Scope {
     pub(crate) gfuncs: Vec<GFunc>,
     /// The instances made so far: a generic, its type arguments, and the type that results.
     pub(crate) instances: Vec<(Rc<Applied>, Ty)>,
+    /// The type aliases declared so far, which a type may be written as.
+    pub(crate) aliases: Vec<Alias>,
     /// The locals in scope, innermost last.
     pub(crate) vars: Vec<Var>,
     /// Where each open block's locals start in `vars`.

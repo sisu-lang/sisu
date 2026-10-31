@@ -6,6 +6,7 @@ use crate::mir::tests::assert_near_linear;
 use crate::parser::parse_ok;
 use crate::source::line_col;
 
+mod aliases;
 mod arrays;
 mod chars;
 mod conformances;

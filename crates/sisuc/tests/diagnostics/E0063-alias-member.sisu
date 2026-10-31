@@ -1,0 +1,20 @@
+enum E {
+    A
+}
+
+type F<T> = f64
+type S<T> = string
+type N<T> = i64
+type EU<T> = E
+
+fn main() {
+    print(F.nope)
+    print(F<i64>.nope)
+    print(N.max)
+    print(S.len)
+    print(EU.Zed)
+    print(EU.A(1))
+    print(S("a", "b"))
+    print(S())
+    print(N("a"))
+}

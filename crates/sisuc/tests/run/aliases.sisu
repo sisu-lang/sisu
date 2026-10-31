@@ -1,0 +1,132 @@
+// Type aliases: a `Grid` is a `[[char?]]` and a `Pairs<string>` is a `[[string]]`, with no
+// conversion either way. The layout rows come first: an alias ends at its line, so the alias after
+// `fn f() {}` and the `;` after an alias keep the items apart, and an alias that ends in `>` leaves
+// the line after it a line of its own. Valgrind and `--rc-checks` check that every string of
+// `Pairs<string>` is freed exactly once.
+class Box<T> {
+    value: T
+}
+
+fn f() {}
+type A = i64; fn g() {}
+type P<T> = Box<T>
+fn unwrap<T>(b: P<T>) -> T {
+    b.value
+}
+type Q<T> = [T]
+fn first<T>(xs: Q<T>) -> T? {
+    if xs.len() > 0 { xs[0] } else { None }
+}
+
+type Grid = [[char?]]
+type Pairs<T> = [[T]]
+
+// A grid of `width` by `height`, with a mark on the diagonal.
+fn make(width: i64, height: i64) -> Grid {
+    let mut grid: Grid = []
+    let mut y = 0
+    while y < height {
+        let mut row: [char?] = []
+        let mut x = 0
+        while x < width {
+            if x == y {
+                row.push('x')
+            } else {
+                row.push(None)
+            }
+            x += 1
+        }
+        grid.push(row)
+        y += 1
+    }
+    grid
+}
+
+// A `Grid` is a `[[char?]]`: the parameter takes one, and the caller gives either name.
+fn marks(rows: [[char?]]) -> i64 {
+    let mut n = 0
+    for row in rows {
+        for cell in row {
+            if let c = cell {
+                if c == 'x' {
+                    n += 1
+                }
+            }
+        }
+    }
+    n
+}
+
+fn longest(p: Pairs<string>) -> i64 {
+    let mut best = 0
+    for row in p {
+        for word in row {
+            if word.len() > best {
+                best = word.len()
+            }
+        }
+    }
+    best
+}
+
+// Value positions: a name that an alias takes stands for the whole type it names, with the
+// arguments that the alias fixes and the ones that a use writes or infers.
+type Measure<T> = f64
+type Maybe<T> = [T]?
+type Slot = Box<i64>?
+type Tree = Leaf2
+enum Leaf2 {
+    Bare
+    Leaf(i64)
+}
+const SCALE: f64 = Measure<i64>(3)
+const HALF_TURN: f64 = Measure<i64>.pi
+
+fn depth(t: Leaf2) -> i64 {
+    match t {
+        Tree.Leaf(n) => n
+        Tree.Bare => 0
+    }
+}
+
+fn firsts(m: [i64]?) -> i64 {
+    match m {
+        Maybe.Some(xs) => xs.len()
+        Maybe.None => 0
+    }
+}
+
+fn main() {
+    f()
+    g()
+    let n: A = 7
+    print(n + 1)                           // 8
+    print(unwrap(Box(value: "boxed")))     // boxed
+    print(first([5, 6]) ?? 0)              // 5
+    print(first([""]) == None)             // false: the array holds one string
+    let grid = make(3, 2)
+    print(grid.len())                      // 2
+    print(grid[1].len())                   // 3
+    print(marks(grid))                     // 2
+    print(grid)                            // [['x', None, None], [None, 'x', None]]
+    let plain: [[char?]] = grid
+    let again: Grid = plain
+    print(again[0][0] == 'x')              // true
+    let words: Pairs<string> = [["a" + "b", "cde"], ["f"]]
+    print(longest(words))                  // 3
+    let same: [[string]] = words
+    print(same[0][0])                      // ab
+    print(SCALE)                           // 3.0
+    print(HALF_TURN > 3.14)                // true
+    print(Measure<string>(2) + Measure<i64>.pi) // 5.141592653589793
+    let some = Maybe.Some([1, 2])
+    let none: [i64]? = Maybe.None
+    print(firsts(some))                    // 2
+    print(firsts(none))                    // 0
+    print(firsts(Maybe<i64>.Some([4])))    // 1
+    let slot: Box<i64>? = Box(value: 1)
+    print(slot == Slot.None)               // false
+    print(Slot.None == slot)               // false
+    print(depth(Tree.Leaf(5)))             // 5
+    print(depth(Tree.Bare))                // 0
+}

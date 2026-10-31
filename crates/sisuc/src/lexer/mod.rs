@@ -58,6 +58,8 @@ pub(crate) enum TokenKind {
     Enum,
     Interface,
     Extend,
+    /// `type`, which starts an alias and an associated type.
+    Type,
     Match,
     NoneKw,
     Is,
@@ -155,6 +157,7 @@ impl TokenKind {
             TokenKind::Enum => "Enum",
             TokenKind::Interface => "Interface",
             TokenKind::Extend => "Extend",
+            TokenKind::Type => "Type",
             TokenKind::Match => "Match",
             TokenKind::NoneKw => "NoneKw",
             TokenKind::Is => "Is",
@@ -238,6 +241,7 @@ impl TokenKind {
             TokenKind::Enum => "enum",
             TokenKind::Interface => "interface",
             TokenKind::Extend => "extend",
+            TokenKind::Type => "type",
             TokenKind::Match => "match",
             TokenKind::NoneKw => "None",
             TokenKind::Is => "is",
@@ -540,7 +544,7 @@ fn judge(
 ) -> Judgement {
     use TokenKind::{
         Class, Const, Dot, Else, Enum, Extend, Fn, Gt, Interface, LBrace, Newline, QuestionDot,
-        QuestionQuestion, RBrace,
+        QuestionQuestion, RBrace, Type,
     };
     let (i, end) = (run.start, run.end);
     let (prev, next) = (i.checked_sub(1).map(|p| &tokens[p]), tokens.get(end));
@@ -571,7 +575,11 @@ fn judge(
         || break_after
         || prev.is_none_or(|p| p.kind == LBrace)
         || next == Some(&RBrace)
-        || (between_items && matches!(next, Some(Fn | Class | Enum | Interface | Extend | Const)))
+        || (between_items
+            && matches!(
+                next,
+                Some(Fn | Class | Enum | Interface | Extend | Type | Const)
+            ))
     {
         Judgement::Redundant
     } else if between_items && prev.is_some_and(|p| p.kind != RBrace) && next == Some(&LBrace) {
@@ -743,7 +751,7 @@ impl Statement {
             self.bounded = true;
         } else if self.tokens == 3
             && matches!(tokens[i - 1].kind, TokenKind::Ident(_))
-            && tokens[self.start].kind == TokenKind::Reserved("type")
+            && tokens[self.start].kind == TokenKind::Type
         {
             self.params = true;
             self.bounded = true;
@@ -821,11 +829,12 @@ impl Statements {
                 // A `>=` after a type annotation closes it and starts its value. So does a loop
                 // keyword: it follows a loop label's `:`, which is no annotation.
                 Eq | Ge | TokenKind::While | TokenKind::For | Loop => {
-                    // The `=` that is the third token of `type Item = ...` starts the type of an
-                    // associated type's choice, as a `:` starts a type annotation.
+                    // The first `=` of `type Item = ...` or `type P<T> = ...` starts the type of
+                    // an associated type's choice or of an alias, as a `:` starts a type
+                    // annotation. Without it, `type P<T> = Box<T>` would not end its line at `>`.
                     let chooses = matches!(t.kind, Eq)
-                        && s.tokens == 3
-                        && tokens[s.start].kind == TokenKind::Reserved("type");
+                        && s.annotation.is_none()
+                        && tokens[s.start].kind == TokenKind::Type;
                     s.annotation = chooses.then_some(0);
                 }
                 Gt => {
@@ -952,7 +961,7 @@ impl Brackets {
             {
                 self.self_ending = true;
             }
-            TokenKind::Const if self.open.is_empty() => self.self_ending = false,
+            TokenKind::Const | TokenKind::Type if self.open.is_empty() => self.self_ending = false,
             _ => {}
         }
         if separator {
@@ -1599,7 +1608,7 @@ fn keyword(text: &str) -> Option<TokenKind> {
         "import" => TokenKind::Reserved("import"),
         "pub" => TokenKind::Reserved("pub"),
         "record" => TokenKind::Reserved("record"),
-        "type" => TokenKind::Reserved("type"),
+        "type" => TokenKind::Type,
         "weak" => TokenKind::Reserved("weak"),
         "test" => TokenKind::Reserved("test"),
         "todo" => TokenKind::Todo,
@@ -1800,9 +1809,7 @@ mod tests {
     #[test]
     fn reserved_words_should_lex_as_reserved_tokens() {
         use TokenKind::{Eof, Reserved};
-        let words = [
-            "import", "pub", "record", "type", "weak", "test", "extern", "as",
-        ];
+        let words = ["import", "pub", "record", "weak", "test", "extern", "as"];
         let mut expected: Vec<_> = words.iter().map(|w| Reserved(w)).collect();
         expected.extend([
             ident("matches"),
@@ -1817,6 +1824,8 @@ mod tests {
             kinds(&format!("{} matches type_ pubx ask echo", words.join(" "))),
             expected
         );
+        // `type` is a keyword since aliases.
+        assert_eq!(kinds("type types"), [TokenKind::Type, ident("types"), Eof]);
         // `enum` and `match` are keywords now.
         assert_eq!(
             kinds("enum enums match matches"),
@@ -1864,60 +1873,61 @@ mod tests {
             TokenKind::Enum => 27,
             TokenKind::Interface => 28,
             TokenKind::Extend => 29,
-            TokenKind::Match => 30,
-            TokenKind::NoneKw => 31,
-            TokenKind::Is => 32,
-            TokenKind::SelfKw => 33,
-            TokenKind::SelfType => 34,
-            TokenKind::True => 35,
-            TokenKind::False => 36,
-            TokenKind::Plus => 37,
-            TokenKind::Minus => 38,
-            TokenKind::Star => 39,
-            TokenKind::StarStar => 40,
-            TokenKind::Slash => 41,
-            TokenKind::Percent => 42,
-            TokenKind::PlusEq => 43,
-            TokenKind::MinusEq => 44,
-            TokenKind::StarEq => 45,
-            TokenKind::SlashEq => 46,
-            TokenKind::PercentEq => 47,
-            TokenKind::EqEq => 48,
-            TokenKind::NotEq => 49,
-            TokenKind::Lt => 50,
-            TokenKind::Le => 51,
-            TokenKind::Gt => 52,
-            TokenKind::Ge => 53,
-            TokenKind::AndAnd => 54,
-            TokenKind::Amp => 55,
-            TokenKind::OrOr => 56,
-            TokenKind::Bang => 57,
-            TokenKind::Eq => 58,
-            TokenKind::LParen => 59,
-            TokenKind::RParen => 60,
-            TokenKind::LBrace => 61,
-            TokenKind::RBrace => 62,
-            TokenKind::Comma => 63,
-            TokenKind::Colon => 64,
-            TokenKind::Arrow => 65,
-            TokenKind::FatArrow => 66,
-            TokenKind::Pipe => 67,
-            TokenKind::Dot => 68,
-            TokenKind::DotDot => 69,
-            TokenKind::DotDotEq => 70,
-            TokenKind::LBracket => 71,
-            TokenKind::RBracket => 72,
-            TokenKind::Semicolon => 73,
-            TokenKind::Question => 74,
-            TokenKind::QuestionDot => 75,
-            TokenKind::QuestionQuestion => 76,
-            TokenKind::Newline => 77,
-            TokenKind::Eof => 78,
+            TokenKind::Type => 30,
+            TokenKind::Match => 31,
+            TokenKind::NoneKw => 32,
+            TokenKind::Is => 33,
+            TokenKind::SelfKw => 34,
+            TokenKind::SelfType => 35,
+            TokenKind::True => 36,
+            TokenKind::False => 37,
+            TokenKind::Plus => 38,
+            TokenKind::Minus => 39,
+            TokenKind::Star => 40,
+            TokenKind::StarStar => 41,
+            TokenKind::Slash => 42,
+            TokenKind::Percent => 43,
+            TokenKind::PlusEq => 44,
+            TokenKind::MinusEq => 45,
+            TokenKind::StarEq => 46,
+            TokenKind::SlashEq => 47,
+            TokenKind::PercentEq => 48,
+            TokenKind::EqEq => 49,
+            TokenKind::NotEq => 50,
+            TokenKind::Lt => 51,
+            TokenKind::Le => 52,
+            TokenKind::Gt => 53,
+            TokenKind::Ge => 54,
+            TokenKind::AndAnd => 55,
+            TokenKind::Amp => 56,
+            TokenKind::OrOr => 57,
+            TokenKind::Bang => 58,
+            TokenKind::Eq => 59,
+            TokenKind::LParen => 60,
+            TokenKind::RParen => 61,
+            TokenKind::LBrace => 62,
+            TokenKind::RBrace => 63,
+            TokenKind::Comma => 64,
+            TokenKind::Colon => 65,
+            TokenKind::Arrow => 66,
+            TokenKind::FatArrow => 67,
+            TokenKind::Pipe => 68,
+            TokenKind::Dot => 69,
+            TokenKind::DotDot => 70,
+            TokenKind::DotDotEq => 71,
+            TokenKind::LBracket => 72,
+            TokenKind::RBracket => 73,
+            TokenKind::Semicolon => 74,
+            TokenKind::Question => 75,
+            TokenKind::QuestionDot => 76,
+            TokenKind::QuestionQuestion => 77,
+            TokenKind::Newline => 78,
+            TokenKind::Eof => 79,
         }
     }
 
     /// How many kinds `slot` has.
-    const KINDS: usize = 79;
+    const KINDS: usize = 80;
 
     /// The file that the check of `selfhost/lexer.sisu` lexes holds a token of each kind and each
     /// reserved word, so that the check sees every one. The reserved words are listed by hand, as
@@ -1936,9 +1946,7 @@ mod tests {
             missing.is_empty(),
             "all_tokens.sisu has no token of the kinds at these places of `slot`: {missing:?}"
         );
-        for word in [
-            "import", "pub", "record", "type", "weak", "test", "extern", "as",
-        ] {
+        for word in ["import", "pub", "record", "weak", "test", "extern", "as"] {
             assert!(
                 tokens.iter().any(|t| t.kind == TokenKind::Reserved(word)),
                 "all_tokens.sisu has no reserved word `{word}`"
@@ -3273,6 +3281,26 @@ mod tests {
         );
     }
 
+    /// The `=` of an alias starts a type, so a line-end `>` after the body ends the alias, whatever
+    /// the number of its parameters. The `(1)` line would otherwise join the alias as a call.
+    #[test]
+    fn a_line_end_gt_should_end_an_alias_body() {
+        let newlines = |src: &str| {
+            all_kinds(src)
+                .iter()
+                .filter(|k| **k == TokenKind::Newline)
+                .count()
+        };
+        for src in [
+            "type Q = Box<i64>\n(1)",
+            "type P<T> = Box<T>\n(1)",
+            "type M<K, V> = Map<K, V>\n(1)",
+            "type P<T> = [T]\n(1)",
+        ] {
+            assert_eq!(newlines(src), 2, "{src:?}");
+        }
+    }
+
     /// A line-end `??` ends the statement where it closes a type annotation, and goes on to its
     /// operand anywhere else.
     #[test]
@@ -3901,7 +3929,7 @@ mod tests {
     }
 
     #[test]
-    fn semicolon_separates_or_is_redundant() {
+    fn a_semicolon_should_separate_or_be_redundant() {
         use Judged::{Gone, Kept, Sep};
         for (src, want) in [
             ("x; y", vec![Sep]),
@@ -3924,6 +3952,13 @@ mod tests {
             ("const A = 1\nextend C {}; fn main() {}", vec![Gone(2, 12)]),
             ("const A = 1; interface I {}", vec![Sep]),
             ("const A = 1; extend C {}", vec![Sep]),
+            // An alias ends at its line, as a `const` does: its `;` separates, and a `;` after a
+            // self-ending item before one is redundant. An alias after a self-ending item
+            // resets that state.
+            ("type A = i64; fn g() {}", vec![Sep]),
+            ("fn h() {}; type B = i64", vec![Gone(1, 10)]),
+            ("type C = i64; type D = i64", vec![Sep]),
+            ("fn f() {}\ntype A = i64; fn main() {}", vec![Sep]),
             ("fn main(); { }", vec![Kept]),
             ("if c { a }; else { b }", vec![Gone(1, 11)]),
             ("const A = 1; const B = 2", vec![Sep]),

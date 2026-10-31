@@ -1,7 +1,6 @@
 //! Interface declarations: their parameters, requirements and inheritance, the bounds that name
 //! them, and the closure of the interfaces a bound inherits.
 
-use std::collections::VecDeque;
 use std::rc::Rc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -16,7 +15,7 @@ use crate::diagnostic::{
     AddBound, BlockNeed, BoundSite, Definition as Kind, DiagnosticKind, NoOperatorForm,
     NotConformForm, NotInterface, PreludeBound, UnknownForm, WideKind,
 };
-use crate::graph::components;
+use crate::graph::{components, cycle_through};
 use crate::lang::Dispatch;
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -172,6 +171,8 @@ enum Check {
         this: Type,
         ats: Vec<Span>,
     },
+    /// The type `ty`, written at `at`, conforms to the interface of `bound`.
+    Conforms { ty: Type, bound: Bound, at: Span },
 }
 
 /// Where a resolved type is kept: the type of a parameter or a result of a signature, of a field,
@@ -184,6 +185,8 @@ pub(super) enum Slot {
     Payload(EnumId, usize, usize),
     RequirementParam(InterfaceId, usize, usize),
     RequirementRet(InterfaceId, usize),
+    /// The body of a type alias, by its place among the aliases.
+    Alias(usize),
 }
 
 /// The type parameters in scope where a pending check was queued, and their bounds.
@@ -306,10 +309,6 @@ impl Checker<'_> {
                 bounds: Vec::new(),
             })
             .collect();
-        for (k, assoc) in declared.iter().enumerate() {
-            (self.declaring_assoc.entry(assoc.name.name).or_default()).push((id, k));
-            self.assoc_at.insert((id, assoc.name.name), k);
-        }
         declared
     }
 
@@ -887,6 +886,7 @@ impl Checker<'_> {
         self.body.type_param(name).is_none()
             && !self.class_ids.contains_key(&name)
             && !self.enum_ids.contains_key(&name)
+            && !self.aliases.names.contains_key(&name)
             && matches!(self.interface_ids.get(&name), Some(Declared::Known(_)))
     }
 
@@ -1868,6 +1868,12 @@ impl Checker<'_> {
         self.check_or_wait(Check::Arguments { bound, this, ats });
     }
 
+    /// Checks that `ty`, written at `at`, conforms to the interface of `bound`, as the bound of a
+    /// type parameter would need. When every conformance is not yet known, the check waits.
+    pub(super) fn check_conforms(&mut self, at: Span, ty: Type, bound: Bound) -> bool {
+        self.check_or_wait(Check::Conforms { ty, bound, at })
+    }
+
     /// Queues `check` while the conformances are not yet known, and else runs it. Whether it
     /// holds, or waits.
     fn check_or_wait(&mut self, check: Check) -> bool {
@@ -1900,6 +1906,7 @@ impl Checker<'_> {
                 }
                 true
             }
+            Check::Conforms { ty, bound, at } => self.check_bound(*at, *ty, *bound, &[]),
         }
     }
 
@@ -1945,7 +1952,8 @@ impl Checker<'_> {
     pub(super) fn keep_at(&mut self, queued: std::ops::Range<usize>, place: Slot) {
         let waiting = self.pending_bounds.iter_mut();
         for check in waiting.flat_map(|pending| &mut pending[queued.clone()]) {
-            check.place = Some(place);
+            // The body of an alias that a type names keeps its own checks.
+            check.place.get_or_insert(place);
         }
     }
 
@@ -2061,6 +2069,7 @@ impl Checker<'_> {
             Slot::RequirementRet(interface, r) => {
                 self.interfaces[interface.0].requirements[r].ret = None;
             }
+            Slot::Alias(id) => self.unknown_alias(id),
         }
     }
 
@@ -2575,31 +2584,4 @@ impl Waits {
         }
         out
     }
-}
-
-/// The interfaces on a shortest cycle through `start`, in order, without `start`; empty for an
-/// interface that inherits itself. `start` lies on a cycle of its component in `edges`.
-fn cycle_through(edges: &[Vec<usize>], component: &[usize], start: usize) -> Vec<usize> {
-    let mut parent: FxHashMap<usize, usize> = FxHashMap::default();
-    let mut queue = VecDeque::from([start]);
-    // `start` is reached again through the cycle, so it is not seen at first.
-    while let Some(n) = queue.pop_front() {
-        for &m in &edges[n] {
-            if component[m] == component[start] && !parent.contains_key(&m) {
-                parent.insert(m, n);
-                queue.push_back(m);
-            }
-        }
-        if parent.contains_key(&start) {
-            break;
-        }
-    }
-    let mut path = Vec::new();
-    let mut at = parent[&start];
-    while at != start {
-        path.push(at);
-        at = parent[&at];
-    }
-    path.reverse();
-    path
 }

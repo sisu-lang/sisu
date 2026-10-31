@@ -20,8 +20,8 @@ pub(crate) struct Program {
     pub(crate) breaks: Vec<usize>,
 }
 
-/// A function, class, enum, constant, interface or `extend` block that holds a syntax error, so
-/// only its name survives. An `extend` block is named by its target.
+/// A function, class, enum, constant, alias, interface or `extend` block that holds a syntax
+/// error, so only its name survives. An `extend` block is named by its target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Broken {
     pub(crate) name: Ident,
@@ -34,6 +34,7 @@ pub(crate) enum BrokenKind {
     Class,
     Enum,
     Constant,
+    Alias,
     Interface,
     Extend,
 }
@@ -44,6 +45,7 @@ pub(crate) enum Item {
     Class(Class),
     Enum(Enum),
     Const(Const),
+    Alias(AliasDecl),
     Interface(Interface),
     Extend(Extend),
 }
@@ -104,6 +106,17 @@ pub(crate) struct Extend {
     /// The names of the methods that hold a syntax error; the block itself is intact.
     pub(crate) broken_methods: Vec<Ident>,
     /// `extend` through `}`.
+    pub(crate) span: Span,
+}
+
+/// `type Name<A, B> = T`, at the top level: another name for a type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AliasDecl {
+    pub(crate) name: Ident,
+    /// The names in `<A, B>`; empty when the alias takes none. They take no bounds.
+    pub(crate) params: Vec<Ident>,
+    pub(crate) ty: TypeExpr,
+    /// `type` through the end of `ty`.
     pub(crate) span: Span,
 }
 
@@ -872,6 +885,7 @@ impl fmt::Display for Program {
                 Item::Enum(e) => write!(f, "{e}")?,
                 Item::Interface(interface) => write!(f, "{interface}")?,
                 Item::Extend(extend) => write!(f, "{extend}")?,
+                Item::Alias(alias) => write!(f, "{alias}")?,
                 Item::Const(c) => {
                     write!(f, "(const {}", c.name.name)?;
                     if let Some(ty) = &c.ty {
@@ -882,6 +896,18 @@ impl fmt::Display for Program {
             }
         }
         Ok(())
+    }
+}
+
+impl fmt::Display for AliasDecl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "(type {}{} {})",
+            self.name.name,
+            angled(&self.params),
+            self.ty
+        )
     }
 }
 

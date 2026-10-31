@@ -40,6 +40,7 @@ enum Kind {
     Enum
     Interface
     Extend
+    Type
     Match
     NoneKw
     Is
@@ -233,7 +234,7 @@ fn keyword(word: string) -> Kind {
         "let" => Kind.Let
         "mut" => Kind.Mut
         "var" => Kind.Var
-        "import" | "pub" | "record" | "type" | "weak" | "test" | "extern" | "as" => Kind.Reserved
+        "import" | "pub" | "record" | "weak" | "test" | "extern" | "as" => Kind.Reserved
         "todo" => Kind.Todo
         "if" => Kind.If
         "else" => Kind.Else
@@ -249,6 +250,7 @@ fn keyword(word: string) -> Kind {
         "enum" => Kind.Enum
         "interface" => Kind.Interface
         "extend" => Kind.Extend
+        "type" => Kind.Type
         "match" => Kind.Match
         "None" => Kind.NoneKw
         "is" => Kind.Is
@@ -441,10 +443,10 @@ class Tracker {
         self.current.annotation == 0
     }
 
-    fn feed(self, kind: Kind, text: string) {
+    fn feed(self, kind: Kind) {
         let s = self.current
         if s.first == Start.Unseen {
-            s.first = if kind == Kind.Reserved && text == "type" {
+            s.first = if kind == Kind.Type {
                 Start.TypeWord
             } else {
                 Start.Other
@@ -480,8 +482,9 @@ class Tracker {
                 }
             }
             Eq | Ge | While | For | Loop => {
-                // The `=` of `type Item = ...` starts the type of an associated type's choice.
-                let chooses = kind == Kind.Eq && s.tokens == 3 && s.first == Start.TypeWord
+                // The first `=` of `type Item = ...` or `type P<T> = ...` starts the type of an
+                // associated type's choice or of an alias.
+                let chooses = kind == Kind.Eq && s.annotation == None && s.first == Start.TypeWord
                 s.annotation = if chooses { 0 } else { None }
             }
             Gt => {
@@ -589,7 +592,7 @@ class Lexer {
     // How many `;` that separate statements end the tokens, which the tracker has not read.
     mut trailing: i64
     // Whether the top-level item so far is a `fn`, `class`, `enum`, `interface` or `extend`. Such
-    // an item ends at its `}`. A `const` ends at a line break.
+    // an item ends at its `}`. A `const` or a `type` ends at a line break.
     mut self_ending: bool
     // The kind of the last token that is not a `;`.
     mut last_code: Kind
@@ -628,7 +631,7 @@ class Lexer {
         if self.open.len() == 0 {
             if declares(kind) {
                 self.self_ending = true
-            } else if kind == Kind.Const {
+            } else if kind == Kind.Const || kind == Kind.Type {
                 self.self_ending = false
             }
         }
@@ -641,9 +644,9 @@ class Lexer {
         } else {
             // The `;`s before this token end the statement, whatever the first of them does.
             if self.trailing > 0 {
-                self.tracker.feed(Kind.Semicolon, ";")
+                self.tracker.feed(Kind.Semicolon)
             }
-            self.tracker.feed(kind, spelled)
+            self.tracker.feed(kind)
             self.trailing = 0
         }
         if kind != Kind.Semicolon {
@@ -881,7 +884,7 @@ fn judge(tokens: [Token], i: i64, end: i64, semi: Semi) -> Judgement {
 
 // Whether a token of this kind starts a top-level item, which needs no `;` before it.
 fn starts_item(kind: Kind) -> bool {
-    declares(kind) || kind == Kind.Const
+    declares(kind) || kind == Kind.Const || kind == Kind.Type
 }
 
 // The second pass: prints the tokens, and the `Eof` after the last one that is not a `Newline`.

@@ -1,0 +1,14 @@
+error[E0137]: `F` takes 1 type argument, but 2 were given
+ --> E0137-alias-arity.sisu:4:12
+  |
+4 |     print(F<i64, string>(3))
+  |            ^^^^^^^^^^^^^
+
+error[E0137]: `F` takes 1 type argument, but 2 were given
+ --> E0137-alias-arity.sisu:5:12
+  |
+5 |     print(F<i64, string>.pi)
+  |            ^^^^^^^^^^^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0137

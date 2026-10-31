@@ -1,0 +1,26 @@
+error[E0137]: `Num` takes no type arguments
+  --> E0137-alias-variant.sisu:21:19
+   |
+21 |     let b = EE.Num<i64>(1)
+   |                   ^^^^^
+   |
+help: remove the type arguments
+   |
+21 -     let b = EE.Num<i64>(1)
+21 +     let b = EE.Num(1)
+   |
+
+error[E0137]: `A` takes no type arguments
+  --> E0137-alias-variant.sisu:22:17
+   |
+22 |     let d = GI.A<i64>(1)
+   |                 ^^^^^
+   |
+help: remove the type arguments
+   |
+22 -     let d = GI.A<i64>(1)
+22 +     let d = GI.A(1)
+   |
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0137

@@ -1,5 +1,7 @@
 //! Assignment: places, which root may be written, the temps of compound operators, and spills.
 
+use std::rc::Rc;
+
 use super::expr::{if_some, literal_type, local, operator};
 use super::member::safe_value;
 use super::operator::Operator;
@@ -68,6 +70,8 @@ pub(super) struct CheckedPlace {
     /// The type a value written to it needs, the type of what the place stores; `None` is
     /// `Error`.
     ty: Option<Type>,
+    /// That type as its declaration writes it, when it names an alias.
+    shown: Option<Rc<str>>,
     /// `false` for a root that is a field without `mut`. A name root that cannot be written is
     /// reported but still lowers, as in milestone 2.
     writable: bool,
@@ -83,6 +87,7 @@ impl CheckedPlace {
         Self {
             path: None,
             ty: None,
+            shown: None,
             writable: false,
             held: None,
             guard: None,
@@ -110,6 +115,9 @@ impl Checker<'_> {
         value: &ast::Expr,
     ) -> Result<tir::Stmt, Poisoned> {
         let place = self.place(span, target, Change::Assign);
+        if let (Some(want), Some(text)) = (place.ty, &place.shown) {
+            self.show(value.span, want, text);
+        }
         let value = self.expect(value, place.ty);
         self.assigned(span, place, value)
     }
@@ -545,6 +553,7 @@ impl Checker<'_> {
         Some(CheckedPlace {
             path: None,
             ty,
+            shown: None,
             writable: false,
             held: None,
             guard: None,
@@ -651,6 +660,7 @@ impl Checker<'_> {
             b.reassigned |= b.kind == BindingKind::Var;
         }
         let (local, ty, kind, declared) = (b.local, b.ty, b.kind, b.span);
+        let shown = b.shown.clone();
         let cause = match kind {
             BindingKind::Var => None,
             BindingKind::Let => Some(Immutable::Let {
@@ -667,6 +677,7 @@ impl Checker<'_> {
                 operands: Vec::new(),
             }),
             ty,
+            shown,
             writable: true,
             held,
             guard: None,
@@ -717,7 +728,7 @@ impl Checker<'_> {
                     return CheckedPlace::failed();
                 };
                 let field = &self.classes[class.0].fields[index];
-                let writable = field.mutable;
+                let (writable, shown) = (field.mutable, field.shown.clone());
                 let held = if writable {
                     None
                 } else {
@@ -730,6 +741,7 @@ impl Checker<'_> {
                         operands: vec![base],
                     }),
                     ty,
+                    shown,
                     writable,
                     held,
                     guard,
@@ -755,6 +767,7 @@ impl Checker<'_> {
                 CheckedPlace {
                     path,
                     ty: element.filter(|_| !mismatched),
+                    shown: None,
                     writable: inner.writable,
                     held: inner.held,
                     guard: None,

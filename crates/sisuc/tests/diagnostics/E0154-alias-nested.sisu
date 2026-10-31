@@ -1,0 +1,41 @@
+class Heap<T: Ord> {
+    value: T
+}
+
+class Box<U> {
+    value: U?
+}
+
+class Tag<T, K> {
+    first: T
+}
+
+enum HeapE<T: Ord> {
+    Zero
+    One(T)
+}
+
+type A<T> = Box<Heap<T>>
+type H<T> = Heap<T>?
+type E<T> = HeapE<T>
+type TH<T> = Tag<T, Heap<T>>
+
+fn main() {
+    let a = A<bool>(value: None)
+    let b = H<bool>.None
+    let c = H.Some(Heap(value: true))
+    let d = E<bool>.Zero
+    let e = E.One(true)
+    let h = A(value: Heap(value: true))
+    let i = TH(first: true)
+    let f = A<i64>(value: None)
+    let g = E.One(1)
+    print(a.value == None)
+    print(b == None)
+    print(c == None)
+    print(h.value == None)
+    print(i.first)
+    print(f.value == None)
+    print(d == e)
+    print(g == g)
+}

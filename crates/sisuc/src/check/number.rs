@@ -3,9 +3,10 @@
 
 use std::f64::consts;
 
+use super::alias::Via;
 use super::expr::{no_member, postfix, typed};
 use super::generic::Site;
-use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, built_in_type};
+use super::{Checked, Checker, Declared, Poisoned, UNKNOWN};
 use crate::ast;
 use crate::diagnostic::{Definition, DiagnosticKind, MathFix, NanFix};
 use crate::source::Span;
@@ -116,6 +117,12 @@ impl Checker<'_> {
             _ => return None,
         };
         let name = ident.name;
+        let site = Site {
+            name: &ident,
+            written,
+            angles: angles.unwrap_or(base.span),
+            expected,
+        };
         // A local cannot take an enum's name, so the enum wins over one that tried.
         match self.enum_ids.get(&name) {
             Some(&Declared::Known(id)) => {
@@ -123,37 +130,34 @@ impl Checker<'_> {
                 if let Some(angles) = angles.filter(|_| !generic) {
                     self.not_generic(name, angles);
                 }
-                let site = Site {
-                    name: &ident,
-                    written,
-                    angles: angles.unwrap_or(base.span),
-                    expected,
-                };
-                return Some(self.enum_path(span, id, member, call, site));
+                return Some(self.enum_path(span, id, member, call, site, None));
             }
             Some(Declared::Broken) => {
                 self.stray(call.map_or(&[], |(args, _)| args));
                 return Some(Err(Poisoned::error()));
             }
             None if name.as_str() == "Option" => {
-                let site = Site {
-                    name: &ident,
-                    written,
-                    angles: angles.unwrap_or(base.span),
-                    expected,
-                };
-                return Some(self.option_path(span, site, member, call));
+                return Some(self.option_path(span, site, member, call, None));
             }
             None => {}
         }
-        // Any other base with type arguments is checked as a value, which reports them.
-        if angles.is_some() || self.lookup(name).is_some() {
+        // An alias is the type that it names, unless a local takes the name.
+        if self.alias_visible(name)
+            && let Some(checked) = self.alias_path(span, site, member, call)
+        {
+            return Some(checked);
+        }
+        // Any other base with type arguments is checked as a value, which reports them. An alias
+        // of a built-in type took them above, and they fit.
+        let applied = self.aliases.names.contains_key(&name) && self.built_in_of(name).is_some();
+        if (angles.is_some() && !applied) || self.lookup(name).is_some() {
             return None;
         }
         let written = base.span.to(member.span);
         let declared = self.constants.contains_key(&name)
             || self.function_ids.contains_key(&name)
             || self.class_ids.contains_key(&name)
+            || self.aliases.names.contains_key(&name)
             || self.interface_ids.contains_key(&name);
         if matches!(name.as_str(), "math" | "Math") && !declared {
             if let Some((args, _)) = call {
@@ -169,7 +173,7 @@ impl Checker<'_> {
             self.report_math(written, fix);
             return Some(Err(Poisoned::error()));
         }
-        let ty = built_in_type(name.as_str())?;
+        let ty = self.built_in_of(name)?;
         if let Some((args, _)) = call {
             return if ty == Type::F64 {
                 self.math_call(written, member, args)
@@ -187,6 +191,14 @@ impl Checker<'_> {
             self.diagnostics.push(d);
             return Some(Err(Poisoned::error()));
         };
+        // An alias of `f64` with a parameter that its constant does not bind (E0050).
+        if angles.is_none()
+            && let Via::To(through) = self.through(name)
+            && !through.params.is_empty()
+        {
+            self.report_unbound_alias(site, &through, Some((member, false)));
+            return Some(Err(Poisoned::error()));
+        }
         Some(Ok(tir::Expr {
             kind: tir::ExprKind::Float(x),
             ty: Type::F64,

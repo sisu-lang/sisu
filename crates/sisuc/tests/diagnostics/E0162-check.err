@@ -1,0 +1,10 @@
+error[E0162]: with `B15<[[[[[[[[i64]]]]]]]]>`, the type aliases of this program have built more than 1,000,000 distinct types
+  --> E0162-check.sisu:38:10
+   |
+38 | fn g8(x: B15<[[[[[[[[i64]]]]]]]]>) {}
+   |          ^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: hold an inner part in a field of a class or an enum
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0162

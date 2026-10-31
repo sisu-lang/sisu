@@ -81,6 +81,13 @@ enums with `match`.
   call that more than one conformance answers are errors (`E0146` to
   `E0157`). There are no interface values (`any`) yet
   ([ADR 0023](adr/0023-generics-are-monomorphized-and-checked-at-the-definition.md))
+- type aliases, `type Grid = [[char?]]` and `type Pairs<T> = [[T]]`: another
+  name for a type, so a `Grid` is a `[[char?]]` everywhere, inside type
+  arguments too. An alias of a class or an enum builds values as the type does
+  (`P(x: 1.0, y: 2.0)`, `E.Num(1)`), and an alias of a number type converts. An
+  alias that refers to itself is an error (`E0161`), and so is a type that
+  nests past 256 levels (`E0071`) or holds more than 100,000 distinct types
+  (`E0162`). The checker replaces each alias, so no later stage sees one
 - the prelude's interfaces `Display`, `Eq`, `Ord` and `AnyObject`. `print`,
   interpolation and `to_string()` use `Display`, and every type that can be a
   type argument has one: a class prints its name, or the text of its own
@@ -414,7 +421,7 @@ Each item is cheap when its milestone lands and expensive to retrofit:
 
 | Milestone | Add | Why |
 | --- | --- | --- |
-| 4 | Reserve the keywords that later milestones bring: `import` and `pub` (planned for milestone 2, it did not land), `enum`, `match`, `record`, `type`, `weak`, `const`, `test` and `todo`. Landed in milestone 4, stage 1 (`E0083`); it also reserves `echo`, `interface`, `extern` and `as`, and `const` became a keyword with top-level constants. Milestone 8 released `echo` for an ordinary name, when `dbg` took its place | A program that names a variable `match` would break when that keyword lands |
+| 4 | Reserve the keywords that later milestones bring: `import` and `pub` (planned for milestone 2, it did not land), `enum`, `match`, `record`, `type`, `weak`, `const`, `test` and `todo`. Landed in milestone 4, stage 1 (`E0083`); it also reserves `echo`, `interface`, `extern` and `as`, and `const` became a keyword with top-level constants. Milestone 8 released `echo` for an ordinary name, when `dbg` took its place, and made `type` a keyword for type aliases | A program that names a variable `match` would break when that keyword lands |
 | 4 | `let mut` replaces `var`; a class field is bare, set once by the constructor, or `mut` (ADR 0011). `var` stays reserved, so using it is error `E0013`, "there is no `var` in Sisu", with the help "Sisu declares a variable with `let mut`" (on a field, "a field that can change is marked `mut`"). | Every program and test changes, so it is cheapest before strings and enums add more code |
 | 4 | Top-level `const NAME = expr`, where `expr` uses only literals, operators and other constants; the checker folds it to a value. Planned for milestone 3, it did not land. | Named limits, such as a sieve size, without global variables |
 | 4 | String interpolation `"x = {x}"`. `print(x)` and `"{x}"` go through one internal operation per type that turns a value into text. Milestone 8's `Display` interface replaces that operation, so neither is rewritten. | The biggest single win for real programs |
@@ -814,10 +821,11 @@ Each is small once its milestone's main feature exists:
 
 - Milestone 8: type aliases, `type Index = Map<string, [i64]>`. An alias is
   another name for the same type, so it adds no type safety; for a distinct
-  type, use a newtype (milestone 10). Done in milestone 8, stage 6: `dbg(x)`,
-  which prints `x` with its file, line, column and source text on standard
-  error and returns `x`, so it can wrap any expression while debugging. It
-  shows a class one level deep, and lays a value out as `{x:#}` does.
+  type, use a newtype (milestone 10). Done in milestone 8, stage 9. Done in
+  milestone 8, stage 6: `dbg(x)`, which prints `x` with its file, line, column
+  and source text on standard error and returns `x`, so it can wrap any
+  expression while debugging. It shows a class one level deep, and lays a value
+  out as `{x:#}` does.
 - Milestone 8: `Eq` and `Ord` interfaces in the prelude; milestone 11:
   `Hash`, with `Map` and `Set`. `Map` keys need `Hash`, and `sort` needs
   `Ord`. `Hash` has the shape

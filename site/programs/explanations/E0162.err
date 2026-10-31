@@ -1,0 +1,10 @@
+error[E0162]: the type that `Pair<B15<[T]>, B15<T?>>` names holds more than 100,000 distinct types
+  --> E0162.sisu:21:15
+   |
+21 | type B16<T> = Pair<B15<[T]>, B15<T?>>
+   |               ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: hold an inner part in a field of a class or an enum
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0162

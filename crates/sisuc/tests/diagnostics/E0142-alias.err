@@ -1,0 +1,15 @@
+error[E0142]: loop label `A` has the same name as the type alias `A`
+ --> E0142-alias.sisu:5:15
+  |
+1 | type A = i64
+  |      - the type alias is declared here
+...
+4 |     A: loop {
+  |     - loop label declared here
+5 |         break A 1
+  |               ^
+  |
+  = help: rename the loop label
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0142

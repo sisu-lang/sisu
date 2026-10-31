@@ -1,0 +1,14 @@
+class Box<T: Ord> {
+    v: T
+}
+
+type BX<T> = Box<T>
+
+fn main() {
+    let a: Box<bool> = Box(v: true)
+    let b: BX<bool> = BX(v: true)
+    let c = BX(v: true)
+    print(a.v)
+    print(b.v)
+    print(c.v)
+}

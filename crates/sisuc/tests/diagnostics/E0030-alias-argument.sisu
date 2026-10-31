@@ -1,0 +1,8 @@
+type F<T> = f64
+type Pairs<T> = [[T]]
+
+fn main() {
+    print(F<Missing>(3))
+    print(F<Missing>.pi)
+    print(Pairs<Missing>(1))
+}

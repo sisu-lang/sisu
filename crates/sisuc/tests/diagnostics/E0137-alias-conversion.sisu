@@ -1,0 +1,7 @@
+type F<T> = f64
+type G = F<i64>
+
+fn main() {
+    print(G<i64>(3))
+    print(G<i64>.pi)
+}

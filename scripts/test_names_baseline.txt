@@ -863,7 +863,6 @@ crates/sisuc/src/generate/coverage.rs::known_sites_take_every_count_and_negative
 crates/sisuc/src/generate/coverage.rs::let_binding_keeps_the_type
 crates/sisuc/src/generate/coverage.rs::let_binding_skips_a_short_circuit
 crates/sisuc/src/generate/coverage.rs::main_calls_fit_the_budget_left
-crates/sisuc/src/generate/coverage.rs::main_holds_several_statements
 crates/sisuc/src/generate/coverage.rs::no_block_as_a_place
 crates/sisuc/src/generate/coverage.rs::no_block_in_a_const
 crates/sisuc/src/generate/coverage.rs::no_const_with_an_overflowing_step
@@ -983,7 +982,6 @@ crates/sisuc/src/lexer/mod.rs::reports_every_bad_character
 crates/sisuc/src/lexer/mod.rs::safe_brace_fix_removes_the_error
 crates/sisuc/src/lexer/mod.rs::semicolon_before_a_line_start_lexes_clean
 crates/sisuc/src/lexer/mod.rs::semicolon_ends_a_line
-crates/sisuc/src/lexer/mod.rs::semicolon_separates_or_is_redundant
 crates/sisuc/src/lexer/mod.rs::star_star
 crates/sisuc/src/lexer/mod.rs::string_ends_statement
 crates/sisuc/src/lexer/mod.rs::string_error_fixes

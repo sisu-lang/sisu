@@ -1,0 +1,62 @@
+error[E0063]: `f64` has no constant `nope`
+  --> E0063-alias-member.sisu:11:13
+   |
+11 |     print(F.nope)
+   |             ^^^^
+
+error[E0063]: `f64` has no constant `nope`
+  --> E0063-alias-member.sisu:12:18
+   |
+12 |     print(F<i64>.nope)
+   |                  ^^^^
+
+error[E0063]: `i64` has no constant `max`
+  --> E0063-alias-member.sisu:13:13
+   |
+13 |     print(N.max)
+   |             ^^^
+
+error[E0063]: `string` has no constant `len`
+  --> E0063-alias-member.sisu:14:13
+   |
+14 |     print(S.len)
+   |             ^^^
+
+error[E0118]: `E` has no variant `Zed`
+  --> E0063-alias-member.sisu:15:14
+   |
+15 |     print(EU.Zed)
+   |              ^^^
+
+error[E0119]: `E.A` holds nothing; write `E.A`
+  --> E0063-alias-member.sisu:16:15
+   |
+16 |     print(EU.A(1))
+   |               ^^^
+   |
+help: remove the parentheses
+   |
+16 -     print(EU.A(1))
+16 +     print(EU.A)
+   |
+
+error[E0053]: `string` takes 1 argument, found 2
+  --> E0063-alias-member.sisu:17:11
+   |
+17 |     print(S("a", "b"))
+   |           ^^^^^^^^^^^
+
+error[E0053]: `string` takes 1 argument, found 0
+  --> E0063-alias-member.sisu:18:11
+   |
+18 |     print(S())
+   |           ^^^
+
+error[E0032]: expected `u8`, `char` or `f64`, found `string`
+  --> E0063-alias-member.sisu:19:13
+   |
+19 |     print(N("a"))
+   |             ^^^
+
+sisu: 9 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032, E0053, E0063, E0118, E0119

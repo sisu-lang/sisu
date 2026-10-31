@@ -1,0 +1,8 @@
+type M<T> = [T]?
+
+fn main() {
+    let x: i64? = M.Some(1)
+    let y = M.Some(1)
+    print(x == None)
+    print(y == None)
+}

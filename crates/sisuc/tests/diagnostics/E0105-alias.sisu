@@ -1,0 +1,6 @@
+type Numbers = [i64]
+
+fn main() {
+    let xs = Numbers(1)
+    print(xs)
+}

@@ -642,6 +642,12 @@ impl Gen<'_> {
             .all(|field| field.ty.least() <= field.cap);
         let infer = fits && self.scope.classes[id].inferable && self.pick(2) == 0;
         let name = if infer { ty.bare() } else { ty.to_string() };
+        // An alias of the class builds it as the class does, with the alias's fixed arguments.
+        let name = if infer {
+            name
+        } else {
+            self.constructor(ty, name)
+        };
         self.w.text(&format!("{name}("));
         let mut parts = Vec::new();
         for f in 0..self.scope.classes[id].fields.len() {
@@ -695,6 +701,11 @@ impl Gen<'_> {
         let fits = fields.iter().map(Ty::least).fold(0, u64::saturating_add) < max;
         let infer = inferable && fits && self.pick(2) == 0;
         let enum_name = if infer { ty.bare() } else { ty.to_string() };
+        let enum_name = if infer {
+            enum_name
+        } else {
+            self.constructor(ty, enum_name)
+        };
         // `Ok(..)` and `Err(..)` take their `Result` from the type that the `let` writes.
         let is_result = matches!(ty, Ty::Enum { applied: Some(a), .. } if a.generic == RESULT);
         if is_result && std::mem::take(&mut self.bare) && self.pick(2) == 0 {
@@ -1960,7 +1971,9 @@ impl Gen<'_> {
         let mut text = if self.pick(2) == 0 {
             name
         } else {
-            format!("{}.{name}", ty.bare())
+            // An alias of the enum is the enum, as a qualifier says.
+            let enum_name = self.constructor(ty, ty.bare());
+            format!("{enum_name}.{name}")
         };
         if fields.is_empty() {
             return (text, true);

@@ -333,13 +333,22 @@ impl Checker<'_> {
                 ty,
                 init,
             } => {
+                let uses = self.aliases.uses;
                 let declared = ty.as_ref().map(|ty| self.resolve(ty));
+                let shown = ty.as_ref().and_then(|ty| self.shown_text(ty, uses));
                 self.body.let_init = Some((init.span, name.name, mutable.is_some()));
+                self.body.failed_let = matches!(declared, Some(None)).then_some(init.span);
                 let init = match declared {
-                    Some(declared) => self.expect(init, declared),
+                    Some(declared) => {
+                        if let (Some(want), Some(text)) = (declared, &shown) {
+                            self.show(init.span, want, text);
+                        }
+                        self.expect(init, declared)
+                    }
                     None => self.value(init, None),
                 };
                 self.body.let_init = None;
+                self.body.failed_let = None;
                 // `let _ = e` binds nothing: the value is an expression statement, which
                 // codegen releases at once.
                 if name.name.as_str() == "_" {
@@ -357,6 +366,14 @@ impl Checker<'_> {
                     BindingKind::Let
                 };
                 let local = self.declare(name, ty, kind, *mutable);
+                if let Some(binding) = self
+                    .body
+                    .scopes
+                    .last_mut()
+                    .and_then(|s| s.get_mut(&name.name))
+                {
+                    binding.shown = shown;
+                }
                 Ok(tir::Stmt::Let {
                     local,
                     init: init.map_err(|_| unit())?,
@@ -758,6 +775,9 @@ impl Checker<'_> {
                 return Err(never());
             }
             Some(value) => {
+                if let (Some(want), Some(text)) = (self.body.ret, self.body.ret_shown.clone()) {
+                    self.show(value.span, want, &text);
+                }
                 let value = self.expect(value, self.body.ret).map_err(|_| never())?;
                 Some(Box::new(value))
             }
@@ -933,6 +953,10 @@ impl Checker<'_> {
         if let Some(id) = self.interface_ids.get(&name) {
             let span = at(id, |id| self.interfaces[id.0].name.span);
             return Some((ClashKind::Interface, span));
+        }
+        if let Some(id) = self.aliases.names.get(&name) {
+            let span = at(id, |&id| self.aliases.infos[id].name.span);
+            return Some((ClashKind::Alias, span));
         }
         built_in_type(name.as_str()).map(|_| (ClashKind::BuiltInType, None))
     }
@@ -1326,11 +1350,14 @@ impl Checker<'_> {
         kind: BindingKind,
         keyword: Option<Span>,
     ) -> tir::LocalId {
-        if !self.reserved(name) && !name.span.in_prelude() && self.enum_ids.contains_key(&name.name)
+        if !self.reserved(name)
+            && !name.span.in_prelude()
+            && (self.enum_ids.contains_key(&name.name) || self.alias_unhideable(name.name))
         {
             self.report(DiagnosticKind::EnumNamedLocal {
                 name: name.name.to_string(),
                 at: name.span,
+                optional: self.alias_names_option(name.name),
             });
         }
         self.insert_local(name, ty, kind, keyword)
@@ -1369,6 +1396,7 @@ impl Checker<'_> {
             loop_named: false,
             read: false,
             also: Vec::new(),
+            shown: None,
         };
         if kind == BindingKind::Param
             && let Some(first) = scope.get(&name.name)

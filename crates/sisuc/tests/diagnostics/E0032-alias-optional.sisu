@@ -1,0 +1,6 @@
+type Name = string?
+
+fn main() {
+    let name: Name = 1
+    print(1)
+}
