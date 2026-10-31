@@ -213,6 +213,42 @@ fn the_search_for_an_alias_cycle_should_read_each_edge_once() {
     assert_near_linear(steps(100), steps(200), steps(300));
 }
 
+/// The chain `B1` to `B15` of the E0162 page, then `uses` functions whose parameter types are
+/// `B15` of a type of its own: each use builds fewer entries than the limit of one written type,
+/// so only the limit of the whole check can stop them.
+fn many_uses(uses: usize) -> String {
+    let mut src = branching(15);
+    for k in 0..uses {
+        writeln!(
+            src,
+            "fn g{k}(x: B15<{}i64{}>) {{}}",
+            "[".repeat(k),
+            "]".repeat(k)
+        )
+        .expect("writing to a string should not fail");
+    }
+    format!("{PAIR}{src}fn main() {{}}")
+}
+
+/// The memo of the aliases stays within the limit of the whole check, however many uses a program
+/// makes, and the use that passes it is the one report: each later use is `Error` with no report.
+/// 160 uses is 20x the smallest count that passes the limit (about 8).
+#[test]
+fn many_uses_of_an_alias_should_stay_within_the_limit_of_the_check() {
+    alias::MEMO_PEAK.set(0);
+    let src = many_uses(160);
+    let (_, ds) = checked(&src);
+    let [d] = &ds[..] else {
+        panic!("{} diagnostics", ds.len());
+    };
+    assert_eq!(d.code(), Code::AliasTooLarge);
+    assert!(
+        alias::MEMO_PEAK.get() <= alias::MAX_CHECK_ENTRIES + 1,
+        "{} entries",
+        alias::MEMO_PEAK.get()
+    );
+}
+
 /// A depth-first resolution that follows each alias by a call would use a frame for each alias of
 /// the chain: 100,000 aliases overflow the stack. The alias that waits for its body takes a place
 /// in a list, so the resolution of a chain has no recursion.
@@ -765,6 +801,11 @@ fn a_value_position_should_check_the_type_that_its_alias_names() {
             "a constant that reads a member of a value is not known",
             "const X: f64 = (1.0).pi\nfn main() {}",
             vec![(Code::ConstantNotKnown, (1, 16))],
+        ),
+        (
+            "the type that passes the limit of the whole check, and no report after it",
+            fixture!("E0162-check"),
+            vec![(Code::AliasTooLarge, (38, 10))],
         ),
         (
             "a local cannot take the name of an alias of an enum",

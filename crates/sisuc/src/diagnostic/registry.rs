@@ -392,7 +392,13 @@ pub(crate) enum DiagnosticKind {
     },
     /// The written type `ty`, at `at`, which names more than `limit` distinct types once the type
     /// aliases in it are replaced.
-    AliasTooLarge { ty: String, at: Span, limit: usize },
+    AliasTooLarge {
+        ty: String,
+        at: Span,
+        limit: usize,
+        /// Whether `limit` is the whole check's, not the written type's.
+        check: bool,
+    },
     /// The argument `arg`, at `at`, of an inherited interface of `interface`, which is built from
     /// a type parameter.
     InheritedArgument {
@@ -2753,13 +2759,25 @@ impl From<DiagnosticKind> for Diagnostic {
                     d.with_secondary(span, format!("`{from}` uses `{to}` here"))
                 })
             }
-            DiagnosticKind::AliasTooLarge { ty, at, limit } => Diagnostic::coded(
+            DiagnosticKind::AliasTooLarge {
+                ty,
+                at,
+                limit,
+                check,
+            } => Diagnostic::coded(
                 code,
                 at,
-                format!(
-                    "the type that `{ty}` names holds more than {} distinct types",
-                    thousands(limit)
-                ),
+                if check {
+                    format!(
+                        "with `{ty}`, the type aliases of this program have built more than {} distinct types",
+                        thousands(limit)
+                    )
+                } else {
+                    format!(
+                        "the type that `{ty}` names holds more than {} distinct types",
+                        thousands(limit)
+                    )
+                },
             )
             .with_help("hold an inner part in a field of a class or an enum"),
             DiagnosticKind::InheritedArgument {

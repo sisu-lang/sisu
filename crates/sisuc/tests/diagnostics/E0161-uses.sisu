@@ -11,4 +11,5 @@ fn main() {
     let e = A.max(1, 2)
     let f = A.sqrt<i64>(1)
     let g: u8 = A(1)
+    print(A.None == None)
 }

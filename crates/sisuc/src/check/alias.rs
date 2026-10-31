@@ -34,9 +34,25 @@ const MAX_DEPTH: u32 = 256;
 
 /// How many distinct types the resolution of one written type may add to the memo.
 const MAX_ENTRIES: usize = 100_000;
+/// The most entries that the memo may hold in a whole check, whatever the written types add. The
+/// limit of one written type bounds a type, and this bounds the program: a program of many uses,
+/// each under `MAX_ENTRIES` with its own arguments, would otherwise build and keep all of them.
+/// It is a first value, and GitHub issue #322 tunes it.
+pub(super) const MAX_CHECK_ENTRIES: usize = 1_000_000;
+
+/// Which limit of the memo a substitution passed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Passed {
+    /// The limit of one written type, `MAX_ENTRIES`.
+    Type,
+    /// The limit of the whole check, `MAX_CHECK_ENTRIES`.
+    Check,
+}
 
 #[cfg(test)]
 thread_local! {
+    /// The most entries the memo has held on this thread, read after each substitution.
+    pub(super) static MEMO_PEAK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many aliases the walk over them has entered on this thread.
     pub(super) static VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The most aliases that the walk may enter on this thread: the one that passes it panics, so a
@@ -121,8 +137,11 @@ pub(super) struct Aliases {
     memo: SharedMemo,
     /// How many entries the memo held when the outermost written type that resolves began.
     base: Option<usize>,
-    /// Whether a use passed `MAX_ENTRIES` in the outermost written type.
-    too_large: bool,
+    /// The limit that a use passed in the outermost written type, which is reported at its end.
+    too_large: Option<Passed>,
+    /// Whether the memo passed `MAX_CHECK_ENTRIES`: every later substitution fails, with no
+    /// report of its own, so each later use of an alias is `Error`.
+    exhausted: bool,
     /// How many uses of an alias have resolved.
     pub(super) uses: usize,
 }
@@ -333,7 +352,7 @@ impl Checker<'_> {
         let ty = self.substitute(resolved.body, own_args(&params));
         // The body was within the limits when it resolved, so a substitution of its own
         // parameters stays within them; if not, the alias is `Error`, and the use reports nothing.
-        self.aliases.too_large = false;
+        self.aliases.too_large = None;
         match ty {
             Some(ty) => Via::To(Through {
                 params,
@@ -372,13 +391,7 @@ impl Checker<'_> {
             self.aliases.base = None;
         }
         let Some(built) = built else {
-            if std::mem::take(&mut self.aliases.too_large) {
-                self.report(DiagnosticKind::AliasTooLarge {
-                    ty: self.source.text(at).to_string(),
-                    at,
-                    limit: MAX_ENTRIES,
-                });
-            }
+            self.report_too_large(at);
             return Via::Error;
         };
         match self.use_checks(&through.checks, list, at) {
@@ -549,10 +562,27 @@ impl Checker<'_> {
         if list == TypeArgs::intern(&own) {
             return Some(ty);
         }
+        if self.aliases.exhausted {
+            return None;
+        }
         let base = self.aliases.base.unwrap_or(self.aliases.memo.len());
-        let built = ty.subst_shared(list, &mut self.aliases.memo, base + MAX_ENTRIES);
+        let per_type = base + MAX_ENTRIES;
+        let built = ty.subst_shared(
+            list,
+            &mut self.aliases.memo,
+            per_type.min(MAX_CHECK_ENTRIES),
+        );
+        #[cfg(test)]
+        MEMO_PEAK.set(MEMO_PEAK.get().max(self.aliases.memo.len()));
         if built.is_none() {
-            self.aliases.too_large = true;
+            // The limit of the type comes first when both are passed together.
+            let passed = if per_type <= MAX_CHECK_ENTRIES {
+                Passed::Type
+            } else {
+                self.aliases.exhausted = true;
+                Passed::Check
+            };
+            self.aliases.too_large = Some(passed);
         }
         built
     }
@@ -786,15 +816,28 @@ impl Checker<'_> {
         resolved: Option<Type>,
     ) -> Option<Type> {
         self.aliases.base = None;
-        if !std::mem::take(&mut self.aliases.too_large) {
+        if self.aliases.too_large.is_none() {
             return resolved;
         }
-        self.report(DiagnosticKind::AliasTooLarge {
-            ty: self.source.text(ty.bare).to_string(),
-            at: ty.bare,
-            limit: MAX_ENTRIES,
-        });
+        self.report_too_large(ty.bare);
         None
+    }
+
+    /// Reports the written type at `at`, when a use passed a limit of the memo in it: once for
+    /// the type, and once for the check, as every later substitution fails with no report.
+    fn report_too_large(&mut self, at: Span) {
+        let Some(passed) = self.aliases.too_large.take() else {
+            return;
+        };
+        self.report(DiagnosticKind::AliasTooLarge {
+            ty: self.source.text(at).to_string(),
+            at,
+            limit: match passed {
+                Passed::Type => MAX_ENTRIES,
+                Passed::Check => MAX_CHECK_ENTRIES,
+            },
+            check: passed == Passed::Check,
+        });
     }
 
     /// The type written as `ty`, when the types it resolved to followed a use of an alias, which
