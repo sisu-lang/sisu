@@ -251,8 +251,18 @@ impl Checker<'_> {
             });
             return None;
         }
-        // The parameter of an alias takes no bound: no closure says which interface it means.
-        if self.body.alias.is_some() && matches!(base_ty.kind(), TypeKind::Param(..)) {
+        if self.body.alias.is_some() {
+            // The bounds of an associated type are not known when the aliases resolve, so the
+            // body writes no associated type of one.
+            if matches!(base_ty.kind(), TypeKind::Assoc(..)) {
+                self.report(DiagnosticKind::UnknownType {
+                    name: name.name.to_string(),
+                    at: ty.bare,
+                    form: UnknownForm::OfAssociatedInAlias,
+                });
+                return None;
+            }
+            // The parameter of an alias takes no bound: no closure says which interface it means.
             return self.alias_assoc(ty, base, base_ty, name);
         }
         let closure = self.closure_len(base_ty);

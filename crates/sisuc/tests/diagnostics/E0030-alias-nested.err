@@ -1,0 +1,8 @@
+error[E0030]: the body of a type alias writes an associated type of a type parameter, as `T.Item`, but not an associated type of that
+ --> E0030-alias-nested.sisu:6:17
+  |
+6 | type Inner<T> = T.Item.Item
+  |                 ^^^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0030

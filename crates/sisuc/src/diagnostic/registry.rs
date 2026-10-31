@@ -1698,6 +1698,8 @@ pub(crate) enum UnknownForm {
     /// The type parameter or associated type `base` has no associated type of the diagnostic's
     /// name. `add` is the bound that gives it one, when one interface declares it.
     NoAssociated { base: String, add: Option<AddBound> },
+    /// The body of a type alias writes the associated type of an associated type, as `T.Item.Item`.
+    OfAssociatedInAlias,
     /// The associated type is written through a class, an enum or another type that is no type
     /// parameter. `own` when the base is `Self` in a conformance, which writes the name alone.
     ConcreteBase { own: bool },
@@ -2909,6 +2911,11 @@ impl From<DiagnosticKind> for Diagnostic {
                         None => d,
                     }
                 }
+                UnknownForm::OfAssociatedInAlias => Diagnostic::coded(
+                    code,
+                    at,
+                    "the body of a type alias writes an associated type of a type parameter, as `T.Item`, but not an associated type of that",
+                ),
                 UnknownForm::ConcreteBase { own } => {
                     let d = Diagnostic::coded(
                         code,

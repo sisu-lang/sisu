@@ -90,10 +90,6 @@ fn aliases_should_check_clean_where_they_name_a_type() {
             "the paths of Option, through an alias of an optional type",
             "type O = i64?\ntype M<T> = T?\nfn show(x: i64?) { print(x == None) }\nfn main() {\n    let a: O = O.Some(1)\n    let b: O = O.None\n    let c = M<i64>.Some(1)\n    let d: string? = M<string>.None\n    show(a)\n    show(b)\n    show(c)\n    print(d == None)\n}",
         ),
-        (
-            "an associated type of an associated type",
-            "interface It {\n    type Item\n    fn next(self) -> Item?\n}\ntype Y<T> = T.Item.Item\nfn main() {}",
-        ),
     ] {
         clean_row(row, src);
     }
@@ -425,6 +421,11 @@ fn an_associated_type_of_an_alias_parameter_should_name_the_one_interface_that_d
             "an associated type that two interfaces declare",
             format!("{ITER}{OTHER}type Z<T> = T.Item\nfn main() {{}}"),
             vec![(Code::Ambiguous, (13, 15))],
+        ),
+        (
+            "an associated type of an associated type",
+            format!("{ITER}type Y<T> = T.Item.Item\nfn main() {{}}"),
+            vec![(Code::UnknownType, (10, 13))],
         ),
         (
             "an associated type that a generic interface declares",

@@ -1,0 +1,8 @@
+interface Source {
+    type Item
+    fn first(self) -> Item
+}
+
+type Inner<T> = T.Item.Item
+
+fn main() {}
