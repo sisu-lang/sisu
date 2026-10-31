@@ -1,0 +1,65 @@
+// GIVEN generic functions `id` and `pick` (`pick` returns its second argument), a generic
+//       function `opt` that returns `T?`, a class with a generic method `m`, and an interface
+//       `R` with a generic requirement `r`
+// WHEN an optional value (`Some(2)`, `opt(2)`, an `if` with a `None` branch, a safe call) is an
+//      argument of a generic call beside a plain literal, with no context and with an `i64?`
+//      context, in both orders, and a safe call is the argument of `id`, on a present receiver
+//      and on an absent one
+// THEN the parameter is the optional type, as it is when the optional comes first, the literal
+//      fits it, and each line prints the value, or 9 for an absent one
+// AND the same holds for a safe call of a method and for one of a bound's requirement
+fn id<T>(x: T) -> T { x }
+fn pick<T>(_a: T, b: T) -> T { b }
+fn opt<T>(x: T) -> T? { Some(x) }
+
+class B {
+    fn m<T>(self, x: T) -> T { x }
+}
+
+interface R {
+    fn r<T>(self, x: T) -> T
+}
+
+class Q: R {
+    fn r<T>(self, x: T) -> T { x }
+}
+
+fn via<X: R>(x: X?) -> i64? {
+    id(x?.r(1))
+}
+
+fn main() {
+    let yes = true
+    let no = false
+    let v = pick(1, Some(2))
+    print("{v ?? 9}") // 2
+    let w = pick(1, opt(3))
+    print("{w ?? 9}") // 3
+    let u = pick(1, if yes { 4 } else { None })
+    print("{u ?? 9}") // 4
+    let t = pick(1, if no { 4 } else { None })
+    print("{t ?? 9}") // 9
+    let s = pick(Some(5), 1)
+    print("{s ?? 9}") // 1
+    let r: i64? = pick(1, Some(6))
+    print("{r ?? 9}") // 6
+    // A safe call has an optional result, so `id` meets the `i64?` context whole.
+    let present: B? = B()
+    let absent: B? = None
+    let a: i64? = id(present?.m(7))
+    print("{a ?? 9}") // 7
+    let b: i64? = id(absent?.m(7))
+    print("{b ?? 9}") // 9
+    let c = pick(1, present?.m(8))
+    print("{c ?? 9}") // 8
+    let d = pick(1, absent?.m(8))
+    print("{d ?? 9}") // 9
+    let e = [present?.m(10), 11]
+    print("{e[0] ?? 9} {e[1] ?? 9}") // 10 11
+    let q: Q? = Q()
+    let f = via(q)
+    print("{f ?? 9}") // 1
+    let none: Q? = None
+    let g = via(none)
+    print("{g ?? 9}") // 9
+}

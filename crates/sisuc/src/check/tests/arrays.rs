@@ -1044,9 +1044,6 @@ fn a_sibling_with_nothing_to_wait_for_should_be_reported_once() {
     for (statement, expected) in [
         ("let _a = [None]", (Code::CannotInfer, "None")),
         ("let _a = [[], []]", (Code::CannotInfer, "[]")),
-        // `k2(1, [])` returns its second argument: the `1` does not give it a type, so its `[]`
-        // is not typed `i64` by the literal, and the call cannot be inferred.
-        ("let _a = [[x], k2(1, [])]", (Code::CannotInfer, "k2")),
     ] {
         let src = join_main(statement);
         let (code, text) = expected;
@@ -1056,6 +1053,33 @@ fn a_sibling_with_nothing_to_wait_for_should_be_reported_once() {
             &[(code, in_statement(&src, statement, text))],
         );
     }
+}
+
+/// A literal at a place that the call does not return does not make the call a literal (see
+/// `Checker::rank_call`, `passes`). `k2(1, [])` returns its second argument: the `1` does not
+/// give it a type, so its `[]` is not typed `i64` by the literal, and the call cannot be inferred.
+/// The row guards that rule: it fails when a literal at any place makes the call a literal.
+#[test]
+fn a_literal_at_a_place_that_is_not_returned_should_not_type_the_call() {
+    let statement = "let _a = [[x], k2(1, [])]";
+    let src = join_main(statement);
+    codes(
+        &src,
+        &[(Code::CannotInfer, in_statement(&src, statement, "k2"))],
+    );
+}
+
+/// `dbg` with two arguments is not the one-argument `dbg` that passes its context on: in an
+/// array that a call takes, it reports its argument count once, as `dbg_argument` decides.
+#[test]
+fn a_dbg_with_two_arguments_in_an_array_should_report_the_count_once() {
+    with_prelude();
+    let statement = "g([[dbg(1, 2)]])";
+    let src = join_main(statement);
+    codes(
+        &src,
+        &[(Code::PrintArgument, in_statement(&src, statement, "dbg"))],
+    );
 }
 
 /// A literal that holds an array is not typed beside a sibling: it keeps its default type, as it

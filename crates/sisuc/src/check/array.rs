@@ -141,8 +141,8 @@ impl Checker<'_> {
         let want = as_optional(joined);
         for (i, e) in elements.iter().enumerate() {
             if ranks[i] == Rank::Waits {
-                // What waits and makes no optional by its syntax may still give a type that the
-                // join does not take, such as a call of `fn none<T>() -> T?`.
+                // What waits and makes no optional by itself (`Ranked::optional`) may still give a
+                // type that the join does not take, such as `[]`.
                 slots[i] = Some(if optional[i] {
                     self.value(e, Some(want))
                 } else {

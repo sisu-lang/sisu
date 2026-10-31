@@ -1837,6 +1837,79 @@ fn a_method_that_returns_an_optional_should_make_the_call_that_holds_it_optional
     }
 }
 
+/// With no context, the arguments that are optional are checked before a plain literal beside
+/// them, so the parameter is the optional type and the literal fits it. Before, the literal bound
+/// the parameter to `i64` first and the optional was rejected. The order of the arguments, and a
+/// context of `i64?` or `u8?`, make no difference.
+#[test]
+fn an_optional_argument_should_bind_before_a_plain_literal() {
+    with_prelude();
+    let decls = "fn pick<T>(a: T, b: T) -> T { a }\n\
+        fn pick3<T>(a: T, b: T, c: T) -> T { a }\n\
+        fn opt<T>(x: T) -> T? { Some(x) }\n\
+        fn h<T>(a: T, b: T?) -> T { a }\n\
+        class Bx {\n    fn pick<T>(self, a: T, b: T) -> T { a }\n}\n";
+    // The reversed orders passed before this change: they are controls.
+    for row in [
+        "let v = pick(1, Some(2))",
+        "let v = pick(1, opt(2))",
+        "let v = pick(1, if c { 2 } else { None })",
+        "let v = pick(1, match c {\n true => Some(2)\n false => None\n })",
+        "let v = pick(1, dbg(Some(2)))",
+        "let v = pick(1, { Some(2) })",
+        "let v = pick(Some(2), 1)",
+        "let v = pick(opt(2), 1)",
+        "let v = pick(if c { 2 } else { None }, 1)",
+        "let v = pick3(1, 2, Some(3))",
+        "let v = pick3(1, Some(2), 3)",
+        "let v = pick3(Some(1), 2, 3)",
+        "let v = h(1, Some(2))",
+        "let v = bx.pick(1, Some(2))",
+        "let v: i64? = pick(1, Some(2))",
+        "let v: u8? = pick(1, Some(2))",
+        "let v: u8? = pick3(1, 2, Some(3))",
+        "let v: u8? = bx.pick(1, opt(2))",
+    ] {
+        let src =
+            format!("{decls}fn main() {{\n    let c = true\n    let bx = Bx()\n    {row}\n}}");
+        clean_row(row, &src);
+    }
+}
+
+/// A safe call (`receiver?.method(...)`) has an optional result, whatever the method returns, so
+/// the call that holds it meets an optional context whole (`i64?`). Before, only a method that
+/// returns an optional counted, and `id(b?.m(1))` reported "expected `i64`, found `i64?`".
+#[test]
+fn a_safe_call_should_make_the_call_that_holds_it_optional() {
+    with_prelude();
+    let decls = "fn id<T>(x: T) -> T { x }\n\
+        fn pick<T>(a: T, b: T) -> T { a }\n\
+        class B {\n    fn m<T>(self, x: T) -> T { x }\n}\n\
+        interface R {\n    fn r<T>(self, x: T) -> T\n}\n\
+        class Q: R {\n    fn r<T>(self, x: T) -> T { x }\n}\n\
+        fn via<X: R>(x: X?) -> i64? { id(x?.r(1)) }\n";
+    for row in [
+        "let r: i64? = id(b?.m(1))",
+        "let r: u8? = id(b?.m(1))",
+        "let r = id(b?.m(1))",
+        "let r: i64? = id(dbg(b?.m(1)))",
+        "let r: i64? = id({ b?.m(1) })",
+        "let r: i64? = id(if c { b?.m(1) } else { 1 })",
+        "let r: i64? = pick(1, b?.m(1))",
+        "let r: i64? = pick(b?.m(1), 1)",
+        "let r: i64? = pick(None, b?.m(1))",
+        "let r = pick(1, b?.m(1))",
+        "let r = [b?.m(1), 2]",
+        "let r = b?.m(1) == 2",
+        "let r = via(q)",
+    ] {
+        let src = format!(
+            "{decls}fn main() {{\n    let c = true\n    let b: B? = B()\n    let q: Q? = Q()\n    {row}\n}}"
+        );
+        clean_row(row, &src);
+    }
+}
+
 /// A name that a branch binds hides an outer local of the same name while ranking, as it does
 /// while checking: the call on the branch's local is the one that runs, and the outer local has
 /// no method `m` to be checked against it.
