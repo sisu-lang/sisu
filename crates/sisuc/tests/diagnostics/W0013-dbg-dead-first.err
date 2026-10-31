@@ -1,0 +1,21 @@
+warning[W0013]: field `x` is never read
+ --> W0013-dbg-dead-first.sisu:2:5
+  |
+2 |     x: i64
+  |     ^ never read
+...
+9 |     dbg(p)
+  |     ------ `dbg` can show `x` here, but `dbg` is not a read
+  |
+  = help: delete it, or name it `_x` if it is kept on purpose
+
+warning[W0012]: function `unused` is never called
+ --> W0013-dbg-dead-first.sisu:4:4
+  |
+4 | fn unused(p: P) {
+  |    ^^^^^^ never called
+  |
+  = help: delete it, or name it `_unused` if it is kept on purpose
+
+sisu: 2 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0012, W0013

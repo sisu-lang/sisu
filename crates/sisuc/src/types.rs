@@ -239,7 +239,7 @@ thread_local! {
     /// The kinds `TypeKind::names` has looked at on this thread, one for each type interned.
     static NAMED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The entries `Type::entry` has read on this thread: each read of a kind or a flag.
-    static READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The most steps `write_steps` has held at once on this thread.
     static HELD: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The most types `Type::subst` may substitute on this thread: the one that passes it panics,

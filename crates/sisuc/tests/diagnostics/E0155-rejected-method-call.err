@@ -1,0 +1,104 @@
+error[E0155]: `i64` is a built-in type; only the prelude extends it
+ --> E0155-rejected-method-call.sisu:1:8
+  |
+1 | extend i64 {
+  |        ^^^
+
+error[E0155]: `f64` is a built-in type; only the prelude extends it
+ --> E0155-rejected-method-call.sisu:5:8
+  |
+5 | extend f64 {
+  |        ^^^
+
+error[E0155]: `string` is a built-in type; only the prelude extends it
+ --> E0155-rejected-method-call.sisu:9:8
+  |
+9 | extend string {
+  |        ^^^^^^
+
+error[E0155]: `bool` is a built-in type; only the prelude extends it
+  --> E0155-rejected-method-call.sisu:13:8
+   |
+13 | extend bool {
+   |        ^^^^
+
+error[E0155]: `[i64]` is a built-in type; only the prelude extends it
+  --> E0155-rejected-method-call.sisu:17:8
+   |
+17 | extend [i64] {
+   |        ^^^^^
+
+error[E0155]: `extend` takes a class or enum, and `T` is a type parameter
+  --> E0155-rejected-method-call.sisu:21:11
+   |
+21 | extend<T> T {
+   |           ^
+
+error[E0155]: an `extend` block cannot name an associated type in `Wrap<S.Item>`
+  --> E0155-rejected-method-call.sisu:34:19
+   |
+34 | extend<S: Source> Wrap<S.Item> {
+   |                   ^^^^^^^^^^^^
+
+error[E0155]: `f64` is a built-in type; only the prelude extends it
+  --> E0155-rejected-method-call.sisu:39:8
+   |
+39 | extend f64 {
+   |        ^^^
+
+error[E0155]: `string` is a built-in type; only the prelude extends it
+  --> E0155-rejected-method-call.sisu:43:8
+   |
+43 | extend string {
+   |        ^^^^^^
+
+error[E0155]: `[i64]` is a built-in type; only the prelude extends it
+  --> E0155-rejected-method-call.sisu:47:8
+   |
+47 | extend [i64] {
+   |        ^^^^^
+
+error[E0155]: `[string]` is a built-in type; only the prelude extends it
+  --> E0155-rejected-method-call.sisu:52:8
+   |
+52 | extend [string] {
+   |        ^^^^^^^^
+
+error[E0033]: cannot find binding `missing`
+  --> E0155-rejected-method-call.sisu:64:18
+   |
+64 |     print(x.same(missing))
+   |                  ^^^^^^^
+
+error[E0062]: `maybe` may be `None`
+  --> E0155-rejected-method-call.sisu:81:11
+   |
+81 |     print(maybe.twice())
+   |           ^^^^^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`
+help: if a `None` result is fine, use `?.`
+   |
+81 |     print(maybe?.twice())
+   |                +
+
+error[E0033]: cannot find binding `missing`
+  --> E0155-rejected-method-call.sisu:82:19
+   |
+82 |     print(5.twice(missing))
+   |                   ^^^^^^^
+
+error[E0155]: `extend` takes a class or enum, and `T` is a type parameter
+  --> E0155-rejected-method-call.sisu:91:11
+   |
+91 | extend<T> T { fn show(self, n: i64) -> bool { true } }
+   |           ^
+
+error[E0053]: `Show.show` takes 0 arguments, found 1
+  --> E0155-rejected-method-call.sisu:92:33
+   |
+92 | fn bound<U: Show>(x: U) { print(x.show(1)) }
+   |                                 ^^^^^^^^^
+
+sisu: 16 errors
+sisu: for more on a code, run `sisu explain <code>`: E0033, E0053, E0062, E0155

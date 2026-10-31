@@ -1,0 +1,68 @@
+error[E0053]: `[U].contains` takes 1 argument, found 0
+  --> E0053-method-receiver.sisu:11:11
+   |
+11 |     print(xs.contains())
+   |           ^^^^^^^^^^^^^
+
+error[E0053]: `i64.min` takes 1 argument, found 0
+  --> E0053-method-receiver.sisu:21:11
+   |
+21 |     print(n.min())
+   |           ^^^^^^^
+
+error[E0053]: `f64.min` takes 1 argument, found 0
+  --> E0053-method-receiver.sisu:23:11
+   |
+23 |     print(x.min())
+   |           ^^^^^^^
+
+error[E0053]: `string.len` takes 0 arguments, found 1
+  --> E0053-method-receiver.sisu:24:11
+   |
+24 |     print("a".len(1))
+   |           ^^^^^^^^^^
+
+error[E0053]: `[i64].len` takes 0 arguments, found 1
+  --> E0053-method-receiver.sisu:25:11
+   |
+25 |     print([1].len(2))
+   |           ^^^^^^^^^^
+
+error[E0053]: `[i64].contains` takes 1 argument, found 0
+  --> E0053-method-receiver.sisu:26:11
+   |
+26 |     print([1].contains())
+   |           ^^^^^^^^^^^^^^
+
+error[E0053]: `Box<i64>.get` takes 1 argument, found 0
+  --> E0053-method-receiver.sisu:28:11
+   |
+28 |     print(b.get())
+   |           ^^^^^^^
+
+error[E0053]: `Box<i64>.put` takes 1 argument, found 0
+  --> E0053-method-receiver.sisu:29:11
+   |
+29 |     print(b.put())
+   |           ^^^^^^^
+
+error[E0053]: `[i64].push` takes 1 argument, found 0
+  --> E0053-method-receiver.sisu:31:5
+   |
+31 |     xs.push()
+   |     ^^^^^^^^^
+
+error[E0053]: `i64.to_string` takes 0 arguments, found 1
+  --> E0053-method-receiver.sisu:32:11
+   |
+32 |     print(5.to_string(1))
+   |           ^^^^^^^^^^^^^^
+
+error[E0053]: `E.eq` takes 1 argument, found 0
+  --> E0053-method-receiver.sisu:33:11
+   |
+33 |     print(E.A.eq())
+   |           ^^^^^^^^
+
+sisu: 11 errors
+sisu: for more on a code, run `sisu explain <code>`: E0053

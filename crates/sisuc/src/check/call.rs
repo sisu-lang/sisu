@@ -225,6 +225,7 @@ impl Checker<'_> {
             });
             return Err(Poisoned::error());
         }
+        self.reject_array_lacking(callee, first_checked.as_ref(), rest)?;
         let at_start = self.starts_break_value(callee.span);
         let functions = self
             .function_ids
@@ -247,6 +248,41 @@ impl Checker<'_> {
             suggestion,
         });
         // No `labels`: the name may have meant a class, whose constructor takes them.
+        self.stray(rest);
+        Err(Poisoned::error())
+    }
+
+    /// Reports the call `callee(first, rest...)` when `first` is an array, or an optional one, that
+    /// no block of the prelude gives the method `callee`, as `sum(xs)` on a `[u8]`: no idiom found
+    /// the method, but it is the one that the array lacks, as for `xs.sum()`. `Err` when it did.
+    fn reject_array_lacking(
+        &mut self,
+        callee: &ast::Ident,
+        first: Option<&Checked>,
+        rest: &[ast::Arg],
+    ) -> Result<(), Poisoned> {
+        let Some(Ok(first)) = first else {
+            return Ok(());
+        };
+        let ty = match first.ty.kind() {
+            TypeKind::Optional(payload) => payload,
+            _ => first.ty,
+        };
+        let name = callee.name.as_str();
+        let targets = self.prelude_targets(callee.name);
+        if !matches!(ty.kind(), TypeKind::Array(_))
+            || targets.is_empty()
+            || self.prelude_method_names(ty).contains(&name)
+        {
+            return Ok(());
+        }
+        self.report(DiagnosticKind::SumNeedsNumbers {
+            method: name.to_string(),
+            ty: self.type_name(first.ty),
+            targets: targets.into_iter().map(|t| self.type_name(t)).collect(),
+            at: callee.span,
+            function: true,
+        });
         self.stray(rest);
         Err(Poisoned::error())
     }
@@ -493,11 +529,12 @@ impl Checker<'_> {
         };
         // The member was found unknown, or the receiver of a path that is no idiom was: a name
         // or a type, which has no members.
-        let unknown = self.diagnostics[start..].iter().any(|d| match d.code() {
-            Code::NoMember | Code::UnknownVariant => d.span() == method.span,
-            Code::BindingNotFound | Code::TypeAsValue => d.span() == receiver.span,
-            _ => false,
-        });
+        let unknown = self.body.rejected_calls.contains(&method.span)
+            || self.diagnostics[start..].iter().any(|d| match d.code() {
+                Code::NoMember | Code::UnknownVariant => d.span() == method.span,
+                Code::BindingNotFound | Code::TypeAsValue => d.span() == receiver.span,
+                _ => false,
+            });
         if deferred && !unknown {
             self.not_generic(method.name, angles);
         }
@@ -589,8 +626,10 @@ impl Checker<'_> {
             self.not_generic(site.name.name, site.angles);
         }
         if !args.is_empty() {
+            let ty = type_of(&receiver)
+                .expect("a call that the compiler's `Display` answers should have a receiver type");
             let d = DiagnosticKind::ArgumentCount {
-                name: "to_string".to_string(),
+                name: self.method_name(ty, "to_string"),
                 want: 0,
                 found: args.len(),
                 at: span,
@@ -651,7 +690,7 @@ impl Checker<'_> {
         }
         if args.len() != 1 {
             let d = DiagnosticKind::ArgumentCount {
-                name: method.name.to_string(),
+                name: self.method_name(ty, method.name.as_str()),
                 want: 1,
                 found: args.len(),
                 at: span,
@@ -727,6 +766,11 @@ impl Checker<'_> {
             self.not_generic(site.name.name, site.angles);
         }
         if params.len() != args.len() {
+            // A method names its receiver's type as the call writes it, not as the block does.
+            let name = match receiver.as_ref().and_then(type_of) {
+                Some(ty) => self.method_name(ty, site.name.name.as_str()),
+                None => name,
+            };
             return self.wrong_count(span, name, params.len(), args);
         }
         let (checked, types, ret) = if declared.is_empty() {
@@ -770,6 +814,11 @@ impl Checker<'_> {
             })),
             (_, ret) => Err(Poisoned::of(ret.filter(|_| !failed))),
         }
+    }
+
+    /// What a count error calls the method `method` of a receiver of type `ty`: `[i64].len`.
+    pub(super) fn method_name(&self, ty: Type, method: &str) -> String {
+        format!("{}.{method}", self.type_name(ty))
     }
 
     /// A call at `span` of the method `name` that wants `want` arguments and has the wrong count:

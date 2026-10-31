@@ -6,12 +6,14 @@ use std::rc::Rc;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::extend::holder_of;
-use super::{BindingKind, Body, Checker, Choice, Choices, Declared, Definition, Holder};
+use super::{
+    BindingKind, Body, Checker, Choice, Choices, Declared, Definition, Holder, LeafAnswers, LeafKey,
+};
 use crate::ast;
 use crate::conformance::{CHOICE_DEPTH_LIMIT, Entered, Generated, ensure_stack, find, generated};
 use crate::diagnostic::{
-    AddBound, BoundSite, Definition as Kind, DiagnosticKind, NoOperatorForm, NotConformForm,
-    NotInterface, PreludeBound, UnknownForm, WideKind,
+    AddBound, BlockNeed, BoundSite, Definition as Kind, DiagnosticKind, NoOperatorForm,
+    NotConformForm, NotInterface, PreludeBound, UnknownForm, WideKind,
 };
 use crate::graph::{components, cycle_through};
 use crate::lang::Dispatch;
@@ -24,6 +26,33 @@ use crate::tir::{ClassId, EnumId, FuncId, InterfaceId, Type, TypeArgs, TypeKind}
 /// arguments, doubles the number at each level of inheritance, so the walk stops here (E0157).
 pub(super) const BOUND_CLOSURE_LIMIT: usize = 256;
 
+/// The state of one root walk of `Checker::leaf`: Tarjan's search for strongly connected
+/// components. A type is on `stack` from the walk that reads it until its component closes;
+/// `index` gives its place there. `low` is the least place that the open walk has cut against.
+struct LeafWalk {
+    index: FxHashMap<LeafKey, usize>,
+    stack: Vec<LeafKey>,
+    low: usize,
+}
+
+impl LeafWalk {
+    fn new() -> Self {
+        Self {
+            index: FxHashMap::default(),
+            stack: Vec::new(),
+            low: usize::MAX,
+        }
+    }
+
+    /// Puts `key` on the stack, and gives its place there.
+    fn enter(&mut self, key: LeafKey) -> usize {
+        let place = self.stack.len();
+        self.stack.push(key);
+        self.index.insert(key, place);
+        place
+    }
+}
+
 /// How many class or enum keys a query for a conformance may hold open, one inside the other. A
 /// declaration that instantiates itself with a longer type argument each time, through a path that
 /// the graph of instantiations does not see (`check/cycle.rs`), makes a query that has no end.
@@ -33,6 +62,12 @@ pub(super) const BOUND_CLOSURE_LIMIT: usize = 256;
 /// and `mono` makes the same number of instances for a program that nests that deep, which is far
 /// above any program.
 pub(super) const CONFORMS_DEPTH_LIMIT: usize = 1 << 18;
+
+/// Whether `part`, a part that `failing_leaf` found, is a type parameter or an associated type:
+/// it fails for want of a bound, which the program can add.
+fn is_parameter(part: Type) -> bool {
+    matches!(part.kind(), TypeKind::Param(..) | TypeKind::Assoc(..))
+}
 
 /// `CONFORMS_DEPTH_LIMIT`; a test may lower it (`CONFORMS_DEPTH`).
 fn depth_limit() -> usize {
@@ -627,6 +662,7 @@ impl Checker<'_> {
     ) {
         self.body.required.clear();
         self.body.conformed.clear();
+        self.body.leaves.clear();
         for &(place, bound) in added {
             self.body.bounds[place].push(bound);
             let Some(mut out) = self.body.conforming.get_mut(place).and_then(Option::take) else {
@@ -1200,7 +1236,10 @@ impl Checker<'_> {
     /// `conformance::Open`). It decides each such type once: a type with no type parameter once
     /// in the program, and a type that names one once in each body. Each is a type that `mono`
     /// instantiates when the program uses it. The worst input is a branching chain of enums, each
-    /// with two ways to the next level, which forms 2^n types at its last level.
+    /// with two ways to the next level, which forms 2^n types at its last level. The search for
+    /// the failing part on the error path (`failing_leaf`) keeps two caches split the same way
+    /// (`leaves` and `Body.leaves`). It decides each type once in the same way, and it has the
+    /// same bound (user, 2026-10-31).
     pub(super) fn conforms(&mut self, ty: Type, interface: InterfaceId, args: TypeArgs) -> bool {
         if interface == self.lang.display {
             return generated(self.lang, ty, interface) == Generated::Holds;
@@ -1407,27 +1446,39 @@ impl Checker<'_> {
     /// A part of `ty` that makes `ty` fail `interface` with `args` on its own, not always the
     /// first in the order of the generated rule: a class with no matching record, a type whose
     /// matching written record fails its bounds, or a type parameter whose bounds lack the
-    /// interface. It walks the rule again with a visited set, so a type is read once, and is only
-    /// for a type that `conforms` has found to fail; `ty` itself if the walk finds no part.
+    /// interface. It is only for a type that `conforms` has found to fail; `ty` itself if the
+    /// walk finds no part.
+    ///
+    /// The walk reads each type once. It finds the strongly connected components of the types it
+    /// meets, as Tarjan's algorithm does (`LeafWalk`). The types of one component reach each
+    /// other, so they share one answer, which the walk keeps when it closes the component. The
+    /// root closes last, so each answer is final. The parameter that an answer names can depend on
+    /// the order of the queries. Each such parameter is a true answer, and the help for E0139
+    /// names one.
     pub(super) fn failing_leaf(
         &mut self,
         ty: Type,
         interface: InterfaceId,
         args: TypeArgs,
     ) -> Type {
-        // A root is asked with nothing in progress, so its answer is the one to give again for the
-        // same root, whatever its walk cut short: a program that compares one type many times
-        // reads it once. Another walk may use it only when the answer is a part (`leaf` keeps
-        // those) or the walk cut nothing short; `or_insert` leaves such an entry as it is.
         let key = (ty, interface, args);
-        if let Some(&(kept, _)) = self.leaves.get(&key) {
+        if let Some(&kept) = self.leaves_of(ty).get(&key) {
             return kept.unwrap_or(ty);
         }
-        let found = self.leaf(ty, interface, args, &mut FxHashSet::default());
-        if !ty.has_param() {
-            self.leaves.entry(key).or_insert((found, false));
-        }
+        let found = self.leaf(ty, interface, args, &mut LeafWalk::new());
+        self.leaves_of(ty).entry(key).or_insert(found);
         found.unwrap_or(ty)
+    }
+
+    /// Closes the strongly connected component that is on `walk.stack` from `from`: each of its
+    /// types takes `answer` as its final answer. Each of them reaches the type that closes the
+    /// component, and so reaches all that the walk of that type reached. A type that already has
+    /// a final answer of its own, a part that fails, keeps it.
+    fn close_part(&mut self, walk: &mut LeafWalk, from: usize, answer: Option<Type>) {
+        for key in walk.stack.drain(from..) {
+            walk.index.remove(&key);
+            self.leaves_of(key.0).entry(key).or_insert(answer);
+        }
     }
 
     /// The report that `ty`, the type of the operand at `at`, has no `op`, which `interface` (`Eq`
@@ -1443,7 +1494,7 @@ impl Checker<'_> {
         interface: InterfaceId,
     ) -> DiagnosticKind {
         let leaf = self.failing_leaf(ty, interface, TypeArgs::NONE);
-        if matches!(leaf.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)) {
+        if is_parameter(leaf) {
             return DiagnosticKind::ParamLacks {
                 ty: self.type_name(ty),
                 op: op.to_string(),
@@ -1490,42 +1541,72 @@ impl Checker<'_> {
     pub(super) fn rule_failure(&mut self, ty: Type, interface: InterfaceId) -> Option<Type> {
         match generated(self.lang, ty, interface) {
             Generated::Payloads(id, own) if !self.payloads_conform(id, own, interface) => {
-                let mut seen = FxHashSet::default();
-                seen.insert((ty, interface, TypeArgs::NONE));
-                let leaf = self.payloads_leaf(id, own, interface, &mut seen);
+                let mut walk = LeafWalk::new();
+                walk.enter((ty, interface, TypeArgs::NONE));
+                let leaf = self.payloads_leaf(id, own, interface, &mut walk);
+                // This walk reads the payloads of `ty` and ignores its record, but another walk
+                // reads the record of `ty` and stops there. A type that reaches `ty` is still on
+                // the stack, and its answer is not the answer of another walk, so it is dropped.
+                // A part that closed before `ty` does not reach `ty`, so its answers stay.
                 Some(leaf.unwrap_or(ty))
             }
             _ => None,
         }
     }
 
-    /// The first payload part of the enum `id`, with `own` for its parameters, that fails
-    /// `interface` on its own; `None` when each holds. It ends where `payloads_conform` did: at a
-    /// marked enum, and at an enum whose query was too deep, whose payloads no query read.
+    /// The payload part of the enum `id`, with `own` for its parameters, that fails `interface` on
+    /// its own, the first that is not a type parameter, else the first parameter; `None` when each
+    /// holds. It ends where `payloads_conform` did: at a marked enum, and at an enum whose query
+    /// was too deep, whose payloads no query read.
     fn payloads_leaf(
         &mut self,
         id: EnumId,
         own: TypeArgs,
         interface: InterfaceId,
-        seen: &mut FxHashSet<(Type, InterfaceId, TypeArgs)>,
+        walk: &mut LeafWalk,
     ) -> Option<Type> {
         if self.marked[id.0] || self.too_deep.contains(&Holder::Enum(id)) {
             return None;
         }
-        self.payload_slots(id).into_iter().find_map(|slot| {
-            let payload = self.payload_type(id, slot)?;
-            let part = self.subst(payload, own.get())?;
-            self.leaf(part, interface, TypeArgs::NONE, seen)
-        })
+        // A type parameter fails only for want of a bound, which the program can add. A part that
+        // fails whatever the bounds is the better answer, so the first of those wins, in any order
+        // of the slots; the first parameter is the answer only when no other part fails.
+        let mut param = None;
+        for slot in self.payload_slots(id) {
+            let Some(payload) = self.payload_type(id, slot) else {
+                continue;
+            };
+            let Some(part) = self.subst(payload, own.get()) else {
+                continue;
+            };
+            let Some(found) = self.leaf(part, interface, TypeArgs::NONE, walk) else {
+                continue;
+            };
+            if !is_parameter(found) {
+                return Some(found);
+            }
+            param = param.or(Some(found));
+        }
+        param
     }
 
-    /// `failing_leaf` for one type; `None` when it holds, or is already being read.
+    /// The answers of `leaf` that `ty` uses: the body's for a type that names a type parameter,
+    /// the checker's for any other.
+    fn leaves_of(&mut self, ty: Type) -> &mut LeafAnswers {
+        if ty.has_param() {
+            &mut self.body.leaves
+        } else {
+            &mut self.leaves
+        }
+    }
+
+    /// `failing_leaf` for one type; `None` when it holds, or when the walk is reading it already.
     fn leaf(
         &mut self,
         ty: Type,
         interface: InterfaceId,
         args: TypeArgs,
-        seen: &mut FxHashSet<(Type, InterfaceId, TypeArgs)>,
+        walk: &mut LeafWalk,
     ) -> Option<Type> {
         ensure_stack(|| {
             match ty.kind() {
@@ -1539,22 +1620,25 @@ impl Checker<'_> {
                     if broken {
                         return None;
                     }
-                    if !seen.insert((ty, interface, args)) {
-                        self.leaf_cuts += 1;
-                        return None;
-                    }
-                    // The answer for a type with no type parameter changes with no body. A part
-                    // that was found fails on its own, wherever the walk began, and `None` with no
-                    // part cut short does not depend on where it began: both are kept, so a type
-                    // that was read before costs nothing more. A `None` after a cut holds only
-                    // while an ancestor is in progress, so it is not kept.
+                    // A final answer is final in any walk, so it is read first: a type that this
+                    // walk finished with a final answer is not a cut.
                     let key = (ty, interface, args);
-                    if let Some(&(kept, true)) = self.leaves.get(&key) {
+                    if let Some(&kept) = self.leaves_of(ty).get(&key) {
                         return kept;
                     }
+                    // A type on the stack is a cut: the walk is reading it, or has read it and not
+                    // closed its component. It gives `None` and lowers `walk.low` to its place.
+                    if let Some(&at) = walk.index.get(&key) {
+                        walk.low = walk.low.min(at);
+                        return None;
+                    }
+                    // The answer for a type with no type parameter changes with no body; one for
+                    // a type that names a parameter changes with the bounds, so it is kept with
+                    // the body (`Body.leaves`), as `Body.conformed` keeps the queries.
                     #[cfg(test)]
                     super::LEAF_STEPS.set(super::LEAF_STEPS.get() + 1);
-                    let cuts = self.leaf_cuts;
+                    let place = walk.enter(key);
+                    let outer = std::mem::replace(&mut walk.low, place);
                     let found =
                         if let Some((k, stands)) = find(&self.conformances, interface, ty, args) {
                             (!self.record_holds(interface, k, stands)).then_some(ty)
@@ -1563,19 +1647,28 @@ impl Checker<'_> {
                                 Generated::Holds => None,
                                 Generated::Fails | Generated::Element(_) => Some(ty),
                                 Generated::Payloads(id, own) => {
-                                    self.payloads_leaf(id, own, interface, seen)
+                                    self.payloads_leaf(id, own, interface, walk)
                                 }
                             }
                         };
-                    if !ty.has_param() && (self.leaf_cuts == cuts || found.is_some()) {
-                        self.leaves.insert(key, (found, true));
+                    // A part that fails on its own is true for this type at once, whatever the
+                    // walk cut. `None` and a parameter wait for the component: a cut hides what
+                    // the type in progress reaches. The first type of the component closes it,
+                    // when it ends with no cut against a type lower on the stack.
+                    let low = walk.low;
+                    walk.low = outer.min(low);
+                    if found.is_some_and(|part| !is_parameter(part)) {
+                        self.leaves_of(ty).insert(key, found);
+                    }
+                    if low == place {
+                        self.close_part(walk, place, found);
                     }
                     found
                 }
                 _ => match generated(self.lang, ty, interface) {
                     Generated::Holds => None,
                     Generated::Fails | Generated::Payloads(..) => Some(ty),
-                    Generated::Element(part) => self.leaf(part, interface, args, seen),
+                    Generated::Element(part) => self.leaf(part, interface, args, walk),
                 },
             }
         })
@@ -1595,6 +1688,19 @@ impl Checker<'_> {
     /// Checks that `ty` meets `bound`, whose arguments name the parameters that `with` gives
     /// types to. Reports it at `at` when not.
     pub(super) fn check_bound(&mut self, at: Span, ty: Type, bound: Bound, with: &[Type]) -> bool {
+        self.check_bound_of(at, ty, bound, with, None)
+    }
+
+    /// `check_bound` for a bound of a block, where the call is of the method that `need` names:
+    /// the label of a bound of the prelude says that the method needs it.
+    pub(super) fn check_bound_of(
+        &mut self,
+        at: Span,
+        ty: Type,
+        bound: Bound,
+        with: &[Type],
+        need: Option<BlockNeed>,
+    ) -> bool {
         let args = self.subst_args(bound.args, with);
         if self.conforms(ty, bound.interface, args) {
             self.probe_associated(ty, bound.interface, args);
@@ -1620,9 +1726,10 @@ impl Checker<'_> {
             if part_fails {
                 PreludeBound::Since {
                     part: self.type_name(leaf),
+                    need,
                 }
             } else {
-                PreludeBound::Call
+                PreludeBound::Call { need }
             }
         });
         self.report(DiagnosticKind::NotConform {

@@ -1,0 +1,10 @@
+class W<T> {
+    x: T
+    fn to_string(self) -> string {
+        print(W(x: [self.x]))
+        return "w"
+    }
+}
+fn main() {
+    print(W(x: 1))
+}

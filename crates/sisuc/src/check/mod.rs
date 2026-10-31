@@ -509,6 +509,15 @@ struct Checker<'src> {
     broken_extensions: FxHashSet<Symbol>,
     /// The methods that a block of an intact target lost to a syntax error.
     broken_extension_methods: FxHashSet<(Holder, Symbol)>,
+    /// The names of the methods of each `extend` block whose target the checker rejected. Such a
+    /// block may have given any type a method of its name, so a call of that name on any type is
+    /// poisoned, with no report. The set holds names, not types. The target can be a type
+    /// parameter, which stands for every type. It can also be a type that `Holder` does not
+    /// name, such as `f64`, `string` or `bool`. The block's own error is in the program. So the
+    /// set can hide a report on another type that has a member of the same name: a missing
+    /// method (E0063), a field that is not a method (E0058), or a variant that is not a method
+    /// (E0120). That costs nothing.
+    rejected_methods: FxHashSet<Symbol>,
     /// The methods of the conformance blocks that cover the receiver of the call being found, with
     /// the block's interface and its arguments for the receiver: a buffer that `find_method` fills
     /// and clears per call.
@@ -544,11 +553,8 @@ struct Checker<'src> {
     /// The answers of `conforms` for a type with no type parameter, which no body changes.
     conformed: FxHashMap<(Type, tir::InterfaceId, TypeArgs), bool>,
     /// The part that makes a class or an enum with no type parameter fail an interface (`None`
-    /// when it holds), as `failing_leaf` found it; and whether no part of that walk was cut short,
-    /// which lets another walk use it.
-    leaves: FxHashMap<(Type, tir::InterfaceId, TypeArgs), (Option<Type>, bool)>,
-    /// How many parts the walks of `failing_leaf` have cut short, for a part that was being read.
-    leaf_cuts: usize,
+    /// when it holds), as `failing_leaf` found it.
+    leaves: LeafAnswers,
     /// The classes and enums whose queries went past `CONFORMS_DEPTH_LIMIT` and were reported.
     too_deep: FxHashSet<Holder>,
     /// The language interfaces, found by name once the prelude's names are collected.
@@ -594,6 +600,9 @@ struct Checker<'src> {
     pending: Vec<Pending>,
     /// Whether a type argument was recorded: see `tir::Program::instantiates`.
     instantiates: bool,
+    /// Each `dbg` call: the body that holds it, if any, the type of its operand, and its span.
+    /// W0013 reads them: `dbg` shows a field, and that is not a read.
+    dbg_shown: Vec<(Option<Owner>, Type, Span)>,
     /// How many classes, enums and functions the user's items declare.
     prelude: tir::ItemCounts,
     /// By the span of an expression, how the program wrote it when the typed tree does not say
@@ -678,6 +687,12 @@ struct ClosureIndex {
     by_interface: FxHashMap<tir::InterfaceId, Vec<(usize, TypeArgs)>>,
 }
 
+/// The part that makes a class or an enum fail an interface (`None` when it holds), as
+/// `failing_leaf` found it, by the type, the interface and its arguments. Each answer is final:
+/// any walk may use it.
+type LeafKey = (Type, tir::InterfaceId, TypeArgs);
+type LeafAnswers = FxHashMap<LeafKey, Option<Type>>;
+
 /// What checking one body needs: a function's, a method's, or a constant's initialiser.
 #[derive(Default)]
 struct Body {
@@ -726,6 +741,9 @@ struct Body {
     /// The answers of `conforms` for a type that holds a type parameter: they change with the
     /// bounds, and a body's are cleared with them.
     conformed: FxHashMap<(Type, tir::InterfaceId, TypeArgs), bool>,
+    /// The answers of `failing_leaf` for a type that holds a type parameter, as `conformed` keeps
+    /// the answers of `conforms`: they change with the bounds, and are cleared with them.
+    leaves: LeafAnswers,
     /// Where in `Checker.scopes` the type parameters now in scope are, once a check waits.
     scope: Option<usize>,
     /// Where each call of a value, `a<b, c>(d)`, that has been reported starts: comparisons
@@ -785,6 +803,10 @@ struct Body {
     exits: u32,
     /// How many W0005 (a comparison with `f64.nan`) the body has reported.
     nans: u32,
+    /// The method names, by span, of the calls that `call_of_rejected_method` answered. Such a
+    /// call has no report, but its member is unknown: a list of type arguments on it is not
+    /// reported (`method_call_expr`).
+    rejected_calls: FxHashSet<Span>,
     /// The target of the compound assignment being checked, whose reads are not reads: they
     /// only give the value back to the target.
     quiet: Option<Span>,
@@ -854,6 +876,7 @@ impl Body {
         self.required.clear();
         self.named.clear();
         self.conformed.clear();
+        self.leaves.clear();
         self.scope = None;
     }
 
@@ -897,7 +920,7 @@ pub(crate) fn check<'src>(
     checker.lowered_enums = checker.lower_enums();
     checker
         .diagnostics
-        .extend(payload_limit::diagnostics(&checker.lowered_enums));
+        .extend(payload_limit::diagnostics(&checker.lowered_enums, &[]));
     checker.holds_table = checker.holds_table();
     checker.check_main(&declared);
     // Every body is checked, so this collects into a `Vec` before it gives up on a `None`.
@@ -1096,6 +1119,7 @@ impl<'src> Checker<'src> {
             builtin_methods: Vec::new(),
             broken_extensions: FxHashSet::default(),
             broken_extension_methods: FxHashSet::default(),
+            rejected_methods: FxHashSet::default(),
             candidates: Vec::new(),
             conformances: tir::Conformances::default(),
             conformance_bounds: FxHashMap::default(),
@@ -1108,7 +1132,6 @@ impl<'src> Checker<'src> {
             probe_budget: 0,
             conformed: FxHashMap::default(),
             leaves: FxHashMap::default(),
-            leaf_cuts: 0,
             too_deep: FxHashSet::default(),
             lang: tir::LangInterfaces::default(),
             open: conformance::Open::default(),
@@ -1129,6 +1152,7 @@ impl<'src> Checker<'src> {
             uses: Vec::new(),
             pending: Vec::new(),
             instantiates: false,
+            dbg_shown: Vec::new(),
             prelude: tir::ItemCounts::default(),
         }
     }

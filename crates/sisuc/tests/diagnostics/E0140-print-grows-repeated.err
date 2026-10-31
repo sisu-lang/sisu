@@ -1,0 +1,10 @@
+error[E0140]: `W.to_string` instantiates itself without end
+ --> E0140-print-grows-repeated.sisu:9:9
+  |
+9 |         print(Triple(a: [self.x], b: [self.x], c: W(x: [self.x])))
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `print` here
+  |
+  = help: `print` is a call through `Display`, and a call through `Display` counts as reaching every conformance to `Display`. `Triple<[T], [T], W<[T]>>` holds `W<[T]>`, whose argument grows
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

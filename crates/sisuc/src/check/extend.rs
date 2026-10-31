@@ -8,7 +8,7 @@ use super::interface::Bound;
 use super::{Checker, Choices, Declared, Definition, DiagnosticKind, Holder, Symbol, UNKNOWN};
 use crate::ast;
 use crate::conformance::{bind, overlap};
-use crate::diagnostic::{CannotExtendForm, Earlier, Owner as MethodOwner};
+use crate::diagnostic::{BlockNeed, CannotExtendForm, Earlier, Owner as MethodOwner};
 use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
@@ -152,10 +152,23 @@ impl<'a> Checker<'_> {
                 duplicate: false,
             });
             self.record_block_bounds(at);
-        } else if let Some(holder) = target.and_then(method_holder) {
-            // The methods of a failed block may have given the target methods.
+        } else {
+            self.record_failed_block(extend, target);
+        }
+    }
+
+    /// Records what a failed block may have given. When the target is a type that the checker
+    /// can take, the block may have given methods to that type. Else it may have given methods of
+    /// its names to any type.
+    fn record_failed_block(&mut self, extend: &ast::Extend, target: Option<Type>) {
+        if let Some(holder) = target.and_then(method_holder) {
             let name = self.holder_name(holder);
             self.broken_extensions.insert(name);
+        } else {
+            // No target: its methods may belong to any type (see `Checker.rejected_methods`).
+            let names = (extend.methods.iter().map(|m| m.name.name))
+                .chain(extend.broken_methods.iter().map(|m| m.name));
+            self.rejected_methods.extend(names);
         }
     }
 
@@ -212,14 +225,24 @@ impl<'a> Checker<'_> {
     }
 
     /// Reports the first bound of the block `extension` that fails for a receiver of type `ty`,
-    /// at the call that starts at `span`: the receiver's type arguments do not meet it.
-    pub(super) fn report_block_bound(&mut self, extension: usize, ty: Type, span: Span) {
+    /// at the call of `method` that starts at `span`: the receiver's type arguments do not meet it.
+    pub(super) fn report_block_bound(
+        &mut self,
+        extension: usize,
+        ty: Type,
+        span: Span,
+        method: &str,
+    ) {
         let stands = self
             .covers(extension, ty)
             .expect("a block that fails its bounds should cover the receiver");
         let (i, bound) = (self.first_failed_bound(extension, stands))
             .expect("a block that fails its bounds should have a bound that fails");
-        self.check_bound(span, stands.get()[i], bound, stands.get());
+        let need = BlockNeed {
+            method: method.to_string(),
+            stands: self.type_name(stands.get()[i]),
+        };
+        self.check_bound_of(span, stands.get()[i], bound, stands.get(), Some(need));
     }
 
     /// Reports each type parameter of `extend` that its target, `target`, does not name. The fix

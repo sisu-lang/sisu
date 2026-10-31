@@ -691,7 +691,7 @@ pub(crate) fn holds_class<P: Payloads + ?Sized>(
 }
 
 /// Whether `conformances` holds a written conformance to `interface` for the concrete type `ty`.
-fn has_written(conformances: &Conformances, interface: InterfaceId, ty: Type) -> bool {
+pub(crate) fn has_written(conformances: &Conformances, interface: InterfaceId, ty: Type) -> bool {
     head_of(ty).is_some() && find(conformances, interface, ty, TypeArgs::NONE).is_some()
 }
 

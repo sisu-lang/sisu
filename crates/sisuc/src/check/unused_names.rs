@@ -5,14 +5,23 @@
 //! uses, each field that it does not read, each variant that it does not build, and the pending
 //! findings of the live functions.
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::extend::holder_of;
 use super::{Checker, Declared, Holder};
+use crate::conformance::has_written;
 use crate::diagnostic::{Code, Definition, Diagnostic, DiagnosticKind, UsedBy};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir;
+use crate::tir::{Type, TypeKind, head_of};
+use crate::types::Head;
+
+#[cfg(test)]
+thread_local! {
+    /// How many types `shown_by_dbg` has read on this thread.
+    pub(super) static SHOWN_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 /// Whether `d` is a warning that `Checker::unused` gives and `Checker::unjudged` does not: one
 /// that judges whether code is live. A program with an error gets none, because a use in code
@@ -262,7 +271,7 @@ impl Checker<'_> {
                 .collect()
         };
         let mut found = Vec::new();
-        let mut report = |kind: Definition, at: Span, item: usize| {
+        let mut report = |kind: Definition, at: Span, item: usize, shown: Option<Span>| {
             // The prelude is out of the user's sight, so nothing in it is unused.
             if at.in_prelude() {
                 return;
@@ -278,6 +287,7 @@ impl Checker<'_> {
                     kind,
                     name,
                     at,
+                    shown,
                     uses,
                 },
                 _ => DiagnosticKind::UnusedItem {
@@ -295,23 +305,25 @@ impl Checker<'_> {
             let dead_block = (self.signatures[f].extension)
                 .is_some_and(|b| !reached.live[self.owner_index(Owner::Block(b))]);
             if held && !dead_block {
-                report(function_kind(f), self.signatures[f].span, f);
+                report(function_kind(f), self.signatures[f].span, f, None);
             }
         }
+        let mut shown = None;
         for (c, class) in self.classes.iter().enumerate() {
             if reached.built[c] {
                 for (f, field) in class.fields.iter().enumerate() {
                     if !reached.read[c][f] {
-                        report(Definition::Field, field.name.span, slots.fields[c] + f);
+                        let dbg = shown.get_or_insert_with(|| self.shown_by_dbg(&reached.live))[c];
+                        report(Definition::Field, field.name.span, slots.fields[c] + f, dbg);
                     }
                 }
             } else {
-                report(Definition::Class, class.name.span, slots.classes + c);
+                report(Definition::Class, class.name.span, slots.classes + c, None);
             }
         }
         for (e, info) in self.enums.iter().enumerate() {
             if !reached.enum_built[e] {
-                report(Definition::Enum, info.name.span, slots.enums + e);
+                report(Definition::Enum, info.name.span, slots.enums + e, None);
                 continue;
             }
             for (v, variant) in info.variants.iter().enumerate() {
@@ -320,13 +332,19 @@ impl Checker<'_> {
                         Definition::Variant,
                         variant.name.span,
                         slots.variants[e] + v,
+                        None,
                     );
                 }
             }
         }
         for (i, info) in self.interfaces.iter().enumerate() {
             if !reached.interfaces[i] {
-                report(Definition::Interface, info.name.span, slots.interfaces + i);
+                report(
+                    Definition::Interface,
+                    info.name.span,
+                    slots.interfaces + i,
+                    None,
+                );
             }
         }
         for (c, span) in constants.iter().enumerate() {
@@ -334,7 +352,7 @@ impl Checker<'_> {
             if let Some(span) = *span
                 && !reached.live[owner]
             {
-                report(Definition::Constant, span, owner);
+                report(Definition::Constant, span, owner, None);
             }
         }
         for (b, block) in self.extensions.iter().enumerate() {
@@ -351,6 +369,93 @@ impl Checker<'_> {
             p.judged(live)
         }));
         found
+    }
+
+    /// By class, the first live `dbg` that can show its fields. The walk reads types, not values:
+    /// an empty array or a `None` shows no field. `dbg` shows the fields of a class that
+    /// its operand is, or that the operand holds in an array, an optional or an enum payload. It
+    /// writes a field that is a class as `print` does, so the walk stops at a class. A type with a
+    /// written `Display` shows its text, so the walk skips it, as `Checker::dbg_show` does.
+    ///
+    /// The walk follows the structure of each operand type. It reads the payloads of each enum
+    /// declaration once, as declared. It reads an argument of an enum only when `shown_params_with`
+    /// says that the enum shows it, with the same rule as the walk: an enum with any written
+    /// `Display` shows none. So the cost is linear in the operand types and the enum
+    /// declarations.
+    ///
+    /// shortcut: a `dbg` of a type parameter shows the instances that `mono` makes. The checker
+    /// does not see them, so such a field gets no label. A class or an enum with a parameter and
+    /// any written `Display` is skipped too: its text may apply to the instance that `dbg` prints,
+    /// so a field behind it gets no label. A type that holds no type parameter, such as
+    /// `Gate<string>`, is skipped too when it has a written `Display`. This holds also when a bound
+    /// of that `Display` fails. Then `dbg` prints its fields, but they get no label:
+    /// `extend<T: Mark> Gate<T>: Display` and `dbg(Gate(v: "one"))`.
+    /// To give the label, check the bounds, as `record_holds` in `conformance.rs` does, when a
+    /// program needs it.
+    fn shown_by_dbg(&self, live: &[bool]) -> Vec<Option<Span>> {
+        let live_calls = (self.dbg_shown.iter())
+            .filter(|&&(owner, ..)| owner.is_some_and(|owner| live[self.owner_index(owner)]));
+        let mut roots: Vec<(Span, Type)> = live_calls.map(|&(_, ty, span)| (span, ty)).collect();
+        roots.sort_unstable_by_key(|(span, _)| span.start());
+        let mut shown = vec![None; self.classes.len()];
+        if roots.is_empty() {
+            return shown;
+        }
+        let written: FxHashSet<Head> = (self.conformances.iter())
+            .filter(|&(interface, _)| interface == self.lang.display)
+            .filter_map(|(_, c)| head_of(c.target))
+            .collect();
+        // The walk skips a type with any written `Display`, so the arguments of such an enum are
+        // not shown through the payload of another enum either.
+        let hidden: Vec<bool> = (0..self.enums.len())
+            .map(|e| written.contains(&Head::Enum(tir::EnumId(e))))
+            .collect();
+        let params = self.shown_params_with(&hidden);
+        let (mut seen, mut declared) = (FxHashSet::default(), FxHashSet::default());
+        for (call, root) in roots {
+            let mut walk = vec![root];
+            while let Some(ty) = walk.pop() {
+                if !seen.insert(ty) {
+                    continue;
+                }
+                let skipped = if ty.has_param() {
+                    head_of(ty).is_some_and(|head| written.contains(&head))
+                } else {
+                    has_written(&self.conformances, self.lang.display, ty)
+                };
+                if skipped {
+                    continue;
+                }
+                #[cfg(test)]
+                SHOWN_VISITS.set(SHOWN_VISITS.get() + 1);
+                match ty.kind() {
+                    TypeKind::Class(class, _) => {
+                        shown[class.0].get_or_insert(call);
+                    }
+                    TypeKind::Array(inner) | TypeKind::Optional(inner) => walk.push(inner),
+                    TypeKind::Enum(id, args) => {
+                        let on = params[id.0].iter();
+                        walk.extend(
+                            args.get()
+                                .iter()
+                                .zip(on)
+                                .filter(|(_, on)| **on)
+                                .map(|(&a, _)| a),
+                        );
+                        if declared.insert(id) {
+                            let variants = &self.enums[id.0].variants;
+                            #[cfg(test)]
+                            let before = walk.len();
+                            walk.extend(variants.iter().flat_map(|v| v.fields.iter().flatten()));
+                            #[cfg(test)]
+                            SHOWN_VISITS.set(SHOWN_VISITS.get() + walk.len() - before);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        shown
     }
 
     /// The W0002 of each pending finding that holds one, for a program that the pass does not

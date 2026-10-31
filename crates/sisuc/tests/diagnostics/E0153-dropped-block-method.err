@@ -1,0 +1,54 @@
+error[E0153]: `C` conforms to `Shape` twice
+ --> E0153-dropped-block-method.sisu:4:11
+  |
+3 | class C: Shape {}
+  |          ----- first conformance here
+4 | extend C: Shape { fn area(self) -> f64 { 1.0 } }
+  |           ^^^^^
+
+error[E0153]: `D` conforms to `Shape` twice
+ --> E0153-dropped-block-method.sisu:7:11
+  |
+6 | class D: Shape {}
+  |          ----- first conformance here
+7 | extend D: Shape { fn area(self) -> i64 { 1 } }
+  |           ^^^^^
+
+error[E0153]: `F` conforms to `Shape` twice
+  --> E0153-dropped-block-method.sisu:10:11
+   |
+ 9 | class F: Shape { fn area(self) -> f64 { 2.0 } }
+   |          ----- first conformance here
+10 | extend F: Shape { fn area(self) -> f64 { 3.0 } }
+   |           ^^^^^
+
+error[E0152]: `Box<T>` does not meet `Shape`
+  --> E0153-dropped-block-method.sisu:13:15
+   |
+13 | class Box<T>: Shape { value: T }
+   |               ^^^^^
+   |
+   = help: fn area(self) -> f64
+
+error[E0153]: `Box<i64>` conforms to `Shape` twice
+  --> E0153-dropped-block-method.sisu:14:18
+   |
+13 | class Box<T>: Shape { value: T }
+   |               ----- first conformance here
+14 | extend Box<i64>: Shape { fn area(self) -> f64 { 1.0 } }
+   |                  ^^^^^
+
+error[E0063]: `C` has no method `perimeter`
+  --> E0153-dropped-block-method.sisu:20:15
+   |
+20 |     print(C().perimeter())
+   |               ^^^^^^^^^
+
+error[E0063]: `Box<bool>` has no method `area`
+  --> E0153-dropped-block-method.sisu:22:28
+   |
+22 |     print(Box(value: true).area())
+   |                            ^^^^
+
+sisu: 7 errors
+sisu: for more on a code, run `sisu explain <code>`: E0063, E0152, E0153

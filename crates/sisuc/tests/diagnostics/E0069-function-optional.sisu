@@ -1,0 +1,5 @@
+fn total(bytes: [u8]?) -> i64 {
+    sum(bytes)
+}
+
+fn main() {}

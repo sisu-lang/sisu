@@ -294,9 +294,12 @@ impl Checker<'_> {
         if built_in.is_none()
             && let Some(Declared::Known(func)) = self.own_method(ty, method.name)
         {
-            return self.unmet_block_bound(span, func, ty, args);
+            return self.unmet_block_bound(span, func, ty, method, args);
         }
         let Some(&(_, arity)) = built_in else {
+            if self.rejected_methods.contains(&method.name) {
+                return self.call_of_rejected_method(method, args);
+            }
             let prelude = self.prelude_method_names(ty);
             let targets = self.prelude_targets(method.name);
             let d = if !prelude.contains(&name) && !targets.is_empty() {
@@ -305,6 +308,7 @@ impl Checker<'_> {
                     ty: self.type_name(ty),
                     targets: targets.into_iter().map(|t| self.type_name(t)).collect(),
                     at: method.span,
+                    function: false,
                 }
                 .into()
             } else {
@@ -315,7 +319,7 @@ impl Checker<'_> {
         };
         if args.len() != arity {
             let d = DiagnosticKind::ArgumentCount {
-                name: name.to_string(),
+                name: self.method_name(ty, name),
                 want: arity,
                 found: args.len(),
                 at: span,
@@ -337,15 +341,17 @@ impl Checker<'_> {
         span: Span,
         func: tir::FuncId,
         ty: Type,
+        method: &ast::Ident,
         args: &[ast::Arg],
     ) -> Checked {
         let sig = &self.signatures[func.0];
-        let (name, params) = (sig.name.clone(), sig.params.clone());
+        let params = sig.params.clone();
         let extension = sig
             .extension
             .expect("a method whose block bounds fail should have a block");
         self.labels(args);
         if params.len() != args.len() {
+            let name = self.method_name(ty, method.name.as_str());
             return self.wrong_count(span, name, params.len(), args);
         }
         let stands = self.owner_args(func, ty).get().to_vec();
@@ -359,8 +365,21 @@ impl Checker<'_> {
             own_mistake |= mismatched || failed;
         }
         if !own_mistake {
-            self.report_block_bound(extension, ty, span);
+            self.report_block_bound(extension, ty, span, method.name.as_str());
         }
+        Err(Poisoned::error())
+    }
+
+    /// A call of the method `method` that a rejected `extend` block may have given (see
+    /// `Checker.rejected_methods`): poisoned, with no report of its own.
+    pub(super) fn call_of_rejected_method(
+        &mut self,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+    ) -> Checked {
+        self.body.rejected_calls.insert(method.span);
+        self.labels(args);
+        self.stray(args);
         Err(Poisoned::error())
     }
 

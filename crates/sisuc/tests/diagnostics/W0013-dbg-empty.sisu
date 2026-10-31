@@ -1,0 +1,14 @@
+class P {
+    x: i64
+}
+class R {
+    y: i64
+}
+fn main() {
+    let _p = P(x: 1)
+    let ps: [P] = []
+    dbg(ps)
+    let _r = R(y: 1)
+    let r: R? = None
+    dbg(r)
+}

@@ -1,0 +1,18 @@
+error[E0159]: `B<T>` has no `==`, since `Node` has none
+  --> E0159-cycle-param-reverse.sisu:11:13
+   |
+11 |     let x = b == b
+   |             ^ this has type `B<T>`
+   |
+   = help: make `Node` conform to `Eq`
+
+error[E0159]: `A<T>` has no `==`, since `Node` has none
+  --> E0159-cycle-param-reverse.sisu:12:12
+   |
+12 |     return a == a
+   |            ^ this has type `A<T>`
+   |
+   = help: make `Node` conform to `Eq`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0159

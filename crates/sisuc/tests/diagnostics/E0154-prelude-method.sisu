@@ -1,0 +1,9 @@
+class Node {}
+
+fn found(nodes: [Node], n: Node) -> bool {
+    nodes.contains(n)
+}
+
+fn main() {
+    print(found([Node()], Node()))
+}

@@ -1,0 +1,23 @@
+class Node {}
+
+enum Mix<T> {
+    A(T)
+    B(Node)
+}
+
+enum Flip<T> {
+    B(Node)
+    A(T)
+}
+
+fn need<U: Eq>(u: U) {}
+
+fn first<T>(a: Mix<T>) {
+    need(a)
+}
+
+fn last<T>(a: Flip<T>) {
+    need(a)
+}
+
+fn main() {}

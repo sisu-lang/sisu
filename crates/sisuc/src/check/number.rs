@@ -337,6 +337,9 @@ impl Checker<'_> {
     ) -> Checked {
         // An `i64` reaches here when the prelude gives it no method of the name.
         let Some((op, params)) = self::method(ty, method.name.as_str()) else {
+            if self.rejected_methods.contains(&method.name) {
+                return self.call_of_rejected_method(method, args);
+            }
             let owner = self.type_name(ty);
             let names: Vec<&str> = if ty == Type::F64 {
                 METHODS.iter().map(|(op, _)| op.name()).collect()
@@ -347,7 +350,7 @@ impl Checker<'_> {
         };
         if args.len() != params {
             let d = DiagnosticKind::ArgumentCount {
-                name: method.name.to_string(),
+                name: self.method_name(ty, method.name.as_str()),
                 want: params,
                 found: args.len(),
                 at: span,

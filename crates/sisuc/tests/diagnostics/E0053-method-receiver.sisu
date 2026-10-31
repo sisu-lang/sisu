@@ -1,0 +1,34 @@
+class Box<T> {
+    value: T
+    fn get(self, other: T) -> T { other }
+}
+
+extend<T> Box<T> {
+    fn put(self, other: T) -> T { other }
+}
+
+fn first<U>(xs: [U]) {
+    print(xs.contains())
+}
+
+enum E {
+    A
+    B
+}
+
+fn main() {
+    let n = 3
+    print(n.min())
+    let x = 1.5
+    print(x.min())
+    print("a".len(1))
+    print([1].len(2))
+    print([1].contains())
+    let b = Box(value: 1)
+    print(b.get())
+    print(b.put())
+    let mut xs = [1]
+    xs.push()
+    print(5.to_string(1))
+    print(E.A.eq())
+}

@@ -1,0 +1,15 @@
+enum Wrap<T> {
+    Item(T)
+    Nothing
+}
+class W<T> {
+    x: T
+}
+extend<T: Eq> W<T>: Eq {
+    fn eq(self, other: Self) -> bool {
+        Wrap.Item(W(x: [self.x])) == Wrap.Item(W(x: [other.x]))
+    }
+}
+fn main() {
+    print(W(x: 1) == W(x: 2))
+}

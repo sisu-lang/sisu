@@ -480,11 +480,13 @@ pub(crate) enum DiagnosticKind {
     /// every alignment, and a value of that size can never be on the stack. `instance` is
     /// whether `name` is an instance of the generic enum declared at `at`. `holder` is the enum
     /// of the prelude that holds `name` inline, when its payload is the one of 4 GiB or more.
+    /// `used` is the first expression that uses the instance, when `mono` knows it.
     PayloadTooLarge {
         name: String,
         instance: bool,
         holder: Option<String>,
         at: Span,
+        used: Option<Span>,
     },
     /// A call of the method `method` of `receiver`, at `at`, that more than one conformance
     /// could answer: those of `interfaces`. `annotate` is the `let` that picks one.
@@ -784,12 +786,15 @@ pub(crate) enum DiagnosticKind {
     /// An index into the value at `at`, of type `ty`, which is no array.
     CannotIndex { ty: String, at: Span },
     /// The method `method` at `at`, called on an array of type `ty`. The prelude gives the method
-    /// to the array types `targets`, and none of them is `ty`.
+    /// to the array types `targets`, and none of them is `ty`. `function` is whether the call
+    /// writes the method as a function, `method(xs)`, and the label then says it is a method: it
+    /// states the cause, so it is not a help.
     SumNeedsNumbers {
         method: String,
         ty: String,
         targets: Vec<String>,
         at: Span,
+        function: bool,
     },
     /// A call at `at` of the method `name` of an array, a number, a class or an enum as a
     /// function, with its `receiver`.
@@ -934,9 +939,9 @@ pub(crate) enum DiagnosticKind {
     /// without digits.
     MalformedFormatSpec { at: Span },
     /// The format spec at `at`, its `:` included, which asks for more than `#`, or alignment,
-    /// width and precision: a leading `0`, a sign, a type, a fill, a space or a nested `{`. When
-    /// `pretty`, it is a `#` beside an alignment, a width or a precision.
-    UnsupportedFormatSpec { at: Span, pretty: bool },
+    /// width and precision: a leading `0`, a sign, a type, a fill, a space or a nested `{`. `form`
+    /// says which of these forms it is.
+    UnsupportedFormatSpec { at: Span, form: SpecForm },
     /// The format spec at `at`, its `:` included, whose width, when `width`, or else precision is
     /// above its limit.
     FormatSpecLimit { at: Span, width: bool },
@@ -1168,11 +1173,13 @@ pub(crate) enum DiagnosticKind {
         uses: Vec<(Span, UsedBy, String)>,
     },
     /// The field or variant `name` (its `kind`), whose name in its declaration is at `at`, which
-    /// no live code reads or builds; `uses` are as `UnusedItem`'s.
+    /// no live code reads or builds; `uses` are as `UnusedItem`'s. `shown` is the `dbg` call that
+    /// shows a field, which is not a read.
     UnusedMember {
         kind: Definition,
         name: String,
         at: Span,
+        shown: Option<Span>,
         uses: Vec<(Span, UsedBy, String)>,
     },
     /// The local `name`, or the parameter when `param`, declared at `at`, which nothing reads;
@@ -1221,6 +1228,9 @@ pub(crate) enum DiagnosticKind {
         /// The associated type, as written, whose choices the cycle passes: the check counts it as
         /// every choice that it cannot show to be impossible.
         choice: Option<String>,
+        /// The type, as written, whose argument grows in the call through `reach`, and the type
+        /// of the operand that holds it when that is another type.
+        grows: Option<(String, Option<String>)>,
     },
     /// The check of `interface` for the type `root`, which stopped after `limit` nested types:
     /// the class or enum `holder`, named at `at`, is the one that the check was too deep for.
@@ -1251,6 +1261,8 @@ pub(crate) enum Hop {
 pub(crate) enum Spelled {
     /// A function, a method or a type, or a call of a method of an interface, as written.
     Instance(String),
+    /// A call of a function or a method of the prelude, by its own name.
+    Prelude(String),
     /// An operator or a built-in function that calls through a language interface: `==`, `<`,
     /// `print` or `dbg`.
     Operator(String),
@@ -1282,7 +1294,7 @@ impl Spelled {
     /// What the program spells at the place, as the subject of a sentence.
     fn subject(&self) -> String {
         match self {
-            Spelled::Instance(name) => format!("`{name}`"),
+            Spelled::Instance(name) | Spelled::Prelude(name) => format!("`{name}`"),
             Spelled::Operator(op) => format!("`{op}`"),
             Spelled::Interpolation => "the interpolation".to_string(),
             Spelled::Generated {
@@ -1301,6 +1313,9 @@ impl Spelled {
             Spelled::Interpolation => Some(format!(
                 "an interpolation is a call through `{interface}`, and "
             )),
+            Spelled::Prelude(name) => {
+                Some(format!("`{name}` is a call through `{interface}`, and "))
+            }
             Spelled::Instance(_) | Spelled::Generated { .. } => None,
         }
     }
@@ -1626,6 +1641,40 @@ impl Definition {
     }
 }
 
+/// The W0012 or W0013 of the item or member `name`, whose name is at `at`. `shown` is the `dbg`
+/// call that shows it.
+fn unused_name(
+    code: Code,
+    kind: Definition,
+    name: &str,
+    at: Span,
+    shown: Option<Span>,
+    uses: Vec<(Span, UsedBy, String)>,
+) -> Diagnostic {
+    let verb = kind.unused_verb();
+    // A variant cannot take a `_` name (E0113).
+    let help = if kind == Definition::Variant {
+        "delete it".to_string()
+    } else {
+        format!("delete it, or name it `_{name}` if it is kept on purpose")
+    };
+    let d = Diagnostic::coded(
+        code,
+        at,
+        format!("{} `{name}` is never {verb}", kind.word()),
+    )
+    .with_label(format!("never {verb}"))
+    .with_help(help);
+    let d = match shown {
+        Some(call) => d.with_secondary(
+            call,
+            format!("`dbg` can show `{name}` here, but `dbg` is not a read"),
+        ),
+        None => d,
+    };
+    cite_uses(d, uses)
+}
+
 /// `d` with a secondary label for each of `uses`, a use in dead code.
 fn cite_uses(d: Diagnostic, uses: Vec<(Span, UsedBy, String)>) -> Diagnostic {
     uses.into_iter().fold(d, |d, (at, user, name)| {
@@ -1760,6 +1809,19 @@ pub(crate) enum MismatchSource {
     Binding { name: String, at: Span },
     /// The `break` at the span, the first of its `loop` whose value set the loop's type.
     Break(Span),
+}
+
+/// The form of an `UnsupportedFormatSpec`, which sets its message and help.
+#[derive(Clone, Copy)]
+pub(crate) enum SpecForm {
+    /// Any spec that the other forms do not name.
+    Plain,
+    /// A `#` beside an alignment, a width or a precision.
+    Pretty,
+    /// `?` alone, which Rust uses for the debug form.
+    Debug,
+    /// `#?` alone, which Rust uses for the debug form over lines.
+    PrettyDebug,
 }
 
 /// What helps a precision on a part that is not an `f64`.
@@ -1994,9 +2056,21 @@ pub(crate) enum NotConformForm {
 #[derive(Clone)]
 pub(crate) enum PreludeBound {
     /// The type itself fails the bound.
-    Call,
+    Call { need: Option<BlockNeed> },
     /// A part of the type fails the bound: `part` does not conform to the interface.
-    Since { part: String },
+    Since {
+        part: String,
+        need: Option<BlockNeed>,
+    },
+}
+
+/// The method of a prelude block that has the bound, and the type that stands for the block's
+/// type parameter at the call: the program wrote that type, not the name in the prelude. The
+/// label names them when the call is of that method.
+#[derive(Clone)]
+pub(crate) struct BlockNeed {
+    pub method: String,
+    pub stands: String,
 }
 
 /// What the report of a missing operator (`NoOperator`) says besides the missing operator.
@@ -2550,11 +2624,22 @@ impl From<DiagnosticKind> for Diagnostic {
                             d
                         };
                         let d = match label {
-                            Some(PreludeBound::Call) => {
+                            Some(PreludeBound::Call { need: None }) => {
                                 d.with_label("required by the bound of this call")
                             }
-                            Some(PreludeBound::Since { part }) => d.with_label(format!(
+                            Some(PreludeBound::Call { need: Some(need) }) => d.with_label(format!(
+                                "`{}` needs `{}: {interface}`",
+                                need.method, need.stands
+                            )),
+                            Some(PreludeBound::Since { part, need: None }) => d.with_label(format!(
                                 "required by the bound of this call, since `{part}` does not conform to `{interface}`"
+                            )),
+                            Some(PreludeBound::Since {
+                                part,
+                                need: Some(need),
+                            }) => d.with_label(format!(
+                                "`{}` needs `{}: {interface}`, and `{part}` does not conform to `{interface}`",
+                                need.method, need.stands
                             )),
                             None => d,
                         };
@@ -2698,6 +2783,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 instance,
                 holder,
                 at,
+                used,
             } => {
                 // The span is the declaration, which holds the other enums in an instance only.
                 let this = if instance {
@@ -2717,12 +2803,15 @@ impl From<DiagnosticKind> for Diagnostic {
                         format!("{this} holds other enums inline"),
                     ),
                 };
-                Diagnostic::coded(code, at, message)
-                    .with_label(label)
-                    .with_help(format!(
-                        "a payload must be less than {PAYLOAD_LIMIT_GIB} GiB. Hold a part in a class or an array. \
-                         Such a field adds only the size of a pointer to the payload."
-                    ))
+                let d = Diagnostic::coded(code, at, message).with_label(label);
+                let d = match used {
+                    Some(used) => d.with_secondary(used, "the instance is used here"),
+                    None => d,
+                };
+                d.with_help(format!(
+                    "a payload must be less than {PAYLOAD_LIMIT_GIB} GiB. Hold a part in a class or an array. \
+                     Such a field adds only the size of a pointer to the payload."
+                ))
             }
             DiagnosticKind::NotAnInterface { written, at, kind } => Diagnostic::coded(
                 code,
@@ -3581,9 +3670,16 @@ impl From<DiagnosticKind> for Diagnostic {
                 ty,
                 targets,
                 at,
+                function,
             } => {
                 let targets = one_of(&targets);
-                Diagnostic::coded(code, at, format!("`{method}` needs {targets}, found `{ty}`"))
+                let d =
+                    Diagnostic::coded(code, at, format!("`{method}` needs {targets}, found `{ty}`"));
+                if function {
+                    d.with_label(format!("`{method}` is a method of {targets}, not a function"))
+                } else {
+                    d
+                }
             }
             DiagnosticKind::MethodAsFunction {
                 name,
@@ -4017,17 +4113,29 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::MalformedFormatSpec { at } => {
                 Diagnostic::coded(code, at, "a format spec is `#` or `[<^>][width][.precision]`")
             }
-            DiagnosticKind::UnsupportedFormatSpec { at, pretty: false } => Diagnostic::coded(
-                code,
-                at,
-                "Sisu's format specs take `#`, or an alignment, a width and a precision",
-            ),
-            DiagnosticKind::UnsupportedFormatSpec { at, pretty: true } => Diagnostic::coded(
-                code,
-                at,
-                "`#` does not combine with a width, alignment or precision",
-            )
-            .with_help("remove the `#`, or the width, alignment and precision"),
+            DiagnosticKind::UnsupportedFormatSpec { at, form: SpecForm::Plain } => {
+                Diagnostic::coded(
+                    code,
+                    at,
+                    "Sisu's format specs take `#`, or an alignment, a width and a precision",
+                )
+            }
+            DiagnosticKind::UnsupportedFormatSpec { at, form: SpecForm::Pretty } => {
+                Diagnostic::coded(
+                    code,
+                    at,
+                    "`#` does not combine with a width, alignment or precision",
+                )
+                .with_help("remove the `#`, or the width, alignment and precision")
+            }
+            DiagnosticKind::UnsupportedFormatSpec { at, form: SpecForm::Debug } => {
+                Diagnostic::coded(code, at, "Sisu's format specs have no `?`")
+                    .with_help("delete the `:?`: Sisu shows a value with its `Display`")
+            }
+            DiagnosticKind::UnsupportedFormatSpec { at, form: SpecForm::PrettyDebug } => {
+                Diagnostic::coded(code, at, "Sisu's format specs have no `#?`")
+                    .with_help("write `#` alone to lay the value out over lines")
+            }
             DiagnosticKind::FormatSpecLimit { at, width } => Diagnostic::coded(
                 code,
                 at,
@@ -4583,29 +4691,14 @@ impl From<DiagnosticKind> for Diagnostic {
                 name,
                 at,
                 uses,
-            }
-            | DiagnosticKind::UnusedMember {
+            } => unused_name(code, kind, &name, at, None, uses),
+            DiagnosticKind::UnusedMember {
                 kind,
                 name,
                 at,
+                shown,
                 uses,
-            } => {
-                let verb = kind.unused_verb();
-                // A variant cannot take a `_` name (E0113).
-                let help = if kind == Definition::Variant {
-                    "delete it".to_string()
-                } else {
-                    format!("delete it, or name it `_{name}` if it is kept on purpose")
-                };
-                let d = Diagnostic::coded(
-                    code,
-                    at,
-                    format!("{} `{name}` is never {verb}", kind.word()),
-                )
-                .with_label(format!("never {verb}"))
-                .with_help(help);
-                cite_uses(d, uses)
-            }
+            } => unused_name(code, kind, &name, at, shown, uses),
             DiagnosticKind::UnusedBlock { name, at, uses } => {
                 let d = Diagnostic::coded(
                     code,
@@ -4708,6 +4801,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 through,
                 reach,
                 choice,
+                grows,
             } => {
                 let d = through.into_iter().fold(
                     Diagnostic::coded(
@@ -4747,11 +4841,19 @@ impl From<DiagnosticKind> for Diagnostic {
                         "the check is cautious: `{ty}` counts as each choice that a conformance makes, unless the check can show that it is impossible"
                     )
                 });
+                let grows = grows.map(|(instance, held_by)| match held_by {
+                    Some(operand) => format!("`{operand}` holds `{instance}`, whose argument grows"),
+                    None => format!("The argument of `{instance}` grows"),
+                });
                 let help: Vec<String> = reach.into_iter().chain(choice).collect();
                 if help.is_empty() {
                     d
                 } else {
-                    d.with_help(help.join("; "))
+                    let help = help.join("; ");
+                    d.with_help(match grows {
+                        Some(grows) => format!("{help}. {grows}"),
+                        None => help,
+                    })
                 }
             }
             DiagnosticKind::ConformanceTooDeep {

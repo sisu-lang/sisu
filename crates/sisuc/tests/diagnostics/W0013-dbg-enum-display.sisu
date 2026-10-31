@@ -1,0 +1,18 @@
+class P {
+    x: i64
+}
+enum F<T> {
+    A(T)
+}
+extend F<P>: Display {
+    fn to_string(self) -> string {
+        return "custom"
+    }
+}
+enum E<T> {
+    A(F<T>)
+}
+fn main() {
+    let e = E.A(F.A(P(x: 1)))
+    dbg(e)
+}

@@ -1,0 +1,34 @@
+error[E0159]: `Mix<T>` has no `==`, since `Node` has none
+  --> E0159-param-order.sisu:14:5
+   |
+14 |     a == b
+   |     ^ this has type `Mix<T>`
+   |
+   = help: make `Node` conform to `Eq`
+
+error[E0159]: `Flip<T>` has no `==`, since `Node` has none
+  --> E0159-param-order.sisu:18:5
+   |
+18 |     a == b
+   |     ^ this has type `Flip<T>`
+   |
+   = help: make `Node` conform to `Eq`
+
+error[E0159]: `Result<T, Node>` has no `==`, since `Node` has none
+  --> E0159-param-order.sisu:22:5
+   |
+22 |     a == a && b == b
+   |     ^ this has type `Result<T, Node>`
+   |
+   = help: make `Node` conform to `Eq`
+
+error[E0159]: `Result<Node, T>` has no `==`, since `Node` has none
+  --> E0159-param-order.sisu:22:15
+   |
+22 |     a == a && b == b
+   |               ^ this has type `Result<Node, T>`
+   |
+   = help: make `Node` conform to `Eq`
+
+sisu: 4 errors
+sisu: for more on a code, run `sisu explain <code>`: E0159

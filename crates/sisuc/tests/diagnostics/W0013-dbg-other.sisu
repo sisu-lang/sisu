@@ -1,0 +1,12 @@
+class P {
+    x: i64
+}
+class R {
+    a: i64
+    b: i64
+}
+fn main() {
+    dbg(P(x: 1))
+    let r = R(a: 1, b: 2)
+    print(r.a)
+}
