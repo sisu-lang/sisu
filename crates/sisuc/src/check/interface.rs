@@ -1627,7 +1627,7 @@ impl Checker<'_> {
                         return kept;
                     }
                     // A type on the stack is a cut: the walk is reading it, or has read it and not
-                    // closed its part. It gives `None` and lowers `walk.low` to its place.
+                    // closed its component. It gives `None` and lowers `walk.low` to its place.
                     if let Some(&at) = walk.index.get(&key) {
                         walk.low = walk.low.min(at);
                         return None;

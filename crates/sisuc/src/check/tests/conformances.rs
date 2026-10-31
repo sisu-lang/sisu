@@ -657,8 +657,8 @@ fn cycle_of_params(n: usize, reversed: bool) -> String {
     )
 }
 
-/// Each enum of a cycle of type parameters is one component, so its walk keeps `T` for each of
-/// them, from whichever enum the comparisons begin.
+/// The enums of a cycle of type parameters are one component. The walk keeps `T` for each of
+/// them when it closes the component, from whichever enum the comparisons begin.
 #[test]
 fn failing_leaf_should_read_each_enum_of_a_cycle_of_type_parameters_once() {
     for reversed in [false, true] {
@@ -2380,10 +2380,11 @@ fn failing_leaf_should_not_keep_a_none_that_was_found_with_a_cycle_cut_short() {
     assert_eq!(leaves, ["A", "A"]);
 }
 
-/// A strongly connected component closes at its first type, and a child's `low` reaches its
-/// parent. Each row asks `failing_leaf` for `R`, then for the parameter of `other`.
+/// Each row asks `failing_leaf` for `R`, then for the parameter of `other`. Row 1 closes the
+/// component `C0`, `C1` inside the walk of `R`. In row 2, the cut against `R` is two levels down,
+/// under `X` and `Y`.
 #[test]
-fn failing_leaf_should_close_a_component_at_its_first_type_and_pass_low_to_the_parent() {
+fn failing_leaf_should_name_the_part_each_type_reaches_after_an_earlier_walk() {
     let rows = [
         (
             "a cycle that closes before its root ends in a part",
