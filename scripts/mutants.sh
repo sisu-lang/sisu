@@ -7,7 +7,12 @@
 # the output or the tree (-o, --output, -d, --dir, --manifest-path).
 # An argument that tests no mutant (--list, --list-files, --check and the like) ends with
 # "mutation-test: NOT RUN", never PASS.
-# Each mutant costs one build and one full test run, so this takes an hour or more.
+# Two passes keep it short. Pass 1 tests each mutant with the unit tests only (`--lib`,
+# about 6 s against 47 s for the whole suite). Pass 2 runs only when pass 1 missed a mutant:
+# it tests the mutants that pass 1 did not catch (--iterate) with the whole suite, so a
+# mutant that only an end-to-end test kills is caught, not missed. The summary adds the counts.
+# Arguments after -- choose the tests yourself: the script then runs one pass with them.
+# Each mutant still costs one build, so a large diff takes an hour or more.
 # It runs under nice -n 19 with 2 mutants at a time unless -j or CARGO_MUTANTS_JOBS says otherwise.
 # The last line is a summary that starts "mutation-test: PASS" or "mutation-test: FAIL".
 # A summary of a run that measured a commit ends "(HEAD <sha>)"; NOT RUN lines and the
@@ -48,9 +53,15 @@ head=$(git rev-parse HEAD)
 base=${1:-$(git merge-base main HEAD)}
 [[ $# -gt 0 ]] && shift
 not_run=
+test_args=
+iterate=
 for arg in "$@"; do
   case $arg in
-    --) break ;;
+    --)
+      test_args=yes
+      break
+      ;;
+    --iterate) iterate=yes ;;
     -o* | --output | --output=* | -d* | --dir | --dir=* | --manifest-path | --manifest-path=*)
       verdict="mutation-test: FAIL: $arg moves mutants.out or the tree; the summary needs the default"
       echo "$verdict"
@@ -90,28 +101,48 @@ flock "$held"
 git diff "$base" >"$diff"
 
 # cargo mutants rotates the last mutants.out to mutants.out.old and writes a new one only
-# when it tests mutants, so the counts count only if lock.json is newer than this mark.
+# when it tests mutants, so a pass counts only if lock.json is newer than this mark.
 started=target/mutation-test.start
-touch "$started"
+# One pass of cargo mutants over the diff with these extra arguments; sets status and tested.
 # .cargo/mutants.toml leaves .llvm/ out of the copied tree, so point the
 # build at the original.
-status=0
-TMPDIR=$run CARGO_MUTANTS_JOBS=${CARGO_MUTANTS_JOBS:-2} \
-  LLVM_SYS_231_PREFIX="$PWD/.llvm/23" nice -n 19 cargo mutants --in-diff "$diff" --output . "$@" || status=$?
+pass() {
+  touch "$started"
+  status=0
+  TMPDIR=$run CARGO_MUTANTS_JOBS=${CARGO_MUTANTS_JOBS:-2} \
+    LLVM_SYS_231_PREFIX="$PWD/.llvm/23" nice -n 19 cargo mutants --in-diff "$diff" --output . "$@" || status=$?
+  tested=
+  [[ mutants.out/lock.json -nt $started ]] && tested=yes
+  return 0
+}
+count() { if [[ -f mutants.out/$1.txt ]]; then wc -l <"mutants.out/$1.txt"; else echo 0; fi; }
 
+if [[ -n $not_run || -n $test_args ]]; then
+  pass "$@"
+else
+  pass "$@" -- --lib
+fi
 if [[ -n $not_run ]]; then
   verdict="mutation-test: NOT RUN: $not_run tests no mutant"
   echo "$verdict"
   exit "$status"
 fi
-count() { if [[ -f mutants.out/$1.txt ]]; then wc -l <"mutants.out/$1.txt"; else echo 0; fi; }
+caught=0
+unviable=0
+# Pass 2: exit 2 is a missed mutant and 3 a timeout; any other failure stops the run here.
+if [[ -z $test_args && -n $tested ]] && ((status == 2 || status == 3)) && (($(count missed) > 0)); then
+  caught=$(count caught)
+  unviable=$(count unviable)
+  echo "mutation-test: pass 1 (unit tests) missed $(count missed); pass 2 tests them with the whole suite"
+  if [[ -n $iterate ]]; then pass "$@"; else pass --iterate "$@"; fi
+fi
 missed=0
-if [[ mutants.out/lock.json -nt $started ]]; then
+if [[ -n $tested ]]; then
   missed=$(count missed)
   # A mutant that hangs the tests is caught, but cargo mutants exits 3 for a timeout even
   # when another mutant was missed, so only the missed count can pass it.
   ((status == 3 && missed == 0)) && status=0
-  counts="$(count caught) caught, $(count unviable) unviable, $missed missed, $(count timeout) timeouts"
+  counts="$((caught + $(count caught))) caught, $((unviable + $(count unviable))) unviable, $missed missed, $(count timeout) timeouts"
 else
   # No new output: the diff holds no mutant, or cargo mutants stopped before the first test.
   counts="no mutant tested"

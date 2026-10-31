@@ -187,8 +187,16 @@ fix; see `handover.sisu`.
 tests in `programs.rs` run.
 
 Mutation testing changes the code that a branch touched, one mutant at a
-time, and reports each mutant the tests still pass. Each mutant costs one
-build and one run of the whole test suite, so a run can take an hour or more.
+time, and reports each mutant the tests still pass. The script runs two
+passes. Pass 1 tests each mutant with the unit tests only (`cargo nextest run
+--lib`: about 6 s, against 47 s for the whole suite). On one sixth of the
+mutants of a 4,000-line diff, pass 1 tested 87 mutants in 7 minutes and
+caught every one that built; the whole suite took 1 hour 42 minutes for 171. When pass 1 misses a
+mutant, pass 2 tests the mutants that pass 1 did not catch (`--iterate`) with
+the whole suite, so a mutant that only an end-to-end test kills counts as
+caught. The summary adds the counts of both passes. Arguments after `--` choose
+the tests yourself; the script then runs one pass with them. Each mutant still
+costs one build, so a large diff can take an hour or more.
 The script mutates the
 diff from where the branch left `main`. On a branch stacked on another stage,
 pass that stage's tip as the base, so earlier stages stay out. Arguments after
