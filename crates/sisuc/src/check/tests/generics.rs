@@ -5364,7 +5364,14 @@ const WAIT_CALL_DECLS: &str = "class Two<A, B> {\n    a: A\n    b: B\n}\n\
     class H: Holds<string> {\n    type Item = i64\n}\n\
     fn mkh<E>() -> Result<H, E> { Ok(H()) }\n\
     fn mkxh<X>() -> Two<X, H> { panic(\"e\") }\n\
-    fn gh<T: Holds<U>, U>(_c: Two<T.Item, T>, _d: Result<T, string>, _e: Result<U, string>) -> i64 { 0 }\n";
+    fn gh<T: Holds<U>, U>(_c: Two<T.Item, T>, _d: Result<T, string>, _e: Result<U, string>) -> i64 { 0 }\n\
+    fn mkxa<X>() -> Two<X, Two<H, string>> { panic(\"e\") }\n\
+    fn gh2<T: Holds<U>, U>(_c: Two<T.Item, Two<T, U>>, _d: Result<T, string>, _e: Result<U, string>) -> i64 { 0 }\n\
+    fn mkdv<X>() -> Two<X, Two<X, i64>> { panic(\"e\") }\n\
+    fn fc<T, U, V>(_c: Two<V, bool>, _a: Two<T, Two<U, V>>, _b: Result<T, string>) -> i64 { 0 }\n\
+    fn fc2<T, U, V>(_a: Two<T, Two<U, V>>, _c: Two<V, bool>, _b: Result<T, string>) -> i64 { 0 }\n\
+    type BX<X> = Bx<i64, X>\n\
+    type MB<X> = Mb<i64, X>\n";
 
 /// The rows of `a_waiting_call_should_wait_for_a_later_argument_that_binds_its_context`: a body,
 /// and the codes, each with the text of the line where it is reported.
@@ -5380,8 +5387,11 @@ const WAIT_CALL_ROWS: &[(&str, &[(Code, &str)])] = {
         // first.
         ("print(g3(mk2(), mk2(), mk()))", &[]),
         ("print(g(mk2(), mks()))", &[]),
-        // A variant that leaves `U` waits too.
+        // A variant that leaves `U` waits too, and so do the alias of a class and the variant of
+        // an alias of an enum.
         ("print(gv(Mb.A(1), mk()))", &[]),
+        ("print(gb(BX(a: 1), mk()))", &[]),
+        ("print(gv(MB.A(1), mk()))", &[]),
         // One binding wakes two calls.
         ("print(g2(mk2(), mk2(), mk()))", &[]),
         // A call with written type arguments does not wait. A parameter type that names `T`
@@ -5401,12 +5411,12 @@ const WAIT_CALL_ROWS: &[(&str, &[(Code, &str)])] = {
         ),
         // A call waits for the parameters at the places of its own open parameter, not for the
         // first one that the parameter type names. `mkv()` has `X` under `U`, and `mks()` binds
-        // `U`. The order of the arguments does not decide the result.
+        // `U`; both orders check.
         ("print(gq(mk2(), mkv(), mks()))", &[]),
         ("print(gq2(mkv(), mk2(), mks()))", &[]),
         // An open parameter at two places waits for both. When only `U` is bound, the call is
-        // checked when the sweep ends and still sees `U`. When both are bound, `mks()` and
-        // `mk()` wake it.
+        // checked when the sweep ends and still sees `U`. When both are bound, the two `mks()`
+        // wake it.
         ("print(gtu(mkd(), mks()))", &[]),
         ("print(gd(mkd(), mks(), mks()))", &[]),
         // An optional parameter type: the call meets the payload of the context, or its own
@@ -5426,7 +5436,17 @@ const WAIT_CALL_ROWS: &[(&str, &[(Code, &str)])] = {
         ("print(g(mkx(), mk()))", &[]),
         ("print(gla(mkla(), mkt2()))", &[]),
         ("print(gh(mkxh(), mkh(), mks()))", &[]),
+        // `T.Item` has an interface argument, `U`. `unbound_params` reaches it.
+        ("print(gh2(mkxa(), mkh(), mks()))", &[]),
+        // This one gives E0050 as it did before. The fault is a mismatch (`X` is `Two<..>` and
+        // `W` is not): a separate diagnostic issue.
         ("print(gaa(mkxx(), mkw()))", &[(CannotInfer, "mkxx()")]),
+        // `mkdv()` waits for `T` and `U`, its `X` at two places. Only `mk()` binds `T`, and no
+        // argument binds `U`, so nothing wakes it: it is checked when the sweep ends, in order.
+        // In `fc`, `mk2()` needs the `V` that `mkdv()` binds and comes first: E0050. In `fc2`,
+        // `mkdv()` comes first, so it checks.
+        ("print(fc(mk2(), mkdv(), mk()))", &[(CannotInfer, "mk2()")]),
+        ("print(fc2(mkdv(), mk2(), mk()))", &[]),
         // A call that nothing wakes is checked when the sweep ends, with what the later
         // arguments bound. `mkv()` has `X` under `T`, and `mks()` binds `U`: the call checks.
         // `mkt()` has `i64` under `U`, which `mks()` binds to `string`: the mismatch is true.
@@ -5445,9 +5465,9 @@ const WAIT_CALL_ROWS: &[(&str, &[(Code, &str)])] = {
 };
 
 /// An argument that is a call and leaves a parameter to its context waits for the parameter of
-/// the outer call that its context lacks, when a later argument binds that one. The order of the
-/// arguments then does not decide the result (#217). A call that nothing wakes is checked when
-/// the sweep ends, in order, with what the later arguments bound.
+/// the outer call that its context lacks, when a later argument binds that one (#217). A call
+/// that nothing wakes is checked when the sweep ends, in order, with what the later arguments
+/// bound: when it binds what an earlier call needs, that call reports E0050 (the `fc` rows).
 #[test]
 fn a_waiting_call_should_wait_for_a_later_argument_that_binds_its_context() {
     with_prelude();

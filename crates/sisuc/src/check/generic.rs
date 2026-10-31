@@ -1944,8 +1944,12 @@ impl Checker<'_> {
     // shortcut: a call waits for every unbound parameter at every place of an open parameter. For
     // `mkd<X>() -> Two<X, X>` and `Two<T, U>`, it waits for `T` and for `U`, though `U` alone
     // gives `X`. When only `U` is bound, the call is checked when the sweep ends, after all the
-    // later arguments, so it still sees `U`. Upgrade when a program needs the call checked
-    // before all the places are known.
+    // later arguments, so it still sees `U`. The same holds when a parameter in the wait set is
+    // never bound: nothing wakes the call, and it is checked when the sweep ends, in argument
+    // order. An earlier call that needs what it binds then reports E0050. With
+    // `mkdv<X>() -> Two<X, Two<X, i64>>`, `fc<T, U, V>(_c: Two<V, bool>, _a: Two<T, Two<U, V>>,
+    // _b: Result<T, string>)` and `fc(mk2(), mkdv(), mk())`, `mk2()` gives E0050; with
+    // `mkdv()` first it checks. Upgrade by one count for each place of an open parameter.
     fn waits_for(
         &mut self,
         call: &Inference<'_>,
