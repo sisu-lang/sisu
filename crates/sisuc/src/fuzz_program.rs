@@ -1694,14 +1694,22 @@ mod tests {
         assert!(stderr.contains("cannot write "), "{stderr}");
     }
 
-    /// A failed property 6 leaves the broken copy in the dump, and no build ran. Seed 6 has
-    /// bound sites; the forced replacement of its first conforms, so the property fails.
+    /// The first seed of the series whose program has bound sites. A new generator rule changes
+    /// what each seed makes, so the test finds the seed and does not name it.
+    fn bound_seed() -> u64 {
+        (0..64)
+            .find(|&n| !generate(&seed(n)).bound_sites.is_empty())
+            .expect("a seed of the first 64 should have a bound site")
+    }
+
+    /// A failed property 6 leaves the broken copy in the dump, and no build ran. The forced
+    /// replacement of the first bound site of `bound_seed` conforms, so the property fails.
     #[test]
     fn a_failed_bound_should_leave_the_broken_copy_in_the_dump() {
         if env::var_os(CHILD).is_some() {
             on_stack(|| {
                 FORCE.set(Some(Force::Conforming));
-                program(&seed(6), &runtime());
+                program(&seed(bound_seed()), &runtime());
             });
             return;
         }
@@ -1712,7 +1720,7 @@ mod tests {
         );
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(!out.status.success(), "{stderr}");
-        let g = generate(&seed(6));
+        let g = generate(&seed(bound_seed()));
         assert_record(&stderr, "property 6: ", &g, &scratch.0);
         let dump = scratch.0.join("dump");
         let read = |name: &str| {
