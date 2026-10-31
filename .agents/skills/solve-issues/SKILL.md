@@ -39,7 +39,7 @@ its last event.
 1. Run `git fetch origin`. Do all root-cause work on `origin/main`.
 2. Build `sisu` at `origin/main` once for the batch:
    `git -C <repo> show origin/main:.agents/skills/review-sisu/scripts/build_sisu.sh | bash -s -- <repo> ${TMPDIR:-/tmp}/sisu-issues-<batch> origin/main`.
-   Use the `sisu` path that it prints. It exports the commit. Never build in a worktree (`CODING_STANDARDS.md`, Reviewing).
+   Use the `sisu` path that it prints. It exports the commit. Do not use `git worktree add` for this build (`CODING_STANDARDS.md`, Reviewing).
 3. When the user names the issues, take those issues and go to step 1.6.
 4. Otherwise, list the open issues: `gh api 'repos/sisu-lang/sisu/issues?state=open&per_page=100' --paginate`, with the sandbox off. Skip each item that has a `pull_request` field.
 5. Leave out each issue that a branch or a pull request fixes, and each issue on hold. Look in these places:
@@ -49,9 +49,11 @@ its last event.
    - the comments on the issue, the memory, and what the user said.
 6. Run the repro of each bug report on `origin/main`. Close it without a question in two cases only:
    - It is fixed on `origin/main`. Close it with `state_reason` `completed`.
-   - The committed reference (`docs/reference/`) or an ADR states this exact behaviour, and the issue does not argue that the rule is wrong. Add the `wontfix` label, then close it with `not_planned`.
+   - The committed reference (`docs/reference/`) or an ADR states this exact behaviour. The issue does not argue that the rule is wrong. Close it as intended (below).
 
-   Before you close, comment with the command and its output (`docs/agents/issue-tracker.md`). Write the close in the ledger.
+   Before you close, comment with the command and its output (`docs/agents/issue-tracker.md`). Write the program and the paths relative to the repository: issue text has no `/tmp` paths. Write the close in the ledger.
+
+   To close an issue as intended, replace its triage label with `wontfix`. Keep its other labels: `PUT` replaces the whole list. Then close it with `not_planned`.
 7. Each other issue that disagrees with documented behaviour needs a language decision (step 2.4).
 
 ### 2. Group them
@@ -61,17 +63,23 @@ its last event.
 3. For each group, propose a review flow, with the reason:
    - **Full:** the roles above, one mutation test per task.
    - **Light:** `opus-medium` for each task and for the final review. `make test` and `make coverage` only; no mutation test.
-4. For each language decision, write the options and their costs. Post them on the issue, as in step 3.7.
+4. For each language decision, write the options and their costs. Post them on the issue, as in step 3.8.
 
-**Stop 1.** Show these in the reply text, in one message: the groups, their
-order, the review flow of each group, the issues left out, the issues
-closed, and each language decision with its risk and a short Sisu example.
-Then ask with `AskUserQuestion`. It takes at most four questions. So ask one
-question that approves the table or asks for changes, and one question for
-each language decision. Write the answers in the ledger.
+**Stop 1.** Show these in the reply text, in one message:
 
-An issue that gets a language decision at Stop 1 joins a group. The first
-task of that group records the decision in `docs/reference/` or in an ADR.
+- the groups, their order, and the review flow of each group;
+- the issues left out, and the issues closed;
+- each language decision, with its risk and a short Sisu example.
+
+Then ask with `AskUserQuestion`. One call takes at most four questions. Ask
+one question that approves the table or asks for changes. Ask one question
+for each language decision. With more than three decisions, use more than
+one call. Write the answers in the ledger.
+
+After a language decision at Stop 1:
+
+- The user keeps today's rule: close the issue as intended (step 1.6). When the reference does not state the rule yet, a group's first task records it first.
+- The user changes the rule: the issue joins a group. The first task of that group records the decision in `docs/reference/` or in an ADR.
 
 ### 3. Find the root causes
 
@@ -103,9 +111,9 @@ options when there are some. Ask with `AskUserQuestion`, as at Stop 1.
 
 Do this once for each group. On resume, use the worktree in the ledger.
 
-1. Run, in the repository root: `git worktree add --no-track -b fix/<group> .claude/worktrees/<group> origin/main`.
+1. Run, in the repository root: `git worktree add --no-track -b fix/<batch>-<group> .claude/worktrees/<batch>-<group> origin/main`.
 2. Run `codegraph init -y` in the new worktree.
-3. Link the LLVM: `ln -s <repo>/.llvm .claude/worktrees/<group>/.llvm`.
+3. Link the LLVM: `ln -s <repo>/.llvm .claude/worktrees/<batch>-<group>/.llvm`.
 4. Run `cargo fetch --locked` in the new worktree, with the sandbox off.
 
 ### 6. Run each task
@@ -117,7 +125,7 @@ Do this once for each group. On resume, use the worktree in the ledger.
    - **DONE:** go to step 6.5.
    - **BLOCKED:** the stated cause is wrong. Do step 3 again for that issue, then Stop 2 again.
    - **DONE_WITH_CONCERNS:** check each concern. A mutation test that did not run gets one run from you, after the reviews.
-5. On the full flow, check that the last line of the mutation log names a commit in `<BASE>..HEAD`.
+5. On the full flow, check that the last line of the mutation log names a commit in `<BASE>..HEAD`. Skip this check when the mutation test did not run.
 6. Run `review-sisu` on `<BASE>..HEAD`. It writes the review brief, launches the reviewers, and says how to rule and when to ask the user.
 7. Write each fix-round brief from the "Fix round" part of [brief.md](brief.md). Give it to a `sonnet-high` executor.
 
@@ -128,8 +136,9 @@ Do this once for each group. On resume, use the worktree in the ledger.
 3. Write the pull request body with `mattpocock-skills:pr`, with one `Closes #<N>` line for each issue.
 4. The user pushes. Then create the pull request with `gh api repos/sisu-lang/sisu/pulls`, with the sandbox off.
 5. Never merge.
-6. Write the ledger's "After the merge" lines: one line with a runnable repro for each deferred finding and each line of `diagnostic-issues.md`.
-7. Go to step 3 for the next group.
+6. Write the ledger's "After the merge" lines. Write one line with a runnable repro for each deferred finding. Do the same for each line of each `diagnostic-issues.md` in the group's review runs.
+7. Go to step 3 for the next group that does not wait for a merge. When all groups wait, tell the user and stop.
+8. When the batch ends, delete the batch build: `rm -rf ${TMPDIR:-/tmp}/sisu-issues-<batch>`.
 
 ## Common mistakes
 

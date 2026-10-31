@@ -19,7 +19,7 @@ Started <date> on origin/main <sha>. Build: <path of the origin/main sisu>.
 
 | Group | Issues | Order | Flow | Branch | Worktree | State |
 | --- | --- | --- | --- | --- | --- | --- |
-| A | #<N>, #<N> | 1 | full / light | fix/<group> | .claude/worktrees/<group> | waiting / root cause / task <N> / final review / PR #<N> |
+| A | #<N>, #<N> | 1 | full / light | fix/<batch>-<group> | .claude/worktrees/<batch>-<group> | waiting / root cause / task <N> / final review / PR #<N> |
 
 ## Decisions
 
