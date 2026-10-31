@@ -1163,9 +1163,9 @@ impl Checker<'_> {
         });
     }
 
-    /// For a call through a language interface on `operand`, whose cycle takes the method
-    /// `method`: the first type in `operand` of the class or enum that declares the method, whose
-    /// argument grows. The type is `operand` itself or a type that `operand` holds, and then
+    /// Takes a call through a language interface on `operand`, whose cycle takes the method
+    /// `method`. Gives the first type in `operand` of the class or enum that declares the method,
+    /// whose argument grows. The type is `operand` itself or a type that `operand` holds, and then
     /// `operand` comes with it. An argument grows when it names a parameter and is not one. `None`
     /// when `operand` holds no such type.
     fn growth(

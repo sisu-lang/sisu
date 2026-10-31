@@ -9,12 +9,13 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::extend::holder_of;
 use super::{Checker, Declared, Holder};
-use crate::conformance::always_written;
+use crate::conformance::has_written;
 use crate::diagnostic::{Code, Definition, Diagnostic, DiagnosticKind, UsedBy};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir;
-use crate::tir::{Type, TypeKind};
+use crate::tir::{Type, TypeKind, head_of};
+use crate::types::Head;
 
 #[cfg(test)]
 thread_local! {
@@ -376,12 +377,15 @@ impl Checker<'_> {
     /// written `Display` shows its text, so the walk skips it, as `Checker::dbg_show` does.
     ///
     /// The walk follows the structure of each operand type. It reads the payloads of each enum
-    /// declaration once, as declared, and an argument of an enum only when `shown_params` says that
-    /// the enum shows it. So the cost is linear in the operand types and the enum declarations.
+    /// declaration once, as declared. It reads an argument of an enum only when `shown_params` says
+    /// that the enum shows it. So the cost is linear in the operand types and the enum
+    /// declarations.
     ///
     /// shortcut: a `dbg` of a type parameter shows the instances that `mono` makes. The checker
-    /// does not see them, so such a field gets no label. A written `Display` with a bound on
-    /// another interface counts as not written, as in `dbg_show`.
+    /// does not see them, so such a field gets no label. A class or an enum with a parameter and
+    /// any written `Display` is skipped too: its text may apply to the instance that `dbg` prints,
+    /// so a field behind it gets no label. A type without a parameter keeps its label when its
+    /// written `Display` does not apply.
     fn shown_by_dbg(&self, live: &[bool]) -> Vec<Option<Span>> {
         let live_calls = (self.dbg_shown.iter())
             .filter(|&&(owner, ..)| owner.is_some_and(|owner| live[self.owner_index(owner)]));
@@ -392,11 +396,23 @@ impl Checker<'_> {
             return shown;
         }
         let params = self.shown_params();
+        let written: FxHashSet<Head> = (self.conformances.iter())
+            .filter(|&(interface, _)| interface == self.lang.display)
+            .filter_map(|(_, c)| head_of(c.target))
+            .collect();
         let (mut seen, mut declared) = (FxHashSet::default(), FxHashSet::default());
         for (call, root) in roots {
             let mut walk = vec![root];
             while let Some(ty) = walk.pop() {
-                if !seen.insert(ty) || always_written(&self.conformances, self.lang.display, ty) {
+                if !seen.insert(ty) {
+                    continue;
+                }
+                let skipped = if ty.has_param() {
+                    head_of(ty).is_some_and(|head| written.contains(&head))
+                } else {
+                    has_written(&self.conformances, self.lang.display, ty)
+                };
+                if skipped {
                     continue;
                 }
                 #[cfg(test)]
@@ -417,7 +433,11 @@ impl Checker<'_> {
                         );
                         if declared.insert(id) {
                             let variants = &self.enums[id.0].variants;
+                            #[cfg(test)]
+                            let before = walk.len();
                             walk.extend(variants.iter().flat_map(|v| v.fields.iter().flatten()));
+                            #[cfg(test)]
+                            SHOWN_VISITS.set(SHOWN_VISITS.get() + walk.len() - before);
                         }
                     }
                     _ => {}

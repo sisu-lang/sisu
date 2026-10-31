@@ -1068,7 +1068,9 @@ fn class_chain(n: usize) -> String {
 }
 
 /// The walk reads the structure of the operand and each enum declaration once, not the instances
-/// that the declarations make, which double at each level of the chain.
+/// that the declarations make, which double at each level of the chain. Each level costs 5: 3 types
+/// that the walk reads and 2 payloads that the declaration walk pushes. A second walk of a
+/// declaration pushes its payloads again, so the count grows with the instances.
 #[test]
 fn shown_by_dbg_should_visit_each_enum_declaration_once() {
     let (short, long) = (6, 12);
@@ -1077,7 +1079,7 @@ fn shown_by_dbg_should_visit_each_enum_declaration_once() {
         shown_visits(&enum_chain(long)),
     );
     assert!(
-        many - few <= 4 * (long - short),
+        many - few <= 5 * (long - short),
         "{few} types for {short} enums and {many} types for {long} enums"
     );
     assert!(many > few, "each enum should be read: {few} and {many}");
@@ -1148,4 +1150,53 @@ fn shown_by_dbg_should_label_only_the_fields_that_dbg_shows() {
         [(2, false), (5, true)],
         "a generic class"
     );
+    // The `Display` of `W<i64>` may apply to the instance that the enum holds, so the field gets no
+    // label. A class without a written `Display` keeps its label, and so does a type that its
+    // written `Display` does not match.
+    let on = |display: &str, payload: &str| {
+        format!(
+            "class W<T> {{\n    v: T\n}}\n{display}enum E<T> {{\n    A({payload})\n}}\nclass Hold<T> {{\n    h: T\n}}\n"
+        )
+    };
+    let for_i64 =
+        "extend W<i64>: Display {\n    fn to_string(self) -> string {\n        \"w\"\n    }\n}\n";
+    let bounded = "extend<T: Eq> W<T>: Display {\n    fn to_string(self) -> string {\n        \"w\"\n    }\n}\n";
+    let held = "let e: E<i64> = E.A(W(v: 1))\n    dbg(e)";
+    for (display, payload, shown, label, what) in [
+        (
+            for_i64,
+            "W<T>",
+            held,
+            false,
+            "a written Display for one argument",
+        ),
+        (
+            bounded,
+            "W<T>",
+            held,
+            false,
+            "a written Display with a bound",
+        ),
+        (
+            for_i64,
+            "[W<T>]",
+            "let e: E<i64> = E.A([W(v: 1)])\n    dbg(e)",
+            false,
+            "in an array",
+        ),
+        (for_i64, "W<T>?", held, false, "in an optional"),
+        (bounded, "W<T>", "dbg(W(v: 1))", false, "a bound that holds"),
+        (
+            for_i64,
+            "W<T>",
+            "dbg(W(v: \"s\"))",
+            true,
+            "no match, no parameter",
+        ),
+        ("", "W<T>", held, true, "no written Display"),
+    ] {
+        let src = on(display, payload);
+        let got = row(&src, shown);
+        assert_eq!(got, [(2, label)], "{what}");
+    }
 }
