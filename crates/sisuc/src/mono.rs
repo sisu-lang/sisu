@@ -33,9 +33,6 @@ thread_local! {
     static FAST_PATHS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many `(type, interface)` pairs the record walk has entered on this thread.
     pub(crate) static WALK_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many times `output` has read the enum that an output type holds, to note the use of
-    /// that enum, on this thread.
-    pub(crate) static HELD_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// `program` with each generic function, class and enum replaced by the instantiations it
@@ -445,8 +442,6 @@ impl Mono {
     /// The output enum that the type `ty` holds, through arrays and optionals, for a type that
     /// `output` has made.
     fn held_by(&self, ty: Type) -> Option<EnumId> {
-        #[cfg(test)]
-        HELD_READS.set(HELD_READS.get() + 1);
         self.types.get(&ty).and_then(|&(_, held)| held)
     }
 
@@ -1135,6 +1130,42 @@ mod tests {
     use crate::parser::parse_ok;
     use crate::tir::InterfaceId;
     use crate::types::NAME_LIMIT;
+
+    /// The program of the wrapper chain: `a{k}` is `a{k-1}` wrapped in one more array, so its type
+    /// is `k` arrays deep and the `n` types of the chain are all distinct.
+    fn wrapper_chain(n: usize) -> String {
+        let mut src =
+            String::from("fn wrap<T>(t: T) -> [T] {\n    [t]\n}\nfn main() {\n    let a0 = 1\n");
+        for k in 1..=n {
+            writeln!(src, "    let a{k} = wrap(a{})", k - 1)
+                .expect("writing to a `String` should succeed");
+        }
+        src + "}\n"
+    }
+
+    /// `mono` reads each type of the wrapper chain a bounded number of times, whatever its depth:
+    /// a type `k` arrays deep is met again, and a walk down it on each meeting costs `k`. The
+    /// count is `types::READS`, each read of a kind, so a walk anywhere in `mono` shows in it. It
+    /// starts at `Mono::run`, which the debug check of the output (`assert_concrete`) does not
+    /// enter. The name of an instance is cut at `NAME_LIMIT`, so the reads for each wrapper grow
+    /// with its depth only up to that limit. The sizes are 400, 800 and 1200 wrappers, past it.
+    #[test]
+    fn mono_should_read_each_type_of_a_wrapper_chain_a_bounded_number_of_times() {
+        use crate::types::READS;
+
+        let reads = |n| {
+            let src = wrapper_chain(n);
+            let (program, diagnostics) = check_alone(&parse_ok(&src), &src, &[]);
+            let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+            READS.set(0);
+            Mono::new(program)
+                .run()
+                .unwrap_or_else(|found| panic!("{found:?}"));
+            READS.get()
+        };
+        let (a, b, c) = (reads(400), reads(800), reads(1200));
+        crate::mir::tests::assert_near_linear(a, b, c);
+    }
 
     /// The program `front_end` gives for `src`, which checks without an error.
     fn instantiated(src: &str) -> Program {

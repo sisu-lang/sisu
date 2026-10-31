@@ -542,15 +542,8 @@ struct Checker<'src> {
     /// The answers of `conforms` for a type with no type parameter, which no body changes.
     conformed: FxHashMap<(Type, tir::InterfaceId, TypeArgs), bool>,
     /// The part that makes a class or an enum with no type parameter fail an interface (`None`
-    /// when it holds), as `failing_leaf` found it; and whether no part of that walk was cut short,
-    /// which lets another walk use it.
+    /// when it holds), as `failing_leaf` found it.
     leaves: LeafAnswers,
-    /// How many parts the walks of `failing_leaf` have cut short, for a part that was being read.
-    leaf_cuts: usize,
-    /// The type parameters that the walk of `failing_leaf` found after a cut, for a type that was
-    /// read, with the key of that type. A cut can hide a part that fails on its own, so the walk
-    /// keeps these answers only when it ends with no such part (`settle_leaves`).
-    leaf_provisional: Vec<(LeafKey, Type)>,
     /// The classes and enums whose queries went past `CONFORMS_DEPTH_LIMIT` and were reported.
     too_deep: FxHashSet<Holder>,
     /// The language interfaces, found by name once the prelude's names are collected.
@@ -682,10 +675,10 @@ struct ClosureIndex {
 }
 
 /// The part that makes a class or an enum fail an interface (`None` when it holds), as
-/// `failing_leaf` found it, by the type, the interface and its arguments; and whether no part of
-/// that walk was cut short, which lets another walk use it.
+/// `failing_leaf` found it, by the type, the interface and its arguments. Each answer is final:
+/// any walk may use it.
 type LeafKey = (Type, tir::InterfaceId, TypeArgs);
-type LeafAnswers = FxHashMap<LeafKey, (Option<Type>, bool)>;
+type LeafAnswers = FxHashMap<LeafKey, Option<Type>>;
 
 /// What checking one body needs: a function's, a method's, or a constant's initialiser.
 #[derive(Default)]
@@ -1107,8 +1100,6 @@ impl<'src> Checker<'src> {
             probe_budget: 0,
             conformed: FxHashMap::default(),
             leaves: FxHashMap::default(),
-            leaf_cuts: 0,
-            leaf_provisional: Vec::new(),
             too_deep: FxHashSet::default(),
             lang: tir::LangInterfaces::default(),
             open: conformance::Open::default(),

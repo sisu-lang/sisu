@@ -679,6 +679,67 @@ fn failing_leaf_should_read_each_enum_of_a_cycle_of_type_parameters_once() {
     }
 }
 
+/// A cycle `C0` … `Cn`, where `Ck` has the variants `A(C(k+1))` and `V(i64)` and `Cn` goes back
+/// to `C0`; `n` enums `Ri`, each with the variants `A(C0)` and `N(Node)`; and one function that
+/// compares each `Ri` with itself. With `generic`, each enum has a parameter `T` and `V(T)`, and
+/// the function is generic over `T`. The cycle cannot reach `Node`, and each `Ri` can.
+fn cycle_before_roots(n: usize, generic: bool) -> String {
+    let (decl, arg, hold, bound) = if generic {
+        ("<T>", "<T>", "T", "<T>")
+    } else {
+        ("", "", "i64", "")
+    };
+    let mut src = String::from("class Node {}\n");
+    for k in 0..=n {
+        let next = (k + 1) % (n + 1);
+        writeln!(
+            src,
+            "enum C{k}{decl} {{\n    A(C{next}{arg})\n    V({hold})\n}}"
+        )
+        .unwrap();
+    }
+    for i in 0..n {
+        writeln!(src, "enum R{i}{decl} {{\n    A(C0{arg})\n    N(Node)\n}}").unwrap();
+    }
+    let params: Vec<String> = (0..n).map(|i| format!("r{i}: R{i}{arg}")).collect();
+    let lines: Vec<String> = (0..n)
+        .map(|i| format!("    let _ = r{i} == r{i}\n"))
+        .collect();
+    writeln!(
+        src,
+        "fn f{bound}({}) {{\n{}}}\nfn main() {{}}",
+        params.join(", "),
+        lines.concat()
+    )
+    .unwrap();
+    src
+}
+
+/// A cycle that cannot reach the part that fails is settled when its walk ends, so a later root
+/// that reaches the cycle reads it no more: each enum is read once, however many roots reach the
+/// cycle, as for a cycle of type parameters.
+#[test]
+fn failing_leaf_should_read_a_cycle_once_for_the_roots_that_end_in_a_part() {
+    for generic in [true, false] {
+        let count = |n: usize| {
+            LEAF_STEPS.set(0);
+            let (_, ds) = checked(&cycle_before_roots(n, generic));
+            assert_eq!(
+                ds.iter().filter(|d| d.code() == Code::NoOperator).count(),
+                n,
+                "each comparison should give its own report, generic: {generic}"
+            );
+            LEAF_STEPS.get()
+        };
+        let (one, two, three) = (count(20), count(40), count(60));
+        assert_eq!(
+            one, 42,
+            "one read for each enum, and for `Node`, generic: {generic}"
+        );
+        assert_near_linear(one, two, three);
+    }
+}
+
 /// The search for the failing part decides each type once, so on the error path it costs steps
 /// in proportion to the types that the chain forms, which is what the query costs when the bound
 /// holds.

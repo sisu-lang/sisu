@@ -4171,38 +4171,6 @@ fn mono_counts_should_grow_in_proportion_to_the_types() {
     assert_near_linear(a.1, b.1, c.1);
 }
 
-/// The program of the wrapper chain: `a{k}` is `a{k-1}` wrapped in one more array, so its type is
-/// `k` arrays deep and the `n` types of the chain are all distinct.
-fn wrapper_chain(n: usize) -> String {
-    let mut src =
-        String::from("fn wrap<T>(t: T) -> [T] {\n    [t]\n}\nfn main() {\n    let a0 = 1\n");
-    for k in 1..=n {
-        writeln!(src, "    let a{k} = wrap(a{})", k - 1)
-            .expect("writing to a `String` should succeed");
-    }
-    src + "}\n"
-}
-
-/// `mono` reads the enum that an output type holds once for each type that it makes, not once for
-/// each level of the type each time it meets it: on the wrapper chain a type `k` arrays deep is
-/// met again, and a walk down it on each meeting costs `k`. The sizes are 100, 200 and 300
-/// wrappers, ten times the smallest chain that shows the quadratic cost.
-#[test]
-fn mono_should_read_the_held_enum_of_a_type_in_one_step() {
-    use crate::mono::HELD_READS;
-
-    let reads = |n| {
-        HELD_READS.set(0);
-        let src = wrapper_chain(n);
-        let (program, diagnostics) = check_alone(&parse_ok(&src), &src, &[]);
-        let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
-        crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
-        HELD_READS.get()
-    };
-    let (a, b, c) = (reads(100), reads(200), reads(300));
-    assert_near_linear(a, b, c);
-}
-
 /// The walk of an interpolation is the walk of a `print`: it enters each `(type, interface)` pair
 /// once, and `holds` decides each enum key once, however many parts reach them.
 #[test]
