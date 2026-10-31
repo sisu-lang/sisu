@@ -1,0 +1,14 @@
+error[E0137]: `M` takes 1 type argument, but 2 were given
+ --> E0137-alias-optional-arguments.sisu:5:14
+  |
+5 |     let a = M<i64, i64>.Some(1)
+  |              ^^^^^^^^^^
+
+error[E0137]: `N` takes 2 type arguments, but 1 was given
+ --> E0137-alias-optional-arguments.sisu:6:14
+  |
+6 |     let b = N<i64>.None
+  |              ^^^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0137

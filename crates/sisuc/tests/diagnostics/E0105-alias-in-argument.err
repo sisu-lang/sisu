@@ -1,0 +1,26 @@
+error[E0105]: `Ns` is a type alias of `[i64]`, which has no constructor
+  --> E0105-alias-in-argument.sisu:19:16
+   |
+19 |     let a = id(Ns(1))
+   |                ^^
+
+error[E0054]: this value is already `i64`
+  --> E0105-alias-in-argument.sisu:20:20
+   |
+20 |     let b = id(Num(1))
+   |                    ^
+   |
+help: remove the conversion
+   |
+20 -     let b = id(Num(1))
+20 +     let b = id(1)
+   |
+
+error[E0105]: `EE` is a type alias of `E`, which has no constructor
+  --> E0105-alias-in-argument.sisu:21:26
+   |
+21 |     let c = two(EE.A(1), EE(1))
+   |                          ^^
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0054, E0105

@@ -277,6 +277,14 @@ impl Checker<'_> {
             ExprKind::Unary { operand, .. } => self.gate(operand, user, order),
             ExprKind::Binary { lhs, rhs, .. } => all(self, &mut [&**lhs, &**rhs].into_iter()),
             ExprKind::Compare { operands, .. } => all(self, &mut operands.iter()),
+            // An alias that is `Error` has reported its error already.
+            ExprKind::Call { callee, args, .. } if self.alias_error(callee.name) => {
+                all(self, &mut args.iter().map(|arg| &arg.value));
+                false
+            }
+            ExprKind::Field { base, .. } if matches!(base.kind, ExprKind::Name(name) if self.alias_error(name)) => {
+                false
+            }
             ExprKind::Call { callee, args, .. }
                 if matches!(callee.name.as_str(), "i64" | "u8" | "char" | "f64")
                     || matches!(

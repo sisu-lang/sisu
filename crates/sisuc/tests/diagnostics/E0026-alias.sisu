@@ -1,0 +1,4 @@
+type i64 = u8
+type Pair<string> = [string]
+
+fn main() {}

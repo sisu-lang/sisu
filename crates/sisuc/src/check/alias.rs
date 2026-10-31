@@ -379,6 +379,16 @@ impl Checker<'_> {
         }
     }
 
+    /// Whether `name` is an alias that is `Error`: a broken one, or one that has failed. Its own
+    /// error stands, so a use of it reports nothing more.
+    pub(super) fn alias_error(&self, name: Symbol) -> bool {
+        match self.aliases.names.get(&name) {
+            Some(Declared::Broken) => true,
+            Some(&Declared::Known(id)) => matches!(self.aliases.infos[id].state, State::Done(None)),
+            None => false,
+        }
+    }
+
     /// The built-in type that `name` names: a built-in type's own name, or an alias of one.
     pub(super) fn built_in_of(&self, name: Symbol) -> Option<Type> {
         built_in_type(name.as_str()).or_else(|| {

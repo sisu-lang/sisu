@@ -1,8 +1,13 @@
 type A =
 
+const C = A(1)
+const D = A.pi
+
 fn f(x: A) {}
 
 fn main() {
     let q = A(1)
     let r = A.Num(1)
+    let s = A.max(1, 2)
+    let t: u8 = A(1)
 }

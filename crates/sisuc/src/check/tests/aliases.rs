@@ -87,6 +87,14 @@ fn aliases_should_check_clean_where_they_name_a_type() {
             &reversed_chain(2_000),
         ),
         (
+            "the patterns of an alias of an enum and of an optional type",
+            "type O = i64?\nenum E {\n    Num(i64)\n    Nil\n}\ntype EE = E\nfn f(o: O, e: EE) -> i64 {\n    let a = match o {\n        O.Some(n) => n\n        O.None => 0\n    }\n    let b = match e {\n        EE.Num(n) => n\n        EE.Nil => 1\n    }\n    a + b\n}\nfn main() {\n    print(f(O.Some(1), EE.Nil))\n    print(f(O.None, EE.Num(1)))\n}",
+        ),
+        (
+            "an optional alias with no type argument written, whose use fixes it",
+            "type M<T> = T?\nfn main() {\n    let c: i64? = M.None\n    let d: i64? = M.Some(1)\n    print(c == None)\n    print(d == None)\n}",
+        ),
+        (
             "the paths of Option, through an alias of an optional type",
             "type O = i64?\ntype M<T> = T?\nfn show(x: i64?) { print(x == None) }\nfn main() {\n    let a: O = O.Some(1)\n    let b: O = O.None\n    let c = M<i64>.Some(1)\n    let d: string? = M<string>.None\n    show(a)\n    show(b)\n    show(c)\n    print(d == None)\n}",
         ),
@@ -363,6 +371,11 @@ fn a_bound_in_an_alias_body_should_be_checked_at_each_use() {
             "a bounded class with no parameter, in the body",
             format!("{HEAP}type H0 = Heap<bool>\nfn f(a: H0, b: H0) {{}}\nfn main() {{}}"),
             vec![(Code::NotConform, (4, 16))],
+        ),
+        (
+            "an alias of a bounded enum, used with a type that fails it",
+            "enum Heap2<T: Ord> {\n    One(T)\n    Zero\n}\ntype H<T> = Heap2<T>\nfn f(h: H<bool>) {}\nfn main() {}".to_string(),
+            vec![(Code::NotConform, (6, 9))],
         ),
         (
             "a bounded class with a parameter inside an array",
