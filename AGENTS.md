@@ -48,6 +48,10 @@ Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `
 
 Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
 
+### Issues
+
+To work through the open GitHub issues, use the `solve-issues` skill. It picks and groups the issues, finds each root cause, hands each task to an executor, and keeps the batch ledger in `.scratch/<batch>/progress.md`.
+
 ### Reviews
 
 To have another model review a spec, a plan or a diff, use the `review-sisu` skill. It holds the review brief, the reviewers to launch, and how to rule on their findings.
