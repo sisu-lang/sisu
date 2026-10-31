@@ -33,11 +33,17 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         };
         let open = through.filter(|t| !t.params.is_empty());
+        // An alias `type M<T> = T?` is `Option` over its parameter: an expected optional fixes
+        // the parameter as it fixes the one of `Some`.
+        let plain = open.is_none_or(|t| {
+            matches!(t.ty.kind(), TypeKind::Optional(p)
+                if t.params.len() == 1 && p == Type::intern(TypeKind::Param(t.params[0], 0)))
+        });
         let (arg, found) = match site.expected.map(|ty| (ty, ty.kind())) {
             // An expected `T?` fixes `T`, so a literal in the argument takes that type: the
             // generic call would type an `if` of integer literals by their default first.
             Some((want, TypeKind::Optional(payload)))
-                if site.written.is_empty() && !want.holds_hole() && open.is_none() =>
+                if site.written.is_empty() && !want.holds_hole() && plain =>
             {
                 (mark(self.operand(&args[0].value, Some(payload))), want)
             }

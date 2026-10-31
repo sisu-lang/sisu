@@ -107,6 +107,10 @@ fn aliases_should_check_clean_where_they_name_a_type() {
             "class Box<T> {\n    v: i64\n}\ntype BB<T> = Box<T>\nfn id<T>(x: T) -> T { x }\nfn main() {\n    let a: Box<string> = id(BB(v: 1))\n    print(a.v)\n}",
         ),
         (
+            "Some of an alias that is an optional over its parameter, where an optional of an optional is expected",
+            "type M<T> = T?\nfn main() {\n    let k = true\n    let a: i64?? = M.Some(M.Some(1))\n    let b = if k { M.Some(M.Some(1)) } else { M.Some(M.Some(2)) }\n    print(a == b)\n}",
+        ),
+        (
             "the paths of Option, through an alias of an optional type",
             "type O = i64?\ntype M<T> = T?\nfn show(x: i64?) { print(x == None) }\nfn main() {\n    let a: O = O.Some(1)\n    let b: O = O.None\n    let c = M<i64>.Some(1)\n    let d: string? = M<string>.None\n    show(a)\n    show(b)\n    show(c)\n    print(d == None)\n}",
         ),
