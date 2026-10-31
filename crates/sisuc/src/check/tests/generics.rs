@@ -4527,6 +4527,149 @@ fn nested_generic_calls_should_rank_each_expression_once() {
     }
 }
 
+/// The program of `a_nested_array_literal_should_resolve_its_type_a_linear_number_of_times`: an
+/// array literal `depth` deep, for a parameter type with `Two<T, i64>` at its end.
+fn nested_array_program(depth: usize) -> String {
+    let (open, close) = ("[".repeat(depth), "]".repeat(depth));
+    format!(
+        "enum Two<A, B> {{\n    P(A, B)\n}}\n\
+         fn mk<A>(a: A) -> Two<A, i64> {{ Two.P(a, 1) }}\n\
+         fn f<T>(_x: {open}Two<T, i64>{close}) {{}}\n\
+         fn main() {{\n    f({open}mk(true){close})\n}}"
+    )
+}
+
+/// An array literal `d` deep, for a parameter type `d` arrays deep that names `T` at its end.
+/// Each level takes the context of its element from the level above, and its bound element type
+/// from the level below, so no level walks the type below it. The work grows with the depth, not
+/// with its square (#301). The depths are far below the nesting limit of the parser, and small
+/// enough for the stack of a debug test thread.
+#[test]
+fn a_nested_array_literal_should_resolve_its_type_a_linear_number_of_times() {
+    with_prelude();
+    let walked = |depth: usize| {
+        generic::WALKED.set(0);
+        clean(&nested_array_program(depth));
+        generic::WALKED.get()
+    };
+    assert!(walked(1) > 0, "the counter should count the walks");
+    assert_near_linear(walked(20), walked(40), walked(60));
+}
+
+/// The declarations that the rows of `nested_array_literals_should_keep_their_types` share. Each
+/// `f` takes an array of arrays with a type that names `T` at its end.
+const NESTED_ARRAY_DECLS: &str = "enum Two<A, B> {\n    P(A, B)\n}\n\
+    fn mk<A>(a: A) -> Two<A, i64> { Two.P(a, 1) }\n\
+    fn mk2<A>(a: A) -> Two<A, A> { Two.P(a, a) }\n\
+    fn id<T>(x: T) -> T { x }\n\
+    fn f<T>(_x: [[Two<T, i64>]]) -> i64 { 0 }\n\
+    fn fopt<T>(_x: [[Two<T, i64>?]]) -> i64 { 0 }\n\
+    fn fto<T>(_x: [[T?]]) -> i64 { 0 }\n\
+    fn f2<T>(_x: [[Two<T, T>]]) -> i64 { 0 }\n\
+    fn f3<T>(_x: [[[Two<T, i64>]]]) -> i64 { 0 }\n\
+    fn fs<T>(_x: [[Two<T, i64>]]?) -> i64 { 0 }\n\
+    interface I {\n    type Item\n}\n\
+    class W: I {\n    type Item = i64\n}\n\
+    class V: I {\n    type Item = bool\n}\n\
+    fn mkw() -> Two<i64, W> { Two.P(1, W()) }\n\
+    fn mkv() -> Two<bool, V> { Two.P(true, V()) }\n\
+    fn fa<T: I>(_x: [[Two<T.Item, T>]]) -> i64 { 0 }\n\
+    fn fb<T: I>(_x: [[Two<T.Item, T>?]]) -> i64 { 0 }\n\
+    fn idl<T>(xs: [T]) -> [T] { xs }\n\
+    fn gl<T>(_c: [[Two<T, i64>]], _d: T) -> i64 { 0 }\n\
+    fn gl2<T>(_c: [[Two<T, i64>]], _d: Result<T, string>) -> i64 { 0 }\n\
+    fn mkb<E>() -> Result<bool, E> { Ok(true) }\n";
+
+/// The rows of `nested_array_literals_should_keep_their_types`: a body, and the codes, each with
+/// the text of the last line where it is reported. The output of each row is the same as before
+/// a level took its context and its bound type from the levels next to it (#301).
+const NESTED_ARRAY_ROWS: &[(&str, &[(Code, &str)])] = {
+    use Code::{CannotInfer, Mismatch};
+    &[
+        // The type at the end binds `T`, and each level has the type of the one inside.
+        ("print(f([[mk(true)]]))", &[]),
+        ("print(f3([[[mk(true)]]]))", &[]),
+        // An optional element type, with a `None` beside the call or in a level of its own.
+        ("print(fopt([[mk(true)]]))", &[]),
+        ("print(fopt([[mk(true), None]]))", &[]),
+        ("print(fopt([[None, mk(true)]]))", &[]),
+        ("print(fopt([[None], [mk(true)]]))", &[]),
+        // `T?` at the bottom takes a value that is not optional, and a `None`.
+        ("print(fto([[mk(true)]]))", &[]),
+        ("print(fto([[1, None]]))", &[]),
+        ("print(fto([[None], [1]]))", &[]),
+        ("print(fto([[Some(1), None]]))", &[]),
+        ("print(fto([[1], [Some(2)]]))", &[]),
+        ("print(fto([[None]]))", &[(CannotInfer, "fto(")]),
+        // A level with two elements, and one where an element is `[]`.
+        ("print(f([[mk(true)], [mk(false)]]))", &[]),
+        ("print(f([[mk(true)], []]))", &[]),
+        ("print(f([[], [mk(true)]]))", &[]),
+        ("print(f3([[[mk(true)], []], [[mk(false)]]]))", &[]),
+        ("print(f([[]]))", &[(CannotInfer, "f(")]),
+        ("print(f([[], []]))", &[(CannotInfer, "f(")]),
+        // The second element disagrees, at the bottom or one level up: one mismatch.
+        ("print(f([[mk(true)], [mk(1)]]))", &[(Mismatch, "1)")]),
+        (
+            "print(f([[mk(true), mk(1)], [mk(false)]]))",
+            &[(Mismatch, "1)")],
+        ),
+        ("print(f3([[[mk(true)], [mk(2)]]]))", &[(Mismatch, "2)")]),
+        ("print(fto([[1], [\"s\"]]))", &[(Mismatch, "\"s\"")]),
+        // An element type that names `T` at two places.
+        ("print(f2([[mk2(true)]]))", &[]),
+        ("print(f2([[mk(true)]]))", &[(Mismatch, "mk(true)")]),
+        ("print(f2([[mk2(true)], [mk2(1)]]))", &[(Mismatch, "1)")]),
+        // The same depth under `Some(...)` and under a generic call.
+        ("print(fs(Some([[mk(true)]])))", &[]),
+        ("print(f(id([[mk(true)]])))", &[]),
+        // An associated type in the element type is replaced in the bound type of each level.
+        ("print(fa([[mkw()]]))", &[]),
+        ("print(fa([[mkw(), mkw()], [mkw()]]))", &[]),
+        ("print(fb([[mkw(), None]]))", &[]),
+        ("print(fa([[mkw()], [mkv()]]))", &[(Mismatch, "mkv()")]),
+        // The context of the call holds a hole, which hints `T`. So the outer literal goes to
+        // `inferred_array`, and its element type is `T`, not an array.
+        ("print(gl(idl([[mk(true)]]), true))", &[]),
+        ("print(gl2(idl([[mk(true)], [mk(false)]]), mkb()))", &[]),
+        // An element that is a local variable takes no context, and binds or meets the type.
+        ("let x = [mk(true)]\nprint(f([x]))", &[]),
+        ("let x = [mk(true)]\nprint(f([[mk(false)], x]))", &[]),
+        (
+            "let x = [mk(1)]\nprint(f([[mk(false)], x]))",
+            &[(Mismatch, "x]")],
+        ),
+    ]
+};
+
+/// An array literal in an array literal gets the context of its element from the context of the
+/// literal around it, and its bound element type from the literal inside. Both are the same as
+/// the walks of the element type that they replace (#301).
+#[test]
+fn nested_array_literals_should_keep_their_types() {
+    with_prelude();
+    for &(body, expected) in NESTED_ARRAY_ROWS {
+        let src = format!(
+            "{NESTED_ARRAY_DECLS}fn main() {{\n    {}\n}}",
+            body.replace('\n', "\n    ")
+        );
+        let line = NESTED_ARRAY_DECLS.lines().count() + 1 + body.lines().count();
+        let last = body.lines().last().expect("a row should have a call");
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|&(code, at)| {
+                let col = 4
+                    + last
+                        .find(at)
+                        .unwrap_or_else(|| panic!("`{at}` in `{last}`"))
+                    + 1;
+                (code, (line, col))
+            })
+            .collect();
+        codes_row(body, &src, &expected);
+    }
+}
+
 /// The declarations that the rows of the failed bound tests share. `J` is an interface that no type
 /// conforms to, and `V` conforms to `K<i64>` only. `none` and `two` are calls that only their
 /// context can bind.
