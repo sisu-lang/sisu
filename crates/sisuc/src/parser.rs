@@ -106,16 +106,23 @@ fn rising(ranges: &[Range<usize>]) -> bool {
 }
 
 /// The format spec `text`, written at `at` from its `:`: `#`, or `[<^>][width][.precision]`.
-/// A width is from 1 to 1000 and a precision is from 0 to 30.
-/// A single `#` beside those parts, in any place, is an error of its own form, as are `?` and
-/// `#?` alone.
-/// The spec is read without the `#` first, so a spec that is wrong without it gets that error,
-/// except a limit error: the `#` is the first thing to remove then.
+/// A width is from 1 to 1000. A precision is from 0 to 30.
+/// A single `#` beside those parts, in any place, is an error of its own form.
+/// So are `?` alone and `#?` alone.
+/// The spec is read without the `#` first, so a spec that is wrong without it gets that error.
+/// A limit error is the exception: the `#` is the first thing to remove then.
 fn format_spec(text: &str, at: Span) -> Result<FormatSpec, Diagnostic> {
     if text == "?" {
         return Err(DiagnosticKind::UnsupportedFormatSpec {
             at,
             form: SpecForm::Debug,
+        }
+        .into());
+    }
+    if text == "#?" {
+        return Err(DiagnosticKind::UnsupportedFormatSpec {
+            at,
+            form: SpecForm::PrettyDebug,
         }
         .into());
     }
@@ -129,13 +136,6 @@ fn format_spec(text: &str, at: Span) -> Result<FormatSpec, Diagnostic> {
                 pretty: true,
                 span: at,
             });
-        }
-        if without == "?" {
-            return Err(DiagnosticKind::UnsupportedFormatSpec {
-                at,
-                form: SpecForm::PrettyDebug,
-            }
-            .into());
         }
         return Err(match plain_format_spec(&without, at) {
             Err(error) if error.code() != diagnostic::Code::FormatSpecLimit => error,
@@ -4049,7 +4049,7 @@ mod tests {
         for (text, helped) in [
             ("?", true),
             ("#?", true),
-            ("?#", true),
+            ("?#", false),
             ("??", false),
             (">8?", false),
             ("#?x", false),

@@ -3931,7 +3931,7 @@ impl From<DiagnosticKind> for Diagnostic {
             }
             DiagnosticKind::UnsupportedFormatSpec { at, form: SpecForm::Debug } => {
                 Diagnostic::coded(code, at, "Sisu's format specs have no `?`")
-                    .with_help("delete the `?`: Sisu shows a value with its `Display`")
+                    .with_help("delete the `:?`: Sisu shows a value with its `Display`")
             }
             DiagnosticKind::UnsupportedFormatSpec { at, form: SpecForm::PrettyDebug } => {
                 Diagnostic::coded(code, at, "Sisu's format specs have no `#?`")

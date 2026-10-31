@@ -4,7 +4,7 @@ error[E0109]: Sisu's format specs have no `?`
 3 |     print("{xs:?}")
   |               ^^
   |
-  = help: delete the `?`: Sisu shows a value with its `Display`
+  = help: delete the `:?`: Sisu shows a value with its `Display`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0109
