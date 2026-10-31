@@ -4528,14 +4528,15 @@ fn nested_generic_calls_should_rank_each_expression_once() {
 }
 
 /// The program of `a_nested_array_literal_should_resolve_its_type_a_linear_number_of_times`: an
-/// array literal `depth` deep, for a parameter type with `Two<T, i64>` at its end.
-fn nested_array_program(depth: usize) -> String {
+/// array literal `depth` deep, for a parameter type with `end` at its end. `bottom` is what the
+/// innermost level holds, and `setup` is the line before the call.
+fn nested_array_program(depth: usize, end: &str, bottom: &str, setup: &str) -> String {
     let (open, close) = ("[".repeat(depth), "]".repeat(depth));
     format!(
         "enum Two<A, B> {{\n    P(A, B)\n}}\n\
          fn mk<A>(a: A) -> Two<A, i64> {{ Two.P(a, 1) }}\n\
-         fn f<T>(_x: {open}Two<T, i64>{close}) {{}}\n\
-         fn main() {{\n    f({open}mk(true){close})\n}}"
+         fn f<T>(_x: {open}{end}{close}) {{}}\n\
+         fn main() {{\n    {setup}\n    f({open}{bottom}{close})\n}}"
     )
 }
 
@@ -4543,17 +4544,25 @@ fn nested_array_program(depth: usize) -> String {
 /// Each level takes the context of its element from the level above, and its bound element type
 /// from the level below, so no level walks the type below it. The work grows with the depth, not
 /// with its square (#301). The depths are far below the nesting limit of the parser, and small
-/// enough for the stack of a debug test thread.
+/// enough for the stack of a debug test thread. The literal is refused when an element at the
+/// bottom takes no context, a local variable or a `None`. Each level then still takes its
+/// context from the level above, and does not walk the type below it.
 #[test]
 fn a_nested_array_literal_should_resolve_its_type_a_linear_number_of_times() {
     with_prelude();
-    let walked = |depth: usize| {
-        generic::WALKED.set(0);
-        clean(&nested_array_program(depth));
-        generic::WALKED.get()
-    };
-    assert!(walked(1) > 0, "the counter should count the walks");
-    assert_near_linear(walked(20), walked(40), walked(60));
+    for (end, bottom, setup) in [
+        ("Two<T, i64>", "mk(true)", ""),
+        ("Two<T, i64>", "y", "let y = mk(true)"),
+        ("Two<T, i64>?", "mk(true), None", ""),
+    ] {
+        let walked = |depth: usize| {
+            generic::WALKED.set(0);
+            clean(&nested_array_program(depth, end, bottom, setup));
+            generic::WALKED.get()
+        };
+        assert!(walked(1) > 0, "the counter should count the walks");
+        assert_near_linear(walked(20), walked(40), walked(60));
+    }
 }
 
 /// The declarations that the rows of `nested_array_literals_should_keep_their_types` share. Each
@@ -4638,6 +4647,17 @@ const NESTED_ARRAY_ROWS: &[(&str, &[(Code, &str)])] = {
         (
             "let x = [mk(1)]\nprint(f([[mk(false)], x]))",
             &[(Mismatch, "x]")],
+        ),
+        // A local variable at the bottom refuses the literals above it. Each level
+        // still takes its context from the level above.
+        ("let y = mk(true)\nprint(f3([[[y]]]))", &[]),
+        (
+            "let y = mk(true)\nprint(f3([[[mk(false)], [y]], [[mk(true)]]]))",
+            &[],
+        ),
+        (
+            "let y = mk(true)\nprint(f3([[[mk(false)], [y]], [[mk(1)]]]))",
+            &[(Mismatch, "1)")],
         ),
     ]
 };

@@ -2198,8 +2198,11 @@ impl Checker<'_> {
         context: Option<Type>,
     ) -> Checked {
         if let Some((elements, element)) = self.literal_elements(call, e, pattern) {
+            // The one walk of `pattern` for the whole literal: a refused literal has no context,
+            // and its levels take their parts of this one (see `inferred_array`).
+            let partial = context.or_else(|| self.partial_context(call, e, pattern));
             return self
-                .inferred_array(call, e.span, elements, element, context)
+                .inferred_array(call, e.span, elements, element, partial, context.is_some())
                 .0;
         }
         let checked = self.expr(e, context);
@@ -2254,14 +2257,18 @@ impl Checker<'_> {
     /// does. So a later `None` or integer literal meets the parameter that an earlier element
     /// bound, and so wraps. A `None` or `[]` with nothing bound is reported as `joined` reports it:
     /// the first alone, unless an element failed already. Each element gets its own context, so no
-    /// hole reaches the type of the array. `context` is the context of the literal when
-    /// `takes_context` has accepted it: `partial` of `[element]`, which the caller made with the
-    /// bindings that the call has now. Each element then takes its context with no new walk.
-    /// While no element has bound a parameter, an element that is an array literal takes the
-    /// element type of `context`, with no walk of `element`. Else each element asks
-    /// `call_context`: an element that takes no context, such as a local variable, is checked on
-    /// its own, and the others keep theirs. An element of type `unit` or `never` has no value,
-    /// which is reported at once, and binds nothing.
+    /// hole reaches the type of the array. `partial` is `partial` of `[element]`, which the
+    /// caller made with the bindings that the call has now, if it says more than a hole.
+    /// `accepted` is whether `takes_context` has accepted the literal with it. While no element
+    /// has bound a parameter, an element that is an array literal takes the element type of
+    /// `partial`, with no walk of `element`, and asks `takes_context` for it: the answer is
+    /// kept, so a literal that the walk from above reached costs nothing. This holds for a
+    /// refused literal too: an element at the bottom that takes no context, such as a local
+    /// variable or `None`, refuses every level above it, and no level walks the type below it.
+    /// Else each element makes its context again, and if the literal is not accepted, asks
+    /// `takes_context`: an element that takes no context is checked on its own, and the others
+    /// keep theirs. An element of type `unit` or `never` has no value, which is reported at
+    /// once, and binds nothing.
     ///
     /// Gives the checked literal, and the type that `known_in` gives for `element` after the
     /// elements, if the elements bind all it names. An enclosing literal takes its bound element
@@ -2272,9 +2279,9 @@ impl Checker<'_> {
         span: Span,
         elements: &[ast::Expr],
         element: Type,
-        context: Option<Type>,
+        partial: Option<Type>,
+        accepted: bool,
     ) -> (Checked, Option<Type>) {
-        let accepted = context.is_some();
         let entry = call.bindings.kept;
         let mut slots: Vec<Option<Checked>> = elements.iter().map(|_| None).collect();
         let mut quiet = false;
@@ -2292,17 +2299,19 @@ impl Checker<'_> {
                     mark(self.operand(e, Some(want)))
                 } else if !bare_hole(e) {
                     let kept = call.bindings.kept;
-                    let element_context = match (&e.kind, context.map(Type::kind)) {
-                        // `context` is `partial` of `[element]`, so it holds the `partial` of
+                    let part = match (&e.kind, partial.map(Type::kind)) {
+                        // `partial` is that of `[element]`, so it holds the `partial` of
                         // `element`, which an array literal takes, while nothing is bound.
                         (ast::ExprKind::ArrayLit(_), Some(TypeKind::Array(part)))
                             if kept == entry && matches!(element.kind(), TypeKind::Array(_)) =>
                         {
                             (part != *HOLE).then_some(part)
                         }
-                        _ if accepted => self.partial_context(call, e, element),
-                        _ => self.call_context(call, e, element),
+                        _ => self.partial_context(call, e, element),
                     };
+                    // `call_context` is `part` that `takes_context` accepts.
+                    let taken = part.is_some_and(|part| accepted || self.takes_context(e, part));
+                    let element_context = part.filter(|_| taken);
                     let (checked, nested) = match self.literal_elements(call, e, element) {
                         Some((inner, inner_element)) => {
                             let (checked, bound) = self.inferred_array(
@@ -2310,7 +2319,8 @@ impl Checker<'_> {
                                 e.span,
                                 inner,
                                 inner_element,
-                                element_context,
+                                part,
+                                taken,
                             );
                             (checked, Some(bound))
                         }
