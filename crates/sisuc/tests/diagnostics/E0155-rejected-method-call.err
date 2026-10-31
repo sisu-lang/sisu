@@ -88,5 +88,17 @@ error[E0033]: cannot find binding `missing`
 82 |     print(5.twice(missing))
    |                   ^^^^^^^
 
-sisu: 14 errors
-sisu: for more on a code, run `sisu explain <code>`: E0033, E0062, E0155
+error[E0155]: `extend` takes a class or enum, and `T` is a type parameter
+  --> E0155-rejected-method-call.sisu:91:11
+   |
+91 | extend<T> T { fn show(self, n: i64) -> bool { true } }
+   |           ^
+
+error[E0053]: `Show.show` takes 0 arguments, found 1
+  --> E0155-rejected-method-call.sisu:92:33
+   |
+92 | fn bound<U: Show>(x: U) { print(x.show(1)) }
+   |                                 ^^^^^^^^^
+
+sisu: 16 errors
+sisu: for more on a code, run `sisu explain <code>`: E0033, E0053, E0062, E0155

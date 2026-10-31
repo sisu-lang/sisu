@@ -85,3 +85,8 @@ fn main() {
     print([1].head<i64>())
     print(["a"].sum())
 }
+
+// A call of a real bound method keeps its own error, though a rejected block has the name.
+interface Show { fn show(self) -> string }
+extend<T> T { fn show(self, n: i64) -> bool { true } }
+fn bound<U: Show>(x: U) { print(x.show(1)) }

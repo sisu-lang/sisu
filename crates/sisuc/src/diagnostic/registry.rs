@@ -1134,11 +1134,13 @@ pub(crate) enum DiagnosticKind {
         uses: Vec<(Span, UsedBy, String)>,
     },
     /// The field or variant `name` (its `kind`), whose name in its declaration is at `at`, which
-    /// no live code reads or builds; `uses` are as `UnusedItem`'s.
+    /// no live code reads or builds; `uses` are as `UnusedItem`'s. `shown` is the `dbg` call that
+    /// shows a field, which is not a read.
     UnusedMember {
         kind: Definition,
         name: String,
         at: Span,
+        shown: Option<Span>,
         uses: Vec<(Span, UsedBy, String)>,
     },
     /// The local `name`, or the parameter when `param`, declared at `at`, which nothing reads;
@@ -1187,6 +1189,9 @@ pub(crate) enum DiagnosticKind {
         /// The associated type, as written, whose choices the cycle passes: the check counts it as
         /// every choice that it cannot show to be impossible.
         choice: Option<String>,
+        /// The type, as written, whose argument grows in the call through `reach`, and the type
+        /// of the operand that holds it when that is another type.
+        grows: Option<(String, Option<String>)>,
     },
     /// The check of `interface` for the type `root`, which stopped after `limit` nested types:
     /// the class or enum `holder`, named at `at`, is the one that the check was too deep for.
@@ -1217,6 +1222,8 @@ pub(crate) enum Hop {
 pub(crate) enum Spelled {
     /// A function, a method or a type, or a call of a method of an interface, as written.
     Instance(String),
+    /// A call of a function or a method of the prelude, by its own name.
+    Prelude(String),
     /// An operator or a built-in function that calls through a language interface: `==`, `<`,
     /// `print` or `dbg`.
     Operator(String),
@@ -1248,7 +1255,7 @@ impl Spelled {
     /// What the program spells at the place, as the subject of a sentence.
     fn subject(&self) -> String {
         match self {
-            Spelled::Instance(name) => format!("`{name}`"),
+            Spelled::Instance(name) | Spelled::Prelude(name) => format!("`{name}`"),
             Spelled::Operator(op) => format!("`{op}`"),
             Spelled::Interpolation => "the interpolation".to_string(),
             Spelled::Generated {
@@ -1267,6 +1274,9 @@ impl Spelled {
             Spelled::Interpolation => Some(format!(
                 "an interpolation is a call through `{interface}`, and "
             )),
+            Spelled::Prelude(name) => {
+                Some(format!("`{name}` is a call through `{interface}`, and "))
+            }
             Spelled::Instance(_) | Spelled::Generated { .. } => None,
         }
     }
@@ -1570,6 +1580,40 @@ impl Definition {
             | Definition::Interface => "used",
         }
     }
+}
+
+/// The W0012 or W0013 of the item or member `name`, whose name is at `at`. `shown` is the `dbg`
+/// call that shows it.
+fn unused_name(
+    code: Code,
+    kind: Definition,
+    name: &str,
+    at: Span,
+    shown: Option<Span>,
+    uses: Vec<(Span, UsedBy, String)>,
+) -> Diagnostic {
+    let verb = kind.unused_verb();
+    // A variant cannot take a `_` name (E0113).
+    let help = if kind == Definition::Variant {
+        "delete it".to_string()
+    } else {
+        format!("delete it, or name it `_{name}` if it is kept on purpose")
+    };
+    let d = Diagnostic::coded(
+        code,
+        at,
+        format!("{} `{name}` is never {verb}", kind.word()),
+    )
+    .with_label(format!("never {verb}"))
+    .with_help(help);
+    let d = match shown {
+        Some(call) => d.with_secondary(
+            call,
+            format!("`dbg` shows `{name}` here, but `dbg` is not a read"),
+        ),
+        None => d,
+    };
+    cite_uses(d, uses)
 }
 
 /// `d` with a secondary label for each of `uses`, a use in dead code.
@@ -4520,29 +4564,14 @@ impl From<DiagnosticKind> for Diagnostic {
                 name,
                 at,
                 uses,
-            }
-            | DiagnosticKind::UnusedMember {
+            } => unused_name(code, kind, &name, at, None, uses),
+            DiagnosticKind::UnusedMember {
                 kind,
                 name,
                 at,
+                shown,
                 uses,
-            } => {
-                let verb = kind.unused_verb();
-                // A variant cannot take a `_` name (E0113).
-                let help = if kind == Definition::Variant {
-                    "delete it".to_string()
-                } else {
-                    format!("delete it, or name it `_{name}` if it is kept on purpose")
-                };
-                let d = Diagnostic::coded(
-                    code,
-                    at,
-                    format!("{} `{name}` is never {verb}", kind.word()),
-                )
-                .with_label(format!("never {verb}"))
-                .with_help(help);
-                cite_uses(d, uses)
-            }
+            } => unused_name(code, kind, &name, at, shown, uses),
             DiagnosticKind::UnusedBlock { name, at, uses } => {
                 let d = Diagnostic::coded(
                     code,
@@ -4645,6 +4674,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 through,
                 reach,
                 choice,
+                grows,
             } => {
                 let d = through.into_iter().fold(
                     Diagnostic::coded(
@@ -4684,11 +4714,19 @@ impl From<DiagnosticKind> for Diagnostic {
                         "the check is cautious: `{ty}` counts as each choice that a conformance makes, unless the check can show that it is impossible"
                     )
                 });
+                let grows = grows.map(|(instance, held_by)| match held_by {
+                    Some(operand) => format!("`{operand}` holds `{instance}`, whose argument grows"),
+                    None => format!("The argument of `{instance}` grows"),
+                });
                 let help: Vec<String> = reach.into_iter().chain(choice).collect();
                 if help.is_empty() {
                     d
                 } else {
-                    d.with_help(help.join("; "))
+                    let help = help.join("; ");
+                    d.with_help(match grows {
+                        Some(grows) => format!("{help}. {grows}"),
+                        None => help,
+                    })
                 }
             }
             DiagnosticKind::ConformanceTooDeep {

@@ -119,6 +119,7 @@ use std::collections::VecDeque;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use super::extend::holder_of;
 use super::{Checker, Lowered};
 use crate::ast::angled;
 use crate::conformance::always_written;
@@ -163,8 +164,20 @@ const MATCHING_CHOICES: usize = 64;
 /// The interface that `instance` calls through, if it calls through one.
 fn calls_through(instance: Instance) -> Option<tir::InterfaceId> {
     match instance {
-        Instance::Required(interface, ..) | Instance::Operator(interface, _) => Some(interface),
+        Instance::Required(interface, ..) | Instance::Operator(interface, ..) => Some(interface),
         Instance::Call(..) | Instance::Type(..) => None,
+    }
+}
+
+/// The operand of the call that `instance` is, when the program writes it as an operator, an
+/// interpolation or a built-in function. A generated node has none: its operand is a payload that
+/// the enum's declaration writes.
+fn operand_of(instance: Instance) -> Option<Type> {
+    match instance {
+        Instance::Operator(_, written, operand) if !matches!(written, Written::Generated(_)) => {
+            Some(operand)
+        }
+        _ => None,
     }
 }
 
@@ -181,8 +194,9 @@ enum Instance {
     /// arguments.
     Required(tir::InterfaceId, usize, TypeArgs),
     /// A call through a language interface that the program spells as an operator, an
-    /// interpolation or a generated `==` or `to_string`, and not as a call of the method.
-    Operator(tir::InterfaceId, Written),
+    /// interpolation or a generated `==` or `to_string`, and not as a call of the method, on an
+    /// operand of the type given.
+    Operator(tir::InterfaceId, Written, Type),
 }
 
 /// A language interface and how the program spells a call through it.
@@ -505,7 +519,7 @@ impl Graph {
         }
         let instance = written.map_or(
             Instance::Required(interface, 0, TypeArgs::NONE),
-            |written| Instance::Operator(interface, written),
+            |written| Instance::Operator(interface, written, ty),
         );
         // A generated node keeps the type as its label: only the program's own spelling replaces
         // it.
@@ -1012,6 +1026,10 @@ impl Checker<'_> {
     /// Reports the cycle of positive weight `cycle`, whose edges follow each other. It is labeled
     /// at `label`, an edge of it, or else at its first step of positive weight in source order. A
     /// cycle is reported once for each site.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one walk along the cycle that builds each part of the report, so it reads in one place"
+    )]
     fn report_cycle(
         &mut self,
         functions: &[Option<tir::Function>],
@@ -1073,14 +1091,22 @@ impl Checker<'_> {
         let mut shown = FxHashSet::from_iter([edge.site]);
         // The last call in the user's file, which a step inside the prelude came through.
         let mut entered = label_spelled.clone();
+        // The operand of the call through `reach`, until the edge out of its hub says which method
+        // the cycle takes.
+        let mut operand = None;
+        let mut grows = None;
         if let Some(interface) = calls_through(label_instance) {
             reach = Some((interface, label_spelled.clone()));
+            operand = operand_of(label_instance);
         }
         // A call through a hub, until the edge out of the hub says which method it may run.
         let mut calling: Option<(Span, tir::InterfaceId, Option<Spelled>)> = None;
         for &i in &cycle[1..] {
             let e = &edges[i];
             if e.out {
+                if let Some(operand) = operand.take() {
+                    grows = self.growth(functions, operand, e.holder);
+                }
                 if let Some((mark, interface, by)) = calling.take() {
                     through.push((
                         mark,
@@ -1113,6 +1139,9 @@ impl Checker<'_> {
             entered = spelled.clone();
             if let Some(interface) = calls_through(instance) {
                 let by = matches!(instance, Instance::Operator(..)).then(|| spelled.clone());
+                if reach.is_none() {
+                    operand = operand_of(instance);
+                }
                 reach.get_or_insert((interface, spelled));
                 calling = Some((e.mark, interface, by));
             } else {
@@ -1131,7 +1160,42 @@ impl Checker<'_> {
             reach: reach
                 .map(|(interface, by)| (self.interfaces[interface.0].name.name.to_string(), by)),
             choice,
+            grows,
         });
+    }
+
+    /// For a call through a language interface on an operand of type `operand`, whose cycle takes
+    /// the method `method`: the first type in `operand`, `operand` itself included, of the class
+    /// or enum that declares the method, with `operand` when it is another type. Its argument
+    /// grows. `None` when `operand` holds no such type.
+    fn growth(
+        &self,
+        functions: &[Option<tir::Function>],
+        operand: Type,
+        method: usize,
+    ) -> Option<(String, Option<String>)> {
+        let owner = functions[method].as_ref()?.owner?;
+        let head = holder_of(owner)?;
+        let mut seen = FxHashSet::default();
+        let mut walk = vec![operand];
+        while let Some(ty) = walk.pop() {
+            if !seen.insert(ty) {
+                continue;
+            }
+            if holder_of(ty) == Some(head) {
+                let held_by = (ty != operand).then(|| self.type_name(operand));
+                return Some((self.type_name(ty), held_by));
+            }
+            match ty.kind() {
+                // Reversed, so that the first argument is walked first.
+                TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+                    walk.extend(args.get().iter().rev());
+                }
+                TypeKind::Array(inner) | TypeKind::Optional(inner) => walk.push(inner),
+                _ => {}
+            }
+        }
+        None
     }
 
     /// The first use of an associated type on the cycle, as written: its edge runs into the
@@ -1154,11 +1218,22 @@ impl Checker<'_> {
         instance: Instance,
     ) -> Spelled {
         let spelling = match instance {
-            Instance::Operator(interface, written) => Some((interface, written)),
+            Instance::Operator(interface, written, _) => Some((interface, written)),
             Instance::Call(.., spelling) | Instance::Type(_, spelling) => spelling,
             Instance::Required(..) => None,
         };
         let Some((interface, written)) = spelling else {
+            // The program writes a call of a function of the prelude by its own name, as in
+            // `xs.contains(x)`: the type arguments are the compiler's.
+            if let Instance::Call(func, ..) = instance
+                && self.signatures[func.0].span.in_prelude()
+            {
+                let function = functions[func.0].as_ref();
+                let name = function.and_then(|f| f.method.clone());
+                return Spelled::Prelude(
+                    name.unwrap_or_else(|| self.signatures[func.0].name.clone()),
+                );
+            }
             return Spelled::Instance(self.instance_name(functions, instance));
         };
         match written {

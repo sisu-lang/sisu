@@ -1,0 +1,13 @@
+class Wrap<T> {
+    v: T
+}
+class W<T> {
+    x: T
+    fn to_string(self) -> string {
+        print(Wrap(v: W(x: [self.x])))
+        return "w"
+    }
+}
+fn main() {
+    print(W(x: 1))
+}

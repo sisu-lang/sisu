@@ -5,7 +5,7 @@
 //! uses, each field that it does not read, each variant that it does not build, and the pending
 //! findings of the live functions.
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::extend::holder_of;
 use super::{Checker, Declared, Holder};
@@ -13,6 +13,7 @@ use crate::diagnostic::{Code, Definition, Diagnostic, DiagnosticKind, UsedBy};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir;
+use crate::tir::{Type, TypeKind};
 
 /// Whether `d` is a warning that `Checker::unused` gives and `Checker::unjudged` does not: one
 /// that judges whether code is live. A program with an error gets none, because a use in code
@@ -262,7 +263,7 @@ impl Checker<'_> {
                 .collect()
         };
         let mut found = Vec::new();
-        let mut report = |kind: Definition, at: Span, item: usize| {
+        let mut report = |kind: Definition, at: Span, item: usize, shown: Option<Span>| {
             // The prelude is out of the user's sight, so nothing in it is unused.
             if at.in_prelude() {
                 return;
@@ -278,6 +279,7 @@ impl Checker<'_> {
                     kind,
                     name,
                     at,
+                    shown,
                     uses,
                 },
                 _ => DiagnosticKind::UnusedItem {
@@ -295,23 +297,25 @@ impl Checker<'_> {
             let dead_block = (self.signatures[f].extension)
                 .is_some_and(|b| !reached.live[self.owner_index(Owner::Block(b))]);
             if held && !dead_block {
-                report(function_kind(f), self.signatures[f].span, f);
+                report(function_kind(f), self.signatures[f].span, f, None);
             }
         }
+        let mut shown = None;
         for (c, class) in self.classes.iter().enumerate() {
             if reached.built[c] {
                 for (f, field) in class.fields.iter().enumerate() {
                     if !reached.read[c][f] {
-                        report(Definition::Field, field.name.span, slots.fields[c] + f);
+                        let dbg = shown.get_or_insert_with(|| self.shown_by_dbg())[c];
+                        report(Definition::Field, field.name.span, slots.fields[c] + f, dbg);
                     }
                 }
             } else {
-                report(Definition::Class, class.name.span, slots.classes + c);
+                report(Definition::Class, class.name.span, slots.classes + c, None);
             }
         }
         for (e, info) in self.enums.iter().enumerate() {
             if !reached.enum_built[e] {
-                report(Definition::Enum, info.name.span, slots.enums + e);
+                report(Definition::Enum, info.name.span, slots.enums + e, None);
                 continue;
             }
             for (v, variant) in info.variants.iter().enumerate() {
@@ -320,13 +324,19 @@ impl Checker<'_> {
                         Definition::Variant,
                         variant.name.span,
                         slots.variants[e] + v,
+                        None,
                     );
                 }
             }
         }
         for (i, info) in self.interfaces.iter().enumerate() {
             if !reached.interfaces[i] {
-                report(Definition::Interface, info.name.span, slots.interfaces + i);
+                report(
+                    Definition::Interface,
+                    info.name.span,
+                    slots.interfaces + i,
+                    None,
+                );
             }
         }
         for (c, span) in constants.iter().enumerate() {
@@ -334,7 +344,7 @@ impl Checker<'_> {
             if let Some(span) = *span
                 && !reached.live[owner]
             {
-                report(Definition::Constant, span, owner);
+                report(Definition::Constant, span, owner, None);
             }
         }
         for (b, block) in self.extensions.iter().enumerate() {
@@ -351,6 +361,43 @@ impl Checker<'_> {
             p.judged(live)
         }));
         found
+    }
+
+    /// By class, the first `dbg` that shows its fields: the `dbg` of a value whose type is the
+    /// class, or holds it in a field, an array, an optional or an enum payload. Each type is
+    /// walked once, so the cost is linear in the types that the operands of `dbg` reach.
+    ///
+    /// shortcut: a `dbg` of a type parameter shows the instances that `mono` makes, which the
+    /// checker does not see, so such a field gets no `dbg` label; upgrade when a program needs one.
+    fn shown_by_dbg(&self) -> Vec<Option<Span>> {
+        let mut roots: Vec<(Span, Type)> = self.dbg_shown.iter().map(|(&t, &s)| (s, t)).collect();
+        roots.sort_unstable_by_key(|(span, _)| span.start());
+        let mut shown = vec![None; self.classes.len()];
+        let mut seen = FxHashSet::default();
+        for (call, root) in roots {
+            let mut walk = vec![root];
+            while let Some(ty) = walk.pop() {
+                if !seen.insert(ty) {
+                    continue;
+                }
+                match ty.kind() {
+                    TypeKind::Class(class, _) => {
+                        shown[class.0].get_or_insert(call);
+                        for field in 0..self.classes[class.0].fields.len() {
+                            walk.extend(self.field_type(ty, field));
+                        }
+                    }
+                    TypeKind::Enum(id, args) => {
+                        let variants = &self.enums[id.0].variants;
+                        let payloads = variants.iter().flat_map(|v| v.fields.iter().flatten());
+                        walk.extend(payloads.filter_map(|&p| self.subst(p, args.get())));
+                    }
+                    TypeKind::Array(inner) | TypeKind::Optional(inner) => walk.push(inner),
+                    _ => {}
+                }
+            }
+        }
+        shown
     }
 
     /// The W0002 of each pending finding that holds one, for a program that the pass does not

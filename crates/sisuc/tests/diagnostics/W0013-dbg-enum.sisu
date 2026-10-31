@@ -1,0 +1,10 @@
+class P {
+    x: i64
+}
+enum E {
+    A(P?)
+    B
+}
+fn main() {
+    dbg(E.A(P(x: 1)))
+}

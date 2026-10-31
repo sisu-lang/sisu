@@ -590,6 +590,9 @@ struct Checker<'src> {
     pending: Vec<Pending>,
     /// Whether a type argument was recorded: see `tir::Program::instantiates`.
     instantiates: bool,
+    /// The type of the operand of each `dbg`, with the span of the first `dbg` of that type. W0013
+    /// reads it: `dbg` shows a field, and that is not a read.
+    dbg_shown: FxHashMap<Type, Span>,
     /// How many classes, enums and functions the user's items declare.
     prelude: tir::ItemCounts,
     /// By the span of an expression, how the program wrote it when the typed tree does not say
@@ -1119,6 +1122,7 @@ impl<'src> Checker<'src> {
             uses: Vec::new(),
             pending: Vec::new(),
             instantiates: false,
+            dbg_shown: FxHashMap::default(),
             prelude: tir::ItemCounts::default(),
         }
     }
