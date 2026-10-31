@@ -1596,6 +1596,9 @@ fn type_parameters_should_be_found_in_one_step() {
 /// call's arguments, not with their square: one step per receiver and per block.
 #[test]
 fn work_kept_ahead_should_be_found_in_one_step() {
+    // The declarations hold one `xs.len() == 0`: the operator ranks its sides, which finds the
+    // receiver of `len` once.
+    const DECLARED: usize = 1;
     let inspected = |n: usize, arg: &str, ty: &str| {
         let params: Vec<_> = (0..n).map(|i| format!("x{i}: T")).collect();
         let src = with_generics(&format!(
@@ -1608,8 +1611,8 @@ fn work_kept_ahead_should_be_found_in_one_step() {
         generic::INSPECTED.get()
     };
     for (arg, ty) in [("b.make()", "[i64]"), ("{ let n = true; n }", "bool")] {
-        assert_eq!(inspected(64, arg, ty), 64, "{arg}");
-        assert_eq!(inspected(128, arg, ty), 128, "{arg}");
+        assert_eq!(inspected(64, arg, ty), 64 + DECLARED, "{arg}");
+        assert_eq!(inspected(128, arg, ty), 128 + DECLARED, "{arg}");
     }
 }
 
@@ -1777,21 +1780,21 @@ fn a_call_whose_type_its_arguments_do_not_give_should_rank_concrete() {
         fn len_of<T>(xs: [T]) -> i64 { 0 }\n\
         class Bx<T> {\n    v: T\n\
         fn get<U>(self, u: U) -> T { self.v }\n\
-        fn put<U>(self, x: T, u: U) -> T { x }\n}\n\
-        interface G<A> {\n    fn rget<U>(self, u: U) -> A\n}\n\
+        fn put<U>(self, x: T, u: U) -> T { x }\n}\n";
+    // The requirement call is in `f`, which the other rows do not need.
+    let bound = "interface G<A> {\n    fn rget<U>(self, u: U) -> A\n}\n\
         class C {}\n\
         extend C: G<u8?> {\n    fn rget<U>(self, u: U) -> u8? { Some(4) }\n}\n\
         fn f<X: G<u8?>>(x: X) -> u8 {\n    let r: u8? = id(x.rget(1))\n    r ?? 0\n}\n";
-    for row in [
-        "let r: u8? = id(bx.get(1))",
-        "let r: u8? = id(bx.get(Some(1)))",
-        "let r: u8? = id(bx.put(1, 5))",
-        "let r: u8 = f(C())",
-        "let r: u8? = pick(bx.get(1), 2)",
-        "let r: i64 = pick(len_of([1]), 2)",
+    for (row, more) in [
+        ("let r: u8? = id(bx.get(1))", ""),
+        ("let r: u8? = id(bx.get(Some(1)))", ""),
+        ("let r: u8? = id(bx.put(1, 5))", ""),
+        ("let r: u8 = f(C())", bound),
+        ("let r: u8? = pick(bx.get(1), 2)", ""),
     ] {
         let src = format!(
-            "{decls}fn main() {{\n    let v: u8? = Some(3)\n    let bx = Bx(v: v)\n    {row}\n}}"
+            "{decls}{more}fn main() {{\n    let v: u8? = Some(3)\n    let bx = Bx(v: v)\n    {row}\n}}"
         );
         clean_row(row, &src);
     }
@@ -1801,6 +1804,37 @@ fn a_call_whose_type_its_arguments_do_not_give_should_rank_concrete() {
         format!("{decls}fn main() {{\n    let x: u8 = 3\n    let r = pick(len_of([1]), x)\n}}");
     let line = decls.lines().count() + 3;
     codes(&src, &[(Code::Mismatch, (line, 31))]);
+}
+
+/// A call of a method, or of a requirement of a bound, that returns `U?` makes an optional by
+/// itself, as `Some(...)` and a function that returns `T?` do. The call that holds it meets an
+/// optional context whole (`u8?`). An argument of the call that holds it can be at a later place
+/// than the first.
+#[test]
+fn a_method_that_returns_an_optional_should_make_the_call_that_holds_it_optional() {
+    with_prelude();
+    let decls = "fn id<T>(x: T) -> T { x }\n\
+        fn pick<T>(a: T, b: T) -> T { a }\n\
+        fn pick3<T>(a: T, b: T, c: T) -> T { a }\n\
+        class Bx<T> {\n    v: T\n    fn mk<U>(self, u: U) -> U? { Some(u) }\n}\n\
+        interface G {\n    fn ropt<U>(self, u: U) -> U?\n}\n\
+        class C {}\n\
+        extend C: G {\n    fn ropt<U>(self, u: U) -> U? { Some(u) }\n}\n\
+        fn f<X: G>(x: X) -> u8? { id(x.ropt(1)) }\n";
+    for row in [
+        // A method of the receiver's class.
+        "let r: u8? = id(bx.mk(1))",
+        // A requirement of a bound, in the body of `f` above.
+        "let r: u8? = f(C())",
+        // The optional argument is at the second and the third place.
+        "let r: u8? = pick(1, Some(2))",
+        "let r: u8? = pick3(1, 2, Some(3))",
+    ] {
+        let src = format!(
+            "{decls}fn main() {{\n    let bx = Bx(v: 1)\n    {row}\n    print(\"{{r ?? 0}}\")\n}}"
+        );
+        clean_row(row, &src);
+    }
 }
 
 /// A name that a branch binds hides an outer local of the same name while ranking, as it does
@@ -2799,8 +2833,10 @@ fn generic_array_literals_should_report_each_mistake_once() {
             "g1([1, if x > 0 { return 0 } else { return 1 }])",
             vec![(Code::NoValue, (2, 12))],
         ),
-        // Nothing in the outer literal binds `T`, so the first `None` is the one reported.
-        ("g4([[None], [1]])", vec![(Code::CannotInfer, (2, 10))]),
+        // The `[1]` after it binds `T`, so the `[None]` before it is no mistake (#300).
+        ("g4([[None], [1]])", vec![]),
+        // Nothing binds `T`: the call reports it, once.
+        ("g4([[None], [None]])", vec![(Code::CannotInfer, (2, 5))]),
     ] {
         codes(&with_optional_elements(body), &expected);
     }
@@ -4079,7 +4115,8 @@ fn nested_some_context_should_cost_one_step_for_each_level() {
 }
 
 /// A generic call nested `d` deep, as an argument of a generic call: the outer call ranks its
-/// arguments, and each inner call ranks its own again when it is checked. `body.ranked` answers
+/// arguments, and each inner call ranks its own again when it is checked. A join or an operator
+/// nested so ranks its siblings, and each inner one ranks its own again. `body.ranked` answers
 /// the second time, so `rank_value` walks each expression once and the work grows with the
 /// depth, not with its square. The depths are far below the nesting limit of the parser (256).
 #[test]
@@ -4089,7 +4126,7 @@ fn nested_generic_calls_should_rank_each_expression_once() {
     let steps = |(before, open, inner, close): (&str, &str, &str, &str), depth: usize| {
         let src = format!(
             "fn k<T>(a: T, b: T) -> T {{ b }}\nfn id<T>(x: T) -> T {{ x }}\n\
-             fn main() {{\n    {before}{}{inner}{}\n}}",
+             fn main() {{\n    let c = true\n    let x: u8 = 3\n    {before}{}{inner}{}\n}}",
             open.repeat(depth),
             close.repeat(depth),
         );
@@ -4102,9 +4139,20 @@ fn nested_generic_calls_should_rank_each_expression_once() {
         ("let r: u8? = ", "id(", "1", ")"),
         ("let r: u8? = ", "k(Some(1), ", "None", ")"),
     ] {
-        eprintln!("{row:?}");
         assert!(steps(row, 1) > 0, "the counter should count the walk");
         assert_near_linear(steps(row, 20), steps(row, 40), steps(row, 60));
+    }
+    // Joins and operators rank their siblings too: an array in an array, an `if` in an `if`, an
+    // operator in an operator. Each level recurses deeper than a call does, and 60 levels
+    // overflow the stack of a debug test thread, so the depths are smaller.
+    for row in [
+        ("let r = ", "[1, ", "1", "].len()"),
+        ("let r = ", "if c { x } else { ", "1", " }"),
+        ("let r = ", "x + (", "1", ")"),
+        ("let r = ", "{ 1 } + (", "x", ")"),
+    ] {
+        assert!(steps(row, 1) > 0, "the counter should count the walk");
+        assert_near_linear(steps(row, 10), steps(row, 20), steps(row, 30));
     }
 }
 
@@ -4779,4 +4827,39 @@ const HELD_BOUND_ROWS: &[PartialRow<'static>] = {
 #[test]
 fn a_bound_that_holds_should_leave_the_arguments_after_it_checked() {
     check_rows_after(REJECT_DECLS, HELD_BOUND_ROWS);
+}
+
+/// An array literal whose element makes an optional is no optional itself: the call that holds it
+/// meets an optional context by its payload, and wraps the value, so `T` is the array.
+#[test]
+fn an_array_literal_should_not_make_the_call_that_holds_it_optional() {
+    infers(&[
+        (
+            "fn g() { let r: [i64?]? = id([Some(1)]) }",
+            "id",
+            &["[i64?]", "[i64?]"],
+        ),
+        (
+            "fn g(c: bool) { let r: [i64?]? = id([if c { 1 } else { None }]) }",
+            "id",
+            &["[i64?]", "[i64?]"],
+        ),
+    ]);
+}
+
+/// An element that is a call of `dbg` with a label does not fit its declaration, so it keeps the
+/// order of a call also when the array is the argument of a generic call: it is checked first,
+/// with no expected type, and reports its own mistakes, not a mismatch with the other element.
+#[test]
+fn a_call_that_does_not_fit_should_be_checked_first_in_an_array_argument() {
+    with_prelude();
+    let src =
+        with_generics("fn g() {\n    take_all([dbg(x: []), 1])\n}\nfn take_all<T>(xs: [T]) {}");
+    codes(
+        &src,
+        &[
+            (Code::LabeledArgument, (2, 19)),
+            (Code::CannotInfer, (2, 22)),
+        ],
+    );
 }

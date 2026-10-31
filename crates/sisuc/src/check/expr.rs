@@ -473,18 +473,47 @@ pub(super) fn literal_type(ty: Option<Type>) -> Type {
     }
 }
 
-/// Which side of an `if`, `if let` or `==` with no expected type is checked first, the lower
-/// first: a concrete value is 0, an `int_literal` 1, a `bare_none` or `[]` 2. `dbg(x)` passes
-/// its expected type to `x`, so it has the rank of `x`.
-pub(super) fn rank(e: &ast::Expr) -> u8 {
+/// Whether `e` is a bare `None` or an empty array literal, also under `dbg`, which passes its
+/// expected type to its argument. Nothing in such a value gives its type, so it takes the type
+/// of its siblings, or is reported if none is known.
+pub(super) fn bare_hole(e: &ast::Expr) -> bool {
     if let Some(argument) = dbg_argument(e) {
-        return rank(argument);
+        return bare_hole(argument);
+    }
+    bare_none(e) || matches!(&e.kind, ExprKind::ArrayLit(elements) if elements.is_empty())
+}
+
+/// Whether `e` makes an optional by its syntax: it is `none_literal`, or `dbg(v)`, a block, an
+/// `if` or `if let` with `else`, or a `match`, where a value of it (the argument, the tail, a
+/// value branch's tail) is `noneish`. An array literal makes the type of its elements optional
+/// for such a value. This differs from `Ranked::optional` (see `generic.rs`), which also looks
+/// through the arguments of a generic call and counts `Some` and callees that return `T?`, and
+/// which the branches of an `if` use. This binds no scope and checks nothing.
+// shortcut: a generic call that returns `T?` (`none()`) gets the siblings' type, not it made
+// optional; upgrade when such joins are wanted.
+pub(super) fn noneish(e: &ast::Expr) -> bool {
+    use ExprKind as K;
+    let tail_is = |block: &ast::Block| tail(block).is_some_and(noneish);
+    if none_literal(e) {
+        return true;
+    }
+    if let Some(argument) = dbg_argument(e) {
+        return noneish(argument);
     }
     match &e.kind {
-        _ if bare_none(e) => 2,
-        ExprKind::ArrayLit(elements) if elements.is_empty() => 2,
-        _ if int_literal(e) => 1,
-        _ => 0,
+        K::Block(block) => tail_is(block),
+        K::If {
+            then_block,
+            else_block: Some(else_block),
+            ..
+        }
+        | K::IfLet {
+            then_block,
+            else_block: Some(else_block),
+            ..
+        } => tail_is(then_block) || tail_is(else_block),
+        K::Match { arms, .. } => arms.iter().any(|arm| noneish(&arm.body)),
+        _ => false,
     }
 }
 
