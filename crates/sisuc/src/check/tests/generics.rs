@@ -1681,7 +1681,10 @@ fn literal_like_arguments_should_follow_the_others() {
 const TRANSPARENT_DECLS: &str = "fn id<T>(x: T) -> T { x }\n\
     fn pick<T>(a: T, b: T) -> T { a }\n\
     enum Two<A, B> { P(A, B) }\n\
-    fn mk<A, B>(a: A, b: B) -> Two<A, B> { Two.P(a, b) }\n";
+    fn mk<A, B>(a: A, b: B) -> Two<A, B> { Two.P(a, b) }\n\
+    fn opt<T>(x: T) -> T? { Some(x) }\n\
+    fn none_of<T>(x: i64) -> T? { None }\n\
+    fn bound<T: Ord>(a: T?, b: T) -> T { b }\n";
 
 /// A value that passes its context to its parts (`dbg`, a block, an `if`, a `match`, a generic
 /// call, an array literal) ranks as its parts do, so an integer literal under it is typed by the
@@ -1716,9 +1719,18 @@ fn literals_under_a_transparent_form_should_take_the_type_of_the_call() {
         "let r: u8? = id(if c { Some(1) } else { None })",
         "let r: u8? = id(if c { 1 } else { None })",
         "let r: u8? = id(id(Some(1)))",
+        "let r: u8? = id(match c {\n true => Some(1)\n false => None\n })",
+        "let y: u8? = None\n    let r: u8? = id(if let v = y { print(v)\n Some(1) } else { None })",
+        // A generic callee whose declared return type is an optional makes one, as `Some` does.
+        "let r: u8? = id(opt(1))",
+        "let r: u8? = id(if c { 1 } else { none_of(5) })",
+        "let r: u8? = id(match c {\n true => 1\n false => none_of(5)\n })",
+        // Only an argument of the bare parameter counts: `T?` takes the payload of `Some(1)`.
+        "let r: u8? = bound(Some(1), 2)",
         // A literal alone meets the payload, and the call wraps it.
         "let r: u8? = id(1)",
         "let y: i64? = None\n    let r: i64 = y ?? id(2)",
+        "let y: i64? = None\n    let r: i64 = y ?? id(dbg(2))",
         "let r: Two<u8, i64> = mk(id(5), 1)",
     ] {
         let src = format!(
@@ -1748,6 +1760,29 @@ fn a_concrete_argument_should_bind_before_a_literal_under_a_transparent_form() {
     let src = format!("{TRANSPARENT_DECLS}fn main() {{\n    let r = pick(1, \"s\")\n}}");
     let line = TRANSPARENT_DECLS.lines().count() + 2;
     codes(&src, &[(Code::Mismatch, (line, 18))]);
+    // The concrete `"s"` binds first, so the literal under `dbg` is the one reported.
+    let src = format!("{TRANSPARENT_DECLS}fn main() {{\n    let r = pick(dbg(1), \"s\")\n}}");
+    codes(&src, &[(Code::Mismatch, (line, 18))]);
+}
+
+/// A name that a branch binds hides an outer local of the same name while ranking, as it does
+/// while checking: the call on the branch's local is the one that runs, and the outer local has
+/// no method `m` to be checked against it.
+#[test]
+fn a_branch_local_should_hide_an_outer_local_while_ranking() {
+    with_prelude();
+    for row in [
+        "let r: u8? = id(if c {\n let b = B()\n none_of(b.m(5))\n } else {\n Some(1)\n })",
+        "let r: u8? = id(match o {\n Some(b) => none_of(b.m(5))\n None => Some(1)\n })",
+        "let r: u8? = id(if let b = o {\n none_of(b.m(5))\n } else {\n Some(1)\n })",
+    ] {
+        let src = format!(
+            "{TRANSPARENT_DECLS}class A {{\n    x: i64\n}}\n\
+             class B {{\n    fn m<T>(self, x: T) -> T {{ x }}\n}}\n\
+             fn main() {{\n    let c = true\n    let o: B? = B()\n    let b = A(x: 1)\n    {row}\n    print(\"{{b.x}}\")\n}}"
+        );
+        clean_row(row, &src);
+    }
 }
 
 /// A `T?` parameter takes an optional's payload, or a value the call wraps.
@@ -4003,6 +4038,36 @@ fn nested_some_context_should_cost_one_step_for_each_level() {
     };
     assert!(steps(1) > 0, "the counter should count the walk");
     assert_near_linear(steps(10), steps(20), steps(30));
+}
+
+/// A generic call nested `d` deep, as an argument of a generic call: the outer call ranks its
+/// arguments, and each inner call ranks its own again when it is checked. `body.ranked` answers
+/// the second time, so `rank_value` walks each expression once and the work grows with the
+/// depth, not with its square. The depths are far below the nesting limit of the parser (256).
+#[test]
+fn nested_generic_calls_should_rank_each_expression_once() {
+    with_prelude();
+    // The statement is `before`, then `open` repeated `depth` times, `inner`, `close` likewise.
+    let steps = |(before, open, inner, close): (&str, &str, &str, &str), depth: usize| {
+        let src = format!(
+            "fn k<T>(a: T, b: T) -> T {{ b }}\nfn id<T>(x: T) -> T {{ x }}\n\
+             fn main() {{\n    {before}{}{inner}{}\n}}",
+            open.repeat(depth),
+            close.repeat(depth),
+        );
+        generic::RANK_STEPS.set(0);
+        clean(&src);
+        generic::RANK_STEPS.get()
+    };
+    for row in [
+        ("let r: u8 = ", "k(1, ", "1", ")"),
+        ("let r: u8? = ", "id(", "1", ")"),
+        ("let r: u8? = ", "k(Some(1), ", "None", ")"),
+    ] {
+        eprintln!("{row:?}");
+        assert!(steps(row, 1) > 0, "the counter should count the walk");
+        assert_near_linear(steps(row, 20), steps(row, 40), steps(row, 60));
+    }
 }
 
 /// The declarations that the rows of the failed bound tests share. `J` is an interface that no type
