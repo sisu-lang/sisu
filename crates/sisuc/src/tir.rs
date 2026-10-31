@@ -127,6 +127,9 @@ pub(crate) struct Program {
     /// construction, a variant path or a type name. A program with none, and with no generic item
     /// of the user's, has nothing for `mono` to instantiate. Only the checker sets it.
     pub(crate) instantiates: bool,
+    /// Whether `mono` took its fast path, which instantiates nothing: the program then holds the
+    /// user's items alone. `--emit tir` prints it. Only `mono` sets it.
+    pub(crate) fast_path: bool,
     /// Where the prelude's items start in each list; the user's come first. Only the checker
     /// sets it.
     pub(crate) prelude: ItemCounts,

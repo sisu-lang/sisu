@@ -245,6 +245,58 @@ mod tests {
         assert_eq!(names(front_end(src).0), ["main", "id<i64>"]);
     }
 
+    /// Only an unusual prelude reaches some faults in the checker. One such fault, a span read
+    /// from the wrong text, once crashed the compiler with a plain panic. The diagnostics cases
+    /// are a corpus of unusual programs, so each one, as the prelude, must check or give the
+    /// internal error.
+    #[test]
+    fn every_diagnostics_case_as_the_prelude_should_check_or_give_the_prelude_internal_error() {
+        let cases = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/diagnostics");
+        let mut paths: Vec<_> = fs::read_dir(cases)
+            .expect("tests/diagnostics should be readable")
+            .map(|entry| entry.expect("an entry should be readable").path())
+            .filter(|path| path.extension().is_some_and(|e| e == "sisu"))
+            .collect();
+        paths.sort();
+        assert!(!paths.is_empty(), "no diagnostics case");
+        let hook = std::panic::take_hook();
+        // The expected internal errors would fill the output.
+        std::panic::set_hook(Box::new(|_| {}));
+        // Deep cases overflow the default test stack, as `main` runs `cli` on a larger one.
+        let runner = std::thread::Builder::new()
+            .stack_size(crate::STACK_SIZE)
+            .spawn(move || {
+                let mut failures = Vec::new();
+                for path in &paths {
+                    // A prelude is text, so a case that is not UTF-8 (E0072) is no prelude.
+                    let Ok(case) = fs::read_to_string(path) else {
+                        continue;
+                    };
+                    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        checked_with(&case, "fn main() {}")
+                    }));
+                    let Err(payload) = caught else { continue };
+                    let message = payload
+                        .downcast_ref::<String>()
+                        .map(String::as_str)
+                        .or_else(|| payload.downcast_ref::<&str>().copied())
+                        .unwrap_or_default();
+                    if !message
+                        .starts_with("internal compiler error: the prelude does not check clean")
+                    {
+                        let name = path.file_name().unwrap_or_default().to_string_lossy();
+                        failures.push(format!("{name}: {message}"));
+                    }
+                }
+                failures
+            })
+            .expect("the thread should start");
+        let joined = runner.join();
+        std::panic::set_hook(hook);
+        let failures = joined.expect("the loop should not panic");
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
     /// The code and `(line, col)` of every diagnostic `src` reports, in order.
     fn codes(src: &str) -> Vec<(Code, (usize, usize))> {
         front_end(src)

@@ -319,7 +319,14 @@ fn emit(
             print_stdout(reporter, &format!("{}\n", parsed.program))
         }
         Stage::Tir => match front_end(reporter, &path, &source) {
-            Some(program) => print_stdout(reporter, &format!("{program}\n")),
+            Some(program) => {
+                let path = if program.fast_path {
+                    "fast path"
+                } else {
+                    "instantiated"
+                };
+                print_stdout(reporter, &format!("// mono: {path}\n{program}\n"))
+            }
             None => ExitCode::FAILURE,
         },
         Stage::Mir => match front_end(reporter, &path, &source) {

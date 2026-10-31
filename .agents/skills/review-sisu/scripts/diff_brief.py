@@ -20,7 +20,10 @@ the main checkout's gitignored docs/superpowers/ is not in a worktree.
            because a task runs mutation tests once and later commits are not mutated. A log
            measured before a rebase is accepted when a commit of the range has the same
            `git patch-id` as the measured commit; Focus names both.
-  --coverage  the output of `make coverage` for the diff; Focus names it
+  --coverage  the output of `make coverage` for the diff; Focus names it. Fails when the file does
+           not exist, or when its last `coverage:` line does not name the diff's head commit, or says
+           the run measured uncommitted changes or saw HEAD change. Unlike a mutation log, coverage of an earlier
+           commit is refused: it is cheap to run again at the head
 For a diff, Focus also lists each line the diff removes from the tests with no identical line
 added back, and each test file it deletes, and each sisu build in OUT's bin/<sha>/ that
 build_sisu.sh wrote.
@@ -107,6 +110,20 @@ def log_mismatch(log, repo, base, head):
     return None
 
 
+def coverage_mismatch(path, repo, head):
+    """Why the last `coverage:` line of `path` does not describe the commit `head` of `repo`, or None."""
+    lines = [line for line in path.read_text().splitlines() if line.startswith('coverage: ')]
+    found = re.search(r'\(HEAD ([0-9a-f]{40})( with uncommitted changes)?\)$', lines[-1]) if lines else None
+    if not found:
+        return f'no coverage line ending "(HEAD <sha>)" in {path}'
+    measured, want = found[1], commit(repo, head)
+    if found[2]:
+        return f'{path} measured uncommitted changes on {measured[:8]}, or HEAD changed during the run; run make coverage again at the head on a clean tree'
+    if measured != want:
+        return f'{path} measured {measured[:8]}, not the head {want[:8] or "unknown"}; run make coverage again at the head'
+    return None
+
+
 # Test files whose removed lines Focus lists. Blessed output is left out: golden_diff.py checks a rewording.
 TESTS = [':(glob)**/tests/**', ':(glob)**/tests.rs', ':(glob)scripts/test_*.py']
 EXPECTED = [':(exclude,glob)**/*.err', ':(exclude,glob)**/*.json', ':(exclude,glob)**/*.out']
@@ -190,7 +207,10 @@ def main():
                 note += f'. Commits after it, not mutated: {" ".join(c[:8] for c in later)}'
             focus_lines.append(f'Mutation-test log: {log}{note}')
         if a.coverage:
-            focus_lines.append(f'Coverage result: {Path(a.coverage).resolve()}')
+            coverage = Path(a.coverage).resolve()
+            if why := coverage_mismatch(coverage, repo, shas[1]):
+                sys.exit(f'diff_brief: {why}')
+            focus_lines.append(f'Coverage result: {coverage}')
         if removed := removed_tests(repo, *shas):
             more = [f'- and {len(removed) - SHOWN} more: see the diff'] if len(removed) > SHOWN else []
             focus_lines.append('Removed from the tests, with no identical line added back. For each, find its '

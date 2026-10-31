@@ -97,6 +97,30 @@ class LogMismatch(Repo):
         self.assertIn(f'measured {side[:8]}, which is not in', self.mismatch(self.summary(side)))
 
 
+class CoverageMismatch(Repo):
+    """coverage_mismatch on outputs of `make coverage` for the range base..HEAD."""
+
+    def mismatch(self, text):
+        path = Path(self.repo) / 'coverage.txt'
+        path.write_text(text)
+        with mock.patch.dict(os.environ, ENV, clear=True):
+            return diff_brief.coverage_mismatch(path, self.repo, 'HEAD')
+
+    def test_coverage_on_the_head_should_pass(self):
+        self.assertIsNone(self.mismatch(f'coverage: measured (HEAD {self.head})\nCoverage: 90%\n'))
+
+    def test_coverage_on_an_earlier_commit_of_the_range_should_fail(self):
+        why = self.mismatch(f'coverage: measured (HEAD {self.mid})\nCoverage: 90%\n')
+        self.assertIn(f'measured {self.mid[:8]}, not the head {self.head[:8]}', why)
+
+    def test_coverage_on_uncommitted_changes_should_fail(self):
+        why = self.mismatch(f'coverage: measured (HEAD {self.head} with uncommitted changes)\nCoverage: 90%\n')
+        self.assertIn('measured uncommitted changes', why)
+
+    def test_coverage_without_a_coverage_line_should_fail(self):
+        self.assertIn('no coverage line', self.mismatch('Coverage: 90%\n'))
+
+
 class Brief(Repo):
     """The brief that main() writes; the test repository has no origin/main, so the script's own template is used."""
 
@@ -132,7 +156,7 @@ class Brief(Repo):
 
     def test_a_coverage_result_should_be_named_in_focus(self):
         coverage = Path(self.repo) / 'coverage.txt'
-        coverage.write_text('uncovered: none\n')
+        coverage.write_text(f'coverage: measured (HEAD {self.head})\nuncovered: none\n')
         self.assertIn(f'Coverage result: {coverage}', self.brief('HEAD~2..HEAD', '--coverage', str(coverage)))
 
     def test_a_missing_plan_should_fail_before_writing(self):

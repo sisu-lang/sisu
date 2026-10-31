@@ -221,6 +221,7 @@ interface has the interface between its type and its name,
 `Celsius.Convert<Fahrenheit>.convert`, so two conformances may each hold a
 method of one name. `mir` and codegen see only concrete types, and a program
 with no generic declaration passes through, apart from those method names.
+The first line of `--emit tir` says whether `mono` took this fast path.
 `mono` starts from the user's functions only. A prelude function joins the
 program when a function that the program has calls it. `--emit tir` prints the
 program after `mono`, with the prelude functions that it reaches.

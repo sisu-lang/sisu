@@ -938,6 +938,7 @@ pub(crate) fn check<'src>(
             enums,
             functions,
             instantiates,
+            fast_path: false,
             prelude,
             interfaces,
             conformances,

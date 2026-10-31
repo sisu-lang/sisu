@@ -243,7 +243,11 @@ which runs only when the assert fails. Test code is left out:
 `crates/*/tests/`, and unit-test modules in their own file, `src/**/tests.rs`
 or under `src/**/tests/`. It never fails on low
 coverage. Commit new files, or
-`git add -N` them, so the diff sees them.
+`git add -N` them, so the diff sees them. Before the report, the output has a
+line `coverage: measured (HEAD <sha>)`, with `with uncommitted changes` when the
+tracked tree differs from HEAD, or when HEAD changes during the run. The review
+script (`diff_brief.py --coverage`) refuses coverage of another commit or of
+uncommitted changes.
 
 Programs that the tests compile link an uninstrumented runtime, whose two
 archives are built in `target/llvm-cov-runtime` and copied next to the
@@ -667,7 +671,7 @@ These flags run the pipeline up to one stage and stop there.
 | --- | --- |
 | `sisu build --emit tokens file.sisu` | The lexer's tokens |
 | `sisu build --emit ast file.sisu` | The parser's syntax tree |
-| `sisu build --emit tir file.sisu` | The checker's typed tree, `tir`, after `mono` has copied each generic function, class and enum once per list of type arguments, such as `first<i64>`; it also shows each prelude function that the program reaches, such as `[i64].sum` |
+| `sisu build --emit tir file.sisu` | The checker's typed tree, `tir`, after `mono` has copied each generic function, class and enum once per list of type arguments, such as `first<i64>`; it also shows each prelude function that the program reaches, such as `[i64].sum`. Its first line, `// mono: fast path` or `// mono: instantiated`, says which path `mono` took |
 | `sisu build --emit mir file.sisu` | The mid-level IR, `mir`, after parameter inference, the reuse pass, the ownership pass, the hoist, elaboration and pair removal: every copy, move and release is a statement, a borrowed parameter is marked `borrow`, a `match` arm that takes its scrutinee apart prints `take_apart` and `free`, and a construction that builds into a freed box prints `into [..]`; it also shows each prelude function that the program reaches |
 | `sisu build --emit ir file.sisu` | The LLVM IR, before and after `mem2reg` |
 | `sisu build -O2 --emit ir file.sisu` | The LLVM IR, before and after LLVM's `default<O2>` pipeline |
