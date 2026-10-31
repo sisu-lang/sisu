@@ -114,7 +114,7 @@ const IDENTITY: &str = "reach: a class is compared with `is` or against `None`";
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 102] = [
+const REACH: [&str; 103] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
