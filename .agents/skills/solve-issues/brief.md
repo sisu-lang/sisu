@@ -45,7 +45,7 @@ Neighbours: <the table of neighbouring cases, with today's output and the wanted
 4. Run `(cd <worktree> && nice -n 19 make coverage BASE=<BASE> > <ledger folder>/<group>-task-<N>-coverage.txt 2>&1)`. Cover or explain each uncovered changed region.
 5. After the commit, run one mutation test with Bash `run_in_background: true`:
    `(cd <worktree> && env CARGO_MUTANTS_JOBS=2 nice -n 19 make mutation-test BASE=<BASE> LOG=<ledger folder>/<group>-task-<N>-mutation.log)`.
-   Write it exactly so, with `env`. Wait for its completion notification. Never poll with sleep. Never start a second run. When it is killed for low memory, report DONE_WITH_CONCERNS "mutation test not run". Kill each surviving mutant with a test, or explain it. After each new commit, run step 4 again at the new head.
+   Write it exactly so, with `env`. Wait for its completion notification. Never poll with sleep. Never start a second run. When it is killed for low memory, report DONE_WITH_CONCERNS "mutation test not run". Kill each surviving mutant with a test, or explain it. Before each new commit, run step 2. After it, run step 4 again at the new head.
 6. Stop every background job you started. Then report once:
    - the status: DONE, DONE_WITH_CONCERNS or BLOCKED;
    - each commit, and the commit that the mutation log names, with its last line;
@@ -64,4 +64,4 @@ A fix-round brief has these parts, in this order:
 2. The rulings file and the reports.
 3. Each accepted finding: its severity, the cause you checked, the probe that shows it, and the fix.
 4. "Fix the class": the neighbouring cases to list and probe, the probe folder (`review-sisu` names it), and the `scripts/diag_diff.py` command to run.
-5. The job: a test that fails without each fix; `make test`; one commit; `make coverage BASE=<round base>` into the ledger folder. No mutation test. One report.
+5. The job: a test that fails without each fix; `make test`; one commit; `make coverage BASE=<round base>` into `<ledger folder>/<group>-task-<N>-fix<round>-coverage.txt`. No mutation test. One report.

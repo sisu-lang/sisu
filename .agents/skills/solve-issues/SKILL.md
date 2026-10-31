@@ -51,7 +51,7 @@ its last event.
    - It is fixed on `origin/main`. Close it with `state_reason` `completed`.
    - The committed reference (`docs/reference/`) or an ADR states this exact behaviour. The issue does not argue that the rule is wrong. Close it as intended (below).
 
-   Before you close, comment with the command and its output (`docs/agents/issue-tracker.md`). Write the program and the paths relative to the repository: issue text has no `/tmp` paths. Write the close in the ledger.
+   Before you close, comment with the command and its output (`docs/agents/issue-tracker.md`). Write the command as `sisu run <file>.sisu`, and give the program text in the comment: issue text has no `/tmp` or `.scratch` paths. Write the close in the ledger.
 
    To close an issue as intended, replace its triage label with `wontfix`. Keep its other labels: `PUT` replaces the whole list. Then close it with `not_planned`.
 7. Each other issue that disagrees with documented behaviour needs a language decision (step 2.4).
@@ -78,13 +78,15 @@ one call. Write the answers in the ledger.
 
 After a language decision at Stop 1:
 
-- The user keeps today's rule: close the issue as intended (step 1.6). When the reference does not state the rule yet, a group's first task records it first.
+- The user keeps today's rule: close the issue as intended now (step 1.6). When the reference does not state the rule yet, add the rule to the first task of the first group. Name the issue in that pull request body without `Closes`.
 - The user changes the rule: the issue joins a group. The first task of that group records the decision in `docs/reference/` or in an ADR.
 
 ### 3. Find the root causes
 
-Take the next group in the order. Do one group at a time. For each issue of
-the group:
+Take the next group in the order. Do one group at a time. Run
+`git fetch origin` first. When `origin/main` moved since the build, build it
+again (step 1.2) and write the new path in the ledger. For each issue of the
+group:
 
 1. Reproduce it with the `origin/main` build.
 2. Find the cause in the code: the function, the line, and why it gives this output.
@@ -118,13 +120,13 @@ Do this once for each group. On resume, use the worktree in the ledger.
 
 ### 6. Run each task
 
-1. When `git merge-base --is-ancestor origin/main HEAD` fails in the worktree, merge `origin/main` and run `make test`.
+1. Run `git fetch origin`. When `git merge-base --is-ancestor origin/main HEAD` fails in the worktree, merge `origin/main` and run `make test`.
 2. Set `<BASE>` to the worktree's `HEAD` now. Write it in the brief and in the ledger.
 3. Launch the executor with `run_in_background`.
 4. Read its report, and act on its status:
    - **DONE:** go to step 6.5.
    - **BLOCKED:** the stated cause is wrong. Do step 3 again for that issue, then Stop 2 again.
-   - **DONE_WITH_CONCERNS:** check each concern. A mutation test that did not run gets one run from you, after the reviews.
+   - **DONE_WITH_CONCERNS:** check each concern. A mutation test that did not run gets one run from you, after the reviews. Check its log as in step 6.5. Put each surviving mutant into a fix round.
 5. On the full flow, check that the last line of the mutation log names a commit in `<BASE>..HEAD`. Skip this check when the mutation test did not run.
 6. Run `review-sisu` on `<BASE>..HEAD`. It writes the review brief, launches the reviewers, and says how to rule and when to ask the user.
 7. Write each fix-round brief from the "Fix round" part of [brief.md](brief.md). Give it to a `sonnet-high` executor.
