@@ -350,20 +350,24 @@ fn judge_bounds(g: &Generated) -> Result<(), Failure> {
 /// Properties 1 and 2: `source` checks with no error, W0010 or W0011, and its MIR certifies and its
 /// module verifies, without and with `--rc-checks` (`fuzz::assert_compiles` panics if not).
 fn checked(name: &str, source: &str) -> Result<Program, Failure> {
+    // Every generated function returns and every generated loop ends, so none may call itself
+    // on every path, and no loop condition may stay unchanged.
+    let endless = |d: &Diagnostic| matches!(d.code().as_str(), "W0010" | "W0011");
     let (program, diagnostics) = front_end::front_end(source);
     let failure = |what: String| {
-        let rendered = render(name, source, &diagnostics);
+        // Other warnings are allowed, so the detail shows only what fails the property.
+        let failing: Vec<Diagnostic> = diagnostics
+            .iter()
+            .filter(|d| d.severity() == Severity::Error || endless(d))
+            .cloned()
+            .collect();
+        let rendered = render(name, source, &failing);
         Failure::new(1, format!("{what}\n{rendered}"))
     };
     let Some(program) = program else {
         return Err(failure(format!("the checker rejects the {name}")));
     };
-    // Every generated function returns and every generated loop ends, so none may call itself
-    // on every path, and no loop condition may stay unchanged.
-    if let Some(d) = diagnostics
-        .iter()
-        .find(|d| matches!(d.code().as_str(), "W0010" | "W0011"))
-    {
+    if let Some(d) = diagnostics.iter().find(|d| endless(d)) {
         let code = d.code().as_str();
         return Err(failure(format!("the checker reports {code} on the {name}")));
     }
@@ -1124,6 +1128,19 @@ mod tests {
             judge_source(name, source, &program, &runtime(), &scratch.0, &stdin)
                 .unwrap_or_else(|(f, record)| panic!("property 3: {}\n{record}", f.detail));
         });
+    }
+
+    /// Any seed of the series, named by `SISU_FUZZ_SEED`, as the named seed tests check theirs:
+    /// `SISU_FUZZ_SEED=72 cargo nextest run -p sisuc --lib seed_from_env --run-ignored only`.
+    #[test]
+    #[ignore = "runs only on demand, for the seed that SISU_FUZZ_SEED names"]
+    fn seed_from_env_should_pass() {
+        let n = env::var("SISU_FUZZ_SEED")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .expect("SISU_FUZZ_SEED should name a seed number");
+        seed_passes(n, false);
+        seed_passes(n, true);
     }
 
     #[test]
