@@ -391,8 +391,9 @@ impl Makes {
 
     /// Whether the argument `ranked` at place `i` is `nested` at a place of the parameter's
     /// optional (`T?`). It makes the parameter an optional, as `passes_optional` does. Both prove
-    /// only that: when the context has more optionals than the call makes, the payload of the
-    /// context is the optional already (see `Checker::infer_call`).
+    /// only that for a return type `T?`; for `T`, see the shortcut on `Checker::rank_arguments`.
+    /// When the context has more optionals than the call makes, the payload of the context is the
+    /// optional already (see `Checker::infer_call`).
     fn passes_lifted(&self, i: usize, ranked: Ranked) -> bool {
         self.lifted(i) && ranked.nested
     }

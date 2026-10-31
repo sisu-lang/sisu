@@ -2107,7 +2107,8 @@ fn a_call_that_returns_an_optional_parameter_should_meet_a_nested_optional_conte
         "let v: i64??? = q(opt(1), Some(2))\n    print(v != None)",
         "let m: Mk? = Some(Mk(n: 1))\n    let v: i64??? = q(m?.o(1), Some(2))\n    print(v != None)",
         // A call that returns `T` and has an optional at a place `T` meets its context whole.
-        // Main accepted both rows.
+        // The `opt` calls in these rows return `T?` at a context of three optionals: main accepted
+        // both rows.
         "let v: i64??? = h(opt(1), opt(Some(2)))\n    print(v != None)",
         "let m: Mk? = Some(Mk(n: 1))\n    let v: i64??? = h(m?.o(1), opt(Some(2)))\n    print(v != None)",
     ] {
