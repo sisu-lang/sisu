@@ -1,0 +1,15 @@
+interface I {
+    type Item
+}
+
+class W: I {
+    type Item = i64
+}
+
+fn g<T: I>(a: T) -> T {
+    a
+}
+
+fn main() {
+    let _x: i64 = g(W())
+}

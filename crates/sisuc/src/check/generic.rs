@@ -1552,6 +1552,11 @@ impl Checker<'_> {
         if call.slots.iter().flatten().any(mismatched) {
             return;
         }
+        // A context that fails a bound is not a type that the parameter can have: no argument is
+        // to blame for not being it, and the bound check would report the types that it set.
+        if !self.meets_bounds(sig, &context) {
+            return;
+        }
         let mut blamed = false;
         for (i, arg) in args.iter().enumerate() {
             // An argument of type `unit` or `never` binds only what no other does (see `last`).
@@ -1584,6 +1589,31 @@ impl Checker<'_> {
             }
             call.bindings = context;
         }
+    }
+
+    /// Whether each parameter that `context` binds meets its bounds (`Checker::conforms`, which
+    /// reports nothing). A bound whose arguments name a parameter that `context` leaves unbound
+    /// is not decided yet, as in `check_early`, and holds here. The work is one query for each
+    /// bound of the callee.
+    fn meets_bounds(&mut self, sig: &GenericSig<'_>, context: &Bindings) -> bool {
+        let with: Vec<Type> = context.found.iter().map(|&t| listed(t)).collect();
+        let owned = sig.owner.len();
+        for (k, bounds) in sig.bounds.iter().enumerate() {
+            let Some(ty) = context.found[owned + k].filter(|&t| t != *REJECTED) else {
+                continue;
+            };
+            for bound in bounds {
+                let args = bound.args.get();
+                if !args.iter().all(|&arg| self.known(context, arg).is_some()) {
+                    continue;
+                }
+                let args = self.subst_args(bound.args, &with);
+                if !self.conforms(ty, bound.interface, args) {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// Checks the arguments that need context (rank 2) once the others are checked, in two

@@ -5042,6 +5042,80 @@ fn a_call_that_rejected_a_parameter_should_blame_no_argument_for_its_expected_ty
     check_rows_after(REJECT_DECLS, NO_BLAME_ROWS);
 }
 
+/// The declarations that the rows of `a_context_that_fails_a_bound_should_blame_no_argument`
+/// share. `Vi` conforms to `I`, as `W` does.
+const CONTEXT_BOUND_DECLS: &str = "class Vi: I {\n    type Item = bool\n}\n\
+    class Gr<X: I> {\n    x: X\n    fn n<U: I>(self, a: U) -> X { self.x }\n}\n\
+    class Bx {\n    fn m<T: I>(self, a: T) -> T { a }\n}\n\
+    fn h<T: I>(a: T, _p: Two<T, i64>) -> T { a }\n\
+    fn hb<T>(a: T, _p: Two<T, i64>) -> T { a }\n\
+    fn g<T: I>(a: T) -> T { a }\n\
+    fn g2<T: I>(a: T, _b: T) -> T { a }\n\
+    fn hk1<T: K<U>, U>(_a: T) -> Two<T, U> { panic(\"e\") }\n\
+    fn hk2<T: K<U>, U>(a: T) -> T { a }\n";
+
+/// The rows of `a_context_that_fails_a_bound_should_blame_no_argument`.
+const CONTEXT_BOUND_ROWS: &[PartialRow<'static>] = {
+    use Code::Mismatch;
+    &[
+        // The context makes `T` an `i64`, which `I` has no conformance for. The call keeps the
+        // `T = W` of its first argument, as a call with no context does.
+        (
+            "",
+            "let _x: i64 = h(W(), Two.P(5, 7))",
+            &[(Mismatch, "h(W()"), (Mismatch, "5")],
+        ),
+        ("", "let _x: i64 = g(W())", &[(Mismatch, "g(W())")]),
+        ("", "let _x: i64? = g2(W(), W())", &[(Mismatch, "g2(")]),
+        // The bound of `T` names `U`, which the context binds: `i64` does not conform to
+        // `K<bool>`, and the first argument is the error.
+        (
+            "",
+            "let _x: Two<i64, bool> = hk1(V())",
+            &[(Code::NotConform, "V()")],
+        ),
+        // The context leaves `U` open, so the bound waits, and the context fits as before.
+        ("", "let _x: i64 = hk2(V())", &[(Mismatch, "V()")]),
+        // A method with a bound of its own parameter.
+        (
+            "",
+            "let _x: i64 = Bx().m(W())",
+            &[(Mismatch, "Bx().m(W())")],
+        ),
+        // Control rows: the context passes every bound, or the parameter has none, so the
+        // arguments that it contradicts are still blamed.
+        (
+            "",
+            "let _x: i64 = hb(W(), Two.P(5, 7))",
+            &[(Mismatch, "W()")],
+        ),
+        (
+            "",
+            "let _x: Vi = g2(W(), W())",
+            &[(Mismatch, "W()"), (Mismatch, "W())")],
+        ),
+        ("", "let _x: i64 = g2(W(), Vi())", &[(Mismatch, "Vi()")]),
+        // The bound of the receiver's class is not the context's: it binds only the method's own
+        // parameters.
+        (
+            "",
+            "let _x: i64 = Gr(x: W()).n(W())",
+            &[(Mismatch, "Gr(x: W()).n(W())")],
+        ),
+    ]
+};
+
+/// A context that fails the bound of a parameter that it binds is not a type that the parameter
+/// can have, so no argument is to blame for not being it. The bound check that follows would
+/// report the type that the blame set, and the call keeps the type of its argument.
+#[test]
+fn a_context_that_fails_a_bound_should_blame_no_argument() {
+    check_rows_after(
+        &format!("{REJECT_DECLS}{CONTEXT_BOUND_DECLS}"),
+        CONTEXT_BOUND_ROWS,
+    );
+}
+
 /// Classes that conform to `K` for a type that holds the parameter of a bound: the arguments of
 /// the bound name the parameter in an array, an optional, an enum and a class.
 const WAIT_SHAPE_DECLS: &str = "class Va: K<[i64]> {\n}\n\
