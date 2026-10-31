@@ -1,0 +1,10 @@
+error[E0147]: `Shape` is an interface, not a type
+ --> E0147-alias.sisu:5:15
+  |
+5 | type Shapes = Shape
+  |               ^^^^^
+  |
+  = help: use a type parameter: `T: Shape`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0147

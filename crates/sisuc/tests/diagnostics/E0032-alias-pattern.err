@@ -1,0 +1,62 @@
+error[E0032]: expected a pattern for `Tree<i64>`, found `TS.Node`
+  --> E0032-alias-pattern.sisu:19:9
+   |
+19 |         TS.Node(n) => 1
+   |         ^^^^^^^^^^
+
+error[E0032]: expected a pattern for `Tree<i64>`, found `TS.Leaf`
+  --> E0032-alias-pattern.sisu:20:9
+   |
+20 |         TS.Leaf => 0
+   |         ^^^^^^^
+
+error[E0032]: expected a pattern for `Tree<i64>`, found `TW.Node`
+  --> E0032-alias-pattern.sisu:26:9
+   |
+26 |         TW.Node(n) => 1
+   |         ^^^^^^^^^^
+
+error[E0032]: expected a pattern for `Tree<i64>`, found `TW.Leaf`
+  --> E0032-alias-pattern.sisu:27:9
+   |
+27 |         TW.Leaf => 0
+   |         ^^^^^^^
+
+error[E0032]: expected a pattern for `i64?`, found `OS.Some`
+  --> E0032-alias-pattern.sisu:33:9
+   |
+33 |         OS.Some(n) => 1
+   |         ^^^^^^^^^^
+
+error[E0032]: expected a pattern for `i64?`, found `OS.None`
+  --> E0032-alias-pattern.sisu:34:9
+   |
+34 |         OS.None => 0
+   |         ^^^^^^^
+
+error[E0032]: expected a pattern for `i64?`, found `M.Some`
+  --> E0032-alias-pattern.sisu:40:9
+   |
+40 |         M.Some(n) => 1
+   |         ^^^^^^^^^
+
+error[E0032]: expected a pattern for `i64?`, found `M.None`
+  --> E0032-alias-pattern.sisu:41:9
+   |
+41 |         M.None => 0
+   |         ^^^^^^
+
+error[E0032]: expected a pattern for `i64`, found `TI.None`
+  --> E0032-alias-pattern.sisu:47:9
+   |
+47 |         TI.None => 1
+   |         ^^^^^^^
+
+error[E0032]: expected a pattern for `Tree<i64>`, found `LF.Node`
+  --> E0032-alias-pattern.sisu:51:9
+   |
+51 |         LF.Node(n) => 1
+   |         ^^^^^^^^^^
+
+sisu: 10 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

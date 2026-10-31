@@ -1,0 +1,9 @@
+type O = i64?
+
+fn main() {
+    let a: bool? = O.None
+    let b = O.Some
+    let c = O.Other
+    let d: O = O.Some(1, 2)
+    let e: O = O.None(1)
+}

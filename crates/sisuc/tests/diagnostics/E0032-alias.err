@@ -1,0 +1,56 @@
+error[E0032]: expected `Grid`, found `string`
+  --> E0032-alias.sisu:13:5
+   |
+13 |     "x"
+   |     ^^^
+
+error[E0032]: expected `Grid`, found `string`
+  --> E0032-alias.sisu:17:12
+   |
+17 |     return "x"
+   |            ^^^
+
+error[E0032]: expected `Grid`, found `string`
+  --> E0032-alias.sisu:25:19
+   |
+25 |     let a: Grid = "x"
+   |                   ^^^
+
+error[E0032]: expected `Grid`, found `string`
+  --> E0032-alias.sisu:27:30
+   |
+27 |     let board = Board(cells: "z")
+   |                              ^^^
+
+error[E0032]: expected `Grid`, found `string`
+  --> E0032-alias.sisu:29:19
+   |
+29 |     other.cells = "q"
+   |                   ^^^
+
+error[E0032]: expected `Grid`, found `string`
+  --> E0032-alias.sisu:30:9
+   |
+30 |     g = "w"
+   |         ^^^
+
+error[E0032]: expected `Grid`, found `string`
+  --> E0032-alias.sisu:31:10
+   |
+31 |     size("y")
+   |          ^^^
+
+error[E0032]: expected `[Grid]`, found `string`
+  --> E0032-alias.sisu:32:10
+   |
+32 |     pass("v")
+   |          ^^^
+
+error[E0032]: expected `[[string]]`, found `string`
+  --> E0032-alias.sisu:33:18
+   |
+33 |     each<string>("x")
+   |                  ^^^
+
+sisu: 9 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

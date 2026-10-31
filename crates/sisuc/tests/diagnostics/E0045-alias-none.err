@@ -1,0 +1,18 @@
+error[E0045]: `is` tests identity, and `None` is not an object
+ --> E0045-alias-none.sisu:9:11
+  |
+9 |     print(p is OP.None)
+  |           ^^^^^^^^^^^^
+  |
+  = help: use `p == None`
+
+error[E0045]: `is` tests identity, and `None` is not an object
+  --> E0045-alias-none.sisu:10:11
+   |
+10 |     print(OP.None is p)
+   |           ^^^^^^^^^^^^
+   |
+   = help: use `p == None`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0045

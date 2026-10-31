@@ -1,0 +1,65 @@
+error[E0154]: `bool` does not conform to `Ord`
+  --> E0154-alias-nested.sisu:24:13
+   |
+ 1 | class Heap<T: Ord> {
+   |               --- required by this bound
+...
+24 |     let a = A<bool>(value: None)
+   |             ^^^^^^^
+
+error[E0154]: `bool` does not conform to `Ord`
+  --> E0154-alias-nested.sisu:25:13
+   |
+ 1 | class Heap<T: Ord> {
+   |               --- required by this bound
+...
+25 |     let b = H<bool>.None
+   |             ^^^^^^^
+
+error[E0154]: `bool` does not conform to `Ord`
+  --> E0154-alias-nested.sisu:26:32
+   |
+ 1 | class Heap<T: Ord> {
+   |               --- required by this bound
+...
+26 |     let c = H.Some(Heap(value: true))
+   |                                ^^^^
+
+error[E0154]: `bool` does not conform to `Ord`
+  --> E0154-alias-nested.sisu:27:13
+   |
+13 | enum HeapE<T: Ord> {
+   |               --- required by this bound
+...
+27 |     let d = E<bool>.Zero
+   |             ^^^^^^^
+
+error[E0154]: `bool` does not conform to `Ord`
+  --> E0154-alias-nested.sisu:28:13
+   |
+13 | enum HeapE<T: Ord> {
+   |               --- required by this bound
+...
+28 |     let e = E.One(true)
+   |             ^^^^^^^^^^^
+
+error[E0154]: `bool` does not conform to `Ord`
+  --> E0154-alias-nested.sisu:29:34
+   |
+ 1 | class Heap<T: Ord> {
+   |               --- required by this bound
+...
+29 |     let h = A(value: Heap(value: true))
+   |                                  ^^^^
+
+error[E0154]: `bool` does not conform to `Ord`
+  --> E0154-alias-nested.sisu:30:13
+   |
+ 1 | class Heap<T: Ord> {
+   |               --- required by this bound
+...
+30 |     let i = TH(first: true)
+   |             ^^^^^^^^^^^^^^^
+
+sisu: 7 errors
+sisu: for more on a code, run `sisu explain <code>`: E0154

@@ -17,11 +17,12 @@ class Names {
     match None { Some(self) => Self, _ => x is y }
     interface I { }
     extend Names { }
+    type
     enum E { }
 }
 
 // Reserved words: each one is `Reserved`, and `var` and `todo` are not.
-import pub record type weak test extern as
+import pub record weak test extern as
 
 // Operators and punctuation: each one, by longest match.
 fn operators() {
@@ -254,6 +255,14 @@ fn first() {};extend C { }
 const A = 1
 extend C { }; fn main() { }
 const A = 1; extend C { }
+// `type` is like `const`: an alias ends at its line. After one, a `;` separates it from the item
+// after it. A run before one, after a `fn`, is redundant. An alias resets the state of a `fn`
+// before it, so the `;` after it separates.
+type A = i64; fn g() {}
+fn h() {};type B = i64
+type C = i64; type D = i64
+fn h() {}
+type A = i64; fn main() {}
 // A `;` cuts an item's header, and no item starts with `{`: it stays. After a `}` it separates.
 fn first(); { }
 const A = 1; { }
@@ -342,6 +351,15 @@ interface Chooser {
     y
 }
 
+// The `=` of an alias starts the type of its body, whatever the number of its parameters, so a `>`
+// that ends the line closes it. The `(1)` after it starts a statement, not a call.
+type P<T> = Box<T>
+(1)
+type Q<T> = [T]
+(1)
+type M<K, V> = Map<K, V>
+(1)
+
 // The `->` starts the type of a method's result, so a `>` that ends the line closes it.
 interface Boxes {
     fn f(self) -> Box<i64>
@@ -400,8 +418,8 @@ fn q() -> Foo<A
     & B> { }
 class A extend<T: B
     & C> { }
-// The `=` of `type X = ...` starts a type only as its third token, and only in a `type`. Another
-// token at that place, such as `>=`, starts none.
+// The `=` of `type X = ...` and of `type X<A> = ...` starts a type only as the first `=` of a
+// `type` with no `:` or `->` before it. Another token in its place, such as `>=`, starts none.
 type X >= Box<i64>
     y
 type X: A = Box<i64>

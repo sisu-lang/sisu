@@ -1,0 +1,7 @@
+type M<T> = T?
+type N<T, U> = T?
+
+fn main() {
+    let a = M<i64, i64>.Some(1)
+    let b = N<i64>.None
+}

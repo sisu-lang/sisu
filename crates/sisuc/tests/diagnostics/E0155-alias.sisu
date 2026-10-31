@@ -1,0 +1,11 @@
+type Grid = [[char?]]
+
+extend Grid {
+    fn rows(self) -> i64 {
+        self.len()
+    }
+}
+
+fn main() {
+    print(1)
+}

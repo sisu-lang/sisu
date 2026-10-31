@@ -1,0 +1,13 @@
+enum E {
+    A
+    B(i64)
+}
+
+type F = E
+
+fn main() {
+    let F = 3
+    print(F)
+    let v = F.A
+    print(v == E.A)
+}

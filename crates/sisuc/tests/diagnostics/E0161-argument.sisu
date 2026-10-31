@@ -1,0 +1,6 @@
+type Pairs<T> = [[T]]
+type Loop = Pairs<Loop>
+
+fn main() {
+    print(1)
+}

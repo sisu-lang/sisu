@@ -1,0 +1,50 @@
+error[E0118]: `G` has no variant `Missing`
+  --> E0118-alias-variant.sisu:19:16
+   |
+19 |     let a = GI.Missing(1)
+   |                ^^^^^^^
+
+error[E0105]: `PI` is a type, not a value
+  --> E0118-alias-variant.sisu:20:13
+   |
+20 |     let b = PI.Foo(1)
+   |             ^^
+
+error[E0118]: `G` has no variant `Missing`
+  --> E0118-alias-variant.sisu:21:21
+   |
+21 |     let c = GP<i64>.Missing(1)
+   |                     ^^^^^^^
+
+error[E0105]: `PI` is a type, not a value
+  --> E0118-alias-variant.sisu:23:16
+   |
+23 |     let e = id(PI.Foo(1))
+   |                ^^
+
+error[E0105]: `PI` is a type, not a value
+  --> E0118-alias-variant.sisu:24:16
+   |
+24 |     let f = id(PI.x)
+   |                ^^
+
+error[E0105]: `PI` is a type, not a value
+  --> E0118-alias-variant.sisu:25:13
+   |
+25 |     let k = PI.Some<i64>(1)
+   |             ^^
+
+error[E0105]: `PI` is a type, not a value
+  --> E0118-alias-variant.sisu:26:19
+   |
+26 |     print(None == PI.None)
+   |                   ^^
+
+error[E0063]: `i64` has no field `x`
+  --> E0118-alias-variant.sisu:28:19
+   |
+28 |     let g = id(PI.x)
+   |                   ^
+
+sisu: 8 errors
+sisu: for more on a code, run `sisu explain <code>`: E0063, E0105, E0118

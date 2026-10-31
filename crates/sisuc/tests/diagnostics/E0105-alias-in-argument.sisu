@@ -1,0 +1,22 @@
+type Ns = [i64]
+type Num = i64
+
+enum E {
+    A(i64)
+}
+
+type EE = E
+
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn two<T>(x: T, y: T) -> T {
+    x
+}
+
+fn main() {
+    let a = id(Ns(1))
+    let b = id(Num(1))
+    let c = two(EE.A(1), EE(1))
+}

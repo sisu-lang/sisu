@@ -1,6 +1,6 @@
 //! Array expressions: literals and their element join, `[v; n]`, indexing and methods.
 
-use super::expr::{fits, literal_type, no_member, none_literal, path, typed};
+use super::expr::{fits, literal_type, no_member, path, typed};
 use super::generic::{Rank, mark};
 use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, payload, type_of, wrap};
 use crate::ast;
@@ -213,7 +213,7 @@ impl Checker<'_> {
             matches!(
                 ty.kind(),
                 TypeKind::Class(..) | TypeKind::Param(..) | TypeKind::Assoc(..)
-            ) && !none_literal(value)
+            ) && !self.none_written(value)
         });
         if let Some(class) = class {
             self.report(DiagnosticKind::SameObject {

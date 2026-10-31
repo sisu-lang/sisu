@@ -1,0 +1,27 @@
+enum G<T> {
+    A(T)
+    B
+}
+
+enum E {
+    Num(i64)
+    Nil
+}
+
+class P<T> {
+    x: T
+}
+
+type GI = G<i64>
+type EE = E
+type O = i64?
+type PI = P<i64>
+
+fn main() {
+    let a = EE.Nil<i64>(1)
+    let c = O.None<i64>(1)
+    let e = PI.Foo<i64>(1)
+    let f = GI.Missing<i64>(1)
+    let PI = 3
+    let g = PI.Foo<i64>(1)
+}

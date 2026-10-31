@@ -1,0 +1,29 @@
+error[E0154]: `bool` does not conform to `Ord`
+ --> E0154-alias-annotation-once.sisu:8:16
+  |
+1 | class Box<T: Ord> {
+  |              --- required by this bound
+...
+8 |     let a: Box<bool> = Box(v: true)
+  |                ^^^^
+
+error[E0154]: `bool` does not conform to `Ord`
+ --> E0154-alias-annotation-once.sisu:9:12
+  |
+1 | class Box<T: Ord> {
+  |              --- required by this bound
+...
+9 |     let b: BX<bool> = BX(v: true)
+  |            ^^^^^^^^
+
+error[E0154]: `bool` does not conform to `Ord`
+  --> E0154-alias-annotation-once.sisu:10:13
+   |
+ 1 | class Box<T: Ord> {
+   |              --- required by this bound
+...
+10 |     let c = BX(v: true)
+   |             ^^^^^^^^^^^
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0154

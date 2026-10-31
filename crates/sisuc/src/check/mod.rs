@@ -1,6 +1,7 @@
 //! The checker: signatures, scopes, names and types. It lowers the program to `tir` as it
 //! checks, and records every error instead of stopping at the first.
 
+mod alias;
 mod array;
 mod assoc;
 mod bound;
@@ -44,6 +45,7 @@ use crate::source::{self, Span};
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
 use crate::types::{Head, write_type};
+use alias::{AliasInfo, Aliases, FieldType, UseCheck};
 use assoc::{Choice, Choices, Named};
 use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable};
@@ -124,6 +126,11 @@ struct Signature {
     /// Without a method's `self`.
     params: Vec<Option<Type>>,
     ret: Option<Type>,
+    /// Each parameter's type as written, when the function is not generic and the type names an
+    /// alias: a mismatch shows it so.
+    param_shown: Vec<Option<Rc<str>>>,
+    /// The return type as written, under the same rule.
+    ret_shown: Option<Rc<str>>,
     /// The name's span.
     span: Span,
     /// `fn` through the end of the signature, before the body.
@@ -201,6 +208,8 @@ struct FieldInfo {
     inner: Vec<(Type, Span)>,
     /// `None` is `Error`.
     ty: Option<Type>,
+    /// The type as written, when the class is not generic and the type names an alias.
+    shown: Option<Rc<str>>,
     mutable: bool,
 }
 
@@ -237,6 +246,8 @@ struct Binding {
     read: bool,
     /// Where each later alternative of an or-pattern binds the name again.
     also: Vec<Span>,
+    /// The type of the annotation as written, when it names an alias.
+    shown: Option<Rc<str>>,
 }
 
 /// Which part of a loop the code being checked is in.
@@ -574,6 +585,8 @@ struct Checker<'src> {
     written: Option<Vec<(Type, Span)>>,
     /// The first constant of each name, and every broken one.
     constants: FxHashMap<Symbol, Declared<ConstInfo>>,
+    /// The type aliases, which share the namespace of the items above.
+    aliases: Aliases,
     /// What a value of each enum and class may hold, for W0011.
     holds_table: HoldsTable,
     diagnostics: Diagnostics,
@@ -716,6 +729,15 @@ struct Body {
     /// The names of the associated types whose choices are being resolved: a choice cannot name
     /// one of them.
     choosing: Vec<Symbol>,
+    /// The checks that the body of the alias being resolved leaves to each use of the alias, in
+    /// order; `None` outside an alias body, where a type parameter is an alias's parameter, with
+    /// no name.
+    alias: Option<Vec<UseCheck>>,
+    /// The type that each expression is checked against as its declaration writes it, by the
+    /// expression's span, when the type names an alias: a mismatch shows the alias.
+    shown: FxHashMap<Span, (Type, Rc<str>)>,
+    /// The return type as the function writes it, under the same rule.
+    ret_shown: Option<Rc<str>>,
     /// The answers of `conforms` for a type that holds a type parameter: they change with the
     /// bounds, and a body's are cleared with them.
     conformed: FxHashMap<(Type, tir::InterfaceId, TypeArgs), bool>,
@@ -752,6 +774,9 @@ struct Body {
     /// Where the value of the unlabeled `break` being checked starts: the parser reads an open
     /// loop label there as the `break`'s label, so a fix must not write one there.
     break_start: Option<usize>,
+    /// Where the initializer of a `let` is, whose annotation failed: a constructor there does not
+    /// check its bounds, as its errors would follow from the annotation's.
+    failed_let: Option<Span>,
     /// Where the quiet value is: an expression that has no expected type only because the
     /// context of an array literal around it failed (see `joined`). Its value parts are quiet
     /// too, and a quiet value that cannot be inferred is not reported, as the failed context
@@ -954,7 +979,10 @@ pub(crate) fn check<'src>(
             ast::Item::Extend(extend) => !extend.broken_methods.is_empty(),
             // Nothing poisons a call of a method an interface loses without an error yet: Task 4
             // resolves such calls, and until then the program has an error of its own.
-            ast::Item::Function(_) | ast::Item::Const(_) | ast::Item::Interface(_) => false,
+            ast::Item::Function(_)
+            | ast::Item::Const(_)
+            | ast::Item::Alias(_)
+            | ast::Item::Interface(_) => false,
         });
     let interfaces = checker.lowered_interfaces();
     let enums = checker.lowered_enums;
@@ -1116,6 +1144,7 @@ impl<'src> Checker<'src> {
             spellings: FxHashMap::default(),
             written: None,
             constants: FxHashMap::default(),
+            aliases: Aliases::default(),
             holds_table: HoldsTable::default(),
             diagnostics: Diagnostics::default(),
             parse_errors: Vec::new(),
@@ -1148,6 +1177,7 @@ impl Checker<'_> {
         broken: &[ast::Broken],
     ) -> Vec<(&'a ast::Function, Option<Type>)> {
         self.collect_names(items, user_items, broken);
+        self.resolve_aliases();
         self.lang = self.language_interfaces();
         self.interface_signatures(items);
         let declared = self.collect_signatures(items);
@@ -1162,6 +1192,7 @@ impl Checker<'_> {
         self.growing_classes = vec![false; self.classes.len()];
         self.read_declared_bounds();
         self.conformances(items);
+        self.normalize_declarations();
         declared
     }
 
@@ -1287,6 +1318,7 @@ impl Checker<'_> {
                         bounds: Vec::new(),
                         assoc: Vec::new(),
                     });
+                    self.index_assoc(interface, id);
                     let name = &interface.name;
                     if !self.built_in(name)
                         && self.first_callable(&mut first, Definition::Interface, name)
@@ -1294,6 +1326,7 @@ impl Checker<'_> {
                         self.interface_ids.insert(name.name, Declared::Known(id));
                     }
                 }
+                ast::Item::Alias(alias) => self.declare_alias(alias, &mut first),
                 ast::Item::Extend(extend) => next_function += extend.methods.len(),
             }
         }
@@ -1301,6 +1334,44 @@ impl Checker<'_> {
             self.prelude = self.item_counts(next_function);
         }
         self.poison_broken(broken);
+    }
+
+    /// Records the alias `alias`, and its name as the first function, class, enum, constant or
+    /// alias of that name, which `first` holds.
+    fn declare_alias(
+        &mut self,
+        alias: &ast::AliasDecl,
+        first: &mut FxHashMap<Symbol, (Span, Definition)>,
+    ) {
+        let id = self.aliases.infos.len();
+        self.aliases.infos.push(AliasInfo::new(alias));
+        // Its parameters are names of types, as a function's are.
+        let mut params = FxHashMap::default();
+        for param in &alias.params {
+            if !self.built_in(param) {
+                self.first_definition(&mut params, Definition::Type, None, param);
+            }
+        }
+        if !self.built_in(&alias.name) && self.first_callable(first, Definition::Alias, &alias.name)
+        {
+            self.aliases
+                .names
+                .insert(alias.name.name, Declared::Known(id));
+        }
+    }
+
+    /// Records, for each name, the interfaces that declare an associated type of it, and its place
+    /// among theirs: the first associated type of each name that `interface`, whose id is `id`,
+    /// declares. They are known before any type resolves, as a type alias may name one.
+    fn index_assoc(&mut self, interface: &ast::Interface, id: tir::InterfaceId) {
+        let mut named = FxHashSet::default();
+        for assoc in &interface.assoc {
+            if named.insert(assoc.name.name) {
+                let k = named.len() - 1;
+                (self.declaring_assoc.entry(assoc.name.name).or_default()).push((id, k));
+                self.assoc_at.insert((id, assoc.name.name), k);
+            }
+        }
     }
 
     /// Poisons the name of each broken item.
@@ -1322,6 +1393,9 @@ impl Checker<'_> {
                 }
                 ast::BrokenKind::Constant => {
                     self.constants.insert(*name, Declared::Broken);
+                }
+                ast::BrokenKind::Alias => {
+                    self.aliases.names.insert(*name, Declared::Broken);
                 }
                 // Its target is intact, and its parse error already fails the program. A method
                 // call on the target that finds no method is poisoned.
@@ -1346,6 +1420,9 @@ impl Checker<'_> {
             }
             if let Some(constant) = self.constants.get_mut(name) {
                 *constant = Declared::Broken;
+            }
+            if let Some(alias) = self.aliases.names.get_mut(name) {
+                *alias = Declared::Broken;
             }
         }
     }
@@ -1454,7 +1531,7 @@ impl Checker<'_> {
                     self.extend_signatures(extend, &mut declared);
                     continue;
                 }
-                ast::Item::Const(_) | ast::Item::Interface(_) => continue,
+                ast::Item::Const(_) | ast::Item::Alias(_) | ast::Item::Interface(_) => continue,
             };
             let id = tir::ClassId(next_class);
             next_class += 1;
@@ -1482,7 +1559,8 @@ impl Checker<'_> {
                             scoped = true;
                         }
                         let from = self.queued();
-                        let (ty, inner) = self.resolve_written(&field.ty);
+                        let FieldType { ty, inner, shown } =
+                            self.resolve_field(&field.ty, owner.is_empty());
                         let queued = from..self.queued();
                         if self.first_definition(
                             &mut first,
@@ -1500,6 +1578,7 @@ impl Checker<'_> {
                                 ty_span: field.ty.span,
                                 inner,
                                 ty,
+                                shown,
                                 mutable: field.mutable,
                             });
                         }
@@ -1550,19 +1629,26 @@ impl Checker<'_> {
         self.body.set_bounds(0, owner_bounds);
         let bounds = self.declare_bounds(owner.len(), Vec::new(), &f.type_params);
         let func = tir::FuncId(self.signatures.len());
-        let params = (f.params.iter().enumerate())
+        // A mismatch shows an alias as written only where the type is the declaration's own.
+        let plain = type_params.is_empty();
+        let (params, param_shown): (Vec<_>, Vec<_>) = (f.params.iter().enumerate())
             .map(|(i, p)| {
                 let from = self.queued();
+                let uses = self.aliases.uses;
                 let ty = self.resolve(&p.ty);
                 self.keep_at(from..self.queued(), Slot::Param(func, i));
-                ty
+                (ty, self.shown_text(&p.ty, uses).filter(|_| plain))
             })
-            .collect();
+            .unzip();
         let from = self.queued();
+        let uses = self.aliases.uses;
         let ret = f
             .ret
             .as_ref()
             .map_or(Some(Type::UNIT), |ty| self.resolve(ty));
+        let ret_shown = (f.ret.as_ref())
+            .and_then(|ty| self.shown_text(ty, uses))
+            .filter(|_| plain);
         self.keep_at(from..self.queued(), Slot::Ret(func));
         self.body.set_type_params(&[]);
         self.signatures.push(Signature {
@@ -1572,6 +1658,8 @@ impl Checker<'_> {
             bounds,
             params,
             ret,
+            param_shown,
+            ret_shown,
             span: f.name.span,
             header: Span::new(f.span.start(), f.body.span.start()),
             conformance: None,
@@ -1682,8 +1770,21 @@ impl Checker<'_> {
     }
 
     /// `None`, reported at the name without its `?`, for an unknown type, and for type
-    /// arguments that do not fit.
+    /// arguments that do not fit. The aliases in `ty` are replaced, within the limits of an alias:
+    /// the depth of the type, and the size of the work that the outermost written type causes.
     fn resolve(&mut self, ty: &ast::TypeExpr) -> Option<Type> {
+        let outermost = self.begin_written();
+        let uses = self.aliases.uses;
+        let resolved = self.resolve_type(ty);
+        let resolved = self.alias_limits(ty, resolved, uses);
+        if outermost {
+            return self.end_written(ty, resolved);
+        }
+        resolved
+    }
+
+    /// `resolve` without the limits of aliases.
+    fn resolve_type(&mut self, ty: &ast::TypeExpr) -> Option<Type> {
         let named = match &ty.kind {
             ast::TypeKind::Array(element) => Type::array(self.resolve(element)?),
             ast::TypeKind::Applied(applied) => {
@@ -1731,6 +1832,12 @@ impl Checker<'_> {
         };
         if let Some(i) = self.body.type_param(name) {
             let i = u32::try_from(i).expect("a declaration should have fewer than 2^32 parameters");
+            // The body of an alias names its parameters by place alone.
+            let name = if self.body.alias.is_some() {
+                Symbol::intern("")
+            } else {
+                name
+            };
             return plain(self, Type::intern(TypeKind::Param(name, i)));
         }
         match self.assoc_named(name, ident().span) {
@@ -1745,6 +1852,11 @@ impl Checker<'_> {
         // A broken name poisons every use, a built-in type's too.
         if let (Some(Declared::Broken), _) | (_, Some(Declared::Broken)) = declared {
             return None;
+        }
+        match self.aliases.names.get(&name).copied() {
+            Some(Declared::Broken) => return None,
+            Some(Declared::Known(id)) => return self.alias(id, ty, name, args, angles),
+            None => {}
         }
         // A class or an enum that took a language interface's name is the type.
         let taken = matches!(declared, (Some(_), _) | (_, Some(_)));
@@ -1798,7 +1910,10 @@ impl Checker<'_> {
                 let enums = self.enum_ids.keys().map(|e| (e.as_str(), Definition::Enum));
                 let interfaces =
                     (self.interface_ids.keys()).map(|i| (i.as_str(), Definition::Interface));
-                let candidates = (types.into_iter().chain(classes).chain(enums)).chain(interfaces);
+                let aliases = (self.aliases.names.keys()).map(|a| (a.as_str(), Definition::Alias));
+                let candidates = (types.into_iter().chain(classes).chain(enums))
+                    .chain(interfaces)
+                    .chain(aliases);
                 self.report(DiagnosticKind::UnknownType {
                     name: name.to_string(),
                     at: ident().span,
@@ -1814,7 +1929,14 @@ impl Checker<'_> {
     /// Whether the applied type `ty` meets the bounds of its class or enum, which is `bounded` when
     /// its declaration writes one, and `written` are its arguments as written.
     fn bounded(&mut self, bounded: bool, ty: Type, written: &[ast::TypeExpr]) -> bool {
-        !bounded || self.check_applied(ty, written.iter().map(|arg| arg.span).collect())
+        if !bounded {
+            return true;
+        }
+        // In an alias body, a type that names a parameter waits for each use of the alias.
+        if self.body.alias.is_some() && ty.has_param() {
+            return self.make_check(UseCheck::Applied(ty), Span::new(0, 0));
+        }
+        self.check_applied(ty, written.iter().map(|arg| arg.span).collect())
     }
 
     /// `function`, except that a method of a block that failed has the unknown receiver and is not
@@ -1846,9 +1968,11 @@ impl Checker<'_> {
         let (conformance, prelude) = (sig.conformance, sig.span.in_prelude());
         // The parameters of a method's owner: its class's, or its `extend` block's.
         let owner_params = sig.type_params.len() - sig.own;
+        let ret_shown = sig.ret_shown.clone();
         let mut fresh = Body {
             owner: Some(Owner::Func(id)),
             ret,
+            ret_shown,
             self_type: owner,
             ..Body::default()
         };
@@ -1896,6 +2020,7 @@ impl Checker<'_> {
                 Some(Type::UNIT) => None,
                 Some(ret) => Some(ret),
             };
+            c.show_value(&f.body, ret);
             let mut body = c.block(&f.body, expected);
             if let (Some(Type::UNIT), Ok(checked)) = (ret, &body) {
                 c.discard_tail(&f.body, checked);
@@ -1910,6 +2035,9 @@ impl Checker<'_> {
             (params, body)
         });
         let locals = state.locals;
+        // The mismatch of the body's value is reported after its checks, as the body is gone. The
+        // next body replaces it, so the map holds one function's entries.
+        self.body.shown = state.shown;
         let type_params = state.type_params.iter().map(Symbol::to_string).collect();
         match (ret, block_type(&body)) {
             (Some(want), Some(got)) if want != Type::UNIT && got != Type::NEVER && got != want => {
@@ -1972,6 +2100,7 @@ impl Checker<'_> {
             || self.function_ids.contains_key(&name)
             || self.enum_ids.contains_key(&name)
             || self.interface_ids.contains_key(&name)
+            || self.aliases.names.contains_key(&name)
             || self.constants.contains_key(&name);
         let enums = self.variant_of(name);
         let at_start = self.starts_break_value(span);
@@ -2021,10 +2150,12 @@ impl Checker<'_> {
             || name.as_str() == "Option"
             || self.class_ids.contains_key(&name)
             || self.enum_ids.contains_key(&name)
+            || self.aliases.names.contains_key(&name)
         {
             return DiagnosticKind::TypeAsValue {
                 name: name.to_string(),
                 at: span,
+                alias: None,
             }
             .into();
         }
@@ -2071,6 +2202,20 @@ impl Checker<'_> {
             suggestion,
         }
         .into()
+    }
+
+    /// Whether `e` is a call of a conversion that can fail: `u8(...)`, `char(...)`, or `i64(...)`,
+    /// which can fail only from an `f64`, the one argument that makes it an optional. A call of an
+    /// alias of one of these types is one too.
+    fn can_fail(&self, e: &ast::Expr) -> bool {
+        let ast::ExprKind::Call { callee, .. } = &e.kind else {
+            return false;
+        };
+        matches!(callee.name.as_str(), "u8" | "char" | "i64")
+            || matches!(
+                self.alias_type(callee.name),
+                Some(Type::U8 | Type::CHAR | Type::I64)
+            )
     }
 
     fn type_name(&self, ty: Type) -> String {
@@ -2136,9 +2281,9 @@ impl Checker<'_> {
             _ => (None, None),
         };
         let conversion = matches!(got.kind(), TypeKind::Optional(p) if p == want)
-            && source.is_some_and(can_fail);
+            && source.is_some_and(|e| self.can_fail(e));
         DiagnosticKind::Mismatch {
-            want: vec![self.type_name(want)],
+            want: vec![self.want_name(span, want)],
             got: self.type_name(got),
             at: span,
             source: from,
@@ -2163,12 +2308,6 @@ impl Checker<'_> {
         }
         .into()
     }
-}
-
-/// Whether `e` is a call of a conversion that can fail: `u8(...)`, `char(...)`, or `i64(...)`,
-/// which can fail only from an `f64`, the one argument that makes it an optional.
-fn can_fail(e: &ast::Expr) -> bool {
-    matches!(&e.kind, ast::ExprKind::Call { callee, .. } if matches!(callee.name.as_str(), "u8" | "char" | "i64"))
 }
 
 /// `params` as the arguments of their own declaration: `<T, U>` as `Param`s.

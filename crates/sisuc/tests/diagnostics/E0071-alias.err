@@ -1,0 +1,10 @@
+error[E0071]: the type that `D9<D9<T>>` names nests deeper than 256 levels
+  --> E0071-alias.sisu:10:15
+   |
+10 | type D10<T> = D9<D9<T>>
+   |               ^^^^^^^^^
+   |
+   = help: hold an inner part in a field of a class or an enum
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0071

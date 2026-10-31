@@ -100,6 +100,8 @@ large_input() {
 const K$i = $i
 const HALF$i = 0.5
 
+type Row$i = [i64]
+
 enum Shape$i {
     Dot
     Circle(f64)
@@ -237,6 +239,8 @@ fn step$i(x: i64) -> i64 {
     let gauge = both$i(Dial$i(n: K$i)) - both$i(Bar$i(n: K$i)) + unit_of$i(Dial$i(n: K$i)) - K$i + unit_of$i(Bar$i(n: K$i)).len() - 1
     let top = (largest$i([Disc$i(r: K$i), Disc$i(r: 0)]) ?? Disc$i(r: 0)).r - K$i + (largest$i([0, K$i, 1]) ?? 0) - K$i
     let kept = if [Disc$i(r: top)] == [Disc$i(r: 0)] { 0 } else { 1 }
+    let row: Row$i = [x, 1]
+    let rowed = row[1] - 1
     let alias = Bar$i(n: K$i)
     let same = if same$i(alias, alias) { 0 } else { 1 }
     let shown = shapes.to_string().len() + t.to_string().len() + "{[x, K$i]}".len() + "{[x, K$i]:#}".len()
@@ -244,7 +248,7 @@ fn step$i(x: i64) -> i64 {
     if shown < 0 {
         let _ = dbg(q)
     }
-    let generic = t.size() + u.size() - 3 + q.b - K$i + parsed + peeled + gauge + top + kept + same + (if shown > 0 { 0 } else { 1 })
+    let generic = t.size() + u.size() - 3 + q.b - K$i + parsed + peeled + gauge + top + kept + same + rowed + (if shown > 0 { 0 } else { 1 })
     step$((i - 1))(x + (c?.get() ?? 0) + zero + generic)
 }
 SISU

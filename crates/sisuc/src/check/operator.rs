@@ -1,8 +1,6 @@
 //! Operators: arithmetic, comparison, equality, `is` and `??`.
 
-use super::expr::{
-    fits, if_some, int_literal, literal_type, local, none_literal, operator, path, typed,
-};
+use super::expr::{fits, if_some, int_literal, literal_type, local, operator, path, typed};
 use super::generic::{Rank, mismatched};
 use super::interface::Operation;
 use super::{
@@ -28,7 +26,7 @@ impl Checker<'_> {
         expected: Option<Type>,
     ) -> Result<(Type, (Checked, bool)), Poisoned> {
         // A `None` expects an `i64`, as in `None + 1`.
-        let expected = expected.or_else(|| none_literal(operand).then_some(Type::I64));
+        let expected = expected.or_else(|| self.none_written(operand).then_some(Type::I64));
         let before = self.diagnostics.len();
         let checked = self.value(operand, expected);
         if let Some(ty) = type_of(&checked).filter(|ty| ty.has_param()) {
@@ -561,7 +559,7 @@ impl Checker<'_> {
     }
 
     /// `lhs == rhs`, or `!=`. The side of lower `sibling_rank` is checked first, the left on a tie
-    /// unless it is the only `none_literal`, and the other expects its type made optional,
+    /// unless it is the only `none_written`, and the other expects its type made optional,
     /// unless it is one. A side that is the other's type with two or more `?` layers taken off
     /// is held to it. A value converts through one `?` only. A `None` beside a value that is not
     /// optional is reported: the answer is fixed. So is a `u8` beside an `i64`, at the side
@@ -570,7 +568,7 @@ impl Checker<'_> {
     /// `f64.nan` is warned about.
     fn equal(&mut self, span: Span, negated: bool, lhs: &ast::Expr, rhs: &ast::Expr) -> Checked {
         let swapped = self.sibling_rank(rhs) < self.sibling_rank(lhs)
-            || (none_literal(lhs) && !none_literal(rhs));
+            || (self.none_written(lhs) && !self.none_written(rhs));
         let (first, second) = if swapped { (rhs, lhs) } else { (lhs, rhs) };
         let checked = self.value(first, None);
         let want = type_of(&checked).map_or_else(|| UNKNOWN, as_optional);
@@ -585,8 +583,8 @@ impl Checker<'_> {
             self.diagnostics.push(d);
             return Err(Poisoned::error());
         }
-        // `second` is the `none_literal`, if either is.
-        if none_literal(second)
+        // `second` is the `none_written`, if either is.
+        if self.none_written(second)
             && let Some(ty) = type_of(&checked)
             && !matches!(ty.kind(), TypeKind::Optional(_))
         {
@@ -632,7 +630,7 @@ impl Checker<'_> {
             _ => None,
         };
         // A second side that rejected the first's type is the mistake: it has no type to compare.
-        if !none_literal(second) && !mismatched(&l) && !mismatched(&r) {
+        if !self.none_written(second) && !mismatched(&l) && !mismatched(&r) {
             let same = match (type_of(&l), type_of(&r)) {
                 (Some(lt), Some(rt)) => lt == rt || fits(lt, rt) || fits(rt, lt),
                 _ => false,
@@ -679,8 +677,8 @@ impl Checker<'_> {
     /// are the same value. An optional of an optional object is no object: one layer comes off
     /// first.
     pub(super) fn is(&mut self, span: Span, lhs: &ast::Expr, rhs: &ast::Expr) -> Checked {
-        if none_literal(lhs) || none_literal(rhs) {
-            let other = if none_literal(lhs) { rhs } else { lhs };
+        if self.none_written(lhs) || self.none_written(rhs) {
+            let other = if self.none_written(lhs) { rhs } else { lhs };
             // It goes before the diagnostics of `other`, which the help waits for.
             let at = self.diagnostics.len();
             let checked = self.value(other, Some(UNKNOWN));

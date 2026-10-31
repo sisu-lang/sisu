@@ -1,0 +1,15 @@
+interface Source {
+    type Item
+    fn next(self) -> Item?
+}
+
+interface Feed {
+    type Item
+    fn feed(self) -> i64
+}
+
+type Both<T> = T.Item
+
+fn main() {
+    print(1)
+}

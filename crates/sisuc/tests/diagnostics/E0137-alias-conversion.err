@@ -1,0 +1,26 @@
+error[E0137]: `G` takes no type arguments
+ --> E0137-alias-conversion.sisu:5:12
+  |
+5 |     print(G<i64>(3))
+  |            ^^^^^
+  |
+help: remove the type arguments
+  |
+5 -     print(G<i64>(3))
+5 +     print(G(3))
+  |
+
+error[E0137]: `G` takes no type arguments
+ --> E0137-alias-conversion.sisu:6:12
+  |
+6 |     print(G<i64>.pi)
+  |            ^^^^^
+  |
+help: remove the type arguments
+  |
+6 -     print(G<i64>.pi)
+6 +     print(G.pi)
+  |
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0137

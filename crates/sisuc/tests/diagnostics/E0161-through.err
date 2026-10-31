@@ -1,0 +1,12 @@
+error[E0161]: type alias `Outer` refers to itself through `Inner`
+ --> E0161-through.sisu:1:6
+  |
+1 | type Outer = Inner
+  |      ^^^^^   ----- `Outer` uses `Inner` here
+2 | type Inner = [Outer]
+  |               ----- `Inner` uses `Outer` here
+  |
+  = help: use an enum or a class for a type that holds itself
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0161

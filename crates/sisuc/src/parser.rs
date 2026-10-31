@@ -5,11 +5,11 @@ use std::mem;
 use std::ops::Range;
 
 use crate::ast::{
-    Align, Applied, Arg, Arm, AssocChoice, AssocType, BinaryOp, Block, Bound, Broken, BrokenKind,
-    Class, CompareOp, Const, Enum, Expr, ExprKind, Extend, FieldDecl, ForSource, FormatSpec,
-    Function, Ident, Interface, Item, Literal, Member, MutSelf, Param, Part, Pattern, PatternKind,
-    PayloadField, Program, Requirement, Stmt, StmtKind, TypeExpr, TypeKind, TypeParam, UnaryOp,
-    Variant,
+    AliasDecl, Align, Applied, Arg, Arm, AssocChoice, AssocType, BinaryOp, Block, Bound, Broken,
+    BrokenKind, Class, CompareOp, Const, Enum, Expr, ExprKind, Extend, FieldDecl, ForSource,
+    FormatSpec, Function, Ident, Interface, Item, Literal, Member, MutSelf, Param, Part, Pattern,
+    PatternKind, PayloadField, Program, Requirement, Stmt, StmtKind, TypeExpr, TypeKind, TypeParam,
+    UnaryOp, Variant,
 };
 use crate::diagnostic::{
     self, BuiltIn, ClashForm, Diagnostic, DiagnosticKind, ForeignPattern, ForeignRange,
@@ -509,6 +509,7 @@ impl<'a> Parser<'a> {
             return Err(DiagnosticKind::NestingTooDeep {
                 at: self.peek().span,
                 limit: MAX_DEPTH,
+                alias: None,
             }
             .into());
         }
@@ -921,29 +922,7 @@ impl<'a> Parser<'a> {
                 bytes.start = line;
             }
             covered.push(bytes);
-            let parsed = match self.peek().kind {
-                TokenKind::Fn => self.checked(end, |p| {
-                    Ok((Item::Function(p.function(Receiver::Free)?), Vec::new()))
-                }),
-                TokenKind::Class => self.with_methods(end, |p, errors, methods| {
-                    p.class_body(errors, methods).map(Item::Class)
-                }),
-                TokenKind::Enum => self.with_methods(end, |p, errors, methods| {
-                    p.enum_body(errors, methods).map(Item::Enum)
-                }),
-                TokenKind::Interface => self.with_methods(end, |p, errors, methods| {
-                    p.interface_body(errors, methods).map(Item::Interface)
-                }),
-                TokenKind::Extend => self.with_methods(end, |p, errors, methods| {
-                    p.extend_body(errors, methods).map(Item::Extend)
-                }),
-                TokenKind::Const => {
-                    self.checked(end, |p| Ok((Item::Const(p.constant(end)?), Vec::new())))
-                }
-                _ => self.checked(end, |p| {
-                    Err(p.expected("`fn`, `class`, `enum`, `interface`, `extend` or `const`"))
-                }),
-            };
+            let parsed = self.item(end);
             match parsed {
                 Ok((item, errors)) => {
                     debug_assert!(
@@ -995,6 +974,35 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// The item that starts here and runs to `end`, and the errors of its methods that it
+    /// survives, or its error.
+    fn item(&mut self, end: usize) -> Result<(Item, Vec<Diagnostic>), Diagnostic> {
+        match self.peek().kind {
+            TokenKind::Fn => self.checked(end, |p| {
+                Ok((Item::Function(p.function(Receiver::Free)?), Vec::new()))
+            }),
+            TokenKind::Class => self.with_methods(end, |p, errors, methods| {
+                p.class_body(errors, methods).map(Item::Class)
+            }),
+            TokenKind::Enum => self.with_methods(end, |p, errors, methods| {
+                p.enum_body(errors, methods).map(Item::Enum)
+            }),
+            TokenKind::Interface => self.with_methods(end, |p, errors, methods| {
+                p.interface_body(errors, methods).map(Item::Interface)
+            }),
+            TokenKind::Extend => self.with_methods(end, |p, errors, methods| {
+                p.extend_body(errors, methods).map(Item::Extend)
+            }),
+            TokenKind::Const => {
+                self.checked(end, |p| Ok((Item::Const(p.constant(end)?), Vec::new())))
+            }
+            TokenKind::Type => self.checked(end, |p| Ok((Item::Alias(p.alias(end)?), Vec::new()))),
+            _ => self.checked(end, |p| {
+                Err(p.expected("`fn`, `class`, `enum`, `interface`, `extend`, `const` or `type`"))
+            }),
+        }
+    }
+
     /// The name and kind of the item that starts at `start`, when its header is intact: `fn`,
     /// `class`, `enum`, `interface` or `const`, then a name, with no lexer diagnostic before the
     /// token after the name. `fn to$tal` lexes as `fn to tal`, so its name is not `to`. An
@@ -1005,6 +1013,7 @@ impl<'a> Parser<'a> {
             TokenKind::Class => BrokenKind::Class,
             TokenKind::Enum => BrokenKind::Enum,
             TokenKind::Const => BrokenKind::Constant,
+            TokenKind::Type => BrokenKind::Alias,
             TokenKind::Interface => BrokenKind::Interface,
             TokenKind::Extend => BrokenKind::Extend,
             _ => return None,
@@ -1065,7 +1074,7 @@ impl<'a> Parser<'a> {
     /// that cannot end a line. A constant is one line, as a statement is, so a `}` in its value
     /// does not end it.
     fn item_end(&self, start: usize) -> usize {
-        let line = self.tokens[start].kind == TokenKind::Const;
+        let line = matches!(self.tokens[start].kind, TokenKind::Const | TokenKind::Type);
         let mut depth = 0usize;
         for (i, token) in self.tokens.iter().enumerate().skip(start) {
             match token.kind {
@@ -1099,6 +1108,7 @@ impl<'a> Parser<'a> {
             TokenKind::Fn
                 | TokenKind::Class
                 | TokenKind::Const
+                | TokenKind::Type
                 | TokenKind::Enum
                 | TokenKind::Interface
                 | TokenKind::Extend
@@ -1128,7 +1138,7 @@ impl<'a> Parser<'a> {
     /// is one line, runs up to the token that ends it (a line break, a closer or `Eof`), so that
     /// text skipped before it lies in the item.
     fn bytes(&self, start: usize, end: usize) -> Range<usize> {
-        let line = self.tokens[start].kind == TokenKind::Const;
+        let line = matches!(self.tokens[start].kind, TokenKind::Const | TokenKind::Type);
         let last = &self.tokens[end - 1];
         let stop = match (&last.kind, &self.tokens[end].kind) {
             (TokenKind::RBrace, _) if !line => last.span.end(),
@@ -1280,7 +1290,7 @@ impl<'a> Parser<'a> {
     /// A class member or, when `chooses`, the choice of an associated type, and the end of its
     /// line.
     fn class_line(&mut self, chooses: bool) -> Result<ClassLine, Diagnostic> {
-        if chooses && self.at(&TokenKind::Reserved("type")) {
+        if chooses && self.at(&TokenKind::Type) {
             let choice = self.assoc_choice()?;
             self.line_end()?;
             return Ok(ClassLine::Assoc(choice));
@@ -1459,7 +1469,7 @@ impl<'a> Parser<'a> {
     ) -> Result<EnumMember, Diagnostic> {
         let member = if self.at(&TokenKind::Fn) {
             EnumMember::Method(self.method(Receiver::Of(owner))?)
-        } else if chooses && self.at(&TokenKind::Reserved("type")) {
+        } else if chooses && self.at(&TokenKind::Type) {
             EnumMember::Assoc(self.assoc_choice()?)
         } else {
             let start = self.peek().span;
@@ -1588,6 +1598,36 @@ impl<'a> Parser<'a> {
             return Err(self.end_of_line());
         }
         Ok(Const { name, ty, value })
+    }
+
+    /// `type Name<A, B> = T`, which ends the item at `end`.
+    fn alias(&mut self, end: usize) -> Result<AliasDecl, Diagnostic> {
+        let keyword = self.bump().span;
+        let name = self.name("a type alias name")?;
+        let mut params = Vec::new();
+        if self.eat(&TokenKind::Lt).is_some() {
+            loop {
+                params.push(self.name("a type parameter")?);
+                if self.eat(&TokenKind::Comma).is_none() || self.at(&TokenKind::Gt) {
+                    break;
+                }
+            }
+            if self.eat(&TokenKind::Gt).is_none() {
+                return Err(self.expected("`,` or `>`"));
+            }
+        }
+        self.expect(&TokenKind::Eq)?;
+        self.depth = 0;
+        let ty = self.parse_type()?;
+        if self.pos != end {
+            return Err(self.end_of_line());
+        }
+        Ok(AliasDecl {
+            name,
+            params,
+            span: keyword.to(ty.span),
+            ty,
+        })
     }
 
     /// `receiver` says where the function stands, and so whether `self` may be its first
@@ -1756,7 +1796,7 @@ impl<'a> Parser<'a> {
     fn interface_line(&mut self) -> Result<InterfaceLine, Diagnostic> {
         let line = match self.peek().kind {
             TokenKind::Fn => InterfaceLine::Requirement(self.requirement()?),
-            TokenKind::Reserved("type") => InterfaceLine::Assoc(self.assoc_type()?),
+            TokenKind::Type => InterfaceLine::Assoc(self.assoc_type()?),
             TokenKind::Ident(_)
             | TokenKind::Underscore
             | TokenKind::Mut
@@ -1859,7 +1899,7 @@ impl<'a> Parser<'a> {
     fn extend_line(&mut self, chooses: bool) -> Result<ExtendLine, Diagnostic> {
         let line = match self.peek().kind {
             TokenKind::Fn => ExtendLine::Method(self.method(Receiver::Extension)?),
-            TokenKind::Reserved("type") if chooses => ExtendLine::Assoc(self.assoc_choice()?),
+            TokenKind::Type if chooses => ExtendLine::Assoc(self.assoc_choice()?),
             _ => return Err(self.expected("`fn`")),
         };
         self.line_end()?;
@@ -4637,6 +4677,40 @@ mod tests {
     }
 
     #[test]
+    fn alias_items_should_parse_to_alias_items() {
+        for (src, want) in [
+            ("type Grid = [[char?]]", "(type Grid [[char?]])"),
+            ("type Pairs<T> = [[T]]", "(type Pairs<T> [[T]])"),
+            ("type M<K, V> = [K]", "(type M<K, V> [K])"),
+            // A trailing comma ends the list, as it does for a function.
+            ("type M<K, V,> = [K]", "(type M<K, V> [K])"),
+            // An alias is one line, so the item after it starts on the next.
+            (
+                "type A = i64\nfn main() {}",
+                "(type A i64)\n(fn main () unit (block))",
+            ),
+            // An alias may name itself or the type that follows: the checker reports cycles.
+            ("type A = A?", "(type A A?)"),
+        ] {
+            assert_eq!(program(src), want, "{src}");
+        }
+        for (src, code, line, col) in [
+            // An alias's parameters take no bounds.
+            ("type S<T: Ord> = [T]", Code::Expected, 1, 9),
+            ("type A", Code::Expected, 1, 7),
+            ("type A =", Code::Expected, 1, 9),
+            ("type A = i64 x", Code::Expected, 1, 14),
+            ("type A<> = i64", Code::Expected, 1, 8),
+            ("type _ = i64", Code::UnderscoreName, 1, 6),
+            ("type A<_> = i64", Code::UnderscoreName, 1, 8),
+            // An alias is an item, so a function body has none.
+            ("fn f() { type A = i64 }", Code::Expected, 1, 10),
+        ] {
+            assert_eq!(parse_err(src), (code, line, col), "{src}");
+        }
+    }
+
+    #[test]
     fn const_statement_fix_leaves_a_let_that_parses() {
         for (src, want) in [
             ("fn f() { const C = 1 }", "fn f() { let C = 1 }"),
@@ -5128,20 +5202,15 @@ mod tests {
                 (Code::MutSelf, 2, 10),
             ),
             ("interface I {\n    1\n}", (Code::Expected, 2, 5)),
-            // `type` still belongs to a later milestone outside the places that read it.
-            ("type X = i64", (Code::ReservedWord, 1, 1)),
-            (
-                "fn main() {\n    print(p.type)\n}",
-                (Code::ReservedWord, 2, 13),
-            ),
+            // `type` is a keyword: it is no name, and it starts an item or a choice only where the
+            // grammar reads one.
+            ("fn main() {\n    let type = 1\n}", (Code::Expected, 2, 9)),
+            ("fn main() {\n    print(p.type)\n}", (Code::Expected, 2, 13)),
             (
                 "extend Circle {\n    type Item = i64\n}",
-                (Code::ReservedWord, 2, 5),
+                (Code::Expected, 2, 5),
             ),
-            (
-                "class C {\n    type Item = i64\n}",
-                (Code::ReservedWord, 2, 5),
-            ),
+            ("class C {\n    type Item = i64\n}", (Code::Expected, 2, 5)),
             // `extend` and `Self` are keywords, not names.
             ("fn main() {\n    let extend = 1\n}", (Code::Expected, 2, 9)),
             (
@@ -5192,7 +5261,7 @@ mod tests {
             // Only an enum that lists an interface chooses an associated type.
             (
                 "enum E {\n    A\n    type Item = i64\n}",
-                (Code::ReservedWord, 3, 5),
+                (Code::Expected, 3, 5),
             ),
             ("fn f(x: S.) {}", (Code::Expected, 1, 10)),
         ] {
@@ -5420,7 +5489,7 @@ mod tests {
             ),
             (
                 "let x = 1\nextend C {\n    type Item = i64\n}",
-                [Code::Expected, Code::ReservedWord],
+                [Code::Expected, Code::Expected],
             ),
             (
                 "fn f() +\ninterface I: {}",
@@ -7026,9 +7095,9 @@ mod tests {
     fn reserved_words_should_be_errors_where_a_name_goes() {
         // One row per place that wants a name or an expression.
         for (src, line, col) in [
-            ("fn main() {\n    let type = 1\n}", 2, 9),
+            ("fn main() {\n    let weak = 1\n}", 2, 9),
             ("class C {\n    record: i64\n}", 2, 5),
-            ("fn main() {\n    print(p.type)\n}", 2, 13),
+            ("fn main() {\n    print(p.weak)\n}", 2, 13),
             ("import x", 1, 1),
         ] {
             assert_eq!(parse_err(src), (Code::ReservedWord, line, col), "{src}");

@@ -1,0 +1,10 @@
+type Outer = Inner
+type Inner = [Outer]
+
+fn first(x: Outer) {}
+
+fn second(x: Inner) {}
+
+fn main() {
+    print(1)
+}

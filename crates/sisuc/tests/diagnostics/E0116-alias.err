@@ -1,0 +1,8 @@
+error[E0116]: `F` names an enum
+ --> E0116-alias.sisu:9:9
+  |
+9 |     let F = 3
+  |         ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0116
