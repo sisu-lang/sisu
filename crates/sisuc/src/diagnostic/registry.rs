@@ -460,7 +460,7 @@ pub(crate) enum DiagnosticKind {
     /// every alignment, and a value of that size can never be on the stack. `instance` is
     /// whether `name` is an instance of the generic enum declared at `at`. `holder` is the enum
     /// of the prelude that holds `name` inline, when its payload is the one of 4 GiB or more.
-    /// `used` is the first expression that makes the instance, when `mono` knows it.
+    /// `used` is the first expression that uses the instance, when `mono` knows it.
     PayloadTooLarge {
         name: String,
         instance: bool,
@@ -2746,7 +2746,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 };
                 let d = Diagnostic::coded(code, at, message).with_label(label);
                 let d = match used {
-                    Some(used) => d.with_secondary(used, "this use makes the instance"),
+                    Some(used) => d.with_secondary(used, "the instance is used here"),
                     None => d,
                 };
                 d.with_help(format!(

@@ -3010,8 +3010,8 @@ fn build_should_report_e0160_for_a_generic_enum_that_only_its_instance_makes_lar
 
 /// GIVEN `enum P<T> { End; A(T, T) }` and a `let` of `P` nested 32 levels deep, set to `P.End`
 /// WHEN it is built to LLVM IR
-/// THEN the E0160 shows the line of the declaration of `P`, and the line of the `let` with a
-/// second label under `P.End` that says the use makes the instance
+/// THEN the E0160 shows the line of the declaration of `P`, and the line of the `let`.
+/// AND it has a second label under `P.End` that says the instance is used here
 #[test]
 fn build_should_label_the_use_that_makes_an_instance_that_is_too_large() {
     let nested = format!("{}i64{}", "P<".repeat(32), ">".repeat(32));
@@ -3026,7 +3026,7 @@ fn build_should_label_the_use_that_makes_an_instance_that_is_too_large() {
     let line = format!("6 | {written}P.End");
     // The gutter of a label line has no number, and the label starts under `P.End`.
     let label = format!(
-        "  | {}----- this use makes the instance",
+        "  | {}----- the instance is used here",
         " ".repeat(written.len())
     );
     assert!(stderr.contains(&line), "{stderr}");

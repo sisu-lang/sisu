@@ -96,6 +96,12 @@ thread_local! {
     static MEASURE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many enums and `held_inline` edges `spread_uses` has visited on this thread.
+    static SPREAD_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// What `measure` knows of each enum: `None` before it is measured, then its bound, which is
 /// `None` too when a field has a type that is not final or an inline cycle.
 type Known = [Option<Option<Measured>>];
@@ -225,7 +231,8 @@ pub(crate) struct Oversized {
     /// The prelude enum that holds it, when the payload over the limit is that enum's: a
     /// `Result<E, E>` is as large as `E` and a tag.
     pub(crate) holder: Option<String>,
-    /// The first expression that makes the enum that is over the limit, when `mono` knows one.
+    /// The first expression that uses the instance that is over the limit, when `mono` knows
+    /// one. An enum that is no instance has none.
     pub(crate) used: Option<Span>,
 }
 
@@ -258,50 +265,45 @@ fn largest_held(enums: &[Enum], measured: &[Option<Measured>], id: usize) -> Opt
 /// that its largest field holds. When that chain reaches no user's enum, the report names the
 /// prelude's enum. On the checker path, `checked_with` treats a report in the prelude as an
 /// internal error. The reports are in the order of the enums. `first_uses` is the first use of each
-/// enum, which a report gives as the place that makes an instance.
+/// enum, which a report gives as the place that uses an instance.
 pub(crate) fn oversized(enums: &[Enum], first_uses: &[Option<Span>]) -> Vec<Oversized> {
     oversized_with(enums, first_uses, PAYLOAD_LIMIT)
 }
 
-/// The first use of enum `id`: its own, else the one of the first enum that holds it inline, at
-/// any depth, found breadth first. `holders` is the reverse of `held_inline`, built when first
-/// needed: the normal path reports nothing, so it never builds it.
-fn first_use(
-    enums: &[Enum],
-    first_uses: &[Option<Span>],
-    holders: &mut Option<Vec<Vec<usize>>>,
-    id: usize,
-) -> Option<Span> {
-    let use_of = |id: usize| first_uses.get(id).copied().flatten();
-    if let Some(own) = use_of(id) {
-        return Some(own);
+/// The use of each instance in `enums`: its own in `first_uses`, else the one of its nearest
+/// holder that is an instance. The pass is breadth first from every instance that has a use, so
+/// it takes time linear in the enums and the `held_inline` edges, however many reports need it.
+/// An enum that is no instance has no use, and a use does not pass through it: a field of a
+/// non-generic enum or class is the declaration's, not the instance's. When no instance has a use
+/// the result is empty.
+fn spread_uses(enums: &[Enum], first_uses: &[Option<Span>]) -> Vec<Option<Span>> {
+    let own = |id: usize| first_uses.get(id).copied().flatten();
+    let mut queue: VecDeque<usize> = (0..enums.len())
+        .filter(|&id| enums[id].instance && own(id).is_some())
+        .collect();
+    if queue.is_empty() {
+        return Vec::new();
     }
-    let holders = holders.get_or_insert_with(|| {
-        let mut holders = vec![Vec::new(); enums.len()];
-        for (holder, e) in enums.iter().enumerate() {
-            for held in held_inline(e) {
-                holders[held].push(holder);
-            }
-        }
-        holders
-    });
-    let mut seen = FxHashSet::default();
-    seen.insert(id);
-    let mut queue = VecDeque::from([id]);
-    while let Some(held) = queue.pop_front() {
-        for &holder in &holders[held] {
-            if seen.insert(holder) {
-                if let Some(found) = use_of(holder) {
-                    return Some(found);
-                }
-                queue.push_back(holder);
+    let mut uses = vec![None; enums.len()];
+    for &id in &queue {
+        uses[id] = own(id);
+    }
+    while let Some(holder) = queue.pop_front() {
+        #[cfg(test)]
+        SPREAD_STEPS.set(SPREAD_STEPS.get() + 1);
+        for held in held_inline(&enums[holder]) {
+            #[cfg(test)]
+            SPREAD_STEPS.set(SPREAD_STEPS.get() + 1);
+            if enums[held].instance && uses[held].is_none() {
+                uses[held] = uses[holder];
+                queue.push_back(held);
             }
         }
     }
-    // shortcut: an instance that only a field of a non-generic class reaches has no use, as `mono`
-    // lowers the classes before any expression; no second label then. Upgrade by giving a class
-    // field a span.
-    None
+    // shortcut: an instance that only a field of a non-generic class or enum reaches has no use,
+    // as `mono` lowers the classes before any expression, and a non-generic enum is no instance;
+    // no second label then. Upgrade by giving a class or enum field a span.
+    uses
 }
 
 /// `oversized` with `limit` in place of `PAYLOAD_LIMIT`, for the tests, which cannot build a
@@ -311,7 +313,7 @@ fn oversized_with(enums: &[Enum], first_uses: &[Option<Span>], limit: u64) -> Ve
     let over = |id: usize| measured[id].is_some_and(|m| m.payload >= limit);
     let mut seen = FxHashSet::default();
     let mut found = Vec::new();
-    let mut holders = None;
+    let mut spread = None;
     for (id, e) in enums.iter().enumerate() {
         if !over(id) || held_inline(e).any(over) {
             continue;
@@ -331,9 +333,16 @@ fn oversized_with(enums: &[Enum], first_uses: &[Option<Span>], limit: u64) -> Ve
         };
         let target = &enums[target];
         if seen.insert(target.span) {
-            // With a holder, a use makes the holder's instance: `target` may be a user's enum
-            // that is no instance.
-            let first = first_use(enums, first_uses, &mut holders, id);
+            // The use is of `id`, not of `target`: with a holder, a use makes the holder's
+            // instance, and `target` may be a user's enum that is no instance.
+            let first = if !enums[id].instance {
+                None
+            } else if let Some(own) = first_uses.get(id).copied().flatten() {
+                Some(own)
+            } else {
+                let spread = spread.get_or_insert_with(|| spread_uses(enums, first_uses));
+                spread.get(id).copied().flatten()
+            };
             found.push(Oversized {
                 name: target.name.clone(),
                 at: target.span,
@@ -666,14 +675,23 @@ mod tests {
         assert_eq!(found[0].holder, None);
     }
 
-    /// `Top` holds `Mid`, `Mid` holds `Low`, and `Low`, over a limit of 30, is the mistake.
+    /// `enums` as instances of a generic enum, which is what `mono` makes.
+    fn instances<const N: usize>(enums: [Enum; N]) -> [Enum; N] {
+        enums.map(|e| Enum {
+            instance: true,
+            ..e
+        })
+    }
+
+    /// `Top` holds `Mid`, `Mid` holds `Low`, and `Low`, over a limit of 30, is the mistake. All
+    /// four are instances.
     fn chain() -> [Enum; 4] {
-        [
+        instances([
             pair("Top", 0, 1),
             pair("Mid", 1, 2),
             pair("Low", 2, 3),
             holding("Leaf", 3, vec![Type::I64]),
-        ]
+        ])
     }
 
     #[test]
@@ -694,16 +712,18 @@ mod tests {
     }
 
     #[test]
-    fn oversized_should_prefer_the_nearest_holder_that_has_a_use() {
-        // `Low` is held by `Near`, which has a use, and by `Far`, which `Outer` holds. `Far` comes
-        // first in the order of the enums, so a depth first walk would find the use of `Outer`.
-        let enums = [
+    fn oversized_should_use_the_use_of_a_holder_that_is_nearer_than_the_use_of_another() {
+        // `Low` is held by `Near`, which has a use, and by `Far`, which `Outer` holds, and
+        // `Outer` has a use too. `Far` comes first in the order of the enums, so a depth first
+        // walk would find the use of `Outer`. The use of `Near` is one step from `Low`, and the
+        // one of `Outer` is two. When the distances tie, either use may win: this test has none.
+        let enums = instances([
             pair("Outer", 0, 1),
             pair("Far", 1, 3),
             pair("Near", 2, 3),
             pair("Low", 3, 4),
             holding("Leaf", 4, vec![Type::I64]),
-        ];
+        ]);
         let uses = [
             Some(Span::new(10, 11)),
             None,
@@ -727,13 +747,76 @@ mod tests {
     }
 
     #[test]
+    fn oversized_should_give_no_use_for_an_enum_that_is_no_instance() {
+        // `Low` has a use, but no generic enum makes it: no instance, no use.
+        let mut enums = chain();
+        enums[2].instance = false;
+        let uses = [None, None, Some(Span::new(30, 31)), None];
+        let found = oversized_with(&enums, &uses, 30);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].used, None);
+    }
+
+    #[test]
+    fn oversized_should_not_pass_the_use_of_an_enum_that_is_no_instance_to_the_one_it_holds() {
+        // `Top` is no instance and has a use, and `Mid` holds nothing with a use: the field of a
+        // non-generic enum is no use of the instance `Low`.
+        let mut enums = chain();
+        enums[0].instance = false;
+        let uses = [Some(Span::new(10, 11)), None, None, None];
+        let found = oversized_with(&enums, &uses, 30);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].used, None);
+    }
+
+    /// The enums `C0` to `C{n-1}` form a chain, and the last one holds `n` enums `R` that are over
+    /// the limit, so there are `n` reports. Only `C0` has a use. A search for each report would
+    /// walk the whole chain again, and the work would grow with the square of `n`.
+    #[test]
+    fn oversized_should_visit_each_enum_and_edge_a_bounded_number_of_times_for_many_reports() {
+        let steps = |n: usize| {
+            let mut enums: Vec<_> = (0..n - 1)
+                .map(|k| holding("C", k, vec![enum_type(k + 1)]))
+                .collect();
+            // The enum `R` for report `k` has the id `n + k`.
+            let reports = n..2 * n;
+            enums.push(holding(
+                "C",
+                n - 1,
+                reports.clone().map(enum_type).collect(),
+            ));
+            enums.extend(reports.map(|k| holding("R", k, vec![Type::I64, Type::I64])));
+            for e in &mut enums {
+                e.instance = true;
+            }
+            let mut uses = vec![None; enums.len()];
+            uses[0] = Some(Span::new(5, 6));
+            SPREAD_STEPS.set(0);
+            let found = oversized_with(&enums, &uses, 16);
+            assert_eq!(found.len(), n);
+            assert!(found.iter().all(|o| o.used == Some(Span::new(5, 6))));
+            SPREAD_STEPS.get()
+        };
+        crate::mir::tests::assert_near_linear(steps(100), steps(200), steps(300));
+    }
+
+    #[test]
+    fn oversized_should_not_spread_uses_when_no_enum_has_one() {
+        SPREAD_STEPS.set(0);
+        let found = oversized_with(&chain(), &[], 30);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].used, None);
+        assert_eq!(SPREAD_STEPS.get(), 0);
+    }
+
+    #[test]
     fn oversized_should_use_the_first_use_of_the_prelude_enum_that_holds_the_user_enum() {
         // A use of `User` is no use of `Wrap`, the instance that makes the payload too large.
         let base = PRELUDE_BASE as usize;
-        let enums = [
+        let enums = instances([
             holding("User", 3, vec![Type::I64, Type::I64]),
             holding("Wrap", base, vec![enum_type(0)]),
-        ];
+        ]);
         let uses = [Some(Span::new(60, 61)), Some(Span::new(70, 71))];
         let found = oversized_with(&enums, &uses, 20);
         assert_eq!(found.len(), 1);

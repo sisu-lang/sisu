@@ -405,7 +405,12 @@ impl Mono {
     /// id, with no arguments. Reaching a class's instantiation puts it on the worklist.
     fn output(&mut self, ty: Type) -> Type {
         if let Some(&done) = self.types.get(&ty) {
-            if let TypeKind::Enum(id, _) = done.kind() {
+            // An optional or an array of an instance has the instance in its type.
+            let mut held = done;
+            while let TypeKind::Optional(inner) | TypeKind::Array(inner) = held.kind() {
+                held = inner;
+            }
+            if let TypeKind::Enum(id, _) = held.kind() {
                 self.note_use(id);
             }
             return done;
@@ -2153,6 +2158,93 @@ mod tests {
             [src.find("Result.Ok")
                 .expect("the source should hold the use")]
         );
+    }
+
+    /// The source of a program with `P`, then `decls`, then `main` with the body `body`. `P^32` and
+    /// `P^28` in `decls` and `body` stand for `P` nested 32 and 28 levels deep.
+    fn with_pairs(decls: &str, body: &str) -> String {
+        let nested = |levels: usize| format!("{}i64{}", "P<".repeat(levels), ">".repeat(levels));
+        let program = format!(
+            "enum P<T> {{\n    End\n    A(T, T)\n}}\n{decls}fn main() {{\n{body}    print(1)\n}}\n"
+        );
+        program
+            .replace("P^32", &nested(32))
+            .replace("P^28", &nested(28))
+    }
+
+    /// How many E0160 the front end reports for `src`.
+    fn payload_errors(src: &str) -> usize {
+        let found = crate::front_end::front_end(src).1;
+        let too_large = |d: &&Diagnostic| d.code() == crate::diagnostic::Code::PayloadTooLarge;
+        found.iter().filter(too_large).count()
+    }
+
+    /// An earlier function ends in an expression, so `at` has that expression's span when `main`
+    /// starts. `expr` puts `at` back, so the locals of `main` do not take that span.
+    #[test]
+    fn instantiate_should_not_leak_the_span_of_an_earlier_function_into_the_label() {
+        let src = with_pairs(
+            "fn a() -> i64 {\n    return 1\n}\n",
+            "    let x: P^32 = P.End\n",
+        );
+        assert_eq!(
+            payload_uses(&src),
+            [src.find("P.End").expect("the source should hold the use")]
+        );
+    }
+
+    /// `W` is no instance: two fields of `P^28` make it too large, and `W.End` only uses `W`. Each
+    /// `P^28` alone is under the limit, so the error is on `W`.
+    #[test]
+    fn instantiate_should_give_no_e0160_label_for_an_enum_that_is_no_instance() {
+        let src = with_pairs(
+            "enum W {\n    End\n    A(P^28, P^28)\n}\n",
+            "    let w = W.End\n",
+        );
+        assert_eq!(payload_errors(&src), 1);
+        assert_eq!(payload_uses(&src), Vec::<usize>::new());
+    }
+
+    /// `G` is no instance: its declaration makes the instance of `P`, and `G.B` only uses `G`.
+    #[test]
+    fn instantiate_should_give_no_e0160_label_when_a_non_generic_enum_holds_the_instance() {
+        let src = with_pairs("enum G {\n    A(P^32)\n    B\n}\n", "    let g = G.B\n");
+        assert_eq!(payload_errors(&src), 1);
+        assert_eq!(payload_uses(&src), Vec::<usize>::new());
+    }
+
+    /// `G` is no instance, so the instance `H<i64>` that holds it does not pass its use to `P`.
+    #[test]
+    fn instantiate_should_give_no_e0160_label_when_an_instance_holds_a_non_generic_enum() {
+        let decls = "enum G {\n    A(P^32)\n    B\n}\nenum H<T> {\n    A(G)\n    B(T)\n}\n";
+        let src = with_pairs(decls, "    let h: H<i64> = H.B(1)\n");
+        assert_eq!(payload_errors(&src), 1);
+        assert_eq!(payload_uses(&src), Vec::<usize>::new());
+    }
+
+    /// An instance holds an instance: `W.B` uses `W<P^32>`, which holds the instance of `P` that is
+    /// over the limit. The local made both before any expression, so the label comes from the
+    /// spread of the use of `W<P^32>`.
+    #[test]
+    fn instantiate_should_point_e0160_at_the_use_of_an_instance_that_holds_the_instance() {
+        let src = with_pairs(
+            "enum W<T> {\n    A(T)\n    B\n}\n",
+            "    let w: W<P^32> = W.B\n",
+        );
+        assert_eq!(
+            payload_uses(&src),
+            [src.find("W.B").expect("the source should hold the use")]
+        );
+    }
+
+    /// The type of `None` is an optional of the instance, and the type of `[]` an array of it.
+    #[test]
+    fn instantiate_should_point_e0160_at_an_expression_whose_type_is_an_optional_or_array() {
+        for (ty, value) in [("P^32?", "None"), ("[P^32]", "[]")] {
+            let src = with_pairs("", &format!("    let x: {ty} = {value}\n"));
+            let at = src.rfind(value).expect("the source should hold the use");
+            assert_eq!(payload_uses(&src), [at], "{ty}");
+        }
     }
 
     /// A `Result` that holds an instance of `P`, through another `Result`: the error is at the
