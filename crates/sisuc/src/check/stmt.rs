@@ -56,7 +56,7 @@ impl Checker<'_> {
     /// there is none). Warns "unreachable code" on the first statement after a `never` one.
     /// Every statement is checked, also after one fails. `expected` is for the block's value.
     pub(super) fn block(&mut self, block: &ast::Block, expected: Option<Type>) -> CheckedBlock {
-        // Ranking an argument may have checked all but the block's value (see `tail_waits`).
+        // Ranking an argument may have checked all but the block's value (see `tail_rank`).
         let (scope, so_far) = match self.kept(block.span, true) {
             Some((_, Ahead::Block(scope, so_far))) => (scope, so_far),
             _ => (FxHashMap::default(), BlockSoFar::default()),

@@ -473,19 +473,14 @@ pub(super) fn literal_type(ty: Option<Type>) -> Type {
     }
 }
 
-/// Which side of an `if`, `if let` or `==` with no expected type is checked first, the lower
-/// first: a concrete value is 0, an `int_literal` 1, a `bare_none` or `[]` 2. `dbg(x)` passes
-/// its expected type to `x`, so it has the rank of `x`.
-pub(super) fn rank(e: &ast::Expr) -> u8 {
+/// Whether `e` is a bare `None` or an empty array literal, also under `dbg`, which passes its
+/// expected type to its argument. Nothing in such a value gives its type, so it takes the type
+/// of its siblings, or is reported if none is known.
+pub(super) fn bare_hole(e: &ast::Expr) -> bool {
     if let Some(argument) = dbg_argument(e) {
-        return rank(argument);
+        return bare_hole(argument);
     }
-    match &e.kind {
-        _ if bare_none(e) => 2,
-        ExprKind::ArrayLit(elements) if elements.is_empty() => 2,
-        _ if int_literal(e) => 1,
-        _ => 0,
-    }
+    bare_none(e) || matches!(&e.kind, ExprKind::ArrayLit(elements) if elements.is_empty())
 }
 
 /// The argument of `e`, if `e` is a call of `dbg` with one unlabeled argument and no type

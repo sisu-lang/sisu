@@ -102,7 +102,6 @@ crates/sisuc/src/check/tests/chars.rs::already_converted_keeps_comments_it_does_
 crates/sisuc/src/check/tests/chars.rs::already_converted_with_a_comment_is_unsafe
 crates/sisuc/src/check/tests/chars.rs::already_converted_with_a_label_has_no_fix
 crates/sisuc/src/check/tests/chars.rs::char_arithmetic
-crates/sisuc/src/check/tests/chars.rs::char_arithmetic_reports_once
 crates/sisuc/src/check/tests/chars.rs::char_as_a_type_name_suggestion
 crates/sisuc/src/check/tests/chars.rs::char_beside_a_number_in_equality
 crates/sisuc/src/check/tests/chars.rs::char_built_in_names

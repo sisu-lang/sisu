@@ -1,0 +1,8 @@
+error[E0032]: expected `i64`, found `[]`
+ --> E0032-join-empty-array.sisu:2:15
+  |
+2 |     let xs = [[], 1]
+  |               ^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

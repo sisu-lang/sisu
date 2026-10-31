@@ -1,25 +1,25 @@
 error[E0154]: `i64` does not conform to `Source`
-  --> E0154-rejected-parameter.sisu:19:16
+  --> E0154-rejected-parameter.sisu:21:16
    |
 13 | fn first_only<T: Source>(pair: Two<T, T.Item>, same: T) {}
    |                  ------ required by this bound
 ...
-19 |     first_only(Two.Both(5, 7), Plain())
+21 |     first_only(Two.Both(n, 7), Plain())
    |                ^^^^^^^^^^^^^^
 
 error[E0154]: `i64` does not conform to `Source`
-  --> E0154-rejected-parameter.sisu:21:16
+  --> E0154-rejected-parameter.sisu:23:16
    |
 15 | fn then_other<T: Source, U>(pair: Two<T, T.Item>, label: U, other: Two<U, T.Item>) {}
    |                  ------ required by this bound
 ...
-21 |     then_other(Two.Both(5, 7), true, Two.Both("s", 3))
+23 |     then_other(Two.Both(n, 7), true, Two.Both("s", 3))
    |                ^^^^^^^^^^^^^^
 
 error[E0032]: expected `bool`, found `string`
-  --> E0154-rejected-parameter.sisu:21:47
+  --> E0154-rejected-parameter.sisu:23:47
    |
-21 |     then_other(Two.Both(5, 7), true, Two.Both("s", 3))
+23 |     then_other(Two.Both(n, 7), true, Two.Both("s", 3))
    |                                               ^^^
 
 sisu: 3 errors

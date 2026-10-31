@@ -7,7 +7,7 @@ use std::{fmt, iter};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::alias::{Through, Via};
-use super::expr::{dbg_argument, int_literal, option_written};
+use super::expr::{bare_hole, dbg_argument, int_literal, option_written};
 use super::interface::{Bound, Required};
 use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
@@ -190,30 +190,40 @@ fn leaves_open(params: impl Iterator<Item = Option<Type>>, names: &[Symbol], own
     (owner..names.len()).any(|i| !bound[i] && !broken[i])
 }
 
-/// `leaves_open` for a call of a function or method, which returns `ret`: the context binds only
-/// what the type of the call names, so the call is open if `ret` names a parameter that no
-/// parameter type does. It is not open, whatever else it leaves, if one parameter is named by
-/// no type at all: nothing can bind that one, and the call reports it.
-fn leaves_open_in(
+/// Two facts of a call of a function or method that returns `ret`, from one walk of `ret`: whether
+/// it is open, and whether it is outside. `ret` is `None` when it did not resolve; the call is
+/// neither then.
+///
+/// - Open: the context binds only what the type of the call names, so the call is open if `ret`
+///   names a parameter that no parameter type does. It is not open, whatever else it leaves, if
+///   one parameter is named by no type at all: nothing can bind that one, and the call reports
+///   it.
+/// - Outside: `ret` names none of the type parameters from `owner` on, which are the callee's own,
+///   so the arguments do not give the call its type.
+fn open_and_outside(
     params: impl Iterator<Item = Option<Type>>,
-    ret: Type,
+    ret: Option<Type>,
     names: &[Symbol],
     owner: usize,
-) -> bool {
-    let bound = named_params(params, names.len());
+) -> (bool, bool) {
+    let Some(ret) = ret else {
+        return (false, false);
+    };
     let built = named_params(iter::once(Some(ret)), names.len());
+    let outside = !built[owner..].contains(&true);
+    let bound = named_params(params, names.len());
     let broken = broken_params(names);
     let mut open = false;
     for i in (owner..names.len()).filter(|&i| !bound[i] && !broken[i]) {
         if !built[i] {
-            return false;
+            return (false, outside);
         }
         open = true;
     }
-    open
+    (open, outside)
 }
 
-/// A call of a generic callee as ranking sees it (see `Checker::waits`).
+/// A call of a generic callee as ranking sees it (see `Checker::rank_value`).
 #[derive(Default)]
 #[expect(
     clippy::struct_excessive_bools,
@@ -225,10 +235,157 @@ struct CallShape {
     /// Whether the arguments fit the callee's declaration, whose return type resolved.
     shaped: bool,
     /// Whether no argument can bind one of its type parameters, and the type of the call names
-    /// it, so only the call's context can bind it.
+    /// it. Then only the call's context can bind it.
     open: bool,
     /// Whether the call is `Some(...)` or `Option.Some(...)`, which `Checker::some` checks.
     some: bool,
+    /// How the call makes an optional by itself (see `Ranked::optional`).
+    makes: Makes,
+    /// The places whose declared type names, other than under an associated type, a type
+    /// parameter that the declared return type names too (see `carried_places`). Bit `i` is set
+    /// for the place `i`. An argument that holds an optional at such a place makes the call hold
+    /// one (see `Ranked::holds_optional`).
+    carried: u64,
+    /// Whether the fitting call's declared return type names none of the callee's own type
+    /// parameters. Then its arguments do not give the call its type (see `Rank`).
+    outside: bool,
+}
+
+/// How a call of a generic callee makes an optional by itself, from its declaration.
+#[derive(Default)]
+enum Makes {
+    /// Its declared return type is not an optional, nor a bare type parameter.
+    #[default]
+    No,
+    /// Its declared return type is an optional: `Some`, or `fn opt<T>(x: T) -> T?`.
+    Always,
+    /// Its declared return type is a bare type parameter `P`. Bit `i` of a mask is set for the
+    /// place `i`.
+    // shortcut: a place from 64 on does not count, so a callee of 64 parameters or more, with an
+    // optional argument from place 64 on, reports "expected `u8`, found `u8?`"; upgrade if a callee
+    // with more parameters needs it.
+    // shortcut: an argument at a place of `inside` counts when it holds an optional at any depth,
+    // so `first([[Some(1)]])` for `fn first<T>(xs: [T]) -> T` counts, and `T` is `[i64?]`; upgrade
+    // if such a call needs a context that is not an optional.
+    // shortcut: a place `T?` of `P` is not in `inside`, as there `Some(2)` fills the place's own
+    // `?`. So `let v: i64? = h(1, Some(Some(2)))` for `fn h<T>(a: T, b: T?) -> T` meets the
+    // payload and reports "expected `i64`, found `i64?`"; upgrade if such a call needs the context
+    // to meet the return type whole.
+    Through {
+        /// The places of the declared type `P`. The call is an optional when one of the
+        /// arguments there is.
+        bare: u64,
+        /// The places whose declared type holds `P` under arrays or the type arguments of a class
+        /// or an enum, such as `[P]` or `Bx<P>`. The call is an optional when one of the
+        /// arguments there holds an optional.
+        inside: u64,
+    },
+}
+
+/// Whether bit `i` of `mask` is set. A place from 64 on is not.
+fn has_place(mask: u64, i: usize) -> bool {
+    i < u64::BITS as usize && (mask >> i) & 1 == 1
+}
+
+impl Makes {
+    /// How a callee with the return type `ret` and the parameter types `params` makes an
+    /// optional.
+    fn of(ret: Option<Type>, params: impl Iterator<Item = Option<Type>>) -> Makes {
+        match ret.map(|ret| (ret, ret.kind())) {
+            Some((_, TypeKind::Optional(_))) => Makes::Always,
+            Some((ret, TypeKind::Param(..))) => {
+                let (mut bare, mut inside) = (0, 0);
+                for (i, param) in params.take(u64::BITS as usize).enumerate() {
+                    match param {
+                        Some(param) if param == ret => bare |= 1 << i,
+                        Some(param) if holds_param(param, ret) => inside |= 1 << i,
+                        _ => {}
+                    }
+                }
+                Makes::Through { bare, inside }
+            }
+            _ => Makes::No,
+        }
+    }
+
+    /// Whether the argument at place `i` is of the bare return parameter.
+    fn through(&self, i: usize) -> bool {
+        matches!(self, Makes::Through { bare, .. } if has_place(*bare, i))
+    }
+
+    /// Whether the argument at place `i` is of the return parameter in arrays or in the type
+    /// arguments of a class or an enum.
+    fn inside(&self, i: usize) -> bool {
+        matches!(self, Makes::Through { inside, .. } if has_place(*inside, i))
+    }
+
+    /// Whether the argument `ranked` at place `i` makes the call an optional: it is one at a
+    /// place of the bare parameter, or it holds one at a place that holds the parameter.
+    fn passes_optional(&self, i: usize, ranked: Ranked) -> bool {
+        self.through(i) && ranked.optional || self.inside(i) && ranked.holds_optional
+    }
+}
+
+/// Whether `ty` holds `param` other than as itself: under arrays or the type arguments of a class
+/// or an enum, not under an optional nor an associated type.
+fn holds_param(ty: Type, param: Type) -> bool {
+    match ty.kind() {
+        TypeKind::Array(t) => t == param || holds_param(t, param),
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+            (args.get().iter()).any(|&arg| arg == param || holds_param(arg, param))
+        }
+        _ => false,
+    }
+}
+
+/// Whether `ty` names a type parameter that `marked` marks by its place, other than under an
+/// associated type (see `names_outside_assoc`).
+fn names_marked(ty: Type, marked: &[bool]) -> bool {
+    if !ty.has_param() {
+        return false;
+    }
+    match ty.kind() {
+        TypeKind::Param(_, j) => marked[j as usize],
+        TypeKind::Array(inner) | TypeKind::Optional(inner) => names_marked(inner, marked),
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+            (args.get().iter()).any(|&arg| names_marked(arg, marked))
+        }
+        TypeKind::Assoc(..) => false,
+        _ => unreachable!("only a kind with a child can name a parameter"),
+    }
+}
+
+/// The places among `params` whose type names a type parameter that `marked` marks, as
+/// `CallShape::carried` says. A place from 64 on does not count (see `Makes::Through`).
+fn carried_places(params: impl Iterator<Item = Option<Type>>, marked: &[bool]) -> u64 {
+    let mut places = 0;
+    for (i, param) in params.take(u64::BITS as usize).enumerate() {
+        if param.is_some_and(|param| names_marked(param, marked)) {
+            places |= 1 << i;
+        }
+    }
+    places
+}
+
+/// The places among `params` whose type names a type parameter, of `count`, that the declared
+/// return type `ret` names too, other than under an associated type. `ret` is `None` when it
+/// did not resolve: no place is carried then.
+// shortcut: a place `T?` counts, though an optional there only fills the place's own `?`. So
+// `pick(h(1, Some(2)), Some(3))` for `fn h<T>(a: T, b: T?) -> T` is rejected, and the reversed
+// order passes; upgrade with the `T?` limit of `Makes::Through`.
+fn carried(ret: Option<Type>, params: impl Iterator<Item = Option<Type>>, count: usize) -> u64 {
+    let Some(ret) = ret.filter(|_| count > 0) else {
+        return 0;
+    };
+    let (mut inside, mut outside) = (vec![false; count], vec![false; count]);
+    mark_by_assoc(ret, false, &mut inside, &mut outside);
+    carried_places(params, &outside)
+}
+
+/// The places among `params` that name a type parameter, of `count`, for a construction, whose
+/// built type names all of them.
+fn carried_by_construction(params: impl Iterator<Item = Option<Type>>, count: usize) -> u64 {
+    carried_places(params, &vec![true; count])
 }
 
 /// The hole, `_`: the type of a part that a context has not fixed yet (see `Bindings::partial`).
@@ -590,6 +747,9 @@ thread_local! {
     pub(super) static INSPECTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many expressions `takes_context` has looked at on this thread.
     pub(super) static CONTEXT_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many expressions `rank_value` has walked on this thread, those it answers from
+    /// `body.ranked` not counted.
+    pub(super) static RANK_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// A generic callee as a call sees it: a function or method, a class's constructor, or an
@@ -738,9 +898,10 @@ fn fits(
             .all(|((ty, label), arg)| ty.is_some() && arg.label.as_ref().map(|l| l.name) == label)
 }
 
-/// Work that ranking an argument did ahead of its turn (see `needs_context`), kept in
-/// `body.ahead` by the span it was done for until checking reaches it. It lives no longer than
-/// the generic call that ranked it, nor than the diagnostics and locals it made.
+/// Work that ranking an argument did ahead of its turn (see `rank_value`). It is kept in
+/// `body.ahead` by the span it was done for, until checking reaches it. It lives no longer than
+/// the generic call, join or operator that ranked it (see `Checker::ranked`), nor than the
+/// diagnostics and locals it made.
 pub(super) enum Ahead {
     /// A method's checked receiver, or a `match`'s scrutinee.
     Receiver(Checked),
@@ -760,19 +921,129 @@ pub(super) enum Ahead {
     ),
 }
 
-/// Whether one of `branches` has a value, and each that has one needs context: each is `None`
-/// when its branch ends in an exit, else whether its value needs context. It stops at the first
-/// value that does not, so the branches after it are not ranked.
-fn branches_wait(branches: impl IntoIterator<Item = Option<bool>>) -> bool {
-    let mut any = false;
-    for waits in branches {
-        match waits {
-            None => {}
-            Some(true) => any = true,
-            Some(false) => return false,
+/// How much a value needs the context of its call, from least to most (see `rank_value`). The
+/// rank orders the values of a call. A `Concrete` value binds first. A `Literal` value takes the
+/// type that the others fix. A `Waits` value takes what the call's context gives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Rank {
+    /// Its type comes from itself.
+    Concrete,
+    /// Its type comes from the defaults of its integer literals, or from the arguments of a
+    /// generic call that rank so. It takes the type of the others when they fix one.
+    ///
+    /// A generic call ranks `Literal` as its arguments do only if its declared return type names
+    /// a type parameter of its own. The arguments bind that parameter. Else the arguments do not
+    /// give the call its type, and the call is `Concrete`. A call of a callee that is not generic
+    /// is `Concrete` too (`len_of([1])` is `i64`; `bx.get(1)` is the `T` of the receiver). Such a
+    /// call whose arguments all wait stays `Waits`: no context binds what they leave, and the
+    /// call reports it.
+    Literal,
+    /// Its type cannot come from itself: it needs the context of its call.
+    Waits,
+}
+
+/// What `rank_value` finds about a value.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Ranked {
+    pub(super) rank: Rank,
+    /// Whether the value can make an optional by itself, which a literal beside it does not. A
+    /// bare `None` can, and so can a safe call (`receiver?.method(...)`). So can a call of a
+    /// generic callee whose declared return type is an optional. So can a call whose declared
+    /// return type is a bare type parameter, when an argument of that type is `optional`. A
+    /// block can when its tail can. An `if`, an `if let` with `else` or a `match` can when a
+    /// value branch can. A context that is an optional then meets the type of the value whole,
+    /// not its payload. The field is complete only for a `Literal` or `Waits` value, as ranking
+    /// stops at a `Concrete` part. A `Concrete` value can carry `true` (`opt(x)` with a concrete
+    /// `x`), and no reader reads it.
+    pub(super) optional: bool,
+    /// Whether the type of the value has an optional that a plain literal in its place would
+    /// not have. A `T?` place counts too: `h(1, Some(2))` for `fn h<T>(a: T, b: T?) -> T` holds
+    /// an optional, though it fills the `?` (see `carried`). It is set where `optional` is. An
+    /// array literal keeps it from its elements: `[Some(2)]` holds an optional, but is not an
+    /// optional element. So does a call that has an argument that holds one at a place whose
+    /// declared type names a type parameter that the declared return type names too:
+    /// `id([Some(2)])`, `wrap(Some(2))` for `-> [T]`, and `Bx(v: Some(2))`. Not `k2(Some(1), [2])`
+    /// for `fn k2<T, U>(a: T, b: U) -> U`. The order of the arguments of a call reads it (see
+    /// `infer_call`), and joins do not.
+    pub(super) holds_optional: bool,
+    /// For a `Literal` value: whether its type is the type of an integer literal it holds, which
+    /// is a scalar (see `sibling`). An integer literal is. So is a value that passes such a
+    /// literal on as it is: `dbg`, a block, a branch, or a call that returns a type parameter,
+    /// when each literal argument is at a place of that parameter. The `1` of `k2(1, [])` for
+    /// `fn k2<T, U>(a: T, b: U) -> U` is not passed on. An array, or a call that returns
+    /// `Some(...)` or a class, is not.
+    scalar: bool,
+}
+
+impl Ranked {
+    const CONCRETE: Self = Self {
+        rank: Rank::Concrete,
+        optional: false,
+        holds_optional: false,
+        scalar: false,
+    };
+    const LITERAL: Self = Self {
+        rank: Rank::Literal,
+        optional: false,
+        holds_optional: false,
+        scalar: true,
+    };
+    const WAITS: Self = Self {
+        rank: Rank::Waits,
+        optional: false,
+        holds_optional: false,
+        scalar: false,
+    };
+
+    /// The rank that joins and operators order siblings by. They type a `Literal` value with
+    /// `literal_type`, which knows scalars only. So a `Literal` value that is not `scalar` is
+    /// `Concrete` for them. It is checked alone and takes its default type, as `[[1], [2]]` and
+    /// `W(x: 1) < W(x: 2)` always did.
+    // shortcut: such a value does not take the type of a sibling, so `[[1], x2]` with
+    // `x2: [u8]` does not give `[1]` the type `[u8]`; upgrade when `literal_type` knows arrays
+    // and the types of a call.
+    ///
+    /// A call that does not fit its declaration (`fit` is false) is `Concrete` too. It is checked
+    /// first and alone, and reports its own mistakes, not those of a sibling's type.
+    pub(super) fn sibling(self, fit: bool) -> Rank {
+        if !fit || self.rank == Rank::Literal && !self.scalar {
+            Rank::Concrete
+        } else {
+            self.rank
         }
     }
-    any
+}
+
+/// The rank of a value made of `parts`, each a value that its type comes from. The rank is
+/// `Waits` when every part waits, `Literal` when no part is `Concrete` and one is `Literal`,
+/// else `Concrete`. It is `optional` or `holds_optional` when a part is, and `scalar` when each
+/// `Literal` part is.
+/// It stops at the first `Concrete` part, so the parts after it are not ranked.
+fn combine(parts: impl IntoIterator<Item = Ranked>) -> Ranked {
+    let mut found = Ranked::WAITS;
+    let mut scalar = true;
+    for part in parts {
+        match part.rank {
+            Rank::Concrete => return Ranked::CONCRETE,
+            Rank::Literal => found.rank = Rank::Literal,
+            Rank::Waits => {}
+        }
+        found.optional |= part.optional;
+        found.holds_optional |= part.holds_optional;
+        if part.rank == Rank::Literal {
+            scalar &= part.scalar;
+        }
+    }
+    found.scalar = scalar;
+    found
+}
+
+/// `combine` of the values of `branches`: each is `None` when its branch ends in an exit, else
+/// the rank of its value. `Concrete` when no branch has a value.
+fn combine_branches(branches: impl IntoIterator<Item = Option<Ranked>>) -> Ranked {
+    let mut any = false;
+    let found = combine(branches.into_iter().flatten().inspect(|_| any = true));
+    if any { found } else { Ranked::CONCRETE }
 }
 
 /// Whether `checked`, an argument, was rejected by its parameter's type (see `mark`).
@@ -813,7 +1084,7 @@ impl Checker<'_> {
     /// parameters. The caller has matched the arguments to the parameters by count and label.
     /// `written` gives every type parameter that the receiver does not give.
     ///
-    /// 1. The arguments that are neither literal-like nor need context. Each is checked against
+    /// 1. The arguments of rank `Concrete`. Each is checked against
     ///    its parameter's type once that type names no unbound parameter, and on its own before.
     /// 2. `expected` against the return type, whole. When the return type cannot meet an
     ///    optional `expected` whole, it meets its payload. When it meets neither with the help
@@ -822,8 +1093,8 @@ impl Checker<'_> {
     ///    When `expected` holds a hole (see `call_context`) that the return type cannot meet,
     ///    and a parameter is left unbound, the call reports a mismatch at itself in place of
     ///    E0050.
-    /// 3. The literal-like arguments, as in pass 1.
-    /// 4. The arguments that need context, against their parameter's type.
+    /// 3. The arguments of rank `Literal`, as in pass 1.
+    /// 4. The arguments of rank `Waits`, against their parameter's type.
     ///
     /// An argument of type `unit` or `never` binds only what none of the others binds. Returns
     /// the arguments in source order, the type arguments and the call's type. Returns `None`,
@@ -841,17 +1112,9 @@ impl Checker<'_> {
         args: &[ast::Arg],
         expected: Option<Type>,
     ) -> Option<(Vec<Checked>, TypeArgs, Option<Type>)> {
-        let mark = self.body.ahead.len();
         // The context of the quiet value failed, as an `UNKNOWN` one did.
         let expected = expected.or_else(|| self.quiet(span, expected).then_some(UNKNOWN));
-        let call = self.infer_call(span, sig, written, args, expected);
-        // A key is kept again only once its last entry is used, so an earlier entry of a key
-        // truncated here, if any, is used, and dropping the key loses nothing. A placeholder
-        // (`keep` with no work) is the exception, but ranking fills each one before this runs.
-        for (key, _) in self.body.ahead.drain(mark..) {
-            self.body.ahead_at.remove(&key);
-        }
-        call
+        self.ranked(|c| c.infer_call(span, sig, written, args, expected))
     }
 
     /// `generic_call`, before what ranking kept is dropped.
@@ -889,7 +1152,7 @@ impl Checker<'_> {
         }
         // Whether every call in an argument fits its declaration.
         let mut fit = vec![true; args.len()];
-        let ranks = self.rank_arguments(&call, sig, args, &mut fit);
+        let (ranks, holds, through) = self.rank_arguments(&call, sig, args, &mut fit);
         // A context that holds a hole gives the arguments below more context (see `hint`).
         if let (Some(ret), Some(want)) = (sig.ret, expected) {
             call.bindings.hint(ret, want);
@@ -899,14 +1162,15 @@ impl Checker<'_> {
         }
         let mut misfit = None;
         if let (Some(ret), Some(want)) = (sig.ret, expected.filter(|&ty| ty != UNKNOWN)) {
-            // The return type meets `want` whole if it can and an argument waits for it:
-            // `let x: i64? = pick(5, None)` binds `T = i64?`. Else it meets the payload of an
-            // optional `want`, and the call's value is wrapped: `y ?? id(2)` on an `i64?` `y`
-            // gives the `i64` that `y ?? 2` gives. What of it cannot meet either is reported
-            // where the value is used, unless the context fits alone: then the arguments that
-            // contradict it are reported, each at its own place. Type arguments that the call
-            // writes are its own.
-            let met = (ranks.contains(&2) && call.bindings.unify(ret, want))
+            // The return type meets `want` whole if it can and an argument waits for it, or
+            // makes the optional itself and has the type of the return type (`through`):
+            // `let x: i64? = pick(5, None)` binds `T = i64?`, and so does `id(Some(1))`. Else it
+            // meets the payload of an optional `want`, and the call's value is wrapped:
+            // `y ?? id(2)` on an `i64?` `y` gives the `i64` that `y ?? 2` gives. What of it
+            // cannot meet either is reported where the value is used, unless the context fits
+            // alone: then the arguments that contradict it are reported, each at its own place.
+            // Type arguments that the call writes are its own.
+            let met = ((through || ranks.contains(&2)) && call.bindings.unify(ret, want))
                 || call.bindings.constrain(ret, payload(want));
             misfit = self.misfit(span, ret, want, met).then_some(ret);
             if !met && written.is_empty() && !call.failed {
@@ -914,8 +1178,16 @@ impl Checker<'_> {
             }
             self.report_fresh(&mut call, span);
         }
-        for (i, arg) in args.iter().enumerate().filter(|&(i, _)| ranks[i] == 1) {
-            self.infer_arg(&mut call, i, &arg.value, sig.params[i], None);
+        // With no context, the first argument of rank 1 binds the parameter, and one that holds
+        // an optional gives the wider type: `pick(1, Some(2))` binds `T = i64?`, where `1` first
+        // would bind `T = i64` and reject `Some(2)`. So does `pick([1], [Some(2)])`, which binds
+        // `T = [i64?]`. A literal then fits the optional, as `1` fits `i64?`. So the arguments
+        // that hold an optional are checked before the others.
+        for first in [true, false] {
+            let wanted = |&(i, _): &(usize, _)| ranks[i] == 1 && holds[i] == first;
+            for (i, arg) in args.iter().enumerate().filter(wanted) {
+                self.infer_arg(&mut call, i, &arg.value, sig.params[i], None);
+            }
         }
         self.sweep_waiting(&mut call, sig, args, &ranks, &fit);
         for (i, ty) in std::mem::take(&mut call.last) {
@@ -976,31 +1248,45 @@ impl Checker<'_> {
         Some((checked, list, ret))
     }
 
-    /// The rank of each argument of the call: 2 for one that waits for context, 1 for one whose
-    /// type comes from its literals' defaults, else 0. An argument for a type that names an
-    /// unbound parameter only under an associated type waits for it, whatever the argument is
-    /// (see `waits_for_assoc`). `fit` is cleared where a call in an argument does not fit its
+    /// The rank of each argument of the call: 2 for `Rank::Waits`, 1 for `Rank::Literal`, else 0
+    /// for `Rank::Concrete`. An argument for a type that names an unbound parameter only under
+    /// an associated type waits for it, whatever the argument is (see `waits_for_assoc`).
+    ///
+    /// Also whether each argument of rank 1 is `Ranked::holds_optional`, which sets the order of
+    /// rank 1 (see `infer_call`). `fit` is cleared where a call in an argument does not fit its
     /// declaration.
+    ///
+    /// Also whether the return type is a bare type parameter, and an argument of rank 1 makes it
+    /// an optional (see `Makes::passes_optional`). The context then meets the return type whole.
     fn rank_arguments(
         &mut self,
         call: &Inference<'_>,
         sig: &GenericSig<'_>,
         args: &[ast::Arg],
         fit: &mut [bool],
-    ) -> Vec<u8> {
-        iter::zip(args, fit)
+    ) -> (Vec<u8>, Vec<bool>, bool) {
+        let makes = Makes::of(sig.ret, sig.params.iter().copied());
+        let mut through = false;
+        let (ranks, holds) = iter::zip(args, fit)
             .enumerate()
             .map(|(i, (arg, fit))| {
                 let writes_assoc =
                     sig.params[i].is_some_and(|param| waits_for_assoc(&call.bindings, param));
-                match &arg.value {
-                    _ if writes_assoc => 2,
-                    e if self.waits(e, fit) => 2,
-                    e if self.literal_like(e) => 1,
-                    _ => 0,
+                if writes_assoc {
+                    return (2, false);
+                }
+                let ranked = self.rank_value(&arg.value, fit);
+                match ranked.rank {
+                    Rank::Waits => (2, false),
+                    Rank::Literal => {
+                        through |= makes.passes_optional(i, ranked);
+                        (1, ranked.holds_optional)
+                    }
+                    Rank::Concrete => (0, false),
                 }
             })
-            .collect()
+            .unzip();
+        (ranks, holds, through)
     }
 
     /// Checks the bounds of the parameters `bound`, which a binding has just bound, and the bounds
@@ -1427,16 +1713,16 @@ impl Checker<'_> {
         }
     }
 
-    /// The array literal `elements` for `[element]`, where `element` names an unbound
-    /// parameter. The elements are checked in the three waves of `rank`, as `infer_value` does,
-    /// so a later `None` or integer literal meets the parameter already bound by an earlier
-    /// element, and so wraps. A `None` or `[]` with nothing bound is reported as `joined`
-    /// reports it: the first alone, unless an element failed already. Each element gets its own
-    /// context, so no hole reaches the type of the array. `accepted` says that `takes_context`
-    /// has accepted the literal, so each element takes its context with no new walk. Else
-    /// each element asks `call_context`: an element that takes no context, such as a local
-    /// variable, is checked on its own, and the others keep theirs. An element of type `unit`
-    /// or `never` has no value, which is reported at once, and binds nothing.
+    /// The array literal `elements` for `[element]`, where `element` names an unbound parameter.
+    /// The elements are checked in the three waves of `Rank` (see `sibling_rank`), as `infer_value`
+    /// does. So a later `None` or integer literal meets the parameter that an earlier element
+    /// bound, and so wraps. A `None` or `[]` with nothing bound is reported as `joined` reports it:
+    /// the first alone, unless an element failed already. Each element gets its own context, so no
+    /// hole reaches the type of the array. `accepted` says that `takes_context` has accepted the
+    /// literal, so each element takes its context with no new walk. Else each element asks
+    /// `call_context`: an element that takes no context, such as a local variable, is checked on
+    /// its own, and the others keep theirs. An element of type `unit` or `never` has no value,
+    /// which is reported at once, and binds nothing.
     fn inferred_array(
         &mut self,
         call: &mut Inference<'_>,
@@ -1450,16 +1736,16 @@ impl Checker<'_> {
         // `element`'s type once an element binds all it names. A later element meets it with
         // no new walk of `element`, so the work does not grow with elements times its depth.
         let mut bound = None;
-        let ranks: Vec<u8> = elements.iter().map(|e| self.rank(e)).collect();
-        for wave in 0..3 {
+        let ranks: Vec<Rank> = elements.iter().map(|e| self.sibling_rank(e)).collect();
+        for wave in [Rank::Concrete, Rank::Literal, Rank::Waits] {
             for (i, e) in elements
                 .iter()
                 .enumerate()
-                .filter(|(i, _)| ranks[*i] == wave)
+                .filter(|&(i, _)| ranks[i] == wave)
             {
                 let checked = if let Some(want) = bound {
                     mark(self.operand(e, Some(want)))
-                } else if wave < 2 {
+                } else if !bare_hole(e) {
                     let kept = call.bindings.kept;
                     let context = if accepted {
                         self.partial_context(call, e, element)
@@ -1626,50 +1912,123 @@ impl Checker<'_> {
         });
     }
 
-    /// Whether `e`'s type cannot come from itself: a bare `[]` or `None`; a payload-free
-    /// variant of a generic enum; an array literal whose elements all need context; an `if`, an
-    /// `if let` or a `match` whose every value branch does, or a block whose value does; or a
-    /// call of a generic function or method, or a construction of a generic class or variant,
-    /// its type arguments not written, whose arguments fit its declaration and all need
-    /// context, or, if they fit, whose parameter types leave one of its own type parameters
-    /// unnamed that the call's type names, which no argument can bind. A call of `dbg` needs
-    /// context when its argument does. A name resolves as the checker resolves it: a call's
-    /// callee by its declaration, whatever local takes it. A method's receiver, an `if let`'s
-    /// value and a `match`'s scrutinee are checked here, ahead of their turn, and kept for it
-    /// (see `Ahead`).
-    // shortcut: a nested generic call scans its arguments again, quadratic in the depth of the
-    // nesting; remember the answer by span if deep nests appear.
-    pub(super) fn needs_context(&mut self, e: &ast::Expr) -> bool {
-        self.waits(e, &mut true)
+    /// How much `e` needs the context of its call, and whether it can make an optional by itself
+    /// (see `Ranked`).
+    ///
+    /// The value `Waits` when its type cannot come from itself. A bare `[]` or `None` waits, and
+    /// so does a payload-free variant of a generic enum. So does a call of a generic function or
+    /// method, or a construction of a generic class or variant, its type arguments not written.
+    /// Such a call waits when its arguments fit its declaration and all wait.
+    ///
+    /// Such a call waits also in one more case. Its arguments fit, and the parameter types leave
+    /// one of its own type parameters unnamed. The call's type names that parameter, so no
+    /// argument can bind it.
+    ///
+    /// The value is `Literal` when its type comes from the defaults of its integer literals
+    /// alone, with values that wait. These are an integer literal, arithmetic over them, or such
+    /// a call. Else it is `Concrete`.
+    ///
+    /// A value that passes its context to its parts has the rank of its parts (see `combine`).
+    /// An array literal has the rank of its elements. A call of a generic callee, `dbg` among
+    /// them, has the rank of its arguments. An `if`, an `if let` or a `match` has the rank of its
+    /// value branches (see `combine_branches`). A block has the rank of its value.
+    ///
+    /// A name resolves as the checker resolves it: a call's callee by its declaration, whatever
+    /// local takes it. A method's receiver, an `if let`'s value and a `match`'s scrutinee are
+    /// checked here, ahead of their turn, and kept for it (see `Ahead`). `fit` is cleared when a
+    /// call that waits does not fit its declaration: count, labels, and every parameter's and the
+    /// return type resolved.
+    ///
+    /// The answer for a span is kept in `body.ranked`. So a nested generic call, which ranks its
+    /// arguments again when it is checked, costs no new walk.
+    pub(super) fn rank_value(&mut self, e: &ast::Expr, fit: &mut bool) -> Ranked {
+        if let Some(&(ranked, cleared)) = self.body.ranked.get(&e.span) {
+            *fit &= !cleared;
+            return ranked;
+        }
+        #[cfg(test)]
+        RANK_STEPS.set(RANK_STEPS.get() + 1);
+        let mut here = true;
+        let ranked = self.rank_walk(e, &mut here);
+        *fit &= here;
+        self.body.ranked.insert(e.span, (ranked, !here));
+        ranked
     }
 
-    /// `needs_context`, where `fit` is cleared when a call that waits does not fit its
-    /// declaration: count, labels, and every parameter's and the return type resolved.
-    fn waits(&mut self, e: &ast::Expr, fit: &mut bool) -> bool {
+    /// How much `e` needs the context of the siblings it is checked with, in a join or beside an
+    /// operator: its `Ranked::sibling`. A sibling that waits is checked after the others, and
+    /// takes their type.
+    pub(super) fn sibling_rank(&mut self, e: &ast::Expr) -> Rank {
+        self.sibling_ranked(e).0
+    }
+
+    /// `sibling_rank`, and whether `e` can make an optional by itself (`Ranked::optional`). A
+    /// sibling ranked `Concrete` says `false`: it is not ranked to the end.
+    pub(super) fn sibling_ranked(&mut self, e: &ast::Expr) -> (Rank, bool) {
+        let mut fit = true;
+        let ranked = self.rank_value(e, &mut fit);
+        let rank = ranked.sibling(fit);
+        (rank, ranked.optional && rank != Rank::Concrete)
+    }
+
+    /// Runs `f`, which ranks values and checks them. Then it drops the work that ranking kept
+    /// (see `Ahead`) and `f` did not use. A key is kept again only once its last entry is used.
+    /// So an earlier entry of a key truncated here, if any, is used, and dropping the key loses
+    /// nothing. A placeholder (`keep` with no work) is the exception, but ranking fills each one
+    /// before `f` returns.
+    pub(super) fn ranked<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let mark = self.body.ahead.len();
+        let result = f(self);
+        for (key, _) in self.body.ahead.drain(mark..) {
+            self.body.ahead_at.remove(&key);
+        }
+        result
+    }
+
+    /// `rank_value`, for a span not ranked yet.
+    fn rank_walk(&mut self, e: &ast::Expr, fit: &mut bool) -> Ranked {
         use ast::ExprKind as K;
-        let (
-            CallShape {
-                generic,
-                shaped,
-                open,
-                ..
+        match &e.kind {
+            _ if self.bare_none_written(e) => Ranked {
+                optional: true,
+                holds_optional: true,
+                ..Ranked::WAITS
             },
-            args,
-        ) = match &e.kind {
-            _ if self.bare_none_written(e) => return true,
-            K::ArrayLit(elements) => return elements.iter().all(|e| self.waits(e, fit)),
+            _ if int_literal(e) => Ranked::LITERAL,
+            K::ArrayLit(elements) => {
+                let found = combine(elements.iter().map(|e| self.rank_value(e, fit)));
+                Ranked {
+                    optional: false,
+                    scalar: false,
+                    ..found
+                }
+            }
             K::Field {
                 base,
                 name,
                 safe: false,
             } => {
-                return self
+                let waits = self
                     .generic_variant(base, name)
                     .is_some_and(|v| v.fields.is_empty());
+                if waits {
+                    Ranked::WAITS
+                } else {
+                    Ranked::CONCRETE
+                }
             }
             K::MethodCall { .. } | K::Call { .. } => match self.call_shape(e) {
-                Some(shape) => shape,
-                None => return false,
+                Some((shape, args)) => {
+                    let ranked = self.rank_call(shape, args, fit);
+                    // The result of a safe call is optional, whatever the method returns.
+                    let safe = matches!(e.kind, K::MethodCall { safe: true, .. });
+                    Ranked {
+                        optional: ranked.optional || safe,
+                        holds_optional: ranked.holds_optional || safe,
+                        ..ranked
+                    }
+                }
+                None => Ranked::CONCRETE,
             },
             K::If {
                 then_block,
@@ -1677,41 +2036,96 @@ impl Checker<'_> {
                 ..
             } => {
                 let blocks = [then_block, else_block].into_iter();
-                return branches_wait(blocks.map(|b| self.block_waits(b, fit, |_| None)));
+                combine_branches(blocks.map(|b| self.block_rank(b, fit, |_| None)))
             }
             K::IfLet {
                 pattern,
                 value,
                 then_block,
                 else_block: Some(else_block),
-            } => return self.if_let_waits(pattern, value, then_block, else_block, fit),
+            } => self.if_let_rank(pattern, value, then_block, else_block, fit),
             K::Match {
                 scrutinee, arms, ..
             } => {
                 let form = LetValue::Match {
                     ty: self.value_ahead(scrutinee).filter(|&ty| matchable(ty)),
                 };
-                return branches_wait(arms.iter().map(|arm| {
+                combine_branches(arms.iter().map(|arm| {
                     let bind =
                         |c: &mut Self| Some(c.bind_pattern(None, &form, &arm.pattern, Some(arm)));
                     match &arm.body.kind {
-                        K::Block(block) => self.block_waits(block, fit, bind),
-                        _ => Some(self.tail_waits(arm_key(arm), None, &arm.body, fit, bind)),
+                        K::Block(block) => self.block_rank(block, fit, bind),
+                        _ => Some(self.tail_rank(arm_key(arm), None, &arm.body, fit, bind)),
                     }
-                }));
+                }))
             }
-            K::Block(block) => return self.block_waits(block, fit, |_| None) == Some(true),
-            _ => return false,
+            K::Block(block) => self
+                .block_rank(block, fit, |_| None)
+                .unwrap_or(Ranked::CONCRETE),
+            _ => Ranked::CONCRETE,
+        }
+    }
+
+    /// The rank of a call of `shape` with `args`, a call that `rank_walk` found.
+    fn rank_call(&mut self, shape: CallShape, args: &[ast::Arg], fit: &mut bool) -> Ranked {
+        let CallShape {
+            generic,
+            shaped,
+            open,
+            makes,
+            outside,
+            carried,
+            ..
+        } = shape;
+        if !generic {
+            return Ranked::CONCRETE;
+        }
+        // An argument is walked here and only here: an `open` call walks none.
+        let mut through = false;
+        let mut holds = false;
+        let mut passes = true;
+        let mut found = if open {
+            Ranked::WAITS
+        } else {
+            combine(args.iter().enumerate().map(|(i, arg)| {
+                let ranked = self.rank_value(&arg.value, fit);
+                through |= makes.passes_optional(i, ranked);
+                holds |= ranked.holds_optional && has_place(carried, i);
+                passes &= ranked.rank != Rank::Literal || makes.through(i);
+                ranked
+            }))
         };
-        let waits = generic && (open || args.iter().all(|arg| self.waits(&arg.value, fit)));
-        *fit &= !waits || shaped;
-        waits
+        if outside && found.rank == Rank::Literal {
+            return Ranked::CONCRETE;
+        }
+        // Only a literal at a place of the returned type parameter passes its type on.
+        found.scalar &= passes;
+        found.optional = through || matches!(makes, Makes::Always);
+        found.holds_optional = holds || found.optional;
+        *fit &= found.rank != Rank::Waits || shaped;
+        found
     }
 
     /// The shape of `e`, a call of a function or method, a construction or a variant, its type
     /// arguments not written, with its arguments; `None` for anything else.
     fn call_shape<'e>(&mut self, e: &'e ast::Expr) -> Option<(CallShape, &'e [ast::Arg])> {
         use ast::ExprKind as K;
+        // A `push` on a place checks its receiver as the place that it writes. A receiver checked
+        // ahead is a value, which leaves the call no place to write: it is not ranked. A branch
+        // that ends in such a call is ranked, so this must hold.
+        // shortcut: a method named `push` that a class writes with type parameters of its own, on
+        // a field, is not ranked as a waiting call; upgrade if such a call needs the context.
+        if let K::MethodCall {
+            receiver,
+            method,
+            safe,
+            ..
+        } = &e.kind
+            && method.name.as_str() == "push"
+            && self.is_push_place(receiver, *safe)
+        {
+            return None;
+        }
         match &e.kind {
             K::MethodCall {
                 receiver,
@@ -1747,6 +2161,7 @@ impl Checker<'_> {
                         generic: true,
                         shaped,
                         open: shaped && leaves_open(v.fields.iter().copied(), &v.names, 0),
+                        carried: carried_by_construction(v.fields.iter().copied(), v.names.len()),
                         ..CallShape::default()
                     }
                 } else if !safe
@@ -1760,6 +2175,9 @@ impl Checker<'_> {
                         shaped: matches!(&args[..], [arg] if arg.label.is_none()),
                         open: false,
                         some: true,
+                        makes: Makes::Always,
+                        outside: false,
+                        carried: 0,
                     }
                 } else {
                     self.generic_method(receiver, method, args, *safe)
@@ -1779,91 +2197,76 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether the `if let pattern = value { then_block } else { else_block }` waits, as
-    /// `branches_wait` decides. Its value is checked once, and kept for it (see `Ahead::Let`).
-    fn if_let_waits(
+    /// The rank of the `if let pattern = value { then_block } else { else_block }`, as
+    /// `combine_branches` decides. Its value is checked once, and kept for it (see
+    /// `Ahead::Let`).
+    fn if_let_rank(
         &mut self,
         pattern: &ast::Pattern,
         value: &ast::Expr,
         then_block: &ast::Block,
         else_block: &ast::Block,
         fit: &mut bool,
-    ) -> bool {
-        // Ranked before: its value comes back to bind the first block, and goes back after.
-        let kept = self.kept(value.span, false);
-        let (index, checked, form, mismatched) =
-            if let Some((index, Ahead::Let(checked, form, mismatched))) = kept {
-                (index, checked, form, mismatched)
-            } else {
-                // An argument is not part of an assignment target's chain.
-                let target = std::mem::take(&mut self.body.in_target);
-                let (checked, form, mismatched) = self.let_value(Unwrap::IfLet, pattern, value);
-                self.body.in_target = target;
-                let index = self.keep((value.span, false), None);
-                (index, checked, form, mismatched)
-            };
-        let then = self.block_waits(then_block, fit, |c| {
+    ) -> Ranked {
+        // An argument is not part of an assignment target's chain.
+        let target = std::mem::take(&mut self.body.in_target);
+        let (checked, form, mismatched) = self.let_value(Unwrap::IfLet, pattern, value);
+        self.body.in_target = target;
+        let index = self.keep((value.span, false), None);
+        let then = self.block_rank(then_block, fit, |c| {
             Some(c.bind_pattern(Some(Unwrap::IfLet), &form, pattern, None))
         });
         self.body.ahead[index].1 = Some(Ahead::Let(checked, form, mismatched));
-        let other = iter::once_with(|| self.block_waits(else_block, fit, |_| None));
-        branches_wait(iter::once(then).chain(other))
+        let other = iter::once_with(|| self.block_rank(else_block, fit, |_| None));
+        combine_branches(iter::once(then).chain(other))
     }
 
-    /// Whether `block` ends in a value that needs context (see `tail_waits`, which `bind` binds
-    /// for); `None` when it ends in an exit, which leaves no value.
-    fn block_waits(
+    /// The rank of the value that `block` ends in (see `tail_rank`, which `bind` binds for);
+    /// `None` when it ends in an exit, which leaves no value. A block with no value is
+    /// `Concrete`.
+    pub(super) fn block_rank(
         &mut self,
         block: &ast::Block,
         fit: &mut bool,
         bind: impl FnOnce(&mut Self) -> Option<(LetPattern, Option<Checked>)>,
-    ) -> Option<bool> {
+    ) -> Option<Ranked> {
         match block.stmts.last().map(|stmt| &stmt.kind) {
             Some(StmtKind::Return(_) | StmtKind::Break { .. } | StmtKind::Continue { .. }) => None,
             Some(StmtKind::Expr(tail)) => {
-                Some(self.tail_waits(block.span, Some(block), tail, fit, bind))
+                Some(self.tail_rank(block.span, Some(block), tail, fit, bind))
             }
-            _ => Some(false),
+            _ => Some(Ranked::CONCRETE),
         }
     }
 
-    /// Whether `tail`, the value of the branch at `key`, needs context, in the branch's scope.
+    /// The rank of `tail`, the value of the branch at `key`, in the branch's scope.
     /// Here, once, `bind` binds its names in that scope, if any, and the statements of `block`
     /// before `tail` are checked. The scope is kept for the branch (see `Ahead`). `block` is
     /// `None` for a `match` arm whose body is `tail`.
-    fn tail_waits(
+    pub(super) fn tail_rank(
         &mut self,
         key: Span,
         block: Option<&ast::Block>,
         tail: &ast::Expr,
         fit: &mut bool,
         bind: impl FnOnce(&mut Self) -> Option<(LetPattern, Option<Checked>)>,
-    ) -> bool {
-        // Ranked before: its scope comes back for the value, and goes back after.
-        let kept = match self.kept(key, true) {
-            Some((index, Ahead::Block(scope, so_far))) => Some((index, None, scope, so_far)),
-            Some((index, Ahead::Bound(bound, guard, scope, so_far))) => {
-                Some((index, Some((bound, guard)), scope, so_far))
-            }
-            _ => None,
-        };
-        let (index, bound, so_far) = if let Some((index, bound, scope, so_far)) = kept {
-            self.body.scopes.push(scope);
-            (index, bound, so_far)
-        } else {
-            self.body.scopes.push(FxHashMap::default());
-            // Neither a pattern's guard nor a statement is part of an assignment target's chain.
-            let target = std::mem::take(&mut self.body.in_target);
-            let bound = bind(self);
-            let mut so_far = BlockSoFar::default();
-            if let Some(block) = block {
-                self.block_statements(block, None, &mut so_far, block.stmts.len() - 1);
-            }
-            self.body.in_target = target;
-            // Its place, held before the value's ranking keeps work of its own.
-            (self.keep((key, true), None), bound, so_far)
-        };
-        let waits = self.waits(tail, fit);
+    ) -> Ranked {
+        // A join ranks a branch that an argument's ranking ranked before: its work is kept.
+        if self.body.ranked.contains_key(&tail.span) {
+            return self.rank_value(tail, fit);
+        }
+        self.body.scopes.push(FxHashMap::default());
+        // Neither a pattern's guard nor a statement is part of an assignment target's chain.
+        let target = std::mem::take(&mut self.body.in_target);
+        let bound = bind(self);
+        let mut so_far = BlockSoFar::default();
+        if let Some(block) = block {
+            self.block_statements(block, None, &mut so_far, block.stmts.len() - 1);
+        }
+        self.body.in_target = target;
+        // Its place, held before the value's ranking keeps work of its own.
+        let index = self.keep((key, true), None);
+        let rank = self.rank_value(tail, fit);
         let scope = self
             .body
             .scopes
@@ -1873,7 +2276,7 @@ impl Checker<'_> {
             Some((bound, guard)) => Ahead::Bound(bound, guard, scope, so_far),
             None => Ahead::Block(scope, so_far),
         });
-        waits
+        rank
     }
 
     /// Takes the work kept for `span` (see `Ahead`), a block's if `block`, else a receiver's,
@@ -2000,14 +2403,16 @@ impl Checker<'_> {
         // The receiver binds the owner's type parameters: its class's, or its block's.
         let owner = sig.type_params.len() - sig.own;
         let shaped = sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args);
+        let ret = sig.ret.filter(|_| shaped);
+        let (open, outside) =
+            open_and_outside(sig.params.iter().copied(), ret, &sig.type_params, owner);
         CallShape {
             generic: sig.own > 0,
             shaped,
-            // The receiver binds the owner's type parameters.
-            open: shaped
-                && sig.ret.is_some_and(|ret| {
-                    leaves_open_in(sig.params.iter().copied(), ret, &sig.type_params, owner)
-                }),
+            open,
+            makes: Makes::of(sig.ret, sig.params.iter().copied()),
+            outside,
+            carried: carried(sig.ret, sig.params.iter().copied(), sig.type_params.len()),
             ..CallShape::default()
         }
     }
@@ -2062,14 +2467,21 @@ impl Checker<'_> {
                 let shaped = shaped(one);
                 let mut names = interface.type_params.clone();
                 names.extend_from_slice(&requirement.own);
+                let ret = requirement.ret.filter(|_| shaped);
+                let params = requirement.params.iter().copied();
+                let (open, outside) =
+                    open_and_outside(params, ret, &names, interface.type_params.len());
                 CallShape {
                     generic: !requirement.own.is_empty(),
                     shaped,
-                    open: shaped
-                        && requirement.ret.is_some_and(|ret| {
-                            let params = requirement.params.iter().copied();
-                            leaves_open_in(params, ret, &names, interface.type_params.len())
-                        }),
+                    open,
+                    makes: Makes::of(requirement.ret, requirement.params.iter().copied()),
+                    outside,
+                    carried: carried(
+                        requirement.ret,
+                        requirement.params.iter().copied(),
+                        names.len(),
+                    ),
                     ..CallShape::default()
                 }
             }
@@ -2147,6 +2559,8 @@ impl Checker<'_> {
             return CallShape {
                 generic: true,
                 shaped: matches!(args, [arg] if arg.label.is_none()),
+                makes: Makes::Through { bare: 1, inside: 0 },
+                carried: 1,
                 ..CallShape::default()
             };
         }
@@ -2162,6 +2576,10 @@ impl Checker<'_> {
                     shaped,
                     open: shaped
                         && leaves_open(info.fields.iter().map(|f| f.ty), &info.type_params, 0),
+                    carried: carried_by_construction(
+                        info.fields.iter().map(|f| f.ty),
+                        info.type_params.len(),
+                    ),
                     ..CallShape::default()
                 }
             }
@@ -2169,13 +2587,16 @@ impl Checker<'_> {
                 let sig = &self.signatures[func.0];
                 let shaped =
                     sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args);
+                let ret = sig.ret.filter(|_| shaped);
+                let (open, outside) =
+                    open_and_outside(sig.params.iter().copied(), ret, &sig.type_params, 0);
                 CallShape {
                     generic: !sig.type_params.is_empty(),
                     shaped,
-                    open: shaped
-                        && sig.ret.is_some_and(|ret| {
-                            leaves_open_in(sig.params.iter().copied(), ret, &sig.type_params, 0)
-                        }),
+                    open,
+                    makes: Makes::of(sig.ret, sig.params.iter().copied()),
+                    outside,
+                    carried: carried(sig.ret, sig.params.iter().copied(), sig.type_params.len()),
                     ..CallShape::default()
                 }
             }
@@ -2186,6 +2607,9 @@ impl Checker<'_> {
                 shaped: matches!(args, [arg] if arg.label.is_none()),
                 open: false,
                 some: true,
+                makes: Makes::Always,
+                outside: false,
+                carried: 0,
             },
             // An alias of a generic class, whose parameters its uses bind.
             (None, None) if let Via::To(through) = self.through(name) => {
@@ -2205,6 +2629,10 @@ impl Checker<'_> {
                                 &info.type_params,
                                 0,
                             ),
+                        carried: carried_by_construction(
+                            info.variants[v].fields.iter().copied(),
+                            info.type_params.len(),
+                        ),
                         ..CallShape::default()
                     }
                 }),
@@ -2227,22 +2655,8 @@ impl Checker<'_> {
             generic: !through.params.is_empty(),
             shaped,
             open: shaped && leaves_open(fields.iter().map(|f| f.0), &through.params, 0),
+            carried: carried_by_construction(fields.iter().map(|f| f.0), through.params.len()),
             ..CallShape::default()
-        }
-    }
-
-    /// Whether `e`'s type comes from its literals' defaults: an integer literal or arithmetic
-    /// over them, ranked as an array literal's elements are, or a non-empty array literal whose
-    /// elements are each literal-like or need context, one at least literal-like.
-    pub(super) fn literal_like(&mut self, e: &ast::Expr) -> bool {
-        match &e.kind {
-            ast::ExprKind::ArrayLit(elements) => {
-                elements.iter().any(|e| self.literal_like(e))
-                    && elements
-                        .iter()
-                        .all(|e| self.literal_like(e) || self.needs_context(e))
-            }
-            _ => int_literal(e),
         }
     }
 

@@ -1,0 +1,34 @@
+// GIVEN an outer local `b` of class `A`, and an `if` branch with its own local `b` of class `B`;
+// both classes have a generic method `m`, and the branch calls `b.m` as an argument of `none_of`,
+// a call that only its context can bind, inside `id`, a call with a context that is an optional
+// WHEN the program runs
+// THEN the call runs `m` of `B`, the local of the branch, and not `m` of `A`
+fn id<T>(x: T) -> T { x }
+fn none_of<T>(_x: i64) -> T? { None }
+
+class A {
+    fn m<T>(self, x: T) -> T {
+        print("A.m")
+        x
+    }
+}
+
+class B {
+    fn m<T>(self, x: T) -> T {
+        print("B.m") // the first line of output, from the branch's call
+        x
+    }
+}
+
+fn main() {
+    let c = true
+    let b = A()
+    let r: u8? = id(if c {
+        let b = B()
+        none_of(b.m(5))
+    } else {
+        Some(1)
+    })
+    print("{r ?? 7}") // 7: the call of none_of made the None
+    print("{b.m(1)}") // A.m, then 1: the outer b is still the A
+}

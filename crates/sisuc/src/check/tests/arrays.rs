@@ -952,3 +952,207 @@ fn push_should_take_exactly_one_argument() {
         codes_row(row, src, &[(Code::ArgumentCount, (3, 5))]);
     }
 }
+
+/// The declarations of the join tests: `id`, `none`, `pick` and `k2` are calls that only a sibling
+/// can type (`k2` returns its second argument), `f` and `g` take an array that holds a type
+/// parameter.
+const JOIN_DECLS: &str = "fn id<T>(x: T) -> T { x }\nfn none<T>() -> T? { None }\n\
+    fn pick<T>(a: T, b: T) -> T { a }\nfn k2<T, U>(a: T, b: U) -> U { b }\n\
+    fn f<T>(x: [T]) {}\nfn g<T>(x: [[T?]]) {}\n";
+
+/// `statement` at line 6 of a `main` with `c: bool`, `x: u8`, `x2: [u8]` and `y: u8?`, after the
+/// `JOIN_DECLS`.
+fn join_main(statement: &str) -> String {
+    format!(
+        "{JOIN_DECLS}fn main() {{\n    let c = true\n    let x: u8 = 3\n    let x2: [u8] = [1]\n    let y: u8? = 4\n    {statement}\n}}"
+    )
+}
+
+/// The place of `needle` in `statement`, which `join_main` put in `src`.
+fn in_statement(src: &str, statement: &str, needle: &str) -> (usize, usize) {
+    let start = src
+        .rfind(statement)
+        .expect("the program should hold the statement");
+    let inside = statement
+        .find(needle)
+        .expect("the statement should hold the text");
+    line_col(src, start + inside)
+}
+
+/// Siblings in an array literal rank by what they hold, as the arguments of a call do. A value
+/// that waits for a type, and a block, a call or an `if` that holds a literal, take the type of the
+/// others. Before, a block or a generic call counted as concrete, was checked alone and gave the
+/// default type or no type (#287, #289), and `dbg(None)` made the type of the literal optional for
+/// its context but not for its elements (a crash in the code generator).
+#[test]
+fn siblings_should_take_the_type_of_the_others_in_an_array_literal() {
+    with_prelude();
+    for statement in [
+        // `dbg` passes the context on: the element type is optional.
+        "let _a = [dbg(None), 1]",
+        "let _a = [1, dbg(None)]",
+        "let _a = [{ None }, 1]",
+        "let _a = [id([]), [1.0]]",
+        "let _a = [[1], id([])]",
+        "let _a = [[[], []], [[1]]]",
+        // A literal under a block or a call takes the `u8` of its sibling, at each place.
+        "let _a = [{ 1 }, x]",
+        "let _a = [id(1), x]",
+        "let _a = [{ 1 }, x, 2]",
+        "let _a = [x, { 1 }, 2]",
+        "let _a = [x, 2, { 1 }]",
+        "let _a = [x, if c { 1 } else { None }]",
+        // A call that makes an optional, by its arguments or by its declaration, makes the
+        // element type optional, as the `None` or the `if` it holds does.
+        "let _a = [id(None), 1]",
+        "let _a = [1, none()]",
+        "let _a = [none(), x]",
+        "let _a = [x, id(None)]",
+        "let _a = [x, none()]",
+        "let _a = [x, dbg(id(None))]",
+        "let _a = [x, pick(None, None)]",
+        "let _a = [id(if c { 1 } else { None })]",
+        "let _a = [1, id(if c { 1 } else { None })]",
+        "let _a = [x, if c { 1 } else { 2 }]",
+        "let _a = [x, match c {\n        true => 1\n        false => None\n    }]",
+        "g([[None], [Some(\"s\")]])",
+        // Two arrays deep.
+        "let _a = [[x, { 1 }], x2]",
+    ] {
+        clean_row(statement, &join_main(statement));
+    }
+}
+
+/// A value that waits is typed as its siblings are, not as an optional of it, unless it makes an
+/// optional by itself. So a `[]` is reported for what it is.
+#[test]
+fn a_waiting_sibling_that_is_no_optional_should_be_reported_for_its_type() {
+    with_prelude();
+    for statement in ["let _a = [[], 1]", "f([[], 1])", "let _a = [1, []]"] {
+        let src = join_main(statement);
+        codes_row(
+            statement,
+            &src,
+            &[(Code::Mismatch, in_statement(&src, statement, "[]"))],
+        );
+    }
+}
+
+/// A mistake that remains is reported where it was before.
+#[test]
+fn a_sibling_with_nothing_to_wait_for_should_be_reported_once() {
+    for (statement, expected) in [
+        ("let _a = [None]", (Code::CannotInfer, "None")),
+        ("let _a = [[], []]", (Code::CannotInfer, "[]")),
+    ] {
+        let src = join_main(statement);
+        let (code, text) = expected;
+        codes_row(
+            statement,
+            &src,
+            &[(code, in_statement(&src, statement, text))],
+        );
+    }
+}
+
+/// A literal at a place that the call does not return does not make the call a literal (see
+/// `Checker::rank_call`, `passes`). `k2(1, [])` returns its second argument: the `1` does not
+/// give it a type, so its `[]` is not typed `i64` by the literal, and the call cannot be inferred.
+/// The row guards that rule: it fails when a literal at any place makes the call a literal.
+#[test]
+fn a_literal_at_a_place_that_is_not_returned_should_not_type_the_call() {
+    let statement = "let _a = [[x], k2(1, [])]";
+    let src = join_main(statement);
+    codes(
+        &src,
+        &[(Code::CannotInfer, in_statement(&src, statement, "k2"))],
+    );
+}
+
+/// `dbg` with two arguments is not the one-argument `dbg` that passes its context on: in an
+/// array that a call takes, it reports its argument count once, as `dbg_argument` decides.
+#[test]
+fn a_dbg_with_two_arguments_in_an_array_should_report_the_count_once() {
+    with_prelude();
+    let statement = "g([[dbg(1, 2)]])";
+    let src = join_main(statement);
+    codes(
+        &src,
+        &[(Code::PrintArgument, in_statement(&src, statement, "dbg"))],
+    );
+}
+
+/// A literal that holds an array is not typed beside a sibling: it keeps its default type, as it
+/// did before, because `literal_type` knows scalars only. The `[[1], x2]` row guards this limit
+/// (see `Ranked::sibling`): it passes at the base and fails when the limit is lifted by mistake,
+/// and a change that types an array beside a sibling must change the row.
+#[test]
+fn a_literal_array_should_keep_its_default_type_beside_a_sibling() {
+    for statement in [
+        "let _a = [[1], [2]]",
+        "let _a: [i64?] = [Option<i64>.None, 1]",
+        "let _a = if c { [1] } else { [] }",
+    ] {
+        clean_row(statement, &join_main(statement));
+    }
+    let src = join_main("let _a = [[1], x2]");
+    codes(
+        &src,
+        &[(
+            Code::Mismatch,
+            in_statement(&src, "let _a = [[1], x2]", "x2]"),
+        )],
+    );
+}
+
+/// A block, a call or an `if` that ranks a sibling is checked once. The statements of a block
+/// that ranking checks ahead report their mistakes once.
+#[test]
+fn work_done_to_rank_a_sibling_should_report_its_mistakes_once() {
+    for statement in [
+        "let _a = [{ let z = undefined_name; 1 }, x]",
+        "let _a = [x, { let z = undefined_name; 1 }]",
+        "let _a = if c { let z = undefined_name; 1 } else { x }",
+        "let _a = if c { x } else { let z = undefined_name; 1 }",
+        "let _a = { let z = undefined_name; 1 } + x",
+        "let _a = ({ let z = undefined_name; 1 }) == x",
+        "let _a = x < { let z = undefined_name; 1 }",
+        "let _a = [undefined_name.len(), 2]",
+        "let _a = undefined_name.len() + x",
+        "let _a = match c {\n        true => { let z = undefined_name; 1 }\n        false => x\n    }",
+    ] {
+        let src = join_main(statement);
+        codes_row(
+            statement,
+            &src,
+            &[(
+                Code::BindingNotFound,
+                in_statement(&src, statement, "undefined_name"),
+            )],
+        );
+    }
+}
+
+/// A `push` writes the place of its receiver, so ranking does not check the receiver ahead as a
+/// value. A branch that ends in a `push`, inside a block that ranking checks ahead as a sibling,
+/// checks clean. Before, the call got no place and failed with no diagnostic.
+#[test]
+fn a_push_that_ends_a_branch_should_check_clean_when_a_sibling_ranks_it() {
+    for statement in [
+        "let _a = [[1], ({\n        if c {\n        } else {\n            let mut v: [string?] = []\n            v.push(None)\n        }\n        [2]\n    })][0]",
+        "let _a = { if c {\n        } else {\n            let mut v: [i64] = []\n            v.push(1)\n        }\n        2 } + x",
+    ] {
+        clean_row(statement, &join_main(statement));
+    }
+}
+
+/// A call of a requirement of a bound, with no argument to give its `U`, waits for a type as a
+/// call of a function does. Beside an `i64` it takes that type, its `U?` made optional, so the
+/// array is `[i64?]`. A call that did not wait would be checked alone, and `U` could not be
+/// inferred.
+#[test]
+fn a_requirement_call_that_waits_should_take_the_type_of_its_sibling() {
+    let src = "interface G {\n    fn ropt<U>(self) -> U?\n}\n\
+        fn f<X: G>(x: X) {\n    let a = [x.ropt(), 1]\n}\nfn main() {}";
+    clean(src);
+}

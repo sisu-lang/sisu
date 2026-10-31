@@ -15,7 +15,7 @@ use std::rc::Rc;
 
 use rustc_hash::FxHashMap;
 
-use super::expr::{bare_none, dbg_argument, none_literal, rank};
+use super::expr::{bare_none, none_literal};
 use super::generic::{Site, type_meets};
 use super::interface::{Bound, Slot};
 use super::{
@@ -459,19 +459,8 @@ impl Checker<'_> {
             .then(|| bare && !self.aliases.infos[id].params.is_empty())
     }
 
-    /// `rank` of `e`, where the empty optional of an alias with parameters waits for its context
-    /// as `Option.None` does.
-    pub(super) fn rank(&self, e: &ast::Expr) -> u8 {
-        if let Some(argument) = dbg_argument(e) {
-            return self.rank(argument);
-        }
-        if self.alias_none(e) == Some(true) {
-            return 2;
-        }
-        rank(e)
-    }
-
-    /// `bare_none` of `e`, which also holds for `A.None` as `rank` says.
+    /// `bare_none` of `e`, which also holds for the `A.None` of an alias with parameters, which
+    /// waits for its context as `Option.None` does.
     pub(super) fn bare_none_written(&self, e: &ast::Expr) -> bool {
         bare_none(e) || self.alias_none(e) == Some(true)
     }

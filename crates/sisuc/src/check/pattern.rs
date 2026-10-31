@@ -116,6 +116,25 @@ fn empty_block() -> tir::Block {
 }
 
 impl Checker<'_> {
+    /// The branch for each of `arms`, ranked when no type is `expected` (see `block_branch`). The
+    /// patterns bind for the ranking in `form`.
+    fn arm_branches<'a>(
+        &mut self,
+        arms: &'a [ast::Arm],
+        form: &LetValue,
+        expected: Option<Type>,
+    ) -> Vec<Branch<'a>> {
+        arms.iter()
+            .map(|arm| {
+                let bind = |c: &mut Self| Some(c.bind_pattern(None, form, &arm.pattern, Some(arm)));
+                match &arm.body.kind {
+                    ast::ExprKind::Block(block) => self.block_branch(block, expected, bind),
+                    _ => self.expr_branch(arm, &arm.body, expected, bind),
+                }
+            })
+            .collect()
+    }
+
     /// `match scrutinee { arms }`, whose keyword is at `keyword` and `}` at `close`. Each arm is
     /// checked in a scope that holds its bindings, and the arms join as an `if`'s branches do
     /// (`join`). When every pattern checked, the arms are checked for coverage and reachability.
@@ -139,35 +158,33 @@ impl Checker<'_> {
             });
         }
         let mismatched = cannot.is_some();
-        let sources: Vec<_> = arms
-            .iter()
-            .map(|arm| match &arm.body.kind {
-                ast::ExprKind::Block(block) => Branch::of_block(self, block),
-                _ => Branch::of_expr(self, &arm.body),
-            })
-            .collect();
         let mut patterns: Vec<_> = arms.iter().map(|_| None).collect();
         let mut guards: Vec<_> = arms.iter().map(|_| None).collect();
         let form = LetValue::Match { ty: position };
-        let (blocks, ty) = self.join(span, &sources, expected, |c, i, expected| {
-            let arm = &arms[i];
-            let (bound, guard, so_far) = c.bound_branch(arm_key(arm), |c| {
-                c.bind_pattern(None, &form, &arm.pattern, Some(arm))
-            });
-            let LetPattern::Match { pattern } = bound else {
-                panic!("a `match` arm should test its value, which `bind_pattern` never unwraps");
-            };
-            patterns[i] = pattern;
-            guards[i] = guard;
-            if let ast::ExprKind::Block(block) = &arm.body.kind {
-                return c.resume_block(block, expected, so_far);
-            }
-            let value = c.expr(&arm.body, expected);
-            c.pop_scope();
-            value.map(|value| tir::Block {
-                stmts: Vec::new(),
-                ty: value.ty,
-                value: Some(Box::new(value)),
+        let (blocks, ty) = self.ranked(|c| {
+            let sources = c.arm_branches(arms, &form, expected);
+            c.join(span, &sources, expected, |c, i, expected| {
+                let arm = &arms[i];
+                let (bound, guard, so_far) = c.bound_branch(arm_key(arm), |c| {
+                    c.bind_pattern(None, &form, &arm.pattern, Some(arm))
+                });
+                let LetPattern::Match { pattern } = bound else {
+                    panic!(
+                        "a `match` arm should test its value, which `bind_pattern` never unwraps"
+                    );
+                };
+                patterns[i] = pattern;
+                guards[i] = guard;
+                if let ast::ExprKind::Block(block) = &arm.body.kind {
+                    return c.resume_block(block, expected, so_far);
+                }
+                let value = c.expr(&arm.body, expected);
+                c.pop_scope();
+                value.map(|value| tir::Block {
+                    stmts: Vec::new(),
+                    ty: value.ty,
+                    value: Some(Box::new(value)),
+                })
             })
         });
         // A scrutinee `match` cannot take fails the `match`, as a failed condition fails an `if`.
