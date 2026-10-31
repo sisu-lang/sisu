@@ -1084,27 +1084,26 @@ impl Checker<'_> {
             .expect("the label should be an edge of the cycle");
         let mut cycle = cycle;
         cycle.rotate_left(at);
-        // `reach` holds the operand of the call, until the edge out of its hub says which method
-        // the cycle takes.
-        let (mut through, mut reach): (Vec<_>, Option<(_, _, Option<Type>)>) = (Vec::new(), None);
+        let (mut through, mut reach) = (Vec::new(), None);
         let choice = self.choice_use(edges, &cycle);
         let label_spelled = self.spell(functions, graph, edge.holder, label_instance);
         // A call that gives two parameters their arguments is one site, shown once.
         let mut shown = FxHashSet::from_iter([edge.site]);
         // The last call in the user's file, which a step inside the prelude came through.
         let mut entered = label_spelled.clone();
-        let mut grows = None;
+        // The operand of the call through the interface, until the edge out of its hub says which
+        // method the cycle takes.
+        let (mut operand, mut grows): (Option<Type>, _) = (None, None);
         if let Some(interface) = calls_through(label_instance) {
-            reach = Some((interface, label_spelled.clone(), operand_of(label_instance)));
+            reach = Some((interface, label_spelled.clone()));
+            operand = operand_of(label_instance);
         }
         // A call through a hub, until the edge out of the hub says which method it may run.
         let mut calling: Option<(Span, tir::InterfaceId, Option<Spelled>)> = None;
         for &i in &cycle[1..] {
             let e = &edges[i];
             if e.out {
-                if let Some((.., operand)) = &mut reach
-                    && let Some(operand) = operand.take()
-                {
+                if let Some(operand) = operand.take() {
                     grows = self.growth(functions, operand, e.holder);
                 }
                 if let Some((mark, interface, by)) = calling.take() {
@@ -1128,7 +1127,7 @@ impl Checker<'_> {
             // about a call through the interface, spelled as the user's call into the prelude.
             if e.mark.in_prelude() {
                 if let Some(interface) = calls_through(instance) {
-                    reach.get_or_insert_with(|| (interface, entered.clone(), None));
+                    reach.get_or_insert_with(|| (interface, entered.clone()));
                 }
                 continue;
             }
@@ -1139,7 +1138,10 @@ impl Checker<'_> {
             entered = spelled.clone();
             if let Some(interface) = calls_through(instance) {
                 let by = matches!(instance, Instance::Operator(..)).then(|| spelled.clone());
-                reach.get_or_insert_with(|| (interface, spelled, operand_of(instance)));
+                if reach.is_none() {
+                    operand = operand_of(instance);
+                    reach = Some((interface, spelled));
+                }
                 calling = Some((e.mark, interface, by));
             } else {
                 through.push((
@@ -1155,16 +1157,17 @@ impl Checker<'_> {
             instance: label_spelled,
             through,
             reach: reach
-                .map(|(interface, by, _)| (self.interfaces[interface.0].name.name.to_string(), by)),
+                .map(|(interface, by)| (self.interfaces[interface.0].name.name.to_string(), by)),
             choice,
             grows,
         });
     }
 
-    /// For a call through a language interface on an operand of type `operand`, whose cycle takes
-    /// the method `method`: the first type in `operand`, `operand` itself included, of the class
-    /// or enum that declares the method, with `operand` when it is another type. Its argument
-    /// grows. `None` when `operand` holds no such type.
+    /// For a call through a language interface on `operand`, whose cycle takes the method
+    /// `method`: the first type in `operand` of the class or enum that declares the method, whose
+    /// argument grows. The type is `operand` itself or a type that `operand` holds, and then
+    /// `operand` comes with it. An argument grows when it names a parameter and is not one. `None`
+    /// when `operand` holds no such type.
     fn growth(
         &self,
         functions: &[Option<tir::Function>],
@@ -1177,16 +1180,21 @@ impl Checker<'_> {
         let mut seen = FxHashSet::default();
         let mut walk = vec![operand];
         while let Some(ty) = walk.pop() {
-            if !seen.insert(ty) {
+            // A type with no parameter holds nothing that grows.
+            if !ty.has_param() || !seen.insert(ty) {
                 continue;
             }
-            if head.is_some_and(|head| holder_of(ty) == Some(head)) {
-                let held_by = (ty != operand).then(|| self.type_name(operand));
-                return Some((self.type_name(ty), held_by));
-            }
             match ty.kind() {
-                // Reversed, so that the first argument is walked first.
                 TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+                    let grows =
+                        |a: &Type| a.has_param() && !matches!(a.kind(), TypeKind::Param(..));
+                    if head.is_some_and(|head| holder_of(ty) == Some(head))
+                        && args.get().iter().any(grows)
+                    {
+                        let held_by = (ty != operand).then(|| self.type_name(operand));
+                        return Some((self.type_name(ty), held_by));
+                    }
+                    // Reversed, so that the first argument is walked first.
                     walk.extend(args.get().iter().rev());
                 }
                 TypeKind::Array(inner) | TypeKind::Optional(inner) => walk.push(inner),
@@ -1534,7 +1542,7 @@ impl Checker<'_> {
     /// holds and the parameter it fills holds. A parameter holds when a payload shows it. Each
     /// part of each payload type is read once, so the pass is linear in the type parameters and
     /// payloads.
-    fn shown_params(&self) -> Vec<Vec<bool>> {
+    pub(super) fn shown_params(&self) -> Vec<Vec<bool>> {
         // A node is ready when its `need` is 0: a parameter needs one of the nodes that lead to it,
         // an argument needs both its holders.
         let first: Vec<usize> = (self.enums.iter())

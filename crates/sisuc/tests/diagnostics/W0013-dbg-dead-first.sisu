@@ -1,0 +1,10 @@
+class P {
+    x: i64
+}
+fn unused(p: P) {
+    dbg(p)
+}
+fn main() {
+    let p = P(x: 1)
+    dbg(p)
+}

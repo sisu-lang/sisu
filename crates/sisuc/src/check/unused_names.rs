@@ -9,11 +9,18 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::extend::holder_of;
 use super::{Checker, Declared, Holder};
+use crate::conformance::always_written;
 use crate::diagnostic::{Code, Definition, Diagnostic, DiagnosticKind, UsedBy};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir;
 use crate::tir::{Type, TypeKind};
+
+#[cfg(test)]
+thread_local! {
+    /// How many types `shown_by_dbg` has read on this thread.
+    pub(super) static SHOWN_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 /// Whether `d` is a warning that `Checker::unused` gives and `Checker::unjudged` does not: one
 /// that judges whether code is live. A program with an error gets none, because a use in code
@@ -305,7 +312,7 @@ impl Checker<'_> {
             if reached.built[c] {
                 for (f, field) in class.fields.iter().enumerate() {
                     if !reached.read[c][f] {
-                        let dbg = shown.get_or_insert_with(|| self.shown_by_dbg())[c];
+                        let dbg = shown.get_or_insert_with(|| self.shown_by_dbg(&reached.live))[c];
                         report(Definition::Field, field.name.span, slots.fields[c] + f, dbg);
                     }
                 }
@@ -363,36 +370,56 @@ impl Checker<'_> {
         found
     }
 
-    /// By class, the first `dbg` that shows its fields: the `dbg` of a value whose type is the
-    /// class, or holds it in a field, an array, an optional or an enum payload. Each type is
-    /// walked once, so the cost is linear in the types that the operands of `dbg` reach.
+    /// By class, the first live `dbg` that shows its fields. `dbg` shows the fields of a class that
+    /// its operand is, or that the operand holds in an array, an optional or an enum payload. It
+    /// writes a field that is a class as `print` does, so the walk stops at a class. A type with a
+    /// written `Display` shows its text, so the walk skips it, as `Checker::dbg_show` does.
     ///
-    /// shortcut: a `dbg` of a type parameter shows the instances that `mono` makes, which the
-    /// checker does not see, so such a field gets no `dbg` label; upgrade when a program needs one.
-    fn shown_by_dbg(&self) -> Vec<Option<Span>> {
-        let mut roots: Vec<(Span, Type)> = self.dbg_shown.iter().map(|(&t, &s)| (s, t)).collect();
+    /// The walk follows the structure of each operand type. It reads the payloads of each enum
+    /// declaration once, as declared, and an argument of an enum only when `shown_params` says that
+    /// the enum shows it. So the cost is linear in the operand types and the enum declarations.
+    ///
+    /// shortcut: a `dbg` of a type parameter shows the instances that `mono` makes. The checker
+    /// does not see them, so such a field gets no label. A written `Display` with a bound on
+    /// another interface counts as not written, as in `dbg_show`.
+    fn shown_by_dbg(&self, live: &[bool]) -> Vec<Option<Span>> {
+        let live_calls =
+            (self.dbg_shown.iter()).filter(|&&(owner, ..)| live[self.owner_index(owner)]);
+        let mut roots: Vec<(Span, Type)> = live_calls.map(|&(_, ty, span)| (span, ty)).collect();
         roots.sort_unstable_by_key(|(span, _)| span.start());
         let mut shown = vec![None; self.classes.len()];
-        let mut seen = FxHashSet::default();
+        if roots.is_empty() {
+            return shown;
+        }
+        let params = self.shown_params();
+        let (mut seen, mut declared) = (FxHashSet::default(), FxHashSet::default());
         for (call, root) in roots {
             let mut walk = vec![root];
             while let Some(ty) = walk.pop() {
-                if !seen.insert(ty) {
+                if !seen.insert(ty) || always_written(&self.conformances, self.lang.display, ty) {
                     continue;
                 }
+                #[cfg(test)]
+                SHOWN_VISITS.set(SHOWN_VISITS.get() + 1);
                 match ty.kind() {
                     TypeKind::Class(class, _) => {
                         shown[class.0].get_or_insert(call);
-                        for field in 0..self.classes[class.0].fields.len() {
-                            walk.extend(self.field_type(ty, field));
-                        }
-                    }
-                    TypeKind::Enum(id, args) => {
-                        let variants = &self.enums[id.0].variants;
-                        let payloads = variants.iter().flat_map(|v| v.fields.iter().flatten());
-                        walk.extend(payloads.filter_map(|&p| self.subst(p, args.get())));
                     }
                     TypeKind::Array(inner) | TypeKind::Optional(inner) => walk.push(inner),
+                    TypeKind::Enum(id, args) => {
+                        let on = params[id.0].iter();
+                        walk.extend(
+                            args.get()
+                                .iter()
+                                .zip(on)
+                                .filter(|(_, on)| **on)
+                                .map(|(&a, _)| a),
+                        );
+                        if declared.insert(id) {
+                            let variants = &self.enums[id.0].variants;
+                            walk.extend(variants.iter().flat_map(|v| v.fields.iter().flatten()));
+                        }
+                    }
                     _ => {}
                 }
             }

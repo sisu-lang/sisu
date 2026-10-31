@@ -1,0 +1,10 @@
+class P {
+    x: i64
+}
+fn never(p: P) {
+    dbg(p)
+}
+fn main() {
+    let p = P(x: 1)
+    print(p)
+}

@@ -3,9 +3,6 @@ warning[W0013]: field `x` is never read
   |
 2 |     x: i64
   |     ^ never read
-...
-8 |     dbg(Q(p: P(x: 1)))
-  |     ------------------ `dbg` shows `x` here, but `dbg` is not a read
   |
   = help: delete it, or name it `_x` if it is kept on purpose
 

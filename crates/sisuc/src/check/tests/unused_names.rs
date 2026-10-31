@@ -2,7 +2,10 @@
 //! that no live code reads, or a variant that no live code builds. W0014: a local or a parameter
 //! that nothing reads.
 
+use std::fmt::Write as _;
+
 use super::*;
+use crate::check::unused_names;
 
 const W0012: Code = Code::UnusedItem;
 const W0013: Code = Code::UnusedMember;
@@ -1014,4 +1017,135 @@ fn receiver_of_a_class_push_should_be_read() {
     judge_unused();
     let src = "class Pile {\n    mut n: i64\n    fn push(self, x: i64) { self.n += x }\n}\nclass Holder {\n    pile: Pile\n    piles: [Pile]\n}\nfn main() {\n    let pile = Pile(n: 0)\n    pile.push(1)\n    let holder = Holder(pile: pile, piles: [pile])\n    holder.pile.push(2)\n    holder.piles[0].push(3)\n    let piles = [pile]\n    piles[0].push(4)\n    print(holder.pile.n)\n}";
     assert_eq!(found(src), Vec::new());
+}
+
+/// How many types the W0013 walk of `dbg` read for `src`, which holds a field that nothing reads.
+fn shown_visits(src: &str) -> usize {
+    judge_unused();
+    unused_names::SHOWN_VISITS.set(0);
+    let ds = diags(src);
+    assert!(
+        ds.iter().any(|d| d.code() == W0013),
+        "the program should hold a field that nothing reads: {ds:?}"
+    );
+    unused_names::SHOWN_VISITS.get()
+}
+
+/// The chain `E0<T>` to `E{n-1}<T>`: `Ek` has the variants `A([E(k+1)<[T]>])` and
+/// `B(E(k+1)<T?>)`, so the instances of the next enum double at each level. The last enum holds
+/// the class `P` and the parameter. `main` builds `E0<i64>` and shows it with `dbg`.
+fn enum_chain(n: usize) -> String {
+    let mut src = String::from("class P {\n    x: i64\n}\n");
+    for k in 0..n - 1 {
+        let next = k + 1;
+        writeln!(
+            src,
+            "enum E{k}<T> {{\n    A([E{next}<[T]>])\n    B(E{next}<T?>)\n    Z\n}}"
+        )
+        .expect("writing to a `String` should succeed");
+    }
+    let last = n - 1;
+    writeln!(src, "enum E{last}<T> {{\n    A(P)\n    B(T)\n}}")
+        .expect("writing to a `String` should succeed");
+    src + "fn main() {\n    let _p = P(x: 1)\n    let e: E0<i64> = E0.Z\n    dbg(e)\n}"
+}
+
+/// The chain `C0<T>` to `C{n-1}<T>` of classes, as `enum_chain` is of enums.
+fn class_chain(n: usize) -> String {
+    let mut src = String::new();
+    for k in 0..n - 1 {
+        let next = k + 1;
+        writeln!(
+            src,
+            "class C{k}<T> {{\n    a: [C{next}<[T]>]\n    b: [C{next}<T?>]\n}}"
+        )
+        .expect("writing to a `String` should succeed");
+    }
+    let last = n - 1;
+    writeln!(src, "class C{last}<T> {{\n    x: T\n}}")
+        .expect("writing to a `String` should succeed");
+    src + "fn main() {\n    dbg(C0<i64>(a: [], b: []))\n}"
+}
+
+/// The walk reads the structure of the operand and each enum declaration once, not the instances
+/// that the declarations make, which double at each level of the chain.
+#[test]
+fn shown_by_dbg_should_visit_each_enum_declaration_once() {
+    let (short, long) = (6, 12);
+    let (few, many) = (
+        shown_visits(&enum_chain(short)),
+        shown_visits(&enum_chain(long)),
+    );
+    assert!(
+        many - few <= 4 * (long - short),
+        "{few} types for {short} enums and {many} types for {long} enums"
+    );
+    assert!(many > few, "each enum should be read: {few} and {many}");
+}
+
+/// A class shows its fields as `print` does, so the walk stops at it: it reads no type that the
+/// class holds, whatever the chain of classes below it.
+#[test]
+fn shown_by_dbg_should_stop_at_a_class() {
+    assert_eq!(shown_visits(&class_chain(12)), 1);
+    assert_eq!(shown_visits(&class_chain(6)), 1);
+}
+
+/// A `dbg` that no live code reaches gives no label, and does not take the label from a later `dbg`
+/// that live code reaches.
+#[test]
+fn shown_by_dbg_should_ignore_a_dbg_in_dead_code() {
+    judge_unused();
+    let dead = "class P {\n    x: i64\n}\nfn never(p: P) {\n    dbg(p)\n}\n";
+    assert_eq!(
+        found(&format!(
+            "{dead}fn main() {{\n    let p = P(x: 1)\n    print(p)\n}}"
+        )),
+        [(W0013, (2, 5), vec![]), (W0012, (4, 4), vec![])]
+    );
+    assert_eq!(
+        found(&format!(
+            "{dead}fn main() {{\n    let p = P(x: 1)\n    dbg(p)\n}}"
+        )),
+        [(W0013, (2, 5), vec![(9, 5)]), (W0012, (4, 4), vec![])]
+    );
+}
+
+/// `dbg` shows the fields of a class that its operand is, or holds in an array, an optional or an
+/// enum payload. It writes a class field as `print` does, and a written `to_string` as its text.
+#[test]
+fn shown_by_dbg_should_label_only_the_fields_that_dbg_shows() {
+    judge_unused();
+    let row = |decls: &str, shown: &str| {
+        let src = format!("{decls}fn main() {{\n    {shown}\n}}");
+        found(&src)
+            .into_iter()
+            .filter(|(code, ..)| *code == W0013)
+            .map(|(_, at, shows)| (at.0, !shows.is_empty()))
+            .collect::<Vec<_>>()
+    };
+    let p = "class P {\n    x: i64\n}\n";
+    let q = format!("{p}class Q {{\n    p: P\n}}\n");
+    // Line 2 is `x`, and line 5 is `p`.
+    assert_eq!(row(p, "dbg(P(x: 1))"), [(2, true)], "the operand");
+    assert_eq!(
+        row(&q, "dbg(Q(p: P(x: 1)))"),
+        [(2, false), (5, true)],
+        "a class field"
+    );
+    assert_eq!(row(p, "dbg([P(x: 2)])"), [(2, true)], "an array");
+    let written =
+        "class R {\n    y: i64\n    fn to_string(self) -> string {\n        \"r\"\n    }\n}\n";
+    assert_eq!(
+        row(written, "dbg(R(y: 2))"),
+        [(2, false)],
+        "a written to_string"
+    );
+    assert_eq!(row(written, "dbg([R(y: 2)])"), [(2, false)], "in an array");
+    let boxed = "class Box<T> {\n    v: T\n}\n";
+    assert_eq!(
+        row(&format!("{p}{boxed}"), "dbg(Box(v: P(x: 1)))"),
+        [(2, false), (5, true)],
+        "a generic class"
+    );
 }
