@@ -1138,10 +1138,10 @@ impl Checker<'_> {
             entered = spelled.clone();
             if let Some(interface) = calls_through(instance) {
                 let by = matches!(instance, Instance::Operator(..)).then(|| spelled.clone());
-                if reach.is_none() {
+                reach.get_or_insert_with(|| {
                     operand = operand_of(instance);
-                    reach = Some((interface, spelled));
-                }
+                    (interface, spelled)
+                });
                 calling = Some((e.mark, interface, by));
             } else {
                 through.push((

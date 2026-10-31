@@ -383,8 +383,8 @@ impl Checker<'_> {
     /// does not see them, so such a field gets no label. A written `Display` with a bound on
     /// another interface counts as not written, as in `dbg_show`.
     fn shown_by_dbg(&self, live: &[bool]) -> Vec<Option<Span>> {
-        let live_calls =
-            (self.dbg_shown.iter()).filter(|&&(owner, ..)| live[self.owner_index(owner)]);
+        let live_calls = (self.dbg_shown.iter())
+            .filter(|&&(owner, ..)| owner.is_some_and(|owner| live[self.owner_index(owner)]));
         let mut roots: Vec<(Span, Type)> = live_calls.map(|&(_, ty, span)| (span, ty)).collect();
         roots.sort_unstable_by_key(|(span, _)| span.start());
         let mut shown = vec![None; self.classes.len()];
