@@ -5336,7 +5336,35 @@ const WAIT_CALL_DECLS: &str = "class Two<A, B> {\n    a: A\n    b: B\n}\n\
     interface I {\n    type Item\n}\n\
     class W: I {\n    type Item = i64\n}\n\
     fn mkw<E>() -> Result<W, E> { Ok(W()) }\n\
-    fn ga<T: I>(_c: Two<T.Item, bool>, _d: Result<T, string>) -> i64 { 0 }\n";
+    fn ga<T: I>(_c: Two<T.Item, bool>, _d: Result<T, string>) -> i64 { 0 }\n\
+    fn mkv<X>() -> Two<i64, X> { panic(\"e\") }\n\
+    fn mkt<X>() -> Two<X, i64> { panic(\"e\") }\n\
+    fn mkr<X>() -> Two<i64, Two<X, bool>> { panic(\"e\") }\n\
+    fn mkd<X>() -> Two<X, X> { panic(\"e\") }\n\
+    fn mkp<X>() -> Two<X, bool>? { None }\n\
+    fn gq<T, U>(_a: Two<T, bool>, _b: Two<T, U>, _c: Result<U, string>) -> i64 { 0 }\n\
+    fn gq2<T, U>(_b: Two<T, U>, _a: Two<T, bool>, _c: Result<U, string>) -> i64 { 0 }\n\
+    fn gtu<T, U>(_c: Two<T, U>, _d: Result<U, string>) -> i64 { 0 }\n\
+    fn gn<T>(_c: Two<T, Two<T, bool>>, _d: Result<T, string>) -> i64 { 0 }\n\
+    fn gd<T, U>(_c: Two<T, U>, _d: Result<U, string>, _e: Result<T, string>) -> i64 { 0 }\n\
+    fn gp<T>(_c: Two<T, bool>?, _d: Result<T, string>) -> i64 { 0 }\n\
+    fn gl<T>(_c: [Two<T, bool>], _d: Result<T, string>) -> i64 { 0 }\n\
+    fn mkl<X>() -> [Two<X, bool>] { [] }\n\
+    fn mkxw<X>() -> Two<X, W> { panic(\"e\") }\n\
+    fn gaa<T: I>(_c: Two<T.Item, T>, _d: Result<T, string>) -> i64 { 0 }\n\
+    fn mkn<X: I>() -> Two<X.Item, bool> { panic(\"e\") }\n\
+    fn gnn<T>(_c: Two<Two<T, bool>, bool>, _d: Result<T, string>) -> i64 { 0 }\n\
+    fn gn2<T>(_c: Two<T, bool>, _d: Result<T, string>) -> i64 { 0 }\n\
+    fn mkx<X>() -> X { panic(\"e\") }\n\
+    fn mkla<X>() -> [Two<i64, X>] { [] }\n\
+    fn mkt2<E>() -> Result<Two<i64, i64>, E> { panic(\"e\") }\n\
+    fn gla<T>(_c: [T], _d: Result<T, string>) -> i64 { 0 }\n\
+    fn mkxx<X>() -> Two<Two<X, bool>, W> { panic(\"e\") }\n\
+    interface Holds<Y> {\n    type Item\n}\n\
+    class H: Holds<string> {\n    type Item = i64\n}\n\
+    fn mkh<E>() -> Result<H, E> { Ok(H()) }\n\
+    fn mkxh<X>() -> Two<X, H> { panic(\"e\") }\n\
+    fn gh<T: Holds<U>, U>(_c: Two<T.Item, T>, _d: Result<T, string>, _e: Result<U, string>) -> i64 { 0 }\n";
 
 /// The rows of `a_waiting_call_should_wait_for_a_later_argument_that_binds_its_context`: a body,
 /// and the codes, each with the text of the line where it is reported.
@@ -5349,7 +5377,7 @@ const WAIT_CALL_ROWS: &[(&str, &[(Code, &str)])] = {
         ("print(gr(Ok(true), mk()))", &[]),
         ("print(gb(Bx(a: 1), mk()))", &[]),
         // `mk()` binds `U`, which wakes the second `mk2()`; that binds `T`, which wakes the
-        // first. The woken call waits again when its context leaves a parameter open.
+        // first.
         ("print(g3(mk2(), mk2(), mk()))", &[]),
         ("print(g(mk2(), mks()))", &[]),
         // A variant that leaves `U` waits too.
@@ -5371,6 +5399,41 @@ const WAIT_CALL_ROWS: &[(&str, &[(Code, &str)])] = {
             "print(g(mk2(), Err(\"e\")))",
             &[(CannotInfer, "mk2()"), (CannotInfer, "Err")],
         ),
+        // A call waits for the parameters at the places of its own open parameter, not for the
+        // first one that the parameter type names. `mkv()` has `X` under `U`, and `mks()` binds
+        // `U`. The order of the arguments does not decide the result.
+        ("print(gq(mk2(), mkv(), mks()))", &[]),
+        ("print(gq2(mkv(), mk2(), mks()))", &[]),
+        // An open parameter at two places waits for both. When only `U` is bound, the call is
+        // checked when the sweep ends and still sees `U`. When both are bound, `mks()` and
+        // `mk()` wake it.
+        ("print(gtu(mkd(), mks()))", &[]),
+        ("print(gd(mkd(), mks(), mks()))", &[]),
+        // An optional parameter type: the call meets the payload of the context, or its own
+        // optional meets the optional.
+        ("print(gp(mkp(), mk()))", &[]),
+        ("print(gp(mk2(), mk()))", &[]),
+        // An array type, and an associated type in the parameter type next to a plain `T`.
+        ("print(gl(mkl(), mk()))", &[]),
+        ("print(gaa(mkxw(), mkw()))", &[]),
+        // An associated type in the type of the call binds nothing, so the call waits for
+        // nothing and reports its parameter, as it did.
+        ("print(gnn(mkn(), mk()))", &[(CannotInfer, "mkn()")]),
+        ("print(gn2(mkn(), mk()))", &[(CannotInfer, "mkn()")]),
+        // A call that returns a bare `X` waits for the parameters under its context. A call
+        // that returns an array, a parameter type of a bare `T`, and an associated type that
+        // names another parameter.
+        ("print(g(mkx(), mk()))", &[]),
+        ("print(gla(mkla(), mkt2()))", &[]),
+        ("print(gh(mkxh(), mkh(), mks()))", &[]),
+        ("print(gaa(mkxx(), mkw()))", &[(CannotInfer, "mkxx()")]),
+        // A call that nothing wakes is checked when the sweep ends, with what the later
+        // arguments bound. `mkv()` has `X` under `T`, and `mks()` binds `U`: the call checks.
+        // `mkt()` has `i64` under `U`, which `mks()` binds to `string`: the mismatch is true.
+        ("print(gtu(mkv(), mks()))", &[]),
+        ("print(gtu(mkt(), mks()))", &[(Mismatch, "mkt()")]),
+        // A woken call that disagrees with the argument that woke it is blamed.
+        ("print(gn(mkr(), mks()))", &[(Mismatch, "mkr()")]),
         // The limit: a call under another call does not wait.
         ("print(g(id(mk2()), mk()))", &[(CannotInfer, "mk2()")]),
         // A call that is wrong for its parameter reports the mismatch, as it did.
@@ -5383,8 +5446,8 @@ const WAIT_CALL_ROWS: &[(&str, &[(Code, &str)])] = {
 
 /// An argument that is a call and leaves a parameter to its context waits for the parameter of
 /// the outer call that its context lacks, when a later argument binds that one. The order of the
-/// arguments then does not decide the result (#217). A call that nothing wakes is checked after
-/// the others, in order, and gives the same output as before.
+/// arguments then does not decide the result (#217). A call that nothing wakes is checked when
+/// the sweep ends, in order, with what the later arguments bound.
 #[test]
 fn a_waiting_call_should_wait_for_a_later_argument_that_binds_its_context() {
     with_prelude();
@@ -5410,12 +5473,19 @@ fn a_waiting_call_should_wait_for_a_later_argument_that_binds_its_context() {
     }
 }
 
-/// A call of `n` waiting calls, `a0` to `a{n-1}`, and a last argument that binds the parameter of
-/// the last one. Place `i` has the type `Two<T{i+1}, T{i}>`, so it waits for `T{i+1}`, which place
-/// `i+1` binds when it is checked. The last argument wakes the waiting calls from the end to the
-/// start. Each call is tested when it first waits and again when it is woken: the work is linear
-/// in `n`, where a sweep that tests every waiting call after each binding is quadratic. The sizes
-/// are 20, 40 and 60, far above the smallest chain that shows it.
+/// Two calls that wait, in chains of three sizes (20, 40 and 60; 100, 200 and 300), far above the
+/// smallest chain that shows the cost. Each is linear in its size, where a sweep that tests every
+/// waiting call after each binding, or files a call under one parameter at a time, is not.
+///
+/// The first chain is `n` waiting calls, `a0` to `a{n-1}`, and a last argument that binds the
+/// parameter of the last one. Place `i` has the type `Two<T{i+1}, T{i}>`, so it waits for
+/// `T{i+1}`, which place `i+1` binds when it is checked. The last argument wakes the waiting calls
+/// from the end to the start. Each call is tested once.
+///
+/// The second is one waiting call with the type `Tup<T0, ..., T{k-1}>` whose `X` sits under the
+/// last parameter, and `k` later arguments that each bind one parameter. The call waits for
+/// `T{k-1}` only, so it is tested once, where a call that waits for the first unbound parameter,
+/// and moves on at each binding, builds a context of size `k` `k` times.
 #[test]
 fn waiting_calls_should_be_tested_a_linear_number_of_times() {
     with_prelude();
@@ -5441,4 +5511,33 @@ fn waiting_calls_should_be_tested_a_linear_number_of_times() {
     };
     assert!(steps(1) > 0, "the counter should count the tests");
     assert_near_linear(steps(20), steps(40), steps(60));
+    let wide = |k: usize| {
+        let list = |name: &str| (0..k).map(|i| format!("{name}{i}")).collect::<Vec<_>>();
+        let fields: Vec<String> = (0..k).map(|i| format!("    f{i}: A{i}\n")).collect();
+        let built: Vec<String> = (0..k)
+            .map(|i| if i + 1 == k { "X" } else { "i64" }.to_string())
+            .collect();
+        let params: Vec<String> = (0..k)
+            .map(|i| format!("_d{i}: Result<T{i}, string>"))
+            .collect();
+        let src = format!(
+            "class Tup<{}> {{\n{}}}\n\
+             fn mk<E>() -> Result<i64, E> {{ Ok(1) }}\n\
+             fn mkz<X>() -> Tup<{}> {{ panic(\"e\") }}\n\
+             fn gk<{}>(_c: Tup<{}>, {}) -> i64 {{ 0 }}\n\
+             fn main() {{\n    print(gk(mkz(), {}))\n}}",
+            list("A").join(", "),
+            fields.concat(),
+            built.join(", "),
+            list("T").join(", "),
+            list("T").join(", "),
+            params.join(", "),
+            vec!["mk()"; k].join(", "),
+        );
+        generic::WAIT_STEPS.set(0);
+        generic::WALKED.set(0);
+        clean(&src);
+        generic::WAIT_STEPS.get() + generic::WALKED.get()
+    };
+    assert_near_linear(wide(100), wide(200), wide(300));
 }

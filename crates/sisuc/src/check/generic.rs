@@ -180,41 +180,43 @@ fn broken_params(names: &[Symbol]) -> Vec<bool> {
         .collect()
 }
 
-/// Whether one of the type parameters in `names` from `owner` on has no type in `params` that
-/// names it, so that no argument can bind it. For a construction, whose built type names all
-/// of them: the call needs its context, whatever its arguments are. A broken parameter is
-/// not open.
-fn leaves_open(params: impl Iterator<Item = Option<Type>>, names: &[Symbol], owner: usize) -> bool {
+/// The type parameters in `names` from `owner` on that no type in `params` names, so that no
+/// argument can bind them. For a construction, whose built type names all of them: the call needs
+/// its context, whatever its arguments are. A broken parameter is not open.
+fn open_params(
+    params: impl Iterator<Item = Option<Type>>,
+    names: &[Symbol],
+    owner: usize,
+) -> Vec<usize> {
     let bound = named_params(params, names.len());
     let broken = broken_params(names);
-    (owner..names.len()).any(|i| !bound[i] && !broken[i])
+    (owner..names.len())
+        .filter(|&i| !bound[i] && !broken[i])
+        .collect()
 }
 
-/// Whether a call of a function or method that returns `ret` is open: the context binds only what
-/// the type of the call names, so the call is open if `ret` names a parameter that no parameter
-/// type does. It is not open, whatever else it leaves, if one parameter is named by no type at
-/// all: nothing can bind that one, and the call reports it. `ret` is `None` when it did not
-/// resolve; the call is not open then.
-fn is_open(
+/// The open parameters (see `open_params`) of a call of a function or method that returns `ret`,
+/// or none when the call is not open: the context binds only what the type of the call names, so
+/// the call is open if `ret` names a parameter that no parameter type does. It is not open,
+/// whatever else it leaves, if one parameter is named by no type at all: nothing can bind that
+/// one, and the call reports it. `ret` is `None` when it did not resolve; the call is not open
+/// then.
+fn open_params_of_call(
     params: impl Iterator<Item = Option<Type>>,
     ret: Option<Type>,
     names: &[Symbol],
     owner: usize,
-) -> bool {
+) -> Vec<usize> {
     let Some(ret) = ret else {
-        return false;
+        return Vec::new();
     };
     let built = named_params(iter::once(Some(ret)), names.len());
-    let bound = named_params(params, names.len());
-    let broken = broken_params(names);
-    let mut open = false;
-    for i in (owner..names.len()).filter(|&i| !bound[i] && !broken[i]) {
-        if !built[i] {
-            return false;
-        }
-        open = true;
+    let open = open_params(params, names, owner);
+    if open.iter().all(|&i| built[i]) {
+        open
+    } else {
+        Vec::new()
     }
-    open
 }
 
 /// What a call that only its context can finish gives the call that checks it as an argument,
@@ -229,24 +231,188 @@ struct OpenCall {
     params: Vec<usize>,
 }
 
-/// The `OpenCall` of a call that is `open`, of a callee with the type parameters `names` whose
-/// parameter types are `params`. A broken parameter is not open (see `leaves_open`).
-fn open_call(
-    open: bool,
-    built: Option<Type>,
-    params: impl Iterator<Item = Option<Type>>,
-    names: &[Symbol],
-) -> Option<OpenCall> {
-    let built = built.filter(|_| open)?;
-    let bound = named_params(params, names.len());
-    let broken = broken_params(names);
+/// The `OpenCall` of a call with the open parameters `params` (see `open_params`) that builds
+/// `built`, of a callee with `count` type parameters; `None` for a call that is not open.
+fn open_call(params: Vec<usize>, built: Option<Type>, count: usize) -> Option<OpenCall> {
+    let built = built.filter(|_| !params.is_empty())?;
     Some(OpenCall {
         built,
-        count: names.len(),
-        params: (0..names.len())
-            .filter(|&i| !bound[i] && !broken[i])
-            .collect(),
+        count,
+        params,
     })
+}
+
+/// Counts one step of the work that decides if a call waits and wakes it (see `WAIT_STEPS`).
+fn wait_step() {
+    #[cfg(test)]
+    WAIT_STEPS.set(WAIT_STEPS.get() + 1);
+}
+
+/// Adds to `on` each parameter of `outer` that `ty` names and that is unbound.
+fn unbound_params(outer: &Bindings, ty: Type, on: &mut Vec<usize>) {
+    wait_step();
+    if !ty.has_param() {
+        return;
+    }
+    match ty.kind() {
+        TypeKind::Param(_, i) => on.extend(outer.found[i as usize].is_none().then_some(i as usize)),
+        TypeKind::Array(inner) | TypeKind::Optional(inner) => unbound_params(outer, inner, on),
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+            for &arg in args.get() {
+                unbound_params(outer, arg, on);
+            }
+        }
+        TypeKind::Assoc(base, _, args, _) => {
+            unbound_params(outer, base, on);
+            for &arg in args.get() {
+                unbound_params(outer, arg, on);
+            }
+        }
+        _ => unreachable!("only a kind with a child can name a parameter"),
+    }
+}
+
+/// Whether `built`, a callee's type, names a parameter of the callee that is `unbound`.
+fn names_unbound(unbound: &[bool], built: Type) -> bool {
+    wait_step();
+    if !built.has_param() {
+        return false;
+    }
+    match built.kind() {
+        TypeKind::Param(_, p) => unbound[p as usize],
+        TypeKind::Array(inner) | TypeKind::Optional(inner) => names_unbound(unbound, inner),
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+            args.get().iter().any(|&arg| names_unbound(unbound, arg))
+        }
+        // An associated type binds nothing (see `Bindings::bind`).
+        _ => false,
+    }
+}
+
+/// Adds to `on` the unbound parameters of `outer` that decide a parameter of the callee that is
+/// `unbound`. It walks `built`, the callee's type, and `param`, the outer call's parameter type,
+/// together, as `Bindings::bind` meets a context. Where `built` names an unbound parameter of the
+/// callee, the context gives it nothing until each unbound parameter of `outer` in the part of
+/// `param` at that place is bound. Where `param` names one, the context gives nothing for each
+/// unbound parameter of the callee in the part of `built` at that place. `false` when the two
+/// types do not meet. The walk is linear in the sizes of the two types.
+fn needed_params(
+    outer: &Bindings,
+    unbound: &[bool],
+    built: Type,
+    param: Type,
+    on: &mut Vec<usize>,
+) -> bool {
+    wait_step();
+    if !built.has_param() || !param.has_param() {
+        return true;
+    }
+    match (built.kind(), param.kind()) {
+        (_, TypeKind::Param(_, i)) => {
+            on.extend(
+                (outer.found[i as usize].is_none() && names_unbound(unbound, built))
+                    .then_some(i as usize),
+            );
+            true
+        }
+        (TypeKind::Param(_, p), _) => {
+            if unbound[p as usize] {
+                unbound_params(outer, param, on);
+            }
+            true
+        }
+        // The type that it stands for is known once its base is bound.
+        (TypeKind::Assoc(..), _) => true,
+        (_, TypeKind::Assoc(..)) => {
+            if names_unbound(unbound, built) {
+                unbound_params(outer, param, on);
+            }
+            true
+        }
+        (TypeKind::Array(b), TypeKind::Array(q))
+        | (TypeKind::Optional(b), TypeKind::Optional(q)) => needed_params(outer, unbound, b, q, on),
+        // A value converts through one `?` only.
+        (TypeKind::Optional(b), _) if !matches!(b.kind(), TypeKind::Optional(_)) => {
+            needed_params(outer, unbound, b, param, on)
+        }
+        (TypeKind::Class(a, bs), TypeKind::Class(c, qs)) if a == c => {
+            needed_all(outer, unbound, bs, qs, on)
+        }
+        (TypeKind::Enum(a, bs), TypeKind::Enum(c, qs)) if a == c => {
+            needed_all(outer, unbound, bs, qs, on)
+        }
+        _ => false,
+    }
+}
+
+/// `needed_params` for each pair of `built` and `params`, every one of them walked.
+fn needed_all(
+    outer: &Bindings,
+    unbound: &[bool],
+    built: TypeArgs,
+    params: TypeArgs,
+    on: &mut Vec<usize>,
+) -> bool {
+    iter::zip(built.get(), params.get()).fold(true, |all, (&b, &q)| {
+        needed_params(outer, unbound, b, q, on) && all
+    })
+}
+
+/// The arguments of one `sweep_waiting` that wait for a binding, and what each one waits for.
+struct Parked {
+    /// For each argument, how many unbound parameters it still waits for: 0 when it waits for
+    /// none.
+    left: Vec<usize>,
+    /// The arguments that wait for each parameter.
+    by_param: FxHashMap<usize, Vec<usize>>,
+}
+
+impl Parked {
+    fn new(len: usize) -> Self {
+        Parked {
+            left: vec![0; len],
+            by_param: FxHashMap::default(),
+        }
+    }
+
+    /// Keeps the argument at `i` under each parameter in `on`, which are unbound and distinct.
+    fn park(&mut self, i: usize, on: Vec<usize>) {
+        self.left[i] = on.len();
+        for param in on {
+            wait_step();
+            self.by_param.entry(param).or_default().push(i);
+        }
+    }
+
+    /// Whether the argument at `i` waits for a parameter.
+    fn is_parked(&self, i: usize) -> bool {
+        self.left[i] > 0
+    }
+
+    /// Stops the wait of the argument at `i`: it is checked now.
+    fn unpark(&mut self, i: usize) {
+        self.left[i] = 0;
+    }
+
+    /// The arguments that wait for no more parameter now that `bound` are bound, the last of them
+    /// first, so that a stack takes them in order. Each argument counts one for each parameter it
+    /// waits for.
+    fn wake(&mut self, bound: &[usize]) -> Vec<usize> {
+        let mut woken = Vec::new();
+        for param in bound {
+            for i in self.by_param.remove(param).into_iter().flatten() {
+                wait_step();
+                if self.left[i] > 0 {
+                    self.left[i] -= 1;
+                    if self.left[i] == 0 {
+                        woken.push(i);
+                    }
+                }
+            }
+        }
+        woken.sort_unstable_by(|a, b| b.cmp(a));
+        woken
+    }
 }
 
 /// A call of a generic callee as ranking sees it (see `Checker::rank_value`).
@@ -1667,11 +1833,10 @@ impl Checker<'_> {
     /// bound, so it binds nothing new, and a third sweep would find nothing.
     ///
     /// In the first sweep, an argument that waits (see `waits_for`) is not checked. It is kept
-    /// by the place of the parameter that it waits for. A binding takes only the arguments that
-    /// wait for the parameters that it binds, and checks them at once, in order, before the sweep
-    /// goes on. One that still waits goes to the list of the next parameter that it needs. So an
-    /// argument is tested at most once for each parameter that its type names. When the sweep
-    /// ends, the arguments that no binding woke are checked in order, as the second sweep does.
+    /// under each parameter that it waits for (see `Parked`). A binding takes the arguments that
+    /// wait for the parameters that it binds. One that has no more to wait for is checked at
+    /// once, in order, before the sweep goes on. So an argument is tested once. When the sweep
+    /// ends, the arguments that still wait are checked in order, as the second sweep does.
     fn sweep_waiting(
         &mut self,
         call: &mut Inference<'_>,
@@ -1684,50 +1849,52 @@ impl Checker<'_> {
             return;
         }
         let unchecked = |call: &Inference<'_>, i: usize| ranks[i] == 2 && call.slots[i].is_none();
-        let opens: Vec<Option<OpenCall>> = (args.iter().enumerate())
-            .map(|(i, arg)| {
-                (unchecked(call, i) && fit[i])
-                    .then(|| self.open_call_of(&arg.value))
-                    .flatten()
-            })
-            .collect();
         call.bound.clear();
-        // The places that wait, by the place of the parameter that they wait for.
-        let mut waiting: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
-        let mut todo: Vec<usize> = Vec::new();
+        let mut parked = Parked::new(args.len());
         for first in 0..args.len() {
             if !unchecked(call, first) {
                 continue;
             }
-            todo.push(first);
-            while let Some(i) = todo.pop() {
-                let (e, param) = (&args[i].value, sig.params[i]);
-                let waits_for = (opens[i].as_ref().zip(param))
-                    .and_then(|(open, param)| self.waits_for(call, e, param, open));
-                if let Some(on) = waits_for {
-                    waiting.entry(on).or_default().push(i);
-                    continue;
-                }
-                self.infer_waiting(call, i, e, param, fit[i]);
-                let bound = std::mem::take(&mut call.bound);
-                let mut woken: Vec<usize> = (bound.iter())
-                    .filter_map(|on| waiting.remove(on))
-                    .flatten()
-                    .collect();
-                // The stack gives the first place last.
-                woken.sort_unstable_by(|a, b| b.cmp(a));
-                todo.extend(woken);
+            let open = if fit[first] {
+                self.open_call_of(&args[first].value)
+            } else {
+                None
+            };
+            let waits_for = (open.as_ref().zip(sig.params[first]))
+                .and_then(|(open, param)| self.waits_for(call, &args[first].value, param, open));
+            match waits_for {
+                Some(on) => parked.park(first, on),
+                None => self.check_waiting(call, sig, args, fit, &mut parked, first),
             }
         }
-        let mut left: Vec<usize> = waiting.into_values().flatten().collect();
-        left.sort_unstable();
-        for i in left {
-            self.infer_waiting(call, i, &args[i].value, sig.params[i], fit[i]);
+        for i in 0..args.len() {
+            if parked.is_parked(i) {
+                parked.unpark(i);
+                self.check_waiting(call, sig, args, fit, &mut parked, i);
+            }
         }
         for (i, arg) in args.iter().enumerate() {
             if unchecked(call, i) {
                 self.infer_waiting(call, i, &arg.value, sig.params[i], fit[i]);
             }
+        }
+    }
+
+    /// Checks the waiting argument at `first`, then each argument that its bindings leave with
+    /// nothing to wait for, at once and in order (see `Parked::wake`).
+    fn check_waiting(
+        &mut self,
+        call: &mut Inference<'_>,
+        sig: &GenericSig<'_>,
+        args: &[ast::Arg],
+        fit: &[bool],
+        parked: &mut Parked,
+        first: usize,
+    ) {
+        let mut todo = vec![first];
+        while let Some(i) = todo.pop() {
+            self.infer_waiting(call, i, &args[i].value, sig.params[i], fit[i]);
+            todo.extend(parked.wake(&std::mem::take(&mut call.bound)));
         }
     }
 
@@ -1750,34 +1917,59 @@ impl Checker<'_> {
         self.call_shape(e).and_then(|(shape, _)| shape.wait)
     }
 
-    /// The first unbound parameter of the outer call that `e`, an open call that is an argument
-    /// for `param`, waits for; `None` when it does not wait. It waits when `param` names an
-    /// unbound parameter, `call_context` gives it a context, and that context leaves a parameter
-    /// of the callee unbound that no argument can bind: the call would report E0050. A later
-    /// argument can bind `param`'s parameter and give the call more context.
+    /// The unbound parameters of the outer call that `e`, an open call that is an argument for
+    /// `param`, waits for; `None` when it does not wait. It waits when `param` names an unbound
+    /// parameter, `call_context` gives it a context, and that context leaves a parameter of the
+    /// callee unbound that no argument can bind: the call would report E0050. A later argument
+    /// can bind a parameter of `param` and give the call more context.
     ///
-    /// A parameter that is rejected is not waited for: nothing will bind it. The work is one
-    /// unification of the callee's type with the context, linear in the size of that type.
+    /// The call waits for the parameters that `param` names at the places of the callee's open
+    /// parameters (see `needed_params`), which it finds once. A rejected parameter is not waited
+    /// for: nothing will bind it. The work is one unification of the callee's type with the
+    /// context, and one walk of both types, linear in their size.
+    // shortcut: a call waits for every unbound parameter at every place of an open parameter. For
+    // `mkd<X>() -> Two<X, X>` and `Two<T, U>`, it waits for `T` and for `U`, though `U` alone
+    // gives `X`. When only `U` is bound, the call is checked when the sweep ends, after all the
+    // later arguments, so it still sees `U`. Upgrade when a program needs the call checked
+    // before all the places are known.
     fn waits_for(
         &mut self,
         call: &Inference<'_>,
         e: &ast::Expr,
         param: Type,
         open: &OpenCall,
-    ) -> Option<usize> {
+    ) -> Option<Vec<usize>> {
         if waits_for_assoc(&call.bindings, param) {
             return None;
         }
-        let on =
-            (call.bindings.unknown_param(param)).filter(|&on| call.bindings.found[on].is_none())?;
+        call.bindings.unknown_param(param)?;
         let context = self.call_context(call, e, param)?;
-        #[cfg(test)]
-        WAIT_STEPS.set(WAIT_STEPS.get() + 1);
+        wait_step();
         let mut callee = Bindings::new(open.count, &[]);
         // As `infer_call` meets the context: whole, or its payload when it is optional.
         let meets =
             callee.unify(open.built, context) || callee.constrain(open.built, payload(context));
-        (meets && open.params.iter().any(|&p| callee.found[p].is_none())).then_some(on)
+        let mut unbound = vec![false; open.count];
+        for &p in &open.params {
+            unbound[p] = meets && callee.found[p].is_none();
+        }
+        if !unbound.contains(&true) {
+            return None;
+        }
+        let mut on = Vec::new();
+        if !needed_params(&call.bindings, &unbound, open.built, param, &mut on) {
+            on.clear();
+            needed_params(
+                &call.bindings,
+                &unbound,
+                open.built,
+                payload(param),
+                &mut on,
+            );
+        }
+        on.sort_unstable();
+        on.dedup();
+        (!on.is_empty()).then_some(on)
     }
 
     /// Checks `e`, the waiting argument at `i` for `param`, now: `sweep_waiting` calls it when
@@ -2468,14 +2660,18 @@ impl Checker<'_> {
                         && (v.labels.iter().all(Option::is_some)
                             || v.labels.iter().all(Option::is_none))
                         && fits(v.fields.iter().copied().zip(v.labels.iter().copied()), args);
-                    let open = shaped && leaves_open(v.fields.iter().copied(), names, 0);
+                    let open = if shaped {
+                        open_params(v.fields.iter().copied(), names, 0)
+                    } else {
+                        Vec::new()
+                    };
                     let built = Type::intern(TypeKind::Enum(id, own_args(names)));
                     CallShape {
                         generic: true,
                         shaped,
-                        open,
+                        open: !open.is_empty(),
                         places: carried_by_construction(v.fields.iter().copied(), names.len()),
-                        wait: open_call(open, Some(built), v.fields.iter().copied(), names),
+                        wait: open_call(open, Some(built), names.len()),
                         ..CallShape::default()
                     }
                 } else if !safe
@@ -2691,11 +2887,11 @@ impl Checker<'_> {
         let owner = sig.type_params.len() - sig.own;
         let shaped = sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args);
         let ret = sig.ret.filter(|_| shaped);
-        let open = is_open(sig.params.iter().copied(), ret, &sig.type_params, owner);
+        let open = open_params_of_call(sig.params.iter().copied(), ret, &sig.type_params, owner);
         CallShape {
             generic: sig.own > 0,
             shaped,
-            open,
+            open: !open.is_empty(),
             makes: Makes::of(sig.ret, sig.params.iter().copied()),
             places: carried(
                 sig.ret,
@@ -2760,11 +2956,11 @@ impl Checker<'_> {
                 let ret = requirement.ret.filter(|_| shaped);
                 let params = requirement.params.iter().copied();
                 let owner = interface.type_params.len();
-                let open = is_open(params, ret, &names, owner);
+                let open = open_params_of_call(params, ret, &names, owner);
                 CallShape {
                     generic: !requirement.own.is_empty(),
                     shaped,
-                    open,
+                    open: !open.is_empty(),
                     makes: Makes::of(requirement.ret, requirement.params.iter().copied()),
                     places: carried(
                         requirement.ret,
@@ -2863,23 +3059,21 @@ impl Checker<'_> {
             (Some(&Declared::Known(class)), _) => {
                 let info = &self.classes[class.0];
                 let shaped = fits(info.fields.iter().map(|f| (f.ty, Some(f.name.name))), args);
-                let open =
-                    shaped && leaves_open(info.fields.iter().map(|f| f.ty), &info.type_params, 0);
+                let open = if shaped {
+                    open_params(info.fields.iter().map(|f| f.ty), &info.type_params, 0)
+                } else {
+                    Vec::new()
+                };
                 let built = Type::intern(TypeKind::Class(class, own_args(&info.type_params)));
                 CallShape {
                     generic: !info.type_params.is_empty(),
                     shaped,
-                    open,
+                    open: !open.is_empty(),
                     places: carried_by_construction(
                         info.fields.iter().map(|f| f.ty),
                         info.type_params.len(),
                     ),
-                    wait: open_call(
-                        open,
-                        Some(built),
-                        info.fields.iter().map(|f| f.ty),
-                        &info.type_params,
-                    ),
+                    wait: open_call(open, Some(built), info.type_params.len()),
                     ..CallShape::default()
                 }
             }
@@ -2888,11 +3082,12 @@ impl Checker<'_> {
                 let shaped =
                     sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args);
                 let ret = sig.ret.filter(|_| shaped);
-                let open = is_open(sig.params.iter().copied(), ret, &sig.type_params, 0);
+                let open =
+                    open_params_of_call(sig.params.iter().copied(), ret, &sig.type_params, 0);
                 CallShape {
                     generic: !sig.type_params.is_empty(),
                     shaped,
-                    open,
+                    open: !open.is_empty(),
                     makes: Makes::of(sig.ret, sig.params.iter().copied()),
                     places: carried(
                         sig.ret,
@@ -2900,7 +3095,7 @@ impl Checker<'_> {
                         sig.type_params.len(),
                         0,
                     ),
-                    wait: open_call(open, ret, sig.params.iter().copied(), &sig.type_params),
+                    wait: open_call(open, ret, sig.type_params.len()),
                     ..CallShape::default()
                 }
             }
@@ -2921,14 +3116,18 @@ impl Checker<'_> {
                     let info = &self.enums[id.0];
                     let shaped = matches!(args, [arg] if arg.label.is_none());
                     let fields = || info.variants[v].fields.iter().copied();
-                    let open = shaped && leaves_open(fields(), &info.type_params, 0);
+                    let open = if shaped {
+                        open_params(fields(), &info.type_params, 0)
+                    } else {
+                        Vec::new()
+                    };
                     let built = Type::intern(TypeKind::Enum(id, own_args(&info.type_params)));
                     CallShape {
                         generic: true,
                         shaped,
-                        open,
+                        open: !open.is_empty(),
                         places: carried_by_construction(fields(), info.type_params.len()),
-                        wait: open_call(open, Some(built), fields(), &info.type_params),
+                        wait: open_call(open, Some(built), info.type_params.len()),
                         ..CallShape::default()
                     }
                 }),
