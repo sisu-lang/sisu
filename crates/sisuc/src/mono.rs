@@ -1149,6 +1149,8 @@ mod tests {
     /// starts at `Mono::run`, which the debug check of the output (`assert_concrete`) does not
     /// enter. The name of an instance is cut at `NAME_LIMIT`, so the reads for each wrapper grow
     /// with its depth only up to that limit. The sizes are 400, 800 and 1200 wrappers, past it.
+    /// Names stop growing at about 126 wrappers (`NAME_LIMIT` is 256, and each level takes two
+    /// bytes), and 400 is about three times that.
     #[test]
     fn mono_should_read_each_type_of_a_wrapper_chain_a_bounded_number_of_times() {
         use crate::types::READS;

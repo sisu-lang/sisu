@@ -657,9 +657,8 @@ fn cycle_of_params(n: usize, reversed: bool) -> String {
     )
 }
 
-/// A type parameter that a walk finds after a cut is kept when the root walk ends with no part
-/// that fails on its own: each enum of a cycle whose only failing part is `T` is read once, from
-/// whichever enum the comparisons begin.
+/// Each enum of a cycle of type parameters is one component, so its walk keeps `T` for each of
+/// them, from whichever enum the comparisons begin.
 #[test]
 fn failing_leaf_should_read_each_enum_of_a_cycle_of_type_parameters_once() {
     for reversed in [false, true] {
@@ -680,9 +679,9 @@ fn failing_leaf_should_read_each_enum_of_a_cycle_of_type_parameters_once() {
 }
 
 /// A cycle `C0` … `Cn`, where `Ck` has the variants `A(C(k+1))` and `V(i64)` and `Cn` goes back
-/// to `C0`; `n` enums `Ri`, each with the variants `A(C0)` and `N(Node)`; and one function that
-/// compares each `Ri` with itself. With `generic`, each enum has a parameter `T` and `V(T)`, and
-/// the function is generic over `T`. The cycle cannot reach `Node`, and each `Ri` can.
+/// to `C0`. Then `n` enums `Ri`, each with the variants `A(C0)` and `N(Node)`. Then one function
+/// that compares each `Ri` with itself. With `generic`, each enum has a parameter `T` and `V(T)`,
+/// and the function is generic over `T`. The cycle cannot reach `Node`, and each `Ri` can.
 fn cycle_before_roots(n: usize, generic: bool) -> String {
     let (decl, arg, hold, bound) = if generic {
         ("<T>", "<T>", "T", "<T>")
@@ -696,10 +695,11 @@ fn cycle_before_roots(n: usize, generic: bool) -> String {
             src,
             "enum C{k}{decl} {{\n    A(C{next}{arg})\n    V({hold})\n}}"
         )
-        .unwrap();
+        .expect("writing to a `String` should succeed");
     }
     for i in 0..n {
-        writeln!(src, "enum R{i}{decl} {{\n    A(C0{arg})\n    N(Node)\n}}").unwrap();
+        writeln!(src, "enum R{i}{decl} {{\n    A(C0{arg})\n    N(Node)\n}}")
+            .expect("writing to a `String` should succeed");
     }
     let params: Vec<String> = (0..n).map(|i| format!("r{i}: R{i}{arg}")).collect();
     let lines: Vec<String> = (0..n)
@@ -711,12 +711,12 @@ fn cycle_before_roots(n: usize, generic: bool) -> String {
         params.join(", "),
         lines.concat()
     )
-    .unwrap();
+    .expect("writing to a `String` should succeed");
     src
 }
 
-/// A cycle that cannot reach the part that fails is settled when its walk ends, so a later root
-/// that reaches the cycle reads it no more: each enum is read once, however many roots reach the
+/// A cycle that cannot reach the part that fails is settled when its walk ends. A later root that
+/// reaches the cycle reads it no more. So each enum is read once, however many roots reach the
 /// cycle, as for a cycle of type parameters.
 #[test]
 fn failing_leaf_should_read_a_cycle_once_for_the_roots_that_end_in_a_part() {
@@ -2378,6 +2378,37 @@ fn failing_leaf_should_not_keep_a_none_that_was_found_with_a_cycle_cut_short() {
         })
     });
     assert_eq!(leaves, ["A", "A"]);
+}
+
+/// A strongly connected component closes at its first type, and a child's `low` reaches its
+/// parent. Each row asks `failing_leaf` for `R`, then for the parameter of `other`.
+#[test]
+fn failing_leaf_should_close_a_component_at_its_first_type_and_pass_low_to_the_parent() {
+    let rows = [
+        (
+            "a cycle that closes before its root ends in a part",
+            "class Node {}\nenum C0 {\n    A(C1)\n    V(i64)\n}\nenum C1 {\n    A(C0)\n    V(i64)\n}\nenum R {\n    A(C0)\n    N(Node)\n}\nfn other(x: C0) {}\n",
+            ["Node", "C0"],
+        ),
+        (
+            "a cut two levels down",
+            "class Node {}\nenum R {\n    A(X)\n    N(Node)\n}\nenum X {\n    A(Y)\n    V(i64)\n}\nenum Y {\n    A(R)\n    V(i64)\n}\nfn other(x: X) {}\n",
+            ["Node", "Node"],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let leaves = with_probe(src, ("T", "R"), "Eq", |checker, r, eq| {
+            let other = (checker.signatures.iter())
+                .find(|signature| signature.name == "other")
+                .and_then(|signature| signature.params[0])
+                .expect("the program should declare `other`");
+            [r, other].map(|ty| {
+                let leaf = checker.failing_leaf(ty, eq, TypeArgs::NONE);
+                checker.type_name(leaf)
+            })
+        });
+        assert_eq!(leaves, expected, "{row}");
+    }
 }
 
 /// The step that passes the budget panics, so a query that blows up fails at once.

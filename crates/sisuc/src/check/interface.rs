@@ -27,9 +27,9 @@ use crate::tir::{ClassId, EnumId, FuncId, InterfaceId, Type, TypeArgs, TypeKind}
 /// arguments, doubles the number at each level of inheritance, so the walk stops here (E0157).
 pub(super) const BOUND_CLOSURE_LIMIT: usize = 256;
 
-/// The state of one root walk of `Checker::leaf`: Tarjan's search for strongly connected parts.
-/// A type is on `stack` from the walk that reads it until its part closes; `index` gives its
-/// place there. `low` is the least place that the open walk has cut against.
+/// The state of one root walk of `Checker::leaf`: Tarjan's search for strongly connected
+/// components. A type is on `stack` from the walk that reads it until its component closes;
+/// `index` gives its place there. `low` is the least place that the open walk has cut against.
 struct LeafWalk {
     index: FxHashMap<LeafKey, usize>,
     stack: Vec<LeafKey>,
@@ -1449,11 +1449,12 @@ impl Checker<'_> {
     /// interface. It is only for a type that `conforms` has found to fail; `ty` itself if the
     /// walk finds no part.
     ///
-    /// The walk reads each type once. It finds the strongly connected parts of the types it
-    /// meets, as Tarjan's algorithm does (`LeafWalk`). The types of one part reach each other, so
-    /// they share one answer, which the walk keeps when it closes the part. The root closes
-    /// last, so each answer is final. The parameter that an answer names can depend on the order
-    /// of the queries. Each such parameter is a true answer, and the help for E0139 names one.
+    /// The walk reads each type once. It finds the strongly connected components of the types it
+    /// meets, as Tarjan's algorithm does (`LeafWalk`). The types of one component reach each
+    /// other, so they share one answer, which the walk keeps when it closes the component. The
+    /// root closes last, so each answer is final. The parameter that an answer names can depend on
+    /// the order of the queries. Each such parameter is a true answer, and the help for E0139
+    /// names one.
     pub(super) fn failing_leaf(
         &mut self,
         ty: Type,
@@ -1469,10 +1470,10 @@ impl Checker<'_> {
         found.unwrap_or(ty)
     }
 
-    /// Closes the strongly connected part that is on `walk.stack` from `from`: each of its types
-    /// takes `answer` as its final answer. Each of them reaches the type that closes the part,
-    /// and so reaches all that the walk of that type reached. A type that already has a final
-    /// answer of its own, a part that fails, keeps it.
+    /// Closes the strongly connected component that is on `walk.stack` from `from`: each of its
+    /// types takes `answer` as its final answer. Each of them reaches the type that closes the
+    /// component, and so reaches all that the walk of that type reached. A type that already has
+    /// a final answer of its own, a part that fails, keeps it.
     fn close_part(&mut self, walk: &mut LeafWalk, from: usize, answer: Option<Type>) {
         for key in walk.stack.drain(from..) {
             walk.index.remove(&key);
@@ -1651,9 +1652,9 @@ impl Checker<'_> {
                             }
                         };
                     // A part that fails on its own is true for this type at once, whatever the
-                    // walk cut. `None` and a parameter wait for the part: a cut hides what the
-                    // type in progress reaches. The first type of the part closes it, when it
-                    // ends with no cut above itself.
+                    // walk cut. `None` and a parameter wait for the component: a cut hides what
+                    // the type in progress reaches. The first type of the component closes it,
+                    // when it ends with no cut against a type lower on the stack.
                     let low = walk.low;
                     walk.low = outer.min(low);
                     if found.is_some_and(|part| !is_parameter(part)) {
