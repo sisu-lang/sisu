@@ -1084,27 +1084,27 @@ impl Checker<'_> {
             .expect("the label should be an edge of the cycle");
         let mut cycle = cycle;
         cycle.rotate_left(at);
-        let (mut through, mut reach) = (Vec::new(), None);
+        // `reach` holds the operand of the call, until the edge out of its hub says which method
+        // the cycle takes.
+        let (mut through, mut reach): (Vec<_>, Option<(_, _, Option<Type>)>) = (Vec::new(), None);
         let choice = self.choice_use(edges, &cycle);
         let label_spelled = self.spell(functions, graph, edge.holder, label_instance);
         // A call that gives two parameters their arguments is one site, shown once.
         let mut shown = FxHashSet::from_iter([edge.site]);
         // The last call in the user's file, which a step inside the prelude came through.
         let mut entered = label_spelled.clone();
-        // The operand of the call through `reach`, until the edge out of its hub says which method
-        // the cycle takes.
-        let mut operand = None;
         let mut grows = None;
         if let Some(interface) = calls_through(label_instance) {
-            reach = Some((interface, label_spelled.clone()));
-            operand = operand_of(label_instance);
+            reach = Some((interface, label_spelled.clone(), operand_of(label_instance)));
         }
         // A call through a hub, until the edge out of the hub says which method it may run.
         let mut calling: Option<(Span, tir::InterfaceId, Option<Spelled>)> = None;
         for &i in &cycle[1..] {
             let e = &edges[i];
             if e.out {
-                if let Some(operand) = operand.take() {
+                if let Some((.., operand)) = &mut reach
+                    && let Some(operand) = operand.take()
+                {
                     grows = self.growth(functions, operand, e.holder);
                 }
                 if let Some((mark, interface, by)) = calling.take() {
@@ -1128,7 +1128,7 @@ impl Checker<'_> {
             // about a call through the interface, spelled as the user's call into the prelude.
             if e.mark.in_prelude() {
                 if let Some(interface) = calls_through(instance) {
-                    reach.get_or_insert_with(|| (interface, entered.clone()));
+                    reach.get_or_insert_with(|| (interface, entered.clone(), None));
                 }
                 continue;
             }
@@ -1139,10 +1139,7 @@ impl Checker<'_> {
             entered = spelled.clone();
             if let Some(interface) = calls_through(instance) {
                 let by = matches!(instance, Instance::Operator(..)).then(|| spelled.clone());
-                if reach.is_none() {
-                    operand = operand_of(instance);
-                }
-                reach.get_or_insert((interface, spelled));
+                reach.get_or_insert_with(|| (interface, spelled, operand_of(instance)));
                 calling = Some((e.mark, interface, by));
             } else {
                 through.push((
@@ -1158,7 +1155,7 @@ impl Checker<'_> {
             instance: label_spelled,
             through,
             reach: reach
-                .map(|(interface, by)| (self.interfaces[interface.0].name.name.to_string(), by)),
+                .map(|(interface, by, _)| (self.interfaces[interface.0].name.name.to_string(), by)),
             choice,
             grows,
         });
@@ -1174,15 +1171,16 @@ impl Checker<'_> {
         operand: Type,
         method: usize,
     ) -> Option<(String, Option<String>)> {
-        let owner = functions[method].as_ref()?.owner?;
-        let head = holder_of(owner)?;
+        let head = (functions[method].as_ref())
+            .and_then(|function| function.owner)
+            .and_then(holder_of);
         let mut seen = FxHashSet::default();
         let mut walk = vec![operand];
         while let Some(ty) = walk.pop() {
             if !seen.insert(ty) {
                 continue;
             }
-            if holder_of(ty) == Some(head) {
+            if head.is_some_and(|head| holder_of(ty) == Some(head)) {
                 let held_by = (ty != operand).then(|| self.type_name(operand));
                 return Some((self.type_name(ty), held_by));
             }
