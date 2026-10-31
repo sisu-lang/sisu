@@ -5315,3 +5315,130 @@ fn a_call_that_does_not_fit_should_be_checked_first_in_an_array_argument() {
         ],
     );
 }
+
+/// The declarations that the rows of
+/// `a_waiting_call_should_wait_for_a_later_argument_that_binds_its_context` share. `mk2` and `mk`
+/// leave `X` and `E` to their context. `g` takes a call and then the argument that binds its
+/// parameter. `gr`, `gb` and `gv` take a call that binds some of its own parameters.
+const WAIT_CALL_DECLS: &str = "class Two<A, B> {\n    a: A\n    b: B\n}\n\
+    class Bx<A, B> {\n    a: A\n}\n\
+    fn mk<E>() -> Result<i64, E> { Ok(1) }\n\
+    fn mks<E>() -> Result<string, E> { Ok(\"s\") }\n\
+    fn mk2<X>() -> Two<X, bool> { panic(\"e\") }\n\
+    fn id<T>(x: T) -> T { x }\n\
+    fn g<T>(_c: Two<T, bool>, _d: Result<T, string>) -> i64 { 0 }\n\
+    fn gr<T>(_c: Result<bool, T>, _d: Result<T, string>) -> i64 { 0 }\n\
+    fn gb<T>(_c: Bx<i64, T>, _d: Result<T, string>) -> i64 { 0 }\n\
+    fn g3<T, U>(_c: Two<T, bool>, _e: Two<U, T>, _d: Result<U, string>) -> i64 { 0 }\n\
+    enum Mb<T, U> { A(T) }\n\
+    fn gv<U>(_c: Mb<i64, U>, _d: Result<U, string>) -> i64 { 0 }\n\
+    fn g2<T>(_c: Two<T, bool>, _e: Two<T, bool>, _d: Result<T, string>) -> i64 { 0 }\n\
+    interface I {\n    type Item\n}\n\
+    class W: I {\n    type Item = i64\n}\n\
+    fn mkw<E>() -> Result<W, E> { Ok(W()) }\n\
+    fn ga<T: I>(_c: Two<T.Item, bool>, _d: Result<T, string>) -> i64 { 0 }\n";
+
+/// The rows of `a_waiting_call_should_wait_for_a_later_argument_that_binds_its_context`: a body,
+/// and the codes, each with the text of the line where it is reported.
+const WAIT_CALL_ROWS: &[(&str, &[(Code, &str)])] = {
+    use Code::{CannotInfer, Mismatch};
+    &[
+        // The later argument binds `T`, and the call before it gets `Two<i64, bool>`.
+        ("print(g(mk2(), mk()))", &[]),
+        // `Ok(true)` leaves `E`; `mk()` binds `T`. A construction waits too.
+        ("print(gr(Ok(true), mk()))", &[]),
+        ("print(gb(Bx(a: 1), mk()))", &[]),
+        // `mk()` binds `U`, which wakes the second `mk2()`; that binds `T`, which wakes the
+        // first. The woken call waits again when its context leaves a parameter open.
+        ("print(g3(mk2(), mk2(), mk()))", &[]),
+        ("print(g(mk2(), mks()))", &[]),
+        // A variant that leaves `U` waits too.
+        ("print(gv(Mb.A(1), mk()))", &[]),
+        // One binding wakes two calls.
+        ("print(g2(mk2(), mk2(), mk()))", &[]),
+        // A call with written type arguments does not wait. A parameter type that names `T`
+        // only under an associated type waits for the other arguments, as it did.
+        ("print(g(mk2<i64>(), mk()))", &[]),
+        ("print(ga(mk2(), mkw()))", &[]),
+        ("let r: i64 = g(mk2(), Ok(1))\nprint(r)", &[]),
+        // Nothing binds `T`: both calls wait for it, and the sweep ends. They are checked in
+        // order, with no wait, as before.
+        (
+            "print(g(mk2(), mk2()))",
+            &[(CannotInfer, "mk2()"), (Mismatch, "mk2())")],
+        ),
+        (
+            "print(g(mk2(), Err(\"e\")))",
+            &[(CannotInfer, "mk2()"), (CannotInfer, "Err")],
+        ),
+        // The limit: a call under another call does not wait.
+        ("print(g(id(mk2()), mk()))", &[(CannotInfer, "mk2()")]),
+        // A call that is wrong for its parameter reports the mismatch, as it did.
+        (
+            "print(g(mk(), mk2()))",
+            &[(Mismatch, "mk()"), (Mismatch, "mk2())")],
+        ),
+    ]
+};
+
+/// An argument that is a call and leaves a parameter to its context waits for the parameter of
+/// the outer call that its context lacks, when a later argument binds that one. The order of the
+/// arguments then does not decide the result (#217). A call that nothing wakes is checked after
+/// the others, in order, and gives the same output as before.
+#[test]
+fn a_waiting_call_should_wait_for_a_later_argument_that_binds_its_context() {
+    with_prelude();
+    for &(body, expected) in WAIT_CALL_ROWS {
+        let src = format!(
+            "{WAIT_CALL_DECLS}fn main() {{\n    {}\n}}",
+            body.replace('\n', "\n    ")
+        );
+        let line = WAIT_CALL_DECLS.lines().count() + 1 + body.lines().count();
+        let last = body.lines().last().expect("a row should have a call");
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|&(code, at)| {
+                let col = 4
+                    + last
+                        .find(at)
+                        .unwrap_or_else(|| panic!("`{at}` in `{last}`"))
+                    + 1;
+                (code, (line, col))
+            })
+            .collect();
+        codes_row(body, &src, &expected);
+    }
+}
+
+/// A call of `n` waiting calls, `a0` to `a{n-1}`, and a last argument that binds the parameter of
+/// the last one. Place `i` has the type `Two<T{i+1}, T{i}>`, so it waits for `T{i+1}`, which place
+/// `i+1` binds when it is checked. The last argument wakes the waiting calls from the end to the
+/// start. Each call is tested when it first waits and again when it is woken: the work is linear
+/// in `n`, where a sweep that tests every waiting call after each binding is quadratic. The sizes
+/// are 20, 40 and 60, far above the smallest chain that shows it.
+#[test]
+fn waiting_calls_should_be_tested_a_linear_number_of_times() {
+    with_prelude();
+    let steps = |n: usize| {
+        let names: Vec<String> = (0..=n).map(|i| format!("T{i}")).collect();
+        let params: Vec<String> = (0..n)
+            .map(|i| format!("a{i}: Two<T{}, T{i}>", i + 1))
+            .chain([format!("z: Result<T{n}, string>")])
+            .collect();
+        let args = vec!["mk2()"; n].join(", ");
+        let src = format!(
+            "class Two<A, B> {{\n    a: A\n    b: B\n}}\n\
+             fn mk<E>() -> Result<i64, E> {{ Ok(1) }}\n\
+             fn mk2<X>() -> Two<X, bool> {{ panic(\"e\") }}\n\
+             fn c<{}>({}) -> i64 {{ 0 }}\n\
+             fn main() {{\n    print(c({args}, mk()))\n}}",
+            names.join(", "),
+            params.join(", "),
+        );
+        generic::WAIT_STEPS.set(0);
+        clean(&src);
+        generic::WAIT_STEPS.get()
+    };
+    assert!(steps(1) > 0, "the counter should count the tests");
+    assert_near_linear(steps(20), steps(40), steps(60));
+}
