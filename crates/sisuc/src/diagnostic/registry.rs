@@ -460,11 +460,13 @@ pub(crate) enum DiagnosticKind {
     /// every alignment, and a value of that size can never be on the stack. `instance` is
     /// whether `name` is an instance of the generic enum declared at `at`. `holder` is the enum
     /// of the prelude that holds `name` inline, when its payload is the one of 4 GiB or more.
+    /// `used` is the first expression that makes the instance, when `mono` knows it.
     PayloadTooLarge {
         name: String,
         instance: bool,
         holder: Option<String>,
         at: Span,
+        used: Option<Span>,
     },
     /// A call of the method `method` of `receiver`, at `at`, that more than one conformance
     /// could answer: those of `interfaces`. `annotate` is the `let` that picks one.
@@ -2722,6 +2724,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 instance,
                 holder,
                 at,
+                used,
             } => {
                 // The span is the declaration, which holds the other enums in an instance only.
                 let this = if instance {
@@ -2741,12 +2744,15 @@ impl From<DiagnosticKind> for Diagnostic {
                         format!("{this} holds other enums inline"),
                     ),
                 };
-                Diagnostic::coded(code, at, message)
-                    .with_label(label)
-                    .with_help(format!(
-                        "a payload must be less than {PAYLOAD_LIMIT_GIB} GiB. Hold a part in a class or an array. \
-                         Such a field adds only the size of a pointer to the payload."
-                    ))
+                let d = Diagnostic::coded(code, at, message).with_label(label);
+                let d = match used {
+                    Some(used) => d.with_secondary(used, "this use makes the instance"),
+                    None => d,
+                };
+                d.with_help(format!(
+                    "a payload must be less than {PAYLOAD_LIMIT_GIB} GiB. Hold a part in a class or an array. \
+                     Such a field adds only the size of a pointer to the payload."
+                ))
             }
             DiagnosticKind::NotAnInterface { written, at, kind } => Diagnostic::coded(
                 code,

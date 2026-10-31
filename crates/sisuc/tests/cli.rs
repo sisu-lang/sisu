@@ -3008,6 +3008,31 @@ fn build_should_report_e0160_for_a_generic_enum_that_only_its_instance_makes_lar
     assert!(!stderr.contains("panicked"), "{stderr}");
 }
 
+/// GIVEN `enum P<T> { End; A(T, T) }` and a `let` of `P` nested 32 levels deep, set to `P.End`
+/// WHEN it is built to LLVM IR
+/// THEN the E0160 shows the line of the declaration of `P`, and the line of the `let` with a
+/// second label under `P.End` that says the use makes the instance
+#[test]
+fn build_should_label_the_use_that_makes_an_instance_that_is_too_large() {
+    let nested = format!("{}i64{}", "P<".repeat(32), ">".repeat(32));
+    let source = format!(
+        "enum P<T> {{\n    End\n    A(T, T)\n}}\nfn main() {{\n    let x: {nested} = P.End\n    print(x)\n}}\n"
+    );
+    let out = run_on("payload_generic_use", &source, &["build", "--emit", "ir"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert_eq!(e0160_errors(&stderr), 1, "{stderr}");
+    let written = format!("    let x: {nested} = ");
+    let line = format!("6 | {written}P.End");
+    // The gutter of a label line has no number, and the label starts under `P.End`.
+    let label = format!(
+        "  | {}----- this use makes the instance",
+        " ".repeat(written.len())
+    );
+    assert!(stderr.contains(&line), "{stderr}");
+    assert!(stderr.contains(&label), "{stderr}");
+}
+
 /// GIVEN `enum P<T> { End; A(T, T) }` and a `let` of `Result<Result<P^28, i64>, i64>`, where `P^28`
 /// is `P` nested 28 levels deep
 /// WHEN it is built to LLVM IR

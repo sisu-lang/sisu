@@ -893,7 +893,7 @@ pub(crate) fn check<'src>(
     checker.lowered_enums = checker.lower_enums();
     checker
         .diagnostics
-        .extend(payload_limit::diagnostics(&checker.lowered_enums));
+        .extend(payload_limit::diagnostics(&checker.lowered_enums, &[]));
     checker.holds_table = checker.holds_table();
     checker.check_main(&declared);
     // Every body is checked, so this collects into a `Vec` before it gives up on a `None`.

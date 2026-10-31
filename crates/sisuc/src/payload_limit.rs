@@ -12,6 +12,8 @@
 //! the bound is exact except for these. A test in `codegen/tests.rs` checks the bound against
 //! the LLVM size of each enum.
 
+use std::collections::VecDeque;
+
 use rustc_hash::FxHashSet;
 
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
@@ -223,17 +225,21 @@ pub(crate) struct Oversized {
     /// The prelude enum that holds it, when the payload over the limit is that enum's: a
     /// `Result<E, E>` is as large as `E` and a tag.
     pub(crate) holder: Option<String>,
+    /// The first expression that makes the enum that is over the limit, when `mono` knows one.
+    pub(crate) used: Option<Span>,
 }
 
-/// The diagnostics of `oversized`, one for each report.
-pub(crate) fn diagnostics(enums: &[Enum]) -> Vec<Diagnostic> {
-    (oversized(enums).into_iter())
+/// The diagnostics of `oversized`, one for each report. `first_uses` is the first use of each enum
+/// that `mono` found, or `&[]` when there is none.
+pub(crate) fn diagnostics(enums: &[Enum], first_uses: &[Option<Span>]) -> Vec<Diagnostic> {
+    (oversized(enums, first_uses).into_iter())
         .map(|o| {
             DiagnosticKind::PayloadTooLarge {
                 name: o.name,
                 instance: o.instance,
                 holder: o.holder,
                 at: o.at,
+                used: o.used,
             }
             .into()
         })
@@ -251,18 +257,61 @@ fn largest_held(enums: &[Enum], measured: &[Option<Measured>], id: usize) -> Opt
 /// enum of the prelude is no place for the user to change, so the report names the user's enum
 /// that its largest field holds. When that chain reaches no user's enum, the report names the
 /// prelude's enum. On the checker path, `checked_with` treats a report in the prelude as an
-/// internal error. The reports are in the order of the enums.
-pub(crate) fn oversized(enums: &[Enum]) -> Vec<Oversized> {
-    oversized_with(enums, PAYLOAD_LIMIT)
+/// internal error. The reports are in the order of the enums. `first_uses` is the first use of each
+/// enum, which a report gives as the place that makes an instance.
+pub(crate) fn oversized(enums: &[Enum], first_uses: &[Option<Span>]) -> Vec<Oversized> {
+    oversized_with(enums, first_uses, PAYLOAD_LIMIT)
+}
+
+/// The first use of enum `id`: its own, else the one of the first enum that holds it inline, at
+/// any depth, found breadth first. `holders` is the reverse of `held_inline`, built when first
+/// needed: the normal path reports nothing, so it never builds it.
+fn first_use(
+    enums: &[Enum],
+    first_uses: &[Option<Span>],
+    holders: &mut Option<Vec<Vec<usize>>>,
+    id: usize,
+) -> Option<Span> {
+    let use_of = |id: usize| first_uses.get(id).copied().flatten();
+    if let Some(own) = use_of(id) {
+        return Some(own);
+    }
+    let holders = holders.get_or_insert_with(|| {
+        let mut holders = vec![Vec::new(); enums.len()];
+        for (holder, e) in enums.iter().enumerate() {
+            for held in held_inline(e) {
+                holders[held].push(holder);
+            }
+        }
+        holders
+    });
+    let mut seen = FxHashSet::default();
+    seen.insert(id);
+    let mut queue = VecDeque::from([id]);
+    while let Some(held) = queue.pop_front() {
+        for &holder in &holders[held] {
+            if seen.insert(holder) {
+                if let Some(found) = use_of(holder) {
+                    return Some(found);
+                }
+                queue.push_back(holder);
+            }
+        }
+    }
+    // shortcut: an instance that only a field of a non-generic class reaches has no use, as `mono`
+    // lowers the classes before any expression; no second label then. Upgrade by giving a class
+    // field a span.
+    None
 }
 
 /// `oversized` with `limit` in place of `PAYLOAD_LIMIT`, for the tests, which cannot build a
 /// payload of 4 GiB cheaply.
-fn oversized_with(enums: &[Enum], limit: u64) -> Vec<Oversized> {
+fn oversized_with(enums: &[Enum], first_uses: &[Option<Span>], limit: u64) -> Vec<Oversized> {
     let measured = measure(enums);
     let over = |id: usize| measured[id].is_some_and(|m| m.payload >= limit);
     let mut seen = FxHashSet::default();
     let mut found = Vec::new();
+    let mut holders = None;
     for (id, e) in enums.iter().enumerate() {
         if !over(id) || held_inline(e).any(over) {
             continue;
@@ -282,11 +331,15 @@ fn oversized_with(enums: &[Enum], limit: u64) -> Vec<Oversized> {
         };
         let target = &enums[target];
         if seen.insert(target.span) {
+            // With a holder, a use makes the holder's instance: `target` may be a user's enum
+            // that is no instance.
+            let first = first_use(enums, first_uses, &mut holders, id);
             found.push(Oversized {
                 name: target.name.clone(),
                 at: target.span,
                 instance: target.instance,
                 holder,
+                used: first,
             });
         }
     }
@@ -481,8 +534,8 @@ mod tests {
     fn oversized_should_flag_a_payload_that_equals_the_limit() {
         // The payload of `A` is two `i64`s: 16 bytes.
         let enums = [holding("A", 0, vec![Type::I64, Type::I64])];
-        assert_eq!(oversized_with(&enums, 16).len(), 1);
-        assert_eq!(oversized_with(&enums, 17), []);
+        assert_eq!(oversized_with(&enums, &[], 16).len(), 1);
+        assert_eq!(oversized_with(&enums, &[], 17), []);
     }
 
     #[test]
@@ -494,7 +547,7 @@ mod tests {
             pair("Low", 2, 3),
             holding("Leaf", 3, vec![Type::I64]),
         ];
-        let found = oversized_with(&enums, 30);
+        let found = oversized_with(&enums, &[], 30);
         let names: Vec<_> = found
             .iter()
             .map(|o| (o.name.as_str(), o.holder.as_deref()))
@@ -510,7 +563,7 @@ mod tests {
             holding("Leaf", 1, vec![Type::I64]),
             pair("B", 2, 1),
         ];
-        let names: Vec<_> = oversized_with(&enums, 16)
+        let names: Vec<_> = oversized_with(&enums, &[], 16)
             .into_iter()
             .map(|o| o.name)
             .collect();
@@ -525,7 +578,7 @@ mod tests {
             pair("P<u8>", 5, 2),
             holding("Leaf", 6, vec![Type::I64]),
         ];
-        let found = oversized_with(&enums, 16);
+        let found = oversized_with(&enums, &[], 16);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "P<i64>");
     }
@@ -539,14 +592,14 @@ mod tests {
             vec![vec![(enum_type(1), true), (enum_type(1), true)]],
         );
         let leaf = holding("Leaf", 1, vec![Type::I64]);
-        assert_eq!(oversized_with(&[boxed, leaf], 20), []);
+        assert_eq!(oversized_with(&[boxed, leaf], &[], 20), []);
     }
 
     #[test]
     fn oversized_should_not_report_an_enum_with_an_unknown_part() {
         let param = Type::intern(TypeKind::Param(crate::symbol::Symbol::intern("T"), 0));
         let enums = [holding("A", 0, vec![param, Type::I64, Type::I64])];
-        assert_eq!(oversized_with(&enums, 1), []);
+        assert_eq!(oversized_with(&enums, &[], 1), []);
     }
 
     #[test]
@@ -558,7 +611,7 @@ mod tests {
             holding("User", 3, vec![Type::I64, Type::I64]),
             holding("Wrap", base, vec![enum_type(0)]),
         ];
-        let found = oversized_with(&enums, 20);
+        let found = oversized_with(&enums, &[], 20);
         assert_eq!(
             found,
             [Oversized {
@@ -566,6 +619,7 @@ mod tests {
                 at: Span::new(3, 4),
                 instance: false,
                 holder: Some("Wrap".to_string()),
+                used: None,
             }]
         );
     }
@@ -579,7 +633,7 @@ mod tests {
             holding("Inner", base + 1, vec![enum_type(2)]),
             holding("User", 3, vec![Type::I64, Type::I64]),
         ];
-        let found = oversized_with(&enums, 32);
+        let found = oversized_with(&enums, &[], 32);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "User");
         assert_eq!(found[0].holder.as_deref(), Some("Outer"));
@@ -596,7 +650,7 @@ mod tests {
             holding("Middle", base + 1, vec![enum_type(2)]),
             holding("Inner", base + 2, vec![Type::I64]),
         ];
-        let found = oversized_with(&enums, 20);
+        let found = oversized_with(&enums, &[], 20);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "Outer");
         assert_eq!(found[0].holder, None);
@@ -606,9 +660,83 @@ mod tests {
     fn oversized_should_name_a_prelude_enum_that_is_over_the_limit_by_its_own_fields() {
         let base = PRELUDE_BASE as usize;
         let enums = [holding("Big", base, vec![Type::I64, Type::I64])];
-        let found = oversized_with(&enums, 16);
+        let found = oversized_with(&enums, &[], 16);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "Big");
         assert_eq!(found[0].holder, None);
+    }
+
+    /// `Top` holds `Mid`, `Mid` holds `Low`, and `Low`, over a limit of 30, is the mistake.
+    fn chain() -> [Enum; 4] {
+        [
+            pair("Top", 0, 1),
+            pair("Mid", 1, 2),
+            pair("Low", 2, 3),
+            holding("Leaf", 3, vec![Type::I64]),
+        ]
+    }
+
+    #[test]
+    fn oversized_should_use_the_first_use_of_the_enum_over_the_limit() {
+        let uses = [Some(Span::new(10, 11)), None, Some(Span::new(30, 31)), None];
+        let found = oversized_with(&chain(), &uses, 30);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].used, Some(Span::new(30, 31)));
+    }
+
+    #[test]
+    fn oversized_should_use_the_first_use_of_an_enum_that_holds_it_at_depth_two() {
+        // `Low` and `Mid` have no use; `Top` holds `Low` through `Mid`.
+        let uses = [Some(Span::new(10, 11)), None, None, None];
+        let found = oversized_with(&chain(), &uses, 30);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].used, Some(Span::new(10, 11)));
+    }
+
+    #[test]
+    fn oversized_should_prefer_the_nearest_holder_that_has_a_use() {
+        // `Low` is held by `Near`, which has a use, and by `Far`, which `Outer` holds. `Far` comes
+        // first in the order of the enums, so a depth first walk would find the use of `Outer`.
+        let enums = [
+            pair("Outer", 0, 1),
+            pair("Far", 1, 3),
+            pair("Near", 2, 3),
+            pair("Low", 3, 4),
+            holding("Leaf", 4, vec![Type::I64]),
+        ];
+        let uses = [
+            Some(Span::new(10, 11)),
+            None,
+            Some(Span::new(20, 21)),
+            None,
+            None,
+        ];
+        let found = oversized_with(&enums, &uses, 30);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "Low");
+        assert_eq!(found[0].used, Some(Span::new(20, 21)));
+    }
+
+    #[test]
+    fn oversized_should_give_no_use_when_no_enum_that_holds_it_has_one() {
+        let uses = [None, None, None, Some(Span::new(40, 41))];
+        // The use of `Leaf`, which `Low` holds, is no use of `Low`.
+        let found = oversized_with(&chain(), &uses, 30);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].used, None);
+    }
+
+    #[test]
+    fn oversized_should_use_the_first_use_of_the_prelude_enum_that_holds_the_user_enum() {
+        // A use of `User` is no use of `Wrap`, the instance that makes the payload too large.
+        let base = PRELUDE_BASE as usize;
+        let enums = [
+            holding("User", 3, vec![Type::I64, Type::I64]),
+            holding("Wrap", base, vec![enum_type(0)]),
+        ];
+        let uses = [Some(Span::new(60, 61)), Some(Span::new(70, 71))];
+        let found = oversized_with(&enums, &uses, 20);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].used, Some(Span::new(70, 71)));
     }
 }
