@@ -118,7 +118,7 @@ fn main() {
     print(same[0][0])                      // ab
     print(SCALE)                           // 3.0
     print(HALF_TURN > 3.14)                // true
-    print(Measure<string>(2) + Measure.pi) // 5.141592653589793
+    print(Measure<string>(2) + Measure<i64>.pi) // 5.141592653589793
     let some = Maybe.Some([1, 2])
     let none: [i64]? = Maybe.None
     print(firsts(some))                    // 2

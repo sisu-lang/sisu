@@ -1,0 +1,21 @@
+type O = i64?
+type M<T> = [T]?
+
+fn first(O: i64) -> i64 {
+    O
+}
+
+fn main() {
+    let M = 3
+    let y: i64? = O.None
+    let w: i64? = 5
+    match w {
+        O.Some(v) => print(v)
+        O.None => print(0)
+    }
+    let z: [i64]? = M.None
+    print(z == None)
+    print(M)
+    print(y == None)
+    print(first(1))
+}

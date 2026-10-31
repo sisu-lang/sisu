@@ -115,6 +115,10 @@ impl Checker<'_> {
                 self.construct_class(span, class, site, args, Some(through))
             }
             TypeKind::I64 | TypeKind::U8 | TypeKind::F64 | TypeKind::Char | TypeKind::String => {
+                if !self.bind_unused(span, site, through) {
+                    self.stray(args);
+                    return Err(Poisoned::error());
+                }
                 self.convert(span, site.name.span, through.ty, args)
             }
             _ => {
@@ -853,6 +857,7 @@ impl Checker<'_> {
         through: Option<&Through>,
     ) -> Checked {
         self.record(Used::Class(class), span);
+        let quiet = self.body.failed_let == Some(span);
         let info = &self.classes[class.0];
         let name = info.name.name.as_str();
         let (declared, bounds, ret, fields): (_, _, _, Vec<(Symbol, Option<Type>)>) = match through
@@ -889,7 +894,8 @@ impl Checker<'_> {
                 owner: &[],
                 params: &params,
                 ret: Some(ret),
-                bounds: &bounds,
+                // An annotation that failed its bound reported it: the value is quiet.
+                bounds: if quiet { &[] } else { &bounds },
             };
             // An alias's type arguments, when the call wrote them, are applied already.
             let written = (
@@ -903,7 +909,8 @@ impl Checker<'_> {
             };
             let failed = args.iter().any(mismatched);
             // The bounds that the alias's body puts on its parameters, on what they are bound to.
-            let held = through.is_none_or(|t| self.use_checks(&t.checks, list, span) == Some(true));
+            let held = quiet
+                || through.is_none_or(|t| self.use_checks(&t.checks, list, span) == Some(true));
             return match args.into_iter().collect() {
                 Ok(args) if held => {
                     Ok(self.spilled(span, ty, args, |args| tir::ExprKind::New { class, args }))

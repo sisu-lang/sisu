@@ -562,12 +562,12 @@ fn main() {
 The rules:
 
 - A type alias is a top-level declaration. Its name must differ from the name of any function, class, enum, interface or constant ([E0034](../diagnostics/E0034.md)), and from a built-in type's name ([E0026](../diagnostics/E0026.md)). An alias can stand before the declaration that uses it, and after it.
-- An alias can have type parameters, such as `Pairs<T>`. They take no bounds. A use writes every argument: `Pairs` alone is an error ([E0137](../diagnostics/E0137.md)).
+- An alias can have type parameters, such as `Pairs<T>`. They take no bounds. A type writes every argument: `Pairs` alone is an error ([E0137](../diagnostics/E0137.md)).
 - An alias is the type that it names, also inside type arguments: a `Stack<Grid>` is a `Stack<[[char?]]>`. An `extend` block of an alias extends the type that the alias names, so `extend Grid` is an error, as `extend [[char?]]` is ([E0155](../diagnostics/E0155.md)).
 - An alias of a class or an enum builds values as the type does, and an alias of a number type converts and has its constants. An alias of an optional type has its `Some` and `None`. A use can write the type arguments, as in `Pairs<i64>(...)`, or leave them to its arguments and its context, as a generic call does. The pattern `Alias.Variant(x)` holds the arguments that the alias fixes. An alias of a type with no constructor, such as an array, cannot be called ([E0105](../diagnostics/E0105.md)).
 - An alias of a type with a bound, such as `type H<T> = Heap<T>` for a `Heap<T: Ord>`, is checked at each use, on the type that the use names. An alias of an interface is an error ([E0147](../diagnostics/E0147.md)). A use of an alias that fails such a bound is that type's error, so it is reported once.
 - An alias that refers to itself, directly or through another alias, is an error ([E0161](../diagnostics/E0161.md)). A class or an enum can hold itself.
-- The type that an alias names is no deeper than 256 levels ([E0071](../diagnostics/E0071.md)), and one written type adds no more than 100,000 distinct types ([E0162](../diagnostics/E0162.md)).
+- The type that an alias names is no deeper than 256 levels ([E0071](../diagnostics/E0071.md)), and one written type adds no more than 100,000 distinct types, and the whole program no more than 1,000,000 ([E0162](../diagnostics/E0162.md)).
 - A message about a value that does not fit a declared type shows the alias as the declaration writes it: "expected `Grid`, found `string`". Any other message shows the type that the alias names.
 
 ```sisu

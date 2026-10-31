@@ -16,7 +16,7 @@ use std::rc::Rc;
 use rustc_hash::FxHashMap;
 
 use super::expr::{bare_none, dbg_argument, none_literal, rank};
-use super::generic::{Site, type_meets};
+use super::generic::{GenericSig, Site, type_meets};
 use super::interface::{Bound, Slot};
 use super::{
     Body, Checked, Checker, Declared, DiagnosticKind, Poisoned, UnknownForm, built_in_type,
@@ -427,13 +427,13 @@ impl Checker<'_> {
     }
 
     /// Whether `e` is the empty optional: `None`, `Option.None`, `Option<T>.None`, or the same
-    /// through an alias of an optional type that no local hides.
+    /// through an alias of an optional type, which no local can hide.
     pub(super) fn none_written(&self, e: &ast::Expr) -> bool {
         none_literal(e) || self.alias_none(e).is_some()
     }
 
-    /// `Some(bare)` when `e` is `A.None` or `A<T>.None` for an alias `A` of an optional type that
-    /// no local hides: `bare` when the alias takes parameters and `e` writes none, so the context
+    /// `Some(bare)` when `e` is `A.None` or `A<T>.None` for an alias `A` of an optional type:
+    /// `bare` when the alias takes parameters and `e` writes none, so the context
     /// fixes the type, as it does for `Option.None`.
     pub(super) fn alias_none(&self, e: &ast::Expr) -> Option<bool> {
         let ast::ExprKind::Field {
@@ -455,10 +455,9 @@ impl Checker<'_> {
         let State::Done(Some(resolved)) = &self.aliases.infos[id].state else {
             return None;
         };
-        (name.name.as_str() == "None"
-            && matches!(resolved.body.kind(), TypeKind::Optional(_))
-            && !self.body.scopes.iter().any(|s| s.contains_key(alias)))
-        .then(|| bare && !self.aliases.infos[id].params.is_empty())
+        // A local cannot hide an alias of an optional type (it is reported).
+        (name.name.as_str() == "None" && matches!(resolved.body.kind(), TypeKind::Optional(_)))
+            .then(|| bare && !self.aliases.infos[id].params.is_empty())
     }
 
     /// `rank` of `e`, where the empty optional of an alias with parameters waits for its context
@@ -479,15 +478,27 @@ impl Checker<'_> {
     }
 
     /// Whether a path that starts with the alias `name` reads the alias: no local has the name, or
-    /// the alias names an enum, which a local cannot hide (it is reported).
+    /// the alias names an enum or an optional type, which a local cannot hide (it is reported).
     pub(super) fn alias_visible(&mut self, name: Symbol) -> bool {
-        self.lookup(name).is_none() || self.alias_names_enum(name)
+        self.lookup(name).is_none() || self.alias_unhideable(name)
     }
 
     /// Whether `name` is an alias of an enum, whose variants a path of the name writes.
     pub(super) fn alias_names_enum(&self, name: Symbol) -> bool {
         self.alias_type(name)
             .is_some_and(|ty| matches!(ty.kind(), TypeKind::Enum(..)))
+    }
+
+    /// Whether `name` is an alias of an optional type, whose `Some` and `None` a path writes.
+    pub(super) fn alias_names_option(&self, name: Symbol) -> bool {
+        self.alias_type(name)
+            .is_some_and(|ty| matches!(ty.kind(), TypeKind::Optional(..)))
+    }
+
+    /// Whether a local cannot hide the alias `name`, as none can hide what it names: an enum, and
+    /// `Option`.
+    pub(super) fn alias_unhideable(&self, name: Symbol) -> bool {
+        self.alias_names_enum(name) || self.alias_names_option(name)
     }
 
     /// Whether `name` is an alias that is `Error`: a broken one, or one that has failed. Its own
@@ -683,15 +694,56 @@ impl Checker<'_> {
                 Some(Err(Poisoned::error()))
             }
             Via::To(through) => match through.ty.kind() {
+                // A generic enum binds the parameters of the alias itself.
+                TypeKind::Enum(id, _) if self.enums[id.0].type_params.is_empty() => {
+                    if !self.bind_unused(span, site, &through) {
+                        self.stray(call.map_or(&[], |(args, _)| args));
+                        return Some(Err(Poisoned::error()));
+                    }
+                    Some(self.enum_path(span, id, member, call, site, Some(&through)))
+                }
                 TypeKind::Enum(id, _) => {
                     Some(self.enum_path(span, id, member, call, site, Some(&through)))
                 }
                 TypeKind::Optional(_) => {
                     Some(self.optional_alias_path(span, site, &through, member, call))
                 }
+                TypeKind::I64
+                | TypeKind::U8
+                | TypeKind::F64
+                | TypeKind::Char
+                | TypeKind::String
+                    if !self.bind_unused(span, site, &through) =>
+                {
+                    self.stray(call.map_or(&[], |(args, _)| args));
+                    Some(Err(Poisoned::error()))
+                }
                 _ => None,
             },
         }
+    }
+
+    /// Whether the parameters of `through`, the alias that `site` writes with no type argument, are
+    /// bound: a value that holds no part of the alias's type, such as a conversion or a variant of
+    /// an enum that takes no parameter, binds none, and the first that the context does not bind
+    /// is reported (E0050), as for a generic call that leaves a parameter free.
+    pub(super) fn bind_unused(&mut self, span: Span, site: Site<'_>, through: &Through) -> bool {
+        if through.params.is_empty() {
+            return true;
+        }
+        let sig = GenericSig {
+            name: site.name,
+            variant: None,
+            declared: &through.params,
+            owner: &[],
+            params: &[],
+            ret: Some(through.ty),
+            bounds: &[],
+        };
+        matches!(
+            self.generic_call(span, &sig, (&[], site.angles), &[], site.expected),
+            Some((_, _, Some(_)))
+        )
     }
 
     /// `A.None` and `A.Some(x)`, where the alias `A` names an optional type: the paths of `Option`.

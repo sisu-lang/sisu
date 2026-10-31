@@ -1,0 +1,14 @@
+error[E0116]: `O` names an optional type
+ --> E0116-alias-optional.sisu:4:10
+  |
+4 | fn first(O: i64) -> i64 {
+  |          ^
+
+error[E0116]: `M` names an optional type
+ --> E0116-alias-optional.sisu:9:9
+  |
+9 |     let M = 3
+  |         ^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0116

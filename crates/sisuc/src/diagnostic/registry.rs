@@ -956,8 +956,14 @@ pub(crate) enum DiagnosticKind {
     MixedLabels { variant: String, at: Span },
     /// The enum `name`, at `at`, which declares no variant.
     EmptyEnum { name: String, at: Span },
-    /// A local, parameter or binding at `at` named `name`, which names an enum.
-    EnumNamedLocal { name: String, at: Span },
+    /// A local, parameter or binding at `at` named `name`, which names an enum, or an optional
+    /// type through an alias.
+    EnumNamedLocal {
+        name: String,
+        at: Span,
+        /// Whether `name` is an alias of an optional type, which no local can be named like either.
+        optional: bool,
+    },
     /// The variant `name`, at `at`, written without its enum where no item or binding takes the
     /// name; `enums` are the enums that have such a variant, in declaration order. `labelled`
     /// are those of `enums` whose name is an open loop label that `at` would follow as the
@@ -4083,9 +4089,14 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::EmptyEnum { name, at } => {
                 Diagnostic::coded(code, at, format!("`{name}` needs at least one variant"))
             }
-            DiagnosticKind::EnumNamedLocal { name, at } => {
-                Diagnostic::coded(code, at, format!("`{name}` names an enum"))
-            }
+            DiagnosticKind::EnumNamedLocal { name, at, optional } => Diagnostic::coded(
+                code,
+                at,
+                format!(
+                    "`{name}` names {}",
+                    if optional { "an optional type" } else { "an enum" }
+                ),
+            ),
             DiagnosticKind::BareVariant {
                 name,
                 enums,

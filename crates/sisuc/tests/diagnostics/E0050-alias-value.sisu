@@ -1,0 +1,25 @@
+enum E {
+    A
+    B(i64)
+}
+
+class P {
+    x: i64
+}
+
+type F<T> = f64
+type S<T> = string
+type EU<T> = E
+type PU<T> = P
+
+const X: f64 = F(3)
+const Y: f64 = F.pi
+
+fn main() {
+    print(F(3))
+    print(F.pi)
+    print(S(3))
+    print(EU.A)
+    print(EU.B(1) == EU.A)
+    print(PU(x: 1).x)
+}

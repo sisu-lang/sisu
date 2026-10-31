@@ -802,10 +802,52 @@ fn a_value_position_should_check_the_type_that_its_alias_names() {
             "const X: f64 = (1.0).pi\nfn main() {}",
             vec![(Code::ConstantNotKnown, (1, 16))],
         ),
+    ] {
+        codes_row(row, src, &expected);
+    }
+}
+
+/// What a value position leaves unbound, hides or reports twice: the limit of the whole check, a
+/// local named like an alias, a parameter that nothing binds, and a bound that the annotation
+/// reported already.
+#[test]
+fn a_value_position_should_report_each_mistake_of_its_alias_once() {
+    for (row, src, expected) in [
         (
             "the type that passes the limit of the whole check, and no report after it",
             fixture!("E0162-check"),
             vec![(Code::AliasTooLarge, (38, 10))],
+        ),
+        (
+            "a local cannot take the name of an alias of an optional type, nor an alias hide it",
+            fixture!("E0116-alias-optional"),
+            vec![
+                (Code::EnumNamedLocal, (4, 10)),
+                (Code::EnumNamedLocal, (9, 9)),
+            ],
+        ),
+        (
+            "a parameter of an alias that nothing binds, in every value position",
+            fixture!("E0050-alias-value"),
+            vec![
+                (Code::CannotInfer, (15, 16)),
+                (Code::CannotInfer, (16, 16)),
+                (Code::CannotInfer, (19, 11)),
+                (Code::CannotInfer, (20, 11)),
+                (Code::CannotInfer, (21, 11)),
+                (Code::CannotInfer, (22, 11)),
+                (Code::CannotInfer, (23, 11)),
+                (Code::CannotInfer, (24, 11)),
+            ],
+        ),
+        (
+            "an annotation that failed its bound is not reported again at the constructor",
+            fixture!("E0154-alias-annotation-once"),
+            vec![
+                (Code::NotConform, (8, 16)),
+                (Code::NotConform, (9, 12)),
+                (Code::NotConform, (10, 13)),
+            ],
         ),
         (
             "a local cannot take the name of an alias of an enum",
@@ -835,7 +877,7 @@ fn an_alias_should_stand_for_its_type_where_a_comparison_or_a_constant_reads_it(
         ),
         (
             "constants and qualifiers through an alias with a parameter",
-            "type F<T> = f64\ntype G = F<i64>\nconst X: f64 = F<i64>(3)\nconst Y: f64 = F<i64>.pi\nconst Z: f64 = G(3)\nfn main() {\n    print(F<string>.pi + F.pi + G.pi + X + Y + Z)\n}".to_string(),
+            "type F<T> = f64\ntype G = F<i64>\nconst X: f64 = F<i64>(3)\nconst Y: f64 = F<i64>.pi\nconst Z: f64 = G(3)\nfn main() {\n    print(F<string>.pi + F<i64>.pi + G.pi + X + Y + Z)\n}".to_string(),
         ),
     ] {
         clean_row(row, &src);

@@ -756,6 +756,9 @@ struct Body {
     /// Where the value of the unlabeled `break` being checked starts: the parser reads an open
     /// loop label there as the `break`'s label, so a fix must not write one there.
     break_start: Option<usize>,
+    /// Where the initializer of a `let` is, whose annotation failed: the failure reported the
+    /// bound of the annotated type, so a constructor there does not report it again.
+    failed_let: Option<Span>,
     /// Where the quiet value is: an expression that has no expected type only because the
     /// context of an array literal around it failed (see `joined`). Its value parts are quiet
     /// too, and a quiet value that cannot be inferred is not reported, as the failed context

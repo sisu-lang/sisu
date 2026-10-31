@@ -337,6 +337,7 @@ impl Checker<'_> {
                 let declared = ty.as_ref().map(|ty| self.resolve(ty));
                 let shown = ty.as_ref().and_then(|ty| self.shown_text(ty, uses));
                 self.body.let_init = Some((init.span, name.name, mutable.is_some()));
+                self.body.failed_let = matches!(declared, Some(None)).then_some(init.span);
                 let init = match declared {
                     Some(declared) => {
                         if let (Some(want), Some(text)) = (declared, &shown) {
@@ -347,6 +348,7 @@ impl Checker<'_> {
                     None => self.value(init, None),
                 };
                 self.body.let_init = None;
+                self.body.failed_let = None;
                 // `let _ = e` binds nothing: the value is an expression statement, which
                 // codegen releases at once.
                 if name.name.as_str() == "_" {
@@ -1350,11 +1352,12 @@ impl Checker<'_> {
     ) -> tir::LocalId {
         if !self.reserved(name)
             && !name.span.in_prelude()
-            && (self.enum_ids.contains_key(&name.name) || self.alias_names_enum(name.name))
+            && (self.enum_ids.contains_key(&name.name) || self.alias_unhideable(name.name))
         {
             self.report(DiagnosticKind::EnumNamedLocal {
                 name: name.name.to_string(),
                 at: name.span,
+                optional: self.alias_names_option(name.name),
             });
         }
         self.insert_local(name, ty, kind, keyword)
