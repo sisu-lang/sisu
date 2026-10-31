@@ -1,0 +1,36 @@
+// GIVEN joins and operators whose siblings are `dbg(None)`, blocks, calls of `id` and `if`s,
+// beside integer literals, `[]` and a `u8`
+// WHEN the program runs
+// THEN each join takes the type that the siblings fix: `dbg(None)` makes the element type
+// optional, and a literal under a block or a call is a `u8` beside a `u8`
+fn id<T>(x: T) -> T { x }
+
+fn main() {
+    let c = true
+    let x: u8 = 3
+    // `dbg(None)` makes the element type of the array optional, so both elements are `i64?`.
+    let a = [dbg(None), 1]
+    print(a.len()) // 2
+    let b = [1, dbg(None)]
+    print(b.len()) // 2
+    print(b[0] ?? 0) // 1
+    print(b[1] ?? 9) // 9
+    // A block and a call that hold a literal take the `u8` of `x`.
+    let d = [{ 1 }, x, id(2)]
+    print(d[0] + d[2]) // 3
+    // The same for an operator, on either side.
+    print({ 4 } + x) // 7
+    print(x + id(5)) // 8
+    print(id(3) == x) // true
+    // A `[]` beside a non-empty array takes its type, through a call.
+    let e = [[1.5], id([])]
+    print(e[1].len()) // 0
+    // The branches of an `if` join the same way.
+    let f = if c { ({ None }) } else { 4 }
+    print(f ?? 8) // 8
+    let g = if c { id([]) } else { [2.5] }
+    print(g.len()) // 0
+    // An `if` in an array beside a `u8` is a `u8?` when a branch is `None`.
+    let h = [x, if c { 1 } else { None }]
+    print(h[1] ?? 0) // 1
+}

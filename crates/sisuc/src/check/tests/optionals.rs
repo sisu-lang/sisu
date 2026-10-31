@@ -576,3 +576,62 @@ fn a_match_on_an_optional_should_cover_none_and_every_value() {
         codes(&with_shapes(body), &[(Code::NonExhaustive, (2, 13))]);
     }
 }
+
+/// The branches of an `if`, an `if let` and a `match` rank as the elements of an array do. A
+/// branch that waits for a type and is no optional by its syntax takes the type of the others as
+/// it is. A branch whose value is a `None` through a block or `dbg` makes the type optional.
+#[test]
+fn a_branch_that_waits_should_take_the_type_of_the_others() {
+    super::with_prelude();
+    let decls = "fn id<T>(x: T) -> T { x }\n";
+    for statement in [
+        "let _a = if c { id([]) } else { [1.0] }",
+        "let _a = if c { ({ None }) } else { 1 }",
+        "let _a = if c { 1 } else { ({ None }) }",
+        "let _a = if let v = y { ({ None }) } else { 1 }",
+        "let _a = if let v = y { ({ 1 }) } else { x }",
+        "let _a = match c {\n        true => dbg(None)\n        false => 1\n    }",
+        "let _a = match c {\n        true => { 1 }\n        false => x\n    }",
+        // A value that is no `None` keeps the optional of a branch that is.
+        "let _a = if c { x } else { y }",
+        "let _a = if c { x } else { 1 }",
+        "let _a = if c { x } else { if c { 1 } else { None } }",
+        "let _a = if c { [1] } else { [] }",
+        // A call that makes an optional by itself keeps it, as it did.
+        "let _a = if c { x } else { id(None) }",
+        "let _a = if c { id(None) } else { x }",
+        "let _a = match c {\n        true => x\n        false => id(None)\n    }",
+    ] {
+        let src = format!(
+            "{decls}fn main() {{\n    let c = true\n    let x: u8 = 3\n    let y: u8? = 4\n    {statement}\n}}"
+        );
+        clean_row(statement, &src);
+    }
+}
+
+/// A branch that waits and is no optional by its syntax expects the type of the others as it is,
+/// so it is reported for what it is, once.
+#[test]
+fn a_waiting_branch_that_is_no_optional_should_be_reported_for_its_type() {
+    for (statement, text) in [
+        ("let _a = if c { [] } else { 1 }", "[]"),
+        ("let _a = if c { 1 } else { [] }", "[]"),
+        (
+            "let _a = match c {\n        true => []\n        false => 1\n    }",
+            "[]",
+        ),
+    ] {
+        let src = format!("fn main() {{\n    let c = true\n    {statement}\n}}");
+        let start = src
+            .rfind(statement)
+            .expect("the program should hold the statement");
+        let at = line_col(
+            &src,
+            start
+                + statement
+                    .find(text)
+                    .expect("the statement should hold the text"),
+        );
+        codes_row(statement, &src, &[(Code::Mismatch, at)]);
+    }
+}

@@ -426,3 +426,34 @@ fn built_in_names() {
 fn print_takes_u8() {
     clean("fn f(b: u8) { print(b) }\nfn main() {}");
 }
+
+/// An operand that holds only an integer literal takes the `u8` of the other, whether it is a
+/// block, a call, an `if` or a `dbg`, and on either side of `+`, `<` and `==`. Before, such an
+/// operand counted as concrete, was checked first as an `i64`, and was reported against the `u8`
+/// (#289).
+#[test]
+fn an_operand_that_holds_a_literal_should_take_the_type_of_the_other_operand() {
+    with_prelude();
+    let decls = "fn id<T>(x: T) -> T { x }\n";
+    for statement in [
+        "let _a = { 1 } + x",
+        "let _a = x + { 1 }",
+        "let _a = id(1) + x",
+        "let _a = x + id(1)",
+        "let _a = (if c { 1 } else { 2 }) + x",
+        "let _a = x + (if c { 1 } else { 2 })",
+        "let _a = { 1 } < x",
+        "let _a = x < { 1 }",
+        "let _a = { 1 } == x",
+        "let _a = x == { 1 }",
+        "let _a = id(1) == x",
+        "let _a = dbg({ 1 }) == x",
+        "let _a = ({ ({ 1 }) }) + x",
+        "let _a = (match c {\n        true => 1\n        false => 2\n    }) + x",
+    ] {
+        let src = format!(
+            "{decls}fn main() {{\n    let c = true\n    let x: u8 = 3\n    {statement}\n}}"
+        );
+        clean_row(statement, &src);
+    }
+}

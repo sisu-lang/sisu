@@ -776,6 +776,10 @@ struct Body {
     /// What `takes_context` answered for each array literal and `Some(...)`, with the context,
     /// by the span of the expression.
     taken: FxHashMap<(Span, Type), bool>,
+    /// What `rank_value` answered for each expression, by its span, and whether ranking it
+    /// cleared `fit`. A span is checked in one scope only (there are no closures yet), so the
+    /// answer holds for every call that ranks it.
+    ranked: FxHashMap<Span, (generic::Ranked, bool)>,
 }
 
 impl Body {

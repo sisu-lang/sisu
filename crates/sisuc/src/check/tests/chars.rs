@@ -156,7 +156,7 @@ fn char_value_on_an_element_or_field_is_reported_alone() {
 }
 
 #[test]
-fn char_arithmetic_reports_once() {
+fn arithmetic_on_a_char_should_be_reported_once() {
     // A longer expression reports the operator of its first `char` operand, and nothing above
     // it.
     codes(
@@ -171,16 +171,25 @@ fn char_arithmetic_reports_once() {
         ),
         &[(Code::Mismatch, (2, 11)), (Code::Mismatch, (3, 11))],
     );
-    // A `None` or `[]` inside the operand beside the `char` reports itself, which has no type to
-    // take, and a mixed `if` joins to `f64`.
+    // A `None` or `[]` inside a concrete operand beside the `char` reports itself, which has no
+    // type to take, and a mixed `if` joins to `f64`.
     codes(
         &with_main(
-            "fn f(c: char) {\n    print(c + { None })\n    print(c + { [] })\n    print(c + if true { 1.0 } else { 2 })\n}",
+            "fn f(c: char) {\n    print(c + { let k = None; k })\n    print(c + { let k = []; k })\n    print(c + if true { 1.0 } else { 2 })\n}",
         ),
         &[
-            (Code::CannotInfer, (2, 17)),
-            (Code::CannotInfer, (3, 17)),
+            (Code::CannotInfer, (2, 25)),
+            (Code::CannotInfer, (3, 25)),
             (Code::Mismatch, (4, 11)),
+        ],
+    );
+    // A block that ends in a `None` or `[]` waits for a type as the bare value does, so the
+    // operator is the mistake.
+    codes(
+        &with_main("fn f(c: char) {\n    print(c + { None })\n    print(c + { [] })\n}"),
+        &[
+            (Code::ArithmeticOnChar, (2, 13)),
+            (Code::ArithmeticOnChar, (3, 13)),
         ],
     );
     // A `u8` or an `i64` beside the `char` is not reported as well, on either side.
