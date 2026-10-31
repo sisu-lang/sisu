@@ -126,7 +126,7 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0113](E0113.md) | error | variant name not capitalized |
 | [E0114](E0114.md) | error | payload labels mixed |
 | [E0115](E0115.md) | error | enum without variants |
-| [E0116](E0116.md) | error | local named like an enum |
+| [E0116](E0116.md) | error | local named like an enum or an optional type |
 | [E0117](E0117.md) | error | variant without its enum |
 | [E0118](E0118.md) | error | unknown variant |
 | [E0119](E0119.md) | error | variant built the wrong way |

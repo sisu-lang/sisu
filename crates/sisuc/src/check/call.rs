@@ -115,11 +115,13 @@ impl Checker<'_> {
                 self.construct_class(span, class, site, args, Some(through))
             }
             TypeKind::I64 | TypeKind::U8 | TypeKind::F64 | TypeKind::Char | TypeKind::String => {
-                if !self.bind_unused(span, site, through) {
-                    self.stray(args);
+                let converted = self.convert(span, site.name.span, through.ty, args);
+                // The parameters of the alias bind to nothing: reported once the call checks.
+                if converted.is_ok() && !through.params.is_empty() {
+                    self.report_unbound_alias(site, through, None);
                     return Err(Poisoned::error());
                 }
-                self.convert(span, site.name.span, through.ty, args)
+                converted
             }
             _ => {
                 self.report(DiagnosticKind::TypeAsValue {

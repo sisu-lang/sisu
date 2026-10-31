@@ -3,6 +3,7 @@
 
 use std::f64::consts;
 
+use super::alias::Via;
 use super::expr::{no_member, postfix, typed};
 use super::generic::Site;
 use super::{Checked, Checker, Declared, Poisoned, UNKNOWN};
@@ -190,6 +191,14 @@ impl Checker<'_> {
             self.diagnostics.push(d);
             return Some(Err(Poisoned::error()));
         };
+        // An alias of `f64` with a parameter that its constant does not bind (E0050).
+        if angles.is_none()
+            && let Via::To(through) = self.through(name)
+            && !through.params.is_empty()
+        {
+            self.report_unbound_alias(site, &through, Some((member, false)));
+            return Some(Err(Poisoned::error()));
+        }
         Some(Ok(tir::Expr {
             kind: tir::ExprKind::Float(x),
             ty: Type::F64,

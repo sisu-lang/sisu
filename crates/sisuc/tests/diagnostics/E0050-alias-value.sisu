@@ -21,12 +21,11 @@ const Y: f64 = F.pi
 fn main() {
     print(F(3))
     print(F.pi)
-    print(S(3))
+    print(S(['a']))
+    print(N(2.5))
+    print(B(3))
+    print(C(65))
     print(EU.A)
     print(EU.B(1) == EU.A)
     print(PU(x: 1).x)
-    print(N.max)
-    print(B.max)
-    print(C.max)
-    print(S.len)
 }

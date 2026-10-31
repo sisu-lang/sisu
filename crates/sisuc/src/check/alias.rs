@@ -16,7 +16,7 @@ use std::rc::Rc;
 use rustc_hash::FxHashMap;
 
 use super::expr::{bare_none, dbg_argument, none_literal, rank};
-use super::generic::{GenericSig, Site, type_meets};
+use super::generic::{Site, type_meets};
 use super::interface::{Bound, Slot};
 use super::{
     Body, Checked, Checker, Declared, DiagnosticKind, Poisoned, UnknownForm, built_in_type,
@@ -694,13 +694,15 @@ impl Checker<'_> {
                 Some(Err(Poisoned::error()))
             }
             Via::To(through) => match through.ty.kind() {
-                // A generic enum binds the parameters of the alias itself.
+                // An enum with no parameter binds none of the alias's, which is reported once the
+                // variant checks; a generic enum binds them in `enum_path`.
                 TypeKind::Enum(id, _) if self.enums[id.0].type_params.is_empty() => {
-                    if !self.bind_unused(span, site, &through) {
-                        self.stray(call.map_or(&[], |(args, _)| args));
+                    let checked = self.enum_path(span, id, member, call, site, Some(&through));
+                    if checked.is_ok() && !through.params.is_empty() {
+                        self.report_unbound_alias(site, &through, Some((member, call.is_some())));
                         return Some(Err(Poisoned::error()));
                     }
-                    Some(self.enum_path(span, id, member, call, site, Some(&through)))
+                    Some(checked)
                 }
                 TypeKind::Enum(id, _) => {
                     Some(self.enum_path(span, id, member, call, site, Some(&through)))
@@ -708,42 +710,50 @@ impl Checker<'_> {
                 TypeKind::Optional(_) => {
                     Some(self.optional_alias_path(span, site, &through, member, call))
                 }
-                TypeKind::I64
-                | TypeKind::U8
-                | TypeKind::F64
-                | TypeKind::Char
-                | TypeKind::String
-                    if !self.bind_unused(span, site, &through) =>
-                {
-                    self.stray(call.map_or(&[], |(args, _)| args));
-                    Some(Err(Poisoned::error()))
-                }
                 _ => None,
             },
         }
     }
 
-    /// Whether the parameters of `through`, the alias that `site` writes with no type argument, are
-    /// bound: a value that holds no part of the alias's type, such as a conversion or a variant of
-    /// an enum that takes no parameter, binds none, and the first that the context does not bind
-    /// is reported (E0050), as for a generic call that leaves a parameter free.
-    pub(super) fn bind_unused(&mut self, span: Span, site: Site<'_>, through: &Through) -> bool {
-        if through.params.is_empty() {
-            return true;
-        }
-        let sig = GenericSig {
-            name: site.name,
-            variant: None,
-            declared: &through.params,
-            owner: &[],
-            params: &[],
-            ret: Some(through.ty),
-            bounds: &[],
+    /// Reports the parameters of `through`, the alias that `site` writes with no type argument,
+    /// as unbound (E0050). A value that holds no part of the alias's type, a conversion, a
+    /// constant of `f64` or a variant of an enum that takes no parameter, binds none, and the
+    /// context cannot, so the first is the one reported, with the form that the value has: the
+    /// call of a conversion, or `Alias<...>.member` with `(...)` when a call follows. The caller
+    /// asks only for a value that otherwise checks, so a mistake of the member or of the
+    /// arguments comes first.
+    pub(super) fn report_unbound_alias(
+        &mut self,
+        site: Site<'_>,
+        through: &Through,
+        member: Option<(&ast::Ident, bool)>,
+    ) {
+        let name = site.name;
+        let dots = vec!["..."; through.params.len()].join(", ");
+        let (callee, example, at) = match member {
+            Some((member, call)) => (
+                format!("{}.{}", name.name, member.name),
+                format!(
+                    "{}<{dots}>.{}{}",
+                    name.name,
+                    member.name,
+                    if call { "(...)" } else { "" }
+                ),
+                name.span.to(member.span),
+            ),
+            None => (
+                name.name.to_string(),
+                format!("{}<{dots}>(...)", name.name),
+                name.span,
+            ),
         };
-        matches!(
-            self.generic_call(span, &sig, (&[], site.angles), &[], site.expected),
-            Some((_, _, Some(_)))
-        )
+        self.report(DiagnosticKind::CannotInferParam {
+            param: through.params[0].to_string(),
+            callee,
+            example,
+            at,
+            in_result: false,
+        });
     }
 
     /// `A.None` and `A.Some(x)`, where the alias `A` names an optional type: the paths of `Option`.
