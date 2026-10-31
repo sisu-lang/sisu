@@ -43,12 +43,10 @@ Neighbours: <the table of neighbouring cases, with today's output and the wanted
 2. Run `(cd <worktree> && nice -n 19 make test)`. It must pass. Clippy and fmt must be clean.
 3. Commit as `<author>`. Use `git -C <worktree> commit -F <file>`, one commit per Bash call. Write the message in STE. Add no `Claude-Session` or session-URL line. Then run `git log -1` to check that it landed.
 4. Run `(cd <worktree> && nice -n 19 make coverage BASE=<BASE> > <ledger folder>/<group>-task-<N>-coverage.txt 2>&1)`. Cover or explain each uncovered changed region.
-5. After the commit, run one mutation test with Bash `run_in_background: true`:
-   `(cd <worktree> && env CARGO_MUTANTS_JOBS=2 nice -n 19 make mutation-test BASE=<BASE> LOG=<ledger folder>/<group>-task-<N>-mutation.log)`.
-   Write it exactly so, with `env`. Wait for its completion notification. Never poll with sleep. Never start a second run. When it is killed for low memory, report DONE_WITH_CONCERNS "mutation test not run". Kill each surviving mutant with a test, or explain it. Before each new commit, run step 2. After it, run step 4 again at the new head.
+5. Run no mutation test: the controller runs one for the whole group, after the reviews.
 6. Stop every background job you started. Then report once:
    - the status: DONE, DONE_WITH_CONCERNS or BLOCKED;
-   - each commit, and the commit that the mutation log names, with its last line;
+   - each commit;
    - the coverage result for the changed lines;
    - the neighbour outputs before and after;
    - anything you could not do.

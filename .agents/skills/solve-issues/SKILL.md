@@ -61,7 +61,7 @@ its last event.
 1. Put issues in one group when their fixes change the same functions. One group is one branch and one pull request.
 2. Order the groups. Two groups that change the same code run one after the other. A group that changes code an open branch changes waits for that branch to merge.
 3. For each group, propose a review flow, with the reason:
-   - **Full:** the roles above, one mutation test per task.
+   - **Full:** the roles above, and one mutation test for the group, which you run after the last task review (step 7.1).
    - **Light:** `opus-medium` for each task and for the final review. `make test` and `make coverage` only; no mutation test.
 4. For each language decision, write the options and their costs. Post them on the issue, as in step 3.8.
 
@@ -126,21 +126,21 @@ Do this once for each group. On resume, use the worktree in the ledger.
 4. Read its report, and act on its status:
    - **DONE:** go to step 6.5.
    - **BLOCKED:** the stated cause is wrong. Do step 3 again for that issue, then Stop 2 again.
-   - **DONE_WITH_CONCERNS:** check each concern. A mutation test that did not run gets one run from you, after the reviews. Check its log as in step 6.5. Put each surviving mutant into a fix round.
-5. On the full flow, check that the last line of the mutation log names a commit in `<BASE>..HEAD`. Skip this check when the mutation test did not run.
-6. Run `review-sisu` on `<BASE>..HEAD`. It writes the review brief, launches the reviewers, and says how to rule and when to ask the user.
-7. Write each fix-round brief from the "Fix round" part of [brief.md](brief.md). Give it to a `sonnet-high` executor.
+   - **DONE_WITH_CONCERNS:** check each concern.
+5. Run `review-sisu` on `<BASE>..HEAD`. It writes the review brief, launches the reviewers, and says how to rule and when to ask the user.
+6. Write each fix-round brief from the "Fix round" part of [brief.md](brief.md). Give it to a `sonnet-high` executor.
 
 ### 7. Finish the group
 
-1. Run the `update-docs` skill.
-2. Run `review-sisu` on the whole branch, with the final reviewers of the group's flow.
-3. Write the pull request body with `mattpocock-skills:pr`, with one `Closes #<N>` line for each issue.
-4. The user pushes. Then create the pull request with `gh api repos/sisu-lang/sisu/pulls`, with the sandbox off.
-5. Never merge.
-6. Write the ledger's "After the merge" lines. Write one line with a runnable repro for each deferred finding. Do the same for each line of each `diagnostic-issues.md` in the group's review runs.
-7. Go to step 3 for the next group that does not wait for a merge. When all groups wait, tell the user and stop.
-8. When the batch ends, delete the batch build: `rm -rf ${TMPDIR:-/tmp}/sisu-issues-<batch>`.
+1. On the full flow, run one mutation test on the group's head with Bash `run_in_background: true`: `(cd <worktree> && env CARGO_MUTANTS_JOBS=2 nice -n 19 make mutation-test BASE=<group base> LOG=<ledger folder>/<group>-mutation.log)`. Check that its last line names the head. Put each surviving mutant into one fix round, with a test that kills it or a reason it is equivalent. An executor never runs a mutation test: it would block the task for an hour.
+2. Run the `update-docs` skill.
+3. Run `review-sisu` on the whole branch, with `--mutation-log` set to that log and the final reviewers of the group's flow.
+4. Write the pull request body with `mattpocock-skills:pr`, with one `Closes #<N>` line for each issue.
+5. The user pushes. Then create the pull request with `gh api repos/sisu-lang/sisu/pulls`, with the sandbox off.
+6. Never merge.
+7. Write the ledger's "After the merge" lines. Write one line with a runnable repro for each deferred finding. Do the same for each line of each `diagnostic-issues.md` in the group's review runs.
+8. Go to step 3 for the next group that does not wait for a merge. When all groups wait, tell the user and stop.
+9. When the batch ends, delete the batch build: `rm -rf ${TMPDIR:-/tmp}/sisu-issues-<batch>`.
 
 ## Common mistakes
 

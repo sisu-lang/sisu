@@ -15,24 +15,40 @@ SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mutants.sh')
 # A caller's LOG and CARGO_MUTANTS_JOBS would change what the script does.
 ENV = {k: v for k, v in os.environ.items()
        if not k.startswith('GIT_') and k not in ('LOG', 'CARGO_MUTANTS_JOBS')}
-# The fake cargo mutants records its jobs, niceness and arguments, and whether an old
-# mutants.out was there. Unless FAKE_WRITE is 0, it then writes a new mutants.out with the
-# result files that the test names in FAKE_CAUGHT, FAKE_MISSED and FAKE_TIMEOUT. It exits
-# with FAKE_EXIT. The sleep keeps lock.json strictly newer than the script's start mark.
+# The fake cargo mutants records its jobs, niceness and arguments (to `args`, or to `args2`
+# for a run with --iterate), and whether an old mutants.out was there. Unless FAKE_WRITE is 0,
+# it then writes a new mutants.out with the result files that the test names in FAKE_CAUGHT,
+# FAKE_UNVIABLE, FAKE_MISSED and FAKE_TIMEOUT. It exits with FAKE_EXIT. A run with --iterate
+# is the second pass: it takes FAKE_PASS2_CAUGHT (0 by default), and FAKE_PASS2_MISSED,
+# FAKE_PASS2_TIMEOUT and FAKE_PASS2_EXIT, each the first pass's value by default.
+# The sleep keeps lock.json strictly newer than the script's start mark.
 FAKE_CARGO = """#!/usr/bin/env bash
 echo "$CARGO_MUTANTS_JOBS $(nice)" >seen
-echo "$*" >args
+prefix=FAKE
+if [[ " $* " == *" --iterate "* ]]; then
+  echo "$*" >args2
+  prefix=FAKE_PASS2
+  FAKE_PASS2_CAUGHT=${FAKE_PASS2_CAUGHT:-0}
+  FAKE_PASS2_UNVIABLE=0
+  FAKE_PASS2_MISSED=${FAKE_PASS2_MISSED:-${FAKE_MISSED:-0}}
+  FAKE_PASS2_TIMEOUT=${FAKE_PASS2_TIMEOUT:-${FAKE_TIMEOUT:-0}}
+  FAKE_PASS2_EXIT=${FAKE_PASS2_EXIT:-${FAKE_EXIT:-0}}
+else
+  echo "$*" >args
+fi
+exit_var=${prefix}_EXIT
 [[ -e mutants.out/missed.txt ]] && touch saw_old_out
 sleep 0.05
-[[ ${FAKE_WRITE:-1} == 0 ]] && exit "${FAKE_EXIT:-0}"
-rm -rf mutants.out
+[[ ${FAKE_WRITE:-1} == 0 ]] && exit "${!exit_var:-0}"
+rm -rf mutants.out.old
+[[ -e mutants.out ]] && mv mutants.out mutants.out.old
 mkdir -p mutants.out
 touch mutants.out/lock.json
-for kind in caught missed timeout; do
-  var=FAKE_${kind^^}
+for kind in caught unviable missed timeout; do
+  var=${prefix}_${kind^^}
   for ((i = 0; i < ${!var:-0}; i++)); do echo "mutant $i" >>mutants.out/$kind.txt; done
 done
-exit "${FAKE_EXIT:-0}"
+exit "${!exit_var:-0}"
 """
 
 
@@ -187,6 +203,47 @@ class Mutants(unittest.TestCase):
         self.assertEqual(run.returncode, 0)
         with open(os.path.join(self.repo, 'args'), encoding='utf-8') as f:
             self.assertTrue(f.read().strip().endswith('-- -o x'))
+
+    def test_a_first_pass_should_test_each_mutant_with_the_unit_tests_only(self):
+        self.rust_commit()
+        run = self.mutate(caught=2)
+        self.assertEqual(run.returncode, 0)
+        with open(os.path.join(self.repo, 'args'), encoding='utf-8') as f:
+            self.assertTrue(f.read().strip().endswith('-- --lib'))
+        self.assertFalse(self.seen('args2'))
+        self.assertEqual(self.last_line(),
+                         f'mutation-test: PASS: 2 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.head()})')
+
+    def test_a_mutant_that_only_the_whole_suite_kills_should_be_caught_in_the_second_pass(self):
+        self.rust_commit()
+        run = self.mutate(caught=5, unviable=1, missed=2, exit=2, pass2_caught=2, pass2_missed=0, pass2_exit=0)
+        self.assertEqual(run.returncode, 0)
+        with open(os.path.join(self.repo, 'args2'), encoding='utf-8') as f:
+            args2 = f.read().split()
+        self.assertIn('--iterate', args2)
+        self.assertNotIn('--lib', args2)
+        self.assertEqual(self.last_line(),
+                         f'mutation-test: PASS: 7 caught, 1 unviable, 0 missed, 0 timeouts (HEAD {self.head()})')
+
+    def test_a_mutant_that_survives_both_passes_should_fail(self):
+        self.rust_commit()
+        run = self.mutate(caught=5, missed=2, exit=2, pass2_caught=1, pass2_missed=1)
+        self.assertEqual(run.returncode, 1)
+        self.assertEqual(self.last_line(),
+                         f'mutation-test: FAIL: 6 caught, 0 unviable, 1 missed, 0 timeouts (HEAD {self.head()})')
+
+    def test_a_failed_first_pass_should_not_start_the_second(self):
+        self.rust_commit()
+        run = self.mutate(missed=1, exit=4)
+        self.assertEqual(run.returncode, 1)
+        self.assertFalse(self.seen('args2'))
+        self.assertTrue(self.last_line().startswith('mutation-test: FAIL: 0 caught, 0 unviable, 1 missed'))
+
+    def test_iterate_given_by_the_caller_should_reach_the_second_pass_once(self):
+        self.rust_commit()
+        self.mutate('--iterate', missed=1, exit=2, pass2_caught=1, pass2_missed=0, pass2_exit=0)
+        with open(os.path.join(self.repo, 'args2'), encoding='utf-8') as f:
+            self.assertEqual(f.read().split().count('--iterate'), 1)
 
     def test_cargo_should_get_output_dot_to_beat_the_environment_and_a_config_file(self):
         self.rust_commit()

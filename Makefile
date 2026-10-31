@@ -54,7 +54,7 @@ check: lint test deny ## Lint, test and deny; CI also runs make miri
 coverage: ## Coverage of the changes since BASE
 	scripts/coverage.sh "$(BASE)"
 
-mutation-test: ## Mutation-test the changes since BASE (an hour or more); LOG=<file> writes the output there
+mutation-test: ## Mutation-test the changes since BASE (unit tests, then the whole suite for survivors); LOG=<file> writes the output there
 	LOG="$(LOG)" scripts/mutants.sh "$(BASE)"
 
 fuzz: ## Fuzz TARGET (front_end by default, or program) for SECS seconds (1800 by default)
