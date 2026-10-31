@@ -1,0 +1,4 @@
+fn main() {
+    let bytes: [u8] = [1, 2]
+    print(sum(bytes))
+}

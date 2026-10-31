@@ -75,6 +75,7 @@ impl Checker<'_> {
         let Some(ty) = type_of(&checked) else {
             return Err(Poisoned::error());
         };
+        self.dbg_shown.push((self.body.owner, ty, span));
         let kind = checked
             .ok()
             .filter(|_| !labeled)

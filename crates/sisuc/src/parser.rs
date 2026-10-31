@@ -13,7 +13,7 @@ use crate::ast::{
 };
 use crate::diagnostic::{
     self, BuiltIn, ClashForm, Diagnostic, DiagnosticKind, ForeignPattern, ForeignRange,
-    InterfaceBodyForm, Join, LetField, MatchIdiomForm, Owner, PowerFix,
+    InterfaceBodyForm, Join, LetField, MatchIdiomForm, Owner, PowerFix, SpecForm,
 };
 use crate::lexer::{Lexed, MIN_MAGNITUDE, Token, TokenKind, literal_too_large};
 use crate::source::{Source, Span};
@@ -106,10 +106,26 @@ fn rising(ranges: &[Range<usize>]) -> bool {
 }
 
 /// The format spec `text`, written at `at` from its `:`: `#`, or `[<^>][width][.precision]`.
-/// A width is from 1 to 1000 and a precision is from 0 to 30.
+/// A width is from 1 to 1000. A precision is from 0 to 30.
 /// A single `#` beside those parts, in any place, is an error of its own form.
+/// So are `?` alone and `#?` alone.
 /// The spec is read without the `#` first, so a spec that is wrong without it gets that error.
+/// A limit error is the exception: the `#` is the first thing to remove then.
 fn format_spec(text: &str, at: Span) -> Result<FormatSpec, Diagnostic> {
+    if text == "?" {
+        return Err(DiagnosticKind::UnsupportedFormatSpec {
+            at,
+            form: SpecForm::Debug,
+        }
+        .into());
+    }
+    if text == "#?" {
+        return Err(DiagnosticKind::UnsupportedFormatSpec {
+            at,
+            form: SpecForm::PrettyDebug,
+        }
+        .into());
+    }
     if text.matches('#').count() == 1 {
         let without = text.replacen('#', "", 1);
         if without.is_empty() {
@@ -122,8 +138,12 @@ fn format_spec(text: &str, at: Span) -> Result<FormatSpec, Diagnostic> {
             });
         }
         return Err(match plain_format_spec(&without, at) {
-            Ok(_) => DiagnosticKind::UnsupportedFormatSpec { at, pretty: true }.into(),
-            Err(error) => error,
+            Err(error) if error.code() != diagnostic::Code::FormatSpecLimit => error,
+            _ => DiagnosticKind::UnsupportedFormatSpec {
+                at,
+                form: SpecForm::Pretty,
+            }
+            .into(),
         });
     }
     plain_format_spec(text, at)
@@ -149,7 +169,11 @@ fn plain_format_spec(text: &str, at: Span) -> Result<FormatSpec, Diagnostic> {
         None => (None, rest),
     };
     if !rest.is_empty() || width.starts_with('0') {
-        return Err(DiagnosticKind::UnsupportedFormatSpec { at, pretty: false }.into());
+        return Err(DiagnosticKind::UnsupportedFormatSpec {
+            at,
+            form: SpecForm::Plain,
+        }
+        .into());
     }
     if precision.is_some_and(str::is_empty) || (width.is_empty() && precision.is_none()) {
         return Err(DiagnosticKind::MalformedFormatSpec { at }.into());
@@ -3971,6 +3995,11 @@ mod tests {
             ("#.2", unsupported),
             ("#8", unsupported),
             ("#.", malformed),
+            ("#2000", unsupported),
+            ("#.31", unsupported),
+            ("#99999999999999999999", unsupported),
+            ("#?", unsupported),
+            ("?", unsupported),
             ("1001", limit),
             ("65536", limit),
             ("99999999999999999999", limit),
@@ -3998,6 +4027,9 @@ mod tests {
             (">#8", true),
             ("#.2", true),
             ("#8", true),
+            ("#2000", true),
+            ("#.31", true),
+            ("#65536.5", true),
             ("##", false),
             ("#x", false),
             ("+", false),
@@ -4005,6 +4037,27 @@ mod tests {
             let error = format_spec(text, at).expect_err(text);
             assert_eq!(error.code(), Code::UnsupportedFormatSpec, "{text}");
             assert_eq!(error.help().is_some(), combined, "{text}");
+        }
+    }
+
+    /// `?` alone and `#?` alone, which a Rust user writes, each get a help. Other text with a `?`
+    /// is the general form, which has none. The fixtures `E0109-debug` and `E0109-debug-hash` pin
+    /// the text.
+    #[test]
+    fn format_spec_should_give_a_help_for_a_debug_spec_alone() {
+        let at = Span::new(0, 0);
+        for (text, helped) in [
+            ("?", true),
+            ("#?", true),
+            ("?#", false),
+            ("??", false),
+            (">8?", false),
+            ("#?x", false),
+            ("#>?", false),
+        ] {
+            let error = format_spec(text, at).expect_err(text);
+            assert_eq!(error.code(), Code::UnsupportedFormatSpec, "{text}");
+            assert_eq!(error.help().is_some(), helped, "{text}");
         }
     }
 

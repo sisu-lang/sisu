@@ -1,0 +1,17 @@
+enum A<T> {
+    B(B<T>)
+    V(T)
+}
+enum B<T> {
+    A(A<T>)
+    W(T)
+}
+fn f<T>(a: A<T>, b: B<T>) -> bool {
+    let x = a == a
+    return b == b
+}
+fn g<T>(a: A<T>, b: B<T>) -> bool {
+    let x = b == b
+    return a == a
+}
+fn main() {}

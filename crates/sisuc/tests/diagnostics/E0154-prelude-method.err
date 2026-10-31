@@ -1,0 +1,10 @@
+error[E0154]: `Node` does not conform to `Eq`
+ --> E0154-prelude-method.sisu:4:5
+  |
+4 |     nodes.contains(n)
+  |     ^^^^^^^^^^^^^^^^^ `contains` needs `Node: Eq`
+  |
+  = help: make `Node` conform to `Eq`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154

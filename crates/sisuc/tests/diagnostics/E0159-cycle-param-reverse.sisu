@@ -1,0 +1,14 @@
+class Node {}
+enum A<T> {
+    B(B<T>)
+    N(Node)
+}
+enum B<T> {
+    A(A<T>)
+    V(T)
+}
+fn f<T>(a: A<T>, b: B<T>) -> bool {
+    let x = b == b
+    return a == a
+}
+fn main() {}

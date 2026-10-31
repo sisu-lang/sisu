@@ -1,0 +1,9 @@
+class R {
+    y: i64
+    fn to_string(self) -> string {
+        return "r"
+    }
+}
+fn main() {
+    dbg([R(y: 2)])
+}

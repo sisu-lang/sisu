@@ -1,0 +1,15 @@
+class Triple<A, B, C> {
+    a: A
+    b: B
+    c: C
+}
+class W<T> {
+    x: T
+    fn to_string(self) -> string {
+        print(Triple(a: [self.x], b: [self.x], c: W(x: [self.x])))
+        return "w"
+    }
+}
+fn main() {
+    print(W(x: 1))
+}

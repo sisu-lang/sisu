@@ -4,7 +4,7 @@ error[E0140]: `W<T>.eq` instantiates itself without end
 6 |         [W(v: [self.v])] != [W(v: [other.v])]
   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `!=` here
   |
-  = help: `!=` is a call through `Eq`, and a call through `Eq` counts as reaching every conformance to `Eq`
+  = help: `!=` is a call through `Eq`, and a call through `Eq` counts as reaching every conformance to `Eq`. The argument of `W<[T]>` grows
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0140

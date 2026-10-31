@@ -292,7 +292,7 @@ impl Checker<'_> {
         }
         let [arg] = args else {
             let d = DiagnosticKind::ArgumentCount {
-                name: "push".to_string(),
+                name: self.method_name(read.ty, "push"),
                 want: 1,
                 found: args.len(),
                 at: span,

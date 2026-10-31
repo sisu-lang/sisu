@@ -1,0 +1,9 @@
+class P {
+    x: i64
+}
+class Q {
+    p: P
+}
+fn main() {
+    dbg(Q(p: P(x: 1)))
+}

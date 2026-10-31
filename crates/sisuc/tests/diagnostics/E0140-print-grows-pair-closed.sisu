@@ -1,0 +1,14 @@
+class Pair<A, B> {
+    a: A
+    b: B
+}
+class W<T> {
+    x: T
+    fn to_string(self) -> string {
+        print(Pair(a: W(x: [1]), b: W(x: [self.x])))
+        return "w"
+    }
+}
+fn main() {
+    print(W(x: 1))
+}

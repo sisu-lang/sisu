@@ -1,0 +1,92 @@
+extend i64 {
+    fn twice(self) -> i64 { self * 2 }
+}
+
+extend f64 {
+    fn half(self) -> f64 { self / 2.0 }
+}
+
+extend string {
+    fn shout(self) -> string { self }
+}
+
+extend bool {
+    fn flip(self) -> bool { !self }
+}
+
+extend [i64] {
+    fn second(self) -> i64 { 0 }
+}
+
+extend<T> T {
+    fn same(self) -> bool { true }
+}
+
+interface Source {
+    type Item
+    fn next(self) -> Item?
+}
+
+class Wrap<S> {
+    value: S
+}
+
+extend<S: Source> Wrap<S.Item> {
+    fn size(self) -> i64 { 1 }
+}
+
+// A generic method on a built-in type: the list of type arguments gets no E0137.
+extend f64 {
+    fn shrink<T>(self) -> f64 { self / 2.0 }
+}
+
+extend string {
+    fn trim_all<T>(self) -> string { self }
+}
+
+extend [i64] {
+    fn head<T>(self) -> i64 { 0 }
+}
+
+// An array that the prelude's `sum` does not cover gets no E0069.
+extend [string] {
+    fn sum(self) -> i64 { 0 }
+}
+
+interface Plain {
+    type Item
+    fn get(self) -> Item
+}
+
+// A receiver that is a type parameter or an associated type gets no E0063.
+fn param<U>(x: U) {
+    print(x.same())
+    print(x.same(missing))
+}
+
+fn assoc<P: Plain>(x: P) {
+    print(x.get().same())
+}
+
+fn main() {
+    print(5.twice())
+    print(1.5.half())
+    print("a".shout())
+    print(true.flip())
+    print([1].second())
+    print(true.same())
+    print(Wrap(value: 1).size())
+    // An optional receiver keeps its own error, and an argument keeps its errors.
+    let maybe: i64? = 5
+    print(maybe.twice())
+    print(5.twice(missing))
+    print(1.5.shrink<i64>())
+    print("a".trim_all<i64>())
+    print([1].head<i64>())
+    print(["a"].sum())
+}
+
+// A call of a real bound method keeps its own error, though a rejected block has the name.
+interface Show { fn show(self) -> string }
+extend<T> T { fn show(self, n: i64) -> bool { true } }
+fn bound<U: Show>(x: U) { print(x.show(1)) }

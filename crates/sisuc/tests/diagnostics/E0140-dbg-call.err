@@ -4,7 +4,7 @@ error[E0140]: `W<T>.to_string` instantiates itself without end
 7 |         let _ = dbg(W(x: [self.x]))
   |                 ^^^^^^^^^^^^^^^^^^^ `dbg` here
   |
-  = help: `dbg` is a call through `Display`, and a call through `Display` counts as reaching every conformance to `Display`
+  = help: `dbg` is a call through `Display`, and a call through `Display` counts as reaching every conformance to `Display`. The argument of `W<[T]>` grows
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0140

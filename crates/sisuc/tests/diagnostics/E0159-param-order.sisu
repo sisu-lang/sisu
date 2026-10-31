@@ -1,0 +1,25 @@
+class Node {}
+
+enum Mix<T> {
+    A(T)
+    B(Node)
+}
+
+enum Flip<T> {
+    B(Node)
+    A(T)
+}
+
+fn first<T>(a: Mix<T>, b: Mix<T>) -> bool {
+    a == b
+}
+
+fn last<T>(a: Flip<T>, b: Flip<T>) -> bool {
+    a == b
+}
+
+fn result<T>(a: Result<T, Node>, b: Result<Node, T>) -> bool {
+    a == a && b == b
+}
+
+fn main() {}

@@ -1,4 +1,4 @@
-error[E0053]: `len` takes 0 arguments, found 1
+error[E0053]: `[i64].len` takes 0 arguments, found 1
  --> E0053-array.sisu:3:11
   |
 3 |     print(xs.len(1))

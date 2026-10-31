@@ -1,0 +1,9 @@
+class Box<T> {
+    v: T
+}
+class P {
+    x: i64
+}
+fn main() {
+    dbg(Box(v: P(x: 1)))
+}

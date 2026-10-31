@@ -1,0 +1,17 @@
+class Node {}
+
+class Box<T> {
+    value: T
+}
+
+extend<T: Eq> Box<T> {
+    fn has(self, other: T) -> bool {
+        self.value == other
+    }
+}
+
+fn found(box: Box<Node>, n: Node) -> bool {
+    box.has(n)
+}
+
+fn main() {}
