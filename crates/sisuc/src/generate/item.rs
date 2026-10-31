@@ -23,7 +23,7 @@ pub(crate) const MAX_FIELDS: usize = 3;
 /// The most classes and enums a program declares.
 const MAX_TYPES: usize = 3;
 /// The most type aliases a program declares.
-const MAX_ALIASES: usize = 3;
+pub(crate) const MAX_ALIASES: usize = 3;
 /// The most methods of a class.
 const MAX_METHODS: usize = 2;
 /// The most interfaces a program declares, and the most requirements of one.

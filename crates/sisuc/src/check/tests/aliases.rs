@@ -99,6 +99,14 @@ fn aliases_should_check_clean_where_they_name_a_type() {
             "type M<T> = T?\nfn main() {\n    let c: i64? = M.None\n    let d: i64? = M.Some(1)\n    print(c == None)\n    print(d == None)\n}",
         ),
         (
+            "a generic call whose argument is Some of an alias, with a payload that waits for its type",
+            "type M<T> = T?\nfn id<T>(x: T) -> T { x }\nfn main() {\n    let a: i64?? = id(M.Some(None))\n    print(a == None)\n}",
+        ),
+        (
+            "a generic call whose argument constructs through an alias that leaves a parameter open",
+            "class Box<T> {\n    v: i64\n}\ntype BB<T> = Box<T>\nfn id<T>(x: T) -> T { x }\nfn main() {\n    let a: Box<string> = id(BB(v: 1))\n    print(a.v)\n}",
+        ),
+        (
             "the paths of Option, through an alias of an optional type",
             "type O = i64?\ntype M<T> = T?\nfn show(x: i64?) { print(x == None) }\nfn main() {\n    let a: O = O.Some(1)\n    let b: O = O.None\n    let c = M<i64>.Some(1)\n    let d: string? = M<string>.None\n    show(a)\n    show(b)\n    show(c)\n    print(d == None)\n}",
         ),
@@ -494,6 +502,16 @@ fn a_bound_in_an_alias_body_should_be_checked_at_each_use() {
         (
             "an alias of a bounded enum, used with a type that fails it",
             "enum Heap2<T: Ord> {\n    One(T)\n    Zero\n}\ntype H<T> = Heap2<T>\nfn f(h: H<bool>) {}\nfn main() {}".to_string(),
+            vec![(Code::NotConform, (6, 9))],
+        ),
+        (
+            "a constructor of an alias that fails its bound, whose value is Error",
+            "class Box<T: Ord> {\n    v: T\n}\ntype BX<T> = Box<T>\nfn main() {\n    let c: i64 = BX(v: true)\n}".to_string(),
+            vec![(Code::NotConform, (6, 18))],
+        ),
+        (
+            "a class of two parameters, whose second one is bounded",
+            "class Two<A, B: Ord> {\n    a: A\n    b: B\n}\ntype T2<X> = Two<i64, X>\nfn f(x: T2<bool>) {}\nfn main() {}".to_string(),
             vec![(Code::NotConform, (6, 9))],
         ),
         (
@@ -901,4 +919,144 @@ fn an_alias_should_stand_for_its_type_where_a_comparison_or_a_constant_reads_it(
     ] {
         clean_row(row, &src);
     }
+}
+
+/// An alias whose bound fails where it is declared is `Error`: a use in a body reports nothing
+/// more.
+#[test]
+fn an_alias_that_fails_its_bound_should_be_error_where_a_body_uses_it() {
+    codes_row(
+        "an annotation of the failed alias that holds another type",
+        "class Heap<T: Ord> {\n    items: [T]\n}\ntype H0 = Heap<bool>\nfn main() {\n    let x: H0 = 1\n}",
+        &[(Code::NotConform, (4, 16))],
+    );
+}
+
+/// The empty optional of an alias is `None` only for the alias of an optional type, and waits for
+/// its context only where the alias takes parameters and writes none.
+#[test]
+fn the_empty_optional_through_an_alias_should_wait_only_where_nothing_fixes_its_type() {
+    with_prelude();
+    for (row, src) in [
+        (
+            "an alias with no parameter fixes the type of an array",
+            "type O = i64?\nfn main() {\n    let xs = [O.None]\n    print(xs.len())\n}",
+        ),
+        (
+            "an alias with its arguments written fixes the type of an array",
+            "type M<T> = T?\nfn main() {\n    let xs = [M<i64>.None]\n    print(xs.len())\n}",
+        ),
+    ] {
+        clean_row(row, src);
+    }
+    for (row, src, expected) in [
+        (
+            "a name that is not None, on an alias of an optional type",
+            "type O = i64?\nfn main() {\n    let a: O = O.Some\n}",
+            vec![(Code::VariantForm, (3, 18))],
+        ),
+        (
+            "None on an alias that is not optional",
+            "type A = i64\nfn main() {\n    let a = A.None == 1\n}",
+            vec![(Code::NoMember, (3, 15))],
+        ),
+    ] {
+        codes_row(row, src, &expected);
+    }
+}
+
+/// A local that takes the name of an alias is read as a local, unless the alias names an enum or
+/// an optional type, which no local can hide.
+#[test]
+fn a_local_should_hide_an_alias_that_it_shares_a_name_with() {
+    codes_row(
+        "a member of a local that has the name of an alias that is Error",
+        "type Bad = Missing\nfn f(Bad: i64) -> i64 { Bad.x }\nfn main() {}",
+        &[(Code::UnknownType, (1, 12)), (Code::NoMember, (2, 29))],
+    );
+}
+
+/// Type arguments written after a built-in type, not after an alias of one, are reported, in a
+/// function and in a constant.
+#[test]
+fn type_arguments_after_a_built_in_type_should_be_reported_though_no_alias_takes_them() {
+    for (row, src, expected) in [
+        (
+            "in a function",
+            "fn main() {\n    let x = f64<i64>.pi\n}",
+            vec![(Code::TypeAsValue, (2, 13)), (Code::TypeArguments, (2, 16))],
+        ),
+        (
+            "in a constant",
+            "const X: f64 = f64<i64>.pi\nfn main() {}",
+            vec![(Code::ConstantNotKnown, (1, 16))],
+        ),
+        (
+            "after an alias of an array, in a constant",
+            "type G<T> = [T]\nconst X: f64 = G<i64>.pi\nfn main() {}",
+            vec![(Code::ConstantNotKnown, (2, 16))],
+        ),
+    ] {
+        codes_row(row, src, &expected);
+    }
+}
+
+/// An alias that is used without the arguments that it takes is reported at its name.
+#[test]
+fn an_alias_used_without_its_arguments_should_be_reported_at_its_name() {
+    diagnostic(
+        "type Pairs<T> = [[T]]\nfn f(p: Pairs) {}\nfn main() {}",
+        Code::TypeArguments,
+        (2, 9, "Pairs"),
+        &[],
+    );
+}
+
+/// The path of an alias of an optional type that takes no parameter is the path of `Option`: it
+/// has the type that the alias names, whatever the context wants. The wording is pinned in
+/// `E0032-alias-optional-path`.
+#[test]
+fn a_path_of_an_optional_alias_should_have_its_type_and_name_option() {
+    for (row, body, expected) in [
+        (
+            "the empty optional where another type is wanted",
+            "let a: bool? = O.None",
+            (Code::Mismatch, (3, 20)),
+        ),
+        (
+            "a variant that needs its payload",
+            "let a = O.Some",
+            (Code::VariantForm, (3, 15)),
+        ),
+        (
+            "a variant that Option has not",
+            "let a = O.Other",
+            (Code::UnknownVariant, (3, 15)),
+        ),
+        (
+            "a payload of the wrong count",
+            "let a: O = O.Some(1, 2)",
+            (Code::ArgumentCount, (3, 16)),
+        ),
+        (
+            "a payload that None holds not",
+            "let a: O = O.None(1)",
+            (Code::VariantForm, (3, 22)),
+        ),
+    ] {
+        let src = format!("type O = i64?\nfn main() {{\n    {body}\n}}");
+        codes_row(row, &src, &[expected]);
+    }
+}
+
+/// A call of a generic function whose argument constructs through an alias that leaves a
+/// parameter open is reported at the outer call, which cannot bind that parameter either.
+#[test]
+fn a_construction_through_an_alias_should_report_the_outer_call_that_cannot_infer() {
+    diagnostic(
+        "class Box<T> {\n    v: i64\n}\ntype BB<T> = Box<T>\nfn id<T>(x: T) -> T { x }\nfn main() {\n    let a = id(BB(v: 1))\n}",
+        Code::CannotInfer,
+        (7, 13, "id"),
+        &[],
+    );
 }

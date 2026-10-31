@@ -1,0 +1,10 @@
+error[E0030]: an associated type's choice cannot name `Item`
+ --> E0030-choice-hides-alias.sisu:9:17
+  |
+9 |     type Item = Item
+  |                 ^^^^
+  |
+  = help: `Item` also names a type, which this associated type hides: rename one of them
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0030

@@ -9,7 +9,7 @@ use std::fmt::Write as _;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::item::{MAX_INTERFACES, MAX_KNOWN, MAX_REQUIREMENTS, MOST};
+use super::item::{MAX_ALIASES, MAX_INTERFACES, MAX_KNOWN, MAX_REQUIREMENTS, MOST};
 use super::scope::{Class, Const, Enum, Field, Func, Ty, Var, Variant};
 use super::writer::{Rewrite, Site, Writer, allowed};
 use super::{Answer, BUDGET, Cost, DEPTHS, FUEL, Gen, MAX_BOUND, MAX_NESTING, MAX_SIZE, generate};
@@ -3217,6 +3217,76 @@ fn generated_interfaces_should_reach_their_maxima() {
     }
     assert_eq!(most, MAX_INTERFACES);
     assert_eq!(requirements, MAX_REQUIREMENTS);
+}
+
+/// A program may declare as many aliases as `MAX_ALIASES`. A plain alias names a value type, a
+/// class or an enum, or a generic type, alone, in an array, in an optional or in two arrays. A
+/// generic alias wraps its parameter in an array, in an optional or in two arrays, and a type is
+/// written through each of them.
+#[test]
+fn generated_aliases_should_reach_every_shape() {
+    let (mut most, mut plain, mut generic, mut used) = (
+        0,
+        FxHashSet::default(),
+        FxHashSet::default(),
+        FxHashSet::default(),
+    );
+    for data in seeds() {
+        let g = generate(&data);
+        let aliases: Vec<_> = (parsed(&g.plain).items.into_iter())
+            .filter_map(|item| match item {
+                ast::Item::Alias(alias) => Some(alias),
+                _ => None,
+            })
+            .collect();
+        most = most.max(aliases.len());
+        for alias in aliases {
+            let body = alias.ty.to_string();
+            if !alias.params.is_empty() {
+                // The name is written once in the declaration, and once more for each use.
+                if g.plain.matches(&format!("{}<", alias.name.name)).count() > 1 {
+                    used.insert(body.clone());
+                }
+                generic.insert(body);
+                continue;
+            }
+            let (layer, leaf) = if let Some(inner) = body.strip_prefix("[[") {
+                ("two arrays", inner.strip_suffix("]]"))
+            } else if let Some(inner) = body.strip_prefix('[') {
+                ("an array", inner.strip_suffix(']'))
+            } else if let Some(inner) = body.strip_suffix('?') {
+                ("an optional", Some(inner))
+            } else {
+                ("no layer", Some(body.as_str()))
+            };
+            let leaf = leaf.expect("a layer should close where it opens");
+            let kind = if Ty::VALUES.iter().any(|ty| ty.to_string() == leaf) {
+                "a value type"
+            } else if leaf.contains('<') {
+                "a generic type"
+            } else {
+                "a class or an enum"
+            };
+            plain.insert((layer, kind));
+        }
+    }
+    assert_eq!(most, MAX_ALIASES);
+    for layer in ["no layer", "an array", "an optional", "two arrays"] {
+        assert!(
+            plain.iter().any(|&(l, _)| l == layer),
+            "no alias has {layer}"
+        );
+    }
+    for kind in ["a value type", "a class or an enum", "a generic type"] {
+        assert!(
+            plain.iter().any(|&(_, k)| k == kind),
+            "no alias names {kind}"
+        );
+    }
+    for body in ["[T]", "T?", "[[T]]"] {
+        assert!(generic.contains(body), "no alias is `{body}`");
+        assert!(used.contains(body), "no type is written through `{body}`");
+    }
 }
 
 #[test]

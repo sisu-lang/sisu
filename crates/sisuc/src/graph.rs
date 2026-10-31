@@ -94,3 +94,26 @@ thread_local! {
     /// How many edges `cycle_through` has looked at on this thread.
     pub(crate) static CYCLE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The nodes after `start` on a shortest cycle, in the order that the edges lead through them:
+    /// a two-node cycle, a three-node cycle, and a short cycle beside a long one.
+    #[test]
+    fn cycle_through_should_list_the_nodes_after_start_in_order() {
+        for (row, edges, expected) in [
+            ("two nodes", vec![vec![1], vec![0]], vec![1]),
+            ("three nodes", vec![vec![1], vec![2], vec![0]], vec![1, 2]),
+            (
+                "a short cycle beside a long one",
+                vec![vec![1, 2], vec![0], vec![3], vec![4], vec![0]],
+                vec![1],
+            ),
+        ] {
+            let component = components(&edges);
+            assert_eq!(cycle_through(&edges, &component, 0), expected, "{row}");
+        }
+    }
+}

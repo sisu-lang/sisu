@@ -1,0 +1,16 @@
+class P {
+    x: i64
+
+    fn me(self) -> Self {
+        1
+    }
+
+    fn take(self, other: Self) {}
+
+    fn go(self) {
+        let a: Self = 1
+        self.take(1)
+    }
+}
+
+fn main() {}
