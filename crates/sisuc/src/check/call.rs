@@ -568,8 +568,10 @@ impl Checker<'_> {
             self.not_generic(site.name.name, site.angles);
         }
         if !args.is_empty() {
+            let ty = type_of(&receiver)
+                .expect("a call that the compiler's `Display` answers should have a receiver type");
             let d = DiagnosticKind::ArgumentCount {
-                name: "to_string".to_string(),
+                name: self.method_name(ty, "to_string"),
                 want: 0,
                 found: args.len(),
                 at: span,
@@ -630,7 +632,7 @@ impl Checker<'_> {
         }
         if args.len() != 1 {
             let d = DiagnosticKind::ArgumentCount {
-                name: method.name.to_string(),
+                name: self.method_name(ty, method.name.as_str()),
                 want: 1,
                 found: args.len(),
                 at: span,
@@ -705,6 +707,11 @@ impl Checker<'_> {
             self.not_generic(site.name.name, site.angles);
         }
         if params.len() != args.len() {
+            // A method names its receiver's type as the call writes it, not as the block does.
+            let name = match receiver.as_ref().and_then(type_of) {
+                Some(ty) => self.method_name(ty, site.name.name.as_str()),
+                None => name,
+            };
             return self.wrong_count(span, name, params.len(), args);
         }
         let (checked, types, ret) = if declared.is_empty() {
@@ -742,6 +749,11 @@ impl Checker<'_> {
             })),
             (_, ret) => Err(Poisoned::of(ret.filter(|_| !failed))),
         }
+    }
+
+    /// What a count error calls the method `method` of a receiver of type `ty`: `[i64].len`.
+    pub(super) fn method_name(&self, ty: Type, method: &str) -> String {
+        format!("{}.{method}", self.type_name(ty))
     }
 
     /// A call at `span` of the method `name` that wants `want` arguments and has the wrong count:

@@ -275,6 +275,9 @@ impl Checker<'_> {
             return self.unmet_block_bound(span, func, ty, method, args);
         }
         let Some(&(_, arity)) = built_in else {
+            if self.rejected_methods.contains(&method.name) {
+                return self.call_of_rejected_method(args);
+            }
             let prelude = self.prelude_method_names(ty);
             let targets = self.prelude_targets(method.name);
             let d = if !prelude.contains(&name) && !targets.is_empty() {
@@ -294,7 +297,7 @@ impl Checker<'_> {
         };
         if args.len() != arity {
             let d = DiagnosticKind::ArgumentCount {
-                name: name.to_string(),
+                name: self.method_name(ty, name),
                 want: arity,
                 found: args.len(),
                 at: span,
@@ -320,12 +323,13 @@ impl Checker<'_> {
         args: &[ast::Arg],
     ) -> Checked {
         let sig = &self.signatures[func.0];
-        let (name, params) = (sig.name.clone(), sig.params.clone());
+        let params = sig.params.clone();
         let extension = sig
             .extension
             .expect("a method whose block bounds fail should have a block");
         self.labels(args);
         if params.len() != args.len() {
+            let name = self.method_name(ty, method.name.as_str());
             return self.wrong_count(span, name, params.len(), args);
         }
         let stands = self.owner_args(func, ty).get().to_vec();
@@ -341,6 +345,14 @@ impl Checker<'_> {
         if !own_mistake {
             self.report_block_bound(extension, ty, span, method.name.as_str());
         }
+        Err(Poisoned::error())
+    }
+
+    /// A call of a method that a rejected `extend` block may have given (see
+    /// `Checker.rejected_methods`): poisoned, with no report of its own.
+    pub(super) fn call_of_rejected_method(&mut self, args: &[ast::Arg]) -> Checked {
+        self.labels(args);
+        self.stray(args);
         Err(Poisoned::error())
     }
 

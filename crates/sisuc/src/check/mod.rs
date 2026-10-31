@@ -498,6 +498,13 @@ struct Checker<'src> {
     broken_extensions: FxHashSet<Symbol>,
     /// The methods that a block of an intact target lost to a syntax error.
     broken_extension_methods: FxHashSet<(Holder, Symbol)>,
+    /// The names of the methods of each `extend` block whose target the checker rejected. Such a
+    /// block may have given any type a method of its name, so a call of that name on any type is
+    /// poisoned, with no report. The set holds names, not types: the target can be a type
+    /// parameter, which stands for every type, or a type that `Holder` does not name, such as
+    /// `f64`, `string` or `bool`. The block's own error is in the program, so a missed report
+    /// of a method with the same name on another type costs nothing.
+    rejected_methods: FxHashSet<Symbol>,
     /// The methods of the conformance blocks that cover the receiver of the call being found, with
     /// the block's interface and its arguments for the receiver: a buffer that `find_method` fills
     /// and clears per call.
@@ -1073,6 +1080,7 @@ impl<'src> Checker<'src> {
             builtin_methods: Vec::new(),
             broken_extensions: FxHashSet::default(),
             broken_extension_methods: FxHashSet::default(),
+            rejected_methods: FxHashSet::default(),
             candidates: Vec::new(),
             conformances: tir::Conformances::default(),
             conformance_bounds: FxHashMap::default(),

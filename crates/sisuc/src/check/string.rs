@@ -320,6 +320,9 @@ impl Checker<'_> {
             "bytes" => (Type::array(Type::U8), tir::ExprKind::Bytes),
             "words" => (Type::array(Type::STRING), tir::ExprKind::Words),
             _ => {
+                if self.rejected_methods.contains(&method.name) {
+                    return self.call_of_rejected_method(args);
+                }
                 let owner = self.type_name(Type::STRING);
                 let d = no_member(Definition::Method, owner, method, METHODS);
                 return self.rejected(d, args);
@@ -327,7 +330,7 @@ impl Checker<'_> {
         };
         if !args.is_empty() {
             let d = DiagnosticKind::ArgumentCount {
-                name: method.name.to_string(),
+                name: self.method_name(Type::STRING, method.name.as_str()),
                 want: 0,
                 found: args.len(),
                 at: span,

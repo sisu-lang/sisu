@@ -152,10 +152,22 @@ impl<'a> Checker<'_> {
                 duplicate: false,
             });
             self.record_block_bounds(at);
-        } else if let Some(holder) = target.and_then(method_holder) {
-            // The methods of a failed block may have given the target methods.
+        } else {
+            self.record_failed_block(extend, target);
+        }
+    }
+
+    /// Records what a failed block may have given: methods to its target, when the target is a
+    /// type that the checker can take, and else methods of its names to any type.
+    fn record_failed_block(&mut self, extend: &ast::Extend, target: Option<Type>) {
+        if let Some(holder) = target.and_then(method_holder) {
             let name = self.holder_name(holder);
             self.broken_extensions.insert(name);
+        } else {
+            // No target: its methods may belong to any type (see `Checker.rejected_methods`).
+            let names = (extend.methods.iter().map(|m| m.name.name))
+                .chain(extend.broken_methods.iter().map(|m| m.name));
+            self.rejected_methods.extend(names);
         }
     }
 
