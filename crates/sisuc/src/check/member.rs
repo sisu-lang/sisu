@@ -319,12 +319,12 @@ impl Checker<'_> {
                 if let Some(func) = masked {
                     let at = (self.signatures[func.0].extension)
                         .expect("a method whose block bounds fail should have a block");
-                    self.report_block_bound(at, ty, span);
+                    self.report_block_bound(at, ty, span, name.name.as_str());
                     return None;
                 }
                 // A block covered the receiver, and its bounds fail: the type argument is wrong.
                 if let Some((at, _)) = self.failed_block {
-                    self.report_block_bound(at, ty, span);
+                    self.report_block_bound(at, ty, span, name.name.as_str());
                     return None;
                 }
             }
@@ -338,7 +338,12 @@ impl Checker<'_> {
             }
         }
         // A broken block may have given the type the method.
-        if self.has_broken_block(ty) {
+        if self.has_broken_block(ty) || self.in_duplicate_block(ty, name.name) {
+            return None;
+        }
+        // A rejected block may have given any type, except an optional, the method.
+        if self.rejected_methods.contains(&name.name) && !matches!(ty.kind(), TypeKind::Optional(_))
+        {
             return None;
         }
         let d = match ty.kind() {
@@ -382,6 +387,21 @@ impl Checker<'_> {
     /// reach. The collection of the fields found the answer, so a call reads no field.
     fn names_to_string_field(&self, ty: Type) -> bool {
         matches!(ty.kind(), TypeKind::Class(class, _) if self.classes[class.0].names_to_string)
+    }
+
+    /// Whether a block that repeats a conformance of `ty` (E0153) declares the method `name`. The
+    /// lookup skips the block, and its error says what is wrong.
+    ///
+    /// shortcut: the methods of such a block are not checked against the interface until the user
+    /// removes one of the two conformances. Then the normal check runs.
+    fn in_duplicate_block(&self, ty: Type, name: Symbol) -> bool {
+        let blocks =
+            method_holder(ty).and_then(|holder| self.extension_methods.get(&(holder, name)));
+        blocks.is_some_and(|blocks| {
+            blocks
+                .iter()
+                .any(|&(at, _)| self.extensions[at].duplicate && self.covers(at, ty).is_some())
+        })
     }
 
     /// Whether an `extend` block of the class or enum `ty` is broken: it may have given `ty`

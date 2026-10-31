@@ -1,0 +1,15 @@
+class W<T> {
+    v: T
+}
+extend W<i64>: Display {
+    fn to_string(self) -> string {
+        return "w"
+    }
+}
+enum E<T> {
+    A(W<T>)
+}
+fn main() {
+    let e: E<i64> = E.A(W(v: 1))
+    dbg(e)
+}

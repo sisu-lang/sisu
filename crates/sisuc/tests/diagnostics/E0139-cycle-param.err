@@ -1,0 +1,34 @@
+error[E0139]: `A<T>` has no `==`
+  --> E0139-cycle-param.sisu:10:13
+   |
+10 |     let x = a == a
+   |             ^ this has type `A<T>`
+   |
+   = help: add a bound: `T: Eq`
+
+error[E0139]: `B<T>` has no `==`
+  --> E0139-cycle-param.sisu:11:12
+   |
+11 |     return b == b
+   |            ^ this has type `B<T>`
+   |
+   = help: add a bound: `T: Eq`
+
+error[E0139]: `B<T>` has no `==`
+  --> E0139-cycle-param.sisu:14:13
+   |
+14 |     let x = b == b
+   |             ^ this has type `B<T>`
+   |
+   = help: add a bound: `T: Eq`
+
+error[E0139]: `A<T>` has no `==`
+  --> E0139-cycle-param.sisu:15:12
+   |
+15 |     return a == a
+   |            ^ this has type `A<T>`
+   |
+   = help: add a bound: `T: Eq`
+
+sisu: 4 errors
+sisu: for more on a code, run `sisu explain <code>`: E0139

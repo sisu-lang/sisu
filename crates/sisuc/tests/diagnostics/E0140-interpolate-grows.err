@@ -1,0 +1,10 @@
+error[E0140]: `W.to_string` instantiates itself without end
+ --> E0140-interpolate-grows.sisu:7:18
+  |
+7 |         return "{Wrap(v: W(x: [self.x]))}"
+  |                  ^^^^^^^^^^^^^^^^^^^^^^^ the interpolation here
+  |
+  = help: an interpolation is a call through `Display`, and a call through `Display` counts as reaching every conformance to `Display`. `Wrap<W<[T]>>` holds `W<[T]>`, whose argument grows
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

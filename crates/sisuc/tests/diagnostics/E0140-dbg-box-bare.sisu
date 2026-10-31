@@ -1,0 +1,13 @@
+class Box<T> {
+    v: T
+}
+class W<T> {
+    x: T
+    fn to_string(self) -> string {
+        dbg(Box(v: W(x: self.x)))
+        return "w"
+    }
+}
+fn main() {
+    print(W(x: 1))
+}

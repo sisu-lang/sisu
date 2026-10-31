@@ -1,0 +1,29 @@
+warning[W0013]: field `x` is never read
+ --> W0013-dbg-enum-class.sisu:2:5
+  |
+2 |     x: i64
+  |     ^ never read
+  |
+  = help: delete it, or name it `_x` if it is kept on purpose
+
+warning[W0013]: field `v` is never read
+  --> W0013-dbg-enum-class.sisu:5:5
+   |
+ 5 |     v: T
+   |     ^ never read
+...
+12 |     dbg(E.A(Hold(v: P(x: 1))))
+   |     -------------------------- `dbg` can show `v` here, but `dbg` is not a read
+   |
+   = help: delete it, or name it `_v` if it is kept on purpose
+
+warning[W0013]: variant `B` is never built
+ --> W0013-dbg-enum-class.sisu:9:5
+  |
+9 |     B
+  |     ^ never built
+  |
+  = help: delete it
+
+sisu: 3 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0013

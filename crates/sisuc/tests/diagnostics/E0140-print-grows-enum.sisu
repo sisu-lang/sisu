@@ -1,0 +1,17 @@
+enum Hold<T> {
+    Has(T)
+    Empty
+}
+extend<T> Hold<T>: Display {
+    fn to_string(self) -> string { "hold" }
+}
+class W<T> {
+    x: T
+    fn to_string(self) -> string {
+        print(Hold.Has(W(x: [self.x])))
+        return "w"
+    }
+}
+fn main() {
+    print(W(x: 1))
+}

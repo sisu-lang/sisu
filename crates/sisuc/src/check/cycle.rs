@@ -119,6 +119,7 @@ use std::collections::VecDeque;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use super::extend::holder_of;
 use super::{Checker, Lowered};
 use crate::ast::angled;
 use crate::conformance::always_written;
@@ -147,6 +148,8 @@ thread_local! {
     pub(super) static DBG_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many types `shown_params` has read on this thread, to find the arguments `dbg` shows.
     pub(super) static SHOWN_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many types `Checker::growth` has read on this thread, to find the argument that grows.
+    pub(super) static GROWTH_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The nodes and the edges of the component that the last search for a cycle read.
     pub(super) static SEARCHED: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
@@ -163,8 +166,20 @@ const MATCHING_CHOICES: usize = 64;
 /// The interface that `instance` calls through, if it calls through one.
 fn calls_through(instance: Instance) -> Option<tir::InterfaceId> {
     match instance {
-        Instance::Required(interface, ..) | Instance::Operator(interface, _) => Some(interface),
+        Instance::Required(interface, ..) | Instance::Operator(interface, ..) => Some(interface),
         Instance::Call(..) | Instance::Type(..) => None,
+    }
+}
+
+/// The operand of the call that `instance` is, when the program writes it as an operator, an
+/// interpolation or a built-in function. A generated node has none: its operand is a payload that
+/// the enum's declaration writes.
+fn operand_of(instance: Instance) -> Option<Type> {
+    match instance {
+        Instance::Operator(_, written, operand) if !matches!(written, Written::Generated(_)) => {
+            Some(operand)
+        }
+        _ => None,
     }
 }
 
@@ -181,8 +196,9 @@ enum Instance {
     /// arguments.
     Required(tir::InterfaceId, usize, TypeArgs),
     /// A call through a language interface that the program spells as an operator, an
-    /// interpolation or a generated `==` or `to_string`, and not as a call of the method.
-    Operator(tir::InterfaceId, Written),
+    /// interpolation or a generated `==` or `to_string`, and not as a call of the method, on an
+    /// operand of the type given.
+    Operator(tir::InterfaceId, Written, Type),
 }
 
 /// A language interface and how the program spells a call through it.
@@ -505,7 +521,7 @@ impl Graph {
         }
         let instance = written.map_or(
             Instance::Required(interface, 0, TypeArgs::NONE),
-            |written| Instance::Operator(interface, written),
+            |written| Instance::Operator(interface, written, ty),
         );
         // A generated node keeps the type as its label: only the program's own spelling replaces
         // it.
@@ -1012,6 +1028,10 @@ impl Checker<'_> {
     /// Reports the cycle of positive weight `cycle`, whose edges follow each other. It is labeled
     /// at `label`, an edge of it, or else at its first step of positive weight in source order. A
     /// cycle is reported once for each site.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one walk along the cycle that builds each part of the report, so it reads in one place"
+    )]
     fn report_cycle(
         &mut self,
         functions: &[Option<tir::Function>],
@@ -1073,14 +1093,21 @@ impl Checker<'_> {
         let mut shown = FxHashSet::from_iter([edge.site]);
         // The last call in the user's file, which a step inside the prelude came through.
         let mut entered = label_spelled.clone();
+        // The operand of the call through the interface, until the edge out of its hub says which
+        // method the cycle takes.
+        let (mut operand, mut grows): (Option<Type>, _) = (None, None);
         if let Some(interface) = calls_through(label_instance) {
             reach = Some((interface, label_spelled.clone()));
+            operand = operand_of(label_instance);
         }
         // A call through a hub, until the edge out of the hub says which method it may run.
         let mut calling: Option<(Span, tir::InterfaceId, Option<Spelled>)> = None;
         for &i in &cycle[1..] {
             let e = &edges[i];
             if e.out {
+                if let Some(operand) = operand.take() {
+                    grows = self.growth(functions, operand, e.holder);
+                }
                 if let Some((mark, interface, by)) = calling.take() {
                     through.push((
                         mark,
@@ -1113,7 +1140,10 @@ impl Checker<'_> {
             entered = spelled.clone();
             if let Some(interface) = calls_through(instance) {
                 let by = matches!(instance, Instance::Operator(..)).then(|| spelled.clone());
-                reach.get_or_insert((interface, spelled));
+                reach.get_or_insert_with(|| {
+                    operand = operand_of(instance);
+                    (interface, spelled)
+                });
                 calling = Some((e.mark, interface, by));
             } else {
                 through.push((
@@ -1131,7 +1161,51 @@ impl Checker<'_> {
             reach: reach
                 .map(|(interface, by)| (self.interfaces[interface.0].name.name.to_string(), by)),
             choice,
+            grows,
         });
+    }
+
+    /// Takes a call through a language interface on `operand`, whose cycle takes the method
+    /// `method`. Gives the first type in `operand` of the class or enum that declares the method,
+    /// whose argument grows. The type is `operand` itself or a type that `operand` holds, and then
+    /// `operand` comes with it. An argument grows when it names a parameter and is not one. `None`
+    /// when `operand` holds no such type.
+    fn growth(
+        &self,
+        functions: &[Option<tir::Function>],
+        operand: Type,
+        method: usize,
+    ) -> Option<(String, Option<String>)> {
+        let head = (functions[method].as_ref())
+            .and_then(|function| function.owner)
+            .and_then(holder_of);
+        let mut seen = FxHashSet::default();
+        let mut walk = vec![operand];
+        while let Some(ty) = walk.pop() {
+            // A type with no parameter holds nothing that grows.
+            if !ty.has_param() || !seen.insert(ty) {
+                continue;
+            }
+            #[cfg(test)]
+            GROWTH_VISITS.set(GROWTH_VISITS.get() + 1);
+            match ty.kind() {
+                TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+                    let grows =
+                        |a: &Type| a.has_param() && !matches!(a.kind(), TypeKind::Param(..));
+                    if head.is_some_and(|head| holder_of(ty) == Some(head))
+                        && args.get().iter().any(grows)
+                    {
+                        let held_by = (ty != operand).then(|| self.type_name(operand));
+                        return Some((self.type_name(ty), held_by));
+                    }
+                    // Reversed, so that the first argument is walked first.
+                    walk.extend(args.get().iter().rev());
+                }
+                TypeKind::Array(inner) | TypeKind::Optional(inner) => walk.push(inner),
+                _ => {}
+            }
+        }
+        None
     }
 
     /// The first use of an associated type on the cycle, as written: its edge runs into the
@@ -1154,11 +1228,22 @@ impl Checker<'_> {
         instance: Instance,
     ) -> Spelled {
         let spelling = match instance {
-            Instance::Operator(interface, written) => Some((interface, written)),
+            Instance::Operator(interface, written, _) => Some((interface, written)),
             Instance::Call(.., spelling) | Instance::Type(_, spelling) => spelling,
             Instance::Required(..) => None,
         };
         let Some((interface, written)) = spelling else {
+            // The program writes a call of a function of the prelude by its own name, as in
+            // `xs.contains(x)`: the type arguments are the compiler's.
+            if let Instance::Call(func, ..) = instance
+                && self.signatures[func.0].span.in_prelude()
+            {
+                let function = functions[func.0].as_ref();
+                let name = function.and_then(|f| f.method.clone());
+                return Spelled::Prelude(
+                    name.unwrap_or_else(|| self.signatures[func.0].name.clone()),
+                );
+            }
             return Spelled::Instance(self.instance_name(functions, instance));
         };
         match written {
@@ -1461,7 +1546,18 @@ impl Checker<'_> {
     /// holds and the parameter it fills holds. A parameter holds when a payload shows it. Each
     /// part of each payload type is read once, so the pass is linear in the type parameters and
     /// payloads.
-    fn shown_params(&self) -> Vec<Vec<bool>> {
+    pub(super) fn shown_params(&self) -> Vec<Vec<bool>> {
+        let hidden: Vec<bool> = (0..self.enums.len())
+            .map(|e| always_written(&self.conformances, self.lang.display, self.own_type(e)))
+            .collect();
+        self.shown_params_with(&hidden)
+    }
+
+    /// `shown_params` for a rule of its own on which enums hide their arguments: `hidden[e]` says
+    /// that `dbg` shows the text of the enum `e` and no argument of it. The cycle analysis hides
+    /// the arguments of an enum with a written `Display` that always applies. The unused-name
+    /// check hides them for any written `Display`, as its walk does.
+    pub(super) fn shown_params_with(&self, hidden: &[bool]) -> Vec<Vec<bool>> {
         // A node is ready when its `need` is 0: a parameter needs one of the nodes that lead to it,
         // an argument needs both its holders.
         let first: Vec<usize> = (self.enums.iter())
@@ -1476,9 +1572,6 @@ impl Checker<'_> {
         let mut then: Vec<Vec<usize>> = vec![Vec::new(); params];
         let mut ready = Vec::new();
         let mut stack: Vec<(Type, Option<usize>)> = Vec::new();
-        let written: Vec<bool> = (0..self.enums.len())
-            .map(|e| always_written(&self.conformances, self.lang.display, self.own_type(e)))
-            .collect();
         for (e, info) in self.enums.iter().enumerate() {
             let payloads = info
                 .variants
@@ -1495,7 +1588,7 @@ impl Checker<'_> {
                     },
                     TypeKind::Array(part) | TypeKind::Optional(part) => stack.push((part, from)),
                     TypeKind::Enum(id, args) => {
-                        if written[id.0] {
+                        if hidden[id.0] {
                             continue;
                         }
                         for (j, &arg) in

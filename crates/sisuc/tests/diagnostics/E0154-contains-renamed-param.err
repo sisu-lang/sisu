@@ -1,0 +1,18 @@
+error[E0154]: `U` does not conform to `Eq`
+ --> E0154-contains-renamed-param.sisu:2:5
+  |
+2 |     xs.contains(x)
+  |     ^^^^^^^^^^^^^^ `contains` needs `U: Eq`
+  |
+  = help: add a bound: `U: Eq`
+
+error[E0154]: `U?` does not conform to `Eq`
+ --> E0154-contains-renamed-param.sisu:6:5
+  |
+6 |     xs.contains(x)
+  |     ^^^^^^^^^^^^^^ `contains` needs `U?: Eq`, and `U` does not conform to `Eq`
+  |
+  = help: add a bound: `U: Eq`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0154

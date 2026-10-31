@@ -521,6 +521,246 @@ fn failing_leaf_should_read_each_type_once() {
     }
 }
 
+/// `enum E<T>` with `n` variants that each hold a `T`, and a generic function that compares two
+/// values of it `comparisons` times. `T` has no `Eq`, so each comparison fails.
+fn repeated_comparisons(n: usize, comparisons: usize) -> String {
+    let variants: Vec<String> = (0..n).map(|k| format!("    V{k}(T)\n")).collect();
+    let lines = "    let _ = a == b\n".repeat(comparisons);
+    format!(
+        "enum E<T> {{\n{}}}\nfn f<T>(a: E<T>, b: E<T>) {{\n{lines}}}\nfn main() {{}}",
+        variants.concat()
+    )
+}
+
+/// The first of `E0` … `E(n)` has two ways to the next, `[T]` and `T?`, and the last holds `T`:
+/// the 2^(n+1) - 1 types that the chain forms are all distinct. A generic function compares two
+/// values of `E0<T>` twice, with the bound `bound` on `T`: the second comparison reads nothing
+/// more.
+fn branching(n: usize, bound: &str) -> String {
+    let mut decls: Vec<String> = (0..n)
+        .map(|k| {
+            format!(
+                "enum E{k}<T> {{\n    A(E{m}<[T]>)\n    B(E{m}<T?>)\n}}\n",
+                m = k + 1
+            )
+        })
+        .collect();
+    decls.push(format!("enum E{n}<T> {{\n    A(T)\n}}\n"));
+    format!(
+        "{}fn f<T{bound}>(a: E0<T>, b: E0<T>) {{\n    let _ = a == b\n    let _ = a == b\n}}\nfn main() {{}}",
+        decls.concat()
+    )
+}
+
+/// A type that names a type parameter is read for the part that fails once in each body, as
+/// `conforms` decides it once: later comparisons of it read nothing more.
+#[test]
+fn failing_leaf_should_read_a_type_that_names_a_parameter_once_in_a_body() {
+    let count = |comparisons: usize| {
+        LEAF_STEPS.set(0);
+        let (_, ds) = checked(&repeated_comparisons(8, comparisons));
+        assert_eq!(
+            ds.iter().filter(|d| d.code() == Code::ParamLacks).count(),
+            comparisons,
+            "each comparison should give its own report"
+        );
+        LEAF_STEPS.get()
+    };
+    assert_eq!(count(1), 1, "one read for the enum");
+    assert_eq!(count(40), 1, "no more for the later comparisons");
+}
+
+/// Each body has its own answers: the type that a second function names is read again, since its
+/// bounds may differ.
+#[test]
+fn failing_leaf_should_read_a_type_that_names_a_parameter_again_in_the_next_body() {
+    let src = "enum E<T> {\n    A(T)\n}\n\
+        fn f<T>(a: E<T>, b: E<T>) -> bool { a == b }\n\
+        fn g<T>(a: E<T>, b: E<T>) -> bool { a == b }\n\
+        fn h<T: Eq>(a: E<T>, b: E<T>) -> bool { a == b }\nfn main() {}";
+    LEAF_STEPS.set(0);
+    let (_, ds) = checked(src);
+    assert_eq!(
+        ds.iter().map(Diagnostic::code).collect::<Vec<_>>(),
+        [Code::ParamLacks; 2]
+    );
+    assert_eq!(LEAF_STEPS.get(), 2, "one read for each body that fails");
+}
+
+/// The chain `E0<T>` … `En<T>`, where `Ek` has the variant `A(E(k+1)<T>)` and `En` holds `T`, and
+/// one generic function that compares each of its `n + 1` enums with itself. `T` has no `Eq`, so
+/// each comparison fails.
+fn linear_chain(n: usize) -> String {
+    let mut decls: Vec<String> = (0..n)
+        .map(|k| format!("enum E{k}<T> {{\n    A(E{m}<T>)\n}}\n", m = k + 1))
+        .collect();
+    decls.push(format!("enum E{n}<T> {{\n    A(T)\n}}\n"));
+    let params: Vec<String> = (0..=n).map(|k| format!("a{k}: E{k}<T>")).collect();
+    let lines: Vec<String> = (0..=n)
+        .map(|k| format!("    let _ = a{k} == a{k}\n"))
+        .collect();
+    format!(
+        "{}fn f<T>({}) {{\n{}}}\nfn main() {{}}",
+        decls.concat(),
+        params.join(", "),
+        lines.concat()
+    )
+}
+
+/// A type that names a type parameter and is read inside the walk of another type is kept for the
+/// body: on a linear chain, where one body compares every level, each level is read once, not
+/// once for each level above it.
+#[test]
+fn failing_leaf_should_read_each_level_of_a_linear_chain_once_in_a_body() {
+    let count = |n: usize| {
+        LEAF_STEPS.set(0);
+        let (_, ds) = checked(&linear_chain(n));
+        assert_eq!(
+            ds.iter().filter(|d| d.code() == Code::ParamLacks).count(),
+            n + 1,
+            "each comparison should give its own report"
+        );
+        LEAF_STEPS.get()
+    };
+    let (one, two, three) = (count(20), count(40), count(60));
+    assert_eq!(one, 21, "one read for each enum of the chain");
+    assert_near_linear(one, two, three);
+}
+
+/// The cycle `E0<T>` … `En<T>`, where `Ek` has the variants `A(E(k+1)<T>)` and `V(T)`, and `En`
+/// goes back to `E0`; and one generic function that compares each of its `n + 1` enums with
+/// itself, from the first, or from the last when `reversed`. `T` has no `Eq`, so each comparison
+/// fails, and the part that fails is `T`, never a part behind a cut.
+fn cycle_of_params(n: usize, reversed: bool) -> String {
+    let decls: Vec<String> = (0..=n)
+        .map(|k| {
+            format!(
+                "enum E{k}<T> {{\n    A(E{m}<T>)\n    V(T)\n}}\n",
+                m = (k + 1) % (n + 1)
+            )
+        })
+        .collect();
+    let params: Vec<String> = (0..=n).map(|k| format!("a{k}: E{k}<T>")).collect();
+    let mut order: Vec<usize> = (0..=n).collect();
+    if reversed {
+        order.reverse();
+    }
+    let lines: Vec<String> = order
+        .iter()
+        .map(|k| format!("    let _ = a{k} == a{k}\n"))
+        .collect();
+    format!(
+        "{}fn f<T>({}) {{\n{}}}\nfn main() {{}}",
+        decls.concat(),
+        params.join(", "),
+        lines.concat()
+    )
+}
+
+/// The enums of a cycle of type parameters are one component. The walk keeps `T` for each of
+/// them when it closes the component, from whichever enum the comparisons begin.
+#[test]
+fn failing_leaf_should_read_each_enum_of_a_cycle_of_type_parameters_once() {
+    for reversed in [false, true] {
+        let count = |n: usize| {
+            LEAF_STEPS.set(0);
+            let (_, ds) = checked(&cycle_of_params(n, reversed));
+            assert_eq!(
+                ds.iter().filter(|d| d.code() == Code::ParamLacks).count(),
+                n + 1,
+                "each comparison should give its own report, reversed: {reversed}"
+            );
+            LEAF_STEPS.get()
+        };
+        let (one, two, three) = (count(20), count(40), count(60));
+        assert_eq!(one, 21, "one read for each enum, reversed: {reversed}");
+        assert_near_linear(one, two, three);
+    }
+}
+
+/// A cycle `C0` … `Cn`, where `Ck` has the variants `A(C(k+1))` and `V(i64)` and `Cn` goes back
+/// to `C0`. Then `n` enums `Ri`, each with the variants `A(C0)` and `N(Node)`. Then one function
+/// that compares each `Ri` with itself. With `generic`, each enum has a parameter `T` and `V(T)`,
+/// and the function is generic over `T`. The cycle cannot reach `Node`, and each `Ri` can.
+fn cycle_before_roots(n: usize, generic: bool) -> String {
+    let (decl, arg, hold, bound) = if generic {
+        ("<T>", "<T>", "T", "<T>")
+    } else {
+        ("", "", "i64", "")
+    };
+    let mut src = String::from("class Node {}\n");
+    for k in 0..=n {
+        let next = (k + 1) % (n + 1);
+        writeln!(
+            src,
+            "enum C{k}{decl} {{\n    A(C{next}{arg})\n    V({hold})\n}}"
+        )
+        .expect("writing to a `String` should succeed");
+    }
+    for i in 0..n {
+        writeln!(src, "enum R{i}{decl} {{\n    A(C0{arg})\n    N(Node)\n}}")
+            .expect("writing to a `String` should succeed");
+    }
+    let params: Vec<String> = (0..n).map(|i| format!("r{i}: R{i}{arg}")).collect();
+    let lines: Vec<String> = (0..n)
+        .map(|i| format!("    let _ = r{i} == r{i}\n"))
+        .collect();
+    writeln!(
+        src,
+        "fn f{bound}({}) {{\n{}}}\nfn main() {{}}",
+        params.join(", "),
+        lines.concat()
+    )
+    .expect("writing to a `String` should succeed");
+    src
+}
+
+/// A cycle that cannot reach the part that fails is settled when its walk ends. A later root that
+/// reaches the cycle reads it no more. So each enum is read once, however many roots reach the
+/// cycle, as for a cycle of type parameters.
+#[test]
+fn failing_leaf_should_read_a_cycle_once_for_the_roots_that_end_in_a_part() {
+    for generic in [true, false] {
+        let count = |n: usize| {
+            LEAF_STEPS.set(0);
+            let (_, ds) = checked(&cycle_before_roots(n, generic));
+            assert_eq!(
+                ds.iter().filter(|d| d.code() == Code::NoOperator).count(),
+                n,
+                "each comparison should give its own report, generic: {generic}"
+            );
+            LEAF_STEPS.get()
+        };
+        let (one, two, three) = (count(20), count(40), count(60));
+        assert_eq!(
+            one, 42,
+            "one read for each enum, and for `Node`, generic: {generic}"
+        );
+        assert_near_linear(one, two, three);
+    }
+}
+
+/// The search for the failing part decides each type once, so on the error path it costs steps
+/// in proportion to the types that the chain forms, which is what the query costs when the bound
+/// holds.
+#[test]
+fn failing_leaf_should_cost_steps_in_proportion_to_the_types_of_a_branching_chain() {
+    LEAF_STEPS.set(0);
+    let (_, ds) = checked(&branching(8, ""));
+    assert_eq!(
+        ds.iter().map(Diagnostic::code).collect::<Vec<_>>(),
+        [Code::ParamLacks; 2]
+    );
+    let leaf = LEAF_STEPS.get();
+    CONFORMS_STEPS.set(0);
+    CONFORMS_BUDGET.set(100_000);
+    let (_, ds) = checked(&branching(8, ": Eq"));
+    assert!(ds.is_empty(), "the bound holds");
+    let query = CONFORMS_STEPS.get();
+    assert_eq!(leaf, (1 << 9) - 1, "one read for each type of the chain");
+    assert_eq!(query, leaf, "the query forms the same types");
+}
+
 #[test]
 fn generated_should_decide_each_type_once() {
     // Only the steps: each enum of the chain holds two of the next, so the payload limit adds an
@@ -2140,6 +2380,38 @@ fn failing_leaf_should_not_keep_a_none_that_was_found_with_a_cycle_cut_short() {
     assert_eq!(leaves, ["A", "A"]);
 }
 
+/// Each row asks `failing_leaf` for `R`, then for the parameter of `other`. Row 1 closes the
+/// component `C0`, `C1` inside the walk of `R`. In row 2, the cut against `R` is two levels down,
+/// under `X` and `Y`.
+#[test]
+fn failing_leaf_should_name_the_part_each_type_reaches_after_an_earlier_walk() {
+    let rows = [
+        (
+            "a cycle that closes before its root ends in a part",
+            "class Node {}\nenum C0 {\n    A(C1)\n    V(i64)\n}\nenum C1 {\n    A(C0)\n    V(i64)\n}\nenum R {\n    A(C0)\n    N(Node)\n}\nfn other(x: C0) {}\n",
+            ["Node", "C0"],
+        ),
+        (
+            "a cut two levels down",
+            "class Node {}\nenum R {\n    A(X)\n    N(Node)\n}\nenum X {\n    A(Y)\n    V(i64)\n}\nenum Y {\n    A(R)\n    V(i64)\n}\nfn other(x: X) {}\n",
+            ["Node", "Node"],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let leaves = with_probe(src, ("T", "R"), "Eq", |checker, r, eq| {
+            let other = (checker.signatures.iter())
+                .find(|signature| signature.name == "other")
+                .and_then(|signature| signature.params[0])
+                .expect("the program should declare `other`");
+            [r, other].map(|ty| {
+                let leaf = checker.failing_leaf(ty, eq, TypeArgs::NONE);
+                checker.type_name(leaf)
+            })
+        });
+        assert_eq!(leaves, expected, "{row}");
+    }
+}
+
 /// The step that passes the budget panics, so a query that blows up fails at once.
 #[test]
 #[should_panic(expected = "conforms should stay within its budget of 3 steps")]
@@ -2565,6 +2837,42 @@ fn operators_should_report_a_missing_bound() {
     );
     let start = src.find("[n1]").expect("the call should have its argument");
     codes(&src, &[(Code::NotConform, line_col(&src, start))]);
+}
+
+/// A part that fails on its own (a class with no `Eq`) beats a type parameter that a bound could
+/// fix, wherever the part stands among the payloads. The help text of each row is pinned in the
+/// fixtures `E0159-param-order` and `E0154-bound-param-order`.
+#[test]
+fn equality_should_report_a_part_that_cannot_hold_before_a_type_parameter() {
+    with_prelude();
+    let decls = "class Node {}\nenum Mix<T> {\n    A(T)\n    B(Node)\n}\nenum Flip<T> {\n    B(Node)\n    A(T)\n}\nenum Deep<T> {\n    A(Mix<T>)\n    C(T)\n}\nenum Only<T> {\n    A(T)\n    B(i64)\n}\n";
+    let rows = [
+        ("parameter first", "a: Mix<T>, b: Mix<T>", Code::NoOperator),
+        ("parameter last", "a: Flip<T>, b: Flip<T>", Code::NoOperator),
+        (
+            "part nested in a payload",
+            "a: Deep<T>, b: Deep<T>",
+            Code::NoOperator,
+        ),
+        (
+            "optional of a parameter",
+            "a: [Mix<T>?], b: [Mix<T>?]",
+            Code::NoOperator,
+        ),
+        (
+            "only a parameter fails",
+            "a: Only<T>, b: Only<T>",
+            Code::ParamLacks,
+        ),
+    ];
+    for (row, params, code) in rows {
+        let src = format!("{decls}fn f<T>({params}) -> bool {{ a == b }}\nfn main() {{}}");
+        codes_row(row, &src, &[(code, where_is(&src, "a == b"))]);
+    }
+    // A bound that the parameter has: the class is still the part that fails.
+    let src =
+        format!("{decls}fn f<T: Eq>(a: Mix<T>, b: Mix<T>) -> bool {{ a == b }}\nfn main() {{}}");
+    codes(&src, &[(Code::NoOperator, where_is(&src, "a == b"))]);
 }
 
 /// The position of the first `needle` in `src`.
@@ -3463,6 +3771,35 @@ fn dbg_should_find_the_shown_arguments_in_proportion_to_the_type_parameters() {
         b - a,
         "each parameter should cost the same: {a} {b} {c}"
     );
+}
+
+/// The search of an operand for the type whose argument grows reads each type once. An operand
+/// that holds one type twice at each level, `Pair<X, X>` with `X` the level below and `[T]` at the
+/// bottom, is read in `n` steps, not in 2^n. No type in it has an argument that grows.
+#[test]
+fn growth_should_read_each_type_of_an_operand_once() {
+    let steps = |n: usize| {
+        let mut body = String::from("let a0 = [self.x]\n");
+        for k in 1..=n {
+            writeln!(body, "        let a{k} = Pair.Two(a{}, a{})", k - 1, k - 1)
+                .expect("writing to a `String` should succeed");
+        }
+        let src = format!(
+            "enum Pair<A, B> {{\n    Two(A, B)\n}}\nextend<A, B> Pair<A, B>: Display {{\n    fn to_string(self) -> string {{\n        \"pair\"\n    }}\n}}\nclass W<T> {{\n    x: T\n    fn to_string(self) -> string {{\n        {body}        print(a{n})\n        return \"w\"\n    }}\n}}\nfn main() {{\n    print(W(x: 1))\n}}"
+        );
+        cycle::GROWTH_VISITS.set(0);
+        codes(
+            &src,
+            &[(
+                Code::InstantiationCycle,
+                where_is(&src, &format!("print(a{n})")),
+            )],
+        );
+        cycle::GROWTH_VISITS.get()
+    };
+    let (a, b, c) = (steps(6), steps(12), steps(18));
+    assert!(a > 6, "the levels should be read: {a}");
+    assert_eq!(c - b, b - a, "each level should cost the same: {a} {b} {c}");
 }
 
 #[test]

@@ -1,0 +1,8 @@
+error[E0069]: `sum` needs an `[i64]` or an `[f64]`, found `[u8]`
+ --> E0069-function.sisu:3:11
+  |
+3 |     print(sum(bytes))
+  |           ^^^ `sum` is a method of an `[i64]` or an `[f64]`, not a function
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0069

@@ -1,0 +1,23 @@
+interface Shape { fn area(self) -> f64 }
+
+class C: Shape {}
+extend C: Shape { fn area(self) -> f64 { 1.0 } }
+
+class D: Shape {}
+extend D: Shape { fn area(self) -> i64 { 1 } }
+
+class F: Shape { fn area(self) -> f64 { 2.0 } }
+extend F: Shape { fn area(self) -> f64 { 3.0 } }
+
+// The second conformance covers `Box<i64>` only, so `Box<bool>` has no `area`.
+class Box<T>: Shape { value: T }
+extend Box<i64>: Shape { fn area(self) -> f64 { 1.0 } }
+
+fn main() {
+    print(C().area())
+    print(D().area())
+    print(F().area())
+    print(C().perimeter())
+    print(Box(value: 1).area())
+    print(Box(value: true).area())
+}

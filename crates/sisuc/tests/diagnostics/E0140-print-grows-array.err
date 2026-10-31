@@ -1,0 +1,10 @@
+error[E0140]: `W.to_string` instantiates itself without end
+ --> E0140-print-grows-array.sisu:7:9
+  |
+7 |         print(Wrap(v: [W(x: [self.x])]))
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `print` here
+  |
+  = help: `print` is a call through `Display`, and a call through `Display` counts as reaching every conformance to `Display`. `Wrap<[W<[T]>]>` holds `W<[T]>`, whose argument grows
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

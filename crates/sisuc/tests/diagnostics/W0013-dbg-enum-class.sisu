@@ -1,0 +1,13 @@
+class P {
+    x: i64
+}
+class Hold<T> {
+    v: T
+}
+enum E<T> {
+    A(Hold<T>)
+    B
+}
+fn main() {
+    dbg(E.A(Hold(v: P(x: 1))))
+}

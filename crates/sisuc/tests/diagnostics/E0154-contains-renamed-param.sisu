@@ -1,0 +1,9 @@
+fn find<U>(xs: [U], x: U) -> bool {
+    xs.contains(x)
+}
+
+fn find_optional<U>(xs: [U?], x: U?) -> bool {
+    xs.contains(x)
+}
+
+fn main() {}

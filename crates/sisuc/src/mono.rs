@@ -118,8 +118,9 @@ struct Mono {
     enum_ids: FxHashMap<(EnumId, TypeArgs), EnumId>,
     /// The checked program's generic enums, at their ids.
     enum_decls: Vec<Option<Enum>>,
-    /// The output's type for each concrete checked type met so far.
-    types: FxHashMap<Type, Type>,
+    /// The output's type for each concrete checked type met so far, and the output enum that this
+    /// type holds, through arrays and optionals, if any: the enum whose use a hit notes.
+    types: FxHashMap<Type, (Type, Option<EnumId>)>,
     /// The output's functions, each `None` until the worklist instantiates it.
     functions: Vec<Option<Function>>,
     /// The output, without its functions until the end: its classes name types as they arrive.
@@ -148,6 +149,14 @@ struct Mono {
     /// temporaries add to them.
     locals: Vec<Local>,
     work: VecDeque<Work>,
+    /// The span of the expression that `expr` lowers, `None` outside one and inside the
+    /// prelude's: the place that an instance is first reached from.
+    at: Option<Span>,
+    /// The first use of each output enum, in its ids: where an instance first comes from an
+    /// expression. The enums of `out.enums` and this table have the same length. An instance
+    /// that only a local's type or a class field reaches has none until an expression meets
+    /// its type. `payload_limit` reads it for the error of an instance that is too large.
+    uses: Vec<Option<Span>>,
 }
 
 impl Mono {
@@ -183,6 +192,8 @@ impl Mono {
             walked: FxHashSet::default(),
             locals: Vec::new(),
             work: VecDeque::new(),
+            at: None,
+            uses: Vec::new(),
         };
         let user_funcs = program.prelude.funcs;
         for (i, f) in program.functions.into_iter().enumerate() {
@@ -211,6 +222,7 @@ impl Mono {
                 let id = EnumId(mono.out.enums.len());
                 mono.enum_ids.insert((EnumId(i), TypeArgs::NONE), id);
                 mono.out.enums.push(e);
+                mono.uses.push(None);
                 mono.enum_decls.push(None);
             } else {
                 mono.enum_decls.push(Some(e));
@@ -305,7 +317,7 @@ impl Mono {
                 .all(Option::is_some),
             "every enum should have a size bound after the layout: its types are final and the layout boxes each cycle"
         );
-        let oversized = payload_limit::diagnostics(&self.out.enums);
+        let oversized = payload_limit::diagnostics(&self.out.enums, &self.uses);
         if !oversized.is_empty() {
             return Err(oversized);
         }
@@ -393,25 +405,44 @@ impl Mono {
     /// The output's type for the concrete checked type `ty`: each class and enum by its output
     /// id, with no arguments. Reaching a class's instantiation puts it on the worklist.
     fn output(&mut self, ty: Type) -> Type {
-        if let Some(&done) = self.types.get(&ty) {
+        if let Some(&(done, held)) = self.types.get(&ty) {
+            if let Some(id) = held {
+                self.note_use(id);
+            }
             return done;
         }
-        let done = ensure_stack(|| match ty.kind() {
-            TypeKind::Class(id, args) => {
-                Type::intern(TypeKind::Class(self.class(id, args), TypeArgs::NONE))
-            }
+        // An optional or an array of an instance has the instance in its type. The entry of the
+        // inner type, which `output` has just made, says which: no walk down the type.
+        let (done, held) = ensure_stack(|| match ty.kind() {
+            TypeKind::Class(id, args) => (
+                Type::intern(TypeKind::Class(self.class(id, args), TypeArgs::NONE)),
+                None,
+            ),
             TypeKind::Enum(id, args) => {
-                Type::intern(TypeKind::Enum(self.enum_id(id, args), TypeArgs::NONE))
+                let id = self.enum_id(id, args);
+                (Type::intern(TypeKind::Enum(id, TypeArgs::NONE)), Some(id))
             }
-            TypeKind::Array(element) => Type::array(self.output(element)),
-            TypeKind::Optional(payload) => Type::optional(self.output(payload)),
+            TypeKind::Array(element) => {
+                let inner = self.output(element);
+                (Type::array(inner), self.held_by(element))
+            }
+            TypeKind::Optional(payload) => {
+                let inner = self.output(payload);
+                (Type::optional(inner), self.held_by(payload))
+            }
             TypeKind::Param(..) => {
                 panic!("`subst` should replace every type parameter before `mono` maps a type")
             }
-            _ => ty,
+            _ => (ty, None),
         });
-        self.types.insert(ty, done);
+        self.types.insert(ty, (done, held));
         done
+    }
+
+    /// The output enum that the type `ty` holds, through arrays and optionals, for a type that
+    /// `output` has made.
+    fn held_by(&self, ty: Type) -> Option<EnumId> {
+        self.types.get(&ty).and_then(|&(_, held)| held)
     }
 
     /// Reaches each of the concrete checked types `args`, before the instance that takes them
@@ -505,9 +536,18 @@ impl Mono {
         done
     }
 
+    /// Records the expression that `expr` lowers as the first use of the output enum `id`.
+    fn note_use(&mut self, id: EnumId) {
+        let first = &mut self.uses[id.0];
+        if first.is_none() {
+            *first = self.at;
+        }
+    }
+
     /// The output id of enum `id` with `args`, given and put on the worklist when first reached.
     fn enum_id(&mut self, id: EnumId, args: TypeArgs) -> EnumId {
         if let Some(&done) = self.enum_ids.get(&(id, args)) {
+            self.note_use(done);
             return done;
         }
         self.reach(args.get());
@@ -525,6 +565,7 @@ impl Mono {
             cycle: None,
         };
         self.out.enums.push(e);
+        self.uses.push(self.at);
         self.enum_ids.insert((id, args), done);
         self.work.push_back(Work::Enum {
             id: done,
@@ -606,11 +647,22 @@ impl Mono {
         }
     }
 
+    /// `expr_kind`, with `at` at `e`: an instance that the types of `e` reach first has `e` for
+    /// its first use. Each early return of `expr_kind` leaves `at` as `expr` found it.
+    fn expr(&mut self, e: &mut Expr, args: &[Type]) {
+        let outer = self.at;
+        if !e.span.in_prelude() {
+            self.at = Some(e.span);
+        }
+        self.expr_kind(e, args);
+        self.at = outer;
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "one arm per node kind, so the walk reads in one place"
     )]
-    fn expr(&mut self, e: &mut Expr, args: &[Type]) {
+    fn expr_kind(&mut self, e: &mut Expr, args: &[Type]) {
         use ExprKind as K;
         // A stand-in type may not fit its node, so no node is walked after the first failure.
         if self.failed() {
@@ -1078,6 +1130,44 @@ mod tests {
     use crate::parser::parse_ok;
     use crate::tir::InterfaceId;
     use crate::types::NAME_LIMIT;
+
+    /// The program of the wrapper chain: `a{k}` is `a{k-1}` wrapped in one more array, so its type
+    /// is `k` arrays deep and the `n` types of the chain are all distinct.
+    fn wrapper_chain(n: usize) -> String {
+        let mut src =
+            String::from("fn wrap<T>(t: T) -> [T] {\n    [t]\n}\nfn main() {\n    let a0 = 1\n");
+        for k in 1..=n {
+            writeln!(src, "    let a{k} = wrap(a{})", k - 1)
+                .expect("writing to a `String` should succeed");
+        }
+        src + "}\n"
+    }
+
+    /// `mono` reads each type of the wrapper chain a bounded number of times, whatever its depth:
+    /// a type `k` arrays deep is met again, and a walk down it on each meeting costs `k`. The
+    /// count is `types::READS`, each read of a kind, so a walk anywhere in `mono` shows in it. It
+    /// starts at `Mono::run`, which the debug check of the output (`assert_concrete`) does not
+    /// enter. The name of an instance is cut at `NAME_LIMIT`, so the reads for each wrapper grow
+    /// with its depth only up to that limit. The sizes are 400, 800 and 1200 wrappers, past it.
+    /// Names stop growing at about 126 wrappers (`NAME_LIMIT` is 256, and each level takes two
+    /// bytes), and 400 is about three times that.
+    #[test]
+    fn mono_should_read_each_type_of_a_wrapper_chain_a_bounded_number_of_times() {
+        use crate::types::READS;
+
+        let reads = |n| {
+            let src = wrapper_chain(n);
+            let (program, diagnostics) = check_alone(&parse_ok(&src), &src, &[]);
+            let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+            READS.set(0);
+            Mono::new(program)
+                .run()
+                .unwrap_or_else(|found| panic!("{found:?}"));
+            READS.get()
+        };
+        let (a, b, c) = (reads(400), reads(800), reads(1200));
+        crate::mir::tests::assert_near_linear(a, b, c);
+    }
 
     /// The program `front_end` gives for `src`, which checks without an error.
     fn instantiated(src: &str) -> Program {
@@ -2045,6 +2135,166 @@ mod tests {
                 .all(|&(code, _)| code != crate::diagnostic::Code::PayloadTooLarge),
             "{small:?}"
         );
+    }
+
+    /// The start of each secondary span of the E0160 that `front_end` reports for `src`.
+    fn payload_uses(src: &str) -> Vec<usize> {
+        let found = crate::front_end::front_end(src).1;
+        (found.iter())
+            .filter(|d| d.code() == crate::diagnostic::Code::PayloadTooLarge)
+            .flat_map(|d| d.secondary().iter().map(|(span, _)| span.start()))
+            .collect()
+    }
+
+    /// The `let` types the instance first, as a local, so no expression reaches it first. The
+    /// expression `P.End` then has the type of the outer instance, and the instance that is over
+    /// the limit is nested inside it.
+    #[test]
+    fn instantiate_should_point_e0160_at_the_expression_that_has_the_type_of_the_outer_instance() {
+        let src = nested_pairs(32);
+        assert_eq!(
+            payload_uses(&src),
+            [src.find("P.End").expect("the source should hold the use")]
+        );
+    }
+
+    /// An instance nested in another enum: `W.Box(P.End)` has the type of `W`, and `P.End`, an
+    /// operand, has the type of the outer instance of `P`. The use is the nearest holder.
+    #[test]
+    fn instantiate_should_point_e0160_at_the_nearest_expression_that_holds_the_instance() {
+        let nested = format!("{}i64{}", "P<".repeat(32), ">".repeat(32));
+        let src = format!(
+            "enum P<T> {{\n    End\n    A(T, T)\n}}\nenum W<T> {{\n    Box(T)\n}}\nfn main() {{\n    let x: W<{nested}> = W.Box(P.End)\n    print(x)\n}}\n"
+        );
+        assert_eq!(
+            payload_uses(&src),
+            [src.find("P.End").expect("the source should hold the use")]
+        );
+    }
+
+    /// No local, parameter or field has the type: the first use is the expression that makes
+    /// the instance, and the instances inside it come from the same expression.
+    #[test]
+    fn instantiate_should_point_e0160_at_the_expression_that_first_makes_the_instance() {
+        let nested = format!("{}i64{}", "P<".repeat(32), ">".repeat(32));
+        let src = format!(
+            "enum P<T> {{\n    End\n    A(T, T)\n}}\nfn main() {{\n    print({nested}.End)\n}}\n"
+        );
+        assert_eq!(
+            payload_uses(&src),
+            [src.find(&nested).expect("the source should hold the use")]
+        );
+    }
+
+    /// The `Result` is the instance that the use makes, not `F`, which the user wrote: a use
+    /// of `F` alone is no use of the instance.
+    #[test]
+    fn instantiate_should_point_e0160_at_the_use_of_the_result_that_holds_the_enum() {
+        let mut src = String::new();
+        for n in 5..31 {
+            writeln!(
+                src,
+                "enum E{n} {{\n    End\n    A(E{}, E{})\n}}",
+                n + 1,
+                n + 1
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        src.push_str("enum E31 {\n    End\n    A(i64, i64)\n}\n");
+        src.push_str("enum F {\n    End\n    A(E5, E5, i64)\n}\n");
+        src.push_str("fn main() {\n    let r: Result<F, F> = Result.Ok(F.End)\n    print(r)\n}\n");
+        assert_eq!(
+            payload_uses(&src),
+            [src.find("Result.Ok")
+                .expect("the source should hold the use")]
+        );
+    }
+
+    /// The source of a program with `P`, then `decls`, then `main` with the body `body`. `P^32` and
+    /// `P^28` in `decls` and `body` stand for `P` nested 32 and 28 levels deep.
+    fn with_pairs(decls: &str, body: &str) -> String {
+        let nested = |levels: usize| format!("{}i64{}", "P<".repeat(levels), ">".repeat(levels));
+        let program = format!(
+            "enum P<T> {{\n    End\n    A(T, T)\n}}\n{decls}fn main() {{\n{body}    print(1)\n}}\n"
+        );
+        program
+            .replace("P^32", &nested(32))
+            .replace("P^28", &nested(28))
+    }
+
+    /// How many E0160 the front end reports for `src`.
+    fn payload_errors(src: &str) -> usize {
+        let found = crate::front_end::front_end(src).1;
+        let too_large = |d: &&Diagnostic| d.code() == crate::diagnostic::Code::PayloadTooLarge;
+        found.iter().filter(too_large).count()
+    }
+
+    /// An earlier function ends in an expression, so `at` has that expression's span when `main`
+    /// starts. `expr` puts `at` back, so the locals of `main` do not take that span.
+    #[test]
+    fn instantiate_should_not_leak_the_span_of_an_earlier_function_into_the_label() {
+        let src = with_pairs(
+            "fn a() -> i64 {\n    return 1\n}\n",
+            "    let x: P^32 = P.End\n",
+        );
+        assert_eq!(
+            payload_uses(&src),
+            [src.find("P.End").expect("the source should hold the use")]
+        );
+    }
+
+    /// `W` is no instance: two fields of `P^28` make it too large, and `W.End` only uses `W`. Each
+    /// `P^28` alone is under the limit, so the error is on `W`.
+    #[test]
+    fn instantiate_should_give_no_e0160_label_for_an_enum_that_is_no_instance() {
+        let src = with_pairs(
+            "enum W {\n    End\n    A(P^28, P^28)\n}\n",
+            "    let w = W.End\n",
+        );
+        assert_eq!(payload_errors(&src), 1);
+        assert_eq!(payload_uses(&src), Vec::<usize>::new());
+    }
+
+    /// `G` is no instance: its declaration makes the instance of `P`, and `G.B` only uses `G`.
+    #[test]
+    fn instantiate_should_give_no_e0160_label_when_a_non_generic_enum_holds_the_instance() {
+        let src = with_pairs("enum G {\n    A(P^32)\n    B\n}\n", "    let g = G.B\n");
+        assert_eq!(payload_errors(&src), 1);
+        assert_eq!(payload_uses(&src), Vec::<usize>::new());
+    }
+
+    /// `G` is no instance, so the instance `H<i64>` that holds it does not pass its use to `P`.
+    #[test]
+    fn instantiate_should_give_no_e0160_label_when_an_instance_holds_a_non_generic_enum() {
+        let decls = "enum G {\n    A(P^32)\n    B\n}\nenum H<T> {\n    A(G)\n    B(T)\n}\n";
+        let src = with_pairs(decls, "    let h: H<i64> = H.B(1)\n");
+        assert_eq!(payload_errors(&src), 1);
+        assert_eq!(payload_uses(&src), Vec::<usize>::new());
+    }
+
+    /// An instance holds an instance: `W.B` uses `W<P^32>`, which holds the instance of `P` that is
+    /// over the limit. The local made both before any expression, so the label comes from the
+    /// spread of the use of `W<P^32>`.
+    #[test]
+    fn instantiate_should_point_e0160_at_the_use_of_an_instance_that_holds_the_instance() {
+        let src = with_pairs(
+            "enum W<T> {\n    A(T)\n    B\n}\n",
+            "    let w: W<P^32> = W.B\n",
+        );
+        assert_eq!(
+            payload_uses(&src),
+            [src.find("W.B").expect("the source should hold the use")]
+        );
+    }
+
+    /// The type of `None` is an optional of the instance, and the type of `[]` an array of it.
+    #[test]
+    fn instantiate_should_point_e0160_at_an_expression_whose_type_is_an_optional_or_array() {
+        for (ty, value) in [("P^32?", "None"), ("[P^32]", "[]")] {
+            let src = with_pairs("", &format!("    let x: {ty} = {value}\n"));
+            let at = src.rfind(value).expect("the source should hold the use");
+            assert_eq!(payload_uses(&src), [at], "{ty}");
+        }
     }
 
     /// A `Result` that holds an instance of `P`, through another `Result`: the error is at the

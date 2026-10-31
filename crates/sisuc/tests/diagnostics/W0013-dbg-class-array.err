@@ -1,0 +1,21 @@
+warning[W0013]: field `x` is never read
+ --> W0013-dbg-class-array.sisu:2:5
+  |
+2 |     x: i64
+  |     ^ never read
+  |
+  = help: delete it, or name it `_x` if it is kept on purpose
+
+warning[W0013]: field `ps` is never read
+ --> W0013-dbg-class-array.sisu:5:5
+  |
+5 |     ps: [P]
+  |     ^^ never read
+...
+8 |     dbg(Q(ps: [P(x: 3)]))
+  |     --------------------- `dbg` can show `ps` here, but `dbg` is not a read
+  |
+  = help: delete it, or name it `_ps` if it is kept on purpose
+
+sisu: 2 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0013

@@ -1,0 +1,20 @@
+error[E0155]: `string` is a built-in type; only the prelude extends it
+ --> E0155-rejected-real-method.sisu:2:8
+  |
+2 | extend string {
+  |        ^^^^^^
+
+error[E0137]: `len` takes no type arguments
+ --> E0155-rejected-real-method.sisu:7:18
+  |
+7 |     print("a".len<i64>())
+  |                  ^^^^^
+  |
+help: remove the type arguments
+  |
+7 -     print("a".len<i64>())
+7 +     print("a".len())
+  |
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0137, E0155
