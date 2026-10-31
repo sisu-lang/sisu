@@ -6,6 +6,12 @@ enum Tree<T> {
 type TS = Tree<string>
 type TW<T> = Tree<[T]>
 type OS = string?
+class Leafy {
+    size: i64
+}
+
+type TI = Tree<i64>
+type LF = Leafy
 type M<T> = [T]?
 
 fn trees(t: Tree<i64>) -> i64 {
@@ -34,6 +40,18 @@ fn arrays(o: i64?) -> i64 {
         M.Some(n) => 1
         M.None => 0
     }
+}
+
+fn named(o: i64?, t: Tree<i64>) -> i64 {
+    let a = match o {
+        TI.None => 1
+        _ => 0
+    }
+    let b = match t {
+        LF.Node(n) => 1
+        _ => 0
+    }
+    a + b
 }
 
 fn main() {

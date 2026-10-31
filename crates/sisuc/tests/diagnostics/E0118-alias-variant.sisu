@@ -22,6 +22,8 @@ fn main() {
     let d = GP<i64>.B
     let e = id(PI.Foo(1))
     let f = id(PI.x)
+    let k = PI.Some<i64>(1)
+    print(None == PI.None)
     let PI = 3
     let g = id(PI.x)
 }

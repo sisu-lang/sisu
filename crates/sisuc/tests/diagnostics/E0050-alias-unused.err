@@ -1,0 +1,18 @@
+error[E0050]: cannot infer `T` for `U.Some`
+ --> E0050-alias-unused.sisu:4:13
+  |
+4 |     let a = U.Some(1)
+  |             ^^^^^^
+  |
+  = help: write the type: `U<...>.Some(...)`
+
+error[E0050]: cannot infer `T` for `U.None`
+ --> E0050-alias-unused.sisu:5:13
+  |
+5 |     let b = U.None
+  |             ^^^^^^
+  |
+  = help: write the type: `U<...>.None`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0050

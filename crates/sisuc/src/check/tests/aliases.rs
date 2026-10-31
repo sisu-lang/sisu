@@ -739,15 +739,32 @@ fn a_value_position_should_check_the_type_that_its_alias_names() {
             "a pattern qualifier holds the arguments that the alias fixes",
             fixture!("E0032-alias-pattern"),
             vec![
-                (Code::Mismatch, (13, 9)),
-                (Code::Mismatch, (14, 9)),
+                (Code::Mismatch, (19, 9)),
                 (Code::Mismatch, (20, 9)),
-                (Code::Mismatch, (21, 9)),
+                (Code::Mismatch, (26, 9)),
                 (Code::Mismatch, (27, 9)),
-                (Code::Mismatch, (28, 9)),
+                (Code::Mismatch, (33, 9)),
                 (Code::Mismatch, (34, 9)),
-                (Code::Mismatch, (35, 9)),
+                (Code::Mismatch, (40, 9)),
+                (Code::Mismatch, (41, 9)),
+                (Code::Mismatch, (47, 9)),
+                (Code::Mismatch, (51, 9)),
             ],
+        ),
+        (
+            "an alias whose parameter nothing binds",
+            fixture!("E0050-alias-unused"),
+            vec![(Code::CannotInfer, (4, 13)), (Code::CannotInfer, (5, 13))],
+        ),
+        (
+            "an empty optional through an alias is no object for `is`",
+            fixture!("E0045-alias-none"),
+            vec![(Code::IsTestsNone, (9, 11)), (Code::IsTestsNone, (10, 11))],
+        ),
+        (
+            "a constant that reads a member of a value is not known",
+            "const X: f64 = (1.0).pi\nfn main() {}",
+            vec![(Code::ConstantNotKnown, (1, 16))],
         ),
         (
             "a local cannot take the name of an alias of an enum",
@@ -770,6 +787,10 @@ fn an_alias_should_stand_for_its_type_where_a_comparison_or_a_constant_reads_it(
         (
             "an empty optional through an alias, on either side of ==, and in an array",
             format!("{BOX}type OP = Box<i64>?\ntype M<T> = Box<T>?\nfn main() {{\n    let p: Box<i64>? = None\n    print(p == OP.None)\n    print(OP.None != p)\n    print(p == M<i64>.None)\n    print(p == M.None)\n    let xs = [M.None, p]\n    print(xs.len())\n}}"),
+        ),
+        (
+            "an optional alias and a generic one as the argument of a generic call",
+            "class Pair<A, B> {\n    first: A\n    second: B\n}\nenum Tree<T> {\n    Leaf\n    Node(T)\n}\ntype M<T> = [T]?\ntype TG<T> = Tree<T>\ntype PG<T> = Pair<T, T>\nfn id<T>(x: T) -> T {\n    x\n}\nfn main() {\n    let a = id(M.Some([1]))\n    let b = id(TG.Node(1))\n    let c = id(PG(first: 1, second: 2))\n    let d: Tree<i64> = id(TG.Leaf)\n    let e: [i64]? = id(M.None)\n    print(a == None)\n    print(c.first)\n    print(e == None)\n    print(b == d)\n}".to_string(),
         ),
         (
             "constants and qualifiers through an alias with a parameter",

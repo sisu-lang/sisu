@@ -1,0 +1,11 @@
+class Box<U> {
+    value: U?
+}
+
+type OP = Box<i64>?
+
+fn main() {
+    let p: Box<i64>? = None
+    print(p is OP.None)
+    print(OP.None is p)
+}
