@@ -14,7 +14,8 @@ use std::rc::Rc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::generic::Site;
+use super::expr::{bare_none, dbg_argument, none_literal, rank};
+use super::generic::{Site, type_meets};
 use super::interface::{Bound, Slot};
 use super::{
     Body, Checked, Checker, Declared, DiagnosticKind, Poisoned, UnknownForm, built_in_type,
@@ -138,6 +139,9 @@ fn body_param(i: usize) -> Type {
 pub(super) struct Through {
     pub(super) params: Vec<Symbol>,
     pub(super) ty: Type,
+    /// The checks that the alias's uses make once `params` are bound: none when the use wrote
+    /// the type arguments, which made them.
+    pub(super) checks: Rc<[UseCheck]>,
 }
 
 /// A name in a value position, and whether an alias took it.
@@ -361,20 +365,75 @@ impl Checker<'_> {
         // parameters stays within them; if not, the alias is `Error`, and the use reports nothing.
         self.aliases.too_large = false;
         match ty {
-            Some(ty) => Via::To(Through { params, ty }),
+            Some(ty) => Via::To(Through {
+                params,
+                ty,
+                checks: resolved.checks,
+            }),
             None => Via::Error,
         }
     }
 
-    /// The type that the alias `name`, which takes no parameter, names, if it is resolved and not
-    /// `Error`. The reads that cannot change the checker use it.
+    /// `through` for a name that a site writes with the type arguments `written` in `angles`: the
+    /// alias is applied as a written type is, so the type arguments are resolved and counted, the
+    /// checks of the alias are made, and the limits hold. The type that it gives is complete: it
+    /// has no parameter left to bind.
+    pub(super) fn through_site(
+        &mut self,
+        name: &ast::Ident,
+        written: &[ast::TypeExpr],
+        angles: Span,
+    ) -> Via {
+        let through = match self.through(name.name) {
+            Via::To(through) => through,
+            other => return other,
+        };
+        if written.is_empty() {
+            return Via::To(through);
+        }
+        self.aliases.uses += 1;
+        let Some(list) = self.type_args_of(name, &through.params, written, angles, false) else {
+            return Via::Error;
+        };
+        let at = name.span.to(angles);
+        let outermost = self.begin_written();
+        let built = self.substitute(through.ty, list);
+        if outermost {
+            self.aliases.base = None;
+        }
+        let Some(built) = built else {
+            if std::mem::take(&mut self.aliases.too_large) {
+                self.report(DiagnosticKind::AliasTooLarge {
+                    ty: self.source.text(at).to_string(),
+                    at,
+                    limit: MAX_ENTRIES,
+                });
+            }
+            return Via::Error;
+        };
+        match self.use_checks(&through.checks, list, at) {
+            Some(true) => {}
+            _ => return Via::Error,
+        }
+        match self.settle(built) {
+            Some(ty) => Via::To(Through {
+                params: Vec::new(),
+                ty,
+                checks: Rc::from([]),
+            }),
+            None => Via::Error,
+        }
+    }
+
+    /// The type that the alias `name` names, if it is resolved and not `Error`; a parameter shows
+    /// as `Param("", i)`. The reads that cannot change the checker use it, and ask only for a
+    /// built-in type, which no parameter is in.
     pub(super) fn alias_type(&self, name: Symbol) -> Option<Type> {
         let &Declared::Known(id) = self.aliases.names.get(&name)? else {
             return None;
         };
-        let info = &self.aliases.infos[id];
-        match &info.state {
-            State::Done(Some(resolved)) if info.params.is_empty() => Some(resolved.body),
+        match &self.aliases.infos[id].state {
+            State::Done(Some(resolved)) => Some(resolved.body),
             _ => None,
         }
     }
@@ -384,6 +443,70 @@ impl Checker<'_> {
         matches!(self.aliases.names.get(&name), Some(&Declared::Known(id)) if self.aliases.infos[id].params.is_empty())
     }
 
+    /// Whether `e` is the empty optional: `None`, `Option.None`, `Option<T>.None`, or the same
+    /// through an alias of an optional type that no local hides.
+    pub(super) fn none_written(&self, e: &ast::Expr) -> bool {
+        none_literal(e) || self.alias_none(e).is_some()
+    }
+
+    /// `Some(bare)` when `e` is `A.None` or `A<T>.None` for an alias `A` of an optional type that
+    /// no local hides: `bare` when the alias takes parameters and `e` writes none, so the context
+    /// fixes the type, as it does for `Option.None`.
+    pub(super) fn alias_none(&self, e: &ast::Expr) -> Option<bool> {
+        let ast::ExprKind::Field {
+            base,
+            name,
+            safe: false,
+        } = &e.kind
+        else {
+            return None;
+        };
+        let (alias, bare) = match &base.kind {
+            ast::ExprKind::Name(alias) => (alias, true),
+            ast::ExprKind::Applied { name, .. } => (&name.name, false),
+            _ => return None,
+        };
+        let Some(&Declared::Known(id)) = self.aliases.names.get(alias) else {
+            return None;
+        };
+        let State::Done(Some(resolved)) = &self.aliases.infos[id].state else {
+            return None;
+        };
+        (name.name.as_str() == "None"
+            && matches!(resolved.body.kind(), TypeKind::Optional(_))
+            && !self.body.scopes.iter().any(|s| s.contains_key(alias)))
+        .then(|| bare && !self.aliases.infos[id].params.is_empty())
+    }
+
+    /// `rank` of `e`, where the empty optional of an alias with parameters waits for its context
+    /// as `Option.None` does.
+    pub(super) fn rank(&self, e: &ast::Expr) -> u8 {
+        if let Some(argument) = dbg_argument(e) {
+            return self.rank(argument);
+        }
+        if self.alias_none(e) == Some(true) {
+            return 2;
+        }
+        rank(e)
+    }
+
+    /// `bare_none` of `e`, which also holds for `A.None` as `rank` says.
+    pub(super) fn bare_none_written(&self, e: &ast::Expr) -> bool {
+        bare_none(e) || self.alias_none(e) == Some(true)
+    }
+
+    /// Whether a path that starts with the alias `name` reads the alias: no local has the name, or
+    /// the alias names an enum, which a local cannot hide (it is reported).
+    pub(super) fn alias_visible(&mut self, name: Symbol) -> bool {
+        self.lookup(name).is_none() || self.alias_names_enum(name)
+    }
+
+    /// Whether `name` is an alias of an enum, whose variants a path of the name writes.
+    pub(super) fn alias_names_enum(&self, name: Symbol) -> bool {
+        self.alias_type(name)
+            .is_some_and(|ty| matches!(ty.kind(), TypeKind::Enum(..)))
+    }
+
     /// Whether `name` is an alias that is `Error`: a broken one, or one that has failed. Its own
     /// error stands, so a use of it reports nothing more.
     pub(super) fn alias_error(&self, name: Symbol) -> bool {
@@ -391,6 +514,18 @@ impl Checker<'_> {
             Some(Declared::Broken) => true,
             Some(&Declared::Known(id)) => matches!(self.aliases.infos[id].state, State::Done(None)),
             None => false,
+        }
+    }
+
+    /// Whether the path base `base` names a built-in type: its own name, or an alias of one,
+    /// which may write type arguments after it that the alias takes.
+    pub(super) fn names_built_in(&self, base: &ast::Expr) -> bool {
+        match &base.kind {
+            ast::ExprKind::Name(name) => self.built_in_of(*name).is_some(),
+            ast::ExprKind::Applied { name, .. } => {
+                self.aliases.names.contains_key(&name.name) && self.built_in_of(name.name).is_some()
+            }
+            _ => false,
         }
     }
 
@@ -428,8 +563,11 @@ impl Checker<'_> {
         let (resolved, list) = (resolved?, list?);
         let built = self.substitute(resolved.body, list)?;
         // The checks come before the replacement of an associated type, which poisons a type that
-        // does not conform without a report of its own.
-        self.use_checks(&resolved, list, ty.bare)?;
+        // does not conform without a report of its own. A type that fails one is `Error`, as a
+        // class that fails its bound is.
+        if !self.use_checks(&resolved.checks, list, ty.bare)? {
+            return None;
+        }
         self.settle(built)
     }
 
@@ -458,11 +596,17 @@ impl Checker<'_> {
         Some(built)
     }
 
-    /// Makes the checks of the use of `resolved` with `list`, written at `at`. In an alias body,
-    /// one that still names a parameter waits for the use of that alias. `None` when a
-    /// substitution passed the limit.
-    fn use_checks(&mut self, resolved: &Resolved, list: TypeArgs, at: Span) -> Option<()> {
-        for &check in resolved.checks.iter() {
+    /// Makes the checks of a use of an alias with the type arguments `list`, written at `at`. In
+    /// an alias body, one that still names a parameter waits for the use of that alias. Whether
+    /// they all hold; `None` when a substitution passed the limit.
+    pub(super) fn use_checks(
+        &mut self,
+        checks: &[UseCheck],
+        list: TypeArgs,
+        at: Span,
+    ) -> Option<bool> {
+        let mut held = true;
+        for &check in checks {
             let (of, applied) = match check {
                 UseCheck::Applied(ty) => (ty, None),
                 UseCheck::Conforms(ty, interface, bound) => (ty, Some((interface, bound))),
@@ -472,9 +616,9 @@ impl Checker<'_> {
                 None => UseCheck::Applied(ty),
                 Some((interface, bound)) => UseCheck::Conforms(ty, interface, bound),
             };
-            self.make_check(check, at);
+            held &= self.make_check(check, at);
         }
-        Some(())
+        Some(held)
     }
 
     /// Makes `check` where the type is written at `at`; in an alias body, a type that names a
@@ -505,11 +649,20 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether `name` is `Option`, or an alias of an optional type, which a qualifier in a pattern
-    /// may write.
+    /// Whether `name` is `Option`, or an alias of an optional type.
     pub(super) fn names_option(&mut self, name: Symbol) -> bool {
         name.as_str() == "Option"
             || matches!(self.through(name), Via::To(through) if matches!(through.ty.kind(), TypeKind::Optional(_)))
+    }
+
+    /// Whether `name`, a qualifier in a pattern at a position of the optional type `ty`, is
+    /// `Option`, or an alias of that type, whose fixed arguments hold: the alias's own parameters
+    /// are the only types that `ty` may leave open.
+    pub(super) fn names_option_at(&mut self, name: Symbol, ty: Type) -> bool {
+        name.as_str() == "Option"
+            || matches!(self.through(name), Via::To(through)
+                if matches!(through.ty.kind(), TypeKind::Optional(_))
+                    && type_meets(through.params.len(), through.ty, ty))
     }
 
     /// `A.member`, or `A.member(args)` when `call` gives the arguments and the span of their
@@ -523,7 +676,7 @@ impl Checker<'_> {
         member: &ast::Ident,
         call: Option<(&[ast::Arg], Span)>,
     ) -> Option<Checked> {
-        match self.through(site.name.name) {
+        match self.through_site(site.name, site.written, site.angles) {
             Via::Not => None,
             Via::Error => {
                 self.stray(call.map_or(&[], |(args, _)| args));
@@ -543,7 +696,8 @@ impl Checker<'_> {
 
     /// `A.None` and `A.Some(x)`, where the alias `A` names an optional type: the paths of `Option`.
     /// The type that the alias names is the context of the value when it takes no parameter, or
-    /// when the type arguments written after it fix it.
+    /// when the type arguments written after it fixed it. Else the value binds the parameters, as
+    /// a call of a generic callee does.
     pub(super) fn optional_alias_path(
         &mut self,
         span: Span,
@@ -552,21 +706,8 @@ impl Checker<'_> {
         member: &ast::Ident,
         call: Option<(&[ast::Arg], Span)>,
     ) -> Checked {
-        let mut expected = site.expected;
-        if through.params.is_empty() {
-            expected = Some(through.ty);
-        } else if !site.written.is_empty() {
-            let Some(list) =
-                self.type_args_of(site.name, &through.params, site.written, site.angles, false)
-            else {
-                self.stray(call.map_or(&[], |(args, _)| args));
-                return Err(Poisoned::error());
-            };
-            let Some(ty) = self.subst(through.ty, list.get()) else {
-                self.stray(call.map_or(&[], |(args, _)| args));
-                return Err(Poisoned::error());
-            };
-            expected = Some(ty);
+        if !through.params.is_empty() {
+            return self.option_path(span, site, member, call, Some(through));
         }
         // The value is `Option`'s, so a message names `Option`, not the alias.
         let option = ast::Ident {
@@ -576,22 +717,10 @@ impl Checker<'_> {
         let site = Site {
             name: &option,
             written: &[],
-            expected,
+            expected: Some(through.ty),
             ..site
         };
-        self.option_path(span, site, member, call)
-    }
-
-    /// Checks the bounds of the class or enum of `ty`, which a use of an alias built, written at
-    /// `at`: an argument that the alias's parameter took may fail what the declaration asks of it.
-    /// Whether they hold, or wait.
-    pub(super) fn bounded_use(&mut self, ty: Type, at: Span) -> bool {
-        let (bounded, count) = match ty.kind() {
-            TypeKind::Class(id, args) => (self.classes[id.0].bounded, args.get().len()),
-            TypeKind::Enum(id, args) => (self.enums[id.0].bounded, args.get().len()),
-            _ => return true,
-        };
-        !bounded || self.check_applied(ty, vec![at; count])
+        self.option_path(span, site, member, call, None)
     }
 
     /// The type `base.name` in an alias body, where `base`, a parameter of the alias, takes no
@@ -701,7 +830,7 @@ impl Checker<'_> {
     /// The type written as `ty`, when the types it resolved to followed a use of an alias, which
     /// `uses` says: a mismatch with a declared type shows the type as the declaration writes it.
     pub(super) fn shown_text(&self, ty: &ast::TypeExpr, uses: usize) -> Option<Rc<str>> {
-        (self.aliases.uses > uses).then(|| Rc::from(self.source.text(ty.span)))
+        (self.aliases.uses > uses).then(|| Rc::from(ty.to_string()))
     }
 
     /// Says that the expression at `at`, which is checked against `want`, has the type that its

@@ -136,18 +136,20 @@ impl Checker<'_> {
                 return Some(Err(Poisoned::error()));
             }
             None if name.as_str() == "Option" => {
-                return Some(self.option_path(span, site, member, call));
+                return Some(self.option_path(span, site, member, call, None));
             }
             None => {}
         }
         // An alias is the type that it names, unless a local takes the name.
-        if self.lookup(name).is_none()
+        if self.alias_visible(name)
             && let Some(checked) = self.alias_path(span, site, member, call)
         {
             return Some(checked);
         }
-        // Any other base with type arguments is checked as a value, which reports them.
-        if angles.is_some() || self.lookup(name).is_some() {
+        // Any other base with type arguments is checked as a value, which reports them. An alias
+        // of a built-in type took them above, and they fit.
+        let applied = self.aliases.names.contains_key(&name) && self.built_in_of(name).is_some();
+        if (angles.is_some() && !applied) || self.lookup(name).is_some() {
             return None;
         }
         let written = base.span.to(member.span);

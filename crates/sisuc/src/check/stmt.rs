@@ -1348,7 +1348,9 @@ impl Checker<'_> {
         kind: BindingKind,
         keyword: Option<Span>,
     ) -> tir::LocalId {
-        if !self.reserved(name) && !name.span.in_prelude() && self.enum_ids.contains_key(&name.name)
+        if !self.reserved(name)
+            && !name.span.in_prelude()
+            && (self.enum_ids.contains_key(&name.name) || self.alias_names_enum(name.name))
         {
             self.report(DiagnosticKind::EnumNamedLocal {
                 name: name.name.to_string(),

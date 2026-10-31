@@ -69,6 +69,33 @@ fn longest(p: Pairs<string>) -> i64 {
     best
 }
 
+// Value positions: a name that an alias takes stands for the whole type it names, with the
+// arguments that the alias fixes and the ones that a use writes or infers.
+type Measure<T> = f64
+type Maybe<T> = [T]?
+type Slot = Box<i64>?
+type Tree = Leaf2
+enum Leaf2 {
+    Bare
+    Leaf(i64)
+}
+const SCALE: f64 = Measure<i64>(3)
+const HALF_TURN: f64 = Measure<i64>.pi
+
+fn depth(t: Leaf2) -> i64 {
+    match t {
+        Tree.Leaf(n) => n
+        Tree.Bare => 0
+    }
+}
+
+fn firsts(m: [i64]?) -> i64 {
+    match m {
+        Maybe.Some(xs) => xs.len()
+        Maybe.None => 0
+    }
+}
+
 fn main() {
     f()
     g()
@@ -89,4 +116,17 @@ fn main() {
     print(longest(words))                  // 3
     let same: [[string]] = words
     print(same[0][0])                      // ab
+    print(SCALE)                           // 3.0
+    print(HALF_TURN > 3.14)                // true
+    print(Measure<string>(2) + Measure.pi) // 5.141592653589793
+    let some = Maybe.Some([1, 2])
+    let none: [i64]? = Maybe.None
+    print(firsts(some))                    // 2
+    print(firsts(none))                    // 0
+    print(firsts(Maybe<i64>.Some([4])))    // 1
+    let slot: Box<i64>? = Box(value: 1)
+    print(slot == Slot.None)               // false
+    print(Slot.None == slot)               // false
+    print(depth(Tree.Leaf(5)))             // 5
+    print(depth(Tree.Bare))                // 0
 }

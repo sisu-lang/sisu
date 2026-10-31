@@ -1,0 +1,5 @@
+type Pairs<T> = [[T]]
+
+fn main() {
+    let x: Pairs<  i64 > = "s"
+}

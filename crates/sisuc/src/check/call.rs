@@ -56,7 +56,7 @@ impl Checker<'_> {
         if let Some(checked) = self.prelude_call(span, callee, args, site.expected) {
             return checked;
         }
-        match self.through(callee.name) {
+        match self.through_site(callee, site.written, site.angles) {
             Via::Not => {}
             Via::Error => {
                 self.stray(args);
@@ -84,7 +84,7 @@ impl Checker<'_> {
             }
             // Here `Some` is the prelude's. A user item named `Some` is reported, and the two arms
             // above call it.
-            _ if callee.name.as_str() == "Some" => self.some(span, site, None, args),
+            _ if callee.name.as_str() == "Some" => self.some(span, site, None, args, None),
             // `Ok` and `Err` are the prelude's, and no user item can take their names.
             _ if let Some((id, _)) = self.result_variant(callee.name) => {
                 self.enum_path(span, id, callee, Some((args, callee.span)), site, None)
@@ -383,7 +383,7 @@ impl Checker<'_> {
         // An alias is the type that it names, unless a local takes the name.
         if let Via::To(through) = self.through(name)
             && let TypeKind::Enum(id, _) = through.ty.kind()
-            && self.lookup(name).is_none()
+            && self.alias_visible(name)
         {
             return variant(self, id);
         }
@@ -891,15 +891,19 @@ impl Checker<'_> {
                 ret: Some(ret),
                 bounds: &bounds,
             };
-            let written = (site.written, site.angles);
-            let Some((args, _, Some(ty))) =
+            // An alias's type arguments, when the call wrote them, are applied already.
+            let written = (
+                if through.is_some() { &[] } else { site.written },
+                site.angles,
+            );
+            let Some((args, list, Some(ty))) =
                 self.generic_call(span, &sig, written, args, site.expected)
             else {
                 return Err(Poisoned::error());
             };
             let failed = args.iter().any(mismatched);
-            // The bounds of the class, on the arguments that the alias's parameters took.
-            let held = through.is_none() || self.bounded_use(ty, span);
+            // The bounds that the alias's body puts on its parameters, on what they are bound to.
+            let held = through.is_none_or(|t| self.use_checks(&t.checks, list, span) == Some(true));
             return match args.into_iter().collect() {
                 Ok(args) if held => {
                     Ok(self.spilled(span, ty, args, |args| tir::ExprKind::New { class, args }))

@@ -2,6 +2,7 @@
 //! `Option<T>.None`. The prelude declares `Option`, but the optional type is built in, so none of
 //! these makes an enum value.
 
+use super::alias::Through;
 use super::generic::{GenericSig, Site, mark, mismatched};
 use super::{Checked, Checker, DiagnosticKind, Poisoned, optional_of};
 use crate::ast;
@@ -12,13 +13,15 @@ use crate::tir::{self, Type, TypeKind};
 
 impl Checker<'_> {
     /// `Some(args)`, which `site` writes, or `Option.Some(args)` when `member` is its `Some`:
-    /// the call of `Some<T>(x: T) -> T?`, which converts `x` to the optional once.
+    /// the call of `Some<T>(x: T) -> T?`, which converts `x` to the optional once. Through an alias
+    /// of an optional type that takes parameters, the call binds them: `through` says its type.
     pub(super) fn some(
         &mut self,
         span: Span,
         site: Site<'_>,
         member: Option<&ast::Ident>,
         args: &[ast::Arg],
+        through: Option<&Through>,
     ) -> Checked {
         // Built only for a diagnostic.
         let path = if let Some(member) = member {
@@ -29,32 +32,45 @@ impl Checker<'_> {
         let Some(labeled) = self.positional_shape(span, &path, 1, args) else {
             return Err(Poisoned::error());
         };
+        let open = through.filter(|t| !t.params.is_empty());
         let (arg, found) = match site.expected.map(|ty| (ty, ty.kind())) {
             // An expected `T?` fixes `T`, so a literal in the argument takes that type: the
             // generic call would type an `if` of integer literals by their default first.
             Some((want, TypeKind::Optional(payload)))
-                if site.written.is_empty() && !want.holds_hole() =>
+                if site.written.is_empty() && !want.holds_hole() && open.is_none() =>
             {
                 (mark(self.operand(&args[0].value, Some(payload))), want)
             }
             _ => {
                 let param = Symbol::intern("T");
                 let ty = Type::intern(TypeKind::Param(param, 0));
+                let (declared, payload, ret) = match open {
+                    Some(t) => match t.ty.kind() {
+                        TypeKind::Optional(payload) => (t.params.clone(), payload, t.ty),
+                        _ => unreachable!("an alias that builds `Some` should name an optional"),
+                    },
+                    None => (vec![param], ty, optional_of(ty)),
+                };
                 let sig = GenericSig {
                     name: site.name,
                     variant: member,
-                    declared: &[param],
+                    declared: &declared,
                     owner: &[],
-                    params: &[Some(ty)],
-                    ret: Some(optional_of(ty)),
+                    params: &[Some(payload)],
+                    ret: Some(ret),
                     bounds: &[],
                 };
                 let written = (site.written, site.angles);
-                let Some((args, _, Some(found))) =
+                let Some((args, list, Some(found))) =
                     self.generic_call(span, &sig, written, args, site.expected)
                 else {
                     return Err(Poisoned::error());
                 };
+                if let Some(t) = open
+                    && self.use_checks(&t.checks, list, span) != Some(true)
+                {
+                    return Err(Poisoned::error());
+                }
                 let arg = (args.into_iter().next())
                     .expect("`Some` should have the one argument it checked");
                 (arg, found)
@@ -80,9 +96,31 @@ impl Checker<'_> {
         site: Site<'_>,
         member: &ast::Ident,
         call: Option<(&[ast::Arg], Span)>,
+        through: Option<&Through>,
     ) -> Checked {
         match (member.name.as_str(), call) {
-            ("Some", Some((args, _))) => self.some(span, site, Some(member), args),
+            ("Some", Some((args, _))) => self.some(span, site, Some(member), args, through),
+            ("None", None) if let Some(t) = through.filter(|t| !t.params.is_empty()) => {
+                let sig = GenericSig {
+                    name: site.name,
+                    variant: Some(member),
+                    declared: &t.params,
+                    owner: &[],
+                    params: &[],
+                    ret: Some(t.ty),
+                    bounds: &[],
+                };
+                let written = (site.written, site.angles);
+                let Some((_, list, Some(found))) =
+                    self.generic_call(span, &sig, written, &[], site.expected)
+                else {
+                    return Err(Poisoned::error());
+                };
+                if self.use_checks(&t.checks, list, span) != Some(true) {
+                    return Err(Poisoned::error());
+                }
+                self.none(span, Some(found))
+            }
             ("None", None) => {
                 let mut expected = site.expected;
                 if !site.written.is_empty() {

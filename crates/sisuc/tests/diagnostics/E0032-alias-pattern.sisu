@@ -1,0 +1,41 @@
+enum Tree<T> {
+    Leaf
+    Node(T)
+}
+
+type TS = Tree<string>
+type TW<T> = Tree<[T]>
+type OS = string?
+type M<T> = [T]?
+
+fn trees(t: Tree<i64>) -> i64 {
+    match t {
+        TS.Node(n) => 1
+        TS.Leaf => 0
+    }
+}
+
+fn wrapped(t: Tree<i64>) -> i64 {
+    match t {
+        TW.Node(n) => 1
+        TW.Leaf => 0
+    }
+}
+
+fn optionals(o: i64?) -> i64 {
+    match o {
+        OS.Some(n) => 1
+        OS.None => 0
+    }
+}
+
+fn arrays(o: i64?) -> i64 {
+    match o {
+        M.Some(n) => 1
+        M.None => 0
+    }
+}
+
+fn main() {
+    print(trees(Tree.Leaf) + wrapped(Tree.Leaf) + optionals(None) + arrays(None))
+}

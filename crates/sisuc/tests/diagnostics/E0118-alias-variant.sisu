@@ -22,6 +22,6 @@ fn main() {
     let d = GP<i64>.B
     let e = id(PI.Foo(1))
     let f = id(PI.x)
-    let GI = 3
-    let g = id(GI.A)
+    let PI = 3
+    let g = id(PI.x)
 }

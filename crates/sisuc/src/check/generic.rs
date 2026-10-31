@@ -7,7 +7,7 @@ use std::{fmt, iter};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::alias::{Through, Via};
-use super::expr::{bare_none, dbg_argument, int_literal, option_written, rank};
+use super::expr::{dbg_argument, int_literal, option_written};
 use super::interface::{Bound, Required};
 use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
@@ -560,6 +560,11 @@ impl Bindings {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(TypeArgs::intern(&list))
     }
+}
+
+/// Whether `value` is `pattern` for some types of its `count` parameters.
+pub(super) fn type_meets(count: usize, pattern: Type, value: Type) -> bool {
+    Bindings::new(count, &[]).unify(pattern, value)
 }
 
 #[cfg(test)]
@@ -1445,8 +1450,13 @@ impl Checker<'_> {
         // `element`'s type once an element binds all it names. A later element meets it with
         // no new walk of `element`, so the work does not grow with elements times its depth.
         let mut bound = None;
+        let ranks: Vec<u8> = elements.iter().map(|e| self.rank(e)).collect();
         for wave in 0..3 {
-            for (i, e) in elements.iter().enumerate().filter(|(_, e)| rank(e) == wave) {
+            for (i, e) in elements
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| ranks[*i] == wave)
+            {
                 let checked = if let Some(want) = bound {
                     mark(self.operand(e, Some(want)))
                 } else if wave < 2 {
@@ -1646,7 +1656,7 @@ impl Checker<'_> {
             },
             args,
         ) = match &e.kind {
-            _ if bare_none(e) => return true,
+            _ if self.bare_none_written(e) => return true,
             K::ArrayLit(elements) => return elements.iter().all(|e| self.waits(e, fit)),
             K::Field {
                 base,
@@ -1741,7 +1751,8 @@ impl Checker<'_> {
                     }
                 } else if !safe
                     && method.name.as_str() == "Some"
-                    && option_written(receiver) == Some(false)
+                    && (option_written(receiver) == Some(false)
+                        || matches!(receiver.kind, ast::ExprKind::Name(n) if self.names_option(n)))
                 {
                     // `Option.Some` is `Some`, as `generic_callee` takes it.
                     CallShape {
@@ -1898,7 +1909,7 @@ impl Checker<'_> {
             let Via::To(through) = self.through(name) else {
                 return None;
             };
-            if self.lookup(name).is_some() {
+            if !self.alias_visible(name) {
                 return None;
             }
             let TypeKind::Enum(id, list) = through.ty.kind() else {
@@ -2481,12 +2492,8 @@ impl Checker<'_> {
             (Some(Declared::Known(id)), ..) => Some(self.classes[id.0].type_params.len()),
             (_, Some(Declared::Known(id)), _) => Some(self.signatures[id.0].type_params.len()),
             (.., Some(Declared::Known(id))) => Some(self.enums[id.0].type_params.len()),
-            // An alias takes the parameters that it writes.
-            _ if let Via::To(through) = self.through(n)
-                && self.lookup(n).is_none() =>
-            {
-                Some(through.params.len())
-            }
+            // An alias counts and resolves the arguments itself (`through_site`).
+            _ if self.aliases.names.contains_key(&n) && self.lookup(n).is_none() => return None,
             _ => None,
         };
         match params {
@@ -2522,7 +2529,7 @@ impl Checker<'_> {
         }
         // An alias is the type that it names, unless a local takes the name.
         if let Via::To(through) = self.through(name)
-            && self.lookup(name).is_none()
+            && self.alias_visible(name)
         {
             match through.ty.kind() {
                 TypeKind::Enum(id, _) => return self.enum_path_method(id, method),

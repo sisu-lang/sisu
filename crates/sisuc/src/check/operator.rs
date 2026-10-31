@@ -1,8 +1,6 @@
 //! Operators: arithmetic, comparison, equality, `is` and `??`.
 
-use super::expr::{
-    fits, if_some, int_literal, literal_type, local, none_literal, operator, path, rank, typed,
-};
+use super::expr::{fits, if_some, int_literal, literal_type, local, operator, path, typed};
 use super::generic::mismatched;
 use super::interface::Operation;
 use super::{
@@ -28,7 +26,7 @@ impl Checker<'_> {
         expected: Option<Type>,
     ) -> Result<(Type, (Checked, bool)), Poisoned> {
         // A `None` expects an `i64`, as in `None + 1`.
-        let expected = expected.or_else(|| none_literal(operand).then_some(Type::I64));
+        let expected = expected.or_else(|| self.none_written(operand).then_some(Type::I64));
         let before = self.diagnostics.len();
         let checked = self.value(operand, expected);
         if let Some(ty) = type_of(&checked).filter(|ty| ty.has_param()) {
@@ -287,7 +285,7 @@ impl Checker<'_> {
         let mut first = None;
         let mut ty = if literal_type(expected) != Type::I64 {
             Some(literal_type(expected))
-        } else if let Some(k) = operands.iter().position(|e| rank(e) == 0) {
+        } else if let Some(k) = operands.iter().position(|e| self.rank(e) == 0) {
             // An `i64` the context wants reaches an operator inside, so a nested `f64` is reported.
             let checked = self.value(operands[k], expected.filter(|_| wants_i64));
             let ty = type_of(&checked).map(|ty| match payload(ty) {
@@ -357,7 +355,7 @@ impl Checker<'_> {
                 Some((_, operand)) => operand,
                 None => self.value(e, (!by_char).then(|| want.unwrap_or(UNKNOWN))),
             };
-            if rank(e) != 0 {
+            if self.rank(e) != 0 {
                 deferred.extend(self.diagnostics.drain(start..));
             }
             let char_value = type_of(&value) == Some(Type::CHAR);
@@ -453,7 +451,7 @@ impl Checker<'_> {
                 want = None;
             }
             mismatched |= m;
-            failed |= got.is_none() && rank(e) == 0;
+            failed |= got.is_none() && self.rank(e) == 0;
             checked.push(operand);
             before = got;
         }
@@ -565,7 +563,8 @@ impl Checker<'_> {
     /// an `i64` or a `u8` beside an `f64`, at the side that is not the `f64`. A side that is
     /// `f64.nan` is warned about.
     fn equal(&mut self, span: Span, negated: bool, lhs: &ast::Expr, rhs: &ast::Expr) -> Checked {
-        let swapped = rank(rhs) < rank(lhs) || (none_literal(lhs) && !none_literal(rhs));
+        let swapped =
+            self.rank(rhs) < self.rank(lhs) || (self.none_written(lhs) && !self.none_written(rhs));
         let (first, second) = if swapped { (rhs, lhs) } else { (lhs, rhs) };
         let checked = self.value(first, None);
         let want = type_of(&checked).map_or_else(|| UNKNOWN, as_optional);
@@ -581,7 +580,7 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         }
         // `second` is the `none_literal`, if either is.
-        if none_literal(second)
+        if self.none_written(second)
             && let Some(ty) = type_of(&checked)
             && !matches!(ty.kind(), TypeKind::Optional(_))
         {
@@ -627,7 +626,7 @@ impl Checker<'_> {
             _ => None,
         };
         // A second side that rejected the first's type is the mistake: it has no type to compare.
-        if !none_literal(second) && !mismatched(&l) && !mismatched(&r) {
+        if !self.none_written(second) && !mismatched(&l) && !mismatched(&r) {
             let same = match (type_of(&l), type_of(&r)) {
                 (Some(lt), Some(rt)) => lt == rt || fits(lt, rt) || fits(rt, lt),
                 _ => false,
@@ -674,8 +673,8 @@ impl Checker<'_> {
     /// are the same value. An optional of an optional object is no object: one layer comes off
     /// first.
     pub(super) fn is(&mut self, span: Span, lhs: &ast::Expr, rhs: &ast::Expr) -> Checked {
-        if none_literal(lhs) || none_literal(rhs) {
-            let other = if none_literal(lhs) { rhs } else { lhs };
+        if self.none_written(lhs) || self.none_written(rhs) {
+            let other = if self.none_written(lhs) { rhs } else { lhs };
             // It goes before the diagnostics of `other`, which the help waits for.
             let at = self.diagnostics.len();
             let checked = self.value(other, Some(UNKNOWN));

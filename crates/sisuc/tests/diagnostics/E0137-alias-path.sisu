@@ -22,6 +22,6 @@ fn main() {
     let c = O.None<i64>(1)
     let e = PI.Foo<i64>(1)
     let f = GI.Missing<i64>(1)
-    let GI = 3
-    let g = GI.A<i64>(1)
+    let PI = 3
+    let g = PI.Foo<i64>(1)
 }

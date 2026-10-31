@@ -388,14 +388,19 @@ impl Checker<'_> {
             ret: Some(ret),
             bounds: &bounds,
         };
-        let written = (site.written, site.angles);
-        let Some((args, _, Some(ty))) = self.generic_call(span, &sig, written, args, site.expected)
+        // An alias's type arguments, when the call wrote them, are applied already.
+        let written = (
+            if through.is_some() { &[] } else { site.written },
+            site.angles,
+        );
+        let Some((args, list, Some(ty))) =
+            self.generic_call(span, &sig, written, args, site.expected)
         else {
             return Err(Poisoned::error());
         };
         let failed = labeled || args.iter().any(mismatched);
-        // The bounds of the enum, on the arguments that the alias's parameters took.
-        let held = through.is_none() || self.bounded_use(ty, span);
+        // The bounds that the alias's body puts on its parameters, on what they are bound to.
+        let held = through.is_none_or(|t| self.use_checks(&t.checks, list, span) == Some(true));
         match args.into_iter().collect() {
             Ok(args) if !failed && held => Ok(self.spilled(span, ty, args, |args| {
                 tir::ExprKind::Variant { id, variant, args }

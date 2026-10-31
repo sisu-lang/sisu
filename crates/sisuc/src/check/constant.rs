@@ -282,7 +282,7 @@ impl Checker<'_> {
                 all(self, &mut args.iter().map(|arg| &arg.value));
                 false
             }
-            ExprKind::Field { base, .. } if matches!(base.kind, ExprKind::Name(name) if self.alias_error(name)) => {
+            ExprKind::Field { base, .. } if matches!(&base.kind, ExprKind::Name(name) | ExprKind::Applied { name: ast::Ident { name, .. }, .. } if self.alias_error(*name)) => {
                 false
             }
             ExprKind::Call { callee, args, .. }
@@ -295,9 +295,7 @@ impl Checker<'_> {
                 all(self, &mut args.iter().map(|arg| &arg.value))
             }
             // `f64.pi`; `f64.PI` and `i64.max` pass too, and the checker reports them.
-            ExprKind::Field { base, .. } if matches!(base.kind, ExprKind::Name(name) if self.built_in_of(name).is_some()) => {
-                true
-            }
+            ExprKind::Field { base, .. } if self.names_built_in(base) => true,
             ExprKind::Name(name) => {
                 let declared = if *name == user.name {
                     user.span

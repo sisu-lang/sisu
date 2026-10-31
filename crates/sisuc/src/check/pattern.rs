@@ -9,7 +9,7 @@ use super::alias::Via;
 use super::branch::Branch;
 use super::enums::reserved_name;
 use super::exhaust::{self, Report, Row};
-use super::generic::Ahead;
+use super::generic::{Ahead, type_meets};
 use super::stmt::BlockSoFar;
 use super::{Checked, CheckedBlock, Checker, Declared, Poisoned, type_of};
 use crate::ast;
@@ -142,8 +142,8 @@ impl Checker<'_> {
         let sources: Vec<_> = arms
             .iter()
             .map(|arm| match &arm.body.kind {
-                ast::ExprKind::Block(block) => Branch::of_block(block),
-                _ => Branch::of_expr(&arm.body),
+                ast::ExprKind::Block(block) => Branch::of_block(self, block),
+                _ => Branch::of_expr(self, &arm.body),
             })
             .collect();
         let mut patterns: Vec<_> = arms.iter().map(|_| None).collect();
@@ -591,6 +591,10 @@ impl Checker<'_> {
     /// `None` match the optional itself, a variant, literal or range pattern matches the value
     /// inside, each alternative of an `|` takes this rule, and a name or `_` covers the whole
     /// optional. See `pattern`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one match over the pattern kinds, each arm short"
+    )]
     fn optional_pattern(
         &mut self,
         p: &ast::Pattern,
@@ -628,7 +632,9 @@ impl Checker<'_> {
                 fields,
                 parens,
             } if name.name.as_str() == "Some"
-                && qualifier.as_ref().is_none_or(|q| self.names_option(q.name)) =>
+                && qualifier
+                    .as_ref()
+                    .is_none_or(|q| self.names_option_at(q.name, ty)) =>
             {
                 let kind = match (parens, &fields[..]) {
                     (Some(_), [field]) => {
@@ -656,7 +662,7 @@ impl Checker<'_> {
                 name,
                 fields,
                 parens,
-            } if name.name.as_str() == "None" && self.names_option(q.name) => {
+            } if name.name.as_str() == "None" && self.names_option_at(q.name, ty) => {
                 let Some(parens) = parens else {
                     return Some(pattern(tir::PatternKind::None));
                 };
@@ -673,13 +679,28 @@ impl Checker<'_> {
                 qualifier: Some(q),
                 name,
                 ..
-            } if self.names_option(q.name) => {
+            } if self.names_option_at(q.name, ty) => {
                 let variants = [("None", Definition::Variant), ("Some", Definition::Variant)];
                 self.report(DiagnosticKind::UnknownVariant {
                     enum_name: q.name.to_string(),
                     name: name.name.to_string(),
                     at: name.span,
                     suggestion: suggestion(name.name.as_str(), variants),
+                });
+                self.poison(p, keyword, bound);
+                None
+            }
+            // An alias of an optional type that is not this one.
+            ast::PatternKind::Variant {
+                qualifier: Some(q),
+                name,
+                ..
+            } if self.names_option(q.name) => {
+                let want = self.type_name(ty);
+                self.report(DiagnosticKind::PatternMismatch {
+                    want,
+                    found: written(Some(q), name),
+                    at: p.span,
                 });
                 self.poison(p, keyword, bound);
                 None
@@ -1076,12 +1097,12 @@ impl Checker<'_> {
             Some(q) if let Some(&Declared::Known(named)) = self.enum_ids.get(&q.name) => {
                 matches!(ty.kind(), TypeKind::Enum(id, _) if id == named)
             }
-            // An alias of an enum is the enum.
+            // An alias of an enum is the type that it names, whose fixed arguments hold.
             Some(q)
                 if let Via::To(through) = self.through(q.name)
-                    && let TypeKind::Enum(named, _) = through.ty.kind() =>
+                    && matches!(through.ty.kind(), TypeKind::Enum(..)) =>
             {
-                matches!(ty.kind(), TypeKind::Enum(id, _) if id == named)
+                type_meets(through.params.len(), through.ty, ty)
             }
             Some(q) => {
                 self.resolve(&ast::TypeExpr {

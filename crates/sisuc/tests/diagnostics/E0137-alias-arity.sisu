@@ -1,0 +1,6 @@
+type F<T> = f64
+
+fn main() {
+    print(F<i64, string>(3))
+    print(F<i64, string>.pi)
+}

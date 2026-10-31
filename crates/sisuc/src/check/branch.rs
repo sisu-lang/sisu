@@ -1,6 +1,6 @@
 //! Branches: `if`, `if let` and the join of branch types.
 
-use super::expr::{fits, rank};
+use super::expr::fits;
 use super::generic::Ahead;
 use super::pattern::LetPattern;
 use super::{
@@ -117,7 +117,10 @@ impl Checker<'_> {
             return (then(self, None), None, Ok(Type::UNIT));
         };
         let mut then = Some(then);
-        let sources = [Branch::of_block(then_block), Branch::of_block(else_block)];
+        let sources = [
+            Branch::of_block(self, then_block),
+            Branch::of_block(self, else_block),
+        ];
         let (blocks, ty) = self.join(span, &sources, expected, |c, i, expected| {
             if i == 0 {
                 let then = then
@@ -271,8 +274,8 @@ impl Checker<'_> {
 }
 
 /// The `rank` of `block`'s value; a block that ends in no expression is concrete.
-fn block_rank(block: &ast::Block) -> u8 {
-    tail(block).map_or(0, rank)
+fn block_rank(checker: &Checker<'_>, block: &ast::Block) -> u8 {
+    tail(block).map_or(0, |e| checker.rank(e))
 }
 
 /// A branch of an `if` or an arm of a `match`, as `join` sees its source: the `rank` of its
@@ -284,17 +287,17 @@ pub(super) struct Branch<'a> {
 }
 
 impl<'a> Branch<'a> {
-    pub(super) fn of_block(block: &'a ast::Block) -> Self {
+    pub(super) fn of_block(checker: &Checker<'_>, block: &'a ast::Block) -> Self {
         Branch {
-            rank: block_rank(block),
+            rank: block_rank(checker, block),
             span: value_span(block),
             tail: tail(block),
         }
     }
 
-    pub(super) fn of_expr(e: &'a ast::Expr) -> Self {
+    pub(super) fn of_expr(checker: &Checker<'_>, e: &'a ast::Expr) -> Self {
         Branch {
-            rank: rank(e),
+            rank: checker.rank(e),
             span: e.span,
             tail: Some(e),
         }

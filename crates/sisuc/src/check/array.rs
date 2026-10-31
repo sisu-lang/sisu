@@ -1,6 +1,6 @@
 //! Array expressions: literals and their element join, `[v; n]`, indexing and methods.
 
-use super::expr::{fits, literal_type, no_member, none_literal, path, rank, typed};
+use super::expr::{fits, literal_type, no_member, path, typed};
 use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, payload, type_of, wrap};
 use crate::ast;
 use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Literal};
@@ -71,7 +71,7 @@ impl Checker<'_> {
         let mut slots: Vec<Option<Checked>> = elements.iter().map(|_| None).collect();
         let outer = self.body.quiet_at;
         for (slot, e) in slots.iter_mut().zip(elements) {
-            if rank(e) == 0 {
+            if self.rank(e) == 0 {
                 self.body.quiet_at = if quiet { Some(e.span) } else { outer };
                 *slot = Some(self.value(e, None));
             }
@@ -79,7 +79,7 @@ impl Checker<'_> {
         self.body.quiet_at = outer;
         let literal = literal_type(slots.iter().flatten().next().and_then(type_of));
         for (slot, e) in slots.iter_mut().zip(elements) {
-            if rank(e) == 1 {
+            if self.rank(e) == 1 {
                 *slot = Some(self.value(e, Some(literal)));
             }
         }
@@ -115,7 +115,8 @@ impl Checker<'_> {
             }
         }
         let Some(joined) = joined.filter(|_| !failed) else {
-            for (i, e) in elements.iter().filter(|e| rank(e) == 2).enumerate() {
+            let waiting: Vec<_> = elements.iter().filter(|e| self.rank(e) == 2).collect();
+            for (i, e) in waiting.into_iter().enumerate() {
                 let expected = (i > 0 || failed || quiet).then_some(UNKNOWN);
                 // Only its own diagnostics matter.
                 drop(self.value(e, expected));
@@ -124,11 +125,11 @@ impl Checker<'_> {
         };
         let want = as_optional(joined);
         for (slot, e) in slots.iter_mut().zip(elements) {
-            if rank(e) == 2 {
+            if self.rank(e) == 2 {
                 *slot = Some(self.value(e, Some(want)));
             }
         }
-        let element = if elements.iter().any(none_literal) {
+        let element = if elements.iter().any(|e| self.none_written(e)) {
             want
         } else {
             joined
@@ -191,7 +192,7 @@ impl Checker<'_> {
             matches!(
                 ty.kind(),
                 TypeKind::Class(..) | TypeKind::Param(..) | TypeKind::Assoc(..)
-            ) && !none_literal(value)
+            ) && !self.none_written(value)
         });
         if let Some(class) = class {
             self.report(DiagnosticKind::SameObject {

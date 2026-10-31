@@ -598,3 +598,110 @@ fn an_alias_should_report_what_a_value_position_names_wrongly() {
         codes_row(row, &src, &expected);
     }
 }
+
+/// The source of the diagnostic fixture `name`, which also pins the wording of its reports.
+macro_rules! fixture {
+    ($name:literal) => {
+        include_str!(concat!("../../../tests/diagnostics/", $name, ".sisu"))
+    };
+}
+
+/// A use of an alias in a value position makes what the alias's own type makes of it: the type
+/// arguments it writes are resolved, counted and checked, those it leaves out are bound by the
+/// value, and the bounds that the alias's body puts on its parameters hold for what they are bound
+/// to.
+#[test]
+fn a_value_position_should_check_the_type_that_its_alias_names() {
+    for (row, src, expected) in [
+        (
+            "bounds nested in the body, in a constructor, a variant and an optional",
+            fixture!("E0154-alias-nested"),
+            vec![
+                (Code::NotConform, (24, 13)),
+                (Code::NotConform, (25, 13)),
+                (Code::NotConform, (26, 32)),
+                (Code::NotConform, (27, 13)),
+                (Code::NotConform, (28, 13)),
+                (Code::NotConform, (29, 34)),
+                (Code::NotConform, (30, 13)),
+            ],
+        ),
+        (
+            "an annotation that failed its bound is not reported again at the variant",
+            fixture!("E0154-alias-enum"),
+            vec![(Code::NotConform, (9, 12)), (Code::NotConform, (10, 13))],
+        ),
+        (
+            "an optional alias binds its parameters from the shape of its body",
+            fixture!("E0032-alias-optional-shape"),
+            vec![(Code::Mismatch, (4, 26)), (Code::Mismatch, (5, 20))],
+        ),
+        (
+            "an unknown type argument, in a conversion, a qualifier and a constructor",
+            fixture!("E0030-alias-argument"),
+            vec![
+                (Code::UnknownType, (5, 13)),
+                (Code::UnknownType, (6, 13)),
+                (Code::UnknownType, (7, 17)),
+            ],
+        ),
+        (
+            "too many type arguments",
+            fixture!("E0137-alias-arity"),
+            vec![
+                (Code::TypeArguments, (4, 12)),
+                (Code::TypeArguments, (5, 12)),
+            ],
+        ),
+        (
+            "type arguments for an alias that takes none, which an alias of an alias is",
+            fixture!("E0137-alias-conversion"),
+            vec![
+                (Code::TypeArguments, (5, 12)),
+                (Code::TypeArguments, (6, 12)),
+            ],
+        ),
+        (
+            "a pattern qualifier holds the arguments that the alias fixes",
+            fixture!("E0032-alias-pattern"),
+            vec![
+                (Code::Mismatch, (13, 9)),
+                (Code::Mismatch, (14, 9)),
+                (Code::Mismatch, (20, 9)),
+                (Code::Mismatch, (21, 9)),
+                (Code::Mismatch, (27, 9)),
+                (Code::Mismatch, (28, 9)),
+                (Code::Mismatch, (34, 9)),
+                (Code::Mismatch, (35, 9)),
+            ],
+        ),
+        (
+            "a local cannot take the name of an alias of an enum",
+            fixture!("E0116-alias"),
+            vec![(Code::EnumNamedLocal, (9, 9))],
+        ),
+    ] {
+        codes_row(row, src, &expected);
+    }
+}
+
+/// An alias of an optional type has an empty optional that every comparison with `None` takes as
+/// `None` itself, and an alias of a built-in type is a built-in type in a qualifier and in a
+/// constant.
+#[test]
+fn an_alias_should_stand_for_its_type_where_a_comparison_or_a_constant_reads_it() {
+    const BOX: &str = "class Box<U> {\n    value: U?\n}\n";
+    with_prelude();
+    for (row, src) in [
+        (
+            "an empty optional through an alias, on either side of ==, and in an array",
+            format!("{BOX}type OP = Box<i64>?\ntype M<T> = Box<T>?\nfn main() {{\n    let p: Box<i64>? = None\n    print(p == OP.None)\n    print(OP.None != p)\n    print(p == M<i64>.None)\n    print(p == M.None)\n    let xs = [M.None, p]\n    print(xs.len())\n}}"),
+        ),
+        (
+            "constants and qualifiers through an alias with a parameter",
+            "type F<T> = f64\ntype G = F<i64>\nconst X: f64 = F<i64>(3)\nconst Y: f64 = F<i64>.pi\nconst Z: f64 = G(3)\nfn main() {\n    print(F<string>.pi + F.pi + G.pi + X + Y + Z)\n}".to_string(),
+        ),
+    ] {
+        clean_row(row, &src);
+    }
+}

@@ -2004,8 +2004,9 @@ impl Checker<'_> {
             (params, body)
         });
         let locals = state.locals;
-        // The mismatch of the body's value is reported after its checks, as the body is gone.
-        self.body.shown.extend(state.shown);
+        // The mismatch of the body's value is reported after its checks, as the body is gone. The
+        // next body replaces it, so the map holds one function's entries.
+        self.body.shown = state.shown;
         let type_params = state.type_params.iter().map(Symbol::to_string).collect();
         match (ret, block_type(&body)) {
             (Some(want), Some(got)) if want != Type::UNIT && got != Type::NEVER && got != want => {
