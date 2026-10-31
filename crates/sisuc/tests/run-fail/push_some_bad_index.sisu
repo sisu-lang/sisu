@@ -1,0 +1,21 @@
+// GIVEN an object whose field `_gs` holds two optional arrays
+// AND `arg`, which prints that it ran
+// WHEN `h._gs[7]?.push(...)` runs, with an argument that can `return`, and the argument is
+// not an exit
+// THEN the push panics at the bounds check of the index 7 and prints nothing before it
+// AND the argument never runs: the check of the index comes before it
+class Holder {
+    mut _gs: [[i64]?]
+}
+fn arg(n: i64) -> i64 {
+    print("arg {n}")
+    n
+}
+fn push(h: Holder, b: bool) -> i64 {
+    h._gs[7]?.push(if b { return 1 } else { arg(30) })
+    0
+}
+fn main() {
+    let h = Holder(_gs: [[1], None])
+    print(push(h, false))
+}

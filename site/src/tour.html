@@ -4,7 +4,7 @@ A tour of the Sisu language as it works today, one small program at a time.
   <section class="ph"><div class="w">
     <h1>A tour of Sisu</h1>
     <p class="lede">The language as it works today, one small program at a time, in about ten minutes of reading.</p>
-    <p class="meta">The working programs on this page compile with sisu today. Every output and error shown is what sisu really prints. Checked against the repository at commit e4b0113.</p>
+    <p class="meta">The working programs on this page compile with sisu today. Every output and error shown is what sisu really prints. Checked against the repository at commit 04f8d68.</p>
   </div></section>
 
   <div class="w doc">
@@ -114,7 +114,8 @@ A tour of the Sisu language as it works today, one small program at a time.
       <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
 {{text programs/run/arrays.out}}</pre></figure>
       <p>A function that changes an array returns the new one. Shared data that changes in place belongs in a class.</p>
-      <!-- source: docs/adr/0007-arrays-are-values.md, docs/roadmap.md ("What works today": copy-on-write arrays), crates/sisuc/tests/run/copies.sisu -->
+      <p>An array grows with <code>push</code>. After <code>let mut xs = [1, 2]</code>, <code>xs.push(3)</code> makes <code>xs</code> hold three elements. Another holder of the old array keeps its two.</p>
+      <!-- source: docs/adr/0007-arrays-are-values.md, docs/roadmap.md ("What works today": copy-on-write arrays), crates/sisuc/tests/run/copies.sisu, docs/reference/arrays.md (Methods) -->
 
       <h2 id="overflow">Integers panic on overflow</h2>
       <p>Integer arithmetic that overflows stops the program with a panic that names the line. A wrong answer is never silent. Division by zero panics the same way, and every panic exits with status 101.</p>

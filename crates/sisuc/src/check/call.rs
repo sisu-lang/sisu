@@ -378,7 +378,14 @@ impl Checker<'_> {
         {
             checked
         } else {
-            self.member(span, safe, receiver, method, |c, checked| {
+            // The receiver of a `push` is a place, checked once and held for the call.
+            let on_place = method.name.as_str() == "push" && self.is_push_place(receiver, safe);
+            let scrutinee = if on_place {
+                self.push_receiver(receiver)
+            } else {
+                self.value_kept(receiver)
+            };
+            let mut call = |c: &mut Self, checked: Checked| -> Checked {
                 if !path && let Some((first, _)) = types.split_first() {
                     if let Some(value) = c.method_args(&checked, receiver, method, first, angles) {
                         c.stray(args);
@@ -415,8 +422,17 @@ impl Checker<'_> {
                         return Err(c.misread_as(at, compare));
                     }
                 }
-                c.method_call(span, checked, receiver, site, args)
-            })
+                c.method_call(span, safe, checked, receiver, site, args)
+            };
+            match scrutinee {
+                // `?.push` onto an array in a place writes the place: no payload is bound.
+                scrutinee if on_place && safe => match self.safe_push_receiver(receiver, scrutinee)
+                {
+                    Ok(array) => call(self, Ok(array)),
+                    Err(value) => self.member_of(span, safe, value, receiver, method, call),
+                },
+                scrutinee => self.member_of(span, safe, scrutinee, receiver, method, call),
+            }
         };
         // The member was found unknown, or the receiver of a path that is no idiom was: a name
         // or a type, which has no members.
@@ -431,10 +447,12 @@ impl Checker<'_> {
         checked
     }
 
-    /// `receiver.method(args)`, `receiver` checked from `receiver_expr`.
+    /// `receiver.method(args)`, `receiver` checked from `receiver_expr`. `safe` when it is
+    /// `receiver?.method(args)`.
     fn method_call(
         &mut self,
         span: Span,
+        safe: bool,
         receiver: Checked,
         receiver_expr: &ast::Expr,
         site: Site<'_>,
@@ -447,6 +465,20 @@ impl Checker<'_> {
             Ok(checked) => return checked,
             Err(receiver) => receiver,
         };
+        // A `push` onto an array writes its place, so it is not a method of the prelude's.
+        if method.name.as_str() == "push" {
+            let place = self.take_pushed(receiver_expr);
+            match type_of(&receiver) {
+                // A type that is known and is no array, a class with a `push` method of its own,
+                // reads its receiver and writes nothing.
+                Some(ty) if !matches!(ty.kind(), TypeKind::Array(_)) => {
+                    if let (Ok(read), Some(_)) = (&receiver, place) {
+                        self.read_pushed(read, receiver_expr);
+                    }
+                }
+                _ => return self.push(span, safe, (receiver, place), receiver_expr, args),
+            }
+        }
         match type_of(&receiver) {
             // A built-in type, an array and an optional have a `Display` that the compiler writes,
             // and no method of their own named `to_string`.

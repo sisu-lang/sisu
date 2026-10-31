@@ -1,0 +1,16 @@
+fn iterations() -> i64 { 1000 }
+
+class Bag {
+    mut items: [i64]
+}
+
+// GIVEN an object whose `mut` field holds an array that nothing else holds
+// WHEN `main` pushes `iterations()` elements onto the field
+// THEN each push is in place: the block of the literal, then one reallocation at each doubling
+fn main() {
+    let bag = Bag(items: [0])
+    for i in 0..iterations() {
+        bag.items.push(i)
+    }
+    print(bag.items.len())           // 1001 (1 with no iterations)
+}

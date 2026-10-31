@@ -329,3 +329,489 @@ fn compound_assignment_reports_as_a_local_would() {
         }
     }
 }
+
+/// `class Bag` with a `mut` and a plain array field, and a function that makes one.
+const BAG: &str = "class Bag {\n    mut items: [i64]\n    kept: [i64]\n}\nfn make() -> Bag { Bag(items: [1], kept: [1]) }\n";
+
+/// A `push` onto a place that can change checks clean. The places are a `let mut` local, a `mut`
+/// field, an element of either, and a call's `mut` field. An optional element type wraps the
+/// argument. The first rows read `reassigned` and `written`, so neither warns.
+#[test]
+fn push_should_check_clean_onto_a_place_that_can_change() {
+    for (row, src) in [
+        (
+            "let mut local",
+            "fn main() {\n    let mut xs = [1]\n    xs.push(2)\n    print(xs)\n}".to_owned(),
+        ),
+        (
+            "mut field of self",
+            "class Bag {\n    mut items: [i64]\n    fn add(self, x: i64) { self.items.push(x) }\n}\nfn main() {}"
+                .to_owned(),
+        ),
+        (
+            "element of a local",
+            "fn main() {\n    let mut xss = [[1]]\n    xss[0].push(2)\n}".to_owned(),
+        ),
+        (
+            "element of an array in a mut field",
+            "class Rows {\n    mut grid: [[i64]]\n    fn add(self, x: i64) { self.grid[0].push(x) }\n}\nfn main() {}"
+                .to_owned(),
+        ),
+        (
+            "optional element type",
+            "fn main() {\n    let mut xs: [i64?] = [None]\n    xs.push(1)\n    xs.push(None)\n}".to_owned(),
+        ),
+        (
+            "the Stack of the spec",
+            "class Stack<T> {\n    mut items: [T]\n    fn push(self, x: T) { self.items.push(x) }\n}\nfn main() {}"
+                .to_owned(),
+        ),
+        (
+            "mut field of a call",
+            format!("{BAG}fn main() {{\n    make().items.push(2)\n}}"),
+        ),
+    ] {
+        clean_row(row, &src);
+    }
+}
+
+/// The operands of the place are bound in source order and spilled as an element write's are.
+/// They are the base, the indexes and the value. One `push` keeps the place.
+#[test]
+fn push_should_lower_to_a_statement_over_its_place() {
+    let rows = [
+        (
+            "fn main() {\n    let mut xs = [1]\n    xs.push(2)\n}".to_owned(),
+            "(push xs#0 2)",
+        ),
+        (
+            "fn main() {\n    let mut xss = [[1]]\n    xss[0].push(2)\n}".to_owned(),
+            "(push (index xss#0 0) 2)",
+        ),
+        (
+            format!("{BAG}fn main() {{\n    make().items.push(2)\n}}"),
+            "(push (. (call make) items) 2)",
+        ),
+        (
+            "fn main() {\n    let mut xs: [i64?] = [None]\n    xs.push(1)\n}".to_owned(),
+            "(push xs#0 (wrap 1))",
+        ),
+        // The object is counted and the argument can exit, so both are bound before it runs.
+        (
+            "class A {\n    mut f: [i64]\n}\nfn g(a: A, c: bool) -> i64 {\n    a.f.push(if c { return 0 } else { 1 })\n    0\n}\nfn main() {}"
+                .to_owned(),
+            "(block (let #2 a#0) (let #3 (if c#1 (block (return 0)) (block 1))) (push (. #2 f) #3))",
+        ),
+    ];
+    for (src, part) in rows {
+        contains(&src, &[part]);
+    }
+}
+
+/// A `?.push` writes the optional the place stores, with a `Some` step. A `?.` that only chains
+/// what an earlier `?.` made optional adds none: the place of `c?.items?.push` over `items:
+/// [i64]` is the field of the object that `?.` binds. The object is bound where it is present.
+#[test]
+fn push_through_a_safe_access_should_lower_to_a_some_step_of_a_stored_optional() {
+    let class = "class C {\n    mut items: [i64]\n    mut maybe: [i64]?\n}\n";
+    for (src, part, absent) in [
+        (
+            "fn main() {\n    let mut xs: [i64]? = [1]\n    xs?.push(2)\n}".to_owned(),
+            "(push (some xs#0) 2)",
+            "",
+        ),
+        (
+            "fn main() {\n    let mut gs: [[i64]?] = [[1]]\n    gs[0]?.push(2)\n}".to_owned(),
+            "(push (some (index gs#0 0)) 2)",
+            "",
+        ),
+        (
+            format!("{class}fn f(c: C?) {{ c?.items?.push(1) }}\nfn main() {{}}"),
+            "(if-some #1 c#0 (block (block (push (. #1 items) 1))) (block))",
+            "(some (. #1 items))",
+        ),
+        (
+            format!("{class}fn f(c: C?) {{ c?.maybe?.push(1) }}\nfn main() {{}}"),
+            "(if-some #1 c#0 (block (block (push (some (. #1 maybe)) 1))) (block))",
+            "",
+        ),
+        (
+            format!("{class}fn f(c: C) {{ c.maybe?.push(1) }}\nfn main() {{}}"),
+            "(push (some (. c#0 maybe)) 1)",
+            "",
+        ),
+    ] {
+        contains(&src, &[part]);
+        assert!(
+            absent.is_empty() || !lowered(&src).contains(absent),
+            "{src}"
+        );
+    }
+}
+
+/// A row of `push_rows`: its name, its source and the diagnostics it gives.
+type PushRow<'a> = (&'a str, &'a str, Vec<(Code, (usize, usize))>);
+
+/// `codes_row` for each of `rows`.
+fn push_rows(rows: &[PushRow<'_>]) {
+    for (row, src, expected) in rows {
+        codes_row(row, src, expected);
+    }
+}
+
+/// A receiver that cannot change is E0001 at the receiver.
+#[test]
+fn push_should_report_a_receiver_that_cannot_change() {
+    push_rows(&[
+        (
+            "let local",
+            "fn main() {\n    let xs = [1]\n    xs.push(2)\n}",
+            vec![(Code::AssignToImmutable, (3, 5))],
+        ),
+        (
+            "field without mut",
+            "class C {\n    items: [i64]\n    fn add(self) { self.items.push(1) }\n}\nfn main() {}",
+            vec![(Code::AssignToImmutable, (3, 20))],
+        ),
+        (
+            "parameter",
+            "fn f(xs: [i64]) { xs.push(1) }\nfn main() {}",
+            vec![(Code::AssignToImmutable, (1, 19))],
+        ),
+        (
+            "element of a let",
+            "fn main() {\n    let xss = [[1]]\n    xss[0].push(2)\n}",
+            vec![(Code::AssignToImmutable, (3, 5))],
+        ),
+    ]);
+}
+
+/// A receiver that is no place is E0021 there.
+#[test]
+fn push_should_report_a_receiver_that_is_no_place() {
+    push_rows(&[
+        (
+            "call result",
+            "fn f() -> [i64] { [1] }\nfn main() { f().push(1) }",
+            vec![(Code::AssignToExpression, (2, 13))],
+        ),
+        (
+            "literal",
+            "fn main() { [1].push(2) }",
+            vec![(Code::AssignToExpression, (1, 13))],
+        ),
+        (
+            "element of a call",
+            "fn f() -> [[i64]] { [[1]] }\nfn main() { f()[0].push(1) }",
+            vec![(Code::AssignToExpression, (2, 13))],
+        ),
+        (
+            "element of a call, two levels",
+            "fn make() -> [[i64]] { [[1]] }\nfn main() { make()[0].push(2) }",
+            vec![(Code::AssignToExpression, (2, 13))],
+        ),
+        (
+            "element of a literal",
+            "fn main() { [[1]][0].push(2) }",
+            vec![(Code::AssignToExpression, (1, 13))],
+        ),
+    ]);
+}
+
+/// The value of a `push` is `unit`, so a use of it is E0043.
+#[test]
+fn push_should_have_no_value() {
+    push_rows(&[(
+        "value of the call",
+        "fn main() {\n    let mut xs = [1]\n    let r = xs.push(1)\n}",
+        vec![(Code::NoValue, (3, 13))],
+    )]);
+}
+
+/// A receiver that is no array leaves `push` to the method lookup, which finds no method of a
+/// `string`.
+#[test]
+fn push_should_be_no_method_of_a_string() {
+    push_rows(&[(
+        "string receiver",
+        "fn main() {\n    let s = \"a\"\n    s.push('a')\n}",
+        vec![(Code::NoMember, (3, 7))],
+    )]);
+}
+
+/// A `?.push` onto an optional array writes the place: a `let mut` local, an element, a field of
+/// an object that `?.` takes out of an optional, and a field of `self`. It checks clean, and a
+/// class with a `push` method of its own keeps its `?.` call.
+#[test]
+fn push_should_check_clean_through_a_safe_access() {
+    for (row, src) in [
+        (
+            "let mut optional array",
+            "fn main() {\n    let mut xs: [i64]? = [1]\n    xs?.push(2)\n    print(xs ?? [])\n}",
+        ),
+        (
+            "array field of an optional object, as the fix of E0062 writes it",
+            "class C {\n    mut items: [i64]\n}\nfn f(c: C?) { c?.items?.push(1) }\nfn main() {}",
+        ),
+        (
+            "optional array field of an optional object",
+            "class C {\n    mut items: [i64]?\n}\nfn f(c: C?) { c?.items?.push(1) }\nfn main() {}",
+        ),
+        (
+            "optional array field of an object",
+            "class C {\n    mut items: [i64]?\n}\nfn f(c: C) { c.items?.push(1) }\nfn main() {}",
+        ),
+        (
+            "optional array field of self",
+            "class C {\n    mut maybe: [i64]?\n    fn add(self) { self.maybe?.push(1) }\n}\nfn main() {}",
+        ),
+        (
+            "optional element of an array",
+            "fn main() {\n    let mut gs: [[i64]?] = [[1], None]\n    gs[0]?.push(2)\n    print(gs[1] ?? [])\n}",
+        ),
+        (
+            "chain of optional objects",
+            "class C {\n    mut next: C?\n    mut items: [i64]\n}\nfn f(c: C?) { c?.next?.items?.push(1) }\nfn main() {}",
+        ),
+        (
+            "field of a call's optional object",
+            "class C {\n    mut items: [i64]\n}\nfn make() -> C? { None }\nfn main() { make()?.items?.push(1) }",
+        ),
+        (
+            "optional class with a push method of its own",
+            "class Pile {\n    mut n: i64\n    fn push(self, x: i64) { self.n += x }\n}\nfn f(p: Pile?) { p?.push(1) }\nfn main() {}",
+        ),
+        (
+            "class with a push method of its own, in a field of an optional object",
+            "class Pile {\n    mut n: i64\n    fn push(self, x: i64) { self.n += x }\n}\nclass Heap {\n    mut pile: Pile\n}\nfn f(h: Heap?) { h?.pile?.push(1) }\nfn main() {}",
+        ),
+    ] {
+        clean_row(row, src);
+    }
+}
+
+/// A place that `?.push` writes reports what a `push` reports, once and at the place: a `let` or
+/// a parameter that cannot change, a field without `mut`, a receiver that is a temporary, a value
+/// that is used and an argument of the wrong type.
+#[test]
+fn push_should_report_a_mistake_through_a_safe_access() {
+    push_rows(&[
+        (
+            "let optional array",
+            "fn main() {\n    let xs: [i64]? = [1]\n    xs?.push(2)\n}",
+            vec![(Code::AssignToImmutable, (3, 5))],
+        ),
+        (
+            "parameter optional array",
+            "fn f(m: [i64]?) { m?.push(1) }\nfn main() {}",
+            vec![(Code::AssignToImmutable, (1, 19))],
+        ),
+        (
+            "element of a parameter",
+            "fn f(m: [[i64]?]) { m[0]?.push(1) }\nfn main() {}",
+            vec![(Code::AssignToImmutable, (1, 21))],
+        ),
+        (
+            "field without mut",
+            "class C {\n    items: [i64]\n}\nfn f(c: C?) { c?.items?.push(1) }\nfn main() {}",
+            vec![(Code::AssignToImmutable, (4, 15))],
+        ),
+        (
+            "call result",
+            "fn f() -> [i64]? { [1] }\nfn main() { f()?.push(1) }",
+            vec![(Code::AssignToExpression, (2, 13))],
+        ),
+        (
+            "value of the call",
+            "fn main() {\n    let mut xs: [i64]? = [1]\n    let r = xs?.push(1)\n}",
+            vec![(Code::NoValue, (3, 13))],
+        ),
+        (
+            "argument of the wrong type",
+            "fn main() {\n    let mut xs: [i64]? = [1]\n    xs?.push(\"a\")\n}",
+            vec![(Code::Mismatch, (3, 14))],
+        ),
+        (
+            "type arguments",
+            "fn main() {\n    let mut xs: [i64]? = [1]\n    xs?.push<i64>(1)\n}",
+            vec![(Code::TypeArguments, (3, 13))],
+        ),
+        (
+            "object that is no optional",
+            "class C {\n    mut items: [i64]\n}\nfn f(c: C) { c?.items?.push(1) }\nfn main() {}",
+            vec![(Code::SafeAccessNotOptional, (4, 14))],
+        ),
+        (
+            "array field read without `?.`",
+            "class C {\n    mut items: [i64]\n}\nfn f(c: C?) { c?.items.push(1) }\nfn main() {}",
+            vec![(Code::MayBeNone, (4, 15))],
+        ),
+        (
+            "index of an optional array",
+            "class C {\n    mut rows: [[i64]]\n}\nfn f(c: C?) { c?.rows[0]?.push(1) }\nfn main() {}",
+            vec![(Code::MayBeNone, (4, 15))],
+        ),
+    ]);
+}
+
+/// A `?.` on a receiver that is no optional is reported by the `?.`, and the failed receiver
+/// leaves nothing more to say about the `push`.
+#[test]
+fn push_should_leave_a_safe_access_on_no_optional_to_its_own_error() {
+    push_rows(&[(
+        "safe call on an array that is no optional",
+        "fn f(m: [i64]) { m?.push(1) }\nfn main() {}",
+        vec![(Code::SafeAccessNotOptional, (1, 18))],
+    )]);
+}
+
+/// Every place that a `push` names is written, whatever else the call gets wrong, so its `let
+/// mut` is reassigned and gets no W0002: a call that is the argument of a generic call, and an
+/// index that is not found, as in an element write.
+#[test]
+fn push_should_write_its_place_whatever_else_it_gets_wrong() {
+    push_rows(&[
+        (
+            "argument of a generic call",
+            "fn f<T>(x: T) {}\nfn main() {\n    let mut xs = [1]\n    f(xs.push(1))\n    print(xs)\n}",
+            vec![(Code::TypeArgument, (4, 7))],
+        ),
+        (
+            "element as the argument of a generic call",
+            "fn f<T>(x: T, y: T) {}\nfn main() {\n    let mut xss = [[1]]\n    f(xss[0].push(1), 2)\n    print(xss)\n}",
+            vec![(Code::NoValue, (4, 7))],
+        ),
+        (
+            "name that is not found",
+            "fn main() {\n    let y = nope.push(1)\n}",
+            vec![(Code::BindingNotFound, (2, 13))],
+        ),
+        (
+            "function that is not found",
+            "fn main() {\n    let y = undefined_fn().push(1)\n}",
+            vec![(Code::FunctionNotFound, (2, 13))],
+        ),
+        (
+            "name that is not found, in an argument",
+            "fn main() {\n    print(nope.push(1))\n}",
+            vec![(Code::BindingNotFound, (2, 11))],
+        ),
+        (
+            "field that is not found",
+            "class C {\n    mut n: i64\n}\nfn main() {\n    let c = C(n: 1)\n    let y = c.nope.push(1)\n}",
+            vec![(Code::NoMember, (6, 15))],
+        ),
+        (
+            "index that is not found",
+            "fn main() {\n    let mut xss = [[1]]\n    xss[nope].push(1)\n    print(xss)\n}",
+            vec![(Code::BindingNotFound, (3, 9))],
+        ),
+    ]);
+}
+
+/// A mistake inside the index of a `push` receiver is reported once, as it is in the index of
+/// an element write.
+#[test]
+fn push_should_report_a_mistake_in_its_receiver_once() {
+    for (row, src, expected) in [
+        (
+            "unused binding",
+            "fn main() {\n    let mut xss = [[1]]\n    xss[{\n        let t = 0\n        0\n    }].push(2)\n    print(xss)\n}",
+            vec![(Code::UnusedVariable, (4, 13))],
+        ),
+        (
+            "assignment to a let",
+            "fn main() {\n    let y = 0\n    let mut xss = [[1]]\n    xss[{\n        y = 1\n        0\n    }].push(2)\n    print(xss)\n}",
+            vec![(Code::AssignToImmutable, (5, 9))],
+        ),
+        (
+            "receiver that cannot change, and an assignment in its index",
+            "fn main() {\n    let y = 0\n    let xss = [[1]]\n    xss[{\n        y = 1\n        0\n    }].push(2)\n}",
+            vec![
+                (Code::AssignToImmutable, (4, 5)),
+                (Code::AssignToImmutable, (5, 9)),
+            ],
+        ),
+    ] {
+        judge_unused();
+        let found: Vec<_> = checked(src)
+            .1
+            .iter()
+            .map(|d| (d.code(), at(src, d.span())))
+            .collect();
+        assert_eq!(found, expected, "row `{row}`");
+    }
+}
+
+/// Each nested receiver is checked once, so the expressions checked grow in step with the
+/// source. A receiver checked twice at each level doubles them at each level.
+#[test]
+fn push_should_check_nested_receivers_in_linear_steps() {
+    let checks = |depth: usize| {
+        let mut push = "xss[0].push(1)".to_owned();
+        for _ in 0..depth {
+            push = format!("xss[{{\n{push}\n0\n}}].push(1)");
+        }
+        let src = format!("fn main() {{\n    let mut xss = [[1]]\n{push}\n    print(xss)\n}}");
+        EXPR_CHECKS.set(0);
+        assert!(checked(&src).0.is_some(), "{src}");
+        EXPR_CHECKS.get()
+    };
+    assert_near_linear(checks(4), checks(8), checks(12));
+}
+
+/// A `break` in a `push` leaves a `loop` that gives an `i64?`. The widened loop wraps the value.
+/// It does so when the `break` is in the pushed value, in the pushed value of a `?.push`, and when
+/// it is in the index of the array.
+#[test]
+fn push_should_wrap_a_break_in_its_value_and_in_its_index() {
+    contains(
+        "fn main() {\n    let mut xs = [1]\n    let y: i64? = loop {\n        xs.push(if true { break 1 } else { 2 })\n        break None\n    }\n    print(y ?? 0)\n}",
+        &["(push xs#0 (if true (block (break (wrap 1))) (block 2)))"],
+    );
+    contains(
+        "fn main() {\n    let mut xs: [i64]? = [1]\n    let y: i64? = loop {\n        xs?.push(if true { break 1 } else { 2 })\n        break None\n    }\n    print(y ?? 0)\n}",
+        &["(push (some xs#0) (if true (block (break (wrap 1))) (block 2)))"],
+    );
+    contains(
+        "fn main() {\n    let mut xss = [[5]]\n    let z: i64? = loop {\n        xss[if true { break 2 } else { 0 }].push(3)\n        break None\n    }\n    print(z ?? 0)\n}",
+        &["(push (index xss#0 (if true (block (break (wrap 2))) (block 0))) 3)"],
+    );
+}
+
+/// A block that holds a `?.push` is asked whether it can leave, and the answer reads through the
+/// `Some` step of the place. The block here is the value that a field appends to, which the check
+/// of an append asks.
+#[test]
+fn push_through_a_safe_access_should_stay_in_the_value_that_a_field_appends() {
+    contains(
+        "class T {\n    mut text: string\n}\nfn f(t: T) {\n    let mut xs: [i64]? = [1]\n    t.text += {\n        xs?.push(1)\n        \"x\"\n    }\n}\nfn main() {}",
+        &["(push (some xs#1) 1)"],
+    );
+}
+
+/// A method named `push` of a class writes no binding, so the receiver `let mut` is never
+/// reassigned, as for any other method.
+#[test]
+fn a_class_push_should_not_stamp_its_receiver() {
+    codes(
+        "class Pile {\n    mut n: i64\n    fn push(self, x: i64) { self.n += x }\n}\nfn main() {\n    let mut p = Pile(n: 0)\n    p.push(1)\n    print(p.n)\n}",
+        &[(Code::NeverReassigned, (6, 13))],
+    );
+}
+
+/// A push receiver moves the operands of its place into the value it reads, and back out into
+/// the `Push`: no node of a tree is cloned. A clone at each level of nested receivers copies
+/// every level inside it, so the work grows with the square of the depth.
+#[test]
+fn push_should_not_clone_the_nodes_of_its_receiver() {
+    // 8 levels: a clone at any one level breaks the count of 0.
+    let mut push = "xss[0].push(1)".to_owned();
+    for _ in 0..8 {
+        push = format!("xss[{{\n{push}\n0\n}}].push(1)");
+    }
+    let src = format!("fn main() {{\n    let mut xss = [[1]]\n{push}\n    print(xss)\n}}");
+    tir::CLONED_EXPRS.set(0);
+    assert!(checked(&src).0.is_some(), "{src}");
+    assert_eq!(tir::CLONED_EXPRS.get(), 0, "{src}");
+}

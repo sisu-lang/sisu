@@ -97,7 +97,7 @@ impl Placer<'_> {
             Statement::Take { place, .. }
             | Statement::MakeUnique(place)
             | Statement::Check(place) => self.place(place),
-            Statement::Store { place, value } => {
+            Statement::Store { place, value } | Statement::Push { place, value, .. } => {
                 self.place(place);
                 self.operand(value);
             }

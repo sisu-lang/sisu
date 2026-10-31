@@ -188,6 +188,7 @@ fn written(stmt: &Statement, mut f: impl FnMut(LocalId)) {
             }
         }
         Statement::Store { .. }
+        | Statement::Push { .. }
         | Statement::Release(_)
         | Statement::ScopeRelease(_)
         | Statement::MakeUnique(_)
@@ -204,7 +205,7 @@ fn statement(stmt: &Statement, read: &mut impl FnMut(LocalId)) {
         Statement::Take { place, .. } | Statement::MakeUnique(place) | Statement::Check(place) => {
             self::place(place, read);
         }
-        Statement::Store { place, value } => {
+        Statement::Store { place, value } | Statement::Push { place, value, .. } => {
             self::place(place, read);
             operand(value, read);
         }

@@ -1830,6 +1830,122 @@ mod tests {
         );
     }
 
+    /// The place of a kind in the list of kinds. The `match` has no wildcard arm, so a new
+    /// variant does not build until it has a place, and then a row in the file.
+    fn slot(kind: &TokenKind) -> usize {
+        match kind {
+            TokenKind::Ident(_) => 0,
+            TokenKind::Underscore => 1,
+            TokenKind::Int(_) => 2,
+            TokenKind::Float(_) => 3,
+            TokenKind::Char(_) => 4,
+            TokenKind::Str(_) => 5,
+            TokenKind::StrHead(_) => 6,
+            TokenKind::StrMiddle(_) => 7,
+            TokenKind::StrTail(_) => 8,
+            TokenKind::FormatSpec(_) => 9,
+            TokenKind::Fn => 10,
+            TokenKind::Let => 11,
+            TokenKind::Mut => 12,
+            TokenKind::Var => 13,
+            TokenKind::Reserved(_) => 14,
+            TokenKind::Todo => 15,
+            TokenKind::If => 16,
+            TokenKind::Else => 17,
+            TokenKind::While => 18,
+            TokenKind::For => 19,
+            TokenKind::Loop => 20,
+            TokenKind::In => 21,
+            TokenKind::Return => 22,
+            TokenKind::Break => 23,
+            TokenKind::Continue => 24,
+            TokenKind::Class => 25,
+            TokenKind::Const => 26,
+            TokenKind::Enum => 27,
+            TokenKind::Interface => 28,
+            TokenKind::Extend => 29,
+            TokenKind::Match => 30,
+            TokenKind::NoneKw => 31,
+            TokenKind::Is => 32,
+            TokenKind::SelfKw => 33,
+            TokenKind::SelfType => 34,
+            TokenKind::True => 35,
+            TokenKind::False => 36,
+            TokenKind::Plus => 37,
+            TokenKind::Minus => 38,
+            TokenKind::Star => 39,
+            TokenKind::StarStar => 40,
+            TokenKind::Slash => 41,
+            TokenKind::Percent => 42,
+            TokenKind::PlusEq => 43,
+            TokenKind::MinusEq => 44,
+            TokenKind::StarEq => 45,
+            TokenKind::SlashEq => 46,
+            TokenKind::PercentEq => 47,
+            TokenKind::EqEq => 48,
+            TokenKind::NotEq => 49,
+            TokenKind::Lt => 50,
+            TokenKind::Le => 51,
+            TokenKind::Gt => 52,
+            TokenKind::Ge => 53,
+            TokenKind::AndAnd => 54,
+            TokenKind::Amp => 55,
+            TokenKind::OrOr => 56,
+            TokenKind::Bang => 57,
+            TokenKind::Eq => 58,
+            TokenKind::LParen => 59,
+            TokenKind::RParen => 60,
+            TokenKind::LBrace => 61,
+            TokenKind::RBrace => 62,
+            TokenKind::Comma => 63,
+            TokenKind::Colon => 64,
+            TokenKind::Arrow => 65,
+            TokenKind::FatArrow => 66,
+            TokenKind::Pipe => 67,
+            TokenKind::Dot => 68,
+            TokenKind::DotDot => 69,
+            TokenKind::DotDotEq => 70,
+            TokenKind::LBracket => 71,
+            TokenKind::RBracket => 72,
+            TokenKind::Semicolon => 73,
+            TokenKind::Question => 74,
+            TokenKind::QuestionDot => 75,
+            TokenKind::QuestionQuestion => 76,
+            TokenKind::Newline => 77,
+            TokenKind::Eof => 78,
+        }
+    }
+
+    /// How many kinds `slot` has.
+    const KINDS: usize = 79;
+
+    /// The file that the check of `selfhost/lexer.sisu` lexes holds a token of each kind and each
+    /// reserved word, so that the check sees every one. The reserved words are listed by hand, as
+    /// in `reserved_words_should_lex_as_reserved_tokens`: a newly reserved word goes into both
+    /// lists and into the file.
+    #[test]
+    fn all_tokens_should_cover_every_token_kind() {
+        let tokens = lex_clean(include_str!("../../tests/tokens/all_tokens.sisu"))
+            .expect("all_tokens.sisu should lex without an error");
+        let mut seen = [false; KINDS];
+        for token in &tokens {
+            seen[slot(&token.kind)] = true;
+        }
+        let missing: Vec<usize> = (0..KINDS).filter(|&i| !seen[i]).collect();
+        assert!(
+            missing.is_empty(),
+            "all_tokens.sisu has no token of the kinds at these places of `slot`: {missing:?}"
+        );
+        for word in [
+            "import", "pub", "record", "type", "weak", "test", "extern", "as",
+        ] {
+            assert!(
+                tokens.iter().any(|t| t.kind == TokenKind::Reserved(word)),
+                "all_tokens.sisu has no reserved word `{word}`"
+            );
+        }
+    }
+
     #[test]
     fn pipe_and_range_tokens() {
         use TokenKind::{DotDot, DotDotEq, Eof, OrOr, Pipe};

@@ -981,3 +981,37 @@ fn prelude_interface_should_not_warn_when_nothing_uses_it() {
     let (_, ds) = check(&parse_ok(src), &prelude, src, &[]);
     assert!(ds.is_empty(), "{ds:?}");
 }
+
+/// A write to a field does not read it, and nor does a `push` onto it.
+#[test]
+fn field_should_warn_when_live_code_only_pushes_onto_it() {
+    judge_unused();
+    diagnostic(
+        "class P {\n    mut xs: [i64]\n}\nfn main() {\n    let p = P(xs: [1])\n    p.xs.push(2)\n}",
+        W0013,
+        (2, 9, "xs"),
+        &[],
+    );
+}
+
+/// A `push` onto an element names the field of the array without reading it. It reads the fields
+/// of the index. So `b` is only pushed onto and warns, and `c` is read and does not.
+#[test]
+fn field_should_warn_when_live_code_only_pushes_onto_one_of_its_elements() {
+    judge_unused();
+    diagnostic(
+        "class P {\n    mut b: [[i64]]\n    c: i64\n}\nfn main() {\n    let p = P(b: [[1]], c: 0)\n    p.b[p.c].push(2)\n}",
+        W0013,
+        (2, 9, "b"),
+        &[],
+    );
+}
+
+/// A method named `push` of a class reads its receiver as any method does: the local, and the
+/// field that holds the object, whether it is reached by an index or not, are used.
+#[test]
+fn receiver_of_a_class_push_should_be_read() {
+    judge_unused();
+    let src = "class Pile {\n    mut n: i64\n    fn push(self, x: i64) { self.n += x }\n}\nclass Holder {\n    pile: Pile\n    piles: [Pile]\n}\nfn main() {\n    let pile = Pile(n: 0)\n    pile.push(1)\n    let holder = Holder(pile: pile, piles: [pile])\n    holder.pile.push(2)\n    holder.piles[0].push(3)\n    let piles = [pile]\n    piles[0].push(4)\n    print(holder.pile.n)\n}";
+    assert_eq!(found(src), Vec::new());
+}

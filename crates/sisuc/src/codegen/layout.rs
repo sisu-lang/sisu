@@ -52,6 +52,20 @@ pub(super) struct ArrayLayout<'ctx> {
     pub(super) align: u64,
 }
 
+impl ArrayLayout<'_> {
+    /// The most bytes a block of this layout can have: `Layout::from_size_align` needs the size
+    /// rounded up to the alignment to fit in an `isize`.
+    fn byte_limit(&self) -> u64 {
+        i64::MAX.cast_unsigned() - self.align + 1
+    }
+
+    /// The most elements a block of this layout can have: the header and that many elements
+    /// are `byte_limit` bytes at most. A block that has this many elements cannot take another.
+    pub(super) fn largest(&self) -> u64 {
+        (self.byte_limit() - self.offset) / self.size
+    }
+}
+
 /// A string block's header, from the target's data layout. A block with capacity `cap` is
 /// `size + cap` bytes, aligned to `align`.
 pub(super) struct StringLayout<'ctx> {
@@ -72,10 +86,10 @@ pub(super) const BYTES: u32 = 3;
 pub(super) enum HeapBlock<'a, 'ctx> {
     /// An object of the class.
     Class(ClassId),
-    /// An array block of `len` elements.
+    /// An array block with room for `cap` elements.
     Array {
         layout: &'a ArrayLayout<'ctx>,
-        len: IntValue<'ctx>,
+        cap: IntValue<'ctx>,
     },
     /// A string block of capacity `cap`.
     String { cap: IntValue<'ctx> },
@@ -515,10 +529,11 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.store(object, self.context.i64_type().const_int(1, false).into());
     }
 
-    /// The array header: the count, then the length.
+    /// The array header, as the string header is: the count, the length, then the capacity.
     fn header(&self) -> StructType<'ctx> {
         let i64_type = self.context.i64_type().into();
-        self.context.struct_type(&[i64_type, i64_type], false)
+        self.context
+            .struct_type(&[i64_type, i64_type, i64_type], false)
     }
 
     pub(super) fn array_layout(&self, element: Type) -> ArrayLayout<'ctx> {
@@ -556,12 +571,12 @@ impl<'ctx> Codegen<'ctx, '_> {
         match *block {
             HeapBlock::Class(id) => abi(&self.classes[id.0].ty),
             HeapBlock::Box(inner) => abi(&self.enums[inner.0].boxed),
-            // A length that reaches here passed the size checks, or is a literal's or an
+            // A capacity that reaches here passed the size checks, or is a literal's or an
             // existing block's.
-            HeapBlock::Array { layout, len } => {
+            HeapBlock::Array { layout, cap } => {
                 let elements = self
                     .builder
-                    .build_int_nuw_mul(len, i64_type.const_int(layout.size, false), "elements")
+                    .build_int_nuw_mul(cap, i64_type.const_int(layout.size, false), "elements")
                     .expect(POSITIONED);
                 let size = self
                     .builder
@@ -598,7 +613,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// `heap_size`'s array formula with checks, for `[v; n]`, whose length `len` is the
-    /// program's: panics at `span` when `len` is negative or the block would be too large.
+    /// program's and is also the capacity of the new block: panics at `span` when `len` is
+    /// negative or the block would be too large.
     pub(super) fn checked_array_size(
         &self,
         layout: &ArrayLayout<'ctx>,
@@ -614,9 +630,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.panic_if(negative, span, "array length is negative");
         let (elements, wrapped) = self.overflowing("llvm.umul.with.overflow", len, size);
         let (total, carried) = self.overflowing("llvm.uadd.with.overflow", elements, offset);
-        // `Layout::from_size_align` needs the size rounded up to the alignment to fit in
-        // an `isize`.
-        let largest = i64_type.const_int(i64::MAX.cast_unsigned() - layout.align + 1, false);
+        let largest = i64_type.const_int(layout.byte_limit(), false);
         let above = self.int_compare(IntPredicate::UGT, total, largest);
         let too_large = [wrapped, carried, above]
             .into_iter()
@@ -631,6 +645,13 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder
             .build_struct_gep(self.header(), array, 1, "len")
             .expect("the array header should have the length at index 1")
+    }
+
+    /// The address of the header's capacity.
+    pub(super) fn cap_ptr(&self, array: PointerValue<'ctx>) -> PointerValue<'ctx> {
+        self.builder
+            .build_struct_gep(self.header(), array, 2, "cap")
+            .expect("the array header should have the capacity at index 2")
     }
 
     pub(super) fn string_layout(&self) -> StringLayout<'ctx> {

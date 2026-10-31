@@ -1,0 +1,20 @@
+// GIVEN a `loop` that gives an `i64?`, and a `break` with an `i64` inside a `push`
+// WHEN the `break` is in the pushed value, or in the index of the array that is pushed onto
+// THEN the loop gives that `i64` as a value that holds it, not as the bits of a bare `i64`
+// AND the array keeps its elements when the `push` does not run
+fn main() {
+    let mut xs = [1]
+    let y: i64? = loop {
+        xs.push(if true { break 1 } else { 2 })
+        break None
+    }
+    print(y ?? 0)                    // 1
+    let mut xss = [[5]]
+    let z: i64? = loop {
+        xss[if true { break 2 } else { 0 }].push(3)
+        break None
+    }
+    print(z ?? 0)                    // 2
+    print(xs)                        // [1]
+    print(xss)                       // [[5]]
+}

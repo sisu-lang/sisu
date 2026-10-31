@@ -581,7 +581,9 @@ impl Mono {
         for stmt in &mut block.stmts {
             match stmt {
                 Stmt::Let { init: e, .. } | Stmt::Expr(e) => self.expr(e, args),
-                Stmt::Assign { place, value } | Stmt::Append { place, value } => {
+                Stmt::Assign { place, value }
+                | Stmt::Append { place, value }
+                | Stmt::Push { place, value, .. } => {
                     self.place(place, args);
                     self.expr(value, args);
                 }
@@ -600,6 +602,7 @@ impl Mono {
                 self.place(base, args);
                 self.expr(index, args);
             }
+            Place::Some(base) => self.place(base, args),
         }
     }
 

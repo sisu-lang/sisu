@@ -122,7 +122,7 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             rc_retain,
             rc_fault,
             tbaa_kind: context.get_kind_id("tbaa"),
-            header_tag: tbaa_tag(context, tbaa_root, "count and length"),
+            header_tag: tbaa_tag(context, tbaa_root, "array header"),
             element_tag: tbaa_tag(context, tbaa_root, "array element"),
             tbaa_root,
             program,
@@ -250,14 +250,14 @@ struct Codegen<'ctx, 'src> {
     rc_fault: Option<FunctionValue<'ctx>>,
     /// The kind id of `!tbaa` metadata.
     tbaa_kind: u32,
-    /// The TBAA tag of an array's length, and of every count that `load_count` and `store_count`
-    /// read and write. An array element's loads and stores carry `element_tag`, so
-    /// that LLVM knows a store to an element leaves those counts and lengths as they were. An
-    /// enum element is loaded and stored whole with `element_tag` too. A tag describes only the
-    /// bytes the access itself touches, and an element's bytes never hold a count or a length:
-    /// the strings, objects and boxes an enum element points at keep their counts in their own
-    /// blocks, as the strings of a `[string]` do. Other accesses, such as a string's length or a
-    /// new object's count, carry no tag and may alias anything.
+    /// The TBAA tag of an array's header, which is its length and capacity, and of every count
+    /// that `load_count` and `store_count` read and write. An array element's loads and stores
+    /// carry `element_tag`, so that LLVM knows a store to an element leaves those counts and
+    /// lengths as they were. An enum element is loaded and stored whole with `element_tag` too. A
+    /// tag describes only the bytes the access itself touches, and an element's bytes never hold a
+    /// count or a length: the strings, objects and boxes an enum element points at keep their
+    /// counts in their own blocks, as the strings of a `[string]` do. Other accesses, such as a
+    /// string's length or a new object's count, carry no tag and may alias anything.
     header_tag: MetadataValue<'ctx>,
     element_tag: MetadataValue<'ctx>,
     /// The root of every TBAA type. Each class field has its own type, `ClassLayout::field_tag`:
@@ -617,6 +617,11 @@ impl<'ctx> Codegen<'ctx, '_> {
                 // Lowering stores only into a field or an element; a local is assigned.
                 let tag = tag.expect("a store's place should end in a field or an element");
                 self.store_tagged(address, value, tag);
+            }
+            Statement::Push { place, value, at } => {
+                let (value, _) = self.operand(value);
+                let (slot, ty, _) = self.address(place.local, &place.projections, false);
+                self.array_push(slot, ty, value, *at);
             }
             Statement::Release(local) => {
                 self.check_not_moved(*local);

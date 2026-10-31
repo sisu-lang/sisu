@@ -324,7 +324,7 @@ This table lists each feature or path and the benchmark that measures it:
 | Array indexing in a loop | sieve |
 | Class allocation and release, `?.` and `??` | binary_trees |
 | Writes to an array with one holder, passed and returned | quicksort |
-| Copy-on-write of an array with a live copy | shared_arrays |
+| Copy-on-write of an array with a live copy, and `push` onto an array and onto one with a live copy | shared_arrays |
 | String `==` on array elements and class fields that stay live | compare |
 | `f64` arithmetic | nbody, mandelbrot |
 | Short loops over small arrays | fannkuch_redux |
@@ -334,8 +334,9 @@ This table lists each feature or path and the benchmark that measures it:
 | Text scanned from `bytes()` into a boxed tree, rewritten and evaluated | interp |
 | Calls through a bound, static at two conforming classes, and an associated type read through a bound | interfaces |
 | Printing compound values; `==` through a written `Eq` | show |
+| Lexing as a real program does it: `read_line`, `chars()`, an enum of tokens with a generated `Display`, `Stack<T>` over a linked class, an interface bound, and `push` onto arrays, on a fixed input of `.sisu` source | selfhost_lexer |
 | The front end | check_binary_trees, check_large |
-| An `-O2` build | build_hello, build_binary_trees, build_large_20; build_large on `main` only |
+| An `-O2` build | build_hello, build_binary_trees, build_selfhost_lexer, build_large_20; build_large on `main` only |
 
 ## Running them
 

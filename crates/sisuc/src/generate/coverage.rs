@@ -217,6 +217,7 @@ const REACH: [&str; 102] = [
     "reach: `dbg` may run a written `to_string`",
     "reach: `dbg` writes a value that runs no written method",
     "reach: `dbg` shows the fields of a class with no written `Display`",
+    "reach: a `push` appends to an array",
 ];
 
 /// The local that `operand` reads whole: the one place where its type is known here.
@@ -643,6 +644,9 @@ impl Walk {
         for function in &mir.functions {
             for block in &function.blocks {
                 for stmt in &block.stmts {
+                    if matches!(stmt, crate::mir::Statement::Push { .. }) {
+                        self.mark("reach: a `push` appends to an array");
+                    }
                     let crate::mir::Statement::Assign { value, .. } = stmt else {
                         continue;
                     };
@@ -2131,6 +2135,11 @@ impl Walk {
                     self.place(place);
                     self.tir_expr(value, Parent::Other);
                 }
+                tir::Stmt::Push { place, value, .. } => {
+                    self.mark("tir::Stmt::Push");
+                    self.place(place);
+                    self.tir_expr(value, Parent::Other);
+                }
                 tir::Stmt::Expr(e) => {
                     self.mark("tir::Stmt::Expr");
                     self.tir_expr(e, Parent::Discard);
@@ -2180,6 +2189,10 @@ impl Walk {
                 self.mark("tir::Place::Index");
                 self.place(base);
                 self.tir_expr(index, Parent::Other);
+            }
+            tir::Place::Some(base) => {
+                self.mark("tir::Place::Some");
+                self.place(base);
             }
         }
     }
@@ -4080,6 +4093,26 @@ fn with_strings(data: &[u8], len: u64, base: u64, room: u64, bound: Option<u64>)
     g
 }
 
+/// The checker reads the element of `s0[i] op= e` before `e`. That read may panic. So a later
+/// operand runs after an effect, even when `e` is a literal. A rewrite that moves a `let` into
+/// `e` then breaks the condition of the Let rewrite.
+#[test]
+fn an_element_compound_should_count_as_an_effect_before_its_value() {
+    let mut seen = 0;
+    for mut state in 0..256 {
+        let data: Vec<u8> = (0..32)
+            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+            .collect();
+        let mut g = with_strings(&data, 3, 2, 100, None);
+        g.compound();
+        if g.w.out.program.starts_with("s0[") {
+            seen += 1;
+            assert!(g.effect, "{}", g.w.out.program);
+        }
+    }
+    assert!(seen > 0, "no input should fail to compound an element");
+}
+
 #[test]
 fn an_element_takes_at_most_its_base() {
     // `s0` holds 3 strings of 2 chars at most: 9 in all, but `s0[i] = e` may write 2 chars only.
@@ -4256,6 +4289,257 @@ fn a_mutable_array_counts_its_slots_bases_and_room() {
         widest > 0,
         "no input should fail to write 8 strings of 64 chars with room"
     );
+}
+
+/// A `Gen` over `data` in `main`, holding `let mut v0: [i64]` of 2 elements with `grow` for
+/// pushes, inside a loop of `bound` runs if any.
+fn with_growth(data: &[u8], grow: u64, bound: Option<u64>) -> Gen<'_> {
+    let mut g = Gen::new(data);
+    let mut var = Var::new(
+        "v0".to_string(),
+        Ty::Array(Box::new(Ty::I64)),
+        true,
+        0,
+        0,
+        0,
+    );
+    (var.len, var.grow, var.size) = (2, grow, 2 + grow);
+    g.scope.vars.push(var);
+    if let Some(bound) = bound {
+        g.cost.enter_loop(bound);
+    }
+    g
+}
+
+/// Each `push` onto an array of numbers adds one slot at each run of every loop around it. It
+/// takes that much of the growth. The growth is 3 in all, so 3 pushes fit outside a loop. Only 1
+/// fits in a loop of 2 runs.
+#[test]
+fn a_push_should_take_the_growth_of_its_array_at_each_run() {
+    for (bound, pushes) in [(None, 3), (Some(2), 1)] {
+        for mut state in 0..64 {
+            let data: Vec<u8> = (0..32)
+                .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+                .collect();
+            let mut g = with_growth(&data, 3, bound);
+            // One more than the growth allows, so that a push that takes nothing fails here.
+            for _ in 0..4 {
+                if g.push_targets().is_empty() {
+                    break;
+                }
+                g.push_stmt();
+                g.w.line();
+            }
+            let program = &g.w.out.program;
+            assert_eq!(program.matches("v0.push(").count(), pushes, "{program}");
+            assert!(g.push_targets().is_empty(), "{program}");
+        }
+    }
+}
+
+/// A mutable array of a type with no class object gets growth for pushes. Its most size, growth
+/// included, stays within `MAX_SIZE`. Some arrays get growth, and the full ones get none.
+#[test]
+fn a_mutable_array_should_get_growth_within_the_most_size() {
+    let (mut with, mut without) = (0, 0);
+    for element in [Ty::String, Ty::I64, Ty::Array(Box::new(Ty::String))] {
+        for mut state in 0..1_024 {
+            let data: Vec<u8> = (0..8)
+                .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+                .collect();
+            let mut g = Gen::new(&data);
+            let ty = Ty::Array(Box::new(element.clone()));
+            g.array_let("v0".to_string(), ty, &element);
+            let var = &g.scope.vars[0];
+            assert!(var.size <= MAX_SIZE, "{}", g.w.out.program);
+            assert!(
+                [0, super::stmt::GROW].contains(&var.grow),
+                "{}",
+                g.w.out.program
+            );
+            // The size covers the growth beside the elements the array holds now.
+            let held = var.len + var.len * var.base + var.room;
+            assert!(held + var.grow <= var.size, "{}", g.w.out.program);
+            // An array that leaves twice the growth free always gets it.
+            if held + 2 * super::stmt::GROW <= MAX_SIZE {
+                assert_eq!(var.grow, super::stmt::GROW, "{}", g.w.out.program);
+            }
+            if var.grow > 0 {
+                with += 1;
+            } else {
+                without += 1;
+            }
+        }
+    }
+    assert!(with > 0 && without > 0, "{with} {without}");
+}
+
+/// A push onto an element of an array of arrays stays below the length the array holds at least.
+#[test]
+fn a_push_onto_an_element_should_stay_below_the_length() {
+    let mut seen = [false; 3];
+    for mut state in 0..1_024 {
+        let data: Vec<u8> = (0..32)
+            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+            .collect();
+        let mut g = with_growth(&data, 64, None);
+        let var = &mut g.scope.vars[0];
+        var.ty = Ty::Array(Box::new(Ty::Array(Box::new(Ty::I64))));
+        var.len = 3;
+        g.push_stmt();
+        for (at, seen) in seen.iter_mut().enumerate() {
+            *seen |= g.w.out.program.contains(&format!("v0[{at}].push("));
+        }
+        assert!(
+            !g.w.out.program.contains("v0[3].push("),
+            "{}",
+            g.w.out.program
+        );
+    }
+    assert_eq!(seen, [true; 3]);
+}
+
+/// A `push` is planned only where the growth covers the smallest value of the element. Seeds 1818
+/// and 4814 once asked for a `Result<bool, string>` in no room.
+#[test]
+fn a_push_should_get_room_for_the_smallest_value_of_its_element() {
+    for n in [1818, 4814] {
+        checked(&generate(&seed(n)).program);
+    }
+}
+
+/// An array with no growth takes no `push`, while one that a statement declares may.
+#[test]
+fn an_array_without_growth_should_take_no_push() {
+    for mut state in 0..1_024 {
+        let data: Vec<u8> = (0..32)
+            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+            .collect();
+        let mut g = with_growth(&data, 0, None);
+        g.stmts(false);
+        assert!(!g.w.out.program.contains("v0.push("), "{}", g.w.out.program);
+    }
+}
+
+/// The programs of the seeds push onto a local, onto an element of an array and onto a `mut`
+/// field, and now and then through `?.`. A guard keeps the field within its cap.
+#[test]
+fn a_push_should_reach_a_local_an_element_and_a_guarded_field() {
+    let (mut local, mut element, mut field) = (false, false, false);
+    for data in seeds() {
+        let program = generate(&data).program;
+        let lines: Vec<&str> = program.lines().map(str::trim_start).collect();
+        for (at, line) in lines.iter().enumerate() {
+            let Some((place, _)) = line.split_once(".push(") else {
+                continue;
+            };
+            let (place, through) = place
+                .strip_suffix('?')
+                .map_or((place, false), |place| (place, true));
+            if place.ends_with(']') {
+                element = true;
+            } else if place.contains('.') {
+                field = true;
+                let guard = lines[at - 1];
+                // Through `?.`, the guard reads an absent object as holding no element.
+                let length = format!("{place}{}.len()", "?".repeat(usize::from(through)));
+                assert!(
+                    guard.starts_with("if ") && guard.contains(&length) && guard.contains(" < "),
+                    "{place} is pushed to outside its guard: {guard}"
+                );
+            } else {
+                local = true;
+            }
+        }
+    }
+    assert!(
+        local && element && field,
+        "{local} {element} {field}: a local, an element and a field"
+    );
+}
+
+/// A mutable optional array of a type with no class object gets the growth of `?.push`, when the
+/// size it may reach leaves room for it within `MAX_SIZE`. No other local gets it.
+#[test]
+fn an_optional_array_should_get_growth_only_where_it_fits() {
+    let g = Gen::new(&[0; 8]);
+    let optional = |element: Ty| Ty::Optional(Box::new(Ty::Array(Box::new(element))));
+    let growth = super::stmt::GROW;
+    for (row, ty, mutable, size, expected) in [
+        ("holds nothing", optional(Ty::I64), true, 0, growth),
+        (
+            "leaves room for the growth",
+            optional(Ty::I64),
+            true,
+            MAX_SIZE - growth,
+            growth,
+        ),
+        (
+            "leaves one too little",
+            optional(Ty::I64),
+            true,
+            MAX_SIZE - growth + 1,
+            0,
+        ),
+        ("cannot change", optional(Ty::I64), false, 0, 0),
+        ("holds class objects", optional(Ty::class(0, 9)), true, 0, 0),
+        ("is no optional", Ty::Array(Box::new(Ty::I64)), true, 0, 0),
+        ("is no array", Ty::Optional(Box::new(Ty::I64)), true, 0, 0),
+    ] {
+        assert_eq!(
+            g.optional_growth(&ty, mutable, size),
+            expected,
+            "row `{row}`"
+        );
+    }
+}
+
+/// A push through `?.` onto an optional array local runs for an array and for `None`, and one
+/// onto a field of an optional object runs for an object and for `None`. The guard of the field
+/// reads an absent object as holding no element, so the push runs and does nothing.
+#[test]
+fn a_push_through_an_optional_should_take_the_place_of_its_local() {
+    let object = Ty::class(0, 9);
+    let (mut local, mut field) = (false, false);
+    for mut state in 0..64 {
+        let data: Vec<u8> = (0..32)
+            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+            .collect();
+        let mut g = with_growth(&data, 64, None);
+        g.scope.vars[0].ty = Ty::Optional(Box::new(Ty::Array(Box::new(Ty::I64))));
+        g.scope.classes.push(Class {
+            fields: vec![Field {
+                name: "g0".to_string(),
+                ty: Ty::Array(Box::new(Ty::I64)),
+                mutable: true,
+                cap: 8,
+            }],
+            size: 9,
+            applied: None,
+            inferable: false,
+        });
+        let var = Var::new(
+            "v1".to_string(),
+            Ty::Optional(Box::new(object.clone())),
+            false,
+            0,
+            0,
+            0,
+        );
+        g.scope.vars.push(var);
+        g.push_stmt();
+        let program = &g.w.out.program;
+        local |= program.starts_with("v0?.push(");
+        if program.starts_with("if ") {
+            assert!(
+                program.starts_with("if (v1?.g0?.len() ?? 0) < 8 ")
+                    && program.contains("v1?.g0?.push("),
+                "{program}"
+            );
+            field = true;
+        }
+    }
+    assert!(local && field, "{local} {field}: a local and a field");
 }
 
 #[test]
@@ -5370,9 +5654,18 @@ impl<'f> Lets<'f> {
     fn stmt(&mut self, stmt: &tir::Stmt) {
         match stmt {
             tir::Stmt::Let { init, .. } | tir::Stmt::Expr(init) => self.expr(init),
-            tir::Stmt::Assign { place, value } | tir::Stmt::Append { place, value } => {
+            tir::Stmt::Assign { place, value }
+            | tir::Stmt::Append { place, value }
+            | tir::Stmt::Push { place, value, .. } => {
                 self.place(place);
-                self.expr(value);
+                // Through `?.`, the value runs only when the optional holds one. `Some` is the
+                // outermost of a place: `v?[0].push(e)` does not parse, and `v[0]?.push(e)` is a
+                // `Some` of an `Index`.
+                if matches!(place, tir::Place::Some(_)) {
+                    self.conditionally(|walk| walk.expr(value));
+                } else {
+                    self.expr(value);
+                }
             }
         }
     }
@@ -5385,6 +5678,7 @@ impl<'f> Lets<'f> {
                 self.place(base);
                 self.expr(index);
             }
+            tir::Place::Some(base) => self.place(base),
         }
     }
 
@@ -5921,7 +6215,10 @@ fn known_answers_should_be_integer() {
         let lets = Lets::new(&main.locals, &pure_calls);
         let printed = main.body.stmts.iter().filter_map(|stmt| match stmt {
             tir::Stmt::Expr(e) => Some(e),
-            tir::Stmt::Let { .. } | tir::Stmt::Assign { .. } | tir::Stmt::Append { .. } => None,
+            tir::Stmt::Let { .. }
+            | tir::Stmt::Assign { .. }
+            | tir::Stmt::Append { .. }
+            | tir::Stmt::Push { .. } => None,
         });
         let mut sites = 0;
         for e in printed.chain(main.body.value.as_deref()) {

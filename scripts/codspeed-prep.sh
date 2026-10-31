@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Prepares the CodSpeed benchmarks listed in codspeed.yml and codspeed-main.yml:
-# builds release sisu, compiles reduced copies of the bench/ programs,
-# generates a 200-section and a 20-section compiler input, then runs every
-# benchmark once and checks what it prints. Writes .codspeed-main-merged.yml,
-# the entries of both files, which pushes to main run. Exits non-zero, naming
-# the benchmark or file, when a reduction no longer applies or a benchmark
-# misbehaves.
+# builds release sisu, compiles reduced copies of the bench/ programs and the
+# lexer in Sisu, generates a 200-section and a 20-section compiler input, then
+# runs every benchmark once and checks what it prints: the lexer's output on its
+# input must be what `sisu build --emit tokens` prints. Writes
+# .codspeed-main-merged.yml, the entries of both files, which pushes to main
+# run. Exits non-zero, naming the benchmark or file, when a reduction no longer
+# applies or a benchmark misbehaves.
 #   scripts/codspeed-prep.sh
 set -euo pipefail
 
@@ -16,7 +17,7 @@ small_sections=20
 
 cargo build --release --locked -p sisuc -p sisu-runtime-mimalloc
 rm -rf "$out"
-mkdir -p "$out"/{fib,sieve,binary_trees,quicksort,nbody,mandelbrot,fannkuch_redux,large,large_20,build_hello,build_binary_trees,build_large,build_large_20,strings,enum_match,shared_arrays,compare,tree_rewrite,interp,interfaces,show}
+mkdir -p "$out"/{fib,sieve,binary_trees,quicksort,nbody,mandelbrot,fannkuch_redux,large,large_20,build_hello,build_binary_trees,build_large,build_large_20,strings,enum_match,shared_arrays,compare,tree_rewrite,interp,interfaces,show,selfhost_lexer,build_selfhost_lexer}
 
 fail() {
     echo "codspeed-prep: $*" >&2
@@ -73,6 +74,8 @@ reduce fannkuch_redux 's/fannkuch(10)/fannkuch(9)/'
 for b in strings enum_match shared_arrays compare tree_rewrite interp interfaces show; do
     build "$b" "bench/features/$b/main.sisu" "$out/$b/main"
 done
+# The lexer in Sisu, which the benchmark runs on a fixed input.
+build selfhost_lexer selfhost/lexer.sisu "$out/selfhost_lexer/main"
 
 # step0 returns its argument. stepi adds 1 through an array, a class and an
 # optional chain, and 0 through constants, an enum, f64 methods, a string built
@@ -319,12 +322,20 @@ expected() {
         fannkuch_redux) printf '%s\n' 8629 'Pfannkuchen(9) = 30' ;;
         strings) printf '%s\n' 186741 9800 10000 12073291 ;;
         enum_match) printf '%s\n' 457364 816672 ;;
-        shared_arrays) printf '%s\n' 20000 519500 ;;
+        shared_arrays) printf '%s\n' 20000 519500 199990000 6000 5999 ;;
         compare) printf '%s\n' 1494 640 2880 ;;
         tree_rewrite) printf '%s\n' 732347 163697 ;;
         interp) printf '%s\n' 549000 126 ;;
         interfaces) printf '%s\n' 699988 949994 1010000 ;;
         show) printf '%s\n' 1091750 40900 ;;
+        # The tokens of the input from the compiler's lexer, which the lexer in Sisu must match.
+        selfhost_lexer)
+            target/release/sisu build --emit tokens bench/features/selfhost_lexer/input.sisu \
+                2>"$out/stderr" || {
+                cat "$out/stderr" >&2
+                fail "bench/features/selfhost_lexer/input.sisu does not lex"
+            }
+            ;;
         *) return 1 ;;
     esac
 }

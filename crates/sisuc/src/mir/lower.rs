@@ -41,6 +41,7 @@ use super::{
     Projection, Rvalue, Side, Statement, Terminator,
 };
 use crate::conformance::{Written, calls_written, prints_by_helper};
+use crate::source::Span;
 use crate::tir::{
     self, Block, CompareOp, Expr, ExprKind, FuncId, LocalId, Place, Stmt, Type, TypeKind,
 };
@@ -540,7 +541,12 @@ impl<'a> Lowering<'a> {
                 place: place @ Place::Index { .. },
                 value,
             } => self.element_write(place, value)?,
+            Stmt::Assign {
+                place: Place::Some(_),
+                ..
+            } => unreachable!("only a `push` should write through `Some`"),
             Stmt::Append { place, value } => self.append(place, value)?,
+            Stmt::Push { place, value, span } => self.array_push(place, value, *span)?,
             Stmt::Expr(e) => {
                 let value = self.into(e, None)?;
                 self.discard(value);
@@ -1113,6 +1119,8 @@ impl<'a> Lowering<'a> {
         dest: Option<LocalId>,
         join: &mut Option<BlockId>,
     ) {
+        #[cfg(test)]
+        ARM_STEPS.set(ARM_STEPS.get() + 1);
         if let Some(value) = self.block(block, dest) {
             if dest.is_none() {
                 self.discard(value);
@@ -1208,7 +1216,8 @@ impl<'a> Lowering<'a> {
 
     /// The root of a written element place, and its index operands from the root outwards,
     /// each pinned against the indexes after it and `value`. A field root's base is read into
-    /// a temporary, never borrowed; the caller releases it after the store.
+    /// a temporary, never borrowed; the caller releases it after the store. The exception is a
+    /// `value` that exits (see below).
     fn written_root<'p>(&mut self, place: &'p Place, value: &Expr) -> Option<WrittenRoot<'p>> {
         let mut indexes = Vec::new();
         let mut root = place;
@@ -1219,6 +1228,17 @@ impl<'a> Lowering<'a> {
         indexes.reverse();
         let (root, temp) = match root {
             Place::Local(local) => (whole(*local), None),
+            // A value that exits would leak a temporary at the exit. The checker has bound the
+            // base of such a place to a local of its own, which nothing writes and which the exit
+            // releases, so the place reads it in place (`spill_before`).
+            Place::Field { base, index } if value.exits() => {
+                let ExprKind::Local(local) = base.kind else {
+                    unreachable!("the checker should bind the base of a place whose value exits")
+                };
+                let mut root = whole(local);
+                root.projections.push(self.field(base.ty, *index));
+                (root, None)
+            }
             Place::Field { base, index } => {
                 let temp = self.temp_of(base)?;
                 let mut root = whole(temp);
@@ -1226,6 +1246,7 @@ impl<'a> Lowering<'a> {
                 (root, Some(temp))
             }
             Place::Index { .. } => unreachable!("the loop above should stop at the root"),
+            Place::Some(_) => unreachable!("a `Some` should end a written place, never lead it"),
         };
         let later: Vec<&Expr> = indexes.iter().copied().chain([value]).collect();
         let mut ops = Vec::with_capacity(indexes.len());
@@ -1273,6 +1294,74 @@ impl<'a> Lowering<'a> {
         self.store(place, value_op, value.ty);
         self.release(temp);
         Some(())
+    }
+
+    /// `p.push(value)`, in the order of an element write. The order is a field root's base, the
+    /// indexes and the value. Then come the check and `make_unique` of each level, the push, and
+    /// the release of the base. The push decides on the count of the array `p` holds.
+    ///
+    /// A place that ends in `Some` holds an optional array. The push tests it before the value,
+    /// so an absent array runs nothing, and again after the value, which may have cleared it. The
+    /// second test is the last step before the push: it proves the write (`certify`). When it
+    /// finds `None`, the value is released and the base with it.
+    fn array_push(&mut self, place: &Place, value: &Expr, at: Span) -> Option<()> {
+        let (place, some) = match place {
+            Place::Some(array) => (&**array, true),
+            place => (place, false),
+        };
+        let (root, indexes, temp) = self.written_root(place, value)?;
+        if !some {
+            let value = self.operand(value)?;
+            let place = self.walk(root, &indexes);
+            self.push(Statement::Push { place, value, at });
+            self.release(temp);
+            return Some(());
+        }
+        // The test reads the element of an indexed place, so a bad index panics here, before the
+        // value runs. A push of an array that is not optional runs the value first.
+        let optional = Self::indexed(&root, &indexes);
+        let join = self.new_block();
+        self.if_present(&optional, |lowering| {
+            lowering.release(temp);
+            lowering.goto(join);
+        });
+        // The checker rejects a value that never finishes (E0043), so the join stays reachable.
+        let value = self.operand(value)?;
+        self.if_present(&optional, |lowering| {
+            lowering.discard_operand(&value);
+            lowering.release(temp);
+            lowering.goto(join);
+        });
+        let mut place = self.walk(root, &indexes);
+        place.projections.push(Projection::Some);
+        self.push(Statement::Push { place, value, at });
+        self.release(temp);
+        self.goto(join);
+        self.current = Some(join);
+        Some(())
+    }
+
+    /// Ends the block with a test of the optional at `place`. `absent` lowers the branch where it
+    /// holds none, which must leave the block. Lowering goes on in the branch where it holds a
+    /// value, a block that nothing else enters.
+    fn if_present(&mut self, place: &MirPlace, absent: impl FnOnce(&mut Self)) {
+        let (some, none) = (self.new_block(), self.new_block());
+        self.terminate(Terminator::TestPresent {
+            place: place.clone(),
+            some,
+            none,
+        });
+        self.current = Some(none);
+        absent(self);
+        self.current = Some(some);
+    }
+
+    /// Releases the operand of a statement that does not run, when it owns a reference: a
+    /// temporary does, and a read of a source local does not.
+    fn discard_operand(&mut self, operand: &Operand) {
+        if let Operand::Move(local) = operand {
+            self.push(Statement::Release(*local));
+        }
     }
 
     /// `p += value` on a string field or element, in the spec's order: a copy of `p`, the
@@ -1429,6 +1518,8 @@ fn mentions(e: &Expr, found: &mut Mentions) {
 thread_local! {
     /// How many expressions `mentions` has walked on this thread.
     pub(super) static WALKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many arms of an `if`, an `if let` or a `match` lowering has lowered on this thread.
+    pub(super) static ARM_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many guard-membership records `is_guarded` has read on this thread: one flag per
     /// question about a source local.
     pub(super) static PROBED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -1542,7 +1633,9 @@ fn block_mentions(block: &Block, found: &mut Mentions) {
                 found.found.push(local.0);
                 mentions(init, found);
             }
-            Stmt::Assign { place, value } | Stmt::Append { place, value } => {
+            Stmt::Assign { place, value }
+            | Stmt::Append { place, value }
+            | Stmt::Push { place, value, .. } => {
                 place_mentions(place, found);
                 mentions(value, found);
             }
@@ -1563,5 +1656,6 @@ fn place_mentions(place: &Place, found: &mut Mentions) {
             place_mentions(base, found);
             mentions(index, found);
         }
+        Place::Some(base) => place_mentions(base, found),
     }
 }

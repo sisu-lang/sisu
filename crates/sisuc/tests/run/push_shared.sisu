@@ -1,0 +1,16 @@
+fn iterations() -> i64 { 1000 }
+
+// GIVEN an array `xs` that `saved` shares before each push
+// WHEN `main` pushes `iterations()` elements onto it
+// THEN each push copies the block once, into a block with room for one more element
+// AND `saved` keeps the value before the last push
+fn main() {
+    let mut xs = [0]
+    let mut saved = xs
+    for i in 0..iterations() {
+        saved = xs
+        xs.push(i)
+    }
+    print(xs.len())                  // 1001 (1 with no iterations)
+    print(saved.len())               // 1000: the value before the last push (1 with none)
+}

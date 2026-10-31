@@ -1,0 +1,10 @@
+error[E0021]: cannot push to a temporary value
+ --> E0021-push.sisu:4:5
+  |
+4 |     numbers().push(4)
+  |     ^^^^^^^^^ this value is not stored in a variable
+  |
+  = help: store it in a `let mut` variable first
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0021

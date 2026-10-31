@@ -1,12 +1,16 @@
 //! Assignment: places, which root may be written, the temps of compound operators, and spills.
 
-use super::expr::{literal_type, local, operator};
+use super::expr::{if_some, literal_type, local, operator};
+use super::member::safe_value;
 use super::operator::Operator;
+use super::unused_names::Used;
 use super::{
-    BindingKind, Checked, Checker, Declared, Poisoned, UNKNOWN, block_expr, payload, type_of,
+    BindingKind, Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, block_expr, payload,
+    type_of,
 };
 use crate::ast;
 use crate::diagnostic::{DiagnosticKind, Immutable};
+use crate::parser::{goes_through_safe_access, is_place};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, ExprKind, Type, TypeKind};
@@ -18,6 +22,32 @@ struct Path {
     operands: Vec<tir::Expr>,
 }
 
+/// What a write to a place does to the root's binding, which decides the wording of E0001.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Change {
+    /// `x = v`.
+    Assign,
+    /// `x[i] = v`, where `x` is the root of the place.
+    Element,
+    /// `x.push(v)`.
+    Push,
+}
+
+impl Change {
+    /// E0001 for the root `name`, whose write at `at` its `cause` forbids.
+    fn immutable(self, name: String, at: Span, cause: Immutable) -> DiagnosticKind {
+        match self {
+            Change::Push => DiagnosticKind::PushToImmutable { name, at, cause },
+            Change::Assign | Change::Element => DiagnosticKind::AssignToImmutable {
+                name,
+                at,
+                element: self == Change::Element,
+                cause,
+            },
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 enum Root {
     Local(tir::LocalId),
@@ -25,14 +55,27 @@ enum Root {
     Field(usize),
 }
 
-struct CheckedPlace {
+/// The object that the `?.` of a place's root field takes out of an optional. `bind` holds it
+/// where `scrutinee` has one, and the place starts there.
+struct Guard {
+    bind: tir::LocalId,
+    scrutinee: tir::Expr,
+}
+
+pub(super) struct CheckedPlace {
     /// `None` when a part of the place failed.
     path: Option<Path>,
-    /// The type a value written to it needs; `None` is `Error`.
+    /// The type a value written to it needs, the type of what the place stores; `None` is
+    /// `Error`.
     ty: Option<Type>,
     /// `false` for a root that is a field without `mut`. A name root that cannot be written is
     /// reported but still lowers, as in milestone 2.
     writable: bool,
+    /// For a `push`, whose receiver may turn out to be no array: the E0001 of a root that cannot
+    /// change, which only an array reports.
+    held: Option<DiagnosticKind>,
+    /// The object that a `?.` of the root field takes out of an optional.
+    guard: Option<Guard>,
 }
 
 impl CheckedPlace {
@@ -41,7 +84,20 @@ impl CheckedPlace {
             path: None,
             ty: None,
             writable: false,
+            held: None,
+            guard: None,
         }
+    }
+
+    /// The type of the place as a value: a `?.` of its root field makes it an optional.
+    fn value_ty(&self) -> Option<Type> {
+        self.ty.map(|ty| {
+            if self.guard.is_some() {
+                as_optional(ty)
+            } else {
+                ty
+            }
+        })
     }
 }
 
@@ -53,7 +109,7 @@ impl Checker<'_> {
         target: &ast::Expr,
         value: &ast::Expr,
     ) -> Result<tir::Stmt, Poisoned> {
-        let place = self.place(span, target, false);
+        let place = self.place(span, target, Change::Assign);
         let value = self.expect(value, place.ty);
         self.assigned(span, place, value)
     }
@@ -70,6 +126,232 @@ impl Checker<'_> {
                 Ok(self.write(span, path.root, path.operands, value))
             }
             _ => Err(Poisoned::typed(Type::UNIT)),
+        }
+    }
+
+    /// Whether a `push` checks its receiver `e` as a place. That holds for a field, or for an
+    /// index of a local or of a field. A `?.` may lead to it only when `safe` says the call is
+    /// `?.push`: `e?.push(x)` holds a value only where `e` does. The place stamps nothing and
+    /// reports nothing until the receiver is known to be an array (`push_receiver`).
+    pub(super) fn is_push_place(&mut self, e: &ast::Expr, safe: bool) -> bool {
+        // A receiver checked ahead of its turn is a value already.
+        is_place(e)
+            && (safe || !goes_through_safe_access(e))
+            && !self.body.ahead_at.contains_key(&(e.span, false))
+            && self.rooted(e)
+    }
+
+    /// Whether the chain of indexes of the place `e` ends in a field or in a local: not in a
+    /// constant, a function or an unknown name.
+    fn rooted(&mut self, e: &ast::Expr) -> bool {
+        match &e.kind {
+            ast::ExprKind::Index { base, .. } => self.rooted(base),
+            &ast::ExprKind::Name(name) => self.lookup(name).is_some(),
+            _ => true,
+        }
+    }
+
+    /// The receiver of a `push`, checked once as a place. The place waits in `body.pushed` for
+    /// `push`, or for the method lookup that finds the receiver is no array. The result is the
+    /// value the place holds, which owns the operands of the place.
+    pub(super) fn push_receiver(&mut self, receiver: &ast::Expr) -> Checked {
+        let mut place = self.place(receiver.span, receiver, Change::Push);
+        // A place of type `Error` has reported itself.
+        let read = match (place.path.take(), place.ty) {
+            (Some(path), Some(_)) => Ok(self.read(build(path.root, path.operands), receiver.span)),
+            (_, ty) => Err(Poisoned::of(ty)),
+        };
+        self.body.pushed = Some((receiver.span, place));
+        read
+    }
+
+    /// Takes the place that `push_receiver` checked for `receiver`.
+    pub(super) fn take_pushed(&mut self, receiver: &ast::Expr) -> Option<CheckedPlace> {
+        let (at, place) = self.body.pushed.take()?;
+        (at == receiver.span).then_some(place)
+    }
+
+    /// The receiver of `receiver?.push(arg)`, which `push_receiver` checked as `read`. The place
+    /// may hold an array that is optional, because its own type or a `?.` of its root field makes
+    /// it so. Then the call writes the place. The result is `Ok` of the array, as `?.` hands it to
+    /// the call, and the place waits for `push`. Else the call is a method of whatever the place
+    /// holds. The result is then `Err` of the place read as a value, as a `?.` reads a receiver.
+    /// The root field's `?.` binds its object for that value.
+    pub(super) fn safe_push_receiver(
+        &mut self,
+        receiver: &ast::Expr,
+        read: Checked,
+    ) -> Result<tir::Expr, Checked> {
+        let guarded = self
+            .body
+            .pushed
+            .as_ref()
+            .is_some_and(|(_, place)| place.guard.is_some());
+        let held = type_of(&read).map(|ty| if guarded { as_optional(ty) } else { ty });
+        let in_place = matches!(held.map(Type::kind),
+            Some(TypeKind::Optional(payload)) if matches!(payload.kind(), TypeKind::Array(_)));
+        let read = match read {
+            Ok(mut array) if in_place => {
+                // The array inside the optional that the place stores.
+                if let TypeKind::Optional(payload) = array.ty.kind() {
+                    array.ty = payload;
+                }
+                return Ok(array);
+            }
+            read => read,
+        };
+        let place = self
+            .take_pushed(receiver)
+            .expect("`push_receiver` should have kept the place of a receiver that is a place");
+        if let Ok(read) = &read {
+            self.read_pushed(read, receiver);
+        }
+        Err(match place.guard {
+            Some(Guard { bind, scrutinee }) => safe_value(receiver.span, bind, Ok(scrutinee), read),
+            None => read,
+        })
+    }
+
+    /// Records the reads of the receiver `e` of a `push` that is no array's, whose value is
+    /// `read`. The local is read. The field at the root of the place is read. A write reads
+    /// neither.
+    pub(super) fn read_pushed(&mut self, read: &tir::Expr, e: &ast::Expr) {
+        match (&e.kind, &read.kind) {
+            (ast::ExprKind::Index { base, .. }, ExprKind::Index { base: read, .. }) => {
+                self.read_pushed(read, base);
+            }
+            (&ast::ExprKind::Name(name), ExprKind::Local(_)) => {
+                let binding = self.lookup(name);
+                binding
+                    .expect("the root of a checked place should be a binding")
+                    .read = true;
+            }
+            (ast::ExprKind::Field { .. }, ExprKind::Field { base, index }) => {
+                let TypeKind::Class(class, _) = base.ty.kind() else {
+                    unreachable!("the base of a checked field should be a class")
+                };
+                self.record(Used::Field(class, *index), e.span);
+            }
+            _ => unreachable!("the read of a push receiver should match its syntax"),
+        }
+    }
+
+    /// `receiver.push(arg)`, `receiver` the checked `receiver_expr`. The place of the receiver
+    /// is `place`, if `push_receiver` checked it. The receiver is an array, or its type is
+    /// unknown. It gives a `unit` block that holds `Push` of the place, after the spills of its
+    /// operands and the value. A receiver that no place takes is reported before the argument.
+    /// `safe` makes it `receiver?.push(arg)`: a place of an optional type is pushed to where it
+    /// holds a value, and a root field's `?.` holds its object in `place.guard`.
+    pub(super) fn push(
+        &mut self,
+        span: Span,
+        safe: bool,
+        (receiver, place): (Checked, Option<CheckedPlace>),
+        receiver_expr: &ast::Expr,
+        args: &[ast::Arg],
+    ) -> Checked {
+        let element = match type_of(&receiver).map(Type::kind) {
+            Some(TypeKind::Array(element)) => Some(element),
+            _ => None,
+        };
+        // A receiver of unknown type may be a class whose `push` gives a value, so its failure
+        // says nothing about the call's value.
+        let unit = || {
+            Err(if element.is_some() {
+                Poisoned::typed(Type::UNIT)
+            } else {
+                Poisoned::error()
+            })
+        };
+        let not_pushed = |checker: &mut Self, d: Option<DiagnosticKind>| {
+            if let Some(d) = d {
+                checker.report(d);
+            }
+            checker.stray(args);
+            unit()
+        };
+        // Every place that a `push` names is written, whatever else the call gets wrong.
+        if is_place(receiver_expr) {
+            self.stamp_push(receiver_expr);
+        }
+        // A receiver that failed has reported itself.
+        if receiver.is_err() {
+            return not_pushed(self, None);
+        }
+        if !is_place(receiver_expr) {
+            let at = receiver_expr.span;
+            return not_pushed(self, Some(DiagnosticKind::PushToTemporary { at }));
+        }
+        // Only a receiver checked ahead of its turn has no place: its call is an argument, whose
+        // `unit` is reported.
+        let (Ok(read), Some(mut place)) = (receiver, place) else {
+            return not_pushed(self, None);
+        };
+        if let Some(d) = place.held.take() {
+            self.report(d);
+        }
+        let [arg] = args else {
+            let d = DiagnosticKind::ArgumentCount {
+                name: "push".to_string(),
+                want: 1,
+                found: args.len(),
+                at: span,
+            };
+            return self.rejected(d.into(), args);
+        };
+        // A label or a mismatch is reported, and an error withholds the `tir`.
+        self.labels(args);
+        let value = self.expect(&arg.value, element);
+        match value {
+            Ok(value) if place.writable => {
+                let path = unread(read);
+                // The place stores an optional that `?.` takes the array out of.
+                let some = safe
+                    && place
+                        .ty
+                        .is_some_and(|ty| matches!(ty.kind(), TypeKind::Optional(_)));
+                Ok(self.pushed(span, path, (some, place.guard), value))
+            }
+            _ => unit(),
+        }
+    }
+
+    /// The unit block of `Push` of the place `path`, after the spill of its operands, and of
+    /// `value` unless `some`, as `write` makes a store. With `some`, the place stores an optional
+    /// and is written where it holds a value. A `guard` makes the block the branch where its
+    /// object is present.
+    fn pushed(
+        &mut self,
+        span: Span,
+        path: Path,
+        (some, guard): (bool, Option<Guard>),
+        value: tir::Expr,
+    ) -> tir::Expr {
+        let mut operands = path.operands;
+        let mut stmts;
+        let mut value = value;
+        if some {
+            // The value runs after the test that the optional holds an array, which mir puts
+            // in front of it, so it stays in the `Push`. Only the path is bound, where an exit
+            // in the value comes after a counted operand.
+            let exits = value.exits();
+            (stmts, operands) = self.spill_before(operands, exits);
+        } else {
+            operands.push(value);
+            (stmts, operands) = self.spill(operands);
+            value = operands
+                .pop()
+                .expect("`spill` should return one operand per input");
+        }
+        let mut place = build(path.root, operands);
+        if some {
+            place = tir::Place::Some(Box::new(place));
+        }
+        stmts.push(tir::Stmt::Push { place, value, span });
+        let block = block_expr(stmts, None, Type::UNIT, span);
+        match guard {
+            Some(Guard { bind, scrutinee }) => if_some(bind, scrutinee, block, None, span),
+            None => block,
         }
     }
 
@@ -98,7 +380,7 @@ impl Checker<'_> {
             self.body.quiet = outer;
             return result;
         }
-        let place = self.place(span, target, false);
+        let place = self.place(span, target, Change::Assign);
         let Some(ty) = place.ty else {
             // Only its own mistakes are left to report.
             drop(self.expr(value, Some(UNKNOWN)));
@@ -169,7 +451,7 @@ impl Checker<'_> {
             return self.assign(span, target, target);
         }
         // `assign` of `target op value`, whose `op` spans the statement.
-        let place = self.place(span, target, false);
+        let place = self.place(span, target, Change::Assign);
         let want = place.ty;
         let checked = self.binary(
             span,
@@ -254,22 +536,53 @@ impl Checker<'_> {
     /// The constant `name` as the root of a place that `span` assigns, reported, if `name` names
     /// one. The value is still checked against the constant's type. A broken constant poisons
     /// the assignment without a diagnostic.
-    fn constant_place(&mut self, span: Span, name: Symbol, element: bool) -> Option<CheckedPlace> {
+    fn constant_place(&mut self, span: Span, name: Symbol, change: Change) -> Option<CheckedPlace> {
         let Declared::Known(constant) = self.constants.get(&name)? else {
             return Some(CheckedPlace::failed());
         };
         let (declared, ty) = (constant.span, constant.ty);
-        self.report(DiagnosticKind::AssignToImmutable {
-            name: name.to_string(),
-            at: span,
-            element,
-            cause: Immutable::Constant { declared },
-        });
+        self.report(change.immutable(name.to_string(), span, Immutable::Constant { declared }));
         Some(CheckedPlace {
             path: None,
             ty,
             writable: false,
+            held: None,
+            guard: None,
         })
+    }
+
+    /// Reports E0001 for the root `name` that `change` writes at `at`, or for a `push` holds it
+    /// back: its receiver may be no array.
+    fn forbid(
+        &mut self,
+        change: Change,
+        name: String,
+        at: Span,
+        cause: Immutable,
+    ) -> Option<DiagnosticKind> {
+        let d = change.immutable(name, at, cause);
+        if change == Change::Push {
+            return Some(d);
+        }
+        self.report(d);
+        None
+    }
+
+    /// Stamps what the place `target` of a `push` writes, as `place` stamps a write. A binding at
+    /// the root of a chain of indexes is reassigned. The root of a field's base is written.
+    fn stamp_push(&mut self, target: &ast::Expr) {
+        let mut root = target;
+        while let ast::ExprKind::Index { base, .. } = &root.kind {
+            root = base;
+        }
+        let &ast::ExprKind::Name(name) = &root.kind else {
+            return self.stamp_root(root);
+        };
+        let stamp = self.write_stamp();
+        if let Some(b) = self.lookup(name) {
+            b.written = stamp;
+            b.reassigned |= b.kind == BindingKind::Var;
+        }
     }
 
     /// Counts a write, and gives the stamp to put on what it writes.
@@ -303,83 +616,114 @@ impl Checker<'_> {
         }
     }
 
-    /// The place `target` names, which `span` assigns. `element` when it is the base of an
-    /// index, so the write replaces an element of it.
-    fn place(&mut self, span: Span, target: &ast::Expr, element: bool) -> CheckedPlace {
-        match &target.kind {
-            &ast::ExprKind::Name(name) => {
-                let stamp = self.write_stamp();
-                let Some(b) = self.lookup(name) else {
-                    if let Some(place) = self.constant_place(span, name, element) {
-                        return place;
-                    } else if self.is_function(name) {
-                        self.report(DiagnosticKind::AssignToFunction {
-                            name: name.to_string(),
-                            at: target.span,
-                        });
-                    } else {
-                        let d = self.not_found(name, target.span);
-                        self.diagnostics.push(d);
-                        // The name may have meant any open binding; none of them warns as
-                        // unassigned.
-                        for b in self.body.scopes.iter_mut().flat_map(|s| s.values_mut()) {
-                            b.reassigned = true;
-                        }
-                    }
-                    return CheckedPlace::failed();
-                };
-                b.written = stamp;
-                b.reassigned |= b.kind == BindingKind::Var;
-                let (local, ty, kind, declared) = (b.local, b.ty, b.kind, b.span);
-                let cause = match kind {
-                    BindingKind::Var => None,
-                    BindingKind::Let => Some(Immutable::Let {
-                        declared,
-                        redeclared: b.shadows_mut,
-                    }),
-                    BindingKind::Param => Some(Immutable::Param { declared }),
-                    BindingKind::Unwrapped(keyword) => {
-                        Some(Immutable::Unwrapped { keyword, declared })
-                    }
-                };
-                if let Some(cause) = cause {
-                    self.report(DiagnosticKind::AssignToImmutable {
-                        name: name.to_string(),
-                        at: span,
-                        element,
-                        cause,
-                    });
-                }
-                CheckedPlace {
-                    path: Some(Path {
-                        root: Root::Local(local),
-                        operands: Vec::new(),
-                    }),
-                    ty,
-                    writable: true,
+    /// The place of the local, constant or unknown name `name`, the target `target` that `span`
+    /// changes as `change` says.
+    fn name_place(
+        &mut self,
+        span: Span,
+        target: &ast::Expr,
+        name: Symbol,
+        change: Change,
+    ) -> CheckedPlace {
+        // A `push` stamps when it knows its receiver is an array (`stamp_push`).
+        let stamp = (change != Change::Push).then(|| self.write_stamp());
+        let Some(b) = self.lookup(name) else {
+            if let Some(place) = self.constant_place(span, name, change) {
+                return place;
+            } else if self.is_function(name) {
+                self.report(DiagnosticKind::AssignToFunction {
+                    name: name.to_string(),
+                    at: target.span,
+                });
+            } else {
+                let d = self.not_found(name, target.span);
+                self.diagnostics.push(d);
+                // The name may have meant any open binding; none of them warns as
+                // unassigned.
+                for b in self.body.scopes.iter_mut().flat_map(|s| s.values_mut()) {
+                    b.reassigned = true;
                 }
             }
-            ast::ExprKind::Field { base, name, .. } => {
-                self.stamp_root(base);
+            return CheckedPlace::failed();
+        };
+        if let Some(stamp) = stamp {
+            b.written = stamp;
+            b.reassigned |= b.kind == BindingKind::Var;
+        }
+        let (local, ty, kind, declared) = (b.local, b.ty, b.kind, b.span);
+        let cause = match kind {
+            BindingKind::Var => None,
+            BindingKind::Let => Some(Immutable::Let {
+                declared,
+                redeclared: b.shadows_mut,
+            }),
+            BindingKind::Param => Some(Immutable::Param { declared }),
+            BindingKind::Unwrapped(keyword) => Some(Immutable::Unwrapped { keyword, declared }),
+        };
+        let held = cause.and_then(|cause| self.forbid(change, name.to_string(), span, cause));
+        CheckedPlace {
+            path: Some(Path {
+                root: Root::Local(local),
+                operands: Vec::new(),
+            }),
+            ty,
+            writable: true,
+            held,
+            guard: None,
+        }
+    }
+
+    /// The place `target` names, which `span` changes as `change` says: `Element` when it is the
+    /// base of an index, so the write replaces an element of it.
+    fn place(&mut self, span: Span, target: &ast::Expr, change: Change) -> CheckedPlace {
+        match &target.kind {
+            &ast::ExprKind::Name(name) => self.name_place(span, target, name, change),
+            ast::ExprKind::Field {
+                base, name, safe, ..
+            } => {
+                if change != Change::Push {
+                    self.stamp_root(base);
+                }
                 // A `?.` anywhere in the target's chain would not parse.
                 let outer = std::mem::replace(&mut self.body.in_target, true);
                 let checked = self.value(base, None);
                 self.body.in_target = outer;
+                let mut guard = None;
+                // Only a `push`'s receiver has one: `?.` takes the object out of its optional,
+                // where the place starts.
+                let checked = if *safe {
+                    match (self.safe_payload(&checked, base, name), checked) {
+                        (Ok(payload), Ok(scrutinee)) => {
+                            let bind = self.fresh(payload);
+                            guard = Some(Guard { bind, scrutinee });
+                            Ok(local(bind, payload, base.span))
+                        }
+                        (payload, _) => {
+                            // As `?.` does, report the field and give no type.
+                            self.find_field(
+                                payload.err().and_then(|failed| failed.ty),
+                                base,
+                                name,
+                                true,
+                            );
+                            return CheckedPlace::failed();
+                        }
+                    }
+                } else {
+                    checked
+                };
                 let Some((class, index, ty)) = self.find_field(type_of(&checked), base, name, true)
                 else {
                     return CheckedPlace::failed();
                 };
                 let field = &self.classes[class.0].fields[index];
                 let writable = field.mutable;
-                if !writable {
+                let held = if writable {
+                    None
+                } else {
                     let (name, declared) = (field.name.name.to_string(), field.name.span);
-                    self.report(DiagnosticKind::AssignToImmutable {
-                        name,
-                        at: span,
-                        element,
-                        cause: Immutable::Field { declared },
-                    });
-                }
+                    self.forbid(change, name, span, Immutable::Field { declared })
+                };
                 CheckedPlace {
                     path: checked.ok().map(|base| Path {
                         root: Root::Field(index),
@@ -387,11 +731,18 @@ impl Checker<'_> {
                     }),
                     ty,
                     writable,
+                    held,
+                    guard,
                 }
             }
             ast::ExprKind::Index { base, index } => {
-                let inner = self.place(span, base, true);
-                let element = self.element(base, inner.ty);
+                let inner_change = if change == Change::Push {
+                    Change::Push
+                } else {
+                    Change::Element
+                };
+                let inner = self.place(span, base, inner_change);
+                let element = self.element(base, inner.value_ty());
                 let (index, mismatched) = self.operand(index, Some(Type::I64));
                 let path = inner
                     .path
@@ -405,6 +756,8 @@ impl Checker<'_> {
                     path,
                     ty: element.filter(|_| !mismatched),
                     writable: inner.writable,
+                    held: inner.held,
+                    guard: None,
                 }
             }
             _ => unreachable!("the parser should make only a name, a field or an index a place"),
@@ -464,6 +817,9 @@ impl Checker<'_> {
                 let (base, index) = (Box::new(base), Box::new(index));
                 (ExprKind::Index { base, index }, ty)
             }
+            tir::Place::Some(_) => {
+                unreachable!("only a `push` has a `Some` step, and a `push` reads no place")
+            }
         };
         tir::Expr { kind, ty, span }
     }
@@ -512,6 +868,26 @@ fn same_index(a: &tir::Expr, b: &tir::Expr) -> bool {
         (ExprKind::Local(a), ExprKind::Local(b)) => a == b,
         (ExprKind::Int(a), ExprKind::Int(b)) => a == b,
         _ => false,
+    }
+}
+
+/// The path of the place that `read` holds, the inverse of `Checker::read`.
+fn unread(read: tir::Expr) -> Path {
+    match read.kind {
+        ExprKind::Local(id) => Path {
+            root: Root::Local(id),
+            operands: Vec::new(),
+        },
+        ExprKind::Field { base, index } => Path {
+            root: Root::Field(index),
+            operands: vec![*base],
+        },
+        ExprKind::Index { base, index } => {
+            let mut path = unread(*base);
+            path.operands.push(*index);
+            path
+        }
+        _ => unreachable!("`push_receiver` should read a place as a local, a field or an index"),
     }
 }
 

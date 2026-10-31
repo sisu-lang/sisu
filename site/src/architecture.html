@@ -15,7 +15,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
   <section class="ph"><div class="w">
     <h1>How the compiler works</h1>
     <p class="lede"><code>sisu</code> compiles one Sisu source file into one native executable. It is a pipeline: each stage takes what the stage before it produced and hands on something closer to machine code.</p>
-    <p class="meta">From docs/architecture.md and the ADRs at commit e4b0113 · x86-64 and ARM64 Linux, ARM64 macOS</p>
+    <p class="meta">From docs/architecture.md and the ADRs at commit 04f8d68 · x86-64 and ARM64 Linux, ARM64 macOS</p>
   </div></section>
   <!-- source: docs/architecture.md (intro), README.md (x86-64 and ARM64 Linux, ARM64 macOS) -->
 
@@ -87,7 +87,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
       <p>Codegen lays out every value in memory:</p>
       <ul>
         <li>An object lives on the heap, with a reference count in front of its fields.</li>
-        <li>An array is one counted block: the count, the length, then the elements.</li>
+        <li>An array is one counted block: the count, the length, the capacity, then the elements.</li>
         <li>A string is one counted block: the count, the length, the capacity, then the UTF-8 bytes.</li>
         <li>An enum value has no heap block of its own: it is a tag and its variant's payload, held inline. A field that would make an enum contain itself goes behind a counted box.</li>
       </ul>
@@ -110,6 +110,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
       <h3>Arrays are values</h3>
       <p>Binding an array, passing it or storing it behaves as a copy: no other holder can change your array. The copy is made only when it is needed. A write to an element first checks the count. At 1 it writes in place; above 1 it copies the block, then writes. A read, a binding, an argument and a loop over an array never copy.</p>
       <p>A function cannot change its caller's array. A function that changes an array returns the new one, and the caller writes <code>xs = f(xs)</code>.</p>
+      <p><code>xs.push(x)</code> adds an element. When the count is 1 and the block has room, it writes in place. When the block is full, it grows by doubling. When another holder shares the block, it copies first. <code>xs?.push(x)</code> on an optional array computes <code>x</code> only when the array is there.</p>
 
       <h3>What last use buys</h3>
       <p>When a local is read for the last time, its reference moves instead of being shared. So in <code>xs = f(xs)</code>, when nothing else holds the array, <code>f</code> holds the only reference and its writes happen in place. This is a language rule, not an optimizer pass, and it never causes an error. The quicksort benchmark shows it: Sisu holds 83.8 MiB, against C's 77.6 MiB for its one array of 10 000 000 integers; the extra 6 MiB is mimalloc's own.</p>

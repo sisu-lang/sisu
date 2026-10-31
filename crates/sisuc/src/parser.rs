@@ -3651,7 +3651,7 @@ impl<'a> Parser<'a> {
 }
 
 /// A name, a field of any expression, or an index of a place.
-fn is_place(e: &Expr) -> bool {
+pub(crate) fn is_place(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Name(_) | ExprKind::Field { .. } => true,
         ExprKind::Index { base, .. } => is_place(base),
@@ -3660,7 +3660,7 @@ fn is_place(e: &Expr) -> bool {
 }
 
 /// Whether a `?.` sits anywhere in the chain of fields, calls and indexes that makes up `e`.
-fn goes_through_safe_access(e: &Expr) -> bool {
+pub(crate) fn goes_through_safe_access(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Field { base, safe, .. } => *safe || goes_through_safe_access(base),
         ExprKind::MethodCall { receiver, safe, .. } => *safe || goes_through_safe_access(receiver),

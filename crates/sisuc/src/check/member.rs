@@ -38,11 +38,46 @@ impl Checker<'_> {
         member: impl FnOnce(&mut Self, Checked) -> Checked,
     ) -> Checked {
         let scrutinee = self.value_kept(receiver);
+        self.member_of(span, safe, scrutinee, receiver, name, member)
+    }
+
+    /// `member` of the checked `scrutinee`, the receiver `receiver`.
+    pub(super) fn member_of(
+        &mut self,
+        span: Span,
+        safe: bool,
+        scrutinee: Checked,
+        receiver: &ast::Expr,
+        name: &ast::Ident,
+        member: impl FnOnce(&mut Self, Checked) -> Checked,
+    ) -> Checked {
         if !safe {
             return member(self, scrutinee);
         }
-        let Some(TypeKind::Optional(payload)) = type_of(&scrutinee).map(Type::kind) else {
-            if type_of(&scrutinee).is_some() {
+        let payload = match self.safe_payload(&scrutinee, receiver, name) {
+            Ok(payload) => payload,
+            Err(failed) => {
+                // Only its own diagnostics matter.
+                drop(member(self, Err(failed)));
+                return Err(Poisoned::error());
+            }
+        };
+        let bind = self.fresh(payload);
+        let member = member(self, Ok(local(bind, payload, receiver.span)));
+        safe_value(span, bind, scrutinee, member)
+    }
+
+    /// The type that `receiver?.name` takes out of the optional `scrutinee`. A receiver that is
+    /// no optional, or an optional of an optional, is reported. The `Err` is what the member is
+    /// checked on then.
+    pub(super) fn safe_payload(
+        &mut self,
+        scrutinee: &Checked,
+        receiver: &ast::Expr,
+        name: &ast::Ident,
+    ) -> Result<Type, Poisoned> {
+        let Some(TypeKind::Optional(payload)) = type_of(scrutinee).map(Type::kind) else {
+            if type_of(scrutinee).is_some() {
                 let kind = DiagnosticKind::SafeAccessNotOptional {
                     value: path(receiver),
                     at: receiver.span,
@@ -50,9 +85,7 @@ impl Checker<'_> {
                 };
                 self.diagnostics.push(kind.into());
             }
-            // Only its own diagnostics matter.
-            drop(member(self, Err(Poisoned::of(type_of(&scrutinee)))));
-            return Err(Poisoned::error());
+            return Err(Poisoned::of(type_of(scrutinee)));
         };
         // `?.` takes one layer off: on a `C??` it leaves a `C?`, which has no members.
         if matches!(payload.kind(), TypeKind::Optional(_)) {
@@ -67,31 +100,9 @@ impl Checker<'_> {
                 }),
             };
             self.diagnostics.push(kind.into());
-            // Only its own diagnostics matter.
-            drop(member(self, Err(Poisoned::error())));
             return Err(Poisoned::error());
         }
-        let bind = self.fresh(payload);
-        let member = member(self, Ok(local(bind, payload, receiver.span)));
-        let ty = match type_of(&member) {
-            Some(Type::UNIT) => Type::UNIT,
-            Some(ty) => as_optional(ty),
-            None => return Err(Poisoned::error()),
-        };
-        let (Ok(scrutinee), Ok(member)) = (scrutinee, member) else {
-            return Err(Poisoned::typed(ty));
-        };
-        let none = (ty != Type::UNIT).then_some(tir::Expr {
-            kind: tir::ExprKind::None,
-            ty,
-            span,
-        });
-        let value = if member.ty == ty {
-            member
-        } else {
-            wrap(member, ty)
-        };
-        Ok(if_some(bind, scrutinee, value, none, span))
+        Ok(payload)
     }
 
     /// `base.name`, `base` checked from `receiver`.
@@ -614,4 +625,33 @@ fn may_be_none(receiver: &ast::Expr, name: &ast::Ident, fix: bool) -> Diagnostic
         peel: None,
     }
     .into()
+}
+
+/// `receiver?.name`, whose `member` was checked on `bind`, the payload of `scrutinee`: its type
+/// `U` makes the result a `U?`, or `unit` for a method with no value.
+pub(super) fn safe_value(
+    span: Span,
+    bind: tir::LocalId,
+    scrutinee: Checked,
+    member: Checked,
+) -> Checked {
+    let ty = match type_of(&member) {
+        Some(Type::UNIT) => Type::UNIT,
+        Some(ty) => as_optional(ty),
+        None => return Err(Poisoned::error()),
+    };
+    let (Ok(scrutinee), Ok(member)) = (scrutinee, member) else {
+        return Err(Poisoned::typed(ty));
+    };
+    let none = (ty != Type::UNIT).then_some(tir::Expr {
+        kind: tir::ExprKind::None,
+        ty,
+        span,
+    });
+    let value = if member.ty == ty {
+        member
+    } else {
+        wrap(member, ty)
+    };
+    Ok(if_some(bind, scrutinee, value, none, span))
 }

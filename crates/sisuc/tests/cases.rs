@@ -10,8 +10,11 @@
 //! A `site_pending` case is a program the site shows before it compiles: `sisu check` reports
 //! an error, until the day it compiles. An `explanation` case is the Broken program of a
 //! `docs/diagnostics` explanation, whose `sisu` output is under `site/programs/explanations/`.
+//! A `selfhost_lexer` case is a Sisu file of the tests, of `selfhost/` or of the compiler's own
+//! Sisu sources. The lexer in Sisu must print the tokens that `sisu build --emit tokens` prints for
+//! it, unless the file has a lexer error, which excludes it.
 //! An `every_program_certifies` case builds the mir of a program in `tests/run`, `tests/run-fail`,
-//! `tests/programs` or `bench`, which a debug build certifies.
+//! `tests/programs`, `bench` or `selfhost`, which a debug build certifies.
 //!
 //! `SISU_BLESS=1` rewrites the `.out`, `.err` and `.json` files of passing cases. It never creates
 //! one.
@@ -112,6 +115,15 @@ fn every_program_certifies(path: &Path) -> datatest_stable::Result<()> {
     Ok(())
 }
 
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "datatest-stable accepts only test functions that return a `Result`"
+)]
+fn selfhost_lexer(path: &Path) -> datatest_stable::Result<()> {
+    support::selfhost::check(path);
+    Ok(())
+}
+
 /// Asserts that `sisu build --emit mir` builds `path`, which the debug build the tests use
 /// certifies function by function, and that a traversal from each function's `bb0` visits every
 /// block.
@@ -179,4 +191,8 @@ datatest_stable::harness! {
     { test = explanation, root = "../../docs/diagnostics", pattern = r"[EW]\d{4}\.md$" },
     { test = every_program_certifies, root = "tests", pattern = r"^(run|run-fail|programs)/[^/]+\.sisu$" },
     { test = every_program_certifies, root = "../../bench", pattern = r"main\.sisu$" },
+    { test = every_program_certifies, root = "../../selfhost", pattern = r"^lexer\.sisu$" },
+    { test = selfhost_lexer, root = "tests", pattern = r"\.sisu$" },
+    { test = selfhost_lexer, root = "../../selfhost", pattern = r"\.sisu$" },
+    { test = selfhost_lexer, root = "src", pattern = r"^(prelude|lang)\.sisu$" },
 }

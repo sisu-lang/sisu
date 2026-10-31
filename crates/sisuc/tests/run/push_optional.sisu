@@ -1,0 +1,204 @@
+// GIVEN optional arrays: a local, an element of an array, and a field of an object, of an optional
+// object, and of an object that an optional object holds
+// AND `named`, which prints its name when it runs, and `clear`, which sets a field to `None`
+// AND a generic class `Pile<T>` whose method pushes onto its optional array field
+// AND a class `Counter` with a `push` method of its own, which is no array's
+// WHEN `main` pushes through `?.` when each optional holds an array, and when one holds `None`
+// AND an argument empties the optional it is pushed onto, and a copy of an array is kept
+// THEN a present array grows in place past several capacities, an absent one does nothing and
+// its argument never runs
+// AND a pushed array keeps the copy that was taken before the push
+// AND an argument that finds its optional cleared is released and pushed nowhere
+// AND every block is freed exactly once on every path, which Valgrind and `--rc-checks` check
+class Cell {
+    mut items: [i64]
+    mut maybe: [i64]?
+    mut words: [string]?
+    mut next: Cell?
+
+    fn add(self, x: i64) {
+        self.maybe?.push(x)
+    }
+}
+
+// A class with a `push` method of its own keeps its `?.` call.
+class Counter {
+    mut total: i64
+
+    fn push(self, x: i64) {
+        self.total += x
+    }
+}
+
+class Holder {
+    mut counter: Counter
+}
+
+class Pile<T> {
+    mut things: [T]?
+
+    fn add(self, x: T) {
+        self.things?.push(x)
+    }
+}
+
+fn named(name: string, x: i64) -> i64 {
+    print(name)
+    x
+}
+
+// The argument empties `words` of the object it is pushed onto, and prints that it ran.
+fn clear(cell: Cell) -> string {
+    print("clear")
+    cell.words = None
+    "cl" + "ear"
+}
+
+fn cell(maybe: [i64]?) -> Cell {
+    Cell(items: [1], maybe: maybe, words: ["x" + "y"], next: None)
+}
+
+// The argument leaves the function, so the string is released on that path, and the argument runs
+// only when the optional is there.
+fn leaves(leave: bool, absent: bool) -> i64 {
+    let mut xs: [string]? = if absent { None } else { ["a" + "b"] }
+    xs?.push(match leave {
+        true => return 1
+        false => "c" + "d"
+    })
+    print(xs ?? ["absent"])
+    0
+}
+
+// The same through an optional object: its object is released on that path too.
+fn leaves_through(leave: bool, absent: bool) -> i64 {
+    let object: Cell? = if absent { None } else { cell([1]) }
+    object?.words?.push(match leave {
+        true => return 2
+        false => "e" + "f"
+    })
+    print(object?.words ?? ["absent"])
+    0
+}
+
+fn main() {
+    // A local, past several growths.
+    let mut xs: [i64]? = []
+    for i in 0..20 {
+        xs?.push(i * i)
+    }
+    print((xs ?? []).len())            // 20
+    print((xs ?? [])[19])              // 361
+    let mut none: [i64]? = None
+    none?.push(named("none", 1))
+    print(none ?? [7])                 // [7]
+
+    // A full block grows, and a shared one is copied.
+    let mut full: [i64]? = [1, 2]
+    let saved_full = full
+    full?.push(3)
+    print(saved_full ?? [])            // [1, 2]
+    print(full ?? [])                  // [1, 2, 3]
+    let mut grown: [i64]? = [1, 2]
+    grown?.push(3)
+    print(grown ?? [])                 // [1, 2, 3]
+
+    // Strings built at run time are released once, with the block and with the copy.
+    let mut words: [string]? = []
+    for i in 0..5 {
+        words?.push("w{i}")
+    }
+    let saved_words = words
+    words?.push("w" + "5")
+    print(saved_words ?? [])           // ["w0", "w1", "w2", "w3", "w4"]
+    print(words ?? [])                 // ["w0", "w1", "w2", "w3", "w4", "w5"]
+
+    // A local as the argument is kept, whether the array is there or not.
+    let kept = "k" + "p"
+    let mut strings: [string]? = []
+    let mut no_strings: [string]? = None
+    strings?.push(kept)
+    no_strings?.push(kept)
+    print(kept)                        // kp
+    print(strings ?? [])               // ["kp"]
+    print(no_strings ?? ["none"])      // ["none"]
+
+    // A method named `push` of a class is called through `?.`, and only when the object is there.
+    let holder: Holder? = Holder(counter: Counter(total: 1))
+    holder?.counter?.push(named("counter", 4))
+    let no_holder: Holder? = None
+    no_holder?.counter?.push(named("no counter", 4))
+    print(holder?.counter?.total ?? 0)  // 5
+
+    // The element type is a type parameter of the class.
+    let pile: Pile<string> = Pile(things: ["a" + "b"])
+    pile.add("c" + "d")
+    print(pile.things ?? [])           // ["ab", "cd"]
+
+    // An element of an array: the array is made unique, so its copy keeps the old element.
+    let mut groups: [[i64]?] = [[1], None]
+    let saved_groups = groups
+    groups[0]?.push(named("element", 2))
+    groups[1]?.push(named("absent element", 9))
+    print(saved_groups[0] ?? [])       // [1]
+    print(groups[0] ?? [])             // [1, 2]
+    print(groups[1] ?? [0])            // [0]
+
+    // A field of an object that `?.` takes out of an optional, and of one that it does not.
+    let present: Cell? = cell([5])
+    present?.items?.push(named("items", 2))
+    present?.maybe?.push(named("maybe", 6))
+    present?.add(7)
+    print(present?.items ?? [])        // [1, 2]
+    print(present?.maybe ?? [])        // [5, 6, 7]
+    let inner_absent: Cell? = cell(None)
+    inner_absent?.items?.push(named("inner absent items", 3))
+    inner_absent?.maybe?.push(named("inner absent", 3))
+    print(inner_absent?.items ?? [])   // [1, 3]
+    print(inner_absent?.maybe ?? [0])  // [0]
+    let outer_absent: Cell? = None
+    outer_absent?.items?.push(named("outer absent", 4))
+    outer_absent?.maybe?.push(named("outer absent", 4))
+    print(outer_absent?.items ?? [0])  // [0]
+    let object = cell([8])
+    object.maybe?.push(named("object", 9))
+    print(object.maybe ?? [])          // [8, 9]
+
+    // A chain of optional objects: the path starts at the last object.
+    let chain = cell(None)
+    chain.next?.items?.push(named("no next", 5))
+    chain.next = cell([1])
+    chain.next?.items?.push(named("next", 5))
+    chain.next?.maybe?.push(named("next maybe", 6))
+    print(chain.next?.items ?? [])     // [1, 5]
+    print(chain.next?.maybe ?? [])     // [1, 6]
+
+    // The argument leaves a function, or a loop body, only when the optionals are there.
+    print(leaves(false, false))        // ["ab", "cd"], then 0
+    print(leaves(false, true))         // ["absent"], then 0
+    print(leaves(true, true))          // ["absent"], then 0
+    print(leaves(true, false))         // 1
+    print(leaves_through(false, false)) // ["xy", "ef"], then 0
+    print(leaves_through(true, true))  // ["absent"], then 0
+    print(leaves_through(true, false)) // 2
+    let mut left = 0
+    for i in 0..5 {
+        let object: Cell? = if i == 0 { None } else { cell([1]) }
+        object?.maybe?.push(match i {
+            1 => continue
+            2 => 5
+            _ => break
+        })
+        left += i
+    }
+    print(left)                        // 2: 0 is absent, 1 continues, 2 pushes, 3 breaks
+
+    // The argument clears what it is pushed onto: nothing is pushed, and its string is released.
+    let cleared = cell(None)
+    cleared.words?.push(clear(cleared))
+    print(cleared.words ?? ["gone"])   // clear, then ["gone"]
+    let through = cell(None)
+    let optional: Cell? = through
+    optional?.words?.push(clear(through))
+    print(through.words ?? ["gone"])   // clear, then ["gone"]
+}

@@ -432,7 +432,8 @@ pub unsafe extern "C" fn sisu_free(ptr: *mut u8, size: usize, align: usize) {
 
 /// Grows or shrinks an object that `sisu_alloc` or `sisu_realloc` returned to `new_size`
 /// bytes, keeping its first `min(old_size, new_size)` bytes. Generated code calls this to grow
-/// a string's block. The object stays one object, so the live count does not change.
+/// a string's block, and an array's block when `push` finds it full. The object stays one
+/// object, so the live count does not change.
 ///
 /// Aborts when `new_size` is 0 or the new layout overflows `isize`, as `sisu_alloc` does.
 /// Calls `handle_alloc_error` when the allocator returns null, so the result is never null.

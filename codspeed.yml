@@ -45,6 +45,9 @@ benchmarks:
   - name: show
     id: show
     exec: target/codspeed/show/main
+  - name: selfhost_lexer
+    id: selfhost_lexer
+    exec: bench/features/selfhost_lexer/run.sh target/codspeed/selfhost_lexer/main bench/features/selfhost_lexer/input.sisu
   - name: build_hello
     id: build_hello
     exec: target/release/sisu build -O2 bench/hello/main.sisu -o target/codspeed/build_hello/main
@@ -54,6 +57,9 @@ benchmarks:
   - name: build_binary_trees
     id: build_binary_trees
     exec: target/release/sisu build -O2 bench/binary_trees/main.sisu -o target/codspeed/build_binary_trees/main
+  - name: build_selfhost_lexer
+    id: build_selfhost_lexer
+    exec: target/release/sisu build -O2 selfhost/lexer.sisu -o target/codspeed/build_selfhost_lexer/main
   - name: check_large
     id: check_large
     exec: target/release/sisu check target/codspeed/large/main.sisu

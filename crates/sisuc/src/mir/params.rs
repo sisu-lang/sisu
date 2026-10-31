@@ -185,7 +185,7 @@ pub(super) fn clobbers(function: &Function, stmt: &Statement) -> bool {
         Statement::Assign { value, .. } => value.may_call_written(),
         Statement::Take { dest, .. } => function.locals[dest.0].counted,
         Statement::Store { value, .. } => certify::counted_value(function, value),
-        Statement::MakeUnique(_) => true,
+        Statement::MakeUnique(_) | Statement::Push { .. } => true,
         Statement::Release(_)
         | Statement::ScopeRelease(_)
         | Statement::Check(_)

@@ -51,6 +51,8 @@ enum Rule {
     Assign,
     /// `v[i] = e`.
     Element,
+    /// `v.push(e)`, `v[i].push(e)`, `v?.push(e)`, or a guarded push onto a `mut` field.
+    Push,
     /// `v.g = e`, or `v.g op= e` of a number.
     SetField,
     Compound,
@@ -136,6 +138,9 @@ impl Gen<'_> {
         }
         if self.scope.vars.iter().any(|var| self.settable(var)) {
             rules.push(Rule::Element);
+        }
+        if !self.push_targets().is_empty() {
+            rules.push(Rule::Push);
         }
         if !self.field_targets().is_empty() {
             // Twice: a `mut` field is rare in scope, and it takes both `=` and `op=`.
@@ -267,6 +272,7 @@ impl Gen<'_> {
                 self.expr(&element, base);
             }
             Rule::SetField => self.set_field(),
+            Rule::Push => self.push_stmt(),
             Rule::Compound => self.compound(),
             Rule::If => self.if_stmt(false),
             Rule::While => self.while_stmt(),
@@ -305,10 +311,13 @@ impl Gen<'_> {
             (_, false) if ty.sized() => (MAX_SIZE, 0),
             _ => (0, 0),
         };
+        let grow = self.optional_growth(&ty, mutable, base);
         self.typed = written;
         let init = self.expr(&ty, base);
         let base = if mutable { base } else { init.size };
         let mut var = Var::new(name, ty, mutable, base, room, self.cost.depth());
+        var.size += grow;
+        var.grow = grow;
         var.len = init.len;
         if let Ty::Array(_) = var.ty {
             // An element holds at most what the array does but for its slots.
@@ -335,6 +344,12 @@ impl Gen<'_> {
             .filter(|room| *element == Ty::String && size + room <= MAX_SIZE || *room == 0)
             .collect();
         let room = rooms[self.pick(rooms.len())];
+        // Only an array of a type with no class object takes a `push`, and it has room for a few.
+        let grow = if self.scope.contains_class(element) || size + room + GROW > MAX_SIZE {
+            0
+        } else {
+            GROW
+        };
         self.w.text("[");
         if fill {
             self.expr(element, base);
@@ -349,9 +364,27 @@ impl Gen<'_> {
         }
         self.w.text("]");
         let mut var = Var::new(name, ty, true, base, room, self.cost.depth());
-        var.size = size + room;
+        var.size = size + room + grow;
+        var.elem += grow;
+        var.grow = grow;
         var.len = len;
         self.scope.vars.push(var);
+    }
+
+    /// The growth that `?.push` may take from a local of type `ty` whose first value reaches
+    /// `size`: a mutable optional array of a type with no class object, when `size` leaves room
+    /// for it within `MAX_SIZE`. It pushes whether the optional holds an array or `None`.
+    pub(crate) fn optional_growth(&self, ty: &Ty, mutable: bool, size: u64) -> u64 {
+        match ty {
+            Ty::Optional(payload)
+                if mutable
+                    && matches!(&**payload, Ty::Array(element) if !self.scope.contains_class(element))
+                    && size + GROW <= MAX_SIZE =>
+            {
+                GROW
+            }
+            _ => 0,
+        }
     }
 
     /// Whether an element of `var` may take an assignment: a mutable array with an element,
@@ -359,6 +392,165 @@ impl Gen<'_> {
     fn settable(&self, var: &Var) -> bool {
         has_elements(var)
             && matches!(&var.ty, Ty::Array(element) if !self.scope.contains_class(element))
+    }
+
+    /// The places a `push` may append to. A mutable array takes a `push` when its type holds no
+    /// class object (decision 4). Its growth must cover a slot and the smallest element, at each
+    /// run. The same holds for an element of a mutable array of such arrays, and for a mutable
+    /// optional array, which `?.` pushes to where it holds one. A `mut` array field takes a
+    /// guarded `push` when its elements have no size. One more element is then one more size. A
+    /// local that holds an optional class object takes the same guarded `push` through `?.`.
+    pub(crate) fn push_targets(&self) -> Vec<Push> {
+        let mut targets = Vec::new();
+        for (v, var) in self.scope.vars.iter().enumerate() {
+            // What one run of a `push` may add, and whether it covers a slot and `element`.
+            let covers = |element: &Ty| {
+                let room = var.grow / self.cost.times_since(var.loops).max(1);
+                room > element.floor()
+            };
+            match &var.ty {
+                Ty::Array(element) if var.assignable && !self.scope.contains_class(element) => {
+                    if covers(element) {
+                        targets.push(Push::Local(v));
+                    }
+                    if has_elements(var) && matches!(&**element, Ty::Array(inner) if covers(inner))
+                    {
+                        targets.push(Push::Element(v));
+                    }
+                }
+                Ty::Optional(payload) => match &**payload {
+                    Ty::Array(element)
+                        if var.assignable
+                            && !self.scope.contains_class(element)
+                            && covers(element) =>
+                    {
+                        targets.push(Push::Optional(v));
+                    }
+                    Ty::Class { id, .. } => targets.extend(self.field_pushes(v, *id, true)),
+                    _ => {}
+                },
+                Ty::Class { id, .. } => targets.extend(self.field_pushes(v, *id, false)),
+                _ => {}
+            }
+        }
+        targets
+    }
+
+    /// The pushes onto the `mut` array fields of the class `id`, which the local `v` holds, or
+    /// holds an optional of when `through`. Only a field whose elements have no size takes one.
+    fn field_pushes(&self, v: usize, id: usize, through: bool) -> Vec<Push> {
+        let fields = self.scope.classes[id].fields.iter().enumerate();
+        fields
+            .filter(|(_, field)| {
+                matches!(&field.ty, Ty::Array(element) if !element.sized())
+                    && field.mutable
+                    && !self.scope.contains_class(&field.ty)
+            })
+            .map(|(f, _)| {
+                if through {
+                    Push::Through(v, id, f)
+                } else {
+                    Push::Field(v, id, f)
+                }
+            })
+            .collect()
+    }
+
+    /// `v.push(e)`, `v[i].push(e)`, `v?.push(e)` or `if v.g.len() < cap { v.g.push(e) }`. A push
+    /// adds `e` and its slot to the size of the array. That size comes out of the growth of the
+    /// local that holds the array, at each run of every loop since its declaration. A field has
+    /// no growth. Its guard keeps its length, which is its size, within its cap. Through `?.`,
+    /// the guard is `(v?.g?.len() ?? 0) < cap`.
+    pub(crate) fn push_stmt(&mut self) {
+        let targets = self.push_targets();
+        let target = targets[self.pick(targets.len())];
+        match target {
+            Push::Local(v) => {
+                let name = self.scope.vars[v].name.clone();
+                let Ty::Array(element) = self.scope.vars[v].ty.clone() else {
+                    unreachable!("only an array takes a push")
+                };
+                self.w.text(&format!("{name}.push("));
+                self.pushed(v, &element);
+            }
+            Push::Optional(v) => {
+                let name = self.scope.vars[v].name.clone();
+                let Ty::Optional(payload) = self.scope.vars[v].ty.clone() else {
+                    unreachable!("only an optional takes a `?.` push")
+                };
+                let Ty::Array(element) = *payload else {
+                    unreachable!("only an optional array takes a `?.` push")
+                };
+                self.w.text(&format!("{name}?.push("));
+                // The argument runs only when `v` holds an array.
+                self.conditionally(|g| g.pushed(v, &element));
+            }
+            Push::Element(v) => {
+                let (name, len) = {
+                    let var = &self.scope.vars[v];
+                    (var.name.clone(), var.len)
+                };
+                let Ty::Array(inner) = self.scope.vars[v].ty.clone() else {
+                    unreachable!("only an array has elements")
+                };
+                let Ty::Array(element) = *inner else {
+                    unreachable!("only an array of arrays takes a push onto an element")
+                };
+                let at = self.upto(len - 1);
+                self.w.text(&format!("{name}[{at}].push("));
+                self.pushed(v, &element);
+            }
+            Push::Field(v, class, f) | Push::Through(v, class, f) => {
+                let through = matches!(target, Push::Through(..));
+                let field = &self.scope.classes[class].fields[f];
+                let Ty::Array(element) = field.ty.clone() else {
+                    unreachable!("only an array field takes a push")
+                };
+                let place = format!(
+                    "{}{}.{}",
+                    self.scope.vars[v].name,
+                    if through { "?" } else { "" },
+                    field.name
+                );
+                // An absent object has no length: the guard reads it as 0, so the push runs and
+                // does nothing.
+                let len = if through {
+                    format!("({place}?.len() ?? 0)")
+                } else {
+                    format!("{place}.len()")
+                };
+                self.w.text(&format!("if {len} < {} ", field.cap));
+                self.conditionally(|g| {
+                    g.open_block();
+                    g.w.line();
+                    g.cost.statement();
+                    g.w.text(&format!("{place}{}.push(", if through { "?" } else { "" }));
+                    g.expr(&element, 0);
+                    g.w.text(")");
+                    g.close_block();
+                });
+            }
+        }
+    }
+
+    /// The argument of a `push` onto `v`, an element of type `element`, and the `)`. It is as
+    /// large as the growth allows at each run, and takes the growth it uses; while it is written,
+    /// the growth and the room are empty, so that a `push` or a `+=` inside it adds nothing.
+    fn pushed(&mut self, v: usize, element: &Ty) {
+        const MOST: u64 = 64;
+        let times = self.cost.times_since(self.scope.vars[v].loops);
+        // The growth covers the slot and the smallest value (`push_targets`).
+        let most = self.scope.vars[v].grow / times.max(1) - 1;
+        let max = most.min(MOST).max(element.floor());
+        let (room, grow) = {
+            let var = &mut self.scope.vars[v];
+            (std::mem::take(&mut var.room), std::mem::take(&mut var.grow))
+        };
+        let added = self.expr(element, max);
+        self.w.text(")");
+        let var = &mut self.scope.vars[v];
+        (var.room, var.grow) = (room, grow);
+        var.push(1 + added.size, times);
     }
 
     /// `v.g = e`, or `v.g op= e` of a number: a `string` takes only `=`, as its cap leaves it no
@@ -425,6 +617,9 @@ impl Gen<'_> {
             if let Ty::Array(inner) = ty {
                 ty = *inner;
             }
+            // The checker reads the element before the right operand, unless it is an append of
+            // an operand that cannot exit, and that read may panic.
+            self.effect = true;
         }
         if ty == Ty::String {
             let times = self.cost.times_since(loops);
@@ -987,8 +1182,25 @@ impl Gen<'_> {
     }
 }
 
+/// A place a `push` may append to (`Gen::push_targets`). It is a local, an element of one, a
+/// local that holds an optional array, or a `mut` field of the class object a local holds, or of
+/// the object a local holds an optional of, as its local, class and field.
+#[derive(Clone, Copy)]
+pub(crate) enum Push {
+    Local(usize),
+    Element(usize),
+    /// A local that holds an optional array, which `?.` pushes to.
+    Optional(usize),
+    Field(usize, usize, usize),
+    /// A field of the object that a local holds an optional of, which `?.` pushes through.
+    Through(usize, usize, usize),
+}
+
 /// The compound assignments of a number but `*=`.
 const OPS: [&str; 4] = [" += ", " -= ", " /= ", " %= "];
+
+/// The size that `push` may add to a mutable array (`Var::grow`), at each run of each loop.
+pub(crate) const GROW: u64 = 64;
 
 /// The sizes a mutable `string` or optional may have, and the room of a `string`.
 const SIZES: [u64; 4] = [0, 16, 64, MAX_SIZE / 2];

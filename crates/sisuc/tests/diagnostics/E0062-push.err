@@ -1,0 +1,14 @@
+error[E0062]: `bag?.items` may be `None`
+ --> E0062-push.sisu:6:5
+  |
+6 |     bag?.items.push(4)
+  |     ^^^^^^^^^^
+  |
+  = help: to use the value only when it is present, unwrap it with `if let`
+help: if a `None` result is fine, use `?.`
+  |
+6 |     bag?.items?.push(4)
+  |               +
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0062

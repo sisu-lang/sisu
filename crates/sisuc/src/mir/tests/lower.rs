@@ -1,7 +1,7 @@
 use rustc_hash::FxHashMap;
 
 use super::*;
-use crate::mir::lower::{Mentions, WALKED};
+use crate::mir::lower::{ARM_STEPS, Mentions, WALKED};
 use crate::mir::print::EXAMINED;
 
 /// Calls run in source order, and an `i64` is returned by a read, not moved.
@@ -203,6 +203,99 @@ fn append_to_an_element() {
             "a#0[i#1] = move _",
         ],
     );
+}
+
+/// A push takes an element write's order: the value, then per level the check and
+/// `make_unique`, then the push itself. The argument that reads the array runs before the push.
+#[test]
+fn push_should_follow_the_order_of_an_element_write() {
+    let printed = lowered(
+        "fn g() -> i64 { 7 }\nfn f(i: i64) {\n    let mut xss = [[1]]\n    xss[i].push(g())\n}",
+    );
+    has(
+        &printed,
+        "f",
+        &[
+            "_ = call g()",
+            "check xss#1[i#0]",
+            "make_unique xss#1",
+            "push xss#1[i#0], _",
+        ],
+    );
+    let printed = lowered("fn f() {\n    let mut xs = [1]\n    xs.push(xs[0])\n}");
+    has(&printed, "f", &["_ = xs#0[0]", "push xs#0, _"]);
+    assert!(
+        !function(&printed, "f").contains("make_unique"),
+        "a push of a local checks its own count: {printed}"
+    );
+}
+
+/// `xs?.push(f())` tests `xs`, runs the call, tests `xs` again, then pushes. The absent branches
+/// run no call, and the second one releases the argument.
+#[test]
+fn push_through_a_safe_access_should_test_the_optional_again_after_its_argument() {
+    let printed = lowered(
+        "fn name() -> string { \"a\" }\nfn f() {\n    let mut xs: [string]? = [\"a\"]\n    xs?.push(name())\n}",
+    );
+    has(
+        &printed,
+        "f",
+        &[
+            "test_present xs#0 bb2 bb3",
+            "bb2:",
+            "_ = call name()",
+            "test_present xs#0 bb4 bb5",
+            "bb4:",
+            "push (xs#0 as some), move _",
+            "bb5:",
+            "release _",
+        ],
+    );
+    let f = function(&printed, "f");
+    // The first absent branch is a block of its own, which runs nothing.
+    let absent = f.split("bb3:").nth(1).and_then(|rest| rest.lines().nth(1));
+    assert_eq!(absent, Some("    goto bb1"), "{f}");
+    assert_eq!(f.matches("call name()").count(), 1, "{f}");
+}
+
+/// A `push` through a chain of optional objects is lowered in steps in proportion to the chain.
+/// Each `?.` is an `if let` that binds its object, so the chain lowers one arm for each link
+/// (`ARM_STEPS`), and the pin rule walks the expressions of the chain once (`WALKED`). The counts
+/// follow the shape of the typed tree, so this guards the shape that the checker gives the chain.
+/// A change to lowering that repeats work without a tick does not change them. Other traversals
+/// of the chain are not counted here: the passes after lowering, which run on the mir (`certify`
+/// counts its own walks), the `owners` map (one entry per borrowed binding) and the printer.
+#[test]
+fn push_through_a_chain_of_objects_should_lower_in_linear_steps() {
+    let steps = |objects: usize| {
+        let program = checked(&chain(objects));
+        ARM_STEPS.set(0);
+        WALKED.set(0);
+        drop(lowered_of(&program));
+        (ARM_STEPS.get(), WALKED.get())
+    };
+    // 10, 20 and 30 objects, the sizes `n`, `2n` and `3n` that the assertion takes.
+    let [(arms, walked), (arms2, walked2), (arms3, walked3)] = [10, 20, 30].map(steps);
+    assert_near_linear(arms, arms2, arms3);
+    assert_near_linear(walked, walked2, walked3);
+}
+
+/// The place that the `push` of a chain writes has two projections, whatever the length of the
+/// chain: the type of `Place::Field` takes an expression as its base, so the path starts at the
+/// object of the last `?.`.
+#[test]
+fn push_through_a_chain_of_objects_should_write_a_path_of_two_projections() {
+    let f = function(&lowered(&chain(10)), "f");
+    assert_eq!(f.matches("push ").count(), 1, "{f}");
+    assert!(f.contains("push (_.1 as some), 1"), "{f}");
+}
+
+/// `c?.next?. ... ?.items?.push(1)` with `objects` links.
+fn chain(objects: usize) -> String {
+    format!(
+        "class C {{\n    next: C?\n    mut items: [i64]?\n}}\nfn f(c: C?) {{ c{}?.items?.push(1) }}",
+        "?.next".repeat(objects)
+    )
 }
 
 /// The checker spills `"a"` into a local before the operand that can return, and the return

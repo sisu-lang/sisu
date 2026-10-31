@@ -114,8 +114,9 @@ and lowers sugar: `while`, `while let` and `for` become loops, `?.` and `??`
 become `if let`, and `x += 1` becomes `x = x + 1`. A `+=` on a string field
 or element, or an assignment that adds to its own field or element place,
 becomes an `Append`. A local keeps `Assign` with `Concat` and appends in place
-through `concat`'s count-1 path. It folds each top-level `const` to a literal
-and replaces every use of its name with that literal. A call to one of the
+through `concat`'s count-1 path. A `push` on an array becomes a `Push`, and
+`xs?.push(x)` becomes a `Push` on a `Some` place, not an `if let`. It folds
+each top-level `const` to a literal and replaces every use of its name with that literal. A call to one of the
 built-in prelude functions, `print`, `eprint`, `panic`, `read_line` and `dbg`,
 has its own rule, and `panic(msg)` and
 `todo` become a `Panic` node of type `never`. A format spec on a part becomes a padding and a precision, and a precision on a
@@ -246,6 +247,11 @@ array it holds can skip the copy
 ([ADR 0007](adr/0007-arrays-are-values.md)). The hoist (`hoist.rs`) moves the
 `make_unique` of an array a loop writes to the loop's pre-header
 ([ADR 0021](adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md)).
+An array `push` is a statement of its own: it decides on the block's count itself, so
+the hoist neither moves it nor bars its array, and it counts as a clobber for pair
+removal and for the quiet functions of the prelude. A `push` through `?.` onto an optional
+array tests it before its argument and again after the argument, which may have cleared it.
+The certifier (`certify.rs`) proves each `Some` of the written path with such a test.
 Elaboration (`elaborate.rs`) then removes each scope release that only empty
 paths reach and makes one that only owned paths reach a plain release, so
 codegen stores the zero value on a move only for a local that a conditional
@@ -347,18 +353,20 @@ on a tag or a value that the tests become, and after the last arm a call to
 `llvm.trap`: the checker has proved that some arm matches, and a checker bug
 must not become undefined behaviour.
 
-An array is one counted heap block too: a header of two `i64`s, the count and
-the length, then the elements. Each array type gets the same helpers, such as
+An array is one counted heap block too: a header of three `i64`s, the count,
+the length and the capacity, then the elements. A new block's capacity is its
+length. Each array type gets the same helpers, such as
 `sisu_rc.release.[i64]`, plus `sisu_rc.unique.[i64]`, which copies the block
 before a write when another holder shares it. A loop makes the arrays it
 writes unique once, before it starts, when nothing in the loop shares them,
 so the writes inside it skip the count check (ADR 0021). An index out of
 bounds calls `sisu_panic_bounds`. Codegen tags the loads and stores of an
-array's count and length, and every count update and check, with one TBAA
-tag, and those of an array element with another, so LLVM knows that writing
-an element changes none of them. A length load also carries `!range` and
-`!noundef`, so LLVM knows that a length is never negative: `alloc_array` is
-the only writer of a length, and no length it gets is negative.
+array's count, length and capacity, and every count update and check, with
+one TBAA tag, and those of an array element with another, so LLVM knows that
+writing an element changes none of them. A length load also carries `!range`
+and `!noundef`, so LLVM knows that a length is never negative. `alloc_array` and
+`array_push` are the only writers of a length. `array_push` stores `len + 1` only
+after it checks that this many elements fit.
 
 A string is one counted block with a header of three `i64`s: the count, the
 length and the capacity, then the UTF-8 bytes. A literal is a private global

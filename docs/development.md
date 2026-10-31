@@ -263,13 +263,20 @@ pull requests only). On `main` it reports totals only. It never turns a check
 red.
 
 CodSpeed measures Sisu against itself in simulation mode. The benchmarks are
-in `codspeed.yml`: the `fib`, `sieve`, `binary_trees`, `quicksort`, `nbody`,
-`mandelbrot` and `fannkuch_redux` programs at reduced inputs, the `strings`,
-`enum_match`, `shared_arrays`, `compare`, `tree_rewrite`, `interp` and
-`interfaces` programs from `bench/features/`, and the compiler on
-`bench/hello` (an `-O2` build), on `bench/binary_trees` (`check` and an
-`-O2` build) and on a generated 200-section input that uses most of the
-language. The `-O2` build of that input comes in two sizes:
+in `codspeed.yml`:
+
+- the `fib`, `sieve`, `binary_trees`, `quicksort`, `nbody`, `mandelbrot` and
+  `fannkuch_redux` programs, at reduced inputs;
+- the `strings`, `enum_match`, `shared_arrays`, `compare`, `tree_rewrite`,
+  `interp`, `interfaces` and `show` programs from `bench/features/`;
+- the lexer in Sisu: `selfhost_lexer` runs the `-O2` build of
+  `selfhost/lexer.sisu` on `bench/features/selfhost_lexer/input.sisu`, and
+  `build_selfhost_lexer` is an `-O2` build of `selfhost/lexer.sisu`;
+- the compiler on `bench/hello` (an `-O2` build), on `bench/binary_trees`
+  (`check` and an `-O2` build) and on a generated 200-section input that uses
+  most of the language.
+
+The `-O2` build of that input comes in two sizes:
 20 sections on every run (`build_large_20`) and 200 sections on pushes to
 `main` only (`build_large`, in `codspeed-main.yml`). Pull request reports show
 `build_large` as skipped, with its result from the baseline run.
@@ -534,6 +541,60 @@ resolve it first.
    that fails on it, then fix the generator. Never steer the generator around
    a compiler bug.
 
+## The growing proof program
+
+`selfhost/lexer.sisu` is Sisu's lexer, written in Sisu. It is the first
+version of the growing proof program (see [the roadmap](roadmap.md#the-growing-proof-program)).
+It reads standard input and prints one token per line, in the format of
+`sisu build --emit tokens`. It follows the clean path only: on input that has
+a lexer error, its output is not defined, and it can panic.
+
+The program has two passes. The first pass reads each line with `read_line`
+and walks its `chars()` once. It keeps every token of the input in an array.
+The second pass judges each run of `;` as `separate` and `judge` in
+`crates/sisuc/src/lexer/mod.rs` do, and prints the tokens.
+
+Run it by hand on a file:
+
+```console
+$ target/debug/sisu run selfhost/lexer.sisu < crates/sisuc/tests/run/fib.sisu
+```
+
+The check is a set of tests:
+
+- `cases.rs` has one `selfhost_lexer` case for each `.sisu` file under
+  `crates/sisuc/tests/`, for each file under `selfhost/`, and for the two
+  compiler sources `prelude.sisu` and `lang.sisu`. `sisu build --emit tokens`
+  runs once on the file. If it exits 0, the plain, the `-O2` and the
+  `--rc-checks` build of the lexer must print the same tokens, byte for byte.
+  If it exits 1 with a diagnostic code on standard error, the file has a lexer
+  error and is excluded. Any other result fails the case with the exit status
+  of `sisu`.
+- `selfhost_corpus_should_compare_a_file_from_each_directory` in `programs.rs`
+  names files that must be compared, with the lexer run on each, and a file
+  that must be excluded. An excluded case passes, so this test makes sure that
+  the check cannot pass with nothing compared.
+- `all_tokens.sisu` in `crates/sisuc/tests/tokens/` holds every kind of token,
+  every reserved word and each rule of the lexer. A unit test in the lexer fails
+  when a kind has no token in it.
+- The four `selfhost_valgrind_` tests run the plain and the `-O2` build of the
+  lexer under Valgrind on `all_tokens.sisu` and on `lexer.sisu`.
+
+`support::selfhost` builds the lexer once for a test run and keeps the builds
+in `target/tmp/selfhost`.
+
+A change to the rules of the lexer changes `selfhost/lexer.sisu` in the same
+pull request, because the check fails when the two lexers differ. For
+example, when a top-level `type` makes a `;` run behave as `const` does, the
+change goes into `separate` and into the program together.
+
+CodSpeed has two benchmarks of the lexer. `selfhost_lexer` runs the `-O2`
+build once on `bench/features/selfhost_lexer/input.sisu`.
+`scripts/codspeed-prep.sh` fails when its output differs from the tokens that
+`sisu build --emit tokens` prints for that file. `build_selfhost_lexer` is an
+`-O2` build of the lexer. The input is fixed: do not change it, so that the
+numbers compare between commits.
+
 ## Compile and run a program
 
 `sisu build` takes a source file and writes the executable, named after the file
@@ -760,6 +821,7 @@ must accept any syntax those programs use.
 | `crates/runtime` | `sisu-runtime`, the runtime's code: a Rust library with a C ABI. |
 | `crates/runtime-mimalloc`, `crates/runtime-system` | `sisu-runtime-mimalloc` and `sisu-runtime-system`, the static archives that link it, on mimalloc and on the System allocator. Every compiled program links one. |
 | `bench` | The benchmark programs, and under `features/` the Sisu-only ones for CodSpeed. |
+| `selfhost` | The lexer in Sisu, `lexer.sisu`, which the tests check against `sisu build --emit tokens` (see [The growing proof program](#the-growing-proof-program)). |
 | `codspeed.yml`, `codspeed-main.yml` | The CodSpeed benchmark lists: `codspeed.yml` on every run, `codspeed-main.yml` on pushes to `main` only. |
 | `fuzz` | The fuzz targets, `front_end` and `program`, in their own Cargo workspace, run by `scripts/fuzz.sh`. |
 | `Makefile` | The entry point for the commands; `make help` lists its targets. |

@@ -120,6 +120,17 @@ fn a_value_should_convert_through_one_layer_only() {
     }
 }
 
+/// `?.push` takes one layer off, as any `?.` does: on an optional of an optional, whether of an
+/// object or of an array, it asks for a layer to be peeled, and pushes nothing.
+#[test]
+fn push_through_an_optional_of_an_optional_should_be_peeled_first() {
+    let object =
+        "class C {\n    mut items: [i64]\n}\nfn g(aa: C??) { aa?.items?.push(1) }\nfn main() {}";
+    diagnostic(object, Code::MayBeNone, (4, 17, "aa"), &[]);
+    let array = "fn g(xs: [i64]??) { xs?.push(1) }\nfn main() {}";
+    diagnostic(array, Code::MayBeNone, (1, 21, "xs"), &[]);
+}
+
 /// `?.` and `is` on an optional of an optional ask for a layer to be peeled, with no fix.
 /// `tests/diagnostics/E0062-nested` and `E0046-nested` pin the wording.
 #[test]

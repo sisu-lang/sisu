@@ -96,6 +96,7 @@ fn step(set: &mut Vec<LocalId>, stmt: &Statement, locals: &[Local], program: &ti
         Statement::Assign { .. }
         | Statement::Take { .. }
         | Statement::Store { .. }
+        | Statement::Push { .. }
         | Statement::Release(_)
         | Statement::ScopeRelease(_)
         | Statement::MakeUnique(_)

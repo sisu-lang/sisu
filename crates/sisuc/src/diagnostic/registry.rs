@@ -54,7 +54,7 @@ macro_rules! codes {
 }
 
 codes! {
-    AssignToImmutable = "E0001",
+    AssignToImmutable | PushToImmutable = "E0001",
     UnreachableCode = "W0001",
     NeverReassigned = "W0002",
     TodoLeft = "W0003",
@@ -76,7 +76,7 @@ codes! {
     MutSelf = "E0018",
     MutParameter = "E0019",
     SelfNotFirst = "E0020",
-    AssignToExpression = "E0021",
+    AssignToExpression | PushToTemporary = "E0021",
     AssignThroughSafeAccess = "E0022",
     RangeOutsideFor = "E0023",
     EqualityChain = "E0024",
@@ -271,6 +271,12 @@ pub(crate) enum DiagnosticKind {
         name: String,
         at: Span,
         element: bool,
+        cause: Immutable,
+    },
+    /// A `push` at `at` onto `name`, or onto an element of it, which cannot change.
+    PushToImmutable {
+        name: String,
+        at: Span,
         cause: Immutable,
     },
     /// A statement at `at` after one that never finishes.
@@ -475,6 +481,8 @@ pub(crate) enum DiagnosticKind {
     SelfNotFirst { at: Span },
     /// An assignment at `at` to something that is not a place.
     AssignToExpression { at: Span },
+    /// A `push` at `at` onto something that is not a place.
+    PushToTemporary { at: Span },
     /// An assignment at `at` through a `?.`.
     AssignThroughSafeAccess { at: Span },
     /// A range at `at` outside a `for`.
@@ -2088,42 +2096,12 @@ impl From<DiagnosticKind> for Diagnostic {
             } => {
                 let what = if element { "an element of " } else { "" };
                 let d = Diagnostic::coded(code, at, format!("cannot assign to {what}`{name}`"));
-                match cause {
-                    Immutable::Let {
-                        declared,
-                        redeclared,
-                    } => if element {
-                        d
-                    } else {
-                        d.with_label("cannot assign twice")
-                    }
-                    .with_secondary(
-                        declared,
-                        if redeclared {
-                            format!("`{name}` is redeclared here with `let`")
-                        } else {
-                            "declared with `let` here".to_string()
-                        },
-                    )
-                    .with_fix(insert_mut("declare it with `let mut`", declared)),
-                    Immutable::Param { declared } => d
-                        .with_secondary(declared, "declared as a parameter here")
-                        .with_help(format!(
-                            "copy it into a variable: `let mut {name} = {name}`"
-                        )),
-                    Immutable::Unwrapped { keyword, declared } => {
-                        d.with_secondary(declared, format!("bound by `{keyword}` here"))
-                    }
-                    Immutable::Field { declared } => d
-                        .with_secondary(declared, "declared without `mut` here")
-                        .with_fix(insert_mut("mark the field `mut`", declared)),
-                    Immutable::Constant { declared } => if element {
-                        d
-                    } else {
-                        d.with_label("cannot assign")
-                    }
-                    .with_secondary(declared, "declared with `const` here"),
-                }
+                immutable_cause(d, &name, element, &cause)
+            }
+            DiagnosticKind::PushToImmutable { name, at, cause } => {
+                let d = Diagnostic::coded(code, at, format!("cannot change `{name}`"))
+                    .with_label(format!("`push` changes `{name}`"));
+                immutable_cause(d, &name, true, &cause)
             }
             DiagnosticKind::UnreachableCode { at } => {
                 Diagnostic::coded(code, at, "unreachable code")
@@ -2752,6 +2730,11 @@ impl From<DiagnosticKind> for Diagnostic {
             }
             DiagnosticKind::AssignToExpression { at } => {
                 Diagnostic::coded(code, at, "cannot assign to this expression")
+            }
+            DiagnosticKind::PushToTemporary { at } => {
+                Diagnostic::coded(code, at, "cannot push to a temporary value")
+                    .with_label("this value is not stored in a variable")
+                    .with_help("store it in a `let mut` variable first")
             }
             DiagnosticKind::AssignThroughSafeAccess { at } => {
                 Diagnostic::coded(code, at, "cannot assign through `?.`")
@@ -4810,6 +4793,47 @@ fn unsafe_fix(message: &str, span: Span, replacement: &str) -> Fix {
             span,
             replacement: replacement.to_string(),
         }],
+    }
+}
+
+/// `d`, an E0001 on `name`, with the labels and fixes of its `cause`. With `element`, the write is
+/// to an element or a `push`, and `d` carries its own label.
+fn immutable_cause(d: Diagnostic, name: &str, element: bool, cause: &Immutable) -> Diagnostic {
+    match *cause {
+        Immutable::Let {
+            declared,
+            redeclared,
+        } => if element {
+            d
+        } else {
+            d.with_label("cannot assign twice")
+        }
+        .with_secondary(
+            declared,
+            if redeclared {
+                format!("`{name}` is redeclared here with `let`")
+            } else {
+                "declared with `let` here".to_string()
+            },
+        )
+        .with_fix(insert_mut("declare it with `let mut`", declared)),
+        Immutable::Param { declared } => d
+            .with_secondary(declared, "declared as a parameter here")
+            .with_help(format!(
+                "copy it into a variable: `let mut {name} = {name}`"
+            )),
+        Immutable::Unwrapped { keyword, declared } => {
+            d.with_secondary(declared, format!("bound by `{keyword}` here"))
+        }
+        Immutable::Field { declared } => d
+            .with_secondary(declared, "declared without `mut` here")
+            .with_fix(insert_mut("mark the field `mut`", declared)),
+        Immutable::Constant { declared } => if element {
+            d
+        } else {
+            d.with_label("cannot assign")
+        }
+        .with_secondary(declared, "declared with `const` here"),
     }
 }
 

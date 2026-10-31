@@ -217,6 +217,9 @@ pub(crate) struct Var {
     /// For a `string`, or a mutable array of them: the chars that `+=` may still add, summed
     /// over every run of each one.
     pub(crate) room: u64,
+    /// For a mutable array, or optional array: the size that `push` may still add, summed over
+    /// every run of each one. It is part of `size`, and of the size an element can reach.
+    pub(crate) grow: u64,
     /// How many loops are around its declaration.
     pub(crate) loops: usize,
     /// For an array: how many elements it holds at least, which an index stays under.
@@ -243,6 +246,7 @@ impl Var {
             base,
             size: base + room,
             room,
+            grow: 0,
             loops,
             len: 0,
             elem: base + room,
@@ -257,6 +261,11 @@ impl Var {
     /// Takes the room of a `+=` that adds at most `added` chars, `times` times.
     pub(crate) fn append(&mut self, added: u64, times: u64) {
         self.room -= added * times;
+    }
+
+    /// Takes the growth of a `push` that adds at most `added` size, `times` times.
+    pub(crate) fn push(&mut self, added: u64, times: u64) {
+        self.grow -= added * times;
     }
 }
 
