@@ -379,6 +379,11 @@ impl Checker<'_> {
         }
     }
 
+    /// Whether `name` is an alias that takes no type parameter.
+    pub(super) fn alias_takes_none(&self, name: Symbol) -> bool {
+        matches!(self.aliases.names.get(&name), Some(&Declared::Known(id)) if self.aliases.infos[id].params.is_empty())
+    }
+
     /// Whether `name` is an alias that is `Error`: a broken one, or one that has failed. Its own
     /// error stands, so a use of it reports nothing more.
     pub(super) fn alias_error(&self, name: Symbol) -> bool {

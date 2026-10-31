@@ -2589,7 +2589,10 @@ impl Checker<'_> {
         angles: Span,
     ) {
         let text = self.source;
-        let instead = types.iter().all(|ty| !self.names_no_type(ty)).then(|| {
+        // An alias that takes no parameter has no type arguments to move onto it.
+        let takes_none =
+            matches!(base.kind, ast::ExprKind::Name(name) if self.alias_takes_none(name));
+        let instead = (!takes_none && types.iter().all(|ty| !self.names_no_type(ty))).then(|| {
             format!(
                 "{}{}.{}",
                 text.text(base.span),

@@ -408,8 +408,9 @@ impl Checker<'_> {
         let start = self.diagnostics.len();
         let path = !types.is_empty() && self.path_method(receiver, method);
         // `Option` is generic, as an enum with the variants `Some` and `None` would be.
-        let option_variant = option_written(receiver) == Some(false)
-            && matches!(method.name.as_str(), "Some" | "None");
+        let option_variant = matches!(method.name.as_str(), "Some" | "None")
+            && (option_written(receiver) == Some(false)
+                || matches!(receiver.kind, ExprKind::Name(name) if self.names_option(name)));
         if path && (option_variant || self.generic_variant(receiver, method).is_some()) {
             // Its arguments alone could not bind what the list was meant to.
             self.variant_args(receiver, method, types, angles);

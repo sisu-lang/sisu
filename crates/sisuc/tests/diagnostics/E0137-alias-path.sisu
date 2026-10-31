@@ -19,9 +19,7 @@ type PI = P<i64>
 
 fn main() {
     let a = EE.Nil<i64>(1)
-    let b = EE.Num<i64>(1)
     let c = O.None<i64>(1)
-    let d = GI.A<i64>(1)
     let e = PI.Foo<i64>(1)
     let f = GI.Missing<i64>(1)
     let GI = 3
