@@ -350,20 +350,24 @@ fn judge_bounds(g: &Generated) -> Result<(), Failure> {
 /// Properties 1 and 2: `source` checks with no error, W0010 or W0011, and its MIR certifies and its
 /// module verifies, without and with `--rc-checks` (`fuzz::assert_compiles` panics if not).
 fn checked(name: &str, source: &str) -> Result<Program, Failure> {
+    // Every generated function returns and every generated loop ends, so none may call itself
+    // on every path, and no loop condition may stay unchanged.
+    let endless = |d: &Diagnostic| matches!(d.code().as_str(), "W0010" | "W0011");
     let (program, diagnostics) = front_end::front_end(source);
     let failure = |what: String| {
-        let rendered = render(name, source, &diagnostics);
+        // Other warnings are allowed, so the detail shows only what fails the property.
+        let failing: Vec<Diagnostic> = diagnostics
+            .iter()
+            .filter(|d| d.severity() == Severity::Error || endless(d))
+            .cloned()
+            .collect();
+        let rendered = render(name, source, &failing);
         Failure::new(1, format!("{what}\n{rendered}"))
     };
     let Some(program) = program else {
         return Err(failure(format!("the checker rejects the {name}")));
     };
-    // Every generated function returns and every generated loop ends, so none may call itself
-    // on every path, and no loop condition may stay unchanged.
-    if let Some(d) = diagnostics
-        .iter()
-        .find(|d| matches!(d.code().as_str(), "W0010" | "W0011"))
-    {
+    if let Some(d) = diagnostics.iter().find(|d| endless(d)) {
         let code = d.code().as_str();
         return Err(failure(format!("the checker reports {code} on the {name}")));
     }
@@ -1126,6 +1130,19 @@ mod tests {
         });
     }
 
+    /// Any seed of the series, named by `SISU_FUZZ_SEED`, as the named seed tests check theirs:
+    /// `SISU_FUZZ_SEED=72 cargo nextest run -p sisuc --lib seed_from_env --run-ignored only`.
+    #[test]
+    #[ignore = "runs only on demand, for the seed that SISU_FUZZ_SEED names"]
+    fn seed_from_env_should_pass() {
+        let n = env::var("SISU_FUZZ_SEED")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .expect("SISU_FUZZ_SEED should name a seed number");
+        seed_passes(n, false);
+        seed_passes(n, true);
+    }
+
     #[test]
     fn seed_0_program_passes() {
         seed_passes(0, false);
@@ -1694,14 +1711,22 @@ mod tests {
         assert!(stderr.contains("cannot write "), "{stderr}");
     }
 
-    /// A failed property 6 leaves the broken copy in the dump, and no build ran. Seed 28 has
-    /// bound sites; the forced replacement of its first conforms, so the property fails.
+    /// The first seed of the series whose program has bound sites. A new generator rule changes
+    /// what each seed makes, so the test finds the seed and does not name it.
+    fn bound_seed() -> u64 {
+        (0..64)
+            .find(|&n| !generate(&seed(n)).bound_sites.is_empty())
+            .expect("a seed of the first 64 should have a bound site")
+    }
+
+    /// A failed property 6 leaves the broken copy in the dump, and no build ran. The forced
+    /// replacement of the first bound site of `bound_seed` conforms, so the property fails.
     #[test]
     fn a_failed_bound_should_leave_the_broken_copy_in_the_dump() {
         if env::var_os(CHILD).is_some() {
             on_stack(|| {
                 FORCE.set(Some(Force::Conforming));
-                program(&seed(28), &runtime());
+                program(&seed(bound_seed()), &runtime());
             });
             return;
         }
@@ -1712,7 +1737,7 @@ mod tests {
         );
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(!out.status.success(), "{stderr}");
-        let g = generate(&seed(28));
+        let g = generate(&seed(bound_seed()));
         assert_record(&stderr, "property 6: ", &g, &scratch.0);
         let dump = scratch.0.join("dump");
         let read = |name: &str| {
