@@ -521,6 +521,93 @@ fn failing_leaf_should_read_each_type_once() {
     }
 }
 
+/// `enum E<T>` with `n` variants that each hold a `T`, and a generic function that compares two
+/// values of it `comparisons` times. `T` has no `Eq`, so each comparison fails.
+fn repeated_comparisons(n: usize, comparisons: usize) -> String {
+    let variants: Vec<String> = (0..n).map(|k| format!("    V{k}(T)\n")).collect();
+    let lines = "    let _ = a == b\n".repeat(comparisons);
+    format!(
+        "enum E<T> {{\n{}}}\nfn f<T>(a: E<T>, b: E<T>) {{\n{lines}}}\nfn main() {{}}",
+        variants.concat()
+    )
+}
+
+/// The first of `E0` … `E(n)` has two ways to the next, `[T]` and `T?`, and the last holds `T`:
+/// the 2^(n+1) - 1 types that the chain forms are all distinct. A generic function compares two
+/// values of `E0<T>` twice, with the bound `bound` on `T`: the second comparison reads nothing
+/// more.
+fn branching(n: usize, bound: &str) -> String {
+    let mut decls: Vec<String> = (0..n)
+        .map(|k| {
+            format!(
+                "enum E{k}<T> {{\n    A(E{m}<[T]>)\n    B(E{m}<T?>)\n}}\n",
+                m = k + 1
+            )
+        })
+        .collect();
+    decls.push(format!("enum E{n}<T> {{\n    A(T)\n}}\n"));
+    format!(
+        "{}fn f<T{bound}>(a: E0<T>, b: E0<T>) {{\n    let _ = a == b\n    let _ = a == b\n}}\nfn main() {{}}",
+        decls.concat()
+    )
+}
+
+/// A type that names a type parameter is read for the part that fails once in each body, as
+/// `conforms` decides it once: later comparisons of it read nothing more.
+#[test]
+fn failing_leaf_should_read_a_type_that_names_a_parameter_once_in_a_body() {
+    let count = |comparisons: usize| {
+        LEAF_STEPS.set(0);
+        let (_, ds) = checked(&repeated_comparisons(8, comparisons));
+        assert_eq!(
+            ds.iter().filter(|d| d.code() == Code::ParamLacks).count(),
+            comparisons,
+            "each comparison should give its own report"
+        );
+        LEAF_STEPS.get()
+    };
+    assert_eq!(count(1), 1, "one read for the enum");
+    assert_eq!(count(40), 1, "no more for the later comparisons");
+}
+
+/// Each body has its own answers: the type that a second function names is read again, since its
+/// bounds may differ.
+#[test]
+fn failing_leaf_should_read_a_type_that_names_a_parameter_again_in_the_next_body() {
+    let src = "enum E<T> {\n    A(T)\n}\n\
+        fn f<T>(a: E<T>, b: E<T>) -> bool { a == b }\n\
+        fn g<T>(a: E<T>, b: E<T>) -> bool { a == b }\n\
+        fn h<T: Eq>(a: E<T>, b: E<T>) -> bool { a == b }\nfn main() {}";
+    LEAF_STEPS.set(0);
+    let (_, ds) = checked(src);
+    assert_eq!(
+        ds.iter().map(Diagnostic::code).collect::<Vec<_>>(),
+        [Code::ParamLacks; 2]
+    );
+    assert_eq!(LEAF_STEPS.get(), 2, "one read for each body that fails");
+}
+
+/// The search for the failing part decides each type once, so on the error path it costs steps
+/// in proportion to the types that the chain forms, which is what the query costs when the bound
+/// holds.
+#[test]
+fn failing_leaf_should_cost_steps_in_proportion_to_the_types_of_a_branching_chain() {
+    LEAF_STEPS.set(0);
+    let (_, ds) = checked(&branching(8, ""));
+    assert_eq!(
+        ds.iter().map(Diagnostic::code).collect::<Vec<_>>(),
+        [Code::ParamLacks; 2]
+    );
+    let leaf = LEAF_STEPS.get();
+    CONFORMS_STEPS.set(0);
+    CONFORMS_BUDGET.set(100_000);
+    let (_, ds) = checked(&branching(8, ": Eq"));
+    assert!(ds.is_empty(), "the bound holds");
+    let query = CONFORMS_STEPS.get();
+    assert_eq!(leaf, (1 << 9) - 1, "one read for each type of the chain");
+    assert_eq!(query, leaf, "the query forms the same types");
+}
+
 #[test]
 fn generated_should_decide_each_type_once() {
     // Only the steps: each enum of the chain holds two of the next, so the payload limit adds an

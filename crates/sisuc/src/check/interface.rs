@@ -7,7 +7,9 @@ use std::rc::Rc;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::extend::holder_of;
-use super::{BindingKind, Body, Checker, Choice, Choices, Declared, Definition, Holder};
+use super::{
+    BindingKind, Body, Checker, Choice, Choices, Declared, Definition, Holder, LeafAnswers,
+};
 use crate::ast;
 use crate::conformance::{CHOICE_DEPTH_LIMIT, Entered, Generated, ensure_stack, find, generated};
 use crate::diagnostic::{
@@ -628,6 +630,7 @@ impl Checker<'_> {
     ) {
         self.body.required.clear();
         self.body.conformed.clear();
+        self.body.leaves.clear();
         for &(place, bound) in added {
             self.body.bounds[place].push(bound);
             let Some(mut out) = self.body.conforming.get_mut(place).and_then(Option::take) else {
@@ -1200,7 +1203,10 @@ impl Checker<'_> {
     /// `conformance::Open`). It decides each such type once: a type with no type parameter once
     /// in the program, and a type that names one once in each body. Each is a type that `mono`
     /// instantiates when the program uses it. The worst input is a branching chain of enums, each
-    /// with two ways to the next level, which forms 2^n types at its last level.
+    /// with two ways to the next level, which forms 2^n types at its last level. The search for
+    /// the failing part on the error path (`failing_leaf`) keeps the same two caches, `leaves` and
+    /// `Body.leaves`. It decides each type once in the same way, and it has the same bound (user,
+    /// 2026-10-31).
     pub(super) fn conforms(&mut self, ty: Type, interface: InterfaceId, args: TypeArgs) -> bool {
         if interface == self.lang.display {
             return generated(self.lang, ty, interface) == Generated::Holds;
@@ -1420,13 +1426,11 @@ impl Checker<'_> {
         // reads it once. Another walk may use it only when the answer is a part (`leaf` keeps
         // those) or the walk cut nothing short; `or_insert` leaves such an entry as it is.
         let key = (ty, interface, args);
-        if let Some(&(kept, _)) = self.leaves.get(&key) {
+        if let Some(&(kept, _)) = self.leaves_of(ty).get(&key) {
             return kept.unwrap_or(ty);
         }
         let found = self.leaf(ty, interface, args, &mut FxHashSet::default());
-        if !ty.has_param() {
-            self.leaves.entry(key).or_insert((found, false));
-        }
+        self.leaves_of(ty).entry(key).or_insert((found, false));
         found.unwrap_or(ty)
     }
 
@@ -1535,6 +1539,16 @@ impl Checker<'_> {
         param
     }
 
+    /// The answers of `leaf` that `ty` uses: the body's for a type that names a type parameter,
+    /// the checker's for any other.
+    fn leaves_of(&mut self, ty: Type) -> &mut LeafAnswers {
+        if ty.has_param() {
+            &mut self.body.leaves
+        } else {
+            &mut self.leaves
+        }
+    }
+
     /// `failing_leaf` for one type; `None` when it holds, or is already being read.
     fn leaf(
         &mut self,
@@ -1559,13 +1573,15 @@ impl Checker<'_> {
                         self.leaf_cuts += 1;
                         return None;
                     }
-                    // The answer for a type with no type parameter changes with no body. A part
+                    // The answer for a type with no type parameter changes with no body; one for
+                    // a type that names a parameter changes with the bounds, so it is kept with
+                    // the body (`Body.leaves`), as `Body.conformed` keeps the queries. A part
                     // that was found fails on its own, wherever the walk began, and `None` with no
                     // part cut short does not depend on where it began: both are kept, so a type
                     // that was read before costs nothing more. A `None` after a cut holds only
                     // while an ancestor is in progress, so it is not kept.
                     let key = (ty, interface, args);
-                    if let Some(&(kept, true)) = self.leaves.get(&key) {
+                    if let Some(&(kept, true)) = self.leaves_of(ty).get(&key) {
                         return kept;
                     }
                     #[cfg(test)]
@@ -1583,8 +1599,8 @@ impl Checker<'_> {
                                 }
                             }
                         };
-                    if !ty.has_param() && (self.leaf_cuts == cuts || found.is_some()) {
-                        self.leaves.insert(key, (found, true));
+                    if self.leaf_cuts == cuts || found.is_some() {
+                        self.leaves_of(ty).insert(key, (found, true));
                     }
                     found
                 }

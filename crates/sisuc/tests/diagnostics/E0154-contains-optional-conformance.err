@@ -5,7 +5,7 @@ error[E0154]: `Pair<bool>?` does not conform to `Eq`
    |           --- this conformance needs `T: Ord`
 ...
 13 |     print(pairs.contains(None))
-   |           ^^^^^^^^^^^^^^^^^^^^ `contains` needs `T: Eq`
+   |           ^^^^^^^^^^^^^^^^^^^^ `contains` needs `Pair<bool>?: Eq`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0154

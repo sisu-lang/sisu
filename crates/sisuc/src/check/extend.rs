@@ -227,7 +227,7 @@ impl<'a> Checker<'_> {
             .expect("a block that fails its bounds should have a bound that fails");
         let need = BlockNeed {
             method: method.to_string(),
-            param: self.extensions[extension].type_params[i].to_string(),
+            param: self.type_name(stands.get()[i]),
         };
         self.check_bound_of(span, stands.get()[i], bound, stands.get(), Some(need));
     }

@@ -765,7 +765,8 @@ pub(crate) enum DiagnosticKind {
     CannotIndex { ty: String, at: Span },
     /// The method `method` at `at`, called on an array of type `ty`. The prelude gives the method
     /// to the array types `targets`, and none of them is `ty`. `function` is whether the call
-    /// writes the method as a function, `method(xs)`, and the help then says it is a method.
+    /// writes the method as a function, `method(xs)`, and the label then says it is a method: it
+    /// states the cause, so it is not a help.
     SumNeedsNumbers {
         method: String,
         ty: String,
@@ -1958,8 +1959,9 @@ pub(crate) enum PreludeBound {
     },
 }
 
-/// The method of a prelude block that has the bound, and the type parameter of the block that the
-/// bound is on. The label names them when the call is of that method.
+/// The method of a prelude block that has the bound, and the type that stands for the block's
+/// type parameter at the call: the program wrote that type, not the name in the prelude. The
+/// label names them when the call is of that method.
 #[derive(Clone)]
 pub(crate) struct BlockNeed {
     pub method: String,
@@ -3519,7 +3521,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 let d =
                     Diagnostic::coded(code, at, format!("`{method}` needs {targets}, found `{ty}`"));
                 if function {
-                    d.with_help(format!("`{method}` is a method of {targets}, not a function"))
+                    d.with_label(format!("`{method}` is a method of {targets}, not a function"))
                 } else {
                     d
                 }

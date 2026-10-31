@@ -2,7 +2,7 @@ error[E0154]: `Node` does not conform to `Eq`
  --> E0154-contains-class.sisu:7:11
   |
 7 |     print(nodes.contains(nodes[0]))
-  |           ^^^^^^^^^^^^^^^^^^^^^^^^ `contains` needs `T: Eq`
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^ `contains` needs `Node: Eq`
   |
   = help: make `Node` conform to `Eq`
 

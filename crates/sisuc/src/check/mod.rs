@@ -535,7 +535,7 @@ struct Checker<'src> {
     /// The part that makes a class or an enum with no type parameter fail an interface (`None`
     /// when it holds), as `failing_leaf` found it; and whether no part of that walk was cut short,
     /// which lets another walk use it.
-    leaves: FxHashMap<(Type, tir::InterfaceId, TypeArgs), (Option<Type>, bool)>,
+    leaves: LeafAnswers,
     /// How many parts the walks of `failing_leaf` have cut short, for a part that was being read.
     leaf_cuts: usize,
     /// The classes and enums whose queries went past `CONFORMS_DEPTH_LIMIT` and were reported.
@@ -665,6 +665,11 @@ struct ClosureIndex {
     by_interface: FxHashMap<tir::InterfaceId, Vec<(usize, TypeArgs)>>,
 }
 
+/// The part that makes a class or an enum fail an interface (`None` when it holds), as
+/// `failing_leaf` found it, by the type, the interface and its arguments; and whether no part of
+/// that walk was cut short, which lets another walk use it.
+type LeafAnswers = FxHashMap<(Type, tir::InterfaceId, TypeArgs), (Option<Type>, bool)>;
+
 /// What checking one body needs: a function's, a method's, or a constant's initialiser.
 #[derive(Default)]
 struct Body {
@@ -704,6 +709,9 @@ struct Body {
     /// The answers of `conforms` for a type that holds a type parameter: they change with the
     /// bounds, and a body's are cleared with them.
     conformed: FxHashMap<(Type, tir::InterfaceId, TypeArgs), bool>,
+    /// The answers of `failing_leaf` for a type that holds a type parameter, as `conformed` keeps
+    /// the answers of `conforms`: they change with the bounds, and are cleared with them.
+    leaves: LeafAnswers,
     /// Where in `Checker.scopes` the type parameters now in scope are, once a check waits.
     scope: Option<usize>,
     /// Where each call of a value, `a<b, c>(d)`, that has been reported starts: comparisons
@@ -825,6 +833,7 @@ impl Body {
         self.required.clear();
         self.named.clear();
         self.conformed.clear();
+        self.leaves.clear();
         self.scope = None;
     }
 
