@@ -241,6 +241,11 @@ struct CallShape {
     some: bool,
     /// How the call makes an optional by itself (see `Ranked::optional`).
     makes: Makes,
+    /// The places whose declared type names, other than under an associated type, a type
+    /// parameter that the declared return type names too (see `carried_places`). Bit `i` is set
+    /// for the place `i`. An argument that holds an optional at such a place makes the call hold
+    /// one (see `Ranked::holds_optional`).
+    carried: u64,
     /// Whether the fitting call's declared return type names none of the callee's own type
     /// parameters. Then its arguments do not give the call its type (see `Rank`).
     outside: bool,
@@ -254,18 +259,32 @@ enum Makes {
     No,
     /// Its declared return type is an optional: `Some`, or `fn opt<T>(x: T) -> T?`.
     Always,
-    /// Its declared return type is a bare type parameter `P`. The call is then an optional when
-    /// one of the arguments at the first set of places is. Each of them has the declared type
-    /// `P`. It is also an optional when one of the arguments at the second set of places holds an
-    /// optional. Each of them has the declared type `P` in arrays, such as `[P]`. Bit `i` is set
-    /// for the place `i`.
+    /// Its declared return type is a bare type parameter `P`. Bit `i` of a mask is set for the
+    /// place `i`.
     // shortcut: a place from 64 on does not count, so a callee of 64 parameters or more, with an
     // optional argument from place 64 on, reports "expected `u8`, found `u8?`"; upgrade if a callee
     // with more parameters needs it.
-    // shortcut: an argument at a place of the second set counts when it holds an optional at any
-    // depth, so `first([[Some(1)]])` for `fn first<T>(xs: [T]) -> T` counts, and `T` is `[i64?]`;
-    // upgrade if such a call needs a context that is not an optional.
-    Through(u64, u64),
+    // shortcut: an argument at a place of `inside` counts when it holds an optional at any depth,
+    // so `first([[Some(1)]])` for `fn first<T>(xs: [T]) -> T` counts, and `T` is `[i64?]`; upgrade
+    // if such a call needs a context that is not an optional.
+    // shortcut: a place `T?` of `P` is not in `inside`, as there `Some(2)` fills the place's own
+    // `?`. So `let v: i64? = h(1, Some(Some(2)))` for `fn h<T>(a: T, b: T?) -> T` meets the
+    // payload and reports "expected `i64`, found `i64?`"; upgrade if such a call needs the context
+    // to meet the return type whole.
+    Through {
+        /// The places of the declared type `P`. The call is an optional when one of the
+        /// arguments there is.
+        bare: u64,
+        /// The places whose declared type holds `P` under arrays or the type arguments of a class
+        /// or an enum, such as `[P]` or `Bx<P>`. The call is an optional when one of the
+        /// arguments there holds an optional.
+        inside: u64,
+    },
+}
+
+/// Whether bit `i` of `mask` is set. A place from 64 on is not.
+fn has_place(mask: u64, i: usize) -> bool {
+    i < u64::BITS as usize && (mask >> i) & 1 == 1
 }
 
 impl Makes {
@@ -275,15 +294,15 @@ impl Makes {
         match ret.map(|ret| (ret, ret.kind())) {
             Some((_, TypeKind::Optional(_))) => Makes::Always,
             Some((ret, TypeKind::Param(..))) => {
-                let (mut bare, mut inner) = (0, 0);
+                let (mut bare, mut inside) = (0, 0);
                 for (i, param) in params.take(u64::BITS as usize).enumerate() {
                     match param {
                         Some(param) if param == ret => bare |= 1 << i,
-                        Some(param) if under_arrays(param) == ret => inner |= 1 << i,
+                        Some(param) if holds_param(param, ret) => inside |= 1 << i,
                         _ => {}
                     }
                 }
-                Makes::Through(bare, inner)
+                Makes::Through { bare, inside }
             }
             _ => Makes::No,
         }
@@ -291,27 +310,79 @@ impl Makes {
 
     /// Whether the argument at place `i` is of the bare return parameter.
     fn through(&self, i: usize) -> bool {
-        matches!(self, Makes::Through(places, _) if i < u64::BITS as usize && (places >> i) & 1 == 1)
+        matches!(self, Makes::Through { bare, .. } if has_place(*bare, i))
     }
 
-    /// Whether the argument at place `i` is of the return parameter in arrays.
+    /// Whether the argument at place `i` is of the return parameter in arrays or in the type
+    /// arguments of a class or an enum.
     fn inside(&self, i: usize) -> bool {
-        matches!(self, Makes::Through(_, places) if i < u64::BITS as usize && (places >> i) & 1 == 1)
+        matches!(self, Makes::Through { inside, .. } if has_place(*inside, i))
     }
 
     /// Whether the argument `ranked` at place `i` makes the call an optional: it is one at a
-    /// place of the bare parameter, or it holds one at a place of the parameter in arrays.
+    /// place of the bare parameter, or it holds one at a place that holds the parameter.
     fn passes_optional(&self, i: usize, ranked: Ranked) -> bool {
         self.through(i) && ranked.optional || self.inside(i) && ranked.holds_optional
     }
 }
 
-/// `ty` with its array levels taken off: `P` for `[[P]]`.
-fn under_arrays(mut ty: Type) -> Type {
-    while let TypeKind::Array(element) = ty.kind() {
-        ty = element;
+/// Whether `ty` holds `param` other than as itself: under arrays or the type arguments of a class
+/// or an enum, not under an optional nor an associated type.
+fn holds_param(ty: Type, param: Type) -> bool {
+    match ty.kind() {
+        TypeKind::Array(t) => t == param || holds_param(t, param),
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+            (args.get().iter()).any(|&arg| arg == param || holds_param(arg, param))
+        }
+        _ => false,
     }
-    ty
+}
+
+/// Whether `ty` names a type parameter that `marked` marks by its place, other than under an
+/// associated type (see `names_outside_assoc`).
+fn names_marked(ty: Type, marked: &[bool]) -> bool {
+    if !ty.has_param() {
+        return false;
+    }
+    match ty.kind() {
+        TypeKind::Param(_, j) => marked[j as usize],
+        TypeKind::Array(inner) | TypeKind::Optional(inner) => names_marked(inner, marked),
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+            (args.get().iter()).any(|&arg| names_marked(arg, marked))
+        }
+        TypeKind::Assoc(..) => false,
+        _ => unreachable!("only a kind with a child can name a parameter"),
+    }
+}
+
+/// The places among `params` whose type names a type parameter that `marked` marks, as
+/// `CallShape::carried` says. A place from 64 on does not count (see `Makes::Through`).
+fn carried_places(params: impl Iterator<Item = Option<Type>>, marked: &[bool]) -> u64 {
+    let mut places = 0;
+    for (i, param) in params.take(u64::BITS as usize).enumerate() {
+        if param.is_some_and(|param| names_marked(param, marked)) {
+            places |= 1 << i;
+        }
+    }
+    places
+}
+
+/// The places among `params` whose type names a type parameter, of `count`, that the declared
+/// return type `ret` names too, other than under an associated type. `ret` is `None` when it
+/// did not resolve: no place is carried then.
+fn carried(ret: Option<Type>, params: impl Iterator<Item = Option<Type>>, count: usize) -> u64 {
+    let Some(ret) = ret.filter(|_| count > 0) else {
+        return 0;
+    };
+    let (mut inside, mut outside) = (vec![false; count], vec![false; count]);
+    mark_by_assoc(ret, false, &mut inside, &mut outside);
+    carried_places(params, &outside)
+}
+
+/// The places among `params` that name a type parameter, of `count`, for a construction, whose
+/// built type names all of them.
+fn carried_by_construction(params: impl Iterator<Item = Option<Type>>, count: usize) -> u64 {
+    carried_places(params, &vec![true; count])
 }
 
 /// The hole, `_`: the type of a part that a context has not fixed yet (see `Bindings::partial`).
@@ -871,8 +942,10 @@ pub(super) struct Ranked {
     pub(super) optional: bool,
     /// Whether the type of the value has an optional that a plain literal in its place would
     /// not have. It is set where `optional` is. An array literal keeps it from its elements:
-    /// `[Some(2)]` holds an optional, but is not an optional element. So does a call that passes
-    /// on, at a place of its returned parameter, an argument that holds one: `id([Some(2)])`.
+    /// `[Some(2)]` holds an optional, but is not an optional element. So does a call that has an
+    /// argument that holds one at a place whose declared type names a type parameter that the
+    /// declared return type names too: `id([Some(2)])`, `wrap(Some(2))` for `-> [T]`, and
+    /// `Bx(v: Some(2))`. Not `k2(Some(1), [2])` for `fn k2<T, U>(a: T, b: U) -> U`.
     /// The order of the arguments of a call reads it (see `infer_call`), and joins do not.
     pub(super) holds_optional: bool,
     /// For a `Literal` value: whether its type is the type of an integer literal it holds, which
@@ -1983,6 +2056,7 @@ impl Checker<'_> {
             open,
             makes,
             outside,
+            carried,
             ..
         } = shape;
         if !generic {
@@ -1998,7 +2072,7 @@ impl Checker<'_> {
             combine(args.iter().enumerate().map(|(i, arg)| {
                 let ranked = self.rank_value(&arg.value, fit);
                 through |= makes.passes_optional(i, ranked);
-                holds |= ranked.holds_optional && (makes.through(i) || makes.inside(i));
+                holds |= ranked.holds_optional && has_place(carried, i);
                 passes &= ranked.rank != Rank::Literal || makes.through(i);
                 ranked
             }))
@@ -2069,6 +2143,7 @@ impl Checker<'_> {
                         generic: true,
                         shaped,
                         open: shaped && leaves_open(v.fields.iter().copied(), names, 0),
+                        carried: carried_by_construction(v.fields.iter().copied(), names.len()),
                         ..CallShape::default()
                     }
                 } else if !safe
@@ -2083,6 +2158,7 @@ impl Checker<'_> {
                         some: true,
                         makes: Makes::Always,
                         outside: false,
+                        carried: 0,
                     }
                 } else {
                     self.generic_method(receiver, method, args, *safe)
@@ -2291,6 +2367,7 @@ impl Checker<'_> {
             open,
             makes: Makes::of(sig.ret, sig.params.iter().copied()),
             outside,
+            carried: carried(sig.ret, sig.params.iter().copied(), sig.type_params.len()),
             ..CallShape::default()
         }
     }
@@ -2355,6 +2432,11 @@ impl Checker<'_> {
                     open,
                     makes: Makes::of(requirement.ret, requirement.params.iter().copied()),
                     outside,
+                    carried: carried(
+                        requirement.ret,
+                        requirement.params.iter().copied(),
+                        names.len(),
+                    ),
                     ..CallShape::default()
                 }
             }
@@ -2432,7 +2514,8 @@ impl Checker<'_> {
             return CallShape {
                 generic: true,
                 shaped: matches!(args, [arg] if arg.label.is_none()),
-                makes: Makes::Through(1, 0),
+                makes: Makes::Through { bare: 1, inside: 0 },
+                carried: 1,
                 ..CallShape::default()
             };
         }
@@ -2445,6 +2528,10 @@ impl Checker<'_> {
                     shaped,
                     open: shaped
                         && leaves_open(info.fields.iter().map(|f| f.ty), &info.type_params, 0),
+                    carried: carried_by_construction(
+                        info.fields.iter().map(|f| f.ty),
+                        info.type_params.len(),
+                    ),
                     ..CallShape::default()
                 }
             }
@@ -2461,6 +2548,7 @@ impl Checker<'_> {
                     open,
                     makes: Makes::of(sig.ret, sig.params.iter().copied()),
                     outside,
+                    carried: carried(sig.ret, sig.params.iter().copied(), sig.type_params.len()),
                     ..CallShape::default()
                 }
             }
@@ -2473,6 +2561,7 @@ impl Checker<'_> {
                 some: true,
                 makes: Makes::Always,
                 outside: false,
+                carried: 0,
             },
             (None, None) => self
                 .result_variant(name)
@@ -2488,6 +2577,10 @@ impl Checker<'_> {
                                 &info.type_params,
                                 0,
                             ),
+                        carried: carried_by_construction(
+                            info.variants[v].fields.iter().copied(),
+                            info.type_params.len(),
+                        ),
                         ..CallShape::default()
                     }
                 }),

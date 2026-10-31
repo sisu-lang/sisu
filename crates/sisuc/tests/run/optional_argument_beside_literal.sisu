@@ -5,15 +5,28 @@
 //      argument of a generic call beside a plain literal, in both orders
 // AND the call has no context or an `i64?` context, and the optional is also inside an array
 // AND a safe call is the argument of `id`, on a present receiver and on an absent one
+// AND a call wraps the optional in an array or a class, as `wrap`, `g`, `two`, `mk` and `unbox` do
+// AND a context of `i64?` or `u8?` meets the call that holds the optional whole
+// AND `first([None, Some(1)])` in an `i64??` context gives the outer `None`
 // THEN the parameter is the optional type, as it is when the optional comes first, the literal
 //      fits it, and each line prints the value, or 9 for an absent one
 // AND the same holds for a safe call of a method and for one of a bound's requirement
+// AND the same holds for the wrapped optional, and an integer literal nests in `id({ 2 })`
 fn id<T>(x: T) -> T { x }
 fn pick<T>(_a: T, b: T) -> T { b }
 fn opt<T>(x: T) -> T? { Some(x) }
 fn k<T>(a: T, _b: [T]) -> T { a }
 fn first<T>(xs: [T]) -> T { xs[0] }
 fn k2<T, U>(_a: T, b: U) -> U { b }
+fn wrap<T>(x: T) -> [T] { [x] }
+fn g<T>(xs: [T]) -> [T] { xs }
+fn two<T>(a: T, _b: i64) -> [T] { [a] }
+fn mk<T>(x: T) -> Bx<T> { Bx(v: x) }
+fn unbox<T>(b: Bx<T>) -> T { b.v }
+
+class Bx<T> {
+    v: T
+}
 
 class B {
     fn m<T>(self, x: T) -> T { x }
@@ -90,4 +103,47 @@ fn main() {
     print("{t[0] ?? 9}") // 22
     let u = pick([1], k2(Some(1), [23]))
     print("{u[0]}") // 23
+    // A call that wraps the optional in an array or a class holds it too.
+    let w1 = pick([1], wrap(Some(24)))
+    print("{w1[0] ?? 9}") // 24
+    let w2 = pick([1], g([Some(25)]))
+    print("{w2[0] ?? 9}") // 25
+    let w3 = pick(1, unbox(Bx(v: Some(26))))
+    print("{w3 ?? 9}") // 26
+    let w4 = k(1, wrap(Some(27)))
+    print("{w4 ?? 9}") // 1
+    let w5 = pick([1], two(Some(28), 1))
+    print("{w5[0] ?? 9}") // 28
+    let w6 = pick(Bx(v: 1), mk(Some(29)))
+    print("{w6.v ?? 9}") // 29
+    let w7 = pick([1], wrap(present?.m(30)))
+    print("{w7[0] ?? 9}") // 30
+    let w8 = pick([[1]], wrap([Some(31)]))
+    print("{w8[0][0] ?? 9}") // 31
+    let w9 = pick(1, first(wrap(Some(32))))
+    print("{w9 ?? 9}") // 32
+    // The context meets the call whole, so the `Some` is the value.
+    let c1: i64? = unbox(Bx(v: Some(33)))
+    print("{c1 ?? 9}") // 33
+    let c2: i64? = first(wrap(Some(34)))
+    print("{c2 ?? 9}") // 34
+    let c3: u8? = first(wrap(Some(35)))
+    print("{c3 ?? 9}") // 35
+    let c4: i64? = k(1, wrap(Some(36)))
+    print("{c4 ?? 9}") // 1
+    let c5: u8? = unbox(Bx(v: Some(37)))
+    print("{c5 ?? 9}") // 37
+    // An `i64??` context meets the return type whole, so the `None` is the outer one.
+    let nn: i64?? = first([None, Some(1)])
+    if let Some(_) = nn {
+        print("some")
+    } else {
+        print("none") // none
+    }
+    // An integer literal nests in the forms that pass it on.
+    let small: u8 = 250
+    print("{id(id(2)) + small}") // 252
+    print("{id({ 2 }) + small}") // 252
+    let last = { id(2) } + small
+    print("{last}") // 252
 }

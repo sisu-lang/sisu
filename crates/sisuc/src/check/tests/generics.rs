@@ -1837,11 +1837,13 @@ fn a_method_that_returns_an_optional_should_make_the_call_that_holds_it_optional
     }
 }
 
-/// With no context, the arguments that hold an optional, also inside an array, are checked before
-/// a plain literal beside them, so the parameter is the optional type and the literal fits it.
-/// Before, the literal bound the parameter to `i64` first and the optional was rejected. The
-/// order of the arguments, and a context of `i64?` or `u8?`, make no difference. A `Some` that
-/// the callee does not return (`k2(Some(1), [2])`) does not make its call hold an optional.
+/// With no context, the arguments that hold an optional are checked before a plain literal beside
+/// them, so the parameter is the optional type and the literal fits it. Before, the literal bound
+/// the parameter to `i64` first and the optional was rejected. A value holds an optional inside an
+/// array, and in a call that has such an argument at a place whose type names a type parameter
+/// that the return type names too: `wrap(Some(2))`, `unbox(Bx(v: Some(2)))`. The order of the
+/// arguments, and a context of `i64?` or `u8?`, make no difference. A `Some` that the callee does
+/// not return (`k2(Some(1), [2])`) does not make its call hold an optional.
 #[test]
 fn an_optional_argument_should_bind_before_a_plain_literal() {
     with_prelude();
@@ -1853,7 +1855,13 @@ fn an_optional_argument_should_bind_before_a_plain_literal() {
         fn first<T>(xs: [T]) -> T { xs[0] }\n\
         fn k2<T, U>(a: T, b: U) -> U { b }\n\
         fn h<T>(a: T, b: T?) -> T { a }\n\
-        class Bx {\n    fn pick<T>(self, a: T, b: T) -> T { a }\n}\n";
+        fn wrap<T>(x: T) -> [T] { [x] }\n\
+        fn g<T>(xs: [T]) -> [T] { xs }\n\
+        fn two<T>(a: T, b: i64) -> [T] { [a] }\n\
+        fn mk<T>(x: T) -> Bx<T> { Bx(v: x) }\n\
+        fn unbox<T>(b: Bx<T>) -> T { b.v }\n\
+        class Bx<T> {\n    v: T\n}\n\
+        class Holder {\n    fn pick<T>(self, a: T, b: T) -> T { a }\n}\n";
     // The reversed orders passed before this change: they are controls.
     for row in [
         "let v = pick(1, Some(2))",
@@ -1869,11 +1877,11 @@ fn an_optional_argument_should_bind_before_a_plain_literal() {
         "let v = pick3(1, Some(2), 3)",
         "let v = pick3(Some(1), 2, 3)",
         "let v = h(1, Some(2))",
-        "let v = bx.pick(1, Some(2))",
+        "let v = holder.pick(1, Some(2))",
         "let v: i64? = pick(1, Some(2))",
         "let v: u8? = pick(1, Some(2))",
         "let v: u8? = pick3(1, 2, Some(3))",
-        "let v: u8? = bx.pick(1, opt(2))",
+        "let v: u8? = holder.pick(1, opt(2))",
         // The optional is inside an array literal, or in a value that passes one on.
         "let v = pick([1], [Some(2)])",
         "let v = pick([1], [None, Some(2)])",
@@ -1884,16 +1892,58 @@ fn an_optional_argument_should_bind_before_a_plain_literal() {
         "let v = pick([[Some(2)]], [[1]])",
         "let v: [i64?] = pick([1], [Some(2)])",
         "let v: [u8?] = pick([1], [Some(2)])",
-        // The context is the optional that the array holds, and the call returns the parameter.
-        "let v: i64? = k(1, [Some(2)])",
-        "let v: i64? = first([Some(1)])",
-        "let v: u8? = first([Some(1)])",
+        // A call that wraps the optional in an array, a class or an enum.
+        "let v = pick([1], wrap(Some(2)))",
+        "let v = pick([1], wrap(opt(2)))",
+        "let v = pick([1], wrap(if c { 2 } else { None }))",
+        "let v = pick([[1]], wrap([Some(2)]))",
+        "let v = pick([1], g([Some(2)]))",
+        "let v = pick([1], two(Some(2), 1))",
+        "let v = pick(Bx(v: 1), mk(Some(2)))",
+        "let v = pick(1, unbox(Bx(v: Some(2))))",
+        "let v = pick(1, first(wrap(Some(2))))",
+        "let v = k(1, wrap(Some(2)))",
+        "let v: i64? = pick(1, unbox(Bx(v: Some(2))))",
+        "let v: u8? = k(1, wrap(Some(2)))",
+        // The reversed orders passed before this change: they are controls.
+        "let v = pick(wrap(Some(2)), [1])",
+        "let v = pick(g([Some(2)]), [1])",
+        "let v = pick(unbox(Bx(v: Some(2))), 1)",
+        "let v = pick(mk(Some(2)), Bx(v: 1))",
         // The `Some` is not returned, so the call holds no optional: the array binds first.
         "let v = pick([1], k2(Some(1), [2]))",
         "let v = pick(k2(Some(1), [2]), [Some(3)])",
     ] {
-        let src =
-            format!("{decls}fn main() {{\n    let c = true\n    let bx = Bx()\n    {row}\n}}");
+        let src = format!(
+            "{decls}fn main() {{\n    let c = true\n    let holder = Holder()\n    {row}\n}}"
+        );
+        clean_row(row, &src);
+    }
+}
+
+/// A context of `i64?` or `u8?` meets the return type whole, and not its payload, when an argument
+/// holds the optional at a place of the returned parameter, with no plain literal beside it. The
+/// place can be in an array or a class, also in a call that is the argument. Before, the context
+/// met the payload, and `Some(1)` was rejected.
+#[test]
+fn a_context_should_meet_a_call_whose_argument_holds_an_optional() {
+    with_prelude();
+    let decls = "fn first<T>(xs: [T]) -> T { xs[0] }\n\
+        fn k<T>(a: T, b: [T]) -> T { a }\n\
+        fn wrap<T>(x: T) -> [T] { [x] }\n\
+        fn unbox<T>(b: Bx<T>) -> T { b.v }\n\
+        class Bx<T> {\n    v: T\n}\n";
+    for row in [
+        "let v: i64? = k(1, [Some(2)])",
+        "let v: i64? = first([Some(1)])",
+        "let v: u8? = first([Some(1)])",
+        "let v: i64? = unbox(Bx(v: Some(1)))",
+        "let v: u8? = unbox(Bx(v: Some(1)))",
+        "let v: i64? = first(wrap(Some(1)))",
+        "let v: u8? = first(wrap(Some(1)))",
+        "let v: i64? = k(1, wrap(Some(2)))",
+    ] {
+        let src = format!("{decls}fn main() {{\n    {row}\n}}");
         clean_row(row, &src);
     }
 }
