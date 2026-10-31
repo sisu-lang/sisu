@@ -3013,7 +3013,7 @@ fn build_should_report_e0160_for_a_generic_enum_that_only_its_instance_makes_lar
 /// THEN the E0160 shows the line of the declaration of `P`, and the line of the `let`.
 /// AND it has a second label under `P.End` that says the instance is used here
 #[test]
-fn build_should_label_the_use_that_makes_an_instance_that_is_too_large() {
+fn build_should_label_a_use_of_an_instance_that_is_too_large() {
     let nested = format!("{}i64{}", "P<".repeat(32), ">".repeat(32));
     let source = format!(
         "enum P<T> {{\n    End\n    A(T, T)\n}}\nfn main() {{\n    let x: {nested} = P.End\n    print(x)\n}}\n"

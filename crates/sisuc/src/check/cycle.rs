@@ -148,6 +148,8 @@ thread_local! {
     pub(super) static DBG_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many types `shown_params` has read on this thread, to find the arguments `dbg` shows.
     pub(super) static SHOWN_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many types `Checker::growth` has read on this thread, to find the argument that grows.
+    pub(super) static GROWTH_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The nodes and the edges of the component that the last search for a cycle read.
     pub(super) static SEARCHED: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
@@ -1184,6 +1186,8 @@ impl Checker<'_> {
             if !ty.has_param() || !seen.insert(ty) {
                 continue;
             }
+            #[cfg(test)]
+            GROWTH_VISITS.set(GROWTH_VISITS.get() + 1);
             match ty.kind() {
                 TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
                     let grows =

@@ -384,9 +384,10 @@ impl Checker<'_> {
     /// shortcut: a `dbg` of a type parameter shows the instances that `mono` makes. The checker
     /// does not see them, so such a field gets no label. A class or an enum with a parameter and
     /// any written `Display` is skipped too: its text may apply to the instance that `dbg` prints,
-    /// so a field behind it gets no label. A type without a parameter that has any written
-    /// `Display` is skipped too, also when a bound of that `Display` fails. Then `dbg` prints its
-    /// fields, but they get no label: `extend<T: Mark> Gate<T>: Display` and `dbg(Gate(v: "one"))`.
+    /// so a field behind it gets no label. A type that holds no type parameter, such as
+    /// `Gate<string>`, is skipped too when it has a written `Display`. This holds also when a bound
+    /// of that `Display` fails. Then `dbg` prints its fields, but they get no label:
+    /// `extend<T: Mark> Gate<T>: Display` and `dbg(Gate(v: "one"))`.
     /// To give the label, check the bounds, as `record_holds` in `conformance.rs` does, when a
     /// program needs it.
     fn shown_by_dbg(&self, live: &[bool]) -> Vec<Option<Span>> {

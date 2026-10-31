@@ -98,7 +98,8 @@ thread_local! {
 
 #[cfg(test)]
 thread_local! {
-    /// How many enums and `held_inline` edges `spread_uses` has visited on this thread.
+    /// How many calls of `spread_uses`, passes of its early return, enums and `held_inline` edges
+    /// it has visited on this thread.
     static SPREAD_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -277,6 +278,8 @@ pub(crate) fn oversized(enums: &[Enum], first_uses: &[Option<Span>]) -> Vec<Over
 /// non-generic enum or class is the declaration's, not the instance's. When no instance has a use
 /// the result is empty.
 fn spread_uses(enums: &[Enum], first_uses: &[Option<Span>]) -> Vec<Option<Span>> {
+    #[cfg(test)]
+    SPREAD_STEPS.set(SPREAD_STEPS.get() + 1);
     let own = |id: usize| first_uses.get(id).copied().flatten();
     let mut queue: VecDeque<usize> = (0..enums.len())
         .filter(|&id| enums[id].instance && own(id).is_some())
@@ -284,6 +287,8 @@ fn spread_uses(enums: &[Enum], first_uses: &[Option<Span>]) -> Vec<Option<Span>>
     if queue.is_empty() {
         return Vec::new();
     }
+    #[cfg(test)]
+    SPREAD_STEPS.set(SPREAD_STEPS.get() + 1);
     let mut uses = vec![None; enums.len()];
     for &id in &queue {
         uses[id] = own(id);
@@ -806,7 +811,8 @@ mod tests {
         let found = oversized_with(&chain(), &[], 30);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].used, None);
-        assert_eq!(SPREAD_STEPS.get(), 0);
+        // One step for the call, and none for the early return, the enums or the edges.
+        assert_eq!(SPREAD_STEPS.get(), 1);
     }
 
     #[test]

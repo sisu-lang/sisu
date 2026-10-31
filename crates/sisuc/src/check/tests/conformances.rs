@@ -3628,6 +3628,35 @@ fn dbg_should_find_the_shown_arguments_in_proportion_to_the_type_parameters() {
     );
 }
 
+/// The search of an operand for the type whose argument grows reads each type once. An operand
+/// that holds one type twice at each level, `Pair<X, X>` with `X` the level below and `[T]` at the
+/// bottom, is read in `n` steps, not in 2^n. No type in it has an argument that grows.
+#[test]
+fn growth_should_read_each_type_of_an_operand_once() {
+    let steps = |n: usize| {
+        let mut body = String::from("let a0 = [self.x]\n");
+        for k in 1..=n {
+            writeln!(body, "        let a{k} = Pair.Two(a{}, a{})", k - 1, k - 1)
+                .expect("writing to a `String` should succeed");
+        }
+        let src = format!(
+            "enum Pair<A, B> {{\n    Two(A, B)\n}}\nextend<A, B> Pair<A, B>: Display {{\n    fn to_string(self) -> string {{\n        \"pair\"\n    }}\n}}\nclass W<T> {{\n    x: T\n    fn to_string(self) -> string {{\n        {body}        print(a{n})\n        return \"w\"\n    }}\n}}\nfn main() {{\n    print(W(x: 1))\n}}"
+        );
+        cycle::GROWTH_VISITS.set(0);
+        codes(
+            &src,
+            &[(
+                Code::InstantiationCycle,
+                where_is(&src, &format!("print(a{n})")),
+            )],
+        );
+        cycle::GROWTH_VISITS.get()
+    };
+    let (a, b, c) = (steps(6), steps(12), steps(18));
+    assert!(a > 6, "the levels should be read: {a}");
+    assert_eq!(c - b, b - a, "each level should cost the same: {a} {b} {c}");
+}
+
 #[test]
 fn implicit_interpolation_should_close_an_instantiation_cycle() {
     let w = "class W<T> {\n    x: T\n}\n";
