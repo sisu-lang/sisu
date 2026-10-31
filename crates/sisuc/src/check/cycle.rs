@@ -1547,6 +1547,17 @@ impl Checker<'_> {
     /// part of each payload type is read once, so the pass is linear in the type parameters and
     /// payloads.
     pub(super) fn shown_params(&self) -> Vec<Vec<bool>> {
+        let hidden: Vec<bool> = (0..self.enums.len())
+            .map(|e| always_written(&self.conformances, self.lang.display, self.own_type(e)))
+            .collect();
+        self.shown_params_with(&hidden)
+    }
+
+    /// `shown_params` for a rule of its own on which enums hide their arguments: `hidden[e]` says
+    /// that `dbg` shows the text of the enum `e` and no argument of it. The cycle analysis hides
+    /// the arguments of an enum with a written `Display` that always applies. The unused-name
+    /// check hides them for any written `Display`, as its walk does.
+    pub(super) fn shown_params_with(&self, hidden: &[bool]) -> Vec<Vec<bool>> {
         // A node is ready when its `need` is 0: a parameter needs one of the nodes that lead to it,
         // an argument needs both its holders.
         let first: Vec<usize> = (self.enums.iter())
@@ -1561,9 +1572,6 @@ impl Checker<'_> {
         let mut then: Vec<Vec<usize>> = vec![Vec::new(); params];
         let mut ready = Vec::new();
         let mut stack: Vec<(Type, Option<usize>)> = Vec::new();
-        let written: Vec<bool> = (0..self.enums.len())
-            .map(|e| always_written(&self.conformances, self.lang.display, self.own_type(e)))
-            .collect();
         for (e, info) in self.enums.iter().enumerate() {
             let payloads = info
                 .variants
@@ -1580,7 +1588,7 @@ impl Checker<'_> {
                     },
                     TypeKind::Array(part) | TypeKind::Optional(part) => stack.push((part, from)),
                     TypeKind::Enum(id, args) => {
-                        if written[id.0] {
+                        if hidden[id.0] {
                             continue;
                         }
                         for (j, &arg) in

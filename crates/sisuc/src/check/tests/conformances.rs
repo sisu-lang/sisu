@@ -627,6 +627,58 @@ fn failing_leaf_should_read_each_level_of_a_linear_chain_once_in_a_body() {
     assert_near_linear(one, two, three);
 }
 
+/// The cycle `E0<T>` … `En<T>`, where `Ek` has the variants `A(E(k+1)<T>)` and `V(T)`, and `En`
+/// goes back to `E0`; and one generic function that compares each of its `n + 1` enums with
+/// itself, from the first, or from the last when `reversed`. `T` has no `Eq`, so each comparison
+/// fails, and the part that fails is `T`, never a part behind a cut.
+fn cycle_of_params(n: usize, reversed: bool) -> String {
+    let decls: Vec<String> = (0..=n)
+        .map(|k| {
+            format!(
+                "enum E{k}<T> {{\n    A(E{m}<T>)\n    V(T)\n}}\n",
+                m = (k + 1) % (n + 1)
+            )
+        })
+        .collect();
+    let params: Vec<String> = (0..=n).map(|k| format!("a{k}: E{k}<T>")).collect();
+    let mut order: Vec<usize> = (0..=n).collect();
+    if reversed {
+        order.reverse();
+    }
+    let lines: Vec<String> = order
+        .iter()
+        .map(|k| format!("    let _ = a{k} == a{k}\n"))
+        .collect();
+    format!(
+        "{}fn f<T>({}) {{\n{}}}\nfn main() {{}}",
+        decls.concat(),
+        params.join(", "),
+        lines.concat()
+    )
+}
+
+/// A type parameter that a walk finds after a cut is kept when the root walk ends with no part
+/// that fails on its own: each enum of a cycle whose only failing part is `T` is read once, from
+/// whichever enum the comparisons begin.
+#[test]
+fn failing_leaf_should_read_each_enum_of_a_cycle_of_type_parameters_once() {
+    for reversed in [false, true] {
+        let count = |n: usize| {
+            LEAF_STEPS.set(0);
+            let (_, ds) = checked(&cycle_of_params(n, reversed));
+            assert_eq!(
+                ds.iter().filter(|d| d.code() == Code::ParamLacks).count(),
+                n + 1,
+                "each comparison should give its own report, reversed: {reversed}"
+            );
+            LEAF_STEPS.get()
+        };
+        let (one, two, three) = (count(20), count(40), count(60));
+        assert_eq!(one, 21, "one read for each enum, reversed: {reversed}");
+        assert_near_linear(one, two, three);
+    }
+}
+
 /// The search for the failing part decides each type once, so on the error path it costs steps
 /// in proportion to the types that the chain forms, which is what the query costs when the bound
 /// holds.

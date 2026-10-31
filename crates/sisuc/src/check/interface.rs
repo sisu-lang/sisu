@@ -37,6 +37,12 @@ pub(super) const BOUND_CLOSURE_LIMIT: usize = 256;
 /// above any program.
 pub(super) const CONFORMS_DEPTH_LIMIT: usize = 1 << 18;
 
+/// Whether `part`, a part that `failing_leaf` found, is a type parameter or an associated type:
+/// it fails for want of a bound, which the program can add.
+fn is_parameter(part: Type) -> bool {
+    matches!(part.kind(), TypeKind::Param(..) | TypeKind::Assoc(..))
+}
+
 /// `CONFORMS_DEPTH_LIMIT`; a test may lower it (`CONFORMS_DEPTH`).
 fn depth_limit() -> usize {
     #[cfg(test)]
@@ -1423,15 +1429,37 @@ impl Checker<'_> {
     ) -> Type {
         // A root is asked with nothing in progress, so its answer is the one to give again for the
         // same root, whatever its walk cut short: a program that compares one type many times
-        // reads it once. Another walk may use it only when the answer is a part (`leaf` keeps
-        // those) or the walk cut nothing short; `or_insert` leaves such an entry as it is.
+        // reads it once. Another walk may use it only when it is final (`leaf` keeps those);
+        // `or_insert` leaves such an entry as it is.
         let key = (ty, interface, args);
         if let Some(&(kept, _)) = self.leaves_of(ty).get(&key) {
             return kept.unwrap_or(ty);
         }
+        self.leaf_provisional.clear();
         let found = self.leaf(ty, interface, args, &mut FxHashSet::default());
+        self.settle_leaves(found);
         self.leaves_of(ty).entry(key).or_insert((found, false));
         found.unwrap_or(ty)
+    }
+
+    /// Ends a root walk of `leaf` that gave `answer`. When the answer is `None` or a type
+    /// parameter, the walk reached every part that the root reaches and found none that fails on
+    /// its own, so no type it read reaches one: each type parameter found after a cut is final.
+    /// When the answer is a part that fails on its own, the types that found a type parameter
+    /// after a cut may reach that part, so they are dropped and a later walk reads them again.
+    ///
+    /// shortcut: a dropped type is read again by each later root that reaches it, so a program
+    /// that asks for many such roots, each ending in a part, can cost more than linear steps;
+    /// upgrade when a program shows it (the first read of a part that fails keeps it, which ends
+    /// the repeat for each type that reaches that part).
+    fn settle_leaves(&mut self, answer: Option<Type>) {
+        let provisional = std::mem::take(&mut self.leaf_provisional);
+        if answer.is_some_and(|part| !is_parameter(part)) {
+            return;
+        }
+        for (key, found) in provisional {
+            self.leaves_of(key.0).insert(key, (Some(found), true));
+        }
     }
 
     /// The report that `ty`, the type of the operand at `at`, has no `op`, which `interface` (`Eq`
@@ -1447,7 +1475,7 @@ impl Checker<'_> {
         interface: InterfaceId,
     ) -> DiagnosticKind {
         let leaf = self.failing_leaf(ty, interface, TypeArgs::NONE);
-        if matches!(leaf.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)) {
+        if is_parameter(leaf) {
             return DiagnosticKind::ParamLacks {
                 ty: self.type_name(ty),
                 op: op.to_string(),
@@ -1496,7 +1524,9 @@ impl Checker<'_> {
             Generated::Payloads(id, own) if !self.payloads_conform(id, own, interface) => {
                 let mut seen = FxHashSet::default();
                 seen.insert((ty, interface, TypeArgs::NONE));
+                self.leaf_provisional.clear();
                 let leaf = self.payloads_leaf(id, own, interface, &mut seen);
+                self.settle_leaves(leaf);
                 Some(leaf.unwrap_or(ty))
             }
             _ => None,
@@ -1531,7 +1561,7 @@ impl Checker<'_> {
             let Some(found) = self.leaf(part, interface, TypeArgs::NONE, seen) else {
                 continue;
             };
-            if !matches!(found.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)) {
+            if !is_parameter(found) {
                 return Some(found);
             }
             param = param.or(Some(found));
@@ -1569,21 +1599,25 @@ impl Checker<'_> {
                     if broken {
                         return None;
                     }
-                    if !seen.insert((ty, interface, args)) {
+                    // A final answer is final in any walk, so it is read before the cut test: a
+                    // type that this walk finished with a final answer is not a cut.
+                    let key = (ty, interface, args);
+                    if let Some(&(kept, true)) = self.leaves_of(ty).get(&key) {
+                        return kept;
+                    }
+                    if !seen.insert(key) {
                         self.leaf_cuts += 1;
                         return None;
                     }
                     // The answer for a type with no type parameter changes with no body; one for
                     // a type that names a parameter changes with the bounds, so it is kept with
                     // the body (`Body.leaves`), as `Body.conformed` keeps the queries. A part
-                    // that was found fails on its own, wherever the walk began, and `None` with no
-                    // part cut short does not depend on where it began: both are kept, so a type
-                    // that was read before costs nothing more. A `None` after a cut holds only
-                    // while an ancestor is in progress, so it is not kept.
-                    let key = (ty, interface, args);
-                    if let Some(&(kept, true)) = self.leaves_of(ty).get(&key) {
-                        return kept;
-                    }
+                    // that fails on its own, not a type parameter, is final wherever the walk
+                    // began. So is `None` or a type parameter with no part cut short, which does
+                    // not depend on where the walk began. After a cut, `None` holds only while an
+                    // ancestor is in progress, so it is not kept. A type parameter after a cut can
+                    // hide a part that fails on its own, behind that ancestor: it is kept only
+                    // when the root walk ends with no such part (`settle_leaves`).
                     #[cfg(test)]
                     super::LEAF_STEPS.set(super::LEAF_STEPS.get() + 1);
                     let cuts = self.leaf_cuts;
@@ -1599,8 +1633,15 @@ impl Checker<'_> {
                                 }
                             }
                         };
-                    if self.leaf_cuts == cuts || found.is_some() {
-                        self.leaves_of(ty).insert(key, (found, true));
+                    let cut = self.leaf_cuts != cuts;
+                    match found {
+                        Some(part) if cut && is_parameter(part) => {
+                            self.leaf_provisional.push((key, part));
+                        }
+                        _ if found.is_some() || !cut => {
+                            self.leaves_of(ty).insert(key, (found, true));
+                        }
+                        _ => {}
                     }
                     found
                 }

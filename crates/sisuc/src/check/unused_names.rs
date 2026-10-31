@@ -371,14 +371,16 @@ impl Checker<'_> {
         found
     }
 
-    /// By class, the first live `dbg` that shows its fields. `dbg` shows the fields of a class that
+    /// By class, the first live `dbg` that can show its fields. The walk reads types, not values:
+    /// an empty array or a `None` shows no field. `dbg` shows the fields of a class that
     /// its operand is, or that the operand holds in an array, an optional or an enum payload. It
     /// writes a field that is a class as `print` does, so the walk stops at a class. A type with a
     /// written `Display` shows its text, so the walk skips it, as `Checker::dbg_show` does.
     ///
     /// The walk follows the structure of each operand type. It reads the payloads of each enum
-    /// declaration once, as declared. It reads an argument of an enum only when `shown_params` says
-    /// that the enum shows it. So the cost is linear in the operand types and the enum
+    /// declaration once, as declared. It reads an argument of an enum only when `shown_params_with`
+    /// says that the enum shows it, with the same rule as the walk: an enum with any written
+    /// `Display` shows none. So the cost is linear in the operand types and the enum
     /// declarations.
     ///
     /// shortcut: a `dbg` of a type parameter shows the instances that `mono` makes. The checker
@@ -399,11 +401,16 @@ impl Checker<'_> {
         if roots.is_empty() {
             return shown;
         }
-        let params = self.shown_params();
         let written: FxHashSet<Head> = (self.conformances.iter())
             .filter(|&(interface, _)| interface == self.lang.display)
             .filter_map(|(_, c)| head_of(c.target))
             .collect();
+        // The walk skips a type with any written `Display`, so the arguments of such an enum are
+        // not shown through the payload of another enum either.
+        let hidden: Vec<bool> = (0..self.enums.len())
+            .map(|e| written.contains(&Head::Enum(tir::EnumId(e))))
+            .collect();
+        let params = self.shown_params_with(&hidden);
         let (mut seen, mut declared) = (FxHashSet::default(), FxHashSet::default());
         for (call, root) in roots {
             let mut walk = vec![root];

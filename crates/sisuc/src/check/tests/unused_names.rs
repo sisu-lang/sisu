@@ -1116,6 +1116,10 @@ fn shown_by_dbg_should_ignore_a_dbg_in_dead_code() {
 /// `dbg` shows the fields of a class that its operand is, or holds in an array, an optional or an
 /// enum payload. It writes a class field as `print` does, and a written `to_string` as its text.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a table of rows, each one program and its labels"
+)]
 fn shown_by_dbg_should_label_only_the_fields_that_dbg_shows() {
     judge_unused();
     let row = |decls: &str, shown: &str| {
@@ -1205,5 +1209,51 @@ fn shown_by_dbg_should_label_only_the_fields_that_dbg_shows() {
         let src = on(display, payload);
         let got = row(&src, shown);
         assert_eq!(got, [(2, label)], "{what}");
+    }
+    // The text of `F<P>` hides `x`, and `E<T>` passes its argument to `F<T>`: the rule that hides
+    // an argument is the same for the payload of another enum as for the operand. Line 2 is `x`.
+    let f_display = "extend F<P>: Display {\n    fn to_string(self) -> string {\n        \"custom\"\n    }\n}\n";
+    let f_bounded = "interface Mark {}\nextend<T: Mark> F<T>: Display {\n    fn to_string(self) -> string {\n        \"custom\"\n    }\n}\n";
+    let held = "dbg(E.A(F.A(P(x: 1))))";
+    for (display, payload, more, shown, label, what) in [
+        (f_display, "F<T>", "", held, false, "through the payload"),
+        (
+            f_display,
+            "F<T>",
+            "enum E2<T> {\n    A(E<T>)\n}\n",
+            "dbg(E2.A(E.A(F.A(P(x: 1)))))",
+            false,
+            "through two payloads",
+        ),
+        (
+            f_display,
+            "[F<T>]",
+            "",
+            "dbg(E.A([F.A(P(x: 1))]))",
+            false,
+            "through an array",
+        ),
+        (
+            f_display,
+            "F<T>?",
+            "",
+            "let e: E<P> = E.A(F.A(P(x: 1)))\n    dbg(e)",
+            false,
+            "through an optional",
+        ),
+        (
+            f_bounded,
+            "F<T>",
+            "",
+            held,
+            false,
+            "a written Display with a bound",
+        ),
+        ("", "F<T>", "", held, true, "no written Display"),
+    ] {
+        let src = format!(
+            "class P {{\n    x: i64\n}}\nenum F<T> {{\n    A(T)\n}}\n{display}enum E<T> {{\n    A({payload})\n}}\n{more}"
+        );
+        assert_eq!(row(&src, shown), [(2, label)], "{what}");
     }
 }

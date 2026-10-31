@@ -232,7 +232,7 @@ impl Checker<'_> {
         }
         self.report(DiagnosticKind::SumNeedsNumbers {
             method: name.to_string(),
-            ty: self.type_name(ty),
+            ty: self.type_name(first.ty),
             targets: targets.into_iter().map(|t| self.type_name(t)).collect(),
             at: callee.span,
             function: true,

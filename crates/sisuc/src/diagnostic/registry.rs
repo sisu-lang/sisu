@@ -1611,7 +1611,7 @@ fn unused_name(
     let d = match shown {
         Some(call) => d.with_secondary(
             call,
-            format!("`dbg` shows `{name}` here, but `dbg` is not a read"),
+            format!("`dbg` can show `{name}` here, but `dbg` is not a read"),
         ),
         None => d,
     };

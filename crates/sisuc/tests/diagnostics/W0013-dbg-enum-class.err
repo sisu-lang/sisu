@@ -13,7 +13,7 @@ warning[W0013]: field `v` is never read
    |     ^ never read
 ...
 12 |     dbg(E.A(Hold(v: P(x: 1))))
-   |     -------------------------- `dbg` shows `v` here, but `dbg` is not a read
+   |     -------------------------- `dbg` can show `v` here, but `dbg` is not a read
    |
    = help: delete it, or name it `_v` if it is kept on purpose
 

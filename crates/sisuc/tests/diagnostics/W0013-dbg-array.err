@@ -5,7 +5,7 @@ warning[W0013]: field `x` is never read
   |     ^ never read
 ...
 6 |     dbg([p])
-  |     -------- `dbg` shows `x` here, but `dbg` is not a read
+  |     -------- `dbg` can show `x` here, but `dbg` is not a read
   |
   = help: delete it, or name it `_x` if it is kept on purpose
 

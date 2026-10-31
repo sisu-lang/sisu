@@ -13,7 +13,7 @@ warning[W0013]: field `ps` is never read
   |     ^^ never read
 ...
 8 |     dbg(Q(ps: [P(x: 3)]))
-  |     --------------------- `dbg` shows `ps` here, but `dbg` is not a read
+  |     --------------------- `dbg` can show `ps` here, but `dbg` is not a read
   |
   = help: delete it, or name it `_ps` if it is kept on purpose
 

@@ -33,6 +33,9 @@ thread_local! {
     static FAST_PATHS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many `(type, interface)` pairs the record walk has entered on this thread.
     pub(crate) static WALK_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many times `output` has read the enum that an output type holds, to note the use of
+    /// that enum, on this thread.
+    pub(crate) static HELD_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// `program` with each generic function, class and enum replaced by the instantiations it
@@ -118,8 +121,9 @@ struct Mono {
     enum_ids: FxHashMap<(EnumId, TypeArgs), EnumId>,
     /// The checked program's generic enums, at their ids.
     enum_decls: Vec<Option<Enum>>,
-    /// The output's type for each concrete checked type met so far.
-    types: FxHashMap<Type, Type>,
+    /// The output's type for each concrete checked type met so far, and the output enum that this
+    /// type holds, through arrays and optionals, if any: the enum whose use a hit notes.
+    types: FxHashMap<Type, (Type, Option<EnumId>)>,
     /// The output's functions, each `None` until the worklist instantiates it.
     functions: Vec<Option<Function>>,
     /// The output, without its functions until the end: its classes name types as they arrive.
@@ -404,33 +408,46 @@ impl Mono {
     /// The output's type for the concrete checked type `ty`: each class and enum by its output
     /// id, with no arguments. Reaching a class's instantiation puts it on the worklist.
     fn output(&mut self, ty: Type) -> Type {
-        if let Some(&done) = self.types.get(&ty) {
-            // An optional or an array of an instance has the instance in its type.
-            let mut held = done;
-            while let TypeKind::Optional(inner) | TypeKind::Array(inner) = held.kind() {
-                held = inner;
-            }
-            if let TypeKind::Enum(id, _) = held.kind() {
+        if let Some(&(done, held)) = self.types.get(&ty) {
+            if let Some(id) = held {
                 self.note_use(id);
             }
             return done;
         }
-        let done = ensure_stack(|| match ty.kind() {
-            TypeKind::Class(id, args) => {
-                Type::intern(TypeKind::Class(self.class(id, args), TypeArgs::NONE))
-            }
+        // An optional or an array of an instance has the instance in its type. The entry of the
+        // inner type, which `output` has just made, says which: no walk down the type.
+        let (done, held) = ensure_stack(|| match ty.kind() {
+            TypeKind::Class(id, args) => (
+                Type::intern(TypeKind::Class(self.class(id, args), TypeArgs::NONE)),
+                None,
+            ),
             TypeKind::Enum(id, args) => {
-                Type::intern(TypeKind::Enum(self.enum_id(id, args), TypeArgs::NONE))
+                let id = self.enum_id(id, args);
+                (Type::intern(TypeKind::Enum(id, TypeArgs::NONE)), Some(id))
             }
-            TypeKind::Array(element) => Type::array(self.output(element)),
-            TypeKind::Optional(payload) => Type::optional(self.output(payload)),
+            TypeKind::Array(element) => {
+                let inner = self.output(element);
+                (Type::array(inner), self.held_by(element))
+            }
+            TypeKind::Optional(payload) => {
+                let inner = self.output(payload);
+                (Type::optional(inner), self.held_by(payload))
+            }
             TypeKind::Param(..) => {
                 panic!("`subst` should replace every type parameter before `mono` maps a type")
             }
-            _ => ty,
+            _ => (ty, None),
         });
-        self.types.insert(ty, done);
+        self.types.insert(ty, (done, held));
         done
+    }
+
+    /// The output enum that the type `ty` holds, through arrays and optionals, for a type that
+    /// `output` has made.
+    fn held_by(&self, ty: Type) -> Option<EnumId> {
+        #[cfg(test)]
+        HELD_READS.set(HELD_READS.get() + 1);
+        self.types.get(&ty).and_then(|&(_, held)| held)
     }
 
     /// Reaches each of the concrete checked types `args`, before the instance that takes them

@@ -13,7 +13,7 @@ warning[W0013]: field `p` is never read
   |     ^ never read
 ...
 8 |     dbg(Q(p: P(x: 1)))
-  |     ------------------ `dbg` shows `p` here, but `dbg` is not a read
+  |     ------------------ `dbg` can show `p` here, but `dbg` is not a read
   |
   = help: delete it, or name it `_p` if it is kept on purpose
 
