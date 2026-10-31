@@ -86,6 +86,14 @@ fn aliases_should_check_clean_where_they_name_a_type() {
             "a reversed chain, which resolves with no recursion",
             &reversed_chain(2_000),
         ),
+        (
+            "the paths of Option, through an alias of an optional type",
+            "type O = i64?\ntype M<T> = T?\nfn show(x: i64?) { print(x == None) }\nfn main() {\n    let a: O = O.Some(1)\n    let b: O = O.None\n    let c = M<i64>.Some(1)\n    let d: string? = M<string>.None\n    show(a)\n    show(b)\n    show(c)\n    print(d == None)\n}",
+        ),
+        (
+            "an associated type of an associated type",
+            "interface It {\n    type Item\n    fn next(self) -> Item?\n}\ntype Y<T> = T.Item.Item\nfn main() {}",
+        ),
     ] {
         clean_row(row, src);
     }

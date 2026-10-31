@@ -1,0 +1,20 @@
+error[E0118]: `G` has no variant `Missing`
+  --> E0118-alias-variant.sisu:15:16
+   |
+15 |     let a = GI.Missing(1)
+   |                ^^^^^^^
+
+error[E0105]: `PI` is a type, not a value
+  --> E0118-alias-variant.sisu:16:13
+   |
+16 |     let b = PI.Foo(1)
+   |             ^^
+
+error[E0118]: `G` has no variant `Missing`
+  --> E0118-alias-variant.sisu:17:21
+   |
+17 |     let c = GP<i64>.Missing(1)
+   |                     ^^^^^^^
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0105, E0118

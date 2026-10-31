@@ -1,0 +1,8 @@
+type A = [A]
+
+fn main() {
+    let a = A(1)
+    let b = A.Some(1)
+    let c = A.first()
+    let d = A.Num
+}
