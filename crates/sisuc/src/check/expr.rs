@@ -483,40 +483,6 @@ pub(super) fn bare_hole(e: &ast::Expr) -> bool {
     bare_none(e) || matches!(&e.kind, ExprKind::ArrayLit(elements) if elements.is_empty())
 }
 
-/// Whether `e` makes an optional by its syntax: it is `none_literal`, or `dbg(v)`, a block, an
-/// `if` or `if let` with `else`, or a `match`, where a value of it (the argument, the tail, a
-/// value branch's tail) is `noneish`. An array literal makes the type of its elements optional
-/// for such a value. This differs from `Ranked::optional` (see `generic.rs`), which also looks
-/// through the arguments of a generic call and counts `Some` and callees that return `T?`, and
-/// which the branches of an `if` use. This binds no scope and checks nothing.
-// shortcut: a generic call that returns `T?` (`none()`) gets the siblings' type, not it made
-// optional; upgrade when such joins are wanted.
-pub(super) fn noneish(e: &ast::Expr) -> bool {
-    use ExprKind as K;
-    let tail_is = |block: &ast::Block| tail(block).is_some_and(noneish);
-    if none_literal(e) {
-        return true;
-    }
-    if let Some(argument) = dbg_argument(e) {
-        return noneish(argument);
-    }
-    match &e.kind {
-        K::Block(block) => tail_is(block),
-        K::If {
-            then_block,
-            else_block: Some(else_block),
-            ..
-        }
-        | K::IfLet {
-            then_block,
-            else_block: Some(else_block),
-            ..
-        } => tail_is(then_block) || tail_is(else_block),
-        K::Match { arms, .. } => arms.iter().any(|arm| noneish(&arm.body)),
-        _ => false,
-    }
-}
-
 /// The argument of `e`, if `e` is a call of `dbg` with one unlabeled argument and no type
 /// argument. No user item can have the name `dbg` (see `generic_callee`), so the name tells.
 pub(super) fn dbg_argument(e: &ast::Expr) -> Option<&ast::Expr> {

@@ -1,6 +1,6 @@
 //! Array expressions: literals and their element join, `[v; n]`, indexing and methods.
 
-use super::expr::{fits, literal_type, no_member, none_literal, noneish, path, typed};
+use super::expr::{fits, literal_type, no_member, none_literal, path, typed};
 use super::generic::{Rank, mark};
 use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, payload, type_of, wrap};
 use crate::ast;
@@ -62,17 +62,19 @@ impl Checker<'_> {
     }
 
     /// The elements of a literal with no expected array type, joined in three waves by
-    /// `sibling_rank`: the concrete elements; the elements that take a literal's type, typed
+    /// `sibling_ranked`: the concrete elements; the elements that take a literal's type, typed
     /// beside the first concrete element; then the elements that wait, against the join. The join
-    /// runs in source order as `branches` joins. A `noneish` element makes the element type
-    /// optional, and is typed against the join made optional; an element that waits and is not
-    /// `noneish` is typed against the join as it is. With no typed element, the first element
-    /// that waits cannot be inferred, which `quiet` (the context failed) leaves unreported.
+    /// runs in source order as `branches` joins. An element that makes an optional by itself
+    /// (`Ranked::optional`) makes the element type optional, and is typed against the join made
+    /// optional; an element that waits and is not such is typed against the join as it is. With
+    /// no typed element, the first element that waits cannot be inferred, which `quiet` (the
+    /// context failed) leaves unreported.
     /// With `quiet`, each concrete element is a quiet value too (see `Body::quiet_at`). An
     /// element whose type is `Error` poisons the array.
     fn joined(&mut self, span: Span, elements: &[ast::Expr], quiet: bool) -> Checked {
         let mut slots: Vec<Option<Checked>> = elements.iter().map(|_| None).collect();
-        let ranks: Vec<Rank> = elements.iter().map(|e| self.sibling_rank(e)).collect();
+        let (ranks, optional): (Vec<Rank>, Vec<bool>) =
+            elements.iter().map(|e| self.sibling_ranked(e)).unzip();
         let outer = self.body.quiet_at;
         for (i, e) in elements.iter().enumerate() {
             if ranks[i] == Rank::Concrete {
@@ -84,8 +86,8 @@ impl Checker<'_> {
         let literal = literal_type(slots.iter().flatten().next().and_then(type_of));
         for (i, e) in elements.iter().enumerate() {
             if ranks[i] == Rank::Literal {
-                // A `noneish` element may be `None`, which the literal's type does not hold.
-                let want = if noneish(e) {
+                // An `optional` element may be `None`, which the literal's type does not hold.
+                let want = if optional[i] {
                     as_optional(literal)
                 } else {
                     literal
@@ -141,14 +143,14 @@ impl Checker<'_> {
             if ranks[i] == Rank::Waits {
                 // What waits and makes no optional by its syntax may still give a type that the
                 // join does not take, such as a call of `fn none<T>() -> T?`.
-                slots[i] = Some(if noneish(e) {
+                slots[i] = Some(if optional[i] {
                     self.value(e, Some(want))
                 } else {
                     mark(self.operand(e, Some(joined)))
                 });
             }
         }
-        let element = if elements.iter().any(noneish) {
+        let element = if optional.contains(&true) {
             want
         } else {
             joined

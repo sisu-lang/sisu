@@ -303,9 +303,6 @@ pub(super) struct Branch<'a> {
 impl Branch<'_> {
     /// Whether the branch expects the type of the others as it is, not made optional: its value
     /// waits and makes no optional by itself.
-    // shortcut: a branch uses `Ranked::optional`, where an array literal uses `noneish`, so that
-    // `if c { x } else { id(None) }` keeps the optional that it always had; an array literal
-    // reports `[x, id(None)]`, as it did. Upgrade when the two should be one rule.
     fn exact(&self) -> bool {
         self.rank == Rank::Waits && !self.optional
     }

@@ -841,7 +841,9 @@ pub(super) struct Ranked {
     /// For a `Literal` value: whether its type is the type of an integer literal it holds, which
     /// is a scalar (see `sibling`). An integer literal is; so is a value that passes such a
     /// literal on as it is, as `dbg`, a block, a branch, or a call that returns a type parameter
-    /// of its arguments do. An array, or a call that returns `Some(...)` or a class, is not.
+    /// do, when each literal argument is at a place of that parameter: the `1` of `k2(1, [])`
+    /// for `fn k2<T, U>(a: T, b: U) -> U` is not passed on. An array, or a call that returns
+    /// `Some(...)` or a class, is not.
     scalar: bool,
 }
 
@@ -1805,8 +1807,16 @@ impl Checker<'_> {
     /// operator: its `Ranked::sibling`. A sibling that waits is checked after the others, and
     /// takes their type.
     pub(super) fn sibling_rank(&mut self, e: &ast::Expr) -> Rank {
+        self.sibling_ranked(e).0
+    }
+
+    /// `sibling_rank`, and whether `e` can make an optional by itself (`Ranked::optional`). A
+    /// sibling ranked `Concrete` says `false`: it is not ranked to the end.
+    pub(super) fn sibling_ranked(&mut self, e: &ast::Expr) -> (Rank, bool) {
         let mut fit = true;
-        self.rank_value(e, &mut fit).sibling(fit)
+        let ranked = self.rank_value(e, &mut fit);
+        let rank = ranked.sibling(fit);
+        (rank, ranked.optional && rank != Rank::Concrete)
     }
 
     /// Runs `f`, which ranks values and checks them. Then it drops the work that ranking kept
@@ -1909,20 +1919,22 @@ impl Checker<'_> {
         }
         // An argument is walked here and only here: an `open` call walks none.
         let mut through = false;
+        let mut passes = true;
         let mut found = if open {
             Ranked::WAITS
         } else {
             combine(args.iter().enumerate().map(|(i, arg)| {
                 let ranked = self.rank_value(&arg.value, fit);
                 through |= ranked.optional && makes.through(i);
+                passes &= ranked.rank != Rank::Literal || makes.through(i);
                 ranked
             }))
         };
         if outside && found.rank == Rank::Literal {
             return Ranked::CONCRETE;
         }
-        // Only a call that returns a type parameter passes the type of a literal on.
-        found.scalar &= matches!(makes, Makes::Through(_));
+        // Only a literal at a place of the returned type parameter passes its type on.
+        found.scalar &= passes;
         found.optional = through || matches!(makes, Makes::Always);
         *fit &= found.rank != Rank::Waits || shaped;
         found
@@ -2196,7 +2208,6 @@ impl Checker<'_> {
         // The receiver binds the owner's type parameters: its class's, or its block's.
         let owner = sig.type_params.len() - sig.own;
         let shaped = sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args);
-        // The receiver binds the owner's type parameters.
         let ret = sig.ret.filter(|_| shaped);
         let (open, outside) =
             open_and_outside(sig.params.iter().copied(), ret, &sig.type_params, owner);

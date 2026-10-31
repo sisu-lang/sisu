@@ -953,9 +953,11 @@ fn push_should_take_exactly_one_argument() {
     }
 }
 
-/// The declarations of the join tests: `id` and `none` are calls that only a sibling can type, `f`
-/// and `g` take an array that holds a type parameter.
+/// The declarations of the join tests: `id`, `none`, `pick` and `k2` are calls that only a sibling
+/// can type (`k2` returns its second argument), `f` and `g` take an array that holds a type
+/// parameter.
 const JOIN_DECLS: &str = "fn id<T>(x: T) -> T { x }\nfn none<T>() -> T? { None }\n\
+    fn pick<T>(a: T, b: T) -> T { a }\nfn k2<T, U>(a: T, b: U) -> U { b }\n\
     fn f<T>(x: [T]) {}\nfn g<T>(x: [[T?]]) {}\n";
 
 /// `statement` at line 6 of a `main` with `c: bool`, `x: u8`, `x2: [u8]` and `y: u8?`, after the
@@ -1000,6 +1002,17 @@ fn siblings_should_take_the_type_of_the_others_in_an_array_literal() {
         "let _a = [x, { 1 }, 2]",
         "let _a = [x, 2, { 1 }]",
         "let _a = [x, if c { 1 } else { None }]",
+        // A call that makes an optional, by its arguments or by its declaration, makes the
+        // element type optional, as the `None` or the `if` it holds does.
+        "let _a = [id(None), 1]",
+        "let _a = [1, none()]",
+        "let _a = [none(), x]",
+        "let _a = [x, id(None)]",
+        "let _a = [x, none()]",
+        "let _a = [x, dbg(id(None))]",
+        "let _a = [x, pick(None, None)]",
+        "let _a = [id(if c { 1 } else { None })]",
+        "let _a = [1, id(if c { 1 } else { None })]",
         "let _a = [x, if c { 1 } else { 2 }]",
         "let _a = [x, match c {\n        true => 1\n        false => None\n    }]",
         "g([[None], [Some(\"s\")]])",
@@ -1010,27 +1023,17 @@ fn siblings_should_take_the_type_of_the_others_in_an_array_literal() {
     }
 }
 
-/// A value that waits is typed as its siblings are, not as an optional of it, unless its syntax
-/// makes an optional. So it is reported for what it is.
+/// A value that waits is typed as its siblings are, not as an optional of it, unless it makes an
+/// optional by itself. So a `[]` is reported for what it is.
 #[test]
 fn a_waiting_sibling_that_is_no_optional_should_be_reported_for_its_type() {
     with_prelude();
-    // Each row: the statement, and the place of the mistake.
-    for (statement, expected) in [
-        ("let _a = [[], 1]", (Code::Mismatch, "[]")),
-        ("f([[], 1])", (Code::Mismatch, "[]")),
-        ("let _a = [1, []]", (Code::Mismatch, "[]")),
-        // `id(None)` is not `noneish`: its type is known only once it is checked.
-        ("let _a = [id(None), 1]", (Code::Mismatch, "None)")),
-        ("let _a = [1, none()]", (Code::Mismatch, "none()")),
-        ("let _a = [none(), x]", (Code::Mismatch, "none()")),
-    ] {
+    for statement in ["let _a = [[], 1]", "f([[], 1])", "let _a = [1, []]"] {
         let src = join_main(statement);
-        let (code, text) = expected;
         codes_row(
             statement,
             &src,
-            &[(code, in_statement(&src, statement, text))],
+            &[(Code::Mismatch, in_statement(&src, statement, "[]"))],
         );
     }
 }
@@ -1041,6 +1044,9 @@ fn a_sibling_with_nothing_to_wait_for_should_be_reported_once() {
     for (statement, expected) in [
         ("let _a = [None]", (Code::CannotInfer, "None")),
         ("let _a = [[], []]", (Code::CannotInfer, "[]")),
+        // `k2(1, [])` returns its second argument: the `1` does not give it a type, so its `[]`
+        // is not typed `i64` by the literal, and the call cannot be inferred.
+        ("let _a = [[x], k2(1, [])]", (Code::CannotInfer, "k2")),
     ] {
         let src = join_main(statement);
         let (code, text) = expected;
@@ -1053,7 +1059,9 @@ fn a_sibling_with_nothing_to_wait_for_should_be_reported_once() {
 }
 
 /// A literal that holds an array is not typed beside a sibling: it keeps its default type, as it
-/// did before, because `literal_type` knows scalars only.
+/// did before, because `literal_type` knows scalars only. The `[[1], x2]` row guards this limit
+/// (see `Ranked::sibling`): it passes at the base and fails when the limit is lifted by mistake,
+/// and a change that types an array beside a sibling must change the row.
 #[test]
 fn a_literal_array_should_keep_its_default_type_beside_a_sibling() {
     for statement in [
@@ -1115,11 +1123,12 @@ fn a_push_that_ends_a_branch_should_check_clean_when_a_sibling_ranks_it() {
 }
 
 /// A call of a requirement of a bound, with no argument to give its `U`, waits for a type as a
-/// call of a function does. Beside an `i64` it takes that type as it is, so its `U?` is the
-/// mistake. A call that did not wait would be checked alone, and `U` could not be inferred.
+/// call of a function does. Beside an `i64` it takes that type, its `U?` made optional, so the
+/// array is `[i64?]`. A call that did not wait would be checked alone, and `U` could not be
+/// inferred.
 #[test]
 fn a_requirement_call_that_waits_should_take_the_type_of_its_sibling() {
     let src = "interface G {\n    fn ropt<U>(self) -> U?\n}\n\
         fn f<X: G>(x: X) {\n    let a = [x.ropt(), 1]\n}\nfn main() {}";
-    codes(src, &[(Code::Mismatch, (5, 14))]);
+    clean(src);
 }
