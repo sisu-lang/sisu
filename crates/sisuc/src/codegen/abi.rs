@@ -132,6 +132,19 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
         ret: Some(Abi::I64),
         attrs: nounwind_memory(NO_MEMORY),
     },
+    // deferred.rs
+    RuntimeFn {
+        name: "sisu_drop_defer",
+        params: &[Abi::Ptr, Abi::Ptr],
+        ret: None,
+        attrs: NONE,
+    },
+    RuntimeFn {
+        name: "sisu_drop_drain",
+        params: &[],
+        ret: None,
+        attrs: NONE,
+    },
     // float.rs
     RuntimeFn {
         name: "sisu_write_f64",
@@ -579,7 +592,7 @@ mod tests {
     /// The `Abi` of the Rust type `ty`, if it has one.
     fn abi_of(ty: &syn::Type) -> Option<Abi> {
         match ty {
-            syn::Type::Ptr(_) => Some(Abi::Ptr),
+            syn::Type::Ptr(_) | syn::Type::FnPtr(_) => Some(Abi::Ptr),
             syn::Type::Path(path) => match path.path.segments.last()?.ident.to_string().as_str() {
                 "i64" | "u64" | "usize" | "isize" => Some(Abi::I64),
                 "i32" | "u32" => Some(Abi::I32),
