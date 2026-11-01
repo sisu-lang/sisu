@@ -164,6 +164,17 @@ fn main() {
     for item in row {
         print(item ?? 0) // 1, 2, 0
     }
+    // The `any` types join as `any Display`, a `Some` after them converts, and a `Some` of an `any`
+    // value joins as the `any` value.
+    let round: any Shape = Circle(r: 1.0)
+    let mixed = [round, lone, Some(2)]
+    for item in mixed {
+        print(item ?? 0) // Circle, 1, 2
+    }
+    let from_some = [Some(round), lone]
+    for item in from_some {
+        print(item ?? 0) // Circle, 1
+    }
     let flat: any Shape = Slab.Plain
     let shapes = [Some(Circle(r: 1.0)), flat, None]
     for shape in shapes {

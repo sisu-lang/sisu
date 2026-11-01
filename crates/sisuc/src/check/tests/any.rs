@@ -1385,6 +1385,18 @@ fn an_array_literal_should_join_a_some_with_an_any_element_as_an_if_does() {
             "`Some` of a class before an `any` value",
             "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let r = [Some(Circle(r: 2.0)), s]\n}",
         ),
+        (
+            "an `any` value that joins an `any` value of another interface, then a `Some`",
+            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let d: any Display = 1\n    let r = [s, d, Some(2)]\n}",
+        ),
+        (
+            "a `Some` of an `any` value before an `any` value",
+            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let d: any Display = 1\n    let r = [Some(s), d]\n}",
+        ),
+        (
+            "an array of `Some` beside an array that holds a `Some` and an `any` value",
+            "fn main() {\n    let d: any Display = 1\n    let c = true\n    let r = if c { [d, Some(2)] } else { [Some(2)] }\n}",
+        ),
     ] {
         clean_row(row, &format!("{DECLS}{src}"));
     }
@@ -1400,6 +1412,26 @@ fn an_array_literal_should_join_a_some_with_an_any_element_as_an_if_does() {
             vec![(Code::Mismatch, (4, 17))],
         ),
         (
+            "an array of an optional number beside an array of an `any` value, in an `if`",
+            "fn main() {\n    let d: any Display = 1\n    let x: i64? = Some(5)\n    let c = true\n    let r = if c { [d] } else { [x] }\n}",
+            vec![(Code::Mismatch, (5, 34))],
+        ),
+        (
+            "an array of a `Some` beside an array of an `any` value, in an `if`",
+            "fn main() {\n    let d: any Display = 1\n    let c = true\n    let r = if c { [d] } else { [Some(2)] }\n}",
+            vec![(Code::Mismatch, (4, 33))],
+        ),
+        (
+            "an optional number after a `Some` of a class and an `any` value",
+            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let x: i64? = Some(5)\n    let r = [Some(Circle(r: 2.0)), s, x]\n}",
+            vec![(Code::Mismatch, (4, 39))],
+        ),
+        (
+            "a `Some` of a class that does not conform, after a `Some` of one that does",
+            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let r = [Some(Circle(r: 2.0)), Some(Kelvin(k: 1.0)), s]\n}",
+            vec![(Code::NotConform, (3, 41))],
+        ),
+        (
             "a generic call that makes an optional number after an `any` value, as in an `if`",
             "fn opt<T>(x: T) -> T? { Some(x) }\nfn main() {\n    let d: any Display = 1\n    let r = [d, opt(2)]\n}",
             vec![(Code::Mismatch, (4, 17))],
@@ -1407,7 +1439,7 @@ fn an_array_literal_should_join_a_some_with_an_any_element_as_an_if_does() {
         (
             "a `Some` of a class that does not conform before an `any` value",
             "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let r = [Some(Kelvin(k: 1.0)), s]\n}",
-            vec![(Code::Mismatch, (3, 14))],
+            vec![(Code::NotConform, (3, 19))],
         ),
     ]);
 }
