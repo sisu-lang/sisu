@@ -90,6 +90,7 @@ fn names_itself(ty: Type, e: usize, count: usize) -> bool {
 /// the user wrote it, which may be an alias. A bare variant, as `Ok`, has none: `site` writes the
 /// variant, so the enum's own name, `enum_name`, stands.
 fn qualifier(site: Site<'_>, member: &ast::Ident, enum_name: Symbol) -> Symbol {
+    // `Checker::cannot_infer` (generic.rs) tests for a bare variant in the same way; change both.
     if site.name.span == member.span {
         enum_name
     } else {

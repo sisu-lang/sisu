@@ -84,9 +84,14 @@ fn count_visit() {
 pub(super) enum UseCheck {
     /// An applied class or enum whose declaration has bounds.
     Applied(Type),
-    /// A type that conforms to an interface, which `T.Item` needs of `T`: written at the first
-    /// span, `T.Item`, with `T` at the second.
-    Conforms(Type, InterfaceId, Span, Span),
+    /// A type that conforms to an interface, which `T.Item` needs of `T`: `T.Item` is written at
+    /// `at`, with `T` at `base`.
+    Conforms {
+        ty: Type,
+        interface: InterfaceId,
+        at: Span,
+        base: Span,
+    },
 }
 
 /// An alias that is resolved: `None` for the type is `Error`.
@@ -610,14 +615,22 @@ impl Checker<'_> {
         for &check in checks {
             let (of, applied) = match check {
                 UseCheck::Applied(ty) => (ty, None),
-                UseCheck::Conforms(ty, interface, bound, base) => {
-                    (ty, Some((interface, bound, base)))
-                }
+                UseCheck::Conforms {
+                    ty,
+                    interface,
+                    at,
+                    base,
+                } => (ty, Some((interface, at, base))),
             };
             let ty = self.substitute(of, list)?;
             let check = match applied {
                 None => UseCheck::Applied(ty),
-                Some((interface, bound, base)) => UseCheck::Conforms(ty, interface, bound, base),
+                Some((interface, at, base)) => UseCheck::Conforms {
+                    ty,
+                    interface,
+                    at,
+                    base,
+                },
             };
             held &= self.make_check(check, at);
         }
@@ -629,7 +642,7 @@ impl Checker<'_> {
     pub(super) fn make_check(&mut self, check: UseCheck, at: Span) -> bool {
         let (ty, count) = match check {
             UseCheck::Applied(ty) => (ty, ty_args(ty)),
-            UseCheck::Conforms(ty, ..) => (ty, 0),
+            UseCheck::Conforms { ty, .. } => (ty, 0),
         };
         if let Some(kept) = &mut self.body.alias
             && ty.has_param()
@@ -641,11 +654,16 @@ impl Checker<'_> {
         }
         match check {
             UseCheck::Applied(ty) => self.check_applied(ty, vec![at; count]),
-            UseCheck::Conforms(ty, interface, bound, base) => {
+            UseCheck::Conforms {
+                ty,
+                interface,
+                at: bound_at,
+                base,
+            } => {
                 let bound = Bound {
                     interface,
                     args: TypeArgs::NONE,
-                    at: bound,
+                    at: bound_at,
                 };
                 self.check_conforms(at, ty, bound, base)
             }
@@ -794,7 +812,12 @@ impl Checker<'_> {
             [(interface, k)] if self.interfaces[interface.0].type_params.len() == 1 => {
                 let k = u32::try_from(k).expect("an interface should have fewer than 2^32 types");
                 self.make_check(
-                    UseCheck::Conforms(base_ty, interface, ty.bare, base.span),
+                    UseCheck::Conforms {
+                        ty: base_ty,
+                        interface,
+                        at: ty.bare,
+                        base: base.span,
+                    },
                     ty.bare,
                 );
                 Some(Type::intern(TypeKind::Assoc(

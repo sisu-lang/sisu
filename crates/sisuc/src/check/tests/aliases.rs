@@ -151,6 +151,23 @@ fn a_cycle_of_many_aliases_should_report_once_without_recursion() {
     assert_eq!(d.secondary().len(), 5);
 }
 
+/// A cycle of seven aliases names six, which is the most that the message shows in full. Then the
+/// report keeps all seven labels: only a cut list cuts its labels.
+#[test]
+fn a_cycle_of_seven_aliases_should_show_every_label() {
+    let mut src = String::new();
+    for k in 1..7 {
+        writeln!(src, "type A{k} = A{}", k + 1).expect("writing to a string should not fail");
+    }
+    src.push_str("type A7 = [A1]\nfn f(x: A1) {}\nfn main() {}");
+    let (_, ds) = checked(&src);
+    let [d] = &ds[..] else {
+        panic!("{} diagnostics", ds.len());
+    };
+    assert_eq!(d.code(), Code::AliasCycle);
+    assert_eq!(d.secondary().len(), 7);
+}
+
 /// `type A0 = Pair<A1, A1>`, `type Ak = Pair<A(k+1), A0>` and `type An = A0`: every alias writes
 /// `A0`, so the component holds n cycles through `A0` that share their aliases, and the shortest
 /// is `A0` and `A1`. With `own`, `A0` also writes itself, as `Pair<A1, A0>`.

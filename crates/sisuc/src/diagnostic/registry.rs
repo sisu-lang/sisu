@@ -2920,8 +2920,10 @@ impl From<DiagnosticKind> for Diagnostic {
                     )
                 };
                 // The labels follow the names: a cut list shows the first steps only.
-                let cut = cycle_shown(&through).1 > 0;
-                let steps = steps.into_iter().take(if cut { CYCLE_SHOWN } else { usize::MAX });
+                let mut steps = steps;
+                if cycle_shown(&through).1 > 0 {
+                    steps.truncate(CYCLE_SHOWN);
+                }
                 let d = Diagnostic::coded(code, at, message)
                     .with_help("use an enum or a class for a type that holds itself");
                 steps.into_iter().fold(d, |d, (from, to, span)| {
@@ -5212,7 +5214,7 @@ mod tests {
     /// A cycle of up to `CYCLE_SHOWN + 1` entries shows all of them: "and 1 more" is no shorter
     /// than the entry. A longer one shows `CYCLE_SHOWN` and counts the rest.
     #[test]
-    fn cycle_listed_should_cut_a_list_longer_than_the_limit_by_one() {
+    fn cycle_listed_should_cut_only_a_list_two_longer_than_the_limit() {
         let names = |n: usize| -> Vec<String> { (0..n).map(|k| format!("A{k}")).collect() };
         assert_eq!(
             cycle_listed(&names(CYCLE_SHOWN + 1)),
