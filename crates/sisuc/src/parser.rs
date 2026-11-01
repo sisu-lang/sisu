@@ -3720,16 +3720,6 @@ pub(crate) fn is_place(e: &Expr) -> bool {
     }
 }
 
-/// Whether a `?.` sits anywhere in the chain of fields, calls and indexes that makes up `e`.
-pub(crate) fn goes_through_safe_access(e: &Expr) -> bool {
-    match &e.kind {
-        ExprKind::Field { base, safe, .. } => *safe || goes_through_safe_access(base),
-        ExprKind::MethodCall { receiver, safe, .. } => *safe || goes_through_safe_access(receiver),
-        ExprKind::Index { base, .. } => goes_through_safe_access(base),
-        _ => false,
-    }
-}
-
 /// What follows `if`: a condition, or the `let pattern = value` of an `if let`.
 enum Head {
     Cond(Expr),

@@ -12,7 +12,7 @@ use super::{
 };
 use crate::ast;
 use crate::diagnostic::{DiagnosticKind, Immutable};
-use crate::parser::{goes_through_safe_access, is_place};
+use crate::parser::is_place;
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, ExprKind, Type, TypeKind};
@@ -843,6 +843,15 @@ impl Checker<'_> {
             }
         };
         tir::Expr { kind, ty, span }
+    }
+}
+
+/// Whether a `?.` sits anywhere in the chain of fields and indexes that makes up the place `e`.
+fn goes_through_safe_access(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Field { base, safe, .. } => *safe || goes_through_safe_access(base),
+        ast::ExprKind::Index { base, .. } => goes_through_safe_access(base),
+        _ => false,
     }
 }
 

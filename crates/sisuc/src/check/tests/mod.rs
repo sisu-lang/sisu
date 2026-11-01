@@ -3064,23 +3064,25 @@ fn may_be_none_before_an_index_should_have_no_fix() {
 
 /// Inside an assignment target, an argument or an index is an ordinary read, so its own
 /// `n.next` keeps the `?.` unsafe fix. Each row is a statement where `n` is an `N`; the last is an
-/// argument inside an index.
+/// argument inside an index. The `rows` rows are an index operand of a write and of a `push`.
 #[test]
 fn may_be_none_should_keep_its_fix_in_an_argument_or_index_of_an_assignment_target() {
     for stmt in [
         "n.at(n.next.v).v = 1",
         "xs[n.next.v].v = 1",
+        "n.rows[n.next.v] = [1]",
+        "n.rows[n.next.v].push(1)",
         "g(n.next.v).v = 1",
         "xs[n.at(n.next.v).v].v = 1",
     ] {
         let src = format!(
-            "class N {{\n    mut v: i64\n    next: N?\n    fn at(self, i: i64) -> N {{\n        self\n    }}\n}}\nfn g(i: i64) -> N {{ N(v: i, next: None) }}\nfn f(n: N, xs: [N]) {{\n    {stmt}\n}}\nfn main() {{}}"
+            "class N {{\n    mut v: i64\n    mut rows: [[i64]]\n    next: N?\n    fn at(self, i: i64) -> N {{\n        self\n    }}\n}}\nfn g(i: i64) -> N {{ N(v: i, rows: [], next: None) }}\nfn f(n: N, xs: [N]) {{\n    {stmt}\n}}\nfn main() {{}}"
         );
         let col = 5 + stmt.find("n.next").expect("each row reads `n.next`");
-        let d = diagnostic(&src, Code::MayBeNone, (10, col, "n.next"), &[]);
+        let d = diagnostic(&src, Code::MayBeNone, (11, col, "n.next"), &[]);
         assert_eq!(
             fixes(&src, &d),
-            [(false, vec![(10, col + 6, ".", "?.".to_owned())])],
+            [(false, vec![(11, col + 6, ".", "?.".to_owned())])],
             "{stmt}"
         );
         let left: Vec<_> = diags(&applied(&src, &d))
