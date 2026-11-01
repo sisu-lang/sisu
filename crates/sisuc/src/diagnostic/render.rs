@@ -57,7 +57,9 @@ const MARGIN: usize = 384;
 /// those of the whole line. A cut line starts with a char that is not white space, so its white
 /// space is 0 columns, and the label's right end is at least the bytes before the span plus 6,
 /// which is more than 140 when there are 256. The other branches need only 76 columns before
-/// the span.
+/// the span. The whole line takes the first branch only when its leading white space ends less
+/// than 140 columns before the span, and the cut then starts after that white space and is
+/// refused, so the whole line and the cut line always take the same branch.
 const LEFT_MIN: usize = 256;
 
 /// The text of a snippet, as the renderer gets it, and where the spans of the source sit in it.
@@ -717,8 +719,8 @@ error[E0011]: expected `=`, found end of line
             }
         }
         // A run of 600 spaces where the cut would start, and then `n` bytes before the span. At
-        // 80 the renderer would read the run as an indent, so the line is not cut; at 300 the
-        // cut starts after the run.
+        // 80, fewer than `LEFT_MIN` bytes would stay before the span, so the line is not cut; at
+        // 300 the cut starts after the run.
         for (n, cut) in [(80, false), (300, true)] {
             let run = format!(
                 "fn main() {{\n    let a = 1;{}let b = \"{}\"; let x: i64 = true\n}}\n",
