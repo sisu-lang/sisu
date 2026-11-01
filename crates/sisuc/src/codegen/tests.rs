@@ -4497,12 +4497,8 @@ fn class_type(codegen: &Codegen<'_, '_>, name: &str) -> Type {
     Type::intern(TypeKind::Class(ClassId(id), TypeArgs::NONE))
 }
 
-/// Class `A` holds a field of each type of the table in the spec ("Which drop functions
-/// count"): the field name says the row. `A` is the holder, so the `A?` of its own cycle is a
-/// link, and `B` is a class that is not in that cycle.
-#[test]
-fn recursing_should_follow_the_spec_table() {
-    let src = "class A {
+/// The program of `recursing_should_follow_the_spec_table`.
+const SPEC_TABLE_PROGRAM: &str = "class A {
     _next: A?
     _array: [A]
     _optional_elements: [A?]
@@ -4519,6 +4515,10 @@ fn recursing_should_follow_the_spec_table() {
     _numbers: [i64]
     _kind: Kind
     _kinds: [Kind]
+    _outer: Outer
+    _numbers_tree: Expr
+    _bounded_outer: Wrap
+    _texts_nested: [[string]]
 }
 
 class B {
@@ -4560,7 +4560,32 @@ enum Kind {
     Y(i64, string)
 }
 
+enum Outer {
+    End
+    To(Inner)
+}
+
+enum Inner {
+    End
+    To(A)
+}
+
+enum Expr {
+    Num(i64)
+    Add(Expr, Expr)
+}
+
+enum Wrap {
+    W(Kind)
+}
+
 fn main() {}";
+
+/// Class `A` holds a field of each type of the table in the spec ("Which drop functions
+/// count"): the field name says the row. `A` is the holder, so the `A?` of its own cycle is a
+/// link, and `B` is a class that is not in that cycle.
+#[test]
+fn recursing_should_follow_the_spec_table() {
     let rows = [
         ("_next", false),
         ("_array", true),
@@ -4578,8 +4603,16 @@ fn main() {}";
         ("_numbers", false),
         ("_kind", false),
         ("_kinds", false),
+        // Only the flag of the earlier component `Inner` sets the flag of `Outer`.
+        ("_outer", true),
+        // `Add` holds its own component, which sets nothing; the other payload is a number.
+        ("_numbers_tree", false),
+        // The flag of the earlier component `Kind` is clear.
+        ("_bounded_outer", false),
+        // An array of a bounded type is bounded, and `_nested: [[A]]` above recurses.
+        ("_texts_nested", false),
     ];
-    with_codegen(src, |codegen| {
+    with_codegen(SPEC_TABLE_PROGRAM, |codegen| {
         let a = class_type(codegen, "A");
         let TypeKind::Class(holder, _) = a.kind() else {
             unreachable!("class_type should give a class");
@@ -4723,5 +4756,53 @@ fn main() {}";
             "drop.A, drain.A, release.E, release.A"
         );
         assert_eq!(codegen.drop_weight(b), codegen.drop_weight(a));
+    });
+}
+
+/// A link of the class cycle opens no frame: `define_drop` lists it. The cycle of `N` does not
+/// count, so a drop weight that took the link for a part would ask for the weight of `N` while
+/// it works that weight out.
+#[test]
+fn drop_weight_should_open_no_frame_for_a_link_of_the_class_cycle() {
+    let src = "class N {
+    _next: N?
+    _text: string
+}
+
+fn main() {}";
+    with_codegen(src, |codegen| {
+        let n = class_type(codegen, "N");
+        assert!(!codegen.counts(n));
+        assert_eq!(
+            codegen.drop_weight(n),
+            3,
+            "drop.N, then release.string and drop.string"
+        );
+    });
+}
+
+/// The source nests `LEVELS` enums, each in the one before: `E0` holds `E1`, and the last holds
+/// `A`. The weight and the decision follow the chain one level at a time, so the compiler's own
+/// stack must not set a limit on how long the chain is. Without the guard, a debug build
+/// overflows the stack of a test thread at about 1 700 levels, so the chain is about 10 times
+/// that.
+#[test]
+fn drop_weight_should_follow_a_chain_of_enums_longer_than_the_stack() {
+    const LEVELS: usize = 20_000;
+    let held = |level: usize| match level + 1 {
+        next if next == LEVELS => "A".to_string(),
+        next => format!("E{next}"),
+    };
+    let enums = (0..LEVELS)
+        .map(|level| format!("enum E{level} {{\n    End\n    To({})\n}}\n", held(level)))
+        .collect::<Vec<_>>()
+        .concat();
+    let src = format!("class A {{\n    _next: E0\n}}\n{enums}fn main() {{}}\n");
+    with_codegen(&src, |codegen| {
+        let a = class_type(codegen, "A");
+        assert!(codegen.counts(a));
+        let frames = u32::try_from(LEVELS).expect("the chain length should fit a u32");
+        // `drop.A`, the `release.E` of each level, and the `release.A` of the last.
+        assert_eq!(codegen.drop_weight(a), frames + 2);
     });
 }

@@ -305,10 +305,10 @@ pub(crate) struct Enum {
     /// has a boxed field.
     pub(crate) cycle: Option<usize>,
     /// The reach flag of the enum's component (ADR 0038). It is set when a payload field of a
-    /// member, with each `?` removed, is counted and is not a `string`, an enum of the same
-    /// component, or an enum of another component whose flag is clear. A drop of a value of a
-    /// type with a clear flag opens a number of frames that the source fixes; any other drop
-    /// may reach a class or an array, and so a chain of drops.
+    /// member, with each `?` removed, is counted and is none of these: a `string`, an enum of
+    /// the same component, or an enum of another component whose flag is clear. With a clear
+    /// flag, the source fixes the number of frames that a drop opens. With a set flag, a drop
+    /// may reach a class or an array, and so start a chain of drops.
     pub(crate) reaches: bool,
 }
 

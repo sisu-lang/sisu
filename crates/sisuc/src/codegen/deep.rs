@@ -1,6 +1,9 @@
 //! Deep drops (ADR 0038): which drop functions count the drop depth, and the drop weight of
-//! each. A drop function that counts adds its weight to a global depth while it runs. The
-//! code that does this is in `define_drop` and `define_array_drop`.
+//! each. A drop function that counts adds its weight to a global depth while it runs.
+//!
+//! The walks here follow the nesting of the source types: a chain of enums that each hold the
+//! next, or nested arrays. They call themselves once for each level, so each recursive step
+//! goes through `ensure_stack`, as the other walks over the depth of a type do.
 // Nothing outside the tests calls these functions yet.
 #![expect(
     dead_code,
@@ -10,6 +13,7 @@
 use rustc_hash::FxHashMap;
 
 use super::Codegen;
+use crate::conformance::ensure_stack;
 use crate::tir::{ClassId, EnumId, Type, TypeKind};
 
 /// The drop depth at which a counting drop function stops recursing and defers its block. The
@@ -38,8 +42,12 @@ impl Codegen<'_, '_> {
     /// - not counted, or a `string`: its drop calls nothing;
     /// - a class in the cycle of `holder`: `define_drop` puts it on a list and frees it in a
     ///   loop, in one frame;
-    /// - an enum with a clear reach flag, or an array of one: the source fixes how deep the
-    ///   enums and strings in it nest (see `tir::Enum::reaches`).
+    /// - an enum with a clear reach flag: the source fixes how deep the enums and strings in it
+    ///   nest (see `tir::Enum::reaches`);
+    /// - an array whose element type, with each `?` removed, is not counted or is bounded as the
+    ///   element of an array: `[string]`, `[[i64]]` and `[[Kind]]` are bounded. The type fixes
+    ///   how many arrays nest, and each level is a frame of the drop weight. A class element is
+    ///   never bounded, because no array is in a class cycle: `[A]` and `[[A]]` recurse.
     ///
     /// Any other type is a recursing part, so a new kind of counted reference needs no rule.
     pub(super) fn recursing(&self, holder: Option<ClassId>, ty: Type) -> bool {
@@ -55,7 +63,7 @@ impl Codegen<'_, '_> {
             }
             // The elements are dropped in the frame of the array, so the array is as deep as one
             // element.
-            TypeKind::Array(element) => self.recursing(None, element),
+            TypeKind::Array(element) => ensure_stack(|| self.recursing(None, element)),
             TypeKind::Enum(id, _) => enums[id.0].reaches,
             _ => true,
         }
@@ -149,7 +157,8 @@ impl Codegen<'_, '_> {
         if !ty.is_counted(&self.program.enums) {
             return 0;
         }
-        match ty.kind() {
+        // Each walk of a chain of types passes here, so this is the place for the guard.
+        ensure_stack(|| match ty.kind() {
             // `release`, then `drop`: the drop of a string has no part.
             TypeKind::String => 2,
             // `release` calls the drop function, which counts the next frames if it counts.
@@ -164,7 +173,7 @@ impl Codegen<'_, '_> {
             }
             TypeKind::Enum(id, _) => self.enum_frames(id),
             _ => 1,
-        }
+        })
     }
 
     /// The frames that `@sisu_rc.release.<E>` opens before the next counting drop function
