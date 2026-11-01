@@ -483,6 +483,18 @@ impl Checker<'_> {
         }
     }
 
+    /// The branch for `e`, an element of an array literal that joins as a branch does (see
+    /// `hinted_elements`).
+    pub(super) fn value_branch<'a>(&mut self, e: &'a ast::Expr) -> Branch<'a> {
+        let (rank, optional) = self.sibling_ranked(e);
+        Branch {
+            rank,
+            optional,
+            span: e.span,
+            tail: Some(e),
+        }
+    }
+
     /// The branch for the body `e` of an arm that is not a block, the arm's value. See
     /// `block_branch`.
     pub(super) fn expr_branch<'a>(
