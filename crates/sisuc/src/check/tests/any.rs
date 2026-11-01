@@ -614,6 +614,31 @@ fn a_join_should_stay_a_mismatch_where_neither_side_converts_to_the_other() {
             vec![(Code::Mismatch, (2, 56))],
         ),
         (
+            "a `Some` of a class after a `Some` of another class: the class is the mistake",
+            "fn main() {\n    let r = if true { Some(Circle(r: 1.0)) } else { Some(Rect(w: 1.0)) }\n}",
+            vec![(Code::Mismatch, (2, 58))],
+        ),
+        (
+            "a `Some` of a class after a value that is no object: the `Some` is the mistake",
+            "fn main() {\n    let r = if true { 1 } else { Some(Circle(r: 1.0)) }\n}",
+            vec![(Code::Mismatch, (2, 34))],
+        ),
+        (
+            "a `Some` of a class after another class: the class is the mistake",
+            "fn main() {\n    let r = if true { Circle(r: 1.0) } else { Some(Rect(w: 1.0)) }\n}",
+            vec![(Code::Mismatch, (2, 52))],
+        ),
+        (
+            "a `Some` of a class after a `Some` of another class, in a loop: the class is the mistake",
+            "fn main() {\n    let r = loop {\n        if true { break Some(Circle(r: 1.0)) }\n        break Some(Rect(w: 1.0))\n    }\n}",
+            vec![(Code::Mismatch, (4, 20))],
+        ),
+        (
+            "a `Some` of a class after the class, in a loop: the optional is the mistake",
+            "fn main() {\n    let r = loop {\n        if true { break Circle(r: 1.0) }\n        break Some(Circle(r: 1.0))\n    }\n}",
+            vec![(Code::Mismatch, (4, 15))],
+        ),
+        (
             "two classes that both conform, as `break` values",
             "fn main() {\n    let r = loop {\n        if true { break Circle(r: 1.0) }\n        break Rect(w: 1.0)\n    }\n}",
             vec![(Code::Mismatch, (4, 15))],
@@ -708,7 +733,17 @@ fn a_join_should_report_the_member_that_leaves_its_any_type() {
         (
             "a `Some` of a class that does not conform, after an `any` value",
             "fn main() {\n    let x: any Solid = Cube(s: 1.0)\n    let r = if true { x } else { Some(Circle(r: 1.0)) }\n}",
-            vec![(Code::NotConform, (3, 34))],
+            vec![(Code::NotConform, (3, 39))],
+        ),
+        (
+            "a `Some` of a class that does not conform, after an `any` value, in a loop",
+            "fn main() {\n    let x: any Solid = Cube(s: 1.0)\n    let r = loop {\n        if true { break x }\n        break Some(Circle(r: 1.0))\n    }\n}",
+            vec![(Code::NotConform, (5, 20))],
+        ),
+        (
+            "a `Some` of a class that conforms, after an `any` value, in a loop: the optional is the mistake",
+            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let r = loop {\n        if true { break s }\n        break Some(Circle(r: 1.0))\n    }\n}",
+            vec![(Code::Mismatch, (5, 15))],
         ),
         (
             "a `Some` of a value that is no object, after an `any` value: it converts as under an expected type",
@@ -761,6 +796,30 @@ fn a_join_should_report_the_member_that_leaves_its_any_type() {
             vec![(Code::NotConform, (3, 34))],
         ),
     ]);
+}
+
+/// A member that leaves the join of an `any` type is reported against the type that is written
+/// for the join, not against the `any` type of its members.
+#[test]
+fn a_join_should_report_the_member_that_leaves_it_against_the_written_type() {
+    for (row, join, pos) in [
+        ("an `if`", "if true { o } else { s }", (4, 37)),
+        (
+            "a `match`",
+            "match 1 {\n        0 => s\n        _ => o\n    }",
+            (6, 14),
+        ),
+        (
+            "a class, then an optional class",
+            "if true { Circle(r: 1.0) } else { o }",
+            (4, 61),
+        ),
+    ] {
+        let src = format!(
+            "{DECLS}fn main() {{\n    let o: Circle? = None\n    let s: any Shape = Circle(r: 1.0)\n    let r: (any Shape)? = {join}\n}}"
+        );
+        diagnostic_row(row, &src, Code::Mismatch, (pos.0 + LINES, pos.1, "o"), &[]);
+    }
 }
 
 /// An `any` value written where an interface belongs is reported as what it is, with the
@@ -820,8 +879,8 @@ fn a_join_should_not_depend_on_the_order_of_its_members() {
     let (array, loops) = (sites[2].0, sites[3].0);
     // A `None` joins without an expected type everywhere but in a loop, whose values do not. A
     // `Some` of an object joins an `any` type only as a branch: an array literal and a loop do
-    // not join a `T?` with an `any` value. A set with no `None` is read where its `any` type is
-    // expected. Each set lists the sites where it does not join.
+    // not join a `Some` of an object with an `any` value of another type. A set with no `None`
+    // is read where its `any` type is expected. Each set lists the sites where it does not join.
     let sets: [([&str; 3], &str, &str, &[&str]); 7] = [
         (
             ["Circle(r: 1.0)", "Rect(w: 1.0)", "s"],

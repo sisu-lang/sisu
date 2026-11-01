@@ -1336,6 +1336,12 @@ impl Checker<'_> {
                 self.frame(target).deferred.push((v.span, got));
                 return Ok(value);
             }
+            // A `Some` of an object is the mistake at the object, as in a branch.
+            if let Some((at, want, object)) = self.object_in_some(&value, first) {
+                let d = self.leaves_any(at, None, want, object);
+                self.diagnostics.push(d);
+                return Err(Poisoned::error());
+            }
             return self
                 .against(v, Ok(value), Some(first), Some(MismatchSource::Break(at)))
                 .0;

@@ -5,8 +5,8 @@ use super::expr::fits;
 use super::generic::{Ahead, Rank};
 use super::pattern::{LetPattern, arm_key};
 use super::{
-    Checked, CheckedBlock, Checker, Poisoned, UNKNOWN, as_optional, block_type, tail, value_span,
-    wrap_block,
+    Checked, CheckedBlock, Checker, Poisoned, UNKNOWN, as_optional, block_type, payload, tail,
+    value_span, wrap_block,
 };
 use crate::ast;
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Unwrap};
@@ -315,14 +315,17 @@ impl Checker<'_> {
                 never: false,
             }
             .into(),
+            // A written type is what the member leaves, as the user wrote it.
             AnyJoin::Leaves { ty, member: (i, t) } => {
-                self.leaves_any(sources[i].span, sources[i].tail, ty, t)
+                let want = expected.filter(|&want| want != UNKNOWN).unwrap_or(ty);
+                let (at, tail, want, got) = self.reported(&sources[i], &blocks[i], want, t);
+                self.leaves_any(at, tail, want, got)
             }
             AnyJoin::Fails { earlier, later } => {
                 // A hint that is no `any` type names the branch that leaves it, as an expected
                 // type does.
                 let want = expected.or_else(|| siblings.filter(|&ty| !is_target(ty)));
-                self.join_mismatch(sources, want, earlier, later)
+                self.join_mismatch((sources, blocks), want, earlier, later)
             }
             AnyJoin::NoAny | AnyJoin::Joined { .. } => {
                 unreachable!("a join that failed should name its mistake")
@@ -337,29 +340,70 @@ impl Checker<'_> {
     /// is nor as its payload is the mistake; without one, `other` is, against `first_ty`. A
     /// branch with no value is that mistake, not a type mismatch.
     fn join_mismatch(
-        &self,
-        sources: &[Branch<'_>],
+        &mut self,
+        (sources, blocks): (&[Branch<'_>], &[CheckedBlock]),
         expected: Option<Type>,
         (first, first_ty): (usize, Type),
         (other, other_ty): (usize, Type),
     ) -> Diagnostic {
-        let (first, other) = (&sources[first], &sources[other]);
+        let mut report = |i: usize, want: Type, got: Type| {
+            let (at, tail, want, got) = self.reported(&sources[i], &blocks[i], want, got);
+            self.mismatch(at, tail, want, got)
+        };
         match expected.filter(|&want| want != UNKNOWN) {
             _ if first_ty == Type::UNIT => DiagnosticKind::NoValue {
-                at: first.span,
+                at: sources[first].span,
                 never: false,
             }
             .into(),
             _ if other_ty == Type::UNIT => DiagnosticKind::NoValue {
-                at: other.span,
+                at: sources[other].span,
                 never: false,
             }
             .into(),
-            Some(want) if fits(want, first_ty) => {
-                self.mismatch(other.span, other.tail, want, other_ty)
+            Some(want) if fits(want, first_ty) => report(other, want, other_ty),
+            Some(want) => report(first, want, first_ty),
+            None => report(other, first_ty, other_ty),
+        }
+    }
+
+    /// Where the branch `source`, of type `got`, is reported as a mistake against `want`, with
+    /// its expression, and the two types to name (see `object_in_some`).
+    fn reported<'a>(
+        &mut self,
+        source: &Branch<'a>,
+        block: &CheckedBlock,
+        want: Type,
+        got: Type,
+    ) -> (Span, Option<&'a ast::Expr>, Type, Type) {
+        let value = block.as_ref().ok().and_then(|b| b.value.as_deref());
+        match value.and_then(|value| self.object_in_some(value, want)) {
+            Some((at, want, object)) => (at, None, want, object),
+            None => (source.span, source.tail, want, got),
+        }
+    }
+
+    /// Where `value`, a `Some` of an object that leaves `want`, an object or an optional object,
+    /// is the mistake, and the two types to name, when the object does not convert to the
+    /// payload of `want`: the object, against that payload, as when the `Some` checks its
+    /// argument against it.
+    pub(super) fn object_in_some(
+        &mut self,
+        value: &tir::Expr,
+        want: Type,
+    ) -> Option<(Span, Type, Type)> {
+        let object = |ty: Type| matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Any(..));
+        let want = payload(want);
+        match &value.kind {
+            tir::ExprKind::Wrap(inner)
+                if object(inner.ty)
+                    && object(want)
+                    && inner.ty != want
+                    && !self.converts_to_any(inner.ty, want) =>
+            {
+                Some((inner.span, want, inner.ty))
             }
-            Some(want) => self.mismatch(first.span, first.tail, want, first_ty),
-            None => self.mismatch(other.span, other.tail, first_ty, other_ty),
+            _ => None,
         }
     }
 }
