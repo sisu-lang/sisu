@@ -4949,7 +4949,7 @@ type Row = (
     Option<&'static str>,
 );
 
-const PRINTED: [Row; 35] = [
+const PRINTED: &[Row] = &[
     ("print", "", "name: string?", "print(name)", Some("name")),
     ("eprint", "", "name: string?", "eprint(name)", Some("name")),
     (

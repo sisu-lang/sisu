@@ -26,7 +26,7 @@ pub(crate) const SEEDS: u64 = 64;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.
-const EXCLUDED: [(&str, &str); 16] = [
+const EXCLUDED: &[(&str, &str)] = &[
     (
         "ast::BrokenKind::Function",
         "only an item with a syntax error is broken",
@@ -95,7 +95,7 @@ const EXCLUDED: [(&str, &str); 16] = [
 
 /// The receivers of the built-in methods `check/number.rs` does not list, by their typed
 /// tree's variant.
-const RECEIVERS: [(&str, &[&str]); 5] = [
+const RECEIVERS: &[(&str, &[&str])] = &[
     ("tir::ExprKind::Len", &["String", "Array"]),
     ("tir::ExprKind::Chars", &["String"]),
     ("tir::ExprKind::Bytes", &["String"]),
@@ -105,7 +105,7 @@ const RECEIVERS: [(&str, &[&str]); 5] = [
 
 /// The scalar conversions, from and to, as `convert` in `check/string.rs` takes them: `i64(e)`
 /// of a `u8`, a `char` or an `f64`, and `u8(e)`, `char(e)` and `f64(e)` of an `i64`.
-const CONVERSIONS: [(&str, &str); 6] = [
+const CONVERSIONS: &[(&str, &str)] = &[
     ("U8", "I64"),
     ("Char", "I64"),
     ("F64", "I64"),
@@ -119,7 +119,7 @@ const IDENTITY: &str = "reach: a class is compared with `is` or against `None`";
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 111] = [
+const REACH: &[&str] = &[
     "reach: a type alias takes a parameter",
     "reach: a type is written as an alias",
     "reach: a type is written as a generic alias",
@@ -263,7 +263,7 @@ fn is_compound(ty: Type) -> bool {
 type Holds = fn(&str) -> bool;
 
 /// The forms only a program's text shows, each with how to find it.
-const TEXT: [(&str, Holds); 8] = [
+const TEXT: &[(&str, Holds)] = &[
     ("text: `_` between digits", |text| {
         text.as_bytes()
             .windows(3)
@@ -412,7 +412,7 @@ fn universe() -> FxHashSet<String> {
         universe.insert(format!("prelude {}", row[0]));
     }
     for (variant, receivers) in RECEIVERS {
-        for receiver in receivers {
+        for receiver in *receivers {
             universe.insert(format!("{variant} on {receiver}"));
         }
     }
@@ -440,7 +440,7 @@ fn bool_fields(owner: &str, fields: &syn::Fields, universe: &mut FxHashSet<Strin
     }
 }
 
-/// The rows of the array `const name`, a tuple row as its elements and any other row as one:
+/// The rows of the table `const name`, a tuple row as its elements and any other row as one:
 /// each element is the last segment of its path, the value of its string literal, or empty
 /// otherwise. `(MathOp::Abs, Receivers::F64, 0)` is `["Abs", "F64", ""]`, and `"print"` is
 /// `["print"]`.
@@ -453,6 +453,11 @@ fn const_rows(file: &syn::File, name: &str) -> Vec<Vec<String>> {
             _ => None,
         })
         .unwrap_or_else(|| panic!("the file should hold `const {name}`"));
+    // A table is a slice, `&[...]`, so that two branches can each add a row.
+    let array = match array {
+        syn::Expr::Reference(r) => &*r.expr,
+        other => other,
+    };
     let syn::Expr::Array(array) = array else {
         panic!("`{name}` should be an array literal");
     };

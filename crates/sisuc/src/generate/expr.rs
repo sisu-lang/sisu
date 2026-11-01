@@ -158,7 +158,7 @@ const ROUNDING: [&str; 6] = ["abs", "sqrt", "floor", "ceil", "trunc", "round"];
 /// The methods of `i64` and `f64` that take arguments of the receiver's type.
 const BOUNDS: [(&str, usize); 3] = [("min", 1), ("max", 1), ("clamp", 2)];
 /// The libm methods, whose results are inexact (decision 11), and their argument counts.
-const LIBM: [(&str, usize); 13] = [
+const LIBM: &[(&str, usize)] = &[
     ("sin", 0),
     ("cos", 0),
     ("tan", 0),
