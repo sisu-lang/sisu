@@ -1,12 +1,13 @@
 """Unit tests for compile_speed.py: python3 -m unittest discover -s scripts -p 'test_*.py'.
 
-Each test that runs the script puts stubs for the compilers, the formatters and the other tools in
-a directory, and makes that directory the whole PATH. A stub compiler logs its arguments and writes
-a small program that logs its own run. The units are small fixture texts. No test starts a real
-compiler, and no test checks an elapsed time.
+Each test that runs the script puts stubs in a directory. The stubs stand for the compilers, the
+formatters and the other tools. The test makes that directory the whole PATH. A stub compiler logs
+its arguments and writes a small program that logs its own run. The units are small fixture texts.
+No test starts a real compiler, and no test checks an elapsed time.
 """
 import os
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -28,7 +29,8 @@ UNITS = {
 TOOLS = {'sisu': 'sisu', 'rustc': 'rustc', 'clangxx': 'clang++', 'go': 'go', 'cc': 'cc',
          'git': 'git', 'rustfmt': 'rustfmt', 'gofmt': 'gofmt', 'clang_format': 'clang-format',
          'perf': 'perf'}
-# The stub writes this program at the path after `-o`. The program logs its run and prints the output of the stub.
+# The stub writes this program at the path after `-o`.
+# The program logs its run and prints the output of the stub.
 PROGRAM = """#!/bin/sh
 echo "ran $0" >> {log}
 printf '{output}'
@@ -103,11 +105,19 @@ class CompileSpeed(unittest.TestCase):
         for name, text in UNITS.items():
             (self.units / name).write_text(text)
 
-    def run_script(self, *args, env, time_bound='60'):
+    def run_script(self, *args, env, time_bound='60', timeout=None):
+        """Runs the script. A later `--sisu` or `--out` in `args` replaces the default."""
         return subprocess.run(
             [sys.executable, str(SCRIPT), '--sisu', str(self.tmp / 'bin' / 'sisu'), '--units',
              str(self.units), '--out', str(self.tmp / 'out'), '--time-bound', time_bound, *args],
-            env=env, capture_output=True, text=True, check=False)
+            env=env, capture_output=True, text=True, check=False, timeout=timeout)
+
+    def kill_stub_sleep(self):
+        """Kills the process that the stub in the time-bound test left, if the script did not."""
+        try:
+            os.kill(int((self.tmp / 'pid').read_text()), signal.SIGKILL)
+        except (OSError, ValueError):
+            pass
 
     def log_lines(self):
         log = self.tmp / 'log'
@@ -166,12 +176,20 @@ class CompileSpeed(unittest.TestCase):
         WHEN `scripts/compile_speed.py` runs
         THEN it exits with code 1 and names the `#include` line
         """
-        (self.units / 'unit.cpp').write_text(
-            'extern "C" int printf(const char*, ...);\n\n#include <vector>\nlong long runXX() { return 45; }\n')
-        r = self.run_script('--sizes', '1', '--check-only', env=stubs(self.tmp))
-        self.assertEqual(r.returncode, 1)
-        self.assertIn('unit.cpp:3', r.stderr)
-        self.assertIn('#include <vector>', r.stderr)
+        head = 'extern "C" int printf(const char*, ...);\n\n'
+        tail = '\nlong long runXX() { return 45; }\n'
+        for label, directive in (('plain', '#include <vector>'),
+                                 ('comment in the directive', '#/**/ include <vector>'),
+                                 ('comment over lines', '/* a\nb */ #include <vector>'),
+                                 ('line splice', '#inc\\\nlude <vector>')):
+            with self.subTest(label):
+                (self.units / 'unit.cpp').write_text(head + directive + tail)
+                r = self.run_script('--sizes', '1', '--check-only', env=stubs(self.tmp))
+                self.assertEqual(r.returncode, 1)
+                # The directive starts on line 3 or, after a two-line comment, on line 4.
+                line = 4 if label == 'comment over lines' else 3
+                self.assertIn(f'unit.cpp:{line}', r.stderr)
+                self.assertNotIn('Traceback', r.stderr)
 
     def test_check_only_should_check_agreement_and_time_nothing(self):
         """
@@ -181,10 +199,13 @@ class CompileSpeed(unittest.TestCase):
         AND it prints no table
         AND the exit code is 0
         """
-        env = stubs(self.tmp)
+        # The environment has another value, so the script must set GOMAXPROCS itself.
+        env = {**stubs(self.tmp), 'GOMAXPROCS': '2'}
         r = self.run_script('--sizes', '3,1', '--check-only', env=env)
         self.assertEqual(r.returncode, 0, r.stderr)
         log = self.log_lines()
+        go_builds = [line for line in log if line.startswith('go ') and ' -o ' in line]
+        self.assertTrue(go_builds[0].endswith('GOMAXPROCS=1'), go_builds)
         for name in ('sisu', 'rustc', 'clang++', 'go'):
             builds = [line for line in log if line.startswith(f'{name} ') and ' -o ' in line]
             self.assertEqual(len(builds), 1, (name, log))
@@ -201,9 +222,11 @@ class CompileSpeed(unittest.TestCase):
         AND it exits with code 1 and names the input
         """
         # The background sleep does not hold the pipes, so only the kill of the group ends it.
-        script = (f'#!/bin/sh\n/bin/sleep 30 >/dev/null 2>&1 &\necho $! > {self.tmp}/pid\nwait\n')
+        script = (f'#!/bin/sh\n/bin/sleep 300 >/dev/null 2>&1 &\necho $! > {self.tmp}/pid\nwait\n')
         env = stubs(self.tmp, rustc=script)
-        r = self.run_script('--sizes', '1', '--check-only', env=env, time_bound='1')
+        self.addCleanup(self.kill_stub_sleep)
+        # The timeout is only a stop for a script that does not kill the group.
+        r = self.run_script('--sizes', '1', '--check-only', env=env, time_bound='1', timeout=20)
         self.assertEqual(r.returncode, 1)
         self.assertIn('Rust, size 1: ran over the time bound', r.stderr)
         pid = int((self.tmp / 'pid').read_text())
@@ -248,6 +271,54 @@ class CompileSpeed(unittest.TestCase):
             deadline.run(['b'], 'second')
         self.assertEqual(timeouts, [10, 6])
 
+    def test_deadline_should_kill_and_wait_for_the_group_on_every_failure(self):
+        """
+        GIVEN a command that times out, is interrupted, or exits with a code that is not 0
+        WHEN `Deadline.run` runs it
+        THEN it kills the process group of the command, waits for it, and then raises
+        """
+        timeout = subprocess.TimeoutExpired(['a'], 1)
+        # (label, what the first communicate does, exit code, run arguments, expected error)
+        cases = (
+            ('timeout', timeout, 0, {}, compile_speed.Fail),
+            ('interrupt', KeyboardInterrupt(), 0, {}, KeyboardInterrupt),
+            ('failed exit', ('', 'bad\n'), 1, {}, compile_speed.Fail),
+            ('failed exit with check off', ('', 'bad\n'), 1, {'check': False}, None),
+        )
+        for label, first, code, kwargs, error in cases:
+            with self.subTest(label):
+                calls = []
+
+                class FakePopen:
+                    pid = 4242
+
+                    def __init__(self, cmd, **kw):
+                        self.returncode = code
+
+                    def communicate(self, timeout=None):
+                        calls.append(timeout)
+                        if len(calls) == 1 and isinstance(first, BaseException):
+                            raise first
+                        return first if len(calls) == 1 else ('', '')
+
+                deadline = compile_speed.Deadline(10)
+                with mock.patch.object(compile_speed.subprocess, 'Popen', FakePopen), \
+                        mock.patch.object(compile_speed.os, 'killpg') as killpg:
+                    if error is None:
+                        deadline.run(['a'], 'what', **kwargs)
+                    else:
+                        with self.assertRaises(error):
+                            deadline.run(['a'], 'what', **kwargs)
+                killpg.assert_called_once_with(4242, signal.SIGKILL)
+                self.assertEqual(len(calls), 2, calls)
+        # A clean exit leaves the group alone.
+        with mock.patch.object(compile_speed.subprocess, 'Popen') as popen, \
+                mock.patch.object(compile_speed.os, 'killpg') as killpg:
+            popen.return_value.communicate.return_value = ('', '')
+            popen.return_value.returncode = 0
+            compile_speed.Deadline(10).run(['a'], 'what')
+        killpg.assert_not_called()
+
     def test_failing_compiler_should_stop_the_script_with_its_stderr(self):
         """
         GIVEN a C++ compiler that is on `PATH` and exits with code 1
@@ -261,6 +332,30 @@ class CompileSpeed(unittest.TestCase):
         for text in ('C++', 'clang++', 'error: no'):
             self.assertIn(text, r.stderr)
         self.assertNotIn('Traceback', r.stderr)
+        noexec = self.tmp / 'noexec'
+        noexec.write_text('#!/bin/sh\n')
+        noexec.chmod(0o644)
+        regular = self.tmp / 'regular'
+        regular.write_text('')
+        garbage = '#!/bin/sh\nprintf "\\377" >&2\nexit 1\n'
+        # A compiler stub whose program exits 3 and writes to stderr: the bytes of a program are not text.
+        broken_program = ('#!/bin/sh\nout=\nprev=\nfor a in "$@"; do [ "$prev" = -o ] && out=$a;'
+                          ' prev=$a; done\nprintf "#!/bin/sh\\necho boom >&2\\nexit 3\\n" > "$out"\n'
+                          '/bin/chmod +x "$out"\n')
+        cases = (
+            ('program that exits 3', {'rustc': broken_program}, (), 'boom'),
+            ('bytes that are not text', {'clangxx': garbage}, (), 'C++'),
+            ('sisu without the execute bit', {}, ('--sisu', str(noexec)), 'Sisu'),
+            ('out that names a file', {}, ('--out', str(regular)), str(regular)),
+        )
+        for label, overrides, extra, named in cases:
+            with self.subTest(label):
+                r = self.run_script('--sizes', '1', '--check-only', *extra,
+                                    env=stubs(self.tmp, **overrides))
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertTrue(r.stderr.startswith('compile_speed: '), r.stderr)
+                self.assertIn(named, r.stderr)
+                self.assertNotIn('Traceback', r.stderr)
 
     def test_missing_formatter_should_skip_only_its_style_check(self):
         """

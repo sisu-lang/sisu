@@ -6,9 +6,10 @@ Usage: python3 scripts/compile_speed.py [--check-only] [--sizes 10,100,1000] [--
        [--time-bound SECONDS]
 
 `bench/compile/` holds one unit in each language. The script repeats the unit to make an input of
-each size, builds and runs each input, and stops with exit code 1 when a compiler gives a warning
-or an input prints something other than the Sisu input prints. `--check-only` does this at the
-smallest size and times nothing. The script does not build `sisu`: `make compile-speed` does.
+each size. It builds and runs each input. It stops with exit code 1 when a compiler gives a
+warning. It also stops when an input prints other output than the Sisu input prints.
+`--check-only` does this at the smallest size and times nothing. The script does not build
+`sisu`: `make compile-speed` does.
 
 Every command runs through one `Deadline`. The time bound is for the whole run. A command that runs
 over it is killed with its processes, and the script exits with code 1 and names the input.
@@ -66,26 +67,41 @@ class Deadline:
         kwargs.setdefault('stdout', subprocess.PIPE)
         kwargs.setdefault('stderr', subprocess.PIPE)
         kwargs.setdefault('text', True)
+        if kwargs['text']:
+            kwargs.setdefault('errors', 'replace')
         shown = shlex.join(str(a) for a in cmd)
         try:
             proc = subprocess.Popen(cmd, start_new_session=True, **kwargs)
         except FileNotFoundError:
             raise Fail(f'{what}: {shown}: the program is not found') from None
+        except OSError as e:
+            raise Fail(f'{what}: {shown}: {e.strerror}') from None
         try:
             out, err = proc.communicate(timeout=left)
         except subprocess.TimeoutExpired:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            proc.communicate()
+            kill_group(proc)
             raise Fail(f'{what}: ran over the time bound') from None
-        if check and proc.returncode != 0:
-            if isinstance(err, bytes):
-                err = err.decode(errors='replace')
-            lines = (err or '').splitlines()[:STDERR_LINES]
-            raise Fail('\n'.join([f'{what}: {shown} exited with code {proc.returncode}', *lines]))
+        except BaseException:
+            kill_group(proc)
+            raise
+        if proc.returncode != 0:
+            kill_group(proc)
+            if check:
+                if isinstance(err, bytes):
+                    err = err.decode(errors='replace')
+                lines = (err or '').splitlines()[:STDERR_LINES]
+                raise Fail('\n'.join([f'{what}: {shown} exited with code {proc.returncode}',
+                                      *lines]))
         return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
+def kill_group(proc):
+    """Kills the process group of `proc` and waits for it, so that no child is left."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    proc.communicate()
 
 
 def generate(lang, unit, copies):
@@ -182,10 +198,25 @@ def warnings(stderr):
 
 
 def check_no_include(path, text):
-    """Stops when the C++ unit has an `#include`: a header would add the library to parse."""
+    """Stops when the C++ unit has an `#include`: a header would add the library to parse.
+
+    The match runs on the text without block comments, and with each line that ends in a
+    backslash joined to the next line. The message has the first physical line of the directive.
+    """
+    original = text.splitlines()
+    # A block comment keeps its line breaks, so the line numbers stay the same.
+    text = re.sub(r'//[^\n]*|/\*.*?\*/', lambda m: m.group() if m.group().startswith('//')
+                  else ' ' + '\n' * m.group().count('\n'), text, flags=re.S)
+    first, joined = 0, ''
     for number, line in enumerate(text.splitlines(), 1):
-        if re.match(r'\s*#\s*include\b', line):
-            raise Fail(f'{path}:{number}: the C++ unit may not include a header: {line.strip()}')
+        first = first or number
+        if line.endswith('\\'):
+            joined += line[:-1]
+            continue
+        if re.match(r'\s*#\s*include\b', joined + line):
+            raise Fail(f'{path}:{first}: the C++ unit may not include a header: '
+                       f'{original[first - 1].strip()}')
+        first, joined = 0, ''
 
 
 def read_units(units_dir):
@@ -199,7 +230,7 @@ def read_units(units_dir):
     return units
 
 
-def check_style(units_dir, units, deadline):
+def check_style(units_dir, deadline):
     """Runs the check mode of each formatter that is on PATH, and says which ones it skips."""
     for lang, cmd in FORMATTERS.items():
         path = units_dir / f'unit.{EXTENSIONS[lang]}'
@@ -222,9 +253,12 @@ def check_sizes(args, units, sizes, deadline):
                 continue
             what = f'{NAMES[lang]}, size {size}'
             work = args.out / lang / str(size)
-            work.mkdir(parents=True, exist_ok=True)
             src, exe = work / f'input.{EXTENSIONS[lang]}', work / 'prog'
-            src.write_text(generate(lang, units[lang], size))
+            try:
+                work.mkdir(parents=True, exist_ok=True)
+                src.write_text(generate(lang, units[lang], size))
+            except OSError as e:
+                raise Fail(f'{what}: {e.filename or work}: {e.strerror}') from None
             cmd = command(ROWS[3], lang, src, exe, False, sisu=args.sisu)
             built = deadline.run(cmd, what, env=environment(lang))
             found = warnings(built.stderr or '')
@@ -270,7 +304,7 @@ def main(argv):
     try:
         units = read_units(args.units)
         check_no_include(args.units / 'unit.cpp', units['cpp'])
-        check_style(args.units, units, deadline)
+        check_style(args.units, deadline)
         sizes = args.sizes[:1] if args.check_only else args.sizes
         check_sizes(args, units, sizes, deadline)
         if not args.check_only:

@@ -155,8 +155,8 @@ func runXX() int64 {
 	total += biggest
 	longest, _ := largestXX([]string{"b", "ccc", "a"})
 	total += int64(len(longest))
-	byte, _ := largestXX([]uint8{4, 8, 1})
-	total += int64(byte)
+	small, _ := largestXX([]uint8{4, 8, 1})
+	total += int64(small)
 	tally := &TallyXX{}
 	shapes := []ShapeXX{DotXX{}, LineXX{4}, RectXX{3, 5}}
 	for _, s := range shapes {

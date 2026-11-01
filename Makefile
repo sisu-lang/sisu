@@ -12,7 +12,7 @@ ARGS =
 .PHONY: help setup audit-setup build test test-health bless lint deny miri check coverage mutation-test fuzz fuzz-coverage bench compile-speed callgrind site
 
 help: ## List the targets
-	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  %-12s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  %-13s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 	@echo
 	@echo 'BASE=<commit> sets where the changes start: by default where HEAD left main.'
 	@echo 'On a stacked branch, pass the stage below, so its changes stay out.'
