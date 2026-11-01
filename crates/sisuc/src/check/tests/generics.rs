@@ -5536,6 +5536,12 @@ const WAIT_CALL_DECLS: &str = "class Two<A, B> {\n    a: A\n    b: B\n}\n\
     fn mkdv<X>() -> Two<X, Two<X, i64>> { panic(\"e\") }\n\
     fn fc<T, U, V>(_c: Two<V, bool>, _a: Two<T, Two<U, V>>, _b: Result<T, string>) -> i64 { 0 }\n\
     fn fc2<T, U, V>(_a: Two<T, Two<U, V>>, _c: Two<V, bool>, _b: Result<T, string>) -> i64 { 0 }\n\
+    fn mky<X, Y>(y: Y) -> Two<X, Y> { panic(\"e\") }\n\
+    fn gy<T, U>(_c: Two<T, [U]>, _d: Result<T, string>, _e: Result<U, string>) -> i64 { 0 }\n\
+    class WV: I {\n    type Item = [i64]\n}\n\
+    fn mkwv<E>() -> Result<WV, E> { Ok(WV()) }\n\
+    fn mkb<X, Y>(y: Y) -> Two<X, [Y]> { panic(\"e\") }\n\
+    fn gz<T: I>(_c: Two<T, T.Item>, _d: Result<T, string>) -> i64 { 0 }\n\
     type BX<X> = Bx<i64, X>\n\
     type MB<X> = Mb<i64, X>\n";
 
@@ -5618,6 +5624,17 @@ const WAIT_CALL_ROWS: &[(&str, &[(Code, &str)])] = {
         // `mkt()` has `i64` under `U`, which `mks()` binds to `string`: the mismatch is true.
         ("print(gtu(mkv(), mks()))", &[]),
         ("print(gtu(mkt(), mks()))", &[(Mismatch, "mkt()")]),
+        // A part of the call's type is a parameter that its own argument binds (`Y`), not an open
+        // one. It waits for `T` and `U` only. At an associated type of the outer call, the same
+        // part names no open parameter.
+        ("print(gy(mky([1]), mk(), mk()))", &[]),
+        ("print(gz(mkb(1), mkwv()))", &[]),
+        // The arguments of an alias of a class do not fit it: the call reports that and waits for
+        // nothing.
+        (
+            "print(gb(BX(a: 1, c: 2), mk()))",
+            &[(Code::TooManyArguments, "c: 2")],
+        ),
         // A woken call that disagrees with the argument that woke it is blamed.
         ("print(gn(mkr(), mks()))", &[(Mismatch, "mkr()")]),
         // The limit: a call under another call does not wait.
@@ -5659,7 +5676,7 @@ fn a_waiting_call_should_wait_for_a_later_argument_that_binds_its_context() {
     }
 }
 
-/// Two calls that wait, in chains of three sizes (20, 40 and 60; 100, 200 and 300), far above the
+/// Calls that wait, in chains of three sizes (20, 40 and 60; 100, 200 and 300), far above the
 /// smallest chain that shows the cost. Each is linear in its size, where a sweep that tests every
 /// waiting call after each binding, or files a call under one parameter at a time, is not.
 ///
@@ -5672,6 +5689,10 @@ fn a_waiting_call_should_wait_for_a_later_argument_that_binds_its_context() {
 /// last parameter, and `k` later arguments that each bind one parameter. The call waits for
 /// `T{k-1}` only, so it is tested once, where a call that waits for the first unbound parameter,
 /// and moves on at each binding, builds a context of size `k` `k` times.
+///
+/// The third is one waiting call that waits for all `k` parameters of `Tup<T0, ..., T{k-1}>`,
+/// which its context names in a shuffled order. Work that fixes the order with a sort is not
+/// linear in `k`.
 #[test]
 fn waiting_calls_should_be_tested_a_linear_number_of_times() {
     with_prelude();
@@ -5726,4 +5747,30 @@ fn waiting_calls_should_be_tested_a_linear_number_of_times() {
         generic::WAIT_STEPS.get() + generic::WALKED.get()
     };
     assert_near_linear(wide(100), wide(200), wide(300));
+    // `mkw()` waits for all `k` parameters, which its context names in the order `i * 7 mod k`. `k`
+    // has no factor 7, so that order is a permutation that a sort would have to fix.
+    let shuffled = |k: usize| {
+        let list = |name: &str| (0..k).map(|i| format!("{name}{i}")).collect::<Vec<_>>();
+        let fields: Vec<String> = (0..k).map(|i| format!("    f{i}: A{i}\n")).collect();
+        let order: Vec<String> = (0..k).map(|i| format!("T{}", i * 7 % k)).collect();
+        let src = format!(
+            "class Tup<{}> {{\n{}}}\n\
+             class Wrap<A> {{\n    a: A\n}}\n\
+             fn mkw<X>() -> Wrap<X> {{ panic(\"e\") }}\n\
+             fn mkt() -> Tup<{}> {{ panic(\"e\") }}\n\
+             fn gs<{}>(_c: Wrap<Tup<{}>>, _d: Tup<{}>) -> i64 {{ 0 }}\n\
+             fn main() {{\n    print(gs(mkw(), mkt()))\n}}",
+            list("A").join(", "),
+            fields.concat(),
+            vec!["i64"; k].join(", "),
+            list("T").join(", "),
+            order.join(", "),
+            list("T").join(", "),
+        );
+        generic::WAIT_STEPS.set(0);
+        generic::WALKED.set(0);
+        clean(&src);
+        generic::WAIT_STEPS.get() + generic::WALKED.get()
+    };
+    assert_near_linear(shuffled(100), shuffled(200), shuffled(300));
 }

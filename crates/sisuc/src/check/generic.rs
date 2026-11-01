@@ -196,11 +196,10 @@ fn open_params(
 }
 
 /// The open parameters (see `open_params`) of a call of a function or method that returns `ret`,
-/// or none when the call is not open: the context binds only what the type of the call names, so
-/// the call is open if `ret` names a parameter that no parameter type does. It is not open,
-/// whatever else it leaves, if one parameter is named by no type at all: nothing can bind that
-/// one, and the call reports it. `ret` is `None` when it did not resolve; the call is not open
-/// then.
+/// or none when the call is not open. The context binds only what the type of the call names. So
+/// the call is open if `ret` names a parameter that no parameter type does. It is not open if
+/// one parameter is named by no type at all, whatever else it leaves: nothing can bind that one,
+/// and the call reports it. `ret` is `None` when it did not resolve; the call is not open then.
 fn open_params_of_call(
     params: impl Iterator<Item = Option<Type>>,
     ret: Option<Type>,
@@ -249,7 +248,7 @@ fn wait_step() {
 }
 
 /// Adds to `on` each parameter of `outer` that `ty` names and that is unbound.
-fn unbound_params(outer: &Bindings, ty: Type, on: &mut Vec<usize>) {
+fn unbound_params(outer: &Bindings, ty: Type, on: &mut FxHashSet<usize>) {
     wait_step();
     if !ty.has_param() {
         return;
@@ -301,7 +300,7 @@ fn needed_params(
     unbound: &[bool],
     built: Type,
     param: Type,
-    on: &mut Vec<usize>,
+    on: &mut FxHashSet<usize>,
 ) -> bool {
     wait_step();
     if !built.has_param() || !param.has_param() {
@@ -351,7 +350,7 @@ fn needed_all(
     unbound: &[bool],
     built: TypeArgs,
     params: TypeArgs,
-    on: &mut Vec<usize>,
+    on: &mut FxHashSet<usize>,
 ) -> bool {
     iter::zip(built.get(), params.get()).fold(true, |all, (&b, &q)| {
         needed_params(outer, unbound, b, q, on) && all
@@ -375,8 +374,8 @@ impl Parked {
         }
     }
 
-    /// Keeps the argument at `i` under each parameter in `on`, which are unbound and distinct.
-    fn park(&mut self, i: usize, on: Vec<usize>) {
+    /// Keeps the argument at `i` under each parameter in `on`, which are unbound.
+    fn park(&mut self, i: usize, on: FxHashSet<usize>) {
         self.left[i] = on.len();
         for param in on {
             wait_step();
@@ -410,6 +409,9 @@ impl Parked {
                 }
             }
         }
+        // shortcut: this sort costs a log a for the a arguments of one call that wake together.
+        // Upgrade to a linear order (for example, buckets by argument index) if a call with very
+        // many waiting arguments shows up in a profile.
         woken.sort_unstable_by(|a, b| b.cmp(a));
         woken
     }
@@ -1956,7 +1958,7 @@ impl Checker<'_> {
         e: &ast::Expr,
         param: Type,
         open: &OpenCall,
-    ) -> Option<Vec<usize>> {
+    ) -> Option<FxHashSet<usize>> {
         if waits_for_assoc(&call.bindings, param) {
             return None;
         }
@@ -1974,7 +1976,7 @@ impl Checker<'_> {
         if !unbound.contains(&true) {
             return None;
         }
-        let mut on = Vec::new();
+        let mut on = FxHashSet::default();
         if !needed_params(&call.bindings, &unbound, open.built, param, &mut on) {
             on.clear();
             needed_params(
@@ -1985,8 +1987,6 @@ impl Checker<'_> {
                 &mut on,
             );
         }
-        on.sort_unstable();
-        on.dedup();
         (!on.is_empty()).then_some(on)
     }
 
