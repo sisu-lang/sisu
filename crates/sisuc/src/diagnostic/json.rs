@@ -195,18 +195,18 @@ mod tests {
 
     #[test]
     fn may_be_none_with_an_access_should_have_help_and_an_unsafe_fix() {
-        let source = "fn f(n: N?) {\n    n.v = 1\n}\n";
+        let source = "fn f(n: N?) {\n    print(n.v)\n}\n";
         let d: Diagnostic = DiagnosticKind::MayBeNone {
             value: Some("n".to_string()),
-            at: Span::new(18, 19),
-            access: Some(Span::new(19, 20)),
+            at: Span::new(24, 25),
+            access: Some(Span::new(25, 26)),
             write: false,
             peel: None,
         }
         .into();
         assert_eq!(
             diagnostic(&d, "a.sisu", source, &LineIndex::new(source)),
-            r#"{"version":1,"kind":"diagnostic","code":"E0062","severity":"error","message":"`n` may be `None`","primary":{"file":"a.sisu","start":18,"end":19,"line":2,"column":5,"label":null},"secondary":[],"help":"to use the value only when it is present, unwrap it with `if let`","fixes":[{"message":"if a `None` result is fine, use `?.`","safe":false,"edits":[{"start":19,"end":20,"line":2,"column":6,"replacement":"?."}]}]}"#
+            r#"{"version":1,"kind":"diagnostic","code":"E0062","severity":"error","message":"`n` may be `None`","primary":{"file":"a.sisu","start":24,"end":25,"line":2,"column":11,"label":null},"secondary":[],"help":"to use the value only when it is present, unwrap it with `if let`","fixes":[{"message":"if a `None` result is fine, use `?.`","safe":false,"edits":[{"start":25,"end":26,"line":2,"column":12,"replacement":"?."}]}]}"#
         );
     }
 

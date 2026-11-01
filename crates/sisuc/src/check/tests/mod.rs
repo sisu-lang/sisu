@@ -3041,6 +3041,18 @@ fn may_be_none_in_an_assignment_target_should_offer_the_fix() {
     }
 }
 
+/// A `push` on a field of an optional that holds no class has no field to hold an array, but the
+/// optional still may be `None`: E0062 offers the `?.` fix.
+#[test]
+fn may_be_none_before_a_push_on_a_field_of_an_optional_array_should_offer_the_fix() {
+    let src = "fn f(xs: [i64]?) {\n    xs.v.push(1)\n}\nfn main() {}";
+    let d = diagnostic(src, Code::MayBeNone, (2, 5, "xs"), &[]);
+    assert_eq!(
+        fixes(src, &d),
+        [(false, vec![(2, 7, ".", "?.".to_owned())])]
+    );
+}
+
 /// An index after the step makes the `?.` fix lead to an index on an optional. So there is no
 /// fix, in a target and in a read. Each row is a statement in a body where `m` is an `N?`.
 #[test]

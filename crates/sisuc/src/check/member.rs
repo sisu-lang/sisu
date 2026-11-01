@@ -13,6 +13,17 @@ use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, InterfaceId, Type, TypeArgs, TypeKind};
 
+/// How a field access uses the field.
+#[derive(Clone, Copy)]
+pub(super) enum Access {
+    /// A value.
+    Read,
+    /// The target of an assignment or a compound assignment.
+    Assign,
+    /// The receiver of a `.push`, which may be a class's own `push`.
+    Push,
+}
+
 /// What a method lookup found.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Found {
@@ -114,7 +125,8 @@ impl Checker<'_> {
         receiver: &ast::Expr,
         name: &ast::Ident,
     ) -> Checked {
-        let Some((class, index, ty)) = self.find_field(type_of(&base), receiver, name, false)
+        let Some((class, index, ty)) =
+            self.find_field(type_of(&base), receiver, name, Access::Read)
         else {
             return Err(Poisoned::error());
         };
@@ -150,22 +162,22 @@ impl Checker<'_> {
     }
 
     /// The class, index and type of field `name` of `receiver`, a value of type `base`. `None` when
-    /// there is none, reported unless `base` is `Error`. `target` when the field is assigned,
-    /// where no `()` can follow the access. A receiver that may be `None` gets the `?.` fix unless
-    /// an index follows in the chain (`Body::indexed`).
+    /// there is none, reported unless `base` is `Error`. `access` says how the field is used; no
+    /// `()` can follow the access of a field that is not read. A receiver that may be `None` gets
+    /// the `?.` fix unless an index follows in the chain (`Body::indexed`).
     pub(super) fn find_field(
         &mut self,
         base: Option<Type>,
         receiver: &ast::Expr,
         name: &ast::Ident,
-        target: bool,
+        access: Access,
     ) -> Option<(tir::ClassId, usize, Option<Type>)> {
         let ty = base?;
         let method = |owner, safe: bool| DiagnosticKind::MethodNotField {
             name: name.name.to_string(),
             owner,
             at: name.span,
-            call: (!target).then_some(safe),
+            call: matches!(access, Access::Read).then_some(safe),
         };
         let d = match ty.kind() {
             TypeKind::Class(class, _) => {
@@ -202,11 +214,34 @@ impl Checker<'_> {
             TypeKind::Array(_) if name.name.as_str() == "len" => {
                 method(self.type_name(ty), true).into()
             }
-            TypeKind::Optional(_) => may_be_none(receiver, name, !self.body.indexed, target),
+            TypeKind::Optional(payload) => {
+                let write = match access {
+                    Access::Read => false,
+                    Access::Assign => true,
+                    Access::Push => self.field_is_array(payload, name.name),
+                };
+                may_be_none(receiver, name, !self.body.indexed, write)
+            }
             _ => no_member(Definition::Field, self.type_name(ty), name, []),
         };
         self.diagnostics.push(d);
         None
+    }
+
+    /// Whether `ty` is a class type whose field `name` has an array type or an optional array
+    /// type, so that a `push` onto it writes.
+    fn field_is_array(&self, ty: Type, name: Symbol) -> bool {
+        let TypeKind::Class(class, _) = ty.kind() else {
+            return false;
+        };
+        let held = self.classes[class.0]
+            .field(name)
+            .and_then(|index| self.field_type(ty, index));
+        let held = held.map(|held| match held.kind() {
+            TypeKind::Optional(payload) => payload,
+            _ => held,
+        });
+        held.is_some_and(|held| matches!(held.kind(), TypeKind::Array(_)))
     }
 
     /// The method of the class or enum type `ty` that its body or a plain `extend` block gives
@@ -643,7 +678,8 @@ fn candidate_results(rets: &[Option<Type>]) -> impl Iterator<Item = (usize, Opti
 }
 
 /// "`node` may be `None`", at the optional `receiver` of a `.` before `name`. With `fix`, a
-/// `?.` may take the `.`'s place. `write` when `name` is the target of an assignment or a `push`.
+/// `?.` may take the `.`'s place. `write` when `name` is the field that an assignment or a `push`
+/// changes, or the `push` itself.
 fn may_be_none(receiver: &ast::Expr, name: &ast::Ident, fix: bool, write: bool) -> Diagnostic {
     DiagnosticKind::MayBeNone {
         value: path(receiver),

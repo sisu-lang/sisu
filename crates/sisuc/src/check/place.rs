@@ -3,7 +3,7 @@
 use std::rc::Rc;
 
 use super::expr::{if_some, literal_type, local, operator};
-use super::member::safe_value;
+use super::member::{Access, safe_value};
 use super::operator::Operator;
 use super::unused_names::Used;
 use super::{
@@ -699,6 +699,11 @@ impl Checker<'_> {
             ast::ExprKind::Field {
                 base, name, safe, ..
             } => {
+                let access = if change == Change::Push {
+                    Access::Push
+                } else {
+                    Access::Assign
+                };
                 if change != Change::Push {
                     self.stamp_root(base);
                 }
@@ -719,7 +724,7 @@ impl Checker<'_> {
                                 payload.err().and_then(|failed| failed.ty),
                                 base,
                                 name,
-                                true,
+                                access,
                             );
                             return CheckedPlace::failed();
                         }
@@ -727,7 +732,8 @@ impl Checker<'_> {
                 } else {
                     checked
                 };
-                let Some((class, index, ty)) = self.find_field(type_of(&checked), base, name, true)
+                let Some((class, index, ty)) =
+                    self.find_field(type_of(&checked), base, name, access)
                 else {
                     return CheckedPlace::failed();
                 };
