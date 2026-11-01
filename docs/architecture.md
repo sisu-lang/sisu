@@ -469,6 +469,13 @@ parse for each one, and the checker runs only on items that parse. The fuzz
 target checks that no fix shown makes the syntax worse. The explanations in
 [`docs/diagnostics`](diagnostics/README.md) are what `sisu explain` prints.
 
+**Module order.** A module of `crates/sisuc/src` uses only the modules of
+its own stage and of earlier ones, so that a stage does not depend on what
+comes after it. `crates/sisuc/tests/architecture.rs` holds the order in
+`LAYERS` and fails on a use of a later layer outside test code. Its
+`BACK_EDGES` list holds the few uses that stay, each with its reason. The
+test fails on an entry that no use needs, so the list can only get shorter.
+
 ## Updating the diagram
 
 The diagram's source is
