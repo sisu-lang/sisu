@@ -319,17 +319,29 @@ because the compilers do different work.
 generic classes, an interface with an associated type, a generic function
 with a bound, an enum, string interpolation and a `run` function. The size is
 the number of copies of the unit. The script gives each copy its own names and
-adds a `main` that prints the sum of the results. Size 1000 is about 140k lines
-in Sisu, and 138k to 158k lines in the other languages. The `main` calls each copy twice. With one call, LLVM
-inlines every copy into `main` at `-O2`, and the time of the optimizer on one
-huge function grows much faster than the program: `rustc -O2` took 14 minutes
-of CPU at size 100. With two calls, each copy stays its own function.
+adds a `main` that prints the sum of the results. Size 1000 is about 143k lines
+in Sisu, and 138k to 158k lines in the other languages.
 
-All ran at commit 01b4d427 on 2026-11-01. The load average was 1.9 at the
-start of the run and 6.7 at the end, on 32 CPUs. Each time is the best of 5
-runs of the command.
+Each copy also has its number in a label string, and the length of the label
+goes into the sum. Without it, the copies are the same apart from their
+names. At `-O2`, `rustc` then merges them into one function, and its back end
+compiles one copy only.
 
-- commit: 01b4d427
+The `main` calls each copy twice. In Sisu and Rust, the `run` function of a
+copy is internal. LLVM gives the last call of an internal function a large
+inline bonus. With one call, LLVM inlines every copy into `main` at `-O2`.
+The time of the optimizer on one huge function grows much faster than the
+program: `rustc -O2` took 14 minutes of CPU at size 100. Two calls remove the
+bonus. The C++ `run` function is external, so it never had the bonus. The
+inliner of Go has no such bonus. The four programs have the same form.
+
+All ran at commit 40ec062f on 2026-11-01. Other jobs ran on the machine
+during the run, so the times are noisy, most at size 10. The load averages for
+1, 5 and 15 minutes were 13.2, 19.8 and 14.0 at the start of the run. They
+were 20.7, 17.8 and 13.7 at the end. The machine has 32 CPUs. The run took
+about 18 minutes. Each time is the best of 5 runs of the command.
+
+- commit: 40ec062f
 - date: 2026-11-01
 - cpu: Intel(R) Core(TM) i9-14900K
 - kernel: 7.0.0-38-generic
@@ -347,66 +359,66 @@ runs of the command.
 
 | Row | Size | Language | Lines | Tokens | Time | Tokens/s | Tokens/s past empty | Lines/s | Instructions/token |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| type check | 10 | Sisu | 1438 | 7435 | 11.4 ms | 653.7k | 1.2M | 126.4k | - |
-| type check | 10 | Rust | 1510 | 9661 | 57.0 ms | 169.5k | 310.3k | 26.5k | - |
-| type check | 10 | C++ | 1452 | 10323 | 26.0 ms | 397.8k | 682.3k | 56.0k | - |
-| type check | 10 | Go | 1599 | 9082 | 13.2 ms | 690.5k | 702.6k | 121.6k | - |
-| type check | 100 | Sisu | 14308 | 74215 | 23.3 ms | 3.2M | 4.0M | 613.0k | - |
-| type check | 100 | Rust | 15010 | 96331 | 339.1 ms | 284.1k | 307.6k | 44.3k | - |
-| type check | 100 | C++ | 13872 | 99423 | 137.6 ms | 722.6k | 784.3k | 100.8k | - |
-| type check | 100 | Go | 15819 | 90532 | 123.6 ms | 732.7k | 734.0k | 128.0k | - |
-| type check | 1000 | Sisu | 143008 | 742015 | 221.9 ms | 3.3M | 3.4M | 644.6k | - |
-| type check | 1000 | Rust | 150010 | 963031 | 3.60 s | 267.6k | 269.5k | 41.7k | - |
-| type check | 1000 | C++ | 138072 | 990423 | 1.33 s | 743.8k | 749.9k | 103.7k | - |
-| type check | 1000 | Go | 158019 | 905032 | 1.51 s | 598.1k | 598.2k | 104.4k | - |
-| type check and mir | 10 | Sisu | 1438 | 7435 | 6.9 ms | 1.1M | 2.0M | 209.6k | - |
-| type check and mir | 10 | Rust | 1510 | 9661 | 57.0 ms | 169.5k | 310.3k | 26.5k | - |
-| type check and mir | 10 | C++ | 1452 | 10323 | 26.0 ms | 397.8k | 682.3k | 56.0k | - |
-| type check and mir | 10 | Go | 1599 | 9082 | 13.2 ms | 690.5k | 702.6k | 121.6k | - |
-| type check and mir | 100 | Sisu | 14308 | 74215 | 43.5 ms | 1.7M | 1.8M | 328.7k | - |
-| type check and mir | 100 | Rust | 15010 | 96331 | 339.1 ms | 284.1k | 307.6k | 44.3k | - |
-| type check and mir | 100 | C++ | 13872 | 99423 | 137.6 ms | 722.6k | 784.3k | 100.8k | - |
-| type check and mir | 100 | Go | 15819 | 90532 | 123.6 ms | 732.7k | 734.0k | 128.0k | - |
-| type check and mir | 1000 | Sisu | 143008 | 742015 | 515.6 ms | 1.4M | 1.4M | 277.3k | - |
-| type check and mir | 1000 | Rust | 150010 | 963031 | 3.60 s | 267.6k | 269.5k | 41.7k | - |
-| type check and mir | 1000 | C++ | 138072 | 990423 | 1.33 s | 743.8k | 749.9k | 103.7k | - |
-| type check and mir | 1000 | Go | 158019 | 905032 | 1.51 s | 598.1k | 598.2k | 104.4k | - |
-| LLVM IR, no optimization | 10 | Sisu | 1438 | 7435 | 22.4 ms | 331.8k | 377.6k | 64.2k | - |
-| LLVM IR, no optimization | 10 | Rust | 1510 | 9661 | 102.4 ms | 94.4k | 130.0k | 14.8k | - |
-| LLVM IR, no optimization | 10 | C++ | 1452 | 10323 | 38.8 ms | 265.7k | 398.5k | 37.4k | - |
-| LLVM IR, no optimization | 10 | Go | 1599 | 9082 | none | - | - | - | - |
-| LLVM IR, no optimization | 100 | Sisu | 14308 | 74215 | 183.7 ms | 404.1k | 410.2k | 77.9k | - |
-| LLVM IR, no optimization | 100 | Rust | 15010 | 96331 | 701.1 ms | 137.4k | 143.1k | 21.4k | - |
-| LLVM IR, no optimization | 100 | C++ | 13872 | 99423 | 269.5 ms | 368.9k | 387.5k | 51.5k | - |
-| LLVM IR, no optimization | 100 | Go | 15819 | 90532 | none | - | - | - | - |
-| LLVM IR, no optimization | 1000 | Sisu | 143008 | 742015 | 2.15 s | 344.6k | 345.0k | 66.4k | - |
-| LLVM IR, no optimization | 1000 | Rust | 150010 | 963031 | 7.12 s | 135.3k | 135.8k | 21.1k | - |
-| LLVM IR, no optimization | 1000 | C++ | 138072 | 990423 | 2.69 s | 368.6k | 370.4k | 51.4k | - |
-| LLVM IR, no optimization | 1000 | Go | 158019 | 905032 | none | - | - | - | - |
-| executable, no optimization | 10 | Sisu | 1438 | 7435 | 77.0 ms | 96.5k | 230.0k | 18.7k | - |
-| executable, no optimization | 10 | Rust | 1510 | 9661 | 147.5 ms | 65.5k | 108.2k | 10.2k | - |
-| executable, no optimization | 10 | C++ | 1452 | 10323 | 108.1 ms | 95.5k | 194.4k | 13.4k | - |
-| executable, no optimization | 10 | Go | 1599 | 9082 | 206.0 ms | 44.1k | 85.2k | 7.8k | - |
-| executable, no optimization | 100 | Sisu | 14308 | 74215 | 343.5 ms | 216.1k | 248.4k | 41.7k | - |
-| executable, no optimization | 100 | Rust | 15010 | 96331 | 877.7 ms | 109.7k | 117.5k | 17.1k | - |
-| executable, no optimization | 100 | C++ | 13872 | 99423 | 654.6 ms | 151.9k | 165.8k | 21.2k | - |
-| executable, no optimization | 100 | Go | 15819 | 90532 | 947.6 ms | 95.5k | 106.7k | 16.7k | - |
-| executable, no optimization | 1000 | Sisu | 143008 | 742015 | 3.36 s | 221.1k | 224.1k | 42.6k | - |
-| executable, no optimization | 1000 | Rust | 150010 | 963031 | 8.68 s | 111.0k | 111.8k | 17.3k | - |
-| executable, no optimization | 1000 | C++ | 138072 | 990423 | 6.46 s | 153.2k | 154.5k | 21.4k | - |
-| executable, no optimization | 1000 | Go | 158019 | 905032 | 9.65 s | 93.8k | 94.8k | 16.4k | - |
-| executable, optimized | 10 | Sisu | 1438 | 7435 | 280.3 ms | 26.5k | 31.9k | 5.1k | - |
-| executable, optimized | 10 | Rust | 1510 | 9661 | 243.7 ms | 39.6k | 56.0k | 6.2k | - |
-| executable, optimized | 10 | C++ | 1452 | 10323 | 454.6 ms | 22.7k | 25.8k | 3.2k | - |
-| executable, optimized | 10 | Go | 1599 | 9082 | 220.6 ms | 41.2k | 62.1k | 7.2k | - |
-| executable, optimized | 100 | Sisu | 14308 | 74215 | 2.52 s | 29.5k | 30.0k | 5.7k | - |
-| executable, optimized | 100 | Rust | 15010 | 96331 | 1.75 s | 55.1k | 57.5k | 8.6k | - |
-| executable, optimized | 100 | C++ | 13872 | 99423 | 4.12 s | 24.1k | 24.5k | 3.4k | - |
-| executable, optimized | 100 | Go | 15819 | 90532 | 1.26 s | 71.9k | 76.5k | 12.6k | - |
-| executable, optimized | 1000 | Sisu | 143008 | 742015 | 26.69 s | 27.8k | 27.8k | 5.4k | - |
-| executable, optimized | 1000 | Rust | 150010 | 963031 | 18.54 s | 52.0k | 52.2k | 8.1k | - |
-| executable, optimized | 1000 | C++ | 138072 | 990423 | 44.41 s | 22.3k | 22.3k | 3.1k | - |
-| executable, optimized | 1000 | Go | 158019 | 905032 | 14.00 s | 64.7k | 65.0k | 11.3k | - |
+| type check | 10 | Sisu | 1439 | 7435 | 5.7 ms | 1.3M | 2.1M | 251.1k | - |
+| type check | 10 | Rust | 1511 | 9661 | 63.6 ms | 152.0k | 256.9k | 23.8k | - |
+| type check | 10 | C++ | 1453 | 10323 | 27.4 ms | 377.2k | 629.0k | 53.1k | - |
+| type check | 10 | Go | 1600 | 9082 | 12.7 ms | 714.7k | 728.2k | 125.9k | - |
+| type check | 100 | Sisu | 14309 | 74215 | 23.8 ms | 3.1M | 3.4M | 600.4k | - |
+| type check | 100 | Rust | 15011 | 96331 | 346.5 ms | 278.0k | 300.5k | 43.3k | - |
+| type check | 100 | C++ | 13873 | 99423 | 143.7 ms | 692.0k | 749.1k | 96.6k | - |
+| type check | 100 | Go | 15820 | 90532 | 123.3 ms | 734.1k | 735.5k | 128.3k | - |
+| type check | 1000 | Sisu | 143009 | 742015 | 216.6 ms | 3.4M | 3.5M | 660.2k | - |
+| type check | 1000 | Rust | 150011 | 963031 | 3.80 s | 253.1k | 254.8k | 39.4k | - |
+| type check | 1000 | C++ | 138073 | 990423 | 1.35 s | 733.9k | 739.9k | 102.3k | - |
+| type check | 1000 | Go | 158020 | 905032 | 1.48 s | 612.0k | 612.1k | 106.9k | - |
+| type check and mir | 10 | Sisu | 1439 | 7435 | 7.9 ms | 941.8k | 1.4M | 182.3k | - |
+| type check and mir | 10 | Rust | 1511 | 9661 | 63.6 ms | 152.0k | 256.9k | 23.8k | - |
+| type check and mir | 10 | C++ | 1453 | 10323 | 27.4 ms | 377.2k | 629.0k | 53.1k | - |
+| type check and mir | 10 | Go | 1600 | 9082 | 12.7 ms | 714.7k | 728.2k | 125.9k | - |
+| type check and mir | 100 | Sisu | 14309 | 74215 | 46.6 ms | 1.6M | 1.7M | 307.1k | - |
+| type check and mir | 100 | Rust | 15011 | 96331 | 346.5 ms | 278.0k | 300.5k | 43.3k | - |
+| type check and mir | 100 | C++ | 13873 | 99423 | 143.7 ms | 692.0k | 749.1k | 96.6k | - |
+| type check and mir | 100 | Go | 15820 | 90532 | 123.3 ms | 734.1k | 735.5k | 128.3k | - |
+| type check and mir | 1000 | Sisu | 143009 | 742015 | 537.9 ms | 1.4M | 1.4M | 265.9k | - |
+| type check and mir | 1000 | Rust | 150011 | 963031 | 3.80 s | 253.1k | 254.8k | 39.4k | - |
+| type check and mir | 1000 | C++ | 138073 | 990423 | 1.35 s | 733.9k | 739.9k | 102.3k | - |
+| type check and mir | 1000 | Go | 158020 | 905032 | 1.48 s | 612.0k | 612.1k | 106.9k | - |
+| LLVM IR, no optimization | 10 | Sisu | 1439 | 7435 | 21.2 ms | 350.1k | 418.2k | 67.8k | - |
+| LLVM IR, no optimization | 10 | Rust | 1511 | 9661 | 106.9 ms | 90.4k | 119.8k | 14.1k | - |
+| LLVM IR, no optimization | 10 | C++ | 1453 | 10323 | 41.4 ms | 249.6k | 387.0k | 35.1k | - |
+| LLVM IR, no optimization | 10 | Go | 1600 | 9082 | none | - | - | - | - |
+| LLVM IR, no optimization | 100 | Sisu | 14309 | 74215 | 190.0 ms | 390.6k | 397.9k | 75.3k | - |
+| LLVM IR, no optimization | 100 | Rust | 15011 | 96331 | 693.0 ms | 139.0k | 144.5k | 21.7k | - |
+| LLVM IR, no optimization | 100 | C++ | 13873 | 99423 | 283.1 ms | 351.1k | 370.3k | 49.0k | - |
+| LLVM IR, no optimization | 100 | Go | 15820 | 90532 | none | - | - | - | - |
+| LLVM IR, no optimization | 1000 | Sisu | 143009 | 742015 | 2.14 s | 346.8k | 347.4k | 66.8k | - |
+| LLVM IR, no optimization | 1000 | Rust | 150011 | 963031 | 7.22 s | 133.4k | 133.9k | 20.8k | - |
+| LLVM IR, no optimization | 1000 | C++ | 138073 | 990423 | 2.73 s | 362.8k | 364.8k | 50.6k | - |
+| LLVM IR, no optimization | 1000 | Go | 158020 | 905032 | none | - | - | - | - |
+| executable, no optimization | 10 | Sisu | 1439 | 7435 | 82.2 ms | 90.5k | 224.3k | 17.5k | - |
+| executable, no optimization | 10 | Rust | 1511 | 9661 | 146.6 ms | 65.9k | 97.6k | 10.3k | - |
+| executable, no optimization | 10 | C++ | 1453 | 10323 | 114.5 ms | 90.1k | 161.5k | 12.7k | - |
+| executable, no optimization | 10 | Go | 1600 | 9082 | 182.4 ms | 49.8k | 80.0k | 8.8k | - |
+| executable, no optimization | 100 | Sisu | 14309 | 74215 | 346.2 ms | 214.3k | 249.7k | 41.3k | - |
+| executable, no optimization | 100 | Rust | 15011 | 96331 | 867.8 ms | 111.0k | 117.4k | 17.3k | - |
+| executable, no optimization | 100 | C++ | 13873 | 99423 | 672.3 ms | 147.9k | 159.9k | 20.6k | - |
+| executable, no optimization | 100 | Go | 15820 | 90532 | 909.5 ms | 99.5k | 107.7k | 17.4k | - |
+| executable, no optimization | 1000 | Sisu | 143009 | 742015 | 3.35 s | 221.4k | 224.7k | 42.7k | - |
+| executable, no optimization | 1000 | Rust | 150011 | 963031 | 8.76 s | 109.9k | 110.5k | 17.1k | - |
+| executable, no optimization | 1000 | C++ | 138073 | 990423 | 6.54 s | 151.5k | 152.7k | 21.1k | - |
+| executable, no optimization | 1000 | Go | 158020 | 905032 | 9.86 s | 91.8k | 92.4k | 16.0k | - |
+| executable, optimized | 10 | Sisu | 1439 | 7435 | 287.4 ms | 25.9k | 31.3k | 5.0k | - |
+| executable, optimized | 10 | Rust | 1511 | 9661 | 297.0 ms | 32.5k | 39.0k | 5.1k | - |
+| executable, optimized | 10 | C++ | 1453 | 10323 | 462.1 ms | 22.3k | 25.3k | 3.1k | - |
+| executable, optimized | 10 | Go | 1600 | 9082 | 207.8 ms | 43.7k | 62.9k | 7.7k | - |
+| executable, optimized | 100 | Sisu | 14309 | 74215 | 2.68 s | 27.7k | 28.2k | 5.3k | - |
+| executable, optimized | 100 | Rust | 15011 | 96331 | 2.21 s | 43.5k | 44.5k | 6.8k | - |
+| executable, optimized | 100 | C++ | 13873 | 99423 | 4.11 s | 24.2k | 24.5k | 3.4k | - |
+| executable, optimized | 100 | Go | 15820 | 90532 | 1.31 s | 69.3k | 72.8k | 12.1k | - |
+| executable, optimized | 1000 | Sisu | 143009 | 742015 | 27.50 s | 27.0k | 27.0k | 5.2k | - |
+| executable, optimized | 1000 | Rust | 150011 | 963031 | 23.02 s | 41.8k | 41.9k | 6.5k | - |
+| executable, optimized | 1000 | C++ | 138073 | 990423 | 44.84 s | 22.1k | 22.1k | 3.1k | - |
+| executable, optimized | 1000 | Go | 158020 | 905032 | 14.32 s | 63.2k | 63.5k | 11.0k | - |
 
 ### What the columns mean
 
@@ -415,12 +427,12 @@ runs of the command.
   no optimization` and `executable, optimized`.
 - **Lines** is the number of lines of the input, and **Tokens** is its
   number of tokens. One scanner counts the tokens, the same way for all four
-  languages: a word or a number is one token, a string is one token, and each
+  languages. A word or a number is one token. A string is one token. Each
   other character that is not white space is one token. A comment is none.
   This is not the token count of `sisu build --timings`. The same program
   has a different number of tokens in each language.
 - **Time** is the wall time of the process, except for the Go type-check cell
-  (see below). The process runs on one thread.
+  (see below). The compiler does its work on one thread.
 - **Tokens/s** is the tokens divided by the time. **Tokens/s past empty** is
   the tokens divided by the time less the time of an empty program (a `main`
   that returns) in the same row. It removes the start-up cost of the
@@ -477,7 +489,8 @@ mise exec go -- make compile-speed      # when mise installs Go
 The target builds `sisu` in release mode, and the script prints the table
 above. It skips a language whose compiler is not on `PATH`. The full run
 takes about 18 minutes on the machine above; `ARGS='--sizes 10,100'` runs
-less. Build outputs go to `target/compile-speed/`. The script checks the
+less. `make compile-speed` has run on Linux only. Build outputs go to
+`target/compile-speed/`. The script checks the
 style of the units with `rustfmt`, `clang-format` and `gofmt`, and skips a
 check when its tool is not on `PATH`. It needs `perf` for the last column.
 
