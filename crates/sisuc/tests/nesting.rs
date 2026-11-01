@@ -232,9 +232,8 @@ const TREE: (&str, &str) = ("nesting is too deep", "the limit is 256 levels");
 
 /// The message and help of the nesting error for a chain, such as `a + b + c`.
 const CHAIN: (&str, &str) = (
-    "this chain nests deeper than 256 levels",
-    "each operator, call, field or index in a chain adds one level: put a part of the chain in \
-     a `let`",
+    "this chain makes the nesting deeper than 256 levels",
+    "put a part of the chain in a `let`",
 );
 
 /// One level past the limit: `check` exits 1 with the one message of `form`, at the failing
@@ -408,7 +407,7 @@ fn power_right_side_should_count_one_level_of_nesting_more_than_its_operator() {
 /// WHEN `check` runs on it
 /// THEN it reports the nesting error for nested constructs, since the chain is the smaller part
 #[test]
-fn short_chain_in_deep_parentheses_should_report_the_nesting_form() {
+fn short_chain_in_deep_parentheses_should_report_the_tree_form() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let source = format!(
         "fn main() {{\n    print({}1{}{})\n}}\n",
@@ -422,6 +421,33 @@ fn short_chain_in_deep_parentheses_should_report_the_nesting_form() {
     assert_eq!(stderr.matches("error[").count(), 1, "{stderr}");
     assert!(
         stderr.starts_with(&format!("error[E0071]: {}", TREE.0)),
+        "{stderr}"
+    );
+}
+
+/// GIVEN a sum of 128 `+`, then `??`, 252 parentheses and a second `??`
+/// WHEN `check` runs on it
+/// THEN the depth runs out at the second `??` with the error for nested constructs
+///
+/// The right side of a `??` continues the chain of `??` above it. The sum is beside that path, so
+/// its links do not count: the second `??` is the second link, under 252 parentheses.
+#[test]
+fn coalesce_right_side_should_not_count_the_links_on_its_left() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let source = format!(
+        "fn main() {{\n    print(1{} ?? {}1{} ?? 1)\n}}\n",
+        " + 1".repeat(128),
+        "(".repeat(252),
+        ")".repeat(252)
+    );
+    fs::write(dir.join("nesting_coalesce_side.sisu"), source).expect("writes");
+    let out = sisu(dir, &["check", "nesting_coalesce_side.sisu"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.starts_with(&format!(
+            "error[E0071]: {}\n --> nesting_coalesce_side.sisu:2:1034\n",
+            TREE.0
+        )),
         "{stderr}"
     );
 }

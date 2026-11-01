@@ -3055,10 +3055,11 @@ impl<'a> Parser<'a> {
         self.binary_chain(min, 0)
     }
 
-    /// `binary`, as part of a chain that has `links` operators before it: the right side of a
-    /// `??` continues the chain of `??` on its left.
-    fn binary_chain(&mut self, min: u8, mut links: usize) -> Result<Expr, Diagnostic> {
+    /// `binary`, as the right side of `coalesces` nested `??`, each the parent of the next: the
+    /// right side of a `??` continues the chain of `??` above it, not the operators on its left.
+    fn binary_chain(&mut self, min: u8, coalesces: usize) -> Result<Expr, Diagnostic> {
         let base = self.depth;
+        let mut links = coalesces;
         let mut lhs = self.unary()?;
         loop {
             let kind = &self.peek().kind;
@@ -3086,7 +3087,7 @@ impl<'a> Parser<'a> {
                 self.depth = base + 1;
                 // `??` is right-associative: its right side starts at its own level.
                 let rhs = if matches!(op, Infix::Coalesce) {
-                    self.binary_chain(level, links)?
+                    self.binary_chain(level, coalesces + 1)?
                 } else {
                     self.binary(level + 1)?
                 };

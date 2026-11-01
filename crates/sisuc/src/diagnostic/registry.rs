@@ -3756,11 +3756,9 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 limit,
                 form: NestingForm::Chain,
-            } => Diagnostic::coded(code, at, format!("this chain nests deeper than {limit} levels"))
-                .with_help(
-                    "each operator, call, field or index in a chain adds one level: put a part \
-                     of the chain in a `let`",
-                ),
+            } => Diagnostic::coded(code, at, format!("this chain makes the nesting deeper than {limit} levels"))
+                .with_label("each operator, call, field or index in a chain adds one level")
+                .with_help("put a part of the chain in a `let`"),
             DiagnosticKind::NestingTooDeep {
                 at,
                 limit,
