@@ -612,13 +612,15 @@ impl Gen<'_> {
     }
 
     fn instance_variant(&mut self, variant: &GVariant, args: &[Ty], params: usize) -> Variant {
-        Variant {
+        let made = Variant {
             name: variant.name.clone(),
             fields: variant.fields.iter().map(|f| self.lower(f, args)).collect(),
             labels: Vec::new(),
             recursive: variant.recursive,
             inferable: GTy::name_all(&variant.fields, params),
-        }
+        };
+        self.scope.note(&made);
+        made
     }
 
     /// A generic function `fn h<T>(v: T, ...) -> R { e }`. The value `e` comes from the arguments,

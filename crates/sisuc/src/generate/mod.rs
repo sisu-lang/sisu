@@ -26,6 +26,9 @@ pub(crate) struct Generated {
     pub(crate) stdin: String,
     /// The known sites `main` prints, in the order it prints them (decision 3).
     pub(crate) known: Vec<Known>,
+    /// The lines `@d<n> <value>` that the marked statements of `shapes` and of the functions it
+    /// calls print, in the order a run of `shapes` to its end prints them.
+    pub(crate) expected: Vec<String>,
     /// The bound sites of `program`, in the order it holds them (property 6).
     pub(crate) bound_sites: Vec<BoundSite>,
     /// The program's cost, as decision 5 counts it.
@@ -99,6 +102,9 @@ const MAX_LOOPS: usize = 3;
 const DEPTHS: usize = 5;
 /// Statements and expression nodes a program may hold; each rule spends one.
 const FUEL: u64 = 400;
+/// The most size of a compound part of an interpolation (decision 5): an array, a class object or
+/// an enum value that `{x:#}` can lay out over several lines.
+const PART_SIZE: u64 = 16;
 /// The most an expression nests.
 const MAX_NESTING: u32 = 6;
 /// The most chars of a line of the stdin.
@@ -114,10 +120,13 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
     // The aliases read a stream of their own, so that the choices of every other rule stay where
     // they were, with or without aliases.
     let rotated: Vec<u8> = data.iter().map(|b| b.rotate_left(3)).collect();
+    // So do the compound parts of an interpolation: a program with none is the same as it was.
+    let mixed: Vec<u8> = data.iter().map(|b| b.rotate_left(5)).collect();
     let mut g = Gen::new(data);
     g.ru = Unstructured::new(&reversed);
     g.au = Unstructured::new(&rotated);
-    let (cost, known) = g.program();
+    g.cu = Unstructured::new(&mixed);
+    let (cost, known, expected) = g.program();
     // Only the tests read the cost.
     #[cfg(not(test))]
     let _ = cost;
@@ -136,6 +145,7 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
         rewritten: g.w.out.rewritten,
         stdin: g.stdin,
         known,
+        expected,
         bound_sites: g.bound_sites,
         #[cfg(test)]
         cost,
@@ -190,6 +200,9 @@ struct Gen<'a> {
     ru: Unstructured<'a>,
     /// What chooses the type aliases and where they are used, apart from `u` and `ru`.
     au: Unstructured<'a>,
+    /// What chooses whether a part of an interpolation is a compound value, apart from `u`,
+    /// `ru` and `au`, so that a part that is not one draws what it drew before.
+    cu: Unstructured<'a>,
     /// Whether an expression of the statement being written so far has an effect or may
     /// panic, so one after it may not move before the statement (decision 2).
     effect: bool,
@@ -223,6 +236,7 @@ impl<'a> Gen<'a> {
             bare: false,
             ru: Unstructured::new(&[]),
             au: Unstructured::new(&[]),
+            cu: Unstructured::new(&[]),
             effect: false,
             returns: false,
             bound_sites: Vec::new(),

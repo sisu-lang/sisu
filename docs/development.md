@@ -441,7 +441,14 @@ must pass six properties:
    comparison; the text and the value of a `dbg` line are compared. So no
    rewrite changes the argument of a `dbg`.
 5. The program prints the integer answers the generator worked out itself, or
-   panics with the overflow or division by zero it expects.
+   panics with the overflow or division by zero it expects. Each method that
+   the generator writes for an interface with an `i64` or `string` result (or
+   a `T` result, when the argument of the conformance is one of them) returns
+   a value that no other method returns. Each call of such a method in
+   `shapes`, or in a generic function that it calls, prints a line
+   `@d<n> <value>`. These lines are, in order, a prefix of the values of the methods
+   that a correct dispatch reaches; a `main` that returns before the calls
+   prints none.
 6. A broken bound gives E0154 and nothing else. For each bound site, an
    argument of a call of a bounded generic function or class whose parameter
    is the bare type parameter that no earlier argument names, a copy of the
