@@ -8,7 +8,7 @@ use super::generic::{Site, named_params};
 use super::unused_names::Used;
 use super::{Checked, Checker, Declared, Holder, Poisoned, UNKNOWN, as_optional, type_of, wrap};
 use crate::ast;
-use crate::diagnostic::{Annotate, Definition, Diagnostic, DiagnosticKind, Peel};
+use crate::diagnostic::{Annotate, Definition, Diagnostic, DiagnosticKind, Peel, UnwrapHelp};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, InterfaceId, Type, TypeArgs, TypeKind};
@@ -110,6 +110,7 @@ impl Checker<'_> {
                     left: self.type_name(payload),
                     member: name.name.to_string(),
                 }),
+                unwrap: UnwrapHelp::It,
             };
             self.diagnostics.push(kind.into());
             return Err(Poisoned::error());
@@ -687,6 +688,7 @@ fn may_be_none(receiver: &ast::Expr, name: &ast::Ident, fix: bool, write: bool) 
         access: fix.then(|| Span::new(receiver.span.end(), name.span.start())),
         write,
         peel: None,
+        unwrap: UnwrapHelp::It,
     }
     .into()
 }

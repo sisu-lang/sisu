@@ -1,0 +1,10 @@
+error[E0062]: `m?.items` may be `None`
+ --> E0062-element-safe.sisu:3:5
+  |
+3 |     m?.items[0] = 2
+  |     ^^^^^^^^
+  |
+  = help: unwrap `m` with `if let`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0062
