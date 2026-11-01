@@ -1,8 +1,9 @@
 //! Array expressions: literals and their element join, `[v; n]`, indexing and methods.
 
+use super::any::widen;
 use super::expr::{fits, literal_type, no_member, path, typed};
 use super::generic::{Rank, mark};
-use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, payload, type_of, wrap};
+use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, payload, type_of};
 use crate::ast;
 use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Literal};
 use crate::source::Span;
@@ -104,11 +105,17 @@ impl Checker<'_> {
                 };
                 match joined {
                     Some(t) if fits(t, ty) => {}
+                    // An object and an `any` type that it converts to join to the `any` type.
                     Some(t) if !fits(ty, t) => {
-                        let d = self.mismatch(e.span, Some(e), t, ty);
-                        self.diagnostics.push(d);
-                        failed = true;
-                        break;
+                        if let Some(w) = self.any_join(t, ty) {
+                            self.instantiates = true;
+                            joined = Some(w);
+                        } else {
+                            let d = self.mismatch(e.span, Some(e), t, ty);
+                            self.diagnostics.push(d);
+                            failed = true;
+                            break;
+                        }
                     }
                     _ => joined = Some(ty),
                 }
@@ -117,7 +124,7 @@ impl Checker<'_> {
             if let Some(t) = joined.filter(|_| !failed) {
                 let short = slots.iter().zip(elements).find_map(|(slot, e)| {
                     let ty = slot.as_ref().and_then(type_of)?;
-                    (!fits(t, ty)).then_some((e, ty))
+                    (!fits(t, ty) && !self.converts_to_any(ty, t)).then_some((e, ty))
                 });
                 if let Some((e, ty)) = short {
                     let d = self.mismatch(e.span, Some(e), t, ty);
@@ -163,7 +170,7 @@ impl Checker<'_> {
             .into_iter()
             .map(|slot| {
                 match slot.expect("the three waves should check every element, one rank each") {
-                    Ok(e) if e.ty != element => Ok(wrap(e, element)),
+                    Ok(e) if e.ty != element => Ok(widen(e, element)),
                     checked => checked,
                 }
             })

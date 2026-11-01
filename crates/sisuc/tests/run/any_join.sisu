@@ -1,0 +1,142 @@
+// GIVEN an interface `I`, an interface `J` that inherits `I`, classes that conform to them, and
+// values of an `any` type, of an object type and of an optional `any` type
+// WHEN they meet where an `if`, a `match`, a `loop` with `break` values or an array literal joins
+// them, with the `any` value first or last, and with an expected `any`, optional `any`, or no type
+// THEN the join is the `any` type, with an optional layer when one side has it, every value is
+// converted to it, and the program runs the same plain, at -O2, under Valgrind and with checks
+interface I {
+    fn v(self) -> i64
+}
+
+interface J: I {
+    fn w(self) -> i64
+}
+
+class C: I {
+    fn v(self) -> i64 {
+        42
+    }
+}
+
+class D: I {
+    fn v(self) -> i64 {
+        7
+    }
+}
+
+class K: J {
+    fn v(self) -> i64 {
+        5
+    }
+
+    fn w(self) -> i64 {
+        6
+    }
+}
+
+fn or_minus(o: (any I)?) -> i64 {
+    if let x = o {
+        x.v()
+    } else {
+        -1
+    }
+}
+
+fn main() {
+    let cond = true
+    let n = 1
+    let a: any I = C()
+    let o: (any I)? = D()
+    let j: any J = K()
+
+    // The `any` value first, and last, with no expected type.
+    let r = if cond { a } else { D() }
+    print(r.v()) // 42
+    let r = if cond { D() } else { a }
+    print(r.v()) // 7
+    let r = match n {
+        0 => a
+        _ => D()
+    }
+    print(r.v()) // 7
+    let r = match n {
+        0 => D()
+        _ => a
+    }
+    print(r.v()) // 42
+
+    // An optional `any` joins with an object, and the object is wrapped.
+    let r = if cond { o } else { C() }
+    print(or_minus(r)) // 7
+    let r = if cond { C() } else { o }
+    print(or_minus(r)) // 42
+
+    // An `any` that inherits joins with one that it inherits, in either order.
+    let r = if cond { j } else { a }
+    print(r.v()) // 5
+    let r = if cond { a } else { j }
+    print(r.v()) // 42
+    let r = if cond { K() } else { a }
+    print(r.v()) // 5
+
+    // Three arms: the join grows, and the first arm converts to it.
+    let r = match n {
+        0 => K()
+        1 => j
+        _ => a
+    }
+    print(r.v()) // 5
+
+    // The expected type is `any I` or `(any I)?`.
+    let r: any I = if cond { a } else { D() }
+    print(r.v()) // 42
+    let r: (any I)? = if cond { a } else { D() }
+    print(or_minus(r)) // 42
+
+    // `break` values: one loop type for all of them, and the earlier values convert.
+    let r = loop {
+        if cond {
+            break a
+        }
+        break D()
+    }
+    print(r.v()) // 42
+    let r = loop {
+        if !cond {
+            break D()
+        }
+        break a
+    }
+    print(r.v()) // 42
+    let r: (any I)? = loop {
+        if !cond {
+            break a
+        }
+        break C()
+    }
+    print(or_minus(r)) // 42
+    let r: (any I)? = loop {
+        if cond {
+            break a
+        }
+        break C()
+    }
+    print(or_minus(r)) // 42
+    let r = loop {
+        if !cond {
+            break j
+        }
+        break a
+    }
+    print(r.v()) // 42
+
+    // Array literals.
+    let xs = [a, D()]
+    print(xs[0].v() + xs[1].v()) // 49
+    let xs = [D(), a, j]
+    print(xs[0].v() + xs[1].v() + xs[2].v()) // 54
+    let xs = [o, C()]
+    print(or_minus(xs[0]) + or_minus(xs[1])) // 49
+    let xs: [(any I)?] = [a, C(), None]
+    print(or_minus(xs[0]) + or_minus(xs[1]) + or_minus(xs[2])) // 83
+}

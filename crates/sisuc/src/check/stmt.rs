@@ -2,6 +2,7 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use super::any::{is_target, widen};
 use super::array::optional_array;
 use super::expr::{fits, local};
 use super::generic::Ahead;
@@ -10,7 +11,7 @@ use super::prelude::PRELUDE;
 use super::unused_names::{Owner, Pending};
 use super::{
     Binding, BindingKind, Checked, CheckedBlock, Checker, Declared, LoopContext, LoopFrame,
-    LoopKind, Poisoned, UNKNOWN, block_expr, built_in_type, starts_in, tail, type_of, wrap,
+    LoopKind, Poisoned, UNKNOWN, block_expr, built_in_type, starts_in, tail, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ClashForm, ClashKind, DiagnosticKind, MismatchSource, Unwrap, closest};
@@ -1210,39 +1211,67 @@ impl Checker<'_> {
                 // Checking `v` can set the first type, through a `break` of this loop inside it.
                 let frame = self.frame(target);
                 frame.valued.get_or_insert(span);
-                match (frame.expected, frame.first) {
-                    (Some(ty), _) if ty == UNKNOWN => checked,
-                    // A value that fits the expected type keeps its own, as a block's value does,
-                    // and joins the others as `if` branches do: a `T` and a `T?` make a `T?`.
-                    (Some(ty), Some((first, _))) if fits(ty, got) && fits(first, got) => {
-                        self.against(v, checked, Some(first), None).0
-                    }
-                    (Some(ty), first) if fits(ty, got) => {
-                        frame.widened = first.is_some();
-                        frame.first = Some((got, span));
-                        checked
-                    }
-                    // A value that converts to the expected `any` type gives the loop that type.
-                    (Some(ty), _) => {
-                        let converted = self.against(v, checked, Some(ty), None).0;
-                        if converted.is_ok() {
-                            self.frame(target).first.get_or_insert((ty, span));
-                        }
-                        converted
-                    }
-                    (None, Some((first, at))) => {
-                        self.against(v, checked, Some(first), Some(MismatchSource::Break(at)))
-                            .0
-                    }
-                    (None, None) => {
-                        frame.first = Some((got, span));
-                        checked
-                    }
+                let (expected, first) = (frame.expected, frame.first);
+                if expected == Some(UNKNOWN) {
+                    checked
+                } else {
+                    self.join_break((v, span), (checked, got), (expected, first), target)
                 }
             }
         };
         if checked.is_err() {
             self.frame(target).failed = true;
+        }
+        checked
+    }
+
+    /// The value `checked` of the `break` `v`, of type `got`, joined with the loop's first value:
+    /// an `any` type that `got` converts to is the type of the loop, as the arms of an `if` join.
+    /// A value that fits the expected type keeps its own, as a block's value does, and joins the
+    /// others as `if` branches do: a `T` and a `T?` make a `T?`, an object and an `any` type that
+    /// it converts to make the `any` type. The values before it are converted at the loop's end
+    /// when the type grows.
+    fn join_break(
+        &mut self,
+        (v, span): (&ast::Expr, Span),
+        (checked, got): (Checked, Type),
+        (expected, first): (Option<Type>, Option<(Type, Span)>),
+        target: usize,
+    ) -> Checked {
+        // A value that does not fit the expected type converts to it, or is the mismatch.
+        let (checked, got) = match expected {
+            Some(ty) if !fits(ty, got) => (self.against(v, checked, Some(ty), None).0, ty),
+            _ => (checked, got),
+        };
+        let value = checked?;
+        let Some((first, at)) = first else {
+            self.frame(target).first = Some((got, span));
+            return Ok(value);
+        };
+        // Without an expected type, a `T` and a `T?` do not join.
+        let joined = if first == got || expected.is_some() && fits(first, got) {
+            Some(first)
+        } else if expected.is_some() && fits(got, first) {
+            Some(got)
+        } else {
+            self.any_join(first, got)
+        };
+        let Some(joined) = joined else {
+            return self
+                .against(v, Ok(value), Some(first), Some(MismatchSource::Break(at)))
+                .0;
+        };
+        let checked = if got == joined {
+            Ok(value)
+        } else {
+            self.against(v, Ok(value), Some(joined), None).0
+        };
+        if joined != first {
+            let frame = self.frame(target);
+            frame.widened = true;
+            frame.first = Some((joined, span));
+            // Converting the values before makes a table, as a conversion does.
+            self.instantiates |= is_target(joined);
         }
         checked
     }
@@ -1651,7 +1680,7 @@ fn wrap_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool) {
             span: value.span,
         };
         let payload = std::mem::replace(&mut **value, placeholder);
-        **value = wrap(payload, ty);
+        **value = widen(payload, ty);
     }
 }
 

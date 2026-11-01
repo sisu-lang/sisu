@@ -373,6 +373,18 @@ impl Checker<'_> {
             && self.converts_now(got)
     }
 
+    /// The type that values of types `a` and `b` join to when one converts to the other: the `any`
+    /// type, with its optional layer. A join never makes an `any` type that neither side has.
+    pub(super) fn any_join(&mut self, a: Type, b: Type) -> Option<Type> {
+        if self.converts_to_any(b, a) {
+            Some(a)
+        } else if self.converts_to_any(a, b) {
+            Some(b)
+        } else {
+            None
+        }
+    }
+
     /// Whether a value of type `got`, which conforms, converts to `any` without a box: an object,
     /// an `any`, or a type whose values are objects or `any`s (`AnyObject`).
     fn converts_now(&mut self, got: Type) -> bool {
@@ -401,6 +413,23 @@ pub(super) fn split_context(expected: Option<Type>) -> (Option<Type>, Option<Typ
         expected.filter(|&want| !is_target(want)),
         expected.filter(|&want| is_target(want)),
     )
+}
+
+/// `e`, of a type that a join widened, as `want`. That is an `any` type, an optional `any` type,
+/// or another optional.
+pub(super) fn widen(e: tir::Expr, want: Type) -> tir::Expr {
+    match want.kind() {
+        TypeKind::Any(..) => to_any(e, want),
+        TypeKind::Optional(payload) if matches!(payload.kind(), TypeKind::Any(..)) => {
+            let e = if e.ty == payload {
+                e
+            } else {
+                to_any(e, payload)
+            };
+            wrap(e, want)
+        }
+        _ => wrap(e, want),
+    }
 }
 
 /// `e` as the `any` type `target`.

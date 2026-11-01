@@ -1,5 +1,6 @@
 //! Branches: `if`, `if let` and the join of branch types.
 
+use super::any::is_target;
 use super::expr::fits;
 use super::generic::{Ahead, Rank};
 use super::pattern::{LetPattern, arm_key};
@@ -218,19 +219,25 @@ impl Checker<'_> {
                 Some((k, j)) if t == Type::optional(j) => {
                     joined = Some((k, t));
                 }
+                // An object and an `any` type that it converts to join to the `any` type.
                 Some((k, j)) => {
-                    let d = self.join_mismatch(sources, expected, (k, j), (i, t));
-                    self.diagnostics.push(d);
-                    failed = true;
-                    break;
+                    if let Some(w) = self.any_join(j, t) {
+                        joined = Some((if w == t { i } else { k }, w));
+                    } else {
+                        let d = self.join_mismatch(sources, expected, (k, j), (i, t));
+                        self.diagnostics.push(d);
+                        failed = true;
+                        break;
+                    }
                 }
             }
         }
         // The join can grow past an earlier branch: each converts through one layer only.
         if let Some((k, j)) = joined.filter(|_| !failed) {
-            let short = blocks.iter().enumerate().find_map(|(i, block)| {
-                let t = block_type(block)?;
-                (t != Type::NEVER && !fits(j, t)).then_some((i, t))
+            let types: Vec<Option<Type>> = blocks.iter().map(block_type).collect();
+            let short = types.into_iter().enumerate().find_map(|(i, t)| {
+                let t = t?;
+                (t != Type::NEVER && !fits(j, t) && !self.converts_to_any(t, j)).then_some((i, t))
             });
             if let Some(other) = short {
                 let d = self.join_mismatch(sources, expected, (k, j), other);
@@ -241,9 +248,13 @@ impl Checker<'_> {
         let ty = match joined {
             _ if failed => None,
             Some((_, ty)) => {
-                for block in &mut blocks {
+                for (block, source) in blocks.iter_mut().zip(sources) {
                     if block_type(block).is_some_and(|t| t != ty && t != Type::NEVER) {
-                        wrap_block(block, ty);
+                        if is_target(ty) {
+                            self.any_block(block, ty, source.span);
+                        } else {
+                            wrap_block(block, ty);
+                        }
                     }
                 }
                 Some(ty)

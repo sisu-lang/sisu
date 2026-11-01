@@ -462,3 +462,112 @@ fn a_conversion_should_make_the_program_go_through_mono() {
         assert!(program.instantiates, "{row}");
     }
 }
+
+/// An object and an `any` type that it converts to join to the `any` type, at every site that
+/// joins: the arms of an `if` and a `match`, the `break` values of a loop, an array literal. The
+/// values that came before convert too.
+#[test]
+fn a_join_should_make_the_any_type_where_one_side_converts_to_it() {
+    let sites = [
+        ("an `if`", "if c { {x} } else { {y} }"),
+        (
+            "a `match`",
+            "match n {\n        0 => {x}\n        _ => {y}\n    }",
+        ),
+        (
+            "a `loop`",
+            "loop {\n        if c { break {x} }\n        break {y}\n    }",
+        ),
+        ("an array literal", "[{x}, {y}][0]"),
+    ];
+    let pairs = [
+        ("an `any` value, then an object", "s", "Rect(w: 1.0)"),
+        ("an object, then an `any` value", "Rect(w: 1.0)", "s"),
+        ("an `any` value, then an optional one", "s", "o"),
+        (
+            "an optional `any` value, then an object",
+            "o",
+            "Circle(r: 1.0)",
+        ),
+        (
+            "an object, then an optional `any` value",
+            "Circle(r: 1.0)",
+            "o",
+        ),
+        (
+            "an `any` that inherits, then the one it inherits",
+            "x",
+            "n2",
+        ),
+        (
+            "an `any` that is inherited, then the one that inherits",
+            "n2",
+            "x",
+        ),
+        (
+            "an object of the inheriting interface, then an `any`",
+            "Cube(s: 1.0)",
+            "n2",
+        ),
+    ];
+    let locals = [
+        ("s", "let s: any Shape = Circle(r: 1.0)\n    "),
+        ("o", "let o: (any Shape)? = None\n    "),
+        ("x", "let x: any Solid = Cube(s: 1.0)\n    "),
+        ("n2", "let n2: any Named = x\n    "),
+    ];
+    for (site, shape) in sites {
+        let mut header = String::new();
+        for (name, text) in [("c", "let c = true\n    "), ("n", "let n = 1\n    ")] {
+            if shape.contains(&format!(" {name} ")) {
+                header.push_str(text);
+            }
+        }
+        for (pair, x, y) in pairs {
+            let mut body = header.clone();
+            for (name, text) in locals {
+                if [x, y].contains(&name) || (name == "x" && [x, y].contains(&"n2")) {
+                    body.push_str(text);
+                }
+            }
+            let join = shape.replace("{x}", x).replace("{y}", y);
+            let src = format!("fn main() {{\n    {body}let r = {join}\n}}");
+            clean_row(&format!("{site}: {pair}"), &format!("{DECLS}{src}"));
+        }
+    }
+}
+
+/// A join never makes an `any` type that neither side has, and an optional object does not
+/// convert: the mismatch keeps its wording.
+#[test]
+fn a_join_should_stay_a_mismatch_where_neither_side_converts_to_the_other() {
+    for (row, src, expected) in [
+        (
+            "two classes that both conform, in an `if`",
+            "fn main() {\n    let r = if true { Circle(r: 1.0) } else { Rect(w: 1.0) }\n}",
+            vec![(Code::Mismatch, (2, 47))],
+        ),
+        (
+            "two classes that both conform, as `break` values",
+            "fn main() {\n    let r = loop {\n        if true { break Circle(r: 1.0) }\n        break Rect(w: 1.0)\n    }\n}",
+            vec![(Code::Mismatch, (4, 15))],
+        ),
+        (
+            "two classes that both conform, in an array literal",
+            "fn main() {\n    let r = [Circle(r: 1.0), Rect(w: 1.0)]\n}",
+            vec![(Code::Mismatch, (2, 30))],
+        ),
+        (
+            "an optional object and an `any` value",
+            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let o: Circle? = None\n    let r = if true { o } else { s }\n}",
+            vec![(Code::Mismatch, (4, 34))],
+        ),
+        (
+            "an `any` value and an object that does not conform to its interface",
+            "fn main() {\n    let s: any Solid = Cube(s: 1.0)\n    let r = if true { s } else { Circle(r: 1.0) }\n}",
+            vec![(Code::Mismatch, (3, 34))],
+        ),
+    ] {
+        codes_after(row, src, &expected);
+    }
+}
