@@ -96,12 +96,12 @@ impl Checker<'_> {
         for (i, e) in elements.iter().enumerate() {
             if ranks[i] == Rank::Literal {
                 // An `optional` element may be `None`, which the literal's type does not hold.
-                // Beside an `any` element, its payload converts to the `any` type.
-                slots[i] = Some(match anchor {
-                    Some(any) if optional[i] => self.value_beside(e, any),
-                    _ if optional[i] => self.value(e, Some(as_optional(literal))),
-                    _ => self.value(e, Some(literal)),
-                });
+                let want = if optional[i] {
+                    as_optional(literal)
+                } else {
+                    literal
+                };
+                slots[i] = Some(self.value(e, Some(want)));
             }
         }
         let mut failed = slots.iter().flatten().any(|c| type_of(c).is_none());
@@ -181,16 +181,16 @@ impl Checker<'_> {
         ) {
             return None;
         }
-        let object = |slot: &Option<Checked>| match slot {
-            Some(Ok(e)) => match &e.kind {
+        let object = |slot: &Option<Checked>| {
+            let e = slot.as_ref()?.as_ref().ok()?;
+            match &e.kind {
                 tir::ExprKind::Wrap(inner)
                     if matches!(inner.ty.kind(), TypeKind::Class(..) | TypeKind::Any(..)) =>
                 {
                     Some(inner.ty)
                 }
                 _ => None,
-            },
-            _ => None,
+            }
         };
         let objects: Vec<(usize, Type)> = typed
             .iter()

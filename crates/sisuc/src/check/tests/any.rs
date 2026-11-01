@@ -1399,6 +1399,16 @@ fn an_array_literal_should_join_a_some_with_an_any_element_as_an_if_does() {
             "fn main() {\n    let d: any Display = 1\n    let x: i64? = Some(5)\n    let r = [d, x]\n}",
             vec![(Code::Mismatch, (4, 17))],
         ),
+        (
+            "a generic call that makes an optional number after an `any` value, as in an `if`",
+            "fn opt<T>(x: T) -> T? { Some(x) }\nfn main() {\n    let d: any Display = 1\n    let r = [d, opt(2)]\n}",
+            vec![(Code::Mismatch, (4, 17))],
+        ),
+        (
+            "a `Some` of a class that does not conform before an `any` value",
+            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let r = [Some(Kelvin(k: 1.0)), s]\n}",
+            vec![(Code::Mismatch, (3, 14))],
+        ),
     ]);
 }
 
