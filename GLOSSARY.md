@@ -185,7 +185,8 @@ _Avoid_: struct, record (a value type, milestone 10)
 **Record**:
 A named type with fields and methods whose values are not shared: binding,
 passing or storing one behaves as a copy, as an array does. Records come in milestone 10.
-_Avoid_: struct, data class
+The name changes to **struct** in milestone 9 part 1 (`docs/register.md`).
+_Avoid_: data class
 
 **Object**:
 One heap-allocated value of a class, shared by every reference to it.

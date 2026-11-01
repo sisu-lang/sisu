@@ -1,6 +1,6 @@
 # Every language feature has a generator rule
 
-Status: accepted when the program fuzzer merges.
+Status: accepted, 2026-10-23 (#134).
 
 A language feature is done only when the program fuzzer's generator produces
 it. A feature here is an AST variant, an operator, a type, a prelude function

@@ -1,6 +1,6 @@
 # `match` takes its scrutinee apart
 
-Status: accepted when part 5 of the mir merges. It supersedes
+Status: accepted, 2026-10-21 (mir part 5, #121). It supersedes
 [ADR 0019](0019-enums-are-values-named-through-their-enum.md)'s rule that
 `match` moves nothing out of its scrutinee.
 

@@ -210,10 +210,10 @@ These came out of the milestone 2 design and are now part of its spec:
 
 ### Decided in milestone 3
 
-- Sisu has no comprehensions. Milestone 9's iterator methods are lazy:
-  `.filter(...).map(...).sum()` builds no intermediate array. A
-  `filter_some`-style method on `[T?]`, which keeps the present elements,
-  comes with them.
+- Milestone 9's iterator methods are lazy: `.filter(...).map(...).sum()`
+  builds no intermediate array. A `filter_some`-style method on `[T?]`, which
+  keeps the present elements, comes with them. Comprehensions were ruled out
+  here and are now open ("Open decisions").
 
 ### Decided in milestone 4
 
@@ -797,12 +797,14 @@ once the decisions it needs are settled:
   Scheduled right after milestone 6: tests in the source file,
   `test "add handles negatives" { assert(add(-1, 1) == 0) }`, with a built-in
   `assert`. A normal build drops `test` blocks; `sisu test` builds a `main`
-  that runs each one and reports which panicked.
+  that runs each one and reports which panicked. A test is now a function
+  marked `@test`, not a `test` block (the user's decision, 2026-10-26); this
+  text changes when the attributes work lands.
   A test is in the same module, so it sees private names. A panic ends the
   whole process (`sisu_panic`), so the spec decides how the other tests still
   run: one child process per test, or stopping at the first failure. Tests
-  sit next to the code, as in Rust and Zig, with no test module or attribute,
-  and the compiler's own `tests/run` cases can use `assert`.
+  sit next to the code, as in Rust and Zig, with no test module, and the
+  compiler's own `tests/run` cases can use `assert`.
 - **Tooling**: everything under "Early tooling", and from "Later and stretch
   goals" parser error recovery, the lints whose features exist, linking with
   `lld`, and debug info.
@@ -1166,12 +1168,12 @@ These do not make code nicer to write, so they wait:
   chooses the linker by hand; the default is still `cc`'s.
 - Parser error recovery, so a syntax error does not hide the next one.
 - A fixed-size inline array: its length is part of its type, and it is stored
-  inline (on the stack, or inside the object that holds it) with no header,
-  no count and no heap block. Name and syntax are open (Swift's
-  `InlineArray<3, i64>`, Rust's `[i64; 3]`, which would clash with today's
-  `[x; n]` making a `[T]`). A built-in literal length needs no const
-  generics; generic code over the length does. Build it when a benchmark shows
-  the heap `[T]` costs too much.
+  inline (on the stack, or inside the object that holds it) with no header, no
+  count and no heap block. Its type is written `FixedArray<T, N>` (2026-10-17,
+  `docs/register.md`), after Swift's `InlineArray<3, i64>`; Rust's `[i64; 3]`
+  would clash with today's `[x; n]` making a `[T]`. A built-in literal length
+  needs no const generics; generic code over the length does. Build it when a
+  benchmark shows the heap `[T]` costs too much.
 - A `Value` bound for type parameters, the mirror of `AnyObject`: every type
   that is not a class, nor an optional of one, conforms, and nothing else can.
   Milestone 8 rejects `[x; n]` in a generic body when `x` is a `T` or `T?`,
@@ -1454,6 +1456,8 @@ accepted.
   rule for each correct program it wrongly rejects.
 - Header files.
 - Unrestricted operator overloading.
+- Function overloading. A closure variant gets its own name, such as `sum_of`
+  beside `sum` ([ADR 0039](adr/0039-sisu-has-no-function-overloading.md)).
 - Inheritance. A `class` is a reference type, not a hierarchy. Composition,
   enums (milestone 7) and interfaces (milestone 8) cover polymorphism, as in
   Rust and Go.
@@ -1578,7 +1582,8 @@ accepted.
   one general form: `@name` or `@name(args)` on the line before it, as in
   Swift and Kotlin. Decide the form before the first attribute lands, so `@`
   is not taken for something else. Later uses could include `@noinline` and
-  `@deprecated("...")`. Tests use `test` blocks, not an attribute.
+  `@deprecated("...")`. Tests use the `@test` attribute (the user's decision,
+  2026-10-26), not `test` blocks.
 - **What a string is.** Resolved by
   [ADR 0014](adr/0014-strings-are-utf-8-values.md): UTF-8, always valid, a
   value shared until written, `len()` in bytes and no `s[i]`.
@@ -1651,7 +1656,9 @@ accepted.
   ([ADR 0019](adr/0019-enums-are-values-named-through-their-enum.md)): a
   variant is built as `Shape.Circle`, a pattern uses the bare name, and the
   type of the matched value decides which enum's variants are searched. Swift's
-  `.circle` short form stays open for expressions only. Resolved for modules
+  `.circle` short form stays open for expressions only. A later ruling
+  (2026-10-31, `docs/register.md`) takes a bare `Circle` instead, where the
+  expected type is the enum. Resolved for modules
   in milestone 11
   ([ADR 0035](adr/0035-a-file-is-a-module-and-its-names-are-private-unless-pub.md)):
   each module has one scope of its items and its imports, an import binds
@@ -1713,9 +1720,9 @@ accepted.
     do. Code after the catch can see class objects left half changed, and
     it is a second way to handle errors beside `Result`.
 
-  The `test` blocks scheduled right after milestone 6 do not wait for this:
-  running each test in a child process isolates its panic with no runtime
-  support.
+  The tests scheduled right after milestone 6 (now `@test` functions) do not
+  wait for this: running each test in a child process isolates its panic with
+  no runtime support.
 - **User drop code.** Decide before milestone 12's file handles, together with
   recovering from a panic. Today drop only frees memory; code the user writes
   to run at drop earns its place when an object holds something outside
@@ -1747,6 +1754,11 @@ accepted.
   arithmetic in the language, since the runtime's `Hasher` holds it. `u64` and
   wrapping operators wait for the first Sisu code that needs them (ADR 0003),
   and other widths, such as `i32`, for the FFI.
+- **Comprehensions.** Open again (the user's decision, 2026-10-27);
+  milestone 3 had ruled them out. A form that fits the map literal is
+  `[w: w.len() for w in words if w.len() > 3]`, sugar for an iterator chain
+  and `to_map()`. Decide once milestone 9's iterator chains exist, so real
+  code can be compared.
 - **Compile-time evaluation and reflection.** Open, to revisit once Sisu has
   grown (the user's decision, 2026-10-20); it was in "Deliberately avoided".
   Zig, C++, Rust and Mojo evaluate code at compile time, and Zig, C++26 and
