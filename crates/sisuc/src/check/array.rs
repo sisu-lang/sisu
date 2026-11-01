@@ -99,7 +99,7 @@ impl Checker<'_> {
     /// not is the mistake, named by its own type.
     fn hinted_elements(&mut self, span: Span, elements: &[ast::Expr], element: Type) -> Checked {
         let fits_element =
-            |c: &mut Self, ty: Type| fits(element, ty) || c.joins_to_any(ty, element);
+            |c: &mut Self, ty: Type| fits(element, ty) || c.converts_to_any(ty, element);
         // The type of each element as written: a `Some` that converted its value is the
         // optional of the value's type.
         let mut own: Vec<Option<Type>> = vec![None; elements.len()];

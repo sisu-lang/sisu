@@ -2129,7 +2129,7 @@ fn an_optional_should_not_convert_to_a_bare_any() {
         (
             "an optional after an `any` value, in a generic call",
             "    let r = pick(d, x)",
-            vec![(Code::Mismatch, (8, 19))],
+            vec![(Code::Mismatch, (8, 21))],
         ),
         (
             "the same in a generic class",
@@ -2139,7 +2139,7 @@ fn an_optional_should_not_convert_to_a_bare_any() {
         (
             "a `Some` of a number after an `any` value, in a generic call",
             "    let r = pick(d, Some(2))",
-            vec![(Code::Mismatch, (8, 19))],
+            vec![(Code::Mismatch, (8, 21))],
         ),
         (
             "a hint with no `any` type and an optional argument of another type",

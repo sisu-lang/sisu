@@ -807,10 +807,10 @@ impl Checker<'_> {
                     (l, r.map(|e| wrap(e, lt)))
                 } else if fits(rt, lt) {
                     (l.map(|e| wrap(e, rt)), r)
-                } else if self.joins_to_any(rt, lt) {
+                } else if self.converts_to_any(rt, lt) {
                     // A class beside an `any` converts to it first.
                     (l, r.map(|e| self.make_any(e, lt)))
-                } else if self.joins_to_any(lt, rt) {
+                } else if self.converts_to_any(lt, rt) {
                     (l.map(|e| self.make_any(e, rt)), r)
                 } else {
                     let kind = DiagnosticKind::CannotCompare {
@@ -847,33 +847,6 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         }
         checked
-    }
-
-    /// The default `other` of a `??`, at `at`, converted to `payload` when that is an `any` type
-    /// that it converts to, unless it is a wider `any` type, which the payload converts to, or an
-    /// optional, which makes the result optional. A written type that is the payload asks for
-    /// the conversion of an optional too. `Err` when the conversion fails, reported.
-    fn default_to_payload(
-        &mut self,
-        at: Span,
-        other: Checked,
-        payload: Type,
-        written: Option<Type>,
-    ) -> Result<Checked, Poisoned> {
-        match type_of(&other) {
-            Some(got)
-                if got != payload
-                    && (written == Some(payload)
-                        || !matches!(got.kind(), TypeKind::Optional(_)))
-                    && self.any_join(payload, got) != Some(got) =>
-            {
-                match self.any_conversion(at, other, payload, got) {
-                    Ok((_, true)) => Err(Poisoned::error()),
-                    Ok((converted, false)) | Err(converted) => Ok(converted),
-                }
-            }
-            _ => Ok(other),
-        }
     }
 
     /// `lhs ?? rhs`: `rhs` is a `T` or a `T?` beside the `T?` `lhs`, and gives the result its
@@ -945,7 +918,17 @@ impl Checker<'_> {
                 other
             }
         };
-        let other = self.default_to_payload(rhs.span, other, payload, written)?;
+        // A value converts to an `any` payload, unless it is a wider `any` type, which the
+        // payload converts to.
+        let other = match type_of(&other) {
+            Some(got) if got != payload && self.any_join(payload, got) != Some(got) => {
+                match self.any_conversion(rhs.span, other, payload, got) {
+                    Ok((_, true)) => return Err(Poisoned::error()),
+                    Ok((converted, false)) | Err(converted) => converted,
+                }
+            }
+            _ => other,
+        };
         let (other, ty) = match type_of(&other) {
             // `a ?? panic("x")`: only the payload reaches the result.
             Some(Type::NEVER) => (other, payload),

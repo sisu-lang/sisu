@@ -304,8 +304,7 @@ impl Checker<'_> {
     /// A value converts when its type conforms to `I`: an object keeps its pointer, an `any` of
     /// an interface that inherits `I` keeps its data, and any other value goes into a counted box
     /// (`mono` and `codegen` choose, by the type that a parameter stands for). An optional
-    /// converts to `any I` when its type conforms, as any other value does. It does not convert to
-    /// `(any I)?`, where the `?` of the value and the `?` of the target would mean two things.
+    /// does not convert, since a `None` has no object.
     pub(super) fn any_conversion(
         &mut self,
         at: Span,
@@ -323,14 +322,10 @@ impl Checker<'_> {
         let TypeKind::Any(interface, args) = target.kind() else {
             unreachable!("the target should be an `any` type");
         };
-        if !can_convert(got, layers == 1) {
+        if !can_convert(got) {
             return Err(checked);
         }
         if !self.conforms(got, interface, args) {
-            // An optional that does not conform may still be a mistake of another kind.
-            if matches!(got.kind(), TypeKind::Optional(_)) {
-                return Err(checked);
-            }
             self.report(self.not_conform(at, got, target));
             return Ok((Err(Poisoned::error()), true));
         }
@@ -397,8 +392,7 @@ impl Checker<'_> {
     }
 
     /// Whether a value of type `got` converts to `want`, which `any_conversion` answers by doing
-    /// it: `want` is `any I` or `(any I)?`, and `got` conforms and may convert to `want`. This is
-    /// the question for an expected type. An optional that conforms converts to a bare `any I`.
+    /// it: `want` is `any I` or `(any I)?`, and `got` conforms.
     pub(super) fn converts_to_any(&mut self, got: Type, want: Type) -> bool {
         let target = match want.kind() {
             TypeKind::Optional(payload) => payload,
@@ -407,24 +401,15 @@ impl Checker<'_> {
         let TypeKind::Any(interface, args) = target.kind() else {
             return false;
         };
-        can_convert(got, matches!(want.kind(), TypeKind::Optional(_)))
-            && self.conforms(got, interface, args)
-    }
-
-    /// Whether a member of type `got` joins into `want`, an `any` type or its optional. It is
-    /// `converts_to_any` for every type but an optional: an optional beside an `any` type makes
-    /// the join optional (`any I` beside `None` is `(any I)?`), so it never goes into the bare
-    /// `any I`. An expected type is another question, and `converts_to_any` answers it.
-    pub(super) fn joins_to_any(&mut self, got: Type, want: Type) -> bool {
-        !matches!(got.kind(), TypeKind::Optional(_)) && self.converts_to_any(got, want)
+        can_convert(got) && self.conforms(got, interface, args)
     }
 
     /// The type that values of types `a` and `b` join to when one converts to the other: the `any`
     /// type, with its optional layer. A join never makes an `any` type that neither side has.
     pub(super) fn any_join(&mut self, a: Type, b: Type) -> Option<Type> {
-        if a == b || self.joins_to_any(b, a) {
+        if a == b || self.converts_to_any(b, a) {
             Some(a)
-        } else if self.joins_to_any(a, b) {
+        } else if self.converts_to_any(a, b) {
             Some(b)
         } else {
             None
@@ -446,7 +431,7 @@ impl Checker<'_> {
             }
         }
         for &(other, t) in members {
-            if !is_target(t) && t != ty && !self.joins_to_any(t, ty) {
+            if !is_target(t) && t != ty && !self.converts_to_any(t, ty) {
                 return AnyJoin::Leaves {
                     ty,
                     member: (other, t),
@@ -495,8 +480,8 @@ impl Checker<'_> {
         match target.kind() {
             // Two `any` types that do not join are a mismatch, not a conformance.
             TypeKind::Any(interface, args)
-                if can_convert(got, false)
-                    && !matches!(got.kind(), TypeKind::Optional(_) | TypeKind::Any(..))
+                if can_convert(got)
+                    && !matches!(got.kind(), TypeKind::Any(..))
                     && !self.conforms(got, interface, args) =>
             {
                 self.not_conform(at, got, target).into()
@@ -522,13 +507,10 @@ impl Checker<'_> {
     }
 }
 
-/// Whether a value of type `got` can convert to an `any` type, if it conforms: to `(any I)?` when
-/// `optional`, else to `any I`. An optional does not convert to `(any I)?`, and `unit` and `never`
-/// have no value to hold.
-fn can_convert(got: Type, optional: bool) -> bool {
-    got != Type::NEVER
-        && got != Type::UNIT
-        && !(optional && matches!(got.kind(), TypeKind::Optional(_)))
+/// Whether a value of type `got` can convert to an `any` type, if it conforms. An optional does
+/// not, since a `None` has no object, and `unit` and `never` have no value to hold.
+fn can_convert(got: Type) -> bool {
+    !matches!(got.kind(), TypeKind::Optional(_)) && got != Type::NEVER && got != Type::UNIT
 }
 
 /// Whether `want` is `any I` or `(any I)?`: the types that a value converts to.
