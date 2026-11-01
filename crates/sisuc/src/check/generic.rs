@@ -2651,6 +2651,7 @@ impl Checker<'_> {
         clippy::too_many_lines,
         reason = "the match names each expression kind, so a new kind must choose its rank"
     )]
+    #[deny(clippy::wildcard_enum_match_arm)]
     fn rank_walk(&mut self, e: &ast::Expr, fit: &mut bool) -> Ranked {
         use ast::ExprKind as K;
         match &e.kind {
@@ -2720,9 +2721,10 @@ impl Checker<'_> {
                 combine_branches(arms.iter().map(|arm| {
                     let bind =
                         |c: &mut Self| Some(c.bind_pattern(None, &form, &arm.pattern, Some(arm)));
-                    match &arm.body.kind {
-                        K::Block(block) => self.block_rank(block, fit, bind),
-                        _ => Some(self.tail_rank(arm_key(arm), None, &arm.body, fit, bind)),
+                    if let K::Block(block) = &arm.body.kind {
+                        self.block_rank(block, fit, bind)
+                    } else {
+                        Some(self.tail_rank(arm_key(arm), None, &arm.body, fit, bind))
                     }
                 }))
             }

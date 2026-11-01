@@ -346,6 +346,7 @@ impl Rvalue {
     /// reaches a written `eq`, and a `Print`, `Dbg` or `Interpolate` whose helper reaches a
     /// written `to_string`.
     /// Pair removal and the certifier both ask this, so they agree.
+    #[deny(clippy::wildcard_enum_match_arm)]
     pub(crate) fn may_call_written(&self) -> bool {
         match self {
             Rvalue::Call { quiet, .. } => !*quiet,
