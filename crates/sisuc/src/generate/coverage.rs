@@ -25,7 +25,7 @@ pub(crate) const SEEDS: u64 = 64;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.
-const EXCLUDED: [(&str, &str); 16] = [
+const EXCLUDED: [(&str, &str); 17] = [
     (
         "ast::BrokenKind::Function",
         "only an item with a syntax error is broken",
@@ -90,6 +90,10 @@ const EXCLUDED: [(&str, &str); 16] = [
         "types::Head::Assoc",
         "the key by which `types::write_type` asks for a name, which is no type",
     ),
+    (
+        "reach: `?.push` follows an index",
+        "it needs a local of type `[[T]?]`, which has three layers; a type nests at most twice",
+    ),
 ];
 
 /// The receivers of the built-in methods `check/number.rs` does not list, by their typed
@@ -118,7 +122,7 @@ const IDENTITY: &str = "reach: a class is compared with `is` or against `None`";
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 108] = [
+const REACH: [&str; 111] = [
     "reach: a type alias takes a parameter",
     "reach: a type is written as an alias",
     "reach: a type is written as a generic alias",
@@ -227,6 +231,9 @@ const REACH: [&str; 108] = [
     "reach: `dbg` writes a value that runs no written method",
     "reach: `dbg` shows the fields of a class with no written `Display`",
     "reach: a `push` appends to an array",
+    "reach: `?.push` follows a field",
+    "reach: `?.push` follows an index",
+    "reach: an assignment goes through `?.`",
 ];
 
 /// The local that `operand` reads whole: the one place where its type is known here.
@@ -1120,6 +1127,13 @@ impl Walk {
     }
 
     /// Walks the target of an assignment.
+    /// Marks an assignment whose `target` goes through `?.`.
+    fn through_optional(&mut self, target: &ast::Expr) {
+        if matches!(target.kind, ast::ExprKind::Field { safe: true, .. }) {
+            self.mark("reach: an assignment goes through `?.`");
+        }
+    }
+
     fn target(&mut self, target: &ast::Expr) {
         if matches!(target.kind, ast::ExprKind::Block(_)) {
             self.misplaced.push(format!("a block as a place: {target}"));
@@ -1513,6 +1527,7 @@ impl Walk {
             }
             ast::StmtKind::Assign { target, value } => {
                 self.mark("ast::StmtKind::Assign");
+                self.through_optional(target);
                 if name(target).is_some() {
                     self.assigns.insert(value.span.start());
                 }
@@ -1523,6 +1538,7 @@ impl Walk {
                 op, target, value, ..
             } => {
                 self.mark("ast::StmtKind::CompoundAssign");
+                self.through_optional(target);
                 self.compounds.insert(stmt.span.start());
                 if *op == ast::BinaryOp::Add && name(target).is_some() {
                     self.adds.insert(stmt.span.start());
@@ -2176,6 +2192,19 @@ impl Walk {
                 }
                 tir::Stmt::Push { place, value, .. } => {
                     self.mark("tir::Stmt::Push");
+                    // `Some` is outermost: it takes the array out of the optional that the
+                    // place after it stores.
+                    if let tir::Place::Some(base) = place {
+                        match **base {
+                            tir::Place::Field { .. } => {
+                                self.mark("reach: `?.push` follows a field");
+                            }
+                            tir::Place::Index { .. } => {
+                                self.mark("reach: `?.push` follows an index");
+                            }
+                            tir::Place::Local(_) | tir::Place::Some(_) => {}
+                        }
+                    }
                     self.place(place);
                     self.tir_expr(value, Parent::Other);
                 }
@@ -4659,6 +4688,150 @@ fn a_push_through_an_optional_should_take_the_place_of_its_local() {
         }
     }
     assert!(local && field, "{local} {field}: a local and a field");
+}
+
+/// A `Gen` over `data` that holds the class `K0`, with the one `mut` field `g0` of type `field`
+/// and a cap of 8, and the local `v0` of type `local`: the object, or an optional of it.
+fn with_field(data: &[u8], field: Ty, local: Ty) -> Gen<'_> {
+    let mut g = Gen::new(data);
+    g.scope.classes.push(Class {
+        fields: vec![Field {
+            name: "g0".to_string(),
+            ty: field,
+            mutable: true,
+            cap: 8,
+        }],
+        size: 9,
+        applied: None,
+        inferable: false,
+    });
+    g.scope
+        .vars
+        .push(Var::new("v0".to_string(), local, false, 0, 0, 0));
+    g
+}
+
+/// The programs of the first 64 inputs that `write` makes on a `Gen` of `with_field`.
+fn field_programs(field: &Ty, local: &Ty, write: impl Fn(&mut Gen<'_>)) -> Vec<String> {
+    (0..64)
+        .map(|mut state| {
+            let data: Vec<u8> = (0..32)
+                .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+                .collect();
+            let mut g = with_field(&data, field.clone(), local.clone());
+            write(&mut g);
+            g.w.out.program
+        })
+        .collect()
+}
+
+/// An optional array field of the object that a local holds takes a push through `?.` after the
+/// field, guarded by its length. A `None` field has no length: the guard reads it as 0.
+#[test]
+fn a_push_onto_an_optional_array_field_should_be_guarded_by_its_length() {
+    let object = Ty::class(0, 9);
+    let field = Ty::Optional(Box::new(Ty::Array(Box::new(Ty::I64))));
+    let programs = field_programs(&field, &object, |g: &mut Gen<'_>| g.push_stmt());
+    for program in &programs {
+        assert!(
+            program.starts_with("if (v0.g0?.len() ?? 0) < 8 ") && program.contains("v0.g0?.push("),
+            "{program}"
+        );
+    }
+}
+
+/// The same field of the object that a local holds an optional of takes the push through both
+/// `?.` steps, and the guard reads an absent object as holding no element.
+#[test]
+fn a_push_through_an_optional_object_onto_an_optional_array_field_should_be_guarded() {
+    let object = Ty::Optional(Box::new(Ty::class(0, 9)));
+    let field = Ty::Optional(Box::new(Ty::Array(Box::new(Ty::I64))));
+    let programs = field_programs(&field, &object, |g: &mut Gen<'_>| g.push_stmt());
+    for program in &programs {
+        assert!(
+            program.starts_with("if (v0?.g0?.len() ?? 0) < 8 ")
+                && program.contains("v0?.g0?.push("),
+            "{program}"
+        );
+    }
+}
+
+/// A field that is an optional array of class objects takes no push (decision 4).
+#[test]
+fn an_optional_array_field_of_class_objects_should_take_no_push() {
+    let field = Ty::Optional(Box::new(Ty::Array(Box::new(Ty::class(0, 9)))));
+    let g = with_field(&[0; 8], field, Ty::class(0, 9));
+    assert!(g.push_targets().is_empty());
+}
+
+/// A push onto an element of an array of optional arrays is written `v0[i]?.push(`, with `i`
+/// below the length the array holds at least.
+#[test]
+fn a_push_onto_an_optional_element_should_stay_below_the_length() {
+    let mut seen = [false; 3];
+    for mut state in 0..1_024 {
+        let data: Vec<u8> = (0..32)
+            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+            .collect();
+        let mut g = with_growth(&data, 64, None);
+        let var = &mut g.scope.vars[0];
+        var.ty = Ty::Array(Box::new(Ty::Optional(Box::new(Ty::Array(Box::new(
+            Ty::I64,
+        ))))));
+        var.len = 3;
+        g.push_stmt();
+        let program = &g.w.out.program;
+        for (at, seen) in seen.iter_mut().enumerate() {
+            *seen |= program.contains(&format!("v0[{at}]?.push("));
+        }
+        assert!(!program.contains("v0[3]"), "{program}");
+    }
+    assert_eq!(seen, [true; 3]);
+}
+
+/// An element of an array of optional arrays of class objects takes no push (decision 4).
+#[test]
+fn an_optional_element_of_class_objects_should_take_no_push() {
+    let mut g = with_growth(&[0; 8], 64, None);
+    let object = Ty::Array(Box::new(Ty::class(0, 9)));
+    g.scope.vars[0].ty = Ty::Array(Box::new(Ty::Optional(Box::new(object))));
+    g.scope.vars[0].len = 3;
+    assert!(g.push_targets().is_empty());
+}
+
+/// An assignment through `?.` writes a field of the object that a local holds an optional of,
+/// as `=` or as a compound assignment of a number.
+#[test]
+fn an_assignment_through_an_optional_object_should_write_its_field() {
+    let object = Ty::Optional(Box::new(Ty::class(0, 9)));
+    let programs = field_programs(&Ty::I64, &object, |g: &mut Gen<'_>| g.set_field());
+    let (mut plain, mut compound) = (false, false);
+    for program in &programs {
+        assert!(program.starts_with("v0?.g0 "), "{program}");
+        plain |= program.starts_with("v0?.g0 = ");
+        compound |= program.starts_with("v0?.g0 += ");
+    }
+    assert!(plain && compound, "{plain} {compound}");
+}
+
+/// A `string` field takes only `=` through `?.`, as it does without it.
+#[test]
+fn a_string_field_through_an_optional_object_should_take_only_assignment() {
+    let object = Ty::Optional(Box::new(Ty::class(0, 9)));
+    for program in field_programs(&Ty::String, &object, |g: &mut Gen<'_>| g.set_field()) {
+        assert!(program.starts_with("v0?.g0 = "), "{program}");
+    }
+}
+
+/// A field that holds a class object takes no assignment through `?.` (decision 4), and an
+/// optional of anything but a class object has no field.
+#[test]
+fn an_assignment_through_an_optional_should_skip_a_class_field_and_a_non_object() {
+    let object = Ty::Optional(Box::new(Ty::class(0, 9)));
+    let g = with_field(&[0; 8], Ty::class(0, 9), object);
+    assert!(g.field_targets().is_empty(), "a class field");
+    let g = with_field(&[0; 8], Ty::I64, Ty::Optional(Box::new(Ty::I64)));
+    assert!(g.field_targets().is_empty(), "an optional of a number");
 }
 
 #[test]
@@ -7260,6 +7433,82 @@ fn the_walk_should_mark_the_operator_keys() {
         let mut walk = Walk::default();
         walk.program(&format!("{RANKED}{body}"));
         for key in [bounded, written, inside, plain] {
+            assert_eq!(
+                walk.seen.contains(key),
+                expected.contains(&key),
+                "{key} in {body}"
+            );
+        }
+    }
+}
+
+/// The walk marks a `?.` push after a field, a `?.` push after an index, and an assignment
+/// through `?.`, and no other push or assignment.
+#[test]
+fn the_walk_should_mark_the_keys_of_a_chain_through_an_optional() {
+    let field = "reach: `?.push` follows a field";
+    let index = "reach: `?.push` follows an index";
+    let assign = "reach: an assignment goes through `?.`";
+    for (body, expected) in [
+        (
+            "class K { mut o: [i64]? }
+fn main() {
+    let c = K(o: [1])
+    c.o?.push(2)
+}",
+            vec![field],
+        ),
+        (
+            "class K { mut o: [i64]? }
+fn main() {
+    let c: K? = K(o: [1])
+    c?.o?.push(2)
+}",
+            vec![field],
+        ),
+        (
+            "fn main() {
+    let mut v: [[i64]?] = [[1], None]
+    v[0]?.push(2)
+}",
+            vec![index],
+        ),
+        (
+            "class K { mut g: i64 }
+fn main() {
+    let c: K? = K(g: 1)
+    c?.g = 2
+}",
+            vec![assign],
+        ),
+        (
+            "class K { mut g: i64 }
+fn main() {
+    let c: K? = K(g: 1)
+    c?.g += 2
+}",
+            vec![assign],
+        ),
+        (
+            "class K { mut g: [i64] }
+fn main() {
+    let c = K(g: [1])
+    c.g.push(2)
+    c.g = [3]
+}",
+            vec![],
+        ),
+        (
+            "fn main() {
+    let mut v: [i64]? = [1]
+    v?.push(2)
+}",
+            vec![],
+        ),
+    ] {
+        let mut walk = Walk::default();
+        walk.program(body);
+        for key in [field, index, assign] {
             assert_eq!(
                 walk.seen.contains(key),
                 expected.contains(&key),
