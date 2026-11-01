@@ -408,6 +408,11 @@ pub(super) fn optional_array(base: &ast::Expr, unwrap: UnwrapHelp) -> Diagnostic
     .into()
 }
 
+/// Whether `ty` is `[T]?`.
+pub(super) fn is_optional_array(ty: Type) -> bool {
+    matches!(ty.kind(), TypeKind::Optional(payload) if matches!(payload.kind(), TypeKind::Array(_)))
+}
+
 /// `E`, when `expected` is `[E]` or `[E]?`.
 fn expected_element(expected: Option<Type>) -> Option<Type> {
     match expected.map(payload).map(Type::kind) {
@@ -425,7 +430,7 @@ pub(super) fn pair(operands: Vec<tir::Expr>) -> (Box<tir::Expr>, Box<tir::Expr>)
 }
 
 /// `ty` with every layer of optional taken off.
-fn innermost(mut ty: Type) -> Type {
+pub(super) fn innermost(mut ty: Type) -> Type {
     while let TypeKind::Optional(inner) = ty.kind() {
         ty = inner;
     }

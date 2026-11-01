@@ -851,6 +851,14 @@ fn an_element_target_help_should_name_what_gives_a_place() {
             true,
         ),
         (
+            "object over two lines",
+            format!(
+                "{m}fn get(a: i64) -> M? {{ None }}\nfn main() {{\n    get(\n        1\n    )?.items[0] = 2\n}}"
+            ),
+            "get(\n        1\n    )?.items",
+            false,
+        ),
+        (
             "local",
             "fn main() {\n    let mut xs: [i64]? = [1]\n    xs[0] = 2\n}".to_owned(),
             "xs",
@@ -944,6 +952,14 @@ fn a_push_that_may_be_a_method_should_not_stamp_its_receiver() {
             "{pile}fn main() {{\n    let mut p: Pile? = Pile(n: 0)\n    p?.push(1)\n    print(p?.n ?? 0)\n}}"
         ),
         &[(Code::NeverReassigned, (6, 13))],
+    );
+    codes(
+        "interface P { fn push(self, x: i64) }\nfn g<U: P>(u: U) {\n    let mut v = u\n    v.push(1)\n}\nfn main() {}",
+        &[(Code::NeverReassigned, (3, 13))],
+    );
+    codes(
+        "enum E { A; B }\nfn main() {\n    let mut e = E.A\n    e.push(1)\n}",
+        &[(Code::NeverReassigned, (3, 13)), (Code::NoMember, (4, 7))],
     );
     codes(
         "class C { v: i64 }\nfn main() {\n    let mut c = C(v: 1)\n    c.nope(2)\n}",

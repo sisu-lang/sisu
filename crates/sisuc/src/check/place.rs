@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use super::array::optional_array;
+use super::array::{innermost, is_optional_array, optional_array};
 use super::expr::{if_some, literal_type, local, operator};
 use super::member::{Access, safe_value};
 use super::operator::Operator;
@@ -149,12 +149,15 @@ impl Checker<'_> {
 
     /// Whether a `push` checks its receiver `e` as a place. That holds for a field, or for an
     /// index of a local or of a field. A `?.` may lead to it only when `safe` says the call is
-    /// `?.push`: `e?.push(x)` holds a value only where `e` does. The place stamps nothing and
-    /// reports nothing until the receiver is known to be an array (`push_receiver`).
+    /// `?.push`: `e?.push(x)` holds a value only where `e` does. An index of such a chain is a
+    /// place too: it always fails there, so the help for an element target applies. The place
+    /// stamps by the rule of `push_receiver`.
     pub(super) fn is_push_place(&mut self, e: &ast::Expr, safe: bool) -> bool {
         // A receiver checked ahead of its turn is a value already.
         is_place(e)
-            && (safe || !goes_through_safe_access(e))
+            && (safe
+                || !goes_through_safe_access(e)
+                || matches!(e.kind, ast::ExprKind::Index { .. }))
             && !self.body.ahead_at.contains_key(&(e.span, false))
             && self.rooted(e)
     }
@@ -173,18 +176,14 @@ impl Checker<'_> {
     /// `push`, or for the method lookup that finds the receiver is no array. The result is the
     /// value the place holds, which owns the operands of the place.
     ///
-    /// A call that writes its receiver counts as a change of the place as soon as the receiver is
+    /// A call of a mutating method counts as a change of the place as soon as the receiver is
     /// checked, whatever the call then gets wrong: `stamp_push` stamps it here. A place of a
     /// class, an enum, a type parameter or an associated type is not stamped, because the call
     /// may be a method of its own, which writes nothing.
     pub(super) fn push_receiver(&mut self, receiver: &ast::Expr) -> Checked {
         let mut place = self.place(receiver.span, receiver, Change::Push);
-        let mut held = place.ty;
-        while let Some(TypeKind::Optional(payload)) = held.map(Type::kind) {
-            held = Some(payload);
-        }
         if !matches!(
-            held.map(Type::kind),
+            place.ty.map(innermost).map(Type::kind),
             Some(
                 TypeKind::Class(..)
                     | TypeKind::Enum(..)
@@ -663,7 +662,7 @@ impl Checker<'_> {
         name: Symbol,
         change: Change,
     ) -> CheckedPlace {
-        // A `push` stamps when it knows its receiver is an array (`stamp_push`).
+        // A `push` stamps by the rule of `push_receiver`.
         let stamp = (change != Change::Push).then(|| self.write_stamp());
         let Some(b) = self.lookup(name) else {
             if let Some(place) = self.constant_place(span, name, change) {
@@ -727,7 +726,9 @@ impl Checker<'_> {
                 },
                 Some(_),
                 Some(TypeKind::Array(_)),
-            ) => UnwrapHelp::Object(self.source.text(object.span).to_string()),
+            ) if self.one_line(object.span) => {
+                UnwrapHelp::Object(self.source.text(object.span).to_string())
+            }
             _ => UnwrapHelp::Nothing,
         };
         self.diagnostics.push(optional_array(base, unwrap));
@@ -898,11 +899,6 @@ impl Checker<'_> {
         };
         tir::Expr { kind, ty, span }
     }
-}
-
-/// Whether `ty` is `[T]?`.
-fn is_optional_array(ty: Type) -> bool {
-    matches!(ty.kind(), TypeKind::Optional(payload) if matches!(payload.kind(), TypeKind::Array(_)))
 }
 
 /// Whether a `?.` sits anywhere in the chain of fields and indexes that makes up the place `e`.
