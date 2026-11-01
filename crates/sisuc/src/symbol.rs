@@ -51,7 +51,9 @@ impl Symbol {
     pub(crate) const OK: Symbol = Symbol(3);
     pub(crate) const ERR: Symbol = Symbol(4);
     pub(crate) const RESULT: Symbol = Symbol(5);
+}
 
+impl Symbol {
     pub(crate) fn intern(name: &str) -> Symbol {
         let mut interner = interner();
         if let Some(&symbol) = interner.ids.get(name) {
