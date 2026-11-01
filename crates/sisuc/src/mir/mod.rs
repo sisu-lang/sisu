@@ -511,6 +511,8 @@ impl Terminator {
 /// loop's `make_unique` of the arrays it writes hoisted to its pre-header, each scope release and
 /// `free` elaborated, and each retain/release pair within a block removed. A debug build
 /// certifies each function and panics on a violation.
+// `scripts/scaling.py` reads this function's instruction count.
+#[inline(never)]
 pub(crate) fn build(program: &tir::Program) -> Program {
     let assumed = params::assumed(program);
     let mut written = Written::default();

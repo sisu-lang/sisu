@@ -51,6 +51,8 @@ thread_local! {
 /// The checker has accepted the program, but its probe does not follow every associated type
 /// that an instance meets (`probe_associated`): the diagnostics are the E0030 of each choice that
 /// an instance needs itself, or needs more steps than the limit, and then there is no program.
+// `scripts/scaling.py` reads this function's instruction count.
+#[inline(never)]
 pub(crate) fn instantiate(mut program: Program) -> Result<Program, Vec<Diagnostic>> {
     let prelude = program.prelude;
     let generic = program.functions[..prelude.funcs]

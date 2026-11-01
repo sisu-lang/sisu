@@ -36,6 +36,8 @@ pub(crate) struct Parsed {
 /// parser resumes after it. A bad format spec alone does not break its item: the parser reports
 /// it and reads its part without a spec. A lexer warning breaks nothing. The prelude (`prelude`)
 /// may declare a variant `None`, which no other source may.
+// `scripts/scaling.py` reads this function's instruction count.
+#[inline(never)]
 pub(crate) fn parse(lexed: Lexed<'_>, prelude: bool) -> Parsed {
     let Lexed {
         source,
