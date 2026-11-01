@@ -1340,12 +1340,13 @@ impl Gen<'_> {
             let text = self.string_text(text_len, MESSAGE_CHARS);
             self.w.text(&text);
             size += text_len;
-            if let Some((ty, most)) = self.compound_part(max - size) {
+            if let Some((ty, most, nodes)) = self.compound_part(max - size) {
                 self.w.text("{");
                 self.synth = true;
                 let info = self.expr(&ty, most);
-                // No width, no alignment, no precision: no spec, or `#`, one time in two.
-                let nodes = self.scope.nodes;
+                // No width, no alignment, no precision: no spec, or `#`, one time in two. `nodes`
+                // is from before `expr`: the part's type and every type in it exist before `expr`
+                // runs, and a type that `expr` makes holds no part of this value.
                 if self.pick(2) == 0 {
                     self.w.text("}");
                     size += ty.printed(info.size, None, nodes);
@@ -1390,11 +1391,12 @@ impl Gen<'_> {
         Info::of(&parts, size, true)
     }
 
-    /// The type of a compound part, now and then, and the most size its value may hold. The
-    /// choice reads `cu` and the type reads `u`, so that a part that is not compound draws what it
-    /// drew before. The size is the greatest of at most `PART_SIZE` for which `{x:#}` writes
-    /// within `room` chars, and so does a plain part.
-    fn compound_part(&mut self, room: u64) -> Option<(Ty, u64)> {
+    /// The type of a compound part, now and then, the most size its value may hold, and the
+    /// `Nodes` that bound counts. The choice reads `cu` and the type reads `u`, so that a part for
+    /// which `cu` chooses no compound value draws what it drew before. The size is the greatest
+    /// of at most `PART_SIZE` for which `{x:#}` writes within `room` chars, and so does a plain
+    /// part.
+    fn compound_part(&mut self, room: u64) -> Option<(Ty, u64, Nodes)> {
         if self.cu.choose_index(2).unwrap_or(0) == 0 {
             return None;
         }
@@ -1403,7 +1405,7 @@ impl Gen<'_> {
         let most = (ty.least()..=PART_SIZE)
             .rev()
             .find(|&size| ty.printed_pretty(size, nodes) <= room)?;
-        Some((ty, most))
+        Some((ty, most, nodes))
     }
 
     /// The type of a compound part: an array of a `bare_type` or of an optional, or a declared or
@@ -2250,6 +2252,16 @@ mod tests {
             .filter(|program| program.contains("let echo") || program.contains("let mut echo"))
             .count();
         assert!(named >= 20, "{named} programs of 100 name a local echo");
+    }
+
+    /// A compound part may make a new enum instance, such as the `G<T>` that a generic call
+    /// lowers. Seeds 29794 and 96755 once counted the nodes of that instance in the size of the
+    /// part, and the size passed `max`.
+    #[test]
+    fn interpolate_should_not_count_the_enum_instances_that_its_part_makes() {
+        for n in [29794, 96755] {
+            crate::generate::generate(&crate::generate::coverage::seed(n));
+        }
     }
 
     #[test]

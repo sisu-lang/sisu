@@ -221,7 +221,7 @@ const FIRST_VALUE: usize = 10;
 /// method of the program gets a value that no other method gets, so a call that reaches the
 /// wrong method prints a different line.
 #[derive(Default)]
-pub(super) struct Values {
+struct Values {
     /// The number of each method with an `i64` result, by its type, its requirement and the
     /// argument of its interface.
     numbers: FxHashMap<(String, String, Option<&'static str>), usize>,
@@ -231,7 +231,7 @@ impl Values {
     /// What the method of `ty` for `requirement`, as the interface with `arg` for its parameter
     /// has it, returns and a call prints. A `string` names its type, requirement and argument,
     /// and holds no `@`. An `i64` is the next number of the table.
-    fn printed(
+    fn value(
         &mut self,
         ty: &str,
         requirement: &str,
@@ -253,7 +253,7 @@ impl Values {
 
     /// The line that the marked statement `mark` prints when it calls a method of `ty`.
     fn line(&mut self, ty: &str, mark: &Marked) -> String {
-        let value = self.printed(ty, &mark.requirement, mark.arg, mark.kind);
+        let value = self.value(ty, &mark.requirement, mark.arg, mark.kind);
         format!("@d{} {value}", mark.n)
     }
 }
@@ -356,7 +356,7 @@ impl Requirement {
         method += ")";
         match (&self.ret, self.kind(arg)) {
             (Some(ret), Some(kind)) => {
-                let value = values.printed(ty, &self.name, arg, kind);
+                let value = values.value(ty, &self.name, arg, kind);
                 let value = match kind {
                     Kind::Integer => value,
                     Kind::Text => format!("\"{value}\""),

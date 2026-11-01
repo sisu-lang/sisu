@@ -4,7 +4,9 @@
 //! clean and compiles to a module LLVM verifies; property 3 is that every build exits 0 or 101,
 //! and all three the same way; property 4 is that the rewritten copy runs as the program does;
 //! property 5 is that the program prints the known integer answers, and that each call of an
-//! interface's requirement prints the value of the method it should reach; property 6 is that a
+//! interface's requirement prints the value of the method it should reach, where the method has an
+//! `i64` or `string` result (or a `T` result, when the argument of the conformance is one of them)
+//! and the call is in `shapes` or in a generic function it calls; property 6 is that a
 //! copy of the program where one argument breaks the bound of its type parameter gets E0154 at
 //! that argument and no other error.
 
