@@ -116,7 +116,7 @@ impl Ty {
     }
 
     /// The types that have values: every type but `unit`.
-    pub(crate) const VALUES: [Ty; 6] = [Ty::I64, Ty::U8, Ty::F64, Ty::Bool, Ty::Char, Ty::String];
+    pub(crate) const VALUES: &[Ty] = &[Ty::I64, Ty::U8, Ty::F64, Ty::Bool, Ty::Char, Ty::String];
 
     /// Whether a value of it written with no expected type may take another type: an integer
     /// literal is an `i64`, and `None` and `[]` cannot be inferred.

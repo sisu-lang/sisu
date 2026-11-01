@@ -57,7 +57,7 @@ fn assert_panics(out: &Output, stdout: &str, stderr: &str) {
 
 /// The programs the small-stack tests run. They are not `tests/run` cases: many objects
 /// under Valgrind is too slow, and `deepchain` overflows on purpose.
-const SMALL_STACK: [&str; 23] = [
+const SMALL_STACK: &[&str] = &[
     "longlist",
     "rightskew",
     "deepchain",
@@ -101,7 +101,10 @@ fn programs_directory_should_hold_only_the_small_stack_programs() {
         })
         .collect();
     files.sort();
-    let mut expected = SMALL_STACK.map(|name| format!("{name}.sisu"));
+    let mut expected: Vec<String> = SMALL_STACK
+        .iter()
+        .map(|name| format!("{name}.sisu"))
+        .collect();
     expected.sort();
     assert_eq!(files, expected);
 }
