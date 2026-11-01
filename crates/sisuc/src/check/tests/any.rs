@@ -1934,7 +1934,7 @@ const HINTED_SOME_LOCALS: &str = "fn main() {\n    let c = true\n    let d: any 
 /// into a bare `any` type, as the join of `[o, Some(y)]` does not.
 #[test]
 fn a_hinted_some_should_not_box_an_optional_argument_into_a_bare_any() {
-    let rows: [Row<'_>; 9] = [
+    let rows: [Row<'_>; 12] = [
         (
             "an array of a `Some` of an optional beside optional `any` values",
             "    let r = if c { [o] } else { [Some(x)] }",
@@ -1978,6 +1978,21 @@ fn a_hinted_some_should_not_box_an_optional_argument_into_a_bare_any() {
         (
             "a written array of an optional `any` type, which converts",
             "    let r: [(any Display)?] = [Some(y)]",
+            vec![],
+        ),
+        (
+            "a `Some` of an optional beside a bare `any` value",
+            "    let r = if c { d } else { Some(x) }",
+            vec![(Code::Mismatch, (10, 31))],
+        ),
+        (
+            "the same in an array with no sibling",
+            "    let r = [d, Some(x)]",
+            vec![(Code::Mismatch, (10, 17))],
+        ),
+        (
+            "a `Some` of a number beside a bare `any` value, which converts",
+            "    let r = [d, Some(2)]",
             vec![],
         ),
     ];
