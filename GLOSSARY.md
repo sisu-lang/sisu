@@ -353,7 +353,8 @@ _Avoid_: constraint
 
 **Instantiation**:
 One compiled copy of a generic function or type for one list of type
-arguments, such as `largest<i64>`.
+arguments, such as `largest<i64>`. Diagnostics, such as E0163, call one an
+instance.
 _Avoid_: specialization
 
 **Monomorphization**:

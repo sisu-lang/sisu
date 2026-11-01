@@ -70,7 +70,8 @@ enums with `match`.
   its bounds, and the operators that `Eq` and `Ord` give it, but a `==` or
   `<` on a `T` with no such bound is an error (`E0139`); `unit` and `never`
   are not type arguments (`E0138`); a use that would need copies without end
-  is an error (`E0140`)
+  is an error (`E0140`), and so is a program whose generic items make more
+  than 100,000 instantiations, in `sisu build` (`E0163`)
 - interfaces: `interface Shape { fn area(self) -> f64 }` lists method
   signatures with no body, associated types (`type Item`), type parameters
   and inherited interfaces (`interface Solid: Named`), and `Self` is the
