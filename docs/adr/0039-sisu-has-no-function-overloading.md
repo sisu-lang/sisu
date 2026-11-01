@@ -16,8 +16,8 @@ let paid = orders.filter(o => o.paid).sum_of(o => o.price)
 
 - **Other features cover its uses.** Named and default arguments
   ([ADR 0004](0004-python-syntax-rust-semantics-swift-memory-model.md),
-  milestone 10) cover optional parameters. Generics and interfaces cover one operation on many
-  types.
+  milestone 10) cover optional parameters. Generics and interfaces cover one
+  operation on many types.
 - **Overload resolution fights type inference.** To choose an overload, the
   checker must know the argument types. A closure's parameter types and a
   literal's type come from the overload that the checker chooses. Each
@@ -27,7 +27,8 @@ let paid = orders.filter(o => o.paid).sum_of(o => o.price)
   compare. A call to an overloaded name gets a list of candidates and a guess
   about which one the programmer meant.
 - **One obvious way.** Two functions with one name and different behaviour
-  break the rule in [ADR 0006](0006-values-correctness-simplicity-readability-performance.md).
+  break the rule in
+  [ADR 0006](0006-values-correctness-simplicity-readability-performance.md).
 
 ## Considered options
 

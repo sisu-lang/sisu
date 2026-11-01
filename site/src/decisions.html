@@ -103,7 +103,7 @@ The design decisions behind Sisu, each written down as a short record with its r
       <ul class="rows">
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0003-arithmetic-panics.md"><span class="num">0003</span><b>Integer overflow panics instead of wrapping</b><span>Overflow, division by zero and dividing the smallest <code>i64</code> by -1 stop the program with a panic that names the source location.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0013-diagnostics-have-stable-codes.md"><span class="num">0013</span><b>Diagnostics have stable codes</b><span>Every error and warning has a code that is never reused, one wording, and an explanation that a test compiles.</span></a></li>
-        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0040-a-failure-the-caller-can-handle-is-a-value-not-a-panic.md"><span class="num">0040</span><b>A failure the caller can handle is a value, not a panic</b><span>A failure that the caller can check is a total result, an optional or a <code>Result</code>. A panic stays only where every value is worse.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0040-a-failure-the-caller-can-handle-is-a-value-not-a-panic.md"><span class="num">0040</span><b>A failure the caller can handle is a value, not a panic</b><span>A function whose failure the caller can check gives a total result, an optional or a <code>Result</code>. A panic stays only where every value is worse.</span></a></li>
       </ul>
       <!-- source: docs/adr/0003-arithmetic-panics.md, docs/adr/0013-diagnostics-have-stable-codes.md, docs/adr/0040-a-failure-the-caller-can-handle-is-a-value-not-a-panic.md -->
 

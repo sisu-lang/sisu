@@ -34,10 +34,10 @@ A panic is correct only where every value-based answer is worse:
 
 ## Why
 
-Sisu has optionals and the prelude enum `Result`, and it has no exceptions. An API that panics on input that the caller could check makes the
-program stop for a case that the type system could show. ADR 0018 made this
-change for conversions: `u8(x)` and `char(n)` panicked, and now return an
-optional.
+Sisu has optionals and the prelude enum `Result`, and it has no exceptions. An
+API that panics on input that the caller could check makes the program stop
+for a case that the type system could show. ADR 0018 made this change for
+conversions: `u8(x)` and `char(n)` panicked, and now return an optional.
 
 ## Considered options
 
@@ -57,7 +57,7 @@ optional.
 - A new index operator comes with a way to check first: a length, a
   `contains`, or an optional `get`.
 - Two panics in the roadmap's "What panics" table are not in the list above:
-  `[v; n]` with a negative `n`, and an I/O failure. Each gets a decision when
-  its area changes.
+  `[v; n]` with a negative or too large `n`, and an I/O failure. Each gets a
+  decision when its area changes.
 - Specs written before 2026-10-29 were not searched for panics. Each one gets
   a check when its plan runs.
