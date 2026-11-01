@@ -21,6 +21,16 @@ fn codes_after(row: &str, src: &str, expected: &[(Code, (usize, usize))]) {
     codes_row(row, &format!("{DECLS}{src}"), &shifted);
 }
 
+/// A row of `codes_after`: its name, its program, and the codes with their positions.
+type Row<'a> = (&'a str, &'a str, Vec<(Code, (usize, usize))>);
+
+/// `codes_after` for each row.
+fn rows_after(rows: &[Row<'_>]) {
+    for (row, src, expected) in rows {
+        codes_after(row, src, expected);
+    }
+}
+
 #[test]
 #[expect(
     clippy::too_many_lines,
@@ -195,12 +205,10 @@ fn interfaces_should_not_be_any_when_a_requirement_needs_the_type() {
     }
 }
 
-/// Each rule of `any`: the names it takes, the conversions it makes and the ones it does not, and
-/// what it has no operator for. The wording is in the fixtures of each code.
+/// An interface written where a type belongs is `InterfaceAsType`, a language interface too.
 #[test]
-#[expect(clippy::too_many_lines, reason = "one row for each rule of `any`")]
-fn any_types_should_report_each_rule_where_it_is_broken() {
-    for (row, src, expected) in [
+fn an_interface_should_not_be_a_type() {
+    rows_after(&[
         (
             "an interface where a type belongs",
             "fn main() {\n    let s: Shape = Circle(r: 1.0)\n}",
@@ -211,6 +219,13 @@ fn any_types_should_report_each_rule_where_it_is_broken() {
             "fn main() {\n    let e: Eq = 5\n}",
             vec![(Code::InterfaceAsType, (2, 12))],
         ),
+    ]);
+}
+
+/// `any` takes the name of an interface, with the arguments of a generic one.
+#[test]
+fn any_should_take_the_name_of_an_interface_and_its_arguments() {
+    rows_after(&[
         (
             "a class after `any`",
             "fn main() {\n    let s: any Circle = Circle(r: 1.0)\n}",
@@ -236,6 +251,13 @@ fn any_types_should_report_each_rule_where_it_is_broken() {
             "fn main() {\n    let s: any Bogus = 5\n}",
             vec![(Code::UnknownType, (2, 16))],
         ),
+    ]);
+}
+
+/// A value converts to an `any` type when it conforms and needs no box. Any other is reported.
+#[test]
+fn a_value_should_convert_to_any_only_where_it_conforms_and_needs_no_box() {
+    rows_after(&[
         (
             "a value that does not conform",
             "fn main() {\n    let s: any Shape = 5\n}",
@@ -267,6 +289,33 @@ fn any_types_should_report_each_rule_where_it_is_broken() {
             vec![(Code::Mismatch, (4, 27))],
         ),
         (
+            "a class that does not conform, as the value of a body",
+            "fn make() -> any Shape {\n    Kelvin(k: 1.0)\n}\nfn main() {}",
+            vec![(Code::NotConform, (2, 5))],
+        ),
+        (
+            "an object that is in error, as the value of a body",
+            "fn make() -> any Shape {\n    Circle(r: true)\n}\nfn main() {}",
+            vec![(Code::Mismatch, (2, 15))],
+        ),
+        (
+            "an object that is in error, as the value of a `let`",
+            "fn main() {\n    let s: any Shape = Circle(r: true)\n}",
+            vec![(Code::Mismatch, (2, 34))],
+        ),
+        (
+            "a default of `??` that does not conform",
+            "fn pick(o: (any Shape)?) -> any Shape {\n    o ?? Kelvin(k: 1.0)\n}\nfn main() {}",
+            vec![(Code::NotConform, (2, 10))],
+        ),
+    ]);
+}
+
+/// `[v; n]` shares one object, so a fill of an object or an interface value is `SameObject`.
+#[test]
+fn an_array_fill_of_an_object_should_be_reported_for_a_class_or_an_interface_value() {
+    rows_after(&[
+        (
             "an array fill of an object, which stays the same object",
             "fn main() {\n    let c = Circle(r: 1.0)\n    let xs: [any Shape] = [c; 3]\n}",
             vec![(Code::SameObject, (3, 28))],
@@ -281,6 +330,13 @@ fn any_types_should_report_each_rule_where_it_is_broken() {
             "fn f(s: any Observer) {\n    let xs = [s; 3]\n}\nfn main() {}",
             vec![(Code::SameObject, (2, 15))],
         ),
+    ]);
+}
+
+/// An interface value has no `==` and no `<`.
+#[test]
+fn an_interface_value_should_have_no_equality_or_order() {
+    rows_after(&[
         (
             "`==` on an interface value",
             "fn f(a: any Shape, b: any Shape) {\n    let x = a == b\n}\nfn main() {}",
@@ -296,6 +352,13 @@ fn any_types_should_report_each_rule_where_it_is_broken() {
             "fn f(a: any Shape, b: any Shape) {\n    let x = a < b\n}\nfn main() {}",
             vec![(Code::NoOperator, (2, 13))],
         ),
+    ]);
+}
+
+/// `is` takes objects, or interface values whose interface has `AnyObject`.
+#[test]
+fn is_should_need_interface_values_that_hold_objects() {
+    rows_after(&[
         (
             "`is` on an interface value that may hold anything",
             "fn f(a: any Shape, b: any Shape) {\n    let x = a is b\n}\nfn main() {}",
@@ -306,19 +369,27 @@ fn any_types_should_report_each_rule_where_it_is_broken() {
             "fn f(a: any Display, b: any Display) {\n    let x = a is b\n}\nfn main() {}",
             vec![(Code::IsNeedsObjects, (2, 13))],
         ),
-        (
-            "`extend` of an interface value",
-            "extend any Shape {}\nfn main() {}",
-            vec![(Code::CannotExtend, (1, 8))],
-        ),
-        (
-            "a method that the interface lacks",
-            "fn f(s: any Shape) {\n    s.perimeter()\n}\nfn main() {}",
-            vec![(Code::NoMember, (2, 7))],
-        ),
-    ] {
-        codes_after(row, src, &expected);
-    }
+    ]);
+}
+
+/// An `extend` block cannot extend an interface value.
+#[test]
+fn an_interface_value_should_not_be_extended() {
+    rows_after(&[(
+        "`extend` of an interface value",
+        "extend any Shape {}\nfn main() {}",
+        vec![(Code::CannotExtend, (1, 8))],
+    )]);
+}
+
+/// A method that the interface lacks is reported on an interface value.
+#[test]
+fn an_interface_value_should_have_only_the_methods_of_its_interface() {
+    rows_after(&[(
+        "a method that the interface lacks",
+        "fn f(s: any Shape) {\n    s.perimeter()\n}\nfn main() {}",
+        vec![(Code::NoMember, (2, 7))],
+    )]);
 }
 
 /// An argument binds a type parameter before the context does, and the result converts after
@@ -340,26 +411,6 @@ fn inference_should_bind_arguments_before_an_any_context() {
             "an array of the argument's type, which no conversion makes an array of `any`",
             "fn single<T>(x: T) -> [T] { [x] }\nfn main() {\n    let c = Circle(r: 1.0)\n    let xs: [any Shape] = single(c)\n}",
             vec![(Code::Mismatch, (4, 27))],
-        ),
-        (
-            "a class that does not conform, as the value of a body",
-            "fn make() -> any Shape {\n    Kelvin(k: 1.0)\n}\nfn main() {}",
-            vec![(Code::NotConform, (2, 5))],
-        ),
-        (
-            "an object that is in error, as the value of a body",
-            "fn make() -> any Shape {\n    Circle(r: true)\n}\nfn main() {}",
-            vec![(Code::Mismatch, (2, 15))],
-        ),
-        (
-            "an object that is in error, as the value of a `let`",
-            "fn main() {\n    let s: any Shape = Circle(r: true)\n}",
-            vec![(Code::Mismatch, (2, 34))],
-        ),
-        (
-            "a default of `??` that does not conform",
-            "fn pick(o: (any Shape)?) -> any Shape {\n    o ?? Kelvin(k: 1.0)\n}\nfn main() {}",
-            vec![(Code::NotConform, (2, 10))],
         ),
         (
             "an argument that the other argument rejects",

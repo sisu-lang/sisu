@@ -1225,12 +1225,11 @@ impl Checker<'_> {
         checked
     }
 
-    /// The value `checked` of the `break` `v`, of type `got`, joined with the loop's first value:
-    /// an `any` type that `got` converts to is the type of the loop, as the arms of an `if` join.
-    /// A value that fits the expected type keeps its own, as a block's value does, and joins the
-    /// others as `if` branches do: a `T` and a `T?` make a `T?`, an object and an `any` type that
-    /// it converts to make the `any` type. The values before it are converted at the loop's end
-    /// when the type grows.
+    /// The value `checked` of the `break` `v`, of type `got`, joined with the loop's first value.
+    /// A value that fits the expected type keeps its own, as a block's value does. The values join
+    /// as `if` branches do: a `T` and a `T?` make a `T?`. An object and an `any` type that it
+    /// converts to make the `any` type. The values before it are converted at the loop's end when
+    /// the type grows.
     fn join_break(
         &mut self,
         (v, span): (&ast::Expr, Span),

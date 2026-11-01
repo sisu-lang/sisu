@@ -1,5 +1,5 @@
-//! `any I`, the checker's side: how it is written, which interfaces can be `any`, which
-//! interfaces an `any I` conforms to, and the conversion of a value to it.
+//! `any I`, the checker's side. It covers how `any I` is written and which interfaces can be
+//! `any`. It also covers which interfaces an `any I` conforms to, and how a value converts to it.
 
 use std::rc::Rc;
 
@@ -16,13 +16,13 @@ use crate::tir::{self, InterfaceId, Type, TypeArgs, TypeKind};
 
 #[cfg(test)]
 thread_local! {
-    /// How many interfaces `why_not_any` has put in a closure, and `entry_reason` has read for a
-    /// reason, not counting an answer that either kept, on this thread.
+    /// How many interfaces `why_not_any` has put in a closure, on this thread. It adds how many
+    /// `entry_reason` has read for a reason. An answer that either kept is not counted.
     pub(super) static ANY_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// Why an interface cannot be `any`: the interface `owner`, which is the interface itself or one
-/// that it inherits, and its requirement or associated type, by place.
+/// Why an interface cannot be `any`. The interface `owner` is the interface itself or one that it
+/// inherits. `kind` names its requirement or associated type, by place.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct AnyReason {
     owner: InterfaceId,
@@ -42,10 +42,10 @@ enum ReasonKind {
 }
 
 impl Checker<'_> {
-    /// The type `any I` that `interface`, written as `written`, makes: the interface and its
-    /// arguments are resolved as a bound is, and the check that the interface can be `any` waits
-    /// for every interface, as a bound check does. `None`, reported, when `written` names no
-    /// interface or the interface cannot be `any`.
+    /// The type `any I` that `interface`, written as `written`, makes. The interface and its
+    /// arguments resolve as a bound does. The check that the interface can be `any` waits for
+    /// every interface, as a bound check does. The result is `None`, reported, when `written`
+    /// names no interface or the interface cannot be `any`.
     pub(super) fn resolve_any(
         &mut self,
         ty: &ast::TypeExpr,
@@ -146,13 +146,13 @@ impl Checker<'_> {
         });
     }
 
-    /// Why `interface` cannot be `any`, `None` when it can: the first reason among its own
-    /// requirements, then each interface it inherits, depth first in the order of the lists. The
-    /// answers are kept by interface, and the reason of each interface in the walk by interface and
-    /// arguments, so a shared ancestor is read once.
+    /// Why `interface` cannot be `any`, or `None` when it can. The reason is the first one among
+    /// its own requirements, then in each interface it inherits, depth first in the order of the
+    /// lists. The answers are kept by interface. The reason of each interface in the walk is kept
+    /// by interface and arguments, so a shared ancestor is read once.
     ///
-    /// The requirements are read over the interface's own parameters and `Self`, so the answer is
-    /// the same for every argument of a generic interface: an argument names no `Self`.
+    /// The requirements are read over the interface's own parameters and `Self`. The answer is
+    /// the same for every argument of a generic interface, because an argument names no `Self`.
     pub(super) fn why_not_any(&mut self, interface: InterfaceId) -> Option<AnyReason> {
         if let Some(&answer) = self.any_roots.get(&interface) {
             return answer;
@@ -186,9 +186,9 @@ impl Checker<'_> {
         answer
     }
 
-    /// The first reason that `interface`, as an entry of a walk with these `args` and `this`
-    /// standing for the `Self` of its root, cannot be `any`: an associated type, or a requirement
-    /// that is generic, takes `Self` in a parameter or returns it.
+    /// The first reason that `interface` cannot be `any`, as an entry of a walk with these `args`.
+    /// `this` stands for the `Self` of the root. A reason is an associated type, or a requirement
+    /// that is generic, takes `Self` in a parameter, or returns it.
     fn entry_reason(
         &mut self,
         interface: InterfaceId,
@@ -231,8 +231,8 @@ impl Checker<'_> {
         answer
     }
 
-    /// `any_ty`, an `any I`, and every interface that `I` inherits, each with its arguments once:
-    /// the interfaces that `any_ty` conforms to, and the interfaces whose requirements it calls.
+    /// `any_ty`, an `any I`, and every interface that `I` inherits, each with its arguments once.
+    /// These are the interfaces that `any_ty` conforms to. Its calls use their requirements.
     pub(super) fn any_interfaces(&mut self, any_ty: Type) -> Rc<[(InterfaceId, TypeArgs)]> {
         if let Some(closure) = self.any_closures.get(&any_ty) {
             return Rc::clone(closure);
@@ -268,8 +268,8 @@ impl Checker<'_> {
     /// `Ok` holds the checked value and whether the rule failed, as `against` returns them. `Err`
     /// gives `checked` back when no conversion applies, for the caller to report a mismatch.
     ///
-    /// A value converts when its type conforms to `I`, and it is an object, an `any` of an
-    /// interface that inherits `I`, or a type with `AnyObject`; any other value is a `Mismatch`
+    /// A value converts when its type conforms to `I`. It must also be an object, an `any` of an
+    /// interface that inherits `I`, or a type with `AnyObject`. Any other value is a `Mismatch`
     /// until it can be boxed. An optional does not convert, since a `None` has no object.
     pub(super) fn any_conversion(
         &mut self,
@@ -317,8 +317,8 @@ impl Checker<'_> {
         Ok((converted, false))
     }
 
-    /// Converts the value of `block`, which ends at `at`, where `want` is expected, as
-    /// `any_conversion` does for an expression: the value of a function's body, or of a branch.
+    /// Converts the value of `block`, which ends at `at`, where `want` is expected. It does what
+    /// `any_conversion` does for an expression, for the value of a function's body or a branch.
     pub(super) fn any_block(&mut self, block: &mut CheckedBlock, want: Type, at: Span) {
         let Some(got) = block_type(block) else {
             return;
@@ -395,8 +395,8 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether a value of type `got`, which conforms, converts to `any` without a box: an object,
-    /// an `any`, or a type whose values are objects or `any`s (`AnyObject`).
+    /// Whether a value of type `got`, which conforms, converts to `any` without a box. The type
+    /// is an object type, an `any`, or a type whose values are objects or `any`s (`AnyObject`).
     fn converts_now(&mut self, got: Type) -> bool {
         match got.kind() {
             TypeKind::Class(..) | TypeKind::Any(..) => true,
