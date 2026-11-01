@@ -12,7 +12,7 @@ use crate::symbol::Symbol;
 use crate::tir::{self, Stream, Type, TypeKind};
 
 /// The prelude's names.
-pub(super) const PRELUDE: [&str; 5] = ["print", "eprint", "panic", "read_line", "dbg"];
+pub(super) const PRELUDE: &[&str] = &["print", "eprint", "panic", "read_line", "dbg"];
 
 /// Whether the prelude function `name` takes arguments: only `read_line` takes none.
 pub(super) fn takes_arguments(name: &str) -> bool {

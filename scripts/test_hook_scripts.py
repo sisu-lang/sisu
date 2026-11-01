@@ -2,6 +2,7 @@
 import contextlib
 import io
 import os
+import subprocess
 import tempfile
 import unittest
 
@@ -40,9 +41,65 @@ class RegistryDebugFormat(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn(':2: diagnostic text uses {:?}', out)
 
-    def test_debug_format_in_the_tests_passes(self):
-        text = 'use a;\n#[cfg(test)]\nformat!("{x:?}")\n'
-        self.assertEqual(run(registry_debug_format.main, text), (0, ''))
+    def test_debug_format_in_the_test_module_should_pass(self):
+        for header in HEADERS:
+            with self.subTest(header=header):
+                text = 'use a;\n' + header + '    format!("{x:?}")\n}\n'
+                self.assertEqual(run(registry_debug_format.main, text), (0, ''))
+
+    def test_debug_format_after_a_step_counter_should_fail(self):
+        text = '#[cfg(test)]\nthread_local! {}\nformat!("{x:?}")\n#[cfg(test)]\nmod tests {}\n'
+        code, out = run(registry_debug_format.main, text)
+        self.assertEqual(code, 1)
+        self.assertIn(':3: diagnostic text uses {:?}', out)
+
+
+# A step counter that CODING_STANDARDS.md asks for, at the top of a production file.
+STEPS = '#[cfg(test)]\nthread_local! {\n    static STEPS: Cell<u32> = const { Cell::new(0) };\n}\n'
+# The plain test module header, and one with what may come between: rustfmt splits a long
+# attribute over lines and keeps a blank line, and a doc comment may come too.
+HEADERS = (
+    '#[cfg(test)]\nmod tests {\n',
+    '#[cfg(test)]\n\n/// The tests.\n#[expect(\n    clippy::x,\n    reason = "[r]",\n)]\nmod tests {\n',
+)
+
+
+def run_hook(script, text):
+    """The exit code and output of `scripts/<script>` on one file holding `text`."""
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, 'f.rs')
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(text)
+        done = subprocess.run([os.path.join(os.path.dirname(__file__), script), path],
+                              capture_output=True, text=True)
+    return done.returncode, done.stdout
+
+
+class ExpectMessages(unittest.TestCase):
+    def test_an_expect_after_a_step_counter_should_fail_at_its_line(self):
+        code, out = run_hook('check-expect-messages.sh', STEPS + 'x.expect("no");\n')
+        self.assertEqual(code, 1)
+        self.assertIn('f.rs:5: expect message should say', out)
+
+    def test_an_expect_in_the_test_module_should_pass(self):
+        for header in HEADERS:
+            with self.subTest(header=header):
+                text = STEPS + 'x.expect("a should");\n' + header + '    x.expect("no");\n}\n'
+                self.assertEqual(run_hook('check-expect-messages.sh', text), (0, ''))
+
+
+class TestWording(unittest.TestCase):
+    def test_wording_after_a_step_counter_should_pass(self):
+        self.assertEqual(run_hook('check-test-wording.sh', STEPS + 'd.message();\n'), (0, ''))
+
+    def test_wording_in_the_test_module_should_fail(self):
+        for header in HEADERS:
+            with self.subTest(header=header):
+                text = STEPS + header + '    d.message();\n}\n'
+                code, out = run_hook('check-test-wording.sh', text)
+                self.assertEqual(code, 1)
+                line = text.count('\n') - 1
+                self.assertIn(f'f.rs:{line}: a unit test reads diagnostic wording', out)
 
 
 class SessionUrl(unittest.TestCase):

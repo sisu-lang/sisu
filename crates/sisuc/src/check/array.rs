@@ -11,7 +11,7 @@ use crate::tir::{self, Type, TypeKind};
 /// The methods of an array that the compiler writes, with their parameter counts. `push` is not
 /// answered here: it writes its receiver's place, which `Checker::push` checks. The prelude's
 /// `extend` blocks give an array its other methods.
-pub(super) const METHODS: [(&str, usize); 2] = [("len", 0), ("push", 1)];
+pub(super) const METHODS: &[(&str, usize)] = &[("len", 0), ("push", 1)];
 
 impl Checker<'_> {
     /// `[a, b, ...]`. With an expected `[E]` or `[E]?`, each element is checked against `E`.

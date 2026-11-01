@@ -2295,6 +2295,40 @@ fn assert_empty(tmp: &Path) {
     assert!(left.is_empty(), "left in {}: {left:?}", tmp.display());
 }
 
+/// GIVEN a program with a warning, and a stderr that is `/dev/full`
+/// WHEN `sisu` checks it, builds it, or runs it
+/// THEN it exits 1 and not with an abort, the program does not run, and `run` leaves no directory
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "writes to /dev/full, which only Linux has"
+)]
+fn sisu_should_exit_1_and_leave_no_directory_when_stderr_is_full() {
+    const WARNS: &str = "fn main() { let mut n = 1; print(n) }";
+    let tmp = scratch_path::empty_dir("stderr_is_full");
+    let full = || {
+        fs::File::options()
+            .write(true)
+            .open("/dev/full")
+            .expect("/dev/full exists on Linux")
+    };
+    let exe = tmp.join("program");
+    let mut check = Command::new(env!("CARGO_BIN_EXE_sisu"));
+    check.args(["check", "-e", WARNS]);
+    let mut build = Command::new(env!("CARGO_BIN_EXE_sisu"));
+    build.args(["build", "-e", WARNS, "-o"]).arg(&exe);
+    let mut run = sisu_run(&tmp);
+    run.args(["-e", WARNS]);
+    for mut command in [check, build, run] {
+        let out = command.stderr(full()).output().expect("sisu starts");
+        assert_eq!(out.status.code(), Some(1), "{command:?}: {:?}", out.status);
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "", "{command:?}");
+    }
+    // `-o` names the build's output, which is whole; the run's own directory is gone.
+    fs::remove_file(&exe).expect("build wrote the executable");
+    assert_empty(&tmp);
+}
+
 /// GIVEN a program that echoes its arguments and its input
 /// WHEN `sisu run` runs it with arguments, with input on stdin, and with `--`
 /// THEN the output is the expected output, stderr is empty, a first `--` is dropped, a later `--`
