@@ -3041,8 +3041,8 @@ fn may_be_none_in_an_assignment_target_should_offer_the_fix() {
     }
 }
 
-/// A `push` on a field of an optional that holds no class has no field to hold an array, but the
-/// optional still may be `None`: E0062 offers the `?.` fix.
+/// An optional array has no field to hold an array. E0062 must still offer the `?.` fix before a
+/// `push` on such a field.
 #[test]
 fn may_be_none_before_a_push_on_a_field_of_an_optional_array_should_offer_the_fix() {
     let src = "fn f(xs: [i64]?) {\n    xs.v.push(1)\n}\nfn main() {}";
