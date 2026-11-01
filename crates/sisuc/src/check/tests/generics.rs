@@ -5538,6 +5538,7 @@ const WAIT_CALL_DECLS: &str = "class Two<A, B> {\n    a: A\n    b: B\n}\n\
     fn fc2<T, U, V>(_a: Two<T, Two<U, V>>, _c: Two<V, bool>, _b: Result<T, string>) -> i64 { 0 }\n\
     fn mky<X, Y>(y: Y) -> Two<X, Y> { panic(\"e\") }\n\
     fn gy<T, U>(_c: Two<T, [U]>, _d: Result<T, string>, _e: Result<U, string>) -> i64 { 0 }\n\
+    fn gw2<T, U>(_a: Two<U, bool>, _c: Two<T, [U]>, _d: Result<T, string>) -> i64 { 0 }\n\
     class WV: I {\n    type Item = [i64]\n}\n\
     fn mkwv<E>() -> Result<WV, E> { Ok(WV()) }\n\
     fn mkb<X, Y>(y: Y) -> Two<X, [Y]> { panic(\"e\") }\n\
@@ -5625,9 +5626,12 @@ const WAIT_CALL_ROWS: &[(&str, &[(Code, &str)])] = {
         ("print(gtu(mkv(), mks()))", &[]),
         ("print(gtu(mkt(), mks()))", &[(Mismatch, "mkt()")]),
         // A part of the call's type is a parameter that its own argument binds (`Y`), not an open
-        // one. It waits for `T` and `U` only. At an associated type of the outer call, the same
+        // one. It waits for `T` only. At an associated type of the outer call, the same
         // part names no open parameter.
         ("print(gy(mky([1]), mk(), mk()))", &[]),
+        // `mk2()` names `U` at the place of a bare `T` in `Two<T, [U]>`: `needed_params` tests
+        // whether that parameter is unbound.
+        ("print(gw2(mk2(), mky([1]), mk()))", &[]),
         ("print(gz(mkb(1), mkwv()))", &[]),
         // The arguments of an alias of a class do not fit it: the call reports that and waits for
         // nothing.
@@ -5691,8 +5695,8 @@ fn a_waiting_call_should_wait_for_a_later_argument_that_binds_its_context() {
 /// and moves on at each binding, builds a context of size `k` `k` times.
 ///
 /// The third is one waiting call that waits for all `k` parameters of `Tup<T0, ..., T{k-1}>`,
-/// which its context names in a shuffled order. Work that fixes the order with a sort is not
-/// linear in `k`.
+/// which its context names in a shuffled order. The call is parked and woken in a linear number of
+/// steps.
 #[test]
 fn waiting_calls_should_be_tested_a_linear_number_of_times() {
     with_prelude();

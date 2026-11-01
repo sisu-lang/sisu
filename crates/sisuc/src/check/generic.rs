@@ -198,8 +198,8 @@ fn open_params(
 /// The open parameters (see `open_params`) of a call of a function or method that returns `ret`,
 /// or none when the call is not open. The context binds only what the type of the call names. So
 /// the call is open if `ret` names a parameter that no parameter type does. It is not open if
-/// one parameter is named by no type at all, whatever else it leaves: nothing can bind that one,
-/// and the call reports it. `ret` is `None` when it did not resolve; the call is not open then.
+/// one parameter is named by no type at all. Nothing can bind that parameter, so the call reports
+/// it. `ret` is `None` when it did not resolve; the call is not open then.
 fn open_params_of_call(
     params: impl Iterator<Item = Option<Type>>,
     ret: Option<Type>,
@@ -409,7 +409,7 @@ impl Parked {
                 }
             }
         }
-        // shortcut: this sort costs a log a for the a arguments of one call that wake together.
+        // shortcut: this sort costs `n log n` for the `n` arguments of one call that wake together.
         // Upgrade to a linear order (for example, buckets by argument index) if a call with very
         // many waiting arguments shows up in a profile.
         woken.sort_unstable_by(|a, b| b.cmp(a));
