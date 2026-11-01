@@ -48,7 +48,10 @@ enums with `match`.
 - optionals such as `i64?` and `Node?`, with `None`, `?.`, `??`, `if let` and
   `while let`; `T?` is short for the prelude enum `Option<T>`, with the bare
   names `Some` and `None`; an optional can hold an optional, such as `i64??`,
-  and `??`, `?.` and `if let` take off one layer at a time
+  and `??`, `?.` and `if let` take off one layer at a time; an assignment
+  such as `c?.n = 2` or `c?.n += 1` writes only when every `?.` step holds a
+  value, and else does not run its right side
+  ([ADR 0037](adr/0037-assignment-through-optional-chaining.md))
 - the prelude enum `Result<T, E>`, with the bare names `Ok` and `Err`
 - enums, declared with `enum` and a list of variants, each with no payload,
   labeled fields (`Rect(w: i64, h: i64)`) or unlabeled ones (`Num(i64)`);
