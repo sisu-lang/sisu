@@ -30,7 +30,7 @@ Eight small programs timed in Sisu, C, Rust, Go, Java and Python, with the numbe
   <section class="ph"><div class="w">
     <h1>How fast is Sisu?</h1>
     <p class="lede">Eight small programs, each written with the same algorithm in Sisu, C, Rust, Go, Java and Python. The numbers show where Sisu stands today, not how fast it will be.</p>
-    <p class="meta">Intel Core i9-14900K under Linux 7.0 · The commit and date are named below the table · Prose checked against the repository at commit 04f8d68</p>
+    <p class="meta">Intel Core i9-14900K under Linux 7.0 · The commit and date are named below the table · Prose checked against the repository at commit 40ec062f</p>
   </div></section>
   <!-- source: docs/benchmarks.md (intro, Results) -->
 
@@ -114,7 +114,55 @@ $ RUNS=10 BENCH_CPU=4 make bench
   </div></section>
   <!-- source: docs/benchmarks.md (What the numbers mean, Running them, toolchains), Makefile (bench), README.md (x86-64 and ARM64 Linux, ARM64 macOS) -->
 
-  <section class="s" aria-labelledby="h-codspeed"><div class="w">
+  <section class="s" aria-labelledby="h-compile"><div class="w">
+    <div class="s-h"><h2 id="h-compile">Compile speed</h2><p>How long Sisu, <code>rustc</code>, <code>clang++</code> and Go take to compile the same program, in five steps. The compilers do different work, so a ratio shows where Sisu is, not who wins.</p></div>
+    <div class="prose">
+      <p><code>scripts/compile_speed.py</code> repeats one unit, in each language, 10, 100 and 1000 times. Size 1000 is about 143k lines in Sisu, and 138k to 158k lines in the other languages. The unit has generic classes, an interface with an associated type, a generic function with a bound, an enum and string interpolation. Each copy has its number in a label string, so that <code>rustc</code> cannot merge the copies into one function at <code>-O2</code>. The <code>main</code> calls each copy twice. In Sisu and Rust, the <code>run</code> function of a copy is internal. LLVM gives the last call of an internal function a large inline bonus. With one call, LLVM inlines every copy into <code>main</code> at <code>-O2</code>. The time of the optimizer on one huge function grows much faster than the program: <code>rustc -O2</code> took 14 minutes of CPU at size 100. Two calls remove the bonus. The C++ <code>run</code> function is external and never had it, and the inliner of Go has no such bonus.</p>
+      <p>The table shows size 1000, from commit 40ec062f on 2026-11-01. Other jobs ran on the machine during the run, so the times are noisy, most at size 10. The load averages for 1, 5 and 15 minutes were 13.2, 19.8 and 14.0 at the start of the run. They were 20.7, 17.8 and 13.7 at the end. The machine has 32 CPUs. Each time is the best of 5 runs. The sizes 10 and 100, the lines, the tokens and the instructions per token are in <a href="https://github.com/sisu-lang/sisu/blob/main/docs/benchmarks.md">docs/benchmarks.md</a>.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Row</th><th>Language</th><th>Time</th><th>Tokens/s past empty</th></tr></thead>
+        <tbody>
+          <tr><td>type check</td><td>Sisu</td><td>216.6 ms</td><td>3.5M</td></tr>
+          <tr><td>type check</td><td>Rust</td><td>3.80 s</td><td>254.8k</td></tr>
+          <tr><td>type check</td><td>C++</td><td>1.35 s</td><td>739.9k</td></tr>
+          <tr><td>type check</td><td>Go</td><td>1.48 s</td><td>612.1k</td></tr>
+          <tr><td>type check and mir</td><td>Sisu</td><td>537.9 ms</td><td>1.4M</td></tr>
+          <tr><td>type check and mir</td><td>Rust</td><td>3.80 s</td><td>254.8k</td></tr>
+          <tr><td>type check and mir</td><td>C++</td><td>1.35 s</td><td>739.9k</td></tr>
+          <tr><td>type check and mir</td><td>Go</td><td>1.48 s</td><td>612.1k</td></tr>
+          <tr><td>LLVM IR, no optimization</td><td>Sisu</td><td>2.14 s</td><td>347.4k</td></tr>
+          <tr><td>LLVM IR, no optimization</td><td>Rust</td><td>7.22 s</td><td>133.9k</td></tr>
+          <tr><td>LLVM IR, no optimization</td><td>C++</td><td>2.73 s</td><td>364.8k</td></tr>
+          <tr><td>LLVM IR, no optimization</td><td>Go</td><td>none</td><td>-</td></tr>
+          <tr><td>executable, no optimization</td><td>Sisu</td><td>3.35 s</td><td>224.7k</td></tr>
+          <tr><td>executable, no optimization</td><td>Rust</td><td>8.76 s</td><td>110.5k</td></tr>
+          <tr><td>executable, no optimization</td><td>C++</td><td>6.54 s</td><td>152.7k</td></tr>
+          <tr><td>executable, no optimization</td><td>Go</td><td>9.86 s</td><td>92.4k</td></tr>
+          <tr><td>executable, optimized</td><td>Sisu</td><td>27.50 s</td><td>27.0k</td></tr>
+          <tr><td>executable, optimized</td><td>Rust</td><td>23.02 s</td><td>41.9k</td></tr>
+          <tr><td>executable, optimized</td><td>C++</td><td>44.84 s</td><td>22.1k</td></tr>
+          <tr><td>executable, optimized</td><td>Go</td><td>14.32 s</td><td>63.5k</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li><b>Tokens/s past empty</b> is the tokens divided by the time less the time of an empty program in the same row. It removes the start-up cost of the compiler. One scanner counts the tokens, the same way for all four languages. This is not the token count of <code>sisu build --timings</code>.</li>
+        <li>The type-check commands do different work. <code>sisu check</code> does a type check. <code>sisu build --emit mir</code> adds mono and mir. <code>rustc --emit=metadata</code> does a type check, trait solving, MIR and the borrow check, with no monomorphization. <code>clang++ -fsyntax-only</code> does a type check and template instantiation. Go's <code>fe:parse</code> is parse and type check. The two Sisu rows bracket the others. Go's compiler is built for speed and does less optimization.</li>
+        <li>The Go type-check cell is the <code>fe:parse</code> time that <code>go build -gcflags=-bench</code> writes, measured inside the compiler. Every other cell is the wall time of the whole process. Go has no step that stops at LLVM IR, so that cell says <code>none</code>.</li>
+        <li>Each compiler ran on one thread: <code>-p=1</code> and <code>GOMAXPROCS=1</code> for Go, <code>-C codegen-units=1</code> for <code>rustc</code>, and one thread for the LLD linker. <code>rustc</code> and Go are therefore faster than this table shows on a machine with many cores.</li>
+        <li>The <code>executable</code> rows include the link step.</li>
+        <li>The Instructions/token column needs <code>perf</code> to read the counters. It shows <code>-</code> when it cannot, as on this machine, where <code>kernel.perf_event_paranoid</code> is 4. Set it to 2 or lower to allow <code>:u</code> events.</li>
+      </ul>
+      <h3>Run it yourself</h3>
+      <p>The target builds <code>sisu</code> in release mode and prints the full table. If mise installs Go, put it on <code>PATH</code> with <code>mise exec go -- make compile-speed</code>. The full run takes about 18 minutes. <code>make compile-speed</code> has run on Linux only.</p>
+      <figure class="code"><figcaption class="cap">terminal</figcaption><pre data-lang="sh">
+$ make compile-speed
+$ make compile-speed ARGS='--check-only'
+</pre></figure>
+    </div>
+  </div></section>
+  <!-- source: docs/benchmarks.md (Compile speed), scripts/compile_speed.py, Makefile (compile-speed) -->
+
+  <section class="s tint" aria-labelledby="h-codspeed"><div class="w">
     <div class="s-h"><h2 id="h-codspeed">Regression tracking</h2><p>The tables above compare Sisu with other languages. CodSpeed does something else: it compares Sisu with itself, change by change, so a slowdown shows on the pull request that causes it.</p></div>
     <div class="prose">
       <p>The <code>CodSpeed</code> workflow runs on every push to <code>main</code>. It also runs on a pull request that changes any of these paths:</p>
