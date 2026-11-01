@@ -43,8 +43,8 @@ variants, and a `match` must cover all of them.
   instead of being freed by a nested call. The list lives on the stack of the
   release that drains it and needs no allocation. The stack stays constant
   for right-deep, left-deep, mixed and mutual shapes. A class or array in a
-  payload is released as today, so a chain that alternates through classes
-  or arrays keeps ADR 0005's limit of one stack frame per object.
+  payload is released as today, and a chain that alternates through classes
+  or arrays drops in a bounded stack through the depth limit of ADR 0038.
 - **The box goes on an enum's field when a cycle runs through a record or
   a generic type.** A cycle made of records alone stays ADR 0011's error. In
   milestone 8, a cycle through `Wrap<E>` boxes the declaring enum's field,

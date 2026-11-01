@@ -36,7 +36,8 @@ same way. See the milestone 2 spec, "Reference counting".
   list, or a chain that alternates between classes, frees in constant stack. A
   cycle is a set of classes that hold each other in direct fields, `X` with any
   number of `?` around it. A list's `next` is a cycle of one class. Other
-  references recurse: a field of an array or an enum, and a class outside the
-  cycle. A class has no generated `==` (ADR 0022), so no compiler-written code
+  references go through the drop functions that ADR 0038 counts. Past a
+  depth limit, a drop waits on a queue, so a drop adds a bounded amount of
+  stack. A class has no generated `==` (ADR 0022), so no compiler-written code
   walks the fields of a class. A written `eq` is a method like any other and
   follows the references it names.

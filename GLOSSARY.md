@@ -227,6 +227,32 @@ Freeing an object when the last reference to it goes away, after releasing
 the references in its fields.
 _Avoid_: deinit, destructor, finalizer
 
+**Drop function**:
+The generated function that drops one heap block whose count is 0:
+`@sisu_rc.drop.<C>` for an object of class `C`, and `@sisu_rc.drop.[T]` for
+an array of `T`. It takes the block's address.
+
+**Recursing part**:
+A counted field, element or payload whose release can call a **Drop
+function** with no bound that the source fixes. Every counted type is one,
+unless ADR 0038 lists its type as bounded. A drop function with a recursing
+part counts the drop depth.
+
+**Drop weight**:
+The constant that a counting **Drop function** adds to the drop depth: 1,
+plus the largest number of helper frames that one of its parts can open
+before the next counting drop function starts.
+
+**Deferred drop**:
+A heap block, with its **Drop function**, that a counting drop function put
+on the runtime's first-in first-out queue at the **Depth limit**. The drop
+that brings the drop depth back to 0 empties the queue.
+_Avoid_: trashcan, postponed
+
+**Depth limit**:
+The drop depth, in frames, at which a counting **Drop function** stops
+recursing and makes a **Deferred drop** (ADR 0038).
+
 **Structural equality**:
 `==` on a value comparing it part by part: array elements, variant payloads,
 an optional's contents. Classes have none: they compare by **Identity**, and

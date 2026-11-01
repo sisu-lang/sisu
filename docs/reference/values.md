@@ -148,6 +148,13 @@ The rules:
 - Sisu frees the memory of an array or a string in the same way, when its last holder goes away.
 - No code of the program runs when Sisu frees an object. A program cannot see when it happens. The time changes only how much memory the program uses. The section [Weak fields](#weak-fields) is in development, and it changes this rule.
 
+The order of drops:
+
+- A drop adds a bounded amount of stack, however deep the value is. A long chain of objects through arrays or enums does not overflow the stack.
+- When a scope ends, the drop of one local is complete before the next local ends. This includes each part of its value that waited past the depth limit.
+- A program drops its values in the same order on each run.
+- Inside one value, Sisu releases the fields in declared order, and the elements of an array in index order. Past the depth limit of [ADR 0038](../adr/0038-deep-drops-defer-past-a-depth-limit.md), a part can drop after a part that it does not hold and that does not hold it, such as the next element of an array.
+
 ## Cycles
 
 A *cycle* is a chain of references that comes back to the object where it starts. Objects in a cycle are never freed. This applies also to one object that refers to itself.
