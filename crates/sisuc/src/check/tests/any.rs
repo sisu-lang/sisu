@@ -1394,6 +1394,10 @@ fn an_array_literal_should_join_a_some_with_an_any_element_as_an_if_does() {
             "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let d: any Display = 1\n    let r = [Some(s), d]\n}",
         ),
         (
+            "an empty array beside an array of an `any` value",
+            "fn main() {\n    let d: any Display = 1\n    let c = true\n    let r = if c { [d] } else { [] }\n}",
+        ),
+        (
             "an array of `Some` beside an array that holds a `Some` and an `any` value",
             "fn main() {\n    let d: any Display = 1\n    let c = true\n    let r = if c { [d, Some(2)] } else { [Some(2)] }\n}",
         ),
@@ -1415,6 +1419,16 @@ fn an_array_literal_should_join_a_some_with_an_any_element_as_an_if_does() {
             "an array of an optional number beside an array of an `any` value, in an `if`",
             "fn main() {\n    let d: any Display = 1\n    let x: i64? = Some(5)\n    let c = true\n    let r = if c { [d] } else { [x] }\n}",
             vec![(Code::Mismatch, (5, 34))],
+        ),
+        (
+            "an array of an `any` value of another interface beside an array of an `any` value",
+            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let n: any Named = Cube(s: 1.0)\n    let c = true\n    let r = if c { [s] } else { [n] }\n}",
+            vec![(Code::Mismatch, (5, 34))],
+        ),
+        (
+            "an `any` value of another interface after a `Some` of a class and an `any` value",
+            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let n: any Named = Cube(s: 1.0)\n    let r = [Some(Circle(r: 2.0)), s, n]\n}",
+            vec![(Code::Mismatch, (4, 39))],
         ),
         (
             "an array of a `Some` beside an array of an `any` value, in an `if`",
