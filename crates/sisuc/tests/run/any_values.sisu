@@ -1,0 +1,175 @@
+// GIVEN interfaces `Shape` and `Named`, a class `Circle`, a struct-free number type `Num` that
+// conforms to `Display`, an `Expr` enum with a deep chain, and an enum `Slab` with a `string`
+// payload that conforms to `Shape`
+// WHEN values that are no objects (a `string`, a `char`, a number, an enum) are converted to `any`,
+// stored, passed, called through the table, shown, copied and dropped
+// THEN each call runs the method of the value inside, each value shows as its type does, and
+// Valgrind and `--rc-checks` find every box and every payload freed once
+interface Shape {
+    fn area(self) -> f64
+}
+
+interface Named {
+    fn name(self) -> string
+}
+
+class Circle: Shape {
+    r: f64
+
+    fn area(self) -> f64 {
+        self.r * self.r * 3.0
+    }
+}
+
+// A number whose `to_string` is written.
+enum Num {
+    Of(i64)
+
+    fn to_string(self) -> string {
+        match self {
+            Num.Of(n) => "Num({n})"
+        }
+    }
+}
+
+enum Expr {
+    Lit(i64)
+    Add(Expr, Expr)
+}
+
+// An enum with a `string` payload: the box owns the payload.
+enum Slab: Shape, Named {
+    Plain
+    Label(string)
+
+    fn area(self) -> f64 {
+        match self {
+            Slab.Plain => 2.0
+            Slab.Label(text) => 1.0 + f64(text.len())
+        }
+    }
+
+    fn name(self) -> string {
+        match self {
+            Slab.Plain => "plain"
+            Slab.Label(text) => "label {text}"
+        }
+    }
+}
+
+fn wrap<T: Shape>(x: T) -> any Shape {
+    x
+}
+
+fn total<T: Shape>(xs: [T]) -> f64 {
+    let mut sum = 0.0
+    for x in xs {
+        sum += x.area()
+    }
+    sum
+}
+
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn describe(s: any Shape) -> string {
+    "area {s.area()}"
+}
+
+// The payload comes back as the box's own `string`, not a copy of it.
+interface Held {
+    fn payload(self) -> string
+}
+
+enum Crate: Held {
+    Empty
+    Of(string)
+
+    fn payload(self) -> string {
+        match self {
+            Crate.Empty => ""
+            Crate.Of(text) => text
+        }
+    }
+}
+
+fn consume(held: any Held) -> i64 {
+    held.payload().len()
+}
+
+// `first` and `copy` share one box. `first` is released inside `consume`, and `copy` is read
+// after that. The payload that this returns outlives both.
+fn owned_payload() -> string {
+    let first: any Held = Crate.Of("owned")
+    let copy = first
+    let calls = first.payload().len() + first.payload().len() + first.payload().len()
+    let moved = consume(first)
+    print(calls + moved + copy.payload().len()) // 25
+    print(Crate.Empty.payload() == "") // true
+    copy.payload()
+}
+
+fn deep(n: i64) -> Expr {
+    let mut e = Expr.Lit(0)
+    for i in 0..n {
+        e = Expr.Add(Expr.Lit(i), e)
+    }
+    e
+}
+
+fn main() {
+    // An array of values that are no objects: each prints as its type does.
+    let shown: [any Display] = ["hi", 'c', 5, Num.Of(1)]
+    print(shown) // ["hi", 'c', 5, Num(1)]
+    for d in shown {
+        print(d)
+    }
+    print(shown[0].to_string()) // hi
+    print("{shown[3]}") // Num(1)
+
+    // The enum with a deep chain: `{s:#}` against `{e:#}` writes the same text.
+    let e = deep(3)
+    let s: any Display = deep(3)
+    print("{s:#}" == "{e:#}") // true
+
+    // An enum that conforms to `Shape`, called through the table.
+    let plain: any Shape = Slab.Plain
+    let label: any Shape = Slab.Label("abc")
+    print(plain.area()) // 2.0
+    print(label.area()) // 4.0
+    let named: any Named = Slab.Label("x")
+    print(named.name()) // label x
+
+    // `wrap` converts a class, an enum, and keeps an `any`.
+    print(wrap(Circle(r: 1.0)).area()) // 3.0
+    print(wrap(Slab.Label("hello")).area()) // 6.0
+    print(wrap(plain).area()) // 2.0
+
+    // An `any Shape` that holds an enum converts to `any Display`.
+    let text: any Display = label
+    print(text) // Label("abc")
+
+    // `total` over one array of a class and an enum: one instance, `total<any Shape>`.
+    let mixed: [any Shape] = [Circle(r: 2.0), Slab.Label("ab"), Slab.Plain]
+    print(total(mixed)) // 17.0
+
+    // Inference: the argument binds `T` to a number, and the result converts.
+    let from_id: any Display = id(5)
+    print(from_id) // 5
+
+    // Ownership through a box: the copy keeps the payload alive after the first is dropped.
+    let first: any Shape = Slab.Label("owned")
+    let copy = first
+    print(first.area()) // 6.0
+    print(first.area()) // 6.0
+    print(first.area()) // 6.0
+    print(copy.area()) // 6.0
+    print(describe(copy)) // area 6.0
+    let again: any Named = Slab.Label("kept")
+    let kept = again.name()
+    print(kept) // label kept
+
+    // The payload outlives the two `any` values that held it.
+    print(owned_payload()) // owned
+}

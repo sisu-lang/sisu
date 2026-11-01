@@ -95,6 +95,8 @@ pub(super) enum HeapBlock<'a, 'ctx> {
     String { cap: IntValue<'ctx> },
     /// A box of the enum.
     Box(EnumId),
+    /// The counted box that holds a value of this type in an `any` value: see `value_box`.
+    Value(Type),
     /// The pending pairs of an `eq_component` helper, with room for `cap` of them.
     Pending { cap: IntValue<'ctx> },
 }
@@ -589,6 +591,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         match *block {
             HeapBlock::Class(id) => abi(&self.classes[id.0].ty),
             HeapBlock::Box(inner) => abi(&self.enums[inner.0].boxed),
+            HeapBlock::Value(ty) => abi(&self.value_box(ty)),
             // A capacity that reaches here passed the size checks, or is a literal's or an
             // existing block's.
             HeapBlock::Array { layout, cap } => {

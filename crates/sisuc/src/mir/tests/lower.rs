@@ -1127,3 +1127,22 @@ fn an_identity_conversion_should_leave_no_to_any() {
         "{printed}"
     );
 }
+
+/// `wrap` at an object type or an enum converts, and at an `any` type, which the conversion
+/// already made, it converts nothing.
+#[test]
+fn a_bounded_conversion_should_lower_to_to_any_only_where_it_makes_a_value() {
+    let printed = built(&format!(
+        "{ANY_SHAPE}enum Slab: Shape {{\n    Plain\n    fn area(self) -> f64 {{ 1.0 }}\n}}\nfn wrap<T: Shape>(x: T) -> any Shape {{ x }}\nfn main() {{\n    let s: any Shape = Circle(r: 1.0)\n    print(wrap(s).area())\n    print(wrap(Circle(r: 2.0)).area())\n    print(wrap(Slab.Plain).area())\n}}"
+    ));
+    assert!(
+        !function(&printed, "wrap<any Shape>").contains("to_any"),
+        "{printed}"
+    );
+    for at in ["wrap<Circle>", "wrap<Slab>"] {
+        assert!(
+            function(&printed, at).contains("to_any"),
+            "{at} in\n{printed}"
+        );
+    }
+}

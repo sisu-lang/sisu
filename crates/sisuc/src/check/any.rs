@@ -298,9 +298,10 @@ impl Checker<'_> {
     /// `Ok` holds the checked value and whether the rule failed, as `against` returns them. `Err`
     /// gives `checked` back when no conversion applies, for the caller to report a mismatch.
     ///
-    /// A value converts when its type conforms to `I`. It must also be an object, an `any` of an
-    /// interface that inherits `I`, or a type with `AnyObject`. Any other value is a `Mismatch`
-    /// until it can be boxed. An optional does not convert, since a `None` has no object.
+    /// A value converts when its type conforms to `I`: an object keeps its pointer, an `any` of
+    /// an interface that inherits `I` keeps its data, and any other value goes into a counted box
+    /// (`mono` and `codegen` choose, by the type that a parameter stands for). An optional does
+    /// not convert, since a `None` has no object.
     pub(super) fn any_conversion(
         &mut self,
         at: Span,
@@ -318,15 +319,12 @@ impl Checker<'_> {
         let TypeKind::Any(interface, args) = target.kind() else {
             unreachable!("the target should be an `any` type");
         };
-        if matches!(got.kind(), TypeKind::Optional(_)) || got == Type::NEVER || got == Type::UNIT {
+        if !can_convert(got) {
             return Err(checked);
         }
         if !self.conforms(got, interface, args) {
             self.report(self.not_conform(at, got, target));
             return Ok((Err(Poisoned::error()), true));
-        }
-        if !self.converts_now(got) {
-            return Err(checked);
         }
         // A conversion makes a table, which only `mono` reaches.
         self.instantiates = true;
@@ -391,7 +389,7 @@ impl Checker<'_> {
     }
 
     /// Whether a value of type `got` converts to `want`, which `any_conversion` answers by doing
-    /// it: `want` is `any I` or `(any I)?`, and `got` conforms and needs no box.
+    /// it: `want` is `any I` or `(any I)?`, and `got` conforms.
     pub(super) fn converts_to_any(&mut self, got: Type, want: Type) -> bool {
         let target = match want.kind() {
             TypeKind::Optional(payload) => payload,
@@ -400,11 +398,7 @@ impl Checker<'_> {
         let TypeKind::Any(interface, args) = target.kind() else {
             return false;
         };
-        !matches!(got.kind(), TypeKind::Optional(_))
-            && got != Type::NEVER
-            && got != Type::UNIT
-            && self.conforms(got, interface, args)
-            && self.converts_now(got)
+        can_convert(got) && self.conforms(got, interface, args)
     }
 
     /// The type that values of types `a` and `b` join to when one converts to the other: the `any`
@@ -468,7 +462,7 @@ impl Checker<'_> {
     }
 
     /// The mistake when the value at `at`, of type `got`, leaves a join whose `any` type is
-    /// `want` (`AnyJoin::Leaves`): a class that does not conform, or else a mismatch.
+    /// `want` (`AnyJoin::Leaves`): a value that does not conform, or else a mismatch.
     pub(super) fn leaves_any(
         &mut self,
         at: Span,
@@ -480,9 +474,12 @@ impl Checker<'_> {
             TypeKind::Optional(payload) => payload,
             _ => want,
         };
-        match (got.kind(), target.kind()) {
-            (TypeKind::Class(..), TypeKind::Any(interface, args))
-                if !self.conforms(got, interface, args) =>
+        match target.kind() {
+            // Two `any` types that do not join are a mismatch, not a conformance.
+            TypeKind::Any(interface, args)
+                if can_convert(got)
+                    && !matches!(got.kind(), TypeKind::Any(..))
+                    && !self.conforms(got, interface, args) =>
             {
                 self.not_conform(at, got, target).into()
             }
@@ -505,18 +502,12 @@ impl Checker<'_> {
             },
         }
     }
+}
 
-    /// Whether a value of type `got`, which conforms, converts to `any` without a box. The type
-    /// is an object type, an `any`, or a type whose values are objects or `any`s (`AnyObject`).
-    fn converts_now(&mut self, got: Type) -> bool {
-        match got.kind() {
-            TypeKind::Class(..) | TypeKind::Any(..) => true,
-            TypeKind::Param(..) | TypeKind::Assoc(..) => {
-                self.conforms(got, self.lang.any_object, TypeArgs::NONE)
-            }
-            _ => false,
-        }
-    }
+/// Whether a value of type `got` can convert to an `any` type, if it conforms. An optional does
+/// not, since a `None` has no object, and `unit` and `never` have no value to hold.
+fn can_convert(got: Type) -> bool {
+    !matches!(got.kind(), TypeKind::Optional(_)) && got != Type::NEVER && got != Type::UNIT
 }
 
 /// Whether `want` is `any I` or `(any I)?`: the types that a value converts to.

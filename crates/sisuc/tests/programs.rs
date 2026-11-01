@@ -285,6 +285,10 @@ allocation_counts! {
     (show_string_tree, "Add(Num(1), Mul(Num(2), Num(3)))\n", "-\n", 1000),
     // An interpolation with a compound part is one block too.
     (show_interp, "Add(Num(1), Mul(Num(2), Num(3)))!\n", "-\n", 1000),
+    // A class object converts to `any Shape` with no allocation.
+    (any_alloc_object, "2000\n", "0\n", 0),
+    // An enum value converts into one counted box: one block for each conversion.
+    (any_alloc_enum, "1500\n", "0\n", 1000),
     // `print` of an `i64` allocates nothing.
     (print_int, super::numbered_lines("start", 1000), "start\n", 0),
 }

@@ -613,7 +613,7 @@ fn main() {
 
 ## Interface values
 
-`any Shape` is a type for a value of any type that conforms to `Shape`. A value converts to it where an `any` type is expected. A call of a method on it uses the method of the type that the value has. An interface that inherits `AnyObject` is class-only, as [Bounds](#bounds) says.
+`any Shape` is a type for a value of any type that conforms to `Shape`. A value converts to it where an `any` type is expected. An object converts as itself. Any other value, such as an enum, a number or a `string`, goes into a box that holds it. A call of a method on it uses the method of the type that the value has. An interface that inherits `AnyObject` is class-only, as [Bounds](#bounds) says.
 
 ```sisu
 interface Shape {
@@ -651,3 +651,34 @@ The rules:
 - An interface whose methods are generic, or that uses `Self` besides the receiver, cannot be `any`. So `any Eq` and `any Ord` are errors.
 - An `any` value prints through the `Display` of the type that it holds. It has no `==` and no `<`.
 - A generic function with the bound `T: Shape` accepts an `[any Shape]`.
+- An object converts with no allocation. Any other value goes into one box, which allocates once. Copies of an `any` value share its box, and the box is freed with its last copy.
+
+A value that is no object converts in the same way. A number, a `string` and a `char` conform to `Display`, and an enum can list an interface as a class does:
+
+```sisu
+interface Shape {
+    fn area(self) -> f64
+}
+
+enum Slab: Shape {
+    Plain
+    Labeled(string)
+
+    fn area(self) -> f64 {
+        match self {
+            Slab.Plain => 2.0
+            Slab.Labeled(text) => 1.0 + f64(text.len())
+        }
+    }
+}
+
+fn main() {
+    let items: [any Display] = ["hi", 'c', 5, [1, 2]]
+    print(items)                       // ["hi", 'c', 5, [1, 2]]
+    let slab: any Shape = Slab.Labeled("abc")
+    let copy = slab
+    print(slab.area())                 // 4.0
+    print(copy.area())                 // 4.0
+    print(Slab.Plain.area())           // 2.0
+}
+```

@@ -190,7 +190,7 @@ struct Mono {
     /// The interfaces of the table of each checked `any` type that `output` has met, with the
     /// checked arguments: see `tir::AnyLayout`.
     layouts: FxHashMap<Type, Rc<[(InterfaceId, TypeArgs)]>>,
-    /// The checked class types and `any` types whose table the output holds.
+    /// The checked types and `any` types whose table the output holds.
     tabled: FxHashSet<(Type, Type)>,
     /// The entries of each interface for each object type, resolved once and shared by every
     /// table that holds them.
@@ -533,9 +533,10 @@ impl Mono {
         closure
     }
 
-    /// Reaches the table of the checked type `source`, a class, for the checked `any` type
-    /// `target`, and of each interface in its layout: the methods that meet their requirements
-    /// are instantiated, and so are the written `to_string` that each show helper may call.
+    /// Reaches the table of the checked type `source`, a class or another value, for the checked
+    /// `any` type `target`, and of each interface in its layout: the methods that meet their
+    /// requirements are instantiated, and so are the written `to_string` that each show helper may
+    /// call.
     fn table(&mut self, source: Type, target: Type) {
         if !self.tabled.insert((source, target)) {
             return;
@@ -852,7 +853,8 @@ impl Mono {
                 e.kind = self.compare(operands, &ops, e.span, args);
             }
             K::ToAny(operand) => {
-                // The table of an object reaches the methods that meet the interface.
+                // The table of an object or a boxed value reaches the methods that meet the
+                // interface.
                 let (source, target) = (self.subst(operand.ty, args), self.subst(e.ty, args));
                 if source == target {
                     // A type parameter that stands for the `any` type is already one.
@@ -860,7 +862,7 @@ impl Mono {
                     *e = inner;
                     return self.expr_kind(e, args);
                 }
-                if matches!(source.kind(), TypeKind::Class(..)) {
+                if !matches!(source.kind(), TypeKind::Any(..)) {
                     self.table(source, target);
                 }
             }

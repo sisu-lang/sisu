@@ -150,6 +150,26 @@ fn any_values_should_check_clean_where_a_value_converts() {
             "the argument of `Some`",
             "fn main() {\n    let s: (any Shape)? = Some(Circle(r: 1.0))\n}",
         ),
+        (
+            "an enum, a number, a string, a char and an array",
+            "enum Num {\n    Of(i64)\n}\nfn main() {\n    let a: any Display = Num.Of(1)\n    let b: any Display = 5\n    let c: any Display = \"hi\"\n    let d: any Display = 'c'\n    let e: any Display = [1, 2]\n}",
+        ),
+        (
+            "an enum that conforms to the interface",
+            "enum Slab: Shape {\n    Plain\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {\n    let s: any Shape = Slab.Plain\n}",
+        ),
+        (
+            "a bounded parameter of any kind, at a class, an enum and an interface value",
+            "enum Slab: Shape {\n    Plain\n    fn area(self) -> f64 { 1.0 }\n}\nfn wrap<T: Shape>(x: T) -> any Shape { x }\nfn main() {\n    let s: any Shape = Rect(w: 1.0)\n    let a = wrap(Circle(r: 1.0))\n    let b = wrap(Slab.Plain)\n    let c = wrap(s)\n}",
+        ),
+        (
+            "a result of inference that is a number",
+            "fn id<T>(x: T) -> T { x }\nfn main() {\n    let d: any Display = id(5)\n}",
+        ),
+        (
+            "an interface value of an enum that converts to `any Display`",
+            "enum Slab: Shape {\n    Plain\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {\n    let s: any Shape = Slab.Plain\n    let d: any Display = s\n}",
+        ),
     ] {
         clean_row(row, &format!("{DECLS}{src}"));
     }
@@ -264,9 +284,9 @@ fn any_should_take_the_name_of_an_interface_and_its_arguments() {
     ]);
 }
 
-/// A value converts to an `any` type when it conforms and needs no box. Any other is reported.
+/// A value converts to an `any` type when it conforms, an object or not. Any other is reported.
 #[test]
-fn a_value_should_convert_to_any_only_where_it_conforms_and_needs_no_box() {
+fn a_value_should_convert_to_any_only_where_it_conforms() {
     rows_after(&[
         (
             "a value that does not conform",
@@ -284,14 +304,14 @@ fn a_value_should_convert_to_any_only_where_it_conforms_and_needs_no_box() {
             vec![(Code::Mismatch, (3, 24))],
         ),
         (
-            "an enum, which waits for the box",
-            "enum Num: Shape {\n    One(i64)\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {\n    let s: any Shape = Num.One(1)\n}",
-            vec![(Code::Mismatch, (6, 24))],
+            "an enum that does not conform",
+            "enum Num {\n    One(i64)\n}\nfn main() {\n    let s: any Shape = Num.One(1)\n}",
+            vec![(Code::NotConform, (5, 24))],
         ),
         (
-            "a bounded parameter that is not an object, which waits for the box",
-            "fn wrap<T: Shape>(x: T) -> any Shape { x }\nfn main() {}",
-            vec![(Code::Mismatch, (1, 40))],
+            "a bounded parameter that does not conform",
+            "fn wrap<T: Display>(x: T) -> any Shape { x }\nfn main() {}",
+            vec![(Code::NotConform, (1, 42))],
         ),
         (
             "an optional of the class where an optional interface value is expected",
@@ -411,11 +431,6 @@ fn inference_should_bind_arguments_before_an_any_context() {
             "two arguments of different classes",
             "fn pair<T>(a: T, b: T) -> T { a }\nfn main() {\n    let c = Circle(r: 1.0)\n    let r = Rect(w: 1.0)\n    let s: any Shape = pair(c, r)\n}",
             vec![(Code::Mismatch, (5, 32))],
-        ),
-        (
-            "a number, which waits for the box",
-            "fn id<T>(x: T) -> T { x }\nfn main() {\n    let d: any Display = id(5)\n}",
-            vec![(Code::Mismatch, (3, 26))],
         ),
         (
             "an array of the argument's type, which no conversion makes an array of `any`",

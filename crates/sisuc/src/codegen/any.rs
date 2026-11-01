@@ -1,8 +1,11 @@
 //! `any` values: a pair of pointers, the data and the table. The data of an object is the object
-//! itself, which holds its count first. The table is one constant global for each object type and
-//! `any` type, named `sisu.<type>:<interface>` (`sisu.Circle:Shape`), a struct of pointers:
+//! itself, which holds its count first. The data of any other value is a counted box,
+//! `{ i64 count, T value }`, that the conversion allocates and that every copy of the `any`
+//! value shares. The table is one constant global for each type and `any` type, named
+//! `sisu.<type>:<interface>` (`sisu.Circle:Shape`), a struct of pointers:
 //!
-//! - slot 0 drops the object: `@sisu_rc.drop.<C>`, which a release calls once the count is 0;
+//! - slot 0 drops the data: `@sisu_rc.drop.<C>` for an object, `@sisu_any.drop.<T>` for a box,
+//!   which a release calls once the count is 0;
 //! - slots 1 and 2 show the value, as `print` and as `dbg` do: `(sink, data, quoted)`;
 //! - then one entry for each requirement of each interface of the layout of the `any` type
 //!   (`tir::AnyLayout`), in its order: `(data, owned arguments...)` returning the result;
@@ -11,10 +14,11 @@
 //!   of `I` without knowing the type inside.
 //!
 //! An entry is glue for one concrete method. The `DynCall` that reaches it reads its receiver in
-//! place and owns every other argument, so the entry adapts to the method's own flags: it retains
-//! the receiver when the method owns `self`, passes on each argument that the method owns, and
-//! releases each argument that the method only borrows, after the call, since the caller of a
-//! borrowing method keeps its arguments alive for the whole call (ADR 0029).
+//! place and owns every other argument, so the entry adapts to the method's own flags: it reads
+//! the value out of a box, retains the receiver when the method owns `self`, passes on each
+//! argument that the method owns, and releases each argument that the method only borrows, after
+//! the call, since the caller of a borrowing method keeps its arguments alive for the whole call
+//! (ADR 0029).
 
 use inkwell::AddressSpace;
 use inkwell::module::Linkage;
@@ -23,9 +27,16 @@ use inkwell::values::{
     BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, PointerValue,
 };
 
+use super::layout::HeapBlock;
 use super::rc::{Helper, Mode};
 use super::{Codegen, POSITIONED};
 use crate::tir::{FuncId, InterfaceId, Type, TypeArgs, TypeKind};
+
+/// Whether the data of an `any` value that holds a `ty` is the object itself. Any other value is
+/// in a box.
+fn is_object(ty: Type) -> bool {
+    matches!(ty.kind(), TypeKind::Class(..))
+}
 
 /// The slot of a table that holds the drop function.
 const DROP: u32 = 0;
@@ -40,6 +51,83 @@ impl<'ctx> Codegen<'ctx, '_> {
     pub(super) fn any_type(&self) -> StructType<'ctx> {
         let ptr = self.context.ptr_type(AddressSpace::default()).into();
         self.context.struct_type(&[ptr, ptr], false)
+    }
+
+    /// `{ i64 count, T value }`: the box that holds a value of type `ty` in an `any` value.
+    pub(super) fn value_box(&self, ty: Type) -> StructType<'ctx> {
+        let value = self
+            .llvm_type(ty)
+            .expect("a boxed value should have a value type");
+        self.context
+            .struct_type(&[self.context.i64_type().into(), value], false)
+    }
+
+    /// The value that `data`, the data of an `any` value that holds a `ty`, stands for: the
+    /// object itself, or the value that its box holds. The box keeps its reference.
+    fn data_value(&self, ty: Type, data: PointerValue<'ctx>) -> BasicValueEnum<'ctx> {
+        if is_object(ty) {
+            return data.into();
+        }
+        let value = self
+            .builder
+            .build_struct_gep(self.value_box(ty), data, 1, "boxed")
+            .expect("a box should hold its value after its count");
+        let value_type = self
+            .llvm_type(ty)
+            .expect("a boxed value should have a value type");
+        self.builder
+            .build_load(value_type, value, "value")
+            .expect(POSITIONED)
+    }
+
+    /// A new box with count 1 that holds `value`, of type `ty`, which the box takes over from
+    /// its owner: no retain.
+    fn new_box(&self, ty: Type, value: BasicValueEnum<'ctx>) -> PointerValue<'ctx> {
+        let (size, align) = self.heap_size(&HeapBlock::Value(ty));
+        let block = self
+            .builder
+            .build_call(self.alloc, &[size.into(), align.into()], "box")
+            .expect(POSITIONED)
+            .try_as_basic_value()
+            .basic()
+            .expect("`sisu_alloc` should return a pointer, as the runtime declares it")
+            .into_pointer_value();
+        self.init_count(block);
+        let slot = self
+            .builder
+            .build_struct_gep(self.value_box(ty), block, 1, "boxed")
+            .expect("a box should hold its value after its count");
+        self.builder.build_store(slot, value).expect(POSITIONED);
+        block
+    }
+
+    /// `@sisu_any.drop.<T>(box)`: the drop of a box that holds a `ty`, for slot 0 of a table:
+    /// releases the value, and frees the box. An object's drop is its class helper.
+    fn drop_glue(&self, ty: Type) -> FunctionValue<'ctx> {
+        if is_object(ty) {
+            return self.helper(Helper::Drop, ty);
+        }
+        let name = format!("sisu_any.drop.{}", self.program.type_name(ty));
+        if let Some(glue) = self.module.get_function(&name) {
+            return glue;
+        }
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let glue = self.module.add_function(
+            &name,
+            self.context.void_type().fn_type(&[ptr.into()], false),
+            Some(Linkage::Internal),
+        );
+        let entry = self.context.append_basic_block(glue, "entry");
+        self.builder.position_at_end(entry);
+        let data = glue
+            .get_nth_param(0)
+            .expect("a drop glue should take its box")
+            .into_pointer_value();
+        self.release(self.data_value(ty, data), ty);
+        let (size, align) = self.heap_size(&HeapBlock::Value(ty));
+        self.call(self.free, &[data.into(), size.into(), align.into()]);
+        self.builder.build_return(None).expect(POSITIONED);
+        glue
     }
 
     /// The interfaces of the table of the `any` type `any`, as `mono` laid them out.
@@ -116,7 +204,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             let as_pointer =
                 |function: FunctionValue<'ctx>| function.as_global_value().as_pointer_value();
             let mut slots: Vec<PointerValue<'ctx>> = vec![
-                as_pointer(self.helper(Helper::Drop, table.ty)),
+                as_pointer(self.drop_glue(table.ty)),
                 as_pointer(self.show_glue(table.ty, Mode::Print)),
                 as_pointer(self.show_glue(table.ty, Mode::Dbg)),
             ];
@@ -143,8 +231,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// `@sisu_any.show.<T>` or `@sisu_any.show.dbg.<T>(sink, data, quoted)`: the show helper of
-    /// the object type `ty` for a table, which takes the `quoted` that a value of another type
-    /// needs and ignores it.
+    /// the type `ty` for a table: `show_value` of the value that the data stands for.
     fn show_glue(&self, ty: Type, mode: Mode) -> FunctionValue<'ctx> {
         let name = match mode {
             Mode::Print => format!("sisu_any.show.{}", self.program.type_name(ty)),
@@ -167,15 +254,36 @@ impl<'ctx> Codegen<'ctx, '_> {
         let (Some(sink), Some(data)) = (sink, data) else {
             unreachable!("a show glue should have its parameters");
         };
-        self.call(
-            self.helper(Helper::Show(mode), ty),
-            &[sink.into(), data.into()],
+        let value = self.data_value(ty, data.into_pointer_value());
+        let sink = sink.into_pointer_value();
+        if is_object(ty) {
+            // An object's text does not depend on `quoted`.
+            self.show_value(sink, ty, value, false, mode);
+            self.builder.build_return(None).expect(POSITIONED);
+            return glue;
+        }
+        let quoted = glue
+            .get_nth_param(2)
+            .expect("a show glue should have its `quoted`")
+            .into_int_value();
+        // `show_value` takes `quoted` as a constant, so the glue has a branch for each.
+        let (plain, marked) = (
+            self.context.append_basic_block(glue, "plain"),
+            self.context.append_basic_block(glue, "quoted"),
         );
+        let done = self.context.append_basic_block(glue, "done");
+        self.branch_on(quoted, marked, plain);
+        for (block, flag) in [(plain, false), (marked, true)] {
+            self.builder.position_at_end(block);
+            self.show_value(sink, ty, value, flag, mode);
+            self.branch_to(done);
+        }
+        self.builder.position_at_end(done);
         self.builder.build_return(None).expect(POSITIONED);
         glue
     }
 
-    /// The entry of a table for `method`, a method of the object type `ty`, or for the
+    /// The entry of a table for `method`, a method of the type `ty`, or for the
     /// `to_string` that the compiler writes when `method` is `None`.
     fn entry_glue(&self, ty: Type, method: Option<FuncId>) -> FunctionValue<'ctx> {
         let Some(method) = method else {
@@ -190,9 +298,15 @@ impl<'ctx> Codegen<'ctx, '_> {
             !function.prelude,
             "no table entry should call a method of the prelude"
         );
+        // The receiver is the data, a pointer, whatever the method's `self` is.
+        let ptr = self.context.ptr_type(AddressSpace::default());
         let params: Vec<BasicMetadataTypeEnum<'ctx>> = function.locals[..function.params]
             .iter()
-            .map(|param| {
+            .enumerate()
+            .map(|(i, param)| {
+                if i == 0 {
+                    return ptr.into();
+                }
                 self.llvm_type(param.ty)
                     .expect("a parameter should have a value type")
                     .into()
@@ -207,9 +321,10 @@ impl<'ctx> Codegen<'ctx, '_> {
             .add_function(&name, fn_type, Some(Linkage::Internal));
         let entry = self.context.append_basic_block(glue, "entry");
         self.builder.position_at_end(entry);
-        let args: Vec<BasicValueEnum<'ctx>> = glue.get_param_iter().collect();
-        // The receiver is the data: the object. A method that owns `self` gets a reference of its
-        // own, as the caller of a borrowing method keeps its.
+        let mut args: Vec<BasicValueEnum<'ctx>> = glue.get_param_iter().collect();
+        // The receiver is the object, or the value in the box. A method that owns `self` gets a
+        // reference of its own, as the caller of a borrowing method keeps its.
+        args[0] = self.data_value(ty, args[0].into_pointer_value());
         if !function.borrowed[0] {
             self.retain(args[0], ty);
         }
@@ -234,8 +349,8 @@ impl<'ctx> Codegen<'ctx, '_> {
         glue
     }
 
-    /// `@sisu_any.to_string.<T>(data) -> string`: the text that `print` writes of the object
-    /// type `ty` when it has no written `to_string`, which every table holds beside the entries
+    /// `@sisu_any.to_string.<T>(data) -> string`: the text that `print` writes of the type
+    /// `ty` when it has no written `to_string`, which every table holds beside the entries
     /// of its interfaces.
     fn generated_to_string_glue(&self, ty: Type) -> FunctionValue<'ctx> {
         let name = format!("sisu_any.to_string.{}", self.program.type_name(ty));
@@ -254,15 +369,17 @@ impl<'ctx> Codegen<'ctx, '_> {
             .get_nth_param(0)
             .expect("a `to_string` glue should have its receiver");
         let sink = self.buffer_sink();
-        self.show_value(sink, ty, data, false, Mode::Print);
+        let value = self.data_value(ty, data.into_pointer_value());
+        self.show_value(sink, ty, value, false, Mode::Print);
         let text = self.finish_buffer_sink(sink);
         self.builder.build_return(Some(&text)).expect(POSITIONED);
         glue
     }
 
-    /// `ToAny`: the object or `any` value `value`, of type `source`, as the `any` type `target`.
-    /// An object keeps its pointer and takes the table that `mono` made for it. An `any` value
-    /// keeps its data and loads the table of the interface that `target` names from its own.
+    /// `ToAny`: `value`, of type `source`, as the `any` type `target`. An object keeps its pointer
+    /// and takes the table that `mono` made for it. Any other value, which the conversion
+    /// consumes, goes into a new box that takes the table. An `any` value keeps its data and
+    /// loads the table of the interface that `target` names from its own.
     pub(super) fn to_any(
         &self,
         source: Type,
@@ -286,7 +403,10 @@ impl<'ctx> Codegen<'ctx, '_> {
                 let (data, table) = self.any_parts(value);
                 (data.into(), self.table_slot(source, table, slot).into())
             }
-            _ => unreachable!("only an object or an `any` value converts to `any`"),
+            _ => (
+                self.new_box(source, value).into(),
+                self.table_global(source, target).into(),
+            ),
         };
         let pair = self.any_type().get_undef();
         let pair = self

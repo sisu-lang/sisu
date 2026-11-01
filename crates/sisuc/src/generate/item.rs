@@ -1082,16 +1082,17 @@ impl Gen<'_> {
         }
     }
 
-    /// Declares the interfaces `Seen` and `Heard`, which inherits `AnyObject`, and the classes
-    /// `Eye` and `Ear` that conform to them, so that `any Seen` and `any Heard` hold objects: the
-    /// functions `any_see`, `any_make` and `any_hear` take, return and compare interface values.
-    /// The statements of `shapes` convert an object in each place a conversion is made, call
-    /// through an array element, an optional, a parameter and a call result, and print and
-    /// compare the values. The interfaces have no `Self` and no generic method, so they can be
-    /// `any`. None of it takes a byte.
+    /// Declares the interfaces `Seen` and `Heard`, which inherits `AnyObject`, the classes `Eye`
+    /// and `Ear` that conform to them and the enum `Beam` that conforms to `Seen`, so that `any
+    /// Seen` and `any Heard` hold objects: the functions `any_see`, `any_make` and `any_hear`
+    /// take, return and compare interface values. The statements of `shapes` convert an object in
+    /// each place a conversion is made, call through an array element, an optional, a parameter
+    /// and a call result, and print and compare the values. An enum, a number, a `string` and a
+    /// `char` convert too, each into a box, to `any Seen` and to `any Display`. The interfaces
+    /// have no `Self` and no generic method, so they can be `any`. None of it takes a byte.
     fn any_values(&mut self, calls: &mut Calls) {
         self.w.text(
-            "interface Seen {\n    fn seen(self) -> i64\n}\ninterface Heard: AnyObject {\n    fn echo(self, n: i64) -> i64\n}\nclass Eye: Seen {\n    v: i64\n    fn seen(self) -> i64 { self.v }\n}\nclass Ear: Heard {\n    fn echo(self, n: i64) -> i64 { n }\n}\nfn any_see(x: any Seen) -> i64 { x.seen() }\nfn any_make() -> any Seen { Eye(v: 5) }\nfn any_hear(x: any Heard, y: any Heard) -> i64 {\n    if x is y { x.echo(1) } else { x.echo(2) }\n}",
+            "interface Seen {\n    fn seen(self) -> i64\n}\ninterface Heard: AnyObject {\n    fn echo(self, n: i64) -> i64\n}\nclass Eye: Seen {\n    v: i64\n    fn seen(self) -> i64 { self.v }\n}\nclass Ear: Heard {\n    fn echo(self, n: i64) -> i64 { n }\n}\nenum Beam: Seen {\n    Wide(i64)\n    fn seen(self) -> i64 {\n        match self {\n            Beam.Wide(n) => n\n        }\n    }\n}\nfn any_see(x: any Seen) -> i64 { x.seen() }\nfn any_make() -> any Seen { Eye(v: 5) }\nfn any_hear(x: any Heard, y: any Heard) -> i64 {\n    if x is y { x.echo(1) } else { x.echo(2) }\n}",
         );
         self.w.line();
         for line in [
@@ -1102,6 +1103,12 @@ impl Gen<'_> {
             "let ear: any Heard = Ear()",
             "let _ = any_hear(ear, Ear()) + any_hear(ear, ear) + ear.echo(0)",
             "print(eyes[0])",
+            "let beam: any Seen = Beam.Wide(6)",
+            "let _ = beam.seen() + any_see(Beam.Wide(7))",
+            "let beams: [any Seen] = [Eye(v: 8), Beam.Wide(9)]",
+            "let _ = beams[1].seen() + any_see(beams[0])",
+            "let shown: [any Display] = [\"s\", 'c', 5, Beam.Wide(1)]",
+            "print(shown)",
         ] {
             calls.push(line);
         }

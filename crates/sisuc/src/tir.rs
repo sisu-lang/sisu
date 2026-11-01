@@ -144,7 +144,7 @@ pub(crate) struct Program {
     pub(crate) lang: LangInterfaces,
     /// The layout of the table of each `any` type that the program names. Only `mono` sets it.
     pub(crate) any_layouts: Vec<AnyLayout>,
-    /// The table of each object type for each `any` type that an object converts to. Only `mono`
+    /// The table of each type for each `any` type that a value converts to. Only `mono`
     /// sets it.
     pub(crate) any_tables: Vec<AnyTable>,
 }
@@ -159,9 +159,9 @@ pub(crate) struct AnyLayout {
     pub(crate) interfaces: Vec<(InterfaceId, TypeArgs)>,
 }
 
-/// The table of the class `ty` for the `any` type `any`: for each interface of the layout of
-/// `any`, the function that meets each of its requirements, `None` for the `to_string` that the
-/// compiler writes.
+/// The table of the type `ty`, a class or any other value, for the `any` type `any`: for each
+/// interface of the layout of `any`, the function that meets each of its requirements, `None` for
+/// the `to_string` that the compiler writes.
 #[derive(Clone, Debug)]
 pub(crate) struct AnyTable {
     pub(crate) ty: Type,

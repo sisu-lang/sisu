@@ -1,0 +1,42 @@
+fn iterations() -> i64 { 1000 }
+
+// An enum value that is no object converts to `any Shape` in one counted box: one allocation for
+// each conversion, and no other. The box goes to `size_of`, which calls itself twice and reads its
+// depth at run time, so `-O2` neither inlines it nor makes it a loop, and cannot take the box out:
+// the build with `-O2` counts the same boxes as the build without it.
+// o2-calls: main size_of 1
+interface Shape {
+    fn size(self) -> i64
+}
+
+enum Kind: Shape {
+    Small
+    Large
+
+    fn size(self) -> i64 {
+        match self {
+            Kind.Small => 1
+            Kind.Large => 2
+        }
+    }
+}
+
+fn size_of(s: any Shape, depth: i64) -> i64 {
+    if depth > 1 {
+        size_of(s, depth - 1) + size_of(s, depth - 2)
+    } else {
+        s.size()
+    }
+}
+
+fn main() {
+    // Standard input is empty, so the depth is 0, but the compiler cannot know it.
+    let depth = (read_line() ?? "").len()
+    let mut total = 0
+    for i in 0..iterations() {
+        let kind = if i % 2 == 0 { Kind.Small } else { Kind.Large }
+        let s: any Shape = kind
+        total += size_of(s, depth)
+    }
+    print(total) // 1500 (0 with no iterations)
+}
