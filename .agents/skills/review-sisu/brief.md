@@ -17,6 +17,8 @@ probe only inside the scratch directory your launch names.
 - `docs/adr/0006-values-correctness-simplicity-readability-performance.md`,
   and every other ADR in `docs/adr/` that the target touches.
 - `GLOSSARY.md`, and "What works today" in `docs/roadmap.md`.
+- `docs/register.md`: the rulings that the code does not show yet, and the
+  known debt.
 - `<test-audit SKILL.md path>`. Apply its authoring gate, junk patterns
   and value bar to new and changed tests, or to the plan's tests. Where it
   disagrees with "Tests" in `CODING_STANDARDS.md`, the standards win: for
@@ -73,6 +75,13 @@ languages do, not by what Sisu did before.
 9. **Decisions.** A choice that is hard to reverse (syntax, semantics, the
    runtime ABI, a diagnostic code) has an ADR, or the target says why it
    needs none. A new term is in `GLOSSARY.md`.
+10. **Structure.** A target that goes against a ruling in
+    `docs/register.md` blocks. A target that makes a debt row larger blocks,
+    unless the target or "Focus" names the row. A diff that adds a field to
+    `Checker`, `Body`, `Codegen` or `Gen`, adds a `_` arm to a match over an
+    enum of the compiler's IR, or states a rule a second time, names the
+    module that owns the rule or the register row that tracks the growth.
+    When it names neither, that is a nit, and the nit proposes the debt row.
 
 # Diagnostics
 
