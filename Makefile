@@ -6,9 +6,10 @@ BASE =
 SECS =
 LOG =
 BENCH =
+ARGS =
 
 .DEFAULT_GOAL := help
-.PHONY: help setup audit-setup build test test-health bless lint deny miri check coverage mutation-test fuzz fuzz-coverage bench callgrind site
+.PHONY: help setup audit-setup build test test-health bless lint deny miri check coverage mutation-test fuzz fuzz-coverage bench compile-speed callgrind site
 
 help: ## List the targets
 	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  %-12s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -65,6 +66,10 @@ fuzz-coverage: ## Line coverage per compiler stage of TARGET's corpus (and front
 
 bench: ## Time the benchmarks in bench/ (BENCH='fib sieve' picks some)
 	scripts/bench.sh $(BENCH)
+
+compile-speed: ## Compare compile speed with rustc, clang++ and Go (ARGS='--check-only')
+	cargo build --release --quiet -p sisuc -p sisu-runtime-mimalloc
+	python3 scripts/compile_speed.py $(ARGS)
 
 callgrind: ## Count the instructions of sisu check, as CodSpeed does
 	scripts/codspeed-prep.sh
