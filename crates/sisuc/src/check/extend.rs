@@ -299,6 +299,7 @@ impl<'a> Checker<'_> {
                 written: None,
                 at: ty.bare,
                 any: false,
+                layers: 0,
             });
             return None;
         }
@@ -325,9 +326,8 @@ impl<'a> Checker<'_> {
             TypeKind::Any(..) => CannotExtendForm::Any,
             _ => CannotExtendForm::BuiltIn,
         };
-        // An alias is the type it names, so the report names that type. So does a target that
-        // is `any`, which `Display` for a written type shows in parentheses.
-        let written = if self.aliases.uses > uses || matches!(form, CannotExtendForm::Any) {
+        // An alias is the type it names, so the report names that type.
+        let written = if self.aliases.uses > uses {
             self.type_name(resolved)
         } else {
             ty.to_string()

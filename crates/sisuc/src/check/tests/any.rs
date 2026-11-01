@@ -571,3 +571,47 @@ fn a_join_should_stay_a_mismatch_where_neither_side_converts_to_the_other() {
         codes_after(row, src, &expected);
     }
 }
+
+/// An `any` value written where an interface belongs is reported as what it is, with the
+/// parentheses that a `?` needs and none otherwise. The wording is in the fixtures.
+#[test]
+fn an_interface_value_should_be_named_as_one_where_an_interface_belongs() {
+    for (row, src, expected) in [
+        (
+            "a bound",
+            "fn f<T: any Shape>(_x: T) {}\nfn main() {}",
+            vec![(Code::NotAnInterface, (1, 9))],
+        ),
+        (
+            "an interface that a class meets",
+            "class Sq: any Shape {\n    s: f64\n    fn area(self) -> f64 { self.s }\n}\nfn main() {}",
+            vec![(Code::NotAnInterface, (1, 11))],
+        ),
+        (
+            "an interface that an interface inherits",
+            "interface Deeper: any Shape {}\nfn main() {}",
+            vec![(Code::NotAnInterface, (1, 19))],
+        ),
+        (
+            "an optional interface value",
+            "fn f<T: (any Shape)?>(_x: T) {}\nfn main() {}",
+            vec![(Code::NotAnInterface, (1, 9))],
+        ),
+    ] {
+        codes_after(row, src, &expected);
+    }
+    for (row, src, expected) in [
+        (
+            "an interface with one `?`",
+            "fn f(_x: Shape?) {}\nfn main() {}",
+            vec![(Code::InterfaceAsType, (1, 10))],
+        ),
+        (
+            "an interface with two `?`",
+            "fn f(_x: Shape??) {}\nfn main() {}",
+            vec![(Code::InterfaceAsType, (1, 10))],
+        ),
+    ] {
+        codes_after(row, src, &expected);
+    }
+}

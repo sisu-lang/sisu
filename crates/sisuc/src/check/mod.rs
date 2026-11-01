@@ -495,7 +495,7 @@ struct Checker<'src> {
     wide_reported: FxHashSet<Span>,
     /// The interfaces written where a type belongs before every interface has its requirements:
     /// the report waits to say whether the interface can be `any`.
-    deferred_as_type: Vec<(tir::InterfaceId, String, String, Span)>,
+    deferred_as_type: Vec<(tir::InterfaceId, String, String, (Span, usize))>,
     /// Why each interface cannot be `any`, `None` when it can (`why_not_any`).
     any_roots: FxHashMap<tir::InterfaceId, Option<any::AnyReason>>,
     /// The same for each interface with its arguments in the walk of one root (`entry_reason`).
@@ -1885,8 +1885,7 @@ impl Checker<'_> {
         let taken = matches!(declared, (Some(_), _) | (_, Some(_)));
         if let (false, Some(found)) = (taken, self.interface_ids.get(&name)) {
             if let Declared::Known(id) = *found {
-                let written = self.source.slice(ty.bare.range()).to_string();
-                self.interface_as_type(id, name.to_string(), written, ident().span);
+                self.interface_as_type(id, name.to_string(), ty, ident().span);
             }
             return None;
         }

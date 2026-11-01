@@ -1,0 +1,15 @@
+interface Shape {
+    fn area(self) -> f64
+}
+
+fn _twice(_shape: any Shape??) {
+    print(1)
+}
+
+fn _thrice(_shape: any Shape???) {
+    print(2)
+}
+
+fn main() {
+    print(3)
+}

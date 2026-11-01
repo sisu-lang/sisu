@@ -1,0 +1,26 @@
+error[E0163]: `any Shape??` needs parentheses
+ --> E0163-layers.sisu:5:19
+  |
+5 | fn _twice(_shape: any Shape??) {
+  |                   ^^^^^^^^^^^
+  |
+  = help: write `(any Shape)??` for an interface value under 2 optional layers
+help: add parentheses
+  |
+5 | fn _twice(_shape: (any Shape)??) {
+  |                   +         +
+
+error[E0163]: `any Shape???` needs parentheses
+ --> E0163-layers.sisu:9:20
+  |
+9 | fn _thrice(_shape: any Shape???) {
+  |                    ^^^^^^^^^^^^
+  |
+  = help: write `(any Shape)???` for an interface value under 3 optional layers
+help: add parentheses
+  |
+9 | fn _thrice(_shape: (any Shape)???) {
+  |                    +         +
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0163

@@ -746,7 +746,9 @@ impl fmt::Display for TypeExpr {
             TypeKind::Array(element) => write!(f, "[{element}]")?,
             TypeKind::SelfType => f.write_str("Self")?,
             TypeKind::Member { base, name } => write!(f, "{base}.{}", name.name)?,
-            TypeKind::Any(interface) => write!(f, "(any {interface})")?,
+            // Parentheses only where a `?` follows: `any I?` is not written.
+            TypeKind::Any(interface) if self.optional > 0 => write!(f, "(any {interface})")?,
+            TypeKind::Any(interface) => write!(f, "any {interface}")?,
         }
         for _ in 0..self.optional {
             f.write_str("?")?;

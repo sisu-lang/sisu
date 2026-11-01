@@ -854,6 +854,7 @@ impl Checker<'_> {
             TypeKind::Param(..) => NotInterface::TypeParam,
             TypeKind::Optional(..) => NotInterface::Optional,
             TypeKind::Array(..) => NotInterface::Array,
+            TypeKind::Any(..) => NotInterface::Any,
             _ => NotInterface::BuiltIn,
         };
         self.not_an_interface(ty, kind);

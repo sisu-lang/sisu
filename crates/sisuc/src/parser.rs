@@ -738,31 +738,36 @@ impl<'a> Parser<'a> {
             bare: name_span,
         };
         let span = keyword.to(name_span);
-        let layers = match self.peek().kind {
-            TokenKind::Question => 1,
-            TokenKind::QuestionQuestion => 2,
-            TokenKind::Amp => {
-                let amp = self.bump().span;
-                let other = self.parse_type()?;
-                return Err(DiagnosticKind::AnyForm {
-                    at: amp.to(other.span),
-                    form: AnyFormKind::Several {
-                        first: self.source.slice(name_span.range()).to_string(),
-                        second: self.source.slice(other.bare.range()).to_string(),
-                    },
-                }
-                .into());
+        if self.peek().kind == TokenKind::Amp {
+            let amp = self.bump().span;
+            let other = self.parse_type()?;
+            return Err(DiagnosticKind::AnyForm {
+                at: amp.to(other.span),
+                form: AnyFormKind::Several {
+                    first: self.source.slice(name_span.range()).to_string(),
+                    second: self.source.slice(other.bare.range()).to_string(),
+                },
             }
-            _ => {
-                return Ok(TypeExpr {
-                    kind: TypeKind::Any(Box::new(interface)),
-                    optional: 0,
-                    span,
-                    bare: span,
-                });
-            }
-        };
-        let mark = self.bump().span;
+            .into());
+        }
+        // Each `?` after the interface is a layer, and a `??` token is two.
+        let (mut layers, mut mark) = (0, span);
+        while let Some(count) = match self.peek().kind {
+            TokenKind::Question => Some(1),
+            TokenKind::QuestionQuestion => Some(2),
+            _ => None,
+        } {
+            layers += count;
+            mark = self.bump().span;
+        }
+        if layers == 0 {
+            return Ok(TypeExpr {
+                kind: TypeKind::Any(Box::new(interface)),
+                optional: 0,
+                span,
+                bare: span,
+            });
+        }
         Err(DiagnosticKind::AnyForm {
             at: span.to(mark),
             form: AnyFormKind::Optional {
@@ -6797,30 +6802,27 @@ mod tests {
     #[test]
     fn any_types_should_parse_where_a_type_goes() {
         let rows = [
-            ("let x: any Shape = y", "(let x (any Shape) y)"),
+            ("let x: any Shape = y", "(let x any Shape y)"),
             ("let x: (any Shape)? = y", "(let x (any Shape)? y)"),
             ("let x: (any Shape)?? = y", "(let x (any Shape)?? y)"),
             ("let x: [(any Shape)?] = y", "(let x [(any Shape)?] y)"),
-            ("let x: [any Shape] = y", "(let x [(any Shape)] y)"),
+            ("let x: [any Shape] = y", "(let x [any Shape] y)"),
             ("let x: (i64) = y", "(let x i64 y)"),
             ("let x: (i64?)? = y", "(let x i64?? y)"),
-            (
-                "let x: Stack<any Shape> = y",
-                "(let x Stack<(any Shape)> y)",
-            ),
+            ("let x: Stack<any Shape> = y", "(let x Stack<any Shape> y)"),
             (
                 "let x: any Convert<Kelvin> = y",
-                "(let x (any Convert<Kelvin>) y)",
+                "(let x any Convert<Kelvin> y)",
             ),
             // `any` with no name after it is a type named `any`.
             ("let x: any = y", "(let x any y)"),
             ("let x: [any]? = y", "(let x [any]? y)"),
-            ("f<any Shape>(x)", "(call f<(any Shape)> x)"),
+            ("f<any Shape>(x)", "(call f<any Shape> x)"),
             ("f<(any Shape)?>(x)", "(call f<(any Shape)?> x)"),
             ("Stack<(any Shape)?>()", "(call Stack<(any Shape)?>)"),
             (
                 "Stack<any Convert<Kelvin>>()",
-                "(call Stack<(any Convert<Kelvin>)>)",
+                "(call Stack<any Convert<Kelvin>>)",
             ),
             // `any` after a `.` or in a value position stays a name.
             ("xs.any(f)", "(call (. xs any) f)"),
@@ -6848,6 +6850,7 @@ mod tests {
         for (src, col) in [
             ("fn f(x: any Observer?) {}", 9),
             ("fn f(x: any Observer??) {}", 9),
+            ("fn f(x: any Observer???) {}", 9),
             ("fn f(x: [any Shape?]) {}", 10),
             ("fn f(x: any Convert<Kelvin>?) {}", 9),
             ("fn f(x: any A & B) {}", 15),
@@ -6858,6 +6861,10 @@ mod tests {
         for (src, fixed_src) in [
             ("fn f(x: any Observer?) {}", "fn f(x: (any Observer)?) {}"),
             ("fn f(x: any Observer??) {}", "fn f(x: (any Observer)??) {}"),
+            (
+                "fn f(x: any Observer???) {}",
+                "fn f(x: (any Observer)???) {}",
+            ),
             ("fn f(x: [any Shape?]) {}", "fn f(x: [(any Shape)?]) {}"),
         ] {
             assert_eq!(fixed(src), fixed_src, "{src}");

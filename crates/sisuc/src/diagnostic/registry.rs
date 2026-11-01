@@ -368,6 +368,8 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         /// Whether the interface can be `any`, which the help then offers.
         any: bool,
+        /// How many `?` follow the name, which the `any` the help offers must keep.
+        layers: usize,
     },
     /// The type `written` at `at`, which is a `kind` and no interface, where a bound, a
     /// conformance or an inherited interface belongs.
@@ -1766,6 +1768,8 @@ pub(crate) enum NotInterface {
     TypeParam,
     Optional,
     Array,
+    /// `any I`, an interface value.
+    Any,
 }
 
 impl NotInterface {
@@ -1778,6 +1782,7 @@ impl NotInterface {
             NotInterface::TypeParam => "a type parameter",
             NotInterface::Optional => "an optional type",
             NotInterface::Array => "an array type",
+            NotInterface::Any => "an interface value",
         }
     }
 }
@@ -2570,15 +2575,26 @@ impl From<DiagnosticKind> for Diagnostic {
                 written,
                 at,
                 any,
+                layers,
             } => {
                 let d = Diagnostic::coded(
                     code,
                     at,
                     format!("`{name}` is an interface, not a type"),
                 );
+                // `Shape?` takes `(any Shape)?`, which has parentheses and keeps each `?`.
+                let value = if layers == 0 {
+                    format!("any {}", written.as_deref().unwrap_or_default())
+                } else {
+                    format!(
+                        "(any {}){}",
+                        written.as_deref().unwrap_or_default(),
+                        "?".repeat(layers)
+                    )
+                };
                 match written {
                     Some(written) if any => d.with_help(format!(
-                        "use a type parameter: `T: {written}`, or `any {written}` for a value of any conforming type"
+                        "use a type parameter: `T: {written}`, or `{value}` for a value of any conforming type"
                     )),
                     Some(written) => d.with_help(format!("use a type parameter: `T: {written}`")),
                     None => d,
@@ -2905,11 +2921,19 @@ impl From<DiagnosticKind> for Diagnostic {
                      Such a field adds only the size of a pointer to the payload."
                 ))
             }
-            DiagnosticKind::NotAnInterface { written, at, kind } => Diagnostic::coded(
-                code,
-                at,
-                format!("`{written}` is {}, not an interface", kind.named()),
-            ),
+            DiagnosticKind::NotAnInterface { written, at, kind } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`{written}` is {}, not an interface", kind.named()),
+                );
+                match (kind, written.strip_prefix("any ")) {
+                    (NotInterface::Any, Some(interface)) => {
+                        d.with_help(format!("name the interface without `any`: `{interface}`"))
+                    }
+                    _ => d,
+                }
+            }
             DiagnosticKind::SelfOutside { at } => Diagnostic::coded(
                 code,
                 at,
@@ -2974,10 +2998,13 @@ impl From<DiagnosticKind> for Diagnostic {
                     layers,
                 } => {
                     let marks = "?".repeat(layers);
+                    let value = if layers == 1 {
+                        "an optional interface value".to_string()
+                    } else {
+                        format!("an interface value under {layers} optional layers")
+                    };
                     Diagnostic::coded(code, at, format!("`{written}{marks}` needs parentheses"))
-                        .with_help(format!(
-                            "write `({written}){marks}` for an optional interface value"
-                        ))
+                        .with_help(format!("write `({written}){marks}` for {value}"))
                         .with_fix(Fix {
                             message: "add parentheses".to_string(),
                             safe: true,

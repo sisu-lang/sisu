@@ -64,15 +64,28 @@ impl Checker<'_> {
         self.check_or_wait(Check::Any { bound }).then_some(any)
     }
 
-    /// Reports that the interface `name`, written as `written` at `at`, is no type. The help
+    /// Reports that the interface `name`, written as the type `ty` at `at`, is no type. The help
     /// offers `any` when the interface can be `any`, which is known once every interface has its
     /// requirements: until then the report waits.
     pub(super) fn interface_as_type(
         &mut self,
         interface: InterfaceId,
         name: String,
-        written: String,
+        ty: &ast::TypeExpr,
         at: Span,
+    ) {
+        let written = self.source.slice(ty.bare.range()).to_string();
+        self.report_as_type(interface, name, written, (at, usize::from(ty.optional)));
+    }
+
+    /// `interface_as_type` for the name as written and the `?` after it, which a held report
+    /// keeps.
+    fn report_as_type(
+        &mut self,
+        interface: InterfaceId,
+        name: String,
+        written: String,
+        (at, layers): (Span, usize),
     ) {
         if self.interfaces_resolved {
             let any = self.why_not_any(interface).is_none();
@@ -81,16 +94,18 @@ impl Checker<'_> {
                 written: Some(written),
                 at,
                 any,
+                layers,
             });
         } else {
-            self.deferred_as_type.push((interface, name, written, at));
+            self.deferred_as_type
+                .push((interface, name, written, (at, layers)));
         }
     }
 
     /// Makes the reports that `interface_as_type` held back.
     pub(super) fn report_deferred_as_type(&mut self) {
         for (interface, name, written, at) in std::mem::take(&mut self.deferred_as_type) {
-            self.interface_as_type(interface, name, written, at);
+            self.report_as_type(interface, name, written, at);
         }
     }
 
