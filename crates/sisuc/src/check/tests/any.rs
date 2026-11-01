@@ -614,6 +614,11 @@ fn a_join_should_stay_a_mismatch_where_neither_side_converts_to_the_other() {
             vec![(Code::Mismatch, (2, 56))],
         ),
         (
+            "a nested join under an `any` hint, with a class that does not conform",
+            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let r = if true { s } else { if false { Circle(r: 1.0) } else { Cube(s: 1.0) } }\n}",
+            vec![(Code::Mismatch, (3, 69))],
+        ),
+        (
             "two classes that both conform, as `break` values",
             "fn main() {\n    let r = loop {\n        if true { break Circle(r: 1.0) }\n        break Rect(w: 1.0)\n    }\n}",
             vec![(Code::Mismatch, (4, 15))],
