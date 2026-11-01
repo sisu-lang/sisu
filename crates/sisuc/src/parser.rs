@@ -3055,7 +3055,7 @@ impl<'a> Parser<'a> {
         self.binary_chain(min, 0)
     }
 
-    /// `binary`, as the right side of `coalesces` nested `??`, each the parent of the next: the
+    /// `binary`, as the right side of `coalesces` nested `??`, each the parent of the next. The
     /// right side of a `??` continues the chain of `??` above it, not the operators on its left.
     fn binary_chain(&mut self, min: u8, coalesces: usize) -> Result<Expr, Diagnostic> {
         let base = self.depth;
