@@ -1,0 +1,8 @@
+error[E0027]: no value of `A0` can be built
+ --> E0027-enum-chain-long.sisu:1:6
+  |
+1 | enum A0 { X(A1) }
+  |      ^^ `A0.X` holds a `A1`, and `A1.X` holds a `A2`, and `A2.X` holds a `A3`, and `A3.X` holds a `A4`, and `A4.X` holds a `A5`, and 2 more
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0027

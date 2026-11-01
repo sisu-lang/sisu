@@ -1,0 +1,18 @@
+error[E0161]: type alias `A0` refers to itself through `A1`, `A2`, `A3`, `A4`, `A5` and 6 more
+ --> E0161-long.sisu:1:6
+  |
+1 | type A0 = [A1]
+  |      ^^    -- `A0` uses `A1` here
+2 | type A1 = [A2]
+  |            -- `A1` uses `A2` here
+3 | type A2 = [A3]
+  |            -- `A2` uses `A3` here
+4 | type A3 = [A4]
+  |            -- `A3` uses `A4` here
+5 | type A4 = [A5]
+  |            -- `A4` uses `A5` here
+  |
+  = help: use an enum or a class for a type that holds itself
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0161

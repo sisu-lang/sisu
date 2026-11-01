@@ -1,8 +1,10 @@
-error[E0030]: the body of a type alias writes an associated type of a type parameter, as `T.Item`, but not an associated type of that
+error[E0030]: a type alias cannot name `T.Item.Item`
  --> E0030-alias-nested.sisu:6:17
   |
 6 | type Inner<T> = T.Item.Item
   |                 ^^^^^^^^^^^
+  |
+  = help: give the alias a parameter that stands for `T.Item`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0030

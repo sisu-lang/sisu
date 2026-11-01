@@ -2540,6 +2540,7 @@ impl Checker<'_> {
             return;
         }
         // `Ok(...)` and `Err(...)` write the variant as the callee and the enum not at all.
+        // `qualifier` (enums.rs) tests for a bare variant in the same way; change both.
         if let Some(variant) = sig.variant.filter(|v| v.span == name.span) {
             self.report(DiagnosticKind::CannotInferResult {
                 param: sig.declared[param].to_string(),

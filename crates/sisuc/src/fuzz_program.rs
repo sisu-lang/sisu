@@ -3,9 +3,12 @@
 //! panics on a breach of a property (ADR 0033). Properties 1 and 2 are that the program checks
 //! clean and compiles to a module LLVM verifies; property 3 is that every build exits 0 or 101,
 //! and all three the same way; property 4 is that the rewritten copy runs as the program does;
-//! property 5 is that the program prints the known integer answers; property 6 is that a copy of
-//! the program where one argument breaks the bound of its type parameter gets E0154 at that
-//! argument and no other error.
+//! property 5 is that the program prints the known integer answers, and that each call of an
+//! interface's requirement prints the value of the method it should reach, where the method has an
+//! `i64` or `string` result (or a `T` result, when the argument of the conformance is one of them)
+//! and the call is in `shapes` or in a generic function it calls; property 6 is that a
+//! copy of the program where one argument breaks the bound of its type parameter gets E0154 at
+//! that argument and no other error.
 
 use std::cell::RefCell;
 use std::fmt::Write as _;
@@ -266,7 +269,8 @@ fn judge(g: &Generated, runtime: &Path, dir: &Path) -> Result<(), (Failure, Stri
     let copies = judge_source("rewritten", &g.rewritten, &rewritten, runtime, dir, &stdin)?;
     judge_pair(&runs[0], &copies[0])
         .map_err(|f| (f, record("program", &runs) + &record("rewritten", &copies)))?;
-    judge_known(&runs[0], &g.known).map_err(|f| (f, record("program", &runs)))
+    judge_known(&runs[0], &g.known).map_err(|f| (f, record("program", &runs)))?;
+    judge_marked(&runs, &g.expected).map_err(|f| (f, record("program", &runs)))
 }
 
 /// Property 3 for `source`, checked as `program`: its three builds in `dir`, run with `stdin`,
@@ -608,6 +612,45 @@ fn judge_known(run: &Run, known: &[Known]) -> Result<(), Failure> {
     Ok(())
 }
 
+/// Whether `line` is a marked line: `@d`, one or more digits and a space.
+fn is_marked(line: &str) -> bool {
+    line.strip_prefix("@d")
+        .and_then(|rest| rest.split_once(' '))
+        .is_some_and(|(number, _)| !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Property 5 for the calls of requirements: in each build of the program, the marked lines of
+/// stdout (`is_marked`) are the first lines of `expected`, in order. A run that returns or panics
+/// before `shapes` prints none, and one that stops inside it prints a prefix, so a shorter list
+/// passes. A wrong value, a wrong order or an extra line fails, and the failure gives the first
+/// line that differs and the line expected there.
+// shortcut: `main`'s statements can print a line that matches, for example two interpolated parts
+// `(char(e) ?? d)` with e = 64 and e = 100, then an integer part; no seed of 0..6000 does;
+// upgrade when a run reports a false property 5 failure (then give `shapes` its own output check,
+// for example after a fixed line that only `shapes` prints).
+fn judge_marked(runs: &[Run], expected: &[String]) -> Result<(), Failure> {
+    for ((build, _), run) in BUILDS.iter().zip(runs) {
+        let stdout = String::from_utf8_lossy(&run.stdout);
+        let printed = stdout.lines().filter(|line| is_marked(line));
+        for (at, line) in printed.enumerate() {
+            let detail = match expected.get(at) {
+                Some(want) if want == line => continue,
+                Some(want) => format!(
+                    "the {build} build should print `{want}` as marked line {}, and it prints `{line}`",
+                    at + 1
+                ),
+                None => format!(
+                    "the {build} build prints `{line}` as marked line {}, and `shapes` prints only {} marked lines",
+                    at + 1,
+                    expected.len()
+                ),
+            };
+            return Err(Failure::new(5, detail));
+        }
+    }
+    Ok(())
+}
+
 /// The builds of `name` in `runs`, each as its exit, stdout and stderr under `==>` lines.
 fn record(name: &str, runs: &[Run; 3]) -> String {
     let mut out = String::new();
@@ -636,8 +679,37 @@ thread_local! {
     static FORCE: std::cell::Cell<Option<Force>> = const { std::cell::Cell::new(None) };
 }
 
+/// `target/debug/libsisu_runtime_mimalloc.a`, the default allocator's runtime, which
+/// nextest's setup script builds: the test binary is `target/debug/deps/<name>` (decision 7).
+#[cfg(test)]
+fn runtime() -> PathBuf {
+    let exe = std::env::current_exe().expect("the test binary should know its path");
+    exe.parent()
+        .and_then(Path::parent)
+        .expect("the test binary should be two levels inside the target directory")
+        .join("libsisu_runtime_mimalloc.a")
+}
+
+/// What `source` writes to its standard output, built at O0 and run once. For the tests of the
+/// generator, which check the text of values.
+#[cfg(test)]
+pub(crate) fn stdout_of(source: &str) -> Vec<u8> {
+    let dir = run::private_dir(&std::env::temp_dir(), fresh_names("-test"))
+        .expect("the test should make its directory");
+    let program = checked("program", source).expect("the test's program should check clean");
+    let exe = dir.join("program");
+    build("program", source, &program, &BUILDS[0].1, &runtime(), &exe);
+    let stdin = dir.join("stdin.txt");
+    fs::write(&stdin, "").expect("the test should write the stdin");
+    let run = run(&exe, &stdin, &dir, LIMIT);
+    drop(fs::remove_dir_all(&dir));
+    assert_eq!(run.exit, Exit::Code(0), "the program should exit 0");
+    run.stdout
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::ops::Range;
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::process::ExitStatusExt;
@@ -648,9 +720,9 @@ mod tests {
 
     use super::dbg_location;
     use super::{
-        Answer, BUILDS, Exit, FORCE, Force, Known, LIMIT, Run, build, builds, checked, judge,
-        judge_bounds, judge_builds, judge_known, judge_pair, judge_source, program, program_in,
-        run,
+        Answer, BUILDS, Exit, FORCE, Force, Known, LIMIT, Run, build, builds, checked, is_marked,
+        judge, judge_bounds, judge_builds, judge_known, judge_marked, judge_pair, judge_source,
+        program, program_in, run, runtime,
     };
     use crate::fresh_names;
     use crate::generate::{BoundSite, Generated, coverage, generate};
@@ -671,16 +743,6 @@ mod tests {
         fn drop(&mut self) {
             drop(fs::remove_dir_all(&self.0));
         }
-    }
-
-    /// `target/debug/libsisu_runtime_mimalloc.a`, the default allocator's runtime, which
-    /// nextest's setup script builds: the test binary is `target/debug/deps/<name>` (decision 7).
-    fn runtime() -> PathBuf {
-        let exe = env::current_exe().expect("the test binary should know its path");
-        exe.parent()
-            .and_then(Path::parent)
-            .expect("the test binary should be two levels inside the target directory")
-            .join("libsisu_runtime_mimalloc.a")
     }
 
     /// `f` on a thread with a `STACK_SIZE` stack, as `program`'s contract asks.
@@ -875,6 +937,7 @@ mod tests {
                 rewritten: rewritten.to_string(),
                 stdin: String::new(),
                 known: Vec::new(),
+                expected: Vec::new(),
                 bound_sites: Vec::new(),
                 cost: 0,
                 plain: String::new(),
@@ -1107,6 +1170,407 @@ mod tests {
         assert_eq!(known(&ran(0, "@\n@k0 42\n@k1 7\n", ""), &sites), 5);
     }
 
+    /// What `judge_marked` says of builds that all print `stdout`, when `shapes` should print
+    /// `expected`: the failed property, 0 for none, and the failure's text.
+    fn marked(stdout: &str, expected: &[&str]) -> (u8, String) {
+        let expected: Vec<String> = expected.iter().map(ToString::to_string).collect();
+        let runs = [ran(0, stdout, ""), ran(0, stdout, ""), ran(0, stdout, "")];
+        judge_marked(&runs, &expected)
+            .map_or_else(|f| (f.property, f.detail), |()| (0, String::new()))
+    }
+
+    const LIST: [&str; 3] = ["@d0 Q0.r1", "@d1 N0.r1", "@d1 Q0.r1"];
+
+    #[test]
+    fn judge_marked_should_pass_when_stdout_prints_the_whole_list() {
+        assert_eq!(marked("@d0 Q0.r1\n@d1 N0.r1\n@d1 Q0.r1\n", &LIST).0, 0);
+    }
+
+    /// `main` can return or panic before `shapes`, and then no marked line prints.
+    #[test]
+    fn judge_marked_should_pass_when_stdout_prints_no_marked_line() {
+        assert_eq!(marked("", &LIST).0, 0);
+        assert_eq!(marked("@k0 7\nplain\n", &LIST).0, 0);
+    }
+
+    /// A marked line is `@d`, digits and a space: another line that starts with `@d` is not one.
+    #[test]
+    fn judge_marked_should_not_read_a_line_without_digits_and_a_space_as_marked() {
+        for line in ["@dx 1", "@d", "@d 1", "@d1", "@d1x 1", "d0 1"] {
+            assert_eq!(marked(&format!("{line}\n"), &[]).0, 0, "{line}");
+        }
+        assert_eq!(marked("@d0 x\n", &[]).0, 5);
+    }
+
+    /// A panic inside `shapes` stops it after some marked lines.
+    #[test]
+    fn judge_marked_should_pass_when_stdout_prints_a_prefix_of_the_list() {
+        assert_eq!(marked("@d0 Q0.r1\n@d1 N0.r1\n", &LIST).0, 0);
+    }
+
+    #[test]
+    fn judge_marked_should_fail_when_a_value_is_wrong() {
+        let (property, detail) = marked("@d0 Q0.r1\n@d1 Q0.r1\n", &LIST);
+        assert_eq!(property, 5);
+        // The first line that differs is the second, where `N0.r1` was the value to print.
+        assert!(
+            detail.contains("`@d1 N0.r1`") && detail.contains("`@d1 Q0.r1`"),
+            "{detail}"
+        );
+        assert!(detail.contains("marked line 2"), "{detail}");
+    }
+
+    #[test]
+    fn judge_marked_should_fail_when_two_lines_are_out_of_order() {
+        let (property, detail) = marked("@d1 N0.r1\n@d0 Q0.r1\n@d1 Q0.r1\n", &LIST);
+        assert_eq!(property, 5);
+        assert!(detail.contains("marked line 1"), "{detail}");
+    }
+
+    #[test]
+    fn judge_marked_should_fail_when_a_line_is_extra() {
+        let (property, detail) = marked("@d0 Q0.r1\n@d1 N0.r1\n@d1 Q0.r1\n@d2 Q0.r1\n", &LIST);
+        assert_eq!(property, 5);
+        assert!(
+            detail.contains("`@d2 Q0.r1`") && detail.contains("prints only 3 marked lines"),
+            "{detail}"
+        );
+    }
+
+    /// The build that differs is the last one, `--rc-checks`: each build is judged, not the
+    /// first.
+    #[test]
+    fn judge_marked_should_read_every_build() {
+        let expected: Vec<String> = LIST.iter().map(ToString::to_string).collect();
+        let right = "@d0 Q0.r1\n";
+        let runs = [
+            ran(0, right, ""),
+            ran(0, right, ""),
+            ran(0, "@d0 N0.r1\n", ""),
+        ];
+        let failure =
+            judge_marked(&runs, &expected).expect_err("the third build prints a wrong line");
+        assert!(failure.detail.contains("--rc-checks"), "{}", failure.detail);
+    }
+
+    /// The text of the item of `program` that starts with `header` at the start of a line, up to
+    /// the line `}` that closes it.
+    fn item<'a>(program: &'a str, header: &str) -> Option<&'a str> {
+        // The header is found after a line break, so one at the start of `program` is too: a break
+        // put before `program` moves each position by one.
+        let start = format!("\n{program}").find(&format!("\n{header}"))?;
+        let rest = &program[start..];
+        Some(&rest[..rest.find("\n}\n")? + 2])
+    }
+
+    /// Whether a line of `text` holds a marked statement and `part`.
+    fn marks(text: &str, part: &str) -> bool {
+        text.lines()
+            .any(|line| line.contains("\"@d") && line.contains(part))
+    }
+
+    /// Whether a method of an interface, as `Requirement::method` writes it with a result `i64`
+    /// or `string`, is in `body`.
+    fn has_method(body: &str) -> bool {
+        body.contains("-> i64 { ") || body.contains("-> string { ")
+    }
+
+    /// The dispatches of a call of a requirement that a program may hold, each a neighbour of
+    /// #203: the call must reach the method of its own type. Each comes with the first seed of the
+    /// series whose program holds it and prints every marked line.
+    const DISPATCHES: [(&str, u64); 8] = [
+        ("a direct call on `Q<k>` and on `N<k>`", 0),
+        ("a call through `via<k>` with `Q<k>`, `N<k>` and `R<k>`", 0),
+        ("a requirement inherited from an earlier interface", 60),
+        (
+            "a result `T` picked by the expected type, `i64` and `string`",
+            18,
+        ),
+        ("`both` with two interfaces in one bound", 0),
+        ("`pick<k>` with a bounded associated type", 55),
+        ("a conformance in an `extend` block", 18),
+        ("a conformance in the declaration list", 0),
+    ];
+
+    /// Whether `g` holds the dispatch `row` of `DISPATCHES`, as its text shows.
+    fn holds(row: &str, g: &Generated) -> bool {
+        let program = g.program.as_str();
+        let shapes = item(program, "fn shapes()").unwrap_or_default();
+        // The most interfaces a program declares is three.
+        let interfaces = 0..3;
+        let conformances = |keyword: &str| {
+            (program.lines())
+                .filter(|line| line.starts_with(keyword) && line.contains(": I"))
+                .filter_map(|line| item(program, line))
+                .any(has_method)
+        };
+        match row {
+            "a direct call on `Q<k>` and on `N<k>`" => marks(shapes, "{q") && marks(shapes, "{n"),
+            "a call through `via<k>` with `Q<k>`, `N<k>` and `R<k>`" => {
+                let mut runs = BTreeMap::new();
+                for line in &g.expected {
+                    *runs.entry(line.split(' ').next()).or_insert(0) += 1;
+                }
+                runs.values().any(|&n| n >= 3)
+            }
+            "a requirement inherited from an earlier interface" => {
+                interfaces.into_iter().any(|k| {
+                    let header = item(program, &format!("interface I{k}"))
+                        .and_then(|text| text.lines().next())
+                        .unwrap_or_default();
+                    let Some((_, list)) = header.trim_end_matches(" {").split_once(": ") else {
+                        return false;
+                    };
+                    let via = item(program, &format!("fn via{k}<")).unwrap_or_default();
+                    list.split(", ").any(|inherited| {
+                        let name = inherited.split('<').next().unwrap_or_default();
+                        let body = item(program, &format!("interface {name}")).unwrap_or_default();
+                        (body.lines())
+                            .filter_map(|line| line.trim().strip_prefix("fn "))
+                            .filter_map(|line| line.split('(').next())
+                            .any(|requirement| marks(via, &format!("x.{requirement}(")))
+                    })
+                })
+            }
+            "a result `T` picked by the expected type, `i64` and `string`" => {
+                let mut types: BTreeMap<&str, Vec<&str>> = BTreeMap::default();
+                let lets = shapes
+                    .lines()
+                    .filter_map(|l| l.trim().strip_prefix("let d"));
+                for (ty, call) in lets
+                    .filter_map(|line| line.split_once(": "))
+                    .filter_map(|(_, rest)| rest.split_once(" = "))
+                {
+                    types
+                        .entry(call.split('(').next().unwrap_or_default())
+                        .or_default()
+                        .push(ty);
+                }
+                types
+                    .values()
+                    .any(|types| types.contains(&"i64") && types.contains(&"string"))
+            }
+            "`both` with two interfaces in one bound" => {
+                item(program, "fn both<").is_some_and(|body| marks(body, ""))
+            }
+            "`pick<k>` with a bounded associated type" => interfaces.into_iter().any(|k| {
+                item(program, &format!("fn pick{k}<")).is_some_and(|body| marks(body, ""))
+            }),
+            "a conformance in an `extend` block" => {
+                ["extend Q", "extend N"].into_iter().any(conformances)
+            }
+            "a conformance in the declaration list" => {
+                ["class Q", "enum N"].into_iter().any(conformances)
+            }
+            _ => unreachable!("{row} should be one of `DISPATCHES`"),
+        }
+    }
+
+    /// The program of the seed `at` of the series, which holds `row` and whose O0 run prints every
+    /// line that `shapes` should: the seed's `Generated`, and that run. A change of the generator
+    /// that moves the seed's bytes fails here, with the name of the row.
+    fn dispatch_of((row, at): (&str, u64)) -> (Generated, Run) {
+        let g = generate(&seed(at));
+        assert!(holds(row, &g), "seed {at} should hold {row}\n{}", g.program);
+        let run = o0_run(&g);
+        let printed = String::from_utf8_lossy(&run.stdout)
+            .lines()
+            .filter(|line| is_marked(line))
+            .count();
+        assert_eq!(
+            printed,
+            g.expected.len(),
+            "seed {at} should print every marked line of {row}"
+        );
+        (g, run)
+    }
+
+    /// The seed's program holds the dispatch, and its O0 run prints the expected lines, which are
+    /// not none.
+    fn dispatch_should_print_its_expected_lines(dispatch: (&str, u64)) {
+        let (g, run) = dispatch_of(dispatch);
+        assert!(!g.expected.is_empty(), "{}", dispatch.0);
+        judge_marked(&[run], &g.expected)
+            .unwrap_or_else(|f| panic!("{}: {}\n{}", dispatch.0, f.detail, g.program));
+    }
+
+    #[test]
+    fn a_direct_call_on_a_class_and_an_enum_should_print_each_receivers_value() {
+        dispatch_should_print_its_expected_lines(DISPATCHES[0]);
+    }
+
+    #[test]
+    fn a_call_through_via_should_print_the_value_of_each_argument() {
+        dispatch_should_print_its_expected_lines(DISPATCHES[1]);
+    }
+
+    #[test]
+    fn a_requirement_from_an_inherited_interface_should_print_the_inherited_value() {
+        dispatch_should_print_its_expected_lines(DISPATCHES[2]);
+    }
+
+    #[test]
+    fn a_result_picked_by_its_expected_type_should_print_that_conformances_value() {
+        dispatch_should_print_its_expected_lines(DISPATCHES[3]);
+    }
+
+    #[test]
+    fn a_call_through_both_should_print_the_values_of_the_class_with_both() {
+        dispatch_should_print_its_expected_lines(DISPATCHES[4]);
+    }
+
+    #[test]
+    fn a_call_through_pick_should_print_the_value_of_the_associated_type() {
+        dispatch_should_print_its_expected_lines(DISPATCHES[5]);
+    }
+
+    #[test]
+    fn a_conformance_in_an_extend_block_should_print_its_own_values() {
+        dispatch_should_print_its_expected_lines(DISPATCHES[6]);
+    }
+
+    #[test]
+    fn a_conformance_in_the_declaration_list_should_print_its_own_values() {
+        dispatch_should_print_its_expected_lines(DISPATCHES[7]);
+    }
+
+    /// Seed 584's `main` returns before it calls `shapes`, which the program holds, so the run
+    /// prints no marked line, and the property holds.
+    #[test]
+    fn a_main_that_returns_before_shapes_should_print_no_marked_line() {
+        let g = generate(&seed(584));
+        let main = item(&g.program, "fn main()").expect("the program should have a `main`");
+        assert!(
+            main.contains("return\n") && main.ends_with("    shapes()\n}"),
+            "{main}"
+        );
+        assert!(
+            !g.expected.is_empty(),
+            "`shapes` should hold marked statements"
+        );
+        let run = o0_run(&g);
+        assert_eq!(run.exit, Exit::Code(0), "`main` should return");
+        assert!(
+            !String::from_utf8_lossy(&run.stdout)
+                .lines()
+                .any(|line| line.starts_with("@d")),
+            "`main` should print no marked line"
+        );
+        judge_marked(&[run], &g.expected).expect("a run that prints no marked line should pass");
+    }
+
+    /// `program` with the values of two methods of one requirement swapped: two methods of the
+    /// same name and result type.
+    fn swapped(program: &str) -> String {
+        let methods = coverage::methods(program);
+        let ((a, first), (b, second)) = (methods.iter().enumerate())
+            .find_map(|(at, (line, method))| {
+                (methods[at + 1..].iter())
+                    .find(|(_, other)| (other.name, other.result) == (method.name, method.result))
+                    .map(|(other_line, other)| ((*line, method), (*other_line, other)))
+            })
+            .expect("the program should hold two methods of one requirement");
+        let mut lines: Vec<String> = program.lines().map(str::to_string).collect();
+        for (at, from, to) in [
+            (a, first.value, second.value),
+            (b, second.value, first.value),
+        ] {
+            lines[at] = lines[at].replace(&format!("{{ {from} }}"), &format!("{{ {to} }}"));
+        }
+        lines.join("\n") + "\n"
+    }
+
+    /// A program of the series where two methods of one requirement, on two types, swap their
+    /// values: it checks clean and exits 0, as before, and only the marked lines show it. Its
+    /// call reaches the other type's value, so property 5 fails, and the failure names the first
+    /// marked line that differs.
+    #[test]
+    fn judge_marked_should_fail_when_two_methods_swap_their_values() {
+        let (g, _) = dispatch_of(DISPATCHES[0]);
+        let source = swapped(&g.program);
+        assert_ne!(source, g.program);
+        let run = on_stack(|| {
+            let scratch = Scratch::new();
+            let program = checked("swapped", &source).expect("a swapped program should check");
+            let stdin = scratch.0.join("stdin.txt");
+            fs::write(&stdin, &g.stdin).expect("the test should write the stdin");
+            let exe = scratch.0.join("program");
+            build("swapped", &source, &program, &BUILDS[0].1, &runtime(), &exe);
+            run(&exe, &stdin, &scratch.0, LIMIT)
+        });
+        assert_eq!(run.exit, Exit::Code(0), "{source}");
+        let failure = judge_marked(&[run], &g.expected)
+            .expect_err("two swapped methods should fail property 5");
+        assert_eq!(failure.property, 5);
+        assert!(
+            failure.detail.contains("should print `@d"),
+            "{}",
+            failure.detail
+        );
+    }
+
+    /// The expected list differs by one value from what the program prints, as when a generator
+    /// rule works out a value wrong: the property fails at that line.
+    #[test]
+    fn judge_marked_should_fail_when_one_expected_value_changes() {
+        let (mut g, run) = dispatch_of(DISPATCHES[0]);
+        let last = g.expected.len() - 1;
+        g.expected[last].push('!');
+        let failure = judge_marked(&[run], &g.expected).expect_err("a changed value should fail");
+        assert_eq!(
+            (
+                failure.property,
+                failure
+                    .detail
+                    .contains(&format!("marked line {}", last + 1))
+            ),
+            (5, true)
+        );
+    }
+
+    /// A program that prints `@d0 a` once, as its own text and as its rewritten copy, with the
+    /// known sites `known` and the expected marked lines `expected`.
+    fn printing(known: Vec<Known>, expected: &[&str]) -> Generated {
+        let program = "fn main() {\n    print(\"@d0 a\")\n}\n";
+        Generated {
+            program: program.to_string(),
+            rewritten: program.to_string(),
+            stdin: String::new(),
+            known,
+            expected: expected.iter().map(ToString::to_string).collect(),
+            bound_sites: Vec::new(),
+            cost: 0,
+            plain: String::new(),
+            made: Vec::new(),
+        }
+    }
+
+    /// The failed property of `judge` on `g`, 0 for none, and the record of the builds.
+    fn judged(g: &Generated) -> (u8, String) {
+        let scratch = Scratch::new();
+        on_stack(|| judge(g, &runtime(), &scratch.0))
+            .map_or_else(|(f, record)| (f.property, record), |()| (0, String::new()))
+    }
+
+    #[test]
+    fn judge_should_pass_when_the_marked_lines_are_the_expected_ones() {
+        assert_eq!(judged(&printing(Vec::new(), &["@d0 a"])).0, 0);
+    }
+
+    #[test]
+    fn judge_should_fail_property_5_when_a_marked_line_is_not_the_expected_one() {
+        let (property, record) = judged(&printing(Vec::new(), &["@d0 b"]));
+        assert_eq!(property, 5);
+        assert!(record.contains("==> program O0"), "{record}");
+    }
+
+    #[test]
+    fn judge_should_fail_property_5_when_a_known_value_is_not_printed() {
+        let (property, record) = judged(&printing(vec![value("k0", "1")], &["@d0 a"]));
+        assert_eq!(property, 5);
+        assert!(record.contains("==> program O0"), "{record}");
+    }
+
     /// The `n`th seed of the coverage test's series, which walks the first 64.
     fn seed(n: u64) -> Vec<u8> {
         coverage::seed(n)
@@ -1269,6 +1733,7 @@ mod tests {
             rewritten: String::new(),
             stdin: String::new(),
             known: Vec::new(),
+            expected: Vec::new(),
             bound_sites: vec![BoundSite {
                 at,
                 bound: "Eq".to_string(),
