@@ -51,9 +51,10 @@ enum Rule {
     Assign,
     /// `v[i] = e`.
     Element,
-    /// `v.push(e)`, `v[i].push(e)`, `v?.push(e)`, or a guarded push onto a `mut` field.
+    /// `v.push(e)`, `v[i].push(e)`, `v[i]?.push(e)`, `v?.push(e)`, or a guarded push onto a `mut`
+    /// field.
     Push,
-    /// `v.g = e`, or `v.g op= e` of a number.
+    /// `v.g = e` or `v?.g = e`, or `op=` in place of `=` for a number.
     SetField,
     Compound,
     If,
@@ -287,10 +288,20 @@ impl Gen<'_> {
     }
 
     /// `let [mut] v[: T] = e`. A mutable `string` gets a size for its first value and plain
-    /// assignments, and room for what `+=` adds; a mutable optional of a size, a size.
+    /// assignments, and room for what `+=` adds; a mutable optional of a size, a size. Now and
+    /// then a mutable `[T]` becomes `[[T]?]`, which `any_type` never gives.
     fn let_stmt(&mut self) {
-        let ty = self.any_type();
+        let mut ty = self.any_type();
         let mutable = self.pick(2) == 1;
+        // The only local whose element takes `?.push`: a third layer that `any_type` never makes.
+        // `[[T]]` is too rare a source, so a plain `[T]` gives it.
+        if mutable
+            && let Ty::Array(element) = &ty
+            && !matches!(**element, Ty::Array(_) | Ty::Optional(_))
+            && self.pick(8) == 0
+        {
+            ty = Ty::Array(Box::new(Ty::Optional(Box::new(ty))));
+        }
         let name = self.scope.local();
         let keyword = if mutable { "let mut" } else { "let" };
         self.w.text(&format!("{keyword} {name}"));
@@ -397,9 +408,11 @@ impl Gen<'_> {
     /// The places a `push` may append to. A mutable array takes a `push` when its type holds no
     /// class object (decision 4). Its growth must cover a slot and the smallest element, at each
     /// run. The same holds for an element of a mutable array of such arrays, and for a mutable
-    /// optional array, which `?.` pushes to where it holds one. A `mut` array field takes a
-    /// guarded `push` when its elements have no size. One more element is then one more size. A
-    /// local that holds an optional class object takes the same guarded `push` through `?.`.
+    /// optional array, which `?.` pushes to where it holds one. An element of a mutable array of
+    /// optional arrays takes a `?.` push on the same terms. A `mut` array field, or optional
+    /// array field, takes a guarded `push` when its elements have no size. One more element is
+    /// then one more size. A local that holds an optional class object takes the same guarded
+    /// `push` through `?.`.
     pub(crate) fn push_targets(&self) -> Vec<Push> {
         let mut targets = Vec::new();
         for (v, var) in self.scope.vars.iter().enumerate() {
@@ -413,9 +426,15 @@ impl Gen<'_> {
                     if covers(element) {
                         targets.push(Push::Local(v));
                     }
-                    if has_elements(var) && matches!(&**element, Ty::Array(inner) if covers(inner))
-                    {
-                        targets.push(Push::Element(v));
+                    if has_elements(var) {
+                        match &**element {
+                            Ty::Array(inner) if covers(inner) => targets.push(Push::Element(v)),
+                            Ty::Optional(payload) if matches!(&**payload, Ty::Array(inner) if covers(inner)) =>
+                            {
+                                targets.push(Push::OptionalElement(v));
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 Ty::Optional(payload) => match &**payload {
@@ -437,12 +456,17 @@ impl Gen<'_> {
     }
 
     /// The pushes onto the `mut` array fields of the class `id`, which the local `v` holds, or
-    /// holds an optional of when `through`. Only a field whose elements have no size takes one.
+    /// holds an optional of when `through`. A field may be an optional array. Only a field whose
+    /// elements have no size takes one.
     fn field_pushes(&self, v: usize, id: usize, through: bool) -> Vec<Push> {
         let fields = self.scope.classes[id].fields.iter().enumerate();
         fields
             .filter(|(_, field)| {
-                matches!(&field.ty, Ty::Array(element) if !element.sized())
+                let array = match &field.ty {
+                    Ty::Optional(payload) => &**payload,
+                    ty => ty,
+                };
+                matches!(array, Ty::Array(element) if !element.sized())
                     && field.mutable
                     && !self.scope.contains_class(&field.ty)
             })
@@ -456,11 +480,12 @@ impl Gen<'_> {
             .collect()
     }
 
-    /// `v.push(e)`, `v[i].push(e)`, `v?.push(e)` or `if v.g.len() < cap { v.g.push(e) }`. A push
-    /// adds `e` and its slot to the size of the array. That size comes out of the growth of the
-    /// local that holds the array, at each run of every loop since its declaration. A field has
-    /// no growth. Its guard keeps its length, which is its size, within its cap. Through `?.`,
-    /// the guard is `(v?.g?.len() ?? 0) < cap`.
+    /// `v.push(e)`, `v[i].push(e)`, `v[i]?.push(e)`, `v?.push(e)` or `if v.g.len() < cap {
+    /// v.g.push(e) }`. A push adds `e` and its slot to the size of the array. That size comes out
+    /// of the growth of the local that holds the array, at each run of every loop since its
+    /// declaration. A field has no growth. Its guard keeps its length, which is its size, within
+    /// its cap. Through `?.`, or for an optional array field, the guard is
+    /// `(v?.g?.len() ?? 0) < cap` or `(v.g?.len() ?? 0) < cap`, and the push is `?.push(e)`.
     pub(crate) fn push_stmt(&mut self) {
         let targets = self.push_targets();
         let target = targets[self.pick(targets.len())];
@@ -500,21 +525,47 @@ impl Gen<'_> {
                 self.w.text(&format!("{name}[{at}].push("));
                 self.pushed(v, &element);
             }
+            Push::OptionalElement(v) => {
+                let (name, len) = {
+                    let var = &self.scope.vars[v];
+                    (var.name.clone(), var.len)
+                };
+                let Ty::Array(inner) = self.scope.vars[v].ty.clone() else {
+                    unreachable!("only an array has elements")
+                };
+                let Ty::Optional(payload) = *inner else {
+                    unreachable!("only an array of optionals takes a `?.` push onto an element")
+                };
+                let Ty::Array(element) = *payload else {
+                    unreachable!("only an optional array takes a `?.` push")
+                };
+                let at = self.upto(len - 1);
+                self.w.text(&format!("{name}[{at}]?.push("));
+                // The argument runs only when the element holds an array.
+                self.conditionally(|g| g.pushed(v, &element));
+            }
             Push::Field(v, class, f) | Push::Through(v, class, f) => {
                 let through = matches!(target, Push::Through(..));
                 let field = &self.scope.classes[class].fields[f];
-                let Ty::Array(element) = field.ty.clone() else {
-                    unreachable!("only an array field takes a push")
+                // An optional array field takes `?.` as an optional object does.
+                let (element, optional) = match field.ty.clone() {
+                    Ty::Array(element) => (*element, false),
+                    Ty::Optional(payload) => match *payload {
+                        Ty::Array(element) => (*element, true),
+                        _ => unreachable!("only an optional array field takes a push"),
+                    },
+                    _ => unreachable!("only an array field takes a push"),
                 };
+                let chained = through || optional;
                 let place = format!(
                     "{}{}.{}",
                     self.scope.vars[v].name,
                     if through { "?" } else { "" },
                     field.name
                 );
-                // An absent object has no length: the guard reads it as 0, so the push runs and
-                // does nothing.
-                let len = if through {
+                // An absent object or field has no length: the guard reads it as 0, so the push
+                // runs and does nothing.
+                let len = if chained {
                     format!("({place}?.len() ?? 0)")
                 } else {
                     format!("{place}.len()")
@@ -524,7 +575,7 @@ impl Gen<'_> {
                     g.open_block();
                     g.w.line();
                     g.cost.statement();
-                    g.w.text(&format!("{place}{}.push(", if through { "?" } else { "" }));
+                    g.w.text(&format!("{place}{}.push(", if chained { "?" } else { "" }));
                     g.expr(&element, 0);
                     g.w.text(")");
                     g.close_block();
@@ -554,32 +605,52 @@ impl Gen<'_> {
     }
 
     /// `v.g = e`, or `v.g op= e` of a number: a `string` takes only `=`, as its cap leaves it no
-    /// room to grow.
-    fn set_field(&mut self) {
+    /// room to grow. Through `?.`, `v?.g = e`, its right side runs only when `v` holds an object
+    /// (ADR 0037).
+    pub(crate) fn set_field(&mut self) {
         let targets = self.field_targets();
         let (v, class, f) = targets[self.pick(targets.len())];
         let field = &self.scope.classes[class].fields[f];
         let (ty, cap) = (field.ty.clone(), field.cap);
-        self.w
-            .text(&format!("{}.{}", self.scope.vars[v].name, field.name));
-        if matches!(ty, Ty::I64 | Ty::U8 | Ty::F64) && self.pick(3) != 0 {
-            self.compound_by(&ty);
+        let through = matches!(self.scope.vars[v].ty, Ty::Optional(_));
+        self.w.text(&format!(
+            "{}{}.{}",
+            self.scope.vars[v].name,
+            if through { "?" } else { "" },
+            field.name
+        ));
+        let write = |g: &mut Self| {
+            if matches!(ty, Ty::I64 | Ty::U8 | Ty::F64) && g.pick(3) != 0 {
+                g.compound_by(&ty);
+            } else {
+                g.w.text(" = ");
+                g.expr(&ty, cap);
+            }
+        };
+        if through {
+            self.conditionally(write);
         } else {
-            self.w.text(" = ");
-            self.expr(&ty, cap);
+            write(self);
         }
     }
 
     /// The fields an assignment may target, each as its local, class and index there: a
-    /// `mut` field of a type that holds no class object (decision 4).
-    fn field_targets(&self) -> Vec<(usize, usize, usize)> {
+    /// `mut` field of a type that holds no class object (decision 4). The local may hold an
+    /// optional of the object, which `?.` goes through.
+    pub(crate) fn field_targets(&self) -> Vec<(usize, usize, usize)> {
         let mut targets = Vec::new();
         for (v, var) in self.scope.vars.iter().enumerate() {
-            if let Ty::Class { id, .. } = var.ty {
-                for (f, field) in self.scope.classes[id].fields.iter().enumerate() {
-                    if field.mutable && !self.scope.contains_class(&field.ty) {
-                        targets.push((v, id, f));
-                    }
+            let id = match &var.ty {
+                Ty::Class { id, .. } => *id,
+                Ty::Optional(payload) => match **payload {
+                    Ty::Class { id, .. } => id,
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            for (f, field) in self.scope.classes[id].fields.iter().enumerate() {
+                if field.mutable && !self.scope.contains_class(&field.ty) {
+                    targets.push((v, id, f));
                 }
             }
         }
@@ -1184,11 +1255,14 @@ impl Gen<'_> {
 
 /// A place a `push` may append to (`Gen::push_targets`). It is a local, an element of one, a
 /// local that holds an optional array, or a `mut` field of the class object a local holds, or of
-/// the object a local holds an optional of, as its local, class and field.
+/// the object a local holds an optional of, as its local, class and field. A field may be an
+/// optional array.
 #[derive(Clone, Copy)]
 pub(crate) enum Push {
     Local(usize),
     Element(usize),
+    /// An element of an array of optional arrays, which `?.` pushes to.
+    OptionalElement(usize),
     /// A local that holds an optional array, which `?.` pushes to.
     Optional(usize),
     Field(usize, usize, usize),

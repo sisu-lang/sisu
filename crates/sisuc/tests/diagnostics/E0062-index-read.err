@@ -1,0 +1,10 @@
+error[E0062]: `row` may be `None`
+ --> E0062-index-read.sisu:6:5
+  |
+6 |     row.items[0]
+  |     ^^^
+  |
+  = help: unwrap it with `if let`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0062

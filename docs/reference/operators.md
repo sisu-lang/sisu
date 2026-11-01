@@ -401,7 +401,7 @@ The rules:
 - `a?.b.c` is an error when `b` is not optional, because `a?.b` is an optional ([E0062](../diagnostics/E0062.md)). Write `a?.b?.c`.
 - A method that returns no value has no value through `?.` too ([E0043](../diagnostics/E0043.md)). When `a` is `None`, the method and its arguments do not run.
 - `?.` on a value that is not optional is an error ([E0049](../diagnostics/E0049.md)). Use `.`.
-- An assignment cannot go through `?.` ([E0022](../diagnostics/E0022.md)). A `push` can: `xs?.push(x)` adds `x` when the optional array `xs` holds an array ([Arrays](arrays.md#methods)).
+- An assignment or a compound assignment can go through `?.`, as a `push` can ([ADR 0037](../adr/0037-assignment-through-optional-chaining.md)). It writes when every `?.` step holds a value. When one step is `None`, the right side does not run and nothing is written. `xs?.push(x)` follows the same rule ([Arrays](arrays.md#methods)). The place must still be one that can change ([Assignment](statements.md#assignment)).
 - A line that starts with `?.` continues the line above it ([Lexical structure](lexical.md#line-continuation)).
 
 ```sisu
@@ -429,6 +429,34 @@ fn main() {
 ```output
 label
 heat: 80
+```
+
+An assignment through `?.` writes only when the object is there:
+
+```sisu
+class Sauna {
+    mut heat: i64
+}
+
+fn raise() -> i64 {
+    print("raise")
+    return 10
+}
+
+fn main() {
+    let on: Sauna? = Sauna(heat: 80)
+    let off: Sauna? = None
+    on?.heat += raise()
+    off?.heat += raise()
+    print(on?.heat ?? 0)       // 90
+    print(off?.heat ?? 0)      // 0
+}
+```
+
+```output
+raise
+90
+0
 ```
 
 ## Passing a failure up

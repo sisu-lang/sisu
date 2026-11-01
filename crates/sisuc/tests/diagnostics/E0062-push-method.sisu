@@ -1,0 +1,14 @@
+class Bag {
+    mut items: [i64]
+}
+
+class Shop {
+    fn bag(self) -> Bag {
+        Bag(items: [])
+    }
+}
+
+fn main() {
+    let shop: Shop? = Shop()
+    shop?.bag().items.push(1)
+}

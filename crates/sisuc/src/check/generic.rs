@@ -2795,10 +2795,10 @@ impl Checker<'_> {
         else_block: &ast::Block,
         fit: &mut bool,
     ) -> Ranked {
-        // An argument is not part of an assignment target's chain.
-        let target = std::mem::take(&mut self.body.in_target);
+        // An argument is not part of the chain that an index ends.
+        let indexed = std::mem::take(&mut self.body.indexed);
         let (checked, form, mismatched) = self.let_value(Unwrap::IfLet, pattern, value);
-        self.body.in_target = target;
+        self.body.indexed = indexed;
         let index = self.keep((value.span, false), None);
         let then = self.block_rank(then_block, fit, |c| {
             Some(c.bind_pattern(Some(Unwrap::IfLet), &form, pattern, None))
@@ -2843,14 +2843,14 @@ impl Checker<'_> {
             return self.rank_value(tail, fit);
         }
         self.body.scopes.push(FxHashMap::default());
-        // Neither a pattern's guard nor a statement is part of an assignment target's chain.
-        let target = std::mem::take(&mut self.body.in_target);
+        // Neither a pattern's guard nor a statement is part of the chain that an index ends.
+        let indexed = std::mem::take(&mut self.body.indexed);
         let bound = bind(self);
         let mut so_far = BlockSoFar::default();
         if let Some(block) = block {
             self.block_statements(block, None, &mut so_far, block.stmts.len() - 1);
         }
-        self.body.in_target = target;
+        self.body.indexed = indexed;
         // Its place, held before the value's ranking keeps work of its own.
         let index = self.keep((key, true), None);
         let rank = self.rank_value(tail, fit);
@@ -3131,10 +3131,10 @@ impl Checker<'_> {
         if let Some(Ahead::Receiver(checked)) = kept {
             return type_of(checked);
         }
-        // An argument is not part of an assignment target's chain.
-        let target = std::mem::take(&mut self.body.in_target);
+        // An argument is not part of the chain that an index ends.
+        let indexed = std::mem::take(&mut self.body.indexed);
         let checked = self.value(e, None);
-        self.body.in_target = target;
+        self.body.indexed = indexed;
         let ty = type_of(&checked);
         self.keep((e.span, false), Some(Ahead::Receiver(checked)));
         ty

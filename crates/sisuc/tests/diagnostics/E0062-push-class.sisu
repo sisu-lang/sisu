@@ -1,0 +1,10 @@
+class Stack {
+    fn push(self, x: i64) -> i64 {
+        x
+    }
+}
+
+fn main() {
+    let s: Stack? = Stack()
+    print(s.push(1))
+}

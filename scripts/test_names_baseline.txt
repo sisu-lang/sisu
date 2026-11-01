@@ -336,11 +336,8 @@ crates/sisuc/src/check/tests/mod.rs::lowers_while_let
 crates/sisuc/src/check/tests/mod.rs::lowers_while_to_loop
 crates/sisuc/src/check/tests/mod.rs::main_after_a_class_named_main_is_not_missing
 crates/sisuc/src/check/tests/mod.rs::main_signatures
-crates/sisuc/src/check/tests/mod.rs::may_be_none_after_an_assignment_target_keeps_its_fix
 crates/sisuc/src/check/tests/mod.rs::may_be_none_fix_follows_any_receiver
-crates/sisuc/src/check/tests/mod.rs::may_be_none_in_a_target_chain_and_in_its_argument
 crates/sisuc/src/check/tests/mod.rs::may_be_none_in_an_array_method_argument_of_a_target_keeps_its_fix
-crates/sisuc/src/check/tests/mod.rs::may_be_none_in_an_assignment_target_has_no_fix
 crates/sisuc/src/check/tests/mod.rs::members_of_a_memberless_type_suggest_nothing
 crates/sisuc/src/check/tests/mod.rs::method_arity
 crates/sisuc/src/check/tests/mod.rs::method_as_assignment_target_has_no_fix
@@ -679,7 +676,6 @@ crates/sisuc/src/diagnostic/explanations.rs::readme_lists_every_code
 crates/sisuc/src/diagnostic/explanations.rs::retired_explanations_say_so
 crates/sisuc/src/diagnostic/explanations.rs::safe_fixes_make_broken_examples_clean
 crates/sisuc/src/diagnostic/explanations.rs::safe_fixes_remove_their_code_in_every_fixture
-crates/sisuc/src/diagnostic/json.rs::help_and_unsafe_fix
 crates/sisuc/src/diagnostic/json.rs::json_offsets_are_bytes
 crates/sisuc/src/diagnostic/json.rs::summary_orders_explanations_by_code
 crates/sisuc/src/diagnostic/json.rs::tool_error_line
@@ -1312,7 +1308,6 @@ crates/sisuc/src/parser.rs::break_value_ends_where_a_jump_ends
 crates/sisuc/src/parser.rs::broken_enum_keeps_its_name
 crates/sisuc/src/parser.rs::broken_items_keep_their_names
 crates/sisuc/src/parser.rs::call_of_a_call
-crates/sisuc/src/parser.rs::cannot_assign_through_safe_access
 crates/sisuc/src/parser.rs::cannot_assign_to_expression
 crates/sisuc/src/parser.rs::cannot_assign_to_self
 crates/sisuc/src/parser.rs::char_is_an_unexpected_token

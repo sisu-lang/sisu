@@ -1,0 +1,15 @@
+class Inner {
+    mut value: i64
+}
+
+class Node {
+    next: Inner
+}
+
+fn bump(n: Node?) {
+    n?.next.value = 1
+}
+
+fn main() {
+    bump(Node(next: Inner(value: 1)))
+}

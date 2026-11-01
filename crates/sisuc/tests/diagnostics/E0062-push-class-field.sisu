@@ -1,0 +1,20 @@
+class Stack {
+    mut items: [i64]
+
+    fn push(self, x: i64) -> i64 {
+        x
+    }
+}
+
+class Node {
+    mut stack: Stack
+    mut next: Node?
+}
+
+fn first(n: Node) {
+    let r = n.next.stack.push(1)
+    print(r)
+}
+
+fn main() {
+}

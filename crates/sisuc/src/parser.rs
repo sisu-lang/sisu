@@ -2999,9 +2999,6 @@ impl<'a> Parser<'a> {
         if !is_place(&target) {
             return Err(DiagnosticKind::AssignToExpression { at: target.span }.into());
         }
-        if goes_through_safe_access(&target) {
-            return Err(DiagnosticKind::AssignThroughSafeAccess { at: target.span }.into());
-        }
         let op_span = self.bump().span;
         if let Some(error) = self.label_not_on_loop() {
             return Err(error);
@@ -3751,16 +3748,6 @@ pub(crate) fn is_place(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Name(_) | ExprKind::Field { .. } => true,
         ExprKind::Index { base, .. } => is_place(base),
-        _ => false,
-    }
-}
-
-/// Whether a `?.` sits anywhere in the chain of fields, calls and indexes that makes up `e`.
-pub(crate) fn goes_through_safe_access(e: &Expr) -> bool {
-    match &e.kind {
-        ExprKind::Field { base, safe, .. } => *safe || goes_through_safe_access(base),
-        ExprKind::MethodCall { receiver, safe, .. } => *safe || goes_through_safe_access(receiver),
-        ExprKind::Index { base, .. } => goes_through_safe_access(base),
         _ => false,
     }
 }
@@ -4612,7 +4599,7 @@ mod tests {
     }
 
     #[test]
-    fn cannot_assign_through_safe_access() {
+    fn assignment_through_safe_access_should_parse() {
         for src in [
             "a?.b = 1",
             "a?.b.c = 1",
@@ -4623,12 +4610,7 @@ mod tests {
             "xs?.items[0].f += 1",
             "xs?.a[0] = 1",
         ] {
-            let full = format!("fn main() {{ {src} }}");
-            assert_eq!(
-                parse_err(&full),
-                (Code::AssignThroughSafeAccess, 1, 13),
-                "{src}"
-            );
+            parse_ok(&format!("fn main() {{ {src} }}"));
         }
     }
 

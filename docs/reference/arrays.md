@@ -156,7 +156,7 @@ The rules:
 - `push` has no value. The argument has the element type, so `push(1)` on an `[i64?]` adds `Some(1)` ([E0032](../diagnostics/E0032.md)), and `push` takes exactly one argument ([E0053](../diagnostics/E0053.md)).
 - A `push` onto an array that another variable holds does not change that variable. Arrays are values ([Arrays are values](#arrays-are-values)).
 - `xs?.push(x)` on an optional array adds `x` when `xs` holds an array. When `xs` is `None`, nothing happens and `x` is not computed. The call tests `xs` again after it computes `x`. When `x` made `xs` `None`, the call adds nothing. The place follows the rules above, so `xs` is a `let mut` variable. `bag?.items?.push(x)` goes through an optional object, and `items` is a `mut` field. `gs[i]?.push(x)` on an array `gs` of optional arrays checks `i` before it computes `x`, so a bad index stops the program before `x` runs.
-- An assignment cannot go through `?.`: `bag?.items = []` is an error ([E0022](../diagnostics/E0022.md)).
+- An assignment can go through `?.` too: `bag?.items = []` writes only when `bag` holds an object ([Optional chaining](operators.md#optional-chaining)).
 - A name that is not one of these methods is an error ([E0063](../diagnostics/E0063.md)).
 - On an optional array, call a method with `?.` ([Optional chaining](operators.md#optional-chaining)).
 

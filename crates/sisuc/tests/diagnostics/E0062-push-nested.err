@@ -1,0 +1,14 @@
+error[E0062]: `bag?.next` may be `None`
+  --> E0062-push-nested.sisu:10:5
+   |
+10 |     bag?.next.items?.push(4)
+   |     ^^^^^^^^^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`
+help: to do nothing when it is `None`, use `?.`
+   |
+10 |     bag?.next?.items?.push(4)
+   |              +
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0062

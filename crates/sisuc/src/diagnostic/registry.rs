@@ -77,7 +77,6 @@ codes! {
     MutParameter = "E0019",
     SelfNotFirst = "E0020",
     AssignToExpression | PushToTemporary = "E0021",
-    AssignThroughSafeAccess = "E0022",
     RangeOutsideFor = "E0023",
     EqualityChain = "E0024",
     ComparisonDirection = "E0025",
@@ -240,6 +239,10 @@ pub(crate) const RETIRED: &[(&str, &str)] = &[
     (
         "E0014",
         include_str!("../../../../docs/diagnostics/E0014.md"),
+    ),
+    (
+        "E0022",
+        include_str!("../../../../docs/diagnostics/E0022.md"),
     ),
     (
         "E0060",
@@ -505,8 +508,6 @@ pub(crate) enum DiagnosticKind {
     AssignToExpression { at: Span },
     /// A `push` at `at` onto something that is not a place.
     PushToTemporary { at: Span },
-    /// An assignment at `at` through a `?.`.
-    AssignThroughSafeAccess { at: Span },
     /// A range at `at` outside a `for`.
     RangeOutsideFor { at: Span },
     /// A second `==`, `!=` or `is` at `at` in one chain.
@@ -742,11 +743,13 @@ pub(crate) enum DiagnosticKind {
     PrintNever { function: &'static str, at: Span },
     /// The optional at `at` that a member, an index or a `for` uses as a value. `value` is its
     /// path as written, when it has one. `access` is the `.` before the member, and any space or
-    /// comment around it, when a `?.` can take its place.
+    /// comment around it, when a `?.` can take its place. `write` when the member is the target of
+    /// an assignment or a `push`: then the `?.` makes the statement do nothing, and has no result.
     MayBeNone {
         value: Option<String>,
         at: Span,
         access: Option<Span>,
+        write: bool,
         /// For a `?.` on an optional of an optional: the optional it leaves, which has no members.
         peel: Option<Peel>,
     },
@@ -2935,10 +2938,6 @@ impl From<DiagnosticKind> for Diagnostic {
                     .with_label("this value is not stored in a variable")
                     .with_help("store it in a `let mut` variable first")
             }
-            DiagnosticKind::AssignThroughSafeAccess { at } => {
-                Diagnostic::coded(code, at, "cannot assign through `?.`")
-                    .with_help("unwrap it with `if let`")
-            }
             DiagnosticKind::RangeOutsideFor { at } => Diagnostic::coded(
                 code,
                 at,
@@ -3586,13 +3585,25 @@ impl From<DiagnosticKind> for Diagnostic {
                 "peel the other layer first: `({receiver} ?? None)?.{member}`"
             )),
             DiagnosticKind::MayBeNone {
-                value, at, access, ..
+                value,
+                at,
+                access,
+                write,
+                ..
             } => {
                 let d = Diagnostic::coded(code, at, format!("{} may be `None`", named(value)));
                 match access {
-                    Some(access) => d
-                        .with_help("to use the value only when it is present, unwrap it with `if let`")
-                        .with_fix(unsafe_fix("if a `None` result is fine, use `?.`", access, "?.")),
+                    Some(access) => {
+                        let fix = if write {
+                            "to do nothing when it is `None`, use `?.`"
+                        } else {
+                            "if a `None` result is fine, use `?.`"
+                        };
+                        d.with_help(
+                            "to use the value only when it is present, unwrap it with `if let`",
+                        )
+                        .with_fix(unsafe_fix(fix, access, "?."))
+                    }
                     None => d.with_help("unwrap it with `if let`"),
                 }
             }
