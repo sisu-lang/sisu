@@ -1150,7 +1150,8 @@ impl Checker<'_> {
                 .iter()
                 .map(|v| (v.name.name.as_str(), Definition::Variant));
             let kind = DiagnosticKind::UnknownVariant {
-                enum_name: info.name.name.to_string(),
+                // As written: an alias of the enum names itself.
+                enum_name: qualifier.map_or(info.name.name, |q| q.name).to_string(),
                 name: name.name.to_string(),
                 at: name.span,
                 suggestion: suggestion(name.name.as_str(), variants),

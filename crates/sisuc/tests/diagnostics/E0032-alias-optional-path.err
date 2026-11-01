@@ -4,25 +4,25 @@ error[E0032]: expected `bool?`, found `i64?`
 4 |     let a: bool? = O.None
   |                    ^^^^^^
 
-error[E0119]: `Option.Some` needs its payload: `Option.Some(...)`
+error[E0119]: `O.Some` needs its payload: `O.Some(...)`
  --> E0032-alias-optional-path.sisu:5:15
   |
 5 |     let b = O.Some
   |               ^^^^
 
-error[E0118]: `Option` has no variant `Other`
+error[E0118]: `O` has no variant `Other`
  --> E0032-alias-optional-path.sisu:6:15
   |
 6 |     let c = O.Other
   |               ^^^^^
 
-error[E0053]: `Option.Some` takes 1 argument, found 2
+error[E0053]: `O.Some` takes 1 argument, found 2
  --> E0032-alias-optional-path.sisu:7:16
   |
 7 |     let d: O = O.Some(1, 2)
   |                ^^^^^^^^^^^^
 
-error[E0119]: `Option.None` holds nothing; write `Option.None`
+error[E0119]: `O.None` holds nothing; write `O.None`
  --> E0032-alias-optional-path.sisu:8:22
   |
 8 |     let e: O = O.None(1)

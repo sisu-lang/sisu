@@ -1,0 +1,8 @@
+enum A0 { X(A1) }
+enum A1 { X(A2) }
+enum A2 { X(A3) }
+enum A3 { X(A4) }
+enum A4 { X(A5) }
+enum A5 { X(A6) }
+enum A6 { X(A0) }
+fn main() {}

@@ -22,13 +22,13 @@ error[E0063]: `string` has no constant `len`
 14 |     print(S.len)
    |             ^^^
 
-error[E0118]: `E` has no variant `Zed`
+error[E0118]: `EU` has no variant `Zed`
   --> E0063-alias-member.sisu:15:14
    |
 15 |     print(EU.Zed)
    |              ^^^
 
-error[E0119]: `E.A` holds nothing; write `E.A`
+error[E0119]: `EU.A` holds nothing; write `EU.A`
   --> E0063-alias-member.sisu:16:15
    |
 16 |     print(EU.A(1))
