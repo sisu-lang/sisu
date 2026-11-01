@@ -38,7 +38,15 @@ thread_local! {
     /// How many tables `Mono::table` has expanded on this thread, each of an object type for an
     /// `any` type, once.
     pub(crate) static TABLES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many interface entries `Mono::entries` has resolved on this thread, once for each
+    /// object type and interface.
+    pub(crate) static ENTRIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many interfaces `Mono::layout` has added to a closure, on this thread.
+    pub(crate) static LAYOUT_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
+
+/// An object type, an interface and its arguments: the key of a list of table entries.
+type EntryKey = (Type, InterfaceId, TypeArgs);
 
 /// `program` with each generic function, class and enum replaced by the instantiations it
 /// reaches, and its enums laid out again.
@@ -162,6 +170,9 @@ struct Mono {
     layouts: FxHashMap<Type, Rc<[(InterfaceId, TypeArgs)]>>,
     /// The checked class types and `any` types whose table the output holds.
     tabled: FxHashSet<(Type, Type)>,
+    /// The entries of each interface for each object type, resolved once and shared by every
+    /// table that holds them.
+    entries: FxHashMap<EntryKey, Rc<[Option<FuncId>]>>,
     /// The first use of each output enum, in its ids: where an instance first comes from an
     /// expression. The enums of `out.enums` and this table have the same length. An instance
     /// that only a local's type or a class field reaches has none until an expression meets
@@ -205,6 +216,7 @@ impl Mono {
             at: None,
             layouts: FxHashMap::default(),
             tabled: FxHashSet::default(),
+            entries: FxHashMap::default(),
             uses: Vec::new(),
         };
         let user_funcs = program.prelude.funcs;
@@ -475,7 +487,10 @@ impl Mono {
             (interface, args),
             any,
             BOUND_CLOSURE_LIMIT,
-            || {},
+            || {
+                #[cfg(test)]
+                LAYOUT_STEPS.set(LAYOUT_STEPS.get() + 1);
+            },
         );
         let display = self.out.lang.display;
         if !closure.iter().any(|&(interface, _)| interface == display) {
@@ -486,6 +501,9 @@ impl Mono {
         let shown = closure
             .iter()
             .map(|&(interface, args)| {
+                if args.get().is_empty() {
+                    return (interface, args);
+                }
                 let args: Vec<Type> = args.get().iter().map(|&arg| self.output(arg)).collect();
                 (interface, TypeArgs::intern(&args))
             })
@@ -508,7 +526,7 @@ impl Mono {
         #[cfg(test)]
         TABLES.set(TABLES.get() + 1);
         let layout = self.layout(target);
-        let (display, any_object) = (self.out.lang.display, self.out.lang.any_object);
+        let any_object = self.out.lang.any_object;
         let mut tables = Vec::new();
         for &(interface, args) in layout.iter() {
             let inner = Type::intern(TypeKind::Any(interface, args));
@@ -517,24 +535,8 @@ impl Mono {
             }
             tables.push(if interface == any_object {
                 Vec::new()
-            } else if interface == display {
-                // The helpers show the value in both modes, through the written `to_string`.
-                self.walk(source, display, false);
-                self.walk(source, display, true);
-                match self.holds(source, display) {
-                    Holds::Written(k, stands) => {
-                        let method = self.conformances.get(display, k).methods[0];
-                        vec![Some(self.function_id(method, stands))]
-                    }
-                    Holds::Generated | Holds::No => vec![None],
-                }
             } else {
-                let (k, stands) = find(&self.conformances, interface, source, args)
-                    .expect("the checker should have found the conformance of a converted type");
-                let methods = self.conformances.get(interface, k).methods.clone();
-                (methods.into_iter())
-                    .map(|method| Some(self.function_id(method, stands)))
-                    .collect()
+                self.entries(source, interface, args).to_vec()
             });
         }
         let (ty, any) = (self.output(source), self.output(target));
@@ -543,6 +545,46 @@ impl Mono {
             any,
             methods: tables,
         });
+    }
+
+    /// The entries of the interface `interface` with `args` in the table of the object type
+    /// `source`: the instance of each method that meets a requirement, or for `Display` the
+    /// written `to_string`, if there is one. A table of a descendant holds the entries of each
+    /// interface it inherits, so each is resolved once and shared.
+    fn entries(
+        &mut self,
+        source: Type,
+        interface: InterfaceId,
+        args: TypeArgs,
+    ) -> Rc<[Option<FuncId>]> {
+        if let Some(entries) = self.entries.get(&(source, interface, args)) {
+            return Rc::clone(entries);
+        }
+        #[cfg(test)]
+        ENTRIES.set(ENTRIES.get() + 1);
+        let display = self.out.lang.display;
+        let entries: Rc<[Option<FuncId>]> = if interface == display {
+            // The helpers show the value in both modes, through the written `to_string`.
+            self.walk(source, display, false);
+            self.walk(source, display, true);
+            match self.holds(source, display) {
+                Holds::Written(k, stands) => {
+                    let method = self.conformances.get(display, k).methods[0];
+                    Rc::from([Some(self.function_id(method, stands))])
+                }
+                Holds::Generated | Holds::No => Rc::from([None]),
+            }
+        } else {
+            let (k, stands) = find(&self.conformances, interface, source, args)
+                .expect("the checker should have found the conformance of a converted type");
+            let methods = self.conformances.get(interface, k).methods.clone();
+            (methods.into_iter())
+                .map(|method| Some(self.function_id(method, stands)))
+                .collect()
+        };
+        self.entries
+            .insert((source, interface, args), Rc::clone(&entries));
+        entries
     }
 
     /// The output enum that the type `ty` holds, through arrays and optionals, for a type that
@@ -1346,6 +1388,58 @@ mod tests {
         // The layout of `any I30` holds each interface once, and `Display` after them.
         let widest = program.any_layouts.iter().map(|l| l.interfaces.len()).max();
         assert_eq!(widest, Some(31));
+    }
+
+    /// A chain of `n` interfaces: `I0` has a method, each `Ik` inherits `I(k-1)` and has none, and
+    /// a class conforms to the last one, which a conversion and a call use.
+    fn chain(n: usize) -> String {
+        let mut src = String::from("interface I0 {\n    fn f(self)\n}\n");
+        for k in 1..n {
+            let _ = writeln!(src, "interface I{k}: I{} {{}}", k - 1);
+        }
+        let _ = write!(
+            src,
+            "class C: I{} {{\n    fn f(self) {{}}\n}}\nfn main() {{\n    let x: any I{} = C()\n    x.f()\n}}",
+            n - 1,
+            n - 1
+        );
+        src
+    }
+
+    /// The work of the tables for a chain of `n` interfaces: the entries resolved, the interfaces
+    /// added to a layout, and the slots that the output holds, which are the entries and upcast
+    /// pointers of every table.
+    fn table_work(n: usize) -> (usize, usize, usize) {
+        ENTRIES.set(0);
+        LAYOUT_STEPS.set(0);
+        let program = instantiated(&chain(n));
+        let slots = program
+            .any_layouts
+            .iter()
+            .map(|l| l.interfaces.len())
+            .sum::<usize>()
+            + (program.any_tables.iter())
+                .map(|table| table.methods.iter().map(Vec::len).sum::<usize>())
+                .sum::<usize>();
+        (ENTRIES.get(), LAYOUT_STEPS.get(), slots)
+    }
+
+    /// A table holds the slots of every interface that it inherits, so a chain of `n` interfaces
+    /// has `n` squared slots in all. The work stays linear in them: each interface's entries are
+    /// resolved once for the class, and each layout is a walk of its own closure, no more.
+    #[test]
+    fn the_tables_of_a_chain_should_cost_in_proportion_to_their_slots() {
+        let [(e1, l1, s1), (e2, l2, s2), (e3, l3, s3)] = [16, 32, 48].map(table_work);
+        // One entry list for each interface and `Display`, however many tables hold it.
+        assert_eq!([e1, e2, e3], [17, 33, 49]);
+        // The layouts add `k` interfaces each, for each `k` up to `n`, and one for `Display`.
+        assert_eq!([l1, l2, l3], [137, 529, 1177]);
+        // The output is the slots, and the layouts are part of them.
+        for (layout, slots) in [(l1, s1), (l2, s2), (l3, s3)] {
+            assert!(layout <= slots, "{layout} layout steps for {slots} slots");
+        }
+        // The slots grow with the square of the chain; the work, with the slots.
+        assert!(s2 < 5 * s1 && s3 < 9 * s1, "{s1}, {s2}, {s3} slots");
     }
 
     /// The methods of the table of a converted class are instantiated, though nothing calls them.
