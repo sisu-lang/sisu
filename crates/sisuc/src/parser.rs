@@ -1509,7 +1509,7 @@ impl<'a> Parser<'a> {
     fn variant(&mut self) -> Result<Variant, Diagnostic> {
         let name = if self.prelude && self.at(&TokenKind::NoneKw) {
             Ident {
-                name: Symbol::intern("None"),
+                name: Symbol::NONE,
                 span: self.bump().span,
             }
         } else if self.at(&TokenKind::NoneKw) {
@@ -2376,7 +2376,7 @@ impl<'a> Parser<'a> {
                     // of anything else.
                     let name = if self.at(&TokenKind::NoneKw) {
                         Ident {
-                            name: Symbol::intern("None"),
+                            name: Symbol::NONE,
                             span: self.bump().span,
                         }
                     } else {
@@ -3276,7 +3276,7 @@ impl<'a> Parser<'a> {
             // `None` member of anything else.
             let name = if !safe && self.at(&TokenKind::NoneKw) {
                 Ident {
-                    name: Symbol::intern("None"),
+                    name: Symbol::NONE,
                     span: self.bump().span,
                 }
             } else {

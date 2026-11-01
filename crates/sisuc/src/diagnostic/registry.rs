@@ -216,6 +216,7 @@ codes! {
     PayloadTooLarge = "E0160",
     AliasCycle = "E0161",
     AliasTooLarge = "E0162",
+    TooManyInstances = "E0163",
     NanComparison = "W0005",
     UnreachableArm = "W0006",
     RedundantSemicolon = "W0007",
@@ -407,6 +408,15 @@ pub(crate) enum DiagnosticKind {
         limit: usize,
         /// Whether `limit` is the whole check's, not the written type's.
         check: bool,
+    },
+    /// `mono` has made more than `limit` instances of the generic items of the program. `name` is
+    /// the generic item with the most instances when `mono` stops, `count` of them. `at` is the
+    /// name of that item when it is the user's, and else the user code that `mono` was lowering.
+    TooManyInstances {
+        name: String,
+        at: Span,
+        count: usize,
+        limit: usize,
     },
     /// The argument `arg`, at `at`, of an inherited interface of `interface`, which is built from
     /// a type parameter.
@@ -1599,6 +1609,12 @@ fn thousands(n: usize) -> String {
         out.push_str(&digits[at..at + 3]);
     }
     out
+}
+
+/// `n` instances, with the singular for 1: `1 instance`, `2 instances`.
+fn instances(n: usize) -> String {
+    let noun = if n == 1 { "instance" } else { "instances" };
+    format!("{} {noun}", thousands(n))
 }
 
 /// What a name is defined as.
@@ -2898,6 +2914,23 @@ impl From<DiagnosticKind> for Diagnostic {
                 },
             )
             .with_help("hold an inner part in a field of a class or an enum"),
+            DiagnosticKind::TooManyInstances {
+                name,
+                at,
+                count,
+                limit,
+            } => Diagnostic::coded(
+                code,
+                at,
+                format!(
+                    "the generic items of this program have more than {} instances",
+                    thousands(limit)
+                ),
+            )
+            .with_label(format!(
+                "`{name}` has the most so far: {}",
+                instances(count)
+            )),
             DiagnosticKind::InheritedArgument {
                 arg,
                 interface,
@@ -5133,6 +5166,13 @@ mod tests {
         assert_eq!(one_of(&types(1)), "an `[i64]`");
         assert_eq!(one_of(&types(2)), "an `[i64]` or an `[f64]`");
         assert_eq!(one_of(&types(3)), "an `[i64]`, an `[f64]` or an `[u8]`");
+    }
+
+    #[test]
+    fn instances_should_write_the_singular_for_one() {
+        assert_eq!(instances(0), "0 instances");
+        assert_eq!(instances(1), "1 instance");
+        assert_eq!(instances(34_466), "34,466 instances");
     }
 
     #[test]

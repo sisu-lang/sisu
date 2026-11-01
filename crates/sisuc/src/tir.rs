@@ -281,6 +281,9 @@ pub(crate) struct ItemCounts {
 #[derive(Debug)]
 pub(crate) struct Class {
     pub(crate) name: String,
+    /// Where the declaration names the class. An instance of a generic class has the span of its
+    /// declaration.
+    pub(crate) span: Span,
     /// The names of its type parameters, in order; empty when it is not generic.
     pub(crate) type_params: Vec<String>,
     pub(crate) fields: Vec<Field>,
@@ -359,6 +362,9 @@ pub(crate) struct Field {
 #[derive(Clone, Debug)]
 pub(crate) struct Function {
     pub(crate) name: String,
+    /// Where the declaration names the function or method. An instance has the span of its
+    /// declaration.
+    pub(crate) span: Span,
     /// The type a method is declared on (`self`'s); `None` for a function.
     pub(crate) owner: Option<Type>,
     /// The interface, with its arguments, of the `extend` block that declares a method; `None`
@@ -1813,6 +1819,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -1934,6 +1941,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -1976,6 +1984,10 @@ mod tests {
 
     /// `match s { Running(c) => c  Idle => 0  _ => 1 }` over `enum State { Idle  Running(i64) }`.
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the enum, the match and the function stay in one test, so the printed tree reads in one place"
+    )]
     fn tir_should_print_a_match_over_an_enum() {
         let state = Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE));
         let pattern = |kind| Pattern {
@@ -2046,6 +2058,7 @@ mod tests {
                 cycle: None,
             }],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2132,6 +2145,7 @@ mod tests {
         );
         let program = Program {
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2182,6 +2196,7 @@ mod tests {
 
         let class = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE));
         let method = Function {
+            span: Span::new(0, 0),
             name: "C.name".into(),
             owner: Some(class),
             conformance: Some((InterfaceId(0), TypeArgs::NONE)),
@@ -2211,6 +2226,7 @@ mod tests {
             ..method.clone()
         };
         let caller = Function {
+            span: Span::new(0, 0),
             name: "f".into(),
             owner: None,
             conformance: None,
@@ -2236,6 +2252,7 @@ mod tests {
         };
         let program = Program {
             classes: vec![Class {
+                span: Span::new(0, 0),
                 name: "C".into(),
                 type_params: Vec::new(),
                 fields: Vec::new(),
@@ -2291,6 +2308,7 @@ mod tests {
         // fn first() { return }
         // fn second(a: i64, ok: bool) -> bool { first(); ok && (a == 3 && a < 4) }
         let first = Function {
+            span: Span::new(0, 0),
             name: "first".into(),
             owner: None,
             conformance: None,
@@ -2329,6 +2347,7 @@ mod tests {
         let ok = expr(ExprKind::Local(LocalId(1)), Type::BOOL);
         let value = binary(BinaryOp::And, ok, binary(BinaryOp::And, a_eq_3, a_lt_4));
         let second = Function {
+            span: Span::new(0, 0),
             name: "second".into(),
             owner: None,
             conformance: None,
@@ -2382,6 +2401,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2421,6 +2441,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2455,6 +2476,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2480,6 +2502,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2506,6 +2529,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2540,6 +2564,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2580,6 +2605,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2644,6 +2670,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2675,6 +2702,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2724,6 +2752,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2767,6 +2796,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2806,6 +2836,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2867,6 +2898,7 @@ mod tests {
         let t = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
         let program = Program {
             classes: vec![Class {
+                span: Span::new(0, 0),
                 name: "Stack".into(),
                 type_params: Vec::new(),
                 fields: vec![],
