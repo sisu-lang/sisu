@@ -539,10 +539,10 @@ each known case on stdout. It exits with code 1 when:
 
 The pull request that fixes a known case removes its row. The gaps between
 the numbers keep a row from changing between known and fixed when a change
-moves a ratio a little. At commit 889485b1, the list has four rows: array
-literal depth (#344), expression depth (#367), type depth (#366) and method
-chain (#366). All four are in the `check` stage. The nightly job runs the
-sweep (`docs/development.md`, "The nightly compile-speed job").
+moves a ratio a little. At commit 889485b1, the sweep finds five superlinear
+cases, all in the `check` stage: array literal depth (#344), expression
+depth (#367), and type depth, method chain and generic call depth (#366).
+`KNOWN` has a row for each. The nightly job runs the sweep (`docs/development.md`, "The nightly compile-speed job").
 
 ## Benchmarks for CodSpeed only
 

@@ -330,14 +330,15 @@ scripts:
 
 The job fails when a check fails, when a stage is superlinear for a shape
 and `KNOWN` in `scripts/scaling.py` has no row for it, and when a row looks
-fixed. A known case is a line on stdout and does not fail the job. The job
-never fails on a time.
+fixed. A known case is a line on stdout and a warning annotation on the run.
+It does not fail the job. The job never fails on a measured time.
 
 The table of the sweep is in the summary of the run. The artifact `scaling`
 holds `table.md` and `counts.json`. A sweep that stops early still writes the
 shapes that it measured, then a line `scaling: <message>`. To run the sweep on
-your machine, use `make scaling`. Step 1 and the sweep stop after 300 and 900
-seconds.
+your machine, use `make scaling`. Each script has a total time bound: 300
+seconds for step 1 and 900 for the sweep. A script that runs over exits with
+code 1. The bound is a guard against a hang.
 
 The scheduled run starts only from the default branch. After a change to the
 workflow, start it once by hand from the Actions tab. GitHub disables a
