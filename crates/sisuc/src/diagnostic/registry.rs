@@ -2102,7 +2102,7 @@ pub(crate) enum NotConformForm {
     /// class or enum with no conformance, which the help shows how to give one.
     Bound {
         bound: Option<Span>,
-        implied: Option<(String, String)>,
+        implied: Option<Implied>,
         label: Option<PreludeBound>,
         make: Option<String>,
         /// Whether the interface is `AnyObject`, which only classes have.
@@ -2112,6 +2112,13 @@ pub(crate) enum NotConformForm {
         /// and where it is.
         needs: Option<(String, Span)>,
     },
+}
+
+/// An associated type, as written, and its base: the text of an implied bound.
+#[derive(Clone)]
+pub(crate) struct Implied {
+    pub(crate) written: String,
+    pub(crate) base: String,
 }
 
 /// How the label names a bound of the prelude, on the call.
@@ -2711,11 +2718,12 @@ impl From<DiagnosticKind> for Diagnostic {
                             None => d,
                         };
                         let d = match (bound, implied) {
-                            (Some(bound), Some((written, base))) => d.with_secondary(
+                            (Some(bound), Some(Implied { written, base })) => d.with_secondary(
                                 bound,
                                 format!("`{written}` needs `{base}: {interface}`"),
                             ),
                             (Some(bound), None) => d.with_secondary(bound, "required by this bound"),
+                            // A bound of the prelude has no span, so `implied` is not shown.
                             (None, _) => d,
                         };
                         let d = match needs {

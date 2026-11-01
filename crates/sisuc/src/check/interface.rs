@@ -12,7 +12,7 @@ use super::{
 use crate::ast;
 use crate::conformance::{CHOICE_DEPTH_LIMIT, Entered, Generated, ensure_stack, find, generated};
 use crate::diagnostic::{
-    AddBound, BlockNeed, BoundSite, Definition as Kind, DiagnosticKind, NoOperatorForm,
+    AddBound, BlockNeed, BoundSite, Definition as Kind, DiagnosticKind, Implied, NoOperatorForm,
     NotConformForm, NotInterface, PreludeBound, UnknownForm, WideKind,
 };
 use crate::graph::{components, cycle_through};
@@ -1746,11 +1746,9 @@ impl Checker<'_> {
             at,
             form: NotConformForm::Bound {
                 bound: (!prelude).then_some(bound.at),
-                implied: implied.map(|base| {
-                    (
-                        self.source.text(bound.at).to_string(),
-                        self.source.text(base).to_string(),
-                    )
+                implied: implied.map(|base| Implied {
+                    written: self.source.text(bound.at).to_string(),
+                    base: self.source.text(base).to_string(),
                 }),
                 label,
                 make,
