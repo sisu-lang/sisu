@@ -14,7 +14,7 @@ done
 [[ ${#files[@]} -eq 0 ]] && exit 0
 
 perl -0777 -ne '
-  s/^#\[cfg\(test\)\]\n(?:#\[[^\n]*\n)*(?:pub(?:\([^)\n]*\))? )?mod \w+ \{.*//ms;
+  s/^#\[cfg\(test\)\]\n(?:#\[(?:[^][]|\[[^]]*\])*\]\n|\/\/[^\n]*\n)*(?:pub(?:\([^)\n]*\))? )?mod \w+ \{.*//ms;
   while (/\.expect\(\s*"((?:[^"\\]|\\.)*)"/g) {
     next if $1 =~ /\bshould\b/;
     my $line = 1 + (substr($_, 0, $-[0]) =~ tr/\n//);

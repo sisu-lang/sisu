@@ -41,8 +41,8 @@ class RegistryDebugFormat(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn(':2: diagnostic text uses {:?}', out)
 
-    def test_debug_format_in_the_tests_passes(self):
-        text = 'use a;\n#[cfg(test)]\nmod tests {\n    format!("{x:?}")\n}\n'
+    def test_debug_format_in_the_test_module_should_pass(self):
+        text = 'use a;\n' + TESTS + '    format!("{x:?}")\n}\n'
         self.assertEqual(run(registry_debug_format.main, text), (0, ''))
 
     def test_debug_format_after_a_step_counter_should_fail(self):
@@ -54,7 +54,8 @@ class RegistryDebugFormat(unittest.TestCase):
 
 # A step counter that CODING_STANDARDS.md asks for, at the top of a production file.
 STEPS = '#[cfg(test)]\nthread_local! {\n    static STEPS: Cell<u32> = const { Cell::new(0) };\n}\n'
-TESTS = '#[cfg(test)]\n#[expect(clippy::x, reason = "r")]\nmod tests {\n'
+# rustfmt splits a long attribute over lines; a doc comment may come between too.
+TESTS = '#[cfg(test)]\n/// The tests.\n#[expect(\n    clippy::x,\n    reason = "[r]",\n)]\nmod tests {\n'
 
 
 def run_hook(script, text):
@@ -86,7 +87,7 @@ class TestWording(unittest.TestCase):
     def test_wording_in_the_test_module_should_fail(self):
         code, out = run_hook('check-test-wording.sh', STEPS + TESTS + '    d.message();\n}\n')
         self.assertEqual(code, 1)
-        self.assertIn('f.rs:8: a unit test reads diagnostic wording', out)
+        self.assertIn('f.rs:12: a unit test reads diagnostic wording', out)
 
 
 class SessionUrl(unittest.TestCase):
