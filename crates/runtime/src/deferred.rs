@@ -117,7 +117,7 @@ mod tests {
     /// WHEN the queue is emptied, in the runtime's unit tests and under `make miri`
     /// THEN the drop functions run in the order 1, 2, 3, 4
     /// AND at most one loop that empties the queue runs at a time
-    /// AND a later drop is run by a later call that empties the queue
+    /// AND a later call that empties the queue runs a later drop
     #[test]
     fn deferred_queue_should_run_drops_in_order_in_one_loop() {
         // SAFETY: `record_1` only records the tag it gets.

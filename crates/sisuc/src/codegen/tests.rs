@@ -5037,17 +5037,10 @@ fn parameter_name(body: &str) -> &str {
     header.trim().split(')').next().unwrap_or_default()
 }
 
-/// Whether the block `from` of `blocks`, or a block that follows it, has the line `call`.
-fn reaches_call(blocks: &[(&str, Vec<&str>)], from: &str, call: &str) -> bool {
-    let from = blocks
-        .iter()
-        .find(|(name, _)| *name == from)
-        .map(|(name, _)| *name);
-    from.is_some_and(|from| {
-        reachable(blocks, from)
-            .into_iter()
-            .any(|name| block_lines(blocks, name).contains(&call))
-    })
+/// Whether the block `from` of `blocks`, or a block that follows it, has the line `call`. A label
+/// that is not a block fails the test.
+fn reaches_call<'a>(blocks: &[(&'a str, Vec<&'a str>)], from: &'a str, call: &str) -> bool {
+    (reachable(blocks, from).into_iter()).any(|name| block_lines(blocks, name).contains(&call))
 }
 
 /// The class `A` holds an array of itself, so the drop of that array counts. The entry block
@@ -5099,9 +5092,9 @@ fn counting_drop_should_defer_at_the_depth_limit() {
     );
 }
 
-/// Same program. The exit gives the depth back as the entry found it, and tests that value
-/// against 0: `icmp eq`. On its `true` side, the flag of the deferral decides: set, the block
-/// calls the function that empties the queue and clears the flag. No other path calls it.
+/// Same program. The exit stores the depth that the entry loaded, and compares that value with 0:
+/// `icmp eq`. When the depth is 0, the exit loads the flag of the deferral. When the flag is set,
+/// the exit calls the function that empties the queue and clears the flag. No other path calls it.
 #[test]
 fn counting_drop_should_empty_the_queue_at_depth_zero() {
     let ir = ir_of(CHAIN_THROUGH_AN_ARRAY);
@@ -5130,7 +5123,7 @@ fn counting_drop_should_empty_the_queue_at_depth_zero() {
     let restore = format!("store i64 {depth}, ptr @sisu_rc.depth");
     assert!(
         exit.iter().any(|line| line.starts_with(&restore)),
-        "no `{restore}` before the test in\n{body}"
+        "no `{restore}` in the block of the test in\n{body}"
     );
     let [zero, other] = branch_targets(exit, test);
     let zero = block_lines(&blocks, zero);
