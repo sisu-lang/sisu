@@ -2,7 +2,7 @@ error[E0163]: the generic items of this program have more than 100,000 instances
  --> E0163.sisu:1:4
   |
 1 | fn g1<T>(x: i64) -> i64 {
-  |    ^^ `g1` has the most: 34,466 instances
+  |    ^^ `g1` has the most so far: 34,466 instances
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0163
