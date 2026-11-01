@@ -1023,7 +1023,22 @@ fn matches(pattern: Type, ty: Type, slots: &mut [Option<Type>]) -> Option<()> {
         {
             matches_all(p, t, slots)
         }
-        _ => (pattern == ty).then_some(()),
+        (
+            TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::String
+            | TypeKind::Unit
+            | TypeKind::Never
+            | TypeKind::Array(_)
+            | TypeKind::Optional(_)
+            | TypeKind::Class(..)
+            | TypeKind::Enum(..)
+            | TypeKind::Assoc(..),
+            _,
+        ) => (pattern == ty).then_some(()),
     }
 }
 
@@ -1180,7 +1195,16 @@ impl Unifier {
             TypeKind::Optional(payload) => Type::optional(self.resolve(payload)?),
             TypeKind::Class(id, args) => Type::intern(TypeKind::Class(id, self.resolve_all(args)?)),
             TypeKind::Enum(id, args) => Type::intern(TypeKind::Enum(id, self.resolve_all(args)?)),
-            _ => ty,
+            // An associated type is opaque here, as it is to `unify`.
+            TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::String
+            | TypeKind::Unit
+            | TypeKind::Never
+            | TypeKind::Assoc(..) => ty,
         })
     }
 
@@ -1231,7 +1255,22 @@ impl Unifier {
             {
                 self.join(left, right) || self.unify_all(l, r)
             }
-            _ => false,
+            (
+                TypeKind::I64
+                | TypeKind::U8
+                | TypeKind::F64
+                | TypeKind::Bool
+                | TypeKind::Char
+                | TypeKind::String
+                | TypeKind::Unit
+                | TypeKind::Never
+                | TypeKind::Array(_)
+                | TypeKind::Optional(_)
+                | TypeKind::Class(..)
+                | TypeKind::Enum(..)
+                | TypeKind::Assoc(..),
+                _,
+            ) => false,
         }
     }
 

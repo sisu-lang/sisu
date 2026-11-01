@@ -41,7 +41,23 @@ fn meets(ty: Type, want: Type) -> bool {
         (TypeKind::Enum(a, p), TypeKind::Enum(b, v)) if a == b => {
             iter::zip(p.get(), v.get()).all(|(&p, &v)| meets(p, v))
         }
-        _ => false,
+        (
+            _,
+            TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::String
+            | TypeKind::Unit
+            | TypeKind::Never
+            | TypeKind::Array(_)
+            | TypeKind::Optional(_)
+            | TypeKind::Class(..)
+            | TypeKind::Enum(..)
+            | TypeKind::Param(..)
+            | TypeKind::Assoc(..),
+        ) => false,
     }
 }
 
@@ -284,7 +300,15 @@ fn names_unbound(unbound: &[bool], built: Type) -> bool {
             args.get().iter().any(|&arg| names_unbound(unbound, arg))
         }
         // An associated type binds nothing (see `Bindings::bind`).
-        _ => false,
+        TypeKind::Assoc(..)
+        | TypeKind::I64
+        | TypeKind::U8
+        | TypeKind::F64
+        | TypeKind::Bool
+        | TypeKind::Char
+        | TypeKind::String
+        | TypeKind::Unit
+        | TypeKind::Never => false,
     }
 }
 
@@ -340,7 +364,21 @@ fn needed_params(
         (TypeKind::Enum(a, bs), TypeKind::Enum(c, qs)) if a == c => {
             needed_all(outer, unbound, bs, qs, on)
         }
-        _ => false,
+        (
+            TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::String
+            | TypeKind::Unit
+            | TypeKind::Never
+            | TypeKind::Array(_)
+            | TypeKind::Optional(_)
+            | TypeKind::Class(..)
+            | TypeKind::Enum(..),
+            _,
+        ) => false,
     }
 }
 
@@ -640,7 +678,17 @@ fn holds_param(ty: Type, param: Type) -> bool {
         TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
             (args.get().iter()).any(|&arg| arg == param || holds_param(arg, param))
         }
-        _ => false,
+        TypeKind::I64
+        | TypeKind::U8
+        | TypeKind::F64
+        | TypeKind::Bool
+        | TypeKind::Char
+        | TypeKind::String
+        | TypeKind::Unit
+        | TypeKind::Never
+        | TypeKind::Optional(_)
+        | TypeKind::Param(..)
+        | TypeKind::Assoc(..) => false,
     }
 }
 
@@ -832,7 +880,16 @@ impl Bindings {
                             self.bind(p, value);
                         }
                     }
-                    _ => {}
+                    TypeKind::I64
+                    | TypeKind::U8
+                    | TypeKind::F64
+                    | TypeKind::Bool
+                    | TypeKind::Char
+                    | TypeKind::String
+                    | TypeKind::Unit
+                    | TypeKind::Never
+                    | TypeKind::Param(..)
+                    | TypeKind::Assoc(..) => {}
                 }
                 true
             }
@@ -847,7 +904,21 @@ impl Bindings {
             // An associated type binds nothing: the type it stands for is known once its base is
             // bound, and the argument is then checked against it (see `Checker::known`).
             (TypeKind::Assoc(..), _) => true,
-            _ => false,
+            (
+                TypeKind::I64
+                | TypeKind::U8
+                | TypeKind::F64
+                | TypeKind::Bool
+                | TypeKind::Char
+                | TypeKind::String
+                | TypeKind::Unit
+                | TypeKind::Never
+                | TypeKind::Array(_)
+                | TypeKind::Optional(_)
+                | TypeKind::Class(..)
+                | TypeKind::Enum(..),
+                _,
+            ) => false,
         }
     }
 
@@ -883,7 +954,22 @@ impl Bindings {
                     self.hint(p, v);
                 }
             }
-            _ => {}
+            (
+                TypeKind::I64
+                | TypeKind::U8
+                | TypeKind::F64
+                | TypeKind::Bool
+                | TypeKind::Char
+                | TypeKind::String
+                | TypeKind::Unit
+                | TypeKind::Never
+                | TypeKind::Array(_)
+                | TypeKind::Optional(_)
+                | TypeKind::Class(..)
+                | TypeKind::Enum(..)
+                | TypeKind::Assoc(..),
+                _,
+            ) => {}
         }
     }
 
@@ -2561,6 +2647,10 @@ impl Checker<'_> {
     }
 
     /// `rank_value`, for a span not ranked yet.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the match names each expression kind, so a new kind must choose its rank"
+    )]
     fn rank_walk(&mut self, e: &ast::Expr, fit: &mut bool) -> Ranked {
         use ast::ExprKind as K;
         match &e.kind {
@@ -2639,7 +2729,32 @@ impl Checker<'_> {
             K::Block(block) => self
                 .block_rank(block, fit, |_| None)
                 .unwrap_or(Ranked::CONCRETE),
-            _ => Ranked::CONCRETE,
+            K::Int { .. }
+            | K::Float(_)
+            | K::Bool(_)
+            | K::Char(_)
+            | K::Str(_)
+            | K::Interpolate(_)
+            | K::Name(_)
+            | K::Applied { .. }
+            | K::Todo { .. }
+            | K::SelfValue
+            | K::NoneLit
+            | K::Field { safe: true, .. }
+            | K::Unary { .. }
+            | K::Binary { .. }
+            | K::Compare { .. }
+            | K::Coalesce { .. }
+            | K::ArrayFill { .. }
+            | K::Index { .. }
+            | K::Is { .. }
+            | K::If {
+                else_block: None, ..
+            }
+            | K::IfLet {
+                else_block: None, ..
+            }
+            | K::Loop { .. } => Ranked::CONCRETE,
         }
     }
 

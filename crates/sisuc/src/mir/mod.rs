@@ -353,7 +353,30 @@ impl Rvalue {
             | Rvalue::Print { calls, .. }
             | Rvalue::Dbg { calls, .. }
             | Rvalue::Interpolate { calls, .. } => *calls,
-            _ => false,
+            Rvalue::Use(_)
+            | Rvalue::Copy(_)
+            | Rvalue::CopyStr(_)
+            | Rvalue::Borrow(_)
+            | Rvalue::Unwrap(_)
+            | Rvalue::New { .. }
+            | Rvalue::Variant { .. }
+            | Rvalue::ArrayLit(_)
+            | Rvalue::ArrayFill { .. }
+            | Rvalue::Wrap(_)
+            | Rvalue::Concat { .. }
+            | Rvalue::ReadLine
+            | Rvalue::Chars(_)
+            | Rvalue::Bytes(_)
+            | Rvalue::Words(_)
+            | Rvalue::FromChars(_)
+            | Rvalue::Len(_)
+            | Rvalue::LenWords(_)
+            | Rvalue::Convert(_)
+            | Rvalue::Math { .. }
+            | Rvalue::Unary { .. }
+            | Rvalue::Binary { .. }
+            | Rvalue::Compare { .. }
+            | Rvalue::Is { .. } => false,
         }
     }
 }

@@ -22,10 +22,11 @@ row in `probes.md`.
   $ awk '/^struct Body \{/,/^\}/' crates/sisuc/src/check/mod.rs | grep -cE '^    [a-z_]+:'
   ```
 
-- **Wildcard arms at decision points.** The `_ =>` arms in each function
-  that the wildcard debt row names. Read each function with CodeGraph
-  (`codegraph explore "<function>"`). Also look for a new `_ =>` arm in a
-  match over `tir`, `mir` or `Type` that decides a result for a variant.
+- **Wildcard arms at decision points.** No debt row is left: each walk
+  that pairs or rebuilds the parts of a type lists every kind. Look for a
+  new `_ =>` arm in a match over `tir`, `mir` or `Type` that decides a
+  result for a variant. In a match on a pair of types, the last arm must
+  list every kind of one side.
 - **Direct name-map reads.** The uses of the five name maps that the
   name-map row names, in `check/`:
 
