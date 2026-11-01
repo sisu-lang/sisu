@@ -850,8 +850,14 @@ impl Checker<'_> {
     }
 
     /// `lhs ?? rhs`: `rhs` is a `T` or a `T?` beside the `T?` `lhs`, and gives the result its
-    /// type, or never finishes, and the result is a `T`.
-    pub(super) fn coalesce(&mut self, span: Span, lhs: &ast::Expr, rhs: &ast::Expr) -> Checked {
+    /// type, or never finishes, and the result is a `T`. A type written for an `any` result is
+    /// what a default that does not join is reported against (see `leaves_written`).
+    pub(super) fn coalesce(
+        &mut self,
+        span: Span,
+        (lhs, rhs): (&ast::Expr, &ast::Expr),
+        expected: Option<Type>,
+    ) -> Checked {
         let scrutinee = self.value(lhs, None);
         let Some(TypeKind::Optional(payload)) = type_of(&scrutinee).map(Type::kind) else {
             if type_of(&scrutinee).is_some() {
@@ -893,11 +899,23 @@ impl Checker<'_> {
             drop(self.fallback(tail, UNKNOWN));
             return Err(Poisoned::error());
         }
+        let written = (self.hinted(span, expected).0)
+            .filter(|&want| want != UNKNOWN && (is_target(want) || is_target(payload)));
         // The right side expects `P` for an optional `P`, else `P?`: a value converts through
-        // one `?` only. That is a hint (see `Body::hint_at`).
-        let outer_hint = self.pass_hint(Some(rhs.span), Some(payload));
-        let other = self.fallback(rhs, as_optional(payload));
-        self.body.hint_at = outer_hint;
+        // one `?` only. That is a hint (see `Body::hint_at`), unless that type is written.
+        let other = match written {
+            Some(want)
+                if is_target(payload) && (want == payload || want == as_optional(payload)) =>
+            {
+                self.fallback(rhs, want)
+            }
+            _ => {
+                let outer_hint = self.pass_hint(Some(rhs.span), Some(payload));
+                let other = self.fallback(rhs, as_optional(payload));
+                self.body.hint_at = outer_hint;
+                other
+            }
+        };
         // A value converts to an `any` payload, unless it is a wider `any` type, which the
         // payload converts to.
         let other = match type_of(&other) {
@@ -918,11 +936,26 @@ impl Checker<'_> {
             Some(ty) => {
                 // An object and an `any` type that it converts to join to the `any` type.
                 let Some(joined) = self.any_join(payload, ty) else {
-                    // A class payload leaves an `any` default, as a member leaves a join.
-                    let d = if is_target(ty) && matches!(payload.kind(), TypeKind::Class(..)) {
-                        self.leaves_any(lhs.span, None, ty, payload)
-                    } else {
-                        self.mismatch(rhs.span, Some(rhs), payload, ty)
+                    let object =
+                        (other.as_ref().ok()).and_then(|v| self.object_in_some(v, payload));
+                    let leaves = written.and_then(|want| {
+                        [(lhs, payload), (rhs, ty)]
+                            .into_iter()
+                            .find(|&(_, t)| !fits(want, t) && !self.converts_to_any(t, want))
+                            .map(|(e, t)| (want, e, t))
+                    });
+                    let d = match (leaves, object) {
+                        // With a written type, the first side that leaves it, as in a join.
+                        (Some((want, e, t)), _) => {
+                            let source = (e.span == rhs.span).then_some(rhs);
+                            self.leaves_any(e.span, source, want, t)
+                        }
+                        // A class payload leaves an `any` default, as a member leaves a join.
+                        _ if is_target(ty) && matches!(payload.kind(), TypeKind::Class(..)) => {
+                            self.leaves_any(lhs.span, None, ty, payload)
+                        }
+                        (None, Some((at, want, object))) => self.leaves_any(at, None, want, object),
+                        (None, None) => self.mismatch(rhs.span, Some(rhs), payload, ty),
                     };
                     self.diagnostics.push(d);
                     return Err(Poisoned::error());

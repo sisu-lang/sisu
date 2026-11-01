@@ -634,6 +634,16 @@ fn a_join_should_stay_a_mismatch_where_neither_side_converts_to_the_other() {
             vec![(Code::Mismatch, (4, 20))],
         ),
         (
+            "a `Some` of a `Some` of a class after one of another class: the class is the mistake",
+            "fn main() {\n    let r = if true { Some(Some(Circle(r: 1.0))) } else { Some(Some(Rect(w: 1.0))) }\n}",
+            vec![(Code::Mismatch, (2, 69))],
+        ),
+        (
+            "a `Some` of a `Some` of a class after one of another class, in a loop",
+            "fn main() {\n    let r = loop {\n        if true { break Some(Some(Circle(r: 1.0))) }\n        break Some(Some(Rect(w: 1.0)))\n    }\n}",
+            vec![(Code::Mismatch, (4, 25))],
+        ),
+        (
             "a `Some` of a class after the class, in a loop: the optional is the mistake",
             "fn main() {\n    let r = loop {\n        if true { break Circle(r: 1.0) }\n        break Some(Circle(r: 1.0))\n    }\n}",
             vec![(Code::Mismatch, (4, 15))],
@@ -798,27 +808,151 @@ fn a_join_should_report_the_member_that_leaves_its_any_type() {
     ]);
 }
 
-/// A member that leaves the join of an `any` type is reported against the type that is written
-/// for the join, not against the `any` type of its members.
+/// With a written type, a join with an `any` member reports as a join with none does: the first
+/// member, in source order, that does not fit the written type, against it; a branch with no
+/// value first. So does a `??` default. The wording is in the fixtures.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one row for each join site and order under a written type"
+)]
 fn a_join_should_report_the_member_that_leaves_it_against_the_written_type() {
-    for (row, join, pos) in [
-        ("an `if`", "if true { o } else { s }", (4, 37)),
+    for (row, written, join, (line, col, text), code) in [
+        (
+            "an `if`",
+            ": (any Shape)?",
+            "if true { o } else { s }",
+            (5, 37, "o"),
+            Code::Mismatch,
+        ),
         (
             "a `match`",
+            ": (any Shape)?",
             "match 1 {\n        0 => s\n        _ => o\n    }",
-            (6, 14),
+            (7, 14, "o"),
+            Code::Mismatch,
         ),
         (
             "a class, then an optional class",
+            ": (any Shape)?",
             "if true { Circle(r: 1.0) } else { o }",
-            (4, 61),
+            (5, 61, "o"),
+            Code::Mismatch,
+        ),
+        (
+            "an `any` value under a class it does not fit",
+            ": Circle?",
+            "if true { s } else { o }",
+            (5, 32, "s"),
+            Code::Mismatch,
+        ),
+        (
+            "an `any` value under a class it does not fit, in a `match`",
+            ": Circle?",
+            "match 1 {\n        0 => o\n        _ => s\n    }",
+            (7, 14, "s"),
+            Code::Mismatch,
+        ),
+        (
+            "an `any` value under a class it does not fit, second",
+            ": Circle?",
+            "if true { o } else { s }",
+            (5, 43, "s"),
+            Code::Mismatch,
+        ),
+        (
+            "an `any` value beside a `Some` of the class",
+            ": Circle?",
+            "if true { s } else { Some(Circle(r: 1.0)) }",
+            (5, 32, "s"),
+            Code::Mismatch,
+        ),
+        (
+            "an `any` value beside a `None`",
+            ": Circle?",
+            "if true { s } else { None }",
+            (5, 32, "s"),
+            Code::Mismatch,
+        ),
+        (
+            "an `any` value under a type that is no object",
+            ": i64",
+            "if true { s } else { o }",
+            (5, 28, "s"),
+            Code::Mismatch,
+        ),
+        (
+            "a branch with no value, after a branch that does not fit",
+            ": (any Shape)?",
+            "if true { o } else { print(1) }",
+            (5, 48, "print(1)"),
+            Code::NoValue,
+        ),
+        (
+            "a `??` default of a `Some` of a class that does not conform",
+            ": (any Shape)?",
+            "os ?? Some(Kelvin(k: 1.0))",
+            (5, 38, "Kelvin(k: 1.0)"),
+            Code::NotConform,
+        ),
+        (
+            "a `??` default of a `Some` of a class that does not conform, with no written type",
+            "",
+            "os ?? Some(Kelvin(k: 1.0))",
+            (5, 24, "Kelvin(k: 1.0)"),
+            Code::NotConform,
+        ),
+        (
+            "a `??` default that is a join",
+            ": (any Shape)?",
+            "os ?? if true { o } else { s }",
+            (5, 43, "o"),
+            Code::Mismatch,
+        ),
+        (
+            "a `??` default of an optional class",
+            ": (any Shape)?",
+            "os ?? o",
+            (5, 33, "o"),
+            Code::Mismatch,
+        ),
+        (
+            "a `??` whose optional `any` value does not fit",
+            ": Circle?",
+            "os ?? o",
+            (5, 22, "os"),
+            Code::Mismatch,
         ),
     ] {
         let src = format!(
-            "{DECLS}fn main() {{\n    let o: Circle? = None\n    let s: any Shape = Circle(r: 1.0)\n    let r: (any Shape)? = {join}\n}}"
+            "{DECLS}fn main() {{\n    let o: Circle? = None\n    let s: any Shape = Circle(r: 1.0)\n    let os: (any Shape)? = None\n    let r{written} = {join}\n}}"
         );
-        diagnostic_row(row, &src, Code::Mismatch, (pos.0 + LINES, pos.1, "o"), &[]);
+        // `NotConform` points at where `any Shape` is first written too.
+        let secondary: &[_] = if code == Code::NotConform {
+            &[(3 + LINES, 12)]
+        } else {
+            &[]
+        };
+        diagnostic_row(row, &src, code, (line + LINES, col, text), secondary);
+    }
+    for (row, join) in [
+        ("an optional class, then an `any` default", "o ?? s"),
+        ("an optional `any` value, then an `any` default", "os ?? s"),
+        (
+            "an optional `any` value, then a `Some` of a class",
+            "os ?? Some(Circle(r: 1.0))",
+        ),
+        (
+            "an optional `any` value, then a join",
+            "os ?? if true { s } else { Circle(r: 1.0) }",
+        ),
+    ] {
+        clean_row(
+            row,
+            &format!(
+                "{DECLS}fn main() {{\n    let o: Circle? = None\n    let s: any Shape = Circle(r: 1.0)\n    let os: (any Shape)? = None\n    let r: (any Shape)? = {join}\n}}"
+            ),
+        );
     }
 }
 

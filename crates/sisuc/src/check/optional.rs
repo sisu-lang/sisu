@@ -53,11 +53,15 @@ impl Checker<'_> {
                 self.body.hint_at = outer_hint;
                 match type_of(&checked) {
                     // An object that does not convert to the hint keeps its own type: the join
-                    // converts it to an `any` type, or the other values to it, or reports it.
+                    // converts it to an `any` type, or the other values to it, or reports it. So
+                    // does a `Some` of one, which kept its type.
                     Some(got)
                         if hinted
                             && got != payload
-                            && matches!(got.kind(), TypeKind::Class(..) | TypeKind::Any(..))
+                            && matches!(
+                                beneath(got).kind(),
+                                TypeKind::Class(..) | TypeKind::Any(..)
+                            )
                             && !self.converts_to_any(got, payload) =>
                     {
                         (checked, optional_of(got))
@@ -187,5 +191,13 @@ impl Checker<'_> {
                 Err(Poisoned::error())
             }
         }
+    }
+}
+
+/// `ty` without its optional layers.
+fn beneath(ty: Type) -> Type {
+    match ty.kind() {
+        TypeKind::Optional(payload) => beneath(payload),
+        _ => ty,
     }
 }

@@ -172,7 +172,7 @@ impl Checker<'_> {
                 self.misread_unless_checked(e.span, types, &checked);
                 checked
             }
-            ExprKind::Coalesce { lhs, rhs } => self.coalesce(e.span, lhs, rhs),
+            ExprKind::Coalesce { lhs, rhs } => self.coalesce(e.span, (lhs, rhs), expected),
             ExprKind::Is { lhs, rhs } => self.is(e.span, lhs, rhs),
             ExprKind::Unary { op, operand } => {
                 let (want, (operand, mismatched)) = match op {

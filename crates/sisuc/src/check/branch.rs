@@ -267,6 +267,10 @@ impl Checker<'_> {
         let members: Vec<(usize, Type)> = (types.iter().enumerate())
             .filter_map(|(i, t)| t.filter(|&t| t != Type::NEVER).map(|t| (i, t)))
             .collect();
+        if let Some(d) = self.leaves_written(sources, blocks, expected, &members) {
+            self.diagnostics.push(d);
+            return (None, error, true);
+        }
         let failed = match self.any_join_all(&members) {
             AnyJoin::Joined { ty } => return (Some(ty), error, false),
             AnyJoin::NoAny => match fold_in_order(&members) {
@@ -315,10 +319,8 @@ impl Checker<'_> {
                 never: false,
             }
             .into(),
-            // A written type is what the member leaves, as the user wrote it.
             AnyJoin::Leaves { ty, member: (i, t) } => {
-                let want = expected.filter(|&want| want != UNKNOWN).unwrap_or(ty);
-                let (at, tail, want, got) = self.reported(&sources[i], &blocks[i], want, t);
+                let (at, tail, want, got) = self.reported(&sources[i], &blocks[i], ty, t);
                 self.leaves_any(at, tail, want, got)
             }
             AnyJoin::Fails { earlier, later } => {
@@ -367,6 +369,34 @@ impl Checker<'_> {
         }
     }
 
+    /// With a written type and an `any` type in the join, the mistake as a join with no `any` type
+    /// reports it: the first member, in source order, that does not fit the written type or
+    /// convert to it, against that type.
+    fn leaves_written(
+        &mut self,
+        sources: &[Branch<'_>],
+        blocks: &[CheckedBlock],
+        expected: Option<Type>,
+        members: &[(usize, Type)],
+    ) -> Option<Diagnostic> {
+        let want = expected.filter(|&want| want != UNKNOWN)?;
+        if !is_target(want) && !members.iter().any(|&(_, t)| is_target(t)) {
+            return None;
+        }
+        // A branch with no value is the mistake first, as in `join_mismatch`.
+        if let Some(&(i, _)) = members.iter().find(|&&(_, t)| t == Type::UNIT) {
+            let at = sources[i].span;
+            return Some(DiagnosticKind::NoValue { at, never: false }.into());
+        }
+        for &(i, t) in members {
+            if !fits(want, t) && !self.converts_to_any(t, want) {
+                let (at, tail, want, got) = self.reported(&sources[i], &blocks[i], want, t);
+                return Some(self.leaves_any(at, tail, want, got));
+            }
+        }
+        None
+    }
+
     /// Where the branch `source`, of type `got`, is reported as a mistake against `want`, with
     /// its expression, and the two types to name (see `object_in_some`).
     fn reported<'a>(
@@ -386,7 +416,7 @@ impl Checker<'_> {
     /// Where `value`, a `Some` of an object that leaves `want`, an object or an optional object,
     /// is the mistake, and the two types to name, when the object does not convert to the
     /// payload of `want`: the object, against that payload, as when the `Some` checks its
-    /// argument against it.
+    /// argument against it. A `Some` of a `Some` looks through each layer that `want` has.
     pub(super) fn object_in_some(
         &mut self,
         value: &tir::Expr,
@@ -402,6 +432,10 @@ impl Checker<'_> {
                     && !self.converts_to_any(inner.ty, want) =>
             {
                 Some((inner.span, want, inner.ty))
+            }
+            // A `Some` of a `Some` checks its argument against an optional payload.
+            tir::ExprKind::Wrap(inner) if matches!(want.kind(), TypeKind::Optional(_)) => {
+                self.object_in_some(inner, want)
             }
             _ => None,
         }
