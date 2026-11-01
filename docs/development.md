@@ -314,6 +314,35 @@ A pull request that changes `codegen`, the runtime or ownership is merged
 only after someone has read its CodSpeed report, including changes below the
 threshold. Any regression that is kept is explained in the description.
 
+### The nightly compile-speed job
+
+The `Compile speed` workflow (`.github/workflows/compile-speed.yml`) runs
+every night at 03:41 UTC, and by hand with `workflow_dispatch`. It builds
+`sisu` in release mode and installs `valgrind` and Go. Then it runs two
+scripts:
+
+1. `scripts/compile_speed.py --check-only` builds the smallest size of the
+   compile-speed program in each language and compares the output of the
+   four programs. It times nothing.
+2. `scripts/scaling.py` runs the scaling sweep
+   (`docs/benchmarks.md`, "The scaling sweep"). A failed check in step 1 does
+   not skip it.
+
+The job fails when a check fails, when a stage is superlinear for a shape
+and `KNOWN` in `scripts/scaling.py` has no row for it, and when a row looks
+fixed. A known case is a line on stdout and does not fail the job. The job
+never fails on a time.
+
+The table of the sweep is in the summary of the run. The artifact `scaling`
+holds `table.md` and `counts.json`. A sweep that stops early still writes the
+shapes that it measured, then a line `scaling: <message>`. To run the sweep on
+your machine, use `make scaling`. Step 1 and the sweep stop after 300 and 900
+seconds.
+
+The scheduled run starts only from the default branch. After a change to the
+workflow, start it once by hand from the Actions tab. GitHub disables a
+`schedule` trigger as the fuzz job below says.
+
 ## Fuzz the front end
 
 The fuzz target, `fuzz/fuzz_targets/front_end.rs`, feeds arbitrary bytes to

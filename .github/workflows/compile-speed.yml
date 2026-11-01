@@ -1,0 +1,61 @@
+name: Compile speed
+
+# This job runs the agreement check of `make compile-speed` and the scaling sweep of
+# `make scaling`. It fails on a superlinear case with no row in `scripts/scaling.py`, on a row
+# that looks fixed, and on a check that fails. It never fails on a time: callgrind counts do
+# not depend on the load of the runner. GitHub mails a failed scheduled run to the user who
+# last changed the `cron` line, when that user has Actions notifications on.
+
+on:
+  schedule:
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run at a time; a new run waits for the one in progress.
+concurrency:
+  group: compile-speed
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Third-party actions are pinned to commit SHAs; Dependabot bumps them.
+jobs:
+  compile-speed:
+    name: Check the compile-speed inputs and sweep the scaling
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+      - uses: ./.github/actions/install-llvm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+      - run: sudo apt-get update && sudo apt-get install --yes valgrind
+      - run: cargo build --release --locked -p sisuc -p sisu-runtime-mimalloc
+      - id: check
+        run: python3 scripts/compile_speed.py --check-only --time-bound 300
+      # A failed check does not skip the sweep.
+      - if: success() || steps.check.outcome == 'failure'
+        run: python3 scripts/scaling.py --time-bound 900
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f target/scaling/table.md ]; then
+            cat target/scaling/table.md
+          else
+            echo "The sweep wrote no table."
+          fi >> "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: scaling
+          path: target/scaling/
+          if-no-files-found: warn
