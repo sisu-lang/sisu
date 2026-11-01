@@ -34,6 +34,7 @@ criteria still gets the current ones. Without origin/main it falls back to ../br
 """
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -62,8 +63,12 @@ SKILLS = {
 
 
 def git(repo, *args):
-    """The stripped stdout of a git command in `repo`, or '' when it fails."""
-    return subprocess.run(['git', '-C', str(repo), *args], capture_output=True, text=True).stdout.strip()
+    """The stripped stdout of a git command in `repo`, or '' when it fails. A byte that is not UTF-8,
+    as some test fixtures hold, reads as U+FFFD, so the brief can still be written. GIT_DIFF_OPTS
+    would beat `--unified=0`."""
+    env = {key: value for key, value in os.environ.items() if key != 'GIT_DIFF_OPTS'}
+    return subprocess.run(['git', '-C', str(repo), *args], capture_output=True, text=True,
+                          encoding='utf-8', errors='replace', env=env).stdout.strip()
 
 
 def commit(repo, ref):
@@ -134,7 +139,11 @@ def removed_tests(repo, base, head):
     """Each line that base..head removes from a test file with no identical line added back to any
     test file, as "path:line: text", then each deleted test file. Blank lines and comments are left out."""
     deleted = git(repo, 'diff', '--name-only', '--diff-filter=D', base, head, '--', *TESTS).splitlines()
-    diff = git(repo, 'diff', '--unified=0', '--no-color', '--diff-filter=MR', base, head, '--', *TESTS, *EXPECTED)
+    # The same output under any user config: no quoted paths, external diff driver or text
+    # conversion, and the `a/` and `b/` prefixes that the loop reads.
+    diff = git(repo, '-c', 'core.quotepath=off', 'diff', '--unified=0', '--no-color', '--no-ext-diff',
+               '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', '--diff-filter=MR', base, head,
+               '--', *TESTS, *EXPECTED)
     # A removed line is named by its base path and line, so a renamed file reads as the base has it.
     removed, added, old, new, number = [], set(), None, None, 0
     for line in diff.splitlines():

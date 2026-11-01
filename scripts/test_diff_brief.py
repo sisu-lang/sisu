@@ -245,6 +245,16 @@ class RemovedTests(unittest.TestCase):
             removed = diff_brief.removed_tests(self.repo, self.base, self.head)
         self.assertEqual(removed, ['src/tests.rs:4: (2, "row two"),', 'tests/gone.sisu: deleted'])
 
+    def test_removed_tests_should_read_a_byte_that_is_not_utf_8(self):
+        # E0072.sisu and wc.in hold such bytes; the diff decoded strictly and stopped the brief.
+        (self.repo / 'tests/raw.in').write_bytes(b'\xff kept\n\xfe gone\n')
+        base = self.commit('raw')
+        (self.repo / 'tests/raw.in').write_bytes(b'\xff kept\n')
+        head = self.commit('raw edit')
+        with mock.patch.dict(os.environ, {**ENV, 'GIT_DIFF_OPTS': '--unified=3'}, clear=True):
+            removed = diff_brief.removed_tests(self.repo, base, head)
+        self.assertEqual(removed, ['tests/raw.in:2: \ufffd gone'])
+
     def test_a_diff_brief_should_list_removed_tests_and_prebuilt_sisu(self):
         run_dir = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, run_dir)
