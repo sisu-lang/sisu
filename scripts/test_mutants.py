@@ -21,8 +21,13 @@ ENV = {k: v for k, v in os.environ.items()
 # FAKE_UNVIABLE, FAKE_MISSED and FAKE_TIMEOUT. It exits with FAKE_EXIT. A run with --iterate
 # is the second pass: it takes FAKE_PASS2_CAUGHT (0 by default), and FAKE_PASS2_MISSED,
 # FAKE_PASS2_TIMEOUT and FAKE_PASS2_EXIT, each the first pass's value by default.
+# A run with --list prints FAKE_LIST mutants (0 by default), records nothing and exits with FAKE_EXIT.
 # The sleep keeps lock.json strictly newer than the script's start mark.
 FAKE_CARGO = """#!/usr/bin/env bash
+if [[ " $* " == *" --list "* ]]; then
+  for ((i = 0; i < ${FAKE_LIST:-0}; i++)); do echo "mutant $i"; done
+  exit "${FAKE_EXIT:-0}"
+fi
 echo "$CARGO_MUTANTS_JOBS $(nice)" >seen
 prefix=FAKE
 if [[ " $* " == *" --iterate "* ]]; then
@@ -250,6 +255,25 @@ class Mutants(unittest.TestCase):
         self.mutate(log=False, env={'CARGO_MUTANTS_OUTPUT': 'x'}, caught=1)
         with open(os.path.join(self.repo, 'args'), encoding='utf-8') as f:
             self.assertIn(' --output .', f.read())
+
+    def test_a_diff_with_more_mutants_than_the_limit_should_fail_before_a_pass(self):
+        self.rust_commit()
+        run = self.mutate(list=301, caught=1)
+        self.assertEqual(run.returncode, 1)
+        self.assertEqual(self.last_line(), 'mutation-test: FAIL: 301 mutants, more than 300; '
+                                           'test a part with --file, or set MUTANTS_MAX=301')
+        self.assertFalse(self.seen('seen'))
+
+    def test_a_diff_at_the_limit_should_run(self):
+        self.rust_commit()
+        self.assertEqual(self.mutate(list=300, caught=1).returncode, 0)
+        self.assertTrue(self.seen('args'))
+
+    def test_mutants_max_should_raise_the_limit(self):
+        self.rust_commit()
+        run = self.mutate(env={'MUTANTS_MAX': '301'}, list=301, caught=1)
+        self.assertEqual(run.returncode, 0)
+        self.assertTrue(self.seen('args'))
 
 
 if __name__ == '__main__':

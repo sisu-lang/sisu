@@ -21,6 +21,7 @@
 # PASS needs no missed mutant; a timeout counts as caught.
 # A run that tests no mutant, for example when the diff holds none, passes with "no mutant tested".
 # A diff that changes no .rs file passes without running cargo mutants.
+# More than 300 mutants (MUTANTS_MAX sets another limit) fails at once, before a pass starts.
 # One run holds the worktree's lock; a second run prints a FAIL line and stops.
 # With LOG=<file>, all output goes there, opened only once this run holds the lock:
 # a shell redirect would truncate a running log before a second run could refuse.
@@ -99,6 +100,17 @@ run=$(mktemp -d "$scratch/run.XXXXXX")
 exec {held}>"$run.lock"
 flock "$held"
 git diff "$base" >"$diff"
+# A large diff stops here, in seconds, not after an hour: 657 mutants took 1.5 hours in
+# M8 part 8, mostly in pass 2. The caller then tests a part, or raises the limit.
+max=${MUTANTS_MAX:-300}
+if [[ -z $not_run && -z $test_args ]]; then
+  total=$(cargo mutants --in-diff "$diff" --list "$@" 2>/dev/null | wc -l || true)
+  if ((total > max)); then
+    verdict="mutation-test: FAIL: $total mutants, more than $max; test a part with --file, or set MUTANTS_MAX=$total"
+    echo "$verdict"
+    exit 1
+  fi
+fi
 
 # cargo mutants rotates the last mutants.out to mutants.out.old and writes a new one only
 # when it tests mutants, so a pass counts only if lock.json is newer than this mark.

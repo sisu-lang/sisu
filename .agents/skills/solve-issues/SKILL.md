@@ -132,7 +132,7 @@ Do this once for each group. On resume, use the worktree in the ledger.
 
 ### 7. Finish the group
 
-1. On the full flow, run one mutation test on the group's head with Bash `run_in_background: true`: `(cd <worktree> && env CARGO_MUTANTS_JOBS=2 nice -n 19 make mutation-test BASE=<group base> LOG=<ledger folder>/<group>-mutation.log)`. Check that its last line names the head. Put each surviving mutant into one fix round, with a test that kills it or a reason it is equivalent. An executor never runs a mutation test: it would block the task for an hour.
+1. On the full flow, run one mutation test on the group's head with Bash `run_in_background: true`: `(cd <worktree> && env CARGO_MUTANTS_JOBS=2 nice -n 19 make mutation-test BASE=<group base> LOG=<ledger folder>/<group>-mutation.log)`. Check that its last line names the head. When it stops at once with more than 300 mutants, ask the user: test all of them with `MUTANTS_MAX=<n>`, or test a part with `--file`. Put each surviving mutant into one fix round, with a test that kills it or a reason it is equivalent. An executor never runs a mutation test: it would block the task for an hour.
 2. Run the `update-docs` skill.
 3. Run `review-sisu` on the whole branch, with `--mutation-log` set to that log and the final reviewers of the group's flow.
 4. Write the pull request body with `mattpocock-skills:pr`, with one `Closes #<N>` line for each issue.
