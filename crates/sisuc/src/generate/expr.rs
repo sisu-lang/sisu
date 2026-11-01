@@ -1392,8 +1392,8 @@ impl Gen<'_> {
 
     /// The type of a compound part, now and then, and the most size its value may hold. The
     /// choice reads `cu` and the type reads `u`, so that a part that is not compound draws what it
-    /// drew before. The size is the greatest of
-    /// at most `PART_SIZE` for which `{x:#}` writes within `room` chars, and so does a plain part.
+    /// drew before. The size is the greatest of at most `PART_SIZE` for which `{x:#}` writes
+    /// within `room` chars, and so does a plain part.
     fn compound_part(&mut self, room: u64) -> Option<(Ty, u64)> {
         if self.cu.choose_index(2).unwrap_or(0) == 0 {
             return None;

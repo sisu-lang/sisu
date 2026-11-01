@@ -144,9 +144,10 @@ slow-timeout = { period = "10s", terminate-after = 3 }
 filter = 'binary(reference) | binary(reference_checker)'
 slow-timeout = { period = "10s", terminate-after = 3 }
 
-# The program fuzzer's unit tests link the programs they build against target/debug's runtime.
+# The program fuzzer's unit tests, and the generator's test that builds and runs long values,
+# link the programs they build against target/debug's runtime.
 [[profile.default.scripts]]
-filter = "package(sisuc) & (kind(test) | test(fuzz_program::))"
+filter = "package(sisuc) & (kind(test) | test(fuzz_program::) | test(printed_should_bound_the_text_of_the_longest_values))"
 setup = "build-runtime"
 
 # The Valgrind tests are the longest, so they start first. A Valgrind run of a case uses

@@ -266,6 +266,15 @@ fn is_compound(ty: Type) -> bool {
     )
 }
 
+/// Whether the body of a function of `text` whose name starts with one of `names` holds a marked
+/// statement, `print("@d<n> ...")`: a call of a requirement that prints its result.
+fn marks_in(text: &str, names: &[&str]) -> bool {
+    text.split("\nfn ")
+        .skip(1)
+        .filter(|function| names.iter().any(|name| function.starts_with(name)))
+        .any(|function| function.contains("\"@d"))
+}
+
 /// Whether a program's text holds a form.
 type Holds = fn(&str) -> bool;
 
@@ -285,6 +294,24 @@ const TEXT: &[(&str, Holds)] = &[
             .skip(1)
             .any(|rest| rest.bytes().take_while(u8::is_ascii_hexdigit).count() > 3)
     }),
+    (
+        "text: a call of a requirement prints its result in `via` or `both`",
+        |text| marks_in(text, &["via", "both"]),
+    ),
+    (
+        "text: a call of a requirement prints its result in `pick`",
+        |text| marks_in(text, &["pick"]),
+    ),
+    (
+        "text: a result `T` picked by its expected type is printed",
+        |text| {
+            text.lines().any(|line| {
+                let line = line.trim_start();
+                line.strip_prefix("let d")
+                    .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+            })
+        },
+    ),
     ("text: `0b`", |text| text.contains("0b")),
     ("text: `0o`", |text| text.contains("0o")),
     ("text: `\\u{...}`", |text| text.contains("\\u{")),
@@ -4087,8 +4114,8 @@ fn a_part_whose_spec_does_not_fit_is_written_without_it() {
 /// with a `cu` that always picks a compound part: the program text, its size, and the scope's
 /// `Nodes`. A byte of `data` is read from the front. The first is the number of parts, the second
 /// the length of the text before the part (2, which is `aa` here), then its two chars, the kind
-/// of the part and the draws of its value; the last one that the value leaves picks `:#` when it
-/// is odd.
+/// of the part (2: a declared type, or an array of a `bare_type` when the scope declares none)
+/// and the draws of its value; the last one that the value leaves picks `:#` when it is odd.
 fn interpolated(declare: fn(&mut Gen<'_>), data: &[u8], room: u64) -> (String, u64, Nodes) {
     let mut g = Gen::new(data);
     g.cu = Unstructured::new(&[1]);
@@ -4228,40 +4255,6 @@ fn interpolate_should_count_a_compound_part_by_the_bound_of_its_text() {
         );
         // The 2 chars of `aa` and the part.
         assert_eq!(size, 2 + if pretty { laid_out } else { plain }, "{name}");
-    }
-}
-
-#[test]
-fn interpolate_should_count_a_compound_part_at_least_as_long_as_it_prints() {
-    // The values print on several lines with `:#`, so the count that is too low by the lines
-    // and the indent is under what the program writes.
-    let parts: Vec<_> = compound_parts()
-        .into_iter()
-        .filter(|part| part.pretty)
-        .map(|part| (part.name, interpolated(part.declare, &part.data, 60)))
-        .collect();
-    let mut source = String::from(
-        "class K0 {\n    a: i64\n}\nenum E0 {\n    V0\n    V1(bool)\n}\nfn main() {\n",
-    );
-    for (i, (_, (program, ..))) in parts.iter().enumerate() {
-        let _ = writeln!(source, "    print(\"=== {i}\")\n    print({program})");
-    }
-    source.push_str("}\n");
-    let out = String::from_utf8(crate::fuzz_program::stdout_of(&source))
-        .expect("the output should be UTF-8");
-    for (i, (name, (_, size, _))) in parts.iter().enumerate() {
-        let (_, from) = out
-            .split_once(&format!("=== {i}\n"))
-            .expect("each part should print its marker");
-        let printed = from.split("\n=== ").next().unwrap_or_default();
-        // Less the line break of `print` and the 2 chars of `aa`.
-        let chars = u64::try_from(printed.trim_end_matches('\n').chars().count() - 2)
-            .expect("the count should fit");
-        assert!(
-            chars <= size - 2,
-            "{name}: {chars} chars printed over the counted {}:\n{printed}",
-            size - 2
-        );
     }
 }
 
@@ -7620,6 +7613,45 @@ fn generated_shapes_should_call_every_requirement_of_a_conformed_interface() {
     assert!(
         calls > 0,
         "some seed's types should conform to an interface"
+    );
+}
+
+/// No two methods that meet a requirement return the same value in a program, for each of the
+/// results `i64` and `string`, so a call that reaches the wrong method prints another line.
+#[test]
+fn generated_methods_should_return_values_that_no_other_method_returns() {
+    let mut methods = [0, 0];
+    for data in seeds() {
+        let source = generate(&data).program;
+        let mut values: [FxHashSet<&str>; 2] = Default::default();
+        for line in source.lines().map(str::trim_start) {
+            // `fn r<n>(self, ...) -> <result> { <value> }`: the requirements are `r<n>`.
+            let Some(rest) = line.strip_prefix("fn r") else {
+                continue;
+            };
+            let Some((name, rest)) = rest.split_once('(') else {
+                continue;
+            };
+            let Some((_, result)) = rest.split_once(") -> ") else {
+                continue;
+            };
+            let Some((ty, value)) = result.split_once(" { ") else {
+                continue;
+            };
+            let kind = match ty {
+                "i64" => 0,
+                "string" => 1,
+                _ => continue,
+            };
+            if name.bytes().all(|b| b.is_ascii_digit()) {
+                assert!(values[kind].insert(value), "{value} twice in {source}");
+                methods[kind] += 1;
+            }
+        }
+    }
+    assert!(
+        methods.iter().all(|&n| n > 0),
+        "methods of {SEEDS} seeds: {methods:?}"
     );
 }
 

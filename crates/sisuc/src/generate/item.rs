@@ -2,6 +2,8 @@
 
 use std::fmt::Write as _;
 
+use rustc_hash::FxHashMap;
+
 use super::expr::{CHARS, OPS, arithmetic_value};
 use super::scope::{Alias, Class, Const, Enum, Field, Func, Ty, Var, Variant, Wrap};
 use super::stmt::Jumps;
@@ -67,6 +69,8 @@ struct Calls {
     lines: Vec<String>,
     /// The line each site is in, and the site, whose `at` is in that line.
     sites: Vec<(usize, BoundSite)>,
+    /// The lines that the marked statements print when `shapes` runs to its end, in order.
+    expected: Vec<String>,
 }
 
 impl Calls {
@@ -76,6 +80,13 @@ impl Calls {
 
     fn extend(&mut self, lines: impl IntoIterator<Item = String>) {
         self.lines.extend(lines);
+    }
+
+    /// The statement or call that `shapes` runs next makes the marked statements `marks` print,
+    /// with the results of the methods of `ty`.
+    fn runs(&mut self, marks: &[Marked], ty: &str, values: &mut Values) {
+        self.expected
+            .extend(marks.iter().map(|mark| values.line(ty, mark)));
     }
 
     /// The statement `before`, `arg` and `after`, where `arg` is a bound site: the first argument
@@ -190,6 +201,67 @@ impl Conformed {
     }
 }
 
+/// The result of a requirement that a call prints, and that each method gives its own value.
+#[derive(Clone, Copy)]
+enum Kind {
+    Integer,
+    Text,
+}
+
+/// The first value of a method with an `i64` result: the values are 10, 11 and so on.
+const FIRST_VALUE: usize = 10;
+
+/// The values of the methods that meet a requirement with an `i64` or a `string` result. Each
+/// method of the program gets a value that no other method gets, so a call that reaches the
+/// wrong method prints a different line.
+#[derive(Default)]
+pub(super) struct Values {
+    /// The number of each method with an `i64` result, by its type, its requirement and the
+    /// argument of its interface.
+    numbers: FxHashMap<(String, String, Option<&'static str>), usize>,
+}
+
+impl Values {
+    /// What the method of `ty` for `requirement`, as the interface with `arg` for its parameter
+    /// has it, returns and a call prints. A `string` names its type, requirement and argument,
+    /// and holds no `@`. An `i64` is the next number of the table.
+    fn printed(
+        &mut self,
+        ty: &str,
+        requirement: &str,
+        arg: Option<&'static str>,
+        kind: Kind,
+    ) -> String {
+        match kind {
+            Kind::Text => match arg {
+                Some(arg) => format!("{ty}.{requirement}.{arg}"),
+                None => format!("{ty}.{requirement}"),
+            },
+            Kind::Integer => {
+                let next = self.numbers.len();
+                let key = (ty.to_string(), requirement.to_string(), arg);
+                (FIRST_VALUE + *self.numbers.entry(key).or_insert(next)).to_string()
+            }
+        }
+    }
+
+    /// The line that the marked statement `mark` prints when it calls a method of `ty`.
+    fn line(&mut self, ty: &str, mark: &Marked) -> String {
+        let value = self.printed(ty, &mark.requirement, mark.arg, mark.kind);
+        format!("@d{} {value}", mark.n)
+    }
+}
+
+/// A statement `print("@d<n> ...")` that prints the result of a call of a requirement, with the
+/// requirement and the argument that it calls through. The check of the output finds the line by
+/// its marker.
+struct Marked {
+    n: usize,
+    requirement: String,
+    arg: Option<&'static str>,
+    kind: Kind,
+}
+
 /// A requirement `fn name(self, p: T, ...) -> R`.
 struct Requirement {
     name: String,
@@ -266,28 +338,48 @@ fn repeats(entries: &[Conformed]) -> bool {
 }
 
 impl Requirement {
-    /// A method that meets the requirement of the interface with `arg` for its parameter:
-    /// `fn r(self, _p: T) -> R { value }`.
-    fn method(&self, arg: Option<&str>) -> String {
+    /// A method of `ty` that meets the requirement of the interface with `arg` for its parameter:
+    /// `fn r(self, _p: T) -> R { value }`. A result `i64` or `string` has the value of `values`
+    /// for the method.
+    fn method(&self, arg: Option<&'static str>, ty: &str, values: &mut Values) -> String {
         let mut method = format!("fn {}(self", self.name);
         for (name, ty) in &self.params {
             write!(method, ", _{name}: {}", ty.written(arg))
                 .expect("writing to a `String` should succeed");
         }
         method += ")";
-        match &self.ret {
-            Some(ty) => {
+        match (&self.ret, self.kind(arg)) {
+            (Some(ret), Some(kind)) => {
+                let value = values.printed(ty, &self.name, arg, kind);
+                let value = match kind {
+                    Kind::Integer => value,
+                    Kind::Text => format!("\"{value}\""),
+                };
+                write!(method, " -> {} {{ {value} }}", ret.written(arg))
+                    .expect("writing to a `String` should succeed");
+            }
+            (Some(ret), None) => {
                 write!(
                     method,
                     " -> {} {{ {} }}",
-                    ty.written(arg),
-                    ty.value(arg, "self")
+                    ret.written(arg),
+                    ret.value(arg, "self")
                 )
                 .expect("writing to a `String` should succeed");
             }
-            None => method += " {}",
+            (None, _) => method += " {}",
         }
         method
+    }
+
+    /// The result that a call through the interface with `arg` prints, when it is an `i64` or a
+    /// `string`.
+    fn kind(&self, arg: Option<&str>) -> Option<Kind> {
+        match self.ret.as_ref()?.written(arg).as_str() {
+            "i64" => Some(Kind::Integer),
+            "string" => Some(Kind::Text),
+            _ => None,
+        }
     }
 
     /// The call of the requirement on the value `var`.
@@ -299,13 +391,32 @@ impl Requirement {
     }
 
     /// A statement that calls the requirement on the value `var`, and prints an `i64` or a
-    /// `string` result.
-    fn call(&self, var: &str, arg: Option<&str>) -> String {
+    /// `string` result as `@d<n> {call}`, which the statement gives as marked. The number `n` is
+    /// `*next`, which the statement takes.
+    fn call(
+        &self,
+        var: &str,
+        arg: Option<&'static str>,
+        next: &mut usize,
+    ) -> (String, Option<Marked>) {
         let call = self.invocation(var, arg);
-        match self.ret.as_ref().map(|ty| ty.written.as_str()) {
-            None => call,
-            Some("i64" | "string") => format!("print({call})"),
-            Some(_) => format!("let _ = {call}"),
+        match (&self.ret, self.kind(arg)) {
+            (None, _) => (call, None),
+            (Some(_), None) => (format!("let _ = {call}"), None),
+            (Some(_), Some(kind)) => {
+                let n = take(next);
+                let mark = self.marked(n, arg, kind);
+                (format!("print(\"@d{n} {{{call}}}\")"), Some(mark))
+            }
+        }
+    }
+
+    fn marked(&self, n: usize, arg: Option<&'static str>, kind: Kind) -> Marked {
+        Marked {
+            n,
+            requirement: self.name.clone(),
+            arg,
+            kind,
         }
     }
 
@@ -313,14 +424,35 @@ impl Requirement {
     /// interface with other arguments too. Only the expected type of a result `T` picks the
     /// conformance, so the result is bound to a `let` of its type; a requirement with another
     /// result gives none.
-    fn picked_call(&self, var: &str, arg: Option<&str>) -> Option<String> {
+    /// The result is printed as `call` prints it: the `let` is `d<n>`, and the `print` after it
+    /// writes `@d<n> {d<n>}`.
+    fn picked_call(
+        &self,
+        var: &str,
+        arg: Option<&'static str>,
+        next: &mut usize,
+    ) -> Option<([String; 2], Marked)> {
         let ret = self.ret.as_ref().filter(|ty| ty.written == "T")?;
-        Some(format!(
-            "let _: {} = {}",
-            ret.written(arg),
-            self.invocation(var, arg)
-        ))
+        let kind = self
+            .kind(arg)
+            .expect("a conformance that two arguments pick between should have `i64` or `string`");
+        let n = take(next);
+        let lines = [
+            format!(
+                "let d{n}: {} = {}",
+                ret.written(arg),
+                self.invocation(var, arg)
+            ),
+            format!("print(\"@d{n} {{d{n}}}\")"),
+        ];
+        Some((lines, self.marked(n, arg, kind)))
     }
+}
+
+/// `*next`, and then the number after it.
+fn take(next: &mut usize) -> usize {
+    *next += 1;
+    *next - 1
 }
 
 /// What a constant expression is known to be: an integer's or a `char`'s value, and a
@@ -799,7 +931,10 @@ impl Gen<'_> {
     /// with `i64`, and the class with `string` as well. And `fn shapes()`, which calls each method
     /// on a value of each type and the generic functions with both types, and builds the class. A
     /// call on a type with two conformances to one interface is picked by the type of its result.
-    /// The methods hold the smallest value of their result. Each interface is used, so none is
+    /// A method with an `i64` or `string` result holds a value of its own (`Values`), and each call
+    /// that prints a result writes `@d<n> <value>`: the calls in `shapes`, and in the generic
+    /// functions it calls. Records the lines that `shapes` prints in `expected` (property 5). The
+    /// other methods hold the smallest value of their result. Each interface is used, so none is
     /// reported. Records the bound sites of its calls (property 6).
     fn shapes(&mut self, declared: &[Shape]) {
         let mut calls = Calls::default();
@@ -823,6 +958,7 @@ impl Gen<'_> {
             let single = [once(k)];
             let all = requirements_of(declared, &conformed_closure(declared, &single));
             let mut values = Vec::new();
+            let mut types = Vec::new();
             // A class and an enum.
             for class in [true, false] {
                 let (ty, value, var) = if class {
@@ -844,36 +980,26 @@ impl Gen<'_> {
                 let entries = self.conforming_type(class, &ty, &roots, declared, listed);
                 calls.push(format!("let {var} = {value}"));
                 // The requirements of the interface, and of those it inherits.
-                for entry in &entries {
-                    let again = entries
-                        .iter()
-                        .filter(|e| e.interface == entry.interface)
-                        .count()
-                        > 1;
-                    for requirement in &declared[entry.interface].requirements {
-                        calls.extend(if again {
-                            requirement.picked_call(&var, entry.arg)
-                        } else {
-                            Some(requirement.call(&var, entry.arg))
-                        });
-                    }
-                }
+                self.direct_calls(declared, &entries, &var, &ty, &mut calls);
                 calls.push(format!("print({var}.plain())"));
                 values.push(var);
+                types.push(ty);
             }
             let bound = once(k).written(declared);
-            self.via(&format!("via{k}"), &bound, &all);
-            for var in &values {
+            let marks = self.via(&format!("via{k}"), &bound, &all);
+            for (var, ty) in values.iter().zip(&types) {
                 calls.site(&format!("via{k}("), var, ")", &bound, NO_BOUND);
+                calls.runs(&marks, ty, &mut self.values);
             }
             if let Some(assoc) = &shape.assoc {
-                self.via_assoc(k, declared);
-                for var in &values {
+                let marks = self.via_assoc(k, declared);
+                for (var, ty) in values.iter().zip(&types) {
                     let (before, after) = (
                         format!("let _ = pick{k}("),
                         format!(", {})", assoc.value(var)),
                     );
                     calls.site(&before, var, &after, &bound, NO_BOUND);
+                    calls.runs(&marks, ty, &mut self.values);
                 }
             }
             self.w.text(&format!("class H{k}<T: {bound}> "));
@@ -890,7 +1016,7 @@ impl Gen<'_> {
                 NO_BOUND,
             );
             calls.push(format!("print(h{k}.v.plain())"));
-            self.generic_extension(k, declared, &values[0], &mut calls);
+            self.generic_extension(k, declared, &values[0], &marks, &mut calls);
             self.later(k, &bound, &values, &mut calls);
         }
         // Two interfaces in one bound: a class that conforms to both.
@@ -899,13 +1025,48 @@ impl Gen<'_> {
             let (a, b) = (roots[0].written(declared), roots[1].written(declared));
             let all = requirements_of(declared, &conformed_closure(declared, &roots));
             self.conforming_type(true, "QBoth", &roots, declared, true);
-            self.via("both", &format!("{a} & {b}"), &all);
+            let marks = self.via("both", &format!("{a} & {b}"), &all);
             calls.push("let qboth = QBoth(v: 1)");
             calls.site("both(", "qboth", ")", &format!("{a} & {b}"), NO_BOUND);
+            calls.runs(&marks, "QBoth", &mut self.values);
         }
         self.language_bounds(!declared.is_empty(), &mut calls);
         calls.extend(self.associated_cycle());
+        self.expected = std::mem::take(&mut calls.expected);
         self.write_shapes(calls);
+    }
+
+    /// The statements of `shapes` that call each requirement of `entries`, the interfaces that the
+    /// value `var` of the type `ty` conforms to, with the lines they print. A type with two
+    /// conformances to one interface picks a call by the type of its result.
+    fn direct_calls(
+        &mut self,
+        declared: &[Shape],
+        entries: &[Conformed],
+        var: &str,
+        ty: &str,
+        calls: &mut Calls,
+    ) {
+        for entry in entries {
+            let again = entries
+                .iter()
+                .filter(|e| e.interface == entry.interface)
+                .count()
+                > 1;
+            for requirement in &declared[entry.interface].requirements {
+                if again {
+                    let picked = requirement.picked_call(var, entry.arg, &mut self.marks);
+                    if let Some((lines, mark)) = picked {
+                        calls.extend(lines);
+                        calls.runs(&[mark], ty, &mut self.values);
+                    }
+                } else {
+                    let (line, mark) = requirement.call(var, entry.arg, &mut self.marks);
+                    calls.push(line);
+                    calls.runs(mark.as_slice(), ty, &mut self.values);
+                }
+            }
+        }
     }
 
     /// `fn shapes()`, which runs `calls`. Records where `program` holds each bound site. The sites
@@ -1137,9 +1298,17 @@ impl Gen<'_> {
     /// when `T` does, each in a block with the bound `T: I<k>`; a block for every `T` with a
     /// method that reads the field; and a block for `R<k><i64>` alone. Gives the statements of
     /// `shapes` that use them, with `value`, a value of a type that conforms to `k`: the
-    /// conformance holds through the bound of `via<k>`. Its methods call nothing, so no cycle
-    /// goes through them, and each interface has one block, so no two conformances overlap.
-    fn generic_extension(&mut self, k: usize, declared: &[Shape], value: &str, calls: &mut Calls) {
+    /// conformance holds through the bound of `via<k>`, whose marked statements are `marks`. Its
+    /// methods call nothing, so no cycle goes through them, and each interface has one block, so no
+    /// two conformances overlap.
+    fn generic_extension(
+        &mut self,
+        k: usize,
+        declared: &[Shape],
+        value: &str,
+        marks: &[Marked],
+        calls: &mut Calls,
+    ) {
         let class = format!("R{k}");
         self.w.text(&format!("class {class}<T> "));
         self.w.open();
@@ -1164,7 +1333,8 @@ impl Gen<'_> {
             }
             for requirement in &declared[entry.interface].requirements {
                 self.w.line();
-                self.w.text(&requirement.method(entry.arg));
+                self.w
+                    .text(&requirement.method(entry.arg, &class, &mut self.values));
             }
             self.w.close();
             self.w.line();
@@ -1189,6 +1359,7 @@ impl Gen<'_> {
             &bound.written(declared),
             NO_BOUND,
         );
+        calls.runs(marks, &class, &mut self.values);
         calls.push(format!("print(w{k}.top().plain())"));
         calls.push(format!("print({class}(v: 1).solo())"));
     }
@@ -1230,7 +1401,7 @@ impl Gen<'_> {
         if listed {
             for (requirement, arg) in requirements_of(declared, &entries) {
                 self.w.line();
-                self.w.text(&requirement.method(arg));
+                self.w.text(&requirement.method(arg, ty, &mut self.values));
             }
         }
         self.w.close();
@@ -1246,7 +1417,8 @@ impl Gen<'_> {
                 }
                 for requirement in &declared[entry.interface].requirements {
                     self.w.line();
-                    self.w.text(&requirement.method(entry.arg));
+                    self.w
+                        .text(&requirement.method(entry.arg, ty, &mut self.values));
                 }
                 self.w.close();
                 self.w.line();
@@ -1263,8 +1435,8 @@ impl Gen<'_> {
 
     /// `fn pick<n><T: I<n>>(_x: T, y: T.A<n>) -> T.A<n> { y }`: the associated type of the
     /// interface `k` as the type of a parameter and of a result, with a call of each requirement on
-    /// `y` when the interface bounds the type by itself.
-    fn via_assoc(&mut self, k: usize, declared: &[Shape]) {
+    /// `y` when the interface bounds the type by itself. Gives the marked statements of the calls.
+    fn via_assoc(&mut self, k: usize, declared: &[Shape]) -> Vec<Marked> {
         let assoc = declared[k]
             .assoc
             .as_ref()
@@ -1279,34 +1451,43 @@ impl Gen<'_> {
             bound.written(declared)
         ));
         self.w.open();
+        let mut marks = Vec::new();
         if assoc.bounded {
             for requirement in &declared[k].requirements {
                 self.w.line();
-                self.w.text(&requirement.call("y", bound.arg));
+                let (line, mark) = requirement.call("y", bound.arg, &mut self.marks);
+                self.w.text(&line);
+                marks.extend(mark);
             }
         }
         self.w.line();
         self.w.text("y");
         self.w.close();
         self.w.line();
+        marks
     }
 
-    /// `fn name<T: bounds>(x: T)`, which calls each of `requirements` on `x`.
+    /// `fn name<T: bounds>(x: T)`, which calls each of `requirements` on `x`. Gives the marked
+    /// statements of the calls, in order: each call of `name` runs them all.
     fn via(
         &mut self,
         name: &str,
         bounds: &str,
         requirements: &[(&Requirement, Option<&'static str>)],
-    ) {
+    ) -> Vec<Marked> {
         let param = if requirements.is_empty() { "_x" } else { "x" };
         self.w.text(&format!("fn {name}<T: {bounds}>({param}: T) "));
         self.w.open();
+        let mut marks = Vec::new();
         for (requirement, arg) in requirements {
             self.w.line();
-            self.w.text(&requirement.call("x", *arg));
+            let (line, mark) = requirement.call("x", *arg, &mut self.marks);
+            self.w.text(&line);
+            marks.extend(mark);
         }
         self.w.close();
         self.w.line();
+        marks
     }
 
     /// The most size for a value of `ty` (decision 5): a class object's own, else its floor
