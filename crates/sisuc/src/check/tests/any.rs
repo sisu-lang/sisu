@@ -1398,6 +1398,10 @@ fn an_array_literal_should_join_a_some_with_an_any_element_as_an_if_does() {
             "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let d: any Display = 1\n    let r = [Some(s), d]\n}",
         ),
         (
+            "an array of an `any` value and a number beside an array of an `any` value",
+            "fn main() {\n    let d: any Display = 1\n    let c = true\n    let r = if c { [d] } else { [d, 2] }\n}",
+        ),
+        (
             "an array of an `any` value beside an array of an optional `any` value",
             "fn main() {\n    let d: any Display = 1\n    let o: (any Display)? = None\n    let c = true\n    let r = if c { [o] } else { [d] }\n}",
         ),
