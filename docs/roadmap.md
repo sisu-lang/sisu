@@ -210,10 +210,10 @@ These came out of the milestone 2 design and are now part of its spec:
 
 ### Decided in milestone 3
 
-- Sisu has no comprehensions. Milestone 9's iterator methods are lazy:
-  `.filter(...).map(...).sum()` builds no intermediate array. A
-  `filter_some`-style method on `[T?]`, which keeps the present elements,
-  comes with them.
+- Milestone 9's iterator methods are lazy: `.filter(...).map(...).sum()`
+  builds no intermediate array. A `filter_some`-style method on `[T?]`, which
+  keeps the present elements, comes with them. Comprehensions were ruled out
+  here and are now open ("Open decisions").
 
 ### Decided in milestone 4
 
@@ -797,7 +797,9 @@ once the decisions it needs are settled:
   Scheduled right after milestone 6: tests in the source file,
   `test "add handles negatives" { assert(add(-1, 1) == 0) }`, with a built-in
   `assert`. A normal build drops `test` blocks; `sisu test` builds a `main`
-  that runs each one and reports which panicked.
+  that runs each one and reports which panicked. A test is now a function
+  marked `@test`, not a `test` block (the user, 2026-10-26); this text
+  changes when the attributes work lands.
   A test is in the same module, so it sees private names. A panic ends the
   whole process (`sisu_panic`), so the spec decides how the other tests still
   run: one child process per test, or stopping at the first failure. Tests
@@ -1454,6 +1456,8 @@ accepted.
   rule for each correct program it wrongly rejects.
 - Header files.
 - Unrestricted operator overloading.
+- Function overloading. A closure variant gets its own name, such as `sum_of`
+  beside `sum` ([ADR 0039](adr/0039-sisu-has-no-function-overloading.md)).
 - Inheritance. A `class` is a reference type, not a hierarchy. Composition,
   enums (milestone 7) and interfaces (milestone 8) cover polymorphism, as in
   Rust and Go.
@@ -1578,7 +1582,8 @@ accepted.
   one general form: `@name` or `@name(args)` on the line before it, as in
   Swift and Kotlin. Decide the form before the first attribute lands, so `@`
   is not taken for something else. Later uses could include `@noinline` and
-  `@deprecated("...")`. Tests use `test` blocks, not an attribute.
+  `@deprecated("...")`. Tests use the `@test` attribute (the user's decision,
+  2026-10-26), not `test` blocks.
 - **What a string is.** Resolved by
   [ADR 0014](adr/0014-strings-are-utf-8-values.md): UTF-8, always valid, a
   value shared until written, `len()` in bytes and no `s[i]`.
@@ -1747,6 +1752,11 @@ accepted.
   arithmetic in the language, since the runtime's `Hasher` holds it. `u64` and
   wrapping operators wait for the first Sisu code that needs them (ADR 0003),
   and other widths, such as `i32`, for the FFI.
+- **Comprehensions.** Open again (the user, 2026-10-27); milestone 3 had
+  ruled them out. A form that fits the map literal is
+  `[w: w.len() for w in words if w.len() > 3]`, sugar for an iterator chain
+  and `to_map()`. Decide once milestone 9's iterator chains exist, so real
+  code can be compared.
 - **Compile-time evaluation and reflection.** Open, to revisit once Sisu has
   grown (the user's decision, 2026-10-20); it was in "Deliberately avoided".
   Zig, C++, Rust and Mojo evaluate code at compile time, and Zig, C++26 and

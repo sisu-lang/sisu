@@ -13,7 +13,7 @@ The design decisions behind Sisu, each written down as a short record with its r
     <p class="lede">Every design choice in Sisu is written down with its reasons, as a short decision record. This page lists them all.</p>
     <p class="meta">{{adr-count}} records · at commit e4b0113</p>
   </div></section>
-  <!-- source: docs/adr/ (37 files, 0001 to 0037), README.md ("Read why a design choice was made") -->
+  <!-- source: docs/adr/ (40 files, 0001 to 0041; 0038 is claimed by an open branch), README.md ("Read why a design choice was made") -->
 
   <div class="w doc">
     <nav class="toc" aria-label="On this page"><h2>On this page</h2><ol>
@@ -59,8 +59,9 @@ The design decisions behind Sisu, each written down as a short record with its r
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0019-enums-are-values-named-through-their-enum.md"><span class="num">0019</span><b>Enums are values named through their enum<small>amended by 0025 and 0030</small></b><span>An enum is an inline value built as <code>Expr.Num(2)</code>; a pattern can use the bare name, and <code>match</code> must cover every variant.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0020-labels-belong-to-the-declaration.md"><span class="num">0020</span><b>Labels belong to the declaration</b><span>A variant labels every field or none, and is built with its labels in declared order.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0035-a-file-is-a-module-and-its-names-are-private-unless-pub.md"><span class="num">0035</span><b>A file is a module, and its names are private unless <code>pub</code><small>not built yet</small></b><span>The path of a file names its module, a folder's front door is <code>pkg.sisu</code>, an import binds only what it shows, and each item, field and method needs its own <code>pub</code>.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0039-sisu-has-no-function-overloading.md"><span class="num">0039</span><b>Sisu has no function overloading</b><span>One name in a scope names one function; a method that takes a closure gets its own name, such as <code>sum_of</code> beside <code>sum</code>.</span></a></li>
       </ul>
-      <!-- source: docs/adr/0001-newline-terminated-statements.md, docs/adr/0028-a-semicolon-stands-in-for-a-line-break.md, docs/adr/0015-the-prelude-holds-only-what-almost-every-program-uses.md, docs/adr/0019-enums-are-values-named-through-their-enum.md, docs/adr/0020-labels-belong-to-the-declaration.md, docs/adr/0035-a-file-is-a-module-and-its-names-are-private-unless-pub.md -->
+      <!-- source: docs/adr/0001-newline-terminated-statements.md, docs/adr/0028-a-semicolon-stands-in-for-a-line-break.md, docs/adr/0015-the-prelude-holds-only-what-almost-every-program-uses.md, docs/adr/0019-enums-are-values-named-through-their-enum.md, docs/adr/0020-labels-belong-to-the-declaration.md, docs/adr/0035-a-file-is-a-module-and-its-names-are-private-unless-pub.md, docs/adr/0039-sisu-has-no-function-overloading.md -->
 
       <h2 id="change">Values and change</h2>
       <ul class="rows">
@@ -102,8 +103,9 @@ The design decisions behind Sisu, each written down as a short record with its r
       <ul class="rows">
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0003-arithmetic-panics.md"><span class="num">0003</span><b>Integer overflow panics instead of wrapping</b><span>Overflow, division by zero and dividing the smallest <code>i64</code> by -1 stop the program with a panic that names the source location.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0013-diagnostics-have-stable-codes.md"><span class="num">0013</span><b>Diagnostics have stable codes</b><span>Every error and warning has a code that is never reused, one wording, and an explanation that a test compiles.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0040-a-failure-the-caller-can-handle-is-a-value-not-a-panic.md"><span class="num">0040</span><b>A failure the caller can handle is a value, not a panic</b><span>A function gives a total result, an optional or a <code>Result</code>; a panic stays only where every value is worse, such as overflow or an index out of range.</span></a></li>
       </ul>
-      <!-- source: docs/adr/0003-arithmetic-panics.md, docs/adr/0013-diagnostics-have-stable-codes.md -->
+      <!-- source: docs/adr/0003-arithmetic-panics.md, docs/adr/0013-diagnostics-have-stable-codes.md, docs/adr/0040-a-failure-the-caller-can-handle-is-a-value-not-a-panic.md -->
 
       <h2 id="runtime">Runtime, I/O and concurrency</h2>
       <ul class="rows">
@@ -117,8 +119,9 @@ The design decisions behind Sisu, each written down as a short record with its r
       <ul class="rows">
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0026-one-compiler-crate.md"><span class="num">0026</span><b>The compiler stays one crate</b><span>A split before LLVM was measured against a rule set in advance: an edit already rebuilds the tests in about 2 s, so a split cannot pay for itself.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0033-every-language-feature-has-a-generator-rule.md"><span class="num">0033</span><b>Every language feature has a generator rule</b><span>A feature is done only when the program fuzzer generates it, and a unit test fails when a variant has no generated program.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0041-special-cases-are-attributes-not-compiler-name-lists.md"><span class="num">0041</span><b>Special cases are attributes, not compiler name lists</b><span>When a check treats some library code in a different way, the declaration carries an attribute, such as <code>@discardable</code>, that user code can use too.</span></a></li>
       </ul>
-      <!-- source: docs/adr/0026-one-compiler-crate.md, docs/adr/0033-every-language-feature-has-a-generator-rule.md -->
+      <!-- source: docs/adr/0026-one-compiler-crate.md, docs/adr/0033-every-language-feature-has-a-generator-rule.md, docs/adr/0041-special-cases-are-attributes-not-compiler-name-lists.md -->
 
       <h2 id="avoided">What Sisu deliberately avoids</h2>
       <p>These come from the roadmap's <a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#deliberately-avoided">Deliberately avoided</a> list.</p>
@@ -126,6 +129,7 @@ The design decisions behind Sisu, each written down as a short record with its r
         <li><strong>Lifetimes and a borrow checker.</strong> Reference counting keeps Sisu in Swift's ergonomic camp. Inferring lifetimes without annotations only moves the cost into the compiler.</li>
         <li><strong>Header files.</strong></li>
         <li><strong>Unrestricted operator overloading.</strong></li>
+        <li><strong>Function overloading.</strong> A closure variant gets its own name, such as <code>sum_of</code> beside <code>sum</code> (ADR 0039).</li>
         <li><strong>Inheritance.</strong> A <code>class</code> is a reference type, not a hierarchy; composition, enums and interfaces cover polymorphism, as in Rust and Go.</li>
         <li><strong>Macros.</strong> They hide code from error messages, the formatter and the language server. Generated conformances, <code>const</code> initializers, attributes and committed generated files do their jobs.</li>
         <li><strong>Variadic parameters.</strong> An array costs two characters, <code>sum([1, 2, 3])</code>, and uses a type that already exists.</li>

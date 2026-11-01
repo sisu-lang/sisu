@@ -46,7 +46,7 @@ Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `
 
 ### Domain docs
 
-Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`. `docs/register.md` holds rulings that are not built yet and the known structural debt: read it before you write or review a spec, a plan or a diff.
 
 ### Issues
 

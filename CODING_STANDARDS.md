@@ -57,6 +57,8 @@ Reviewers apply these rules to specs and plans (`review-sisu`).
 - **Similar cases share one outline.** When cases differ only in their input and result, write one `Scenario Outline:` with an `Examples:` table. Each row has a Proves column that says what the row adds.
 - **Each scenario has an ID.** Use `S1`, `S2` and so on. A change to the spec never uses an ID again.
 - **A plan maps each scenario to a test.** Each task lists its scenario IDs and the test that proves each one, as `file::test_name`. Each scenario is in exactly one task. A task is done when its scenarios pass.
+- **A plan states what a test proves, not a value to match.** A plan never tells the executor to change an expected value, count or marker to fit what the code does. It states the property that the test holds, such as "at least one call from `main` stays after `-O2`". A result that proves nothing then sends the executor back to the program.
+- **No argument from old Sisu code.** Sisu has no users and no code outside this repository, and no model was trained on it. A migration path, a compatibility shim or a diagnostic for removed syntax needs another reason. Habits from other languages are a reason.
 - **A test keeps its scenario's words.** The GIVEN, WHEN and THEN lines of an end-to-end test copy its scenario. Do not write the ID in the test: specs stay out of the repository.
 
 ```gherkin
@@ -108,6 +110,7 @@ Scenario Outline: S5. Only a statement that always leaves makes the next line un
 - **Wording lives in the registry.** No call site writes diagnostic text.
 - **A recovery or fix change is probed for cascades.** Fixing only the first error must leave every other diagnostic in place ([ADR 0013](docs/adr/0013-diagnostics-have-stable-codes.md)). Probe skipped text inside, before and after an item; a broken item header; a redeclared name; and a failed condition before a branch that returns. `each_safe_fix_removes_exactly_its_diagnostic` checks the fixtures; the reviewer probes the inputs no fixture covers.
 - **The primary span covers the offending code.** For "end of line" and "end of file", it is an empty span at that point. `Diagnostic::render` asserts in debug builds that every span sits on character boundaries and does not end with a line break.
+- **A message fits each kind it names.** When one code fires on several kinds of type (class, record, enum, function), its message and help fit each kind. In a record's method, E0073's help says that a record changes field by field, not the class help about shared objects.
 - **A span comes from its token or node.** Carry the keyword's or operand's own span into the AST rather than computing one as `span.start + n` from a wider span: a parenthesized expression's span starts at `(`, and a comment can put multi-byte characters before the token. Stepping one byte past a known ASCII byte, such as a `"`, is fine.
 
 ## Writing
