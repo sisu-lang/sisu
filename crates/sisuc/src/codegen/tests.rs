@@ -4829,6 +4829,43 @@ fn weight_reads(src: &str) -> usize {
     reads
 }
 
+/// Codegen asks `counts` for each array type of a program, and a generic function can build one
+/// array level for each function, so the parser's limit on the nesting of a type does not bound
+/// the levels. Each level of `[[...[i64]...]]` must be decided once. The test asks for the levels
+/// from the outermost to the innermost, as the drop functions are defined, and the other way.
+#[test]
+fn counts_should_read_each_level_of_nested_arrays_once() {
+    let reads = |levels: usize, outermost_first: bool| {
+        let mut reads = 0;
+        with_codegen("fn main() {}", |codegen| {
+            let mut arrays = vec![Type::intern(TypeKind::Array(Type::I64))];
+            for _ in 1..levels {
+                let inner = arrays[arrays.len() - 1];
+                arrays.push(Type::intern(TypeKind::Array(inner)));
+            }
+            if outermost_first {
+                arrays.reverse();
+            }
+            deep::FIELD_READS.set(0);
+            for array in arrays {
+                assert!(
+                    !codegen.counts(array),
+                    "an array of numbers should not count"
+                );
+            }
+            reads = deep::FIELD_READS.get();
+        });
+        reads
+    };
+    for outermost_first in [true, false] {
+        assert_near_linear(
+            reads(100, outermost_first),
+            reads(200, outermost_first),
+            reads(300, outermost_first),
+        );
+    }
+}
+
 /// The weight of an enum is worked out once for each component. A diamond of enums has two
 /// ways from each level to the next, so a walk with no memo for enums reads `2^n` fields. The
 /// sizes are small because that walk, run without the memo, is the failure the test shows.
