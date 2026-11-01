@@ -3476,6 +3476,48 @@ fn check_should_reject_an_optimization_level() {
     );
 }
 
+/// GIVEN a program that checks
+/// WHEN `sisu check hello -- <flag>` runs on it, with each flag that another command takes
+/// THEN the exit code is 2
+/// AND standard error is clap's text, as the flag after `--` is a value, not a flag
+/// AND standard error does not say that `sisu check` does not take the flag
+#[test]
+fn check_should_keep_clap_text_for_a_flag_after_the_double_dash() {
+    for flag in ["-o", "--emit", "-O2", "--timings"] {
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+        fs::write(dir.join("after_dashes.sisu"), CLEAN).expect("writes");
+        let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+            .current_dir(dir)
+            .args(["check", "after_dashes.sisu", "--", flag])
+            .output()
+            .expect("sisu starts");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{flag}: {stderr}");
+        assert!(!stderr.contains("does not take"), "{flag}: {stderr}");
+    }
+}
+
+/// GIVEN a command that takes no format flag
+/// WHEN `sisu explain --format json E0071` runs
+/// THEN the exit code is 2
+/// AND standard error says that `sisu explain` does not take `--format`
+/// AND standard error names `sisu build`, `sisu run` and `sisu check` as the commands that take it
+#[test]
+fn explain_should_name_every_command_that_takes_the_format_flag() {
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .args(["explain", "--format", "json", "E0071"])
+        .output()
+        .expect("sisu starts");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains(
+            "`sisu explain` does not take `--format`; `sisu build`, `sisu run` and `sisu check` take it"
+        ),
+        "{stderr}"
+    );
+}
+
 /// GIVEN a program that runs
 /// WHEN `sisu run --timing` runs on it, a flag that no command takes
 /// THEN the exit code is 2

@@ -323,7 +323,19 @@ fn foreign_flag(args: &[OsString], error: clap::Error) -> clap::Error {
                 .get_short()
                 .is_some_and(|short| *flag == format!("-{short}"))
     };
-    let Some(used) = args.iter().skip(1).find_map(|arg| cli.find_subcommand(arg)) else {
+    // After a `--`, the flag is a value, which every command takes.
+    let flags = || {
+        args.iter()
+            .skip(1)
+            .take_while(|arg| arg.as_os_str() != "--")
+    };
+    if !flags().any(|arg| {
+        arg.to_str()
+            .is_some_and(|arg| arg.starts_with(flag.as_str()))
+    }) {
+        return error;
+    }
+    let Some(used) = flags().find_map(|arg| cli.find_subcommand(arg)) else {
         return error;
     };
     // A flag before the subcommand's name, such as `sisu --timings build`, is not its to reject.

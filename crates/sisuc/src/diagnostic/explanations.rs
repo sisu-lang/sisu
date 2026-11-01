@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::{Code, Diagnostic, Edit, Fix, RETIRED};
-use crate::front_end::{decode, front_end as front_end_with_program};
+use crate::front_end::{decode, front_end};
 use crate::lexer::lex;
 use crate::parser::{parse, parse_ok};
 
@@ -21,10 +21,9 @@ fn on_deep_stack<R: Send>(f: impl FnOnce() -> R + Send) -> R {
     })
 }
 
-/// The diagnostics of `source`, after a `()` where `front_end` has its program, which is not
-/// `Send`.
-fn front_end(source: &str) -> ((), Vec<Diagnostic>) {
-    ((), on_deep_stack(|| front_end_with_program(source).1))
+/// The diagnostics of `source`, found on the deep stack.
+fn diagnostics(source: &str) -> Vec<Diagnostic> {
+    on_deep_stack(|| front_end(source).1)
 }
 
 /// `source` with `edits` applied. An edit equal to one already taken is dropped, as the same fix
@@ -95,7 +94,7 @@ pub(crate) fn apply_fix(source: &str, d: &Diagnostic) -> String {
 /// that was, or `None` when no diagnostic of `code` has one. The result must still lex and
 /// parse; the checker may still report errors it reveals.
 fn fixed(source: &str, code: Code) -> Option<(String, usize)> {
-    let ((), diagnostics) = front_end(source);
+    let diagnostics = diagnostics(source);
     let safe = |d: &&Diagnostic| d.fixes().iter().any(Fix::safe);
     diagnostics.iter().filter(|d| d.code() == code).find(safe)?;
     let fixes: Vec<&Fix> = diagnostics
@@ -118,7 +117,7 @@ fn docs() -> PathBuf {
 }
 
 fn codes(source: &str) -> Vec<Code> {
-    front_end(source).1.iter().map(Diagnostic::code).collect()
+    diagnostics(source).iter().map(Diagnostic::code).collect()
 }
 
 /// An explanation's title, and its Broken and Fixed programs.
@@ -334,13 +333,13 @@ fn minus(mut a: Vec<Code>, b: &[Code]) -> Vec<Code> {
 /// error: a diagnostic that disappears with it was a cascade of the same mistake (ADR 0013). The
 /// checker may still report errors the fix reveals.
 #[test]
-fn each_safe_fix_removes_exactly_its_diagnostic() {
+fn each_safe_fix_should_remove_exactly_its_diagnostic() {
     let mut applied = 0;
     for (path, _) in all_fixtures() {
         let Some(source) = fixture_text(&path) else {
             continue;
         };
-        let diagnostics = front_end(&source).1;
+        let diagnostics = diagnostics(&source);
         let before: Vec<Code> = diagnostics.iter().map(Diagnostic::code).collect();
         for d in &diagnostics {
             for fix in d.fixes().iter().filter(|f| f.safe()) {

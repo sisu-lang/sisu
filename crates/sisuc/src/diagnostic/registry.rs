@@ -4230,13 +4230,13 @@ impl From<DiagnosticKind> for Diagnostic {
                 .with_help(match limit {
                     None => "remove the `#`, or the width, alignment and precision",
                     Some(SpecLimit::Width) => {
-                        "remove the width, alignment and precision, or remove the `#` and write a width of at most 1000"
+                        "remove the width, alignment and precision, or remove the `#` and limit the width to 1000"
                     }
                     Some(SpecLimit::Precision) => {
-                        "remove the width, alignment and precision, or remove the `#` and write a precision of at most 30"
+                        "remove the width, alignment and precision, or remove the `#` and limit the precision to 30"
                     }
                     Some(SpecLimit::Both) => {
-                        "remove the width, alignment and precision, or remove the `#` and write a width of at most 1000 and a precision of at most 30"
+                        "remove the width, alignment and precision, or remove the `#` and limit the width to 1000 and precision to 30"
                     }
                 })
             }

@@ -4,7 +4,7 @@ error[E0109]: `#` does not combine with a width, alignment or precision
 3 |     print("{f:#.40}")
   |              ^^^^^
   |
-  = help: remove the width, alignment and precision, or remove the `#` and write a precision of at most 30
+  = help: remove the width, alignment and precision, or remove the `#` and limit the precision to 30
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0109

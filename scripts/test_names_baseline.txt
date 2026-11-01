@@ -667,7 +667,6 @@ crates/sisuc/src/codegen/tests.rs::words_releases_a_base_that_is_not_a_local
 crates/sisuc/src/codegen/tests.rs::write_bool_passes_a_zero_extended_i1
 crates/sisuc/src/codegen/tests.rs::write_checks_bounds_before_unique
 crates/sisuc/src/diagnostic/explanations.rs::broken_examples_produce_exactly_their_code
-crates/sisuc/src/diagnostic/explanations.rs::each_safe_fix_removes_exactly_its_diagnostic
 crates/sisuc/src/diagnostic/explanations.rs::every_code_has_a_diagnostics_fixture
 crates/sisuc/src/diagnostic/explanations.rs::every_code_has_an_explanation_of_the_fixed_shape
 crates/sisuc/src/diagnostic/explanations.rs::every_explanation_file_is_a_code
