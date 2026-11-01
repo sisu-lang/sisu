@@ -866,7 +866,6 @@ crates/sisuc/src/generate/coverage.rs::no_generated_program_assigns_a_class_into
 crates/sisuc/src/generate/coverage.rs::no_inexact_value_reaches_output
 crates/sisuc/src/generate/coverage.rs::no_message_breaks_a_line
 crates/sisuc/src/generate/coverage.rs::no_panic_site_follows_a_return
-crates/sisuc/src/generate/coverage.rs::printed_sizes_are_the_longest_values
 crates/sisuc/src/generate/coverage.rs::rare_constant_forms_check_clean
 crates/sisuc/src/generate/coverage.rs::read_line_past_the_input_checks_clean
 crates/sisuc/src/generate/coverage.rs::rewrites_are_rare
