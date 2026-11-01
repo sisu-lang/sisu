@@ -1,0 +1,10 @@
+error[E0071]: this chain nests deeper than 256 levels
+ --> E0071-chain.sisu:2:1025
+  |
+2 | ...+ 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1)
+  |                                                                    ^
+  |
+  = help: each operator, call, field or index in a chain adds one level: put a part of the chain in a `let`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0071

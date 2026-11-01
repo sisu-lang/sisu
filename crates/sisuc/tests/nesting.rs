@@ -227,8 +227,24 @@ fn compiles_at_the_limit(name: &str, program: fn(usize) -> Generated, limit: usi
     assert_eq!(run.status.code(), Some(0), "the program should exit 0");
 }
 
-/// One level past the limit: `check` exits 1 with the one message, at the failing token.
-fn errors_past_the_limit(name: &str, program: fn(usize) -> Generated, limit: usize) {
+/// The message and help of the nesting error for nested constructs.
+const TREE: (&str, &str) = ("nesting is too deep", "the limit is 256 levels");
+
+/// The message and help of the nesting error for a chain, such as `a + b + c`.
+const CHAIN: (&str, &str) = (
+    "this chain nests deeper than 256 levels",
+    "each operator, call, field or index in a chain adds one level: put a part of the chain in \
+     a `let`",
+);
+
+/// One level past the limit: `check` exits 1 with the one message of `form`, at the failing
+/// token.
+fn errors_past_the_limit(
+    name: &str,
+    program: fn(usize) -> Generated,
+    limit: usize,
+    (message, help): (&str, &str),
+) {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let Generated { source, fail } = program(limit + 1);
     fs::write(dir.join(format!("{name}.sisu")), &source).expect("writes");
@@ -239,7 +255,7 @@ fn errors_past_the_limit(name: &str, program: fn(usize) -> Generated, limit: usi
     let mut lines = stderr.lines();
     assert_eq!(
         lines.next(),
-        Some("error[E0071]: nesting is too deep"),
+        Some(format!("error[E0071]: {message}").as_str()),
         "{name}"
     );
     assert_eq!(
@@ -247,15 +263,12 @@ fn errors_past_the_limit(name: &str, program: fn(usize) -> Generated, limit: usi
         Some(format!("--> {name}.sisu:{line}:{col}").as_str()),
         "{name}"
     );
-    assert!(
-        stderr.contains("= help: the limit is 256 levels"),
-        "{stderr}"
-    );
+    assert!(stderr.contains(&format!("= help: {help}")), "{stderr}");
     assert_eq!(stderr.matches("error[").count(), 1, "one error: {name}");
 }
 
 macro_rules! construct {
-    ($name:ident, $program:ident, $limit:expr) => {
+    ($name:ident, $program:ident, $limit:expr, $form:ident) => {
         mod $name {
             /// GIVEN a generated program that nests one construct as deep as the limit allows
             /// WHEN it is built and run
@@ -271,39 +284,41 @@ macro_rules! construct {
 
             /// GIVEN a generated program that nests one construct one level past the limit
             /// WHEN `check` runs on it
-            /// THEN it exits 1 with the one nesting error at the token where the depth runs out
+            /// THEN it exits 1 with the one nesting error at the token where the depth runs out,
+            /// in the form that names a chain for a chain
             #[test]
             fn construct_should_report_nesting_too_deep_one_level_past_the_limit() {
                 super::errors_past_the_limit(
                     concat!("nesting_past_", stringify!($name)),
                     super::$program,
                     $limit,
+                    super::$form,
                 );
             }
         }
     };
 }
 
-construct!(parentheses, paren, 253);
-construct!(calls, call, 253);
-construct!(array_literals, array, 254);
-construct!(unary_minus, neg, 253);
-construct!(unary_not, not, 253);
-construct!(sum_chain, plus, 253);
-construct!(and_chain, and, 253);
-construct!(coalesce_chain, coalesce, 253);
-construct!(index_chain, index, 253);
-construct!(method_chains, method_chain, 254);
-construct!(safe_field_chain, safe_chain, 254);
-construct!(ifs, nested_if, 126);
-construct!(if_lets, nested_if_let, 126);
-construct!(else_if_chain, else_if, 252);
-construct!(whiles, nested_while, 253);
-construct!(fors, nested_for, 253);
-construct!(loops, nested_loop, 126);
-construct!(array_types, array_type, 254);
-construct!(match_bodies, match_body, 254);
-construct!(match_patterns, match_pattern, 253);
+construct!(parentheses, paren, 253, TREE);
+construct!(calls, call, 253, TREE);
+construct!(array_literals, array, 254, TREE);
+construct!(unary_minus, neg, 253, TREE);
+construct!(unary_not, not, 253, TREE);
+construct!(sum_chain, plus, 253, CHAIN);
+construct!(and_chain, and, 253, CHAIN);
+construct!(coalesce_chain, coalesce, 253, CHAIN);
+construct!(index_chain, index, 253, CHAIN);
+construct!(method_chains, method_chain, 254, CHAIN);
+construct!(safe_field_chain, safe_chain, 254, CHAIN);
+construct!(ifs, nested_if, 126, TREE);
+construct!(if_lets, nested_if_let, 126, TREE);
+construct!(else_if_chain, else_if, 252, TREE);
+construct!(whiles, nested_while, 253, TREE);
+construct!(fors, nested_for, 253, TREE);
+construct!(loops, nested_loop, 126, TREE);
+construct!(array_types, array_type, 254, TREE);
+construct!(match_bodies, match_body, 254, TREE);
+construct!(match_patterns, match_pattern, 253, TREE);
 
 /// GIVEN a `match` that nests in the assignment arm bodies of other `match` expressions
 /// WHEN it is parsed with `--emit ast` at the limit and one level past it
@@ -389,10 +404,32 @@ fn power_right_side_should_count_one_level_of_nesting_more_than_its_operator() {
     }
 }
 
-/// `check`, `build --emit ast` and a build of `source` all exit 1 with the one message,
-/// however large it is: the parser stops at the first level past the limit and builds nothing
-/// deeper.
-fn assert_too_deep(name: &str, source: &str) {
+/// GIVEN a chain of 11 `+` inside 250 parentheses, which together pass the limit
+/// WHEN `check` runs on it
+/// THEN it reports the nesting error for nested constructs, since the chain is the smaller part
+#[test]
+fn short_chain_in_deep_parentheses_should_report_the_nesting_form() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let source = format!(
+        "fn main() {{\n    print({}1{}{})\n}}\n",
+        "(".repeat(250),
+        " + 1".repeat(11),
+        ")".repeat(250)
+    );
+    fs::write(dir.join("nesting_short_chain.sisu"), source).expect("writes");
+    let out = sisu(dir, &["check", "nesting_short_chain.sisu"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(stderr.matches("error[").count(), 1, "{stderr}");
+    assert!(
+        stderr.starts_with(&format!("error[E0071]: {}", TREE.0)),
+        "{stderr}"
+    );
+}
+
+/// `check`, `build --emit ast` and a build of `source` all exit 1 with the one message of
+/// `form`, however large it is: the parser stops at the first level past the limit and builds
+/// nothing deeper.
+fn assert_too_deep(name: &str, source: &str, (message, _): (&str, &str)) {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let (file, exe) = (format!("{name}.sisu"), format!("{name}.out"));
     fs::write(dir.join(&file), source).expect("writes");
@@ -406,7 +443,7 @@ fn assert_too_deep(name: &str, source: &str) {
         assert_eq!(out.status.code(), Some(1), "{name} {args:?}");
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
-            stderr.starts_with("error[E0071]: nesting is too deep\n"),
+            stderr.starts_with(&format!("error[E0071]: {message}\n")),
             "{name} {args:?}: {stderr}"
         );
         assert_eq!(stderr.matches("error[").count(), 1, "{name} {args:?}");
@@ -423,14 +460,20 @@ fn programs_nested_a_hundred_thousand_levels_should_fail_with_one_nesting_error(
     assert_too_deep(
         "nesting_huge_parentheses",
         &body(format!("{}1{}", "(".repeat(n), ")".repeat(n))),
+        TREE,
     );
-    assert_too_deep("nesting_huge_sum", &body(format!("1{}", "+1".repeat(n))));
+    assert_too_deep(
+        "nesting_huge_sum",
+        &body(format!("1{}", "+1".repeat(n))),
+        CHAIN,
+    );
     assert_too_deep(
         "nesting_huge_else_if",
         &format!(
             "fn main() {{\n    let x = 1\n    if x == 0 {{\n    }}{} else {{\n    }}\n}}\n",
             " else if x == 0 {\n    }".repeat(n)
         ),
+        TREE,
     );
     assert_too_deep(
         "nesting_huge_pattern",
@@ -439,6 +482,7 @@ fn programs_nested_a_hundred_thousand_levels_should_fail_with_one_nesting_error(
             "A(".repeat(n),
             ")".repeat(n)
         ),
+        TREE,
     );
     assert_too_deep(
         "nesting_huge_match",
@@ -447,6 +491,7 @@ fn programs_nested_a_hundred_thousand_levels_should_fail_with_one_nesting_error(
             "match e { _ => ".repeat(n),
             " }".repeat(n)
         ),
+        TREE,
     );
     assert_too_deep(
         "nesting_huge_type",
@@ -455,6 +500,7 @@ fn programs_nested_a_hundred_thousand_levels_should_fail_with_one_nesting_error(
             "[".repeat(n),
             "]".repeat(n)
         ),
+        TREE,
     );
 }
 
@@ -499,7 +545,7 @@ fn chains_stacked_on_wrapped_chains_should_add_their_heights() {
     for (i, (suffix, links)) in shapes.into_iter().enumerate() {
         let rounds = if links == 1 { 300 } else { 100 };
         let name = format!("nesting_wrapped_{i}");
-        assert_too_deep(&name, &wrapped_chains(suffix, links, rounds));
+        assert_too_deep(&name, &wrapped_chains(suffix, links, rounds), TREE);
     }
 }
 
@@ -511,7 +557,7 @@ fn chains_stacked_on_wrapped_chains_should_add_their_heights() {
 /// checker.
 #[test]
 fn sums_wrapped_a_hundred_times_should_fail_with_one_nesting_error() {
-    assert_too_deep("nesting_wrapped_sum", &wrapped_chains("+1", 100, 100));
+    assert_too_deep("nesting_wrapped_sum", &wrapped_chains("+1", 100, 100), TREE);
 }
 
 /// GIVEN a sum and a method chain of ten thousand steps
@@ -524,13 +570,18 @@ fn sums_wrapped_a_hundred_times_should_fail_with_one_nesting_error() {
 fn left_chains_of_ten_thousand_steps_should_fail_with_one_nesting_error() {
     let n = 10_000;
     let body = |expr: String| format!("{PRELUDE}fn main() {{\n    print({expr})\n}}\n");
-    assert_too_deep("nesting_long_sum", &body(format!("1{}", "+1".repeat(n))));
+    assert_too_deep(
+        "nesting_long_sum",
+        &body(format!("1{}", "+1".repeat(n))),
+        CHAIN,
+    );
     assert_too_deep(
         "nesting_long_methods",
         &format!(
             "{PRELUDE}fn main() {{\n    let n = N(next: None, v: 1)\n    let m = n{}\n}}\n",
             ".me()".repeat(n)
         ),
+        CHAIN,
     );
 }
 
@@ -594,8 +645,9 @@ fn operands_of_wrapping_nodes_should_count_the_wrapping_node_in_their_depth() {
                 parses,
                 "{name} with {k} links: {stderr}"
             );
+            // The sum is the chain that runs out of depth.
             assert_eq!(
-                stderr.starts_with("error[E0071]: nesting is too deep"),
+                stderr.starts_with(&format!("error[E0071]: {}", CHAIN.0)),
                 !parses,
                 "{name}"
             );
