@@ -652,6 +652,10 @@ fn a_join_should_stay_a_mismatch_where_neither_side_converts_to_the_other() {
 /// convert to the widest `any` type, whatever the order of the members and at every site: a class
 /// that does not conform gets `NotConform`, as a value does where the `any` type is expected.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one row for each site and form of a join that leaves its `any` type"
+)]
 fn a_join_should_report_the_member_that_leaves_its_any_type() {
     let sites = [
         (
@@ -715,6 +719,31 @@ fn a_join_should_report_the_member_that_leaves_its_any_type() {
             "a branch with no value, after an `any` value and a class",
             "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let r = if true { s } else if false { Rect(w: 1.0) } else { print(1) }\n}",
             vec![(Code::NoValue, (3, 65))],
+        ),
+        (
+            "a branch with no value, after an `any` value and a class, as a block",
+            "fn main() {\n    let c = true\n    let s: any Shape = Circle(r: 1.0)\n    let r = if c { s } else if c { Rect(w: 1.0) } else { let z = 1 }\n}",
+            vec![(Code::NoValue, (4, 58))],
+        ),
+        (
+            "a nested join that leaves its own `any` type, under an `any` hint it does not join",
+            "fn main() {\n    let c = true\n    let d = false\n    let s: any Shape = Circle(r: 1.0)\n    let k: any Named = Cube(s: 1.0)\n    let r = if c { s } else { if d { k } else { Circle(r: 1.0) } }\n}",
+            vec![(Code::NotConform, (6, 49))],
+        ),
+        (
+            "a `Some` of a value that is no object, then an `any` value",
+            "fn main() {\n    let c = true\n    let s: any Shape = Circle(r: 1.0)\n    let r = if c { Some(5) } else { s }\n}",
+            vec![(Code::Mismatch, (4, 20))],
+        ),
+        (
+            "an optional class that does not conform, then an optional `any` default",
+            "fn main() {\n    let o: Circle? = None\n    let k: (any Named)? = None\n    let r = o ?? k\n}",
+            vec![(Code::NotConform, (4, 13))],
+        ),
+        (
+            "an optional value that is no object, then an `any` default",
+            "fn main() {\n    let i: i64? = None\n    let s: any Shape = Circle(r: 1.0)\n    let r = i ?? s\n}",
+            vec![(Code::Mismatch, (4, 18))],
         ),
         (
             "an optional class that does not conform, then an `any` default",

@@ -476,10 +476,7 @@ fn some_object(block: &CheckedBlock) -> Option<Unwrapped> {
 /// its optional `any` type `ty`, and a `None` that ends it a `None` of `ty` (see
 /// `fold_branches`).
 fn unwrap_some_object(block: &mut CheckedBlock, ty: Type) {
-    if some_object(block).is_none() {
-        return;
-    }
-    let Ok(done) = block else {
+    let (Some(_), Ok(done)) = (some_object(block), block) else {
         return;
     };
     let value = done
