@@ -3586,6 +3586,33 @@ fn an_eq_helper_should_pass_a_location_to_a_written_eq_of_the_prelude() {
     }
 }
 
+/// A method of the prelude for a class of the user's file, which only an implicit call reaches,
+/// is in the module: `print` and `==` call it through the conformance.
+#[test]
+fn an_implicit_call_should_reach_a_prelude_method_of_a_class_of_the_user() {
+    let context = Context::create();
+    for (prelude, call, method) in [
+        (
+            "extend C {\n    fn to_string(self) -> string { \"custom\" }\n}\n",
+            "print(C())",
+            "@sisu.C.to_string(",
+        ),
+        (
+            "extend C: Eq {\n    fn eq(self, _other: C) -> bool { true }\n}\n",
+            "print(C() == C())",
+            "@sisu.C.Eq.eq(",
+        ),
+    ] {
+        let src = format!("class C {{}}\nfn main() {{\n    {call}\n}}");
+        let module = compiled_over(&context, prelude, &src, false, |_| {});
+        let ir = module.print_to_string().to_string();
+        let calls = ir
+            .lines()
+            .any(|l| l.contains("call ") && l.contains(method));
+        assert!(calls, "{call}: a call of {method} in\n{ir}");
+    }
+}
+
 /// A class and an enum of the prelude that the user's file names in a type only, with no
 /// construction, still need their layout in the program.
 #[test]

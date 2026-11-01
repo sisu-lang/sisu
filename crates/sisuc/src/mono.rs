@@ -43,6 +43,9 @@ thread_local! {
 /// reached only by a call, never with its class. A function of the prelude is reached the same
 /// way, by a call from a body that is in the program, so a program holds only the prelude
 /// functions it uses.
+/// A program takes a fast path that instantiates nothing and drops the prelude's items when no
+/// declaration is generic, the checker recorded no use of the prelude (`Program::instantiates`),
+/// and no conformance has a method of the prelude for a type outside the prelude.
 ///
 /// The checker has accepted the program, but its probe does not follow every associated type
 /// that an instance meets (`probe_associated`): the diagnostics are the E0030 of each choice that
@@ -54,13 +57,15 @@ pub(crate) fn instantiate(mut program: Program) -> Result<Program, Vec<Diagnosti
         .any(|f| !f.type_params.is_empty())
         || (program.classes[..prelude.classes].iter()).any(|c| !c.type_params.is_empty())
         || (program.enums[..prelude.enums].iter()).any(|e| !e.type_params.is_empty());
-    if !generic && !program.instantiates {
+    if !generic && !program.instantiates && !prelude_method_of_outside_type(&program) {
         #[cfg(test)]
         FAST_PATHS.set(FAST_PATHS.get() + 1);
         program.fast_path = true;
         // Reaching a generic item records a type argument, and so does a use of any other item
-        // of the prelude (see `tir::Program::instantiates`): the prelude's items are then all
-        // templates or unused.
+        // of the prelude (see `tir::Program::instantiates`). An implicit call, such as `print`,
+        // does not: codegen finds the method through the conformance. The prelude's items are
+        // then all templates or unused, unless a conformance holds a prelude method for a type
+        // outside the prelude (`prelude_method_of_outside_type`).
         program.functions.truncate(prelude.funcs);
         program.classes.truncate(prelude.classes);
         program.enums.truncate(prelude.enums);
@@ -83,6 +88,21 @@ pub(crate) fn instantiate(mut program: Program) -> Result<Program, Vec<Diagnosti
         assert_concrete(&program);
     }
     Ok(program)
+}
+
+/// Whether a conformance has a method of the prelude for a target that is not an item of the
+/// prelude. An implicit call of the interface (`print`, `==`) reaches such a method with no
+/// written use, so the program must keep it. The cost is one step for each conformance method.
+fn prelude_method_of_outside_type(program: &Program) -> bool {
+    let prelude = program.prelude;
+    program.conformances.iter().any(|(_, conformance)| {
+        let in_prelude = match conformance.target.kind() {
+            TypeKind::Class(id, _) => id.0 >= prelude.classes,
+            TypeKind::Enum(id, _) => id.0 >= prelude.enums,
+            _ => false,
+        };
+        !in_prelude && conformance.methods.iter().any(|f| f.0 >= prelude.funcs)
+    })
 }
 
 /// An instantiation reached and given its id, whose body waits on the worklist.
@@ -1744,6 +1764,70 @@ mod tests {
         let program = instantiated("fn main() {\n    print(5.min(3))\n}");
         assert_eq!(FAST_PATHS.get(), before);
         assert_eq!(function_names(&program), ["main", "i64.min"]);
+    }
+
+    /// An implicit call, such as `print`, `dbg`, interpolation or `==`, reaches a method of the
+    /// prelude through a conformance, with no written use, so the checker does not set
+    /// `instantiates`. The program then keeps the method when its target is outside the prelude.
+    /// A target in the prelude is dropped with the rest of the prelude when nothing reaches it.
+    #[test]
+    fn a_prelude_conformance_of_a_type_outside_the_prelude_should_leave_the_path_that_instantiates_nothing()
+     {
+        let show = "extend C {\n    fn to_string(self) -> string { \"custom\" }\n}\n";
+        let show_enum = "extend E {\n    fn to_string(self) -> string { \"custom\" }\n}\n";
+        let eq = "extend C: Eq {\n    fn eq(self, _other: C) -> bool { true }\n}\n";
+        let main = |body: &str| format!("class C {{}}\nfn main() {{\n    {body}\n}}");
+        for (row, prelude, src, method) in [
+            ("print", show, main("print(C())"), "C.to_string"),
+            (
+                "interpolation",
+                show,
+                main("print(\"{C()}\")"),
+                "C.to_string",
+            ),
+            ("dbg", show, main("dbg(C())"), "C.to_string"),
+            (
+                "optional",
+                show,
+                main("let c: C? = C()\n    print(c)"),
+                "C.to_string",
+            ),
+            ("array", show, main("print([C()])"), "C.to_string"),
+            (
+                "enum",
+                show_enum,
+                "enum E {\n    A\n}\nfn main() {\n    print(E.A)\n}".to_string(),
+                "E.to_string",
+            ),
+            ("equal", eq, main("print(C() == C())"), "C.Eq.eq"),
+            ("not equal", eq, main("print(C() != C())"), "C.Eq.eq"),
+            ("array equal", eq, main("print([C()] == [C()])"), "C.Eq.eq"),
+            (
+                "written call",
+                show,
+                main("print(C().to_string())"),
+                "C.to_string",
+            ),
+        ] {
+            let before = FAST_PATHS.get();
+            let (program, diagnostics) = crate::front_end::front_end_with(prelude, &src);
+            let program = program.unwrap_or_else(|| panic!("{row}: {diagnostics:?}"));
+            assert_eq!(FAST_PATHS.get(), before, "{row}");
+            let names = function_names(&program);
+            assert!(names.contains(&method), "{row}: {method} in {names:?}");
+        }
+        // A target in the prelude is an item of the prelude: nothing reaches it, so it goes.
+        let before = FAST_PATHS.get();
+        let prelude = "class P {}\nextend P {\n    fn to_string(self) -> string { \"p\" }\n}\n";
+        let (program, diagnostics) =
+            crate::front_end::front_end_with(prelude, "fn main() {\n    print(1)\n}");
+        let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+        assert_eq!(FAST_PATHS.get(), before + 1, "a target in the prelude");
+        assert_eq!(
+            function_names(&program),
+            ["main"],
+            "a target in the prelude"
+        );
     }
 
     /// The prelude of the tests below: a class and an enum that are not generic, so `mono` roots
