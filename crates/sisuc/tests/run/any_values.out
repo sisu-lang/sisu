@@ -6,6 +6,9 @@ Num(1)
 hi
 Num(1)
 true
+true
+[3, None]
+None 3
 2.0
 4.0
 label x

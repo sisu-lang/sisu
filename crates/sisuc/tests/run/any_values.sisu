@@ -1,8 +1,8 @@
-// GIVEN interfaces `Shape` and `Named`, a class `Circle`, a struct-free number type `Num` that
-// conforms to `Display`, an `Expr` enum with a deep chain, and an enum `Slab` with a `string`
-// payload that conforms to `Shape`
-// WHEN values that are no objects (a `string`, a `char`, a number, an enum) are converted to `any`,
-// stored, passed, called through the table, shown, copied and dropped
+// GIVEN interfaces `Shape`, `Named` and `Held`, a class `Circle`, an enum `Num` with a written
+// `to_string`, an `Expr` enum with a deep chain, an enum `Slab` with a `string` payload that
+// conforms to `Shape` and `Named`, an enum `Crate` that conforms to `Held`, and optionals
+// WHEN values that are no objects (a `string`, a `char`, a number, an enum, an optional) are
+// converted to `any`, stored, passed, called through the table, shown, copied and dropped
 // THEN each call runs the method of the value inside, each value shows as its type does, and
 // Valgrind and `--rc-checks` find every box and every payload freed once
 interface Shape {
@@ -128,10 +128,22 @@ fn main() {
     print(shown[0].to_string()) // hi
     print("{shown[3]}") // Num(1)
 
-    // The enum with a deep chain: `{s:#}` against `{e:#}` writes the same text.
-    let e = deep(3)
-    let s: any Display = deep(3)
+    // The enum with a deep chain, so long that `{:#}` wraps it over lines: `{s:#}` against
+    // `{e:#}` writes the same text.
+    let e = deep(12)
+    let s: any Display = deep(12)
+    print("{e:#}".len() > "{e}".len()) // true: the layout adds line breaks
     print("{s:#}" == "{e:#}") // true
+
+    // An optional whose type conforms goes into a box, `None` and a value alike.
+    let some: i64? = Some(3)
+    let none: i64? = None
+    let boxed: [any Display] = [some, none]
+    print(boxed) // [3, None]
+    let held: any Display = none
+    let wrapped: (any Display)? = Some(some)
+    let inner: any Display = wrapped
+    print("{held} {inner}") // None 3
 
     // An enum that conforms to `Shape`, called through the table.
     let plain: any Shape = Slab.Plain

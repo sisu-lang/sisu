@@ -275,6 +275,27 @@ mod tests {
         assert_eq!(names(front_end(src).0), ["main", "id<i64>"]);
     }
 
+    /// An argument fixes `T` before an `any` context does, and a generic function over an `any`
+    /// type is one instance: `id(5)` against `any Display` is `id<i64>`, and `total` over an
+    /// `[any Shape]` is `total<any Shape>`, with no `id<any Display>` and no `total<Circle>`.
+    #[test]
+    fn an_any_context_should_not_make_an_instance_of_its_own() {
+        let src = "interface Shape {\n    fn area(self) -> f64\n}\nclass Circle: Shape {\n    r: f64\n    fn area(self) -> f64 { self.r }\n}\nfn id<T>(x: T) -> T { x }\nfn total<T: Shape>(xs: [T]) -> f64 {\n    let mut sum = 0.0\n    for x in xs { sum += x.area() }\n    sum\n}\nfn main() {\n    let d: any Display = id(5)\n    let xs: [any Shape] = [Circle(r: 1.0)]\n    print(d)\n    print(total(xs))\n}";
+        let names: Vec<String> = front_end(src)
+            .0
+            .expect("the program should check")
+            .functions
+            .into_iter()
+            .map(|f| f.name)
+            .collect();
+        for name in ["id<i64>", "total<any Shape>"] {
+            assert!(names.iter().any(|n| n == name), "{name} in {names:?}");
+        }
+        for name in ["id<any Display>", "total<Circle>"] {
+            assert!(!names.iter().any(|n| n == name), "{name} in {names:?}");
+        }
+    }
+
     /// Only an unusual prelude reaches some faults in the checker. One such fault, a span read
     /// from the wrong text, once crashed the compiler with a plain panic. The diagnostics cases
     /// are a corpus of unusual programs, so each one, as the prelude, must check or give the

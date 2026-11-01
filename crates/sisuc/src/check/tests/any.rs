@@ -167,6 +167,10 @@ fn any_values_should_check_clean_where_a_value_converts() {
             "fn id<T>(x: T) -> T { x }\nfn main() {\n    let d: any Display = id(5)\n}",
         ),
         (
+            "an optional whose type conforms, which goes into a box",
+            "fn main() {\n    let x: i64? = None\n    let d: any Display = x\n    let o: (any Display)? = None\n    let e: any Display = o\n}",
+        ),
+        (
             "an interface value of an enum that converts to `any Display`",
             "enum Slab: Shape {\n    Plain\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {\n    let s: any Shape = Slab.Plain\n    let d: any Display = s\n}",
         ),
@@ -299,9 +303,14 @@ fn a_value_should_convert_to_any_only_where_it_conforms() {
             vec![(Code::NotConform, (2, 24))],
         ),
         (
-            "an optional, which does not convert",
+            "an optional whose type does not conform, which does not convert",
             "fn main() {\n    let m: Circle? = None\n    let s: any Shape = m\n}",
             vec![(Code::Mismatch, (3, 24))],
+        ),
+        (
+            "an optional of a number, where an optional interface value is expected",
+            "fn main() {\n    let x: i64? = None\n    let d: (any Display)? = x\n}",
+            vec![(Code::Mismatch, (3, 29))],
         ),
         (
             "an enum that does not conform",
@@ -755,6 +764,21 @@ fn a_join_should_report_the_member_that_leaves_its_any_type() {
         }
     }
     rows_after(&[
+        (
+            "a number, after an `any` value",
+            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let r = if true { s } else { 5 }\n}",
+            vec![(Code::NotConform, (3, 34))],
+        ),
+        (
+            "a number in an array literal, after an `any` value",
+            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let r = [s, 5]\n}",
+            vec![(Code::NotConform, (3, 17))],
+        ),
+        (
+            "a type parameter that has no bound, after an `any` value",
+            "fn f<T>(t: T, s: any Shape) {\n    let r = if true { s } else { t }\n}\nfn main() {}",
+            vec![(Code::NotConform, (2, 34))],
+        ),
         (
             "a `Some` of a class that does not conform, after an `any` value",
             "fn main() {\n    let x: any Solid = Cube(s: 1.0)\n    let r = if true { x } else { Some(Circle(r: 1.0)) }\n}",

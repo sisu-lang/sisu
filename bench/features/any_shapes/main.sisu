@@ -1,7 +1,10 @@
 // Calls through the table of an `any Shape`. `total` reads an array that holds two classes and two
 // enums: a class is its own data, and an enum value goes into a counted box when it converts, so
 // each call is an indirect call whose entry reads the box. `converted` makes the conversions in
-// its loop: one box for each enum value, none for a class object. Every sum depends on each call.
+// its loop: one box for each enum value, none for a class object. It passes each value to `weigh`,
+// which calls itself twice and so stays a call at `-O2`: LLVM cannot take the box out, and the
+// benchmark allocates 3 boxes for each round (the test `any_shapes_should_keep_its_boxes_at_o2`
+// counts them). Every sum depends on each call.
 interface Shape {
     fn area(self) -> i64
     fn grow(self, by: i64) -> i64
@@ -60,6 +63,15 @@ fn total(shapes: [any Shape], rounds: i64) -> i64 {
     acc
 }
 
+// `depth` is 1, 2 or 3: `weigh(s, depth)` is `depth` times `s.area()`.
+fn weigh(s: any Shape, depth: i64) -> i64 {
+    if depth > 1 {
+        weigh(s, depth - 1) + weigh(s, depth - 2)
+    } else {
+        s.area()
+    }
+}
+
 fn converted(square: Square, rounds: i64) -> i64 {
     let mut acc = 0
     for k in 0..rounds {
@@ -67,7 +79,8 @@ fn converted(square: Square, rounds: i64) -> i64 {
         let wide: any Shape = Wedge.Wide(w: k % 5 + 1, h: 4)
         let named: any Shape = Wedge.Named("abc")
         let kept: any Shape = square
-        acc = (acc + thin.area() + wide.grow(k % 3) + named.area() + kept.grow(1)) % 1_000_003
+        let depth = k % 3 + 1
+        acc = (acc + weigh(thin, depth) + weigh(wide, depth) + weigh(named, depth) + kept.grow(1)) % 1_000_003
     }
     acc
 }

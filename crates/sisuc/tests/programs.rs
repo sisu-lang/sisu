@@ -293,6 +293,26 @@ allocation_counts! {
     (print_int, super::numbered_lines("start", 1000), "start\n", 0),
 }
 
+/// GIVEN the benchmark `bench/features/any_shapes`, which converts an enum value to `any Shape`
+/// 3 times in each of 50 000 rounds, and passes each to a function that calls itself twice
+/// WHEN it is built with `-O2` and run under Valgrind
+/// THEN it makes at least 150 000 allocations, one box for each conversion: the optimizer did not
+/// take the boxes out, so the benchmark measures them
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "reads Valgrind's output, and Valgrind runs only on Linux"
+)]
+fn any_shapes_should_keep_its_boxes_at_o2() {
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bench/features/any_shapes/main.sisu");
+    let source = fs::read_to_string(path).expect("reads the benchmark");
+    let (stdout, allocs) =
+        heap_allocs(&compile_tmp_for_valgrind("any_shapes_bench", &source, true));
+    assert_eq!(stdout, "99985\n749977\n");
+    assert!(allocs >= 150_000, "{allocs} allocations");
+}
+
 /// Compiles `tests/programs/<name>.sisu` without `-O2` and runs it under a 256 KiB stack.
 fn run_in_small_stack(name: &str) -> Output {
     run_in_small_stack_at(name, false)

@@ -345,7 +345,7 @@ expected() {
         tree_rewrite) printf '%s\n' 732347 163697 ;;
         interp) printf '%s\n' 549000 126 ;;
         interfaces) printf '%s\n' 699988 949994 1010000 ;;
-        any_shapes) printf '%s\n' 99985 149993 ;;
+        any_shapes) printf '%s\n' 99985 749977 ;;
         show) printf '%s\n' 1091750 40900 ;;
         # The tokens of the input from the compiler's lexer, which the lexer in Sisu must match.
         selfhost_lexer)
