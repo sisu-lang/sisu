@@ -950,3 +950,12 @@ fn a_push_that_may_be_a_method_should_not_stamp_its_receiver() {
         &[(Code::NeverReassigned, (3, 13)), (Code::NoMember, (4, 7))],
     );
 }
+
+/// An optional that holds no array is no optional array: its element target is `CannotIndex`.
+#[test]
+fn an_element_target_of_an_optional_number_should_not_be_an_optional_array() {
+    codes(
+        "fn main() {\n    let mut n: i64? = 1\n    n[0] = 2\n}",
+        &[(Code::CannotIndex, (3, 5))],
+    );
+}
