@@ -464,6 +464,23 @@ class CompileSpeed(unittest.TestCase):
         self.assertIn('func run0', go)
         self.assertIn('func run1', go)
 
+    def test_main_should_call_each_copy_twice_in_one_statement(self):
+        """
+        GIVEN a unit and a number of copies in each language
+        WHEN `generate` writes the input
+        THEN `main` has one statement for each copy
+        AND the statement calls the copy twice, so that the optimizer keeps each copy its own function
+        """
+        for lang in compile_speed.LANGS:
+            with self.subTest(lang):
+                text = compile_speed.generate(lang, 'fn runXX() -> i64 { 1 }\n', 3)
+                for i in range(3):
+                    statements = [line for line in text.splitlines() if f'run{i}()' in line
+                                  and 'total' in line]
+                    self.assertEqual(len(statements), 1, text)
+                    self.assertEqual(statements[0].count(f'run{i}()'), 2, statements)
+                    self.assertIn(f'total = total + run{i}() + run{i}()', statements[0])
+
     def test_command_should_run_each_compiler_on_one_thread(self):
         """
         GIVEN each row and language

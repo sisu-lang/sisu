@@ -130,8 +130,14 @@ def generate(lang, unit, copies):
 
 
 def main_of(lang, copies):
-    """The `main` that adds the result of each copy in one statement and prints the sum."""
-    calls = [f'total = total + run{i}()' for i in range(copies)]
+    """The `main` that adds the result of each copy in one statement and prints the sum.
+
+    Each statement calls its copy twice. A function with one call site gets the large inline bonus
+    of LLVM (the last call to a static function), so at -O2 every copy would go into `main`, and
+    the time of the optimizer on one large function grows faster than the program. Two call sites
+    keep each copy its own function, in all four languages.
+    """
+    calls = [f'total = total + run{i}() + run{i}()' for i in range(copies)]
     if lang == 'sisu':
         return 'fn main() {\n    let mut total = 0\n' + ''.join(
             f'    {c}\n' for c in calls) + '    print(total)\n}\n'
