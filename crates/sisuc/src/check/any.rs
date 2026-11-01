@@ -394,7 +394,8 @@ impl Checker<'_> {
     }
 
     /// Whether a value of type `got` converts to `want`, which `any_conversion` answers by doing
-    /// it: `want` is `any I` or `(any I)?`, and `got` conforms and may convert to `want`.
+    /// it: `want` is `any I` or `(any I)?`, and `got` conforms and may convert to `want`. This is
+    /// the question for an expected type. An optional that conforms converts to a bare `any I`.
     pub(super) fn converts_to_any(&mut self, got: Type, want: Type) -> bool {
         let target = match want.kind() {
             TypeKind::Optional(payload) => payload,
@@ -407,12 +408,20 @@ impl Checker<'_> {
             && self.conforms(got, interface, args)
     }
 
+    /// Whether a member of type `got` joins into `want`, an `any` type or its optional. It is
+    /// `converts_to_any` for every type but an optional: an optional beside an `any` type makes
+    /// the join optional (`any I` beside `None` is `(any I)?`), so it never goes into the bare
+    /// `any I`. An expected type is another question, and `converts_to_any` answers it.
+    pub(super) fn joins_to_any(&mut self, got: Type, want: Type) -> bool {
+        !matches!(got.kind(), TypeKind::Optional(_)) && self.converts_to_any(got, want)
+    }
+
     /// The type that values of types `a` and `b` join to when one converts to the other: the `any`
     /// type, with its optional layer. A join never makes an `any` type that neither side has.
     pub(super) fn any_join(&mut self, a: Type, b: Type) -> Option<Type> {
-        if a == b || self.converts_to_any(b, a) {
+        if a == b || self.joins_to_any(b, a) {
             Some(a)
-        } else if self.converts_to_any(a, b) {
+        } else if self.joins_to_any(a, b) {
             Some(b)
         } else {
             None
@@ -434,7 +443,7 @@ impl Checker<'_> {
             }
         }
         for &(other, t) in members {
-            if !is_target(t) && t != ty && !self.converts_to_any(t, ty) {
+            if !is_target(t) && t != ty && !self.joins_to_any(t, ty) {
                 return AnyJoin::Leaves {
                     ty,
                     member: (other, t),

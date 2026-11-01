@@ -1293,3 +1293,46 @@ fn coalesce_should_join_its_payload_and_its_default_to_the_any_type() {
         &[(Code::Mismatch, (3, 18))],
     );
 }
+
+/// An `any` value beside `None`, `Some` or an optional `any` value joins to an optional `any`
+/// value: the optional side does not go into a bare `any I`. Only an expected `any I` boxes it.
+#[test]
+fn a_join_of_an_any_value_and_an_optional_should_stay_optional() {
+    for (row, src) in [
+        (
+            "`None` beside an `any` value, in an `if`",
+            "fn main() {\n    let d: any Display = 1\n    let r = if true { d } else { None }\n    print(r ?? 9)\n}",
+        ),
+        (
+            "`??` of an optional `any` value and `None`",
+            "fn main() {\n    let o: (any Display)? = None\n    let k = o ?? None\n    let m: (any Display)? = k\n    print(m ?? 9)\n}",
+        ),
+        (
+            "`??` of two optional `any` values",
+            "fn main() {\n    let a: (any Display)? = None\n    let b: (any Display)? = None\n    let c = a ?? b\n    print(c ?? 9)\n}",
+        ),
+        (
+            "`Some` beside an `any` value, in an `if`",
+            "fn main() {\n    let d: any Display = 1\n    let r = if false { d } else { Some(2) }\n    print(r ?? 9)\n}",
+        ),
+    ] {
+        clean_row(row, src);
+    }
+    // The join is optional, so printing it warns, as it does for any optional.
+    for (row, src) in [
+        (
+            "`None` beside an `any` value",
+            "fn main() {\n    let d: any Display = 1\n    let r = if true { d } else { None }\n    print(r)\n}",
+        ),
+        (
+            "`Some` beside an `any` value",
+            "fn main() {\n    let d: any Display = 1\n    let r = if true { d } else { Some(2) }\n    print(r)\n}",
+        ),
+        (
+            "`??` of an optional `any` value and `None`",
+            "fn main() {\n    let o: (any Display)? = None\n    let k = o ?? None\n    print(k)\n}",
+        ),
+    ] {
+        codes_row(row, src, &[(Code::PrintsOptional, (4, 11))]);
+    }
+}

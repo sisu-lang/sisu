@@ -429,7 +429,7 @@ impl Checker<'_> {
                 if object(inner.ty)
                     && object(want)
                     && inner.ty != want
-                    && !self.converts_to_any(inner.ty, want) =>
+                    && !self.joins_to_any(inner.ty, want) =>
             {
                 Some((inner.span, want, inner.ty))
             }

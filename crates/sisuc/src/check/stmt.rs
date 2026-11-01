@@ -1342,6 +1342,19 @@ impl Checker<'_> {
                 self.diagnostics.push(d);
                 return Err(Poisoned::error());
             }
+            // An optional beside an `any` type is the mistake, not a value to convert: the join
+            // of the two would be optional.
+            if matches!(got.kind(), TypeKind::Optional(_)) && is_target(first) {
+                let d = self.mismatch_from(
+                    v.span,
+                    Some(v),
+                    first,
+                    got,
+                    Some(MismatchSource::Break(at)),
+                );
+                self.diagnostics.push(d);
+                return Err(Poisoned::error());
+            }
             return self
                 .against(v, Ok(value), Some(first), Some(MismatchSource::Break(at)))
                 .0;

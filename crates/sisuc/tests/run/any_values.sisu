@@ -145,6 +145,20 @@ fn main() {
     let inner: any Display = wrapped
     print("{held} {inner}") // None 3
 
+    // An `any` value beside `None`, `Some` or an optional `any` value joins to an optional `any`.
+    let lone: any Display = 1
+    let beside_none = if true { lone } else { None }
+    print(beside_none ?? 9) // 1
+    let beside_some = if false { lone } else { Some(2) }
+    print(beside_some ?? 9) // 2
+    let first: (any Display)? = None
+    let second: (any Display)? = None
+    let either = first ?? second
+    print(either ?? 9) // 9
+    let rest = first ?? None
+    let rested: (any Display)? = rest
+    print(rested ?? 9) // 9
+
     // An enum that conforms to `Shape`, called through the table.
     let plain: any Shape = Slab.Plain
     let label: any Shape = Slab.Label("abc")

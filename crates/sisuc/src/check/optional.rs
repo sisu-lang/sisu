@@ -62,7 +62,7 @@ impl Checker<'_> {
                                 beneath(got).kind(),
                                 TypeKind::Class(..) | TypeKind::Any(..)
                             )
-                            && !self.converts_to_any(got, payload) =>
+                            && !self.joins_to_any(got, payload) =>
                     {
                         (checked, optional_of(got))
                     }
