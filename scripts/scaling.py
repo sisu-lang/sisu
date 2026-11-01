@@ -51,8 +51,9 @@ DEFAULT_OUT = 'target/scaling'
 ROOT = Path(__file__).resolve().parent.parent
 
 
-# The width of a number in a name. The largest size of any shape is 8 * 250 = 2000, so each name
-# has the same length at each size, and the text of a program grows with the number of copies.
+# The width of a number in a name. The largest size of any shape is 8 * 250 = 2000.
+# So each name has the same length at each size. Then the text of a program grows with the
+# number of copies.
 WIDTH = 4
 
 
@@ -69,7 +70,7 @@ def nest(k, wrap, core):
 
 
 def functions(k):
-    funs = ['fn step0000() -> i64 {\n    1\n}\n'] if k else []
+    funs = [f'fn step{tag(0)}() -> i64 {{\n    1\n}}\n'] if k else []
     funs += [f'fn step{tag(i)}() -> i64 {{\n    step{tag(i - 1)}() + 1\n}}\n' for i in range(1, k)]
     shown = f'"{{step{tag(k - 1)}()}}"' if k else '"none"'
     return '\n'.join(funs) + f'\nfn main() {{\n    print({shown})\n}}\n'
@@ -77,7 +78,7 @@ def functions(k):
 
 def statements(k):
     lets = ''.join(f'    let a{tag(i)} = a{tag(i - 1)} + 1\n' for i in range(1, k + 1))
-    return f'fn main() {{\n    let a0000 = 0\n{lets}    print("{{a{tag(k)}}}")\n}}\n'
+    return f'fn main() {{\n    let a{tag(0)} = 0\n{lets}    print("{{a{tag(k)}}}")\n}}\n'
 
 
 def expression_depth(k):

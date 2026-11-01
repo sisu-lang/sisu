@@ -592,9 +592,9 @@ class ScalingTest(unittest.TestCase):
         THEN the growth in bytes at each size is below 2.01 times the growth at half that size
         """
         # Linear text gives 2.00. The commas of the array literal width and the text that differs at
-        # size 0 give at most 2.003. A name with more digits at a larger size gives up to 2.12, and
-        # a nested block that indents its inner lines again gives about 4: the lexer would then look
-        # quadratic. The names have a fixed width, so the bound 2.01 is tight.
+        # size 0 give at most 2.003. A name with more digits at a larger size gives up to 2.12.
+        # A nested block that indents its inner lines again gives about 4. The lexer would then
+        # look quadratic. The names have a fixed width, so the bound 2.01 is tight.
         for name, (n, make) in sc.SHAPES.items():
             sizes = [0, n, 2 * n, 4 * n, 8 * n]
             growth = [len(make(k)) - len(make(0)) for k in sizes]
@@ -675,6 +675,14 @@ class ScalingTest(unittest.TestCase):
                 (known_shape, [1000, 4500, 18900, 71820], KNOWN_344, 0, ''),
             'r3 = 2.95 in a fall looks fixed':
                 (known_shape, [1000, 3400, 10200, 30090], KNOWN_344, 1, '#344 looks fixed'),
+            'r3 = 2.15 stays known':
+                (known_shape, [1000, 2200, 5000, 10750], KNOWN_344, 0, ''),
+            'r3 = 2.14 looks fixed':
+                (known_shape, [1000, 2200, 5000, 10700], KNOWN_344, 1, '#344 looks fixed'),
+            'r3 = 3.0 in a fall stays known':
+                (known_shape, [1000, 3500, 10500, 31500], KNOWN_344, 0, ''),
+            'r3 just under 3.0 in a fall looks fixed':
+                (known_shape, [1000, 3500, 10500, 31499], KNOWN_344, 1, '#344 looks fixed'),
         }
         for name, (name_of_shape, growth, known, code, text) in rows.items():
             with self.subTest(name), mock.patch.object(sc, 'KNOWN', known):
