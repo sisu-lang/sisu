@@ -56,7 +56,7 @@ impl Checker<'_> {
             && let Some(got) = type_of(&checked)
                 .filter(|&got| got != Type::CHAR && !NEGATABLE.contains(&payload(got)))
         {
-            let d = self.takes_mismatch(operand.span, &NEGATABLE, got);
+            let d = self.takes_mismatch(operand.span, NEGATABLE, got);
             self.diagnostics.push(d);
             return Ok((want, (Err(Poisoned::error()), true)));
         }
@@ -920,4 +920,4 @@ impl Operator {
 }
 
 /// The types unary `-` takes. A `u8` is its own error: it cannot be negative.
-pub(super) const NEGATABLE: [Type; 2] = [Type::I64, Type::F64];
+pub(super) const NEGATABLE: &[Type] = &[Type::I64, Type::F64];

@@ -20,7 +20,7 @@ use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
 
 /// The methods of a `string`, none of which takes an argument.
-pub(super) const METHODS: [&str; 4] = ["len", "chars", "bytes", "words"];
+pub(super) const METHODS: &[&str] = &["len", "chars", "bytes", "words"];
 
 impl Checker<'_> {
     /// `l + r` over two `string`s, which `mismatched` says were reported against.
@@ -324,7 +324,7 @@ impl Checker<'_> {
                     return self.call_of_rejected_method(method, args);
                 }
                 let owner = self.type_name(Type::STRING);
-                let d = no_member(Definition::Method, owner, method, METHODS);
+                let d = no_member(Definition::Method, owner, method, METHODS.iter().copied());
                 return self.rejected(d, args);
             }
         };
