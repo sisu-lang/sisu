@@ -545,14 +545,15 @@ class ScalingTest(unittest.TestCase):
 
     def test_report_that_cannot_be_written_should_exit_with_code_1(self):
         """
-        GIVEN a run of the functions shape
-        AND a regular file where the output directory belongs
+        GIVEN a run of the functions shape that measures with no error
+        AND a directory where `counts.json` belongs
         WHEN `scripts/scaling.py` runs
         THEN it exits with code 1
         AND standard error has one `scaling:` line that says the report cannot be written
         AND it raises no exception
         """
-        self.out.write_text('not a directory')
+        self.out.mkdir()
+        (self.out / 'counts.json').mkdir()
         code, _, err = self.stub_run('functions')
         self.assertEqual(code, 1)
         self.assertIn('scaling: cannot write the report', err)
