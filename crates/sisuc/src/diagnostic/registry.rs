@@ -803,13 +803,11 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         receiver: MethodReceiver,
     },
-    /// The token at `at`, where the tree passes `limit` levels. For a type that a type alias makes
-    /// deep, `alias` is the type as written, which names more than `limit` levels, and `at` is
-    /// where it is written.
+    /// The token at `at`, where the tree passes `limit` levels, and what made it deep.
     NestingTooDeep {
         at: Span,
         limit: usize,
-        alias: Option<String>,
+        form: NestingForm,
     },
     /// The first byte at `at` that is not UTF-8, which the text shown in its place replaces.
     InvalidUtf8 { at: Span },
@@ -1395,6 +1393,18 @@ pub(crate) enum PrintProblem {
     Count,
     /// The argument has no value: it is a call that returns nothing.
     NoValue,
+}
+
+/// What made a tree pass the nesting limit.
+pub(crate) enum NestingForm {
+    /// Nested expressions, blocks, patterns or types.
+    Tree,
+    /// A chain of operators, calls, fields or indexes, such as `a + b + c`: each link is one
+    /// level, and the links are more than half the levels.
+    Chain,
+    /// A use of a type alias: the text is the type as written, which names more than the limit,
+    /// and the tree's token is where it is written.
+    Alias(String),
 }
 
 /// Why `main`'s signature is wrong.
@@ -3736,11 +3746,24 @@ impl From<DiagnosticKind> for Diagnostic {
                     edits,
                 })
             }
-            DiagnosticKind::NestingTooDeep { at, limit, alias: None } => {
-                Diagnostic::coded(code, at, "nesting is too deep")
-                    .with_help(format!("the limit is {limit} levels"))
-            }
-            DiagnosticKind::NestingTooDeep { at, limit, alias: Some(ty) } => Diagnostic::coded(
+            DiagnosticKind::NestingTooDeep {
+                at,
+                limit,
+                form: NestingForm::Tree,
+            } => Diagnostic::coded(code, at, "nesting is too deep")
+                .with_help(format!("the limit is {limit} levels")),
+            DiagnosticKind::NestingTooDeep {
+                at,
+                limit,
+                form: NestingForm::Chain,
+            } => Diagnostic::coded(code, at, format!("this chain makes the nesting deeper than {limit} levels"))
+                .with_label("each operator, call, field or index in a chain adds one level")
+                .with_help("put a part of the chain in a `let`"),
+            DiagnosticKind::NestingTooDeep {
+                at,
+                limit,
+                form: NestingForm::Alias(ty),
+            } => Diagnostic::coded(
                 code,
                 at,
                 format!("the type that `{ty}` names nests deeper than {limit} levels"),
