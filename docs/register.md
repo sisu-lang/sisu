@@ -34,7 +34,6 @@ are GitHub issues.
 | The fixed-size inline array is `FixedArray<T, N>`. There is no `Slice<T>` type: `xs[a..b]` is a `[T]` that shares its elements. | 2026-10-17 | none; the roadmap's "fixed-size inline array" bullet points here | Milestone 9 part 1, Task 0 (roadmap) |
 | A `mut` parameter lets a function change the caller's array or struct: `fn set(mut cells: [i64])`, called as `set(mut b.cells)`. `exchange` becomes a prelude function. | 2026-10-30 | ADR 0007 and ADR 0011 (no parameter changes the caller's value); E0019; `docs/roadmap.md` ("`inout` parameters stay out", `x.exchange(with: v)` as a method) | `mut` parameters step 1, after milestone 8 part 8 and before milestone 9 |
 | A bare variant `V` means `E.V` when the expected type is the enum `E`. A name that is also a local is an error. | 2026-10-31 | ADR 0019 (bare `Num(2)`, the reserved `.Variant` form); `docs/roadmap.md` ("Names and namespaces" keeps Swift's `.circle` open, with a note) | After slices: a new ADR |
-| A deep drop counts its depth, and past a limit it puts the rest in a queue that the outermost drop empties (#191). | 2026-11-01 | ADR 0005 (one stack frame per object); ADR 0019 (a box is freed from a pending list) | The deep-drop plan |
 | `sisu check` builds the mir. Copies show as the loop-copy warning only, with no run-time copy report. | 2026-10-26 | `docs/architecture.md` (check stops after the checker; the mir is built on the build path only); `GLOSSARY.md` (Front end); ADR 0023 and E0030 (a chain that mono stops passes `sisu check`) | The loop-copy warning |
 
 ## Debt
