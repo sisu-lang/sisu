@@ -167,10 +167,6 @@ fn any_values_should_check_clean_where_a_value_converts() {
             "fn id<T>(x: T) -> T { x }\nfn main() {\n    let d: any Display = id(5)\n}",
         ),
         (
-            "an optional whose type conforms, which goes into a box",
-            "fn main() {\n    let x: i64? = None\n    let d: any Display = x\n    let o: (any Display)? = None\n    let e: any Display = o\n}",
-        ),
-        (
             "an interface value of an enum that converts to `any Display`",
             "enum Slab: Shape {\n    Plain\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {\n    let s: any Shape = Slab.Plain\n    let d: any Display = s\n}",
         ),
@@ -1493,8 +1489,8 @@ fn an_array_literal_should_join_a_some_with_an_any_element_as_an_if_does() {
 }
 
 /// An optional beside an `any` value does not go into a bare `any I` where no type is written: a
-/// join and a comparison report it, and `??` keeps its result optional. A written `any I` boxes
-/// the optional.
+/// join and a comparison report it, and `??` keeps its result optional. A written `any I` does
+/// not take the optional either.
 #[test]
 fn an_optional_beside_an_any_value_should_stay_a_mistake_where_no_type_is_written() {
     for (row, src, expected) in [
@@ -1513,12 +1509,14 @@ fn an_optional_beside_an_any_value_should_stay_a_mistake_where_no_type_is_writte
             "fn main() {\n    let d: any Display = 1\n    let x: i64? = Some(5)\n    let r = d == x\n    print(r)\n}",
             vec![(Code::CannotCompare, (4, 13))],
         ),
+        (
+            "`??` of an optional default, under a written `any` type",
+            "fn main() {\n    let x: i64? = Some(5)\n    let o: (any Display)? = None\n    let r: any Display = o ?? x\n    print(r)\n}",
+            vec![(Code::Mismatch, (4, 31))],
+        ),
     ] {
         codes_row(row, src, &expected);
     }
-    clean(
-        "fn main() {\n    let x: i64? = Some(5)\n    let o: (any Display)? = None\n    let r: any Display = o ?? x\n    print(r)\n}",
-    );
 }
 
 /// The type `E` of the earlier branch in the parity cases, each with the value that a local of
@@ -1821,7 +1819,8 @@ const BRANCH_ARRAY_LOCALS: &str = "fn main() {\n    let c = true\n    let d: any
 
 /// The branch arrays that reviews found, each with its exact codes and positions: an element of a
 /// branch array in a join with no written type joins as the value would beside the elements of
-/// the earlier branch array, and a written type outside the join still converts.
+/// the earlier branch array, and a written type outside the join converts each value but an
+/// optional.
 #[test]
 fn a_branch_array_should_report_the_element_that_leaves_the_earlier_elements() {
     let rows: [Row<'_>; 19] = [
@@ -1888,12 +1887,12 @@ fn a_branch_array_should_report_the_element_that_leaves_the_earlier_elements() {
         (
             "an optional number beside `any` values, under a written type",
             "    let r: [any Display] = if c { [d] } else { [x] }",
-            vec![],
+            vec![(Code::Mismatch, (7, 49))],
         ),
         (
             "a `Some` of a number beside `any` values, under a written type",
             "    let r: [any Display] = if c { [d] } else { [Some(2)] }",
-            vec![],
+            vec![(Code::Mismatch, (7, 49))],
         ),
         (
             "a `None` beside `any` values, under a written optional type",
@@ -1971,14 +1970,14 @@ fn a_hinted_some_should_not_box_an_optional_argument_into_a_bare_any() {
             vec![(Code::Mismatch, (10, 34))],
         ),
         (
-            "a written optional `any` type, which converts",
+            "a written optional `any` type, which the optional does not convert to",
             "    let r: (any Display)? = if c { o } else { Some(y) }",
-            vec![],
+            vec![(Code::Mismatch, (10, 52))],
         ),
         (
-            "a written array of an optional `any` type, which converts",
+            "a written array of an optional `any` type, which the optional does not convert to",
             "    let r: [(any Display)?] = [Some(y)]",
-            vec![],
+            vec![(Code::Mismatch, (10, 37))],
         ),
         (
             "a `Some` of an optional beside a bare `any` value",
@@ -2061,5 +2060,139 @@ fn a_hinted_some_should_build_only_when_its_argument_is_not_optional() {
         "{} of {cases} cases fail:\n{}",
         failures.len(),
         failures.join("\n")
+    );
+}
+
+/// The locals of the rows of an optional and a bare `any` type, before the row's own lines,
+/// which start at line 8.
+const OPTIONAL_LOCALS: &str = "fn main() {\n    let c = true\n    let d: any Display = 1\n    let o: (any Display)? = Some(d)\n    let x: i64? = Some(5)\n    let y: i64? = None\n    let cx: Circle? = Some(Circle(r: 1.0))\n";
+
+/// The declarations after `main` in the rows of an optional and a bare `any` type.
+const OPTIONAL_DECLS: &str = "fn pick<T>(a: T, b: T) -> T { b }\nclass P<T> {\n    a: T\n    b: T\n}\nenum Cs<T> {\n    Two(T, T)\n}\nfn wrap<T: Display>(v: T) -> any Display { v }\nfn show(v: any Display) {}\nclass B {\n    v: any Display\n}\n";
+
+/// An optional never converts to a bare `any I`, whether a type is written or a generic call
+/// infers it from an earlier argument: each place reports it at the optional. A `Some` of a
+/// value that converts, a `None`, and a bound type parameter whose type is an optional still
+/// build.
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one row for each place an optional meets a bare `any` type"
+)]
+fn an_optional_should_not_convert_to_a_bare_any() {
+    let rows: [Row<'_>; 21] = [
+        (
+            "a written type",
+            "    let e: any Display = x",
+            vec![(Code::Mismatch, (8, 26))],
+        ),
+        (
+            "a written type, from an optional `any` value",
+            "    let e: any Display = o",
+            vec![(Code::Mismatch, (8, 26))],
+        ),
+        (
+            "a parameter",
+            "    show(x)",
+            vec![(Code::Mismatch, (8, 10))],
+        ),
+        (
+            "a field",
+            "    let b = B(v: x)",
+            vec![(Code::Mismatch, (8, 18))],
+        ),
+        (
+            "an array of a written type",
+            "    let xs: [any Display] = [x]",
+            vec![(Code::Mismatch, (8, 30))],
+        ),
+        (
+            "an optional class, where a class `any` type is written",
+            "    let k: any Shape = cx",
+            vec![(Code::Mismatch, (8, 24))],
+        ),
+        (
+            "a `Some` of an optional after an optional `any` value, in a generic call",
+            "    let r = pick(o, Some(y))",
+            vec![(Code::Mismatch, (8, 26))],
+        ),
+        (
+            "the same in a generic class",
+            "    let r = P(a: o, b: Some(y))",
+            vec![(Code::Mismatch, (8, 29))],
+        ),
+        (
+            "the same in a generic enum case",
+            "    let r = Cs.Two(o, Some(y))",
+            vec![(Code::Mismatch, (8, 28))],
+        ),
+        (
+            "an optional after an `any` value, in a generic call",
+            "    let r = pick(d, x)",
+            vec![(Code::Mismatch, (8, 19))],
+        ),
+        (
+            "the same in a generic class",
+            "    let r = P(a: d, b: x)",
+            vec![(Code::Mismatch, (8, 24))],
+        ),
+        (
+            "a `Some` of a number after an `any` value, in a generic call",
+            "    let r = pick(d, Some(2))",
+            vec![(Code::Mismatch, (8, 19))],
+        ),
+        (
+            "a hint with no `any` type and an optional argument of another type",
+            "    let k: i64?? = None\n    let z: f64? = 1.0\n    let r = if c { k } else { Some(z) }",
+            vec![(Code::Mismatch, (10, 36))],
+        ),
+        (
+            "a `Some` of an `any` value",
+            "    let w: (any Display)? = Some(d)",
+            vec![],
+        ),
+        ("a `None`", "    let w: (any Display)? = None", vec![]),
+        (
+            "a `Some` of a number beside an `any` value",
+            "    let r = [d, Some(2)]",
+            vec![],
+        ),
+        (
+            "the same in an `if`",
+            "    let r = if c { d } else { Some(2) }",
+            vec![],
+        ),
+        (
+            "a bound type parameter at an optional",
+            "    let r = wrap(x)",
+            vec![],
+        ),
+        (
+            "a `Some` of an `any` value after an optional `any` value, in a generic call",
+            "    let r = pick(o, Some(d))",
+            vec![],
+        ),
+        (
+            "a `None` after an optional `any` value, in a generic call",
+            "    let r = pick(o, None)",
+            vec![],
+        ),
+        (
+            "an unwrapped optional",
+            "    let e: any Display = x ?? 0",
+            vec![],
+        ),
+    ];
+    for (row, lines, expected) in rows {
+        codes_after(
+            row,
+            &format!("{OPTIONAL_LOCALS}{lines}\n}}\n{OPTIONAL_DECLS}"),
+            &expected,
+        );
+    }
+    codes_after(
+        "a return",
+        "fn give(v: i64?) -> any Display { v }\nfn main() {}",
+        &[(Code::Mismatch, (1, 35))],
     );
 }

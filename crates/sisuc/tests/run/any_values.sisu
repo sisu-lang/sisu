@@ -1,8 +1,8 @@
 // GIVEN interfaces `Shape`, `Named` and `Held`, a class `Circle`, an enum `Num` with a written
 // `to_string`, an `Expr` enum with a deep chain, an enum `Slab` with a `string` payload that
 // conforms to `Shape` and `Named`, an enum `Crate` that conforms to `Held`, and optionals
-// WHEN values that are no objects (a `string`, a `char`, a number, an enum, an optional) are
-// converted to `any`, stored, passed, called through the table, shown, copied and dropped
+// WHEN values that are no objects (a `string`, a `char`, a number, an enum) are converted
+// to `any`, stored, passed, called through the table, shown, copied and dropped
 // THEN each call runs the method of the value inside, each value shows as its type does, and
 // Valgrind and `--rc-checks` find every box and every payload freed once
 interface Shape {
@@ -135,15 +135,14 @@ fn main() {
     print("{e:#}".len() > "{e}".len()) // true: the layout adds line breaks
     print("{s:#}" == "{e:#}") // true
 
-    // An optional whose type conforms goes into a box, `None` and a value alike.
+    // An optional does not convert to an `any` type: `??` takes its value out first.
     let some: i64? = Some(3)
     let none: i64? = None
-    let boxed: [any Display] = [some, none]
-    print(boxed) // [3, None]
-    let held: any Display = none
-    let wrapped: (any Display)? = Some(some)
-    let inner: any Display = wrapped
-    print("{held} {inner}") // None 3
+    let boxed: [any Display] = [some ?? 0, none ?? 0]
+    print(boxed) // [3, 0]
+    let wrapped: (any Display)? = Some(some ?? 0)
+    let inner: any Display = wrapped ?? 0
+    print("{inner}") // 3
 
     // An `any` value beside `None`, `Some` or an optional `any` value joins to an optional `any`.
     let lone: any Display = 1
