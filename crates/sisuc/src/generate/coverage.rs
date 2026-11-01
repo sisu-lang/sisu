@@ -7616,42 +7616,54 @@ fn generated_shapes_should_call_every_requirement_of_a_conformed_interface() {
     );
 }
 
+/// A method that meets a requirement with an `i64` or `string` result, as `Requirement::method`
+/// writes it: `fn r<n>(self, ...) -> <result> { <value> }`.
+pub(crate) struct Method<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) result: &'a str,
+    pub(crate) value: &'a str,
+}
+
+/// The methods of `source` with an `i64` or `string` result that meet a requirement, each with the
+/// number of its line.
+pub(crate) fn methods(source: &str) -> Vec<(usize, Method<'_>)> {
+    fn method(line: &str) -> Option<Method<'_>> {
+        let (name, rest) = line.trim_start().strip_prefix("fn r")?.split_once('(')?;
+        let (_, rest) = rest.split_once(") -> ")?;
+        let (result, value) = rest.split_once(" { ")?;
+        let named = name.bytes().all(|b| b.is_ascii_digit());
+        (named && ["i64", "string"].contains(&result)).then(|| Method {
+            name,
+            result,
+            value: value.trim_end_matches(" }"),
+        })
+    }
+    (source.lines().enumerate())
+        .filter_map(|(at, line)| method(line).map(|method| (at, method)))
+        .collect()
+}
+
 /// No two methods that meet a requirement return the same value in a program, for each of the
 /// results `i64` and `string`, so a call that reaches the wrong method prints another line.
 #[test]
 fn generated_methods_should_return_values_that_no_other_method_returns() {
-    let mut methods = [0, 0];
+    let mut counts = [0, 0];
     for data in seeds() {
         let source = generate(&data).program;
         let mut values: [FxHashSet<&str>; 2] = Default::default();
-        for line in source.lines().map(str::trim_start) {
-            // `fn r<n>(self, ...) -> <result> { <value> }`: the requirements are `r<n>`.
-            let Some(rest) = line.strip_prefix("fn r") else {
-                continue;
-            };
-            let Some((name, rest)) = rest.split_once('(') else {
-                continue;
-            };
-            let Some((_, result)) = rest.split_once(") -> ") else {
-                continue;
-            };
-            let Some((ty, value)) = result.split_once(" { ") else {
-                continue;
-            };
-            let kind = match ty {
-                "i64" => 0,
-                "string" => 1,
-                _ => continue,
-            };
-            if name.bytes().all(|b| b.is_ascii_digit()) {
-                assert!(values[kind].insert(value), "{value} twice in {source}");
-                methods[kind] += 1;
-            }
+        for (_, method) in methods(&source) {
+            let kind = usize::from(method.result == "string");
+            assert!(
+                values[kind].insert(method.value),
+                "{} twice in {source}",
+                method.value
+            );
+            counts[kind] += 1;
         }
     }
     assert!(
-        methods.iter().all(|&n| n > 0),
-        "methods of {SEEDS} seeds: {methods:?}"
+        counts.iter().all(|&n| n > 0),
+        "methods of {SEEDS} seeds: {counts:?}"
     );
 }
 

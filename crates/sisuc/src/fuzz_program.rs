@@ -1231,18 +1231,13 @@ mod tests {
         assert!(failure.detail.contains("--rc-checks"), "{}", failure.detail);
     }
 
-    /// The text of the item of `program` that starts with `header` at the start of a line: the
-    /// line alone when it ends in `}`, else up to the line `}` that closes it.
+    /// The text of the item of `program` that starts with `header` at the start of a line, up to
+    /// the line `}` that closes it.
     fn item<'a>(program: &'a str, header: &str) -> Option<&'a str> {
-        let start = if program.starts_with(header) {
-            0
-        } else {
-            program.find(&format!("\n{header}"))? + 1
-        };
+        // The header is found after a line break, so one at the start of `program` is too: a break
+        // put before `program` moves each position by one.
+        let start = format!("\n{program}").find(&format!("\n{header}"))?;
         let rest = &program[start..];
-        if rest.lines().next()?.ends_with('}') {
-            return rest.lines().next();
-        }
         Some(&rest[..rest.find("\n}\n")? + 2])
     }
 
@@ -1277,12 +1272,11 @@ mod tests {
         let shapes = item(program, "fn shapes()").unwrap_or_default();
         // The most interfaces a program declares is three.
         let interfaces = 0..3;
-        let conformances = |keyword: &str, prefix: &str| {
-            program
-                .lines()
+        let conformances = |keyword: &str| {
+            (program.lines())
                 .filter(|line| line.starts_with(keyword) && line.contains(": I"))
                 .filter_map(|line| item(program, line))
-                .any(|body| has_method(body) && body.starts_with(prefix))
+                .any(has_method)
         };
         match row {
             "a direct call on `Q<k>` and on `N<k>`" => marks(shapes, "{q") && marks(shapes, "{n"),
@@ -1314,18 +1308,17 @@ mod tests {
             }
             "a result `T` picked by the expected type, `i64` and `string`" => {
                 let mut types: BTreeMap<&str, Vec<&str>> = BTreeMap::default();
-                for line in shapes
+                let lets = shapes
                     .lines()
-                    .filter_map(|l| l.trim().strip_prefix("let d"))
+                    .filter_map(|l| l.trim().strip_prefix("let d"));
+                for (ty, call) in lets
+                    .filter_map(|line| line.split_once(": "))
+                    .filter_map(|(_, rest)| rest.split_once(" = "))
                 {
-                    if let Some((_, rest)) = line.split_once(": ")
-                        && let Some((ty, call)) = rest.split_once(" = ")
-                    {
-                        types
-                            .entry(call.split('(').next().unwrap_or_default())
-                            .or_default()
-                            .push(ty);
-                    }
+                    types
+                        .entry(call.split('(').next().unwrap_or_default())
+                        .or_default()
+                        .push(ty);
                 }
                 types
                     .values()
@@ -1338,10 +1331,10 @@ mod tests {
                 item(program, &format!("fn pick{k}<")).is_some_and(|body| marks(body, ""))
             }),
             "a conformance in an `extend` block" => {
-                conformances("extend Q", "extend Q") || conformances("extend N", "extend N")
+                ["extend Q", "extend N"].into_iter().any(conformances)
             }
             "a conformance in the declaration list" => {
-                conformances("class Q", "class Q") || conformances("enum N", "enum N")
+                ["class Q", "enum N"].into_iter().any(conformances)
             }
             _ => unreachable!("{row} should be one of `DISPATCHES`"),
         }
@@ -1445,41 +1438,24 @@ mod tests {
     }
 
     /// `program` with the values of two methods of one requirement swapped: two methods of the
-    /// same name and result type, which only `i64` and `string` results have. `None` when the
-    /// program has no such two.
-    fn swapped(program: &str) -> Option<String> {
+    /// same name and result type.
+    fn swapped(program: &str) -> String {
+        let methods = coverage::methods(program);
+        let ((a, first), (b, second)) = (methods.iter().enumerate())
+            .find_map(|(at, (line, method))| {
+                (methods[at + 1..].iter())
+                    .find(|(_, other)| (other.name, other.result) == (method.name, method.result))
+                    .map(|(other_line, other)| ((*line, method), (*other_line, other)))
+            })
+            .expect("the program should hold two methods of one requirement");
         let mut lines: Vec<String> = program.lines().map(str::to_string).collect();
-        let mut groups: BTreeMap<(String, String), Vec<usize>> = BTreeMap::default();
-        for (at, line) in lines.iter().enumerate() {
-            let Some(rest) = line.trim_start().strip_prefix("fn r") else {
-                continue;
-            };
-            let Some((name, rest)) = rest.split_once('(') else {
-                continue;
-            };
-            let Some((_, result)) = rest.split_once(") -> ") else {
-                continue;
-            };
-            if let Some((ty, _)) = result.split_once(" { ")
-                && name.bytes().all(|b| b.is_ascii_digit())
-                && (ty == "i64" || ty == "string")
-            {
-                groups
-                    .entry((name.to_string(), ty.to_string()))
-                    .or_default()
-                    .push(at);
-            }
+        for (at, from, to) in [
+            (a, first.value, second.value),
+            (b, second.value, first.value),
+        ] {
+            lines[at] = lines[at].replace(&format!("{{ {from} }}"), &format!("{{ {to} }}"));
         }
-        let methods = groups.values().find(|methods| methods.len() >= 2)?;
-        let value = |line: &str| {
-            let (_, value) = line.rsplit_once(" -> ")?.1.split_once(" { ")?;
-            Some(value.trim_end_matches(" }").to_string())
-        };
-        let (a, b) = (methods[0], methods[1]);
-        let (first, second) = (value(&lines[a])?, value(&lines[b])?);
-        lines[a] = lines[a].replace(&format!("{{ {first} }}"), &format!("{{ {second} }}"));
-        lines[b] = lines[b].replace(&format!("{{ {second} }}"), &format!("{{ {first} }}"));
-        Some(lines.join("\n") + "\n")
+        lines.join("\n") + "\n"
     }
 
     /// A program of the series where two methods of one requirement, on two types, swap their
@@ -1489,7 +1465,7 @@ mod tests {
     #[test]
     fn judge_marked_should_fail_when_two_methods_swap_their_values() {
         let (g, _) = dispatch_of(DISPATCHES[0]);
-        let source = swapped(&g.program).expect("the program should hold two methods of a name");
+        let source = swapped(&g.program);
         assert_ne!(source, g.program);
         let run = on_stack(|| {
             let scratch = Scratch::new();
@@ -1528,6 +1504,49 @@ mod tests {
             ),
             (5, true)
         );
+    }
+
+    /// A program that prints `@d0 a` once, as its own text and as its rewritten copy, with the
+    /// known sites `known` and the expected marked lines `expected`.
+    fn printing(known: Vec<Known>, expected: &[&str]) -> Generated {
+        let program = "fn main() {\n    print(\"@d0 a\")\n}\n";
+        Generated {
+            program: program.to_string(),
+            rewritten: program.to_string(),
+            stdin: String::new(),
+            known,
+            expected: expected.iter().map(ToString::to_string).collect(),
+            bound_sites: Vec::new(),
+            cost: 0,
+            plain: String::new(),
+            made: Vec::new(),
+        }
+    }
+
+    /// The failed property of `judge` on `g`, 0 for none, and the record of the builds.
+    fn judged(g: &Generated) -> (u8, String) {
+        let scratch = Scratch::new();
+        on_stack(|| judge(g, &runtime(), &scratch.0))
+            .map_or_else(|(f, record)| (f.property, record), |()| (0, String::new()))
+    }
+
+    #[test]
+    fn judge_should_pass_when_the_marked_lines_are_the_expected_ones() {
+        assert_eq!(judged(&printing(Vec::new(), &["@d0 a"])).0, 0);
+    }
+
+    #[test]
+    fn judge_should_fail_property_5_when_a_marked_line_is_not_the_expected_one() {
+        let (property, record) = judged(&printing(Vec::new(), &["@d0 b"]));
+        assert_eq!(property, 5);
+        assert!(record.contains("==> program O0"), "{record}");
+    }
+
+    #[test]
+    fn judge_should_fail_property_5_when_a_known_value_is_not_printed() {
+        let (property, record) = judged(&printing(vec![value("k0", "1")], &["@d0 a"]));
+        assert_eq!(property, 5);
+        assert!(record.contains("==> program O0"), "{record}");
     }
 
     /// The `n`th seed of the coverage test's series, which walks the first 64.
