@@ -1,0 +1,8 @@
+error[E0032]: expected `i64`, found `W`
+  --> E0032-bound-context-single.sisu:14:19
+   |
+14 |     let _x: i64 = g(W())
+   |                   ^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

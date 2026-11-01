@@ -1,0 +1,19 @@
+// GIVEN `k2`, which returns its second argument, `h`, which takes an optional `T?` beside its
+//       `T`, and `pick`, which takes two `T`
+// WHEN an array holds a `u8` and a `k2` call whose first argument is a literal
+// AND `pick` takes an `h` call with a `Some` at the `T?` place, and a `Some`
+// AND a `u8?` context takes an `h` call with a `Some(Some(2))` at the `T?` place
+// THEN only the second argument of `k2` gives the call its type, so the array holds `u8`
+// AND the `Some` at the `T?` place fills the `?`, so `pick` has the type `i64?` that its second
+//      argument gives and prints 3
+// AND the nested optional makes the call an optional, so the context meets the return type whole
+fn k2<T, U>(_a: T, b: U) -> U { b }
+fn h<T>(a: T, _b: T?) -> T { a }
+fn pick<T>(_a: T, b: T) -> T { b }
+fn main() {
+    let x: u8 = 3
+    print([x, k2(1, 2)])                                // [3, 2]
+    print(pick(h(1, Some(2)), Some(3)) ?? 0)            // 3
+    let v: u8? = h(1, Some(Some(2)))
+    print(v ?? 0)                                       // 1
+}
