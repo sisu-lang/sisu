@@ -86,6 +86,18 @@ fn names_itself(ty: Type, e: usize, count: usize) -> bool {
     }
 }
 
+/// What a message calls the enum of the variant `member`, which `site` writes: the qualifier as
+/// the user wrote it, which may be an alias. A bare variant, as `Ok`, has none: `site` writes the
+/// variant, so the enum's own name, `enum_name`, stands.
+fn qualifier(site: Site<'_>, member: &ast::Ident, enum_name: Symbol) -> Symbol {
+    // `Checker::cannot_infer` (generic.rs) tests for a bare variant in the same way; change both.
+    if site.name.span == member.span {
+        enum_name
+    } else {
+        site.name.name
+    }
+}
+
 impl Checker<'_> {
     /// Whether `name` is one milestone 8's prelude takes; reports it when it is. The prelude's
     /// own declarations take them without a report.
@@ -229,7 +241,8 @@ impl Checker<'_> {
         through: Option<&Through>,
     ) -> Checked {
         let info = &self.enums[id.0];
-        let enum_name = info.name.name.as_str();
+        let enum_name = qualifier(site, member, info.name.name);
+        let enum_name = enum_name.as_str();
         let Some(&variant) = info.index.get(&member.name) else {
             match info.methods.get(&member.name) {
                 Some(Declared::Known(_)) => self.report(DiagnosticKind::MemberKind {
@@ -259,9 +272,12 @@ impl Checker<'_> {
         };
         self.record(Used::Variant(id, variant), span);
         let info = &self.enums[id.0];
-        let enum_name = info.name.name.as_str();
         // Built only for a diagnostic.
-        let path = format_args!("{enum_name}.{}", member.name);
+        let path = format_args!(
+            "{}.{}",
+            qualifier(site, member, info.name.name),
+            member.name
+        );
         let v = &info.variants[variant];
         let ty = Type::intern(TypeKind::Enum(id, TypeArgs::NONE));
         let generic = !info.type_params.is_empty();
@@ -338,9 +354,12 @@ impl Checker<'_> {
     ) -> Checked {
         let info = &self.enums[id.0];
         let v = &info.variants[variant];
-        let enum_name = info.name.name;
         // Built only for a diagnostic.
-        let path = format_args!("{enum_name}.{}", member.name);
+        let path = format_args!(
+            "{}.{}",
+            qualifier(site, member, info.name.name),
+            member.name
+        );
         let (declared, bounds, ret, fields) = match through {
             None => (
                 info.type_params.clone(),

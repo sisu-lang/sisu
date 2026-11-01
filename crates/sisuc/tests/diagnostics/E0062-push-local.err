@@ -1,15 +1,3 @@
-warning[W0002]: `xs` is never reassigned
- --> E0062-push-local.sisu:2:13
-  |
-2 |     let mut xs: [i64]? = [1]
-  |             ^^
-  |
-help: declare it with `let`
-  |
-2 -     let mut xs: [i64]? = [1]
-2 +     let xs: [i64]? = [1]
-  |
-
 error[E0062]: `xs` may be `None`
  --> E0062-push-local.sisu:3:5
   |
@@ -22,5 +10,5 @@ help: to do nothing when it is `None`, use `?.`
 3 |     xs?.push(2)
   |       +
 
-sisu: 1 error, 1 warning
-sisu: for more on a code, run `sisu explain <code>`: E0062, W0002
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0062

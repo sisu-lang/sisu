@@ -175,7 +175,7 @@ fn to_line(value: &impl Serialize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diagnostic::DiagnosticKind;
+    use crate::diagnostic::{DiagnosticKind, UnwrapHelp};
     use crate::front_end::front_end;
     use crate::source::Span;
 
@@ -202,6 +202,7 @@ mod tests {
             access: Some(Span::new(25, 26)),
             write: false,
             peel: None,
+            unwrap: UnwrapHelp::It,
         }
         .into();
         assert_eq!(

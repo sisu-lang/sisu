@@ -1,0 +1,8 @@
+error[E0062]: `xs` may be `None`
+ --> E0062-element-local.sisu:3:5
+  |
+3 |     xs[0] = 2
+  |     ^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0062

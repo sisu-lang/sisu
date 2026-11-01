@@ -11,7 +11,7 @@ error[E0154]: `string` does not conform to `Iter`
   --> E0154-alias.sisu:15:12
    |
 11 | type X<T> = T.Item
-   |             ------ required by this bound
+   |             ------ `T.Item` needs `T: Iter`
 ...
 15 | fn item(x: X<string>) {}
    |            ^^^^^^^^^

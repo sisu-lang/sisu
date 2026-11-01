@@ -12,7 +12,7 @@ use super::{
 use crate::ast;
 use crate::conformance::{CHOICE_DEPTH_LIMIT, Entered, Generated, ensure_stack, find, generated};
 use crate::diagnostic::{
-    AddBound, BlockNeed, BoundSite, Definition as Kind, DiagnosticKind, NoOperatorForm,
+    AddBound, BlockNeed, BoundSite, Definition as Kind, DiagnosticKind, Implied, NoOperatorForm,
     NotConformForm, NotInterface, PreludeBound, UnknownForm, WideKind,
 };
 use crate::graph::{components, cycle_through};
@@ -171,8 +171,14 @@ enum Check {
         this: Type,
         ats: Vec<Span>,
     },
-    /// The type `ty`, written at `at`, conforms to the interface of `bound`.
-    Conforms { ty: Type, bound: Bound, at: Span },
+    /// The type `ty`, written at `at`, conforms to the interface of `bound`, which `ty` implies of
+    /// the type written at `base`.
+    Conforms {
+        ty: Type,
+        bound: Bound,
+        at: Span,
+        base: Span,
+    },
 }
 
 /// Where a resolved type is kept: the type of a parameter or a result of a signature, of a field,
@@ -1688,11 +1694,12 @@ impl Checker<'_> {
     /// Checks that `ty` meets `bound`, whose arguments name the parameters that `with` gives
     /// types to. Reports it at `at` when not.
     pub(super) fn check_bound(&mut self, at: Span, ty: Type, bound: Bound, with: &[Type]) -> bool {
-        self.check_bound_of(at, ty, bound, with, None)
+        self.check_bound_of(at, ty, bound, with, None, None)
     }
 
     /// `check_bound` for a bound of a block, where the call is of the method that `need` names:
-    /// the label of a bound of the prelude says that the method needs it.
+    /// the label of a bound of the prelude says that the method needs it. `implied` is the type
+    /// written at the span, when no one writes the bound: it is an associated type of that type.
     pub(super) fn check_bound_of(
         &mut self,
         at: Span,
@@ -1700,6 +1707,7 @@ impl Checker<'_> {
         bound: Bound,
         with: &[Type],
         need: Option<BlockNeed>,
+        implied: Option<Span>,
     ) -> bool {
         let args = self.subst_args(bound.args, with);
         if self.conforms(ty, bound.interface, args) {
@@ -1738,6 +1746,10 @@ impl Checker<'_> {
             at,
             form: NotConformForm::Bound {
                 bound: (!prelude).then_some(bound.at),
+                implied: implied.map(|base| Implied {
+                    written: self.source.text(bound.at).to_string(),
+                    base: self.source.text(base).to_string(),
+                }),
                 label,
                 make,
                 class_only: bound.interface == self.lang.any_object,
@@ -1870,8 +1882,13 @@ impl Checker<'_> {
 
     /// Checks that `ty`, written at `at`, conforms to the interface of `bound`, as the bound of a
     /// type parameter would need. When every conformance is not yet known, the check waits.
-    pub(super) fn check_conforms(&mut self, at: Span, ty: Type, bound: Bound) -> bool {
-        self.check_or_wait(Check::Conforms { ty, bound, at })
+    pub(super) fn check_conforms(&mut self, at: Span, ty: Type, bound: Bound, base: Span) -> bool {
+        self.check_or_wait(Check::Conforms {
+            ty,
+            bound,
+            at,
+            base,
+        })
     }
 
     /// Queues `check` while the conformances are not yet known, and else runs it. Whether it
@@ -1906,7 +1923,12 @@ impl Checker<'_> {
                 }
                 true
             }
-            Check::Conforms { ty, bound, at } => self.check_bound(*at, *ty, *bound, &[]),
+            Check::Conforms {
+                ty,
+                bound,
+                at,
+                base,
+            } => self.check_bound_of(*at, *ty, *bound, &[], None, Some(*base)),
         }
     }
 
