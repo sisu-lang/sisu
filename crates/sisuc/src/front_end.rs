@@ -6,6 +6,7 @@ use rustc_hash::FxHashSet;
 
 use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, Edit, Fix, Severity};
 use crate::source::{PRELUDE_BASE, Span};
+use crate::timings::{Stage, Timings};
 use crate::{ast, check, lexer, mono, parser, tir};
 
 /// The source in `bytes`. Bytes that are not UTF-8 are an error at the first invalid one, with
@@ -31,8 +32,8 @@ pub(crate) const PRELUDE_SOURCE: &str = include_str!("prelude.sisu");
 /// `prelude_program` puts ahead of every prelude.
 pub(crate) const LANG_SOURCE: &str = include_str!("lang.sisu");
 
-/// `checked`, its program instantiated by `mono`, which reports a choice of an associated type
-/// that the checker did not follow and that an instance needs itself or needs too many steps.
+/// `checked_timed`, its program instantiated by `mono`, which reports a choice of an associated
+/// type that the checker did not follow and that an instance needs itself or needs too many steps.
 pub(crate) fn front_end(source: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
     front_end_with(PRELUDE_SOURCE, source)
 }
@@ -42,8 +43,21 @@ pub(crate) fn front_end_with(
     prelude: &str,
     source: &str,
 ) -> (Option<tir::Program>, Vec<Diagnostic>) {
-    let (program, mut diagnostics) = checked_with(prelude, source);
-    match program.map(mono::instantiate).transpose() {
+    front_end_timed(prelude, source, &mut Timings::off())
+}
+
+/// `front_end_with`, with the time of each stage recorded in `timings`. A program that fails the
+/// check records no `mono` stage.
+pub(crate) fn front_end_timed(
+    prelude: &str,
+    source: &str,
+    timings: &mut Timings,
+) -> (Option<tir::Program>, Vec<Diagnostic>) {
+    let (program, mut diagnostics) = checked_timed(prelude, source, timings);
+    match program
+        .map(|p| timings.time(Stage::Mono, || mono::instantiate(p)))
+        .transpose()
+    {
         Ok(program) => (program, diagnostics),
         Err(found) => {
             // The checker judged liveness on a program that fails, as it does not for an error.
@@ -55,28 +69,31 @@ pub(crate) fn front_end_with(
     }
 }
 
-/// Lexes, parses and checks `source`. Returns every diagnostic, sorted by position, and the
+/// Lexes, parses and checks `source`, with `prelude` in place of `PRELUDE_SOURCE`, and records
+/// the time of each stage in `timings`. Returns every diagnostic, sorted by position, and the
 /// checked program, generic declarations and all, unless one is an error. The checker runs
 /// only when every item is named: it checks the intact items, and treats a broken one as
 /// declared. `sisu check` stops here: `mono` names each instantiation, which costs as much as
-/// its type is long, and check prints none.
-pub(crate) fn checked(source: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
-    checked_with(PRELUDE_SOURCE, source)
-}
-
-/// `checked` with `prelude` in place of `PRELUDE_SOURCE`. A diagnostic that points into the
-/// prelude is an internal error, never one the user sees: the prelude's text is not theirs.
-pub(crate) fn checked_with(prelude: &str, source: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
-    let lexed = match lexer::lex(source) {
+/// its type is long, and check prints none. A diagnostic that points into the prelude is an
+/// internal error, never one the user sees: the prelude's text is not theirs.
+pub(crate) fn checked_timed(
+    prelude: &str,
+    source: &str,
+    timings: &mut Timings,
+) -> (Option<tir::Program>, Vec<Diagnostic>) {
+    let lexed = match timings.time(Stage::Lex, || lexer::lex(source)) {
         Ok(lexed) => lexed,
         Err(d) => return (None, vec![d]),
     };
-    let parsed = parser::parse(lexed, false);
+    timings.count(|| crate::timings::counts(source, &lexed));
+    let parsed = timings.time(Stage::Parse, || parser::parse(lexed, false));
     if !parsed.checkable {
         return (None, parsed.diagnostics);
     }
-    let prelude = prelude_program(prelude);
-    let (program, checked) = check::check(&parsed.program, &prelude, source, &parsed.diagnostics);
+    let prelude = timings.time(Stage::Prelude, || prelude_program(prelude));
+    let (program, checked) = timings.time(Stage::Check, || {
+        check::check(&parsed.program, &prelude, source, &parsed.diagnostics)
+    });
     if let Some(d) = checked.iter().find(|d| points_into_prelude(d)) {
         internal_error(d);
     }
@@ -207,6 +224,18 @@ fn badness(syntax: &Result<Vec<Diagnostic>, Diagnostic>) -> (bool, usize) {
 /// How badly `source` fails to lex or to parse, as `badness` ranks it.
 pub(crate) fn syntax_errors(source: &str) -> (bool, usize) {
     badness(&syntax(source))
+}
+
+/// `checked_with` with `PRELUDE_SOURCE`, for the tests.
+#[cfg(test)]
+pub(crate) fn checked(source: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
+    checked_with(PRELUDE_SOURCE, source)
+}
+
+/// `checked_timed` with no timings.
+#[cfg(test)]
+pub(crate) fn checked_with(prelude: &str, source: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
+    checked_timed(prelude, source, &mut Timings::off())
 }
 
 #[cfg(test)]

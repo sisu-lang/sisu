@@ -45,6 +45,9 @@ enum Command {
         /// current directory
         #[arg(short)]
         output: Option<PathBuf>,
+        /// Print the time of each stage to stderr
+        #[arg(long)]
+        timings: bool,
     },
     /// Compile a program and run it; exit with its exit code
     #[command(group = ArgGroup::new("program").required(true).args(["inline", "rest"]))]
@@ -63,6 +66,9 @@ enum Command {
         /// How to print diagnostics: as text, or as JSON Lines.
         #[arg(long, value_enum, default_value = "text")]
         format: Format,
+        /// Print the time of each stage to stderr
+        #[arg(long)]
+        timings: bool,
         #[command(flatten)]
         program: Program,
     },
@@ -150,11 +156,13 @@ pub(crate) fn parse(args: Vec<OsString>) -> Result<(Format, Mode), clap::Error> 
             emit,
             program,
             output,
+            timings,
         } => {
             let (format, backend) = flags.into_parts();
+            reject_json_timings(&format, timings, "build")?;
             (
                 format,
-                build_mode(backend, emit, program.into_source(), output)?,
+                build_mode(backend, emit, program.into_source(), output, timings)?,
             )
         }
         Command::Run {
@@ -187,14 +195,38 @@ pub(crate) fn parse(args: Vec<OsString>) -> Result<(Format, Mode), clap::Error> 
                 },
             )
         }
-        Command::Check { format, program } => (
+        Command::Check {
             format,
-            Mode::Check {
-                source: program.into_source(),
-            },
-        ),
+            timings,
+            program,
+        } => {
+            reject_json_timings(&format, timings, "check")?;
+            (
+                format,
+                Mode::Check {
+                    source: program.into_source(),
+                    timings,
+                },
+            )
+        }
         Command::Explain { code } => (Format::Text, Mode::Explain { code }),
     })
+}
+
+/// A usage error of `subcommand` for `--timings` with `--format json`: a text line would break
+/// the JSON Lines stream.
+fn reject_json_timings(
+    format: &Format,
+    timings: bool,
+    subcommand: &str,
+) -> Result<(), clap::Error> {
+    if timings && matches!(format, Format::Json) {
+        return Err(usage_error(
+            subcommand,
+            "`--timings` does not work with `--format json`",
+        ));
+    }
+    Ok(())
 }
 
 /// The mode `build` asks for, once the flags it takes are checked against `--emit`.
@@ -203,18 +235,23 @@ fn build_mode(
     emit: Option<Stage>,
     source: Source,
     output: Option<PathBuf>,
+    timings: bool,
 ) -> Result<Mode, clap::Error> {
     let Some(stage) = emit else {
         let output = match (output, &source) {
             (Some(output), _) => output,
             (None, Source::File(file)) => PathBuf::from(file.file_stem().ok_or_else(|| {
-                build_error(format!(
-                    "cannot name an executable after `{}`; give one with `-o <output>`",
-                    file.display()
-                ))
+                usage_error(
+                    "build",
+                    format!(
+                        "cannot name an executable after `{}`; give one with `-o <output>`",
+                        file.display()
+                    ),
+                )
             })?),
             (None, Source::Inline(_)) => {
-                return Err(build_error(
+                return Err(usage_error(
+                    "build",
                     "an inline program needs `-o <output>` to build an executable",
                 ));
             }
@@ -223,6 +260,7 @@ fn build_mode(
             input: source,
             output,
             backend,
+            timings,
         });
     };
     // The other stages run no optimizer.
@@ -231,24 +269,30 @@ fn build_mode(
             .level
             .to_possible_value()
             .expect("`-O` should take only levels it can name");
-        return Err(build_error(format!(
-            "`-O{}` works only when building an executable or with `--emit ir`",
-            level.get_name()
-        )));
+        return Err(usage_error(
+            "build",
+            format!(
+                "`-O{}` works only when building an executable or with `--emit ir`",
+                level.get_name()
+            ),
+        ));
     }
     if backend.rc_checks && !matches!(stage, Stage::Ir | Stage::IrRaw) {
-        return Err(build_error(
+        return Err(usage_error(
+            "build",
             "`--rc-checks` works only when building an executable or with `--emit ir` or \
              `--emit ir-raw`",
         ));
     }
     if backend.linker.is_some() {
-        return Err(build_error(
+        return Err(usage_error(
+            "build",
             "`--linker` works only when building an executable",
         ));
     }
     if backend.allocator.is_some() {
-        return Err(build_error(
+        return Err(usage_error(
+            "build",
             "`--allocator` works only when building an executable",
         ));
     }
@@ -257,16 +301,17 @@ fn build_mode(
         input: source,
         level: backend.level,
         rc_checks: backend.rc_checks,
+        timings,
     })
 }
 
-/// A usage error of `build`, shown with `build`'s usage.
-fn build_error(message: impl std::fmt::Display) -> clap::Error {
+/// A usage error of `subcommand`, shown with its usage.
+fn usage_error(subcommand: &str, message: impl std::fmt::Display) -> clap::Error {
     let mut cli = Cli::command();
-    // Gives the subcommand its full name, `sisu build`, for the usage line.
+    // Gives the subcommand its full name, such as `sisu build`, for the usage line.
     cli.build();
-    cli.find_subcommand_mut("build")
-        .expect("`Cli` should have the subcommand `build`")
+    cli.find_subcommand_mut(subcommand)
+        .expect("`Cli` should have the subcommand that the caller names")
         .error(ErrorKind::ArgumentConflict, message)
 }
 

@@ -24,6 +24,7 @@ use crate::diagnostic::{Diagnostic, Severity};
 use crate::generate::{self, Answer, BoundSite, Generated, Known};
 use crate::report::{Format, Reporter};
 use crate::source::LineIndex;
+use crate::timings::Timings;
 use crate::tir::Program;
 use crate::{Backend, compile, fresh_names, front_end, fuzz, run};
 
@@ -419,6 +420,7 @@ fn build(
         exe,
         dir,
         backend,
+        &mut Timings::off(),
     )
     .unwrap_or_else(|e| panic!("the fuzzer should build the {name}: {e}"));
 }

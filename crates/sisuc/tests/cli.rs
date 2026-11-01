@@ -3086,3 +3086,325 @@ fn build_should_accept_an_enum_whose_cycle_is_boxed() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(0), "{stderr}");
 }
+
+/// The fields of each `timings:` line of `stderr`, split at white space.
+fn timing_lines(stderr: &str) -> Vec<Vec<&str>> {
+    (stderr.lines())
+        .filter(|line| line.starts_with("timings:"))
+        .map(|line| line.split_whitespace().collect())
+        .collect()
+}
+
+/// The stage names on the `timings:` lines of `stderr`, in order.
+fn timing_names(stderr: &str) -> Vec<&str> {
+    timing_lines(stderr)
+        .iter()
+        .map(|fields| fields[1])
+        .collect()
+}
+
+/// The stages the front end times, on `sisu check`.
+const FRONT: [&str; 4] = ["lex", "parse", "prelude", "check"];
+
+/// `stages`, then the `other` and `total` lines every report ends with.
+fn with_tail<'a>(stages: &[&'a str]) -> Vec<&'a str> {
+    [stages, &["other", "total"]].concat()
+}
+
+/// The front end's stages, then `rest`, then `other` and `total`.
+fn front_then<'a>(rest: &[&'a str]) -> Vec<&'a str> {
+    with_tail(&[&FRONT[..], rest].concat())
+}
+
+/// Runs `sisu check --timings -e <code>`.
+fn check_inline_timings(code: &str) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .current_dir(env!("CARGO_TARGET_TMPDIR"))
+        .args(["check", "--timings", "-e", code])
+        .output()
+        .expect("sisu starts")
+}
+
+const CLEAN: &str = "fn main() {\n    print(1)\n}\n";
+
+/// GIVEN a program that builds and prints `1`
+/// WHEN `sisu build --timings` builds it and the executable runs
+/// THEN standard error of the build has one `timings:` line for each stage, and a `prelude` line
+/// after parse
+/// AND the stages are lex, parse, check, mono, mir, codegen, optimize, object and link
+/// AND an `other` line and a `total` line come after them
+/// AND the executable prints `1`
+#[test]
+fn build_with_timings_should_report_each_stage_on_stderr() {
+    let out = run_on(
+        "timings_build",
+        CLEAN,
+        &["build", "--timings", "-o", "timings_build.exe"],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    let rest = ["mono", "mir", "codegen", "optimize", "object", "link"];
+    assert_eq!(timing_names(&stderr), front_then(&rest), "{stderr}");
+    let exe = Path::new(env!("CARGO_TARGET_TMPDIR")).join("timings_build.exe");
+    let ran = Command::new(exe).output().expect("the executable starts");
+    assert_eq!(String::from_utf8_lossy(&ran.stdout), "1\n");
+}
+
+/// GIVEN a program that checks clean
+/// WHEN `sisu check --timings` runs on it
+/// THEN standard error has `timings:` lines for lex, parse, prelude and check
+/// AND an `other` line and a `total` line come after them
+/// AND the exit code is 0
+#[test]
+fn check_with_timings_should_report_the_front_end_only() {
+    let out = run_on("timings_check", CLEAN, &["check", "--timings"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(timing_names(&stderr), front_then(&[]), "{stderr}");
+}
+
+/// The fields after the percent of a `timings:` line, with each rate replaced by `RATE`.
+fn throughput<'a>(fields: &[&'a str]) -> Vec<&'a str> {
+    let mut after = fields[5..].to_vec();
+    for i in 1..after.len() {
+        if after[i].ends_with("/s") {
+            after[i - 1] = "RATE";
+        }
+    }
+    after
+}
+
+/// GIVEN the program `fn main() {`, `    print(1 + 2)`, `}` on 3 lines, which has 12 tokens
+/// WHEN `sisu check --timings` runs on it, from a file and with `-e`
+/// THEN the lex line says `3 lines` and `12 tokens`
+/// AND the parse and check lines say `3 lines`
+#[test]
+fn timings_should_count_the_lines_and_tokens_of_the_users_file_only() {
+    let code = "fn main() {\n    print(1 + 2)\n}\n";
+    let from_file = run_on("timings_count", code, &["check", "--timings"]);
+    let inline = check_inline_timings(code);
+    for (how, out) in [("file", from_file), ("-e", inline)] {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let lines = timing_lines(&stderr);
+        let lex = [
+            "3", "lines", "RATE", "lines/s", "12", "tokens", "RATE", "tokens/s",
+        ];
+        let rest = ["3", "lines", "RATE", "lines/s"];
+        assert_eq!(throughput(&lines[0]), lex, "{how}: {stderr}");
+        assert_eq!(throughput(&lines[1]), rest, "{how} parse: {stderr}");
+        assert_eq!(throughput(&lines[3]), rest, "{how} check: {stderr}");
+    }
+}
+
+/// GIVEN an empty file
+/// WHEN `sisu check --timings` runs on it
+/// THEN the lex line says `0 lines` and `0 tokens`, each with the rate `-`
+#[test]
+fn timings_should_print_a_dash_rate_when_the_file_is_empty() {
+    let out = run_on("timings_empty", "", &["check", "--timings"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let lines = timing_lines(&stderr);
+    let expected = ["0", "lines", "-", "lines/s", "0", "tokens", "-", "tokens/s"];
+    assert_eq!(lines[0][5..], expected, "{stderr}");
+}
+
+/// GIVEN a program that checks clean
+/// WHEN `sisu build --emit tir --timings` runs on it
+/// THEN standard output is the same as from `sisu build --emit tir`
+/// AND standard error has `timings:` lines for lex, parse, prelude, check and mono
+#[test]
+fn timings_should_not_change_stdout() {
+    let plain = run_on("timings_stdout", CLEAN, &["build", "--emit", "tir"]);
+    let timed = run_on(
+        "timings_stdout",
+        CLEAN,
+        &["build", "--emit", "tir", "--timings"],
+    );
+    assert_eq!(plain.status.code(), Some(0));
+    assert_eq!(plain.stdout, timed.stdout);
+    let stderr = String::from_utf8_lossy(&timed.stderr);
+    assert_eq!(timing_names(&stderr), front_then(&["mono"]), "{stderr}");
+}
+
+/// GIVEN a program that checks clean
+/// WHEN `sisu build --emit <stage> --timings` runs on it, for each stage `--emit` takes
+/// THEN standard error has `timings:` lines for the stages that `<stage>` runs, and no others
+/// AND an `other` line and a `total` line come after them
+#[test]
+fn emit_with_timings_should_report_the_stages_it_runs() {
+    let cases: [(&str, Vec<&str>); 6] = [
+        ("tokens", with_tail(&["lex"])),
+        ("ast", with_tail(&["lex", "parse"])),
+        ("tir", front_then(&["mono"])),
+        ("mir", front_then(&["mono", "mir"])),
+        ("ir", front_then(&["mono", "mir", "codegen", "optimize"])),
+        ("ir-raw", front_then(&["mono", "mir", "codegen"])),
+    ];
+    for (stage, names) in cases {
+        let out = run_on(
+            "timings_emit",
+            CLEAN,
+            &["build", "--emit", stage, "--timings"],
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(0), "{stage}: {stderr}");
+        assert_eq!(timing_names(&stderr), names, "{stage}: {stderr}");
+    }
+}
+
+/// GIVEN a program with a type error
+/// WHEN `sisu check --timings` runs on it, and `sisu build --emit tir --timings`
+/// THEN standard error has the diagnostic and `timings:` lines for lex, parse, prelude and check
+/// AND the timings come before the summary
+/// AND the exit code is 1
+#[test]
+fn timings_should_report_the_stages_that_ran_when_the_check_fails() {
+    let code = "fn main() {\n    let x: i64 = \"a\"\n}\n";
+    for flags in [
+        &["check", "--timings"][..],
+        &["build", "--emit", "tir", "--timings"],
+    ] {
+        let out = run_on("timings_fails", code, flags);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{flags:?}: {stderr}");
+        assert_eq!(
+            timing_names(&stderr),
+            front_then(&[]),
+            "{flags:?}: {stderr}"
+        );
+        let diagnostic = at_severity(&stderr, "error").expect("the error is shown");
+        let first = stderr.find("timings:").expect("the timings are shown");
+        let summary = stderr.find("sisu: 1 error").expect("the summary is shown");
+        assert!(diagnostic < first && first < summary, "{flags:?}: {stderr}");
+    }
+}
+
+/// GIVEN a program that checks clean
+/// WHEN `sisu check --timings --format json` runs on it, and `sisu build --emit tir --timings
+/// --format json`
+/// THEN the exit code is 2
+/// AND standard error names both flags
+#[test]
+fn timings_with_json_format_should_be_a_usage_error() {
+    let cases = [
+        &["check", "--timings", "--format", "json"][..],
+        &["build", "--emit", "tir", "--timings", "--format", "json"],
+    ];
+    for flags in cases {
+        let out = run_on("timings_json", CLEAN, flags);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{flags:?}: {stderr}");
+        assert!(stderr.contains("--timings"), "{flags:?}: {stderr}");
+        assert!(stderr.contains("--format json"), "{flags:?}: {stderr}");
+    }
+}
+
+/// The `ms` and percent values of a `timings:` line, from its fields.
+fn ms_and_percent(fields: &[&str]) -> (f64, f64) {
+    let ms = fields[2].parse().expect("a number of milliseconds");
+    let percent = fields[4].trim_end_matches('%').parse().expect("a percent");
+    (ms, percent)
+}
+
+/// GIVEN a program that builds
+/// WHEN `sisu build --emit ir-raw --timings` runs on it
+/// THEN the times of the stage lines, the `prelude` line and the `other` line add to the `total`
+/// time, within the rounding
+/// AND their percents add to 100%, within the rounding
+#[test]
+fn timings_should_add_up_to_the_total() {
+    let out = run_on(
+        "timings_sum",
+        CLEAN,
+        &["build", "--emit", "ir-raw", "--timings"],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let names = front_then(&["mono", "mir", "codegen"]);
+    assert_eq!(timing_names(&stderr), names, "{stderr}");
+    let lines = timing_lines(&stderr);
+    let (parts, total) = lines.split_at(lines.len() - 1);
+    // Each of the `k + 1` values is rounded to one decimal, so it is off by at most 0.05.
+    let slack = 0.05 * f64::from(u8::try_from(parts.len() + 1).expect("a few lines"));
+    let (ms, percent) = parts
+        .iter()
+        .map(|fields| ms_and_percent(fields))
+        .fold((0.0, 0.0), |(ms, percent), (m, p)| (ms + m, percent + p));
+    let (total_ms, _) = ms_and_percent(&total[0]);
+    assert!(
+        (ms - total_ms).abs() <= slack,
+        "{ms} ms of {total_ms}: {stderr}"
+    );
+    assert!((percent - 100.0).abs() <= slack, "{percent}%: {stderr}");
+}
+
+/// GIVEN a program with a string that has no closing quote
+/// WHEN `sisu check --timings` runs on it
+/// THEN the `timings:` lines start with lex and keep the stage order
+/// AND an `other` line and a `total` line come after them
+/// AND the exit code is 1
+#[test]
+fn timings_should_start_with_lex_when_the_lexer_fails() {
+    let out = run_on(
+        "timings_lex_error",
+        "fn main() {\n    print(\"a)\n}\n",
+        &["check", "--timings"],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    let names = timing_names(&stderr);
+    let order = ["lex", "parse", "prelude", "check", "mono", "other", "total"];
+    let places: Vec<_> = (names.iter())
+        .map(|name| order.iter().position(|o| o == name).expect("a known stage"))
+        .collect();
+    assert_eq!(names[0], "lex", "{stderr}");
+    assert!(places.is_sorted_by(|a, b| a < b), "{names:?}: {stderr}");
+    assert_eq!(names[names.len() - 2..], ["other", "total"], "{stderr}");
+}
+
+/// GIVEN a program whose lexer stops, with `print(1]`
+/// WHEN `sisu check --timings` runs on it
+/// THEN the `timings:` lines are lex, other and total
+/// AND the lex line has no lines or tokens
+/// AND the exit code is 1
+#[test]
+fn timings_should_print_no_throughput_when_the_lex_stops() {
+    let out = run_on(
+        "timings_lex_stops",
+        "fn main() {\n    print(1]\n}\n",
+        &["check", "--timings"],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert_eq!(timing_names(&stderr), with_tail(&["lex"]), "{stderr}");
+    assert_eq!(timing_lines(&stderr)[0].len(), 5, "{stderr}");
+}
+
+/// GIVEN a program that runs
+/// WHEN `sisu run --timings` runs on it
+/// THEN the exit code is 2
+/// AND standard error names `--timings`
+#[test]
+fn run_should_reject_timings() {
+    let out = run_on("timings_run", CLEAN, &["run", "--timings"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("--timings"), "{stderr}");
+}
+
+/// GIVEN a build whose output is in a directory that does not exist
+/// WHEN `sisu build --timings` runs on it
+/// THEN standard error says the directory does not exist
+/// AND the `timings:` lines are other and total
+/// AND the exit code is 1
+#[test]
+fn timings_should_report_other_and_total_when_the_build_fails_before_the_compile() {
+    let out = run_on(
+        "timings_no_dir",
+        CLEAN,
+        &["build", "--timings", "-o", "timings_absent_dir/x"],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("does not exist"), "{stderr}");
+    assert_eq!(timing_names(&stderr), with_tail(&[]), "{stderr}");
+}
