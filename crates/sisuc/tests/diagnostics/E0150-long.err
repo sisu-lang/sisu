@@ -1,0 +1,8 @@
+error[E0150]: `A0` inherits from itself, through `A1`, `A2`, `A3`, `A4`, `A5` and 2 more
+ --> E0150-long.sisu:1:15
+  |
+1 | interface A0: A1 {}
+  |               ^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0150

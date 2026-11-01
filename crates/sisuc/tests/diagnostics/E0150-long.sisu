@@ -1,0 +1,10 @@
+interface A0: A1 {}
+interface A1: A2 {}
+interface A2: A3 {}
+interface A3: A4 {}
+interface A4: A5 {}
+interface A5: A6 {}
+interface A6: A7 {}
+interface A7: A0 {}
+
+fn main() {}

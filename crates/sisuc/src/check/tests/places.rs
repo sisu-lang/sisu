@@ -815,3 +815,164 @@ fn push_should_not_clone_the_nodes_of_its_receiver() {
     assert!(checked(&src).0.is_some(), "{src}");
     assert_eq!(tir::CLONED_EXPRS.get(), 0, "{src}");
 }
+
+/// The help of E0062 at the optional array of an element place. `if let` of the array binds a
+/// copy, which is no place, so the help names the object of the `?.` that makes the array
+/// optional, or says nothing; a read keeps its help. The fixtures pin the text.
+#[test]
+fn an_element_target_help_should_name_what_gives_a_place() {
+    let m = "class M { mut items: [i64] }\n";
+    let rows = [
+        (
+            "safe field",
+            format!("{m}fn f(m: M?) {{\n    m?.items[0] = 2\n}}\nfn main() {{}}"),
+            "m?.items",
+            true,
+        ),
+        (
+            "compound",
+            format!("{m}fn f(m: M?) {{\n    m?.items[0] += 2\n}}\nfn main() {{}}"),
+            "m?.items",
+            true,
+        ),
+        (
+            "nested array",
+            "class M { mut items: [[i64]] }\nfn f(m: M?) {\n    m?.items[0][1] = 2\n}\nfn main() {}"
+                .to_owned(),
+            "m?.items",
+            true,
+        ),
+        (
+            "two safe fields",
+            format!(
+                "{m}class O {{ mut m: M? }}\nfn f(o: O?) {{\n    o?.m?.items[0] = 2\n}}\nfn main() {{}}"
+            ),
+            "o?.m?.items",
+            true,
+        ),
+        (
+            "object over two lines",
+            format!(
+                "{m}fn get(a: i64) -> M? {{ None }}\nfn main() {{\n    get(\n        1\n    )?.items[0] = 2\n}}"
+            ),
+            "get(\n        1\n    )?.items",
+            false,
+        ),
+        (
+            "local",
+            "fn main() {\n    let mut xs: [i64]? = [1]\n    xs[0] = 2\n}".to_owned(),
+            "xs",
+            false,
+        ),
+        (
+            "plain field",
+            "class N { mut items: [i64]? }\nfn main() {\n    let n = N(items: [1])\n    n.items[0] = 2\n}"
+                .to_owned(),
+            "n.items",
+            false,
+        ),
+        (
+            "safe field of an optional array",
+            "class M { mut items: [i64]? }\nfn f(m: M?) {\n    m?.items[0] = 2\n}\nfn main() {}"
+                .to_owned(),
+            "m?.items",
+            false,
+        ),
+        (
+            "read",
+            format!("{m}fn f(m: M?) {{\n    print(m?.items[0])\n}}\nfn main() {{}}"),
+            "m?.items",
+            true,
+        ),
+    ];
+    for (row, src, text, helps) in rows {
+        let start = src.rfind(text).expect("the row should hold its target");
+        let line = src[..start].matches('\n').count() + 1;
+        let col = start - src[..start].rfind('\n').map_or(0, |n| n + 1) + 1;
+        let d = diagnostic_row(row, &src, Code::MayBeNone, (line, col, text), &[]);
+        assert_eq!(d.help().is_some(), helps, "row `{row}`");
+        assert!(d.fixes().is_empty(), "row `{row}`");
+    }
+}
+
+/// A `push` on a receiver that is no array is a change of the place, as an assignment of the
+/// wrong type is: its failure says nothing about `mut`, so W0002 stays silent.
+#[test]
+fn a_failed_push_should_count_as_a_change_of_its_receiver() {
+    let rows = [
+        (
+            "optional array",
+            "fn main() {\n    let mut xs: [i64]? = [1]\n    xs.push(2)\n}",
+            Code::MayBeNone,
+            (3, 5),
+        ),
+        (
+            "optional array with a bad value",
+            "fn main() {\n    let mut xs: [i64]? = [1]\n    xs.push(\"s\")\n}",
+            Code::MayBeNone,
+            (3, 5),
+        ),
+        (
+            "optional array with two arguments",
+            "fn main() {\n    let mut xs: [i64]? = [1]\n    xs.push(2, 3)\n}",
+            Code::MayBeNone,
+            (3, 5),
+        ),
+        (
+            "element that is an optional array",
+            "fn main() {\n    let mut xss: [[i64]?] = [[1]]\n    xss[0].push(2)\n}",
+            Code::MayBeNone,
+            (3, 5),
+        ),
+        (
+            "string",
+            "fn main() {\n    let mut s = \"a\"\n    s.push(\"b\")\n}",
+            Code::NoMember,
+            (3, 7),
+        ),
+        (
+            "integer",
+            "fn main() {\n    let mut n = 1\n    n.push(2)\n}",
+            Code::NoMember,
+            (3, 7),
+        ),
+    ];
+    for (row, src, code, pos) in rows {
+        codes_row(row, src, &[(code, pos)]);
+    }
+}
+
+/// A `push` on a class, an enum, a type parameter or an associated type may be a method of its
+/// own, which writes nothing, and so does a method that is not found: `let mut` is never
+/// reassigned.
+#[test]
+fn a_push_that_may_be_a_method_should_not_stamp_its_receiver() {
+    let pile = "class Pile {\n    mut n: i64\n    fn push(self, x: i64) { self.n += x }\n}\n";
+    codes(
+        &format!(
+            "{pile}fn main() {{\n    let mut p: Pile? = Pile(n: 0)\n    p?.push(1)\n    print(p?.n ?? 0)\n}}"
+        ),
+        &[(Code::NeverReassigned, (6, 13))],
+    );
+    codes(
+        "interface P { fn push(self, x: i64) }\nfn g<U: P>(u: U) {\n    let mut v = u\n    v.push(1)\n}\nfn main() {}",
+        &[(Code::NeverReassigned, (3, 13))],
+    );
+    codes(
+        "enum E { A; B }\nfn main() {\n    let mut e = E.A\n    e.push(1)\n}",
+        &[(Code::NeverReassigned, (3, 13)), (Code::NoMember, (4, 7))],
+    );
+    codes(
+        "class C { v: i64 }\nfn main() {\n    let mut c = C(v: 1)\n    c.nope(2)\n}",
+        &[(Code::NeverReassigned, (3, 13)), (Code::NoMember, (4, 7))],
+    );
+}
+
+/// An optional that holds no array is no optional array: its element place is `CannotIndex`.
+#[test]
+fn an_element_target_of_an_optional_number_should_not_be_an_optional_array() {
+    codes(
+        "fn main() {\n    let mut n: i64? = 1\n    n[0] = 2\n}",
+        &[(Code::CannotIndex, (3, 5))],
+    );
+}

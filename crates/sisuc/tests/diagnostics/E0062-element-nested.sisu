@@ -1,0 +1,6 @@
+class M { mut items: [i64] }
+class O { mut m: M? }
+fn f(o: O?) {
+    o?.m?.items[0] = 2
+}
+fn main() { f(None) }
