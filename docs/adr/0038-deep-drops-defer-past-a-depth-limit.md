@@ -112,7 +112,7 @@ checks the margin of the C stack.
 - A drop through an array, an enum or a class outside the cycle adds a
   bounded amount of stack. `binary_trees`' `Node`, whose fields are all links
   of its class cycle, does not count, and its drop does not change.
-- A counting drop function costs a load, a compare, two stores and a test
+- A counting drop function costs a load, a compare, an add, two stores and a test
   at depth 0.
 - Past the depth limit, a deferred block can drop after a block that it does
   not hold (guarantee 4).
