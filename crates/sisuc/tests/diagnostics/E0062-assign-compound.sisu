@@ -1,0 +1,12 @@
+class Node {
+    mut value: i64
+    next: Node?
+}
+
+fn bump(n: Node) {
+    n.next.value += 1
+}
+
+fn main() {
+    bump(Node(value: 1, next: None))
+}

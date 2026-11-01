@@ -93,6 +93,7 @@ impl Checker<'_> {
                 value: path(receiver),
                 at: receiver.span,
                 access: None,
+                write: false,
                 peel: Some(Peel {
                     receiver: self.source.text(receiver.span).to_string(),
                     left: self.type_name(payload),
@@ -201,7 +202,7 @@ impl Checker<'_> {
             TypeKind::Array(_) if name.name.as_str() == "len" => {
                 method(self.type_name(ty), true).into()
             }
-            TypeKind::Optional(_) => may_be_none(receiver, name, !self.body.indexed),
+            TypeKind::Optional(_) => may_be_none(receiver, name, !self.body.indexed, target),
             _ => no_member(Definition::Field, self.type_name(ty), name, []),
         };
         self.diagnostics.push(d);
@@ -377,7 +378,12 @@ impl Checker<'_> {
                     no_member(Definition::Method, self.type_name(ty), name, methods)
                 }
             }
-            TypeKind::Optional(_) => may_be_none(receiver, name, !indexed),
+            // A `push` onto an optional array writes: the `?.` fix makes it do nothing.
+            TypeKind::Optional(payload) => {
+                let write =
+                    name.name.as_str() == "push" && matches!(payload.kind(), TypeKind::Array(_));
+                may_be_none(receiver, name, !indexed, write)
+            }
             _ => no_member(Definition::Method, self.type_name(ty), name, []),
         };
         self.diagnostics.push(d);
@@ -637,12 +643,13 @@ fn candidate_results(rets: &[Option<Type>]) -> impl Iterator<Item = (usize, Opti
 }
 
 /// "`node` may be `None`", at the optional `receiver` of a `.` before `name`. With `fix`, a
-/// `?.` may take the `.`'s place.
-fn may_be_none(receiver: &ast::Expr, name: &ast::Ident, fix: bool) -> Diagnostic {
+/// `?.` may take the `.`'s place. `write` when `name` is the target of an assignment or a `push`.
+fn may_be_none(receiver: &ast::Expr, name: &ast::Ident, fix: bool, write: bool) -> Diagnostic {
     DiagnosticKind::MayBeNone {
         value: path(receiver),
         at: receiver.span,
         access: fix.then(|| Span::new(receiver.span.end(), name.span.start())),
+        write,
         peel: None,
     }
     .into()

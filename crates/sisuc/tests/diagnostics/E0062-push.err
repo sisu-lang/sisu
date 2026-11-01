@@ -5,7 +5,7 @@ error[E0062]: `bag?.items` may be `None`
   |     ^^^^^^^^^^
   |
   = help: to use the value only when it is present, unwrap it with `if let`
-help: if a `None` result is fine, use `?.`
+help: to do nothing when it is `None`, use `?.`
   |
 6 |     bag?.items?.push(4)
   |               +

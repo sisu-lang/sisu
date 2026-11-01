@@ -676,7 +676,6 @@ crates/sisuc/src/diagnostic/explanations.rs::readme_lists_every_code
 crates/sisuc/src/diagnostic/explanations.rs::retired_explanations_say_so
 crates/sisuc/src/diagnostic/explanations.rs::safe_fixes_make_broken_examples_clean
 crates/sisuc/src/diagnostic/explanations.rs::safe_fixes_remove_their_code_in_every_fixture
-crates/sisuc/src/diagnostic/json.rs::help_and_unsafe_fix
 crates/sisuc/src/diagnostic/json.rs::json_offsets_are_bytes
 crates/sisuc/src/diagnostic/json.rs::summary_orders_explanations_by_code
 crates/sisuc/src/diagnostic/json.rs::tool_error_line

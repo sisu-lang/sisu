@@ -1,0 +1,14 @@
+error[E0062]: `xs` may be `None`
+ --> E0062-push-local.sisu:3:5
+  |
+3 |     xs.push(2)
+  |     ^^
+  |
+  = help: to use the value only when it is present, unwrap it with `if let`
+help: to do nothing when it is `None`, use `?.`
+  |
+3 |     xs?.push(2)
+  |       +
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0062

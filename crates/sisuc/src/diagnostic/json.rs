@@ -194,12 +194,13 @@ mod tests {
     }
 
     #[test]
-    fn help_and_unsafe_fix() {
+    fn may_be_none_with_an_access_should_have_help_and_an_unsafe_fix() {
         let source = "fn f(n: N?) {\n    n.v = 1\n}\n";
         let d: Diagnostic = DiagnosticKind::MayBeNone {
             value: Some("n".to_string()),
             at: Span::new(18, 19),
             access: Some(Span::new(19, 20)),
+            write: false,
             peel: None,
         }
         .into();

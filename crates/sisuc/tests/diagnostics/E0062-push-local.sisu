@@ -1,0 +1,4 @@
+fn main() {
+    let xs: [i64]? = [1]
+    xs.push(2)
+}

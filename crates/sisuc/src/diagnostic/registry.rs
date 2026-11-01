@@ -743,11 +743,13 @@ pub(crate) enum DiagnosticKind {
     PrintNever { function: &'static str, at: Span },
     /// The optional at `at` that a member, an index or a `for` uses as a value. `value` is its
     /// path as written, when it has one. `access` is the `.` before the member, and any space or
-    /// comment around it, when a `?.` can take its place.
+    /// comment around it, when a `?.` can take its place. `write` when the member is the target of
+    /// an assignment or a `push`: then the `?.` makes the statement do nothing, and has no result.
     MayBeNone {
         value: Option<String>,
         at: Span,
         access: Option<Span>,
+        write: bool,
         /// For a `?.` on an optional of an optional: the optional it leaves, which has no members.
         peel: Option<Peel>,
     },
@@ -3573,13 +3575,25 @@ impl From<DiagnosticKind> for Diagnostic {
                 "peel the other layer first: `({receiver} ?? None)?.{member}`"
             )),
             DiagnosticKind::MayBeNone {
-                value, at, access, ..
+                value,
+                at,
+                access,
+                write,
+                ..
             } => {
                 let d = Diagnostic::coded(code, at, format!("{} may be `None`", named(value)));
                 match access {
-                    Some(access) => d
-                        .with_help("to use the value only when it is present, unwrap it with `if let`")
-                        .with_fix(unsafe_fix("if a `None` result is fine, use `?.`", access, "?.")),
+                    Some(access) => {
+                        let fix = if write {
+                            "to do nothing when it is `None`, use `?.`"
+                        } else {
+                            "if a `None` result is fine, use `?.`"
+                        };
+                        d.with_help(
+                            "to use the value only when it is present, unwrap it with `if let`",
+                        )
+                        .with_fix(unsafe_fix(fix, access, "?."))
+                    }
                     None => d.with_help("unwrap it with `if let`"),
                 }
             }

@@ -400,6 +400,7 @@ pub(super) fn optional_array(base: &ast::Expr) -> Diagnostic {
         value: path(base),
         at: base.span,
         access: None,
+        write: false,
         peel: None,
     }
     .into()

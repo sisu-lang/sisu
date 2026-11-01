@@ -3041,7 +3041,7 @@ fn may_be_none_in_an_assignment_target_should_offer_the_fix() {
     }
 }
 
-/// An index after the step makes the `?.` fix lead to an index on an optional, so there is no
+/// An index after the step makes the `?.` fix lead to an index on an optional. So there is no
 /// fix, in a target and in a read. Each row is a statement in a body where `m` is an `N?`.
 #[test]
 fn may_be_none_before_an_index_should_have_no_fix() {
