@@ -2196,3 +2196,77 @@ fn an_optional_should_not_convert_to_a_bare_any() {
         &[(Code::Mismatch, (1, 35))],
     );
 }
+
+/// The locals of the rows of `==` beside an `any` value, before the row's own line, which is
+/// line 6.
+const EQUAL_LOCALS: &str = "fn main() {\n    let d: any Display = 1\n    let s: any Shape = Circle(r: 1.0)\n    let c = Circle(r: 2.0)\n    let o: (any Display)? = Some(d)\n";
+
+/// `==` and `!=` between an `any` value and a value that converts to its type need the `Eq` of
+/// the `any` type, which has none: each is E0159 at the `any` side, as `d == d` is.
+#[test]
+fn equal_beside_an_any_value_should_need_the_eq_of_the_any_type() {
+    let rows: [Row<'_>; 11] = [
+        (
+            "a number after",
+            "    print(d == 1)",
+            vec![(Code::NoOperator, (6, 11))],
+        ),
+        (
+            "a number before",
+            "    print(1 == d)",
+            vec![(Code::NoOperator, (6, 16))],
+        ),
+        (
+            "`!=`",
+            "    print(d != 2)",
+            vec![(Code::NoOperator, (6, 11))],
+        ),
+        (
+            "a string",
+            "    print(d == \"a\")",
+            vec![(Code::NoOperator, (6, 11))],
+        ),
+        (
+            "an `if`",
+            "    if d == 1 { }",
+            vec![(Code::NoOperator, (6, 8))],
+        ),
+        (
+            "an enum value",
+            "    print(s == Slab.Plain)",
+            vec![(Code::NoOperator, (6, 11))],
+        ),
+        (
+            "an enum value before",
+            "    print(Slab.Plain == s)",
+            vec![(Code::NoOperator, (6, 25))],
+        ),
+        (
+            "an object after",
+            "    print(s == c)",
+            vec![(Code::NoOperator, (6, 11))],
+        ),
+        (
+            "an object before",
+            "    print(c == s)",
+            vec![(Code::NoOperator, (6, 16))],
+        ),
+        (
+            "a `Some` beside an optional `any` value",
+            "    print(o == Some(1))",
+            vec![(Code::NoOperator, (6, 11))],
+        ),
+        (
+            "two `any` values",
+            "    print(d == d)",
+            vec![(Code::NoOperator, (6, 11))],
+        ),
+    ];
+    for (row, line, expected) in rows {
+        let src = format!(
+            "{EQUAL_LOCALS}{line}\n}}\nenum Slab: Shape {{\n    Plain\n    fn area(self) -> f64 {{ 1.0 }}\n}}\n"
+        );
+        codes_after(row, &src, &expected);
+    }
+    clean("fn main() {\n    let o: (any Display)? = None\n    print(o == None)\n}");
+}
