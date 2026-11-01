@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 
 use syn::visit::{self, Visit};
 
-/// The top-level modules of `src/`, in pipeline order. `crate` names the items of `lib.rs`.
+/// The top-level modules of `src/`, in pipeline order: the shared modules first, then the stages,
+/// then the modules that run the stages. `crate` names the items of `lib.rs`.
 const LAYERS: &[&[&str]] = &[
     &["source", "symbol", "graph", "diagnostic"],
     &["lexer"],
@@ -26,8 +27,8 @@ const LAYERS: &[&[&str]] = &[
     &["fuzz", "fuzz_program", "generate"],
 ];
 
-/// The uses of a later layer that stay, as `(user, used, reason)`. An entry that no use needs
-/// fails the test, so the list can only get shorter.
+/// The uses of a later layer that stay, as `(user, used, reason)`. The list holds no entry that
+/// no use needs.
 const BACK_EDGES: &[(&str, &str, &str)] = &[
     (
         "check",
@@ -105,10 +106,10 @@ impl Uses<'_> {
         }
         let target = match at.first() {
             Some(top) => top.clone(),
+            // A path to the root itself, such as `use crate as c;` or `use crate::*;`, uses it all.
             None => match rest.first() {
                 Some(name) if self.top.contains(name) => name.clone(),
-                Some(_) => "crate".to_owned(),
-                None => return,
+                _ => "crate".to_owned(),
             },
         };
         let user = self
@@ -132,10 +133,7 @@ impl Uses<'_> {
             }
             syn::UseTree::Name(name) => self.use_path(prefix, &name.ident),
             syn::UseTree::Rename(rename) => self.use_path(prefix, &rename.ident),
-            syn::UseTree::Glob(_) => {
-                let path = prefix.clone();
-                self.record(&path);
-            }
+            syn::UseTree::Glob(_) => self.record(prefix),
             syn::UseTree::Group(group) => {
                 for tree in &group.items {
                     self.use_tree(prefix, tree);
@@ -209,7 +207,8 @@ impl<'ast> Visit<'ast> for Uses<'_> {
         }
     }
 
-    // shortcut: a path inside a macro's tokens is not read; parse the tokens if a use hides there.
+    // shortcut: a path inside a macro's tokens is not read, nor a method that an inherent `impl` in
+    // another module adds; parse the tokens, or map each impl to its module, if a use hides there.
     fn visit_path(&mut self, path: &'ast syn::Path) {
         let segments: Vec<String> = path
             .segments
@@ -241,17 +240,19 @@ fn module_file(parent: &Path, name: &str) -> PathBuf {
     }
 }
 
-/// Every use of one top-level module by another, outside test code, with the first file that has
-/// it, and the top-level modules that `lib.rs` declares.
-fn uses() -> (BTreeMap<(String, String), PathBuf>, Vec<String>) {
-    let lib = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
-    let source = |path: &Path| {
-        let text = fs::read_to_string(path)
-            .unwrap_or_else(|e| panic!("{} should be readable: {e}", path.display()));
-        syn::parse_file(&text).unwrap_or_else(|e| panic!("{} should parse: {e}", path.display()))
-    };
-    let root = source(&lib);
-    let top: Vec<String> = root
+fn source(path: &Path) -> syn::File {
+    let text = fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("{} should be readable: {e}", path.display()));
+    syn::parse_file(&text).unwrap_or_else(|e| panic!("{} should parse: {e}", path.display()))
+}
+
+fn lib() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs")
+}
+
+/// The top-level modules that `lib.rs` declares, outside test code.
+fn top_modules() -> Vec<String> {
+    source(&lib())
         .items
         .iter()
         .filter_map(|item| match item {
@@ -260,9 +261,15 @@ fn uses() -> (BTreeMap<(String, String), PathBuf>, Vec<String>) {
             }
             _ => None,
         })
-        .collect();
+        .collect()
+}
+
+/// Every use of one top-level module by another, outside test code, with the first file that has
+/// it.
+fn uses() -> BTreeMap<(String, String), PathBuf> {
+    let top = top_modules();
     let mut edges = BTreeMap::new();
-    let mut files = vec![(Vec::new(), lib)];
+    let mut files = vec![(Vec::new(), lib())];
     while let Some((module, file)) = files.pop() {
         let ast = source(&file);
         let mut uses = Uses {
@@ -280,15 +287,15 @@ fn uses() -> (BTreeMap<(String, String), PathBuf>, Vec<String>) {
             files.push((module, path));
         }
     }
-    (edges, top)
+    edges
 }
 
 /// GIVEN the top-level modules that lib.rs declares
-/// WHEN each one is looked up in LAYERS
+/// WHEN each one is looked up in `LAYERS`
 /// THEN each module has one layer, and each layer names a real module
 #[test]
 fn module_layers_should_name_each_top_level_module_once() {
-    let (_, top) = uses();
+    let top = top_modules();
     let names: Vec<&str> = LAYERS
         .iter()
         .flat_map(|layer| layer.iter().copied())
@@ -313,10 +320,10 @@ fn module_layers_should_name_each_top_level_module_once() {
 
 /// GIVEN every use of one top-level module by another, outside test code
 /// WHEN each use is compared with the layers and the kept back edges
-/// THEN no use goes to a later layer, except the kept ones, and each kept one is still used
+/// THEN no use goes to a later layer, except the kept ones
 #[test]
 fn modules_should_use_only_their_own_and_earlier_layers() {
-    let (edges, _) = uses();
+    let edges = uses();
     let back: Vec<String> = edges
         .iter()
         .filter(|((user, used), _)| {
@@ -324,17 +331,25 @@ fn modules_should_use_only_their_own_and_earlier_layers() {
         })
         .map(|((user, used), file)| format!("{user} uses {used} in {}", file.display()))
         .collect();
-    let stale: Vec<String> = BACK_EDGES
-        .iter()
-        .filter(|(u, d, _)| !edges.contains_key(&((*u).to_owned(), (*d).to_owned())))
-        .map(|(u, d, _)| format!("{u} -> {d}"))
-        .collect();
     assert!(
         back.is_empty(),
         "a module should use only its own layer and earlier ones; move the item, or add a \
          BACK_EDGES entry with a reason:\n{}",
         back.join("\n")
     );
+}
+
+/// GIVEN every use of one top-level module by another, outside test code
+/// WHEN each `BACK_EDGES` entry is looked up in those uses
+/// THEN each entry names a use that the code still has
+#[test]
+fn back_edges_should_each_name_a_use_that_remains() {
+    let edges = uses();
+    let stale: Vec<String> = BACK_EDGES
+        .iter()
+        .filter(|(u, d, _)| !edges.contains_key(&((*u).to_owned(), (*d).to_owned())))
+        .map(|(u, d, _)| format!("{u} -> {d}"))
+        .collect();
     assert!(
         stale.is_empty(),
         "each BACK_EDGES entry should still be used; delete these: {stale:?}"

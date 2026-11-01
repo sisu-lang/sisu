@@ -77,11 +77,16 @@ languages do, not by what Sisu did before.
    needs none. A new term is in `GLOSSARY.md`.
 10. **Structure.** A target that goes against a ruling in
     `docs/register.md` blocks. A target that makes a debt row larger blocks,
-    unless the target or "Focus" names the row. A diff that adds a field to
-    `Checker`, `Body`, `Codegen` or `Gen`, adds a `_` arm to a match over an
-    enum of the compiler's IR, or states a rule a second time, names the
-    module that owns the rule or the register row that tracks the growth.
-    When it names neither, that is a nit, and the nit proposes the debt row.
+    unless the target or "Focus" names the row. A diff can also grow debt
+    that no row tracks:
+    - It adds a field to `Checker`, `Codegen` or `Gen`.
+    - It adds a `_` arm to a match over an enum of the compiler's IR.
+    - It states a rule a second time.
+    - It adds an entry to `BACK_EDGES` in `crates/sisuc/tests/architecture.rs`.
+
+    Such a diff names the module that owns the rule, or the reason for the
+    growth. When it names neither, that is a nit, and the nit proposes a debt
+    row.
 
 # Diagnostics
 

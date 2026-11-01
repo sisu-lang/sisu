@@ -4,7 +4,8 @@ Whether the known structural debt grew since the register last counted it.
 `docs/register.md` lists each debt with its Rust items and, where there is
 one, a count. This area counts each one again on this checkout, compares the
 count with the register, and looks for new debt of the same kinds. It writes
-no probe programs: its probes are the counts.
+no probe programs. Its probes are the counts and the searches of "A new
+hub"; they take the place of the five probes that step 2 asks for.
 
 ## Counts
 
@@ -34,16 +35,20 @@ row in `probes.md`.
 
 - **Number-type lists.** The `matches!` patterns, `|` patterns and slices
   that name two or more number types (`Type::I64`, `Type::U8`, `Type::F64`,
-  `TypeKind::*`). Start from this search and read each hit, because a line
-  can hold one list and a list can span lines:
+  `TypeKind::*`). A list can span lines, one type on each line, so search
+  for each name and group the hits into lists by hand:
 
   ```console
-  $ grep -rnE --include=*.rs '(Type|TypeKind)::(I64|U8|F64)\b.*(Type|TypeKind)::(I64|U8|F64)\b' crates/sisuc/src | grep -v '/tests/'
+  $ grep -rnE --include=*.rs '(Type|TypeKind)::(I64|U8|F64)\b' crates/sisuc/src | grep -v '/tests/'
   ```
+
+  The search also finds the lines of inline `#[cfg(test)] mod tests`
+  blocks. Drop each hit below that line of its file before you count.
 
 - **Module order.** The entries of `BACK_EDGES` in
   `crates/sisuc/tests/architecture.rs`. The test holds the rule, so only
-  count the entries and compare them with the last audit.
+  count the entries. No debt row tracks them: compare the count with the
+  last audit, and read the reason of each new entry.
 - **The other rows.** For each other debt row, check that its Rust items
   still exist and that the problem it states is still there.
 
