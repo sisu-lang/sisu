@@ -4477,3 +4477,251 @@ fn lay_out_enums_should_panic_on_an_enum_that_holds_itself_inline() {
     let context = Context::create();
     compile(&context, &program, &mir, "test.sisu", src, &machine, false);
 }
+
+/// Runs `check` on the `Codegen` of `src`, which needs no layout for the drop decisions.
+fn with_codegen(src: &str, check: impl FnOnce(&Codegen<'_, '_>)) {
+    let context = Context::create();
+    let (program, diagnostics) = check_alone(&parse_ok(src), src, &[]);
+    let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+    let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
+    let machine = target_machine(OptLevel::O0).expect("the host is a target");
+    let mir = mir::build(&program);
+    let codegen = Codegen::new(&context, &program, &mir, "test.sisu", src, &machine, false);
+    check(&codegen);
+}
+
+/// The class type named `name` in the program of `codegen`.
+fn class_type(codegen: &Codegen<'_, '_>, name: &str) -> Type {
+    let id = codegen.program.classes.iter().position(|c| c.name == name);
+    let id = id.unwrap_or_else(|| panic!("the program should declare class {name}"));
+    Type::intern(TypeKind::Class(ClassId(id), TypeArgs::NONE))
+}
+
+/// Class `A` holds a field of each type of the table in the spec ("Which drop functions
+/// count"): the field name says the row. `A` is the holder, so the `A?` of its own cycle is a
+/// link, and `B` is a class that is not in that cycle.
+#[test]
+fn recursing_should_follow_the_spec_table() {
+    let src = "class A {
+    _next: A?
+    _array: [A]
+    _optional_elements: [A?]
+    _nested: [[A]]
+    _optional_array: [A]?
+    _link: Link
+    _generic: Box<A>
+    _boxed: L
+    _tree: Tree
+    _mutual: Second
+    _other: B?
+    _text: string
+    _texts: [string?]
+    _numbers: [i64]
+    _kind: Kind
+    _kinds: [Kind]
+}
+
+class B {
+    _n: i64
+}
+
+enum Link {
+    End
+    To(A)
+}
+
+enum Box<N> {
+    Empty
+    Full(N)
+}
+
+enum L {
+    Nil
+    Cons(A?, L)
+}
+
+enum Tree {
+    Leaf
+    Node([Tree])
+}
+
+enum First {
+    End
+    Next(Second)
+    Hold(A)
+}
+
+enum Second {
+    Back(First)
+}
+
+enum Kind {
+    X
+    Y(i64, string)
+}
+
+fn main() {}";
+    let rows = [
+        ("_next", false),
+        ("_array", true),
+        ("_optional_elements", true),
+        ("_nested", true),
+        ("_optional_array", true),
+        ("_link", true),
+        ("_generic", true),
+        ("_boxed", true),
+        ("_tree", true),
+        ("_mutual", true),
+        ("_other", true),
+        ("_text", false),
+        ("_texts", false),
+        ("_numbers", false),
+        ("_kind", false),
+        ("_kinds", false),
+    ];
+    with_codegen(src, |codegen| {
+        let a = class_type(codegen, "A");
+        let TypeKind::Class(holder, _) = a.kind() else {
+            unreachable!("class_type should give a class");
+        };
+        for (name, want) in rows {
+            let field = codegen.program.classes[holder.0]
+                .fields
+                .iter()
+                .find(|f| f.name == name)
+                .unwrap_or_else(|| panic!("class A should have field {name}"));
+            assert_eq!(codegen.recursing(Some(holder), field.ty), want, "{name}");
+        }
+        // An array element has no holder: a class there is never a link.
+        assert!(codegen.recursing(None, a));
+    });
+}
+
+/// `drop_weight` counts the frames from a counting drop function to the next one. `class A {
+/// _next: [A] }` has `drop.A`, `release.[A]`, then `drop.[A]` counts. A string adds `release`
+/// and `drop`; a class whose drop does not count adds its own weight.
+#[test]
+fn drop_weight_should_count_the_helper_frames_between_counting_drops() {
+    let src = "class A {
+    _next: [A]
+}
+
+fn main() {}";
+    with_codegen(src, |codegen| {
+        let a = class_type(codegen, "A");
+        let array = Type::intern(TypeKind::Array(a));
+        assert!(codegen.counts(a));
+        assert!(codegen.counts(array));
+        assert_eq!(
+            codegen.drop_weight(array),
+            2,
+            "release.A, then drop.A counts"
+        );
+        assert_eq!(
+            codegen.drop_weight(a),
+            2,
+            "release.[A], then drop.[A] counts"
+        );
+    });
+
+    // `E0` holds `E1` inline, and `E1` holds an array of `C`.
+    let src = "class C {
+    _next: E0
+}
+
+enum E0 {
+    End
+    To(E1)
+}
+
+enum E1 {
+    End
+    To([C])
+}
+
+fn main() {}";
+    with_codegen(src, |codegen| {
+        let c = class_type(codegen, "C");
+        assert_eq!(
+            codegen.drop_weight(c),
+            4,
+            "drop.C, release.E0, release.E1, release.[C]"
+        );
+    });
+
+    // `S` does not count, so `W` adds the weight of `S`: `release.S`, `drop.S`, then the
+    // `release.string` and `drop.string` of its text.
+    let src = "class S {
+    _text: string
+}
+
+class W {
+    _s: S
+    _next: [W]
+}
+
+fn main() {}";
+    with_codegen(src, |codegen| {
+        let (s, w) = (class_type(codegen, "S"), class_type(codegen, "W"));
+        assert!(!codegen.counts(s));
+        assert_eq!(codegen.drop_weight(s), 3);
+        assert_eq!(
+            codegen.drop_weight(w),
+            5,
+            "drop.W, release.S, drop.S, 2 string frames"
+        );
+    });
+
+    // An enum with boxes adds `release`, `drain` and `walk`, then the release of its class.
+    let src = "class A {
+    _l: L
+}
+
+enum L {
+    Nil
+    Cons(A?, L)
+}
+
+fn main() {}";
+    with_codegen(src, |codegen| {
+        let a = class_type(codegen, "A");
+        assert_eq!(
+            codegen.drop_weight(a),
+            5,
+            "drop.A, release.L, drain.L, walk.L, release.A"
+        );
+    });
+}
+
+/// `A` and `B` hold each other, so one drain frees both. `A` has only a link, but the drain
+/// of its cycle releases `B`'s `E`, which reaches `A` again. So `A` counts, or the chain
+/// `drop.A`, `drain.A`, `release.E`, `release.A` would never meet a counting drop.
+#[test]
+fn counts_should_follow_a_recursing_part_of_any_class_in_the_cycle() {
+    let src = "class A {
+    _b: B?
+}
+
+class B {
+    _a: A?
+    _e: E
+}
+
+enum E {
+    End
+    To(A)
+}
+
+fn main() {}";
+    with_codegen(src, |codegen| {
+        let (a, b) = (class_type(codegen, "A"), class_type(codegen, "B"));
+        assert!(codegen.counts(a));
+        assert!(codegen.counts(b));
+        assert_eq!(
+            codegen.drop_weight(a),
+            4,
+            "drop.A, drain.A, release.E, release.A"
+        );
+        assert_eq!(codegen.drop_weight(b), codegen.drop_weight(a));
+    });
+}

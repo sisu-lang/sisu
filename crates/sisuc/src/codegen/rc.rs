@@ -86,7 +86,7 @@ impl ClassCycles {
 
     /// The index among the classes of the cycle of `holder` of the class that a field of type
     /// `field` holds, when `holder` is in a cycle and that class is in it too.
-    fn link(&self, holder: ClassId, field: Type) -> Option<usize> {
+    pub(super) fn link(&self, holder: ClassId, field: Type) -> Option<usize> {
         let held = held_class(field)?;
         let cycle = self.cycle[holder.0]?;
         (self.cycle[held.0] == Some(cycle)).then(|| self.position[held.0])

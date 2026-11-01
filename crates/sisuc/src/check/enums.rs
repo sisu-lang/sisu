@@ -564,6 +564,7 @@ impl Checker<'_> {
                     .collect(),
                 counted: false,
                 cycle: None,
+                reaches: false,
             })
             .collect();
         tir::layout_enums(&mut lowered);

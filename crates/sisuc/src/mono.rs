@@ -586,6 +586,7 @@ impl Mono {
             variants: Vec::new(),
             counted: false,
             cycle: None,
+            reaches: false,
         };
         self.out.enums.push(e);
         self.uses.push(self.at);
