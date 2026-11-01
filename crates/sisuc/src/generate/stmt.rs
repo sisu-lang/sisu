@@ -54,7 +54,7 @@ enum Rule {
     /// `v.push(e)`, `v[i].push(e)`, `v[i]?.push(e)`, `v?.push(e)`, or a guarded push onto a `mut`
     /// field.
     Push,
-    /// `v.g = e`, `v?.g = e`, or `v.g op= e` of a number.
+    /// `v.g = e` or `v?.g = e`, or `op=` in place of `=` for a number.
     SetField,
     Compound,
     If,

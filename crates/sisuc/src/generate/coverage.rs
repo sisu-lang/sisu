@@ -7,6 +7,7 @@
 
 use std::fmt::Write as _;
 
+use arbitrary::Unstructured;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::item::{MAX_ALIASES, MAX_INTERFACES, MAX_KNOWN, MAX_REQUIREMENTS, MOST};
@@ -1122,7 +1123,6 @@ impl Walk {
         }
     }
 
-    /// Walks the target of an assignment.
     /// Marks an assignment whose `target` goes through `?.`.
     fn through_optional(&mut self, target: &ast::Expr) {
         if matches!(target.kind, ast::ExprKind::Field { safe: true, .. }) {
@@ -1130,6 +1130,7 @@ impl Walk {
         }
     }
 
+    /// Walks the target of an assignment.
     fn target(&mut self, target: &ast::Expr) {
         if matches!(target.kind, ast::ExprKind::Block(_)) {
             self.misplaced.push(format!("a block as a place: {target}"));
@@ -4687,29 +4688,28 @@ fn a_push_through_an_optional_should_take_the_place_of_its_local() {
 }
 
 /// Only a `let mut` local gets the type `[[T]?]`, and an element of it takes `?.push`; `any_type`
-/// never gives a type of three layers.
+/// never gives a type of three layers. One program holds both.
 #[test]
 fn a_mutable_array_local_should_now_and_then_hold_optional_arrays() {
-    let (mut local, mut push) = (false, false);
-    for data in seeds() {
+    let held = seeds().any(|data| {
         let program = generate(&data).program;
-        local |= program.lines().any(|line| {
-            line.trim_start().starts_with("let mut ")
-                && line.split_once(": [[").is_some_and(|(_, rest)| {
-                    rest.split_once(" = ")
-                        .is_some_and(|(ty, _)| ty.ends_with("]?]"))
-                })
-        });
-        push |= program.contains("]?.push(");
-    }
+        program.contains("]?.push(")
+            && program.lines().any(|line| {
+                line.trim_start().starts_with("let mut ")
+                    && line.split_once(": [[").is_some_and(|(_, rest)| {
+                        rest.split_once(" = ")
+                            .is_some_and(|(ty, _)| ty.ends_with("]?]"))
+                    })
+            })
+    });
     assert!(
-        local && push,
-        "{local} {push}: a local and a push onto its element"
+        held,
+        "no program holds a `[[T]?]` local and a push onto its element"
     );
 }
 
-/// A `Gen` over `data` that holds the class `K0`, with the one `mut` field `g0` of type `field`
-/// and a cap of 8, and the local `v0` of type `local`: the object, or an optional of it.
+/// A `Gen` over `data` that holds the class `K0`. `K0` has one `mut` field `g0` of type `field`,
+/// with a cap of 8. The local `v0` has type `local`: the object, or an optional of it.
 fn with_field(data: &[u8], field: Ty, local: Ty) -> Gen<'_> {
     let mut g = Gen::new(data);
     g.scope.classes.push(Class {
@@ -4741,6 +4741,27 @@ fn field_programs(field: &Ty, local: &Ty, write: impl Fn(&mut Gen<'_>)) -> Vec<S
             g.w.out.program
         })
         .collect()
+}
+
+/// How many of the first 256 inputs make a rewritten copy that starts with a `let` of a rewrite,
+/// for the statement that `write` writes on a `Gen` of `with_field`. The `let` of a nested
+/// statement goes inside it, so it does not count. The inputs choose the rewrites by their own
+/// bytes.
+fn lets_before(field: &Ty, local: &Ty, write: impl Fn(&mut Gen<'_>)) -> usize {
+    (0..256)
+        .filter(|&seed| {
+            let mut state = seed;
+            let data: Vec<u8> = (0..32)
+                .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+                .collect();
+            let mut g = with_field(&data, field.clone(), local.clone());
+            g.ru = Unstructured::new(&data);
+            let start = g.w.begin();
+            write(&mut g);
+            g.w.end(start, false);
+            g.w.out.rewritten.starts_with("let r")
+        })
+        .count()
 }
 
 /// An optional array field of the object that a local holds takes a push through `?.` after the
@@ -4786,7 +4807,7 @@ fn an_optional_array_field_of_class_objects_should_take_no_push() {
 /// below the length the array holds at least.
 #[test]
 fn a_push_onto_an_optional_element_should_stay_below_the_length() {
-    let mut seen = [false; 3];
+    let (mut seen, mut pushed) = ([false; 3], 0);
     for mut state in 0..1_024 {
         let data: Vec<u8> = (0..32)
             .flat_map(|_| splitmix64(&mut state).to_le_bytes())
@@ -4797,14 +4818,24 @@ fn a_push_onto_an_optional_element_should_stay_below_the_length() {
             Ty::I64,
         ))))));
         var.len = 3;
+        g.ru = Unstructured::new(&data);
+        let (start, grow) = (g.w.begin(), g.scope.vars[0].grow);
         g.push_stmt();
+        g.w.end(start, false);
         let program = &g.w.out.program;
         for (at, seen) in seen.iter_mut().enumerate() {
             *seen |= program.contains(&format!("v0[{at}]?.push("));
         }
         assert!(!program.contains("v0[3]"), "{program}");
+        if program.contains("]?.push(") {
+            // The argument takes the growth of `v0`, and runs only when the element holds an array.
+            assert!(g.scope.vars[0].grow < grow, "{program}");
+            assert!(!g.w.out.rewritten.starts_with("let r"), "{program}");
+            pushed += 1;
+        }
     }
     assert_eq!(seen, [true; 3]);
+    assert!(pushed > 100, "{pushed} pushes");
 }
 
 /// An element of an array of optional arrays of class objects takes no push (decision 4).
@@ -4830,6 +4861,20 @@ fn an_assignment_through_an_optional_object_should_write_its_field() {
         compound |= program.starts_with("v0?.g0 += ");
     }
     assert!(plain && compound, "{plain} {compound}");
+}
+
+/// The right side of an assignment through `?.` runs only when the local holds an object. No `let`
+/// before it in the rewritten copy may take it (ADR 0037). For an object that is there, one may.
+#[test]
+fn the_right_side_of_an_assignment_through_an_optional_should_stay_where_it_is() {
+    let object = Ty::class(0, 9);
+    let optional = Ty::Optional(Box::new(object.clone()));
+    let set = |g: &mut Gen<'_>| g.set_field();
+    assert!(
+        lets_before(&Ty::I64, &object, set) > 0,
+        "no `let` goes before `v0.g0 = e`"
+    );
+    assert_eq!(lets_before(&Ty::I64, &optional, set), 0);
 }
 
 /// A `string` field takes only `=` through `?.`, as it does without it.
