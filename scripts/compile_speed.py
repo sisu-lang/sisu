@@ -215,8 +215,8 @@ def warnings(stderr):
 def build(deadline, cmd, what, **kwargs):
     """Runs a compile command, and stops when it gives a warning.
 
-    A warning adds the time to print it. Every compile of the script goes through here: the check
-    builds, the timed runs, the empty program and the perf runs.
+    A warning adds the time to print it. Every compile of the script goes through here, except the
+    linker discovery: the check builds, the timed runs, the empty program and the perf runs.
     """
     result = deadline.run(cmd, what, **kwargs)
     found = warnings(result.stderr or '')
@@ -320,20 +320,20 @@ class Result(NamedTuple):
     note: str = ''
 
 
+# A character literal on one line, with escapes.
+CHAR = re.compile(r"'(?:\\.|[^'\\\n])*'")
+
 # Words, numbers with a suffix, character literals and comments. A `"` starts a string, and
 # `skip_string` reads it.
-TOKEN = re.compile(r"""
+TOKEN = re.compile(rf"""
     (?P<skip>\s+|//[^\n]*|/\*.*?(?:\*/|\Z))
   | (?P<word>[^\W\d]\w*)
   | (?P<number>[0-9][0-9_]*(?:\.[0-9][0-9_]*)?(?:[eE][+-]?[0-9]+)?(?:[A-Za-z][A-Za-z0-9]*)?)
-  | (?P<char>'(?:\\.|[^'\\\n])*')
+  | (?P<char>{CHAR.pattern})
   | (?P<bad>')
   | (?P<quote>")
   | (?P<other>.)
 """, re.X | re.S)
-
-
-CHAR = re.compile(r"'(?:\\.|[^'\\\n])*'")
 
 
 def tokens(text, path):
@@ -433,12 +433,17 @@ def past_empty(tokens, time, empty):
 
 
 def instructions(stderr):
-    """The count of `perf stat -x,` in `stderr`, or None when perf gave no number."""
-    for line in reversed((stderr or '').splitlines()):
-        if 'instructions:u' in line:
-            count = line.split(',')[0]
-            return int(count) if count.isdigit() else None
-    return None
+    """The instructions that `perf stat -x,` counted in `stderr`, or None when it gave no number.
+
+    A hybrid CPU has one line for each core type, such as `cpu_core/instructions/u`. The result
+    is their sum. A line with no number, such as `<not counted>`, counts as nothing.
+    """
+    counts = []
+    for line in (stderr or '').splitlines():
+        fields = line.split(',')
+        if len(fields) > 2 and 'instructions' in fields[2] and fields[0].isdigit():
+            counts.append(int(fields[0]))
+    return sum(counts) if counts else None
 
 
 def first_line(text):
@@ -482,10 +487,12 @@ def find_linker(lang, args, deadline):
         else None
     lines = ((r.stdout or '') + '\n' + (r.stderr or '')).splitlines() if r else []
     lld = next((line.strip() for line in lines if 'LLD' in line), None)
+    # rustc shows the output of its linker as a warning on stderr.
+    shown = 'warning: linker stdout: '
     if lld:
-        # rustc shows the output of the linker as a warning.
-        return lld.removeprefix('warning: linker stdout: '), True
-    return (r and r.returncode == 0 and first_line(r.stdout)) or 'unknown', False
+        return lld.removeprefix(shown), True
+    warned = next((line.removeprefix(shown) for line in lines if line.startswith(shown)), None)
+    return warned or (r and r.returncode == 0 and first_line(r.stdout)) or 'unknown', False
 
 
 def available(lang):
@@ -574,6 +581,10 @@ class Measurer:
 
 def measure(args, units, sizes, deadline):
     """Times each row, size and language. Returns the header lines and the list of Result."""
+    if available('go') and "'" in str(args.out):
+        # The Go `-bench` flag has the path, and Go reads a quote in its flags as a quote.
+        raise Fail(f"--out may not have a ' in it, because Go cannot read a ' in its -gcflags: "
+                   f'{args.out}')
     linkers = {lang: find_linker(lang, args, deadline) for lang in LANGS if available(lang)}
     lld = {lang: found[1] for lang, found in linkers.items()}
     # The perf test is the one of the spec: it fails on a machine that denies the counters.
@@ -678,9 +689,6 @@ def main(argv):
         parser.error('--runs is 1 or more')
     deadline = Deadline(args.time_bound or (600 if args.check_only else 7200))
     try:
-        if "'" in str(args.out):
-            # Go reads a quote in its flags as a quote.
-            raise Fail(f"--out may not have a ' in it: {args.out}")
         units = read_units(args.units)
         check_no_include(args.units / 'unit.cpp', units['cpp'])
         check_style(args.units, deadline)
