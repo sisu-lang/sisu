@@ -216,6 +216,7 @@ codes! {
     PayloadTooLarge = "E0160",
     AliasCycle = "E0161",
     AliasTooLarge = "E0162",
+    TooManyInstances = "E0163",
     NanComparison = "W0005",
     UnreachableArm = "W0006",
     RedundantSemicolon = "W0007",
@@ -407,6 +408,14 @@ pub(crate) enum DiagnosticKind {
         limit: usize,
         /// Whether `limit` is the whole check's, not the written type's.
         check: bool,
+    },
+    /// `mono` has made more than `limit` instances of the generic items of the program. `name` is
+    /// the generic item of the user with the most instances, `count` of them, declared at `at`.
+    TooManyInstances {
+        name: String,
+        at: Span,
+        count: usize,
+        limit: usize,
     },
     /// The argument `arg`, at `at`, of an inherited interface of `interface`, which is built from
     /// a type parameter.
@@ -2898,6 +2907,23 @@ impl From<DiagnosticKind> for Diagnostic {
                 },
             )
             .with_help("hold an inner part in a field of a class or an enum"),
+            DiagnosticKind::TooManyInstances {
+                name,
+                at,
+                count,
+                limit,
+            } => Diagnostic::coded(
+                code,
+                at,
+                format!(
+                    "the generic items of this program have more than {} instances",
+                    thousands(limit)
+                ),
+            )
+            .with_label(format!(
+                "`{name}` has the most: {} instances",
+                thousands(count)
+            )),
             DiagnosticKind::InheritedArgument {
                 arg,
                 interface,

@@ -108,6 +108,12 @@ fn prelude_method_of_outside_type(program: &Program) -> bool {
     })
 }
 
+/// The most instances of generic items that `mono` makes for one program. An instance is one copy
+/// of a generic function, class or enum for one list of type arguments. A chain of generic items
+/// that each use the next one twice, with different arguments, doubles the instances at each step.
+/// When the count passes the limit, `mono` stops and reports E0163 (`docs/diagnostics/E0163.md`).
+const INSTANCE_LIMIT: usize = 100_000;
+
 /// An instantiation reached and given its id, whose body waits on the worklist.
 enum Work {
     Function {
@@ -180,10 +186,20 @@ struct Mono {
     /// that only a local's type or a class field reaches has none until an expression meets
     /// its type. `payload_limit` reads it for the error of an instance that is too large.
     uses: Vec<Option<Span>>,
+    /// How many instances `class`, `enum_id` and `function_id` have made. The non-generic items
+    /// that `new` copies do not count.
+    instances: usize,
+    /// The count of `instances` that `run` accepts.
+    limit: usize,
 }
 
 impl Mono {
     fn new(program: Program) -> Mono {
+        Mono::with_limit(program, INSTANCE_LIMIT)
+    }
+
+    /// `new`, with `run` stopping when the instances pass `limit`.
+    fn with_limit(program: Program, limit: usize) -> Mono {
         let mut mono = Mono {
             decls: Vec::with_capacity(program.functions.len()),
             class_decls: Vec::with_capacity(program.classes.len()),
@@ -217,6 +233,8 @@ impl Mono {
             work: VecDeque::new(),
             at: None,
             uses: Vec::new(),
+            instances: 0,
+            limit,
         };
         let user_funcs = program.prelude.funcs;
         for (i, f) in program.functions.into_iter().enumerate() {
@@ -255,6 +273,36 @@ impl Mono {
     }
 
     fn run(mut self) -> Result<Program, Vec<Diagnostic>> {
+        self.expand();
+        if self.failed() {
+            let found = self.stuck_diagnostics();
+            if !found.is_empty() {
+                return Err(found);
+            }
+            return Err(vec![self.too_many_instances()]);
+        }
+        layout_enums(&mut self.out.enums);
+        debug_assert!(
+            payload_limit::measure(&self.out.enums)
+                .iter()
+                .all(Option::is_some),
+            "every enum should have a size bound after the layout: its types are final and the layout boxes each cycle"
+        );
+        let oversized = payload_limit::diagnostics(&self.out.enums, &self.uses);
+        if !oversized.is_empty() {
+            return Err(oversized);
+        }
+        self.out.functions = self
+            .functions
+            .into_iter()
+            .map(|f| f.expect("the worklist should instantiate every function it reaches"))
+            .collect();
+        Ok(self.out)
+    }
+
+    /// Lowers the non-generic items, then each instance on the worklist, until the worklist is
+    /// empty or `failed` holds.
+    fn expand(&mut self) {
         for i in 0..self.out.classes.len() {
             let mut fields = mem::take(&mut self.out.classes[i].fields);
             for field in &mut fields {
@@ -330,31 +378,55 @@ impl Mono {
                 }
             }
         }
-        if self.failed() {
-            return Err(self.stuck_diagnostics());
-        }
-        layout_enums(&mut self.out.enums);
-        debug_assert!(
-            payload_limit::measure(&self.out.enums)
-                .iter()
-                .all(Option::is_some),
-            "every enum should have a size bound after the layout: its types are final and the layout boxes each cycle"
-        );
-        let oversized = payload_limit::diagnostics(&self.out.enums, &self.uses);
-        if !oversized.is_empty() {
-            return Err(oversized);
-        }
-        self.out.functions = self
-            .functions
-            .into_iter()
-            .map(|f| f.expect("the worklist should instantiate every function it reaches"))
-            .collect();
-        Ok(self.out)
     }
 
-    /// Whether `subst` has met a type that it cannot normalize.
+    /// Whether `subst` has met a type that it cannot normalize, or the instances have passed the
+    /// limit.
     fn failed(&self) -> bool {
-        !self.stuck.borrow().is_empty()
+        !self.stuck.borrow().is_empty() || self.instances > self.limit
+    }
+
+    /// The generic item of the user with the most instances, as its name, the span of its name
+    /// and its count of instances. The items of the prelude have instances too, but the user
+    /// cannot change them. One walk over the maps of instances.
+    fn busiest(&self) -> (String, Span, usize) {
+        let mut classes = vec![0; self.class_decls.len()];
+        for &(decl, _) in self.class_ids.keys() {
+            classes[decl.0] += 1;
+        }
+        let mut enums = vec![0; self.enum_decls.len()];
+        for &(decl, _) in self.enum_ids.keys() {
+            enums[decl.0] += 1;
+        }
+        let mut functions = vec![0; self.decls.len()];
+        for &(decl, _) in self.function_ids.keys() {
+            functions[decl.0] += 1;
+        }
+        let classes = (self.class_decls.iter().zip(classes))
+            .filter_map(|(decl, n)| decl.as_ref().map(|d| (d.name.as_str(), d.span, n)));
+        let enums = (self.enum_decls.iter().zip(enums))
+            .filter_map(|(decl, n)| decl.as_ref().map(|d| (d.name.as_str(), d.span, n)));
+        let functions = (self.decls.iter().zip(functions))
+            .filter_map(|(decl, n)| decl.as_ref().map(|d| (d.name.as_str(), d.span, n)));
+        let (name, at, count) = classes
+            .chain(enums)
+            .chain(functions)
+            .filter(|(_, at, _)| !at.in_prelude())
+            .max_by_key(|&(_, _, n)| n)
+            .expect("a program over the instance limit should have a generic item of the user");
+        (name.to_string(), at, count)
+    }
+
+    /// The E0163 for the instances that `busiest` finds.
+    fn too_many_instances(&self) -> Diagnostic {
+        let (name, at, count) = self.busiest();
+        DiagnosticKind::TooManyInstances {
+            name,
+            at,
+            count,
+            limit: self.limit,
+        }
+        .into()
     }
 
     /// The E0030 of each choice that `subst` met, ordered by place in the source, each at the
@@ -546,10 +618,12 @@ impl Mono {
             .expect("a class reached with arguments should be generic");
         let class = Class {
             name: self.type_instance_name(&decl.name, args.get(), done.0),
+            span: decl.span,
             type_params: Vec::new(),
             fields: Vec::new(),
         };
         self.out.classes.push(class);
+        self.instances += 1;
         self.class_ids.insert((id, args), done);
         self.work.push_back(Work::Class {
             id: done,
@@ -589,6 +663,7 @@ impl Mono {
         };
         self.out.enums.push(e);
         self.uses.push(self.at);
+        self.instances += 1;
         self.enum_ids.insert((id, args), done);
         self.work.push_back(Work::Enum {
             id: done,
@@ -611,6 +686,7 @@ impl Mono {
             .expect("a function reached with arguments should be generic or the prelude's");
         let name = self.instance_name(decl, args.get(), done.0);
         self.functions.push(None);
+        self.instances += 1;
         self.function_ids.insert((id, args), done);
         self.work.push_back(Work::Function {
             id: done,
@@ -2422,5 +2498,125 @@ mod tests {
             front_end_reports(&src),
             [(crate::diagnostic::Code::PayloadTooLarge, at)]
         );
+    }
+
+    /// `n` classes in a chain: `C{k}` holds `C{k-1}` twice, with `[T]` and `T?`, so `C{n}<i64>`
+    /// makes 2^n - 1 instances in all.
+    fn class_chain(n: usize) -> String {
+        let mut src = String::from("class C1<T> {\n    a: [T]\n    b: T?\n}\n");
+        for k in 2..=n {
+            let prev = k - 1;
+            writeln!(
+                src,
+                "class C{k}<T> {{\n    a: C{prev}<[T]>\n    b: C{prev}<T?>\n}}"
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        write!(src, "fn main() {{\n    let x: C{n}<i64>? = None\n}}\n")
+            .expect("writing to a `String` should succeed");
+        src
+    }
+
+    /// The same chain of generic enums.
+    fn enum_chain(n: usize) -> String {
+        let mut src = String::from("enum E1<T> {\n    A([T])\n    B(T?)\n}\n");
+        for k in 2..=n {
+            let prev = k - 1;
+            writeln!(
+                src,
+                "enum E{k}<T> {{\n    A(E{prev}<[T]>)\n    B(E{prev}<T?>)\n}}"
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        write!(src, "fn main() {{\n    let x: E{n}<i64>? = None\n}}\n")
+            .expect("writing to a `String` should succeed");
+        src
+    }
+
+    /// The same chain of generic functions: `g{k}` calls `g{k-1}` twice.
+    fn function_chain(n: usize) -> String {
+        let mut src = String::from("fn g1<T>(x: i64) -> i64 {\n    x + 1\n}\n");
+        for k in 2..=n {
+            let prev = k - 1;
+            writeln!(
+                src,
+                "fn g{k}<T>(x: i64) -> i64 {{\n    g{prev}<[T]>(x) + g{prev}<T?>(x)\n}}"
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        write!(src, "fn main() {{\n    let y = g{n}<i64>(0)\n}}\n")
+            .expect("writing to a `String` should succeed");
+        src
+    }
+
+    /// `src` checked with the prelude, then monomorphized with `limit`, not `INSTANCE_LIMIT`.
+    fn mono_with_limit(src: &str, limit: usize) -> Mono {
+        let (program, diagnostics) = crate::front_end::checked(src);
+        let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+        Mono::with_limit(program, limit)
+    }
+
+    /// The name, the span start and the instance count that `busiest` gives for `src` when the
+    /// worklist has stopped at `limit`.
+    fn busiest_at(src: &str, limit: usize) -> (String, usize, usize) {
+        let mut mono = mono_with_limit(src, limit);
+        mono.expand();
+        let (name, at, count) = mono.busiest();
+        (name, at.start(), count)
+    }
+
+    /// A chain of 6 items makes 2^6 - 1 = 63 instances, so the limit 63 holds and the limit 62
+    /// does not. At 62, the worklist stops while it makes the 32nd of the 32 instances of the
+    /// item `first`, which is the first in the chain. The instances come level by level.
+    fn assert_chain_stops_at_its_first_item(row: &str, src: &str, first: &str) {
+        let at = src.find(first).expect("the source should declare the item");
+        let found = mono_with_limit(src, 62).run().err();
+        let found = found.unwrap_or_else(|| panic!("{row}: 63 instances should pass the limit 62"));
+        let reports: Vec<_> = found.iter().map(|d| (d.code(), d.span().start())).collect();
+        assert_eq!(
+            reports,
+            [(crate::diagnostic::Code::TooManyInstances, at)],
+            "{row}"
+        );
+        assert_eq!(busiest_at(src, 62), (first.to_string(), at, 32), "{row}");
+        let at_limit = mono_with_limit(src, 63).run().err();
+        assert!(
+            at_limit.is_none(),
+            "{row}: 63 instances should hold the limit 63"
+        );
+    }
+
+    #[test]
+    fn mono_should_report_e0163_at_the_first_class_of_a_chain_over_the_limit() {
+        assert_chain_stops_at_its_first_item("class", &class_chain(6), "C1");
+    }
+
+    #[test]
+    fn mono_should_report_e0163_at_the_first_enum_of_a_chain_over_the_limit() {
+        assert_chain_stops_at_its_first_item("enum", &enum_chain(6), "E1");
+    }
+
+    #[test]
+    fn mono_should_report_e0163_at_the_first_function_of_a_chain_over_the_limit() {
+        assert_chain_stops_at_its_first_item("function", &function_chain(6), "g1");
+    }
+
+    /// The prelude's `Result` has 5 instances, and the user's `W` has 2, so `W` is the busiest
+    /// item of the user and `Result` is the busiest item of the program.
+    #[test]
+    fn mono_should_never_point_e0163_at_an_item_of_the_prelude() {
+        let src = "class W<T> {\n    v: T\n}\nfn main() {\n    let a: W<i64> = W(v: 1)\n    let b: W<bool> = W(v: true)\n    let c: Result<i64, i64> = Result.Ok(1)\n    let d: Result<i64, bool> = Result.Ok(1)\n    let e: Result<bool, i64> = Result.Ok(true)\n    let f: Result<bool, bool> = Result.Ok(true)\n    let g: Result<string, i64> = Result.Ok(\"a\")\n}\n";
+        let program = (mono_with_limit(src, INSTANCE_LIMIT).run())
+            .unwrap_or_else(|found| panic!("{found:?}"));
+        let results = program
+            .enums
+            .iter()
+            .filter(|e| e.name.starts_with("Result<"))
+            .count();
+        assert_eq!(
+            results, 5,
+            "the prelude's enum should have the most instances"
+        );
+        assert_eq!(busiest_at(src, 4), ("W".to_string(), 6, 2));
     }
 }

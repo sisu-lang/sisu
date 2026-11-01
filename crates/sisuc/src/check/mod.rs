@@ -1061,6 +1061,7 @@ fn lower_class(class: &ClassInfo) -> Option<tir::Class> {
         .collect::<Option<_>>()?;
     Some(tir::Class {
         name: class.name.name.to_string(),
+        span: class.name.span,
         type_params: class.type_params.iter().map(Symbol::to_string).collect(),
         fields,
     })
@@ -2058,6 +2059,7 @@ impl Checker<'_> {
         }
         Some(tir::Function {
             name,
+            span: f.name.span,
             owner,
             conformance,
             method: owner.map(|_| f.name.name.to_string()),
