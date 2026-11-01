@@ -1520,3 +1520,284 @@ fn an_optional_beside_an_any_value_should_stay_a_mistake_where_no_type_is_writte
         "fn main() {\n    let x: i64? = Some(5)\n    let o: (any Display)? = None\n    let r: any Display = o ?? x\n    print(r)\n}",
     );
 }
+
+/// The type `E` of the earlier branch in the parity cases, each with the value that a local of
+/// that type starts from.
+const PARITY_TYPES: [(&str, &str); 8] = [
+    ("any Display", "1"),
+    ("(any Display)?", "Some(7)"),
+    ("any Shape", "Circle(r: 1.0)"),
+    ("[any Display]", "[d]"),
+    ("[any Display]?", "[d]"),
+    ("i64", "1"),
+    ("i64?", "Some(5)"),
+    ("string", "\"z\""),
+];
+
+/// The values of the later branch in the parity cases. The last one is two values, `[]` beside
+/// `2`, which the later array holds as `[[], 2]`.
+const PARITY_VALUES: [&[&str]; 15] = [
+    &["d"],
+    &["o"],
+    &["x"],
+    &["2"],
+    &["\"a\""],
+    &["Some(2)"],
+    &["Some(d)"],
+    &["None"],
+    &["[]"],
+    &["s"],
+    &["Circle(r: 2.0)"],
+    &["Some(Circle(r: 2.0))"],
+    &["[d]"],
+    &["Some([d])"],
+    &["[]", "2"],
+];
+
+/// The joins of the parity cases: an `if`, a `match` and a `loop` of `break`s.
+#[derive(Clone, Copy, Debug)]
+enum JoinForm {
+    If,
+    Match,
+    Loop,
+}
+
+/// The join `form` of the `members`, each a value in source order, and where each member is in
+/// it, as byte ranges.
+fn join_of(form: JoinForm, members: &[String]) -> (String, Vec<Range<usize>>) {
+    let last = members.len() - 1;
+    let mut text = String::new();
+    let mut ranges = Vec::new();
+    for (i, member) in members.iter().enumerate() {
+        let before = match (form, i) {
+            (JoinForm::If, 0) => "if c { ",
+            (JoinForm::If, i) if i == last => " } else { ",
+            (JoinForm::If, _) => " } else if c { ",
+            (JoinForm::Match, 0) => "match n { 0 => ",
+            (JoinForm::Match, i) if i == last => "; _ => ",
+            (JoinForm::Match, _) => "; 1 => ",
+            (JoinForm::Loop, 0) => "loop {\n        if c { break ",
+            (JoinForm::Loop, i) if i == last => " }\n        break ",
+            (JoinForm::Loop, _) => " }\n        if c { break ",
+        };
+        text.push_str(before);
+        ranges.push(text.len()..text.len() + member.len());
+        text.push_str(member);
+    }
+    text.push_str(match form {
+        JoinForm::If | JoinForm::Match => " }",
+        JoinForm::Loop => "\n    }",
+    });
+    (text, ranges)
+}
+
+/// What checking a parity program found: the start of each error, and the types of the locals
+/// `r`, the join, and `w`, of the written type the join is compared with, when it checked.
+struct ParityRun {
+    errors: Vec<usize>,
+    types: Option<(Type, Type)>,
+}
+
+/// Checks `let r = <join>` after locals of each value's type, with `e` of the type `ty`, made
+/// from `init`, and `w` of the type `written`. The ranges of the members are counted in `src`.
+fn parity_run(
+    (ty, init): (&str, &str),
+    written: &str,
+    join: &(String, Vec<Range<usize>>),
+) -> (String, Vec<Range<usize>>, ParityRun) {
+    let head = format!(
+        "{DECLS}fn main() {{\n    let c = true\n    let n = 1\n    let d: any Display = 1\n    let o: (any Display)? = Some(7)\n    let x: i64? = Some(5)\n    let s: any Shape = Circle(r: 1.0)\n    let e: {ty} = {init}\n    let w: {written} = []\n    let r = "
+    );
+    let src = format!("{head}{}\n}}", join.0);
+    let ranges = (join.1.iter())
+        .map(|r| r.start + head.len()..r.end + head.len())
+        .collect();
+    let (program, ds) = checked(&src);
+    let errors = (ds.iter())
+        .filter(|d| d.severity() == Severity::Error)
+        .map(|d| d.span().start())
+        .collect();
+    let types = program.and_then(|p| {
+        let main = p.functions.iter().find(|f| f.name == "main")?;
+        let local = |name: &str| {
+            (main.locals.iter())
+                .find(|l| l.name.as_deref() == Some(name))
+                .map(|l| l.ty)
+        };
+        Some((local("r")?, local("w")?))
+    });
+    (src, ranges, ParityRun { errors, types })
+}
+
+/// A branch array in a join with no written type joins as its elements would beside the elements
+/// of the earlier branch array, of type `E`: `if c { [e] } else { [v] }` checks clean exactly
+/// when `if c { e } else { v }` does and has the type `E`, and then has the type `[E]`; an array
+/// does not widen. Else an error is in the later array, or at the `e` that the scalar join
+/// blames, and nowhere else. The same holds in a `match` and a `loop`, and one level deeper.
+#[test]
+fn a_branch_array_should_join_as_its_elements_would_in_a_scalar_join() {
+    let mut failures = Vec::new();
+    let mut cases = 0;
+    for (ty, init) in PARITY_TYPES {
+        for values in PARITY_VALUES {
+            for form in [JoinForm::If, JoinForm::Match, JoinForm::Loop] {
+                let scalar_members: Vec<String> = std::iter::once("e".to_string())
+                    .chain(values.iter().map(ToString::to_string))
+                    .collect();
+                let (_, ranges, scalar) = parity_run(
+                    (ty, init),
+                    &format!("[{ty}]"),
+                    &join_of(form, &scalar_members),
+                );
+                let blames_earlier = scalar.errors.iter().any(|at| ranges[0].contains(at));
+                let builds_as_e = scalar.errors.is_empty()
+                    && scalar.types.is_some_and(|(r, w)| Type::array(r) == w);
+                for depth in [1, 2] {
+                    cases += 1;
+                    let (open, close) = ("[".repeat(depth), "]".repeat(depth));
+                    let members = [
+                        format!("{open}e{close}"),
+                        format!("{open}{}{close}", values.join(", ")),
+                    ];
+                    let written = format!("{open}{ty}{close}");
+                    let (src, ranges, array) =
+                        parity_run((ty, init), &written, &join_of(form, &members));
+                    let fine = if builds_as_e {
+                        array.errors.is_empty() && array.types.is_some_and(|(r, w)| r == w)
+                    } else {
+                        !array.errors.is_empty()
+                            && array.errors.iter().all(|at| {
+                                ranges[1].contains(at) || (blames_earlier && ranges[0].contains(at))
+                            })
+                    };
+                    if !fine {
+                        let at: Vec<_> = array.errors.iter().map(|&s| line_col(&src, s)).collect();
+                        failures.push(format!(
+                            "E `{ty}`, values `{}`, {form:?}, depth {depth}: the scalar join {}; the array has errors at {at:?} and type {:?}",
+                            values.join(", "),
+                            if builds_as_e {
+                                "checks clean as `E`"
+                            } else if blames_earlier {
+                                "blames the earlier branch or is not `E`"
+                            } else {
+                                "is rejected or is not `E`"
+                            },
+                            array.types.map(|(r, _)| r),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {cases} cases fail:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+/// The locals of the branch array rows, before the row's own lines, which start at line 7.
+const BRANCH_ARRAY_LOCALS: &str = "fn main() {\n    let c = true\n    let d: any Display = 1\n    let o: (any Display)? = Some(7)\n    let x: i64? = Some(5)\n    let s: any Shape = Circle(r: 1.0)\n";
+
+/// The branch arrays that reviews found, each with its exact codes and positions: an element of a
+/// branch array in a join with no written type joins as the value would beside the elements of
+/// the earlier branch array, and a written type outside the join still converts.
+#[test]
+fn a_branch_array_should_report_the_element_that_leaves_the_earlier_elements() {
+    let rows: [Row<'_>; 18] = [
+        (
+            "an `any` value beside optional `any` values",
+            "    let r = if c { [o] } else { [d] }",
+            vec![],
+        ),
+        (
+            "a number beside optional `any` values",
+            "    let r = if c { [o] } else { [2] }",
+            vec![],
+        ),
+        (
+            "an optional number beside optional `any` values",
+            "    let r = if c { [o] } else { [x] }",
+            vec![(Code::Mismatch, (7, 34))],
+        ),
+        (
+            "an empty array beside arrays of `any` values",
+            "    let r = if c { [[d]] } else { [[]] }",
+            vec![],
+        ),
+        (
+            "an empty array beside a local of arrays of `any` values",
+            "    let ys: [[any Display]] = [[d]]\n    let r = if c { ys } else { [[]] }",
+            vec![],
+        ),
+        (
+            "a `None` beside arrays of `any` values",
+            "    let r = if c { [[d]] } else { [[None]] }",
+            vec![(Code::Mismatch, (7, 37))],
+        ),
+        (
+            "an array of `any` values beside optional arrays of them",
+            "    let r = if c { [Some([d])] } else { [[d]] }",
+            vec![],
+        ),
+        (
+            "an array of `any` values beside a local optional array of them",
+            "    let ys: [any Display]? = Some([d])\n    let r = if c { [ys] } else { [[d]] }",
+            vec![],
+        ),
+        (
+            "a number after an empty array beside arrays of `any` values",
+            "    let r = if c { [[d]] } else { [[], 2] }",
+            vec![(Code::Mismatch, (7, 40))],
+        ),
+        (
+            "a number after two empty arrays beside arrays of `any` values",
+            "    let r = if c { [[d]] } else { [[], [], 2] }",
+            vec![(Code::Mismatch, (7, 44))],
+        ),
+        (
+            "an optional number beside `any` values",
+            "    let r = if c { [d] } else { [x] }",
+            vec![(Code::Mismatch, (7, 34))],
+        ),
+        (
+            "a `Some` of a number beside `any` values",
+            "    let r = if c { [d] } else { [Some(2)] }",
+            vec![(Code::Mismatch, (7, 34))],
+        ),
+        (
+            "an optional number beside `any` values, under a written type",
+            "    let r: [any Display] = if c { [d] } else { [x] }",
+            vec![],
+        ),
+        (
+            "a `Some` of a number beside `any` values, under a written type",
+            "    let r: [any Display] = if c { [d] } else { [Some(2)] }",
+            vec![],
+        ),
+        (
+            "a `None` beside `any` values, under a written optional type",
+            "    let r: [(any Display)?] = if c { [d] } else { [None] }",
+            vec![],
+        ),
+        (
+            "an object beside `any` values, under a written type",
+            "    let r: [any Shape] = if c { [s] } else { [Circle(r: 2.0)] }",
+            vec![],
+        ),
+        (
+            "a `None` beside `any` values",
+            "    let r = if c { [d] } else { [None] }",
+            vec![(Code::Mismatch, (7, 34))],
+        ),
+        (
+            "a `Some` of an object beside `any` values",
+            "    let r = if c { [s] } else { [Some(Circle(r: 2.0))] }",
+            vec![(Code::Mismatch, (7, 34))],
+        ),
+    ];
+    for (row, lines, expected) in rows {
+        codes_after(row, &format!("{BRANCH_ARRAY_LOCALS}{lines}\n}}"), &expected);
+    }
+}

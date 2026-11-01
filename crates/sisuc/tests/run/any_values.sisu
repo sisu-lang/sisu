@@ -181,6 +181,20 @@ fn main() {
     print(optional_row.len()) // 1
     let nested_row = if true { [[lone]] } else { [[]] }
     print(nested_row[0][0]) // 1
+    // The same joins where the program takes the later branch, whose array joins as its elements
+    // would beside the elements of the earlier branch: each value is converted and wrapped.
+    let later_optional = if false { [first] } else { [lone] }
+    print(later_optional[0] ?? 0) // 1
+    let later_number = if false { [first] } else { [2] }
+    print(later_number[0] ?? 0) // 2
+    let later_nested = if false { [[lone]] } else { [[]] }
+    print(later_nested[0].len()) // 0
+    let later_some = if false { [Some([lone])] } else { [[lone]] }
+    let inner = later_some[0] ?? [lone, lone]
+    print(inner.len()) // 1
+    let optionals: [(any Display)?] = [first]
+    let later_written = if false { optionals } else { [lone] }
+    print(later_written[0] ?? 0) // 1
     let flat: any Shape = Slab.Plain
     let shapes = [Some(Circle(r: 1.0)), flat, None]
     for shape in shapes {
