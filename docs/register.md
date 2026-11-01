@@ -24,6 +24,8 @@ are GitHub issues.
 - **A debt row** goes away when the milestone that pays it fixes it. A new row
   needs measured evidence: the Rust item or file, and a count where there is
   one.
+- **The `structure` area of `audit-sisu`** counts each debt row again, and
+  finds a row whose count grew.
 
 ## Rulings not built yet
 
