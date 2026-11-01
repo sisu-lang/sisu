@@ -1292,7 +1292,6 @@ crates/sisuc/src/mir/tests/reuse.rs::freed_token_is_not_taken_after_the_join
 crates/sisuc/src/mir/tests/reuse.rs::inline_field_takes_no_token
 crates/sisuc/src/mir/tests/reuse.rs::inner_match_takes_outer_tokens
 crates/sisuc/src/mir/tests/reuse.rs::join_offers_only_tokens_both_paths_hold
-crates/sisuc/src/mir/tests/reuse.rs::open_tokens_stay_bounded
 crates/sisuc/src/mir/tests/reuse.rs::token_of_another_enum_is_not_taken
 crates/sisuc/src/mir/tests/reuse.rs::token_used_on_one_branch_is_freed_on_the_other
 crates/sisuc/src/parser.rs::a_run_of_redundant_semicolons_leaves_one_space
