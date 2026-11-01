@@ -15,13 +15,14 @@ let paid = orders.filter(o => o.paid).sum_of(o => o.price)
 ## Why
 
 - **Other features cover its uses.** Named and default arguments
-  ([ADR 0004](0004-python-syntax-rust-semantics-swift-memory-model.md)) cover
-  optional parameters. Generics and interfaces cover one operation on many
+  ([ADR 0004](0004-python-syntax-rust-semantics-swift-memory-model.md),
+  milestone 10) cover optional parameters. Generics and interfaces cover one operation on many
   types.
-- **Overload resolution fights closure inference.** To choose an overload, the
-  checker must know the argument types. A closure's parameter types come from
-  the overload that the checker chooses. Swift has this loop, and reports
-  "the compiler is unable to type-check this expression in reasonable time".
+- **Overload resolution fights type inference.** To choose an overload, the
+  checker must know the argument types. A closure's parameter types and a
+  literal's type come from the overload that the checker chooses. Each
+  overload multiplies the cases to try. Swift reports "the compiler is unable
+  to type-check this expression in reasonable time" when there are too many.
 - **Diagnostics stay specific.** A call to one function has one signature to
   compare. A call to an overloaded name gets a list of candidates and a guess
   about which one the programmer meant.
@@ -33,7 +34,7 @@ let paid = orders.filter(o => o.paid).sum_of(o => o.price)
 - **Overloading by parameter types, as Swift, C++, Java and C# do**: rejected
   for the reasons above.
 - **Overloading by the number of parameters only**: rejected. Default
-  arguments already give a shorter call, with one declaration to read.
+  arguments (milestone 10) give a shorter call, with one declaration to read.
 - **No overloading (chosen)**, as in Rust, Go and Python. A closure variant
   has a name that says what it does.
 

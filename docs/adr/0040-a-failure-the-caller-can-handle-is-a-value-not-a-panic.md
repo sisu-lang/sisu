@@ -9,13 +9,13 @@ failure or recover from it, the result type shows the failure. Use one of
 these forms, in this order:
 
 1. **A total behaviour**, when one result is the obvious answer for every
-   input. `take(n)` with `n <= 0` gives no elements. A later `zip` stops at
-   the end of the shorter input.
+   input. In milestone 9's design, `take(n)` with `n <= 0` gives no
+   elements. A later `zip` stops at the end of the shorter input.
 2. **An optional `T?`**, when the failure has one reason that the caller
-   already knows. `m.get(k)` gives `None` for a missing key, and `u8(n)` gives
-   `None` when `n` does not fit (ADR 0018).
-3. **A `Result`** (milestone 12), when the failure has more than one reason
-   and the caller needs to know which.
+   already knows. `u8(n)` gives `None` when `n` does not fit (ADR 0018). In
+   the collections design, `m.get(k)` gives `None` for a missing key.
+3. **A `Result<T, E>`**, when the failure has more than one reason and the
+   caller needs to know which.
 
 ## Where a panic stays
 
@@ -34,8 +34,7 @@ A panic is correct only where every value-based answer is worse:
 
 ## Why
 
-Sisu has optionals and, from milestone 12, `Result`, and it has no
-exceptions. An API that panics on input that the caller could check makes the
+Sisu has optionals and the prelude enum `Result`, and it has no exceptions. An API that panics on input that the caller could check makes the
 program stop for a case that the type system could show. ADR 0018 made this
 change for conversions: `u8(x)` and `char(n)` panicked, and now return an
 optional.
@@ -57,5 +56,8 @@ optional.
   "Where a panic stays". A review blocks a new panic without one.
 - A new index operator comes with a way to check first: a length, a
   `contains`, or an optional `get`.
+- Two panics in the roadmap's "What panics" table are not in the list above:
+  `[v; n]` with a negative `n`, and an I/O failure. Each gets a decision when
+  its area changes.
 - Specs written before 2026-10-29 were not searched for panics. Each one gets
   a check when its plan runs.

@@ -6,7 +6,7 @@ When a check must treat some library functions or types in a different way,
 the declaration carries an attribute. The compiler holds no list of library
 names. The standard library and user code use the same attribute.
 
-The first case is the warning for an ignored result (W0004). Some methods
+The first case is the warning for an unused value (W0004). Some methods
 return a value that a caller often does not need, such as a method that
 removes an element and returns it. The collections design marks them
 `@discardable`, after Swift's `@discardableResult`:
