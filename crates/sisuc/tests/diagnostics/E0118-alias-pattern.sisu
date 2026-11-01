@@ -1,0 +1,9 @@
+type F = E
+enum E { A; B(i64) }
+fn f(e: E) -> i64 {
+    match e {
+        F.Z => 0
+        _ => 1
+    }
+}
+fn main() {}

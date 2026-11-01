@@ -147,8 +147,8 @@ fn a_cycle_of_many_aliases_should_report_once_without_recursion() {
         panic!("{} diagnostics", ds.len());
     };
     assert_eq!((d.code(), at(&src, d.span())), (Code::AliasCycle, (1, 6)));
-    // One secondary label for each step of the cycle.
-    assert_eq!(d.secondary().len(), n);
+    // A long cycle shows its first five steps only.
+    assert_eq!(d.secondary().len(), 5);
 }
 
 /// `type A0 = Pair<A1, A1>`, `type Ak = Pair<A(k+1), A0>` and `type An = A0`: every alias writes

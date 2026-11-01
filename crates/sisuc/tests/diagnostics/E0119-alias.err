@@ -1,0 +1,14 @@
+error[E0119]: `EU.A` holds nothing; write `EU.A`
+ --> E0119-alias.sisu:3:25
+  |
+3 | fn main() { let x = EU.A(1) }
+  |                         ^^^
+  |
+help: remove the parentheses
+  |
+3 - fn main() { let x = EU.A(1) }
+3 + fn main() { let x = EU.A }
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0119

@@ -84,8 +84,9 @@ fn count_visit() {
 pub(super) enum UseCheck {
     /// An applied class or enum whose declaration has bounds.
     Applied(Type),
-    /// A type that conforms to an interface, written at the span, which `T.Item` needs of `T`.
-    Conforms(Type, InterfaceId, Span),
+    /// A type that conforms to an interface, which `T.Item` needs of `T`: written at the first
+    /// span, `T.Item`, with `T` at the second.
+    Conforms(Type, InterfaceId, Span, Span),
 }
 
 /// An alias that is resolved: `None` for the type is `Error`.
@@ -609,12 +610,14 @@ impl Checker<'_> {
         for &check in checks {
             let (of, applied) = match check {
                 UseCheck::Applied(ty) => (ty, None),
-                UseCheck::Conforms(ty, interface, bound) => (ty, Some((interface, bound))),
+                UseCheck::Conforms(ty, interface, bound, base) => {
+                    (ty, Some((interface, bound, base)))
+                }
             };
             let ty = self.substitute(of, list)?;
             let check = match applied {
                 None => UseCheck::Applied(ty),
-                Some((interface, bound)) => UseCheck::Conforms(ty, interface, bound),
+                Some((interface, bound, base)) => UseCheck::Conforms(ty, interface, bound, base),
             };
             held &= self.make_check(check, at);
         }
@@ -638,13 +641,13 @@ impl Checker<'_> {
         }
         match check {
             UseCheck::Applied(ty) => self.check_applied(ty, vec![at; count]),
-            UseCheck::Conforms(ty, interface, bound) => {
+            UseCheck::Conforms(ty, interface, bound, base) => {
                 let bound = Bound {
                     interface,
                     args: TypeArgs::NONE,
                     at: bound,
                 };
-                self.check_conforms(at, ty, bound)
+                self.check_conforms(at, ty, bound, base)
             }
         }
     }
@@ -761,13 +764,8 @@ impl Checker<'_> {
         if !through.params.is_empty() {
             return self.option_path(span, site, member, call, Some(through));
         }
-        // The value is `Option`'s, so a message names `Option`, not the alias.
-        let option = ast::Ident {
-            name: Symbol::OPTION,
-            span: site.name.span,
-        };
+        // The value is `Option`'s, but a message names the alias, as the user wrote it.
         let site = Site {
-            name: &option,
             written: &[],
             expected: Some(through.ty),
             ..site
@@ -795,7 +793,10 @@ impl Checker<'_> {
             // A generic interface needs arguments that no bound writes: no one names it.
             [(interface, k)] if self.interfaces[interface.0].type_params.len() == 1 => {
                 let k = u32::try_from(k).expect("an interface should have fewer than 2^32 types");
-                self.make_check(UseCheck::Conforms(base_ty, interface, ty.bare), ty.bare);
+                self.make_check(
+                    UseCheck::Conforms(base_ty, interface, ty.bare, base.span),
+                    ty.bare,
+                );
                 Some(Type::intern(TypeKind::Assoc(
                     base_ty,
                     interface,

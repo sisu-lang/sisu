@@ -1,0 +1,14 @@
+error[E0118]: `F` has no variant `Z`
+ --> E0118-alias-pattern.sisu:5:11
+  |
+5 |         F.Z => 0
+  |           ^
+  |
+help: a variant with a similar name exists: `A`
+  |
+5 -         F.Z => 0
+5 +         F.A => 0
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0118
