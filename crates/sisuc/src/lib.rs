@@ -24,6 +24,7 @@ mod report;
 mod run;
 mod source;
 mod symbol;
+mod timings;
 mod tir;
 mod types;
 
@@ -39,6 +40,7 @@ use diagnostic::{Code, Diagnostic, RETIRED, Severity};
 use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
 use report::{Format, Reporter};
+use timings::Timings;
 use tir::Program;
 
 pub use fuzz::front_end as fuzz_front_end;
@@ -53,26 +55,28 @@ enum Mode {
     /// Print the usage.
     Help,
     /// Print the version, and with `verbose` the commit, the host and the LLVM version.
-    Version {
-        verbose: bool,
-    },
+    Version { verbose: bool },
     Emit {
         stage: Stage,
         input: Source,
         level: OptLevel,
         rc_checks: bool,
+        /// Print the time of each stage.
+        timings: bool,
     },
     Check {
         source: Source,
+        /// Print the time of each stage.
+        timings: bool,
     },
     /// Print the explanation of a diagnostic code.
-    Explain {
-        code: String,
-    },
+    Explain { code: String },
     Build {
         input: Source,
         output: PathBuf,
         backend: Backend,
+        /// Print the time of each stage.
+        timings: bool,
     },
     /// Compile the program and run it with `args`.
     Run {
@@ -158,6 +162,12 @@ pub fn cli() -> ExitCode {
 
 /// Does what `mode` asks for, and finishes `reporter`, which writes in `format`.
 fn execute(mut reporter: Report, format: &Format, mode: Mode) -> ExitCode {
+    let mut timings = match mode {
+        Mode::Emit { timings: true, .. }
+        | Mode::Check { timings: true, .. }
+        | Mode::Build { timings: true, .. } => Timings::start(),
+        _ => Timings::off(),
+    };
     let code = match mode {
         Mode::Help => print_stdout(&mut reporter, &args::help().to_string()),
         Mode::Version { verbose } => print_stdout(&mut reporter, &version_text(verbose)),
@@ -166,14 +176,23 @@ fn execute(mut reporter: Report, format: &Format, mode: Mode) -> ExitCode {
             input,
             level,
             rc_checks,
-        } => emit(&mut reporter, &stage, &input, level, rc_checks),
-        Mode::Check { source } => run_check(&mut reporter, &source),
+            ..
+        } => emit(
+            &mut reporter,
+            &stage,
+            &input,
+            level,
+            rc_checks,
+            &mut timings,
+        ),
+        Mode::Check { source, .. } => run_check(&mut reporter, &source, &mut timings),
         Mode::Explain { code } => explain(&mut reporter, &code),
         Mode::Build {
             input,
             output,
             backend,
-        } => build(&mut reporter, &input, &output, &backend),
+            ..
+        } => build(&mut reporter, &input, &output, &backend, &mut timings),
         // `run` finishes the reporter itself, before the program starts.
         Mode::Run {
             source,
@@ -181,6 +200,7 @@ fn execute(mut reporter: Report, format: &Format, mode: Mode) -> ExitCode {
             backend,
         } => return run::run(reporter, format, &source, &args, &backend),
     };
+    reporter.timings(&timings.report());
     reporter.finish();
     code
 }
@@ -287,13 +307,14 @@ fn emit(
     input: &Source,
     level: OptLevel,
     rc_checks: bool,
+    timings: &mut Timings,
 ) -> ExitCode {
     let Some((path, source)) = read_source(reporter, input) else {
         return ExitCode::FAILURE;
     };
     match stage {
         Stage::Tokens => {
-            let Some(lexed) = lex(reporter, &path, &source) else {
+            let Some(lexed) = lex(reporter, &path, &source, timings) else {
                 return ExitCode::FAILURE;
             };
             if !lexed.diagnostics.is_empty() {
@@ -304,10 +325,10 @@ fn emit(
             print_stdout(reporter, &lexer::dump(&source, &lexed.tokens))
         }
         Stage::Ast => {
-            let Some(lexed) = lex(reporter, &path, &source) else {
+            let Some(lexed) = lex(reporter, &path, &source, timings) else {
                 return ExitCode::FAILURE;
             };
-            let parsed = parser::parse(lexed, false);
+            let parsed = timings.time(timings::Stage::Parse, || parser::parse(lexed, false));
             reporter.diagnostics(&path, &source, &parsed.diagnostics);
             if parsed
                 .diagnostics
@@ -318,7 +339,7 @@ fn emit(
             }
             print_stdout(reporter, &format!("{}\n", parsed.program))
         }
-        Stage::Tir => match front_end(reporter, &path, &source) {
+        Stage::Tir => match front_end(reporter, &path, &source, timings) {
             Some(program) => {
                 let path = if program.fast_path {
                     "fast path"
@@ -329,19 +350,30 @@ fn emit(
             }
             None => ExitCode::FAILURE,
         },
-        Stage::Mir => match front_end(reporter, &path, &source) {
-            Some(program) => print_stdout(reporter, &mir::print(&mir::build(&program), &program)),
+        Stage::Mir => match front_end(reporter, &path, &source, timings) {
+            Some(program) => {
+                let mir = timings.time(timings::Stage::Mir, || mir::build(&program));
+                print_stdout(reporter, &mir::print(&mir, &program))
+            }
             None => ExitCode::FAILURE,
         },
-        Stage::Ir => emit_ir(reporter, &path, &source, level, rc_checks),
-        Stage::IrRaw => emit_ir_raw(reporter, &path, &source, rc_checks),
+        Stage::Ir => emit_ir(reporter, &path, &source, level, rc_checks, timings),
+        Stage::IrRaw => emit_ir_raw(reporter, &path, &source, rc_checks, timings),
     }
 }
 
 /// Lexes `source`, reporting the error and returning `None` when it cannot be lexed.
-fn lex<'a>(reporter: &mut Report, path: &str, source: &'a str) -> Option<lexer::Lexed<'a>> {
-    match lexer::lex(source) {
-        Ok(lexed) => Some(lexed),
+fn lex<'a>(
+    reporter: &mut Report,
+    path: &str,
+    source: &'a str,
+    timings: &mut Timings,
+) -> Option<lexer::Lexed<'a>> {
+    match timings.time(timings::Stage::Lex, || lexer::lex(source)) {
+        Ok(lexed) => {
+            timings.count(|| timings::counts(source, &lexed));
+            Some(lexed)
+        }
         Err(d) => {
             reporter.diagnostics(path, source, &[d]);
             None
@@ -356,15 +388,18 @@ fn emit_ir(
     source: &str,
     level: OptLevel,
     rc_checks: bool,
+    timings: &mut Timings,
 ) -> ExitCode {
-    let Some(program) = front_end(reporter, path, source) else {
+    let Some(program) = front_end(reporter, path, source, timings) else {
         return ExitCode::FAILURE;
     };
-    let mir = mir::build(&program);
+    let mir = timings.time(timings::Stage::Mir, || mir::build(&program));
     let context = Context::create();
     let pipeline = codegen::pipeline(level);
     let printed = codegen::target_machine(level).and_then(|machine| {
-        let module = codegen::compile(&context, &program, &mir, path, source, &machine, rc_checks);
+        let module = timings.time(timings::Stage::Codegen, || {
+            codegen::compile(&context, &program, &mir, path, source, &machine, rc_checks)
+        });
         // For the `o2-calls` check in the tests (`docs/development.md`); `--emit ir` only, so
         // no executable is affected, and not in the usage text.
         if let Ok(names) = std::env::var("SISU_KEEP_FUNCTIONS") {
@@ -372,7 +407,9 @@ fn emit_ir(
         }
         // `LLVMString`'s `Display` quotes and escapes the text; `to_string` does not.
         let before = module.print_to_string().to_string();
-        codegen::optimize(&module, &machine, level)?;
+        timings.time(timings::Stage::Optimize, || {
+            codegen::optimize(&module, &machine, level)
+        })?;
         Ok(format!(
             "; before {pipeline}\n{before}\n; after {pipeline}\n{}",
             module.print_to_string().to_string()
@@ -393,17 +430,24 @@ fn print_or_report(reporter: &mut Report, text: Result<String, String>) -> ExitC
 }
 
 /// Prints the verified module for `source`, as codegen made it.
-fn emit_ir_raw(reporter: &mut Report, path: &str, source: &str, rc_checks: bool) -> ExitCode {
-    let Some(program) = front_end(reporter, path, source) else {
+fn emit_ir_raw(
+    reporter: &mut Report,
+    path: &str,
+    source: &str,
+    rc_checks: bool,
+    timings: &mut Timings,
+) -> ExitCode {
+    let Some(program) = front_end(reporter, path, source, timings) else {
         return ExitCode::FAILURE;
     };
-    let mir = mir::build(&program);
+    let mir = timings.time(timings::Stage::Mir, || mir::build(&program));
     let context = Context::create();
     print_or_report(
         reporter,
         codegen::target_machine(OptLevel::O0).and_then(|machine| {
-            let module =
-                codegen::compile(&context, &program, &mir, path, source, &machine, rc_checks);
+            let module = timings.time(timings::Stage::Codegen, || {
+                codegen::compile(&context, &program, &mir, path, source, &machine, rc_checks)
+            });
             module.verify().map_err(|e| e.to_string())?;
             Ok(module.print_to_string().to_string())
         }),
@@ -411,11 +455,12 @@ fn emit_ir_raw(reporter: &mut Report, path: &str, source: &str, rc_checks: bool)
 }
 
 /// Lexes, parses and checks `input`; reports every diagnostic. Fails if any is an error.
-fn run_check(reporter: &mut Report, input: &Source) -> ExitCode {
+fn run_check(reporter: &mut Report, input: &Source, timings: &mut Timings) -> ExitCode {
     let Some((name, text)) = read_source(reporter, input) else {
         return ExitCode::FAILURE;
     };
-    let (program, diagnostics) = front_end::checked(&text);
+    let (program, diagnostics) =
+        front_end::checked_timed(front_end::PRELUDE_SOURCE, &text, timings);
     reporter.diagnostics(&name, &text, &diagnostics);
     if program.is_some() {
         ExitCode::SUCCESS
@@ -463,7 +508,13 @@ pub(crate) fn check_bytes<W: Write>(
 }
 
 /// Compiles `input` into the executable `output`.
-fn build(reporter: &mut Report, input: &Source, output: &Path, backend: &Backend) -> ExitCode {
+fn build(
+    reporter: &mut Report,
+    input: &Source,
+    output: &Path,
+    backend: &Backend,
+    timings: &mut Timings,
+) -> ExitCode {
     // `cc -o` would replace the source with the executable.
     let overwrites_input = match input {
         Source::File(input) => match (fs::canonicalize(input), fs::canonicalize(output)) {
@@ -494,7 +545,7 @@ fn build(reporter: &mut Report, input: &Source, output: &Path, backend: &Backend
     let Some((path, source)) = read_source(reporter, input) else {
         return ExitCode::FAILURE;
     };
-    let Some(program) = front_end(reporter, &path, &source) else {
+    let Some(program) = front_end(reporter, &path, &source, timings) else {
         return ExitCode::FAILURE;
     };
     let compiled = compile(
@@ -505,6 +556,7 @@ fn build(reporter: &mut Report, input: &Source, output: &Path, backend: &Backend
         output,
         &std::env::temp_dir(),
         backend,
+        timings,
     );
     match compiled {
         Ok(()) => ExitCode::SUCCESS,
@@ -542,14 +594,24 @@ fn check_output(output: &Path) -> Result<(), String> {
 
 /// Runs the front end on `source` and reports every diagnostic. Returns the program unless a
 /// diagnostic is an error.
-fn front_end(reporter: &mut Report, path: &str, source: &str) -> Option<Program> {
-    let (program, diagnostics) = front_end::front_end(source);
+fn front_end(
+    reporter: &mut Report,
+    path: &str,
+    source: &str,
+    timings: &mut Timings,
+) -> Option<Program> {
+    let (program, diagnostics) =
+        front_end::front_end_timed(front_end::PRELUDE_SOURCE, source, timings);
     reporter.diagnostics(path, source, &diagnostics);
     program
 }
 
 /// Compiles `program` into the executable `output`, linked with `runtime`, going through a
 /// temporary object file in `dir`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the inputs of one compile; a struct would only rename them"
+)]
 fn compile(
     program: &Program,
     path: &str,
@@ -558,6 +620,7 @@ fn compile(
     output: &Path,
     dir: &Path,
     backend: &Backend,
+    timings: &mut Timings,
 ) -> Result<(), String> {
     let Backend {
         level,
@@ -565,12 +628,18 @@ fn compile(
         ref linker,
         allocator: _,
     } = *backend;
-    let mir = mir::build(program);
+    let mir = timings.time(timings::Stage::Mir, || mir::build(program));
     let context = Context::create();
     let machine = codegen::target_machine(level)?;
-    let module = codegen::compile(&context, program, &mir, path, source, &machine, rc_checks);
-    codegen::optimize(&module, &machine, level)?;
-    let code = codegen::object_code(&module, &machine)?;
+    let module = timings.time(timings::Stage::Codegen, || {
+        codegen::compile(&context, program, &mir, path, source, &machine, rc_checks)
+    });
+    timings.time(timings::Stage::Optimize, || {
+        codegen::optimize(&module, &machine, level)
+    })?;
+    let code = timings.time(timings::Stage::Object, || {
+        codegen::object_code(&module, &machine)
+    })?;
     // A name of its own, so a user's `<output>.o` is left alone.
     let object = create_object(dir, code.as_slice(), fresh_names(".o"))?;
     // Remove the object file whether or not the link worked; a link error wins.
@@ -579,7 +648,7 @@ fn compile(
         output,
         linker: linker.as_deref(),
     };
-    let link_result = link::link(&object, &linking);
+    let link_result = timings.time(timings::Stage::Link, || link::link(&object, &linking));
     let removed =
         fs::remove_file(&object).map_err(|e| format!("cannot remove {}: {e}", object.display()));
     link_result.and(removed)

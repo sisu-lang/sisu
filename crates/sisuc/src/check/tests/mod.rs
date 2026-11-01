@@ -2,7 +2,7 @@ use super::*;
 use crate::diagnostic::explanations::apply;
 use crate::diagnostic::{Code, Fix};
 use crate::front_end::{PRELUDE_SOURCE, prelude_program};
-use crate::mir::tests::assert_near_linear;
+use crate::mir::tests::{assert_near_linear, assert_near_linear_for};
 use crate::parser::parse_ok;
 use crate::source::line_col;
 
@@ -3023,38 +3023,79 @@ fn optional_self_field_is_reported_at_its_path() {
     );
 }
 
-/// `?.` would make an assignment target go through `?.`, which does not parse. Each row is a
+/// An assignment target can go through `?.`, so the fix of `m.v = 1` is `m?.v = 1`. Each row is a
 /// statement in a body where `m` is an `N?`.
 #[test]
-fn may_be_none_in_an_assignment_target_has_no_fix() {
+fn may_be_none_in_an_assignment_target_should_offer_the_fix() {
     for stmt in ["m.v = 1", "m.v += 1", "m.get().v = 1", "m.o.v = 1"] {
         let src = format!(
-            "class N {{\n    mut v: i64\n    o: N?\n    fn get(self) -> N {{\n        self\n    }}\n}}\nfn f(m: N?) {{\n    {stmt}\n}}\nfn main() {{}}"
+            "class N {{\n    mut v: i64\n    mut items: [i64]\n    o: N?\n    fn get(self) -> N {{\n        self\n    }}\n}}\nfn f(m: N?) {{\n    {stmt}\n}}\nfn main() {{}}"
         );
-        let d = diagnostic(&src, Code::MayBeNone, (9, 5, "m"), &[]);
+        let d = diagnostic(&src, Code::MayBeNone, (10, 5, "m"), &[]);
+        assert_eq!(
+            fixes(&src, &d),
+            [(false, vec![(10, 6, ".", "?.".to_owned())])],
+            "{stmt}"
+        );
+        // The fixed target must parse.
+        applied(&src, &d);
+    }
+}
+
+/// An optional array has no field to hold an array. E0062 must still offer the `?.` fix before a
+/// `push` on such a field.
+#[test]
+fn may_be_none_before_a_push_on_a_field_of_an_optional_array_should_offer_the_fix() {
+    let src = "fn f(xs: [i64]?) {\n    xs.v.push(1)\n}\nfn main() {}";
+    let d = diagnostic(src, Code::MayBeNone, (2, 5, "xs"), &[]);
+    assert_eq!(
+        fixes(src, &d),
+        [(false, vec![(2, 7, ".", "?.".to_owned())])]
+    );
+}
+
+/// An index after the step makes the `?.` fix lead to an index on an optional. So there is no
+/// fix, in a target and in a read. Each row is a statement in a body where `m` is an `N?`.
+#[test]
+fn may_be_none_before_an_index_should_have_no_fix() {
+    for stmt in [
+        "m.items[0] = 1",
+        "m.items[0] += 1",
+        "m.get().items[0] = 1",
+        "m.o.items[0] = 1",
+        "print(m.items[0])",
+        "print(m.get().items[0])",
+    ] {
+        let src = format!(
+            "class N {{\n    mut v: i64\n    mut items: [i64]\n    o: N?\n    fn get(self) -> N {{\n        self\n    }}\n}}\nfn f(m: N?) {{\n    {stmt}\n}}\nfn main() {{}}"
+        );
+        let col = 5 + stmt.find('m').expect("each row reads `m`");
+        let d = diagnostic(&src, Code::MayBeNone, (10, col, "m"), &[]);
         assert!(d.fixes().is_empty(), "{stmt}: {d:?}");
     }
 }
 
 /// Inside an assignment target, an argument or an index is an ordinary read, so its own
 /// `n.next` keeps the `?.` unsafe fix. Each row is a statement where `n` is an `N`; the last is an
-/// argument inside an index.
+/// argument inside an index. The `rows` rows are an index operand of a write and of a `push`.
 #[test]
 fn may_be_none_should_keep_its_fix_in_an_argument_or_index_of_an_assignment_target() {
     for stmt in [
         "n.at(n.next.v).v = 1",
         "xs[n.next.v].v = 1",
+        "n.rows[n.next.v] = [1]",
+        "n.rows[n.next.v].push(1)",
         "g(n.next.v).v = 1",
         "xs[n.at(n.next.v).v].v = 1",
     ] {
         let src = format!(
-            "class N {{\n    mut v: i64\n    next: N?\n    fn at(self, i: i64) -> N {{\n        self\n    }}\n}}\nfn g(i: i64) -> N {{ N(v: i, next: None) }}\nfn f(n: N, xs: [N]) {{\n    {stmt}\n}}\nfn main() {{}}"
+            "class N {{\n    mut v: i64\n    mut rows: [[i64]]\n    next: N?\n    fn at(self, i: i64) -> N {{\n        self\n    }}\n}}\nfn g(i: i64) -> N {{ N(v: i, rows: [], next: None) }}\nfn f(n: N, xs: [N]) {{\n    {stmt}\n}}\nfn main() {{}}"
         );
         let col = 5 + stmt.find("n.next").expect("each row reads `n.next`");
-        let d = diagnostic(&src, Code::MayBeNone, (10, col, "n.next"), &[]);
+        let d = diagnostic(&src, Code::MayBeNone, (11, col, "n.next"), &[]);
         assert_eq!(
             fixes(&src, &d),
-            [(false, vec![(10, col + 6, ".", "?.".to_owned())])],
+            [(false, vec![(11, col + 6, ".", "?.".to_owned())])],
             "{stmt}"
         );
         let left: Vec<_> = diags(&applied(&src, &d))
@@ -3096,9 +3137,9 @@ fn may_be_none_in_an_array_method_argument_of_a_target_keeps_its_fix() {
     }
 }
 
-/// The receiver `n.next` is the target's own chain and gets no fix; the argument's does.
+/// The receiver `n.next` of the target and the receiver `n.next` of its argument both get a fix.
 #[test]
-fn may_be_none_in_a_target_chain_and_in_its_argument() {
+fn may_be_none_in_a_target_chain_and_in_its_argument_should_offer_the_fix() {
     let src = "class N {\n    mut v: i64\n    next: N?\n    fn at(self, i: i64) -> N {\n        self\n    }\n}\nfn f(n: N) {\n    n.next.at(n.next.v).v = 1\n}\nfn main() {}";
     let found: Vec<_> = diags(src)
         .iter()
@@ -3107,7 +3148,11 @@ fn may_be_none_in_a_target_chain_and_in_its_argument() {
     assert_eq!(
         found,
         [
-            (Code::MayBeNone, (9, 5), vec![]),
+            (
+                Code::MayBeNone,
+                (9, 5),
+                vec![(false, vec![(9, 11, ".", "?.".to_owned())])]
+            ),
             (
                 Code::MayBeNone,
                 (9, 15),
@@ -3117,10 +3162,9 @@ fn may_be_none_in_a_target_chain_and_in_its_argument() {
     );
 }
 
-/// The target's chain, where `n.next` gets no fix, ends with its statement: a read after it
-/// keeps the unsafe fix.
+/// The `n.next` of the target and the `k.next` of a read after it both get the unsafe fix.
 #[test]
-fn may_be_none_after_an_assignment_target_keeps_its_fix() {
+fn may_be_none_in_and_after_an_assignment_target_should_offer_the_fix() {
     let src = "class N {\n    mut v: i64\n    next: N?\n}\nfn f(n: N, k: N) {\n    n.next.next.v = 1\n    print(k.next.v)\n}\nfn main() {}";
     let found: Vec<_> = diags(src)
         .iter()
@@ -3129,7 +3173,11 @@ fn may_be_none_after_an_assignment_target_keeps_its_fix() {
     assert_eq!(
         found,
         [
-            (Code::MayBeNone, (6, 5), vec![]),
+            (
+                Code::MayBeNone,
+                (6, 5),
+                vec![(false, vec![(6, 11, ".", "?.".to_owned())])]
+            ),
             (
                 Code::MayBeNone,
                 (7, 11),

@@ -3,7 +3,7 @@
 use std::rc::Rc;
 
 use super::expr::{if_some, literal_type, local, operator};
-use super::member::safe_value;
+use super::member::{Access, safe_value};
 use super::operator::Operator;
 use super::unused_names::Used;
 use super::{
@@ -12,7 +12,7 @@ use super::{
 };
 use crate::ast;
 use crate::diagnostic::{DiagnosticKind, Immutable};
-use crate::parser::{goes_through_safe_access, is_place};
+use crate::parser::is_place;
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, ExprKind, Type, TypeKind};
@@ -58,7 +58,8 @@ enum Root {
 }
 
 /// The object that the `?.` of a place's root field takes out of an optional. `bind` holds it
-/// where `scrutinee` has one, and the place starts there.
+/// where `scrutinee` has one, and the place starts there. A write or a `push` of the place runs
+/// only there.
 struct Guard {
     bind: tir::LocalId,
     scrutinee: tir::Expr,
@@ -78,7 +79,8 @@ pub(super) struct CheckedPlace {
     /// For a `push`, whose receiver may turn out to be no array: the E0001 of a root that cannot
     /// change, which only an array reports.
     held: Option<DiagnosticKind>,
-    /// The object that a `?.` of the root field takes out of an optional.
+    /// The object that a `?.` of the root field takes out of an optional. The write of the place
+    /// is the branch where it is present.
     guard: Option<Guard>,
 }
 
@@ -131,7 +133,14 @@ impl Checker<'_> {
     ) -> Result<tir::Stmt, Poisoned> {
         match (place.path, value) {
             (Some(path), Ok(value)) if place.writable => {
-                Ok(self.write(span, path.root, path.operands, value))
+                let write = self.write(span, path.root, path.operands, value);
+                Ok(match place.guard {
+                    None => write,
+                    guard => {
+                        let block = block_expr(vec![write], None, Type::UNIT, span);
+                        tir::Stmt::Expr(guarded(guard, block, span))
+                    }
+                })
             }
             _ => Err(Poisoned::typed(Type::UNIT)),
         }
@@ -357,10 +366,7 @@ impl Checker<'_> {
         }
         stmts.push(tir::Stmt::Push { place, value, span });
         let block = block_expr(stmts, None, Type::UNIT, span);
-        match guard {
-            Some(Guard { bind, scrutinee }) => if_some(bind, scrutinee, block, None, span),
-            None => block,
-        }
+        guarded(guard, block, span)
     }
 
     /// `x op= e` is `x = x op e`. On any other place, each of its operands is bound to a fresh
@@ -437,7 +443,8 @@ impl Checker<'_> {
         };
         let operands = reads(&temps);
         lets.push(self.write(span, root, operands, value));
-        Ok(tir::Stmt::Expr(block_expr(lets, None, Type::UNIT, span)))
+        let block = block_expr(lets, None, Type::UNIT, span);
+        Ok(tir::Stmt::Expr(guarded(place.guard, block, span)))
     }
 
     /// `compound_assign` of the name `target`, which is `name`.
@@ -692,16 +699,18 @@ impl Checker<'_> {
             ast::ExprKind::Field {
                 base, name, safe, ..
             } => {
+                let access = if change == Change::Push {
+                    Access::Push
+                } else {
+                    Access::Assign
+                };
                 if change != Change::Push {
                     self.stamp_root(base);
                 }
-                // A `?.` anywhere in the target's chain would not parse.
-                let outer = std::mem::replace(&mut self.body.in_target, true);
                 let checked = self.value(base, None);
-                self.body.in_target = outer;
                 let mut guard = None;
-                // Only a `push`'s receiver has one: `?.` takes the object out of its optional,
-                // where the place starts.
+                // `?.` takes the object out of its optional, where the place starts. The write
+                // of the place is the branch where the object is present.
                 let checked = if *safe {
                     match (self.safe_payload(&checked, base, name), checked) {
                         (Ok(payload), Ok(scrutinee)) => {
@@ -715,7 +724,7 @@ impl Checker<'_> {
                                 payload.err().and_then(|failed| failed.ty),
                                 base,
                                 name,
-                                true,
+                                access,
                             );
                             return CheckedPlace::failed();
                         }
@@ -723,7 +732,8 @@ impl Checker<'_> {
                 } else {
                     checked
                 };
-                let Some((class, index, ty)) = self.find_field(type_of(&checked), base, name, true)
+                let Some((class, index, ty)) =
+                    self.find_field(type_of(&checked), base, name, access)
                 else {
                     return CheckedPlace::failed();
                 };
@@ -753,9 +763,13 @@ impl Checker<'_> {
                 } else {
                     Change::Element
                 };
+                let outer = std::mem::replace(&mut self.body.indexed, true);
                 let inner = self.place(span, base, inner_change);
                 let element = self.element(base, inner.value_ty());
+                // The index is not part of the chain that it ends.
+                self.body.indexed = false;
                 let (index, mismatched) = self.operand(index, Some(Type::I64));
+                self.body.indexed = outer;
                 let path = inner
                     .path
                     .filter(|_| element.is_some())
@@ -835,6 +849,24 @@ impl Checker<'_> {
             }
         };
         tir::Expr { kind, ty, span }
+    }
+}
+
+/// Whether a `?.` sits anywhere in the chain of fields and indexes that makes up the place `e`.
+fn goes_through_safe_access(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Field { base, safe, .. } => *safe || goes_through_safe_access(base),
+        ast::ExprKind::Index { base, .. } => goes_through_safe_access(base),
+        _ => false,
+    }
+}
+
+/// `block`, the write of a place, as the branch where the object of the place's `guard` is
+/// present: the right side runs there only. Without a `guard`, `block` as it is.
+fn guarded(guard: Option<Guard>, block: tir::Expr, span: Span) -> tir::Expr {
+    match guard {
+        Some(Guard { bind, scrutinee }) => if_some(bind, scrutinee, block, None, span),
+        None => block,
     }
 }
 

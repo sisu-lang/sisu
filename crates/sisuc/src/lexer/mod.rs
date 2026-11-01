@@ -2472,6 +2472,29 @@ mod tests {
         }
     }
 
+    /// The parser takes only a name after a `.`, so no prefix change gives a clean program there.
+    #[test]
+    fn an_upper_case_prefix_after_a_dot_should_have_no_fix() {
+        let too_large_binary = format!("x.0B{}", "1".repeat(68));
+        for (row, src, col) in [
+            ("too large hex", "x.0XFFFFFFFFFFFFFFFFFFFF", 3),
+            ("too large binary", too_large_binary.as_str(), 3),
+            ("too large octal", "x.0O7777777777777777777777777", 3),
+            ("too large optional", "x?.0XFFFFFFFFFFFFFFFFFFFF", 4),
+            ("too large with _", "x.0XFFFF_FFFF_FFFF_FFFF_FFFF", 3),
+            ("small", "x.0X1", 3),
+            ("optional", "x?.0X1", 4),
+            ("min magnitude", "x.0X8000000000000000", 3),
+        ] {
+            let d = only(src);
+            assert_eq!(at(src, &d), (Code::BasePrefixUpperCase, 1, col), "{row}");
+            assert!(fix_edits(&d).is_none(), "{row}: no fix");
+        }
+        // The control: without a `.` the fix is safe.
+        let d = only("0X1F");
+        assert!(fix_edits(&d).is_some_and(|(safe, _)| safe), "no dot");
+    }
+
     /// A bare 2^63 does not parse, so lower-casing its prefix is unsafe; after a `-` it is right.
     #[test]
     fn upper_case_prefix_fix_at_min_magnitude_is_unsafe() {

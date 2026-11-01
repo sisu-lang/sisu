@@ -24,7 +24,7 @@ use crate::source::Span;
 use crate::tir::{
     Align, AnyLayout, AnyTable, Arm, Block, ChoicePlace, Class, ClassId, CompareOp, Conformance,
     Conformances, Enum, EnumId, Expr, ExprKind, Field, FuncId, Function, InterfaceId, Local, Place,
-    Program, Stmt, Type, TypeArgs, TypeKind, layout_enums,
+    Program, Stmt, Type, TypeArgs, TypeKind, head_of, layout_enums,
 };
 use crate::types::{Head, write_args, write_method, write_type};
 
@@ -56,6 +56,10 @@ type EntryKey = (Type, InterfaceId, TypeArgs);
 /// way, by a call from a body that is in the program, so a program holds only the prelude
 /// functions it uses.
 ///
+/// A program takes a fast path that instantiates nothing and drops the prelude's items when no
+/// declaration is generic, the checker recorded no use of the prelude (`Program::instantiates`),
+/// and no conformance has a method of the prelude for a type outside the prelude.
+///
 /// The checker has accepted the program, but its probe does not follow every associated type
 /// that an instance meets (`probe_associated`): the diagnostics are the E0030 of each choice that
 /// an instance needs itself, or needs more steps than the limit, and then there is no program.
@@ -66,13 +70,15 @@ pub(crate) fn instantiate(mut program: Program) -> Result<Program, Vec<Diagnosti
         .any(|f| !f.type_params.is_empty())
         || (program.classes[..prelude.classes].iter()).any(|c| !c.type_params.is_empty())
         || (program.enums[..prelude.enums].iter()).any(|e| !e.type_params.is_empty());
-    if !generic && !program.instantiates {
+    if !generic && !program.instantiates && !prelude_method_of_outside_type(&program) {
         #[cfg(test)]
         FAST_PATHS.set(FAST_PATHS.get() + 1);
         program.fast_path = true;
         // Reaching a generic item records a type argument, and so does a use of any other item
-        // of the prelude (see `tir::Program::instantiates`): the prelude's items are then all
-        // templates or unused.
+        // of the prelude (see `tir::Program::instantiates`). An implicit call, such as `print`,
+        // does not: codegen finds the method through the conformance. No conformance holds a
+        // prelude method for a type outside the prelude (`prelude_method_of_outside_type`), so
+        // the prelude's items are all templates or unused.
         program.functions.truncate(prelude.funcs);
         program.classes.truncate(prelude.classes);
         program.enums.truncate(prelude.enums);
@@ -95,6 +101,23 @@ pub(crate) fn instantiate(mut program: Program) -> Result<Program, Vec<Diagnosti
         assert_concrete(&program);
     }
     Ok(program)
+}
+
+/// Whether a conformance has a method of the prelude for a target that is not an item of the
+/// prelude. An implicit call of the interface (`print`, `==`) reaches such a method with no
+/// written use, so the program must keep it. The cost is one step for each conformance method.
+fn prelude_method_of_outside_type(program: &Program) -> bool {
+    let prelude = program.prelude;
+    program.conformances.iter().any(|(_, conformance)| {
+        let in_prelude = match head_of(conformance.target) {
+            Some(Head::Class(id)) => id.0 >= prelude.classes,
+            Some(Head::Enum(id)) => id.0 >= prelude.enums,
+            // `head_of` gives only a class or an enum, and `Conformances::add` admits only those
+            // targets. `false` leaves the fast path.
+            Some(Head::Interface(_) | Head::Assoc(..)) | None => false,
+        };
+        !in_prelude && conformance.methods.iter().any(|f| f.0 >= prelude.funcs)
+    })
 }
 
 /// An instantiation reached and given its id, whose body waits on the worklist.
@@ -2033,6 +2056,62 @@ mod tests {
         let program = instantiated("fn main() {\n    print(5.min(3))\n}");
         assert_eq!(FAST_PATHS.get(), before);
         assert_eq!(function_names(&program), ["main", "i64.min"]);
+    }
+
+    /// An implicit call, such as `print` or `==`, reaches a method of the prelude through a
+    /// conformance, with no written use, so the checker does not set `instantiates`. The program
+    /// then keeps the method when its target is outside the prelude.
+    #[test]
+    fn a_prelude_method_of_a_user_type_should_leave_the_fast_path() {
+        let show = "extend C {\n    fn to_string(self) -> string { \"custom\" }\n}\n";
+        let show_enum = "extend E {\n    fn to_string(self) -> string { \"custom\" }\n}\n";
+        let eq = "extend C: Eq {\n    fn eq(self, _other: C) -> bool { true }\n}\n";
+        let main = |body: &str| format!("class C {{}}\nfn main() {{\n    {body}\n}}");
+        for (row, prelude, src, method) in [
+            (
+                "display on a class",
+                show,
+                main("print(C())"),
+                "C.to_string",
+            ),
+            (
+                "display on an enum",
+                show_enum,
+                "enum E {\n    A\n}\nfn main() {\n    print(E.A)\n}".to_string(),
+                "E.to_string",
+            ),
+            ("eq on a class", eq, main("print(C() == C())"), "C.Eq.eq"),
+        ] {
+            let before = FAST_PATHS.get();
+            let (program, diagnostics) = crate::front_end::front_end_with(prelude, &src);
+            let program = program.unwrap_or_else(|| panic!("{row}: {diagnostics:?}"));
+            assert_eq!(FAST_PATHS.get(), before, "{row}");
+            let names = function_names(&program);
+            assert!(names.contains(&method), "{row}: {method} in {names:?}");
+        }
+    }
+
+    /// A target in the prelude is an item of the prelude: nothing reaches it, so it goes with the
+    /// rest of the prelude.
+    #[test]
+    fn a_prelude_method_of_a_prelude_type_should_keep_the_fast_path() {
+        for (row, prelude) in [
+            (
+                "a class in the prelude",
+                "class P {}\nextend P {\n    fn to_string(self) -> string { \"p\" }\n}\n",
+            ),
+            (
+                "an enum in the prelude",
+                "enum Q {\n    A\n}\nextend Q {\n    fn to_string(self) -> string { \"q\" }\n}\n",
+            ),
+        ] {
+            let before = FAST_PATHS.get();
+            let (program, diagnostics) =
+                crate::front_end::front_end_with(prelude, "fn main() {\n    print(1)\n}");
+            let program = program.unwrap_or_else(|| panic!("{row}: {diagnostics:?}"));
+            assert_eq!(FAST_PATHS.get(), before + 1, "{row}");
+            assert_eq!(function_names(&program), ["main"], "{row}");
+        }
     }
 
     /// The prelude of the tests below: a class and an enum that are not generic, so `mono` roots

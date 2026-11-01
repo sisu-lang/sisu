@@ -306,11 +306,16 @@ pub(super) fn ret() -> Terminator {
 /// The wavelet matrix and its queries add one bit level per doubling of the depths they hold,
 /// a few percent from `2n` to `3n`; quadratic work makes the second step two thirds larger.
 pub(crate) fn assert_near_linear(one: usize, two: usize, three: usize) {
-    assert!(one > 0);
+    assert_near_linear_for("", one, two, three);
+}
+
+/// `assert_near_linear` for a table row: a failure message starts with `row`.
+pub(crate) fn assert_near_linear_for(row: &str, one: usize, two: usize, three: usize) {
+    assert!(one > 0, "{row}the first count is 0");
     let (first, second) = (two - one, three - two);
     assert!(
         second <= first + first / 10,
-        "{one}, {two}, {three} reads: the second step adds {second}, the first {first}"
+        "{row}{one}, {two}, {three} reads: the second step adds {second}, the first {first}"
     );
 }
 

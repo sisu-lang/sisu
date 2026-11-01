@@ -152,7 +152,7 @@ fn generic_instantiation_box_should_give_a_token() {
 /// Each of 40 nested `match`es takes two boxes apart, 80 tokens in all, yet no block is
 /// offered more than `MAX_OPEN`, and the innermost blocks reach it.
 #[test]
-fn open_tokens_stay_bounded() {
+fn open_tokens_should_stay_bounded() {
     const DEPTH: usize = 40;
     let mut src = String::from(
         "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n}\nfn f(e: Expr) -> Expr {\n",
@@ -168,14 +168,23 @@ fn open_tokens_stay_bounded() {
         src.push_str("\nother => other\n}");
     }
     src.push_str("\n}");
-    let program = checked(&src);
-    let built = build(&program);
-    let f = built
-        .functions
-        .iter()
-        .find(|f| f.name == "f")
-        .expect("the program should hold `f`");
-    let most = available(f, &program).iter().map(Vec::len).max();
+    // The front end recurses once per nested `match`, so it runs on a stack of the compiler's
+    // own size.
+    let most = std::thread::Builder::new()
+        .stack_size(crate::STACK_SIZE)
+        .spawn(move || {
+            let program = checked(&src);
+            let built = build(&program);
+            let f = built
+                .functions
+                .iter()
+                .find(|f| f.name == "f")
+                .expect("the program should hold `f`");
+            available(f, &program).iter().map(Vec::len).max()
+        })
+        .expect("the thread should start")
+        .join()
+        .expect("the thread should not panic");
     assert_eq!(most, Some(MAX_OPEN));
 }
 

@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, ExitStatus};
 
 use crate::report::{Format, tool_error_after_summary};
+use crate::timings::Timings;
 use crate::{Backend, Report, Source, compile, fresh_names, front_end, link, read_source};
 
 /// Compiles `source` and runs it with `args`, its stdin, stdout and stderr those of `sisu`.
@@ -57,7 +58,7 @@ fn build(reporter: &mut Report, source: &Source, backend: &Backend) -> Option<(P
         .inspect_err(|message| reporter.tool_error(message))
         .ok()?;
     let (name, text) = read_source(reporter, source)?;
-    let program = front_end(reporter, &name, &text)?;
+    let program = front_end(reporter, &name, &text, &mut Timings::off())?;
     // shortcut: a Ctrl-C or a compiler panic (`panic = "abort"`) from here until `run` removes the
     // directory, through the compile, the link and the spawn, leaves it behind; a signal handler
     // would close the Ctrl-C gap, if it ever matters.
@@ -65,7 +66,16 @@ fn build(reporter: &mut Report, source: &Source, backend: &Backend) -> Option<(P
         .inspect_err(|message| reporter.tool_error(message))
         .ok()?;
     let exe = dir.join("program");
-    match compile(&program, &name, &text, &runtime, &exe, &dir, backend) {
+    match compile(
+        &program,
+        &name,
+        &text,
+        &runtime,
+        &exe,
+        &dir,
+        backend,
+        &mut Timings::off(),
+    ) {
         Ok(()) => Some((dir, exe)),
         Err(message) => {
             reporter.tool_error(&message);

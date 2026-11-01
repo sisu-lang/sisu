@@ -33,7 +33,6 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0019](E0019.md) | error | `mut` parameter |
 | [E0020](E0020.md) | error | `self` that is not the first parameter |
 | [E0021](E0021.md) | error | assignment to something that is not a place |
-| [E0022](E0022.md) | error | assignment through `?.` |
 | [E0023](E0023.md) | error | range outside `for` and patterns |
 | [E0024](E0024.md) | error | chained `==`, `!=` or `is` |
 | [E0025](E0025.md) | error | comparison chain that turns around |
@@ -205,7 +204,7 @@ both, and apply every safe fix to the Broken program.
 A new code takes the next free number in its series, in the order codes land
 on `main`. A code is never reused or renumbered.
 
-E0012, E0014 and E0060 are the retired codes. When the compiler stops reporting a code,
+E0012, E0014, E0022 and E0060 are the retired codes. When the compiler stops reporting a code,
 its variant leaves `DiagnosticKind` and its row leaves the table above. Its
 file stays here and gains a `Status: retired` line after its title, naming
 the ADR that retired it, and `sisu explain` serves it from `RETIRED`, the

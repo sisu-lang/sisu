@@ -1,0 +1,14 @@
+error[E0062]: `n.next` may be `None`
+  --> E0062-push-class-field.sisu:15:13
+   |
+15 |     let r = n.next.stack.push(1)
+   |             ^^^^^^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`
+help: if a `None` result is fine, use `?.`
+   |
+15 |     let r = n.next?.stack.push(1)
+   |                   +
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0062

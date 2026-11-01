@@ -1,0 +1,15 @@
+class Inner {
+    mut items: [i64]?
+}
+
+class Bag {
+    next: Inner
+}
+
+fn add(bag: Bag?) {
+    bag?.next.items?.push(4)
+}
+
+fn main() {
+    add(Bag(next: Inner(items: [1, 2, 3])))
+}

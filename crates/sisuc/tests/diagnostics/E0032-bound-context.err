@@ -1,0 +1,14 @@
+error[E0032]: expected `i64`, found `W`
+  --> E0032-bound-context.sisu:18:19
+   |
+18 |     let _x: i64 = h(W(), Two.P(5, 7))
+   |                   ^^^^^^^^^^^^^^^^^^^
+
+error[E0032]: expected `W`, found `i64`
+  --> E0032-bound-context.sisu:18:32
+   |
+18 |     let _x: i64 = h(W(), Two.P(5, 7))
+   |                                ^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

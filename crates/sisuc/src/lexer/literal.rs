@@ -104,16 +104,21 @@ fn number(
     // Digits right after a `.` are a float's fraction or a field name, never an integer's value,
     // and the parser reports both, so a run too large for one is no error here.
     // shortcut: the token holds 0, so element access (`t.0`) must report a too-large index itself.
-    let value = match value {
-        Some(n) => n,
-        None if after_dot => return Ok(TokenKind::Int(0)),
-        None => return Err(literal_too_large(whole)),
-    };
+    if value.is_none() && !after_dot {
+        return Err(literal_too_large(whole));
+    }
     // Reported last, so that its fix leaves a literal that lexes. A bare 2^63 still fails to
-    // parse; only a `-` before it makes it valid, which the lexer cannot see.
+    // parse; only a `-` before it makes it valid, which the lexer cannot see. After a `.` the
+    // parser takes only a name, so no change of the prefix gives a clean program: no fix.
+    // shortcut: no fix after a `.` while the parser takes only a name there; give it back when
+    // element access by position (`t.0`) lands.
     if let Some((_, p)) = prefix.filter(|(_, p)| p.is_ascii_uppercase()) {
         let at = Span::new(start, start + 2);
-        let safe = value != MIN_MAGNITUDE;
+        let safe = if after_dot {
+            None
+        } else {
+            Some(value != Some(MIN_MAGNITUDE))
+        };
         return Err(DiagnosticKind::BasePrefixUpperCase {
             prefix: p,
             safe,
@@ -121,7 +126,7 @@ fn number(
         }
         .into());
     }
-    Ok(TokenKind::Int(value))
+    Ok(TokenKind::Int(value.unwrap_or(0)))
 }
 
 fn is_digit_or_separator(c: char) -> bool {

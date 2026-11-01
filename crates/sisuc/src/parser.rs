@@ -13,7 +13,8 @@ use crate::ast::{
 };
 use crate::diagnostic::{
     self, AnyFormKind, BuiltIn, ClashForm, Diagnostic, DiagnosticKind, ForeignPattern,
-    ForeignRange, InterfaceBodyForm, Join, LetField, MatchIdiomForm, Owner, PowerFix, SpecForm,
+    ForeignRange, InterfaceBodyForm, Join, LetField, MatchIdiomForm, NestingForm, Owner, PowerFix,
+    SpecForm,
 };
 use crate::lexer::{Lexed, MIN_MAGNITUDE, Token, TokenKind, literal_too_large};
 use crate::source::{Source, Span};
@@ -504,12 +505,27 @@ impl<'a> Parser<'a> {
 
     /// Sets `self.depth`, or reports that the tree is too deep at the next token.
     fn reach(&mut self, depth: usize) -> Result<(), Diagnostic> {
+        self.reach_as(depth, NestingForm::Tree)
+    }
+
+    /// `reach` at the `links`th link of a chain, such as the second `+` of `a + b + c`. The
+    /// report names the chain when its links are more than half the depth.
+    fn reach_link(&mut self, depth: usize, links: usize) -> Result<(), Diagnostic> {
+        let form = if 2 * links > depth {
+            NestingForm::Chain
+        } else {
+            NestingForm::Tree
+        };
+        self.reach_as(depth, form)
+    }
+
+    fn reach_as(&mut self, depth: usize, form: NestingForm) -> Result<(), Diagnostic> {
         self.depth = depth;
         if depth > MAX_DEPTH {
             return Err(DiagnosticKind::NestingTooDeep {
                 at: self.peek().span,
                 limit: MAX_DEPTH,
-                alias: None,
+                form,
             }
             .into());
         }
@@ -3092,9 +3108,6 @@ impl<'a> Parser<'a> {
         if !is_place(&target) {
             return Err(DiagnosticKind::AssignToExpression { at: target.span }.into());
         }
-        if goes_through_safe_access(&target) {
-            return Err(DiagnosticKind::AssignThroughSafeAccess { at: target.span }.into());
-        }
         let op_span = self.bump().span;
         if let Some(error) = self.label_not_on_loop() {
             return Err(error);
@@ -3145,7 +3158,14 @@ impl<'a> Parser<'a> {
     /// Precedence climbing over levels 1 to 7; `min` is the lowest level to accept.
     /// Each operator adds a level: `1 + 1 + 1` builds a tree that is as deep as it is long.
     fn binary(&mut self, min: u8) -> Result<Expr, Diagnostic> {
+        self.binary_chain(min, 0)
+    }
+
+    /// `binary`, as the right side of `coalesces` nested `??`, each the parent of the next. The
+    /// right side of a `??` continues the chain of `??` above it, not the operators on its left.
+    fn binary_chain(&mut self, min: u8, coalesces: usize) -> Result<Expr, Diagnostic> {
         let base = self.depth;
+        let mut links = coalesces;
         let mut lhs = self.unary()?;
         loop {
             let kind = &self.peek().kind;
@@ -3153,7 +3173,8 @@ impl<'a> Parser<'a> {
                 if min > 4 {
                     return Ok(lhs);
                 }
-                lhs = self.comparison_chain(lhs, base)?;
+                links += 1;
+                lhs = self.comparison_chain(lhs, base, links)?;
             } else if *kind == TokenKind::StarStar {
                 // `**` binds as `*` does.
                 if POWER_LEVEL < min {
@@ -3166,15 +3187,16 @@ impl<'a> Parser<'a> {
                 }
                 // The operator is the parent of everything parsed so far: one level more.
                 let wrapped = self.depth + 1;
-                self.reach(wrapped)?;
+                links += 1;
+                self.reach_link(wrapped, links)?;
                 let op_span = self.bump().span;
                 self.depth = base + 1;
                 // `??` is right-associative: its right side starts at its own level.
-                let rhs = self.binary(if matches!(op, Infix::Coalesce) {
-                    level
+                let rhs = if matches!(op, Infix::Coalesce) {
+                    self.binary_chain(level, coalesces + 1)?
                 } else {
-                    level + 1
-                })?;
+                    self.binary(level + 1)?
+                };
                 self.depth = self.depth.max(wrapped);
                 let span = lhs.span.to(rhs.span);
                 let (lhs_box, rhs_box) = (Box::new(lhs), Box::new(rhs));
@@ -3252,12 +3274,18 @@ impl<'a> Parser<'a> {
         &consumed[first..]
     }
 
-    /// Level 4: `first` and every `<`/`<=`/`>`/`>=` operand after it, as one node.
-    fn comparison_chain(&mut self, first: Expr, base: usize) -> Result<Expr, Diagnostic> {
+    /// Level 4: `first` and every `<`/`<=`/`>`/`>=` operand after it, as one node, which is the
+    /// `links`th link of the chain of operators that ends with it.
+    fn comparison_chain(
+        &mut self,
+        first: Expr,
+        base: usize,
+        links: usize,
+    ) -> Result<Expr, Diagnostic> {
         let start = first.span;
         // The chain is the parent of `first`: one level more.
         let mut reach = self.depth + 1;
-        self.reach(reach)?;
+        self.reach_link(reach, links)?;
         let mut operands = vec![first];
         let mut ops: Vec<CompareOp> = Vec::new();
         while let Some(op) = compare_op(&self.peek().kind) {
@@ -3325,11 +3353,13 @@ impl<'a> Parser<'a> {
     fn postfix(&mut self) -> Result<Expr, Diagnostic> {
         let base = self.depth;
         let mut expr = self.primary()?;
+        let mut links = 0;
         loop {
             // Each link is the parent of everything parsed so far: one level more.
             let wrapped = self.depth + 1;
+            links += 1;
             if self.at(&TokenKind::LBracket) {
-                self.reach(wrapped)?;
+                self.reach_link(wrapped, links)?;
                 self.bump();
                 self.depth = base + 1;
                 let index = self.expr()?;
@@ -3348,7 +3378,7 @@ impl<'a> Parser<'a> {
             if !starts_postfix(&self.peek().kind) {
                 return Ok(expr);
             }
-            self.reach(wrapped)?;
+            self.reach_link(wrapped, links)?;
             let access = self.bump();
             let safe = access.kind == TokenKind::QuestionDot;
             // `Option.None` names the variant of the prelude's `Option`; the checker rejects the
@@ -3827,16 +3857,6 @@ pub(crate) fn is_place(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Name(_) | ExprKind::Field { .. } => true,
         ExprKind::Index { base, .. } => is_place(base),
-        _ => false,
-    }
-}
-
-/// Whether a `?.` sits anywhere in the chain of fields, calls and indexes that makes up `e`.
-pub(crate) fn goes_through_safe_access(e: &Expr) -> bool {
-    match &e.kind {
-        ExprKind::Field { base, safe, .. } => *safe || goes_through_safe_access(base),
-        ExprKind::MethodCall { receiver, safe, .. } => *safe || goes_through_safe_access(receiver),
-        ExprKind::Index { base, .. } => goes_through_safe_access(base),
         _ => false,
     }
 }
@@ -4688,7 +4708,7 @@ mod tests {
     }
 
     #[test]
-    fn cannot_assign_through_safe_access() {
+    fn assignment_through_safe_access_should_parse() {
         for src in [
             "a?.b = 1",
             "a?.b.c = 1",
@@ -4699,12 +4719,7 @@ mod tests {
             "xs?.items[0].f += 1",
             "xs?.a[0] = 1",
         ] {
-            let full = format!("fn main() {{ {src} }}");
-            assert_eq!(
-                parse_err(&full),
-                (Code::AssignThroughSafeAccess, 1, 13),
-                "{src}"
-            );
+            parse_ok(&format!("fn main() {{ {src} }}"));
         }
     }
 

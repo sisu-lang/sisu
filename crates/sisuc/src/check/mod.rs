@@ -812,9 +812,9 @@ struct Body {
     /// it takes the siblings' type as its first anchor, not as its expected type (see `hinted`).
     /// Its value parts are hinted too. Only the expression at this span is hinted.
     hint_at: Option<(Span, Type)>,
-    /// Whether the expression being checked is a link of an assigned field's base chain (field
-    /// bases, method receivers, indexed bases), where a `?.` cannot stand.
-    in_target: bool,
+    /// Whether an index follows the expression being checked in its chain (field bases, method
+    /// receivers, indexed bases). A `?.` that fixes a `.` there leads to an index on an optional.
+    indexed: bool,
     /// The initializer of the `let` being checked, and what that `let` writes before its type
     /// (`mut`, then the name): E0050 uses it in its example when the initializer is the whole
     /// `None` or `[]`.

@@ -517,6 +517,17 @@ _Avoid_: export, public
 
 ## Compiler
 
+**Stage**:
+One step of the compiler, in this order: lex, parse, check, mono, mir,
+codegen, optimize, object, link. Each stage reads what the stage before
+it made.
+_Avoid_: pass (that is LLVM's), phase
+
+**Front end**:
+The stages that make the typed tree that codegen needs: lex, parse,
+check and mono. `sisu check` runs the front end without mono.
+_Avoid_: frontend
+
 **Typed tree (`tir`)**:
 The program as the checker understood it: names resolved, every expression
 typed, sugar such as `while` and `?.` lowered. mir is lowered from this.

@@ -77,7 +77,6 @@ codes! {
     MutParameter = "E0019",
     SelfNotFirst = "E0020",
     AssignToExpression | PushToTemporary = "E0021",
-    AssignThroughSafeAccess = "E0022",
     RangeOutsideFor = "E0023",
     EqualityChain = "E0024",
     ComparisonDirection = "E0025",
@@ -244,6 +243,10 @@ pub(crate) const RETIRED: &[(&str, &str)] = &[
         include_str!("../../../../docs/diagnostics/E0014.md"),
     ),
     (
+        "E0022",
+        include_str!("../../../../docs/diagnostics/E0022.md"),
+    ),
+    (
         "E0060",
         include_str!("../../../../docs/diagnostics/E0060.md"),
     ),
@@ -319,8 +322,14 @@ pub(crate) enum DiagnosticKind {
     /// A float literal at `at` that rounds to infinity in `f64`.
     FloatOutOfRange { at: Span },
     /// The base prefix at `at` (`0` and `prefix`, an upper case `X`, `B` or `O`). `safe` is
-    /// false when the lower case literal may still be rejected, as a bare 2^63 is.
-    BasePrefixUpperCase { prefix: char, safe: bool, at: Span },
+    /// false when the lower case literal may still be rejected, as a bare 2^63 is. It is `None`
+    /// after a `.` or `?.`, where the parser takes only a name, so no change of the prefix gives
+    /// a clean program.
+    BasePrefixUpperCase {
+        prefix: char,
+        safe: Option<bool>,
+        at: Span,
+    },
     /// The base prefix at `at` (`0` and `prefix`) with no digits after it.
     BasePrefixWithoutDigits { prefix: char, at: Span },
     /// The `digit`, at `at`, in a literal of base `radix` (2, 8 or 16), which is not a digit there.
@@ -521,8 +530,6 @@ pub(crate) enum DiagnosticKind {
     AssignToExpression { at: Span },
     /// A `push` at `at` onto something that is not a place.
     PushToTemporary { at: Span },
-    /// An assignment at `at` through a `?.`.
-    AssignThroughSafeAccess { at: Span },
     /// A range at `at` outside a `for`.
     RangeOutsideFor { at: Span },
     /// A second `==`, `!=` or `is` at `at` in one chain.
@@ -765,11 +772,13 @@ pub(crate) enum DiagnosticKind {
     PrintNever { function: &'static str, at: Span },
     /// The optional at `at` that a member, an index or a `for` uses as a value. `value` is its
     /// path as written, when it has one. `access` is the `.` before the member, and any space or
-    /// comment around it, when a `?.` can take its place.
+    /// comment around it, when a `?.` can take its place. `write` when the member is the target of
+    /// an assignment or a `push`: then the `?.` makes the statement do nothing, and has no result.
     MayBeNone {
         value: Option<String>,
         at: Span,
         access: Option<Span>,
+        write: bool,
         /// For a `?.` on an optional of an optional: the optional it leaves, which has no members.
         peel: Option<Peel>,
     },
@@ -829,13 +838,11 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         receiver: MethodReceiver,
     },
-    /// The token at `at`, where the tree passes `limit` levels. For a type that a type alias makes
-    /// deep, `alias` is the type as written, which names more than `limit` levels, and `at` is
-    /// where it is written.
+    /// The token at `at`, where the tree passes `limit` levels, and what made it deep.
     NestingTooDeep {
         at: Span,
         limit: usize,
-        alias: Option<String>,
+        form: NestingForm,
     },
     /// The first byte at `at` that is not UTF-8, which the text shown in its place replaces.
     InvalidUtf8 { at: Span },
@@ -1428,6 +1435,18 @@ pub(crate) enum PrintProblem {
     Count,
     /// The argument has no value: it is a call that returns nothing.
     NoValue,
+}
+
+/// What made a tree pass the nesting limit.
+pub(crate) enum NestingForm {
+    /// Nested expressions, blocks, patterns or types.
+    Tree,
+    /// A chain of operators, calls, fields or indexes, such as `a + b + c`: each link is one
+    /// level, and the links are more than half the levels.
+    Chain,
+    /// A use of a type alias: the text is the type as written, which names more than the limit,
+    /// and the tree's token is where it is written.
+    Alias(String),
 }
 
 /// Why `main`'s signature is wrong.
@@ -2403,14 +2422,18 @@ impl From<DiagnosticKind> for Diagnostic {
                 safe,
                 at,
             } => {
-                Diagnostic::coded(code, at, "base prefixes are lower case").with_fix(Fix {
-                    message: "write the prefix in lower case".to_string(),
-                    safe,
-                    edits: vec![Edit {
-                        span: Span::new(at.end() - 1, at.end()),
-                        replacement: prefix.to_ascii_lowercase().to_string(),
-                    }],
-                })
+                let d = Diagnostic::coded(code, at, "base prefixes are lower case");
+                match safe {
+                    Some(safe) => d.with_fix(Fix {
+                        message: "write the prefix in lower case".to_string(),
+                        safe,
+                        edits: vec![Edit {
+                            span: Span::new(at.end() - 1, at.end()),
+                            replacement: prefix.to_ascii_lowercase().to_string(),
+                        }],
+                    }),
+                    None => d,
+                }
             }
             DiagnosticKind::BasePrefixWithoutDigits { prefix, at } => {
                 Diagnostic::coded(code, at, format!("`0{prefix}` needs at least one digit"))
@@ -3115,10 +3138,6 @@ impl From<DiagnosticKind> for Diagnostic {
                     .with_label("this value is not stored in a variable")
                     .with_help("store it in a `let mut` variable first")
             }
-            DiagnosticKind::AssignThroughSafeAccess { at } => {
-                Diagnostic::coded(code, at, "cannot assign through `?.`")
-                    .with_help("unwrap it with `if let`")
-            }
             DiagnosticKind::RangeOutsideFor { at } => Diagnostic::coded(
                 code,
                 at,
@@ -3775,13 +3794,25 @@ impl From<DiagnosticKind> for Diagnostic {
                 "peel the other layer first: `({receiver} ?? None)?.{member}`"
             )),
             DiagnosticKind::MayBeNone {
-                value, at, access, ..
+                value,
+                at,
+                access,
+                write,
+                ..
             } => {
                 let d = Diagnostic::coded(code, at, format!("{} may be `None`", named(value)));
                 match access {
-                    Some(access) => d
-                        .with_help("to use the value only when it is present, unwrap it with `if let`")
-                        .with_fix(unsafe_fix("if a `None` result is fine, use `?.`", access, "?.")),
+                    Some(access) => {
+                        let fix = if write {
+                            "to do nothing when it is `None`, use `?.`"
+                        } else {
+                            "if a `None` result is fine, use `?.`"
+                        };
+                        d.with_help(
+                            "to use the value only when it is present, unwrap it with `if let`",
+                        )
+                        .with_fix(unsafe_fix(fix, access, "?."))
+                    }
                     None => d.with_help("unwrap it with `if let`"),
                 }
             }
@@ -3947,11 +3978,24 @@ impl From<DiagnosticKind> for Diagnostic {
                     edits,
                 })
             }
-            DiagnosticKind::NestingTooDeep { at, limit, alias: None } => {
-                Diagnostic::coded(code, at, "nesting is too deep")
-                    .with_help(format!("the limit is {limit} levels"))
-            }
-            DiagnosticKind::NestingTooDeep { at, limit, alias: Some(ty) } => Diagnostic::coded(
+            DiagnosticKind::NestingTooDeep {
+                at,
+                limit,
+                form: NestingForm::Tree,
+            } => Diagnostic::coded(code, at, "nesting is too deep")
+                .with_help(format!("the limit is {limit} levels")),
+            DiagnosticKind::NestingTooDeep {
+                at,
+                limit,
+                form: NestingForm::Chain,
+            } => Diagnostic::coded(code, at, format!("this chain makes the nesting deeper than {limit} levels"))
+                .with_label("each operator, call, field or index in a chain adds one level")
+                .with_help("put a part of the chain in a `let`"),
+            DiagnosticKind::NestingTooDeep {
+                at,
+                limit,
+                form: NestingForm::Alias(ty),
+            } => Diagnostic::coded(
                 code,
                 at,
                 format!("the type that `{ty}` names nests deeper than {limit} levels"),

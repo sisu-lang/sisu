@@ -1938,6 +1938,184 @@ fn an_optional_argument_should_bind_before_a_plain_literal() {
     }
 }
 
+/// The declarations of the rows that rank a call from the places of its returned parameter. `x` is
+/// a `u8` in `main`.
+const PLACES_DECLS: &str = "fn k2<T, U>(_a: T, b: U) -> U { b }\n\
+    fn h<T>(a: T, _b: T?) -> T { a }\n\
+    fn pick<T>(_a: T, b: T) -> T { b }\n\
+    fn opt<T>(x: T) -> T? { Some(x) }\n\
+    fn id<T>(x: T) -> T { x }\n\
+    fn g<T>(a: T, _xs: [T?]) -> T { a }\n\
+    class Bx<T> {\n    v: T?\n}\n\
+    fn gb<T>(a: T, _b: Bx<T?>) -> T { a }\n\
+    fn q<T>(a: T, _b: T?) -> T? { Some(a) }\n\
+    class Mk {\n    n: i64\n    fn o<T>(self, x: T) -> T? { Some(x) }\n}\n";
+
+/// `row` in a `main` that has `x: u8`, after the `PLACES_DECLS`. It is the only statement, so its
+/// text is at the line `decls + 3`.
+fn places_main(row: &str) -> String {
+    format!("{PLACES_DECLS}fn main() {{\n    let x: u8 = 3\n    {row}\n}}")
+}
+
+/// The place of `needle` in `row`, which `places_main` put in `src`.
+fn in_row(src: &str, row: &str, needle: &str) -> (usize, usize) {
+    let start = src.rfind(row).expect("the program should hold the row");
+    let inside = row.find(needle).expect("the row should hold the text");
+    line_col(src, start + inside)
+}
+
+/// Only an argument at a place of the returned type parameter gives a call its type. `k2(a, b)`
+/// returns `b`, so it ranks as `id(b)` ranks, whatever `a` is: a literal, a `u8`, an array, a
+/// string or a `None`. Before, the `1` of `k2(1, 2)` made the call `Concrete` with `U = i64`, and
+/// `[x, k2(1, 2)]` was rejected. The rows with `id` are controls: they passed before. A `k2` row
+/// has the result of its `id` row.
+#[test]
+fn a_call_should_rank_from_the_places_of_its_returned_parameter() {
+    with_prelude();
+    for (row, expected) in [
+        ("print([x, k2(1, 2)])", None),
+        ("print([x, k2(x, 2)])", None),
+        ("print([[x], k2(1, [])])", None),
+        ("print(k2(1, 2) + x)", None),
+        ("print([k2(1, 2), x])", None),
+        ("print([x, k2(1, x)])", None),
+        ("print([x, k2(\"s\", 2)])", None),
+        ("print([k2(1, 2), 2.5])", None),
+        ("print([k2(x, 2), x])", None),
+        ("print([x, k2([1], 2)])", None),
+        ("print([x, k2(1, None)])", None),
+        // A call that returns `T?` does not pass the type of its literal on: `Some(1)` is an
+        // optional `i64`, which a `u8` beside it does not give its type.
+        ("print([Some(1), x])", Some((Code::Mismatch, "x]"))),
+        ("print([opt(1), x])", Some((Code::Mismatch, "x]"))),
+        // The literal at the returned place still has to fit the type that the others give.
+        (
+            "print([x, k2(1, 300)])",
+            Some((Code::IntegerDoesNotFit, "300")),
+        ),
+        // Nothing gives `T`, which the call returns: it is reported.
+        ("print([x, k2(None, 2)])", Some((Code::CannotInfer, "k2"))),
+        // The controls.
+        ("print([x, id(2)])", None),
+        ("print([[x], id([])])", None),
+        ("print(id(2) + x)", None),
+        ("print([id(2), x])", None),
+        ("print([x, id(None)])", None),
+        (
+            "print([x, id(300)])",
+            Some((Code::IntegerDoesNotFit, "300")),
+        ),
+    ] {
+        let src = places_main(row);
+        let found = expected.map(|(code, needle)| (code, in_row(&src, row, needle)));
+        codes_row(row, &src, found.as_slice());
+    }
+}
+
+/// An optional at a place `T?` fills that `?`: it does not make `T` an optional, so the call that
+/// has it does not hold an optional (see `Ranked::holds_optional`). `pick(h(1, Some(2)), Some(3))`
+/// binds `T = i64?` from `Some(3)`, as the reversed order does. Before, the `Some(2)` made the `h`
+/// call hold an optional, `pick` checked it first and bound `T = i64`, and `Some(3)` was rejected
+/// (#325). An optional at a place `[T?]` or `Bx<T?>` fills the same `?`.
+#[test]
+fn an_optional_at_a_lifted_place_should_not_make_the_call_hold_one() {
+    with_prelude();
+    for row in [
+        "print(pick(h(1, Some(2)), Some(3)) ?? 0)",
+        "print(pick(h(1, None), Some(3)) ?? 0)",
+        "print(pick(g(1, [Some(2)]), Some(3)) ?? 0)",
+        "print(pick(gb(1, Bx(v: Some(2))), Some(3)) ?? 0)",
+        // The reversed order and the controls passed before.
+        "print(pick(Some(3), h(1, Some(2))) ?? 0)",
+        "print(pick(Some(3), g(1, [Some(2)])) ?? 0)",
+        "print(pick(Some(3), gb(1, Bx(v: Some(2)))) ?? 0)",
+        "let v: i64? = h(1, Some(2))\n    print(v ?? 0)",
+        "let v: i64? = h(1, None)\n    print(v ?? 0)",
+        "let v: i64? = g(1, [Some(2)])\n    print(v ?? 0)",
+        // A `T` place that holds the optional still does.
+        "print(pick(id(Some(2)), 3) ?? 0)",
+    ] {
+        clean_row(row, &places_main(row));
+    }
+}
+
+/// A value that makes an optional inside its optional is `Ranked::nested`: `Some(Some(2))`,
+/// `opt(Some(2))`, and a `Some` of an `if`, a call or a `dbg` that makes an optional. A call
+/// that returns `T` and has a nested argument at a place `T?` is an optional, for the optional
+/// at that place is the `T` that the call returns. So a context `i64?` meets its return type
+/// whole, and `h(1, Some(Some(2)))` is valid. Before, the context met the payload, `T = i64`, and
+/// the argument was rejected (#325).
+#[test]
+fn a_nested_optional_at_a_lifted_place_should_make_the_call_an_optional() {
+    with_prelude();
+    for row in [
+        "let v: i64? = h(1, Some(Some(2)))\n    print(v ?? 0)",
+        "let v: i64? = h(1, opt(Some(2)))\n    print(v ?? 0)",
+        "let v: i64? = h(1, Some(if x > 0 { Some(2) } else { None }))\n    print(v ?? 0)",
+        "let v: i64? = h(1, Some(h(Some(2), None)))\n    print(v ?? 0)",
+        "let v: i64? = h(1, id(Some(Some(2))))\n    print(v ?? 0)",
+        "let v: i64? = h(1, dbg(Some(Some(2))))\n    print(v ?? 0)",
+        "let v: i64? = h(1, Some(None))\n    print(v ?? 0)",
+        "let v: u8? = h(1, Some(Some(2)))\n    print(v ?? 0)",
+        // The context is an optional of an optional, so its payload is the optional that `T`
+        // is. Meeting the context whole would make `T = i64??` and reject the `1`.
+        "let v: i64?? = h(1, Some(Some(2)))\n    print((v ?? None) ?? 0)",
+        "let v: u8?? = h(1, Some(Some(2)))\n    print((v ?? None) ?? 0)",
+        "let v: i64?? = h(1, opt(Some(2)))\n    print((v ?? None) ?? 0)",
+        // A context with more optionals than `q` makes meets its payload, so `T = i64?`.
+        "let v: i64??? = q(1, Some(Some(2)))\n    print(((v ?? None) ?? None) ?? 0)",
+        // A safe call flattens only the optional that it adds, so `m?.o(Some(2))` is an `i64??`.
+        "let m: Mk? = Some(Mk(n: 1))\n    let v: i64? = h(1, m?.o(Some(2)))\n    print(v ?? 0)",
+        // Both are optionals, and `Some(2)` fills the `?`.
+        "let v: i64?? = h(1, Some(2))\n    print((v ?? None) ?? 0)",
+        "let v: i64?? = h(Some(1), Some(Some(2)))\n    print((v ?? None) ?? 0)",
+        // The call is an optional beside `pick`, so a plain argument is an optional beside it.
+        "print(pick(h(1, Some(Some(2))), 3) ?? 0)",
+        "print(pick(h(1, Some(Some(2))), Some(3)) ?? 0)",
+        "print(pick(1, h(1, Some(Some(2)))) ?? 0)",
+    ] {
+        clean_row(row, &places_main(row));
+    }
+    // Under an array, `[T?]` does not pass a nested optional on (see `Makes::Through`): the
+    // context meets the payload, as it did before.
+    let row = "let v: i64? = g(1, [Some(Some(2))])\n    print(v ?? 0)";
+    let src = places_main(row);
+    codes(&src, &[(Code::Mismatch, in_row(&src, row, "Some(2)"))]);
+}
+
+/// A call that returns `T?` is an optional of an optional when its argument at a place `T` is an
+/// optional. A context `i64??` meets its return type whole, so `T = i64?`. Before, the context
+/// met the payload, and `opt(Some(2))` was rejected.
+#[test]
+fn a_call_that_returns_an_optional_parameter_should_meet_a_nested_optional_context() {
+    with_prelude();
+    for row in [
+        "let w: i64?? = opt(Some(2))\n    print((w ?? None) ?? 0)",
+        "let w: i64?? = Mk(n: 1).o(Some(2))\n    print((w ?? None) ?? 0)",
+        "let w: i64?? = q(1, Some(2))\n    print((w ?? None) ?? 0)",
+        // A nested optional at the place `T?` makes `T` an optional: the context meets the return
+        // type whole when it has two optionals, and its payload when it has more.
+        "let w: i64?? = q(1, Some(Some(2)))\n    print((w ?? None) ?? 0)",
+        "let w: i64?? = q(1, opt(Some(2)))\n    print((w ?? None) ?? 0)",
+        "let w: i64??? = q(1, opt(Some(2)))\n    print(((w ?? None) ?? None) ?? 0)",
+        // An optional at a place `T` proves only that `T` is an optional, so the call makes two
+        // optionals at least. A context with more optionals meets its payload.
+        "let v: i64??? = q(Some(1), Some(2))\n    print(v != None)",
+        "let v: i64???? = q(Some(1), Some(Some(2)))\n    print(v != None)",
+        "let v: i64???? = q(Some(1), Some(Some(Some(2))))\n    print(v != None)",
+        "let v: i64???? = q(Some(1), opt(Some(2)))\n    print(v != None)",
+        "let v: i64??? = q(opt(1), Some(2))\n    print(v != None)",
+        "let m: Mk? = Some(Mk(n: 1))\n    let v: i64??? = q(m?.o(1), Some(2))\n    print(v != None)",
+        // A call that returns `T` and has an optional at a place `T` meets its context whole.
+        // The `opt` calls in these rows return `T?` at a context of three optionals: main accepted
+        // both rows.
+        "let v: i64??? = h(opt(1), opt(Some(2)))\n    print(v != None)",
+        "let m: Mk? = Some(Mk(n: 1))\n    let v: i64??? = h(m?.o(1), opt(Some(2)))\n    print(v != None)",
+    ] {
+        clean_row(row, &places_main(row));
+    }
+}
+
 /// A context of `i64?` or `u8?` meets the return type whole, and not its payload, when an argument
 /// holds the optional at a place of the returned parameter. The place can be in an array or a
 /// class, also in a call that is the argument. Before, the context met the payload, and
@@ -3108,7 +3286,7 @@ fn waiting_call_that_conflicts_in_a_bound_part_should_mismatch_at_the_call() {
 
 /// A part of the return type that names no parameter, but meets a part of the context that
 /// holds a hole, must still meet its structure: `Result<i64, i64>` against `Result<T, string>`
-/// and `Result<i64, bool>` against `Result<_, string>` clash, so each call is a mismatch and
+/// and `Result<E, bool>` against `Result<_, string>` clash, so each call is a mismatch and
 /// `mk` reports no `E`.
 #[test]
 fn no_parameter_part_should_not_meet_a_value_that_holds_a_hole() {
@@ -3119,8 +3297,8 @@ fn no_parameter_part_should_not_meet_a_value_that_holds_a_hole() {
                fn main() {\n    let x = f(mk())\n    print(x)\n}";
     codes(src, &[(Code::Mismatch, (8, 15))]);
     let src = "fn f<T>(r: Result<T, string>) -> T { panic(\"e\") }\n\
-               fn mk<E>(x: E?) -> Result<i64, bool> { panic(\"e\") }\n\
-               fn main() {\n    let x = f(mk(None))\n    print(x)\n}";
+               fn mk<E>() -> Result<E, bool> { panic(\"e\") }\n\
+               fn main() {\n    let x = f(mk())\n    print(x)\n}";
     codes(src, &[(Code::Mismatch, (4, 15))]);
 }
 
@@ -3149,21 +3327,47 @@ fn safe_call_should_mismatch_a_context_that_is_not_optional() {
     codes(src, &[(Code::Mismatch, (12, 7))]);
 }
 
-/// A waiting call with no value is E0043, as a call with its type written is. It is not a
-/// mismatch of `unit`, and a safe call has no `unit?`.
+/// The declarations and the row of a call with no value, in `f`: `f` takes an array, so a call that
+/// waits for its type would get a context from it. The call is at the line `decls + 3`, after
+/// `lets`.
+fn no_value_main(decls: &str, lets: &str, call: &str) -> (String, usize) {
+    let src = format!("{decls}fn f<T>(r: [T]) {{}}\nfn main() {{\n    {lets}{call}\n}}");
+    (src, decls.lines().count() + 3 + lets.matches('\n').count())
+}
+
+/// A call with no value is E0043, as a call with its type written is. It is not a mismatch of
+/// `unit`, and a safe call has no `unit?`.
 #[test]
-fn waiting_call_with_no_value_should_report_no_value() {
+fn call_with_no_value_should_report_no_value() {
     with_prelude();
     let maker = "class Maker {\n    n: i64\n    fn make<E>(self, x: E?) {}\n}\n";
+    let (fun, m) = ("fn mk<E>(x: E?) {}\n", "let m: Maker? = None\n    ");
     for (decls, lets, call) in [
-        ("fn mk<E>(x: E?) {}\n", "", "f(mk(None))"),
-        ("fn mk<E>(x: E?) {}\n", "", "f(mk<i64>(None))"),
-        (maker, "let m: Maker? = None\n    ", "f(m?.make(None))"),
-        (maker, "let m: Maker? = None\n    ", "f(m?.make<i64>(None))"),
+        (fun, "", "f(mk(Some(1)))"),
+        (fun, "", "f(mk<i64>(None))"),
+        (maker, m, "f(m?.make(Some(1)))"),
+        (maker, m, "f(m?.make<i64>(None))"),
     ] {
-        let src = format!("{decls}fn f<T>(r: [T]) {{}}\nfn main() {{\n    {lets}{call}\n}}");
-        let line = decls.lines().count() + 3 + lets.matches('\n').count();
-        codes(&src, &[(Code::NoValue, (line, 7))]);
+        let (src, line) = no_value_main(decls, lets, call);
+        codes_row(call, &src, &[(Code::NoValue, (line, 7))]);
+    }
+}
+
+/// A call whose arguments do not give its type is checked alone, with no context. It reports the
+/// `E` that it cannot infer first (`mk(None)`), as `let v = mk(None)` does, and not that it has no
+/// value.
+#[test]
+fn a_call_whose_arguments_do_not_give_its_type_should_report_its_parameter() {
+    with_prelude();
+    let maker = "class Maker {\n    n: i64\n    fn make<E>(self, x: E?) {}\n}\n";
+    let (fun, m) = ("fn mk<E>(x: E?) {}\n", "let m: Maker? = None\n    ");
+    // The column of the call, or of the method's name.
+    for (decls, lets, call, col) in [
+        (fun, "", "f(mk(None))", 7),
+        (maker, m, "f(m?.make(None))", 10),
+    ] {
+        let (src, line) = no_value_main(decls, lets, call);
+        codes_row(call, &src, &[(Code::CannotInfer, (line, col))]);
     }
 }
 
@@ -4288,6 +4492,7 @@ fn nested_generic_calls_should_rank_each_expression_once() {
     let steps = |(before, open, inner, close): (&str, &str, &str, &str), depth: usize| {
         let src = format!(
             "fn k<T>(a: T, b: T) -> T {{ b }}\nfn id<T>(x: T) -> T {{ x }}\n\
+             fn k2<T, U>(a: T, b: U) -> U {{ b }}\n\
              fn main() {{\n    let c = true\n    let x: u8 = 3\n    {before}{}{inner}{}\n}}",
             open.repeat(depth),
             close.repeat(depth),
@@ -4300,6 +4505,10 @@ fn nested_generic_calls_should_rank_each_expression_once() {
         ("let r: u8 = ", "k(1, ", "1", ")"),
         ("let r: u8? = ", "id(", "1", ")"),
         ("let r: u8? = ", "k(Some(1), ", "None", ")"),
+        // Only the second argument gives the call its type. The first row nests at that place,
+        // and the second at the place that is not carried, which ranking does not walk.
+        ("let r: u8 = ", "k2(x, ", "1", ")"),
+        ("let r: u8 = ", "k2(", "1", ", 1)"),
     ] {
         assert!(steps(row, 1) > 0, "the counter should count the walk");
         assert_near_linear(steps(row, 20), steps(row, 40), steps(row, 60));
@@ -4315,6 +4524,172 @@ fn nested_generic_calls_should_rank_each_expression_once() {
     ] {
         assert!(steps(row, 1) > 0, "the counter should count the walk");
         assert_near_linear(steps(row, 10), steps(row, 20), steps(row, 30));
+    }
+}
+
+/// The program of `a_nested_array_literal_should_resolve_its_type_a_linear_number_of_times`: an
+/// array literal `depth` deep, for a parameter type with `end` at its end. `bottom` is what the
+/// innermost level holds, and `setup` is the line before the call.
+fn nested_array_program(depth: usize, end: &str, bottom: &str, setup: &str) -> String {
+    let (open, close) = ("[".repeat(depth), "]".repeat(depth));
+    format!(
+        "enum Two<A, B> {{\n    P(A, B)\n}}\n\
+         fn mk<A>(a: A) -> Two<A, i64> {{ Two.P(a, 1) }}\n\
+         fn f<T>(_x: {open}{end}{close}) {{}}\n\
+         fn main() {{\n    {setup}\n    f({open}{bottom}{close})\n}}"
+    )
+}
+
+/// An array literal `d` deep, for a parameter type `d` arrays deep that names `T` at its end.
+/// Each level takes the context of its element from the level above, and its bound element type
+/// from the level below, so no level walks the type below it. The work grows with the depth, not
+/// with its square (#301). The depths are far below the nesting limit of the parser, and small
+/// enough for the stack of a debug test thread. The literal is refused when an element at the
+/// bottom takes no context, a local variable or a `None`. Each level then still takes its
+/// context from the level above, and does not walk the type below it.
+#[test]
+fn a_nested_array_literal_should_resolve_its_type_a_linear_number_of_times() {
+    with_prelude();
+    for (end, bottom, setup) in [
+        ("Two<T, i64>", "mk(true)", ""),
+        ("Two<T, i64>", "y", "let y = mk(true)"),
+        ("Two<T, i64>?", "mk(true), None", ""),
+    ] {
+        let walked = |depth: usize| {
+            generic::WALKED.set(0);
+            clean(&nested_array_program(depth, end, bottom, setup));
+            generic::WALKED.get()
+        };
+        assert!(
+            walked(1) > 0,
+            "{bottom}: the counter should count the walks"
+        );
+        assert_near_linear_for(&format!("{bottom}: "), walked(20), walked(40), walked(60));
+    }
+}
+
+/// The declarations that the rows of `nested_array_literals_should_keep_their_types` share. Each
+/// `f` takes an array of arrays with a type that names `T` at its end.
+const NESTED_ARRAY_DECLS: &str = "enum Two<A, B> {\n    P(A, B)\n}\n\
+    fn mk<A>(a: A) -> Two<A, i64> { Two.P(a, 1) }\n\
+    fn mk2<A>(a: A) -> Two<A, A> { Two.P(a, a) }\n\
+    fn id<T>(x: T) -> T { x }\n\
+    fn f<T>(_x: [[Two<T, i64>]]) -> i64 { 0 }\n\
+    fn fopt<T>(_x: [[Two<T, i64>?]]) -> i64 { 0 }\n\
+    fn fto<T>(_x: [[T?]]) -> i64 { 0 }\n\
+    fn f2<T>(_x: [[Two<T, T>]]) -> i64 { 0 }\n\
+    fn f3<T>(_x: [[[Two<T, i64>]]]) -> i64 { 0 }\n\
+    fn fs<T>(_x: [[Two<T, i64>]]?) -> i64 { 0 }\n\
+    interface I {\n    type Item\n}\n\
+    class W: I {\n    type Item = i64\n}\n\
+    class V: I {\n    type Item = bool\n}\n\
+    fn mkw() -> Two<i64, W> { Two.P(1, W()) }\n\
+    fn mkv() -> Two<bool, V> { Two.P(true, V()) }\n\
+    fn fa<T: I>(_x: [[Two<T.Item, T>]]) -> i64 { 0 }\n\
+    fn fb<T: I>(_x: [[Two<T.Item, T>?]]) -> i64 { 0 }\n\
+    fn idl<T>(xs: [T]) -> [T] { xs }\n\
+    fn gl<T>(_c: [[Two<T, i64>]], _d: T) -> i64 { 0 }\n\
+    fn gl2<T>(_c: [[Two<T, i64>]], _d: Result<T, string>) -> i64 { 0 }\n\
+    fn mkb<E>() -> Result<bool, E> { Ok(true) }\n";
+
+/// The rows of `nested_array_literals_should_keep_their_types`: a body, and the codes, each with
+/// the text of the last line where it is reported. The output of each row is the same as before
+/// a level took its context and its bound type from the levels next to it (#301).
+const NESTED_ARRAY_ROWS: &[(&str, &[(Code, &str)])] = {
+    use Code::{CannotInfer, Mismatch};
+    &[
+        // The type at the end binds `T`, and each level has the type of the one inside.
+        ("print(f([[mk(true)]]))", &[]),
+        ("print(f3([[[mk(true)]]]))", &[]),
+        // An optional element type, with a `None` beside the call or in a level of its own.
+        ("print(fopt([[mk(true)]]))", &[]),
+        ("print(fopt([[mk(true), None]]))", &[]),
+        ("print(fopt([[None, mk(true)]]))", &[]),
+        ("print(fopt([[None], [mk(true)]]))", &[]),
+        // `T?` at the bottom takes a value that is not optional, and a `None`.
+        ("print(fto([[mk(true)]]))", &[]),
+        ("print(fto([[1, None]]))", &[]),
+        ("print(fto([[None], [1]]))", &[]),
+        ("print(fto([[Some(1), None]]))", &[]),
+        ("print(fto([[1], [Some(2)]]))", &[]),
+        ("print(fto([[None]]))", &[(CannotInfer, "fto(")]),
+        // A level with two elements, and one where an element is `[]`.
+        ("print(f([[mk(true)], [mk(false)]]))", &[]),
+        ("print(f([[mk(true)], []]))", &[]),
+        ("print(f([[], [mk(true)]]))", &[]),
+        ("print(f3([[[mk(true)], []], [[mk(false)]]]))", &[]),
+        ("print(f([[]]))", &[(CannotInfer, "f(")]),
+        ("print(f([[], []]))", &[(CannotInfer, "f(")]),
+        // The second element disagrees, at the bottom or one level up: one mismatch.
+        ("print(f([[mk(true)], [mk(1)]]))", &[(Mismatch, "1)")]),
+        (
+            "print(f([[mk(true), mk(1)], [mk(false)]]))",
+            &[(Mismatch, "1)")],
+        ),
+        ("print(f3([[[mk(true)], [mk(2)]]]))", &[(Mismatch, "2)")]),
+        ("print(fto([[1], [\"s\"]]))", &[(Mismatch, "\"s\"")]),
+        // An element type that names `T` at two places.
+        ("print(f2([[mk2(true)]]))", &[]),
+        ("print(f2([[mk(true)]]))", &[(Mismatch, "mk(true)")]),
+        ("print(f2([[mk2(true)], [mk2(1)]]))", &[(Mismatch, "1)")]),
+        // The same depth under `Some(...)` and under a generic call.
+        ("print(fs(Some([[mk(true)]])))", &[]),
+        ("print(f(id([[mk(true)]])))", &[]),
+        // An associated type in the element type is replaced in the bound type of each level.
+        ("print(fa([[mkw()]]))", &[]),
+        ("print(fa([[mkw(), mkw()], [mkw()]]))", &[]),
+        ("print(fb([[mkw(), None]]))", &[]),
+        ("print(fa([[mkw()], [mkv()]]))", &[(Mismatch, "mkv()")]),
+        // The context of the call holds a hole, which hints `T`. So the outer literal goes to
+        // `inferred_array`, and its element type is `T`, not an array.
+        ("print(gl(idl([[mk(true)]]), true))", &[]),
+        ("print(gl2(idl([[mk(true)], [mk(false)]]), mkb()))", &[]),
+        // An element that is a local variable takes no context, and binds or meets the type.
+        ("let x = [mk(true)]\nprint(f([x]))", &[]),
+        ("let x = [mk(true)]\nprint(f([[mk(false)], x]))", &[]),
+        (
+            "let x = [mk(1)]\nprint(f([[mk(false)], x]))",
+            &[(Mismatch, "x]")],
+        ),
+        // A local variable at the bottom refuses the literals above it. Each level
+        // still takes its context from the level above.
+        ("let y = mk(true)\nprint(f3([[[y]]]))", &[]),
+        (
+            "let y = mk(true)\nprint(f3([[[mk(false)], [y]], [[mk(true)]]]))",
+            &[],
+        ),
+        (
+            "let y = mk(true)\nprint(f3([[[mk(false)], [y]], [[mk(1)]]]))",
+            &[(Mismatch, "1)")],
+        ),
+    ]
+};
+
+/// An array literal in an array literal gets the context of its element from the context of the
+/// literal around it, and its bound element type from the literal inside. Both are the same as
+/// the walks of the element type that they replace (#301).
+#[test]
+fn nested_array_literals_should_keep_their_types() {
+    with_prelude();
+    for &(body, expected) in NESTED_ARRAY_ROWS {
+        let src = format!(
+            "{NESTED_ARRAY_DECLS}fn main() {{\n    {}\n}}",
+            body.replace('\n', "\n    ")
+        );
+        let line = NESTED_ARRAY_DECLS.lines().count() + 1 + body.lines().count();
+        let last = body.lines().last().expect("a row should have a call");
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|&(code, at)| {
+                let col = 4
+                    + last
+                        .find(at)
+                        .unwrap_or_else(|| panic!("`{at}` in `{last}`"))
+                    + 1;
+                (code, (line, col))
+            })
+            .collect();
+        codes_row(body, &src, &expected);
     }
 }
 
@@ -4833,6 +5208,87 @@ fn a_call_that_rejected_a_parameter_should_blame_no_argument_for_its_expected_ty
     check_rows_after(REJECT_DECLS, NO_BLAME_ROWS);
 }
 
+/// The declarations that the rows of `a_context_that_fails_a_bound_should_blame_no_argument`
+/// share. `Vi` conforms to `I`, as `W` does.
+const CONTEXT_BOUND_DECLS: &str = "class Vi: I {\n    type Item = bool\n}\n\
+    class Gr<X: I> {\n    x: X\n    fn n<U: I>(self, a: U) -> X { self.x }\n}\n\
+    class Bx {\n    fn m<T: I>(self, a: T) -> T { a }\n}\n\
+    fn h<T: I>(a: T, _p: Two<T, i64>) -> T { a }\n\
+    fn hb<T>(a: T, _p: Two<T, i64>) -> T { a }\n\
+    fn g<T: I>(a: T) -> T { a }\n\
+    fn g2<T: I>(a: T, _b: T) -> T { a }\n\
+    fn hk1<T: K<U>, U>(_a: T) -> Two<T, U> { panic(\"e\") }\n\
+    fn hk2<T: K<U>, U>(a: T) -> T { a }\n";
+
+/// The rows of `a_context_that_fails_a_bound_should_blame_no_argument`.
+const CONTEXT_BOUND_ROWS: &[PartialRow<'static>] = {
+    use Code::Mismatch;
+    &[
+        // The context makes `T` an `i64`, which `I` has no conformance for. The call keeps the
+        // `T = W` of its first argument, as a call with no context does.
+        (
+            "",
+            "let _x: i64 = h(W(), Two.P(5, 7))",
+            &[(Mismatch, "h(W()"), (Mismatch, "5")],
+        ),
+        ("", "let _x: i64 = g(W())", &[(Mismatch, "g(W())")]),
+        ("", "let _x: i64? = g2(W(), W())", &[(Mismatch, "g2(")]),
+        // The bound of `T` names `U`, which the context binds: `i64` does not conform to
+        // `K<bool>`, and the first argument is the error.
+        (
+            "",
+            "let _x: Two<i64, bool> = hk1(V())",
+            &[(Code::NotConform, "V()")],
+        ),
+        // The context leaves `U` open, so the bound waits, and the context fits as before.
+        ("", "let _x: i64 = hk2(V())", &[(Mismatch, "V()")]),
+        // A method with a bound of its own parameter.
+        (
+            "",
+            "let _x: i64 = Bx().m(W())",
+            &[(Mismatch, "Bx().m(W())")],
+        ),
+        // A context that fails a bound of a parameter that it binds blames no argument, also an
+        // argument whose own parameter it binds right. The call keeps `A = W` and `B = W`.
+        (
+            "fn p3<A: I, B: I>(a: A, b: B) -> Two<A, B> { panic(\"e\") }\n",
+            "let _x: Two<i64, V> = p3(W(), W())",
+            &[(Mismatch, "p3(W(), W())")],
+        ),
+        // Control rows: the context passes every bound, or the parameter has none, so the
+        // arguments that it contradicts are still blamed.
+        (
+            "",
+            "let _x: i64 = hb(W(), Two.P(5, 7))",
+            &[(Mismatch, "W()")],
+        ),
+        (
+            "",
+            "let _x: Vi = g2(W(), W())",
+            &[(Mismatch, "W()"), (Mismatch, "W())")],
+        ),
+        ("", "let _x: i64 = g2(W(), Vi())", &[(Mismatch, "Vi()")]),
+        // The bound of the receiver's class is not the context's: it binds only the method's own
+        // parameters.
+        (
+            "",
+            "let _x: i64 = Gr(x: W()).n(W())",
+            &[(Mismatch, "Gr(x: W()).n(W())")],
+        ),
+    ]
+};
+
+/// A context that fails the bound of a parameter that it binds is not a type that the parameter
+/// can have, so no argument is to blame for not being it. The bound check that follows would
+/// report the type that the blame set, and the call keeps the type of its argument.
+#[test]
+fn a_context_that_fails_a_bound_should_blame_no_argument() {
+    check_rows_after(
+        &format!("{REJECT_DECLS}{CONTEXT_BOUND_DECLS}"),
+        CONTEXT_BOUND_ROWS,
+    );
+}
+
 /// Classes that conform to `K` for a type that holds the parameter of a bound: the arguments of
 /// the bound name the parameter in an array, an optional, an enum and a class.
 const WAIT_SHAPE_DECLS: &str = "class Va: K<[i64]> {\n}\n\
@@ -5024,4 +5480,301 @@ fn a_call_that_does_not_fit_should_be_checked_first_in_an_array_argument() {
             (Code::CannotInfer, (2, 22)),
         ],
     );
+}
+
+/// The declarations that the rows of
+/// `a_waiting_call_should_wait_for_a_later_argument_that_binds_its_context` share. `mk2` and `mk`
+/// leave `X` and `E` to their context. `g` takes a call and then the argument that binds its
+/// parameter. `gr`, `gb` and `gv` take a call that binds some of its own parameters.
+const WAIT_CALL_DECLS: &str = "class Two<A, B> {\n    a: A\n    b: B\n}\n\
+    class Bx<A, B> {\n    a: A\n}\n\
+    fn mk<E>() -> Result<i64, E> { Ok(1) }\n\
+    fn mks<E>() -> Result<string, E> { Ok(\"s\") }\n\
+    fn mk2<X>() -> Two<X, bool> { panic(\"e\") }\n\
+    fn id<T>(x: T) -> T { x }\n\
+    fn g<T>(_c: Two<T, bool>, _d: Result<T, string>) -> i64 { 0 }\n\
+    fn gr<T>(_c: Result<bool, T>, _d: Result<T, string>) -> i64 { 0 }\n\
+    fn gb<T>(_c: Bx<i64, T>, _d: Result<T, string>) -> i64 { 0 }\n\
+    fn g3<T, U>(_c: Two<T, bool>, _e: Two<U, T>, _d: Result<U, string>) -> i64 { 0 }\n\
+    enum Mb<T, U> { A(T) }\n\
+    fn gv<U>(_c: Mb<i64, U>, _d: Result<U, string>) -> i64 { 0 }\n\
+    fn g2<T>(_c: Two<T, bool>, _e: Two<T, bool>, _d: Result<T, string>) -> i64 { 0 }\n\
+    interface I {\n    type Item\n}\n\
+    class W: I {\n    type Item = i64\n}\n\
+    fn mkw<E>() -> Result<W, E> { Ok(W()) }\n\
+    fn ga<T: I>(_c: Two<T.Item, bool>, _d: Result<T, string>) -> i64 { 0 }\n\
+    fn mkv<X>() -> Two<i64, X> { panic(\"e\") }\n\
+    fn mkt<X>() -> Two<X, i64> { panic(\"e\") }\n\
+    fn mkr<X>() -> Two<i64, Two<X, bool>> { panic(\"e\") }\n\
+    fn mkd<X>() -> Two<X, X> { panic(\"e\") }\n\
+    fn mkp<X>() -> Two<X, bool>? { None }\n\
+    fn gq<T, U>(_a: Two<T, bool>, _b: Two<T, U>, _c: Result<U, string>) -> i64 { 0 }\n\
+    fn gq2<T, U>(_b: Two<T, U>, _a: Two<T, bool>, _c: Result<U, string>) -> i64 { 0 }\n\
+    fn gtu<T, U>(_c: Two<T, U>, _d: Result<U, string>) -> i64 { 0 }\n\
+    fn gn<T>(_c: Two<T, Two<T, bool>>, _d: Result<T, string>) -> i64 { 0 }\n\
+    fn gd<T, U>(_c: Two<T, U>, _d: Result<U, string>, _e: Result<T, string>) -> i64 { 0 }\n\
+    fn gp<T>(_c: Two<T, bool>?, _d: Result<T, string>) -> i64 { 0 }\n\
+    fn gl<T>(_c: [Two<T, bool>], _d: Result<T, string>) -> i64 { 0 }\n\
+    fn mkl<X>() -> [Two<X, bool>] { [] }\n\
+    fn mkxw<X>() -> Two<X, W> { panic(\"e\") }\n\
+    fn gaa<T: I>(_c: Two<T.Item, T>, _d: Result<T, string>) -> i64 { 0 }\n\
+    fn mkn<X: I>() -> Two<X.Item, bool> { panic(\"e\") }\n\
+    fn gnn<T>(_c: Two<Two<T, bool>, bool>, _d: Result<T, string>) -> i64 { 0 }\n\
+    fn gn2<T>(_c: Two<T, bool>, _d: Result<T, string>) -> i64 { 0 }\n\
+    fn mkx<X>() -> X { panic(\"e\") }\n\
+    fn mkla<X>() -> [Two<i64, X>] { [] }\n\
+    fn mkt2<E>() -> Result<Two<i64, i64>, E> { panic(\"e\") }\n\
+    fn gla<T>(_c: [T], _d: Result<T, string>) -> i64 { 0 }\n\
+    fn mkxx<X>() -> Two<Two<X, bool>, W> { panic(\"e\") }\n\
+    interface Holds<Y> {\n    type Item\n}\n\
+    class H: Holds<string> {\n    type Item = i64\n}\n\
+    fn mkh<E>() -> Result<H, E> { Ok(H()) }\n\
+    fn mkxh<X>() -> Two<X, H> { panic(\"e\") }\n\
+    fn gh<T: Holds<U>, U>(_c: Two<T.Item, T>, _d: Result<T, string>, _e: Result<U, string>) -> i64 { 0 }\n\
+    fn mkxa<X>() -> Two<X, Two<H, string>> { panic(\"e\") }\n\
+    fn gh2<T: Holds<U>, U>(_c: Two<T.Item, Two<T, U>>, _d: Result<T, string>, _e: Result<U, string>) -> i64 { 0 }\n\
+    fn mkdv<X>() -> Two<X, Two<X, i64>> { panic(\"e\") }\n\
+    fn fc<T, U, V>(_c: Two<V, bool>, _a: Two<T, Two<U, V>>, _b: Result<T, string>) -> i64 { 0 }\n\
+    fn fc2<T, U, V>(_a: Two<T, Two<U, V>>, _c: Two<V, bool>, _b: Result<T, string>) -> i64 { 0 }\n\
+    fn mky<X, Y>(y: Y) -> Two<X, Y> { panic(\"e\") }\n\
+    fn gy<T, U>(_c: Two<T, [U]>, _d: Result<T, string>, _e: Result<U, string>) -> i64 { 0 }\n\
+    fn gw2<T, U>(_a: Two<U, bool>, _c: Two<T, [U]>, _d: Result<T, string>) -> i64 { 0 }\n\
+    class WV: I {\n    type Item = [i64]\n}\n\
+    fn mkwv<E>() -> Result<WV, E> { Ok(WV()) }\n\
+    fn mkb<X, Y>(y: Y) -> Two<X, [Y]> { panic(\"e\") }\n\
+    fn gz<T: I>(_c: Two<T, T.Item>, _d: Result<T, string>) -> i64 { 0 }\n\
+    type BX<X> = Bx<i64, X>\n\
+    type MB<X> = Mb<i64, X>\n";
+
+/// The rows of `a_waiting_call_should_wait_for_a_later_argument_that_binds_its_context`: a body,
+/// and the codes, each with the text of the line where it is reported.
+const WAIT_CALL_ROWS: &[(&str, &[(Code, &str)])] = {
+    use Code::{CannotInfer, Mismatch};
+    &[
+        // The later argument binds `T`, and the call before it gets `Two<i64, bool>`.
+        ("print(g(mk2(), mk()))", &[]),
+        // `Ok(true)` leaves `E`; `mk()` binds `T`. A construction waits too.
+        ("print(gr(Ok(true), mk()))", &[]),
+        ("print(gb(Bx(a: 1), mk()))", &[]),
+        // `mk()` binds `U`, which wakes the second `mk2()`; that binds `T`, which wakes the
+        // first.
+        ("print(g3(mk2(), mk2(), mk()))", &[]),
+        ("print(g(mk2(), mks()))", &[]),
+        // A variant that leaves `U` waits too, and so do the alias of a class and the variant of
+        // an alias of an enum.
+        ("print(gv(Mb.A(1), mk()))", &[]),
+        ("print(gb(BX(a: 1), mk()))", &[]),
+        ("print(gv(MB.A(1), mk()))", &[]),
+        // One binding wakes two calls.
+        ("print(g2(mk2(), mk2(), mk()))", &[]),
+        // A call with written type arguments does not wait. A parameter type that names `T`
+        // only under an associated type waits for the other arguments, as it did.
+        ("print(g(mk2<i64>(), mk()))", &[]),
+        ("print(ga(mk2(), mkw()))", &[]),
+        ("let r: i64 = g(mk2(), Ok(1))\nprint(r)", &[]),
+        // Nothing binds `T`: both calls wait for it, and the sweep ends. They are checked in
+        // order, with no wait, as before.
+        (
+            "print(g(mk2(), mk2()))",
+            &[(CannotInfer, "mk2()"), (Mismatch, "mk2())")],
+        ),
+        (
+            "print(g(mk2(), Err(\"e\")))",
+            &[(CannotInfer, "mk2()"), (CannotInfer, "Err")],
+        ),
+        // A call waits for the parameters at the places of its own open parameter, not for the
+        // first one that the parameter type names. `mkv()` has `X` under `U`, and `mks()` binds
+        // `U`; both orders check.
+        ("print(gq(mk2(), mkv(), mks()))", &[]),
+        ("print(gq2(mkv(), mk2(), mks()))", &[]),
+        // An open parameter at two places waits for both. When only `U` is bound, the call is
+        // checked when the sweep ends and still sees `U`. When both are bound, the two `mks()`
+        // wake it.
+        ("print(gtu(mkd(), mks()))", &[]),
+        ("print(gd(mkd(), mks(), mks()))", &[]),
+        // An optional parameter type: the call meets the payload of the context, or its own
+        // optional meets the optional.
+        ("print(gp(mkp(), mk()))", &[]),
+        ("print(gp(mk2(), mk()))", &[]),
+        // An array type, and an associated type in the parameter type next to a plain `T`.
+        ("print(gl(mkl(), mk()))", &[]),
+        ("print(gaa(mkxw(), mkw()))", &[]),
+        // An associated type in the type of the call binds nothing, so the call waits for
+        // nothing and reports its parameter, as it did.
+        ("print(gnn(mkn(), mk()))", &[(CannotInfer, "mkn()")]),
+        ("print(gn2(mkn(), mk()))", &[(CannotInfer, "mkn()")]),
+        // A call that returns a bare `X` waits for the parameters under its context. A call
+        // that returns an array, a parameter type of a bare `T`, and an associated type that
+        // names another parameter.
+        ("print(g(mkx(), mk()))", &[]),
+        ("print(gla(mkla(), mkt2()))", &[]),
+        ("print(gh(mkxh(), mkh(), mks()))", &[]),
+        // `T.Item` has an interface argument, `U`. `unbound_params` reaches it.
+        ("print(gh2(mkxa(), mkh(), mks()))", &[]),
+        // This one gives E0050 as it did before. The fault is a mismatch (`X` is `Two<..>` and
+        // `W` is not): a separate diagnostic issue.
+        ("print(gaa(mkxx(), mkw()))", &[(CannotInfer, "mkxx()")]),
+        // `mkdv()` waits for `T` and `U`, its `X` at two places. Only `mk()` binds `T`, and no
+        // argument binds `U`, so nothing wakes it: it is checked when the sweep ends, in order.
+        // In `fc`, `mk2()` needs the `V` that `mkdv()` binds and comes first: E0050. In `fc2`,
+        // `mkdv()` comes first, so it checks.
+        ("print(fc(mk2(), mkdv(), mk()))", &[(CannotInfer, "mk2()")]),
+        ("print(fc2(mkdv(), mk2(), mk()))", &[]),
+        // A call that nothing wakes is checked when the sweep ends, with what the later
+        // arguments bound. `mkv()` has `X` under `T`, and `mks()` binds `U`: the call checks.
+        // `mkt()` has `i64` under `U`, which `mks()` binds to `string`: the mismatch is true.
+        ("print(gtu(mkv(), mks()))", &[]),
+        ("print(gtu(mkt(), mks()))", &[(Mismatch, "mkt()")]),
+        // A part of the call's type is a parameter that its own argument binds (`Y`), not an open
+        // one. It waits for `T` only. At an associated type of the outer call, the same
+        // part names no open parameter.
+        ("print(gy(mky([1]), mk(), mk()))", &[]),
+        // `mk2()` names `U` at the place of a bare `T` in `Two<T, [U]>`: `needed_params` tests
+        // whether that parameter is unbound.
+        ("print(gw2(mk2(), mky([1]), mk()))", &[]),
+        ("print(gz(mkb(1), mkwv()))", &[]),
+        // The arguments of an alias of a class do not fit it: the call reports that and waits for
+        // nothing.
+        (
+            "print(gb(BX(a: 1, c: 2), mk()))",
+            &[(Code::TooManyArguments, "c: 2")],
+        ),
+        // A woken call that disagrees with the argument that woke it is blamed.
+        ("print(gn(mkr(), mks()))", &[(Mismatch, "mkr()")]),
+        // The limit: a call under another call does not wait.
+        ("print(g(id(mk2()), mk()))", &[(CannotInfer, "mk2()")]),
+        // A call that is wrong for its parameter reports the mismatch, as it did.
+        (
+            "print(g(mk(), mk2()))",
+            &[(Mismatch, "mk()"), (Mismatch, "mk2())")],
+        ),
+    ]
+};
+
+/// An argument that is a call and leaves a parameter to its context waits for the parameter of
+/// the outer call that its context lacks, when a later argument binds that one (#217). A call
+/// that nothing wakes is checked when the sweep ends, in order, with what the later arguments
+/// bound: when it binds what an earlier call needs, that call reports E0050 (the `fc` rows).
+#[test]
+fn a_waiting_call_should_wait_for_a_later_argument_that_binds_its_context() {
+    with_prelude();
+    for &(body, expected) in WAIT_CALL_ROWS {
+        let src = format!(
+            "{WAIT_CALL_DECLS}fn main() {{\n    {}\n}}",
+            body.replace('\n', "\n    ")
+        );
+        let line = WAIT_CALL_DECLS.lines().count() + 1 + body.lines().count();
+        let last = body.lines().last().expect("a row should have a call");
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|&(code, at)| {
+                let col = 4
+                    + last
+                        .find(at)
+                        .unwrap_or_else(|| panic!("`{at}` in `{last}`"))
+                    + 1;
+                (code, (line, col))
+            })
+            .collect();
+        codes_row(body, &src, &expected);
+    }
+}
+
+/// Calls that wait, in chains of three sizes (20, 40 and 60; 100, 200 and 300), far above the
+/// smallest chain that shows the cost. Each is linear in its size, where a sweep that tests every
+/// waiting call after each binding, or files a call under one parameter at a time, is not.
+///
+/// The first chain is `n` waiting calls, `a0` to `a{n-1}`, and a last argument that binds the
+/// parameter of the last one. Place `i` has the type `Two<T{i+1}, T{i}>`, so it waits for
+/// `T{i+1}`, which place `i+1` binds when it is checked. The last argument wakes the waiting calls
+/// from the end to the start. Each call is tested once.
+///
+/// The second is one waiting call with the type `Tup<T0, ..., T{k-1}>` whose `X` sits under the
+/// last parameter, and `k` later arguments that each bind one parameter. The call waits for
+/// `T{k-1}` only, so it is tested once, where a call that waits for the first unbound parameter,
+/// and moves on at each binding, builds a context of size `k` `k` times.
+///
+/// The third is one waiting call that waits for all `k` parameters of `Tup<T0, ..., T{k-1}>`,
+/// which its context names in a shuffled order. The call is parked and woken in a linear number of
+/// steps.
+#[test]
+fn waiting_calls_should_be_tested_a_linear_number_of_times() {
+    with_prelude();
+    let steps = |n: usize| {
+        let names: Vec<String> = (0..=n).map(|i| format!("T{i}")).collect();
+        let params: Vec<String> = (0..n)
+            .map(|i| format!("a{i}: Two<T{}, T{i}>", i + 1))
+            .chain([format!("z: Result<T{n}, string>")])
+            .collect();
+        let args = vec!["mk2()"; n].join(", ");
+        let src = format!(
+            "class Two<A, B> {{\n    a: A\n    b: B\n}}\n\
+             fn mk<E>() -> Result<i64, E> {{ Ok(1) }}\n\
+             fn mk2<X>() -> Two<X, bool> {{ panic(\"e\") }}\n\
+             fn c<{}>({}) -> i64 {{ 0 }}\n\
+             fn main() {{\n    print(c({args}, mk()))\n}}",
+            names.join(", "),
+            params.join(", "),
+        );
+        generic::WAIT_STEPS.set(0);
+        clean(&src);
+        generic::WAIT_STEPS.get()
+    };
+    assert!(steps(1) > 0, "the counter should count the tests");
+    assert_near_linear(steps(20), steps(40), steps(60));
+    let wide = |k: usize| {
+        let list = |name: &str| (0..k).map(|i| format!("{name}{i}")).collect::<Vec<_>>();
+        let fields: Vec<String> = (0..k).map(|i| format!("    f{i}: A{i}\n")).collect();
+        let built: Vec<String> = (0..k)
+            .map(|i| if i + 1 == k { "X" } else { "i64" }.to_string())
+            .collect();
+        let params: Vec<String> = (0..k)
+            .map(|i| format!("_d{i}: Result<T{i}, string>"))
+            .collect();
+        let src = format!(
+            "class Tup<{}> {{\n{}}}\n\
+             fn mk<E>() -> Result<i64, E> {{ Ok(1) }}\n\
+             fn mkz<X>() -> Tup<{}> {{ panic(\"e\") }}\n\
+             fn gk<{}>(_c: Tup<{}>, {}) -> i64 {{ 0 }}\n\
+             fn main() {{\n    print(gk(mkz(), {}))\n}}",
+            list("A").join(", "),
+            fields.concat(),
+            built.join(", "),
+            list("T").join(", "),
+            list("T").join(", "),
+            params.join(", "),
+            vec!["mk()"; k].join(", "),
+        );
+        generic::WAIT_STEPS.set(0);
+        generic::WALKED.set(0);
+        clean(&src);
+        generic::WAIT_STEPS.get() + generic::WALKED.get()
+    };
+    assert_near_linear(wide(100), wide(200), wide(300));
+    // `mkw()` waits for all `k` parameters, which its context names in the order `i * 7 mod k`. `k`
+    // has no factor 7, so that order is a permutation that a sort would have to fix.
+    let shuffled = |k: usize| {
+        let list = |name: &str| (0..k).map(|i| format!("{name}{i}")).collect::<Vec<_>>();
+        let fields: Vec<String> = (0..k).map(|i| format!("    f{i}: A{i}\n")).collect();
+        let order: Vec<String> = (0..k).map(|i| format!("T{}", i * 7 % k)).collect();
+        let src = format!(
+            "class Tup<{}> {{\n{}}}\n\
+             class Wrap<A> {{\n    a: A\n}}\n\
+             fn mkw<X>() -> Wrap<X> {{ panic(\"e\") }}\n\
+             fn mkt() -> Tup<{}> {{ panic(\"e\") }}\n\
+             fn gs<{}>(_c: Wrap<Tup<{}>>, _d: Tup<{}>) -> i64 {{ 0 }}\n\
+             fn main() {{\n    print(gs(mkw(), mkt()))\n}}",
+            list("A").join(", "),
+            fields.concat(),
+            vec!["i64"; k].join(", "),
+            list("T").join(", "),
+            order.join(", "),
+            list("T").join(", "),
+        );
+        generic::WAIT_STEPS.set(0);
+        generic::WALKED.set(0);
+        clean(&src);
+        generic::WAIT_STEPS.get() + generic::WALKED.get()
+    };
+    assert_near_linear(shuffled(100), shuffled(200), shuffled(300));
 }

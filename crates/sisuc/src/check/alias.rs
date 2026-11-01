@@ -23,6 +23,7 @@ use super::{
     own_args, tail, value_span,
 };
 use crate::ast;
+use crate::diagnostic::NestingForm;
 use crate::graph::{components, cycle_through};
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -844,7 +845,7 @@ impl Checker<'_> {
             self.report(DiagnosticKind::NestingTooDeep {
                 at: ty.bare,
                 limit: MAX_DEPTH as usize,
-                alias: Some(self.source.text(ty.bare).to_string()),
+                form: NestingForm::Alias(self.source.text(ty.bare).to_string()),
             });
             return None;
         }

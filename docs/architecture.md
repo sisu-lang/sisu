@@ -40,6 +40,8 @@ stop the pipeline early, as
 [Developing Sisu](development.md#look-inside-the-compiler) lists.
 `--format json` switches the diagnostics to JSON Lines, and `sisu explain <code>`
 prints the explanation of a code and runs no stage.
+`--timings` on `sisu build` and `sisu check` makes `timings.rs` record the
+wall time of each stage that runs, and `report.rs` prints it to stderr.
 
 **Lexer** (`lexer/`). Turns source text into tokens. A line break that can
 end a statement becomes a `Newline` token, because statements end at

@@ -65,6 +65,13 @@ impl<W: Write> Reporter<W> {
         self.line(&text);
     }
 
+    /// Writes each of `lines`, the `timings:` lines of `--timings`.
+    pub(crate) fn timings(&mut self, lines: &[String]) {
+        for line in lines {
+            self.line(line);
+        }
+    }
+
     /// Writes the summary. Text has one only after a diagnostic; JSON always ends with one.
     pub(crate) fn finish(mut self) {
         self.codes.sort_by_key(|code| code.as_str());

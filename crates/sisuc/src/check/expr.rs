@@ -19,15 +19,15 @@ impl Checker<'_> {
     pub(super) fn expr(&mut self, e: &ast::Expr, expected: Option<Type>) -> Checked {
         #[cfg(test)]
         super::EXPR_CHECKS.set(super::EXPR_CHECKS.get() + 1);
-        // An assignment target's chain runs only through field bases, method receivers and
+        // The chain that an index ends runs only through field bases, method receivers and
         // indexed bases; any other expression inside it is an ordinary read.
-        let outer = self.body.in_target;
-        self.body.in_target &= matches!(
+        let outer = self.body.indexed;
+        self.body.indexed &= matches!(
             e.kind,
             ExprKind::Field { .. } | ExprKind::MethodCall { .. } | ExprKind::Index { .. }
         );
         let checked = self.expr_kind(e, expected);
-        self.body.in_target = outer;
+        self.body.indexed = outer;
         checked
     }
 

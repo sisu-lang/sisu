@@ -553,8 +553,8 @@ impl Checker<'_> {
         args: &[ast::Arg],
     ) -> Checked {
         let method = site.name;
-        // The arguments are not part of an assignment target's chain; `expr` restores the flag.
-        let target = std::mem::take(&mut self.body.in_target);
+        // The arguments are not part of the chain that an index ends; `expr` restores the flag.
+        let indexed = std::mem::take(&mut self.body.indexed);
         let receiver = match self.generated_operator(span, receiver, site, args) {
             Ok(checked) => return checked,
             Err(receiver) => receiver,
@@ -602,7 +602,7 @@ impl Checker<'_> {
             _ => {}
         }
         let ty = type_of(&receiver);
-        match self.find_method(ty, receiver_expr, site, target, (span, args.is_empty())) {
+        match self.find_method(ty, receiver_expr, site, indexed, (span, args.is_empty())) {
             Some(Found::Func(func)) => self.invoke(span, func, Some(receiver), site, args),
             Some(Found::GeneratedDisplay { listed }) => {
                 self.generated_display(span, receiver, site, args, listed)
