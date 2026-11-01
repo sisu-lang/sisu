@@ -49,7 +49,7 @@ git -C <repository root> show origin/main:.agents/skills/review-sisu/scripts/dif
 - `<target>` is the path of a spec or a plan, or `<base>..<head>` for a diff. Write a branch as `origin/main..<branch>`. The script writes a diff's range as full SHAs, and copies a spec or a plan to `RUN/target-<round>.md`, which the reviewer reads.
 - Repeat `--doc` for each document the reviewer reads with the target; leave it out when there is none.
 - For a diff, build `sisu` at the base and the head first, so that no reviewer builds them: `git -C <repository root> show origin/main:.agents/skills/review-sisu/scripts/build_sisu.sh | bash -s -- <repository root> RUN <base> <head>`. In a later round, build the round's head; earlier builds stay in `RUN/bin`. The brief lists each build there, and each line that the diff removes from the tests.
-- For a diff, pass the `LOG=` file of a `make mutation-test` run as `--mutation-log`, and the output of `make coverage BASE=<base> > RUN/coverage.txt` as `--coverage`. Leave out each one that did not run. The script stops when the log measured uncommitted changes or a commit outside the range, and when the coverage output measured uncommitted changes or a commit other than the head. A stage or a group runs mutation tests once, on its final head after the task reviews, so a task review has no log; the final review gets it. A log from an earlier commit of the range is still accepted, and the brief lists the commits after it.
+- For a diff, pass the `LOG=` file of a `make mutation-test` run as `--mutation-log`, and the output of `make coverage BASE=<base> > RUN/coverage.txt` as `--coverage`. Leave out each one that did not run. The script stops when the log measured uncommitted changes or a commit outside the range, and when the coverage output measured uncommitted changes or a commit other than the head. A stage or a group runs mutation tests once, on its final head after the task reviews, so a task review has no log; the final review gets it. A large fix round of the final review runs one more (step 5). A log from an earlier commit of the range is still accepted, and the brief lists the commits after it.
 - The script drops a skill line it cannot find. Tell the user in the report.
 
 ### 3. Launch the reviewers
@@ -88,6 +88,7 @@ A diagnostic improvement (`CODING_STANDARDS.md`, Reviewing) is deferred without 
 Rules for ruling:
 
 1. Check a finding before you rule. Run its repro or read the source it cites. When the claim does not hold, reject it and say what you saw. Save each repro program you run as `RUN/probes/<round>/<reviewer>-<n>.sisu`.
+   A fix that a reviewer suggests is a claim too. Check its text, such as the wording of a comment, before it goes into a brief.
 2. Severity follows "Reviewing" in `CODING_STANDARDS.md`. A blocking finding is fixed or deferred with the user's agreement; a nit may be rejected.
 3. A ruling must not break a rule in `CODING_STANDARDS.md`.
 4. When two reviewers disagree, rule on the evidence and record the disagreement.
@@ -98,6 +99,8 @@ Rules for ruling:
 Fix the accepted findings in the target. Fix the class, not only the repro: for each finding, list the neighbouring cases (the same rule in each position the language allows it), try each one, and fix the cause so that all of them are right. A brief for a fix round asks for that list and its results, and for the command and its output behind each claim about what `sisu` does. Its executor writes each probe program to `RUN/probes/<round>/`, and compares the probes of every round with `python3 scripts/diag_diff.py BASE_SISU HEAD_SISU RUN/probes`, where `BASE_SISU` is the build before the round. A fix to code keeps `make test`
 passing, and a fix that changes behavior adds a test that fails without
 it.
+
+In the final review of a diff whose flow runs mutation tests, a fix round that changes more than 50 Rust lines outside the tests, such as a new algorithm, runs one mutation test on its head before the re-review. The stage's or group's run came before that round, so no line is mutated twice. `git diff --shortstat <round base> HEAD -- '*.rs' ':!**/tests/**' ':!**/tests.rs'` gives the count. Run `(cd <worktree> && env CARGO_MUTANTS_JOBS=2 nice -n 19 make mutation-test BASE=<round base> LOG=RUN/mutation-<round>.log)` with Bash `run_in_background`. Put each surviving mutant into the round, with a test that kills it or a reason it is equivalent, and pass the log as `--mutation-log`.
 
 When you fixed a blocking finding, review again. Write `RUN/focus-<round>.md`
 with the fixes and what you probed, and run the script with
