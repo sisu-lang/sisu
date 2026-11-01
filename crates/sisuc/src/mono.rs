@@ -2668,8 +2668,11 @@ mod tests {
             .expect_err("7 instances pass 4");
         assert_eq!(found.len(), 1);
         assert!(!found[0].span().in_prelude(), "{found:?}");
-        assert!(
-            found[0].span().start() >= src.find("fn main").expect("main is in the source"),
+        assert_eq!(
+            found[0].span().start(),
+            // The 5th instance comes from the types of the locals of `main`, before any expression
+            // of it: the place is the name of `main`.
+            src.find("main").expect("the source should have `main`"),
             "{found:?}"
         );
         let mut mono = mono_with_limit(src, 4);
@@ -2723,6 +2726,29 @@ mod tests {
         let found = found.expect("the instances of `Result` should pass the limit 40");
         let at: Vec<_> = found.iter().map(|d| d.span().start()).collect();
         assert_eq!(at, [src.find('K').expect("the source should declare K")]);
+    }
+
+    /// `main` makes 5 instances: 3 of `Result`, `W<i64>` and the `contains` of `[W<i64>]`. The
+    /// worklist then lowers the body of that `contains`, a function of the prelude, and its `==`
+    /// makes the 6th instance, `W<i64>.eq`, which passes the limit 5. The `Result` of the prelude
+    /// has the most instances, so the error is at the user's source that reached the prelude's
+    /// `contains`: the call, which is not the last expression of `main`, and not the place of an
+    /// item that the worklist lowered before.
+    #[test]
+    fn mono_should_point_e0163_at_the_call_that_reached_an_item_of_the_prelude() {
+        let src = "class W<T>: Eq {\n    v: T\n    fn eq(self, other: Self) -> bool {\n        true\n    }\n}\nfn main() {\n    let c: Result<i64, i64> = Result.Ok(1)\n    let d: Result<i64, bool> = Result.Ok(1)\n    let e: Result<bool, i64> = Result.Ok(true)\n    let ws = [W(v: 1)]\n    print(ws.contains(W(v: 1)))\n    print(2)\n}\n";
+        let found = mono_with_limit(src, 5)
+            .run()
+            .expect_err("6 instances pass 5");
+        let at: Vec<_> = found.iter().map(|d| d.span().start()).collect();
+        assert_eq!(
+            at,
+            [src.find("ws.contains")
+                .expect("the source should have the call")]
+        );
+        let mut mono = mono_with_limit(src, 5);
+        mono.expand();
+        assert_eq!(mono.busiest().0, "Result");
     }
 
     /// The error of an instance that comes from the user's source relies on this: no item of the
