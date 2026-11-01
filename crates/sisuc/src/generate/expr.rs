@@ -64,7 +64,7 @@ impl Info {
 }
 
 /// The arithmetic operators, as written.
-pub(crate) const OPS: [&str; 5] = [" + ", " - ", " * ", " / ", " % "];
+pub(crate) const OPS: &[&str] = &[" + ", " - ", " * ", " / ", " % "];
 
 /// `l OPS[op] r` on a `ty`, an `i64` or a `u8`, as the run time has it: the value, or the
 /// message it panics with.
@@ -88,7 +88,7 @@ pub(crate) fn arithmetic_value(ty: &Ty, op: usize, l: i64, r: i64) -> Result<i64
 const DBG_EVERY: u64 = 37;
 
 /// The types a `const` can have.
-const CONSTANT: [Ty; 6] = Ty::VALUES;
+const CONSTANT: &[Ty] = Ty::VALUES;
 
 /// The size of an array of `len` elements of at most `element` each (decision 5).
 pub(crate) fn array_size(len: u64, element: u64) -> u64 {
@@ -154,9 +154,9 @@ enum Rule {
 }
 
 /// The `f64` methods with an exact result and no argument.
-const ROUNDING: [&str; 6] = ["abs", "sqrt", "floor", "ceil", "trunc", "round"];
+const ROUNDING: &[&str] = &["abs", "sqrt", "floor", "ceil", "trunc", "round"];
 /// The methods of `i64` and `f64` that take arguments of the receiver's type.
-const BOUNDS: [(&str, usize); 3] = [("min", 1), ("max", 1), ("clamp", 2)];
+const BOUNDS: &[(&str, usize)] = &[("min", 1), ("max", 1), ("clamp", 2)];
 /// The libm methods, whose results are inexact (decision 11), and their argument counts.
 const LIBM: &[(&str, usize)] = &[
     ("sin", 0),
@@ -173,11 +173,11 @@ const LIBM: &[(&str, usize)] = &[
     ("pow", 1),
     ("hypot", 1),
 ];
-const CLASSIFY: [&str; 3] = ["is_nan", "is_finite", "is_infinite"];
+const CLASSIFY: &[&str] = &["is_nan", "is_finite", "is_infinite"];
 
 /// Chars a string literal may hold, as written: no `@` (decision 3), and no raw `{`, `}`, `"` or
 /// `\`. The escapes from `\r` on hold a line break, which a panic message may not.
-const STRING_CHARS: [&str; 26] = [
+const STRING_CHARS: &[&str] = &[
     "a",
     "b",
     "z",
@@ -208,7 +208,7 @@ const STRING_CHARS: [&str; 26] = [
 /// The chars of `STRING_CHARS` a panic message may hold.
 const MESSAGE_CHARS: usize = 24;
 /// Char literals and their values, smallest first.
-pub(crate) const CHARS: [(&str, char); 14] = [
+pub(crate) const CHARS: &[(&str, char)] = &[
     ("'a'", 'a'),
     ("'Z'", 'Z'),
     ("'0'", '0'),
@@ -225,7 +225,7 @@ pub(crate) const CHARS: [(&str, char); 14] = [
     ("'}'", '}'),
 ];
 /// The types a `match` tests by value, besides enums.
-const MATCHED: [Ty; 5] = [Ty::Bool, Ty::I64, Ty::U8, Ty::Char, Ty::String];
+const MATCHED: &[Ty] = &[Ty::Bool, Ty::I64, Ty::U8, Ty::Char, Ty::String];
 /// The strings a `match` on a `string` tests.
 const WORDS: [&str; 5] = ["\"\"", "\"a\"", "\"b\"", "\"ab\"", "\"é\""];
 /// How deep a variant pattern nests in another.
@@ -1129,7 +1129,7 @@ impl Gen<'_> {
     /// An `f64` literal in one of its written forms, a negative one in parentheses, or one of
     /// `f64`'s constants.
     pub(crate) fn float_literal(&mut self) -> String {
-        const CONSTANTS: [&str; 8] = [
+        const CONSTANTS: &[&str] = &[
             "pi",
             "tau",
             "e",
@@ -1228,7 +1228,7 @@ impl Gen<'_> {
 
     /// A chain `a < b <= c` or `a > b >= c` of two or three operands of one ordered type.
     fn order(&mut self) -> Info {
-        const ORDERED: [Ty; 5] = [Ty::I64, Ty::U8, Ty::F64, Ty::Char, Ty::String];
+        const ORDERED: &[Ty] = &[Ty::I64, Ty::U8, Ty::F64, Ty::Char, Ty::String];
         let operand = ORDERED[self.pick(ORDERED.len())].clone();
         let ops = if self.pick(2) == 0 {
             [" < ", " <= "]

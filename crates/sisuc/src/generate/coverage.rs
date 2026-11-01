@@ -5929,7 +5929,7 @@ fn bound(name: Option<&str>) -> bool {
 /// arguments is pure: `i64`'s `min`, `max` and `clamp`, and the `sum` of an `[f64]`, which
 /// `Math` and `Sum` nodes were. The `sum` of an `[i64]` may overflow. `contains` is not here: it
 /// runs the `eq` of its element type, which a program may write with effects.
-const PURE_PRELUDE: [&str; 4] = ["i64.min", "i64.max", "i64.clamp", "[f64].sum"];
+const PURE_PRELUDE: &[&str] = &["i64.min", "i64.max", "i64.clamp", "[f64].sum"];
 
 /// For each function of `program`: whether a call of it is pure, if its arguments are.
 fn pure_calls(program: &tir::Program) -> Vec<bool> {

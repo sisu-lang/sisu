@@ -231,7 +231,7 @@ impl Checker<'_> {
             .function_ids
             .keys()
             .map(|function| function.as_str())
-            .chain(PRELUDE)
+            .chain(PRELUDE.iter().copied())
             .chain(["i64", "u8", "f64", "char", "string"])
             .filter(|function| !(at_start && self.is_open_label(function)))
             .map(|function| (function, Definition::Function));

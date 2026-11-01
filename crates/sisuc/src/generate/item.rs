@@ -1630,10 +1630,10 @@ impl Gen<'_> {
                 operand
             }
             (Ty::F64, 0) => {
-                const OPS: [&str; 5] = [" + ", " - ", " * ", " / ", " % "];
+                const OPS: &[&str] = &[" + ", " - ", " * ", " / ", " % "];
                 self.w.text("(");
                 self.const_expr(ty, 0);
-                self.one_of(&OPS);
+                self.one_of(OPS);
                 self.const_expr(ty, 0);
                 self.w.text(")");
                 Folded { value: 0, size: 0 }
@@ -1674,7 +1674,7 @@ impl Gen<'_> {
                 Folded { value: 0, size: 0 }
             }
             (Ty::Bool, _) => {
-                const ORDERED: [Ty; 5] = [Ty::I64, Ty::U8, Ty::F64, Ty::Char, Ty::String];
+                const ORDERED: &[Ty] = &[Ty::I64, Ty::U8, Ty::F64, Ty::Char, Ty::String];
                 let operand = ORDERED[self.pick(ORDERED.len())].clone();
                 let ops = if self.pick(2) == 0 {
                     [" < ", " <= "]

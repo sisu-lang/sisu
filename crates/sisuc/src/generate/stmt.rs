@@ -240,11 +240,11 @@ impl Gen<'_> {
                 if self.pick(2) == 0 {
                     self.inexact();
                 } else {
-                    const CLASSIFY: [&str; 3] = ["is_nan", "is_finite", "is_infinite"];
+                    const CLASSIFY: &[&str] = &["is_nan", "is_finite", "is_infinite"];
                     self.w.text("(");
                     self.inexact();
                     self.w.text(").");
-                    self.one_of(&CLASSIFY);
+                    self.one_of(CLASSIFY);
                     self.w.text("()");
                 }
             }
@@ -713,7 +713,7 @@ impl Gen<'_> {
         if self.pick(8) == 7 {
             self.w.text(" *= ");
         } else {
-            self.one_of(&OPS);
+            self.one_of(OPS);
         }
         self.right_operand(ty);
     }
@@ -1271,7 +1271,7 @@ pub(crate) enum Push {
 }
 
 /// The compound assignments of a number but `*=`.
-const OPS: [&str; 4] = [" += ", " -= ", " /= ", " %= "];
+const OPS: &[&str] = &[" += ", " -= ", " /= ", " %= "];
 
 /// The size that `push` may add to a mutable array (`Var::grow`), at each run of each loop.
 pub(crate) const GROW: u64 = 64;
