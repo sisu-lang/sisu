@@ -251,9 +251,28 @@ class RemovedTests(unittest.TestCase):
         base = self.commit('raw')
         (self.repo / 'tests/raw.in').write_bytes(b'\xff kept\n')
         head = self.commit('raw edit')
-        with mock.patch.dict(os.environ, {**ENV, 'GIT_DIFF_OPTS': '--unified=3'}, clear=True):
+        with mock.patch.dict(os.environ, ENV, clear=True):
             removed = diff_brief.removed_tests(self.repo, base, head)
         self.assertEqual(removed, ['tests/raw.in:2: \ufffd gone'])
+
+    def test_removed_tests_should_keep_their_line_numbers_under_git_diff_opts(self):
+        self.write({'tests/opts.in': 'a\nb\nc\n'})
+        base = self.commit('opts')
+        self.write({'tests/opts.in': 'a\nc\n'})
+        head = self.commit('opts edit')
+        with mock.patch.dict(os.environ, {**ENV, 'GIT_DIFF_OPTS': '--unified=3'}, clear=True):
+            removed = diff_brief.removed_tests(self.repo, base, head)
+        self.assertEqual(removed, ['tests/opts.in:2: b'])
+
+    def test_removed_tests_should_name_a_path_that_is_not_ascii_as_written(self):
+        # git quotes such a path as "tests/\303\244.in" unless core.quotepath is off.
+        self.write({'tests/ä.in': 'kept\ngone\n'})
+        base = self.commit('a umlaut')
+        self.write({'tests/ä.in': 'kept\n'})
+        head = self.commit('a umlaut edit')
+        with mock.patch.dict(os.environ, ENV, clear=True):
+            removed = diff_brief.removed_tests(self.repo, base, head)
+        self.assertEqual(removed, ['tests/ä.in:2: gone'])
 
     def test_a_diff_brief_should_list_removed_tests_and_prebuilt_sisu(self):
         run_dir = Path(tempfile.mkdtemp())
