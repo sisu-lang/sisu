@@ -42,24 +42,23 @@ fn window(
 /// rightmost span.
 ///
 /// `annotate-snippets` 0.12.17 shows at most `term_width - code_offset` columns of a long line, so
-/// at most 140 (`Margin::compute` in `renderer/margin.rs`; the width is 140 by default). It
-/// starts the shown part at most `6 + 140 / 2` columns before the leftmost span (`ELLIPSIS_PASSING`
-/// and the padding in `Margin::compute`), and it ends it at most 140 columns after the start
-/// (`Margin::right`). So `MARGIN` is more than 76 + 140, and the renderer shows the same text of
-/// the cut line as of the whole line. For ASCII text a column is at least one byte.
+/// at most 140 (`Margin::compute` in `renderer/margin.rs`; the width is 140 by default). In the
+/// cases where the spans and labels fit in the width (branches 2 and 3), it starts the shown part
+/// at most `6 + 140 / 2` columns before the leftmost span (`ELLIPSIS_PASSING` and the padding),
+/// and it ends it 140 columns after the start. When the spans are wider than the width (branch
+/// 4), it shows the columns from 6 before the leftmost span to 6 after the rightmost span. So
+/// `MARGIN` is more than 76 + 140, and the renderer shows the same text of the cut line as of the
+/// whole line. Each byte is at least one column, because the cut needs ASCII text.
 const MARGIN: usize = 384;
 
-/// The widest line before the long line that a cut keeps whole, in columns. The renderer shows
-/// every line of a snippet from the same column, so a line that ends before the shown part
-/// starts, which is at least `MARGIN - 76` columns in, shows no text in both. A tab is 4 columns
-/// and every other char is at most as wide as it is long.
-const PREVIOUS_MAX_WIDTH: usize = 256;
-
-/// The longest run of white space at the start of a long line that a cut handles. A cut keeps
-/// the run whole, because the renderer takes the least indent of the lines of a snippet into
-/// its margin, and the run is at most 4 x `INDENT_MAX` columns wide, which with 140 is less
-/// than `MARGIN`: the renderer then never shows the lines from the indent.
-const INDENT_MAX: usize = 32;
+/// The fewest bytes between the start of a cut line and its leftmost span. `Margin::compute`
+/// takes its first branch (trim only white space) when the label's right end is less than 140
+/// columns past the white space that starts the line, and then the shown columns differ from
+/// those of the whole line. A cut line starts with a char that is not white space, so its white
+/// space is 0 columns, and the label's right end is at least the bytes before the span plus 6,
+/// which is more than 140 when there are 256. The other branches need only 76 columns before
+/// the span.
+const LEFT_MIN: usize = 256;
 
 /// The text of a snippet, as the renderer gets it, and where the spans of the source sit in it.
 struct Excerpt<'s> {
@@ -140,48 +139,51 @@ impl<'s> Excerpt<'s> {
             .max()
             .expect("a snippet should have a span")
             - start;
-        let previous_width = previous.len() + 3 * previous.matches('\t').count();
-        if previous_width > PREVIOUS_MAX_WIDTH || far > content.len() {
-            return None;
-        }
-        let indent = content
-            .bytes()
-            .take(INDENT_MAX + 1)
-            .take_while(|b| char::from(*b).is_whitespace())
-            .count();
-        let left = near.saturating_sub(MARGIN);
-        let right = (far + MARGIN).min(content.len());
-        let cut_left = left > indent;
-        if indent > INDENT_MAX || (!cut_left && right == content.len()) {
-            return None;
-        }
         // An interior carriage return would join the line break that is put back after the cut.
-        if !content.is_ascii() || content.contains('\r') {
+        if far > content.len() || !content.is_ascii() || content.contains('\r') {
             return None;
         }
-        let kept = &content[if cut_left { left } else { 0 }..right];
+        let mut left = near.saturating_sub(MARGIN);
+        let cut_left = left > 0;
+        if cut_left {
+            // Start at text, not at white space: the renderer reads a run of white space at the
+            // start of a line as its indent.
+            left += content.as_bytes()[left..near]
+                .iter()
+                .take_while(|b| char::from(**b).is_whitespace())
+                .count();
+            if near - left < LEFT_MIN {
+                return None;
+            }
+        }
+        let right = (far + MARGIN).min(content.len());
+        if !cut_left && right == content.len() {
+            return None;
+        }
+        let kept = &content[left..right];
         // The renderer leaves a line of white space out of the indent of the snippet, so the cut
         // line must have text when the whole line has.
         if kept.bytes().all(|b| char::from(b).is_whitespace()) {
             return None;
         }
-        let mut text = String::with_capacity(previous.len() + indent + kept.len() + 2);
-        text.push_str(previous);
-        let gap = if cut_left {
-            text.push_str(&content[..indent]);
-            start + indent..start + left
+        // The renderer hides the line before the long line, because a snippet folds its lines
+        // without a span; only that line's break counts, for the width of the line numbers.
+        let break_len = if previous.ends_with("\r\n") {
+            2
         } else {
-            0..0
+            previous.len().min(1)
         };
+        let mut text = String::with_capacity(break_len + kept.len() + 2);
+        text.push_str(&previous[previous.len() - break_len..]);
         text.push_str(kept);
         text.push_str(&whole[content.len()..]);
         let primary_at = primary.start() - start;
-        let header = cut_left.then(|| (line, indent + (primary_at - left) + 1, primary_at + 1));
+        let header = cut_left.then(|| (line, primary_at - left + 1, primary_at + 1));
         Some(Self {
             text: Cow::Owned(text),
             first,
-            from: range.start,
-            gap,
+            from: start - break_len,
+            gap: start..start + left,
             header,
         })
     }
@@ -714,6 +716,24 @@ error[E0011]: expected `=`, found end of line
                 add(&wide, error(at(&wide, name), "m").with_label("here"), false);
             }
         }
+        // A run of 600 spaces where the cut would start, and then `n` bytes before the span. At
+        // 80 the renderer would read the run as an indent, so the line is not cut; at 300 the
+        // cut starts after the run.
+        for (n, cut) in [(80, false), (300, true)] {
+            let run = format!(
+                "fn main() {{\n    let a = 1;{}let b = \"{}\"; let x: i64 = true\n}}\n",
+                " ".repeat(600),
+                "y".repeat(n)
+            );
+            add(&run, error(at(&run, "x: "), "m").with_label("here"), cut);
+        }
+        // A wide line before the long line is not drawn, so it does not stop the cut.
+        for before in ["x".repeat(300), "x".repeat(10_000), "\t".repeat(300)] {
+            for eol in ["\n", "\r\n"] {
+                let prev = format!("{before}{eol}fn a(u: i64) {{ p(\"{pad}\") }}\n");
+                add(&prev, error(at(&prev, "u: "), "m"), true);
+            }
+        }
         check_cut_cases(&cases);
     }
 
@@ -736,16 +756,19 @@ error[E0011]: expected `=`, found end of line
                 .with_secondary(at(&indented, "n = 0"), "s"),
             true,
         );
-        // An indent that the cut keeps, and one that is too long for it.
+        // An indent of 8 columns and one of 40.
         for indent in [8, 40] {
             let spaces = " ".repeat(indent);
             let deep = format!("fn f() {{\n{spaces}p(\"{pad}\"); x\n}}\n");
-            add(&deep, error(between(&deep, "x\n", "x"), "m"), indent == 8);
+            add(&deep, error(between(&deep, "x\n", "x"), "m"), true);
         }
         // Only white space near the spans, and a deeper indent on the line before.
         let blank = format!("{}x\n  a{}b\n", " ".repeat(30), " ".repeat(1500));
         let in_blank = blank.find("b\n").expect("the line should end in `b`") - 700;
         add(&blank, error(Span::new(in_blank, in_blank), "m"), false);
+        // A span in white space, with the text more than a margin after it: the kept part has none.
+        let spaces = format!("{}x\n", " ".repeat(800));
+        add(&spaces, error(Span::new(5, 5), "m"), false);
         // A fix on the long line; its snippet shows the whole line, and is not cut.
         add(
             &ascii,
@@ -762,40 +785,58 @@ error[E0011]: expected `=`, found end of line
         );
         for before in ["x", &"x".repeat(200), &"x".repeat(400)] {
             let prev = format!("{before}\nfn a(u: i64) {{ p(\"{pad}\") }}\n");
-            add(&prev, error(at(&prev, "u: "), "m"), before.len() < 300);
+            add(&prev, error(at(&prev, "u: "), "m"), true);
         }
         check_cut_cases(&cases);
     }
 
     /// The span moves along a line that is cut at its start, its middle and its end, with a
-    /// label, a secondary span on each side, and a line number of one, two and three digits.
+    /// label, a secondary span on each side, a line number of one, two and three digits, and a
+    /// run of white space in the middle of the line, so that the cut starts in it for some spans.
     #[test]
     fn a_span_at_any_column_of_a_long_line_should_render_as_the_whole_source_does() {
-        let line = "ab cd ".repeat(1000);
-        for lines_before in [0, 11, 120] {
-            let source = format!("{}// x\n    {line}\n", "\n".repeat(lines_before));
-            let start = source.find("ab").expect("the line should start with `ab`");
-            let columns = (0..line.len() - 2)
-                .step_by(101)
-                .chain(line.len() - 8..line.len() - 2);
-            for column in columns {
-                let span = Span::new(start + column, start + column + 2);
-                let mut d = error(span, "m").with_label("here");
-                for other in [
-                    column.checked_sub(900),
-                    Some(column + 900),
-                    Some(column + 5),
-                ] {
-                    if let Some(other) = other.filter(|o| o + 2 < line.len()) {
-                        let at = start + other;
-                        d = d.with_secondary(Span::new(at, at + 2), "other");
+        let half = "ab cd ".repeat(500);
+        for run in ["", &" ".repeat(200), &" ".repeat(600), &"\t".repeat(150)] {
+            let line = format!("{half}{run}{half}");
+            let before: &[usize] = if run.is_empty() { &[0, 11, 120] } else { &[11] };
+            for &lines_before in before {
+                let source = format!("{}// x\n    {line}\n", "\n".repeat(lines_before));
+                let start = source.find("ab").expect("the line should start with `ab`");
+                // Every 101st column, and the columns near the end of the run, where the cut
+                // starts in it.
+                let run_end = half.len() + run.len();
+                let columns = (0..line.len() - 2)
+                    .step_by(101)
+                    .chain(
+                        (run_end - 100..run_end + 700)
+                            .step_by(37)
+                            .filter(|_| !run.is_empty()),
+                    )
+                    .chain(line.len() - 8..line.len() - 2);
+                for column in columns {
+                    let span = Span::new(start + column, start + column + 2);
+                    let alone = error(span, "m").with_label("here");
+                    let mut with_others = alone.clone();
+                    for other in [
+                        column.checked_sub(900),
+                        Some(column + 900),
+                        Some(column + 5),
+                    ] {
+                        if let Some(other) = other.filter(|o| o + 2 < line.len()) {
+                            let at = start + other;
+                            with_others =
+                                with_others.with_secondary(Span::new(at, at + 2), "other");
+                        }
+                    }
+                    for d in [alone, with_others] {
+                        assert_eq!(
+                            d.render("t.sisu", &source, &LineIndex::new(&source), false),
+                            render_whole(&d, "t.sisu", &source),
+                            "{lines_before} lines before, a run of {} bytes, column {column}",
+                            run.len()
+                        );
                     }
                 }
-                assert_eq!(
-                    d.render("t.sisu", &source, &LineIndex::new(&source), false),
-                    render_whole(&d, "t.sisu", &source),
-                    "{lines_before} lines before, column {column}"
-                );
             }
         }
     }
@@ -814,24 +855,30 @@ error[E0011]: expected `=`, found end of line
         }
     }
 
-    /// The text that the renderer gets of a long line does not grow with the line.
+    /// The text that the renderer gets of a long line does not grow with the line, or with the
+    /// line before it.
     #[test]
     fn the_text_that_the_renderer_gets_should_not_grow_with_the_line() {
-        for len in [10_000, 100_000, 1_000_000] {
-            let source = format!("a\n{}\n", "z".repeat(len));
-            let lines = LineIndex::new(&source);
-            let mut longest = 0;
-            for at in (2..len).step_by(len / 50) {
-                let span = Span::new(at, at + 3);
-                let excerpt = Excerpt::new(&source, &lines, std::iter::once(span), span);
-                longest = longest.max(excerpt.text.len());
-                assert_eq!(excerpt.rebased(span).len(), 3, "span at {at}");
+        for before in ["a", &"w".repeat(10_000)] {
+            for len in [10_000, 100_000, 1_000_000] {
+                let source = format!("{before}\n{}\n", "z".repeat(len));
+                let lines = LineIndex::new(&source);
+                let first = before.len() + 1;
+                let mut longest = 0;
+                for at in (first..first + len).step_by(len / 50) {
+                    let span = Span::new(at, at + 3);
+                    let excerpt = Excerpt::new(&source, &lines, std::iter::once(span), span);
+                    longest = longest.max(excerpt.text.len());
+                    assert_eq!(excerpt.rebased(span).len(), 3, "span at {at}");
+                }
+                // The break of the line before, the span, a margin on each side, and the line
+                // break.
+                assert!(
+                    longest <= 1 + 3 + 2 * MARGIN + 1,
+                    "{longest} bytes for a line of {len} after one of {}",
+                    before.len()
+                );
             }
-            // The previous line, the span, a margin on each side, and the line break.
-            assert!(
-                longest <= 2 + 3 + 2 * MARGIN + 1,
-                "{longest} bytes for a line of {len}"
-            );
         }
     }
 
