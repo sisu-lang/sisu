@@ -7,10 +7,11 @@ Usage: python3 registry_debug_format.py FILE...
 import re
 import sys
 
-# The tests: an inline `#[cfg(test)] mod name {`, with any attributes or comments between, which clippy's
-# items_after_test_module keeps at the end of the file. A `#[cfg(test)]` step counter before it is
-# production code.
-TESTS = re.compile(r"^#\[cfg\(test\)\]\n(?:#\[(?:[^][]|\[[^]]*\])*\]\n|//[^\n]*\n)*(?:pub(?:\([^)\n]*\))? )?mod \w+ \{", re.M)
+# The tests: an inline `#[cfg(test)] mod name {`, which clippy's items_after_test_module keeps at
+# the end of the file. A `#[cfg(test)]` step counter before it is production code.
+# shortcut: between the two, the pattern takes blank lines, `//` comments and attributes with one
+# level of inner brackets, not a `/* */` comment; add the form when a file uses it.
+TESTS = re.compile(r"^#\[cfg\(test\)\]\n(?:#\[(?:[^][]|\[[^]]*\])*\]\n|//[^\n]*\n|\n)*(?:pub(?:\([^)\n]*\))? )?mod \w+ \{", re.M)
 
 
 def main(paths: list[str]) -> int:
