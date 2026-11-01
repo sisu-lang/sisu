@@ -14,7 +14,7 @@ diagnostic stops the run: without this check, the failure shows as a missing sta
 
 The script exits with code 1 when a superlinear case has no row in `KNOWN`, when a row of `KNOWN`
 looks fixed, and when a check or a command fails. `--counts FILE` reads the `counts.json` of an
-earlier run and measures nothing. Every command runs through one `Deadline`.
+earlier run and measures nothing. Every measurement command runs through one `Deadline`.
 """
 
 import argparse
@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from fractions import Fraction
 from pathlib import Path
 
 from compile_speed import Deadline, Fail
@@ -50,6 +51,16 @@ DEFAULT_OUT = 'target/scaling'
 ROOT = Path(__file__).resolve().parent.parent
 
 
+# The width of a number in a name. The largest size of any shape is 8 * 250 = 2000, so each name
+# has the same length at each size, and the text of a program grows with the number of copies.
+WIDTH = 4
+
+
+def tag(i):
+    """The number `i` of a copy, with the width of the largest size."""
+    return f'{i:0{WIDTH}d}'
+
+
 def nest(k, wrap, core):
     """`core` inside `k` layers: each layer is `wrap(inner)`."""
     for _ in range(k):
@@ -58,15 +69,15 @@ def nest(k, wrap, core):
 
 
 def functions(k):
-    funs = ['fn step0() -> i64 {\n    1\n}\n'] if k else []
-    funs += [f'fn step{i}() -> i64 {{\n    step{i - 1}() + 1\n}}\n' for i in range(1, k)]
-    shown = f'"{{step{k - 1}()}}"' if k else '"none"'
+    funs = ['fn step0000() -> i64 {\n    1\n}\n'] if k else []
+    funs += [f'fn step{tag(i)}() -> i64 {{\n    step{tag(i - 1)}() + 1\n}}\n' for i in range(1, k)]
+    shown = f'"{{step{tag(k - 1)}()}}"' if k else '"none"'
     return '\n'.join(funs) + f'\nfn main() {{\n    print({shown})\n}}\n'
 
 
 def statements(k):
-    lets = ''.join(f'    let a{i} = a{i - 1} + 1\n' for i in range(1, k + 1))
-    return f'fn main() {{\n    let a0 = 0\n{lets}    print("{{a{k}}}")\n}}\n'
+    lets = ''.join(f'    let a{tag(i)} = a{tag(i - 1)} + 1\n' for i in range(1, k + 1))
+    return f'fn main() {{\n    let a0000 = 0\n{lets}    print("{{a{tag(k)}}}")\n}}\n'
 
 
 def expression_depth(k):
@@ -95,9 +106,9 @@ def array_literal_width(k):
 
 
 def match_arms(k):
-    names = ['First'] + [f'V{i}' for i in range(k)]
+    names = ['First'] + [f'V{tag(i)}' for i in range(k)]
     variants = ''.join(f'    {name}\n' for name in names)
-    arms = ''.join(f'        {name} => {i}\n' for i, name in enumerate(names))
+    arms = ''.join(f'        {name} => 1\n' for name in names)
     built = ', '.join(f'Kind.{name}' for name in names)
     return (f'enum Kind {{\n{variants}}}\n\nfn pick(k: Kind) -> i64 {{\n    match k {{\n{arms}    }}\n}}\n\n'
             f'fn main() {{\n    let mut total = 0\n    for k in [{built}] {{\n        total += pick(k)\n'
@@ -105,17 +116,17 @@ def match_arms(k):
 
 
 def fields(k):
-    declared = ''.join(f'    f{i}: i64\n' for i in range(k))
-    given = ''.join(f', f{i}: {i}' for i in range(k))
-    shown = ''.join(f'    print("{{r.f{i}}}")\n' for i in range(k))
+    declared = ''.join(f'    f{tag(i)}: i64\n' for i in range(k))
+    given = ''.join(f', f{tag(i)}: 1' for i in range(k))
+    shown = ''.join(f'    print("{{r.f{tag(i)}}}")\n' for i in range(k))
     return (f'class Row {{\n    id: i64\n{declared}}}\n\n'
             f'fn main() {{\n    let r = Row(id: 0{given})\n    print("{{r.id}}")\n{shown}}}\n')
 
 
 def conformers(k):
-    classes = ''.join(f'class C{i}: Speak {{\n    fn say(self) -> i64 {{\n        {i}\n    }}\n}}\n\n'
+    classes = ''.join(f'class C{tag(i)}: Speak {{\n    fn say(self) -> i64 {{\n        1\n    }}\n}}\n\n'
                       for i in range(k))
-    calls = ''.join(f'    total += ask(C{i}())\n' for i in range(k))
+    calls = ''.join(f'    total += ask(C{tag(i)}())\n' for i in range(k))
     return ('interface Speak {\n    fn say(self) -> i64\n}\n\n'
             'class Base: Speak {\n    fn say(self) -> i64 {\n        0\n    }\n}\n\n' + classes +
             'fn ask<T: Speak>(x: T) -> i64 {\n    x.say()\n}\n\n'
@@ -123,10 +134,9 @@ def conformers(k):
 
 
 def type_depth(k):
-    ty = nest(k, lambda s: f'Box<{s}>', 'i64')
-    return ('class Box<T> {\n    value: T\n}\n\n'
-            f'fn take(b: {ty}?) -> i64 {{\n    if let _v = b {{\n        1\n    }} else {{\n        0\n    }}\n}}\n\n'
-            'fn main() {\n    let seed = Box(value: 1)\n    print("{take(None) + seed.value}")\n}\n')
+    pair = nest(k + 1, lambda s: f'Pair(a: {s}, b: 1)', '1')
+    return ('class Pair<A, B> {\n    a: A\n    b: B\n}\n\n'
+            f'fn main() {{\n    let v = {pair}\n    let _first = v.a\n    print("{{v.b}}")\n}}\n')
 
 
 def interpolations(k):
@@ -134,8 +144,8 @@ def interpolations(k):
 
 
 def live_locals(k):
-    locals_ = ''.join(f'    let live{i} = "v"\n' for i in range(k))
-    uses = ''.join(f'    total += live{i}.len()\n' for i in range(k))
+    locals_ = ''.join(f'    let live{tag(i)} = "v"\n' for i in range(k))
+    uses = ''.join(f'    total += live{tag(i)}.len()\n' for i in range(k))
     return ('fn main() {\n' + locals_ + '    let mut total = 0\n    let mut i = 0\n'
             '    while i < 3 {\n        i += 1\n        total += i\n    }\n' + uses +
             '    print("{total}")\n}\n')
@@ -166,21 +176,32 @@ SHAPES = {
 }
 
 
+# The numbers of the rule. They are exact fractions: a float would turn `2.45 - 0.05` into
+# 2.4000000000000004, and a ratio on a boundary would fall on the wrong side.
+SUPERLINEAR_R3 = Fraction('2.3')
+SUPERLINEAR_R2 = Fraction('2.1')
+FALL_ALLOWED = Fraction('0.05')
+STEEP = Fraction(3)
+KEPT_R3 = Fraction('2.15')
+FALL_FIXED = Fraction('0.15')
+
+
 def judge(growth, total_8n):
-    """The verdict for one stage and its three ratios.
+    """The verdict for one stage, and its three ratios as exact fractions.
 
     `growth` is the growth at n, 2n, 4n and 8n. `total_8n` is the sum of the growth at 8n of the
-    six stages. The verdict is `not judged` (the growth at 8n is not positive, or under 1% of
-    `total_8n`), `no ratio` (a judged stage with a ratio that has a divisor of 0 or less),
-    `superlinear` or `linear`. A ratio is None when its divisor is 0 or less.
+    six stages. A ratio is None when its divisor is 0 or less.
+
+    The verdict is `not judged` when the growth at 8n is not positive, or is under 1% of `total_8n`.
+    Else it is `no ratio` when a ratio is None. Else it is `superlinear` or `linear`.
     """
-    ratios = [b / a if a > 0 else None for a, b in zip(growth, growth[1:])]
-    if growth[3] <= 0 or growth[3] < 0.01 * total_8n:
+    ratios = [Fraction(b, a) if a > 0 else None for a, b in zip(growth, growth[1:])]
+    if growth[3] <= 0 or growth[3] * 100 < total_8n:
         return 'not judged', ratios
     if None in ratios:
         return 'no ratio', ratios
     r1, r2, r3 = ratios
-    if r3 > 2.3 and r2 >= 2.1 and (r3 >= r1 - 0.05 or r3 >= 3.0):
+    if r3 > SUPERLINEAR_R3 and r2 >= SUPERLINEAR_R2 and (r3 >= r1 - FALL_ALLOWED or r3 >= STEEP):
         return 'superlinear', ratios
     return 'linear', ratios
 
@@ -193,7 +214,7 @@ def looks_fixed(verdict, ratios):
     if verdict in ('not judged', 'no ratio'):
         return True
     r1, _, r3 = ratios
-    return r3 < 2.15 or (r3 < 3.0 and r3 < r1 - 0.15)
+    return r3 < KEPT_R3 or (r3 < STEEP and r3 < r1 - FALL_FIXED)
 
 
 KNOWN_PREFIX = 'known case: '
@@ -222,38 +243,74 @@ def compare(verdicts, known, measured):
 
 
 ANNOTATE_LINE = re.compile(r'^\s*([\d,]+) \(\s*[\d.]+%\)\s+(.*)$')
+OBJECT_FIELD = re.compile(r' \[[^\]]*\]$')
 
 
 def stage_counts(annotate):
     """The count of each stage, from the output of `callgrind_annotate`.
 
-    A line is `<count> (<percent>)  <file>:<function> [<object>]`. A line counts for a stage when
-    its function is the function of the stage, or has `.` and a suffix after it (an LTO clone). A
-    closure of the function is another name and does not count. It raises Fail when a stage has no
-    line or more than one.
+    A line is `<count> (<percent>)  <file>:<function> [<object>]`. A line without the object field
+    is a row for an inlined file, not a function entry, and is skipped.
+
+    A line counts for a stage when its function is the function of the stage. It also counts when
+    the function has `.` and a suffix after it (an LTO clone). A closure of the function has
+    another name and does not count. It raises Fail when a stage has no line or more than one.
     """
-    seen = {}
+    rows = []
     for line in annotate.splitlines():
         match = ANNOTATE_LINE.match(line)
-        if match and ':' in match[2]:
-            function = match[2].split(':', 1)[1].rsplit(' [', 1)[0]
-            seen.setdefault(function, []).append(int(match[1].replace(',', '')))
+        if match is None or ':' not in match[2]:
+            continue
+        field = OBJECT_FIELD.search(match[2])
+        if field is not None:
+            where = match[2][:field.start()]
+            rows.append((where, where.split(':', 1)[1], int(match[1].replace(',', ''))))
     counts = {}
     for stage, function in STAGES:
-        found = [(name, c) for name, cs in seen.items() for c in cs
+        found = [(where, count) for where, name, count in rows
                  if name == function or name.startswith(function + '.')]
         if not found:
             raise Fail(f'{function} is not in the callgrind output')
         if len(found) > 1:
-            names = ', '.join(name for name, _ in found)
+            names = ', '.join(where for where, _ in found)
             raise Fail(f'{function} is in the callgrind output {len(found)} times: {names}')
         counts[stage] = found[0][1]
     return counts
 
 
+def is_count(value):
+    """True for an integer. A boolean is not a count."""
+    return type(value) is int
+
+
+def invalid(data):
+    """What is wrong with the structure of a counts file, or None."""
+    shapes = data.get('shapes') if isinstance(data, dict) else None
+    if not isinstance(shapes, dict):
+        return 'it has no "shapes" object'
+    for name, shape in shapes.items():
+        sizes = shape.get('sizes') if isinstance(shape, dict) else None
+        if not (isinstance(sizes, list) and len(sizes) == 5 and all(is_count(s) for s in sizes)
+                and sizes[1] > 0 and sizes == [0, sizes[1], 2 * sizes[1], 4 * sizes[1], 8 * sizes[1]]):
+            return f'{name}: "sizes" must be 0, n, 2n, 4n and 8n, with n above 0'
+        stages = shape.get('counts')
+        for stage, _ in STAGES:
+            values = stages.get(stage) if isinstance(stages, dict) else None
+            if not (isinstance(values, list) and len(values) == 5 and all(is_count(v) for v in values)):
+                return f'{name}: "counts" must have a list of 5 integers for {stage}'
+    return None
+
+
 def load(path):
-    """The counts of an earlier run (`counts.json`)."""
-    return json.loads(path.read_text())
+    """The counts of an earlier run (`counts.json`). It raises Fail when the file is not valid."""
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError) as e:
+        raise Fail(f'{path}: {e}') from None
+    problem = invalid(data)
+    if problem is not None:
+        raise Fail(f'{path}: {problem}')
+    return data
 
 
 def verdicts(counts):
@@ -282,9 +339,17 @@ def table(counts, verdicts):
             cs = data['counts'][stage]
             verdict, ratios = verdicts[shape, stage]
             growth = [str(c - cs[0]) for c in cs[1:]]
-            shown = ['-' if r is None else f'{r:.2f}' for r in ratios]
+            shown = ['-' if r is None else f'{float(r):.2f}' for r in ratios]
             lines.append(f'| {stage} | ' + ' | '.join(growth + shown) + f' | {verdict} |')
     return '\n'.join(lines) + '\n'
+
+
+def glibc():
+    """The version of the C library, or `unknown`."""
+    try:
+        return os.confstr('CS_GNU_LIBC_VERSION') or 'unknown'
+    except (ValueError, OSError):
+        return 'unknown'
 
 
 def cpu_model():
@@ -321,6 +386,7 @@ def measure(args, counts):
     if shutil.which('valgrind') is None:
         raise Fail('valgrind is not on PATH')
     deadline = Deadline(args.time_bound)
+    counts.update(commit=commit(), cpu=cpu_model(), glibc=glibc())
     counts['valgrind'] = deadline.run(['valgrind', '--version'], 'valgrind --version').stdout.splitlines()[0]
     for name in args.shapes or SHAPES:
         n, make = SHAPES[name]
@@ -363,8 +429,8 @@ def main(argv):
     parser.add_argument('--sisu', default=DEFAULT_SISU, help='the compiler')
     parser.add_argument('--time-bound', type=float, default=1800, help='seconds for the whole run')
     args = parser.parse_args(argv)
-    counts = {'commit': commit(), 'cpu': cpu_model(), 'valgrind': 'unknown',
-              'glibc': os.confstr('CS_GNU_LIBC_VERSION') or 'unknown', 'shapes': {}}
+    counts = {'commit': 'unknown', 'cpu': 'unknown', 'valgrind': 'unknown', 'glibc': 'unknown',
+              'shapes': {}}
     failure = None
     try:
         if args.counts:
@@ -373,6 +439,10 @@ def main(argv):
             measure(args, counts)
     except Fail as e:
         failure = str(e)
+        if args.counts:
+            # Write nothing: the output directory may hold the file that was read.
+            print(f'scaling: {failure}', file=sys.stderr)
+            return 1
     results = verdicts(counts)
     text = table(counts, results)
     print(text)

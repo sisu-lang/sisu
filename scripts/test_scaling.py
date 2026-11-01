@@ -1,14 +1,16 @@
 """Unit tests for scaling.py: python3 -m unittest discover -s scripts -p 'test_scaling.py'.
 
-A test that runs `main` on counts gives it a `counts.json` that the test writes. A test that runs
-`main` on shapes puts stub `sisu`, `valgrind` and `callgrind_annotate` scripts in a directory, and
-makes that directory the whole PATH. Each stub logs its arguments to `log`. No test starts a real
-compiler or valgrind.
+A test that runs `main` on counts gives it a `counts.json` that the test writes, and a PATH with
+no tool. A test that runs `main` on shapes puts stub `sisu`, `valgrind` and `callgrind_annotate`
+scripts in a directory, and makes that directory the whole PATH. Each stub logs its arguments to
+`log`, and fails when its arguments are not the ones that the script must give. No test starts a
+real compiler or valgrind.
 """
 import contextlib
 import io
 import json
 import os
+import re
 import stat
 import tempfile
 import unittest
@@ -21,7 +23,8 @@ from compile_speed import Fail
 # The lines of a real `callgrind_annotate --inclusive=yes --threshold=100 --show=Ir --auto=no`
 # run of the release `sisu build --emit ir-raw` on a program with 3 functions (valgrind 3.22.0).
 # It keeps the header, the total, one line for each of the six stage functions, one closure of
-# `check::check`, and two lines of other functions.
+# `check::check`, two lines of other functions, and the last line: a row of `lexer::lex` from the
+# inlined file `core/src/convert/num.rs`, which has no object field (80 instructions).
 ANNOTATE = """\
 --------------------------------------------------------------------------------
 Ir
@@ -40,8 +43,10 @@ Ir                  file:function
    47,035 ( 0.63%)  ???:<clap_builder::parser::parser::Parser>::get_matches_with [/src/target/release/sisu]
    20,561 ( 0.27%)  ???:sisuc::mono::instantiate [/src/target/release/sisu]
     7,069 ( 0.09%)  ???:<core::iter::adapters::filter_map::FilterMap<core::iter::adapters::enumerate::Enumerate<core::slice::iter::Iter<core::option::Option<sisuc::tir::Function>>>, sisuc::check::check::{closure#4}> as core::iter::traits::iterator::Iterator>::next [/src/target/release/sisu]
+       80 ( 0.00%)  /home/mikko/.rustup/toolchains/1.99.0-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/convert/num.rs:sisuc::lexer::lex
 """
 MONO_LINE = '   20,561 ( 0.27%)  ???:sisuc::mono::instantiate [/src/target/release/sisu]\n'
+CHECK_LINE = '  306,067 ( 4.09%)  ???:sisuc::check::check [/src/target/release/sisu]\n'
 EXPECTED_COUNTS = {'lex': 183335, 'parse': 118740, 'check': 306067, 'mono': 20561, 'mir': 61582,
                    'codegen': 355831}
 KNOWN_344 = [('array literal depth', 'check', 344)]
@@ -62,7 +67,7 @@ S10 = [
     ([-65, -160, -103, -109], [None, None, None], 'not judged'),
 ]
 # The table that `main --counts` writes for the 12 rows of S10, each on its own shape, with the
-# check stage as the row and the codegen stage as the rest of the 100000.
+# check stage as the row and the lex stage as the rest of the 100000.
 S10_TABLE = """\
 # Scaling sweep
 
@@ -268,20 +273,34 @@ def script(path, text):
 def stubs(tmp, check='', annotate=ANNOTATE, valgrind=True):
     """Writes stub `sisu`, `valgrind` and `callgrind_annotate` in `tmp/bin`; returns that PATH.
 
-    `check` is shell text that runs first for each call of the stub `sisu`.
+    `check` is shell text that runs first for each call of the stub `sisu`. A stub exits with
+    code 2 when its arguments are not the ones that the script must give:
+    `sisu check FILE`, `sisu build --emit ir-raw FILE`, `valgrind --tool=callgrind
+    --callgrind-out-file=FILE SISU build --emit ir-raw FILE` and `callgrind_annotate
+    --inclusive=yes --threshold=100 --show=Ir --auto=no FILE`.
     """
     tmp = Path(tmp)
     bin_dir = tmp / 'bin'
     bin_dir.mkdir()
     log = tmp / 'log'
     (tmp / 'annotate.txt').write_text(annotate)
-    script(bin_dir / 'sisu', f'echo "sisu $*" >> {log}\n{check}\nexit 0\n')
+    bad = 'echo "stub $0: wrong arguments: $*" >&2; exit 2'
+    script(bin_dir / 'sisu', f'echo "sisu $*" >> {log}\n'
+           f'case "$1" in\n'
+           f'  check) [ $# -eq 2 ] || {{ {bad}; }};;\n'
+           f'  build) [ $# -eq 4 ] && [ "$2 $3" = "--emit ir-raw" ] || {{ {bad}; }};;\n'
+           f'  *) {bad};;\n'
+           f'esac\n{check}\nexit 0\n')
     if valgrind:
         script(bin_dir / 'valgrind', f'echo "valgrind $*" >> {log}\n'
                'case "$1" in --version) echo valgrind-3.22.0; exit 0;; esac\n'
-               'for a in "$@"; do case "$a" in --callgrind-out-file=*) : > "${a#*=}";; esac; done\n'
+               '[ $# -eq 7 ] && [ "$1" = --tool=callgrind ] && [ "$4 $5 $6" = "build --emit ir-raw" ] '
+               f'|| {{ {bad}; }}\n'
+               'case "$2" in --callgrind-out-file=*) : > "${2#*=}";; *) ' + bad + ';; esac\n'
                'exit 0\n')
     script(bin_dir / 'callgrind_annotate', f'echo "callgrind_annotate $*" >> {log}\n'
+           '[ $# -eq 5 ] && [ "$1 $2 $3 $4" = "--inclusive=yes --threshold=100 --show=Ir --auto=no" ] '
+           f'&& [ -f "$5" ] || {{ {bad}; }}\n'
            f'/bin/cat {tmp / "annotate.txt"}\n')
     return str(bin_dir)
 
@@ -303,10 +322,13 @@ class ScalingTest(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.tmp = Path(tmp.name)
         self.out = self.tmp / 'out'
+        self.no_tools = self.tmp / 'no-tools'
+        self.no_tools.mkdir()
 
-    def counts_run(self, shapes):
-        """Runs `main --counts` on `shapes`, as `counts_file` makes them."""
-        return run_main('--counts', str(counts_file(self.tmp, shapes)), '--out', str(self.out))
+    def counts_run(self, shapes, **env):
+        """Runs `main --counts` on `shapes`, as `counts_file` makes them, with no tool on PATH."""
+        return run_main('--counts', str(counts_file(self.tmp, shapes)), '--out', str(self.out),
+                        path=str(self.no_tools), **env)
 
     def stub_run(self, *shapes, **kwargs):
         """Runs `main --shapes ...` with stubs for the tools; returns (code, stdout, stderr)."""
@@ -329,7 +351,7 @@ class ScalingTest(unittest.TestCase):
             with self.subTest(growth=growth):
                 got, got_ratios = sc.judge(growth, 100000)
                 self.assertEqual(got, verdict)
-                self.assertEqual([None if r is None else round(r, 2) for r in got_ratios], ratios)
+                self.assertEqual([None if r is None else round(float(r), 2) for r in got_ratios], ratios)
         names = list(sc.SHAPES)
         shapes = {names[i]: {'check': growth} for i, (growth, _, _) in enumerate(S10)}
         with mock.patch.object(sc, 'KNOWN', []):
@@ -400,15 +422,13 @@ class ScalingTest(unittest.TestCase):
             with self.subTest(name), mock.patch.object(sc, 'KNOWN', KNOWN_344):
                 code, out, err = self.counts_run({'array literal depth': {'check': growth}})
                 self.assertEqual(code, 0)
-                for text in ('array literal depth', 'check', '#344'):
-                    self.assertIn(text, out)
+                self.assertIn('\nscaling: known case: array literal depth, check (#344)\n', out)
                 self.assertEqual(err, '')
         with self.subTest('annotation'), mock.patch.object(sc, 'KNOWN', KNOWN_344):
             shapes = {'array literal depth': {'check': growths(2.29, 2.45, 2.77)}}
-            counts = str(counts_file(self.tmp, shapes))
-            _, out, _ = run_main('--counts', counts, '--out', str(self.out), GITHUB_ACTIONS='true')
+            _, out, _ = self.counts_run(shapes, GITHUB_ACTIONS='true')
             self.assertIn('::warning title=Known superlinear case::array literal depth, check (#344)\n', out)
-            _, out, _ = run_main('--counts', counts, '--out', str(self.out), GITHUB_ACTIONS='false')
+            _, out, _ = self.counts_run(shapes, GITHUB_ACTIONS='false')
             self.assertNotIn('::warning', out)
 
     def test_shape_that_does_not_build_should_stop_the_sweep(self):
@@ -440,12 +460,21 @@ class ScalingTest(unittest.TestCase):
     def test_stage_function_shown_twice_should_stop_the_sweep(self):
         """
         GIVEN callgrind output with `sisuc::check::check` and `sisuc::check::check.llvm.123`
+        AND output with the function from two source files, both with an object field
         WHEN `stage_counts` reads it
         THEN it raises Fail and names the function
+        AND it names each match by its file and function
         """
         clone = '   306,067 ( 4.09%)  ???:sisuc::check::check.llvm.123 [/src/target/release/sisu]\n'
         with self.assertRaisesRegex(Fail, 'sisuc::check::check .*2 times'):
             sc.stage_counts(ANNOTATE + clone)
+        # The same function from two source files, as a build with debug information gives it.
+        one = '  100 ( 1.00%)  /src/a.rs:sisuc::check::check [/src/target/debug/sisu]\n'
+        two = '   50 ( 0.50%)  /src/b.rs:sisuc::check::check [/src/target/debug/sisu]\n'
+        with self.assertRaises(Fail) as raised:
+            sc.stage_counts(ANNOTATE.replace(CHECK_LINE, one + two))
+        self.assertIn('/src/a.rs:sisuc::check::check', str(raised.exception))
+        self.assertIn('/src/b.rs:sisuc::check::check', str(raised.exception))
 
     def test_known_row_of_a_shape_not_measured_should_be_skipped(self):
         """
@@ -495,8 +524,9 @@ class ScalingTest(unittest.TestCase):
         """
         GIVEN the 14 shapes
         WHEN each makes its program at size k
-        THEN the repeated part of the program has a count of base + k
+        THEN the repeated part of the program has a size of base + k
         AND the base is what the program at size 0 needs to check clean
+        AND a depth shape has that nesting, and the method chain is one chain
         """
         sizes = [('functions', 250), ('statements', 250), ('expression depth', 12),
                  ('block depth', 12), ('generic call depth', 24), ('array literal depth', 24),
@@ -505,36 +535,72 @@ class ScalingTest(unittest.TestCase):
                  ('live locals', 50), ('method chain', 24)]
         self.assertEqual([(name, n) for name, (n, _) in sc.SHAPES.items()], sizes)
 
-        def bracket_depth(text):
-            depth = deepest = 0
+        def depth(text, opening, closing):
+            """The deepest nesting of one kind of bracket."""
+            now = deepest = 0
             for char in text:
-                depth += (char == '[') - (char == ']')
-                deepest = max(deepest, depth)
+                now += (char == opening) - (char == closing)
+                deepest = max(deepest, now)
             return deepest
 
-        # shape: (what to count in the program, the count at size 0)
+        def blocks(text):
+            """The deepest nesting of `{ ... }` blocks, from the lines that open and close one."""
+            now = deepest = 0
+            for row in text.splitlines():
+                now += row.rstrip().endswith('{') - (row.strip() == '}')
+                deepest = max(deepest, now)
+            return deepest
+
+        def line(text, start):
+            return next(row.strip() for row in text.splitlines() if row.strip().startswith(start))
+
+        def chain(text):
+            """The length of the one receiver chain `c.next().next()...`; -1 when it is not one."""
+            found = re.fullmatch(r'let d = c((?:\.next\(\))*)', line(text, 'let d ='))
+            if found is None or text.count('.next()') != len(found[1]) // 7:
+                return -1
+            return len(found[1]) // 7
+
+        # shape: (the size of the repeated part of the program, its size at size 0)
         parts = {
             'functions': (lambda t: t.count('fn '), 1),
             'statements': (lambda t: t.count('let '), 1),
-            'expression depth': (lambda t: t.count('+ ('), 0),
-            'block depth': (lambda t: t.count('if c'), 0),
-            'generic call depth': (lambda t: t.count('id('), 1),
-            'array literal depth': (bracket_depth, 1),
+            'expression depth': (lambda t: depth(line(t, 'let x'), '(', ')'), 0),
+            'block depth': (blocks, 1),
+            'generic call depth': (lambda t: depth(line(t, 'let v'), '(', ')'), 1),
+            'array literal depth': (lambda t: depth(t, '[', ']'), 1),
             'array literal width': (lambda t: t.count('7'), 0),
             'match arms': (lambda t: t.count('=>'), 1),
             'fields': (lambda t: t.count(': i64'), 1),
             'conformers': (lambda t: t.count('class '), 1),
-            'type depth': (lambda t: t.count('Box<'), 1),
+            'type depth': (lambda t: depth(line(t, 'let v'), '(', ')'), 1),
             'interpolations': (lambda t: t.count('{x}'), 1),
             'live locals': (lambda t: t.count('let live'), 0),
-            'method chain': (lambda t: t.count('.next()'), 1),
+            'method chain': (chain, 1),
         }
         self.assertEqual(list(parts), list(sc.SHAPES))
         for name, (_, make) in sc.SHAPES.items():
-            count, base = parts[name]
+            measure, base = parts[name]
             for k in (0, 1, 3):
                 with self.subTest(shape=name, k=k):
-                    self.assertEqual(count(make(k)), base + k)
+                    self.assertEqual(measure(make(k)), base + k)
+
+    def test_text_of_each_shape_should_grow_linearly_with_its_size(self):
+        """
+        GIVEN the 14 shapes at their sizes 0, n, 2n, 4n and 8n
+        WHEN the bytes of each program are counted
+        THEN the growth in bytes at each size is below 2.01 times the growth at half that size
+        """
+        # Linear text gives 2.00. The commas of the array literal width and the text that differs at
+        # size 0 give at most 2.003. A name with more digits at a larger size gives up to 2.12, and
+        # a nested block that indents its inner lines again gives about 4: the lexer would then look
+        # quadratic. The names have a fixed width, so the bound 2.01 is tight.
+        for name, (n, make) in sc.SHAPES.items():
+            sizes = [0, n, 2 * n, 4 * n, 8 * n]
+            growth = [len(make(k)) - len(make(0)) for k in sizes]
+            for i in (2, 3, 4):
+                with self.subTest(shape=name, size=sizes[i]):
+                    self.assertLess(growth[i] / growth[i - 1], 2.01)
 
     def test_stage_counts_should_read_each_stage_from_its_own_line(self):
         """
@@ -560,8 +626,158 @@ class ScalingTest(unittest.TestCase):
             with self.subTest(shape=shape, stage=stage):
                 self.assertIn(shape, sc.SHAPES)
                 self.assertIn(stage, [name for name, _ in sc.STAGES])
+                self.assertIsInstance(issue, int)
                 self.assertGreater(issue, 0)
-        self.assertEqual(sc.KNOWN[0], ('array literal depth', 'check', 344))
+
+
+    def test_judge_should_keep_each_boundary_of_the_rule(self):
+        """
+        GIVEN check growths on each side of each number of the rule
+        WHEN `judge` reads them
+        THEN it takes the number as its text says, with no round-off
+        """
+        rows = {
+            'r3 = 2.30 is not above 2.3': ([2000, 4600, 11500, 26450], 100000, 'linear'),
+            'r3 = 2.31 is above 2.3': ([2000, 4600, 11500, 26565], 100000, 'superlinear'),
+            'r2 = 2.10 is enough': ([1000, 2000, 4200, 10080], 100000, 'superlinear'),
+            'r2 = 2.09 is not enough': ([1000, 2000, 4180, 10032], 100000, 'linear'),
+            'r3 = r1 - 0.05 is not a fall': ([4000, 9800, 22540, 54096], 100000, 'superlinear'),
+            'r3 just under r1 - 0.05 is a fall': ([4000, 9800, 22540, 54095], 100000, 'linear'),
+            'r3 = 3.0 is kept in a fall': ([1000, 3600, 11880, 35640], 100000, 'superlinear'),
+            'r3 = 2.9 in a fall is linear': ([1000, 3600, 11880, 34452], 100000, 'linear'),
+            'the growth of 1% is judged': ([24, 96, 384, 1536], 153600, 'superlinear'),
+            'under 1% is not judged': ([24, 96, 384, 1536], 153601, 'not judged'),
+        }
+        for name, (growth, total, verdict) in rows.items():
+            with self.subTest(name):
+                self.assertEqual(sc.judge(growth, total)[0], verdict)
+
+    def test_sweep_should_decide_each_boundary_of_the_rule_exactly(self):
+        """
+        GIVEN counts whose ratios are on a number of the rule, or just beside it
+        WHEN `scripts/scaling.py` reads them through `main --counts`
+        THEN the exit code is the one that the rule gives
+        """
+        shape = 'match arms'
+        known_shape = 'array literal depth'
+        # shape, growth of check, known list, exit code, text in stderr
+        rows = {
+            'r3 = r1 - 0.05 is superlinear and has no row':
+                (shape, [4000, 9800, 22540, 54096], [], 1, 'match arms, check is superlinear'),
+            'r3 just under r1 - 0.05 is linear': (shape, [4000, 9800, 22540, 54095], [], 0, ''),
+            'r3 = r1 - 0.15 stays known':
+                (known_shape, [4000, 9800, 22540, 51842], KNOWN_344, 0, ''),
+            'r3 just under r1 - 0.15 looks fixed':
+                (known_shape, [4000, 9800, 22540, 51841], KNOWN_344, 1, '#344 looks fixed'),
+            'a known row that is not judged looks fixed':
+                (known_shape, [10, 40, 160, 640], KNOWN_344, 1, '#344 looks fixed'),
+            'r3 = 3.8 in a fall stays known':
+                (known_shape, [1000, 4500, 18900, 71820], KNOWN_344, 0, ''),
+            'r3 = 2.95 in a fall looks fixed':
+                (known_shape, [1000, 3400, 10200, 30090], KNOWN_344, 1, '#344 looks fixed'),
+        }
+        for name, (name_of_shape, growth, known, code, text) in rows.items():
+            with self.subTest(name), mock.patch.object(sc, 'KNOWN', known):
+                got, _, err = self.counts_run({name_of_shape: {'check': growth}})
+                self.assertEqual(got, code)
+                self.assertIn(text, err)
+
+    def test_saved_counts_that_are_not_valid_should_stop_the_sweep(self):
+        """
+        GIVEN a counts file that is missing, is not JSON, or does not have the structure of a run
+        WHEN `scripts/scaling.py` reads it
+        THEN it exits with code 1 and one line `scaling: ...` that names the file
+        AND it writes no file into the output directory
+        """
+        good = json.loads(counts_file(self.tmp, {'functions': {'check': [1, 2, 4, 8]}}).read_text())
+        stage_counts = good['shapes']['functions']['counts']
+
+        def changed(edit):
+            data = json.loads(json.dumps(good))
+            edit(data['shapes']['functions'])
+            return json.dumps(data)
+
+        cases = {
+            'not JSON': '{',
+            'a list': '[]',
+            'no shapes': json.dumps({'commit': 'x'}),
+            'shapes that is a list': json.dumps({'shapes': []}),
+            'sizes that do not double': changed(lambda s: s.update(sizes=[0, 250, 251, 252, 253])),
+            'size n of 0': changed(lambda s: s.update(sizes=[0, 0, 0, 0, 0])),
+            'four sizes': changed(lambda s: s.update(sizes=[0, 250, 500, 1000])),
+            'a missing stage': changed(lambda s: s['counts'].pop('mir')),
+            'four counts': changed(lambda s: s['counts'].update(mir=stage_counts['mir'][:4])),
+            'a fraction': changed(lambda s: s['counts'].update(mir=[1, 2, 3, 4, 1.5])),
+            'a boolean': changed(lambda s: s['counts'].update(mir=[1, 2, 3, 4, True])),
+            'a string': changed(lambda s: s['counts'].update(mir=[1, 2, 3, 4, '5'])),
+        }
+        for name, text in cases.items():
+            with self.subTest(name):
+                path = self.tmp / 'bad.json'
+                path.write_text(text)
+                code, _, err = run_main('--counts', str(path), '--out', str(self.out),
+                                        path=str(self.no_tools))
+                self.assertEqual(code, 1)
+                self.assertEqual(len(err.splitlines()), 1)
+                self.assertTrue(err.startswith('scaling: '))
+                self.assertIn('bad.json', err)
+                self.assertFalse(self.out.exists())
+        with self.subTest('a missing file'):
+            code, _, err = run_main('--counts', str(self.tmp / 'none.json'), '--out', str(self.out),
+                                    path=str(self.no_tools))
+            self.assertEqual(code, 1)
+            self.assertTrue(err.startswith('scaling: '))
+            self.assertIn('none.json', err)
+            self.assertFalse(self.out.exists())
+
+    def test_header_should_be_read_only_when_the_sweep_measures(self):
+        """
+        GIVEN a libc that cannot give its version
+        WHEN `scripts/scaling.py` reads saved counts
+        THEN it works, and the header is the one of the file
+        AND when it measures, the glibc of the header is `unknown`
+        """
+        for error in (ValueError('unrecognized configuration name'), OSError('no libc')):
+            with self.subTest(error=type(error).__name__), mock.patch.object(os, 'confstr',
+                                                                             side_effect=error):
+                code, _, _ = self.counts_run({'functions': {'check': [1000, 2000, 4000, 8000]}})
+                self.assertEqual(code, 0)
+                self.assertEqual(json.loads((self.out / 'counts.json').read_text())['glibc'],
+                                 'glibc 2.0')
+                self.tmp = Path(tempfile.mkdtemp(dir=self.tmp))
+                self.stub_run('functions')
+                self.assertEqual(json.loads((self.out / 'counts.json').read_text())['glibc'],
+                                 'unknown')
+
+    def test_sweep_should_run_the_documented_commands_at_five_sizes(self):
+        """
+        GIVEN a run of the functions shape with stubs that accept only the documented arguments
+        WHEN `scripts/scaling.py` runs
+        THEN it checks the sizes 0 and 2000, and measures the sizes 0, 250, 500, 1000 and 2000
+        AND each measurement is `sisu build --emit ir-raw` under callgrind, read by `callgrind_annotate`
+        """
+        code, _, err = self.stub_run('functions')
+        self.assertEqual((code, err), (0, ''))
+        rows = self.log().splitlines()
+        size = re.compile(r'size-(\d+)\.sisu$')
+        checks = [size.search(row)[1] for row in rows if row.startswith('sisu check ')]
+        self.assertEqual(checks, ['0', '2000'])
+        profiled = [row for row in rows if row.startswith('valgrind --tool=callgrind ')]
+        self.assertEqual([size.search(row)[1] for row in profiled], ['0', '250', '500', '1000', '2000'])
+        for row in profiled:
+            self.assertIn(' build --emit ir-raw ', row)
+        annotated = [row for row in rows if row.startswith('callgrind_annotate ')]
+        self.assertEqual(len(annotated), 5)
+
+    def test_unknown_shape_should_exit_with_code_2(self):
+        """
+        GIVEN a `--shapes` value with a name that is not a shape
+        WHEN `scripts/scaling.py` runs
+        THEN it exits with code 2
+        """
+        with self.assertRaises(SystemExit) as raised:
+            run_main('--shapes', 'functions,nope')
+        self.assertEqual(raised.exception.code, 2)
 
 
 if __name__ == '__main__':
