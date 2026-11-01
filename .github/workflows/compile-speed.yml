@@ -3,10 +3,11 @@ name: Compile speed
 # This job runs the agreement check of `make compile-speed` and the scaling sweep of
 # `make scaling`. It fails on a superlinear case with no row in `scripts/scaling.py`, on a row
 # that looks fixed, and on a check that fails. It never fails on a measured time: callgrind counts
-# do not depend on the load of the runner. Each script has a total time bound (300 and 900
-# seconds). It stops with exit code 1 when it runs over, as a guard against a hang. GitHub mails a
-# failed scheduled run to the user who last changed the `cron` line, when that user has Actions
-# notifications on.
+# do not depend on the load of the runner. They also change a little with the file paths and the C
+# library, so a ratio near a number of the rule can fall on the other side on the runner. Each
+# script has a total time bound (300 and 900 seconds). It stops with exit code 1 when it runs over,
+# as a guard against a hang. GitHub mails a failed scheduled run to the user who last changed the
+# `cron` line, when that user has Actions notifications on.
 
 on:
   schedule:

@@ -12,9 +12,13 @@ each stage (its count less its count at size 0), the ratio at each doubling, and
 Before callgrind, `sisu check` runs on each shape at size 0 and at 8n. A shape that gives a
 diagnostic stops the run: without this check, the failure shows as a missing stage function.
 
-The script exits with code 1 when a superlinear case has no row in `KNOWN`, when a row of `KNOWN`
-looks fixed, and when a check or a command fails. `--counts FILE` reads the `counts.json` of an
-earlier run and measures nothing. Every measurement command runs through one `Deadline`.
+The script exits with code 1 in these cases:
+- A superlinear case has no row in `KNOWN`.
+- A row of `KNOWN` looks fixed.
+- A check, a command or a file operation fails.
+
+`--counts FILE` reads the `counts.json` of an earlier run and measures nothing.
+Every measurement command runs through one `Deadline`.
 """
 
 import argparse
@@ -442,7 +446,7 @@ def main(argv):
             counts = load(Path(args.counts))
         else:
             measure(args, counts)
-    except Fail as e:
+    except (Fail, OSError) as e:
         failure = str(e)
         if args.counts:
             # Write nothing: the output directory may hold the file that was read.
@@ -452,13 +456,19 @@ def main(argv):
     text = table(counts, results)
     print(text)
     out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
-    (out / 'counts.json').write_text(json.dumps(counts, indent=2) + '\n')
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+        (out / 'counts.json').write_text(json.dumps(counts, indent=2) + '\n')
+        table_text = f'{text}\nscaling: {failure}\n' if failure else text
+        (out / 'table.md').write_text(table_text)
+    except OSError as e:
+        if failure:
+            print(f'scaling: {failure}', file=sys.stderr)
+        print(f'scaling: cannot write the report: {e}', file=sys.stderr)
+        return 1
     if failure:
-        (out / 'table.md').write_text(f'{text}\nscaling: {failure}\n')
         print(f'scaling: {failure}', file=sys.stderr)
         return 1
-    (out / 'table.md').write_text(text)
     lines, failures, code = compare(results, KNOWN, set(counts['shapes']))
     for line in lines:
         print(f'scaling: {line}')

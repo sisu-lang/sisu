@@ -502,8 +502,10 @@ grows in one direction, such as more functions, deeper nesting or more match
 arms. `scripts/scaling.py` compiles each of 14 shapes at size 0 and at four
 sizes that double: n, 2n, 4n and 8n. It counts the instructions of each stage
 under callgrind: `lex`, `parse`, `check`, `mono`, `mir` and `codegen`. The
-count does not depend on the load of the machine. It needs `valgrind`, and a
-full run takes about 3 minutes on the machine above.
+count does not depend on the load of the machine. It also changes a little with
+the file paths and the C library, so a ratio near a number of the rule can fall
+on the other side on the runner. It needs `valgrind`, and a full run takes
+about 3 minutes on the machine above.
 
 The script prints one table for each shape. It also writes `table.md` and
 `counts.json` to `target/scaling/`. `ARGS='--shapes functions,fields'`

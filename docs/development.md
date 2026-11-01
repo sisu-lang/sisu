@@ -334,8 +334,9 @@ fixed. A known case is a line on stdout and a warning annotation on the run.
 It does not fail the job. The job never fails on a measured time.
 
 The table of the sweep is in the summary of the run. The artifact `scaling`
-holds `table.md` and `counts.json`. A sweep that stops early still writes the
-shapes that it measured, then a line `scaling: <message>`. To run the sweep on
+holds `table.md`, `counts.json` and the program of each shape at each size.
+A sweep that stops early still writes the shapes that it measured, then a line
+`scaling: <message>`. To run the sweep on
 your machine, use `make scaling`. In the job, each script has a total time
 bound. The job gives `--time-bound 300` to step 1 and `--time-bound 900` to
 the sweep. A script that runs over exits with code 1. The bound is a guard

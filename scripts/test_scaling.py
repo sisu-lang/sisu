@@ -20,11 +20,12 @@ from unittest import mock
 import scaling as sc
 from compile_speed import Fail
 
-# The lines of a real `callgrind_annotate --inclusive=yes --threshold=100 --show=Ir --auto=no`
-# run of the release `sisu build --emit ir-raw` on a program with 3 functions (valgrind 3.22.0).
-# It keeps the header, the total, one line for each of the six stage functions, one closure of
-# `check::check`, two lines of other functions, and the last line: a row of `lexer::lex` from the
-# inlined file `core/src/convert/num.rs`, which has no object field (80 instructions).
+# These are lines of a real `callgrind_annotate --inclusive=yes --threshold=100 --show=Ir
+# --auto=no` run. The run was on the release `sisu build --emit ir-raw` of a program with 3
+# functions (valgrind 3.22.0). The text keeps the header, the total and one line for each of the
+# six stage functions. It keeps one closure of `check::check` and two lines of other functions.
+# The last line is a row of `lexer::lex` from the inlined file `core/src/convert/num.rs`. It has
+# no object field (80 instructions).
 ANNOTATE = """\
 --------------------------------------------------------------------------------
 Ir
@@ -521,6 +522,40 @@ class ScalingTest(unittest.TestCase):
         self.assertEqual(list(counts['shapes']), ['functions'])
         self.assertEqual(counts['shapes']['functions']['counts']['check'], [306067] * 5)
         self.assertEqual(counts['valgrind'], 'valgrind-3.22.0')
+
+    def test_file_error_while_measuring_should_write_the_table_so_far(self):
+        """
+        GIVEN a run of the functions and match arms shapes
+        AND a regular file where the directory of the match arms shape belongs
+        WHEN `scripts/scaling.py` runs
+        THEN it exits with code 1
+        AND `counts.json` holds the functions shape only
+        AND `table.md` has the rows of the functions shape and the `scaling:` line
+        """
+        self.out.mkdir()
+        (self.out / 'match-arms').write_text('not a directory')
+        code, _, err = self.stub_run('functions', 'match arms')
+        self.assertEqual(code, 1)
+        self.assertIn('scaling: ', err)
+        counts = json.loads((self.out / 'counts.json').read_text())
+        self.assertEqual(list(counts['shapes']), ['functions'])
+        text = (self.out / 'table.md').read_text()
+        self.assertIn('## functions', text)
+        self.assertIn('\nscaling: ', text)
+
+    def test_report_that_cannot_be_written_should_exit_with_code_1(self):
+        """
+        GIVEN a run of the functions shape
+        AND a regular file where the output directory belongs
+        WHEN `scripts/scaling.py` runs
+        THEN it exits with code 1
+        AND standard error has one `scaling:` line that says the report cannot be written
+        AND it raises no exception
+        """
+        self.out.write_text('not a directory')
+        code, _, err = self.stub_run('functions')
+        self.assertEqual(code, 1)
+        self.assertIn('scaling: cannot write the report', err)
 
     def test_each_shape_should_have_its_size_in_its_structure(self):
         """
