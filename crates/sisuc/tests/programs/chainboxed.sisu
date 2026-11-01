@@ -1,0 +1,21 @@
+// The same chain of 300 000 objects, each in a field of the enum `L`. `L` holds itself, so its
+// component has boxes, and its payload `Cons(A?, L)` holds a class that the drain of the
+// component releases.
+enum L {
+    Nil
+    Cons(A?, L)
+}
+
+class A {
+    _list: L
+}
+
+fn main() {
+    let mut a = A(_list: L.Nil)
+    let mut i = 0
+    while i < 300_000 {
+        i += 1
+        a = A(_list: L.Cons(a, L.Nil))
+    }
+    print(1)
+}

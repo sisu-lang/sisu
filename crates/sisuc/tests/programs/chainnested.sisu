@@ -1,0 +1,15 @@
+// The same chain of 300 000 objects, each in an array of arrays `[[A]]`. The drop counts at both
+// arrays.
+class A {
+    _next: [[A]]
+}
+
+fn main() {
+    let mut a = A(_next: [])
+    let mut i = 0
+    while i < 300_000 {
+        i += 1
+        a = A(_next: [[a]])
+    }
+    print(1)
+}

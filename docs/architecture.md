@@ -360,6 +360,17 @@ stays the same size for a value of any depth. A field of an enum on the same
 cycle that is held inline, such as `Two<Expr>.Both`'s `Expr` in
 `enum Expr { Pair(Two<Expr>) }`, is walked in place with the same lists.
 
+A drop that recurses through an array, an enum or a class outside the cycle
+counts its depth ([ADR 0038](adr/0038-deep-drops-defer-past-a-depth-limit.md)).
+`codegen/deep.rs` finds the drop functions that count, and the drop weight of
+each. A counting drop function adds its weight to the global `sisu_rc.depth`,
+and puts the depth back before it returns. At or above the depth limit, 256,
+it gives its block and its own address to the runtime's `sisu_drop_defer`,
+sets the global `sisu_rc.deferred`, and returns. The drop that brings the
+depth back to 0 calls `sisu_drop_drain` when that flag is set. The fields of
+`binary_trees`' `Node` are all links of its class cycle, so its drop does not
+count.
+
 `mir/lower/pattern.rs` lowers a `match`. It evaluates the scrutinee once into
 a temporary that the `match` owns, then tests the arms' patterns against it in
 order, reading a boxed field through its box. An arm with alternatives tries
@@ -431,6 +442,9 @@ which `chars()` and `string(cs)` call, and `sisu_words_count` and
 expression, calls only `sisu_words_count`. `stdin.rs` holds `sisu_read_line`,
 which `read_line()` calls. `args.rs` holds `sisu_args_len` and `sisu_arg`,
 which the generated `main` calls to build `args` when `sisu.main` takes it.
+`deferred.rs` holds the queue of deferred drops: `sisu_drop_defer` puts a
+block and its drop function at the back, and `sisu_drop_drain` drops each one
+in order until the queue is empty.
 `print(x)` and `"{x}"` share one formatter per
 type. The text of an array, a class, an enum or an optional goes through a
 sink in `show.rs`: generated `sisu_show.<type>` helpers call `sisu_show_int`,

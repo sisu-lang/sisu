@@ -1,0 +1,19 @@
+// A chain of 300 000 objects of `N`, each in an object of the generic class `W<N>`, which holds
+// an array `[T]`. The drop of `W<N>` counts after `mono`, as the drop of `[N]` does.
+class W<T> {
+    _v: [T]
+}
+
+class N {
+    _next: W<N>?
+}
+
+fn main() {
+    let mut n = N(_next: None)
+    let mut i = 0
+    while i < 300_000 {
+        i += 1
+        n = N(_next: W(_v: [n]))
+    }
+    print(1)
+}

@@ -1,0 +1,20 @@
+// The same chain of 300 000 objects, each in a field of the enum `Link`. The enum has no box:
+// its payload `To(A)` is inline, so the release of the field reaches the drop of `A` directly.
+enum Link {
+    End
+    To(A)
+}
+
+class A {
+    _next: Link
+}
+
+fn main() {
+    let mut a = A(_next: Link.End)
+    let mut i = 0
+    while i < 300_000 {
+        i += 1
+        a = A(_next: Link.To(a))
+    }
+    print(1)
+}
