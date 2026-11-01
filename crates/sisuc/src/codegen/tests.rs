@@ -4987,49 +4987,84 @@ fn ir_of(src: &str) -> String {
 const DROP_OF_A_ARRAY: &str = "define internal void @\"sisu_rc.drop.[A]\"(ptr";
 const CHAIN_THROUGH_AN_ARRAY: &str = "class A {\n    _next: [A]\n}\nfn main() {}";
 
-/// The class `A` holds an array of itself, so the drop of that array counts. A load of the
-/// depth global feeds the `icmp` of a `br`, and one target of the `br` calls the function that
-/// adds a deferred drop, with the function itself as its second argument. That block sets the
-/// flag of the deferral too.
+/// The lines of the block `label` of `blocks`.
+fn block_lines<'b, 'a>(blocks: &'b [(&'a str, Vec<&'a str>)], label: &str) -> &'b [&'a str] {
+    let (_, lines) = (blocks.iter().find(|(name, _)| *name == label))
+        .unwrap_or_else(|| panic!("no block {label} in {blocks:?}"));
+    lines
+}
+
+/// The name of the parameter of the function whose body is `body`, from the rest of its header.
+fn parameter_name(body: &str) -> &str {
+    let header = body.lines().next().unwrap_or_default();
+    header.trim().split(')').next().unwrap_or_default()
+}
+
+/// Whether the block `from` of `blocks`, or a block that follows it, has the line `call`.
+fn reaches_call(blocks: &[(&str, Vec<&str>)], from: &str, call: &str) -> bool {
+    let from = blocks
+        .iter()
+        .find(|(name, _)| *name == from)
+        .map(|(name, _)| *name);
+    from.is_some_and(|from| {
+        reachable(blocks, from)
+            .into_iter()
+            .any(|name| block_lines(blocks, name).contains(&call))
+    })
+}
+
+/// The class `A` holds an array of itself, so the drop of that array counts. The entry block
+/// compares the depth with the limit: `icmp uge`. The `true` side calls the function that adds a
+/// deferred drop, with the parameter and the address of the drop function, sets the flag of the
+/// deferral and returns. The `false` side adds the weight to the depth.
 #[test]
 fn counting_drop_should_defer_at_the_depth_limit() {
     let ir = ir_of(CHAIN_THROUGH_AN_ARRAY);
     let body = function_body(&ir, DROP_OF_A_ARRAY);
     let blocks = blocks(body);
-    let lines: Vec<&str> = blocks
-        .iter()
-        .flat_map(|(_, lines)| lines)
-        .copied()
-        .collect();
-    let (_, depth, _) = instruction(&lines, &|text| {
+    let entry = &blocks[0].1;
+    let (_, depth, _) = instruction(entry, &|text| {
         text.starts_with("load i64, ptr @sisu_rc.depth")
     })
-    .unwrap_or_else(|| panic!("no load of the depth in\n{body}"));
-    let (_, test, _) = instruction(&lines, &|text| {
-        text.starts_with("icmp ") && text.contains(&format!("i64 {depth},"))
-    })
-    .unwrap_or_else(|| panic!("no compare of the depth in\n{body}"));
-    let deferred = branch_targets(&lines, test).into_iter().any(|target| {
-        let (_, lines) = blocks
-            .iter()
-            .find(|(name, _)| *name == target)
-            .expect("a block");
-        let sets_flag = |value| {
-            let store = format!("store i1 {value}, ptr @sisu_rc.deferred");
-            lines.iter().any(|line| line.starts_with(&store))
-        };
-        sets_flag(true)
-            && lines.contains(&"call void @sisu_drop_defer(ptr %0, ptr @\"sisu_rc.drop.[A]\")")
-    });
+    .unwrap_or_else(|| panic!("no load of the depth in the entry block of\n{body}"));
+    let wanted = format!("icmp uge i64 {depth}, {}", deep::DEPTH_LIMIT);
+    let (_, test, _) = instruction(entry, &|text| text == wanted)
+        .unwrap_or_else(|| panic!("no `{wanted}` in the entry block of\n{body}"));
+    let [full, below] = branch_targets(entry, test);
+    let full = block_lines(&blocks, full);
+    let defer = format!(
+        "call void @sisu_drop_defer(ptr {}, ptr @\"sisu_rc.drop.[A]\")",
+        parameter_name(body)
+    );
     assert!(
-        deferred,
-        "no deferral on a branch of the compare in\n{body}"
+        full.contains(&defer.as_str()),
+        "no `{defer}` at the limit in\n{body}"
+    );
+    let sets_flag = |line: &&str| line.starts_with("store i1 true, ptr @sisu_rc.deferred");
+    assert!(
+        full.iter().any(sets_flag),
+        "no flag set at the limit in\n{body}"
+    );
+    assert_eq!(
+        full.last(),
+        Some(&"ret void"),
+        "no return at the limit in\n{body}"
+    );
+    let below = block_lines(&blocks, below);
+    let (_, raised, _) = instruction(below, &|text| {
+        text.starts_with(&format!("add i64 {depth}, "))
+    })
+    .unwrap_or_else(|| panic!("no add to the depth below the limit in\n{body}"));
+    let store = format!("store i64 {raised}, ptr @sisu_rc.depth");
+    assert!(
+        below.iter().any(|line| line.starts_with(&store)),
+        "no `{store}` below the limit in\n{body}"
     );
 }
 
-/// Same program. The branch of an `icmp eq` of the depth with 0 reaches the call that empties
-/// the queue on its `true` side, and not on its `false` side. The block of that call clears the
-/// flag of the deferral.
+/// Same program. The exit gives the depth back as the entry found it, and tests that value
+/// against 0: `icmp eq`. On its `true` side, the flag of the deferral decides: set, the block
+/// calls the function that empties the queue and clears the flag. No other path calls it.
 #[test]
 fn counting_drop_should_empty_the_queue_at_depth_zero() {
     let ir = ir_of(CHAIN_THROUGH_AN_ARRAY);
@@ -5040,29 +5075,58 @@ fn counting_drop_should_empty_the_queue_at_depth_zero() {
         .flat_map(|(_, lines)| lines)
         .copied()
         .collect();
-    let (_, test, _) = instruction(&lines, &|text| {
-        text.starts_with("icmp eq i64 ") && text.ends_with(", 0")
+    let (_, depth, _) = instruction(&blocks[0].1, &|text| {
+        text.starts_with("load i64, ptr @sisu_rc.depth")
     })
-    .unwrap_or_else(|| panic!("no test of the depth against 0 in\n{body}"));
-    let [zero, other] = branch_targets(&lines, test);
-    let drains = |label| {
-        reachable(&blocks, label).into_iter().any(|name| {
-            let (_, lines) = blocks.iter().find(|(n, _)| *n == name).expect("a block");
-            let clears_flag = (lines.iter())
-                .any(|line| line.starts_with("store i1 false, ptr @sisu_rc.deferred"));
-            clears_flag && lines.contains(&"call void @sisu_drop_drain()")
+    .unwrap_or_else(|| panic!("no load of the depth in the entry block of\n{body}"));
+    let wanted = format!("icmp eq i64 {depth}, 0");
+    let (_, test, _) = instruction(&lines, &|text| text == wanted)
+        .unwrap_or_else(|| panic!("no `{wanted}` in\n{body}"));
+    let (_, exit) = blocks
+        .iter()
+        .find(|(_, lines)| {
+            lines
+                .iter()
+                .any(|line| line.starts_with(&format!("{test} = ")))
         })
-    };
-    assert!(drains(zero), "no drain after the test in\n{body}");
-    assert!(!drains(other), "a drain when the depth is not 0 in\n{body}");
+        .expect("the block of the test");
+    let restore = format!("store i64 {depth}, ptr @sisu_rc.depth");
+    assert!(
+        exit.iter().any(|line| line.starts_with(&restore)),
+        "no `{restore}` before the test in\n{body}"
+    );
+    let [zero, other] = branch_targets(exit, test);
+    let zero = block_lines(&blocks, zero);
+    let (_, flag, _) = instruction(zero, &|text| {
+        text.starts_with("load i1, ptr @sisu_rc.deferred")
+    })
+    .unwrap_or_else(|| panic!("no load of the flag at depth 0 in\n{body}"));
+    let [set, unset] = branch_targets(zero, flag);
+    let drain = "call void @sisu_drop_drain()";
+    let set_lines = block_lines(&blocks, set);
+    assert!(
+        set_lines.contains(&drain),
+        "no drain when the flag is set in\n{body}"
+    );
+    let clears_flag = |line: &&str| line.starts_with("store i1 false, ptr @sisu_rc.deferred");
+    assert!(
+        set_lines.iter().any(clears_flag),
+        "the flag stays set in\n{body}"
+    );
+    for label in [other, unset] {
+        assert!(
+            !reaches_call(&blocks, label, drain),
+            "{label} drains in\n{body}"
+        );
+    }
 }
 
-/// `Node` holds only links of its own cycle, so its drop frees its objects in a loop and never
-/// recurses. It does not count, and no global of the drop depth and no function of the queue
-/// appears in it.
+/// The `Node` of `bench/binary_trees` holds only links of its own cycle, so its drop frees its
+/// objects in a loop and never recurses. It does not count, and no global of the drop depth and
+/// no function of the queue appears in it.
 #[test]
 fn cycle_link_drop_should_not_count_the_depth() {
-    let ir = ir_of("class Node {\n    left: Node?\n    right: Node?\n}\nfn main() {}");
+    let ir = ir_of(include_str!("../../../../bench/binary_trees/main.sisu"));
     let body = function_body(&ir, "define internal void @sisu_rc.drop.Node(ptr");
     for unwanted in ["@sisu_rc.depth", "@sisu_drop_"] {
         assert!(!body.contains(unwanted), "{unwanted:?} in\n{body}");

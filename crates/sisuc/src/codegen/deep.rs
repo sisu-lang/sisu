@@ -261,9 +261,10 @@ impl Codegen<'_, '_> {
 
 impl<'ctx> Codegen<'ctx, '_> {
     /// Starts the body of the drop function `drop` of `ty`, a class or an array, when it counts:
-    /// the builder is in its entry block. If the depth is at `DEPTH_LIMIT`, the function defers
-    /// its block (`sisu_drop_defer`), sets the flag `@sisu_rc.deferred` and returns. Otherwise it
-    /// adds `drop_weight(ty)` to `@sisu_rc.depth`, and the builder is in the block for the body.
+    /// the builder is in its entry block. If the depth is at or above `DEPTH_LIMIT`, the function
+    /// defers its block (`sisu_drop_defer`), sets the flag `@sisu_rc.deferred` and returns.
+    /// Otherwise it adds `drop_weight(ty)` to `@sisu_rc.depth`, and the builder is in the block
+    /// for the body.
     /// The result is the block where the body ends (see `end_drop`). For a drop function that
     /// does not count, it builds nothing and gives `None`. A program with no counting drop
     /// function names neither global nor runtime function.
@@ -303,7 +304,9 @@ impl<'ctx> Codegen<'ctx, '_> {
         );
         self.store(deferred, bool_type.const_all_ones().into());
         self.builder.build_return(None).expect(POSITIONED);
-        // The end of the function: take the weight off, and empty the queue at depth 0.
+        // The end of the function. The body gives the depth back as it was after the add, and a
+        // defer returns before the add, so the depth at entry is the depth to store. Then test
+        // for depth 0. The queue empties after the store, at depth 0.
         let (exit, flagged, drain, done) = (
             block("exit"),
             block("flagged"),
@@ -311,16 +314,12 @@ impl<'ctx> Codegen<'ctx, '_> {
             block("done"),
         );
         self.builder.position_at_end(exit);
-        let before = self
-            .builder
-            .build_load(i64_type, depth, "depth")
-            .expect(POSITIONED);
-        let after = self
-            .builder
-            .build_int_sub(before.into_int_value(), weight, "depth.left")
-            .expect(POSITIONED);
-        self.store(depth, after.into());
-        let zero = self.int_compare(IntPredicate::EQ, after, i64_type.const_zero());
+        self.store(depth, current);
+        let zero = self.int_compare(
+            IntPredicate::EQ,
+            current.into_int_value(),
+            i64_type.const_zero(),
+        );
         self.branch_on(zero, flagged, done);
         self.builder.position_at_end(flagged);
         let set = self
