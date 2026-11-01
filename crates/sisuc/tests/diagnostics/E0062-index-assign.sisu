@@ -1,0 +1,11 @@
+class Row {
+    mut items: [i64]
+}
+
+fn set_first(row: Row?) {
+    row.items[0] = 2
+}
+
+fn main() {
+    set_first(Row(items: [1]))
+}

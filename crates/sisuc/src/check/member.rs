@@ -150,7 +150,8 @@ impl Checker<'_> {
 
     /// The class, index and type of field `name` of `receiver`, a value of type `base`. `None` when
     /// there is none, reported unless `base` is `Error`. `target` when the field is assigned,
-    /// where neither `()` nor `?.` can follow the access.
+    /// where no `()` can follow the access. A receiver that may be `None` gets the `?.` fix unless
+    /// an index follows in the chain (`Body::indexed`).
     pub(super) fn find_field(
         &mut self,
         base: Option<Type>,
@@ -200,7 +201,7 @@ impl Checker<'_> {
             TypeKind::Array(_) if name.name.as_str() == "len" => {
                 method(self.type_name(ty), true).into()
             }
-            TypeKind::Optional(_) => may_be_none(receiver, name, !target && !self.body.in_target),
+            TypeKind::Optional(_) => may_be_none(receiver, name, !self.body.indexed),
             _ => no_member(Definition::Field, self.type_name(ty), name, []),
         };
         self.diagnostics.push(d);
@@ -271,14 +272,14 @@ impl Checker<'_> {
     /// The method named by `site` of `receiver`, a value of type `ty`, in the call that starts at
     /// `span`. The type's own method wins; else the method of the one conformance block that has
     /// one, or the one that the call's context picks (`pick_conforming`). `None` when there is
-    /// none, reported unless `ty` is `Error`. `target` when the call is in an assignment target's
-    /// chain, where `?.` cannot follow the receiver.
+    /// none, reported unless `ty` is `Error`. `indexed` when an index follows the call in its
+    /// chain, where a `?.` after the receiver leads to an index on an optional.
     pub(super) fn find_method(
         &mut self,
         ty: Option<Type>,
         receiver: &ast::Expr,
         site: Site<'_>,
-        target: bool,
+        indexed: bool,
         (span, nullary): (Span, bool),
     ) -> Option<Found> {
         let ty = ty?;
@@ -376,7 +377,7 @@ impl Checker<'_> {
                     no_member(Definition::Method, self.type_name(ty), name, methods)
                 }
             }
-            TypeKind::Optional(_) => may_be_none(receiver, name, !target),
+            TypeKind::Optional(_) => may_be_none(receiver, name, !indexed),
             _ => no_member(Definition::Method, self.type_name(ty), name, []),
         };
         self.diagnostics.push(d);

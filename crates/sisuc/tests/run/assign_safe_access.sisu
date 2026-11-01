@@ -1,0 +1,105 @@
+// GIVEN a class `Node` with `mut` fields: an `i64`, a `string` and an optional `Inner`
+// AND `effect`, which prints its label when it runs and gives back its number
+// WHEN `main` assigns and compound-assigns through `?.`, when every `?.` holds a value, and when
+// one holds `None`
+// AND the target is a local, an element of an array, a call and `self.inner`
+// AND the right side leaves the function
+// THEN a present object is written once, after its base and its right side ran in that order
+// AND an absent object is not written, and its right side does not run
+// AND every block is freed exactly once on every path, which Valgrind and `--rc-checks` check
+class Inner {
+    mut n: i64
+}
+
+class Node {
+    mut value: i64
+    mut name: string
+    mut inner: Inner?
+
+    fn bump(self) {
+        self.inner?.n += effect("bump", 1)
+    }
+}
+
+fn effect(label: string, x: i64) -> i64 {
+    print(label)
+    x
+}
+
+fn node(value: i64, inner: Inner?) -> Node {
+    Node(value: value, name: "a" + "b", inner: inner)
+}
+
+fn fetch(label: string, found: Node?) -> Node? {
+    print(label)
+    found
+}
+
+// The right side leaves the function only when the object is there.
+fn leaves(leave: bool, absent: bool) -> i64 {
+    let n: Node? = if absent { None } else { node(1, None) }
+    n?.value = match leave {
+        true => return 100
+        false => 2
+    }
+    n?.value ?? 0
+}
+
+fn main() {
+    // Every operator, on a present object.
+    let present: Node? = node(1, Inner(n: 5))
+    present?.value = effect("assign", 2)
+    print(present?.value ?? 0)         // assign, then 2
+    present?.value += effect("add", 3)
+    print(present?.value ?? 0)         // add, then 5
+    present?.value -= effect("sub", 1)
+    present?.value *= effect("mul", 3)
+    present?.value /= effect("div", 2)
+    present?.value %= effect("rem", 4)
+    print(present?.value ?? 0)         // sub, mul, div, rem, then 2
+    present?.name += "c" + "d"
+    print(present?.name ?? "")         // abcd
+
+    // Two `?.` steps, and a method that writes through `?.` on `self`.
+    present?.inner?.n = effect("inner", 7)
+    print(present?.inner?.n ?? 0)      // inner, then 7
+    let direct = node(1, Inner(n: 20))
+    direct.bump()
+    print(direct.inner?.n ?? 0)        // bump, then 21
+
+    // An absent object, or an absent step, writes nothing and runs nothing.
+    let none: Node? = None
+    none?.value = effect("none assign", 1)
+    none?.value += effect("none add", 1)
+    none?.inner?.n = effect("none inner", 1)
+    print(none?.value ?? -1)           // -1
+    let hollow: Node? = node(1, None)
+    hollow?.inner?.n = effect("hollow assign", 9)
+    hollow?.inner?.n += effect("hollow add", 9)
+    print(hollow?.inner?.n ?? -1)      // -1
+    print(hollow?.value ?? 0)          // 1
+
+    // An element of an array, and a `let mut` local that holds `None` later.
+    let nodes: [Node?] = [node(1, None), None]
+    nodes[0]?.value = effect("element", 4)
+    nodes[1]?.value = effect("absent element", 4)
+    print(nodes[0]?.value ?? 0)        // element, then 4
+    print(nodes[1]?.value ?? -1)       // -1
+    let mut chosen: Node? = node(1, None)
+    chosen?.value = effect("local", 6)
+    print(chosen?.value ?? 0)          // local, then 6
+    chosen = None
+    chosen?.value = effect("absent local", 6)
+    print(chosen?.value ?? -1)         // -1
+
+    // A call is the base: it runs first, and its object is written after the right side.
+    fetch("fetch", present)?.value = effect("after fetch", 8)
+    print(present?.value ?? 0)         // fetch, after fetch, then 8
+    fetch("fetch none", None)?.value = effect("never", 8)
+
+    // The right side leaves the function only when the object is there.
+    print(leaves(false, false))        // 2
+    print(leaves(false, true))         // 0
+    print(leaves(true, true))          // 0
+    print(leaves(true, false))         // 100
+}

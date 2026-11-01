@@ -4,7 +4,11 @@ error[E0062]: `n.next` may be `None`
 7 |     n.next.value = 1
   |     ^^^^^^
   |
-  = help: unwrap it with `if let`
+  = help: to use the value only when it is present, unwrap it with `if let`
+help: if a `None` result is fine, use `?.`
+  |
+7 |     n.next?.value = 1
+  |           +
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0062

@@ -782,9 +782,9 @@ struct Body {
     /// too, and a quiet value that cannot be inferred is not reported, as the failed context
     /// was reported. Only the expression at this span is quiet, not its operands.
     quiet_at: Option<Span>,
-    /// Whether the expression being checked is a link of an assigned field's base chain (field
-    /// bases, method receivers, indexed bases), where a `?.` cannot stand.
-    in_target: bool,
+    /// Whether an index follows the expression being checked in its chain (field bases, method
+    /// receivers, indexed bases). A `?.` that fixes a `.` there leads to an index on an optional.
+    indexed: bool,
     /// The initializer of the `let` being checked, and what that `let` writes before its type
     /// (`mut`, then the name): E0050 uses it in its example when the initializer is the whole
     /// `None` or `[]`.

@@ -1,0 +1,11 @@
+class Row {
+    items: [i64]
+}
+
+fn first(row: Row?) -> i64 {
+    row.items[0]
+}
+
+fn main() {
+    print(first(Row(items: [1])))
+}

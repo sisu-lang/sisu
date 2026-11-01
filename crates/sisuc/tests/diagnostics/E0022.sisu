@@ -1,8 +1,0 @@
-class Node {
-    mut value: i64
-}
-
-fn main() {
-    let node: Node? = Node(value: 1)
-    node?.value = 2
-}

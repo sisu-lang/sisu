@@ -77,7 +77,6 @@ codes! {
     MutParameter = "E0019",
     SelfNotFirst = "E0020",
     AssignToExpression | PushToTemporary = "E0021",
-    AssignThroughSafeAccess = "E0022",
     RangeOutsideFor = "E0023",
     EqualityChain = "E0024",
     ComparisonDirection = "E0025",
@@ -240,6 +239,10 @@ pub(crate) const RETIRED: &[(&str, &str)] = &[
     (
         "E0014",
         include_str!("../../../../docs/diagnostics/E0014.md"),
+    ),
+    (
+        "E0022",
+        include_str!("../../../../docs/diagnostics/E0022.md"),
     ),
     (
         "E0060",
@@ -505,8 +508,6 @@ pub(crate) enum DiagnosticKind {
     AssignToExpression { at: Span },
     /// A `push` at `at` onto something that is not a place.
     PushToTemporary { at: Span },
-    /// An assignment at `at` through a `?.`.
-    AssignThroughSafeAccess { at: Span },
     /// A range at `at` outside a `for`.
     RangeOutsideFor { at: Span },
     /// A second `==`, `!=` or `is` at `at` in one chain.
@@ -2924,10 +2925,6 @@ impl From<DiagnosticKind> for Diagnostic {
                 Diagnostic::coded(code, at, "cannot push to a temporary value")
                     .with_label("this value is not stored in a variable")
                     .with_help("store it in a `let mut` variable first")
-            }
-            DiagnosticKind::AssignThroughSafeAccess { at } => {
-                Diagnostic::coded(code, at, "cannot assign through `?.`")
-                    .with_help("unwrap it with `if let`")
             }
             DiagnosticKind::RangeOutsideFor { at } => Diagnostic::coded(
                 code,
