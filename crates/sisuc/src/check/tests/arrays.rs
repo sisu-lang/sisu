@@ -1055,18 +1055,15 @@ fn a_sibling_with_nothing_to_wait_for_should_be_reported_once() {
     }
 }
 
-/// A literal at a place that the call does not return does not make the call a literal (see
-/// `Checker::rank_call`, `passes`). `k2(1, [])` returns its second argument: the `1` does not
-/// give it a type, so its `[]` is not typed `i64` by the literal, and the call cannot be inferred.
-/// The row guards that rule: it fails when a literal at any place makes the call a literal.
+/// A literal at a place that the call does not return does not give the call its type (see
+/// `Checker::rank_call`, `passes`). `k2(1, [])` returns its second argument, as `id([])` does: the
+/// `1` is not walked, and the call ranks as `id([])` ranks. So `[[x], k2(1, [])]` checks clean, and
+/// its `[]` takes the type of `[x]`. If the `1` made the call a literal, the call would be checked
+/// alone and `U` could not be inferred.
 #[test]
 fn a_literal_at_a_place_that_is_not_returned_should_not_type_the_call() {
     let statement = "let _a = [[x], k2(1, [])]";
-    let src = join_main(statement);
-    codes(
-        &src,
-        &[(Code::CannotInfer, in_statement(&src, statement, "k2"))],
-    );
+    clean_row(statement, &join_main(statement));
 }
 
 /// `dbg` with two arguments is not the one-argument `dbg` that passes its context on: in an

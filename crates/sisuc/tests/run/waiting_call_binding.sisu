@@ -1,0 +1,31 @@
+// GIVEN `mk2`, which leaves its `X` to its context, and `mk`, which leaves its `E`
+// AND `g`, which takes a `Two<T, bool>` and then a `Result<T, string>`
+// AND `g3`, which takes a `Two<T, bool>`, a `Two<U, T>` and a `Result<U, string>`
+// WHEN `g` takes `mk2()` and then `mk()`
+// AND `g3` takes two `mk2()` calls and then `mk()`
+// THEN each `mk2()` waits for the later argument that binds its context, so the program checks
+// AND `g` prints 11 and `g3` prints 21
+class Two<A, B> {
+    a: [A]
+    b: B
+}
+fn mk<E>() -> Result<i64, E> { Ok(7) }
+fn mk2<X>() -> Two<X, bool> { Two(a: [], b: true) }
+fn g<T>(c: Two<T, bool>, d: Result<T, string>) -> i64 {
+    let flag = if c.b { 1 } else { 0 }
+    match d {
+        Ok(_) => c.a.len() + 10 + flag
+        Err(_) => 0
+    }
+}
+fn g3<T, U>(c: Two<T, bool>, e: Two<U, T>, d: Result<U, string>) -> i64 {
+    let flag = if c.b { 1 } else { 0 }
+    match d {
+        Ok(_) => c.a.len() + e.a.len() + 20 + flag
+        Err(_) => 0
+    }
+}
+fn main() {
+    print(g(mk2(), mk()))                // 11
+    print(g3(mk2(), mk2(), mk()))        // 21
+}
