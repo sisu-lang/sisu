@@ -25,7 +25,7 @@ pub(crate) const SEEDS: u64 = 64;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.
-const EXCLUDED: [(&str, &str); 17] = [
+const EXCLUDED: [(&str, &str); 16] = [
     (
         "ast::BrokenKind::Function",
         "only an item with a syntax error is broken",
@@ -89,10 +89,6 @@ const EXCLUDED: [(&str, &str); 17] = [
     (
         "types::Head::Assoc",
         "the key by which `types::write_type` asks for a name, which is no type",
-    ),
-    (
-        "reach: `?.push` follows an index",
-        "it needs a local of type `[[T]?]`, which has three layers; a type nests at most twice",
     ),
 ];
 
@@ -4688,6 +4684,28 @@ fn a_push_through_an_optional_should_take_the_place_of_its_local() {
         }
     }
     assert!(local && field, "{local} {field}: a local and a field");
+}
+
+/// Only a `let mut` local gets the type `[[T]?]`, and an element of it takes `?.push`; `any_type`
+/// never gives a type of three layers.
+#[test]
+fn a_mutable_array_local_should_now_and_then_hold_optional_arrays() {
+    let (mut local, mut push) = (false, false);
+    for data in seeds() {
+        let program = generate(&data).program;
+        local |= program.lines().any(|line| {
+            line.trim_start().starts_with("let mut ")
+                && line.split_once(": [[").is_some_and(|(_, rest)| {
+                    rest.split_once(" = ")
+                        .is_some_and(|(ty, _)| ty.ends_with("]?]"))
+                })
+        });
+        push |= program.contains("]?.push(");
+    }
+    assert!(
+        local && push,
+        "{local} {push}: a local and a push onto its element"
+    );
 }
 
 /// A `Gen` over `data` that holds the class `K0`, with the one `mut` field `g0` of type `field`

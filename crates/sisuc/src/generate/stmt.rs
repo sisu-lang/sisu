@@ -288,10 +288,20 @@ impl Gen<'_> {
     }
 
     /// `let [mut] v[: T] = e`. A mutable `string` gets a size for its first value and plain
-    /// assignments, and room for what `+=` adds; a mutable optional of a size, a size.
+    /// assignments, and room for what `+=` adds; a mutable optional of a size, a size. Now and
+    /// then a mutable `[T]` becomes `[[T]?]`, which `any_type` never gives.
     fn let_stmt(&mut self) {
-        let ty = self.any_type();
+        let mut ty = self.any_type();
         let mutable = self.pick(2) == 1;
+        // The only local whose element takes `?.push`: a third layer that `any_type` never makes.
+        // `[[T]]` is too rare a source, so a plain `[T]` gives it.
+        if mutable
+            && let Ty::Array(element) = &ty
+            && !matches!(**element, Ty::Array(_) | Ty::Optional(_))
+            && self.pick(8) == 0
+        {
+            ty = Ty::Array(Box::new(Ty::Optional(Box::new(ty))));
+        }
         let name = self.scope.local();
         let keyword = if mutable { "let mut" } else { "let" };
         self.w.text(&format!("{keyword} {name}"));
