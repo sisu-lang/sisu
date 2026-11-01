@@ -1136,9 +1136,9 @@ impl Checker<'_> {
     /// now that every `break` is known: each converts to the type of the loop, or is reported.
     fn join_deferred(&mut self, frame: &mut LoopFrame) {
         for (v, got) in std::mem::take(&mut frame.deferred) {
-            let Some((first, at)) = frame.first else {
-                continue;
-            };
+            let (first, at) = frame
+                .first
+                .expect("a loop should hold its first value before one waits");
             // The loop grew to this type when a later value made it, so `wrap_breaks` converts
             // the value.
             if self.converts_to_any(got, first) {

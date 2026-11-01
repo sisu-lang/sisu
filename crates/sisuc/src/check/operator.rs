@@ -1,6 +1,6 @@
 //! Operators: arithmetic, comparison, equality, `is` and `??`.
 
-use super::any::{widen, widen_to};
+use super::any::widen;
 use super::expr::{fits, if_some, int_literal, literal_type, local, operator, path, typed};
 use super::generic::{Rank, mismatched};
 use super::interface::Operation;
@@ -920,7 +920,8 @@ impl Checker<'_> {
                     return Err(Poisoned::error());
                 };
                 self.instantiates = true;
-                (other.map(|e| widen_to(e, joined)), joined)
+                // The default is the `any` side, as the payload converted to it above.
+                (other, joined)
             }
             None => return Err(Poisoned::error()),
         };

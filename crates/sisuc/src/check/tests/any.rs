@@ -619,6 +619,21 @@ fn a_join_should_stay_a_mismatch_where_neither_side_converts_to_the_other() {
             vec![(Code::Mismatch, (2, 30))],
         ),
         (
+            "two `any` values of unrelated interfaces, in an `if`",
+            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let k: any Named = Cube(s: 1.0)\n    let r = if true { s } else { k }\n}",
+            vec![(Code::Mismatch, (4, 34))],
+        ),
+        (
+            "two `any` values of unrelated interfaces, in an array literal",
+            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let k: any Named = Cube(s: 1.0)\n    let r = [s, k]\n}",
+            vec![(Code::Mismatch, (4, 17))],
+        ),
+        (
+            "an `any` value and a class that does not conform, as `break` values",
+            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let r = loop {\n        if true { break s }\n        break Cube(s: 1.0)\n    }\n}",
+            vec![(Code::Mismatch, (5, 15))],
+        ),
+        (
             "an optional object and an `any` value",
             "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let o: Circle? = None\n    let r = if true { o } else { s }\n}",
             vec![(Code::Mismatch, (4, 34))],

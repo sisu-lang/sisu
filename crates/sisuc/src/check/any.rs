@@ -491,11 +491,6 @@ pub(super) fn widen(e: tir::Expr, want: Type) -> tir::Expr {
     }
 }
 
-/// `e` as `want`, unless it has that type already.
-pub(super) fn widen_to(e: tir::Expr, want: Type) -> tir::Expr {
-    if e.ty == want { e } else { widen(e, want) }
-}
-
 /// `e` as the `any` type `target`.
 pub(super) fn to_any(e: tir::Expr, target: Type) -> tir::Expr {
     tir::Expr {
