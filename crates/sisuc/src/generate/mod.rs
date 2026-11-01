@@ -126,7 +126,7 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
     g.ru = Unstructured::new(&reversed);
     g.au = Unstructured::new(&rotated);
     g.cu = Unstructured::new(&mixed);
-    let (cost, known) = g.program();
+    let (cost, known, expected) = g.program();
     // Only the tests read the cost.
     #[cfg(not(test))]
     let _ = cost;
@@ -145,7 +145,7 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
         rewritten: g.w.out.rewritten,
         stdin: g.stdin,
         known,
-        expected: g.expected,
+        expected,
         bound_sites: g.bound_sites,
         #[cfg(test)]
         cost,
@@ -210,12 +210,6 @@ struct Gen<'a> {
     returns: bool,
     /// The bound sites of `program`, in order.
     bound_sites: Vec<BoundSite>,
-    /// How many marked statements the interface calls have so far: the next is `@d<marks>`.
-    marks: usize,
-    /// The values of the methods that meet the requirements of the interfaces.
-    values: item::Values,
-    /// The lines that the marked statements of `shapes` print (`Generated::expected`).
-    expected: Vec<String>,
     /// Where `program` holds the known sites' text, in order.
     #[cfg(test)]
     known_text: Vec<std::ops::Range<usize>>,
@@ -246,9 +240,6 @@ impl<'a> Gen<'a> {
             effect: false,
             returns: false,
             bound_sites: Vec::new(),
-            marks: 0,
-            values: item::Values::default(),
-            expected: Vec::new(),
             #[cfg(test)]
             known_text: Vec::new(),
         }

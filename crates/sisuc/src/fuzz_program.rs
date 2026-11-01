@@ -610,15 +610,26 @@ fn judge_known(run: &Run, known: &[Known]) -> Result<(), Failure> {
     Ok(())
 }
 
-/// Property 5 for the calls of requirements: in each build of the program, the lines of stdout
-/// that start with `@d` are the first lines of `expected`, in order. A run that returns or panics
+/// Whether `line` is a marked line: `@d`, one or more digits and a space.
+fn is_marked(line: &str) -> bool {
+    line.strip_prefix("@d")
+        .and_then(|rest| rest.split_once(' '))
+        .is_some_and(|(number, _)| !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Property 5 for the calls of requirements: in each build of the program, the marked lines of
+/// stdout (`is_marked`) are the first lines of `expected`, in order. A run that returns or panics
 /// before `shapes` prints none, and one that stops inside it prints a prefix, so a shorter list
 /// passes. A wrong value, a wrong order or an extra line fails, and the failure gives the first
 /// line that differs and the line expected there.
+// shortcut: `main`'s statements can print a line that matches, for example two interpolated parts
+// `(char(e) ?? d)` with e = 64 and e = 100, then an integer part; no seed of 0..6000 does;
+// upgrade when a run reports a false property 5 failure (then give `shapes` its own output check,
+// for example after a fixed line that only `shapes` prints).
 fn judge_marked(runs: &[Run], expected: &[String]) -> Result<(), Failure> {
     for ((build, _), run) in BUILDS.iter().zip(runs) {
         let stdout = String::from_utf8_lossy(&run.stdout);
-        let printed = stdout.lines().filter(|line| line.starts_with("@d"));
+        let printed = stdout.lines().filter(|line| is_marked(line));
         for (at, line) in printed.enumerate() {
             let detail = match expected.get(at) {
                 Some(want) if want == line => continue,
@@ -627,7 +638,7 @@ fn judge_marked(runs: &[Run], expected: &[String]) -> Result<(), Failure> {
                     at + 1
                 ),
                 None => format!(
-                    "the {build} build prints `{line}` as marked line {}, and `shapes` makes only {}",
+                    "the {build} build prints `{line}` as marked line {}, and `shapes` prints only {} marked lines",
                     at + 1,
                     expected.len()
                 ),
@@ -707,9 +718,9 @@ mod tests {
 
     use super::dbg_location;
     use super::{
-        Answer, BUILDS, Exit, FORCE, Force, Known, LIMIT, Run, build, builds, checked, judge,
-        judge_bounds, judge_builds, judge_known, judge_marked, judge_pair, judge_source, program,
-        program_in, run, runtime,
+        Answer, BUILDS, Exit, FORCE, Force, Known, LIMIT, Run, build, builds, checked, is_marked,
+        judge, judge_bounds, judge_builds, judge_known, judge_marked, judge_pair, judge_source,
+        program, program_in, run, runtime,
     };
     use crate::fresh_names;
     use crate::generate::{BoundSite, Generated, coverage, generate};
@@ -1180,6 +1191,15 @@ mod tests {
         assert_eq!(marked("@k0 7\nplain\n", &LIST).0, 0);
     }
 
+    /// A marked line is `@d`, digits and a space: another line that starts with `@d` is not one.
+    #[test]
+    fn judge_marked_should_not_read_a_line_without_digits_and_a_space_as_marked() {
+        for line in ["@dx 1", "@d", "@d 1", "@d1", "@d1x 1", "d0 1"] {
+            assert_eq!(marked(&format!("{line}\n"), &[]).0, 0, "{line}");
+        }
+        assert_eq!(marked("@d0 x\n", &[]).0, 5);
+    }
+
     /// A panic inside `shapes` stops it after some marked lines.
     #[test]
     fn judge_marked_should_pass_when_stdout_prints_a_prefix_of_the_list() {
@@ -1210,7 +1230,7 @@ mod tests {
         let (property, detail) = marked("@d0 Q0.r1\n@d1 N0.r1\n@d1 Q0.r1\n@d2 Q0.r1\n", &LIST);
         assert_eq!(property, 5);
         assert!(
-            detail.contains("`@d2 Q0.r1`") && detail.contains("makes only 3"),
+            detail.contains("`@d2 Q0.r1`") && detail.contains("prints only 3 marked lines"),
             "{detail}"
         );
     }
@@ -1254,16 +1274,20 @@ mod tests {
     }
 
     /// The dispatches of a call of a requirement that a program may hold, each a neighbour of
-    /// #203: the call must reach the method of its own type.
-    const DISPATCHES: [&str; 8] = [
-        "a direct call on `Q<k>` and on `N<k>`",
-        "a call through `via<k>` with `Q<k>`, `N<k>` and `R<k>`",
-        "a requirement inherited from an earlier interface",
-        "a result `T` picked by the expected type, `i64` and `string`",
-        "`both` with two interfaces in one bound",
-        "`pick<k>` with a bounded associated type",
-        "a conformance in an `extend` block",
-        "a conformance in the declaration list",
+    /// #203: the call must reach the method of its own type. Each comes with the first seed of the
+    /// series whose program holds it and prints every marked line.
+    const DISPATCHES: [(&str, u64); 8] = [
+        ("a direct call on `Q<k>` and on `N<k>`", 0),
+        ("a call through `via<k>` with `Q<k>`, `N<k>` and `R<k>`", 0),
+        ("a requirement inherited from an earlier interface", 60),
+        (
+            "a result `T` picked by the expected type, `i64` and `string`",
+            18,
+        ),
+        ("`both` with two interfaces in one bound", 0),
+        ("`pick<k>` with a bounded associated type", 55),
+        ("a conformance in an `extend` block", 18),
+        ("a conformance in the declaration list", 0),
     ];
 
     /// Whether `g` holds the dispatch `row` of `DISPATCHES`, as its text shows.
@@ -1340,32 +1364,32 @@ mod tests {
         }
     }
 
-    /// The program of the first seed of the series that holds `row`, whose O0 run prints every
-    /// line that `shapes` should: the seed's `Generated`, and that run.
-    fn dispatch_of(row: &str) -> (Generated, Run) {
-        for g in (0..coverage::SEEDS).map(|n| generate(&seed(n))) {
-            if !holds(row, &g) {
-                continue;
-            }
-            let run = o0_run(&g);
-            let printed = String::from_utf8_lossy(&run.stdout)
-                .lines()
-                .filter(|line| line.starts_with("@d"))
-                .count();
-            if printed == g.expected.len() {
-                return (g, run);
-            }
-        }
-        panic!("no seed of the series holds {row} and prints its marked lines");
+    /// The program of the seed `at` of the series, which holds `row` and whose O0 run prints every
+    /// line that `shapes` should: the seed's `Generated`, and that run. A change of the generator
+    /// that moves the seed's bytes fails here, with the name of the row.
+    fn dispatch_of((row, at): (&str, u64)) -> (Generated, Run) {
+        let g = generate(&seed(at));
+        assert!(holds(row, &g), "seed {at} should hold {row}\n{}", g.program);
+        let run = o0_run(&g);
+        let printed = String::from_utf8_lossy(&run.stdout)
+            .lines()
+            .filter(|line| is_marked(line))
+            .count();
+        assert_eq!(
+            printed,
+            g.expected.len(),
+            "seed {at} should print every marked line of {row}"
+        );
+        (g, run)
     }
 
     /// The seed's program holds the dispatch, and its O0 run prints the expected lines, which are
     /// not none.
-    fn dispatch_should_print_its_expected_lines(row: &str) {
-        let (g, run) = dispatch_of(row);
-        assert!(!g.expected.is_empty(), "{row}");
+    fn dispatch_should_print_its_expected_lines(dispatch: (&str, u64)) {
+        let (g, run) = dispatch_of(dispatch);
+        assert!(!g.expected.is_empty(), "{}", dispatch.0);
         judge_marked(&[run], &g.expected)
-            .unwrap_or_else(|f| panic!("{row}: {}\n{}", f.detail, g.program));
+            .unwrap_or_else(|f| panic!("{}: {}\n{}", dispatch.0, f.detail, g.program));
     }
 
     #[test]
@@ -1408,17 +1432,8 @@ mod tests {
         dispatch_should_print_its_expected_lines(DISPATCHES[7]);
     }
 
-    /// Every dispatch is held by a seed of the series: the search above finds each.
-    #[test]
-    fn the_seeds_should_hold_every_dispatch() {
-        let held: Vec<Generated> = (0..coverage::SEEDS).map(|n| generate(&seed(n))).collect();
-        for row in DISPATCHES {
-            assert!(held.iter().any(|g| holds(row, g)), "no seed holds {row}");
-        }
-    }
-
     /// Seed 584's `main` returns before it calls `shapes`, which the program holds, so the run
-    /// prints no marked line, and the property holds. Its `return` is on line 157 of the program.
+    /// prints no marked line, and the property holds.
     #[test]
     fn a_main_that_returns_before_shapes_should_print_no_marked_line() {
         let g = generate(&seed(584));
@@ -1433,7 +1448,12 @@ mod tests {
         );
         let run = o0_run(&g);
         assert_eq!(run.exit, Exit::Code(0), "`main` should return");
-        assert!(!String::from_utf8_lossy(&run.stdout).contains("\n@d"));
+        assert!(
+            !String::from_utf8_lossy(&run.stdout)
+                .lines()
+                .any(|line| line.starts_with("@d")),
+            "`main` should print no marked line"
+        );
         judge_marked(&[run], &g.expected).expect("a run that prints no marked line should pass");
     }
 

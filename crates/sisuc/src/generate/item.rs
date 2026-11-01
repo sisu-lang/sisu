@@ -71,6 +71,10 @@ struct Calls {
     sites: Vec<(usize, BoundSite)>,
     /// The lines that the marked statements print when `shapes` runs to its end, in order.
     expected: Vec<String>,
+    /// How many marked statements the interface calls have so far: the next is `@d<marks>`.
+    marks: usize,
+    /// The values of the methods that meet the requirements of the interfaces.
+    values: Values,
 }
 
 impl Calls {
@@ -84,9 +88,11 @@ impl Calls {
 
     /// The statement or call that `shapes` runs next makes the marked statements `marks` print,
     /// with the results of the methods of `ty`.
-    fn runs(&mut self, marks: &[Marked], ty: &str, values: &mut Values) {
-        self.expected
-            .extend(marks.iter().map(|mark| values.line(ty, mark)));
+    fn runs(&mut self, marks: &[Marked], ty: &str) {
+        let Calls {
+            expected, values, ..
+        } = self;
+        expected.extend(marks.iter().map(|mark| values.line(ty, mark)));
     }
 
     /// The statement `before`, `arg` and `after`, where `arg` is a bound site: the first argument
@@ -464,8 +470,9 @@ pub(crate) struct Folded {
 }
 
 impl Gen<'_> {
-    /// Writes the program, and returns its cost (decision 5) and its known sites (decision 3).
-    pub(crate) fn program(&mut self) -> (u64, Vec<Known>) {
+    /// Writes the program, and returns its cost (decision 5), its known sites (decision 3) and the
+    /// lines that the marked statements of `shapes` print (`Generated::expected`).
+    pub(crate) fn program(&mut self) -> (u64, Vec<Known>, Vec<String>) {
         // Half the fuel is `main`'s, which the items before it would otherwise often spend.
         let reserve = self.fuel / 2;
         self.fuel -= reserve;
@@ -542,10 +549,12 @@ impl Gen<'_> {
         }
         // After `main`, so that the interfaces move no choice of the items before them. They are
         // written only when `main` calls `shapes`, which uses each one.
-        if called {
+        let expected = if called {
             let declared = self.interfaces();
-            self.shapes(&declared);
-        }
+            self.shapes(&declared)
+        } else {
+            Vec::new()
+        };
         // The stdin comes last, so the first bytes choose the program's shape.
         for _ in 0..self.pick(MAX_LINES + 1) {
             let line = self.stdin_line();
@@ -563,7 +572,7 @@ impl Gen<'_> {
                 },
             })
             .collect();
-        (self.cost.of_main(&costs), known)
+        (self.cost.of_main(&costs), known, expected)
     }
 
     /// `type Al<n> = T` or `type Al<n><T> = [T]`: another name for a type, or for a type over a
@@ -933,10 +942,10 @@ impl Gen<'_> {
     /// call on a type with two conformances to one interface is picked by the type of its result.
     /// A method with an `i64` or `string` result holds a value of its own (`Values`), and each call
     /// that prints a result writes `@d<n> <value>`: the calls in `shapes`, and in the generic
-    /// functions it calls. Records the lines that `shapes` prints in `expected` (property 5). The
-    /// other methods hold the smallest value of their result. Each interface is used, so none is
-    /// reported. Records the bound sites of its calls (property 6).
-    fn shapes(&mut self, declared: &[Shape]) {
+    /// functions it calls. Gives the lines that `shapes` prints (property 5). The other methods
+    /// hold the smallest value of their result. Each interface is used, so none is reported.
+    /// Records the bound sites of its calls (property 6).
+    fn shapes(&mut self, declared: &[Shape]) -> Vec<String> {
         let mut calls = Calls::default();
         let once = |k: usize| Conformed {
             interface: k,
@@ -977,29 +986,30 @@ impl Gen<'_> {
                     single.to_vec()
                 };
                 let listed = heads(self.pick(2));
-                let entries = self.conforming_type(class, &ty, &roots, declared, listed);
+                let entries =
+                    self.conforming_type(class, &ty, &roots, declared, listed, &mut calls);
                 calls.push(format!("let {var} = {value}"));
                 // The requirements of the interface, and of those it inherits.
-                self.direct_calls(declared, &entries, &var, &ty, &mut calls);
+                Self::direct_calls(declared, &entries, &var, &ty, &mut calls);
                 calls.push(format!("print({var}.plain())"));
                 values.push(var);
                 types.push(ty);
             }
             let bound = once(k).written(declared);
-            let marks = self.via(&format!("via{k}"), &bound, &all);
+            let marks = self.via(&format!("via{k}"), &bound, &all, &mut calls);
             for (var, ty) in values.iter().zip(&types) {
                 calls.site(&format!("via{k}("), var, ")", &bound, NO_BOUND);
-                calls.runs(&marks, ty, &mut self.values);
+                calls.runs(&marks, ty);
             }
             if let Some(assoc) = &shape.assoc {
-                let marks = self.via_assoc(k, declared);
+                let marks = self.via_assoc(k, declared, &mut calls);
                 for (var, ty) in values.iter().zip(&types) {
                     let (before, after) = (
                         format!("let _ = pick{k}("),
                         format!(", {})", assoc.value(var)),
                     );
                     calls.site(&before, var, &after, &bound, NO_BOUND);
-                    calls.runs(&marks, ty, &mut self.values);
+                    calls.runs(&marks, ty);
                 }
             }
             self.w.text(&format!("class H{k}<T: {bound}> "));
@@ -1024,23 +1034,23 @@ impl Gen<'_> {
             let roots = [once(0), once(1)];
             let (a, b) = (roots[0].written(declared), roots[1].written(declared));
             let all = requirements_of(declared, &conformed_closure(declared, &roots));
-            self.conforming_type(true, "QBoth", &roots, declared, true);
-            let marks = self.via("both", &format!("{a} & {b}"), &all);
+            self.conforming_type(true, "QBoth", &roots, declared, true, &mut calls);
+            let marks = self.via("both", &format!("{a} & {b}"), &all, &mut calls);
             calls.push("let qboth = QBoth(v: 1)");
             calls.site("both(", "qboth", ")", &format!("{a} & {b}"), NO_BOUND);
-            calls.runs(&marks, "QBoth", &mut self.values);
+            calls.runs(&marks, "QBoth");
         }
         self.language_bounds(!declared.is_empty(), &mut calls);
         calls.extend(self.associated_cycle());
-        self.expected = std::mem::take(&mut calls.expected);
+        let expected = std::mem::take(&mut calls.expected);
         self.write_shapes(calls);
+        expected
     }
 
     /// The statements of `shapes` that call each requirement of `entries`, the interfaces that the
     /// value `var` of the type `ty` conforms to, with the lines they print. A type with two
     /// conformances to one interface picks a call by the type of its result.
     fn direct_calls(
-        &mut self,
         declared: &[Shape],
         entries: &[Conformed],
         var: &str,
@@ -1055,15 +1065,15 @@ impl Gen<'_> {
                 > 1;
             for requirement in &declared[entry.interface].requirements {
                 if again {
-                    let picked = requirement.picked_call(var, entry.arg, &mut self.marks);
+                    let picked = requirement.picked_call(var, entry.arg, &mut calls.marks);
                     if let Some((lines, mark)) = picked {
                         calls.extend(lines);
-                        calls.runs(&[mark], ty, &mut self.values);
+                        calls.runs(&[mark], ty);
                     }
                 } else {
-                    let (line, mark) = requirement.call(var, entry.arg, &mut self.marks);
+                    let (line, mark) = requirement.call(var, entry.arg, &mut calls.marks);
                     calls.push(line);
-                    calls.runs(mark.as_slice(), ty, &mut self.values);
+                    calls.runs(mark.as_slice(), ty);
                 }
             }
         }
@@ -1334,7 +1344,7 @@ impl Gen<'_> {
             for requirement in &declared[entry.interface].requirements {
                 self.w.line();
                 self.w
-                    .text(&requirement.method(entry.arg, &class, &mut self.values));
+                    .text(&requirement.method(entry.arg, &class, &mut calls.values));
             }
             self.w.close();
             self.w.line();
@@ -1359,7 +1369,7 @@ impl Gen<'_> {
             &bound.written(declared),
             NO_BOUND,
         );
-        calls.runs(marks, &class, &mut self.values);
+        calls.runs(marks, &class);
         calls.push(format!("print(w{k}.top().plain())"));
         calls.push(format!("print({class}(v: 1).solo())"));
     }
@@ -1375,6 +1385,7 @@ impl Gen<'_> {
         roots: &[Conformed],
         declared: &[Shape],
         listed: bool,
+        calls: &mut Calls,
     ) -> Vec<Conformed> {
         let entries = conformed_closure(declared, roots);
         let listed = listed && !repeats(&entries);
@@ -1401,7 +1412,7 @@ impl Gen<'_> {
         if listed {
             for (requirement, arg) in requirements_of(declared, &entries) {
                 self.w.line();
-                self.w.text(&requirement.method(arg, ty, &mut self.values));
+                self.w.text(&requirement.method(arg, ty, &mut calls.values));
             }
         }
         self.w.close();
@@ -1418,7 +1429,7 @@ impl Gen<'_> {
                 for requirement in &declared[entry.interface].requirements {
                     self.w.line();
                     self.w
-                        .text(&requirement.method(entry.arg, ty, &mut self.values));
+                        .text(&requirement.method(entry.arg, ty, &mut calls.values));
                 }
                 self.w.close();
                 self.w.line();
@@ -1436,7 +1447,7 @@ impl Gen<'_> {
     /// `fn pick<n><T: I<n>>(_x: T, y: T.A<n>) -> T.A<n> { y }`: the associated type of the
     /// interface `k` as the type of a parameter and of a result, with a call of each requirement on
     /// `y` when the interface bounds the type by itself. Gives the marked statements of the calls.
-    fn via_assoc(&mut self, k: usize, declared: &[Shape]) -> Vec<Marked> {
+    fn via_assoc(&mut self, k: usize, declared: &[Shape], calls: &mut Calls) -> Vec<Marked> {
         let assoc = declared[k]
             .assoc
             .as_ref()
@@ -1455,7 +1466,7 @@ impl Gen<'_> {
         if assoc.bounded {
             for requirement in &declared[k].requirements {
                 self.w.line();
-                let (line, mark) = requirement.call("y", bound.arg, &mut self.marks);
+                let (line, mark) = requirement.call("y", bound.arg, &mut calls.marks);
                 self.w.text(&line);
                 marks.extend(mark);
             }
@@ -1474,6 +1485,7 @@ impl Gen<'_> {
         name: &str,
         bounds: &str,
         requirements: &[(&Requirement, Option<&'static str>)],
+        calls: &mut Calls,
     ) -> Vec<Marked> {
         let param = if requirements.is_empty() { "_x" } else { "x" };
         self.w.text(&format!("fn {name}<T: {bounds}>({param}: T) "));
@@ -1481,7 +1493,7 @@ impl Gen<'_> {
         let mut marks = Vec::new();
         for (requirement, arg) in requirements {
             self.w.line();
-            let (line, mark) = requirement.call("x", *arg, &mut self.marks);
+            let (line, mark) = requirement.call("x", *arg, &mut calls.marks);
             self.w.text(&line);
             marks.extend(mark);
         }
