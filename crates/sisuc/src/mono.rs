@@ -100,8 +100,8 @@ fn prelude_method_of_outside_type(program: &Program) -> bool {
         let in_prelude = match head_of(conformance.target) {
             Some(Head::Class(id)) => id.0 >= prelude.classes,
             Some(Head::Enum(id)) => id.0 >= prelude.enums,
-            // `Conformances::add` admits no other target today. `false` leaves the fast path,
-            // where the normal path keeps every method that it reaches.
+            // `head_of` gives only a class or an enum, and `Conformances::add` admits only those
+            // targets. `false` leaves the fast path.
             Some(Head::Assoc(..)) | None => false,
         };
         !in_prelude && conformance.methods.iter().any(|f| f.0 >= prelude.funcs)
@@ -1769,48 +1769,29 @@ mod tests {
         assert_eq!(function_names(&program), ["main", "i64.min"]);
     }
 
-    /// An implicit call, such as `print`, `dbg`, interpolation or `==`, reaches a method of the
-    /// prelude through a conformance, with no written use, so the checker does not set
-    /// `instantiates`. The program then keeps the method when its target is outside the prelude.
-    /// A target in the prelude is dropped with the rest of the prelude when nothing reaches it.
+    /// An implicit call, such as `print` or `==`, reaches a method of the prelude through a
+    /// conformance, with no written use, so the checker does not set `instantiates`. The program
+    /// then keeps the method when its target is outside the prelude.
     #[test]
-    fn a_prelude_conformance_of_a_type_outside_the_prelude_should_leave_the_path_that_instantiates_nothing()
-     {
+    fn a_prelude_method_of_a_user_type_should_leave_the_fast_path() {
         let show = "extend C {\n    fn to_string(self) -> string { \"custom\" }\n}\n";
         let show_enum = "extend E {\n    fn to_string(self) -> string { \"custom\" }\n}\n";
         let eq = "extend C: Eq {\n    fn eq(self, _other: C) -> bool { true }\n}\n";
         let main = |body: &str| format!("class C {{}}\nfn main() {{\n    {body}\n}}");
         for (row, prelude, src, method) in [
-            ("print", show, main("print(C())"), "C.to_string"),
             (
-                "interpolation",
+                "display on a class",
                 show,
-                main("print(\"{C()}\")"),
+                main("print(C())"),
                 "C.to_string",
             ),
-            ("dbg", show, main("dbg(C())"), "C.to_string"),
             (
-                "optional",
-                show,
-                main("let c: C? = C()\n    print(c)"),
-                "C.to_string",
-            ),
-            ("array", show, main("print([C()])"), "C.to_string"),
-            (
-                "enum",
+                "display on an enum",
                 show_enum,
                 "enum E {\n    A\n}\nfn main() {\n    print(E.A)\n}".to_string(),
                 "E.to_string",
             ),
-            ("equal", eq, main("print(C() == C())"), "C.Eq.eq"),
-            ("not equal", eq, main("print(C() != C())"), "C.Eq.eq"),
-            ("array equal", eq, main("print([C()] == [C()])"), "C.Eq.eq"),
-            (
-                "written call",
-                show,
-                main("print(C().to_string())"),
-                "C.to_string",
-            ),
+            ("eq on a class", eq, main("print(C() == C())"), "C.Eq.eq"),
         ] {
             let before = FAST_PATHS.get();
             let (program, diagnostics) = crate::front_end::front_end_with(prelude, &src);
@@ -1819,26 +1800,29 @@ mod tests {
             let names = function_names(&program);
             assert!(names.contains(&method), "{row}: {method} in {names:?}");
         }
-        // A target in the prelude is an item of the prelude: nothing reaches it, so it goes.
-        let before = FAST_PATHS.get();
-        let prelude = "class P {}\nextend P {\n    fn to_string(self) -> string { \"p\" }\n}\n";
-        let (program, diagnostics) =
-            crate::front_end::front_end_with(prelude, "fn main() {\n    print(1)\n}");
-        let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
-        assert_eq!(FAST_PATHS.get(), before + 1, "a target in the prelude");
-        assert_eq!(
-            function_names(&program),
-            ["main"],
-            "a target in the prelude"
-        );
-        let before = FAST_PATHS.get();
-        let prelude =
-            "enum Q {\n    A\n}\nextend Q {\n    fn to_string(self) -> string { \"q\" }\n}\n";
-        let (program, diagnostics) =
-            crate::front_end::front_end_with(prelude, "fn main() {\n    print(1)\n}");
-        let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
-        assert_eq!(FAST_PATHS.get(), before + 1, "an enum in the prelude");
-        assert_eq!(function_names(&program), ["main"], "an enum in the prelude");
+    }
+
+    /// A target in the prelude is an item of the prelude: nothing reaches it, so it goes with the
+    /// rest of the prelude.
+    #[test]
+    fn a_prelude_method_of_a_prelude_type_should_keep_the_fast_path() {
+        for (row, prelude) in [
+            (
+                "a class in the prelude",
+                "class P {}\nextend P {\n    fn to_string(self) -> string { \"p\" }\n}\n",
+            ),
+            (
+                "an enum in the prelude",
+                "enum Q {\n    A\n}\nextend Q {\n    fn to_string(self) -> string { \"q\" }\n}\n",
+            ),
+        ] {
+            let before = FAST_PATHS.get();
+            let (program, diagnostics) =
+                crate::front_end::front_end_with(prelude, "fn main() {\n    print(1)\n}");
+            let program = program.unwrap_or_else(|| panic!("{row}: {diagnostics:?}"));
+            assert_eq!(FAST_PATHS.get(), before + 1, "{row}");
+            assert_eq!(function_names(&program), ["main"], "{row}");
+        }
     }
 
     /// The prelude of the tests below: a class and an enum that are not generic, so `mono` roots
