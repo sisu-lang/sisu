@@ -95,8 +95,11 @@ associated type, `type Item = i64`. An `extend` block,
 an optional interface and its methods; a broken one keeps the name of its
 target. A `type Name<A, B> = T` item, a type alias, parses into its name, its
 parameter names, which take no bounds, and the type it names; it ends at its
-line, as a `const` does. In a type, `Self` is the conforming type and `S.Item`
-is an associated type. In an expression, a `<` after a name starts type
+line, as a `const` does. In a type, `Self` is the conforming type, `S.Item`
+is an associated type, `any` before an interface name makes an interface value
+type, `any Shape`, and a type may stand in parentheses, `(any Shape)?`. `any` is
+a keyword only there, so `xs.any(...)` still names a method; `any Shape?` and
+`any A & B` are E0163. In an expression, a `<` after a name starts type
 arguments only when the tokens up to its `>` read as types and a `(` or `.`
 follows, as in `first<i64>([])`; any other `<` compares. A `>=` that closes a
 list, as in `let s: Stack<i64>= x`, splits into the `>` and the `=`. It rejects an item that nests deeper than
@@ -188,7 +191,20 @@ conformance chooses: it replaces an associated type of a known type with the
 type its conformance chose. `check/bound.rs` checks a method call on a value
 of type `T`: the name is a requirement of the interfaces of `T`'s bounds, and
 the call becomes an `InterfaceCall` node in `tir`. `conformance.rs` finds the
-conformance that covers a type, for the checker and for `mono`. The walks that
+conformance that covers a type, for the checker and for `mono`.
+`check/any.rs` handles interface values. `any I` is `TypeKind::Any`. An
+interface cannot be `any` when it, or an interface that it inherits, has a
+generic method, a `Self` besides the receiver or an associated type (E0164);
+`why_not_any` keeps each answer, so a long chain of inheritance costs no more
+than its length. A value converts to an `any` type wherever the checker expects
+one: an annotation, an argument, a field, an element, a `return`, a tail, an
+assignment, a branch join, a `break` value, a `??` default and a variant
+payload. It gets a `ToAny` node when its type conforms to `I` and is not an
+optional. An `any I` conforms to `I`, to every interface that `I` inherits and
+to `Display`; a program cannot write or replace that conformance (E0155), and
+`==` on one is E0159. An argument binds a type parameter before the expected
+`any` type does (`check/generic.rs`). A method call on an `any` value is an
+`InterfaceCall`, as through a bound. The walks that
 follow the depth of a type grow the call stack when it is low (`stacker`), so a
 deep type does not overflow it. A type argument that does not conform to a bound is an error at the call (E0154).
 The interfaces `Display`, `Eq`, `Ord` and `AnyObject` are in `lang.sisu`,
@@ -228,8 +244,11 @@ no declaration has. A call of a requirement through a bound is an
 conformance that the type argument has, so `total<Circle>` calls `Circle.area`
 directly and dispatch is static. It does the same for an operator on a `T`,
 through `lang.rs`: `a == b` on a `T` that is a `Circle` with a written `Eq`
-calls `Circle.eq`. It also replaces each associated type with
-the type its conformance chose. It reports E0030 for a chain of more than 128
+calls `Circle.eq`. It replaces an `InterfaceCall` on an `any`
+receiver with a `DynCall`, a call through the table of the value, and each
+`ToAny` makes it reach every method in the table of the converted type; a
+`ToAny` whose operand already has the target type is removed. It also
+replaces each associated type with the type its conformance chose. It reports E0030 for a chain of more than 128
 choices, or a loop, that the checker's probe did not follow, and then gives no
 program. A method of an `extend` block that names an
 interface has the interface between its type and its name,
@@ -359,6 +378,19 @@ recursion. It joins a pending list, linked through its dead count word, and
 stays the same size for a value of any depth. A field of an enum on the same
 cycle that is held inline, such as `Two<Expr>.Both`'s `Expr` in
 `enum Expr { Pair(Two<Expr>) }`, is walked in place with the same lists.
+
+An `any` value (`codegen/any.rs`) is two pointers: the data and a table. The
+data of a class object is the object itself. Any other value is moved into a
+counted box, `{ i64 count, T value }`, which every copy of the `any` value
+shares and which `sisu_any.drop.<T>` releases when its count reaches zero. The
+table is one constant global for each conforming type and `any` type, such as
+`sisu.Circle:Shape`. It holds a drop slot, the two helpers that show the value
+as `print` and as `dbg` do, one entry for each requirement of the interface,
+of the interfaces that it inherits and of `Display`, and a pointer to the
+table of each interface after the first, so that converting an `any J` to the
+`any I` that `J` inherits allocates nothing. A `DynCall` is an indirect call
+of an entry, which adapts to the flags of the concrete method. `(any I)?`
+stores `None` as a null data pointer.
 
 `mir/lower/pattern.rs` lowers a `match`. It evaluates the scrutinee once into
 a temporary that the `match` owns, then tests the arms' patterns against it in

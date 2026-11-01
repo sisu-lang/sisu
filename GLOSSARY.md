@@ -383,7 +383,8 @@ arguments.
 
 **Interface value**:
 A value of type `any I`: a value of any type that conforms to `I`, whose
-methods are called through a table.
+methods are called through a table. An object is its own data; any other value
+goes into a **box**. An interface value conforms to `I`.
 _Avoid_: trait object, existential
 
 **`AnyObject`**:
@@ -652,16 +653,16 @@ reads as `None` once the object has been dropped.
 _Avoid_: unowned
 
 **Counted type**:
-A type whose values hold counted parts: classes, arrays, strings and boxes,
-an enum with a variant that holds one, and optionals of these. Copying such a
+A type whose values hold counted parts: classes, arrays, strings, boxes and
+interface values, an enum with a variant that holds one, and optionals of these. Copying such a
 value retains each counted part. `i64`, `f64`, `u8`, `bool`, `char` and enums
 whose variants hold none are copied whole and are not counted.
 _Avoid_: reference type, heap type
 
 **Box**:
-The counted heap block the compiler puts behind a payload field that closes
-a recursion cycle, such as each `Expr` in `Add(Expr, Expr)`. A program never
-names one.
+The counted heap block the compiler puts behind a value: a payload field that
+closes a recursion cycle, such as each `Expr` in `Add(Expr, Expr)`, or a value
+that is not an object held in an interface value. A program never names one.
 _Avoid_: indirection, `Box<T>`, pointer
 
 **Owned reference**:

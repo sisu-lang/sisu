@@ -648,8 +648,9 @@ fn main() {
 The rules:
 
 - An interface name alone is not a type. Write `T: Shape` for a type parameter, or `any Shape` for a value.
-- An interface whose methods are generic, or that uses `Self` besides the receiver, cannot be `any`. So `any Eq` and `any Ord` are errors.
-- An `any` value prints through the `Display` of the type that it holds. It has no `==` and no `<`.
+- An interface whose methods are generic, that uses `Self` besides the receiver, or that has an associated type, cannot be `any` ([E0164](../diagnostics/E0164.md)). So `any Eq` and `any Ord` are errors. The same holds for an interface that inherits one with such a requirement.
+- A value converts to `any Shape` when its type conforms to `Shape` and it is not an optional. An optional interface value has the type `(any Shape)?`, and the parentheses are required: `any Shape?` is an error ([E0163](../diagnostics/E0163.md)). A `Circle` converts to `(any Shape)?` and is wrapped. A `Circle?` converts to neither `any Shape` nor `(any Shape)?` ([E0032](../diagnostics/E0032.md)). In a generic body, a value of a type parameter `T` converts, whatever type the call gives to `T`.
+- An `any` value prints through the `Display` of the type that it holds. It has no `==` and no `<`, also against a value that converts to it ([E0159](../diagnostics/E0159.md)).
 - A generic function with the bound `T: Shape` accepts an `[any Shape]`.
 - An object converts with no allocation. Any other value goes into one box, which allocates once. Copies of an `any` value share its box, and the box is freed with its last copy.
 

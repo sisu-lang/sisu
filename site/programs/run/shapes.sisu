@@ -1,0 +1,39 @@
+interface Shape {
+    fn area(self) -> f64
+}
+
+class Circle: Shape {
+    r: f64
+
+    fn area(self) -> f64 {
+        f64.pi * self.r * self.r
+    }
+}
+
+enum Rect: Shape {
+    Sides(w: f64, h: f64)
+
+    fn area(self) -> f64 {
+        match self {
+            Sides(w, h) => w * h
+        }
+    }
+}
+
+fn total<T: Shape>(xs: [T]) -> f64 {
+    let mut sum = 0.0
+    for x in xs {
+        sum += x.area()
+    }
+    sum
+}
+
+fn main() {
+    let shapes: [any Shape] = [Circle(r: 1.0), Rect.Sides(w: 2.0, h: 3.0)]
+    for s in shapes {
+        print("{s.area():.2}")
+    }
+    print("{total(shapes):.2}")
+    let rounds = [Circle(r: 2.0), Circle(r: 0.5)]
+    print("{total(rounds):.2}")
+}

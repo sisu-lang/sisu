@@ -84,8 +84,8 @@ notes = [["Roadmap: what works today", "docs/roadmap.md#what-works-today"]]
 
 [[area.feature]]
 text = "Interface values, <code>any Shape</code>"
-state = "planned"
-notes = [["Roadmap: open decisions", "docs/roadmap.md#open-decisions"]]
+state = "works"
+notes = [["ADR 0029", "docs/adr/0029-parameters-are-borrowed-unless-consumed.md"], ["Roadmap: what works today", "docs/roadmap.md#what-works-today"]]
 
 [[area.feature]]
 text = "Errors with <code>Result</code> and <code>?</code>"
