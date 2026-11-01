@@ -17,13 +17,14 @@ The rule has four parts:
 - **Counting is the default.** A counted field, element or payload is a
   *recursing part* unless its type, with each `?` stripped, is bounded. The
   bounded types are: a `string`; a class in the holder's class cycle (ADR
-  0005); an array whose element type is not counted, is a `string`, or is an
-  enum with a clear reach flag; and an enum with a clear reach flag. A drop
-  function with a recursing part *counts*. The drop function of a class in a
-  cycle of two or more classes frees the other objects of the cycle in its
-  drain, with their fields. So it counts when a class of its cycle has a
-  recursing part, and all classes of the cycle share one drop weight. A class
-  with a drop block counts too, when drop blocks land.
+  0005); an array whose element type is not counted, or is bounded as the
+  element of an array (a class element is never bounded, because an array is
+  in no class cycle); and an enum with a clear reach flag. A drop function
+  with a recursing part *counts*. The drop function of a class in a cycle of
+  two or more classes frees the other objects of the cycle in its drain, with
+  their fields. So it counts when a class of its cycle has a recursing part,
+  and all classes of the cycle share one drop weight. A class with a drop
+  block counts too, when drop blocks land.
 - **One reach flag for each enum component** (ADR 0019). The flag is clear
   when each payload field of each member, `?` stripped, is not counted, is a
   `string`, is an enum of the same component, or is an enum of another
