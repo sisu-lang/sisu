@@ -456,7 +456,15 @@ impl Mono {
             TypeKind::Param(..) => {
                 panic!("`subst` should replace every type parameter before `mono` maps a type")
             }
-            _ => (ty, None),
+            TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::String
+            | TypeKind::Unit
+            | TypeKind::Never
+            | TypeKind::Assoc(..) => (ty, None),
         });
         self.types.insert(ty, (done, held));
         done
@@ -1138,7 +1146,14 @@ fn concrete(ty: Type) -> bool {
         TypeKind::Param(..) | TypeKind::Assoc(..) => false,
         TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args == TypeArgs::NONE,
         TypeKind::Array(inner) | TypeKind::Optional(inner) => concrete(inner),
-        _ => true,
+        TypeKind::I64
+        | TypeKind::U8
+        | TypeKind::F64
+        | TypeKind::Bool
+        | TypeKind::Char
+        | TypeKind::String
+        | TypeKind::Unit
+        | TypeKind::Never => true,
     }
 }
 

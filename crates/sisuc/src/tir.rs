@@ -757,7 +757,15 @@ impl Type {
             TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) => true,
             TypeKind::Enum(id, _) => enums[id.0].counted,
             TypeKind::Optional(payload) => payload.is_counted(enums),
-            _ => false,
+            TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::Unit
+            | TypeKind::Never
+            | TypeKind::Param(..)
+            | TypeKind::Assoc(..) => false,
         }
     }
 

@@ -338,7 +338,17 @@ pub(crate) fn parts<P: Payloads + ?Sized>(
                 each(part);
             }
         }),
-        _ => {}
+        TypeKind::I64
+        | TypeKind::U8
+        | TypeKind::F64
+        | TypeKind::Bool
+        | TypeKind::Char
+        | TypeKind::String
+        | TypeKind::Unit
+        | TypeKind::Never
+        | TypeKind::Class(..)
+        | TypeKind::Param(..)
+        | TypeKind::Assoc(..) => {}
     }
 }
 
