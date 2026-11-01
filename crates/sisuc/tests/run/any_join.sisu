@@ -230,4 +230,38 @@ fn main() {
     print((oc ?? od ?? a).v()) // 7
     let r: any I = oc ?? a
     print(r.v()) // 42
+    let jo: (any J)? = K()
+    let none_j: (any J)? = None
+    print((jo ?? a).v()) // 5
+    print((none_j ?? a).v()) // 42
+
+    // A branch's type is a hint for the branches after it, which they do not convert to: a
+    // chain of `any` values, a nested join of two classes and a loop give the `any` type.
+    let r = if c2 { j } else if cond { K() } else { a }
+    print(r.v()) // 5
+    let r = if c2 { j } else if cond { a } else { K() }
+    print(r.v()) // 42
+    let r = if c2 { K() } else if cond { j } else { a }
+    print(r.v()) // 5
+    let r = if c2 { K() } else if cond { a } else { j }
+    print(r.v()) // 42
+    let r = if c2 { a } else if cond { j } else { K() }
+    print(r.v()) // 5
+    let r = if c2 { a } else if cond { K() } else { j }
+    print(r.v()) // 5
+    let r = if cond { a } else if c2 { a } else { a }
+    print(r.v()) // 42
+    let r = if c2 { a } else if cond { C() } else { D() }
+    print(r.v()) // 42
+    let r = if c2 {
+        a
+    } else {
+        loop {
+            if c2 {
+                break C()
+            }
+            break D()
+        }
+    }
+    print(r.v()) // 7
 }

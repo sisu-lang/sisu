@@ -304,9 +304,12 @@ struct LoopFrame {
     first: Option<(Type, Span)>,
     /// Whether `first` went from a `T` to a `T?`, so the `T` values before need wrapping.
     widened: bool,
-    /// The values of objects that did not join the first one yet, with their types. A later
-    /// `any` value can join them, so the loop reports them when its body is checked.
-    deferred: Vec<(ast::Expr, Type)>,
+    /// The values of objects that did not join the first one yet, by span, with their types. A
+    /// later `any` value can join them, so the loop reports them when its body is checked.
+    deferred: Vec<(Span, Type)>,
+    /// The type of the siblings of a hinted loop (see `Body::hint_at`): `expected` is then a
+    /// hint, which no value converts to.
+    siblings: Option<Type>,
     /// Whether the loop is a quiet value (see `Body::quiet_at`), and so its values are too.
     quiet: bool,
     /// Whether a `break` inside a nested loop has targeted it, so its values lie in one.
@@ -340,6 +343,7 @@ impl LoopFrame {
             failed: false,
             widened: false,
             deferred: Vec::new(),
+            siblings: None,
             quiet: false,
             crossed: false,
         }
@@ -798,6 +802,13 @@ struct Body {
     /// too, and a quiet value that cannot be inferred is not reported, as the failed context
     /// was reported. Only the expression at this span is quiet, not its operands.
     quiet_at: Option<Span>,
+    /// Where the hinted value is, and the type of its siblings: an expression whose expected
+    /// type comes from the siblings it joins (the branches before it, the earlier values of its
+    /// loop, the left side of its `??`), not from its context. That type steers inference as an
+    /// expected type does, but the value does not convert to an `any` type for it, and a join in
+    /// it takes the siblings' type as its first anchor, not as its expected type (see `hinted`).
+    /// Its value parts are hinted too. Only the expression at this span is hinted.
+    hint_at: Option<(Span, Type)>,
     /// Whether the expression being checked is a link of an assigned field's base chain (field
     /// bases, method receivers, indexed bases), where a `?.` cannot stand.
     in_target: bool,

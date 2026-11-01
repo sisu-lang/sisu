@@ -894,11 +894,14 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         }
         // The right side expects `P` for an optional `P`, else `P?`: a value converts through
-        // one `?` only.
+        // one `?` only. That is a hint (see `Body::hint_at`).
+        let outer_hint = self.pass_hint(Some(rhs.span), Some(payload));
         let other = self.fallback(rhs, as_optional(payload));
-        // A value converts to an `any` payload.
+        self.body.hint_at = outer_hint;
+        // A value converts to an `any` payload, unless it is a wider `any` type, which the
+        // payload converts to.
         let other = match type_of(&other) {
-            Some(got) if got != payload => {
+            Some(got) if got != payload && self.any_join(payload, got) != Some(got) => {
                 match self.any_conversion(rhs.span, other, payload, got) {
                     Ok((_, true)) => return Err(Poisoned::error()),
                     Ok((converted, false)) | Err(converted) => converted,
@@ -920,7 +923,8 @@ impl Checker<'_> {
                     return Err(Poisoned::error());
                 };
                 self.instantiates = true;
-                // The default is the `any` side, as the payload converted to it above.
+                // A default that converts to the payload did so above: the payload converts to
+                // this default's `any` type.
                 (other, joined)
             }
             None => return Err(Poisoned::error()),

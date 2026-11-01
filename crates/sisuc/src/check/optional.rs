@@ -4,7 +4,7 @@
 
 use super::alias::Through;
 use super::generic::{GenericSig, Site, mark, mismatched};
-use super::{Checked, Checker, DiagnosticKind, Poisoned, optional_of};
+use super::{Checked, Checker, DiagnosticKind, Poisoned, optional_of, type_of};
 use crate::ast;
 use crate::diagnostic::{Definition, suggestion};
 use crate::source::Span;
@@ -39,13 +39,28 @@ impl Checker<'_> {
             matches!(t.ty.kind(), TypeKind::Optional(p)
                 if t.params.len() == 1 && p == Type::intern(TypeKind::Param(t.params[0], 0)))
         });
+        let hinted = self.hinted(span, None).1.is_some();
         let (arg, found) = match site.expected.map(|ty| (ty, ty.kind())) {
             // An expected `T?` fixes `T`, so a literal in the argument takes that type: the
             // generic call would type an `if` of integer literals by their default first.
             Some((want, TypeKind::Optional(payload)))
                 if site.written.is_empty() && !want.holds_hole() && plain =>
             {
-                (mark(self.operand(&args[0].value, Some(payload))), want)
+                let e = &args[0].value;
+                // A hinted `Some` gives its hint to the argument (see `Body::hint_at`).
+                let outer_hint = self.pass_hint(Some(e.span), hinted.then_some(payload));
+                let checked = self.value(e, Some(payload));
+                self.body.hint_at = outer_hint;
+                match type_of(&checked) {
+                    // An `any` argument wider than an `any` hint keeps its type: the join converts
+                    // the other values to it.
+                    Some(got)
+                        if hinted && got != payload && self.any_join(payload, got) == Some(got) =>
+                    {
+                        (checked, optional_of(got))
+                    }
+                    _ => (mark(self.settled(e, checked, Some(payload))), want),
+                }
             }
             _ => {
                 let param = Symbol::intern("T");

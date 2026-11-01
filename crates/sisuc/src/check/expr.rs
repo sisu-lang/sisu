@@ -230,9 +230,12 @@ impl Checker<'_> {
                 body,
             } => self.loop_expr(e.span, (*keyword, label.as_ref()), body, expected),
             ExprKind::Block(block) => {
-                let outer = self.pass_quiet(e.span, tail(block).map(|v| v.span), expected);
+                let value = tail(block).map(|v| v.span);
+                let outer = self.pass_quiet(e.span, value, expected);
+                let outer_hint = self.pass_hint(value, self.hinted(e.span, expected).1);
                 let checked = self.block(block, expected);
                 self.body.quiet_at = outer;
+                self.body.hint_at = outer_hint;
                 checked.map(|block| {
                     let ty = block.ty;
                     tir::Expr {
@@ -378,6 +381,30 @@ impl Checker<'_> {
             self.body.quiet_at = to;
         }
         outer
+    }
+
+    /// `expected` as the expression at `span` takes it, and the type of its siblings: no
+    /// expected type and that type when it is the hinted value (see `Body::hint_at`), else
+    /// `expected` and none.
+    pub(super) fn hinted(
+        &self,
+        span: Span,
+        expected: Option<Type>,
+    ) -> (Option<Type>, Option<Type>) {
+        match self.body.hint_at {
+            Some((at, siblings)) if at == span => (None, Some(siblings)),
+            _ => (expected, None),
+        }
+    }
+
+    /// Makes `to` the hinted value, its siblings of type `siblings`, or makes no value hinted
+    /// when either is `None`. Returns the hinted value before, to put back after `to` is checked.
+    pub(super) fn pass_hint(
+        &mut self,
+        to: Option<Span>,
+        siblings: Option<Type>,
+    ) -> Option<(Span, Type)> {
+        std::mem::replace(&mut self.body.hint_at, to.zip(siblings))
     }
 
     /// A `None`, of the optional type `expected`.

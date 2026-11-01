@@ -444,6 +444,25 @@ impl Checker<'_> {
         AnyJoin::Joined { first, ty }
     }
 
+    /// The type that the typed `members` of a hinted join join to with `siblings`, the type of
+    /// its siblings (see `Body::hint_at`), for members that do not join by themselves: the
+    /// widest `any` type of them all, when `siblings` is one and every member converts to it.
+    /// `if c { a } else { if d { C() } else { D() } }` joins the inner `C` and `D` so.
+    pub(super) fn seeded_join(
+        &mut self,
+        siblings: Option<Type>,
+        members: &[(usize, Type)],
+    ) -> Option<Type> {
+        let seed = siblings.filter(|&ty| is_target(ty))?;
+        let mut with = members.to_vec();
+        // No member has this index; only the joined type is read.
+        with.push((usize::MAX, seed));
+        match self.any_join_all(&with) {
+            AnyJoin::Joined { ty, .. } => Some(ty),
+            AnyJoin::NoAny | AnyJoin::Fails { .. } => None,
+        }
+    }
+
     /// Whether a value of type `got`, which conforms, converts to `any` without a box. The type
     /// is an object type, an `any`, or a type whose values are objects or `any`s (`AnyObject`).
     fn converts_now(&mut self, got: Type) -> bool {

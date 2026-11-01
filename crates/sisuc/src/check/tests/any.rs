@@ -609,6 +609,11 @@ fn a_join_should_stay_a_mismatch_where_neither_side_converts_to_the_other() {
             vec![(Code::Mismatch, (2, 47))],
         ),
         (
+            "three classes in an `else if` chain, where the earlier branch is the hint",
+            "fn main() {\n    let r = if true { Circle(r: 1.0) } else if false { Rect(w: 1.0) } else { Cube(s: 1.0) }\n}",
+            vec![(Code::Mismatch, (2, 56))],
+        ),
+        (
             "two classes that both conform, as `break` values",
             "fn main() {\n    let r = loop {\n        if true { break Circle(r: 1.0) }\n        break Rect(w: 1.0)\n    }\n}",
             vec![(Code::Mismatch, (4, 15))],
@@ -679,9 +684,10 @@ fn an_interface_value_should_be_named_as_one_where_an_interface_belongs() {
 }
 
 /// The join does not depend on the order of its members: every order of a class, a second class
-/// and an `any` value, and of a class, an `any` value and a `None`, joins at every site that joins.
-/// An `else if` chain nests its joins, and a chain of joins that each hold an `any` member is
-/// checked once for each branch.
+/// and an `any` value, of a class, an `any` value and a `None`, and of two `any` values and an
+/// object, joins at every site that joins. An `else if` chain nests its joins, and the join is the
+/// `any` type, not its optional, where no member is optional. A chain of joins that each hold an
+/// `any` member is checked once for each branch.
 #[test]
 fn a_join_should_not_depend_on_the_order_of_its_members() {
     let sites = [
@@ -699,14 +705,26 @@ fn a_join_should_not_depend_on_the_order_of_its_members() {
             "loop {\n        if c { break {1} }\n        if d { break {2} }\n        break {3}\n    }",
         ),
     ];
-    // A `None` joins without an expected type everywhere but in a loop, whose values do not.
-    let sets: [([&str; 3], &str, bool); 3] = [
-        (["Circle(r: 1.0)", "Rect(w: 1.0)", "s"], "", true),
-        (["Circle(r: 1.0)", "s", "None"], ": (any Shape)?", true),
-        (["Circle(r: 1.0)", "s", "None"], "", false),
+    // A `None` joins without an expected type everywhere but in a loop, whose values do not. A
+    // set with no `None` is read where its `any` type is expected.
+    let sets: [([&str; 3], &str, &str, bool); 4] = [
+        (
+            ["Circle(r: 1.0)", "Rect(w: 1.0)", "s"],
+            "",
+            "\n    let t: any Shape = r",
+            true,
+        ),
+        (["Circle(r: 1.0)", "s", "None"], ": (any Shape)?", "", true),
+        (["Circle(r: 1.0)", "s", "None"], "", "", false),
+        (
+            ["x", "Cube(s: 1.0)", "n2"],
+            "",
+            "\n    let t: any Named = r",
+            true,
+        ),
     ];
     for (site, shape) in sites {
-        for (members, ann, in_loop) in sets {
+        for (members, ann, read, in_loop) in sets {
             if !in_loop && site == "a `loop`" {
                 continue;
             }
@@ -721,11 +739,110 @@ fn a_join_should_not_depend_on_the_order_of_its_members() {
                 let [x, y, z] = order.map(|i| members[i]);
                 let join = shape.replace("{1}", x).replace("{2}", y).replace("{3}", z);
                 let src = format!(
-                    "fn main() {{\n    let c = true\n    let d = false\n    let n = 1\n    let s: any Shape = Circle(r: 1.0)\n    let r{ann} = {join}\n}}"
+                    "fn main() {{\n    let c = true\n    let d = false\n    let n = 1\n    let s: any Shape = Circle(r: 1.0)\n    let x: any Solid = Cube(s: 1.0)\n    let n2: any Named = x\n    let r{ann} = {join}{read}\n}}"
                 );
                 clean_row(&format!("{site}: {x}, {y}, {z}"), &format!("{DECLS}{src}"));
             }
         }
+    }
+}
+
+/// A branch gives its type to the inference of the branches after it, a class with type arguments
+/// as much as any other type: a literal in a later branch takes the type that the earlier branch
+/// fixed.
+#[test]
+fn a_branch_should_steer_the_inference_of_the_branches_after_it() {
+    let decls = "class G<T> {\n    x: T\n}\nfn mk<T>(v: T) -> G<T> { G(x: v) }\n";
+    for (row, join) in [
+        ("an `if`", "if c { G(x: u) } else { G(x: 1) }"),
+        (
+            "a `match`",
+            "match n {\n        0 => G(x: u)\n        _ => G(x: 1)\n    }",
+        ),
+        (
+            "an `else if` chain",
+            "if c { G(x: u) } else if d { G(x: 1) } else { G(x: 2) }",
+        ),
+        ("an `if let`", "if let v = o { G(x: v) } else { G(x: 1) }"),
+        ("a generic function", "if c { mk(u) } else { mk(1) }"),
+        (
+            "a nested class",
+            "if c { G(x: G(x: u)) } else { G(x: G(x: 1)) }",
+        ),
+        ("an array field", "if c { G(x: [u]) } else { G(x: [1]) }"),
+        ("a `Some`", "if c { G(x: u) } else { Some(G(x: 1)) }"),
+    ] {
+        let src = format!(
+            "{decls}fn main() {{\n    let u: u8 = 5\n    let o: u8? = 5\n    let c = true\n    let d = false\n    let n = 1\n    let b = {join}\n}}"
+        );
+        clean_row(row, &src);
+    }
+}
+
+/// A type that siblings give a value is a hint, not an expected type: the value does not convert
+/// to it. The join converts its members once it knows its type, so a nested join, a loop, a `??`
+/// default or a `Some` in a branch gives the type of its own members: never the optional that the
+/// hint is, nor a narrower `any` type than a member has.
+#[test]
+fn a_hint_should_not_convert_a_value_to_its_any_type() {
+    for (row, src) in [
+        (
+            "an `else if` chain of `any` values",
+            "let r = if c { s } else if d { s } else { s }\n    let t: any Shape = r",
+        ),
+        (
+            "a nested `if` of two classes",
+            "let r = if c { s } else { if d { Circle(r: 1.0) } else { Rect(w: 1.0) } }\n    let t: any Shape = r",
+        ),
+        (
+            "a nested `match` of two classes",
+            "let r = if c { s } else {\n        match n {\n            0 => Circle(r: 1.0)\n            _ => Rect(w: 1.0)\n        }\n    }\n    let t: any Shape = r",
+        ),
+        (
+            "a member wider than the hint",
+            "let r = if c { x } else if d { Cube(s: 1.0) } else { n2 }\n    let t: any Named = r",
+        ),
+        (
+            "a `None` after a member wider than the hint",
+            "let r = if c { x } else if d { n2 } else { None }\n    let t: (any Named)? = r",
+        ),
+        (
+            "a loop in a branch",
+            "let r = if c { s } else { loop { break Circle(r: 1.0) } }\n    let t: any Shape = r",
+        ),
+        (
+            "a loop of two classes in a branch",
+            "let r = if c { s } else {\n        loop {\n            if d { break Circle(r: 1.0) }\n            break Rect(w: 1.0)\n        }\n    }\n    let t: any Shape = r",
+        ),
+        (
+            "a loop value wider than the hint",
+            "let r = if c { x } else { loop { break n2 } }\n    let t: any Named = r",
+        ),
+        (
+            "a later `break` value that holds a join",
+            "let r = loop {\n        if d { break x }\n        break if c { n2 } else { Cube(s: 1.0) }\n    }\n    let t: any Named = r",
+        ),
+        (
+            "a `??` default that holds a join",
+            "let r = jo ?? if d { n2 } else { Cube(s: 1.0) }\n    let t: any Named = r",
+        ),
+        (
+            "a `??` default that is a block",
+            "let r = jo ?? { if d { n2 } else { Cube(s: 1.0) } }\n    let t: any Named = r",
+        ),
+        (
+            "a `Some` of a value wider than the hint",
+            "let r = if c { x } else { Some(n2) }\n    let t: (any Named)? = r",
+        ),
+        (
+            "a `Some` of a join wider than the hint",
+            "let r = if c { x } else { Some(if d { n2 } else { Cube(s: 1.0) }) }\n    let t: (any Named)? = r",
+        ),
+    ] {
+        let src = format!(
+            "{DECLS}fn main() {{\n    let c = true\n    let d = false\n    let n = 1\n    let s: any Shape = Circle(r: 1.0)\n    let x: any Solid = Cube(s: 1.0)\n    let n2: any Named = x\n    let jo: (any Solid)? = x\n    {src}\n}}"
+        );
+        clean_row(row, &src);
     }
 }
 
@@ -736,8 +853,13 @@ fn a_join_should_not_depend_on_the_order_of_its_members() {
 fn nested_joins_with_an_any_member_should_check_each_branch_once() {
     let checks = |depth: usize| {
         let mut join = "Circle(r: 1.0)".to_owned();
-        for _ in 0..depth {
-            join = format!("if c {{ Circle(r: 1.0) }} else if d {{ s }} else {{ {join} }}");
+        for level in 0..depth {
+            // The `any` member comes first on every other level, so it is the hint below it.
+            join = if level % 2 == 0 {
+                format!("if c {{ Circle(r: 1.0) }} else if d {{ s }} else {{ {join} }}")
+            } else {
+                format!("if c {{ s }} else if d {{ Circle(r: 1.0) }} else {{ {join} }}")
+            };
         }
         let src = format!(
             "{DECLS}fn main() {{\n    let c = true\n    let d = false\n    let s: any Shape = Circle(r: 1.0)\n    let r = {join}\n}}"
@@ -773,6 +895,10 @@ fn coalesce_should_join_its_payload_and_its_default_to_the_any_type() {
         (
             "a class payload and an optional `any` default",
             "fn main() {\n    let c: Circle? = None\n    let o: (any Shape)? = None\n    let r = c ?? o\n}",
+        ),
+        (
+            "a narrower `any` payload and a wider `any` default",
+            "fn main() {\n    let x: any Solid = Cube(s: 1.0)\n    let jo: (any Solid)? = x\n    let none: (any Solid)? = None\n    let n2: any Named = x\n    let r: any Named = jo ?? n2\n    let t: any Named = none ?? n2\n}",
         ),
         (
             "a chain, in either grouping",

@@ -11,7 +11,7 @@ use super::{
 use crate::ast;
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Unwrap};
 use crate::source::Span;
-use crate::tir::{self, Type, TypeKind};
+use crate::tir::{self, Type};
 
 impl Checker<'_> {
     /// Without an `else`, `unit`. With one, the branches joined (see `branches`). A condition
@@ -130,13 +130,14 @@ impl Checker<'_> {
         let Some(else_block) = else_block else {
             return (then(self, None), None, Ok(Type::UNIT));
         };
+        let (expected, siblings) = self.hinted(span, expected);
         let mut then = Some(then);
         let (blocks, ty) = self.ranked(|c| {
             let sources = [
                 c.block_branch(then_block, expected, bind),
                 c.block_branch(else_block, expected, |_| None),
             ];
-            c.join(span, &sources, expected, |c, i, expected| {
+            c.join(span, &sources, (expected, siblings), |c, i, expected| {
                 if i == 0 {
                     let then = then
                         .take()
@@ -157,17 +158,19 @@ impl Checker<'_> {
     /// lowest `Rank` is checked first, the first in source order on a tie. Each branch after it
     /// expects the type of the first branch of a known type that is not `never`, made optional,
     /// unless its value waits and makes no optional by itself: it expects that type as it is.
-    /// A failed or `unit` branch sets what the branches after it expect only until a branch of
-    /// another known type is checked. Then a `never` branch, and after it an `Error` one, takes
-    /// the others' type. A `T` and a `T?` join to `T?`, the `T` branches wrapped; other types
-    /// that differ are reported. A join that fails for a branch that rejected `expected` is a
-    /// mismatch too. With no branches, the type is `never`. A branch with no expected type is
-    /// quiet when the `if` or `match` is (see `Body::quiet_at`).
+    /// That type is a hint (see `Body::hint_at`). In a hinted `if` or `match`, `siblings`, the
+    /// type of the hinted value's siblings, is that first type. A failed or `unit` branch sets
+    /// what the branches after it expect only until a branch of another known type is checked.
+    /// Then a `never` branch, and after it an `Error` one, takes the others' type. A `T` and a
+    /// `T?` join to `T?`, the `T` branches wrapped; other types that differ are reported. A join
+    /// that fails for a branch that rejected `expected` is a mismatch too. With no branches, the
+    /// type is `never`. A branch with no expected type is quiet when the `if` or `match` is (see
+    /// `Body::quiet_at`).
     pub(super) fn join(
         &mut self,
         span: Span,
         sources: &[Branch<'_>],
-        expected: Option<Type>,
+        (expected, siblings): (Option<Type>, Option<Type>),
         mut check: impl FnMut(&mut Self, usize, Option<Type>) -> CheckedBlock,
     ) -> (Vec<CheckedBlock>, Result<Type, Poisoned>) {
         let mut order: Vec<usize> = (0..sources.len()).collect();
@@ -175,22 +178,20 @@ impl Checker<'_> {
             order.sort_by_key(|&i| sources[i].rank);
         }
         let mut checked: Vec<Option<CheckedBlock>> = sources.iter().map(|_| None).collect();
-        let mut anchor = None;
+        let mut anchor = siblings.map(Some);
         for i in order {
             let carried =
                 expected.or_else(|| anchor.and_then(|a| after_branch(a, sources[i].exact())));
-            // A branch whose type comes from itself takes no hint from a class branch before it:
-            // an `any` branch after them can widen the join. An `any` branch before it is the
-            // hint, and so is a failed one, which silences the branch.
-            let class = matches!(anchor, Some(Some(a)) if matches!(a.kind(), TypeKind::Class(..)));
-            let hint = if sources[i].rank == Rank::Concrete && carried != Some(UNKNOWN) && class {
-                expected
-            } else {
-                carried
-            };
-            let outer = self.pass_quiet(span, sources[i].tail.map(|v| v.span), hint);
-            let block = check(self, i, hint);
+            let tail = sources[i].tail.map(|v| v.span);
+            let outer = self.pass_quiet(span, tail, carried);
+            // A type that the branches before give is a hint, not an expected type.
+            let hint = anchor
+                .flatten()
+                .filter(|_| expected.is_none() && carried.is_some());
+            let outer_hint = self.pass_hint(tail, hint);
+            let block = check(self, i, carried);
             self.body.quiet_at = outer;
+            self.body.hint_at = outer_hint;
             // The first branch of a known type anchors the rest; a failed or `unit` one only
             // until then. An `any` branch widens the anchor, which only the hints read.
             match (block_type(&block), anchor) {
@@ -216,7 +217,7 @@ impl Checker<'_> {
                 self.any_block(block, want, source.span);
             }
         }
-        let (joined, error, failed) = self.fold_branches(sources, expected, &blocks);
+        let (joined, error, failed) = self.fold_branches(sources, (expected, siblings), &blocks);
         let ty = match joined {
             _ if failed => None,
             Some((_, ty)) => {
@@ -250,11 +251,12 @@ impl Checker<'_> {
     /// The type that the `blocks` join to, and the branch it came from, whether a block has no
     /// type, and whether the join failed (reported). With an `any` branch, the join is that
     /// type (see `any_join_all`), whatever the order. Else the types fold in source order: a `T`
-    /// and a `T?` make a `T?`, and other types that differ are reported.
+    /// and a `T?` make a `T?`, and other types that differ are reported. Branches that do not
+    /// join by themselves join to an `any` type that `siblings` gives (see `seeded_join`).
     fn fold_branches(
         &mut self,
         sources: &[Branch<'_>],
-        expected: Option<Type>,
+        (expected, siblings): (Option<Type>, Option<Type>),
         blocks: &[CheckedBlock],
     ) -> (Option<(usize, Type)>, bool, bool) {
         let types: Vec<Option<Type>> = blocks.iter().map(block_type).collect();
@@ -262,38 +264,25 @@ impl Checker<'_> {
         let members: Vec<(usize, Type)> = (types.iter().enumerate())
             .filter_map(|(i, t)| t.filter(|&t| t != Type::NEVER).map(|t| (i, t)))
             .collect();
-        match self.any_join_all(&members) {
-            AnyJoin::Joined { first, ty } => return (Some((first, ty)), error, false),
-            AnyJoin::Fails { earlier, later } => {
-                let d = self.join_mismatch(sources, expected, earlier, later);
+        let folded = match self.any_join_all(&members) {
+            AnyJoin::Joined { first, ty } => Ok(Some((first, ty))),
+            AnyJoin::Fails { earlier, later } => Err((earlier, later)),
+            AnyJoin::NoAny => fold_in_order(&members),
+        };
+        match folded {
+            Ok(joined) => (joined, error, false),
+            Err(((first, _), _)) if let Some(ty) = self.seeded_join(siblings, &members) => {
+                (Some((first, ty)), error, false)
+            }
+            Err((earlier, later)) => {
+                // A hint that is no `any` type names the branch that leaves it, as an expected
+                // type does.
+                let want = expected.or_else(|| siblings.filter(|&ty| !is_target(ty)));
+                let d = self.join_mismatch(sources, want, earlier, later);
                 self.diagnostics.push(d);
-                return (None, error, true);
-            }
-            AnyJoin::NoAny => {}
-        }
-        let mut joined = None::<(usize, Type)>;
-        for &(i, t) in &members {
-            match joined {
-                None => joined = Some((i, t)),
-                // The side with more layers takes the other, one layer below it.
-                Some((_, j)) if j == t || j == Type::optional(t) => {}
-                Some((k, j)) if t == Type::optional(j) => joined = Some((k, t)),
-                Some((k, j)) => {
-                    let d = self.join_mismatch(sources, expected, (k, j), (i, t));
-                    self.diagnostics.push(d);
-                    return (joined, error, true);
-                }
+                (None, error, true)
             }
         }
-        // The join can grow past an earlier branch: each converts through one layer only.
-        if let Some((k, j)) = joined
-            && let Some(&(other, t)) = members.iter().find(|&&(_, t)| !fits(j, t))
-        {
-            let d = self.join_mismatch(sources, expected, (k, j), (other, t));
-            self.diagnostics.push(d);
-            return (joined, error, true);
-        }
-        (joined, error, false)
     }
 
     /// The mistake when the branch `first`, of type `first_ty`, and the later branch `other`,
@@ -390,6 +379,33 @@ impl Checker<'_> {
         }
     }
 }
+
+/// The type that the typed `members` join to in source order, and the branch it came from, or
+/// the two branches that do not join: a `T` and a `T?` make a `T?`, and other types that differ
+/// do not join.
+fn fold_in_order(members: &[(usize, Type)]) -> Result<Option<(usize, Type)>, Pair> {
+    let mut joined = None::<(usize, Type)>;
+    for &(i, t) in members {
+        match joined {
+            None => joined = Some((i, t)),
+            // The side with more layers takes the other, one layer below it.
+            Some((_, j)) if j == t || j == Type::optional(t) => {}
+            Some((k, j)) if t == Type::optional(j) => joined = Some((k, t)),
+            Some(earlier) => return Err((earlier, (i, t))),
+        }
+    }
+    // The join can grow past an earlier branch: each converts through one layer only.
+    if let Some((k, j)) = joined
+        && let Some(&other) = members.iter().find(|&&(_, t)| !fits(j, t))
+    {
+        return Err(((k, j), other));
+    }
+    Ok(joined)
+}
+
+/// Two members of a join, each an index and a type, that do not join: the earlier, then the
+/// later.
+type Pair = ((usize, Type), (usize, Type));
 
 /// What one branch of an `if` expects after the other, of type `ty`, when the `if` expects
 /// nothing: `ty` made optional, unless it is one or the branch is `exact`; `Error` after

@@ -1109,6 +1109,7 @@ impl Checker<'_> {
     ) -> Checked {
         let mut frame = LoopFrame::new(LoopKind::Loop, keyword, label.cloned(), expected);
         frame.quiet = self.quiet(span, expected);
+        frame.siblings = self.hinted(span, expected).1;
         let (mut checked, mut frame) = self.loop_body(frame, |c| c.block(body, None));
         self.join_deferred(&mut frame);
         if let Ok(checked) = &mut checked {
@@ -1133,9 +1134,10 @@ impl Checker<'_> {
     }
 
     /// The values of objects that did not join the first value of the loop (see `join_break`),
-    /// now that every `break` is known: each converts to the type of the loop, or is reported.
+    /// now that every `break` is known: each converts to the type of the loop, or to an `any`
+    /// type that the siblings of a hinted loop give (see `seeded_join`), or is reported.
     fn join_deferred(&mut self, frame: &mut LoopFrame) {
-        for (v, got) in std::mem::take(&mut frame.deferred) {
+        for (at_value, got) in std::mem::take(&mut frame.deferred) {
             let (first, at) = frame
                 .first
                 .expect("a loop should hold its first value before one waits");
@@ -1143,9 +1145,14 @@ impl Checker<'_> {
             // the value.
             if self.converts_to_any(got, first) {
                 self.instantiates = true;
+            } else if let Some(ty) = self.seeded_join(frame.siblings, &[(0, first), (1, got)]) {
+                frame.first = Some((ty, at));
+                frame.widened = true;
+                self.instantiates = true;
             } else {
+                // A value of an object reads no conversion from its expression.
                 let source = Some(MismatchSource::Break(at));
-                let d = self.mismatch_from(v.span, Some(&v), first, got, source);
+                let d = self.mismatch_from(at_value, None, first, got, source);
                 self.diagnostics.push(d);
                 frame.failed = true;
             }
@@ -1200,6 +1207,11 @@ impl Checker<'_> {
             .expected
             .map(|ty| (ty, None))
             .or_else(|| frame.first.map(|(ty, at)| (ty, Some(at))));
+        // An earlier value gives a hint, as the siblings of a hinted loop do.
+        let siblings = match hint {
+            Some((_, None)) => frame.siblings,
+            first => first.map(|(ty, _)| ty),
+        };
         let from = hint
             .and_then(|(_, first)| first)
             .map(|first| (v.span, first));
@@ -1210,7 +1222,9 @@ impl Checker<'_> {
             self.body.quiet_at = Some(v.span);
         }
         self.body.label_typo = typo.map(|name| name.span);
+        let outer_hint = self.pass_hint(Some(v.span), siblings);
         let checked = self.expr(v, hint.map(|(ty, _)| ty));
+        self.body.hint_at = outer_hint;
         self.body.label_typo = None;
         self.body.break_hint = outer;
         self.body.quiet_at = outer_quiet;
@@ -1233,10 +1247,12 @@ impl Checker<'_> {
                 let frame = self.frame(target);
                 frame.valued.get_or_insert(span);
                 let (expected, first) = (frame.expected, frame.first);
+                let hinted = frame.siblings.is_some();
                 if expected == Some(UNKNOWN) {
                     checked
                 } else {
-                    self.join_break((v, span), (checked, got), (expected, first), target)
+                    let want = (expected, hinted, first);
+                    self.join_break((v, span), (checked, got), want, target)
                 }
             }
         };
@@ -1250,17 +1266,20 @@ impl Checker<'_> {
     /// A value that fits the expected type keeps its own, as a block's value does. The values join
     /// as `if` branches do: a `T` and a `T?` make a `T?`. An object and an `any` type that it
     /// converts to make the `any` type. The values before it are converted at the loop's end when
-    /// the type grows.
+    /// the type grows. With `hinted`, `expected` is a hint (see `Body::hint_at`).
     fn join_break(
         &mut self,
         (v, span): (&ast::Expr, Span),
         (checked, got): (Checked, Type),
-        (expected, first): (Option<Type>, Option<(Type, Span)>),
+        (expected, hinted, first): (Option<Type>, bool, Option<(Type, Span)>),
         target: usize,
     ) -> Checked {
-        // A value that does not fit the expected type converts to it, or is the mismatch.
+        // A value that does not fit the expected type converts to it, or is the mismatch. No
+        // value converts to an `any` hint: the join of the values does.
         let (checked, got) = match expected {
-            Some(ty) if !fits(ty, got) => (self.against(v, checked, Some(ty), None).0, ty),
+            Some(ty) if !fits(ty, got) && (!hinted || !is_target(ty)) => {
+                (self.against(v, checked, Some(ty), None).0, ty)
+            }
             _ => (checked, got),
         };
         let value = checked?;
@@ -1281,7 +1300,7 @@ impl Checker<'_> {
             let objects = matches!(got.kind(), TypeKind::Class(..))
                 && matches!(first.kind(), TypeKind::Class(..) | TypeKind::Any(..));
             if objects {
-                self.frame(target).deferred.push((v.clone(), got));
+                self.frame(target).deferred.push((v.span, got));
                 return Ok(value);
             }
             return self
