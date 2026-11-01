@@ -4708,6 +4708,38 @@ fn a_mutable_array_local_should_now_and_then_hold_optional_arrays() {
     );
 }
 
+/// The new type stays rare. Over all seeds, a written `let mut` array type is new when it ends with
+/// `]?]`. It is old when it is a `[T]` where `T` is not an array or an optional: the source of the
+/// new type. The rule is one time in 8, so the new type must be fewer than a quarter of the old
+/// type. The rule `!= 0` instead of `== 0` gives 13 new and 26 old, and the right rule 3 and 47.
+#[test]
+fn a_mutable_array_local_should_rarely_hold_optional_arrays() {
+    let (mut new, mut old) = (0, 0);
+    for data in seeds() {
+        for line in generate(&data).program.lines() {
+            let Some(rest) = line.trim_start().strip_prefix("let mut ") else {
+                continue;
+            };
+            let Some((_, rest)) = rest.split_once(": [") else {
+                continue;
+            };
+            // `inner` is the written type without its first `[`.
+            let Some((inner, _)) = rest.split_once(" = ") else {
+                continue;
+            };
+            if inner.ends_with("]?]") {
+                new += 1;
+            } else if !inner.starts_with('[') && !inner.ends_with("?]") {
+                old += 1;
+            }
+        }
+    }
+    assert!(
+        new > 0 && new * 4 < old,
+        "{new} new and {old} old array lets"
+    );
+}
+
 /// A `Gen` over `data` that holds the class `K0`. `K0` has one `mut` field `g0` of type `field`,
 /// with a cap of 8. The local `v0` has type `local`: the object, or an optional of it.
 fn with_field(data: &[u8], field: Ty, local: Ty) -> Gen<'_> {
@@ -4743,8 +4775,8 @@ fn field_programs(field: &Ty, local: &Ty, write: impl Fn(&mut Gen<'_>)) -> Vec<S
         .collect()
 }
 
-/// How many of the first 256 inputs make a rewritten copy that starts with a `let` of a rewrite,
-/// for the statement that `write` writes on a `Gen` of `with_field`. The `let` of a nested
+/// How many of the first 256 inputs make a rewritten copy that starts with a `let` of a rewrite.
+/// The statement is the one that `write` writes on a `Gen` of `with_field`. The `let` of a nested
 /// statement goes inside it, so it does not count. The inputs choose the rewrites by their own
 /// bytes.
 fn lets_before(field: &Ty, local: &Ty, write: impl Fn(&mut Gen<'_>)) -> usize {
@@ -4871,10 +4903,10 @@ fn the_right_side_of_an_assignment_through_an_optional_should_stay_where_it_is()
     let optional = Ty::Optional(Box::new(object.clone()));
     let set = |g: &mut Gen<'_>| g.set_field();
     assert!(
-        lets_before(&Ty::I64, &object, set) > 0,
+        lets_before(&Ty::F64, &object, set) > 0,
         "no `let` goes before `v0.g0 = e`"
     );
-    assert_eq!(lets_before(&Ty::I64, &optional, set), 0);
+    assert_eq!(lets_before(&Ty::F64, &optional, set), 0);
 }
 
 /// A `string` field takes only `=` through `?.`, as it does without it.
