@@ -456,7 +456,7 @@ impl Checker<'_> {
             return None;
         };
         // A local cannot hide an alias of an optional type (it is reported).
-        (name.name.as_str() == "None" && matches!(resolved.body.kind(), TypeKind::Optional(_)))
+        (name.name == Symbol::NONE && matches!(resolved.body.kind(), TypeKind::Optional(_)))
             .then(|| bare && !self.aliases.infos[id].params.is_empty())
     }
 
@@ -651,7 +651,7 @@ impl Checker<'_> {
 
     /// Whether `name` is `Option`, or an alias of an optional type.
     pub(super) fn names_option(&mut self, name: Symbol) -> bool {
-        name.as_str() == "Option"
+        name == Symbol::OPTION
             || matches!(self.through(name), Via::To(through) if matches!(through.ty.kind(), TypeKind::Optional(_)))
     }
 
@@ -659,7 +659,7 @@ impl Checker<'_> {
     /// `Option`, or an alias of that type, whose fixed arguments hold: the alias's own parameters
     /// are the only types that `ty` may leave open.
     pub(super) fn names_option_at(&mut self, name: Symbol, ty: Type) -> bool {
-        name.as_str() == "Option"
+        name == Symbol::OPTION
             || matches!(self.through(name), Via::To(through)
                 if matches!(through.ty.kind(), TypeKind::Optional(_))
                     && type_meets(through.params.len(), through.ty, ty))
@@ -763,7 +763,7 @@ impl Checker<'_> {
         }
         // The value is `Option`'s, so a message names `Option`, not the alias.
         let option = ast::Ident {
-            name: Symbol::intern("Option"),
+            name: Symbol::OPTION,
             span: site.name.span,
         };
         let site = Site {

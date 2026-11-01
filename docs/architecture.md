@@ -112,6 +112,8 @@ no instantiation, so it does not find such a chain. `mono` also reports E0160
 for a payload that can be 4 GiB or more (`payload_limit.rs`) when the checker
 cannot measure it: an enum that holds an instance of a generic enum, or is one.
 The checker finds the error for the other enums, so `sisu check` reports those.
+`mono` reports E0163 when the program reaches more than 100,000 instances, and
+`sisu check` does not report it.
 
 **Checker** (`check/`, `tir.rs`). Resolves every name, types every expression
 and lowers sugar: `while`, `while let` and `for` become loops, `?.` and `??`
@@ -231,7 +233,9 @@ through `lang.rs`: `a == b` on a `T` that is a `Circle` with a written `Eq`
 calls `Circle.eq`. It also replaces each associated type with
 the type its conformance chose. It reports E0030 for a chain of more than 128
 choices, or a loop, that the checker's probe did not follow, and then gives no
-program. A method of an `extend` block that names an
+program. It counts each instance it makes and stops with E0163 when the count
+passes 100,000 (`INSTANCE_LIMIT`), because a chain of generic items can double
+the instances at each step. A method of an `extend` block that names an
 interface has the interface between its type and its name,
 `Celsius.Convert<Fahrenheit>.convert`, so two conformances may each hold a
 method of one name. `mir` and codegen see only concrete types, and a program
@@ -456,7 +460,11 @@ and every message, label, help and fix: a stage builds a `DiagnosticKind`, and
 the registry turns it into a `Diagnostic` with a stable code
 ([ADR 0013](adr/0013-diagnostics-have-stable-codes.md)). `diagnostic/render.rs`
 writes it in the style of `rustc`: the message, the `file:line:col`, and the
-source line with the code underlined. `diagnostic/json.rs` writes the same
+source line with the code underlined. Before it renders a long ASCII line with
+every span on it, it cuts the line to the bytes near the spans, so the renderer
+gets only those bytes; the text is the same as for the whole line. Each
+diagnostic still scans the line once for its checks (a `shortcut:` in
+`render.rs`). `diagnostic/json.rs` writes the same
 diagnostic as one JSON line, and `diagnostic/suggest.rs` finds the closest
 name for a did-you-mean fix. `report.rs` writes diagnostics and tool errors
 as text or JSON, counts them and ends with the summary. Before it writes one,

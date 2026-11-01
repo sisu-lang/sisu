@@ -104,9 +104,9 @@ impl Checker<'_> {
         call: Option<(&[ast::Arg], Span)>,
         through: Option<&Through>,
     ) -> Checked {
-        match (member.name.as_str(), call) {
-            ("Some", Some((args, _))) => self.some(span, site, Some(member), args, through),
-            ("None", None) if let Some(t) = through.filter(|t| !t.params.is_empty()) => {
+        match (member.name, call) {
+            (Symbol::SOME, Some((args, _))) => self.some(span, site, Some(member), args, through),
+            (Symbol::NONE, None) if let Some(t) = through.filter(|t| !t.params.is_empty()) => {
                 let sig = GenericSig {
                     name: site.name,
                     variant: Some(member),
@@ -127,7 +127,7 @@ impl Checker<'_> {
                 }
                 self.none(span, Some(found))
             }
-            ("None", None) => {
+            (Symbol::NONE, None) => {
                 let mut expected = site.expected;
                 if !site.written.is_empty() {
                     let param = [Symbol::intern("T")];
@@ -139,8 +139,8 @@ impl Checker<'_> {
                 }
                 self.none(span, expected)
             }
-            ("Some" | "None", _) => {
-                let payload = member.name.as_str() == "Some";
+            (Symbol::SOME | Symbol::NONE, _) => {
+                let payload = member.name == Symbol::SOME;
                 let (held, at) = match call {
                     Some((args, parens)) => (
                         !args.is_empty() || self.comment_in(&[parens.range()]),
