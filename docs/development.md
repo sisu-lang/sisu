@@ -656,7 +656,10 @@ $ target/debug/sisu build -e 'fn main() { print(1) }' -o one
 `sisu --version` prints `sisu <version>`. With `--verbose` (`-vV`), it adds the
 commit, the host and the LLVM version, which a bug report needs because Sisu
 has no releases. A wrong command line exits with 2, so it differs from a
-program that does not compile (1). `sisu help` and `sisu` alone print the usage.
+program that does not compile (1). When stderr cannot take the report, for
+example on a full disk, `sisu` exits with 1, and `run` does not start the
+program. A reader that stops early, as in `sisu check a.sisu 2>&1 | head -1`,
+is not an error. `sisu help` and `sisu` alone print the usage.
 
 `sisu` links every program with `libsisu_runtime_mimalloc.a`, or with
 `libsisu_runtime_system.a` for `--allocator system`, which it looks for next to
