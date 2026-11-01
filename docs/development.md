@@ -764,9 +764,10 @@ These flags run the pipeline up to one stage and stop there.
 | `sisu check file.sisu` | Only diagnostics; exits with code 1 if any is an error |
 | `sisu explain E0001` | The explanation of a diagnostic code, in any case; unknown codes exit with code 1 |
 
-`--timings` ends with an `other` line and a `total` line. `total` is the wall
-time from the start of the command to the end of its work. `other` is the rest
-of `total`: reading the file, printing the emitted stage, and the time between
+`--timings` does not stop the pipeline early: it only adds the `timings:` lines.
+It ends with an `other` line and a `total` line. `total` is the wall time from
+the start of the command to the end of its work. `other` is the rest of
+`total`: reading the file, printing the emitted stage, and the time between
 stages. This is `sisu check --timings selfhost/lexer.sisu`, on a release build:
 
 ```text

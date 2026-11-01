@@ -176,7 +176,7 @@ fn execute(mut reporter: Report, format: &Format, mode: Mode) -> ExitCode {
             input,
             level,
             rc_checks,
-            timings: _,
+            ..
         } => emit(
             &mut reporter,
             &stage,
@@ -185,13 +185,13 @@ fn execute(mut reporter: Report, format: &Format, mode: Mode) -> ExitCode {
             rc_checks,
             &mut timings,
         ),
-        Mode::Check { source, timings: _ } => run_check(&mut reporter, &source, &mut timings),
+        Mode::Check { source, .. } => run_check(&mut reporter, &source, &mut timings),
         Mode::Explain { code } => explain(&mut reporter, &code),
         Mode::Build {
             input,
             output,
             backend,
-            timings: _,
+            ..
         } => build(&mut reporter, &input, &output, &backend, &mut timings),
         // `run` finishes the reporter itself, before the program starts.
         Mode::Run {

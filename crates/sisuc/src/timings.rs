@@ -124,13 +124,13 @@ fn render(
         .iter()
         .map(|&(stage, time)| {
             let throughput = match (counts, stage) {
-                (Some((lines, tokens)), Stage::Lex) => format!(
-                    "  {lines} lines  {} lines/s  {tokens} tokens  {} tokens/s",
-                    rate(lines, time),
+                (Some((line_count, tokens)), Stage::Lex) => format!(
+                    "  {line_count} lines  {} lines/s  {tokens} tokens  {} tokens/s",
+                    rate(line_count, time),
                     rate(tokens, time)
                 ),
-                (Some((lines, _)), Stage::Parse | Stage::Check) => {
-                    format!("  {lines} lines  {} lines/s", rate(lines, time))
+                (Some((line_count, _)), Stage::Parse | Stage::Check) => {
+                    format!("  {line_count} lines  {} lines/s", rate(line_count, time))
                 }
                 _ => String::new(),
             };
@@ -143,8 +143,9 @@ fn render(
     lines
 }
 
-/// `count` per second of `time`: `-` when either is zero, an integer below 1000, and else with
-/// the first of `k`, `M` and `G` whose value, rounded to one decimal, is below 1000.
+/// `count` per second of `time`: `-` when either is zero, and an integer below 1000.
+/// Else the rate has the first of `k`, `M` and `G` whose value, rounded to one decimal, is below
+/// 1000.
 #[expect(
     clippy::cast_precision_loss,
     reason = "a count of a source file is far below 2^52, and the rate has one decimal"
@@ -159,9 +160,10 @@ fn rate(count: usize, time: Duration) -> String {
         return format!("{whole:.0}");
     }
     for (divisor, suffix) in [(1e3, 'k'), (1e6, 'M')] {
-        let scaled = per_second / divisor;
-        if (scaled * 10.0).round() < 10_000.0 {
-            return format!("{scaled:.1}{suffix}");
+        let text = format!("{:.1}", per_second / divisor);
+        // The text decides: "999.9" has 5 characters, and "1000.0" has 6.
+        if text.len() < 6 {
+            return format!("{text}{suffix}");
         }
     }
     format!("{:.1}G", per_second / 1e9)
@@ -233,6 +235,10 @@ mod tests {
         assert_eq!(rate(9_997, Duration::from_secs(10)), "1.0k");
         assert_eq!(rate(14_333, s), "14.3k");
         assert_eq!(rate(999_960, s), "1.0M");
+        assert_eq!(
+            rate(599_989_979, Duration::from_nanos(600_019_979_999)),
+            "999.9k"
+        );
         assert_eq!(rate(11_900_000, s), "11.9M");
         assert_eq!(rate(2_500_000_000, s), "2.5G");
     }

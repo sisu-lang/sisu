@@ -3175,9 +3175,10 @@ fn throughput<'a>(fields: &[&'a str]) -> Vec<&'a str> {
 }
 
 /// GIVEN the program `fn main() {`, `    print(1 + 2)`, `}` on 3 lines, which has 12 tokens
-/// WHEN `sisu check --timings` runs on it, from a file and with `-e`
+/// WHEN `sisu check --timings` runs on it
 /// THEN the lex line says `3 lines` and `12 tokens`
 /// AND the parse and check lines say `3 lines`
+/// AND the same holds when `sisu check --timings -e` runs on the same code
 #[test]
 fn timings_should_count_the_lines_and_tokens_of_the_users_file_only() {
     let code = "fn main() {\n    print(1 + 2)\n}\n";
@@ -3249,14 +3250,25 @@ fn emit_with_timings_should_report_the_stages_it_runs() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(out.status.code(), Some(0), "{stage}: {stderr}");
         assert_eq!(timing_names(&stderr), names, "{stage}: {stderr}");
+        // Five fields of time and percent; the lex line adds 8 of throughput, the parse and check
+        // lines 4.
+        for fields in timing_lines(&stderr) {
+            let extra = match fields[1] {
+                "lex" => 8,
+                "parse" | "check" => 4,
+                _ => 0,
+            };
+            assert_eq!(fields.len(), 5 + extra, "{stage}: {fields:?}");
+        }
     }
 }
 
 /// GIVEN a program with a type error
-/// WHEN `sisu check --timings` runs on it, and `sisu build --emit tir --timings`
+/// WHEN `sisu check --timings` runs on it
 /// THEN standard error has the diagnostic and `timings:` lines for lex, parse, prelude and check
-/// AND the timings come before the summary
 /// AND the exit code is 1
+/// AND the timings come before the summary
+/// AND the same holds when `sisu build --emit tir --timings` runs on it
 #[test]
 fn timings_should_report_the_stages_that_ran_when_the_check_fails() {
     let code = "fn main() {\n    let x: i64 = \"a\"\n}\n";
@@ -3280,10 +3292,10 @@ fn timings_should_report_the_stages_that_ran_when_the_check_fails() {
 }
 
 /// GIVEN a program that checks clean
-/// WHEN `sisu check --timings --format json` runs on it, and `sisu build --emit tir --timings
-/// --format json`
+/// WHEN `sisu check --timings --format json` runs on it
 /// THEN the exit code is 2
 /// AND standard error names both flags
+/// AND the same holds when `sisu build --emit tir --timings --format json` runs on it
 #[test]
 fn timings_with_json_format_should_be_a_usage_error() {
     let cases = [
