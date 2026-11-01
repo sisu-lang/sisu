@@ -336,9 +336,10 @@ It does not fail the job. The job never fails on a measured time.
 The table of the sweep is in the summary of the run. The artifact `scaling`
 holds `table.md` and `counts.json`. A sweep that stops early still writes the
 shapes that it measured, then a line `scaling: <message>`. To run the sweep on
-your machine, use `make scaling`. Each script has a total time bound: 300
-seconds for step 1 and 900 for the sweep. A script that runs over exits with
-code 1. The bound is a guard against a hang.
+your machine, use `make scaling`. In the job, each script has a total time
+bound: the flag `--time-bound` passes 300 seconds to step 1 and 900 to the
+sweep. A script that runs over exits with code 1. The bound is a guard
+against a hang. A local `make scaling` uses the default of the script.
 
 The scheduled run starts only from the default branch. After a change to the
 workflow, start it once by hand from the Actions tab. GitHub disables a

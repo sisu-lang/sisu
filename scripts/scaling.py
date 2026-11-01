@@ -39,8 +39,8 @@ STAGES = [
     ('mir', 'sisuc::mir::build'),
     ('codegen', 'sisuc::codegen::compile'),
 ]
-# The cases that are superlinear today: (shape, stage, issue). The pull request that fixes a case
-# removes its row.
+# The cases that are superlinear today, and the cases just under the rule that have a known cause:
+# (shape, stage, issue). The pull request that fixes a case removes its row.
 KNOWN = [
     ('array literal depth', 'check', 344),
     ('expression depth', 'check', 367),
@@ -463,7 +463,7 @@ def main(argv):
     for line in lines:
         print(f'scaling: {line}')
         if os.environ.get('GITHUB_ACTIONS') == 'true':
-            print(f'::warning title=Known superlinear case::{line.removeprefix(KNOWN_PREFIX)}')
+            print(f'::warning title=Known case::{line.removeprefix(KNOWN_PREFIX)}')
     for line in failures:
         print(f'scaling: {line}', file=sys.stderr)
     return code

@@ -429,7 +429,7 @@ class ScalingTest(unittest.TestCase):
         with self.subTest('annotation'), mock.patch.object(sc, 'KNOWN', KNOWN_344):
             shapes = {'array literal depth': {'check': growths(2.29, 2.45, 2.77)}}
             _, out, _ = self.counts_run(shapes, GITHUB_ACTIONS='true')
-            self.assertIn('::warning title=Known superlinear case::array literal depth, check (#344)\n', out)
+            self.assertIn('::warning title=Known case::array literal depth, check (#344)\n', out)
             _, out, _ = self.counts_run(shapes, GITHUB_ACTIONS='false')
             self.assertNotIn('::warning', out)
 
