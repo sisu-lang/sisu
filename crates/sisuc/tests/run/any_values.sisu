@@ -159,6 +159,17 @@ fn main() {
     let rested: (any Display)? = rest
     print(rested ?? 9) // 9
 
+    // In an array literal, a `Some` beside an `any` value converts its payload, as in an `if`.
+    let row = [lone, Some(2), None]
+    for item in row {
+        print(item ?? 0) // 1, 2, 0
+    }
+    let flat: any Shape = Slab.Plain
+    let shapes = [Some(Circle(r: 1.0)), flat, None]
+    for shape in shapes {
+        print((shape ?? flat).area()) // 3.0, 2.0, 2.0
+    }
+
     // An enum that conforms to `Shape`, called through the table.
     let plain: any Shape = Slab.Plain
     let label: any Shape = Slab.Label("abc")

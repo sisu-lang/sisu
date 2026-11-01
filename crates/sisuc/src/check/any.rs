@@ -83,6 +83,9 @@ impl Checker<'_> {
     ) -> Option<Type> {
         let bound = self.bound(written, None)?;
         let any = Type::intern(TypeKind::Any(bound.interface, bound.args));
+        // A program that names an `any` type needs the layout of its table, which only `mono`
+        // gives, whether or not a value converts to it.
+        self.instantiates = true;
         if let ast::TypeKind::Applied(applied) = &written.kind {
             let ats = applied.args.iter().map(|arg| arg.span).collect();
             self.check_arguments(bound, any, ats);

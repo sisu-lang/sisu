@@ -77,10 +77,18 @@ impl Checker<'_> {
         let (ranks, optional): (Vec<Rank>, Vec<bool>) =
             elements.iter().map(|e| self.sibling_ranked(e)).unzip();
         let outer = self.body.quiet_at;
+        // The first typed element that is an `any` type, widened by the later ones, is a hint
+        // for the elements after it, as the first branch of an `if` is for the others.
+        let mut anchor: Option<Type> = None;
         for (i, e) in elements.iter().enumerate() {
             if ranks[i] == Rank::Concrete {
                 self.body.quiet_at = if quiet { Some(e.span) } else { outer };
-                slots[i] = Some(self.value(e, None));
+                let checked = match anchor {
+                    Some(any) => self.value_beside(e, any),
+                    None => self.value(e, None),
+                };
+                anchor = self.widen_anchor(anchor, type_of(&checked));
+                slots[i] = Some(checked);
             }
         }
         self.body.quiet_at = outer;
@@ -88,12 +96,12 @@ impl Checker<'_> {
         for (i, e) in elements.iter().enumerate() {
             if ranks[i] == Rank::Literal {
                 // An `optional` element may be `None`, which the literal's type does not hold.
-                let want = if optional[i] {
-                    as_optional(literal)
-                } else {
-                    literal
-                };
-                slots[i] = Some(self.value(e, Some(want)));
+                // Beside an `any` element, its payload converts to the `any` type.
+                slots[i] = Some(match anchor {
+                    Some(any) if optional[i] => self.value_beside(e, any),
+                    _ if optional[i] => self.value(e, Some(as_optional(literal))),
+                    _ => self.value(e, Some(literal)),
+                });
             }
         }
         let mut failed = slots.iter().flatten().any(|c| type_of(c).is_none());
@@ -102,7 +110,10 @@ impl Checker<'_> {
             let typed: Vec<(usize, Type)> = (slots.iter().enumerate())
                 .filter_map(|(i, slot)| Some((i, slot.as_ref().and_then(type_of)?)))
                 .collect();
-            (joined, failed) = self.fold_elements(elements, &typed);
+            joined = self.join_objects(&mut slots, &typed);
+            if joined.is_none() {
+                (joined, failed) = self.fold_elements(elements, &typed);
+            }
         }
         let Some(joined) = joined.filter(|_| !failed) else {
             let waiting = elements
@@ -147,6 +158,82 @@ impl Checker<'_> {
             })
             .collect();
         self.array(span, element, checked, mismatched)
+    }
+
+    /// The optional `any` type that the `typed` elements join to when a `Some` of an object is in
+    /// the way: such an element joins an `any` element as the object, and the join is optional, as
+    /// the branches of an `if` do. Then the `Some` of each such slot is taken off, for `widen` to
+    /// convert and wrap. `None` when the elements join without this, or do not join with it.
+    fn join_objects(
+        &mut self,
+        slots: &mut [Option<Checked>],
+        typed: &[(usize, Type)],
+    ) -> Option<Type> {
+        if !typed
+            .iter()
+            .any(|&(_, ty)| matches!(ty.kind(), TypeKind::Any(..)))
+        {
+            return None;
+        }
+        if matches!(
+            self.any_join_all(typed),
+            AnyJoin::Joined { .. } | AnyJoin::NoAny
+        ) {
+            return None;
+        }
+        let object = |slot: &Option<Checked>| match slot {
+            Some(Ok(e)) => match &e.kind {
+                tir::ExprKind::Wrap(inner)
+                    if matches!(inner.ty.kind(), TypeKind::Class(..) | TypeKind::Any(..)) =>
+                {
+                    Some(inner.ty)
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        let objects: Vec<(usize, Type)> = typed
+            .iter()
+            .map(|&(i, ty)| (i, object(&slots[i]).unwrap_or(ty)))
+            .collect();
+        if objects == typed {
+            return None;
+        }
+        let AnyJoin::Joined { ty } = self.any_join_all(&objects) else {
+            return None;
+        };
+        for &(i, _) in typed {
+            if object(&slots[i]).is_some()
+                && let Some(Ok(e)) = &mut slots[i]
+                && let tir::ExprKind::Wrap(inner) =
+                    std::mem::replace(&mut e.kind, tir::ExprKind::None)
+            {
+                *e = *inner;
+            }
+        }
+        self.instantiates = true;
+        Some(as_optional(ty))
+    }
+
+    /// The value `e`, typed beside an element of the `any` type `any`: with `any` made optional as
+    /// a hint (see `Body::hint_at`), as the branch of an `if` after an `any` branch is. So the
+    /// payload of a `Some` converts to `any`.
+    fn value_beside(&mut self, e: &ast::Expr, any: Type) -> Checked {
+        let outer = self.pass_hint(Some(e.span), Some(any));
+        let checked = self.value(e, Some(as_optional(any)));
+        self.body.hint_at = outer;
+        checked
+    }
+
+    /// `anchor`, the `any` type that the elements before give, widened by an element of type
+    /// `got`: the first element that is an `any` type, or the join of the two.
+    fn widen_anchor(&mut self, anchor: Option<Type>, got: Option<Type>) -> Option<Type> {
+        let bare = |ty: Type| matches!(ty.kind(), TypeKind::Any(..)).then_some(ty);
+        match (anchor, got) {
+            (None, Some(ty)) => bare(ty),
+            (Some(any), Some(ty)) => Some(self.any_join(any, ty).and_then(bare).unwrap_or(any)),
+            (anchor, None) => anchor,
+        }
     }
 
     /// The type that the typed `elements` join to, each an index and a type, and whether the join

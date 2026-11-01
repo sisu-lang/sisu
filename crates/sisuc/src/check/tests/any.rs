@@ -548,6 +548,35 @@ fn a_conversion_should_make_the_program_go_through_mono() {
     }
 }
 
+/// A written `any` type needs the layout of its table, which only `mono` gives, so a program that
+/// names one and converts nothing still goes through `mono`.
+#[test]
+fn a_written_any_type_should_make_the_program_go_through_mono() {
+    for (row, src) in [
+        ("a local", "fn main() {\n    let o: (any Shape)? = None\n}"),
+        ("an array", "fn main() {\n    let xs: [any Shape] = []\n}"),
+        ("a parameter", "fn f(s: any Shape) {}\nfn main() {}"),
+        ("a field", "class H {\n    s: (any Shape)?\n}\nfn main() {}"),
+        ("a payload", "enum E {\n    A(any Shape)\n}\nfn main() {}"),
+        (
+            "an alias",
+            "type S = any Shape\nfn main() {\n    let o: S? = None\n}",
+        ),
+        (
+            "a type argument",
+            "fn main() {\n    let xs: [[any Shape]] = []\n}",
+        ),
+    ] {
+        let (program, ds) = checked(&format!("{DECLS}{src}"));
+        assert!(
+            ds.iter().all(|d| d.code().severity() != Severity::Error),
+            "{row}: {ds:?}"
+        );
+        let program = program.expect("a program that checks has a typed tree");
+        assert!(program.instantiates, "{row}");
+    }
+}
+
 /// An object and an `any` type that it converts to join to the `any` type, at every site that
 /// joins: the arms of an `if` and a `match`, the `break` values of a loop, an array literal. The
 /// values that came before convert too.
@@ -1304,10 +1333,6 @@ fn a_join_of_an_any_value_and_an_optional_should_stay_optional() {
             "fn main() {\n    let d: any Display = 1\n    let r = if true { d } else { None }\n    print(r ?? 9)\n}",
         ),
         (
-            "`??` of an optional `any` value and `None`",
-            "fn main() {\n    let o: (any Display)? = None\n    let k = o ?? None\n    let m: (any Display)? = k\n    print(m ?? 9)\n}",
-        ),
-        (
             "`??` of two optional `any` values",
             "fn main() {\n    let a: (any Display)? = None\n    let b: (any Display)? = None\n    let c = a ?? b\n    print(c ?? 9)\n}",
         ),
@@ -1335,4 +1360,73 @@ fn a_join_of_an_any_value_and_an_optional_should_stay_optional() {
     ] {
         codes_row(row, src, &[(Code::PrintsOptional, (4, 11))]);
     }
+}
+
+/// An array literal joins a `Some` with an `any` element as the branches of an `if` do: after an
+/// `any` element, the payload of a `Some` converts and the elements are optional; a `Some` of an
+/// object before an `any` element joins as the object. A `Some` of another value before it, and
+/// an optional local, are the mistake, in the `if` too.
+#[test]
+fn an_array_literal_should_join_a_some_with_an_any_element_as_an_if_does() {
+    for (row, src) in [
+        (
+            "`Some` of a number after an `any` value",
+            "fn main() {\n    let d: any Display = 1\n    let r = [d, Some(2)]\n}",
+        ),
+        (
+            "`Some` of a string after an `any` value",
+            "fn main() {\n    let d: any Display = 1\n    let r = [d, Some(\"a\")]\n}",
+        ),
+        (
+            "`Some` of a class after an `any` value",
+            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let r = [s, Some(Circle(r: 2.0))]\n}",
+        ),
+        (
+            "`Some` of a class before an `any` value",
+            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let r = [Some(Circle(r: 2.0)), s]\n}",
+        ),
+    ] {
+        clean_row(row, &format!("{DECLS}{src}"));
+    }
+    rows_after(&[
+        (
+            "`Some` of a number before an `any` value, as in an `if`",
+            "fn main() {\n    let d: any Display = 1\n    let r = [Some(2), d]\n}",
+            vec![(Code::Mismatch, (3, 14))],
+        ),
+        (
+            "an optional number after an `any` value",
+            "fn main() {\n    let d: any Display = 1\n    let x: i64? = Some(5)\n    let r = [d, x]\n}",
+            vec![(Code::Mismatch, (4, 17))],
+        ),
+    ]);
+}
+
+/// An optional beside an `any` value does not go into a bare `any I` where no type is written: a
+/// join and a comparison report it, and `??` keeps its result optional. A written `any I` boxes
+/// the optional.
+#[test]
+fn an_optional_beside_an_any_value_should_stay_a_mistake_where_no_type_is_written() {
+    for (row, src, expected) in [
+        (
+            "`break` of an optional after an `any` value",
+            "fn main() {\n    let d: any Display = 1\n    let x: i64? = Some(5)\n    let c = true\n    let r = loop {\n        if c { break d }\n        break x\n    }\n    print(r)\n}",
+            vec![(Code::Mismatch, (7, 15))],
+        ),
+        (
+            "`??` of an optional `any` value and an optional number",
+            "fn main() {\n    let x: i64? = Some(5)\n    let o: (any Display)? = None\n    let r = o ?? x\n    print(r)\n}",
+            vec![(Code::Mismatch, (4, 18))],
+        ),
+        (
+            "`==` of an `any` value and an optional number",
+            "fn main() {\n    let d: any Display = 1\n    let x: i64? = Some(5)\n    let r = d == x\n    print(r)\n}",
+            vec![(Code::CannotCompare, (4, 13))],
+        ),
+    ] {
+        codes_row(row, src, &expected);
+    }
+    clean(
+        "fn main() {\n    let x: i64? = Some(5)\n    let o: (any Display)? = None\n    let r: any Display = o ?? x\n    print(r)\n}",
+    );
 }
