@@ -1,0 +1,8 @@
+error[E0075]: base prefixes are lower case
+ --> E0075-after-dot.sisu:3:13
+  |
+3 |     print(x.0XFFFFFFFFFFFFFFFFFFFF)
+  |             ^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0075

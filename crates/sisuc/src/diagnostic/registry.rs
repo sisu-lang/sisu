@@ -320,8 +320,14 @@ pub(crate) enum DiagnosticKind {
     /// A float literal at `at` that rounds to infinity in `f64`.
     FloatOutOfRange { at: Span },
     /// The base prefix at `at` (`0` and `prefix`, an upper case `X`, `B` or `O`). `safe` is
-    /// false when the lower case literal may still be rejected, as a bare 2^63 is.
-    BasePrefixUpperCase { prefix: char, safe: bool, at: Span },
+    /// false when the lower case literal may still be rejected, as a bare 2^63 is. It is `None`
+    /// after a `.` or `?.`, where the parser takes only a name, so no change of the prefix gives
+    /// a clean program.
+    BasePrefixUpperCase {
+        prefix: char,
+        safe: Option<bool>,
+        at: Span,
+    },
     /// The base prefix at `at` (`0` and `prefix`) with no digits after it.
     BasePrefixWithoutDigits { prefix: char, at: Span },
     /// The `digit`, at `at`, in a literal of base `radix` (2, 8 or 16), which is not a digit there.
@@ -2345,14 +2351,18 @@ impl From<DiagnosticKind> for Diagnostic {
                 safe,
                 at,
             } => {
-                Diagnostic::coded(code, at, "base prefixes are lower case").with_fix(Fix {
-                    message: "write the prefix in lower case".to_string(),
-                    safe,
-                    edits: vec![Edit {
-                        span: Span::new(at.end() - 1, at.end()),
-                        replacement: prefix.to_ascii_lowercase().to_string(),
-                    }],
-                })
+                let d = Diagnostic::coded(code, at, "base prefixes are lower case");
+                match safe {
+                    Some(safe) => d.with_fix(Fix {
+                        message: "write the prefix in lower case".to_string(),
+                        safe,
+                        edits: vec![Edit {
+                            span: Span::new(at.end() - 1, at.end()),
+                            replacement: prefix.to_ascii_lowercase().to_string(),
+                        }],
+                    }),
+                    None => d,
+                }
             }
             DiagnosticKind::BasePrefixWithoutDigits { prefix, at } => {
                 Diagnostic::coded(code, at, format!("`0{prefix}` needs at least one digit"))
