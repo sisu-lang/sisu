@@ -9,15 +9,32 @@ use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct Symbol(u32);
 
-#[derive(Default)]
+/// The prelude's names, in the order that the interner holds them first. The constants of
+/// `Symbol` are indices into this list.
+const PRELUDE: [&str; 6] = ["Option", "Some", "None", "Ok", "Err", "Result"];
+
 struct Interner {
     ids: FxHashMap<&'static str, Symbol>,
     names: Vec<&'static str>,
 }
 
+impl Interner {
+    /// An interner that holds the prelude's names, at the ids that the constants of `Symbol` give.
+    fn seeded() -> Self {
+        let mut ids = FxHashMap::default();
+        for (id, &name) in (0..).zip(&PRELUDE) {
+            ids.insert(name, Symbol(id));
+        }
+        Interner {
+            ids,
+            names: PRELUDE.to_vec(),
+        }
+    }
+}
+
 /// Every name interned in this process. Each text is leaked so that `as_str` can lend it for
 /// the rest of the process; a run interns each distinct name of its source once.
-static INTERNER: LazyLock<Mutex<Interner>> = LazyLock::new(Mutex::default);
+static INTERNER: LazyLock<Mutex<Interner>> = LazyLock::new(|| Mutex::new(Interner::seeded()));
 
 fn interner() -> MutexGuard<'static, Interner> {
     // `intern` changes the tables only after its last fallible step, so a poisoned lock still
@@ -25,7 +42,16 @@ fn interner() -> MutexGuard<'static, Interner> {
     INTERNER.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// The prelude's names, which the checker compares as symbols and so does not lock the interner
+/// for. Each is its text's index in `PRELUDE`.
 impl Symbol {
+    pub(crate) const OPTION: Symbol = Symbol(0);
+    pub(crate) const SOME: Symbol = Symbol(1);
+    pub(crate) const NONE: Symbol = Symbol(2);
+    pub(crate) const OK: Symbol = Symbol(3);
+    pub(crate) const ERR: Symbol = Symbol(4);
+    pub(crate) const RESULT: Symbol = Symbol(5);
+
     pub(crate) fn intern(name: &str) -> Symbol {
         let mut interner = interner();
         if let Some(&symbol) = interner.ids.get(name) {
@@ -71,5 +97,22 @@ mod tests {
         assert_ne!(a, b);
         assert_eq!((a.as_str(), b.as_str()), ("symbol_test_a", "symbol_test_b"));
         assert_eq!(format!("{a} {b:?}"), "symbol_test_a \"symbol_test_b\"");
+    }
+
+    #[test]
+    fn prelude_constants_should_hold_their_texts() {
+        let constants = [
+            (Symbol::OPTION, "Option"),
+            (Symbol::SOME, "Some"),
+            (Symbol::NONE, "None"),
+            (Symbol::OK, "Ok"),
+            (Symbol::ERR, "Err"),
+            (Symbol::RESULT, "Result"),
+        ];
+        assert_eq!(constants.len(), PRELUDE.len());
+        for (symbol, text) in constants {
+            assert_eq!(symbol.as_str(), text);
+            assert_eq!(Symbol::intern(text), symbol);
+        }
     }
 }

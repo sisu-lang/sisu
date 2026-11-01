@@ -84,7 +84,7 @@ impl Checker<'_> {
             }
             // Here `Some` is the prelude's. A user item named `Some` is reported, and the two arms
             // above call it.
-            _ if callee.name.as_str() == "Some" => self.some(span, site, None, args, None),
+            _ if callee.name == Symbol::SOME => self.some(span, site, None, args, None),
             // `Ok` and `Err` are the prelude's, and no user item can take their names.
             _ if let Some((id, _)) = self.result_variant(callee.name) => {
                 self.enum_path(span, id, callee, Some((args, callee.span)), site, None)
@@ -450,7 +450,7 @@ impl Checker<'_> {
         let start = self.diagnostics.len();
         let path = !types.is_empty() && self.path_method(receiver, method);
         // `Option` is generic, as an enum with the variants `Some` and `None` would be.
-        let option_variant = matches!(method.name.as_str(), "Some" | "None")
+        let option_variant = matches!(method.name, Symbol::SOME | Symbol::NONE)
             && (option_written(receiver) == Some(false)
                 || matches!(receiver.kind, ExprKind::Name(name) if self.names_option(name)));
         if path && (option_variant || self.generic_variant(receiver, method).is_some()) {

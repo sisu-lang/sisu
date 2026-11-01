@@ -911,7 +911,7 @@ pub(crate) fn check<'src>(
     let mut checker = Checker::new(program, source, &prelude.text);
     checker.parse_errors = error_spans(parsed);
     let option =
-        |item: &&ast::Item| matches!(item, ast::Item::Enum(e) if e.name.name.as_str() == "Option");
+        |item: &&ast::Item| matches!(item, ast::Item::Enum(e) if e.name.name == Symbol::OPTION);
     let items: Vec<&ast::Item> = (program.items.iter())
         .chain(prelude.program.items.iter().filter(|item| !option(item)))
         .collect();
@@ -1900,7 +1900,7 @@ impl Checker<'_> {
                     .then_some(ty)
             }
             // `Option<T>` is `T?`: the prelude's declaration of it makes no enum.
-            _ if name.as_str() == "Option" => {
+            _ if name == Symbol::OPTION => {
                 let args = self.type_args(&ident(), &[Symbol::intern("T")], args, angles)?;
                 Some(optional_of(args.get()[0]))
             }
@@ -2149,7 +2149,7 @@ impl Checker<'_> {
             .into();
         }
         if built_in_type(name.as_str()).is_some()
-            || name.as_str() == "Option"
+            || name == Symbol::OPTION
             || self.class_ids.contains_key(&name)
             || self.enum_ids.contains_key(&name)
             || self.aliases.names.contains_key(&name)

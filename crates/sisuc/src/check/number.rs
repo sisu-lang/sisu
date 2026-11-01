@@ -10,6 +10,7 @@ use super::{Checked, Checker, Declared, Poisoned, UNKNOWN};
 use crate::ast;
 use crate::diagnostic::{Definition, DiagnosticKind, MathFix, NanFix};
 use crate::source::Span;
+use crate::symbol::Symbol;
 use crate::tir::{self, MathOp, Type, TypeKind};
 
 /// Each method of `f64`: its operation and its parameter count. Every parameter is an `f64`. The
@@ -136,7 +137,7 @@ impl Checker<'_> {
                 self.stray(call.map_or(&[], |(args, _)| args));
                 return Some(Err(Poisoned::error()));
             }
-            None if name.as_str() == "Option" => {
+            None if name == Symbol::OPTION => {
                 return Some(self.option_path(span, site, member, call, None));
             }
             None => {}

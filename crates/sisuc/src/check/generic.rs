@@ -2441,8 +2441,8 @@ impl Checker<'_> {
         let name = sig.name;
         // `Some(...)`, or `Option.Some(...)`. A user variant `Some`, which E0026 reports, is
         // neither.
-        let option = sig.variant.is_none_or(|_| name.name.as_str() == "Option");
-        if option && sig.variant.unwrap_or(name).name.as_str() == "Some" {
+        let option = sig.variant.is_none_or(|_| name.name == Symbol::OPTION);
+        if option && sig.variant.unwrap_or(name).name == Symbol::SOME {
             let (callee, at) = match sig.variant {
                 Some(variant) => (
                     format!("{}.{}", name.name, variant.name),
@@ -2752,7 +2752,7 @@ impl Checker<'_> {
                         ..CallShape::default()
                     }
                 } else if !safe
-                    && method.name.as_str() == "Some"
+                    && method.name == Symbol::SOME
                     && (option_written(receiver) == Some(false)
                         || matches!(receiver.kind, ast::ExprKind::Name(n) if self.names_option(n)))
                 {
@@ -3210,7 +3210,7 @@ impl Checker<'_> {
             }
             // `Some<T>(x: T) -> T?`, and the prelude's `Ok` and `Err`, which no user item can
             // take the name of.
-            (None, None) if name.as_str() == "Some" => CallShape {
+            (None, None) if name == Symbol::SOME => CallShape {
                 generic: true,
                 shaped: matches!(args, [arg] if arg.label.is_none()),
                 open: false,
@@ -3547,7 +3547,7 @@ impl Checker<'_> {
             _ => return false,
         };
         // No item can take the name of the optional type, whose members are its variants.
-        if name.as_str() == "Option" {
+        if name == Symbol::OPTION {
             return true;
         }
         if let Some(&Declared::Known(id)) = self.enum_ids.get(&name) {
