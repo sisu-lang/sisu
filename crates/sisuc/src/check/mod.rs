@@ -302,6 +302,8 @@ struct LoopFrame {
     /// The type of the first value whose type is neither `never` nor `Error`, and its `break`'s
     /// span; under an expected `T?`, a `T?` value after `T` ones replaces it.
     first: Option<(Type, Span)>,
+    /// The span of the value that first set `first`.
+    first_value: Span,
     /// Whether `first` went from a `T` to a `T?`, so the `T` values before need wrapping.
     widened: bool,
     /// The values of objects that did not join the first one yet, by span, with their types. A
@@ -338,6 +340,7 @@ impl LoopFrame {
             broken: false,
             expected,
             first: None,
+            first_value: keyword,
             bare: None,
             valued: None,
             failed: false,

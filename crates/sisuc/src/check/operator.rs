@@ -1,6 +1,6 @@
 //! Operators: arithmetic, comparison, equality, `is` and `??`.
 
-use super::any::widen;
+use super::any::{is_target, widen};
 use super::expr::{fits, if_some, int_literal, literal_type, local, operator, path, typed};
 use super::generic::{Rank, mismatched};
 use super::interface::Operation;
@@ -918,7 +918,12 @@ impl Checker<'_> {
             Some(ty) => {
                 // An object and an `any` type that it converts to join to the `any` type.
                 let Some(joined) = self.any_join(payload, ty) else {
-                    let d = self.mismatch(rhs.span, Some(rhs), payload, ty);
+                    // A class payload leaves an `any` default, as a member leaves a join.
+                    let d = if is_target(ty) && matches!(payload.kind(), TypeKind::Class(..)) {
+                        self.leaves_any(lhs.span, None, ty, payload)
+                    } else {
+                        self.mismatch(rhs.span, Some(rhs), payload, ty)
+                    };
                     self.diagnostics.push(d);
                     return Err(Poisoned::error());
                 };

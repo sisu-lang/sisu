@@ -10,7 +10,7 @@ use super::unused_names::Used;
 use super::{Checked, CheckedBlock, Checker, Poisoned, block_type, wrap};
 use crate::ast;
 use crate::conformance::{any_closure, interface_closure};
-use crate::diagnostic::{DiagnosticKind, NotAny, NotConformForm};
+use crate::diagnostic::{Diagnostic, DiagnosticKind, NotAny, NotConformForm};
 use crate::source::Span;
 use crate::tir::{self, InterfaceId, Type, TypeArgs, TypeKind};
 
@@ -25,14 +25,17 @@ thread_local! {
 pub(super) enum AnyJoin {
     /// No member is an `any` type: the caller joins as before.
     NoAny,
-    /// The members join to `ty`, the widest `any` type, first met at member `first`.
-    Joined { first: usize, ty: Type },
+    /// The members join to `ty`, the widest `any` type.
+    Joined { ty: Type },
     /// Two members do not join: the later one, an index and its type, does not convert to the
     /// earlier one, or the other way round when the `any` type is the later one.
     Fails {
         earlier: (usize, Type),
         later: (usize, Type),
     },
+    /// The `any` types join to `ty`, the widest, and `member`, an index and a type that is no
+    /// `any` type, does not convert to it.
+    Leaves { ty: Type, member: (usize, Type) },
 }
 
 impl AnyJoin {
@@ -319,13 +322,7 @@ impl Checker<'_> {
             return Err(checked);
         }
         if !self.conforms(got, interface, args) {
-            let asks = self.any_written.get(&target).copied();
-            self.report(DiagnosticKind::NotConform {
-                ty: self.type_name(got),
-                interface: self.bound_text(interface, args),
-                at,
-                form: NotConformForm::Any { asks },
-            });
+            self.report(self.not_conform(at, got, target));
             return Ok((Err(Poisoned::error()), true));
         }
         if !self.converts_now(got) {
@@ -438,28 +435,74 @@ impl Checker<'_> {
         }
         for &(other, t) in members {
             if !is_target(t) && t != ty && !self.converts_to_any(t, ty) {
-                return AnyJoin::fails((first, ty), (other, t));
+                return AnyJoin::Leaves {
+                    ty,
+                    member: (other, t),
+                };
             }
         }
-        AnyJoin::Joined { first, ty }
+        AnyJoin::Joined { ty }
     }
 
-    /// The type that the typed `members` of a hinted join join to with `siblings`, the type of
-    /// its siblings (see `Body::hint_at`), for members that do not join by themselves: the
-    /// widest `any` type of them all, when `siblings` is one and every member converts to it.
-    /// `if c { a } else { if d { C() } else { D() } }` joins the inner `C` and `D` so.
+    /// `any_join_all` of the typed `members` of a hinted join with `siblings`, the type of its
+    /// siblings (see `Body::hint_at`), for members that do not join by themselves. With
+    /// `siblings` an `any` type, the members join to the widest `any` type of them all, or one
+    /// of them leaves it. `if c { a } else { if d { C() } else { D() } }` joins the inner `C` and
+    /// `D` so. Else, or when two `any` types do not join, it is `NoAny`: the members' own
+    /// failure is the mistake.
     pub(super) fn seeded_join(
         &mut self,
         siblings: Option<Type>,
         members: &[(usize, Type)],
-    ) -> Option<Type> {
-        let seed = siblings.filter(|&ty| is_target(ty))?;
+    ) -> AnyJoin {
+        let Some(seed) = siblings.filter(|&ty| is_target(ty)) else {
+            return AnyJoin::NoAny;
+        };
         let mut with = members.to_vec();
-        // No member has this index; only the joined type is read.
+        // No member has this index, and only a member that is no `any` type leaves the join.
         with.push((usize::MAX, seed));
         match self.any_join_all(&with) {
-            AnyJoin::Joined { ty, .. } => Some(ty),
-            AnyJoin::NoAny | AnyJoin::Fails { .. } => None,
+            AnyJoin::Fails { .. } => AnyJoin::NoAny,
+            join => join,
+        }
+    }
+
+    /// The mistake when the value at `at`, of type `got`, leaves a join whose `any` type is
+    /// `want` (`AnyJoin::Leaves`): a class that does not conform, or else a mismatch.
+    pub(super) fn leaves_any(
+        &mut self,
+        at: Span,
+        source: Option<&ast::Expr>,
+        want: Type,
+        got: Type,
+    ) -> Diagnostic {
+        let target = match want.kind() {
+            TypeKind::Optional(payload) => payload,
+            _ => want,
+        };
+        match (got.kind(), target.kind()) {
+            (TypeKind::Class(..), TypeKind::Any(interface, args))
+                if !self.conforms(got, interface, args) =>
+            {
+                self.not_conform(at, got, target).into()
+            }
+            _ => self.mismatch(at, source, want, got),
+        }
+    }
+
+    /// The value at `at`, of type `got`, does not conform to the interface of `target`, an `any`
+    /// type.
+    fn not_conform(&self, at: Span, got: Type, target: Type) -> DiagnosticKind {
+        let TypeKind::Any(interface, args) = target.kind() else {
+            unreachable!("the target should be an `any` type");
+        };
+        DiagnosticKind::NotConform {
+            ty: self.type_name(got),
+            interface: self.bound_text(interface, args),
+            at,
+            form: NotConformForm::Any {
+                asks: self.any_written.get(&target).copied(),
+            },
         }
     }
 

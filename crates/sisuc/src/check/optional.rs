@@ -52,10 +52,13 @@ impl Checker<'_> {
                 let checked = self.value(e, Some(payload));
                 self.body.hint_at = outer_hint;
                 match type_of(&checked) {
-                    // An `any` argument wider than an `any` hint keeps its type: the join converts
-                    // the other values to it.
+                    // An object that does not convert to the hint keeps its own type: the join
+                    // converts it to an `any` type, or the other values to it, or reports it.
                     Some(got)
-                        if hinted && got != payload && self.any_join(payload, got) == Some(got) =>
+                        if hinted
+                            && got != payload
+                            && matches!(got.kind(), TypeKind::Class(..) | TypeKind::Any(..))
+                            && !self.converts_to_any(got, payload) =>
                     {
                         (checked, optional_of(got))
                     }

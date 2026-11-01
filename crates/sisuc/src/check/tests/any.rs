@@ -614,11 +614,6 @@ fn a_join_should_stay_a_mismatch_where_neither_side_converts_to_the_other() {
             vec![(Code::Mismatch, (2, 56))],
         ),
         (
-            "a nested join under an `any` hint, with a class that does not conform",
-            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let r = if true { s } else { if false { Circle(r: 1.0) } else { Cube(s: 1.0) } }\n}",
-            vec![(Code::Mismatch, (3, 69))],
-        ),
-        (
             "two classes that both conform, as `break` values",
             "fn main() {\n    let r = loop {\n        if true { break Circle(r: 1.0) }\n        break Rect(w: 1.0)\n    }\n}",
             vec![(Code::Mismatch, (4, 15))],
@@ -634,28 +629,109 @@ fn a_join_should_stay_a_mismatch_where_neither_side_converts_to_the_other() {
             vec![(Code::Mismatch, (4, 34))],
         ),
         (
+            "two `any` values of unrelated interfaces, as `break` values",
+            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let k: any Named = Cube(s: 1.0)\n    let r = loop {\n        if true { break s }\n        break k\n    }\n}",
+            vec![(Code::Mismatch, (6, 15))],
+        ),
+        (
             "two `any` values of unrelated interfaces, in an array literal",
             "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let k: any Named = Cube(s: 1.0)\n    let r = [s, k]\n}",
             vec![(Code::Mismatch, (4, 17))],
         ),
         (
-            "an `any` value and a class that does not conform, as `break` values",
-            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let r = loop {\n        if true { break s }\n        break Cube(s: 1.0)\n    }\n}",
-            vec![(Code::Mismatch, (5, 15))],
-        ),
-        (
             "an optional object and an `any` value",
             "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let o: Circle? = None\n    let r = if true { o } else { s }\n}",
-            vec![(Code::Mismatch, (4, 34))],
-        ),
-        (
-            "an `any` value and an object that does not conform to its interface",
-            "fn main() {\n    let s: any Solid = Cube(s: 1.0)\n    let r = if true { s } else { Circle(r: 1.0) }\n}",
-            vec![(Code::Mismatch, (3, 34))],
+            vec![(Code::Mismatch, (4, 23))],
         ),
     ] {
         codes_after(row, src, &expected);
     }
+}
+
+/// A join with an `any` type in reach, its own or its siblings', reports the member that does not
+/// convert to the widest `any` type, whatever the order of the members and at every site: a class
+/// that does not conform gets `NotConform`, as a value does where the `any` type is expected.
+#[test]
+fn a_join_should_report_the_member_that_leaves_its_any_type() {
+    let sites = [
+        (
+            "a `match`",
+            "match n {\n        0 => {1}\n        1 => {2}\n        _ => {3}\n    }",
+        ),
+        (
+            "an `else if` chain",
+            "if c { {1} } else if d { {2} } else { {3} }",
+        ),
+        (
+            "a nested `if`",
+            "if c { {1} } else { if d { {2} } else { {3} } }",
+        ),
+        ("an array literal", "[{1}, {2}, {3}]"),
+        (
+            "a `loop`",
+            "loop {\n        if c { break {1} }\n        if d { break {2} }\n        break {3}\n    }",
+        ),
+        (
+            "the default of `??`",
+            "o ?? if c { {1} } else if d { {2} } else { {3} }",
+        ),
+    ];
+    let members = ["s", "Circle(r: 1.0)", "Cube(s: 1.0)"];
+    for (site, shape) in sites {
+        for order in [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ] {
+            let [x, y, z] = order.map(|i| members[i]);
+            let join = shape.replace("{1}", x).replace("{2}", y).replace("{3}", z);
+            let src = format!(
+                "fn main() {{\n    let c = true\n    let d = false\n    let n = 1\n    let s: any Shape = Circle(r: 1.0)\n    let o: (any Shape)? = None\n    let r = {join}\n}}"
+            );
+            let cube = src
+                .find("Cube")
+                .expect("the program should hold the `Cube`");
+            let line = src[..cube].matches('\n').count() + 1;
+            let col = cube - src[..cube].rfind('\n').map_or(0, |i| i + 1) + 1;
+            let row = format!("{site}: {x}, {y}, {z}");
+            codes_after(&row, &src, &[(Code::NotConform, (line, col))]);
+        }
+    }
+    rows_after(&[
+        (
+            "a `Some` of a class that does not conform, after an `any` value",
+            "fn main() {\n    let x: any Solid = Cube(s: 1.0)\n    let r = if true { x } else { Some(Circle(r: 1.0)) }\n}",
+            vec![(Code::NotConform, (3, 34))],
+        ),
+        (
+            "a `Some` of a value that is no object, after an `any` value: it converts as under an expected type",
+            "fn main() {\n    let x: any Solid = Cube(s: 1.0)\n    let r = if true { x } else { Some(5) }\n}",
+            vec![(Code::NotConform, (3, 39))],
+        ),
+        (
+            "a branch with no value, after an `any` value and a class",
+            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let r = if true { s } else if false { Rect(w: 1.0) } else { print(1) }\n}",
+            vec![(Code::NoValue, (3, 65))],
+        ),
+        (
+            "an optional class that does not conform, then an `any` default",
+            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let o: Cube? = None\n    let r = o ?? s\n}",
+            vec![(Code::NotConform, (4, 13))],
+        ),
+        (
+            "an optional `any` value, then a default that does not conform",
+            "fn main() {\n    let o: (any Shape)? = None\n    let r = o ?? Cube(s: 1.0)\n}",
+            vec![(Code::NotConform, (3, 18))],
+        ),
+        (
+            "an `any` value, then an object that does not conform to its interface",
+            "fn main() {\n    let s: any Solid = Cube(s: 1.0)\n    let r = if true { s } else { Circle(r: 1.0) }\n}",
+            vec![(Code::NotConform, (3, 34))],
+        ),
+    ]);
 }
 
 /// An `any` value written where an interface belongs is reported as what it is, with the
@@ -689,10 +765,12 @@ fn an_interface_value_should_be_named_as_one_where_an_interface_belongs() {
 }
 
 /// The join does not depend on the order of its members: every order of a class, a second class
-/// and an `any` value, of a class, an `any` value and a `None`, and of two `any` values and an
-/// object, joins at every site that joins. An `else if` chain nests its joins, and the join is the
-/// `any` type, not its optional, where no member is optional. A chain of joins that each hold an
-/// `any` member is checked once for each branch.
+/// and an `any` value, of a class, an `any` value and a `None`, of two `any` values and an
+/// object, of two `any` values and a `Some` of an object, of an `any` value, a `Some` of an
+/// object and a `None`, and of an `any` value, a `Some` of an `any` value that converts to it
+/// and an object, joins at every site that joins. An `else if` chain nests its joins, and
+/// the join is the `any` type, not its optional, where no member is optional. A chain of joins
+/// that each hold an `any` member is checked once for each branch.
 #[test]
 fn a_join_should_not_depend_on_the_order_of_its_members() {
     let sites = [
@@ -710,27 +788,50 @@ fn a_join_should_not_depend_on_the_order_of_its_members() {
             "loop {\n        if c { break {1} }\n        if d { break {2} }\n        break {3}\n    }",
         ),
     ];
+    let (array, loops) = (sites[2].0, sites[3].0);
     // A `None` joins without an expected type everywhere but in a loop, whose values do not. A
-    // set with no `None` is read where its `any` type is expected.
-    let sets: [([&str; 3], &str, &str, bool); 4] = [
+    // `Some` of an object joins an `any` type only as a branch: an array literal and a loop do
+    // not join a `T?` with an `any` value. A set with no `None` is read where its `any` type is
+    // expected. Each set lists the sites where it does not join.
+    let sets: [([&str; 3], &str, &str, &[&str]); 7] = [
         (
             ["Circle(r: 1.0)", "Rect(w: 1.0)", "s"],
             "",
             "\n    let t: any Shape = r",
-            true,
+            &[],
         ),
-        (["Circle(r: 1.0)", "s", "None"], ": (any Shape)?", "", true),
-        (["Circle(r: 1.0)", "s", "None"], "", "", false),
+        (["Circle(r: 1.0)", "s", "None"], ": (any Shape)?", "", &[]),
+        (["Circle(r: 1.0)", "s", "None"], "", "", &[loops]),
         (
             ["x", "Cube(s: 1.0)", "n2"],
             "",
             "\n    let t: any Named = r",
-            true,
+            &[],
+        ),
+        (
+            ["x", "Some(Tag())", "n2"],
+            "",
+            "\n    let t: (any Named)? = r",
+            &[array, loops],
+        ),
+        (
+            ["s", "Some(Circle(r: 1.0))", "None"],
+            "",
+            "\n    let t: (any Shape)? = r",
+            &[array, loops],
+        ),
+        (
+            ["n2", "Some(x)", "Cube(s: 1.0)"],
+            "",
+            "\n    let t: (any Named)? = r",
+            &[array, loops],
         ),
     ];
+    // `Tag` conforms to `Named` only, so it does not convert to `x`, an `any Solid`.
+    let tag = "class Tag: Named {\n    fn name(self) -> string { \"tag\" }\n}\n";
     for (site, shape) in sites {
-        for (members, ann, read, in_loop) in sets {
-            if !in_loop && site == "a `loop`" {
+        for (members, ann, read, skip) in sets {
+            if skip.contains(&site) {
                 continue;
             }
             for order in [
@@ -746,7 +847,10 @@ fn a_join_should_not_depend_on_the_order_of_its_members() {
                 let src = format!(
                     "fn main() {{\n    let c = true\n    let d = false\n    let n = 1\n    let s: any Shape = Circle(r: 1.0)\n    let x: any Solid = Cube(s: 1.0)\n    let n2: any Named = x\n    let r{ann} = {join}{read}\n}}"
                 );
-                clean_row(&format!("{site}: {x}, {y}, {z}"), &format!("{DECLS}{src}"));
+                clean_row(
+                    &format!("{site}: {x}, {y}, {z}"),
+                    &format!("{DECLS}{tag}{src}"),
+                );
             }
         }
     }

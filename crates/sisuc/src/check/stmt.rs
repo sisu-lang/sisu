@@ -2,7 +2,7 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::any::{is_target, widen};
+use super::any::{AnyJoin, is_target, widen};
 use super::array::optional_array;
 use super::expr::{fits, local};
 use super::generic::Ahead;
@@ -1134,29 +1134,60 @@ impl Checker<'_> {
     }
 
     /// The values of objects that did not join the first value of the loop (see `join_break`),
-    /// now that every `break` is known: each converts to the type of the loop, or to an `any`
-    /// type that the siblings of a hinted loop give (see `seeded_join`), or is reported.
+    /// now that every `break` is known: they join it as `if` branches do, also to an `any` type
+    /// that the siblings of a hinted loop give (see `seeded_join`), or one is reported.
     fn join_deferred(&mut self, frame: &mut LoopFrame) {
-        for (at_value, got) in std::mem::take(&mut frame.deferred) {
-            let (first, at) = frame
-                .first
-                .expect("a loop should hold its first value before one waits");
-            // The loop grew to this type when a later value made it, so `wrap_breaks` converts
-            // the value.
-            if self.converts_to_any(got, first) {
+        let deferred = std::mem::take(&mut frame.deferred);
+        let Some((first, at)) = frame.first.filter(|_| !deferred.is_empty()) else {
+            return;
+        };
+        // The first value is member 0, and each deferred value its place after it.
+        let members: Vec<(usize, Type)> = std::iter::once((0, first))
+            .chain((1..).zip(deferred.iter().map(|&(_, t)| t)))
+            .collect();
+        let span = |i: usize| match i.checked_sub(1) {
+            Some(i) => deferred[i].0,
+            None => frame.first_value,
+        };
+        let join = match self.any_join_all(&members) {
+            joined @ AnyJoin::Joined { .. } => joined,
+            failed => match self.seeded_join(frame.siblings, &members) {
+                seeded @ (AnyJoin::Joined { .. } | AnyJoin::Leaves { .. }) => seeded,
+                AnyJoin::NoAny | AnyJoin::Fails { .. } => failed,
+            },
+        };
+        // A value of an object reads no conversion from its expression.
+        let d = match join {
+            AnyJoin::Joined { ty } => {
+                // The loop grew to this type, so `wrap_breaks` converts the values.
+                if ty != first {
+                    frame.first = Some((ty, at));
+                    frame.widened = true;
+                }
                 self.instantiates = true;
-            } else if let Some(ty) = self.seeded_join(frame.siblings, &[(0, first), (1, got)]) {
-                frame.first = Some((ty, at));
-                frame.widened = true;
-                self.instantiates = true;
-            } else {
-                // A value of an object reads no conversion from its expression.
-                let source = Some(MismatchSource::Break(at));
-                let d = self.mismatch_from(at_value, None, first, got, source);
-                self.diagnostics.push(d);
-                frame.failed = true;
+                return;
             }
-        }
+            AnyJoin::Leaves {
+                ty,
+                member: (i, got),
+            } => self.leaves_any(span(i), None, ty, got),
+            AnyJoin::Fails {
+                earlier: (_, want),
+                later: (i, got),
+            } => self.mismatch_from(span(i), None, want, got, Some(MismatchSource::Break(at))),
+            // Objects that join to no `any` type: each is not the first value's.
+            AnyJoin::NoAny => {
+                for &(at_value, got) in &deferred {
+                    let source = Some(MismatchSource::Break(at));
+                    let d = self.mismatch_from(at_value, None, first, got, source);
+                    self.diagnostics.push(d);
+                }
+                frame.failed = true;
+                return;
+            }
+        };
+        self.diagnostics.push(d);
+        frame.failed = true;
     }
 
     /// The loop body open at `at` in `self.body.loops`.
@@ -1284,7 +1315,9 @@ impl Checker<'_> {
         };
         let value = checked?;
         let Some((first, at)) = first else {
-            self.frame(target).first = Some((got, span));
+            let frame = self.frame(target);
+            frame.first = Some((got, span));
+            frame.first_value = v.span;
             return Ok(value);
         };
         // Without an expected type, a `T` and a `T?` do not join.
@@ -1296,9 +1329,9 @@ impl Checker<'_> {
             self.any_join(first, got)
         };
         let Some(joined) = joined else {
-            // An object after an object: a later `any` value can join them both.
-            let objects = matches!(got.kind(), TypeKind::Class(..))
-                && matches!(first.kind(), TypeKind::Class(..) | TypeKind::Any(..));
+            // Objects and `any` values: a later `any` value can join them all.
+            let object = |ty: Type| matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Any(..));
+            let objects = object(got) && object(first);
             if objects {
                 self.frame(target).deferred.push((v.span, got));
                 return Ok(value);

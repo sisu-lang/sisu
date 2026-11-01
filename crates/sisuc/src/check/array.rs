@@ -162,7 +162,7 @@ impl Checker<'_> {
             c.diagnostics.push(d);
         };
         match self.any_join_all(typed) {
-            AnyJoin::Joined { ty, .. } => {
+            AnyJoin::Joined { ty } => {
                 self.instantiates = true;
                 return (Some(ty), false);
             }
@@ -171,6 +171,14 @@ impl Checker<'_> {
                 later: (at, got),
             } => {
                 report(self, at, want, got);
+                return (None, true);
+            }
+            AnyJoin::Leaves {
+                ty,
+                member: (at, got),
+            } => {
+                let d = self.leaves_any(elements[at].span, Some(&elements[at]), ty, got);
+                self.diagnostics.push(d);
                 return (None, true);
             }
             AnyJoin::NoAny => {}

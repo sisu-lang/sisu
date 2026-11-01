@@ -264,4 +264,33 @@ fn main() {
         }
     }
     print(r.v()) // 7
+
+    // A `Some` of an object that does not convert to the hint keeps its type, and the join
+    // converts it to the wider `any` type of a later branch. A `None` joins too.
+    let r = if c2 { j } else if cond { Some(C()) } else { a }
+    print(or_minus(r)) // 42
+    let r = if c2 { Some(C()) } else if cond { j } else { a }
+    print(or_minus(r)) // 5
+    let r = if c2 { a } else if c2 { j } else { Some(C()) }
+    print(or_minus(r)) // 42
+    let r = match n {
+        0 => j
+        1 => Some(C())
+        _ => a
+    }
+    print(or_minus(r)) // 42
+    let r = match n2 {
+        0 => Some(C())
+        1 => j
+        _ => a
+    }
+    print(or_minus(r)) // 42
+    let r = match n2 {
+        0 => Some(C())
+        1 => a
+        _ => None
+    }
+    print(or_minus(r)) // -1
+    let r = if c2 { None } else if cond { Some(C()) } else { a }
+    print(or_minus(r)) // 42
 }
