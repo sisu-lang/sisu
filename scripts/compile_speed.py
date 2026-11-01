@@ -56,9 +56,10 @@ class Deadline:
     def run(self, cmd, what, **kwargs):
         """Runs `cmd` with the time that is left as its timeout.
 
-        It captures each of stdout and stderr as text, unless `kwargs` gives that stream. On a
-        timeout, it kills the whole process group and raises Fail. It also raises Fail when the
-        program is not found or its exit code is not 0, unless `check=False` is given.
+        It captures each of stdout and stderr as text, unless `kwargs` gives that stream. After
+        every command it kills the process group and waits for it, so that no child is left.
+        It raises Fail on a timeout, when the program is not found, and when the exit code is
+        not 0 (unless `check=False` is given).
         """
         check = kwargs.pop('check', True)
         left = self.end - self.clock()
@@ -79,24 +80,29 @@ class Deadline:
         try:
             out, err = proc.communicate(timeout=left)
         except subprocess.TimeoutExpired:
-            kill_group(proc)
             raise Fail(f'{what}: ran over the time bound') from None
-        except BaseException:
+        finally:
             kill_group(proc)
-            raise
-        if proc.returncode != 0:
-            kill_group(proc)
-            if check:
-                if isinstance(err, bytes):
-                    err = err.decode(errors='replace')
-                lines = (err or '').splitlines()[:STDERR_LINES]
-                raise Fail('\n'.join([f'{what}: {shown} exited with code {proc.returncode}',
-                                      *lines]))
+        if check and proc.returncode != 0:
+            if isinstance(err, bytes):
+                err = err.decode(errors='replace')
+            lines = (err or '').splitlines()[:STDERR_LINES]
+            raise Fail('\n'.join([f'{what}: {shown} {exit_text(proc.returncode)}', *lines]))
         return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
+def exit_text(code):
+    """Says how a command ended: its exit code, or the signal that stopped it."""
+    if code >= 0:
+        return f'exited with code {code}'
+    try:
+        return f'was stopped by {signal.Signals(-code).name}'
+    except ValueError:
+        return f'was stopped by signal {-code}'
+
+
 def kill_group(proc):
-    """Kills the process group of `proc` and waits for it, so that no child is left."""
+    """Kills the process group of `proc`, and waits for `proc` and its pipes."""
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
@@ -198,7 +204,7 @@ def warnings(stderr):
 
 
 def check_no_include(path, text):
-    """Stops when the C++ unit has an `#include`: a header would add the library to parse.
+    """Stops when the C++ unit has an `#include` or `%:include`: a header adds the library to parse.
 
     The match runs on the text without block comments, and with each line that ends in a
     backslash joined to the next line. The message has the first physical line of the directive.
@@ -213,7 +219,7 @@ def check_no_include(path, text):
         if line.endswith('\\'):
             joined += line[:-1]
             continue
-        if re.match(r'\s*#\s*include\b', joined + line):
+        if re.match(r'\s*(#|%:)\s*include\b', joined + line):
             raise Fail(f'{path}:{first}: the C++ unit may not include a header: '
                        f'{original[first - 1].strip()}')
         first, joined = 0, ''
@@ -238,6 +244,8 @@ def check_style(units_dir, deadline):
             print(f'skipped: the {NAMES[lang]} style check, {cmd[0]} is not on PATH')
             continue
         r = deadline.run([*cmd, str(path)], f'{NAMES[lang]} style check', check=False)
+        if r.returncode < 0:
+            raise Fail(f'{NAMES[lang]} style check: {cmd[0]} {exit_text(r.returncode)}')
         if r.returncode != 0 or (lang == 'go' and r.stdout.strip()):
             raise Fail(f'{NAMES[lang]}: {path} is not in the style of {cmd[0]}')
 

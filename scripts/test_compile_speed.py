@@ -112,12 +112,32 @@ class CompileSpeed(unittest.TestCase):
              str(self.units), '--out', str(self.tmp / 'out'), '--time-bound', time_bound, *args],
             env=env, capture_output=True, text=True, check=False, timeout=timeout)
 
-    def kill_stub_sleep(self):
-        """Kills the process that the stub in the time-bound test left, if the script did not."""
+    def gone(self, pid):
+        """True when the process `pid` ends within 5 seconds."""
+        for _ in range(50):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            # A killed child that nobody has waited for yet is a zombie.
+            try:
+                if Path(f'/proc/{pid}/stat').read_text().rsplit(') ', 1)[1][0] == 'Z':
+                    return True
+            except (FileNotFoundError, ProcessLookupError):
+                # The process ended between the two reads.
+                return True
+            time.sleep(0.1)
+        return False
+
+    def kill_pidfile(self, path):
+        """Kills the process whose pid is in `path`, if a test left it."""
         try:
-            os.kill(int((self.tmp / 'pid').read_text()), signal.SIGKILL)
+            os.kill(int(path.read_text()), signal.SIGKILL)
         except (OSError, ValueError):
             pass
+
+    def kill_stub_sleep(self):
+        self.kill_pidfile(self.tmp / 'pid')
 
     def log_lines(self):
         log = self.tmp / 'log'
@@ -130,7 +150,7 @@ class CompileSpeed(unittest.TestCase):
         THEN it exits with code 1
         AND it names Rust, the size and the two outputs
         """
-        for output, named in (('46\\n', ('45', '46')), ('45', ())):
+        for output, named in (('46\\n', ('45', '46')), ('45', ()), ('45\\r\\n', ())):
             with self.subTest(output=output):
                 env = stubs(self.tmp, rustc={'output': output})
                 r = self.run_script('--sizes', '1', '--check-only', env=env)
@@ -178,17 +198,19 @@ class CompileSpeed(unittest.TestCase):
         """
         head = 'extern "C" int printf(const char*, ...);\n\n'
         tail = '\nlong long runXX() { return 45; }\n'
-        for label, directive in (('plain', '#include <vector>'),
-                                 ('comment in the directive', '#/**/ include <vector>'),
-                                 ('comment over lines', '/* a\nb */ #include <vector>'),
-                                 ('line splice', '#inc\\\nlude <vector>')):
+        # (label, the text of the directive, its first line, the physical line that the message shows)
+        rows = (('plain', '#include <vector>', 3, '#include <vector>'),
+                ('comment in the directive', '#/**/ include <vector>', 3, '#/**/ include <vector>'),
+                ('comment over lines', '/* a\nb */ #include <vector>', 4, 'b */ #include <vector>'),
+                ('line splice', '#inc\\\nlude <vector>', 3, '#inc\\'),
+                ('digraph', '%:include <vector>', 3, '%:include <vector>'))
+        for label, directive, line, shown in rows:
             with self.subTest(label):
                 (self.units / 'unit.cpp').write_text(head + directive + tail)
                 r = self.run_script('--sizes', '1', '--check-only', env=stubs(self.tmp))
                 self.assertEqual(r.returncode, 1)
-                # The directive starts on line 3 or, after a two-line comment, on line 4.
-                line = 4 if label == 'comment over lines' else 3
                 self.assertIn(f'unit.cpp:{line}', r.stderr)
+                self.assertIn(shown, r.stderr)
                 self.assertNotIn('Traceback', r.stderr)
 
     def test_check_only_should_check_agreement_and_time_nothing(self):
@@ -230,22 +252,7 @@ class CompileSpeed(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn('Rust, size 1: ran over the time bound', r.stderr)
         pid = int((self.tmp / 'pid').read_text())
-        gone = False
-        for _ in range(50):
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
-                gone = True
-            else:
-                # A killed child that nobody has waited for yet is a zombie.
-                try:
-                    gone = Path(f'/proc/{pid}/stat').read_text().rsplit(') ', 1)[1][0] == 'Z'
-                except FileNotFoundError:
-                    gone = True
-            if gone:
-                break
-            time.sleep(0.1)
-        self.assertTrue(gone, f'process {pid} is still running')
+        self.assertTrue(self.gone(pid), f'process {pid} is still running')
 
     def test_deadline_should_give_each_command_the_time_left(self):
         """
@@ -257,25 +264,30 @@ class CompileSpeed(unittest.TestCase):
         timeouts = []
 
         class FakePopen:
+            pid = 4242
+
             def __init__(self, cmd, **kwargs):
                 self.returncode = 0
 
             def communicate(self, timeout=None):
-                timeouts.append(timeout)
-                now[0] += 4
+                # The call without a timeout is the wait after the kill of the group.
+                if timeout is not None:
+                    timeouts.append(timeout)
+                    now[0] += 4
                 return '', ''
 
         deadline = compile_speed.Deadline(10, clock=lambda: now[0])
-        with mock.patch.object(compile_speed.subprocess, 'Popen', FakePopen):
+        with mock.patch.object(compile_speed.subprocess, 'Popen', FakePopen), \
+                mock.patch.object(compile_speed.os, 'killpg'):
             deadline.run(['a'], 'first')
             deadline.run(['b'], 'second')
         self.assertEqual(timeouts, [10, 6])
 
     def test_deadline_should_kill_and_wait_for_the_group_on_every_failure(self):
         """
-        GIVEN a command that times out, is interrupted, or exits with a code that is not 0
+        GIVEN a command that times out, is interrupted, exits with a code that is not 0, or exits
         WHEN `Deadline.run` runs it
-        THEN it kills the process group of the command, waits for it, and then raises
+        THEN it kills the process group of the command, waits for it, and then raises or returns
         """
         timeout = subprocess.TimeoutExpired(['a'], 1)
         # (label, what the first communicate does, exit code, run arguments, expected error)
@@ -284,6 +296,7 @@ class CompileSpeed(unittest.TestCase):
             ('interrupt', KeyboardInterrupt(), 0, {}, KeyboardInterrupt),
             ('failed exit', ('', 'bad\n'), 1, {}, compile_speed.Fail),
             ('failed exit with check off', ('', 'bad\n'), 1, {'check': False}, None),
+            ('clean exit', ('', ''), 0, {}, None),
         )
         for label, first, code, kwargs, error in cases:
             with self.subTest(label):
@@ -311,20 +324,21 @@ class CompileSpeed(unittest.TestCase):
                             deadline.run(['a'], 'what', **kwargs)
                 killpg.assert_called_once_with(4242, signal.SIGKILL)
                 self.assertEqual(len(calls), 2, calls)
-        # A clean exit leaves the group alone.
-        with mock.patch.object(compile_speed.subprocess, 'Popen') as popen, \
-                mock.patch.object(compile_speed.os, 'killpg') as killpg:
-            popen.return_value.communicate.return_value = ('', '')
-            popen.return_value.returncode = 0
-            compile_speed.Deadline(10).run(['a'], 'what')
-        killpg.assert_not_called()
+        # A clean exit that leaves a child with no pipe: the child ends before `run` returns.
+        pidfile = self.tmp / 'child-pid'
+        self.addCleanup(self.kill_pidfile, pidfile)
+        compile_speed.Deadline(10).run(
+            ['/bin/sh', '-c', f'/bin/sleep 300 >/dev/null 2>&1 & echo $! > {pidfile}'], 'what')
+        pid = int(pidfile.read_text())
+        self.assertTrue(self.gone(pid), f'process {pid} is still running')
 
-    def test_failing_compiler_should_stop_the_script_with_its_stderr(self):
+    def test_failure_should_stop_the_script_with_a_message_and_no_traceback(self):
         """
-        GIVEN a C++ compiler that is on `PATH` and exits with code 1
+        GIVEN a compiler that exits with code 1, a program that fails, a tool that a signal stops,
+        a path that cannot be used, or stderr that is not text
         WHEN `scripts/compile_speed.py` runs
         THEN it exits with code 1
-        AND stderr names C++, the command and the first lines of the compiler's stderr
+        AND stderr starts with `compile_speed:` and names the tool or path, and has no traceback
         """
         env = stubs(self.tmp, clangxx={'stderr': 'error: no', 'fail': True})
         r = self.run_script('--sizes', '1', '--check-only', env=env)
@@ -337,6 +351,7 @@ class CompileSpeed(unittest.TestCase):
         noexec.chmod(0o644)
         regular = self.tmp / 'regular'
         regular.write_text('')
+        killed = '#!/bin/sh\nkill -9 $$\n'
         garbage = '#!/bin/sh\nprintf "\\377" >&2\nexit 1\n'
         # A compiler stub whose program exits 3 and writes to stderr: the bytes of a program are not text.
         broken_program = ('#!/bin/sh\nout=\nprev=\nfor a in "$@"; do [ "$prev" = -o ] && out=$a;'
@@ -344,6 +359,8 @@ class CompileSpeed(unittest.TestCase):
                           '/bin/chmod +x "$out"\n')
         cases = (
             ('program that exits 3', {'rustc': broken_program}, (), 'boom'),
+            ('compiler stopped by a signal', {'clangxx': killed}, (), 'SIGKILL'),
+            ('formatter stopped by a signal', {'rustfmt': killed}, (), 'SIGKILL'),
             ('bytes that are not text', {'clangxx': garbage}, (), 'C++'),
             ('sisu without the execute bit', {}, ('--sisu', str(noexec)), 'Sisu'),
             ('out that names a file', {}, ('--out', str(regular)), str(regular)),
@@ -356,6 +373,8 @@ class CompileSpeed(unittest.TestCase):
                 self.assertTrue(r.stderr.startswith('compile_speed: '), r.stderr)
                 self.assertIn(named, r.stderr)
                 self.assertNotIn('Traceback', r.stderr)
+                self.assertNotIn('code -9', r.stderr)
+                self.assertNotIn('style of', r.stderr)
 
     def test_missing_formatter_should_skip_only_its_style_check(self):
         """
