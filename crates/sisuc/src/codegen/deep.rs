@@ -28,16 +28,16 @@ pub(super) const DEPTH_LIMIT: u64 = 256;
 
 #[cfg(test)]
 thread_local! {
-    /// How many parts the walks of this module have read on this thread: a field of a class
-    /// that `cycle_fields` gives, a payload field that `enum_frames` takes as a part, and an
-    /// element that `recursing` takes from an array.
-    pub(super) static FIELD_READS: Cell<usize> = const { Cell::new(0) };
+    /// How many parts the walks of this module have read on this thread. A part is a field of a
+    /// class that `cycle_fields` gives. It is also a payload field that `enum_frames` takes, and
+    /// an element that `recursing` takes from an array.
+    pub(super) static PART_READS: Cell<usize> = const { Cell::new(0) };
 }
 
-/// Counts one part read for `FIELD_READS`; nothing in a build without tests.
+/// Counts one part read for `PART_READS`; nothing in a build without tests.
 fn count_read() {
     #[cfg(test)]
-    FIELD_READS.set(FIELD_READS.get() + 1);
+    PART_READS.set(PART_READS.get() + 1);
 }
 
 /// The drop decisions that `Codegen` has made so far. Each is made once for each type, so the

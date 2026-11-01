@@ -4818,21 +4818,21 @@ fn drop_weight_should_follow_a_chain_of_enums_longer_than_the_stack() {
 fn weight_reads(src: &str) -> usize {
     let mut reads = 0;
     with_codegen(src, |codegen| {
-        deep::FIELD_READS.set(0);
+        deep::PART_READS.set(0);
         for id in 0..codegen.program.classes.len() {
             let class = Type::intern(TypeKind::Class(ClassId(id), TypeArgs::NONE));
             codegen.counts(class);
             codegen.drop_weight(class);
         }
-        reads = deep::FIELD_READS.get();
+        reads = deep::PART_READS.get();
     });
     reads
 }
 
-/// Codegen asks `counts` for each array type of a program, and a generic function can build one
-/// array level for each function, so the parser's limit on the nesting of a type does not bound
-/// the levels. Each level of `[[...[i64]...]]` must be decided once. The test asks for the levels
-/// from the outermost to the innermost, as the drop functions are defined, and the other way.
+/// Codegen asks `counts` for each array type of a program. A generic function can build one array
+/// level for each function. So the parser's limit on the nesting of a type does not bound the
+/// levels. Each level of `[[...[i64]...]]` must be decided once. The test asks for the levels from
+/// the outermost to the innermost, as the drop functions are defined, and the other way.
 #[test]
 fn counts_should_read_each_level_of_nested_arrays_once() {
     let reads = |levels: usize, outermost_first: bool| {
@@ -4846,14 +4846,14 @@ fn counts_should_read_each_level_of_nested_arrays_once() {
             if outermost_first {
                 arrays.reverse();
             }
-            deep::FIELD_READS.set(0);
+            deep::PART_READS.set(0);
             for array in arrays {
                 assert!(
                     !codegen.counts(array),
                     "an array of numbers should not count"
                 );
             }
-            reads = deep::FIELD_READS.get();
+            reads = deep::PART_READS.get();
         });
         reads
     };
