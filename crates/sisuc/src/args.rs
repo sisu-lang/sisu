@@ -32,7 +32,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Compile a program into an executable, or print one stage of it with `--emit`
+    /// Compile a program into an executable, or print one output of it with `--emit`
     Build {
         #[command(flatten)]
         flags: BuildFlags,
