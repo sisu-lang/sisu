@@ -902,7 +902,9 @@ impl Checker<'_> {
         let written = (self.hinted(span, expected).0)
             .filter(|&want| want != UNKNOWN && (is_target(want) || is_target(payload)));
         // The right side expects `P` for an optional `P`, else `P?`: a value converts through
-        // one `?` only. That is a hint (see `Body::hint_at`), unless that type is written.
+        // one `?` only. That is a hint (see `Body::hint_at`), unless that type is written. Then
+        // the right side is checked against it, so `let r: any I = oa ?? None` reports at the
+        // `None`, and an optional value there at the whole `??`.
         let other = match written {
             Some(want)
                 if is_target(payload) && (want == payload || want == as_optional(payload)) =>

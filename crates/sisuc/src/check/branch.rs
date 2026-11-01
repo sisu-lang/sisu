@@ -350,7 +350,7 @@ impl Checker<'_> {
     ) -> Diagnostic {
         let mut report = |i: usize, want: Type, got: Type| {
             let (at, tail, want, got) = self.reported(&sources[i], &blocks[i], want, got);
-            self.mismatch(at, tail, want, got)
+            self.leaves_any(at, tail, want, got)
         };
         match expected.filter(|&want| want != UNKNOWN) {
             _ if first_ty == Type::UNIT => DiagnosticKind::NoValue {

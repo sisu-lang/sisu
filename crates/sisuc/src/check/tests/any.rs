@@ -805,6 +805,16 @@ fn a_join_should_report_the_member_that_leaves_its_any_type() {
             "fn main() {\n    let s: any Solid = Cube(s: 1.0)\n    let r = if true { s } else { Circle(r: 1.0) }\n}",
             vec![(Code::NotConform, (3, 34))],
         ),
+        (
+            "a `Some` of a `Some` of a class that does not conform, after one of an `any` value",
+            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let r = if true { Some(Some(s)) } else { Some(Some(Kelvin(k: 1.0))) }\n}",
+            vec![(Code::NotConform, (3, 56))],
+        ),
+        (
+            "three layers of `Some` of a class that does not conform, after an `any` value",
+            "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let r = if true { Some(Some(Some(s))) } else { Some(Some(Some(Kelvin(k: 1.0)))) }\n}",
+            vec![(Code::NotConform, (3, 67))],
+        ),
     ]);
 }
 
