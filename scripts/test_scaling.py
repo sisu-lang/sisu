@@ -629,11 +629,10 @@ class ScalingTest(unittest.TestCase):
             array_superlinear = verdicts[('array literal depth', stage)][0] == 'superlinear'
             self.assertEqual(array_superlinear, stage == 'check', stage)
             self.assertNotEqual(verdicts[('functions', stage)][0], 'superlinear', stage)
-        # Frozen: the rows of this pull request's known list for the two measured shapes, so a
-        # later row for another case does not change the test.
-        known_at_85c95105 = [('array literal depth', 'check', 344)]
-        self.assertEqual(
-            sc.compare(verdicts, known_at_85c95105, {'array literal depth', 'functions'})[2], 0)
+        with mock.patch.object(sc, 'KNOWN', KNOWN_344):
+            code, _, _ = run_main('--counts', str(SAVED), '--out', str(self.out),
+                                  path=str(self.no_tools))
+        self.assertEqual(code, 0)
 
     def test_known_rows_should_name_a_shape_and_a_stage(self):
         """

@@ -1,6 +1,5 @@
 {
-  "commit": "85c95105",
-  "note": "with #[inline(never)] on the six stage functions",
+  "commit": "85c95105 with #[inline(never)] on the six stage functions",
   "cpu": "Intel(R) Core(TM) i9-14900K",
   "valgrind": "valgrind-3.22.0",
   "glibc": "glibc 2.39",
