@@ -134,7 +134,7 @@ impl Checker<'_> {
                 // As in a written array: "found `None`".
                 drop(self.none(e.span, Some(element)));
             } else {
-                let d = self.mismatch(e.span, Some(e), element, own[at].unwrap_or(joined));
+                let d = self.leaves_any(e.span, Some(e), element, own[at].unwrap_or(joined));
                 self.diagnostics.push(d);
             }
             return Err(Poisoned::error());

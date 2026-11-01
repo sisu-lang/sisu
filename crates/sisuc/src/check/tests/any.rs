@@ -1705,7 +1705,7 @@ const BRANCH_ARRAY_LOCALS: &str = "fn main() {\n    let c = true\n    let d: any
 /// the earlier branch array, and a written type outside the join still converts.
 #[test]
 fn a_branch_array_should_report_the_element_that_leaves_the_earlier_elements() {
-    let rows: [Row<'_>; 18] = [
+    let rows: [Row<'_>; 19] = [
         (
             "an `any` value beside optional `any` values",
             "    let r = if c { [o] } else { [d] }",
@@ -1795,6 +1795,11 @@ fn a_branch_array_should_report_the_element_that_leaves_the_earlier_elements() {
             "a `Some` of an object beside `any` values",
             "    let r = if c { [s] } else { [Some(Circle(r: 2.0))] }",
             vec![(Code::Mismatch, (7, 34))],
+        ),
+        (
+            "a number beside `any` values of an interface it does not conform to",
+            "    let r = if c { [s] } else { [2] }",
+            vec![(Code::NotConform, (7, 34))],
         ),
     ];
     for (row, lines, expected) in rows {
