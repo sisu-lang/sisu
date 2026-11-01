@@ -201,8 +201,12 @@ fn execute(mut reporter: Report, format: &Format, mode: Mode) -> ExitCode {
         } => return run::run(reporter, format, &source, &args, &backend),
     };
     reporter.timings(&timings.report());
-    reporter.finish();
-    code
+    // A report that did not reach stderr is not a success.
+    if reporter.finish() {
+        code
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 /// Writes `text` to stdout, or reports why it cannot.

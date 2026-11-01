@@ -24,10 +24,13 @@ pub(crate) fn run(
 ) -> ExitCode {
     let built = build(&mut reporter, source, backend);
     // The warnings and their summary come before anything the program writes.
-    reporter.finish();
+    let complete = reporter.finish();
     let Some((dir, exe)) = built else {
         return ExitCode::FAILURE;
     };
+    if !complete {
+        return ExitCode::FAILURE;
+    }
     let spawned = Command::new(&exe).args(args).spawn();
     // `spawn` returns once `exec` has worked, and the running program keeps its inode, so the
     // directory can go before the program ends, whatever ends it.

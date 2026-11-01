@@ -2,7 +2,7 @@
 //! JSON Lines, and the summary that ends it.
 
 use std::ffi::OsStr;
-use std::io::Write;
+use std::io::{self, ErrorKind, Write};
 
 use crate::diagnostic::{Code, Diagnostic, Severity, json};
 use crate::front_end;
@@ -23,6 +23,8 @@ pub(crate) struct Reporter<W: Write> {
     errors: usize,
     warnings: usize,
     codes: Vec<Code>,
+    /// Set by the first write that fails. The reporter writes nothing after it.
+    lost: Option<ErrorKind>,
 }
 
 impl<W: Write> Reporter<W> {
@@ -34,6 +36,7 @@ impl<W: Write> Reporter<W> {
             errors: 0,
             warnings: 0,
             codes: Vec::new(),
+            lost: None,
         }
     }
 
@@ -73,7 +76,9 @@ impl<W: Write> Reporter<W> {
     }
 
     /// Writes the summary. Text has one only after a diagnostic; JSON always ends with one.
-    pub(crate) fn finish(mut self) {
+    /// Returns false when a write failed, unless the reader left (`sisu check a.sisu 2>&1 |
+    /// head -1`), which ends the report quietly, as `print_stdout` does.
+    pub(crate) fn finish(mut self) -> bool {
         self.codes.sort_by_key(|code| code.as_str());
         self.codes.dedup();
         match self.format {
@@ -84,7 +89,7 @@ impl<W: Write> Reporter<W> {
                     .map(|(n, noun)| format!("{n} {noun}{}", if n == 1 { "" } else { "s" }))
                     .collect();
                 if counts.is_empty() {
-                    return;
+                    return self.complete();
                 }
                 self.line(&format!("sisu: {}", counts.join(", ")));
                 // Every counted diagnostic has a code, so there is at least one.
@@ -99,11 +104,19 @@ impl<W: Write> Reporter<W> {
                 self.line(&summary);
             }
         }
+        self.complete()
+    }
+
+    fn complete(&self) -> bool {
+        self.lost.is_none_or(|kind| kind == ErrorKind::BrokenPipe)
     }
 
     fn line(&mut self, text: &str) {
-        writeln!(self.out, "{text}")
-            .expect("stderr should take the report, as `eprintln!` assumes");
+        if self.lost.is_none()
+            && let Err(e) = writeln!(self.out, "{text}")
+        {
+            self.lost = Some(e.kind());
+        }
     }
 }
 
@@ -117,13 +130,15 @@ fn tool_error_line(format: &Format, message: &str) -> String {
 
 /// Writes a tool error to stderr after `finish` has written the summary: the one exception to
 /// the summary being the last line, for what goes wrong in `sisu run` once the program is
-/// built.
-#[expect(
-    clippy::print_stderr,
-    reason = "a failed write to stderr has nowhere left to be reported"
-)]
+/// built. Not `eprintln!`, which panics when the write fails.
 pub(crate) fn tool_error_after_summary(format: &Format, message: &str) {
-    eprintln!("{}", tool_error_line(format, message));
+    // A failed write to stderr has nowhere left to be reported, and the exit code already says
+    // that something went wrong.
+    drop(writeln!(
+        io::stderr(),
+        "{}",
+        tool_error_line(format, message)
+    ));
 }
 
 /// Whether text output is colored: only on a terminal, and only when `NO_COLOR` is unset or
@@ -265,6 +280,41 @@ mod tests {
             reporter.finish();
             let out = String::from_utf8(out).expect("the report should be UTF-8");
             assert_eq!(out.contains("\x1b["), colored, "{out}");
+        }
+    }
+
+    /// A stderr whose writes fail with `kind`, as `2>/dev/full` gives `StorageFull`.
+    struct Failing {
+        kind: ErrorKind,
+        writes: usize,
+    }
+
+    impl Write for Failing {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            self.writes += 1;
+            Err(self.kind.into())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn failed_write_should_end_the_report_and_fail_it() {
+        for (kind, complete) in [
+            (ErrorKind::StorageFull, false),
+            (ErrorKind::BrokenPipe, true),
+        ] {
+            let mut out = Failing { kind, writes: 0 };
+            let mut reporter = Reporter::new(&mut out, Format::Text, false);
+            reporter.diagnostics("a.sisu", SOURCE, &[assign(), never_reassigned()]);
+            reporter.tool_error("cannot write a.o");
+            assert_eq!(reporter.finish(), complete, "{kind:?}");
+            assert_eq!(
+                out.writes, 1,
+                "the reporter should stop at the first failed write"
+            );
         }
     }
 
