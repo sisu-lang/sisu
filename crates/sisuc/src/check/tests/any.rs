@@ -1943,7 +1943,7 @@ fn a_hinted_some_should_not_box_an_optional_argument_into_a_bare_any() {
         (
             "the same one level deeper",
             "    let r = if c { [[o]] } else { [[Some(x)]] }",
-            vec![(Code::Mismatch, (10, 35))],
+            vec![(Code::Mismatch, (10, 37))],
         ),
         (
             "an array of a `Some` of an empty optional",

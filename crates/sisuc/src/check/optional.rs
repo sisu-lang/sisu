@@ -3,6 +3,7 @@
 //! these makes an enum value.
 
 use super::alias::Through;
+use super::any::is_target;
 use super::generic::{GenericSig, Site, mark, mismatched};
 use super::{Checked, Checker, DiagnosticKind, Poisoned, optional_of, type_of};
 use crate::ast;
@@ -54,14 +55,16 @@ impl Checker<'_> {
                 match type_of(&checked) {
                     // An object that does not convert to the hint keeps its own type: the join
                     // converts it to an `any` type, or the other values to it, or reports it. So
-                    // does a `Some` of one, which kept its type.
+                    // does a `Some` of one, which kept its type. So does an optional beside an
+                    // `any` type, which only a written type boxes.
                     Some(got)
                         if hinted
                             && got != payload
-                            && matches!(
+                            && (matches!(
                                 beneath(got).kind(),
                                 TypeKind::Class(..) | TypeKind::Any(..)
-                            )
+                            ) || matches!(got.kind(), TypeKind::Optional(_))
+                                && is_target(payload))
                             && !self.joins_to_any(got, payload) =>
                     {
                         (checked, optional_of(got))
