@@ -2472,6 +2472,31 @@ mod tests {
         }
     }
 
+    /// A run after a `.` that is too large is no error, but its upper-case prefix is one. The
+    /// parser rejects the lower case form of that run, so the error has no fix.
+    #[test]
+    fn an_upper_case_prefix_after_a_dot_should_be_reported_without_a_fix_when_the_run_is_too_large()
+    {
+        let too_large_binary = format!("x.0B{}", "1".repeat(68));
+        for (row, src, col) in [
+            ("p1", "x.0XFFFFFFFFFFFFFFFFFFFF", 3),
+            ("p3", too_large_binary.as_str(), 3),
+            ("p4", "x.0O7777777777777777777777777", 3),
+            ("p5", "x?.0XFFFFFFFFFFFFFFFFFFFF", 4),
+            ("p10", "x.0XFFFF_FFFF_FFFF_FFFF_FFFF", 3),
+        ] {
+            let d = only(src);
+            assert_eq!(at(src, &d), (Code::BasePrefixUpperCase, 1, col), "{row}");
+            assert!(fix_edits(&d).is_none(), "{row}: no fix");
+        }
+        let d = only("x.0X1");
+        assert!(fix_edits(&d).is_some_and(|(safe, _)| safe), "p6: safe fix");
+        assert!(
+            lex("x.0xFFFFFFFFFFFFFFFFFFFF").is_ok_and(|l| l.diagnostics.is_empty()),
+            "p7"
+        );
+    }
+
     /// A bare 2^63 does not parse, so lower-casing its prefix is unsafe; after a `-` it is right.
     #[test]
     fn upper_case_prefix_fix_at_min_magnitude_is_unsafe() {
