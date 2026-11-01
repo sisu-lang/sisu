@@ -4806,3 +4806,109 @@ fn drop_weight_should_follow_a_chain_of_enums_longer_than_the_stack() {
         assert_eq!(codegen.drop_weight(a), frames + 2);
     });
 }
+
+/// The fields that the drop weight walks read while `drop_weight` and `counts` run on each class
+/// of `src`, as the depth check of every drop function asks for them.
+fn weight_reads(src: &str) -> usize {
+    let mut reads = 0;
+    with_codegen(src, |codegen| {
+        deep::FIELD_READS.set(0);
+        for id in 0..codegen.program.classes.len() {
+            let class = Type::intern(TypeKind::Class(ClassId(id), TypeArgs::NONE));
+            codegen.counts(class);
+            codegen.drop_weight(class);
+        }
+        reads = deep::FIELD_READS.get();
+    });
+    reads
+}
+
+/// The weight of an enum is worked out once for each component. A diamond of enums has two
+/// ways from each level to the next, so a walk with no memo for enums reads `2^n` fields. The
+/// sizes are small because that walk, run without the memo, is the failure the test shows.
+#[test]
+fn drop_weight_should_read_the_fields_of_a_diamond_of_enums_linearly() {
+    let reads = |levels: usize| {
+        let enums = (0..levels)
+            .flat_map(|i| {
+                ["E", "F"].map(|name| {
+                    let (left, right) = if i + 1 == levels {
+                        ("A".to_string(), "A".to_string())
+                    } else {
+                        (format!("E{}", i + 1), format!("F{}", i + 1))
+                    };
+                    format!("enum {name}{i} {{\n    End\n    L({left})\n    R({right})\n}}\n")
+                })
+            })
+            .collect::<Vec<_>>()
+            .concat();
+        weight_reads(&format!(
+            "class A {{\n    _next: E0\n}}\n{enums}fn main() {{}}\n"
+        ))
+    };
+    assert_near_linear(reads(6), reads(12), reads(18));
+}
+
+/// A class cycle that does not count, and a class for each of its members that holds it. The
+/// decision and the weight of the cycle are made once: without the memos, each holder scans the
+/// whole cycle, which reads the fields `n * n` times.
+#[test]
+fn drop_weight_should_read_the_fields_of_a_cycle_once_for_all_its_holders() {
+    let reads = |n: usize| {
+        let ring = (0..n)
+            .map(|i| {
+                format!(
+                    "class K{i} {{\n    _next: K{}?\n    _text: string\n}}\n",
+                    (i + 1) % n
+                )
+            })
+            .collect::<Vec<_>>()
+            .concat();
+        let holders = (0..n)
+            .map(|i| format!("class H{i} {{\n    _ring: K0\n}}\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        weight_reads(&format!("{ring}{holders}fn main() {{}}\n"))
+    };
+    assert_near_linear(reads(50), reads(100), reads(150));
+}
+
+/// `Expr` and `Two<Expr>` hold each other, with the box on the field of `Pair`; `Both` holds an
+/// `Expr` inline, a link of the component, and a class `C` outside it. By hand, the longest
+/// chain from `drop.H` is: `drop.H`, `release.Expr`, `drain`, `walk.Two`, `release.C`,
+/// `drop.C`, `release.string`, `drop.string`. That is 8 frames. The walk bound counts
+/// `walk` once for each of the 2 members, so the weight is 9: 1 for `drop.H`, 1 for `release`,
+/// 1 for `drain`, 2 for `walk`, and 4 for the part `C` (`release.C`, then the weight 3 of `C`).
+/// The inline link adds nothing: if it did, `enum_frames` would ask for its own component.
+#[test]
+fn drop_weight_should_leave_out_the_inline_links_of_an_enum_component() {
+    let src = "class C {
+    _text: string
+}
+
+class H {
+    _expr: Expr
+}
+
+enum Two<T> {
+    Both(T, C)
+}
+
+enum Expr {
+    Lit(i64)
+    Pair(Two<Expr>)
+}
+
+fn main() {}";
+    with_codegen(src, |codegen| {
+        let (c, h) = (class_type(codegen, "C"), class_type(codegen, "H"));
+        assert!(!codegen.counts(c));
+        assert_eq!(
+            codegen.drop_weight(c),
+            3,
+            "drop.C, release.string, drop.string"
+        );
+        assert!(codegen.counts(h));
+        assert_eq!(codegen.drop_weight(h), 9);
+    });
+}

@@ -10,7 +10,9 @@
     reason = "the depth check in the drop functions calls them in the next change of #191"
 )]
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
+#[cfg(test)]
+use std::cell::Cell;
 
 use super::Codegen;
 use crate::conformance::ensure_stack;
@@ -20,6 +22,19 @@ use crate::tir::{ClassId, EnumId, Type, TypeKind};
 /// depth counts frames. The value keeps the stack of a drop at the limit, plus the largest
 /// drop weight, under a quarter of the 256 KiB stack of the small-stack tests (ADR 0038).
 pub(super) const DEPTH_LIMIT: u64 = 256;
+
+#[cfg(test)]
+thread_local! {
+    /// How many fields the walks of this module have read on this thread: a field of a class
+    /// that `cycle_fields` gives, and a payload field that `enum_frames` takes as a part.
+    pub(super) static FIELD_READS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Counts one field read for `FIELD_READS`; nothing in a build without tests.
+fn count_read() {
+    #[cfg(test)]
+    FIELD_READS.set(FIELD_READS.get() + 1);
+}
 
 /// The drop decisions that `Codegen` has made so far. Each is made once for each type, so the
 /// walk over the fields of all types is linear in the program.
@@ -32,6 +47,11 @@ pub(super) struct DropMemo {
     weights: FxHashMap<Type, u32>,
     /// The frames that the release of an enum opens, for each component under its first member.
     enum_frames: FxHashMap<EnumId, u32>,
+    /// The keys of the drop weights that are being worked out. A walk that reaches its own key
+    /// would never end, so it is an error.
+    weighing: FxHashSet<Type>,
+    /// The same for the enum components in `enum_frames`.
+    framing: FxHashSet<EnumId>,
 }
 
 impl Codegen<'_, '_> {
@@ -44,10 +64,10 @@ impl Codegen<'_, '_> {
     ///   loop, in one frame;
     /// - an enum with a clear reach flag: the source fixes how deep the enums and strings in it
     ///   nest (see `tir::Enum::reaches`);
-    /// - an array whose element type, with each `?` removed, is not counted or is bounded as the
-    ///   element of an array: `[string]`, `[[i64]]` and `[[Kind]]` are bounded. The type fixes
-    ///   how many arrays nest, and each level is a frame of the drop weight. A class element is
-    ///   never bounded, because no array is in a class cycle: `[A]` and `[[A]]` recurse.
+    /// - an array whose element, with each `?` removed, is bounded as an array element.
+    ///   Examples: `[string]`, `[[i64]]`, `[[Kind]]`. The type fixes how many arrays nest, and
+    ///   each level is a frame of the drop weight. A class element is never bounded, because no
+    ///   array is in a class cycle: `[A]` and `[[A]]` recurse.
     ///
     /// Any other type is a recursing part, so a new kind of counted reference needs no rule.
     pub(super) fn recursing(&self, holder: Option<ClassId>, ty: Type) -> bool {
@@ -100,6 +120,10 @@ impl Codegen<'_, '_> {
         if let Some(&weight) = self.deep.borrow().weights.get(&key) {
             return weight;
         }
+        assert!(
+            self.deep.borrow_mut().weighing.insert(key),
+            "drop_weight should not reach the drop function it works out"
+        );
         let parts = match key.kind() {
             TypeKind::Class(id, _) => {
                 let drain = self
@@ -119,7 +143,9 @@ impl Codegen<'_, '_> {
             _ => unreachable!("only a class or an array should have a drop function"),
         };
         let weight = 1 + parts;
-        self.deep.borrow_mut().weights.insert(key, weight);
+        let mut memo = self.deep.borrow_mut();
+        memo.weighing.remove(&key);
+        memo.weights.insert(key, weight);
         weight
     }
 
@@ -144,7 +170,10 @@ impl Codegen<'_, '_> {
         let classes = classes.chain(cycle.is_none().then_some(id));
         classes.flat_map(|class| {
             let fields = &self.program.classes[class.0].fields;
-            fields.iter().map(move |field| (class, field.ty))
+            fields.iter().map(move |field| {
+                count_read();
+                (class, field.ty)
+            })
         })
     }
 
@@ -191,6 +220,10 @@ impl Codegen<'_, '_> {
         if let Some(&frames) = self.deep.borrow().enum_frames.get(&key) {
             return frames;
         }
+        assert!(
+            self.deep.borrow_mut().framing.insert(key),
+            "enum_frames should not reach the component it works out"
+        );
         let boxes = members.as_ref().map_or(0, |members| {
             let levels = u32::try_from(members.len())
                 .expect("a component should have fewer than 2^32 members");
@@ -210,11 +243,16 @@ impl Codegen<'_, '_> {
             .flat_map(|member| &enums[member.0].variants)
             .flat_map(|variant| &variant.fields)
             .filter(|field| !field.boxed && !in_component(field.ty))
-            .map(|field| self.part_frames(field.ty))
+            .map(|field| {
+                count_read();
+                self.part_frames(field.ty)
+            })
             .max()
             .unwrap_or(0);
         let frames = 1 + boxes + parts;
-        self.deep.borrow_mut().enum_frames.insert(key, frames);
+        let mut memo = self.deep.borrow_mut();
+        memo.framing.remove(&key);
+        memo.enum_frames.insert(key, frames);
         frames
     }
 }
