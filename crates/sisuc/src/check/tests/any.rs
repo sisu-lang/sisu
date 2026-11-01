@@ -1554,8 +1554,89 @@ const PARITY_VALUES: [&[&str]; 15] = [
     &["[]", "2"],
 ];
 
+/// The reason of the parity exceptions where the scalar join blames the earlier branch.
+const EARLIER_LEAVES: &str = "the scalar join takes the `any` member first, so `e` leaves its type; the array blames the later element (deferred)";
+
+/// The reason of the parity exceptions of a `Some` in a `loop`.
+const LOOP_SOME: &str = "the scalar `loop` reports the `Some` as a mismatch, where the scalar `if` and `match` and the array report its argument as not conforming";
+
+/// The parity cases, each `E`, the later values and the forms, where the array errors differ
+/// from the scalar join's, with the reason. In these, each error of the array must be at an
+/// element of the later array, of any code.
+const PARITY_EXCEPTIONS: [(&str, &str, &[JoinForm], &str); 14] = [
+    (
+        "[any Display]",
+        "s",
+        &[JoinForm::If, JoinForm::Match],
+        EARLIER_LEAVES,
+    ),
+    (
+        "[any Display]?",
+        "d",
+        &[JoinForm::If, JoinForm::Match],
+        EARLIER_LEAVES,
+    ),
+    (
+        "[any Display]?",
+        "o",
+        &[JoinForm::If, JoinForm::Match],
+        EARLIER_LEAVES,
+    ),
+    (
+        "[any Display]?",
+        "Some(d)",
+        &[JoinForm::If, JoinForm::Match],
+        EARLIER_LEAVES,
+    ),
+    (
+        "[any Display]?",
+        "s",
+        &[JoinForm::If, JoinForm::Match],
+        EARLIER_LEAVES,
+    ),
+    ("i64", "s", &[JoinForm::If, JoinForm::Match], EARLIER_LEAVES),
+    (
+        "i64?",
+        "d",
+        &[JoinForm::If, JoinForm::Match],
+        EARLIER_LEAVES,
+    ),
+    (
+        "i64?",
+        "o",
+        &[JoinForm::If, JoinForm::Match],
+        EARLIER_LEAVES,
+    ),
+    (
+        "i64?",
+        "Some(d)",
+        &[JoinForm::If, JoinForm::Match],
+        EARLIER_LEAVES,
+    ),
+    (
+        "i64?",
+        "s",
+        &[JoinForm::If, JoinForm::Match],
+        EARLIER_LEAVES,
+    ),
+    (
+        "string",
+        "s",
+        &[JoinForm::If, JoinForm::Match],
+        EARLIER_LEAVES,
+    ),
+    ("any Shape", "Some(2)", &[JoinForm::Loop], LOOP_SOME),
+    ("any Shape", "Some([d])", &[JoinForm::Loop], LOOP_SOME),
+    (
+        "string",
+        "[], 2",
+        &[JoinForm::If],
+        "a hint with no `any` type is expected as before, so the array reports each element that does not fit; the scalar `if` stops at the first",
+    ),
+];
+
 /// The joins of the parity cases: an `if`, a `match` and a `loop` of `break`s.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum JoinForm {
     If,
     Match,
@@ -1591,10 +1672,10 @@ fn join_of(form: JoinForm, members: &[String]) -> (String, Vec<Range<usize>>) {
     (text, ranges)
 }
 
-/// What checking a parity program found: the start of each error, and the types of the locals
-/// `r`, the join, and `w`, of the written type the join is compared with, when it checked.
+/// What checking a parity program found: the start and code of each error, and the types of the
+/// locals `r`, the join, and `w`, of the written type the join is compared with, when it checked.
 struct ParityRun {
-    errors: Vec<usize>,
+    errors: Vec<(usize, Code)>,
     types: Option<(Type, Type)>,
 }
 
@@ -1615,7 +1696,7 @@ fn parity_run(
     let (program, ds) = checked(&src);
     let errors = (ds.iter())
         .filter(|d| d.severity() == Severity::Error)
-        .map(|d| d.span().start())
+        .map(|d| (d.span().start(), d.code()))
         .collect();
     let types = program.and_then(|p| {
         let main = p.functions.iter().find(|f| f.name == "main")?;
@@ -1638,6 +1719,7 @@ fn parity_run(
 fn a_branch_array_should_join_as_its_elements_would_in_a_scalar_join() {
     let mut failures = Vec::new();
     let mut cases = 0;
+    let mut used = [false; PARITY_EXCEPTIONS.len()];
     for (ty, init) in PARITY_TYPES {
         for values in PARITY_VALUES {
             for form in [JoinForm::If, JoinForm::Match, JoinForm::Loop] {
@@ -1649,7 +1731,10 @@ fn a_branch_array_should_join_as_its_elements_would_in_a_scalar_join() {
                     &format!("[{ty}]"),
                     &join_of(form, &scalar_members),
                 );
-                let blames_earlier = scalar.errors.iter().any(|at| ranges[0].contains(at));
+                // The member that each error of the scalar join is at, and its code.
+                let blamed: Vec<(Option<usize>, Code)> = (scalar.errors.iter())
+                    .map(|&(at, code)| (ranges.iter().position(|r| r.contains(&at)), code))
+                    .collect();
                 let builds_as_e = scalar.errors.is_empty()
                     && scalar.types.is_some_and(|(r, w)| Type::array(r) == w);
                 for depth in [1, 2] {
@@ -1662,31 +1747,65 @@ fn a_branch_array_should_join_as_its_elements_would_in_a_scalar_join() {
                     let written = format!("{open}{ty}{close}");
                     let (src, ranges, array) =
                         parity_run((ty, init), &written, &join_of(form, &members));
+                    // Where the element of member `k` of the scalar join is in the array program.
+                    let element = |k: usize| {
+                        let at = if k == 0 {
+                            ranges[0].start + depth
+                        } else {
+                            let before: usize = values[..k - 1].iter().map(|v| v.len() + 2).sum();
+                            ranges[1].start + depth + before
+                        };
+                        at..at + scalar_members[k].len()
+                    };
+                    let exception = PARITY_EXCEPTIONS.iter().position(|&(t, v, forms, _)| {
+                        t == ty && v == values.join(", ") && forms.contains(&form)
+                    });
                     let fine = if builds_as_e {
                         array.errors.is_empty() && array.types.is_some_and(|(r, w)| r == w)
+                    } else if let Some(i) = exception {
+                        used[i] = true;
+                        !array.errors.is_empty()
+                            && (array.errors.iter()).all(|&(at, _)| {
+                                (1..scalar_members.len()).any(|k| element(k).contains(&at))
+                            })
+                    } else if blamed.is_empty() {
+                        // The scalar join checks clean, as a type that is not `E`: the array
+                        // does not widen, so an element of the later array is the mistake.
+                        !array.errors.is_empty()
+                            && array.errors.iter().all(|&(at, code)| {
+                                code == Code::Mismatch
+                                    && (1..scalar_members.len()).any(|k| element(k).contains(&at))
+                            })
                     } else {
                         !array.errors.is_empty()
-                            && array.errors.iter().all(|at| {
-                                ranges[1].contains(at) || (blames_earlier && ranges[0].contains(at))
+                            && array.errors.iter().all(|&(at, code)| {
+                                blamed.iter().any(|&(k, c)| {
+                                    c == code && k.is_some_and(|k| element(k).contains(&at))
+                                })
                             })
                     };
                     if !fine {
-                        let at: Vec<_> = array.errors.iter().map(|&s| line_col(&src, s)).collect();
+                        let found = |run: &ParityRun, src: &str| -> Vec<_> {
+                            (run.errors.iter())
+                                .map(|&(at, code)| (code, line_col(src, at)))
+                                .collect()
+                        };
                         failures.push(format!(
-                            "E `{ty}`, values `{}`, {form:?}, depth {depth}: the scalar join {}; the array has errors at {at:?} and type {:?}",
+                            "E `{ty}`, values `{}`, {form:?}, depth {depth}: the scalar join blames {blamed:?}; the array has errors {:?} and type {:?}",
                             values.join(", "),
-                            if builds_as_e {
-                                "checks clean as `E`"
-                            } else if blames_earlier {
-                                "blames the earlier branch or is not `E`"
-                            } else {
-                                "is rejected or is not `E`"
-                            },
+                            found(&array, &src),
                             array.types.map(|(r, _)| r),
                         ));
                     }
                 }
             }
+        }
+    }
+    for (&(ty, values, _, _), used) in PARITY_EXCEPTIONS.iter().zip(used) {
+        if !used {
+            failures.push(format!(
+                "the exception for E `{ty}`, values `{values}` is not used"
+            ));
         }
     }
     assert!(
@@ -1805,4 +1924,127 @@ fn a_branch_array_should_report_the_element_that_leaves_the_earlier_elements() {
     for (row, lines, expected) in rows {
         codes_after(row, &format!("{BRANCH_ARRAY_LOCALS}{lines}\n}}"), &expected);
     }
+}
+
+/// The locals of the hinted `Some` rows, before the row's own lines, which start at line 10.
+const HINTED_SOME_LOCALS: &str = "fn main() {\n    let c = true\n    let d: any Display = 1\n    let o: (any Display)? = Some(7)\n    let x: i64? = Some(5)\n    let y: i64? = None\n    let s: any Shape = Circle(r: 1.0)\n    let so: (any Shape)? = Some(Circle(r: 1.0))\n    let cx: Circle? = Some(Circle(r: 3.0))\n";
+
+/// A `Some` beside a value of an optional `any` type, with no type written, keeps an optional
+/// argument optional: the `Some` is a `T??`, which the join reports. It never boxes the optional
+/// into a bare `any` type, as the join of `[o, Some(y)]` does not.
+#[test]
+fn a_hinted_some_should_not_box_an_optional_argument_into_a_bare_any() {
+    let rows: [Row<'_>; 9] = [
+        (
+            "an array of a `Some` of an optional beside optional `any` values",
+            "    let r = if c { [o] } else { [Some(x)] }",
+            vec![(Code::Mismatch, (10, 34))],
+        ),
+        (
+            "the same one level deeper",
+            "    let r = if c { [[o]] } else { [[Some(x)]] }",
+            vec![(Code::Mismatch, (10, 35))],
+        ),
+        (
+            "an array of a `Some` of an empty optional",
+            "    let r = if c { [o] } else { [Some(y)] }",
+            vec![(Code::Mismatch, (10, 34))],
+        ),
+        (
+            "an `if`",
+            "    let r = if c { o } else { Some(y) }",
+            vec![(Code::Mismatch, (10, 31))],
+        ),
+        (
+            "a `match`",
+            "    let r = match c { true => o; false => Some(y) }",
+            vec![(Code::Mismatch, (10, 43))],
+        ),
+        (
+            "the default of `??`",
+            "    let r = o ?? Some(y)",
+            vec![(Code::Mismatch, (10, 18))],
+        ),
+        (
+            "an array of a `Some` of a `Some`",
+            "    let r = if c { [o] } else { [Some(Some(2))] }",
+            vec![(Code::Mismatch, (10, 34))],
+        ),
+        (
+            "a written optional `any` type, which converts",
+            "    let r: (any Display)? = if c { o } else { Some(y) }",
+            vec![],
+        ),
+        (
+            "a written array of an optional `any` type, which converts",
+            "    let r: [(any Display)?] = [Some(y)]",
+            vec![],
+        ),
+    ];
+    for (row, lines, expected) in rows {
+        codes_after(row, &format!("{HINTED_SOME_LOCALS}{lines}\n}}"), &expected);
+    }
+}
+
+/// Beside `h`, of an optional `any` type, a `Some` checks clean when its argument converts to
+/// the `any` type, and is a mismatch at the `Some` when its argument is an optional, in an `if`,
+/// a `match`, the default of `??`, a `loop` of `break`s and an array in an `if`.
+#[test]
+fn a_hinted_some_should_build_only_when_its_argument_is_not_optional() {
+    let builds: [(&str, &[&str]); 2] = [
+        ("o", &["Some(d)", "Some(2)"]),
+        ("so", &["Some(s)", "Some(Circle(r: 2.0))"]),
+    ];
+    let rejected = [
+        "Some(x)",
+        "Some(y)",
+        "Some(Some(2))",
+        "Some(o)",
+        "Some(cx)",
+        "Some(Some(Circle(r: 2.0)))",
+        "Some(so)",
+    ];
+    let mut failures = Vec::new();
+    let mut cases = 0;
+    for (h, good) in builds {
+        let values = (good.iter()).map(|&v| (v, true));
+        for (value, clean) in values.chain(rejected.iter().map(|&v| (v, false))) {
+            for form in [
+                format!("if c {{ {h} }} else {{ {value} }}"),
+                format!("match c {{ true => {h}; false => {value} }}"),
+                format!("{h} ?? {value}"),
+                format!("loop {{ if c {{ break {h} }}; break {value} }}"),
+                format!("if c {{ [{h}] }} else {{ [{value}] }}"),
+            ] {
+                cases += 1;
+                let src = format!("{DECLS}{HINTED_SOME_LOCALS}    let r = {form}\n}}");
+                let start = src.rfind(value).expect("the program should hold the value");
+                let (_, ds) = checked(&src);
+                let errors: Vec<_> = (ds.iter())
+                    .filter(|d| d.severity() == Severity::Error)
+                    .map(|d| (d.code(), d.span().start()))
+                    .collect();
+                let fine = if clean {
+                    errors.is_empty()
+                } else {
+                    !errors.is_empty()
+                        && (errors.iter()).all(|&(code, at)| {
+                            code == Code::Mismatch && (start..start + value.len()).contains(&at)
+                        })
+                };
+                if !fine {
+                    let found: Vec<_> = (errors.iter())
+                        .map(|&(code, at)| (code, line_col(&src, at)))
+                        .collect();
+                    failures.push(format!("`{form}`: errors {found:?}"));
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {cases} cases fail:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
 }
