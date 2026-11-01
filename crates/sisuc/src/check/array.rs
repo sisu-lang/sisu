@@ -4,7 +4,7 @@ use super::expr::{fits, literal_type, no_member, path, typed};
 use super::generic::{Rank, mark};
 use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, payload, type_of, wrap};
 use crate::ast;
-use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Literal};
+use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Literal, UnwrapHelp};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
 
@@ -267,7 +267,7 @@ impl Checker<'_> {
         let d = match ty.kind() {
             TypeKind::Array(element) => return Some(element),
             TypeKind::Optional(payload) if matches!(payload.kind(), TypeKind::Array(_)) => {
-                optional_array(base)
+                optional_array(base, UnwrapHelp::It)
             }
             _ => DiagnosticKind::CannotIndex {
                 ty: self.type_name(ty),
@@ -395,13 +395,15 @@ impl Checker<'_> {
 }
 
 /// "`m` may be `None`", at the optional array `base` that an index or a `for` needs unwrapped.
-pub(super) fn optional_array(base: &ast::Expr) -> Diagnostic {
+/// `unwrap` says what the help unwraps.
+pub(super) fn optional_array(base: &ast::Expr, unwrap: UnwrapHelp) -> Diagnostic {
     DiagnosticKind::MayBeNone {
         value: path(base),
         at: base.span,
         access: None,
         write: false,
         peel: None,
+        unwrap,
     }
     .into()
 }

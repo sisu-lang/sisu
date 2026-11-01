@@ -768,6 +768,8 @@ pub(crate) enum DiagnosticKind {
         write: bool,
         /// For a `?.` on an optional of an optional: the optional it leaves, which has no members.
         peel: Option<Peel>,
+        /// What the help says to unwrap, when `access` is `None`.
+        unwrap: UnwrapHelp,
     },
     /// The `kind` member `name`, at `at`, which `owner` does not have.
     NoMember {
@@ -1903,6 +1905,17 @@ pub(crate) struct Peel {
     pub(crate) receiver: String,
     pub(crate) left: String,
     pub(crate) member: String,
+}
+
+/// What the help of a `MayBeNone` without a `?.` fix tells the user to unwrap with `if let`.
+#[derive(Clone)]
+pub(crate) enum UnwrapHelp {
+    /// The optional itself.
+    It,
+    /// The object, as written, of the `?.` that makes an element target optional.
+    Object(String),
+    /// Nothing: no `if let` of the optional gives a place that can be written.
+    Nothing,
 }
 
 /// Moving a token up to the code before it: the `gap` between them becomes a space.
@@ -3632,6 +3645,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 access,
                 write,
+                unwrap,
                 ..
             } => {
                 let d = Diagnostic::coded(code, at, format!("{} may be `None`", named(value)));
@@ -3647,7 +3661,13 @@ impl From<DiagnosticKind> for Diagnostic {
                         )
                         .with_fix(unsafe_fix(fix, access, "?."))
                     }
-                    None => d.with_help("unwrap it with `if let`"),
+                    None => match unwrap {
+                        UnwrapHelp::It => d.with_help("unwrap it with `if let`"),
+                        UnwrapHelp::Object(object) => {
+                            d.with_help(format!("unwrap `{object}` with `if let`"))
+                        }
+                        UnwrapHelp::Nothing => d,
+                    },
                 }
             }
             DiagnosticKind::NoMember {

@@ -2,6 +2,7 @@
 
 use std::rc::Rc;
 
+use super::array::optional_array;
 use super::expr::{if_some, literal_type, local, operator};
 use super::member::{Access, safe_value};
 use super::operator::Operator;
@@ -11,7 +12,7 @@ use super::{
     type_of,
 };
 use crate::ast;
-use crate::diagnostic::{DiagnosticKind, Immutable};
+use crate::diagnostic::{DiagnosticKind, Immutable, UnwrapHelp};
 use crate::parser::is_place;
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -171,8 +172,28 @@ impl Checker<'_> {
     /// The receiver of a `push`, checked once as a place. The place waits in `body.pushed` for
     /// `push`, or for the method lookup that finds the receiver is no array. The result is the
     /// value the place holds, which owns the operands of the place.
+    ///
+    /// A call that writes its receiver counts as a change of the place as soon as the receiver is
+    /// checked, whatever the call then gets wrong: `stamp_push` stamps it here. A place of a
+    /// class, an enum, a type parameter or an associated type is not stamped, because the call
+    /// may be a method of its own, which writes nothing.
     pub(super) fn push_receiver(&mut self, receiver: &ast::Expr) -> Checked {
         let mut place = self.place(receiver.span, receiver, Change::Push);
+        let mut held = place.ty;
+        while let Some(TypeKind::Optional(payload)) = held.map(Type::kind) {
+            held = Some(payload);
+        }
+        if !matches!(
+            held.map(Type::kind),
+            Some(
+                TypeKind::Class(..)
+                    | TypeKind::Enum(..)
+                    | TypeKind::Param(..)
+                    | TypeKind::Assoc(..)
+            )
+        ) {
+            self.stamp_push(receiver);
+        }
         // A place of type `Error` has reported itself.
         let read = match (place.path.take(), place.ty) {
             (Some(path), Some(_)) => Ok(self.read(build(path.root, path.operands), receiver.span)),
@@ -287,8 +308,9 @@ impl Checker<'_> {
             checker.stray(args);
             unit()
         };
-        // Every place that a `push` names is written, whatever else the call gets wrong.
-        if is_place(receiver_expr) {
+        // `push_receiver` stamped the place that it checked. Only a receiver it did not check
+        // is stamped here, so a receiver is stamped once.
+        if place.is_none() && is_place(receiver_expr) {
             self.stamp_push(receiver_expr);
         }
         // A receiver that failed has reported itself.
@@ -691,6 +713,26 @@ impl Checker<'_> {
         }
     }
 
+    /// Reports E0062 at `base`, the optional array of an element target whose place is `inner`.
+    /// An `if let` of the array binds a copy, which is no place. The help names the object of the
+    /// `?.` only when that object is what makes the array optional: the `?.` field stores an
+    /// array, and the object is a class, so its field is a place. Else no unwrap gives a place.
+    fn optional_array_target(&mut self, base: &ast::Expr, inner: &CheckedPlace) {
+        let unwrap = match (&base.kind, &inner.guard, inner.ty.map(Type::kind)) {
+            (
+                ast::ExprKind::Field {
+                    base: object,
+                    safe: true,
+                    ..
+                },
+                Some(_),
+                Some(TypeKind::Array(_)),
+            ) => UnwrapHelp::Object(self.source.text(object.span).to_string()),
+            _ => UnwrapHelp::Nothing,
+        };
+        self.diagnostics.push(optional_array(base, unwrap));
+    }
+
     /// The place `target` names, which `span` changes as `change` says: `Element` when it is the
     /// base of an index, so the write replaces an element of it.
     fn place(&mut self, span: Span, target: &ast::Expr, change: Change) -> CheckedPlace {
@@ -765,7 +807,13 @@ impl Checker<'_> {
                 };
                 let outer = std::mem::replace(&mut self.body.indexed, true);
                 let inner = self.place(span, base, inner_change);
-                let element = self.element(base, inner.value_ty());
+                let element = match inner.value_ty() {
+                    Some(ty) if is_optional_array(ty) => {
+                        self.optional_array_target(base, &inner);
+                        None
+                    }
+                    ty => self.element(base, ty),
+                };
                 // The index is not part of the chain that it ends.
                 self.body.indexed = false;
                 let (index, mismatched) = self.operand(index, Some(Type::I64));
@@ -850,6 +898,11 @@ impl Checker<'_> {
         };
         tir::Expr { kind, ty, span }
     }
+}
+
+/// Whether `ty` is `[T]?`.
+fn is_optional_array(ty: Type) -> bool {
+    matches!(ty.kind(), TypeKind::Optional(payload) if matches!(payload.kind(), TypeKind::Array(_)))
 }
 
 /// Whether a `?.` sits anywhere in the chain of fields and indexes that makes up the place `e`.
