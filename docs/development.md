@@ -760,8 +760,36 @@ These flags run the pipeline up to one stage and stop there.
 | `sisu build -O3 --emit ir file.sisu` | The same, with the `default<O3>` pipeline |
 | `sisu build --emit ir-raw file.sisu` | The LLVM IR before any pass, as one module that LLVM's `opt` reads |
 | `sisu build --rc-checks --emit ir-raw file.sisu` | The same, with the count checks of `--rc-checks` built in |
+| `sisu build --timings file.sisu` | The time of each stage, one `timings:` line each, on stderr after the diagnostics. It also works with `--emit <output>`, which times only the stages that make it, and on `sisu check` |
 | `sisu check file.sisu` | Only diagnostics; exits with code 1 if any is an error |
 | `sisu explain E0001` | The explanation of a diagnostic code, in any case; unknown codes exit with code 1 |
+
+`--timings` does not stop the pipeline early: it only adds the `timings:` lines.
+It ends with an `other` line and a `total` line. `total` is the wall time from
+the start of the command to the end of its work. `other` is the rest of
+`total`: reading the file, printing the diagnostics and the emitted output, and
+the time between stages. This is `sisu check --timings selfhost/lexer.sisu`, on a release build:
+
+```text
+timings: lex           0.4 ms   15.2%  946 lines  2.2M lines/s  4779 tokens  11.1M tokens/s
+timings: parse         0.8 ms   28.0%  946 lines  1.2M lines/s
+timings: prelude       0.1 ms    2.3%
+timings: check         1.4 ms   48.6%  946 lines  687.3k lines/s
+timings: other         0.2 ms    5.9%
+timings: total         2.8 ms  100.0%
+```
+
+- The line and token counts are those of your file only. The prelude is not
+  counted.
+- Tokens are the lexer's tokens without `Newline` and `Eof`. This token count
+  is not the token count of the compile-speed comparison.
+- The `prelude` line is the lex and parse of the prelude. The `check` line
+  includes the check of the prelude.
+- A rate is `-` when its time or its count is zero.
+- When the lex stops, as it does on `print(1]`, the lex line has no
+  throughput.
+- `--timings` does not work with `--format json`, and `sisu run` does not take
+  it.
 
 `--format json` writes diagnostics, tool errors and a closing summary to
 stderr as JSON Lines. `build`, `run` and `check` take it; `explain` does not.
