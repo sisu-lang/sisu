@@ -32,8 +32,9 @@ pub(crate) const PRELUDE_SOURCE: &str = include_str!("prelude.sisu");
 /// `prelude_program` puts ahead of every prelude.
 pub(crate) const LANG_SOURCE: &str = include_str!("lang.sisu");
 
-/// `checked_timed`, its program instantiated by `mono`, which reports a choice of an associated
-/// type that the checker did not follow and that an instance needs itself or needs too many steps.
+/// `checked_timed`, with its program instantiated by `mono`. `mono` reports a choice of an
+/// associated type that the checker did not follow. It also reports a choice that an instance
+/// needs itself, or needs too many steps.
 pub(crate) fn front_end(source: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
     front_end_with(PRELUDE_SOURCE, source)
 }

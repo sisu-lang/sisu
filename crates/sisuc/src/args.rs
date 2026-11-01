@@ -36,7 +36,7 @@ enum Command {
     Build {
         #[command(flatten)]
         flags: BuildFlags,
-        /// Print this stage to stdout instead of building
+        /// Print this output of the compiler to stdout instead of building
         #[arg(long, value_enum, conflicts_with = "output")]
         emit: Option<Stage>,
         #[command(flatten)]

@@ -3228,8 +3228,8 @@ fn timings_should_not_change_stdout() {
 }
 
 /// GIVEN a program that checks clean
-/// WHEN `sisu build --emit <stage> --timings` runs on it, for each stage `--emit` takes
-/// THEN standard error has `timings:` lines for the stages that `<stage>` runs, and no others
+/// WHEN `sisu build --emit <output> --timings` runs on it, for each output `--emit` takes
+/// THEN standard error has `timings:` lines for the stages that make `<output>`, and no others
 /// AND an `other` line and a `total` line come after them
 #[test]
 fn emit_with_timings_should_report_the_stages_it_runs() {
