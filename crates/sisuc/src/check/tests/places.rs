@@ -816,7 +816,7 @@ fn push_should_not_clone_the_nodes_of_its_receiver() {
     assert_eq!(tir::CLONED_EXPRS.get(), 0, "{src}");
 }
 
-/// The help of E0062 at the optional array of an element target. `if let` of the array binds a
+/// The help of E0062 at the optional array of an element place. `if let` of the array binds a
 /// copy, which is no place, so the help names the object of the `?.` that makes the array
 /// optional, or says nothing; a read keeps its help. The fixtures pin the text.
 #[test]
@@ -968,7 +968,7 @@ fn a_push_that_may_be_a_method_should_not_stamp_its_receiver() {
     );
 }
 
-/// An optional that holds no array is no optional array: its element target is `CannotIndex`.
+/// An optional that holds no array is no optional array: its element place is `CannotIndex`.
 #[test]
 fn an_element_target_of_an_optional_number_should_not_be_an_optional_array() {
     codes(

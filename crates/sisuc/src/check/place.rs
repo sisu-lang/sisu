@@ -150,7 +150,7 @@ impl Checker<'_> {
     /// Whether a `push` checks its receiver `e` as a place. That holds for a field, or for an
     /// index of a local or of a field. A `?.` may lead to it only when `safe` says the call is
     /// `?.push`: `e?.push(x)` holds a value only where `e` does. An index of such a chain is a
-    /// place too: it always fails there, so the help for an element target applies. The place
+    /// place too: it always fails there, so the help for an element place applies. The place
     /// stamps by the rule of `push_receiver`.
     pub(super) fn is_push_place(&mut self, e: &ast::Expr, safe: bool) -> bool {
         // A receiver checked ahead of its turn is a value already.
@@ -711,7 +711,7 @@ impl Checker<'_> {
         }
     }
 
-    /// Reports E0062 at `base`, the optional array of an element target whose place is `inner`.
+    /// Reports E0062 at `base`, the optional array of an element place whose place is `inner`.
     /// An `if let` of the array binds a copy, which is no place. The help names the object of the
     /// `?.` only when that object is what makes the array optional: the `?.` field stores an
     /// array, and the object is a class, so its field is a place. Else no unwrap gives a place.

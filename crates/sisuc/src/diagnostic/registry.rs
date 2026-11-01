@@ -1912,7 +1912,7 @@ pub(crate) struct Peel {
 pub(crate) enum UnwrapHelp {
     /// The optional itself.
     It,
-    /// The object, as written, of the `?.` that makes an element target optional.
+    /// The object, as written, of the `?.` that makes an element place optional.
     Object(String),
     /// Nothing: no `if let` of the optional gives a place that can be written.
     Nothing,
