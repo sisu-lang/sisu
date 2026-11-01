@@ -189,14 +189,18 @@ tests in `programs.rs` run.
 Mutation testing changes the code that a branch touched, one mutant at a
 time, and reports each mutant the tests still pass. The script runs two
 passes. Pass 1 tests each mutant with the unit tests only (`cargo nextest run
---lib`: about 6 s, against 47 s for the whole suite). On one sixth of the
-mutants of a 4,000-line diff, pass 1 tested 87 mutants in 7 minutes and
-caught every one that built; the whole suite took 1 hour 42 minutes for 171. When pass 1 misses a
+--lib`: about 6 s, against 47 s for the whole suite). Of the 657 mutants of
+a 4,000-line diff, pass 1 did not catch 80 (54 missed, 26 timeouts); pass 2
+tested those 80 with the whole suite in more than one hour. When pass 1 misses a
 mutant, pass 2 tests the mutants that pass 1 did not catch (`--iterate`) with
 the whole suite, so a mutant that only an end-to-end test kills counts as
 caught. The summary adds the counts of both passes. Arguments after `--` choose
 the tests yourself; the script then runs one pass with them. Each mutant still
-costs one build, so a large diff can take an hour or more.
+costs one build, so a large diff can take an hour or more. A diff of more
+than 300 mutants fails at once, before pass 1, with
+`mutation-test: FAIL: N mutants, more than 300`. Then test a part with
+`scripts/mutants.sh <base> --file <path>`, or set `MUTANTS_MAX=<n>` to test
+all of it.
 The script mutates the
 diff from where the branch left `main`. On a branch stacked on another stage,
 pass that stage's tip as the base, so earlier stages stay out. Arguments after
