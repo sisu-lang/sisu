@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Fails when an `expect` message in non-test Rust code lacks "should": the
 # message states the invariant that should hold (CODING_STANDARDS.md, Code).
-# Test code is skipped: files under tests/, tests.rs, and everything after a
-# file's first top-level #[cfg(test)].
+# Test code is skipped: files under tests/, tests.rs, and an inline
+# `#[cfg(test)] mod name { ... }`, which clippy's items_after_test_module keeps
+# at the end of its file. A `#[cfg(test)]` step counter is production code.
 #   scripts/check-expect-messages.sh <file.rs>...
 set -euo pipefail
 
@@ -13,7 +14,7 @@ done
 [[ ${#files[@]} -eq 0 ]] && exit 0
 
 perl -0777 -ne '
-  s/^#\[cfg\(test\)\].*//ms;
+  s/^#\[cfg\(test\)\]\n(?:#\[[^\n]*\n)*(?:pub(?:\([^)\n]*\))? )?mod \w+ \{.*//ms;
   while (/\.expect\(\s*"((?:[^"\\]|\\.)*)"/g) {
     next if $1 =~ /\bshould\b/;
     my $line = 1 + (substr($_, 0, $-[0]) =~ tr/\n//);
