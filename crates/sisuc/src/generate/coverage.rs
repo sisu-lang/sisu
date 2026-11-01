@@ -4083,6 +4083,197 @@ fn a_part_whose_spec_does_not_fit_is_written_without_it() {
     assert_eq!((g.w.out.program.as_str(), info.size), ("\"{0.0}\"", 24));
 }
 
+/// What `Gen::interpolate(room)` writes over `data`, after `declare` has put types in the scope,
+/// with a `cu` that always picks a compound part: the program text, its size, and the scope's
+/// `Nodes`. A byte of `data` is read from the front. The first is the number of parts, the second
+/// the length of the text before the part (2, which is `aa` here), then its two chars, the kind
+/// of the part and the draws of its value; the last one that the value leaves picks `:#` when it
+/// is odd.
+fn interpolated(declare: fn(&mut Gen<'_>), data: &[u8], room: u64) -> (String, u64, Nodes) {
+    let mut g = Gen::new(data);
+    g.cu = Unstructured::new(&[1]);
+    declare(&mut g);
+    let info = g.interpolate(room);
+    (g.w.out.program, info.size, g.scope.nodes)
+}
+
+fn declare_nothing(_: &mut Gen<'_>) {}
+
+/// `class K0 { a: i64 }`.
+fn declare_class(g: &mut Gen<'_>) {
+    g.scope.classes.push(Class {
+        fields: vec![Field {
+            name: "a".to_string(),
+            ty: Ty::I64,
+            mutable: false,
+            cap: 0,
+        }],
+        size: 1,
+        applied: None,
+        inferable: false,
+    });
+    g.scope.types.push(Ty::class(0, 1));
+}
+
+/// `enum E0 { V0, V1(bool) }`, with its variants noted as `Gen::enumeration` notes them.
+fn declare_enum(g: &mut Gen<'_>) {
+    let variant = |name: &str, fields: Vec<Ty>| Variant {
+        name: name.to_string(),
+        recursive: false,
+        fields,
+        labels: Vec::new(),
+        inferable: false,
+    };
+    let variants = vec![variant("V0", Vec::new()), variant("V1", vec![Ty::Bool])];
+    for variant in &variants {
+        g.scope.note(variant);
+    }
+    g.scope.enums.push(Enum {
+        variants,
+        least: 1,
+        has_class: false,
+        applied: None,
+    });
+    g.scope.types.push(E0);
+}
+
+/// A part of a compound kind that `interpolated` writes.
+struct CompoundPart {
+    name: &'static str,
+    declare: fn(&mut Gen<'_>),
+    data: [u8; 14],
+    /// The program text that `data` gives.
+    text: &'static str,
+    /// The part's type; its value is of size 1.
+    ty: Ty,
+    /// Whether the spec is `:#`.
+    pretty: bool,
+}
+
+/// A part of each compound kind, with `:#` and with no spec.
+fn compound_parts() -> [CompoundPart; 6] {
+    let array = Ty::Array(Box::new(Ty::I64));
+    [
+        CompoundPart {
+            name: "array, no spec",
+            declare: declare_nothing,
+            data: [0, 2, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            text: "\"aa{[0]}\"",
+            ty: array.clone(),
+            pretty: false,
+        },
+        CompoundPart {
+            name: "array, #",
+            declare: declare_nothing,
+            data: [0, 2, 0, 0, 2, 0, 0, 0, 0, 1, 1, 1, 1, 1],
+            text: "\"aa{[257]:#}\"",
+            ty: array,
+            pretty: true,
+        },
+        CompoundPart {
+            name: "enum, no spec",
+            declare: declare_enum,
+            data: [0, 2, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            text: "\"aa{E0.V0}\"",
+            ty: E0,
+            pretty: false,
+        },
+        CompoundPart {
+            name: "enum, #",
+            declare: declare_enum,
+            data: [0, 2, 0, 0, 2, 0, 0, 1, 1, 1, 1, 1, 1, 1],
+            text: "\"aa{E0.V0:#}\"",
+            ty: E0,
+            pretty: true,
+        },
+        CompoundPart {
+            name: "class, no spec",
+            declare: declare_class,
+            data: [0, 2, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            text: "\"aa{K0(a: 0)}\"",
+            ty: Ty::class(0, 1),
+            pretty: false,
+        },
+        CompoundPart {
+            name: "class, #",
+            declare: declare_class,
+            data: [0, 2, 0, 0, 2, 0, 0, 0, 0, 1, 1, 1, 1, 1],
+            text: "\"aa{K0(a: 0):#}\"",
+            ty: Ty::class(0, 1),
+            pretty: true,
+        },
+    ]
+}
+
+#[test]
+fn interpolate_should_count_a_compound_part_by_the_bound_of_its_text() {
+    // Each value is of size 1. For an array and an enum, `{x:#}` can write more than `{x}`: the
+    // size must be the bound of the text that the spec asks for.
+    for CompoundPart {
+        name,
+        declare,
+        data,
+        text,
+        ty,
+        pretty,
+    } in compound_parts()
+    {
+        let (program, size, nodes) = interpolated(declare, &data, 60);
+        assert_eq!(program, text, "{name}");
+        let (plain, laid_out) = (ty.printed(1, None, nodes), ty.printed_pretty(1, nodes));
+        assert_eq!(
+            laid_out > plain,
+            !matches!(ty, Ty::Class { .. }),
+            "{name}: `#` should change the bound of an array and an enum only"
+        );
+        // The 2 chars of `aa` and the part.
+        assert_eq!(size, 2 + if pretty { laid_out } else { plain }, "{name}");
+    }
+}
+
+#[test]
+fn interpolate_should_count_a_compound_part_at_least_as_long_as_it_prints() {
+    // The values print on several lines with `:#`, so the count that is too low by the lines
+    // and the indent is under what the program writes.
+    let parts: Vec<_> = compound_parts()
+        .into_iter()
+        .filter(|part| part.pretty)
+        .map(|part| (part.name, interpolated(part.declare, &part.data, 60)))
+        .collect();
+    let mut source = String::from(
+        "class K0 {\n    a: i64\n}\nenum E0 {\n    V0\n    V1(bool)\n}\nfn main() {\n",
+    );
+    for (i, (_, (program, ..))) in parts.iter().enumerate() {
+        let _ = writeln!(source, "    print(\"=== {i}\")\n    print({program})");
+    }
+    source.push_str("}\n");
+    let out = String::from_utf8(crate::fuzz_program::stdout_of(&source))
+        .expect("the output should be UTF-8");
+    for (i, (name, (_, size, _))) in parts.iter().enumerate() {
+        let (_, from) = out
+            .split_once(&format!("=== {i}\n"))
+            .expect("each part should print its marker");
+        let printed = from.split("\n=== ").next().unwrap_or_default();
+        // Less the line break of `print` and the 2 chars of `aa`.
+        let chars = u64::try_from(printed.trim_end_matches('\n').chars().count() - 2)
+            .expect("the count should fit");
+        assert!(
+            chars <= size - 2,
+            "{name}: {chars} chars printed over the counted {}:\n{printed}",
+            size - 2
+        );
+    }
+}
+
+#[test]
+fn interpolate_should_write_a_scalar_part_when_no_compound_value_fits() {
+    // The room after `aa` is 28: an array of one element has 24 chars with no spec and 32 with
+    // `:#`, which is what the part is counted at, so no array fits and the part is an `i64`.
+    let (program, size, _) =
+        interpolated(declare_nothing, &[0, 2, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0], 30);
+    assert_eq!((program.as_str(), size), ("\"aa{0}\"", 2 + 20));
+}
+
 #[test]
 fn an_int_literal_is_worth_what_it_says() {
     // The folder reads the value, the compiler the text: if they differ, a const the folder
