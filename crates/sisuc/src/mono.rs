@@ -108,6 +108,12 @@ fn prelude_method_of_outside_type(program: &Program) -> bool {
     })
 }
 
+/// The most instances of generic items that `mono` makes for one program. An instance is one copy
+/// of a generic function, class or enum for one list of type arguments. A chain of generic items
+/// that each use the next one twice, with different arguments, doubles the instances at each step.
+/// When the count passes the limit, `mono` stops and reports E0163 (`docs/diagnostics/E0163.md`).
+const INSTANCE_LIMIT: usize = 100_000;
+
 /// An instantiation reached and given its id, whose body waits on the worklist.
 enum Work {
     Function {
@@ -171,7 +177,8 @@ struct Mono {
     /// The locals of the function whose body the worklist is lowering; operators that make
     /// temporaries add to them.
     locals: Vec<Local>,
-    work: VecDeque<Work>,
+    /// The instances to lower, each with the `user_at` of the moment that it was reached.
+    work: VecDeque<(Option<Span>, Work)>,
     /// The span of the expression that `expr` lowers, `None` outside one and inside the
     /// prelude's: the place that an instance is first reached from.
     at: Option<Span>,
@@ -180,10 +187,24 @@ struct Mono {
     /// that only a local's type or a class field reaches has none until an expression meets
     /// its type. `payload_limit` reads it for the error of an instance that is too large.
     uses: Vec<Option<Span>>,
+    /// The span of the last item or expression of the user's source that `mono` lowered before
+    /// `failed` held: the place that E0163 points at when an item of the prelude has the most
+    /// instances.
+    user_at: Option<Span>,
+    /// How many instances `class`, `enum_id` and `function_id` have made. The non-generic items
+    /// that `new` copies do not count.
+    instances: usize,
+    /// The count of `instances` that `run` accepts.
+    limit: usize,
 }
 
 impl Mono {
     fn new(program: Program) -> Mono {
+        Mono::with_limit(program, INSTANCE_LIMIT)
+    }
+
+    /// `new`, with `run` stopping when the instances pass `limit`.
+    fn with_limit(program: Program, limit: usize) -> Mono {
         let mut mono = Mono {
             decls: Vec::with_capacity(program.functions.len()),
             class_decls: Vec::with_capacity(program.classes.len()),
@@ -216,7 +237,10 @@ impl Mono {
             locals: Vec::new(),
             work: VecDeque::new(),
             at: None,
+            user_at: None,
             uses: Vec::new(),
+            instances: 0,
+            limit,
         };
         let user_funcs = program.prelude.funcs;
         for (i, f) in program.functions.into_iter().enumerate() {
@@ -255,83 +279,13 @@ impl Mono {
     }
 
     fn run(mut self) -> Result<Program, Vec<Diagnostic>> {
-        for i in 0..self.out.classes.len() {
-            let mut fields = mem::take(&mut self.out.classes[i].fields);
-            for field in &mut fields {
-                field.ty = self.output(field.ty);
-            }
-            self.out.classes[i].fields = fields;
-        }
-        for i in 0..self.out.enums.len() {
-            let mut variants = mem::take(&mut self.out.enums[i].variants);
-            for payload in variants.iter_mut().flat_map(|v| &mut v.fields) {
-                payload.ty = self.output(payload.ty);
-            }
-            self.out.enums[i].variants = variants;
-        }
-        for i in 0..self.functions.len() {
-            let mut f = self.functions[i]
-                .take()
-                .expect("every non-generic function should be in place before the worklist runs");
-            if f.method.is_some() {
-                f.name = self.instance_name(&f, &[], i);
-            }
-            self.function(&mut f, &[]);
-            self.functions[i] = Some(f);
-        }
-        while let Some(work) = self.work.pop_front() {
-            if self.failed() {
-                break;
-            }
-            match work {
-                Work::Function {
-                    id,
-                    decl,
-                    args,
-                    name,
-                } => {
-                    let mut f = self.decls[decl.0]
-                        .clone()
-                        .expect("an instantiated function should be generic or the prelude's");
-                    f.name = name;
-                    f.type_params = Vec::new();
-                    f.owner_params = 0;
-                    self.function(&mut f, args.get());
-                    self.functions[id.0] = Some(f);
-                }
-                Work::Class { id, decl, args } => {
-                    let fields = self.class_decls[decl.0]
-                        .as_ref()
-                        .expect("an instantiated class should be generic")
-                        .fields
-                        .iter()
-                        .map(|field| (field.ty, field.name.clone(), field.mutable))
-                        .collect::<Vec<_>>();
-                    let fields = fields
-                        .into_iter()
-                        .map(|(ty, name, mutable)| Field {
-                            name,
-                            ty: self.ty(ty, args.get()),
-                            mutable,
-                        })
-                        .collect();
-                    self.out.classes[id.0].fields = fields;
-                }
-                Work::Enum { id, decl, args } => {
-                    let decl = self.enum_decls[decl.0]
-                        .as_ref()
-                        .expect("an instantiated enum should be generic");
-                    let mut variants = decl.variants.clone();
-                    for p in variants.iter_mut().flat_map(|v| &mut v.fields) {
-                        p.ty = self.ty(p.ty, args.get());
-                        p.boxed = false;
-                    }
-                    self.out.enums[id.0].variants = variants;
-                }
-            }
-        }
+        self.expand();
         if self.failed() {
-            return Err(self.stuck_diagnostics());
+            let found = self.stuck_diagnostics();
+            if !found.is_empty() {
+                return Err(found);
+            }
+            return Err(vec![self.too_many_instances()]);
         }
         layout_enums(&mut self.out.enums);
         debug_assert!(
@@ -352,9 +306,160 @@ impl Mono {
         Ok(self.out)
     }
 
-    /// Whether `subst` has met a type that it cannot normalize.
+    /// Lowers the non-generic items, then each instance on the worklist, until the worklist is
+    /// empty or `failed` holds.
+    fn expand(&mut self) {
+        for i in 0..self.out.classes.len() {
+            self.note_item(self.out.classes[i].span);
+            let mut fields = mem::take(&mut self.out.classes[i].fields);
+            for field in &mut fields {
+                field.ty = self.output(field.ty);
+            }
+            self.out.classes[i].fields = fields;
+        }
+        for i in 0..self.out.enums.len() {
+            self.note_item(self.out.enums[i].span);
+            let mut variants = mem::take(&mut self.out.enums[i].variants);
+            for payload in variants.iter_mut().flat_map(|v| &mut v.fields) {
+                payload.ty = self.output(payload.ty);
+            }
+            self.out.enums[i].variants = variants;
+        }
+        for i in 0..self.functions.len() {
+            let mut f = self.functions[i]
+                .take()
+                .expect("every non-generic function should be in place before the worklist runs");
+            self.note_item(f.span);
+            if f.method.is_some() {
+                f.name = self.instance_name(&f, &[], i);
+            }
+            self.function(&mut f, &[]);
+            self.functions[i] = Some(f);
+        }
+        while let Some((from, work)) = self.work.pop_front() {
+            if self.failed() {
+                break;
+            }
+            // An instance of the prelude's item has no span of the user's: it keeps the place that
+            // reached it.
+            self.user_at = from;
+            match work {
+                Work::Function {
+                    id,
+                    decl,
+                    args,
+                    name,
+                } => {
+                    let mut f = self.decls[decl.0]
+                        .clone()
+                        .expect("an instantiated function should be generic or the prelude's");
+                    self.note_item(f.span);
+                    f.name = name;
+                    f.type_params = Vec::new();
+                    f.owner_params = 0;
+                    self.function(&mut f, args.get());
+                    self.functions[id.0] = Some(f);
+                }
+                Work::Class { id, decl, args } => {
+                    self.note_item(self.out.classes[id.0].span);
+                    let fields = self.class_decls[decl.0]
+                        .as_ref()
+                        .expect("an instantiated class should be generic")
+                        .fields
+                        .iter()
+                        .map(|field| (field.ty, field.name.clone(), field.mutable))
+                        .collect::<Vec<_>>();
+                    let fields = fields
+                        .into_iter()
+                        .map(|(ty, name, mutable)| Field {
+                            name,
+                            ty: self.ty(ty, args.get()),
+                            mutable,
+                        })
+                        .collect();
+                    self.out.classes[id.0].fields = fields;
+                }
+                Work::Enum { id, decl, args } => {
+                    self.note_item(self.out.enums[id.0].span);
+                    let decl = self.enum_decls[decl.0]
+                        .as_ref()
+                        .expect("an instantiated enum should be generic");
+                    let mut variants = decl.variants.clone();
+                    for p in variants.iter_mut().flat_map(|v| &mut v.fields) {
+                        p.ty = self.ty(p.ty, args.get());
+                        p.boxed = false;
+                    }
+                    self.out.enums[id.0].variants = variants;
+                }
+            }
+        }
+    }
+
+    /// Notes `span`, the name of the item that `mono` starts to lower, as the place of the user's
+    /// source that `mono` is at, unless the item is the prelude's. After `failed` holds, the place
+    /// stays where the failure came from.
+    fn note_item(&mut self, span: Span) {
+        if !span.in_prelude() && !self.failed() {
+            self.user_at = Some(span);
+        }
+    }
+
+    /// Whether `subst` has met a type that it cannot normalize, or the instances have passed the
+    /// limit.
     fn failed(&self) -> bool {
-        !self.stuck.borrow().is_empty()
+        !self.stuck.borrow().is_empty() || self.instances > self.limit
+    }
+
+    /// The generic item with the most instances, as its name, the span of its name and its count
+    /// of instances. The items of the prelude count too: an alias of the user can make all the
+    /// instances of the prelude's `Result`. One walk over the maps of instances.
+    fn busiest(&self) -> (String, Span, usize) {
+        let mut classes = vec![0; self.class_decls.len()];
+        for &(decl, _) in self.class_ids.keys() {
+            classes[decl.0] += 1;
+        }
+        let mut enums = vec![0; self.enum_decls.len()];
+        for &(decl, _) in self.enum_ids.keys() {
+            enums[decl.0] += 1;
+        }
+        let mut functions = vec![0; self.decls.len()];
+        for &(decl, _) in self.function_ids.keys() {
+            functions[decl.0] += 1;
+        }
+        let classes = (self.class_decls.iter().zip(classes))
+            .filter_map(|(decl, n)| decl.as_ref().map(|d| (d.name.as_str(), d.span, n)));
+        let enums = (self.enum_decls.iter().zip(enums))
+            .filter_map(|(decl, n)| decl.as_ref().map(|d| (d.name.as_str(), d.span, n)));
+        let functions = (self.decls.iter().zip(functions))
+            .filter_map(|(decl, n)| decl.as_ref().map(|d| (d.name.as_str(), d.span, n)));
+        let (name, at, count) = classes
+            .chain(enums)
+            .chain(functions)
+            .filter(|&(_, _, n)| n > 0)
+            .max_by_key(|&(_, _, n)| n)
+            .expect("a program over the instance limit should have an item with an instance");
+        (name.to_string(), at, count)
+    }
+
+    /// The E0163 for the instances that `busiest` finds. It is at the name of that item when the
+    /// user declares it, and else at the user's source that `mono` last lowered.
+    fn too_many_instances(&self) -> Diagnostic {
+        let (name, decl, count) = self.busiest();
+        // `user_at` is set before the first instance: the prelude's own items make none (a test
+        // checks it), and every other instance comes from an item or an expression of the user's.
+        let at = if decl.in_prelude() {
+            self.user_at
+                .expect("an instance should come from the user's source")
+        } else {
+            decl
+        };
+        DiagnosticKind::TooManyInstances {
+            name,
+            at,
+            count,
+            limit: self.limit,
+        }
+        .into()
     }
 
     /// The E0030 of each choice that `subst` met, ordered by place in the source, each at the
@@ -456,7 +561,15 @@ impl Mono {
             TypeKind::Param(..) => {
                 panic!("`subst` should replace every type parameter before `mono` maps a type")
             }
-            _ => (ty, None),
+            TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::String
+            | TypeKind::Unit
+            | TypeKind::Never
+            | TypeKind::Assoc(..) => (ty, None),
         });
         self.types.insert(ty, (done, held));
         done
@@ -546,16 +659,21 @@ impl Mono {
             .expect("a class reached with arguments should be generic");
         let class = Class {
             name: self.type_instance_name(&decl.name, args.get(), done.0),
+            span: decl.span,
             type_params: Vec::new(),
             fields: Vec::new(),
         };
         self.out.classes.push(class);
+        self.instances += 1;
         self.class_ids.insert((id, args), done);
-        self.work.push_back(Work::Class {
-            id: done,
-            decl: id,
-            args,
-        });
+        self.work.push_back((
+            self.user_at,
+            Work::Class {
+                id: done,
+                decl: id,
+                args,
+            },
+        ));
         done
     }
 
@@ -586,15 +704,20 @@ impl Mono {
             variants: Vec::new(),
             counted: false,
             cycle: None,
+            reaches: false,
         };
         self.out.enums.push(e);
         self.uses.push(self.at);
+        self.instances += 1;
         self.enum_ids.insert((id, args), done);
-        self.work.push_back(Work::Enum {
-            id: done,
-            decl: id,
-            args,
-        });
+        self.work.push_back((
+            self.user_at,
+            Work::Enum {
+                id: done,
+                decl: id,
+                args,
+            },
+        ));
         done
     }
 
@@ -611,13 +734,17 @@ impl Mono {
             .expect("a function reached with arguments should be generic or the prelude's");
         let name = self.instance_name(decl, args.get(), done.0);
         self.functions.push(None);
+        self.instances += 1;
         self.function_ids.insert((id, args), done);
-        self.work.push_back(Work::Function {
-            id: done,
-            decl: id,
-            args,
-            name,
-        });
+        self.work.push_back((
+            self.user_at,
+            Work::Function {
+                id: done,
+                decl: id,
+                args,
+                name,
+            },
+        ));
         done
     }
 
@@ -676,6 +803,9 @@ impl Mono {
         let outer = self.at;
         if !e.span.in_prelude() {
             self.at = Some(e.span);
+            if !self.failed() {
+                self.user_at = self.at;
+            }
         }
         self.expr_kind(e, args);
         self.at = outer;
@@ -1138,7 +1268,14 @@ fn concrete(ty: Type) -> bool {
         TypeKind::Param(..) | TypeKind::Assoc(..) => false,
         TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args == TypeArgs::NONE,
         TypeKind::Array(inner) | TypeKind::Optional(inner) => concrete(inner),
-        _ => true,
+        TypeKind::I64
+        | TypeKind::U8
+        | TypeKind::F64
+        | TypeKind::Bool
+        | TypeKind::Char
+        | TypeKind::String
+        | TypeKind::Unit
+        | TypeKind::Never => true,
     }
 }
 
@@ -2422,5 +2559,220 @@ mod tests {
             front_end_reports(&src),
             [(crate::diagnostic::Code::PayloadTooLarge, at)]
         );
+    }
+
+    /// `n` classes in a chain: `C{k}` holds `C{k-1}` twice, with `[T]` and `T?`, so `C{n}<i64>`
+    /// makes 2^n - 1 instances in all.
+    fn class_chain(n: usize) -> String {
+        let mut src = String::from("class C1<T> {\n    a: [T]\n    b: T?\n}\n");
+        for k in 2..=n {
+            let prev = k - 1;
+            writeln!(
+                src,
+                "class C{k}<T> {{\n    a: C{prev}<[T]>\n    b: C{prev}<T?>\n}}"
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        write!(src, "fn main() {{\n    let x: C{n}<i64>? = None\n}}\n")
+            .expect("writing to a `String` should succeed");
+        src
+    }
+
+    /// The same chain of generic enums.
+    fn enum_chain(n: usize) -> String {
+        let mut src = String::from("enum E1<T> {\n    A([T])\n    B(T?)\n}\n");
+        for k in 2..=n {
+            let prev = k - 1;
+            writeln!(
+                src,
+                "enum E{k}<T> {{\n    A(E{prev}<[T]>)\n    B(E{prev}<T?>)\n}}"
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        write!(src, "fn main() {{\n    let x: E{n}<i64>? = None\n}}\n")
+            .expect("writing to a `String` should succeed");
+        src
+    }
+
+    /// The same chain of generic functions: `g{k}` calls `g{k-1}` twice.
+    fn function_chain(n: usize) -> String {
+        let mut src = String::from("fn g1<T>(x: i64) -> i64 {\n    x + 1\n}\n");
+        for k in 2..=n {
+            let prev = k - 1;
+            writeln!(
+                src,
+                "fn g{k}<T>(x: i64) -> i64 {{\n    g{prev}<[T]>(x) + g{prev}<T?>(x)\n}}"
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        write!(src, "fn main() {{\n    let y = g{n}<i64>(0)\n}}\n")
+            .expect("writing to a `String` should succeed");
+        src
+    }
+
+    /// `src` checked with the prelude, then monomorphized with `limit`, not `INSTANCE_LIMIT`.
+    fn mono_with_limit(src: &str, limit: usize) -> Mono {
+        let (program, diagnostics) = crate::front_end::checked(src);
+        let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+        Mono::with_limit(program, limit)
+    }
+
+    /// The name, the span start and the instance count that `busiest` gives for `src` when the
+    /// worklist has stopped at `limit`.
+    fn busiest_at(src: &str, limit: usize) -> (String, usize, usize) {
+        let mut mono = mono_with_limit(src, limit);
+        mono.expand();
+        let (name, at, count) = mono.busiest();
+        (name, at.start(), count)
+    }
+
+    /// A chain of 6 items makes 2^6 - 1 = 63 instances, so the limit 63 holds and the limit 62
+    /// does not. At 62, the worklist stops while it makes the 32nd of the 32 instances of the
+    /// item `first`, which is the first in the chain. The instances come level by level.
+    fn assert_chain_stops_at_its_first_item(row: &str, src: &str, first: &str) {
+        let at = src.find(first).expect("the source should declare the item");
+        let found = mono_with_limit(src, 62).run().err();
+        let found = found.unwrap_or_else(|| panic!("{row}: 63 instances should pass the limit 62"));
+        let reports: Vec<_> = found.iter().map(|d| (d.code(), d.span().start())).collect();
+        assert_eq!(
+            reports,
+            [(crate::diagnostic::Code::TooManyInstances, at)],
+            "{row}"
+        );
+        assert_eq!(busiest_at(src, 62), (first.to_string(), at, 32), "{row}");
+        let at_limit = mono_with_limit(src, 63).run().err();
+        assert!(
+            at_limit.is_none(),
+            "{row}: 63 instances should hold the limit 63"
+        );
+    }
+
+    #[test]
+    fn mono_should_report_e0163_at_the_first_class_of_a_chain_over_the_limit() {
+        assert_chain_stops_at_its_first_item("class", &class_chain(6), "C1");
+    }
+
+    #[test]
+    fn mono_should_report_e0163_at_the_first_enum_of_a_chain_over_the_limit() {
+        assert_chain_stops_at_its_first_item("enum", &enum_chain(6), "E1");
+    }
+
+    #[test]
+    fn mono_should_report_e0163_at_the_first_function_of_a_chain_over_the_limit() {
+        assert_chain_stops_at_its_first_item("function", &function_chain(6), "g1");
+    }
+
+    /// The user's `W` has 2 instances and the prelude's `Result` has more, so `Result` is the
+    /// busiest item of the program. The error is not at `Result`, which is in the prelude, but at
+    /// the user's source.
+    #[test]
+    fn mono_should_name_the_prelude_item_that_has_the_most_instances_and_point_into_user_source() {
+        let src = "class W<T> {\n    v: T\n}\nfn main() {\n    let a: W<i64> = W(v: 1)\n    let b: W<bool> = W(v: true)\n    let c: Result<i64, i64> = Result.Ok(1)\n    let d: Result<i64, bool> = Result.Ok(1)\n    let e: Result<bool, i64> = Result.Ok(true)\n    let f: Result<bool, bool> = Result.Ok(true)\n    let g: Result<string, i64> = Result.Ok(\"a\")\n}\n";
+        let program = (mono_with_limit(src, INSTANCE_LIMIT).run())
+            .unwrap_or_else(|found| panic!("{found:?}"));
+        let results = program
+            .enums
+            .iter()
+            .filter(|e| e.name.starts_with("Result<"))
+            .count();
+        assert_eq!(
+            results, 5,
+            "the prelude's enum should have the most instances"
+        );
+        let found = mono_with_limit(src, 4)
+            .run()
+            .expect_err("7 instances pass 4");
+        assert_eq!(found.len(), 1);
+        assert!(!found[0].span().in_prelude(), "{found:?}");
+        assert_eq!(
+            found[0].span().start(),
+            // The 5th instance comes from the types of the locals of `main`, before any expression
+            // of it: the place is the name of `main`.
+            src.find("main").expect("the source should have `main`"),
+            "{found:?}"
+        );
+        let mut mono = mono_with_limit(src, 4);
+        mono.expand();
+        let (name, decl, _) = mono.busiest();
+        assert_eq!(name, "Result");
+        assert!(decl.in_prelude());
+    }
+
+    /// The aliases make all the instances in the prelude's `Result`, each written type is small,
+    /// and the user has no generic item. The error is one E0163 at the user's source.
+    #[test]
+    fn mono_should_report_e0163_for_a_chain_of_aliases_over_a_prelude_enum() {
+        let mut src = "type B1<T> = Result<[T], T?>\n".to_string();
+        for k in 2..=6 {
+            let prev = k - 1;
+            writeln!(src, "type B{k}<T> = Result<B{prev}<[T]>, B{prev}<T?>>")
+                .expect("writing to a `String` should succeed");
+        }
+        src.push_str("fn main() {\n    let x: B6<i64>? = None\n    print(x == None)\n}\n");
+        let found = mono_with_limit(&src, 20).run().err();
+        let found = found.expect("the instances of `Result` should pass the limit 20");
+        let reports: Vec<_> = found
+            .iter()
+            .map(|d| (d.code(), d.span().in_prelude()))
+            .collect();
+        assert_eq!(
+            reports,
+            [(crate::diagnostic::Code::TooManyInstances, false)]
+        );
+        let mut mono = mono_with_limit(&src, 20);
+        mono.expand();
+        assert_eq!(mono.busiest().0, "Result");
+    }
+
+    /// The instances of the prelude's `Result` come from the field types of a class that no
+    /// expression uses. The count passes the limit while `mono` lowers `K`, and `main`, which
+    /// comes later, is not the place.
+    #[test]
+    fn mono_should_point_e0163_at_the_item_whose_types_make_the_instances_of_the_prelude() {
+        let mut src = "type B1<T> = Result<[T], T?>\n".to_string();
+        for k in 2..=6 {
+            let prev = k - 1;
+            writeln!(src, "type B{k}<T> = Result<B{prev}<[T]>, B{prev}<T?>>")
+                .expect("writing to a `String` should succeed");
+        }
+        src.push_str(
+            "class K {\n    a: B6<i64>?\n    b: B6<bool>?\n}\nfn main() {\n    print(1)\n}\n",
+        );
+        let found = mono_with_limit(&src, 40).run().err();
+        let found = found.expect("the instances of `Result` should pass the limit 40");
+        let at: Vec<_> = found.iter().map(|d| d.span().start()).collect();
+        assert_eq!(at, [src.find('K').expect("the source should declare K")]);
+    }
+
+    /// `main` makes 5 instances: 3 of `Result`, `W<i64>` and the `contains` of `[W<i64>]`. The
+    /// worklist then lowers the body of that `contains`, a function of the prelude, and its `==`
+    /// makes the 6th instance, `W<i64>.eq`, which passes the limit 5. The `Result` of the prelude
+    /// has the most instances, so the error is at the user's source that reached the prelude's
+    /// `contains`: the call, which is not the last expression of `main`, and not the place of an
+    /// item that the worklist lowered before.
+    #[test]
+    fn mono_should_point_e0163_at_the_call_that_reached_an_item_of_the_prelude() {
+        let src = "class W<T>: Eq {\n    v: T\n    fn eq(self, other: Self) -> bool {\n        true\n    }\n}\nfn main() {\n    let c: Result<i64, i64> = Result.Ok(1)\n    let d: Result<i64, bool> = Result.Ok(1)\n    let e: Result<bool, i64> = Result.Ok(true)\n    let ws = [W(v: 1)]\n    print(ws.contains(W(v: 1)))\n    print(2)\n}\n";
+        let found = mono_with_limit(src, 5)
+            .run()
+            .expect_err("6 instances pass 5");
+        let at: Vec<_> = found.iter().map(|d| d.span().start()).collect();
+        assert_eq!(
+            at,
+            [src.find("ws.contains")
+                .expect("the source should have the call")]
+        );
+        let mut mono = mono_with_limit(src, 5);
+        mono.expand();
+        assert_eq!(mono.busiest().0, "Result");
+    }
+
+    /// The error of an instance that comes from the user's source relies on this: no item of the
+    /// prelude makes an instance until the user's source reaches it.
+    #[test]
+    fn mono_should_make_no_instance_for_the_items_of_the_prelude_alone() {
+        let mut mono = mono_with_limit("fn main() {}\n", 0);
+        mono.expand();
+        assert_eq!(mono.instances, 0);
     }
 }

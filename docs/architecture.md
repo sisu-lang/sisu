@@ -112,6 +112,8 @@ no instantiation, so it does not find such a chain. `mono` also reports E0160
 for a payload that can be 4 GiB or more (`payload_limit.rs`) when the checker
 cannot measure it: an enum that holds an instance of a generic enum, or is one.
 The checker finds the error for the other enums, so `sisu check` reports those.
+`mono` reports E0163 when the program reaches more than 100,000 instances, and
+`sisu check` does not report it.
 
 **Checker** (`check/`, `tir.rs`). Resolves every name, types every expression
 and lowers sugar: `while`, `while let` and `for` become loops, `?.` and `??`
@@ -231,7 +233,9 @@ through `lang.rs`: `a == b` on a `T` that is a `Circle` with a written `Eq`
 calls `Circle.eq`. It also replaces each associated type with
 the type its conformance chose. It reports E0030 for a chain of more than 128
 choices, or a loop, that the checker's probe did not follow, and then gives no
-program. A method of an `extend` block that names an
+program. It counts each instance it makes and stops with E0163 when the count
+passes 100,000 (`INSTANCE_LIMIT`), because a chain of generic items can double
+the instances at each step. A method of an `extend` block that names an
 interface has the interface between its type and its name,
 `Celsius.Convert<Fahrenheit>.convert`, so two conformances may each hold a
 method of one name. `mir` and codegen see only concrete types, and a program
@@ -356,6 +360,17 @@ stays the same size for a value of any depth. A field of an enum on the same
 cycle that is held inline, such as `Two<Expr>.Both`'s `Expr` in
 `enum Expr { Pair(Two<Expr>) }`, is walked in place with the same lists.
 
+A drop that recurses through an array, an enum or a class outside the cycle
+counts its depth ([ADR 0038](adr/0038-deep-drops-defer-past-a-depth-limit.md)).
+`codegen/deep.rs` finds the drop functions that count, and the drop weight of
+each. A counting drop function adds its weight to the global `sisu_rc.depth`,
+and puts the depth back before it returns. At or above the depth limit, 256,
+it gives its block and its own address to the runtime's `sisu_drop_defer`,
+sets the global `sisu_rc.deferred`, and returns. The drop that brings the
+depth back to 0 calls `sisu_drop_drain` when that flag is set. The fields of
+`binary_trees`' `Node` are all links of its class cycle, so its drop does not
+count.
+
 `mir/lower/pattern.rs` lowers a `match`. It evaluates the scrutinee once into
 a temporary that the `match` owns, then tests the arms' patterns against it in
 order, reading a boxed field through its box. An arm with alternatives tries
@@ -427,6 +442,9 @@ which `chars()` and `string(cs)` call, and `sisu_words_count` and
 expression, calls only `sisu_words_count`. `stdin.rs` holds `sisu_read_line`,
 which `read_line()` calls. `args.rs` holds `sisu_args_len` and `sisu_arg`,
 which the generated `main` calls to build `args` when `sisu.main` takes it.
+`deferred.rs` holds the queue of deferred drops: `sisu_drop_defer` puts a
+block and its drop function at the back, and `sisu_drop_drain` drops each one
+in order until the queue is empty.
 `print(x)` and `"{x}"` share one formatter per
 type. The text of an array, a class, an enum or an optional goes through a
 sink in `show.rs`: generated `sisu_show.<type>` helpers call `sisu_show_int`,
@@ -456,7 +474,11 @@ and every message, label, help and fix: a stage builds a `DiagnosticKind`, and
 the registry turns it into a `Diagnostic` with a stable code
 ([ADR 0013](adr/0013-diagnostics-have-stable-codes.md)). `diagnostic/render.rs`
 writes it in the style of `rustc`: the message, the `file:line:col`, and the
-source line with the code underlined. `diagnostic/json.rs` writes the same
+source line with the code underlined. Before it renders a long ASCII line with
+every span on it, it cuts the line to the bytes near the spans, so the renderer
+gets only those bytes; the text is the same as for the whole line. Each
+diagnostic still scans the line once for its checks (a `shortcut:` in
+`render.rs`). `diagnostic/json.rs` writes the same
 diagnostic as one JSON line, and `diagnostic/suggest.rs` finds the closest
 name for a did-you-mean fix. `report.rs` writes diagnostics and tool errors
 as text or JSON, counts them and ends with the summary. Before it writes one,

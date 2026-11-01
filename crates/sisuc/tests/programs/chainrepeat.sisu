@@ -1,0 +1,23 @@
+// Three runs. Each run builds a chain of 300 000 objects through `[A]`, puts it in `_xs[0]` and
+// then replaces it, so the drop of each chain defers blocks again. Every run must free all of its
+// objects: the flag of the deferral is clear again after each run.
+class A {
+    _next: [A]
+}
+
+fn main() {
+    let mut _xs = [A(_next: [])]
+    let mut run = 0
+    while run < 3 {
+        run += 1
+        let mut a = A(_next: [])
+        let mut i = 0
+        while i < 300_000 {
+            i += 1
+            a = A(_next: [a])
+        }
+        _xs[0] = a
+        _xs[0] = A(_next: [])
+    }
+    print(1)
+}

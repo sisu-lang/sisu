@@ -357,7 +357,22 @@ pub(crate) fn diagnostics(path: &Path, bless: bool) {
     diagnose(path, path, bless);
 }
 
-/// Checks that `sisu check <name>.sisu` on `source`, run from its directory, reports at least
+/// The codes that only `mono` reports. `sisu check` does not run `mono`, so `diagnose` runs
+/// `sisu build --emit mir` for a case of these codes. Add each new code of `mono` to this list.
+const MONO_CODES: [&str; 1] = ["E0163"];
+
+/// The arguments of `sisu` that report the diagnostics of a case of `code`, before `--format`
+/// and the file.
+fn report_args(code: &str) -> &'static [&'static str] {
+    if MONO_CODES.contains(&code) {
+        &["build", "--emit", "mir"]
+    } else {
+        &["check"]
+    }
+}
+
+/// Checks that `sisu check <name>.sisu` on `source` (`sisu build --emit mir` for a code in
+/// `MONO_CODES`), run from its directory, reports at least
 /// one diagnostic, prints nothing on stdout, and exits 1 when a stderr line starts with `error`,
 /// else 0. A source named after a code (`E0001.sisu`, `E0001-field.sisu`) reports that code.
 /// `sisu check --format json` exits the same, and each of its stderr lines is a JSON object,
@@ -367,9 +382,15 @@ pub(crate) fn diagnose(source: &Path, expected: &Path, bless: bool) {
     let dir = source.parent().expect("a case should sit in a directory");
     let name = source.file_name().expect("a case should have a file name");
     let sisu = Path::new(env!("CARGO_BIN_EXE_sisu"));
+    let stem = source
+        .file_stem()
+        .and_then(OsStr::to_str)
+        .expect("a case's name should be UTF-8");
+    let code = stem.split_once('-').map_or(stem, |(code, _)| code);
+    let args = report_args(code);
     let out = Command::new(sisu)
         .current_dir(dir)
-        .arg("check")
+        .args(args)
         .arg(name)
         .output()
         .expect("sisu starts");
@@ -383,11 +404,6 @@ pub(crate) fn diagnose(source: &Path, expected: &Path, bless: bool) {
         "{display}: {stderr}"
     );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "", "{display}");
-    let stem = source
-        .file_stem()
-        .and_then(OsStr::to_str)
-        .expect("a case's name should be UTF-8");
-    let code = stem.split_once('-').map_or(stem, |(code, _)| code);
     if is_code(code) {
         assert!(
             stderr.contains(&format!("[{code}]")),
@@ -396,7 +412,8 @@ pub(crate) fn diagnose(source: &Path, expected: &Path, bless: bool) {
     }
     let out = Command::new(sisu)
         .current_dir(dir)
-        .args(["check", "--format", "json"])
+        .args(args)
+        .args(["--format", "json"])
         .arg(name)
         .output()
         .expect("sisu starts");

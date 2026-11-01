@@ -96,7 +96,7 @@ The end-to-end cases are files. The `cases` test binary runs one test per
 | --- | --- | --- |
 | `run/` | exit 0 with empty stderr unless there is a `<name>.err`, in a plain and an `-O2` build, both also under Valgrind on Linux, in a `--rc-checks` build, and on Linux in an `-O2` build on mimalloc | `<name>.out`: stdout; optional `<name>.err`: stderr |
 | `run-fail/` | panic with exit code 101, the same in a plain and an `-O2` build | `<name>.out`: stdout; `<name>.err`: stderr |
-| `diagnostics/` | report diagnostics under `sisu check`, exiting 1 if one is an error and 0 if all are warnings; a case named `<CODE>.sisu` or `<CODE>-<case>.sisu` reports that code | `<name>.err`: the diagnostics; `<name>.json`: the same under `--format json` |
+| `diagnostics/` | report diagnostics under `sisu check` (`sisu build --emit mir` for a code that only `mono` reports, such as E0163, because `check` does not run `mono`), exiting 1 if one is an error and 0 if all are warnings; a case named `<CODE>.sisu` or `<CODE>-<case>.sisu` reports that code | `<name>.err`: the diagnostics; `<name>.json`: the same under `--format json` |
 
 To add a case, write the `.sisu` file and an empty expected file beside it,
 then fill the expected file with `make bless`. Read what it wrote before

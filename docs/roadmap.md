@@ -42,7 +42,9 @@ enums with `match`.
   wrapping
 - classes with fields and methods, whose objects are freed by reference
   counting when the last reference goes away; a field is bare, set once by
-  the constructor, or `mut`
+  the constructor, or `mut`; a drop uses a bounded amount of stack, however
+  deep the value is
+  ([ADR 0038](adr/0038-deep-drops-defer-past-a-depth-limit.md))
 - `is` that tests identity; a class has `==` only when it lists `Eq` and writes
   the method (`E0159`)
 - optionals such as `i64?` and `Node?`, with `None`, `?.`, `??`, `if let` and
@@ -68,7 +70,8 @@ enums with `match`.
   its bounds, and the operators that `Eq` and `Ord` give it, but a `==` or
   `<` on a `T` with no such bound is an error (`E0139`); `unit` and `never`
   are not type arguments (`E0138`); a use that would need copies without end
-  is an error (`E0140`)
+  is an error (`E0140`), and so is a program whose generic items make more
+  than 100,000 instantiations, in `sisu build` (`E0163`)
 - interfaces: `interface Shape { fn area(self) -> f64 }` lists method
   signatures with no body, associated types (`type Item`), type parameters
   and inherited interfaces (`interface Solid: Named`), and `Self` is the
@@ -1730,7 +1733,8 @@ accepted.
   calls (Rust's `Drop`) or a block in the class (Swift's `deinit`); what
   happens when the drop code stores `self` somewhere, so the object outlives
   its last reference; how it runs inside the loop that drops the classes of
-  a cycle (ADR 0005); and whether a panic runs it. An object in a cycle
+  a cycle (ADR 0005), and when the depth limit defers its object (ADR 0038);
+  and whether a panic runs it. An object in a cycle
   is never dropped, so drop code cannot be what makes a program correct.
 - **Nested optionals.** Resolved in milestone 8
   ([ADR 0024](adr/0024-optionals-nest.md)): optionals nest, `??` and `if let`

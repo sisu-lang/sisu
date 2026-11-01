@@ -1,0 +1,20 @@
+// A chain of 300 000 objects of `A`, where `A` holds a `B?` and `B` holds an array `[A]`. The
+// two classes are joined through an array, so they are not a class cycle and each drop is a
+// call.
+class A {
+    _b: B?
+}
+
+class B {
+    _a: [A]
+}
+
+fn main() {
+    let mut a = A(_b: None)
+    let mut i = 0
+    while i < 300_000 {
+        i += 1
+        a = A(_b: B(_a: [a]))
+    }
+    print(1)
+}

@@ -393,6 +393,7 @@ mod tests {
                 .collect(),
             counted: false,
             cycle: None,
+            reaches: false,
         }
     }
 

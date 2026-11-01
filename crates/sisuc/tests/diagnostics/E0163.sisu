@@ -1,0 +1,21 @@
+class C1<T> { a: [T]; b: T? }
+class C2<T> { a: C1<[T]>; b: C1<T?> }
+class C3<T> { a: C2<[T]>; b: C2<T?> }
+class C4<T> { a: C3<[T]>; b: C3<T?> }
+class C5<T> { a: C4<[T]>; b: C4<T?> }
+class C6<T> { a: C5<[T]>; b: C5<T?> }
+class C7<T> { a: C6<[T]>; b: C6<T?> }
+class C8<T> { a: C7<[T]>; b: C7<T?> }
+class C9<T> { a: C8<[T]>; b: C8<T?> }
+class C10<T> { a: C9<[T]>; b: C9<T?> }
+class C11<T> { a: C10<[T]>; b: C10<T?> }
+class C12<T> { a: C11<[T]>; b: C11<T?> }
+class C13<T> { a: C12<[T]>; b: C12<T?> }
+class C14<T> { a: C13<[T]>; b: C13<T?> }
+class C15<T> { a: C14<[T]>; b: C14<T?> }
+class C16<T> { a: C15<[T]>; b: C15<T?> }
+class C17<T> { a: C16<[T]>; b: C16<T?> }
+fn main() {
+    let x: C17<i64>? = None
+    print(x == None)
+}

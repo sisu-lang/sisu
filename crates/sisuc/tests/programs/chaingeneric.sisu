@@ -1,0 +1,20 @@
+// The same chain of 300 000 objects, each in a field of the generic enum `Box<A>`. The enum is
+// an instance after `mono`, and it reaches the drop of `A` as `Link` does.
+enum Box<N> {
+    Empty
+    Full(N)
+}
+
+class A {
+    _next: Box<A>
+}
+
+fn main() {
+    let mut a = A(_next: Box.Empty)
+    let mut i = 0
+    while i < 300_000 {
+        i += 1
+        a = A(_next: Box.Full(a))
+    }
+    print(1)
+}

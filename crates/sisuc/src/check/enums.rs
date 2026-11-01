@@ -48,10 +48,10 @@ pub(super) struct VariantInfo {
 
 /// The name milestone 8's prelude takes, which no item, variant or binding may take, and what
 /// it is there.
-pub(super) fn reserved_name(name: &str) -> Option<BuiltIn> {
+pub(super) fn reserved_name(name: Symbol) -> Option<BuiltIn> {
     match name {
-        "Option" | "Result" => Some(BuiltIn::Type),
-        "Some" | "Ok" | "Err" => Some(BuiltIn::Constructor),
+        Symbol::OPTION | Symbol::RESULT => Some(BuiltIn::Type),
+        Symbol::SOME | Symbol::OK | Symbol::ERR => Some(BuiltIn::Constructor),
         _ => None,
     }
 }
@@ -93,7 +93,7 @@ impl Checker<'_> {
         if name.span.in_prelude() {
             return false;
         }
-        let Some(kind) = reserved_name(name.name.as_str()) else {
+        let Some(kind) = reserved_name(name.name) else {
             return false;
         };
         self.report(DiagnosticKind::BuiltInName {
@@ -480,10 +480,10 @@ impl Checker<'_> {
     /// The prelude's `Result` and the variant it declares for `name`, when `name` is `Ok` or
     /// `Err`, which a program writes without the enum.
     pub(super) fn result_variant(&self, name: Symbol) -> Option<(EnumId, usize)> {
-        if !matches!(name.as_str(), "Ok" | "Err") {
+        if !matches!(name, Symbol::OK | Symbol::ERR) {
             return None;
         }
-        let Some(&Declared::Known(id)) = self.enum_ids.get(&Symbol::intern("Result")) else {
+        let Some(&Declared::Known(id)) = self.enum_ids.get(&Symbol::RESULT) else {
             return None;
         };
         Some((id, *self.enums[id.0].index.get(&name)?))
@@ -564,6 +564,7 @@ impl Checker<'_> {
                     .collect(),
                 counted: false,
                 cycle: None,
+                reaches: false,
             })
             .collect();
         tir::layout_enums(&mut lowered);

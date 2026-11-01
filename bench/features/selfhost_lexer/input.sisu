@@ -152,12 +152,6 @@ fn numbers() {
     0b1010
     0o17
     0xdeadBEEF
-    // After a `.`, an upper-case prefix takes its digits too. These rows rest on a gap: the
-    // compiler gives no E0075 after a `.` when the run is too large for an integer. The rows go
-    // when that gap is fixed.
-    t.0XFFFFFFFFFFFFFFFFFFFF
-    t.0B11111111111111111111111111111111111111111111111111111111111111111
-    t.0O7777777777777777777777777
 }
 
 // A line break after a token that can end a statement is a `Newline`. This holds after each kind

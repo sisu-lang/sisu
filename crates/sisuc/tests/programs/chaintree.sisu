@@ -1,0 +1,16 @@
+// A chain of 300 000 nodes of an enum that holds an array of itself, with no class. Its reach
+// flag is set because of the array.
+enum Tree {
+    Leaf
+    Node([Tree])
+}
+
+fn main() {
+    let mut tree = Tree.Leaf
+    let mut i = 0
+    while i < 300_000 {
+        i += 1
+        tree = Tree.Node([tree])
+    }
+    print(1)
+}
