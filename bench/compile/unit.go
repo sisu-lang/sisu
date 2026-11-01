@@ -1,5 +1,6 @@
 // One copy of the program that scripts/compile_speed.py repeats. The generator puts the
-// number of the copy in each name that ends in the placeholder.
+// number of the copy in each name that ends in the placeholder, and in one string, so that no
+// compiler can merge the copies.
 // unit.sisu, unit.rs and unit.cpp hold the same program.
 
 package main
@@ -164,6 +165,6 @@ func runXX() int64 {
 	}
 	mean, _ := tally.mean()
 	total += mean
-	label := fmt.Sprintf("tally %d/%d", tally.count, tally.sum)
+	label := fmt.Sprintf("tally XX %d/%d", tally.count, tally.sum)
 	return total + int64(len(label))
 }

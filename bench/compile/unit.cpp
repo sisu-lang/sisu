@@ -1,5 +1,6 @@
 // One copy of the program that scripts/compile_speed.py repeats. The generator
-// puts the number of the copy in each name that ends in the placeholder.
+// puts the number of the copy in each name that ends in the placeholder, and
+// in one string, so that no compiler can merge the copies.
 // unit.sisu, unit.rs and unit.go hold the same program.
 // No header is included: a standard header would add the library to what the
 // compiler parses.
@@ -197,6 +198,6 @@ long long runXX() {
   for (ShapeXX s : shapes)
     tally.add(areaXX(s));
   total += tally.mean().val;
-  Str label = Str("tally ") + str(tally.count) + Str("/") + str(tally.sum);
+  Str label = Str("tally XX ") + str(tally.count) + Str("/") + str(tally.sum);
   return total + label.len();
 }

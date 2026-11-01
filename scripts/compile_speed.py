@@ -132,10 +132,16 @@ def generate(lang, unit, copies):
 def main_of(lang, copies):
     """The `main` that adds the result of each copy in one statement and prints the sum.
 
-    Each statement calls its copy twice. A function with one call site gets the large inline bonus
-    of LLVM (the last call to a static function), so at -O2 every copy would go into `main`, and
-    the time of the optimizer on one large function grows faster than the program. Two call sites
-    keep each copy its own function, in all four languages.
+    Each statement calls its copy twice. In Sisu and Rust, `runN` has internal linkage. LLVM gives
+    the last call of an internal function a large inline bonus. With one call, every copy would go
+    into `main` at -O2, and the time of the optimizer on one large function grows faster than the
+    program. Two calls remove the bonus. The C++ `runN` has external linkage and never had the
+    bonus, and the inliner of Go has no such bonus. They use the same form, so that the programs
+    are the same.
+
+    The copies must also differ in more than their names, because rustc runs the LLVM pass
+    MergeFunctions at -O2, and it would merge identical copies into one function. So the label
+    string of each unit has the number of the copy, and its length goes into the sum.
     """
     calls = [f'total = total + run{i}() + run{i}()' for i in range(copies)]
     if lang == 'sisu':

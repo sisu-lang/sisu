@@ -1,5 +1,6 @@
 // One copy of the program that scripts/compile_speed.py repeats. The generator puts the
-// number of the copy in each name that ends in the placeholder.
+// number of the copy in each name that ends in the placeholder, and in one string, so that no
+// compiler can merge the copies.
 // unit.sisu, unit.cpp and unit.go hold the same program.
 use std::fmt::Display;
 
@@ -148,6 +149,6 @@ fn runXX() -> i64 {
         tally.add(areaXX(s));
     }
     total += tally.mean().unwrap_or(0);
-    let label = format!("tally {}/{}", tally.count, tally.sum);
+    let label = format!("tally XX {}/{}", tally.count, tally.sum);
     total + label.len() as i64
 }

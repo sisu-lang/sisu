@@ -6,6 +6,7 @@ its arguments and writes a small program that logs its own run. The units are sm
 No test starts a real compiler, and no test checks an elapsed time.
 """
 import os
+import re
 import shutil
 import signal
 import stat
@@ -469,7 +470,7 @@ class CompileSpeed(unittest.TestCase):
         GIVEN a unit and a number of copies in each language
         WHEN `generate` writes the input
         THEN `main` has one statement for each copy
-        AND the statement calls the copy twice, so that the optimizer keeps each copy its own function
+        AND the statement calls the copy twice, so that main has two call sites for each copy
         """
         for lang in compile_speed.LANGS:
             with self.subTest(lang):
@@ -844,16 +845,34 @@ done
 
     def test_environment_should_disable_ccache_and_limit_go_to_one_thread(self):
         """
-        GIVEN a language
-        WHEN `environment` builds the environment of its commands
+        GIVEN a caller whose environment has `GOMAXPROCS=2` and `CCACHE_DISABLE=0`
+        WHEN `environment` builds the environment of the commands of each language
         THEN ccache is off for every language, so that no compile is a cache hit
-        AND only Go has `GOMAXPROCS=1`
+        AND Go has `GOMAXPROCS=1` and each other language keeps `GOMAXPROCS=2`
         """
-        for lang in compile_speed.LANGS:
+        with mock.patch.dict(os.environ, {'GOMAXPROCS': '2', 'CCACHE_DISABLE': '0'}):
+            for lang in compile_speed.LANGS:
+                with self.subTest(lang):
+                    env = compile_speed.environment(lang)
+                    self.assertEqual(env['CCACHE_DISABLE'], '1')
+                    self.assertEqual(env['GOMAXPROCS'], '1' if lang == 'go' else '2')
+
+    def test_units_should_put_the_copy_number_in_a_string_that_the_sum_counts(self):
+        """
+        GIVEN the four committed units
+        WHEN `generate` writes three copies of each
+        THEN each copy has its own number in a label string, the same text in all four languages
+        AND so no two copies are the same function, which a compiler could merge
+        """
+        here = Path(__file__).resolve().parent.parent / 'bench' / 'compile'
+        for lang, ext in compile_speed.EXTENSIONS.items():
             with self.subTest(lang):
-                env = compile_speed.environment(lang)
-                self.assertEqual(env['CCACHE_DISABLE'], '1')
-                self.assertEqual(env.get('GOMAXPROCS') == '1', lang == 'go')
+                unit = (here / f'unit.{ext}').read_text()
+                labels = re.findall(r'"(tally XX [^"\n]*)"', unit)
+                self.assertEqual(len(labels), 1, labels)
+                text = compile_speed.generate(lang, unit, 3)
+                for i in range(3):
+                    self.assertEqual(text.count(f'"tally {i} '), 1, i)
 
     def test_instructions_should_sum_the_lines_of_every_core_type(self):
         """
