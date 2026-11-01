@@ -29,7 +29,7 @@ in Codex, `$audit-sisu [area...]`.
 | `diagnostics` | Bad programs that get no diagnostic, a wrong span, or a confusing message | [areas/diagnostics.md](areas/diagnostics.md) |
 | `coverage` | Compiler paths no test reaches, surviving mutants | [areas/coverage.md](areas/coverage.md) |
 | `compile-time` | `sisu` doing avoidable work: repeated steps, allocations on hot paths, IR LLVM only deletes, failing late | [areas/compile-time.md](areas/compile-time.md) |
-| `structure` | Growth of the debt that `docs/register.md` lists: fields on the checker's state, wildcard arms, name-map reads, number-type lists; and the uses that the module-order test keeps | [areas/structure.md](areas/structure.md) |
+| `structure` | Growth of the debt that `docs/register.md` lists: fields on the checker's state, name-map reads, number-type lists; new wildcard arms; and the uses that the module-order test keeps | [areas/structure.md](areas/structure.md) |
 
 With no argument, run all ten; otherwise run the named ones.
 
