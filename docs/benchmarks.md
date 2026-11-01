@@ -307,6 +307,180 @@ runs (`taskset -c 2 hyperfine -N -w 5 -r 50 ...`):
 - `scripts/bench.sh` does not pin or warm up its builds, so its Build column
   reads higher.
 
+## Compile speed
+
+The tables above time the programs. This section times the compilers.
+`scripts/compile_speed.py` compiles one program with `sisu`, `rustc`,
+`clang++` and `go`, and times five commands on it at three sizes. It shows
+where the Sisu compiler stands. It does not show which compiler is better,
+because the compilers do different work.
+
+`bench/compile/` holds one unit in each language: the same program, with
+generic classes, an interface with an associated type, a generic function
+with a bound, an enum, string interpolation and a `run` function. The size is
+the number of copies of the unit. The script gives each copy its own names and
+adds a `main` that prints the sum of the results. Size 1000 is about 140k lines
+in Sisu, and 138k to 158k lines in the other languages. The `main` calls each copy twice. With one call, LLVM
+inlines every copy into `main` at `-O2`, and the time of the optimizer on one
+huge function grows much faster than the program: `rustc -O2` took 14 minutes
+of CPU at size 100. With two calls, each copy stays its own function.
+
+All ran at commit 02f1115c on 2026-11-01. The load average was 17.6 at the
+start of the run and 3.8 at the end, on 32 CPUs. Each time is the best of 5
+runs of the command.
+
+- commit: 02f1115c
+- date: 2026-11-01
+- cpu: Intel(R) Core(TM) i9-14900K
+- kernel: 7.0.0-38-generic
+- sisu: sisu 0.1.0
+- rustc: rustc 1.99.0 (b940084d7 2026-09-28)
+- clang++: Ubuntu clang version 18.1.3 (1ubuntu1)
+- go: go version go1.27.2 linux/amd64
+- rustfmt: rustfmt 1.10.0-stable (b940084d7e 2026-09-28)
+- clang-format: Ubuntu clang-format version 18.1.3 (1ubuntu1)
+- gofmt: from go version go1.27.2 linux/amd64
+- linker (Sisu): GNU ld (GNU Binutils for Ubuntu) 2.42
+- linker (Rust): LLD 23.1.1 (/checkout/src/llvm-project/llvm 1b9c0d5ff9bbe7634aead059efe6b11a7eeba145) (compatible with GNU linkers)
+- linker (C++): GNU ld (GNU Binutils for Ubuntu) 2.42
+- linker (Go): link version go1.27.2
+
+| Row | Size | Language | Lines | Tokens | Time | Tokens/s | Tokens/s past empty | Lines/s | Instructions/token |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| type check | 10 | Sisu | 1438 | 7435 | 6.5 ms | 1.1M | 1.9M | 222.2k | - |
+| type check | 10 | Rust | 1510 | 9661 | 66.5 ms | 145.2k | 246.0k | 22.7k | - |
+| type check | 10 | C++ | 1452 | 10323 | 36.2 ms | 285.1k | 440.3k | 40.1k | - |
+| type check | 10 | Go | 1599 | 9082 | 15.0 ms | 606.2k | 626.8k | 106.7k | - |
+| type check | 100 | Sisu | 14308 | 74215 | 27.2 ms | 2.7M | 3.0M | 526.2k | - |
+| type check | 100 | Rust | 15010 | 96331 | 343.8 ms | 280.2k | 304.3k | 43.7k | - |
+| type check | 100 | C++ | 13872 | 99423 | 142.0 ms | 700.0k | 769.0k | 97.7k | - |
+| type check | 100 | Go | 15819 | 90532 | 127.4 ms | 710.4k | 713.2k | 124.1k | - |
+| type check | 1000 | Sisu | 143008 | 742015 | 207.9 ms | 3.6M | 3.6M | 687.9k | - |
+| type check | 1000 | Rust | 150010 | 963031 | 3.69 s | 260.8k | 262.7k | 40.6k | - |
+| type check | 1000 | C++ | 138072 | 990423 | 1.38 s | 720.3k | 727.0k | 100.4k | - |
+| type check | 1000 | Go | 158019 | 905032 | 1.45 s | 624.4k | 624.6k | 109.0k | - |
+| type check and mir | 10 | Sisu | 1438 | 7435 | 7.6 ms | 974.6k | 1.5M | 188.5k | - |
+| type check and mir | 10 | Rust | 1510 | 9661 | 66.5 ms | 145.2k | 246.0k | 22.7k | - |
+| type check and mir | 10 | C++ | 1452 | 10323 | 36.2 ms | 285.1k | 440.3k | 40.1k | - |
+| type check and mir | 10 | Go | 1599 | 9082 | 15.0 ms | 606.2k | 626.8k | 106.7k | - |
+| type check and mir | 100 | Sisu | 14308 | 74215 | 49.1 ms | 1.5M | 1.6M | 291.6k | - |
+| type check and mir | 100 | Rust | 15010 | 96331 | 343.8 ms | 280.2k | 304.3k | 43.7k | - |
+| type check and mir | 100 | C++ | 13872 | 99423 | 142.0 ms | 700.0k | 769.0k | 97.7k | - |
+| type check and mir | 100 | Go | 15819 | 90532 | 127.4 ms | 710.4k | 713.2k | 124.1k | - |
+| type check and mir | 1000 | Sisu | 143008 | 742015 | 519.9 ms | 1.4M | 1.4M | 275.0k | - |
+| type check and mir | 1000 | Rust | 150010 | 963031 | 3.69 s | 260.8k | 262.7k | 40.6k | - |
+| type check and mir | 1000 | C++ | 138072 | 990423 | 1.38 s | 720.3k | 727.0k | 100.4k | - |
+| type check and mir | 1000 | Go | 158019 | 905032 | 1.45 s | 624.4k | 624.6k | 109.0k | - |
+| LLVM IR, no optimization | 10 | Sisu | 1438 | 7435 | 20.8 ms | 358.2k | 421.5k | 69.3k | - |
+| LLVM IR, no optimization | 10 | Rust | 1510 | 9661 | 294.7 ms | 32.8k | 71.6k | 5.1k | - |
+| LLVM IR, no optimization | 10 | C++ | 1452 | 10323 | 129.3 ms | 79.8k | 846.1k | 11.2k | - |
+| LLVM IR, no optimization | 10 | Go | 1599 | 9082 | none | - | - | - | - |
+| LLVM IR, no optimization | 100 | Sisu | 14308 | 74215 | 218.4 ms | 339.8k | 344.7k | 65.5k | - |
+| LLVM IR, no optimization | 100 | Rust | 15010 | 96331 | 688.4 ms | 139.9k | 182.2k | 21.8k | - |
+| LLVM IR, no optimization | 100 | C++ | 13872 | 99423 | 307.7 ms | 323.1k | 521.6k | 45.1k | - |
+| LLVM IR, no optimization | 100 | Go | 15819 | 90532 | none | - | - | - | - |
+| LLVM IR, no optimization | 1000 | Sisu | 143008 | 742015 | 2.17 s | 342.5k | 343.0k | 66.0k | - |
+| LLVM IR, no optimization | 1000 | Rust | 150010 | 963031 | 7.60 s | 126.7k | 129.4k | 19.7k | - |
+| LLVM IR, no optimization | 1000 | C++ | 138072 | 990423 | 3.35 s | 295.5k | 306.2k | 41.2k | - |
+| LLVM IR, no optimization | 1000 | Go | 158019 | 905032 | none | - | - | - | - |
+| executable, no optimization | 10 | Sisu | 1438 | 7435 | 81.3 ms | 91.4k | 238.5k | 17.7k | - |
+| executable, no optimization | 10 | Rust | 1510 | 9661 | 497.5 ms | 19.4k | 43.4k | 3.0k | - |
+| executable, no optimization | 10 | C++ | 1452 | 10323 | 225.0 ms | 45.9k | 113.5k | 6.5k | - |
+| executable, no optimization | 10 | Go | 1599 | 9082 | 477.2 ms | 19.0k | 30.7k | 3.4k | - |
+| executable, no optimization | 100 | Sisu | 14308 | 74215 | 371.5 ms | 199.8k | 231.0k | 38.5k | - |
+| executable, no optimization | 100 | Rust | 15010 | 96331 | 1.04 s | 93.0k | 126.6k | 14.5k | - |
+| executable, no optimization | 100 | C++ | 13872 | 99423 | 702.8 ms | 141.5k | 174.8k | 19.7k | - |
+| executable, no optimization | 100 | Go | 15819 | 90532 | 949.5 ms | 95.3k | 117.9k | 16.7k | - |
+| executable, no optimization | 1000 | Sisu | 143008 | 742015 | 3.37 s | 220.0k | 223.4k | 42.4k | - |
+| executable, no optimization | 1000 | Rust | 150010 | 963031 | 9.12 s | 105.6k | 108.9k | 16.5k | - |
+| executable, no optimization | 1000 | C++ | 138072 | 990423 | 6.65 s | 148.9k | 152.0k | 20.8k | - |
+| executable, no optimization | 1000 | Go | 158019 | 905032 | 9.51 s | 95.2k | 97.0k | 16.6k | - |
+| executable, optimized | 10 | Sisu | 1438 | 7435 | 289.7 ms | 25.7k | 30.9k | 5.0k | - |
+| executable, optimized | 10 | Rust | 1510 | 9661 | 718.0 ms | 13.5k | 25.8k | 2.1k | - |
+| executable, optimized | 10 | C++ | 1452 | 10323 | 1.09 s | 9.5k | 11.0k | 1.3k | - |
+| executable, optimized | 10 | Go | 1599 | 9082 | 221.6 ms | 41.0k | 59.7k | 7.2k | - |
+| executable, optimized | 100 | Sisu | 14308 | 74215 | 2.60 s | 28.5k | 29.1k | 5.5k | - |
+| executable, optimized | 100 | Rust | 15010 | 96331 | 1.87 s | 51.6k | 63.2k | 8.0k | - |
+| executable, optimized | 100 | C++ | 13872 | 99423 | 4.23 s | 23.5k | 24.4k | 3.3k | - |
+| executable, optimized | 100 | Go | 15819 | 90532 | 1.29 s | 70.0k | 74.0k | 12.2k | - |
+| executable, optimized | 1000 | Sisu | 143008 | 742015 | 27.93 s | 26.6k | 26.6k | 5.1k | - |
+| executable, optimized | 1000 | Rust | 150010 | 963031 | 23.16 s | 41.6k | 42.2k | 6.5k | - |
+| executable, optimized | 1000 | C++ | 138072 | 990423 | 43.79 s | 22.6k | 22.7k | 3.2k | - |
+| executable, optimized | 1000 | Go | 158019 | 905032 | 13.39 s | 67.6k | 67.9k | 11.8k | - |
+
+### What the columns mean
+
+- **Row** is the command. The rows are, from the least to the most work:
+  `type check`, `type check and mir`, `LLVM IR, no optimization`, `executable,
+  no optimization` and `executable, optimized`.
+- **Lines** is the number of lines of the input, and **Tokens** is its
+  number of tokens. One scanner counts the tokens, the same way for all four
+  languages: a word or a number is one token, a string is one token, and each
+  other character that is not white space is one token. A comment is none.
+  This is not the token count of `sisu build --timings`. The same program
+  has a different number of tokens in each language.
+- **Time** is the wall time of the process, except for the Go type-check cell
+  (see below). The process runs on one thread.
+- **Tokens/s** is the tokens divided by the time. **Tokens/s past empty** is
+  the tokens divided by the time less the time of an empty program (a `main`
+  that returns) in the same row. It removes the start-up cost of the
+  compiler, which is large for a small input. **Lines/s** is the lines
+  divided by the time.
+- **Instructions/token** is the user-space instructions that `perf stat`
+  counts for one more run of the command, divided by the tokens. The column
+  shows `-` when `perf` cannot read the counters, as on the machine above,
+  where `kernel.perf_event_paranoid` is 4. To fill it, set
+  `kernel.perf_event_paranoid` to 2 or lower, which allows `:u` events.
+- `none` in the Time column means that the language has no such command. Go
+  has no step that stops at LLVM IR. `skipped` means that the compiler is not
+  on `PATH`.
+
+### What the comparison means
+
+The type-check commands do different work:
+
+| Command | Does |
+| --- | --- |
+| `sisu check` | type check |
+| `sisu build --emit mir` | type check, mono and mir |
+| `rustc --emit=metadata` | type check, trait solving, MIR and the borrow check; no monomorphization |
+| `clang++ -fsyntax-only` | type check and template instantiation |
+| Go `fe:parse` | parse and type check |
+
+The two Sisu rows bracket the others. Go's compiler is built for speed and
+does less optimization. So a ratio is an indication of where Sisu is, not a
+race. `rustc`, `clang++` and Go have one command for both type-check rows, so
+their two rows show the same measurement.
+
+- **The Go type-check cell is Go's own time.** It is the `fe:parse` time that
+  `go build -gcflags=-bench` writes, measured inside the compiler process. It
+  has no instructions per token. Every other cell is the wall time of the
+  whole process.
+- **Each compiler ran on one thread.** The script passes `-p=1` and
+  `GOMAXPROCS=1` to Go, `-C codegen-units=1` to `rustc`, and one thread to
+  the LLD linker. `rustc` and Go are therefore faster than the table shows on
+  a machine with many cores.
+- The rows with `executable` link a program, so they include the time of the
+  linker. Sisu links with GNU ld, `rustc` with LLD, `clang++` with GNU ld and
+  Go with its own linker.
+- Every compile must give no warning, and every program must print what the
+  Sisu program prints. The script stops with exit code 1 otherwise.
+
+### Running it
+
+```sh
+make compile-speed                      # all sizes, 5 runs of each command
+make compile-speed ARGS='--check-only'  # build and compare the smallest size, time nothing
+mise exec go -- make compile-speed      # when mise installs Go
+```
+
+The target builds `sisu` in release mode, and the script prints the table
+above. It skips a language whose compiler is not on `PATH`. The full run
+takes about 20 minutes on the machine above; `ARGS='--sizes 10,100'` runs
+less. Build outputs go to `target/compile-speed/`. The script checks the
+style of the units with `rustfmt`, `clang-format` and `gofmt`, and skips a
+check when its tool is not on `PATH`. It needs `perf` for the last column.
+
 ## Benchmarks for CodSpeed only
 
 `bench/features/` holds Sisu-only programs sized for CodSpeed's simulation.
