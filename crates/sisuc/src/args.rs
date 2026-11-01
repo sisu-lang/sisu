@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use clap::builder::StyledStr;
-use clap::error::ErrorKind;
+use clap::error::{ContextKind, ContextValue, ErrorKind};
 use clap::{ArgGroup, Args, CommandFactory, Parser, Subcommand, ValueEnum};
 
 use crate::codegen::OptLevel;
@@ -137,8 +137,8 @@ impl BuildFlags {
 }
 
 /// The format and the mode `args`, the whole command line, asks for.
-pub(crate) fn parse(args: Vec<OsString>) -> Result<(Format, Mode), clap::Error> {
-    let cli = Cli::try_parse_from(args)?;
+pub(crate) fn parse(args: &[OsString]) -> Result<(Format, Mode), clap::Error> {
+    let cli = Cli::try_parse_from(args).map_err(|error| foreign_flag(args, error))?;
     if cli.version {
         return Ok((
             Format::Text,
@@ -303,6 +303,53 @@ fn build_mode(
         rc_checks: backend.rc_checks,
         timings,
     })
+}
+
+/// `error` as a usage error of the subcommand on `args`, when `error` is an unknown flag that
+/// other subcommands take; else `error`, which clap's own text explains.
+fn foreign_flag(args: &[OsString], error: clap::Error) -> clap::Error {
+    // clap gives an unknown argument its flag alone, as a string.
+    let (ErrorKind::UnknownArgument, Some(ContextValue::String(flag))) =
+        (error.kind(), error.get(ContextKind::InvalidArg))
+    else {
+        return error;
+    };
+    let cli = Cli::command();
+    // The flag alone is `--long` or `-s`.
+    let takes = |arg: &clap::Arg| {
+        arg.get_long()
+            .is_some_and(|long| flag.strip_prefix("--") == Some(long))
+            || arg
+                .get_short()
+                .is_some_and(|short| *flag == format!("-{short}"))
+    };
+    let Some(used) = args.iter().skip(1).find_map(|arg| cli.find_subcommand(arg)) else {
+        return error;
+    };
+    // A flag before the subcommand's name, such as `sisu --timings build`, is not its to reject.
+    if used.get_arguments().any(takes) {
+        return error;
+    }
+    let others: Vec<String> = cli
+        .get_subcommands()
+        .filter(|sub| sub.get_arguments().any(takes))
+        .map(|sub| format!("`sisu {}`", sub.get_name()))
+        .collect();
+    let Some((last, first)) = others.split_last() else {
+        return error;
+    };
+    let (names, verb) = if first.is_empty() {
+        (last.clone(), "takes")
+    } else {
+        (format!("{} and {last}", first.join(", ")), "take")
+    };
+    usage_error(
+        used.get_name(),
+        format!(
+            "`sisu {}` does not take `{flag}`; {names} {verb} it",
+            used.get_name()
+        ),
+    )
 }
 
 /// A usage error of `subcommand`, shown with its usage.

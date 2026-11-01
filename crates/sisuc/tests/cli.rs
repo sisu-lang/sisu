@@ -3428,13 +3428,105 @@ fn timings_should_print_no_throughput_when_the_lex_stops() {
 /// GIVEN a program that runs
 /// WHEN `sisu run --timings` runs on it
 /// THEN the exit code is 2
-/// AND standard error names `--timings`
+/// AND standard error says that `sisu run` does not take `--timings`
+/// AND standard error names `sisu build` and `sisu check` as the commands that take it
 #[test]
 fn run_should_reject_timings() {
     let out = run_on("timings_run", CLEAN, &["run", "--timings"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(2), "{stderr}");
-    assert!(stderr.contains("--timings"), "{stderr}");
+    assert!(
+        stderr.contains(
+            "`sisu run` does not take `--timings`; `sisu build` and `sisu check` take it"
+        ),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("-- --timings"), "{stderr}");
+}
+
+/// GIVEN a program that runs
+/// WHEN `sisu run -o out` runs on it
+/// THEN the exit code is 2
+/// AND standard error says that `sisu run` does not take `-o`
+/// AND standard error names `sisu build` as the command that takes it
+#[test]
+fn run_should_reject_the_output_flag() {
+    let out = run_on("output_run", CLEAN, &["run", "-o", "out"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("`sisu run` does not take `-o`; `sisu build` takes it"),
+        "{stderr}"
+    );
+}
+
+/// GIVEN a program that runs
+/// WHEN `sisu check -O2` runs on it
+/// THEN the exit code is 2
+/// AND standard error says that `sisu check` does not take `-O`
+/// AND standard error names `sisu build` and `sisu run` as the commands that take it
+#[test]
+fn check_should_reject_an_optimization_level() {
+    let out = run_on("level_check", CLEAN, &["check", "-O2"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("`sisu check` does not take `-O`; `sisu build` and `sisu run` take it"),
+        "{stderr}"
+    );
+}
+
+/// GIVEN a program that runs
+/// WHEN `sisu run --timing` runs on it, a flag that no command takes
+/// THEN the exit code is 2
+/// AND standard error is clap's text, which names `--timing` and does not name another command
+#[test]
+fn run_should_keep_clap_text_for_a_flag_that_no_command_takes() {
+    let out = run_on("misspelt_run", CLEAN, &["run", "--timing"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("unexpected argument '--timing'"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("does not take"), "{stderr}");
+}
+
+/// GIVEN a flag that only some commands take
+/// WHEN `sisu --timings` runs with no command
+/// THEN the exit code is 2
+/// AND standard error is clap's text, which does not name a command
+#[test]
+fn sisu_should_keep_clap_text_for_a_flag_with_no_command() {
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .arg("--timings")
+        .output()
+        .expect("sisu starts");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("unexpected argument '--timings'"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("does not take"), "{stderr}");
+}
+
+/// GIVEN a program that runs
+/// WHEN `sisu --timings build` runs on it, with the flag before the command's name
+/// THEN the exit code is 2
+/// AND standard error does not say that `sisu build` does not take `--timings`
+#[test]
+fn build_should_not_reject_a_flag_that_it_takes_when_the_flag_is_misplaced() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    fs::write(dir.join("misplaced_build.sisu"), CLEAN).expect("writes");
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .current_dir(dir)
+        .args(["--timings", "build", "misplaced_build.sisu"])
+        .output()
+        .expect("sisu starts");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(!stderr.contains("does not take"), "{stderr}");
 }
 
 /// GIVEN a build whose output is in a directory that does not exist

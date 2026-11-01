@@ -4,9 +4,28 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::{Code, Diagnostic, Edit, Fix, RETIRED};
-use crate::front_end::{decode, front_end};
+use crate::front_end::{decode, front_end as front_end_with_program};
 use crate::lexer::lex;
 use crate::parser::{parse, parse_ok};
+
+/// `f` on a thread with a `STACK_SIZE` stack: a fixture that nests to the limit overflows the
+/// test's own, as `main` runs `cli` on a larger one.
+fn on_deep_stack<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(crate::STACK_SIZE)
+            .spawn_scoped(scope, f)
+            .expect("the thread should start")
+            .join()
+            .expect("the work on the deep stack should not panic")
+    })
+}
+
+/// The diagnostics of `source`, after a `()` where `front_end` has its program, which is not
+/// `Send`.
+fn front_end(source: &str) -> ((), Vec<Diagnostic>) {
+    ((), on_deep_stack(|| front_end_with_program(source).1))
+}
 
 /// `source` with `edits` applied. An edit equal to one already taken is dropped, as the same fix
 /// can come from several diagnostics; the rest must not overlap, and two insertions must not
@@ -76,7 +95,7 @@ pub(crate) fn apply_fix(source: &str, d: &Diagnostic) -> String {
 /// that was, or `None` when no diagnostic of `code` has one. The result must still lex and
 /// parse; the checker may still report errors it reveals.
 fn fixed(source: &str, code: Code) -> Option<(String, usize)> {
-    let (_, diagnostics) = front_end(source);
+    let ((), diagnostics) = front_end(source);
     let safe = |d: &&Diagnostic| d.fixes().iter().any(Fix::safe);
     diagnostics.iter().filter(|d| d.code() == code).find(safe)?;
     let fixes: Vec<&Fix> = diagnostics
@@ -292,11 +311,13 @@ fn fixtures() -> Vec<(PathBuf, Code)> {
 
 /// The lexer and parser diagnostics of `source`.
 fn syntax_codes(source: &str) -> Vec<Code> {
-    let diagnostics = match lex(source) {
-        Ok(lexed) => parse(lexed, false).diagnostics,
-        Err(d) => vec![d],
-    };
-    diagnostics.iter().map(Diagnostic::code).collect()
+    on_deep_stack(|| {
+        let diagnostics = match lex(source) {
+            Ok(lexed) => parse(lexed, false).diagnostics,
+            Err(d) => vec![d],
+        };
+        diagnostics.iter().map(Diagnostic::code).collect()
+    })
 }
 
 /// `a` with one occurrence of each code of `b` removed.

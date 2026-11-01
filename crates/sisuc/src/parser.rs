@@ -14,6 +14,7 @@ use crate::ast::{
 use crate::diagnostic::{
     self, BuiltIn, ClashForm, Diagnostic, DiagnosticKind, ForeignPattern, ForeignRange,
     InterfaceBodyForm, Join, LetField, MatchIdiomForm, NestingForm, Owner, PowerFix, SpecForm,
+    SpecLimit,
 };
 use crate::lexer::{Lexed, MIN_MAGNITUDE, Token, TokenKind, literal_too_large};
 use crate::source::{Source, Span};
@@ -57,7 +58,7 @@ pub(crate) fn parse(lexed: Lexed<'_>, prelude: bool) -> Parsed {
         halves: &halves,
         halved: None,
         pos: 0,
-        depth: 0,
+        depth: Height::default(),
         lexer: &diagnostics,
         comments: &comments,
         breaks: &breaks,
@@ -108,23 +109,20 @@ fn rising(ranges: &[Range<usize>]) -> bool {
 /// The format spec `text`, written at `at` from its `:`: `#`, or `[<^>][width][.precision]`.
 /// A width is from 1 to 1000. A precision is from 0 to 30.
 /// A single `#` beside those parts, in any place, is an error of its own form.
-/// So are `?` alone and `#?` alone.
+/// So is a `?` after a spec that is right without it: `?` alone, `#?` alone, and `>5?`.
 /// The spec is read without the `#` first, so a spec that is wrong without it gets that error.
 /// A limit error is the exception: the `#` is the first thing to remove then.
 fn format_spec(text: &str, at: Span) -> Result<FormatSpec, Diagnostic> {
-    if text == "?" {
-        return Err(DiagnosticKind::UnsupportedFormatSpec {
-            at,
-            form: SpecForm::Debug,
+    if let Some(without) = text.strip_suffix('?') {
+        let form = match without {
+            "" => Some(SpecForm::Debug),
+            "#" => Some(SpecForm::PrettyDebug),
+            _ if plain_format_spec(without, at).is_ok() => Some(SpecForm::DebugSpec),
+            _ => None,
+        };
+        if let Some(form) = form {
+            return Err(DiagnosticKind::UnsupportedFormatSpec { at, form }.into());
         }
-        .into());
-    }
-    if text == "#?" {
-        return Err(DiagnosticKind::UnsupportedFormatSpec {
-            at,
-            form: SpecForm::PrettyDebug,
-        }
-        .into());
     }
     if text.matches('#').count() == 1 {
         let without = text.replacen('#', "", 1);
@@ -139,9 +137,9 @@ fn format_spec(text: &str, at: Span) -> Result<FormatSpec, Diagnostic> {
         }
         return Err(match plain_format_spec(&without, at) {
             Err(error) if error.code() != diagnostic::Code::FormatSpecLimit => error,
-            _ => DiagnosticKind::UnsupportedFormatSpec {
+            result => DiagnosticKind::UnsupportedFormatSpec {
                 at,
-                form: SpecForm::Pretty,
+                form: SpecForm::Pretty(result.err().map(|_| spec_limit(&without))),
             }
             .into(),
         });
@@ -149,8 +147,9 @@ fn format_spec(text: &str, at: Span) -> Result<FormatSpec, Diagnostic> {
     plain_format_spec(text, at)
 }
 
-/// The format spec `text` without a `#`: `[<^>][width][.precision]`.
-fn plain_format_spec(text: &str, at: Span) -> Result<FormatSpec, Diagnostic> {
+/// The parts of the plain spec `text`, which has the right shape: the alignment, the digits of
+/// the width, the digits of the precision if a `.` is there, and what is left over.
+fn split_spec(text: &str) -> (Option<Align>, &str, Option<&str>, &str) {
     let align = match text.as_bytes().first() {
         Some(b'<') => Some(Align::Left),
         Some(b'>') => Some(Align::Right),
@@ -168,6 +167,35 @@ fn plain_format_spec(text: &str, at: Span) -> Result<FormatSpec, Diagnostic> {
         }
         None => (None, rest),
     };
+    (align, width, precision, rest)
+}
+
+/// A width from 1 to 1000, or `None` when `digits` are empty, too many, or too large.
+fn width_in_limit(digits: &str) -> Option<u16> {
+    digits.parse::<u16>().ok().filter(|&w| w <= 1000)
+}
+
+/// A precision from 0 to 30, or `None` when `digits` are empty, too many, or too large.
+fn precision_in_limit(digits: &str) -> Option<u8> {
+    digits.parse::<u8>().ok().filter(|&p| p <= 30)
+}
+
+/// Which limits the plain spec `text` passes. `text` is a spec that `plain_format_spec` rejects
+/// with a limit error, so at least one part passes.
+fn spec_limit(text: &str) -> SpecLimit {
+    let (_, width, precision, _) = split_spec(text);
+    let wide = !width.is_empty() && width_in_limit(width).is_none();
+    let fine = precision.is_some_and(|p| precision_in_limit(p).is_none());
+    match (wide, fine) {
+        (true, true) => SpecLimit::Both,
+        (true, false) => SpecLimit::Width,
+        _ => SpecLimit::Precision,
+    }
+}
+
+/// The format spec `text` without a `#`: `[<^>][width][.precision]`.
+fn plain_format_spec(text: &str, at: Span) -> Result<FormatSpec, Diagnostic> {
+    let (align, width, precision, rest) = split_spec(text);
     if !rest.is_empty() || width.starts_with('0') {
         return Err(DiagnosticKind::UnsupportedFormatSpec {
             at,
@@ -181,21 +209,11 @@ fn plain_format_spec(text: &str, at: Span) -> Result<FormatSpec, Diagnostic> {
     let limit = |width| Diagnostic::from(DiagnosticKind::FormatSpecLimit { at, width });
     let width = match width {
         "" => None,
-        w => Some(
-            w.parse::<u16>()
-                .ok()
-                .filter(|&w| w <= 1000)
-                .ok_or_else(|| limit(true))?,
-        ),
+        w => Some(width_in_limit(w).ok_or_else(|| limit(true))?),
     };
     let precision = match precision {
         None => None,
-        Some(p) => Some(
-            p.parse::<u8>()
-                .ok()
-                .filter(|&p| p <= 30)
-                .ok_or_else(|| limit(false))?,
-        ),
+        Some(p) => Some(precision_in_limit(p).ok_or_else(|| limit(false))?),
     };
     Ok(FormatSpec {
         align,
@@ -209,6 +227,57 @@ fn plain_format_spec(text: &str, at: Span) -> Result<FormatSpec, Diagnostic> {
 /// How deep the syntax tree may nest. Every later stage walks the tree recursively, and so does
 /// dropping it, so the parser is the one place that bounds the stack they need.
 const MAX_DEPTH: usize = 256;
+
+/// The height of a path through the tree: its levels, and how many of them are links of a chain
+/// or `else if`s. `Ord` puts the deeper path first, so the maximum of two heights is the deeper
+/// path with its own counts, and the report can name what made that path deep.
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+struct Height {
+    /// The levels on the path.
+    depth: usize,
+    /// The levels that an infix operator, a postfix step or a prefix operator added.
+    links: usize,
+    /// The levels that an `else if` added.
+    else_ifs: usize,
+}
+
+impl Height {
+    /// One level more.
+    fn deeper(self) -> Self {
+        Self {
+            depth: self.depth + 1,
+            ..self
+        }
+    }
+
+    /// One level more, which a link of a chain adds.
+    fn link(self) -> Self {
+        Self {
+            links: self.links + 1,
+            ..self.deeper()
+        }
+    }
+
+    /// One level more, which an `else if` adds.
+    fn else_if(self) -> Self {
+        Self {
+            else_ifs: self.else_ifs + 1,
+            ..self.deeper()
+        }
+    }
+
+    /// What made the path deep: links when they are more than half its levels, else `else if`s
+    /// when they are, else nesting.
+    fn form(self) -> NestingForm {
+        if 2 * self.links > self.depth {
+            NestingForm::Chain
+        } else if 2 * self.else_ifs > self.depth {
+            NestingForm::ElseIf
+        } else {
+            NestingForm::Tree
+        }
+    }
+}
 
 #[cfg(test)]
 thread_local! {
@@ -405,8 +474,9 @@ struct Parser<'a> {
     /// the height of the deepest path through the tree it built, counted from the level it was
     /// entered at, in the same units. A node that wraps what it already parsed, as an operator
     /// or a `.` does in a chain, adds a level to that height, so no way of building a tree gets
-    /// past `MAX_DEPTH`. An error ends the parse.
-    depth: usize,
+    /// past `MAX_DEPTH`. The height also counts the links and `else if`s on its path. An error
+    /// ends the parse.
+    depth: Height,
     /// The lexer's diagnostics, in source order.
     lexer: &'a [Diagnostic],
     /// Where each comment starts.
@@ -502,29 +572,15 @@ impl<'a> Parser<'a> {
         self.at(kind).then(|| self.bump())
     }
 
-    /// Sets `self.depth`, or reports that the tree is too deep at the next token.
-    fn reach(&mut self, depth: usize) -> Result<(), Diagnostic> {
-        self.reach_as(depth, NestingForm::Tree)
-    }
-
-    /// `reach` at the `links`th link of a chain, such as the second `+` of `a + b + c`. The
-    /// report names the chain when its links are more than half the depth.
-    fn reach_link(&mut self, depth: usize, links: usize) -> Result<(), Diagnostic> {
-        let form = if 2 * links > depth {
-            NestingForm::Chain
-        } else {
-            NestingForm::Tree
-        };
-        self.reach_as(depth, form)
-    }
-
-    fn reach_as(&mut self, depth: usize, form: NestingForm) -> Result<(), Diagnostic> {
-        self.depth = depth;
-        if depth > MAX_DEPTH {
+    /// Sets `self.depth`, or reports that the tree is too deep at the next token. The report
+    /// names what made the path deep.
+    fn reach(&mut self, height: Height) -> Result<(), Diagnostic> {
+        self.depth = height;
+        if height.depth > MAX_DEPTH {
             return Err(DiagnosticKind::NestingTooDeep {
                 at: self.peek().span,
                 limit: MAX_DEPTH,
-                form,
+                form: height.form(),
             }
             .into());
         }
@@ -533,7 +589,7 @@ impl<'a> Parser<'a> {
 
     /// Enters one more level of nesting for the children that follow.
     fn descend(&mut self) -> Result<(), Diagnostic> {
-        self.reach(self.depth + 1)
+        self.reach(self.depth.deeper())
     }
 
     /// Parses one child of a node whose children start at depth `base`, and raises `reach`, the
@@ -541,8 +597,8 @@ impl<'a> Parser<'a> {
     /// reset `self.depth` to the base before each child, and keep the maximum in `reach`.
     fn child<T>(
         &mut self,
-        base: usize,
-        reach: &mut usize,
+        base: Height,
+        reach: &mut Height,
         parse: impl FnOnce(&mut Self) -> Result<T, Diagnostic>,
     ) -> Result<T, Diagnostic> {
         self.depth = base;
@@ -876,7 +932,7 @@ impl<'a> Parser<'a> {
             return Ok(bounds);
         }
         loop {
-            self.depth = 0;
+            self.depth = Height::default();
             bounds.push(self.parse_type()?);
             if self.eat(&TokenKind::Amp).is_none() {
                 return Ok(bounds);
@@ -892,7 +948,7 @@ impl<'a> Parser<'a> {
             return Ok(listed);
         }
         loop {
-            self.depth = 0;
+            self.depth = Height::default();
             listed.push(self.parse_type()?);
             if self.eat(&TokenKind::Comma).is_none() {
                 return Ok(listed);
@@ -910,7 +966,7 @@ impl<'a> Parser<'a> {
         let mut covered = Vec::new();
         self.skip_newlines();
         while !self.at(&TokenKind::Eof) {
-            self.depth = 0;
+            self.depth = Height::default();
             let start = self.pos;
             let tokens = self.tokens;
             let previous = tokens[..start].last();
@@ -1248,7 +1304,7 @@ impl<'a> Parser<'a> {
         let mut broken_methods = Vec::new();
         self.skip_newlines();
         while !self.at(&TokenKind::RBrace) {
-            self.depth = 0;
+            self.depth = Height::default();
             let start = self.pos;
             let end = self.item_end(start);
             if let Err(error) = line(self, end) {
@@ -1318,7 +1374,7 @@ impl<'a> Parser<'a> {
         self.bump();
         let name = self.name("an associated type name")?;
         self.expect(&TokenKind::Eq)?;
-        self.depth = 0;
+        self.depth = Height::default();
         Ok(AssocChoice {
             name,
             ty: self.parse_type()?,
@@ -1533,7 +1589,7 @@ impl<'a> Parser<'a> {
     fn payload(&mut self) -> Result<Vec<PayloadField>, Diagnostic> {
         let mut fields = Vec::new();
         loop {
-            self.depth = 0;
+            self.depth = Height::default();
             // An `Ident` is not `Eof`, so the token after it exists.
             let labeled = matches!(self.peek().kind, TokenKind::Ident(_))
                 && self.tokens[self.pos + 1].kind == TokenKind::Colon;
@@ -1606,7 +1662,7 @@ impl<'a> Parser<'a> {
             Some(_) => Some(self.parse_type()?),
             None => None,
         };
-        self.depth = 0;
+        self.depth = Height::default();
         self.expect(&TokenKind::Eq)?;
         let value = self.expr()?;
         if self.pos != end {
@@ -1632,7 +1688,7 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(&TokenKind::Eq)?;
-        self.depth = 0;
+        self.depth = Height::default();
         let ty = self.parse_type()?;
         if self.pos != end {
             return Err(self.end_of_line());
@@ -1658,7 +1714,7 @@ impl<'a> Parser<'a> {
             params,
             ret,
         } = self.signature(receiver)?;
-        self.depth = 0;
+        self.depth = Height::default();
         let body = self.block()?;
         Ok(Function {
             name,
@@ -1749,7 +1805,7 @@ impl<'a> Parser<'a> {
                 let name = self.name("a parameter name")?;
                 self.expect(&TokenKind::Colon)?;
                 let ty = self.parse_type()?;
-                self.depth = 0;
+                self.depth = Height::default();
                 params.push(Param { name, ty });
                 if self.eat(&TokenKind::Comma).is_none() {
                     break;
@@ -1874,11 +1930,11 @@ impl<'a> Parser<'a> {
         } else {
             open.to(self.last_span())
         };
-        self.depth = 0;
+        self.depth = Height::default();
         let target = self.parse_type()?;
         let interface = match self.eat(&TokenKind::Colon) {
             Some(_) => {
-                self.depth = 0;
+                self.depth = Height::default();
                 Some(self.parse_type()?)
             }
             None => None,
@@ -2313,7 +2369,7 @@ impl<'a> Parser<'a> {
                 alternatives.push(next);
             }
             // The `Or` is the parent of its alternatives: one level more.
-            self.reach(reach + 1)?;
+            self.reach(reach.deeper())?;
             return Ok(Pattern {
                 kind: PatternKind::Or(alternatives),
                 span,
@@ -2655,8 +2711,8 @@ impl<'a> Parser<'a> {
     )]
     fn sub_patterns(
         &mut self,
-        base: usize,
-        reach: &mut usize,
+        base: Height,
+        reach: &mut Height,
         close: &TokenKind,
     ) -> Result<(Vec<Pattern>, Vec<(Span, Span)>, Span), Diagnostic> {
         let open = self.bump().span;
@@ -2916,7 +2972,7 @@ impl<'a> Parser<'a> {
             return Ok(e);
         }
         // The block is one level above the statement it holds.
-        self.reach(self.depth + 1)?;
+        self.descend()?;
         Ok(Expr {
             kind: ExprKind::Block(Block {
                 stmts: vec![stmt],
@@ -3049,14 +3105,7 @@ impl<'a> Parser<'a> {
     /// Precedence climbing over levels 1 to 7; `min` is the lowest level to accept.
     /// Each operator adds a level: `1 + 1 + 1` builds a tree that is as deep as it is long.
     fn binary(&mut self, min: u8) -> Result<Expr, Diagnostic> {
-        self.binary_chain(min, 0)
-    }
-
-    /// `binary`, as the right side of `coalesces` nested `??`, each the parent of the next. The
-    /// right side of a `??` continues the chain of `??` above it, not the operators on its left.
-    fn binary_chain(&mut self, min: u8, coalesces: usize) -> Result<Expr, Diagnostic> {
         let base = self.depth;
-        let mut links = coalesces;
         let mut lhs = self.unary()?;
         loop {
             let kind = &self.peek().kind;
@@ -3064,8 +3113,7 @@ impl<'a> Parser<'a> {
                 if min > 4 {
                     return Ok(lhs);
                 }
-                links += 1;
-                lhs = self.comparison_chain(lhs, base, links)?;
+                lhs = self.comparison_chain(lhs, base)?;
             } else if *kind == TokenKind::StarStar {
                 // `**` binds as `*` does.
                 if POWER_LEVEL < min {
@@ -3077,14 +3125,13 @@ impl<'a> Parser<'a> {
                     return Ok(lhs);
                 }
                 // The operator is the parent of everything parsed so far: one level more.
-                let wrapped = self.depth + 1;
-                links += 1;
-                self.reach_link(wrapped, links)?;
+                let wrapped = self.depth.link();
+                self.reach(wrapped)?;
                 let op_span = self.bump().span;
-                self.depth = base + 1;
+                self.depth = base.link();
                 // `??` is right-associative: its right side starts at its own level.
                 let rhs = if matches!(op, Infix::Coalesce) {
-                    self.binary_chain(level, coalesces + 1)?
+                    self.binary(level)?
                 } else {
                     self.binary(level + 1)?
                 };
@@ -3134,11 +3181,11 @@ impl<'a> Parser<'a> {
     /// and a `=` straight after the `**` is part of the error, so `x **= 2` is reported once.
     /// The unsafe fix is `lhs.pow(rhs)`: offered when both sides are plain operands, and not
     /// for `**=` or a chain of `**`, which Python reads from the right.
-    fn power_operator(&mut self, lhs: &Expr, base: usize) -> Diagnostic {
+    fn power_operator(&mut self, lhs: &Expr, base: Height) -> Diagnostic {
         let left_ok = power_operand(lhs, self.operand_tokens(lhs), false);
         let at = self.bump().span;
         let assign = self.eat(&TokenKind::Eq).is_some();
-        self.depth = base + 1;
+        self.depth = base.link();
         let rhs = match self.binary(POWER_LEVEL + 1) {
             Ok(rhs) => rhs,
             Err(error) => return error,
@@ -3165,18 +3212,13 @@ impl<'a> Parser<'a> {
         &consumed[first..]
     }
 
-    /// Level 4: `first` and every `<`/`<=`/`>`/`>=` operand after it, as one node, which is the
-    /// `links`th link of the chain of operators that ends with it.
-    fn comparison_chain(
-        &mut self,
-        first: Expr,
-        base: usize,
-        links: usize,
-    ) -> Result<Expr, Diagnostic> {
+    /// Level 4: `first` and every `<`/`<=`/`>`/`>=` operand after it, as one node, which is one
+    /// link of the chain of operators that ends with it.
+    fn comparison_chain(&mut self, first: Expr, base: Height) -> Result<Expr, Diagnostic> {
         let start = first.span;
         // The chain is the parent of `first`: one level more.
-        let mut reach = self.depth + 1;
-        self.reach_link(reach, links)?;
+        let mut reach = self.depth.link();
+        self.reach(reach)?;
         let mut operands = vec![first];
         let mut ops: Vec<CompareOp> = Vec::new();
         while let Some(op) = compare_op(&self.peek().kind) {
@@ -3191,7 +3233,7 @@ impl<'a> Parser<'a> {
             }
             self.bump();
             ops.push(op);
-            self.depth = base + 1;
+            self.depth = base.link();
             operands.push(self.binary(5)?);
             reach = reach.max(self.depth);
         }
@@ -3208,7 +3250,8 @@ impl<'a> Parser<'a> {
             TokenKind::Bang => UnaryOp::Not,
             _ => return self.postfix(),
         };
-        self.descend()?;
+        // Each prefix operator is a link of a chain.
+        self.reach(self.depth.link())?;
         let start = self.bump().span;
         if matches!(op, UnaryOp::Neg) && self.at_min_literal() {
             // `i64::MIN` has no positive twin, so `-9223372036854775808` is one literal.
@@ -3244,15 +3287,13 @@ impl<'a> Parser<'a> {
     fn postfix(&mut self) -> Result<Expr, Diagnostic> {
         let base = self.depth;
         let mut expr = self.primary()?;
-        let mut links = 0;
         loop {
             // Each link is the parent of everything parsed so far: one level more.
-            let wrapped = self.depth + 1;
-            links += 1;
+            let wrapped = self.depth.link();
             if self.at(&TokenKind::LBracket) {
-                self.reach_link(wrapped, links)?;
+                self.reach(wrapped)?;
                 self.bump();
-                self.depth = base + 1;
+                self.depth = base.link();
                 let index = self.expr()?;
                 let close = self.expect(&TokenKind::RBracket)?;
                 self.depth = self.depth.max(wrapped);
@@ -3269,7 +3310,7 @@ impl<'a> Parser<'a> {
             if !starts_postfix(&self.peek().kind) {
                 return Ok(expr);
             }
-            self.reach_link(wrapped, links)?;
+            self.reach(wrapped)?;
             let access = self.bump();
             let safe = access.kind == TokenKind::QuestionDot;
             // `Option.None` names the variant of the prelude's `Option`; the checker rejects the
@@ -3285,7 +3326,7 @@ impl<'a> Parser<'a> {
             // The type arguments and the value arguments are siblings of the receiver: each
             // starts at the receiver's own level and only the deepest counts.
             let written = if self.at(&TokenKind::Lt) && self.type_args_follow() {
-                self.depth = base + 1;
+                self.depth = base.link();
                 let (types, angles) = self.type_args()?;
                 if !self.at(&TokenKind::LParen) {
                     // A field takes no type arguments, so `a.b<i64>.c` has nowhere to put them.
@@ -3299,7 +3340,7 @@ impl<'a> Parser<'a> {
             expr = if written.is_some() || self.at(&TokenKind::LParen) {
                 let (types, angles, types_reach) =
                     written.unwrap_or_else(|| (Vec::new(), name.span.end_point(), wrapped));
-                self.depth = base + 1;
+                self.depth = base.link();
                 let open = self.peek().span;
                 let (args, close) = self.args()?;
                 self.depth = self.depth.max(types_reach);
@@ -3681,7 +3722,7 @@ impl<'a> Parser<'a> {
             let block = if self.at(&TokenKind::If) {
                 // `else if` and `else if let` become a block holding the inner `if`.
                 let inner = self.child(base, &mut reach, |p| {
-                    p.descend()?;
+                    p.reach(p.depth.else_if())?;
                     p.if_expr()
                 })?;
                 Block {
@@ -4099,24 +4140,42 @@ mod tests {
         }
     }
 
-    /// `?` alone and `#?` alone, which a Rust user writes, each get a help. Other text with a `?`
-    /// is the general form, which has none. The fixtures `E0109-debug` and `E0109-debug-hash` pin
-    /// the text.
+    /// A `?` after a spec that is right without it, which a Rust user writes, gets a fix that
+    /// deletes the `?`. Other text with a `?` is the general form, which has none. The fixtures
+    /// `E0109-debug`, `E0109-debug-hash` and `E0109-debug-width` pin the text and the edit.
     #[test]
-    fn format_spec_should_give_a_help_for_a_debug_spec_alone() {
-        let at = Span::new(0, 0);
-        for (text, helped) in [
+    fn format_spec_should_fix_a_question_mark_after_a_right_spec() {
+        for (text, fixed) in [
             ("?", true),
             ("#?", true),
+            (">8?", true),
+            (".2?", true),
             ("?#", false),
             ("??", false),
-            (">8?", false),
             ("#?x", false),
             ("#>?", false),
+            (">?", false),
+            ("x?", false),
+            ("2000?", false),
         ] {
+            // The span starts at the `:`, and the fix needs the last byte of the spec.
+            let at = Span::new(10, 11 + text.len());
             let error = format_spec(text, at).expect_err(text);
             assert_eq!(error.code(), Code::UnsupportedFormatSpec, "{text}");
-            assert_eq!(error.help().is_some(), helped, "{text}");
+            assert_eq!(error.fixes().len(), usize::from(fixed), "{text}");
+        }
+    }
+
+    /// A `#` with a limit error in the rest gets a help and no fix. The fixtures `E0109-limit`
+    /// and `E0109-limit-precision` pin the text.
+    #[test]
+    fn format_spec_should_help_a_hash_with_a_limit_error() {
+        let at = Span::new(0, 0);
+        for text in ["#2000", "#<2000", "#.40", "#2000.40", "#5"] {
+            let error = format_spec(text, at).expect_err(text);
+            assert_eq!(error.code(), Code::UnsupportedFormatSpec, "{text}");
+            assert!(error.help().is_some(), "{text}");
+            assert!(error.fixes().is_empty(), "{text}");
         }
     }
 
@@ -5842,7 +5901,7 @@ mod tests {
             source: lexed.source,
             tokens: &lexed.tokens,
             pos,
-            depth: 0,
+            depth: Height::default(),
             lexer: &lexed.diagnostics,
             comments: &lexed.comments,
             breaks: &lexed.breaks,
@@ -5993,6 +6052,73 @@ mod tests {
         assert_eq!(found, [None, None, too_deep, too_deep]);
         // The receiver is a level of its own, so the method call's arguments sit one lower.
         assert_eq!(free, method + 1);
+    }
+
+    /// What `src`, a statement, makes the nesting report name: the form of the height at which
+    /// the parser stopped.
+    fn nesting_form(src: &str) -> &'static str {
+        let src = src.to_string();
+        std::thread::Builder::new()
+            .stack_size(crate::STACK_SIZE)
+            .spawn(move || {
+                parser_at(&src, 0, |p| {
+                    let error = p.stmt().expect_err("the statement should be too deep");
+                    assert_eq!(error.code(), Code::NestingTooDeep, "{src}");
+                    match p.depth.form() {
+                        NestingForm::Tree => "tree",
+                        NestingForm::Chain => "chain",
+                        NestingForm::ElseIf => "else if",
+                        NestingForm::Alias(_) => unreachable!("only the checker makes an alias"),
+                    }
+                })
+            })
+            .expect("the thread should start")
+            .join()
+            .expect("the parse should not overflow the stack")
+    }
+
+    /// The links of one chain add across the operators, postfix steps and prefix operators on
+    /// the deepest path; `else if`s and nested brackets have forms of their own. The fixtures
+    /// `E0071-chain-mixed`, `E0071-chain-prefix`, `E0071-else-if` and `E0071-tree` pin the text.
+    #[test]
+    fn nesting_report_should_name_what_made_the_deepest_path_deep() {
+        let else_ifs = format!("if a {{ }}{}", " else if a { }".repeat(300));
+        for (what, src, form) in [
+            ("one operator", vec!["1"; 300].join(" + "), "chain"),
+            // The links are in two loops: `*` is in the right side of the first `+`.
+            (
+                "two operators",
+                format!("1 + {}{}", vec!["1"; 130].join(" * "), " + 1".repeat(130)),
+                "chain",
+            ),
+            // Postfix steps, then `+`.
+            (
+                "postfix then operator",
+                format!("a{}{}", ".b()".repeat(150), " + 1".repeat(110)),
+                "chain",
+            ),
+            // `??` and `&&`.
+            (
+                "coalesce then operator",
+                format!("a{}{}", " ?? a".repeat(200), " && a".repeat(60)),
+                "chain",
+            ),
+            ("prefix operators", format!("{}a", "!".repeat(300)), "chain"),
+            ("negations", format!("{}a", "- ".repeat(300)), "chain"),
+            ("else if chain", else_ifs.clone(), "else if"),
+            (
+                "else if chain as a value",
+                format!("let y = {else_ifs}"),
+                "else if",
+            ),
+            (
+                "nested parentheses",
+                format!("{}1{}", "(".repeat(300), ")".repeat(300)),
+                "tree",
+            ),
+        ] {
+            assert_eq!(nesting_form(&src), form, "{what}");
+        }
     }
 
     /// Every operand opens a nested scan, so the cutoff at `MAX_DEPTH` is what keeps a chain

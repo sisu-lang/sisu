@@ -1418,9 +1418,11 @@ pub(crate) enum PrintProblem {
 pub(crate) enum NestingForm {
     /// Nested expressions, blocks, patterns or types.
     Tree,
-    /// A chain of operators, calls, fields or indexes, such as `a + b + c`: each link is one
-    /// level, and the links are more than half the levels.
+    /// A chain of operators, calls, fields or indexes, such as `a + b + c`, or of prefix
+    /// operators: each link is one level, and the links are more than half the levels.
     Chain,
+    /// A chain of `else if`: each one is one level, and they are more than half the levels.
+    ElseIf,
     /// A use of a type alias: the text is the type as written, which names more than the limit,
     /// and the tree's token is where it is written.
     Alias(String),
@@ -1851,12 +1853,23 @@ pub(crate) enum MismatchSource {
 pub(crate) enum SpecForm {
     /// Any spec that the other forms do not name.
     Plain,
-    /// A `#` beside an alignment, a width or a precision.
-    Pretty,
+    /// A `#` beside an alignment, a width or a precision, and which of the two limits the rest
+    /// of the spec passes, if it does.
+    Pretty(Option<SpecLimit>),
     /// `?` alone, which Rust uses for the debug form.
     Debug,
+    /// A `?` after a spec that is valid without it, such as `>5?`.
+    DebugSpec,
     /// `#?` alone, which Rust uses for the debug form over lines.
     PrettyDebug,
+}
+
+/// The limits that a spec passes: a width over 1000, a precision over 30, or both.
+#[derive(Clone, Copy)]
+pub(crate) enum SpecLimit {
+    Width,
+    Precision,
+    Both,
 }
 
 /// What helps a precision on a part that is not an `f64`.
@@ -3816,6 +3829,17 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::NestingTooDeep {
                 at,
                 limit,
+                form: NestingForm::ElseIf,
+            } => Diagnostic::coded(
+                code,
+                at,
+                format!("this `else if` chain makes the nesting deeper than {limit} levels"),
+            )
+            .with_label("each `else if` adds one level")
+            .with_help("write the branches as `match` arms with `if` guards"),
+            DiagnosticKind::NestingTooDeep {
+                at,
+                limit,
                 form: NestingForm::Alias(ty),
             } => Diagnostic::coded(
                 code,
@@ -4197,21 +4221,43 @@ impl From<DiagnosticKind> for Diagnostic {
                     "Sisu's format specs take `#`, or an alignment, a width and a precision",
                 )
             }
-            DiagnosticKind::UnsupportedFormatSpec { at, form: SpecForm::Pretty } => {
+            DiagnosticKind::UnsupportedFormatSpec { at, form: SpecForm::Pretty(limit) } => {
                 Diagnostic::coded(
                     code,
                     at,
                     "`#` does not combine with a width, alignment or precision",
                 )
-                .with_help("remove the `#`, or the width, alignment and precision")
+                .with_help(match limit {
+                    None => "remove the `#`, or the width, alignment and precision",
+                    Some(SpecLimit::Width) => {
+                        "remove the width, alignment and precision, or remove the `#` and write a width of at most 1000"
+                    }
+                    Some(SpecLimit::Precision) => {
+                        "remove the width, alignment and precision, or remove the `#` and write a precision of at most 30"
+                    }
+                    Some(SpecLimit::Both) => {
+                        "remove the width, alignment and precision, or remove the `#` and write a width of at most 1000 and a precision of at most 30"
+                    }
+                })
             }
             DiagnosticKind::UnsupportedFormatSpec { at, form: SpecForm::Debug } => {
                 Diagnostic::coded(code, at, "Sisu's format specs have no `?`")
-                    .with_help("delete the `:?`: Sisu shows a value with its `Display`")
+                    .with_help("Sisu shows a value with its `Display`")
+                    .with_fix(safe_fix("delete the `:?`", at, ""))
+            }
+            DiagnosticKind::UnsupportedFormatSpec { at, form: SpecForm::DebugSpec } => {
+                Diagnostic::coded(code, at, "Sisu's format specs have no `?`")
+                    .with_help("Sisu shows a value with its `Display`")
+                    .with_fix(safe_fix("delete the `?`", last_byte(at), ""))
             }
             DiagnosticKind::UnsupportedFormatSpec { at, form: SpecForm::PrettyDebug } => {
-                Diagnostic::coded(code, at, "Sisu's format specs have no `#?`")
-                    .with_help("write `#` alone to lay the value out over lines")
+                Diagnostic::coded(code, at, "Sisu's format specs have no `#?`").with_fix(
+                    safe_fix(
+                        "delete the `?`: `#` alone lays the value out over lines",
+                        last_byte(at),
+                        "",
+                    ),
+                )
             }
             DiagnosticKind::FormatSpecLimit { at, width } => Diagnostic::coded(
                 code,
@@ -5083,6 +5129,11 @@ fn safe_fix(message: &str, span: Span, replacement: &str) -> Fix {
         safe: true,
         ..unsafe_fix(message, span, replacement)
     }
+}
+
+/// The last byte of a spec that ends in `?`, which is one ASCII byte.
+fn last_byte(spec: Span) -> Span {
+    Span::new(spec.end() - 1, spec.end())
 }
 
 fn unsafe_fix(message: &str, span: Span, replacement: &str) -> Fix {
