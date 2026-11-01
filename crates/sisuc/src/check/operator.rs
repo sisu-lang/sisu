@@ -632,14 +632,21 @@ impl Checker<'_> {
         };
         // A second side that rejected the first's type is the mistake: it has no type to compare.
         if !self.none_written(second) && !mismatched(&l) && !mismatched(&r) {
-            let same = match (type_of(&l), type_of(&r)) {
-                (Some(lt), Some(rt)) => lt == rt || fits(lt, rt) || fits(rt, lt),
-                _ => false,
+            // A pair that converts to one `any` type is compared as two values of it, so only
+            // the `any` side is asked for `Eq`.
+            let (same, any) = match (type_of(&l), type_of(&r)) {
+                (Some(lt), Some(rt)) if lt == rt || fits(lt, rt) || fits(rt, lt) => (true, None),
+                (Some(lt), Some(rt)) => {
+                    let any = self.any_join(lt, rt);
+                    (any.is_some(), any)
+                }
+                _ => (false, None),
             };
             let typed = type_of(&l).is_some() && type_of(&r).is_some();
             for (side, checked) in [(lhs, &l), (rhs, &r)] {
-                let Some(ty) = type_of(checked).filter(|ty| same || (!typed && ty.has_param()))
-                else {
+                let Some(ty) = type_of(checked).filter(|&ty| {
+                    (same && any.is_none_or(|any| any == ty)) || (!typed && ty.has_param())
+                }) else {
                     continue;
                 };
                 let operation = match both {

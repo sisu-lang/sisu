@@ -69,6 +69,10 @@ fn total<T: Shape>(xs: [T]) -> f64 {
     sum
 }
 
+fn wrap_shown<T: Display>(v: T) -> any Display {
+    v
+}
+
 fn id<T>(x: T) -> T {
     x
 }
@@ -143,6 +147,9 @@ fn main() {
     let wrapped: (any Display)? = Some(some ?? 0)
     let inner: any Display = wrapped ?? 0
     print("{inner}") // 3
+    // A bound type parameter boxes its value, an optional too: it converts a `T`.
+    print(wrap_shown(some)) // 3
+    print(wrap_shown(none)) // None
 
     // An `any` value beside `None`, `Some` or an optional `any` value joins to an optional `any`.
     let lone: any Display = 1

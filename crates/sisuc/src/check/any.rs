@@ -304,7 +304,7 @@ impl Checker<'_> {
     /// A value converts when its type conforms to `I`: an object keeps its pointer, an `any` of
     /// an interface that inherits `I` keeps its data, and any other value goes into a counted box
     /// (`mono` and `codegen` choose, by the type that a parameter stands for). An optional
-    /// does not convert, since a `None` has no object.
+    /// does not convert: unwrap it first. An optional `any` value is written `(any I)?`.
     pub(super) fn any_conversion(
         &mut self,
         at: Span,
@@ -508,7 +508,7 @@ impl Checker<'_> {
 }
 
 /// Whether a value of type `got` can convert to an `any` type, if it conforms. An optional does
-/// not, since a `None` has no object, and `unit` and `never` have no value to hold.
+/// not: unwrap it first. `unit` and `never` have no value to hold.
 fn can_convert(got: Type) -> bool {
     !matches!(got.kind(), TypeKind::Optional(_)) && got != Type::NEVER && got != Type::UNIT
 }
