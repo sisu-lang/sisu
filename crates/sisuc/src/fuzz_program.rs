@@ -636,6 +636,34 @@ thread_local! {
     static FORCE: std::cell::Cell<Option<Force>> = const { std::cell::Cell::new(None) };
 }
 
+/// `target/debug/libsisu_runtime_mimalloc.a`, the default allocator's runtime, which
+/// nextest's setup script builds: the test binary is `target/debug/deps/<name>` (decision 7).
+#[cfg(test)]
+fn runtime() -> PathBuf {
+    let exe = std::env::current_exe().expect("the test binary should know its path");
+    exe.parent()
+        .and_then(Path::parent)
+        .expect("the test binary should be two levels inside the target directory")
+        .join("libsisu_runtime_mimalloc.a")
+}
+
+/// What `source` writes to its standard output, built at O0 and run once. For the tests of the
+/// generator, which check the text of values.
+#[cfg(test)]
+pub(crate) fn stdout_of(source: &str) -> Vec<u8> {
+    let dir = run::private_dir(&std::env::temp_dir(), fresh_names("-test"))
+        .expect("the test should make its directory");
+    let program = checked("program", source).expect("the test's program should check clean");
+    let exe = dir.join("program");
+    build("program", source, &program, &BUILDS[0].1, &runtime(), &exe);
+    let stdin = dir.join("stdin.txt");
+    fs::write(&stdin, "").expect("the test should write the stdin");
+    let run = run(&exe, &stdin, &dir, LIMIT);
+    drop(fs::remove_dir_all(&dir));
+    assert_eq!(run.exit, Exit::Code(0), "the program should exit 0");
+    run.stdout
+}
+
 #[cfg(test)]
 mod tests {
     use std::ops::Range;
@@ -650,7 +678,7 @@ mod tests {
     use super::{
         Answer, BUILDS, Exit, FORCE, Force, Known, LIMIT, Run, build, builds, checked, judge,
         judge_bounds, judge_builds, judge_known, judge_pair, judge_source, program, program_in,
-        run,
+        run, runtime,
     };
     use crate::fresh_names;
     use crate::generate::{BoundSite, Generated, coverage, generate};
@@ -671,16 +699,6 @@ mod tests {
         fn drop(&mut self) {
             drop(fs::remove_dir_all(&self.0));
         }
-    }
-
-    /// `target/debug/libsisu_runtime_mimalloc.a`, the default allocator's runtime, which
-    /// nextest's setup script builds: the test binary is `target/debug/deps/<name>` (decision 7).
-    fn runtime() -> PathBuf {
-        let exe = env::current_exe().expect("the test binary should know its path");
-        exe.parent()
-            .and_then(Path::parent)
-            .expect("the test binary should be two levels inside the target directory")
-            .join("libsisu_runtime_mimalloc.a")
     }
 
     /// `f` on a thread with a `STACK_SIZE` stack, as `program`'s contract asks.

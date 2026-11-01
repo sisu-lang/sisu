@@ -3,10 +3,10 @@
 
 use std::ops::Range;
 
-use super::scope::{RESULT, Scope, Ty, Var};
+use super::scope::{Nodes, RESULT, Scope, Ty, Var};
 use super::stmt::MAX_BLOCKS;
 use super::writer::{Mark, Rewrite, Site, allowed};
-use super::{Gen, LINE, MAX_BOUND, MAX_LOOPS, MAX_NESTING, MAX_SIZE};
+use super::{Gen, LINE, MAX_BOUND, MAX_LOOPS, MAX_NESTING, MAX_SIZE, PART_SIZE};
 
 /// What a rule wrote.
 #[derive(Clone, Copy)]
@@ -1340,10 +1340,26 @@ impl Gen<'_> {
             let text = self.string_text(text_len, MESSAGE_CHARS);
             self.w.text(&text);
             size += text_len;
+            if let Some((ty, most)) = self.compound_part(max - size) {
+                self.w.text("{");
+                self.synth = true;
+                let info = self.expr(&ty, most);
+                // No width, no alignment, no precision: no spec, or `#`, one time in two.
+                let nodes = self.scope.nodes;
+                if self.pick(2) == 0 {
+                    self.w.text("}");
+                    size += ty.printed(info.size, None, nodes);
+                } else {
+                    self.w.text(":#}");
+                    size += ty.printed_pretty(info.size, nodes);
+                }
+                parts.push(info);
+                continue;
+            }
             // A `string` always fits.
             let mut fitting: Vec<Ty> = Ty::VALUES
                 .iter()
-                .filter(|ty| ty.printed(0, None) <= max - size)
+                .filter(|ty| ty.printed(0, None, Nodes::default()) <= max - size)
                 .cloned()
                 .collect();
             // An `f64` comes twice: only it takes every part of a spec.
@@ -1356,11 +1372,13 @@ impl Gen<'_> {
             self.synth = true;
             let info = self.expr(&ty, room);
             let (spec, width, precision) = self.format_spec(&ty);
-            let printed = ty.printed(info.size, precision).max(width);
+            let printed = ty
+                .printed(info.size, precision, Nodes::default())
+                .max(width);
             if printed > room {
                 // The spec's width or precision does not fit: write the part without it.
                 self.w.text("}");
-                size += ty.printed(info.size, None);
+                size += ty.printed(info.size, None, Nodes::default());
             } else {
                 self.w.text(&format!("{spec}}}"));
                 size += printed;
@@ -1372,9 +1390,54 @@ impl Gen<'_> {
         Info::of(&parts, size, true)
     }
 
+    /// The type of a compound part, now and then, and the most size its value may hold. The
+    /// choice reads `cu` and the type reads `u`, so that no other part moves. The size is the
+    /// greatest of at most `PART_SIZE` for which `{x:#}` writes within `room` chars, and so does a
+    /// plain part.
+    fn compound_part(&mut self, room: u64) -> Option<(Ty, u64)> {
+        if self.cu.choose_index(2).unwrap_or(0) == 0 {
+            return None;
+        }
+        let ty = self.part_type();
+        let nodes = self.scope.nodes;
+        let most = (ty.least()..=PART_SIZE)
+            .rev()
+            .find(|&size| ty.printed_pretty(size, nodes) <= room)?;
+        Some((ty, most))
+    }
+
+    /// The type of a compound part: an array of a `bare_type` or of an optional, or a declared or
+    /// generic class or enum, as the type of a `let` can be. Never an optional, which W0015 warns
+    /// of, and never `unit`.
+    fn part_type(&mut self) -> Ty {
+        let choice = self.pick(4);
+        let declared = choice == 2;
+        let len = match choice {
+            2 => self.scope.types.len(),
+            3 => self.scope.generic_types.len(),
+            _ => 0,
+        };
+        if len > 0 {
+            let at = self.pick(len);
+            let pool = if declared {
+                &self.scope.types
+            } else {
+                &self.scope.generic_types
+            };
+            return pool[at].clone();
+        }
+        let element = if choice == 1 {
+            Ty::Optional(Box::new(self.type_within(0, false)))
+        } else {
+            self.bare_type()
+        };
+        Ty::Array(Box::new(element))
+    }
+
     /// A format spec `[:#]` or `[:[align][width][.precision]]`, its width, and its precision;
     /// only an `f64` takes a precision (E0111). A part with no width and no precision gets `#`
-    /// one time in four; every part here is a scalar or a `string`, so `#` changes nothing.
+    /// one time in four; every part here is a scalar or a `string`, so `#` changes nothing. A
+    /// compound part has its own rule (`interpolate`).
     fn format_spec(&mut self, ty: &Ty) -> (String, u64, Option<u64>) {
         let width = if self.pick(3) == 0 {
             0

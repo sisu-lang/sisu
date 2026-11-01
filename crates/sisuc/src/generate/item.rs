@@ -1459,7 +1459,7 @@ impl Gen<'_> {
             let types: Vec<String> = fields.iter().map(ToString::to_string).collect();
             self.w.line();
             self.w.text(&format!("{name}{}", payload(&labels, &types)));
-            variants.push(Variant {
+            let variant = Variant {
                 name,
                 recursive: fields
                     .iter()
@@ -1467,7 +1467,9 @@ impl Gen<'_> {
                 fields,
                 labels,
                 inferable: false,
-            });
+            };
+            self.scope.note(&variant);
+            variants.push(variant);
         }
         // A method that takes the enum itself, written as `Self` in every other enum. It makes no
         // pick, so that it moves no choice of the items after it, and nothing calls it.
