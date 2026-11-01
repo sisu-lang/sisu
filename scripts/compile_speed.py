@@ -193,19 +193,36 @@ def command(row, lang, src, out, lld, sisu=DEFAULT_SISU):
     base = ['go', 'build', '-p=1']
     if row in ROWS[:2]:
         bench = out + '.bench'
-        return [*base, f'-gcflags=-bench={bench} -c=1', '-o', out, src]
+        # Go splits the flags on spaces, and it reads a quoted word as one.
+        return [*base, f"-gcflags=-c=1 '-bench={bench}'", '-o', out, src]
     flags = '-N -l -c=1' if row == ROWS[3] else '-c=1'
     return [*base, f'-gcflags={flags}', '-o', out, src]
 
 
 def environment(lang):
-    """The environment of a command: Go runs on one thread."""
-    return {**os.environ, 'GOMAXPROCS': '1'} if lang == 'go' else None
+    """The environment of a command: Go runs on one thread, and ccache is off.
+
+    A ccache in front of clang++ would make each run after the first a cache hit.
+    """
+    return {**os.environ, 'CCACHE_DISABLE': '1', **({'GOMAXPROCS': '1'} if lang == 'go' else {})}
 
 
 def warnings(stderr):
     """The lines of a build's stderr that have `warning`, in any case."""
     return [line for line in stderr.splitlines() if 'warning' in line.lower()]
+
+
+def build(deadline, cmd, what, **kwargs):
+    """Runs a compile command, and stops when it gives a warning.
+
+    A warning adds the time to print it. Every compile of the script goes through here: the check
+    builds, the timed runs, the empty program and the perf runs.
+    """
+    result = deadline.run(cmd, what, **kwargs)
+    found = warnings(result.stderr or '')
+    if found:
+        raise Fail(f'{what}: the build gave a warning: {found[0].strip()}')
+    return result
 
 
 def check_no_include(path, text):
@@ -276,10 +293,7 @@ def check_sizes(args, units, sizes, deadline):
             except OSError as e:
                 raise Fail(f'{what}: {e.filename or work}: {e.strerror}') from None
             cmd = command(ROWS[3], lang, src, exe, False, sisu=args.sisu)
-            built = deadline.run(cmd, what, env=environment(lang))
-            found = warnings(built.stderr or '')
-            if found:
-                raise Fail(f'{what}: the build gave a warning: {found[0].strip()}')
+            build(deadline, cmd, what, env=environment(lang))
             printed = deadline.run([str(exe)], what, text=False).stdout
             if lang == 'sisu':
                 reference = printed
@@ -317,6 +331,9 @@ TOKEN = re.compile(r"""
   | (?P<quote>")
   | (?P<other>.)
 """, re.X | re.S)
+
+
+CHAR = re.compile(r"'(?:\\.|[^'\\\n])*'")
 
 
 def tokens(text, path):
@@ -368,6 +385,10 @@ def skip_braces(text, pos, path):
         c = text[i]
         if c == '"':
             i = skip_string(text, i + 1, path, True)
+            continue
+        if c == "'" and (m := CHAR.match(text, i)):
+            # The braces and quotes of a character literal are not syntax.
+            i = m.end()
             continue
         depth += (c == '{') - (c == '}')
         i += 1
@@ -455,11 +476,16 @@ def find_linker(lang, args, deadline):
                  str(empty)],
         'cpp': ['clang++', '-std=c++20', '-Wl,--version', '-o', prog, str(empty)],
     }[lang]
-    # The build can fail, as `ld --version` makes no file; the version is in the output.
-    r = deadline.run(cmd, what, check=False) if shutil.which(cmd[0]) else None
+    # The build can fail, as `ld --version` makes no file. The LLD line is in the output also then,
+    # and the script must find it, because LLD gets a thread limit. Any other line needs exit 0.
+    r = deadline.run(cmd, what, check=False, env=environment(lang)) if shutil.which(cmd[0]) \
+        else None
     lines = ((r.stdout or '') + '\n' + (r.stderr or '')).splitlines() if r else []
     lld = next((line.strip() for line in lines if 'LLD' in line), None)
-    return lld or first_line(r.stdout if r else '') or 'unknown', lld is not None
+    if lld:
+        # rustc shows the output of the linker as a warning.
+        return lld.removeprefix('warning: linker stdout: '), True
+    return (r and r.returncode == 0 and first_line(r.stdout)) or 'unknown', False
 
 
 def available(lang):
@@ -471,7 +497,8 @@ def tool_line(deadline, cmd, lang=None):
     if shutil.which(cmd[0]) is None:
         return 'not on PATH'
     r = deadline.run(cmd, f'{cmd[0]} version', check=False, env=environment(lang))
-    return first_line(r.stdout) or first_line(r.stderr) or 'unknown'
+    ok = r.returncode == 0
+    return (ok and (first_line(r.stdout) or first_line(r.stderr))) or 'unknown'
 
 
 def cpu_model():
@@ -523,13 +550,17 @@ class Measurer:
             except OSError as e:
                 raise Fail(f'{what}: {e.filename or src}: {e.strerror}') from None
         full = ['perf', 'stat', '-x,', '-e', 'instructions:u', '--', *cmd] if wrap else cmd
-        # An `--emit` row prints its stage to stdout: that output is not the work to measure.
+        # An `--emit` row prints its stage. It goes to /dev/null, so the script does not read it.
         stdout = subprocess.DEVNULL if lang == 'sisu' and '--emit' in cmd else subprocess.PIPE
         start = time.perf_counter()
-        r = self.deadline.run(full, what, env=environment(lang), stdout=stdout)
+        r = build(self.deadline, full, what, env=environment(lang), stdout=stdout)
         elapsed = time.perf_counter() - start
         if bench:
-            elapsed = go_fe_parse(bench.read_text() if bench.exists() else '', what)
+            try:
+                content = bench.read_text(errors='replace') if bench.exists() else ''
+            except OSError as e:
+                raise Fail(f'{what}: {bench}: {e.strerror}') from None
+            elapsed = go_fe_parse(content, what)
         return elapsed, r.stderr
 
     def cell(self, cmd, what, lang, src, text, bench, count_instructions):
@@ -647,6 +678,9 @@ def main(argv):
         parser.error('--runs is 1 or more')
     deadline = Deadline(args.time_bound or (600 if args.check_only else 7200))
     try:
+        if "'" in str(args.out):
+            # Go reads a quote in its flags as a quote.
+            raise Fail(f"--out may not have a ' in it: {args.out}")
         units = read_units(args.units)
         check_no_include(args.units / 'unit.cpp', units['cpp'])
         check_style(args.units, deadline)

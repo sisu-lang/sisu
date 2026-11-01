@@ -47,6 +47,8 @@ BenchmarkCompile:main:fe:subtotal                   1    48121701 ns/op     57.4
 BenchmarkCompile:main:total                         1    83781280 ns/op    100.00 %
 """
 GO_FE_PARSE = 0.029747546
+# The same file for the empty program: its `fe:parse` time is 4747546 ns, so 25 ms less.
+GO_BENCH_EMPTY = GO_BENCH.replace('29747546', ' 4747546')
 # perf runs the command after `--` and then prints a count, as `perf stat -x,` does.
 PERF = """#!/bin/sh
 case "$*" in "stat -e instructions:u true") exit 0;; esac
@@ -60,34 +62,42 @@ exit $code
 
 
 def stub_text(tmp, name, output='45\\n', stderr='', fail=False, out='', bench='',
-              linker='GNU ld stub 1.0'):
+              linker='GNU ld stub 1.0', empty_bench='', version_fail=False):
     """The text of a stub for tool `name`.
 
     A compiler stub logs its arguments, the first line of its last argument and $GOMAXPROCS. It
     writes a program at the path after `-o`, and prints `stderr` to standard error. `fail` makes
     it exit 1. `out` is what a formatter prints to standard output. `bench` is the text that a
-    Go stub appends to the file of a `-gcflags=-bench=<file>` argument. `linker` is what a stub
-    prints for `-Wl,--version`.
+    Go stub appends to the file of a `-bench=<file>` flag, and `empty_bench` is what it appends
+    when the file is in a directory `empty`. `linker` is what a stub prints for `-Wl,--version`.
+    `version_fail` makes the version command print an error and exit 1.
     """
     log = tmp / 'log'
     if name == 'gofmt':
         # The real gofmt has no `--version`: it exits 2.
         version = 'case "$1" in --version) exit 2;; esac\n'
     else:
-        version = f'case "$1" in --version|version|-V) echo "{name} 1.0"; exit 0;; esac\n'
+        shown = 'echo "error: version failed" >&2; exit 1' if version_fail \
+            else f'echo "{name} 1.0"; exit 0'
+        version = f'case "$1" in --version|version|-V) {shown};; esac\n'
     echo_stderr = f"echo '{stderr}' >&2\n" if stderr else ''
     exit_code = 'exit 1\n' if fail else 'exit 0\n'
     if name in ('rustfmt', 'gofmt', 'clang-format', 'perf', 'git'):
         body = f"echo '{out}'\n" if out else ''
         return f'#!/bin/sh\n{version}{body}{echo_stderr}{exit_code}'
     program = PROGRAM.format(log=log, output=output)
-    bench_block = f'if [ -n "$bench" ]; then /bin/cat >> "$bench" <<\'BENCH\'\n{bench}BENCH\nfi\n' \
-        if bench else ''
+    bench_block = ''
+    if bench:
+        put = '/bin/cat >> "$bench" <<\'{0}\'\n{1}{0}\n'
+        bench_block = ('if [ -n "$bench" ]; then\ncase "$bench" in\n*/empty/*) '
+                       + put.format('EMPTY', empty_bench or bench) + ';;\n*) '
+                       + put.format('BENCH', bench) + ';;\nesac\nfi\n')
     return f"""#!/bin/sh
 last=
 for a in "$@"; do last=$a; done
-first=$(/usr/bin/head -n 1 "$last" 2>/dev/null)
-echo "{name} $* first=[$first] GOMAXPROCS=$GOMAXPROCS" >> {log}
+first=
+if [ -f "$last" ]; then first=$(/usr/bin/head -n 1 "$last"); fi
+echo "{name} $* first=[$first] CCACHE_DISABLE=$CCACHE_DISABLE GOMAXPROCS=$GOMAXPROCS" >> {log}
 case "$1 $2" in "tool link") echo "{name} link 1.0"; exit 0;; esac
 case "$*" in *-Wl,--version*) echo "{linker}"; exit 0;; esac
 {version}out=
@@ -97,7 +107,12 @@ prev=
 for a in "$@"; do
     if [ "$prev" = -o ]; then out=$a; fi
     if [ "$prev" = --out-dir ]; then outdir=$a; fi
-    case "$a" in -gcflags=-bench=*) bench=${{a#-gcflags=-bench=}}; bench=${{bench%% *}};; esac
+    case "$a" in -gcflags=*)
+        # Go splits the flags like a shell does: on spaces, and a quoted word is one word.
+        flags=${{a#-gcflags=}}
+        eval "set -- $flags"
+        for f in "$@"; do case "$f" in -bench=*) bench=${{f#-bench=}};; esac; done;;
+    esac
     prev=$a
 done
 {bench_block}{echo_stderr}if [ -n "$out" ]; then
@@ -476,6 +491,7 @@ class CompileSpeed(unittest.TestCase):
                     else:
                         self.assertIn('-p=1', go)
                         self.assertTrue(any('-c=1' in arg for arg in go), go)
+
     def table_rows(self, stdout):
         """The cells of each row of the markdown table in `stdout`, as lists of text."""
         return [[c.strip() for c in line.strip('|').split('|')] for line in stdout.splitlines()
@@ -500,6 +516,10 @@ class CompileSpeed(unittest.TestCase):
             ('/* a */', 'u.go', 0, 'a block comment'),
             ('a /* b\nc */ d', 'u.go', 2, 'a block comment over lines'),
             ('x := 5u8', 'u.rs', 4, 'a suffix is part of the number'),
+            ('print("{\'"\'}")', 'u.sisu', 4, 'a quote character literal in an interpolation'),
+            ('print("{\'{\'}")', 'u.sisu', 4, 'a brace character literal in an interpolation'),
+            (r"""print("{'\''}{'{'}")""", 'u.sisu', 4, 'an escaped quote character literal'),
+            (r"""print("{'\\'}{'"'}")""", 'u.sisu', 4, 'an escaped backslash literal'),
         )
         for text, path, expected, label in rows:
             with self.subTest(label):
@@ -551,13 +571,14 @@ class CompileSpeed(unittest.TestCase):
 
     def test_missing_toolchain_should_be_skipped(self):
         """
-        GIVEN a `PATH` with no `go`
+        GIVEN a `PATH` with no `go`, and a `perf` that fails
         WHEN `scripts/compile_speed.py` runs
         THEN it exits with code 0
         AND each Go cell of the table says `skipped`
-        AND each Sisu, Rust and C++ cell has a time
+        AND each Sisu, Rust and C++ cell has a time and no instruction count
         """
-        r = self.run_script('--sizes', '1', '--runs', '1', env=stubs(self.tmp, omit=('go',)))
+        env = stubs(self.tmp, omit=('go',), perf={'fail': True})
+        r = self.run_script('--sizes', '1', '--runs', '1', env=env)
         self.assertEqual(r.returncode, 0, r.stderr)
         rows = self.table_rows(r.stdout)
         self.assertEqual(len(rows), 20, r.stdout)
@@ -566,6 +587,7 @@ class CompileSpeed(unittest.TestCase):
                 self.assertEqual(cells[5], 'skipped', cells)
             else:
                 self.assertRegex(cells[5], r'^\d+\.\d+ m?s$', cells)
+                self.assertEqual(cells[-1], '-', cells)
 
     def test_full_run_should_print_a_row_for_each_command_language_and_size(self):
         """
@@ -574,15 +596,21 @@ class CompileSpeed(unittest.TestCase):
         THEN the table has one line for each row, size and language
         AND the Go LLVM IR cells say `none`
         AND the Go type-check cells have the `fe:parse` time
+        AND the Go type-check past-empty cells use the `fe:parse` time of the empty program
         AND the Go type-check instruction cells are `-` and every other filled one is a number
         AND no Go input has the same first line twice
+        AND each command has `--runs` samples, and the empty program has them once for each command
+        AND every command has `CCACHE_DISABLE=1`
         AND the header has a version line for each tool and a linker line for each language
         """
-        env = stubs(self.tmp, go={'bench': GO_BENCH}, perf=PERF, git={'out': 'abc1234'},
-                    clangxx={'linker': 'Ubuntu LLD 20.1'})
-        for _ in range(2):
-            r = self.run_script('--sizes', '2,1', '--runs', '2', env=env)
-            self.assertEqual(r.returncode, 0, r.stderr)
+        env = stubs(self.tmp, go={'bench': GO_BENCH, 'empty_bench': GO_BENCH_EMPTY}, perf=PERF,
+                    git={'out': 'abc1234'}, clangxx={'linker': 'Ubuntu GNU ld 2.42'},
+                    rustc={'linker': 'warning: linker stdout: LLD 21.0'})
+        r = self.run_script('--sizes', '2,1', '--runs', '2', env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        first_log = self.log_lines()
+        r = self.run_script('--sizes', '2,1', '--runs', '2', env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
         rows = self.table_rows(r.stdout)
         keys = [tuple(cells[:3]) for cells in rows]
         names = [compile_speed.NAMES[lang] for lang in compile_speed.LANGS]
@@ -597,6 +625,7 @@ class CompileSpeed(unittest.TestCase):
                 self.assertEqual((time, instructions), ('none', '-'), cells)
             elif go and row in compile_speed.ROWS[:2]:
                 self.assertEqual((time, instructions), ('29.7 ms', '-'), cells)
+                self.assertEqual(cells[7], compile_speed.rate(int(cells[4]), 0.025), cells)
             else:
                 self.assertRegex(time, r'^\d+\.\d+ m?s$', cells)
                 self.assertRegex(instructions, r'^\d+$', cells)
@@ -610,19 +639,38 @@ class CompileSpeed(unittest.TestCase):
                   if ' first=[// run ' in line]
         self.assertTrue(firsts)
         self.assertEqual(len(firsts), len(set(firsts)), firsts)
-        # The linker of clang++ is LLD, so its optimized builds get a thread limit. The linker of
-        # the stub rustc is not LLD. The check builds do not use -O2.
+        # Every command of a compiler has the same environment.
+        for line in log:
+            if not line.startswith('ran '):
+                self.assertIn(' CCACHE_DISABLE=1 ', line)
+        # The linker of rustc is LLD, so its optimized builds get a thread limit. The linker of
+        # clang++ is not LLD. The check builds do not use -O2.
+        rust = [line for line in log if line.startswith('rustc ') and 'opt-level=2' in line]
+        self.assertTrue(rust)
+        for line in rust:
+            self.assertIn('link-arg=-Wl,--threads=1', line)
         clang = [line for line in log if line.startswith('clang++ ') and ' -O2 ' in line]
         self.assertTrue(clang)
         for line in clang:
-            self.assertIn('-Wl,--threads=1', line)
-        self.assertFalse([line for line in log if line.startswith('rustc ') and 'threads=1' in line])
+            self.assertNotIn('threads=1', line)
+        # Samples: `--runs 2` runs of a command, and one more under perf where perf counts. The
+        # two type-check rows share their runs. The empty program has two runs of each command
+        # once, not once for each size.
+        def count(name, *words):
+            return len([line for line in first_log if line.startswith(f'{name} ')
+                        and all(word in line for word in words)])
+        self.assertEqual(count('rustc', '--emit=metadata', '/2/input.rs'), 3)
+        self.assertEqual(count('rustc', '--emit=llvm-ir', '/1/input.rs'), 3)
+        self.assertEqual(count('go', '-bench=', '/2/input.go'), 2)
+        for name, commands in (('sisu', 5), ('rustc', 4), ('clang++', 4), ('go', 3)):
+            self.assertEqual(count(name, '/empty/input.'), commands * 2, name)
         header = r.stdout.split('| Row')[0]
         for text in ('commit: abc1234', 'sisu 1.0', 'rustc 1.0', 'clang++ 1.0', 'go 1.0',
                      'rustfmt 1.0', 'clang-format 1.0', 'gofmt: from go 1.0',
-                     'linker (Sisu): GNU ld stub 1.0', 'linker (Rust): GNU ld stub 1.0',
-                     'linker (C++): Ubuntu LLD 20.1', 'linker (Go): go link 1.0'):
+                     'linker (Sisu): GNU ld stub 1.0', 'linker (Rust): LLD 21.0',
+                     'linker (C++): Ubuntu GNU ld 2.42', 'linker (Go): go link 1.0'):
             self.assertIn(text, header)
+        self.assertNotIn('warning', header)
 
     def test_table_should_print_times_and_rates(self):
         """
@@ -653,6 +701,116 @@ class CompileSpeed(unittest.TestCase):
         self.assertEqual(len(rows), 4, text)
         for cells in rows:
             self.assertEqual(cells[3:], expected[cells[2]], cells)
+
+    def test_measurement_should_keep_the_best_of_the_runs(self):
+        """
+        GIVEN `--runs 3` and a command whose three runs take 0.03, 0.01 and 0.02 seconds
+        WHEN `Measurer.cell` measures it
+        THEN it runs the command 3 times and gives 0.01
+        AND it runs the command once more under perf when perf counts
+        """
+        runner = compile_speed.Measurer(mock.Mock(runs=3), None, True)
+        calls = []
+        times = iter([0.03, 0.01, 0.02])
+
+        def run(cmd, what, lang, src, text, bench, wrap=False):
+            calls.append(wrap)
+            return (0.0, '7,,instructions:u,1,100.00,,') if wrap else (next(times), '')
+
+        runner.run = run
+        self.assertEqual(runner.cell(['c'], 'what', 'rust', None, '', None, True), (0.01, 7))
+        self.assertEqual(calls, [False, False, False, True])
+
+    def test_out_with_a_space_should_work_for_every_command(self):
+        """
+        GIVEN an `--out` directory with a space in its name
+        WHEN `scripts/compile_speed.py --sizes 1 --runs 1` runs
+        THEN it exits with code 0
+        AND the Go type-check cells have the `fe:parse` time
+        AND an `--out` with a `'` stops the script with a message
+        """
+        env = stubs(self.tmp, go={'bench': GO_BENCH})
+        r = self.run_script('--sizes', '1', '--runs', '1', '--out', str(self.tmp / 'out dir'),
+                            env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        go = [cells for cells in self.table_rows(r.stdout) if cells[2] == 'Go']
+        self.assertEqual([cells[5] for cells in go[:2]], ['29.7 ms'] * 2, go)
+        # A quote in the path cannot go into the Go flags, so the script says so.
+        r = self.run_script('--sizes', '1', '--out', str(self.tmp / "it's"), env=env)
+        self.assertEqual(r.returncode, 1)
+        self.assertTrue(r.stderr.startswith("compile_speed: --out may not have a '"), r.stderr)
+
+    def with_prefix(self, tool, snippet):
+        """A default stub for `tool` that runs the shell `snippet` first."""
+        return stub_text(self.tmp, tool).replace('#!/bin/sh\n', '#!/bin/sh\n' + snippet, 1)
+
+    def test_failure_in_a_timed_run_should_stop_the_script_with_a_message(self):
+        """
+        GIVEN a warning that only a timed build gives, or a `-bench` file that cannot be read
+        WHEN `scripts/compile_speed.py` measures
+        THEN it exits with code 1
+        AND stderr starts with `compile_speed:`, names the input and the cause, and has no traceback
+        """
+        warn = 'echo "warning: {}" >&2\n'
+        # A Go stub that makes the `-bench` file a directory, so a read fails also as root.
+        unreadable = self.with_prefix('go', """for a in "$@"; do
+    case "$a" in -gcflags=*-bench=*) b=${a#*-bench=}; b=${b%"'"}; /bin/mkdir -p "$b"; exit 0;; esac
+done
+""")
+        cases = (
+            ('unreadable bench file', {'go': unreadable},
+             ('Go, size 1', 'prog.bench')),
+            ('warning only at -O2', {'rustc': self.with_prefix(
+                'rustc', 'case "$*" in *opt-level=2*) ' + warn.format('o2 only') + ';; esac\n')},
+             ('Rust, size 1, executable, optimized', 'warning: o2 only')),
+            ('warning only in the empty program', {'rustc': self.with_prefix(
+                'rustc', 'case "$*" in */empty/input.*) ' + warn.format('empty only') + ';; esac\n')},
+             ('Rust, empty program', 'warning: empty only')),
+            ('warning in the perf run', {'perf': PERF.replace(
+                'echo ', warn.format('perf run') + 'echo ', 1)}, ('perf', 'warning: perf run')),
+        )
+        for label, overrides, named in cases:
+            with self.subTest(label):
+                env = stubs(self.tmp, **{'go': {'bench': GO_BENCH}, 'perf': PERF, **overrides})
+                r = self.run_script('--sizes', '1', '--runs', '1', env=env)
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertTrue(r.stderr.startswith('compile_speed: '), r.stderr)
+                for text in named:
+                    self.assertIn(text, r.stderr)
+                self.assertNotIn('Traceback', r.stderr)
+
+    def test_optional_tool_that_fails_should_give_unknown_and_not_its_error(self):
+        """
+        GIVEN version commands, `git`, `perf` and `cc` that exit with code 1 and print an error
+        WHEN `scripts/compile_speed.py --sizes 1 --runs 1` runs
+        THEN it exits with code 0
+        AND the header says `unknown` for each of them, and shows none of their text
+        """
+        broken = '#!/bin/sh\necho "error: cc broke" >&2\nexit 1\n'
+        env = stubs(self.tmp, rustc={'version_fail': True}, clang_format={'version_fail': True},
+                    go={'version_fail': True, 'bench': GO_BENCH}, cc=broken,
+                    git={'fail': True, 'out': 'fatal: not a git repository'},
+                    perf={'fail': True, 'out': 'perf: broke'})
+        r = self.run_script('--sizes', '1', '--runs', '1', env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for text in ('commit: unknown', 'rustc: unknown', 'clang-format: unknown', 'go: unknown',
+                     'gofmt: from unknown', 'linker (Sisu): unknown'):
+            self.assertIn(text, r.stdout)
+        for text in ('version failed', 'fatal', 'cc broke', 'perf: broke'):
+            self.assertNotIn(text, r.stdout)
+
+    def test_environment_should_disable_ccache_and_limit_go_to_one_thread(self):
+        """
+        GIVEN a language
+        WHEN `environment` builds the environment of its commands
+        THEN ccache is off for every language, so that no compile is a cache hit
+        AND only Go has `GOMAXPROCS=1`
+        """
+        for lang in compile_speed.LANGS:
+            with self.subTest(lang):
+                env = compile_speed.environment(lang)
+                self.assertEqual(env['CCACHE_DISABLE'], '1')
+                self.assertEqual(env.get('GOMAXPROCS') == '1', lang == 'go')
 
 
 if __name__ == '__main__':
