@@ -1,0 +1,8 @@
+class Node {
+    id: i64
+}
+
+fn main() {
+    let node: Node? = Node(id: 1)
+    node?.id = 2
+}

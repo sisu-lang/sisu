@@ -242,11 +242,13 @@ impl Checker<'_> {
 
     /// `base[index]`: `base` is an array, not an optional one, and `index` an `i64`.
     pub(super) fn index(&mut self, span: Span, base: &ast::Expr, index: &ast::Expr) -> Checked {
+        let outer = std::mem::replace(&mut self.body.indexed, true);
         let checked = self.value(base, None);
         let element = self.element(base, type_of(&checked));
-        // The index is not part of an assignment target's chain; `expr` restores the flag.
-        self.body.in_target = false;
+        // The index is not part of the chain that it ends.
+        self.body.indexed = false;
         let (index, mismatched) = self.operand(index, Some(Type::I64));
+        self.body.indexed = outer;
         match (checked, index, element) {
             (Ok(base), Ok(index), Some(element)) => {
                 Ok(self.spilled(span, element, vec![base, index], |operands| {
@@ -398,6 +400,7 @@ pub(super) fn optional_array(base: &ast::Expr) -> Diagnostic {
         value: path(base),
         at: base.span,
         access: None,
+        write: false,
         peel: None,
     }
     .into()

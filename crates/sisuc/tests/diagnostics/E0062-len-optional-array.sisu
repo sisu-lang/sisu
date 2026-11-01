@@ -1,0 +1,4 @@
+fn main() {
+    let xs: [i64]? = [1]
+    print(xs.len())
+}
