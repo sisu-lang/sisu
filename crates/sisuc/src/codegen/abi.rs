@@ -592,7 +592,15 @@ mod tests {
     /// The `Abi` of the Rust type `ty`, if it has one.
     fn abi_of(ty: &syn::Type) -> Option<Abi> {
         match ty {
-            syn::Type::Ptr(_) | syn::Type::FnPtr(_) => Some(Abi::Ptr),
+            syn::Type::Ptr(_) => Some(Abi::Ptr),
+            // `extern fn` with no name is `extern "C" fn`.
+            syn::Type::FnPtr(f)
+                if f.abi
+                    .as_ref()
+                    .is_some_and(|abi| abi.name.as_ref().is_none_or(|n| n.value() == "C")) =>
+            {
+                Some(Abi::Ptr)
+            }
             syn::Type::Path(path) => match path.path.segments.last()?.ident.to_string().as_str() {
                 "i64" | "u64" | "usize" | "isize" => Some(Abi::I64),
                 "i32" | "u32" => Some(Abi::I32),

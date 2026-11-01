@@ -102,20 +102,22 @@ mod tests {
         record(block);
     }
 
+    unsafe extern "C" fn record_5(block: *mut u8) {
+        record(block);
+    }
+
     fn recorded() -> Vec<u8> {
         RECORD.with_borrow(Clone::clone)
     }
 
-    /// ```text
-    /// Scenario: S10. The deferred queue is first in, first out, with one loop at a time
-    ///   GIVEN the runtime's deferred queue and three deferred drops whose drop functions
-    ///     record their order
-    ///   AND the second drop function adds a fourth drop and then calls the function that
-    ///     empties the queue
-    ///   WHEN the queue is emptied, in the runtime's unit tests and under `make miri`
-    ///   THEN the drop functions run in the order 1, 2, 3, 4
-    ///   AND at most one loop that empties the queue runs at a time
-    /// ```
+    /// GIVEN the runtime's deferred queue and three deferred drops whose drop functions
+    ///   record their order
+    /// AND the second drop function adds a fourth drop and then calls the function that
+    ///   empties the queue
+    /// WHEN the queue is emptied, in the runtime's unit tests and under `make miri`
+    /// THEN the drop functions run in the order 1, 2, 3, 4
+    /// AND at most one loop that empties the queue runs at a time
+    /// AND a later drop is run by a later call that empties the queue
     #[test]
     fn deferred_queue_should_run_drops_in_order_in_one_loop() {
         // SAFETY: `record_1` only records the tag it gets.
@@ -131,6 +133,14 @@ mod tests {
             recorded(),
             [1, 2, 3, 4],
             "a second drain should find nothing"
+        );
+        // SAFETY: `record_5` only records the tag it gets.
+        unsafe { sisu_drop_defer(tag(5), record_5) };
+        sisu_drop_drain();
+        assert_eq!(
+            recorded(),
+            [1, 2, 3, 4, 5],
+            "a drain should run after the first loop ended"
         );
     }
 }
