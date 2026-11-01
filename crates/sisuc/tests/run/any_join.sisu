@@ -130,6 +130,29 @@ fn main() {
     }
     print(r.v()) // 42
 
+    // The earlier `break` runs, and its value converts to the type that a later one gives.
+    let r = loop {
+        if cond {
+            break D()
+        }
+        break a
+    }
+    print(r.v()) // 7
+    let r = loop {
+        if cond {
+            break a
+        }
+        break o
+    }
+    print(or_minus(r)) // 42
+    let r = loop {
+        if cond {
+            break j
+        }
+        break a
+    }
+    print(r.v()) // 5
+
     // Array literals.
     let xs = [a, D()]
     print(xs[0].v() + xs[1].v()) // 49
