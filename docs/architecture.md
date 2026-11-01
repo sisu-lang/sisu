@@ -461,9 +461,10 @@ the registry turns it into a `Diagnostic` with a stable code
 ([ADR 0013](adr/0013-diagnostics-have-stable-codes.md)). `diagnostic/render.rs`
 writes it in the style of `rustc`: the message, the `file:line:col`, and the
 source line with the code underlined. Before it renders a long ASCII line with
-every span on it, it cuts the line to the bytes near the spans, so that many
-diagnostics on one line cost time linear in their spans; the text is the same as
-for the whole line. `diagnostic/json.rs` writes the same
+every span on it, it cuts the line to the bytes near the spans, so the renderer
+gets only those bytes; the text is the same as for the whole line. Each
+diagnostic still scans the line once for its checks (a `shortcut:` in
+`render.rs`). `diagnostic/json.rs` writes the same
 diagnostic as one JSON line, and `diagnostic/suggest.rs` finds the closest
 name for a did-you-mean fix. `report.rs` writes diagnostics and tool errors
 as text or JSON, counts them and ends with the summary. Before it writes one,
