@@ -1,20 +1,23 @@
 //! Deep drops (ADR 0038): which drop functions count the drop depth, and the drop weight of
-//! each. A drop function that counts adds its weight to a global depth while it runs.
+//! each. A drop function that counts adds its weight to the global `@sisu_rc.depth` while it
+//! runs. At `DEPTH_LIMIT` it defers its block to the runtime's queue instead. The drop that
+//! brings the depth back to 0 empties the queue when `@sisu_rc.deferred` is set.
 //!
 //! The walks here follow the nesting of the source types: a chain of enums that each hold the
 //! next, or nested arrays. They call themselves once for each level, so each recursive step
 //! goes through `ensure_stack`, as the other walks over the depth of a type do.
-// Nothing outside the tests calls these functions yet.
-#![expect(
-    dead_code,
-    reason = "the depth check in the drop functions calls them in the next change of #191"
-)]
-
 use rustc_hash::{FxHashMap, FxHashSet};
 #[cfg(test)]
 use std::cell::Cell;
 
-use super::Codegen;
+use inkwell::IntPredicate;
+use inkwell::basic_block::BasicBlock;
+use inkwell::module::Linkage;
+use inkwell::types::BasicTypeEnum;
+use inkwell::values::{FunctionValue, GlobalValue};
+
+use super::rc::param;
+use super::{Codegen, POSITIONED};
 use crate::conformance::ensure_stack;
 use crate::tir::{ClassId, EnumId, Type, TypeKind};
 
@@ -229,21 +232,20 @@ impl Codegen<'_, '_> {
                 .expect("a component should have fewer than 2^32 members");
             1 + levels
         });
-        let cycle = enums[id.0].cycle;
-        let in_component = |ty: Type| {
-            cycle.is_some()
-                && ty
-                    .inline_enum()
-                    .is_some_and(|held| enums[held.0].cycle == cycle)
-        };
         let group = members
             .as_deref()
             .unwrap_or_else(|| std::slice::from_ref(&id));
+        // A field that `walk` follows in place adds no frames of its own (see `inline_link`).
         let parts = (group.iter())
-            .flat_map(|member| &enums[member.0].variants)
-            .flat_map(|variant| &variant.fields)
-            .filter(|field| !field.boxed && !in_component(field.ty))
-            .map(|field| {
+            .flat_map(|&member| {
+                let variants = &enums[member.0].variants;
+                (variants.iter().flat_map(|variant| &variant.fields))
+                    .map(move |field| (member, field))
+            })
+            .filter(|&(member, field)| {
+                !field.boxed && (members.is_none() || self.inline_link(member, field).is_none())
+            })
+            .map(|(_, field)| {
                 count_read();
                 self.part_frames(field.ty)
             })
@@ -254,5 +256,112 @@ impl Codegen<'_, '_> {
         memo.framing.remove(&key);
         memo.enum_frames.insert(key, frames);
         frames
+    }
+}
+
+impl<'ctx> Codegen<'ctx, '_> {
+    /// Starts the body of the drop function `drop` of `ty`, a class or an array, when it counts:
+    /// the builder is in its entry block. If the depth is at `DEPTH_LIMIT`, the function defers
+    /// its block (`sisu_drop_defer`), sets the flag `@sisu_rc.deferred` and returns. Otherwise it
+    /// adds `drop_weight(ty)` to `@sisu_rc.depth`, and the builder is in the block for the body.
+    /// The result is the block where the body ends (see `end_drop`). For a drop function that
+    /// does not count, it builds nothing and gives `None`. A program with no counting drop
+    /// function names neither global nor runtime function.
+    pub(super) fn begin_drop(
+        &self,
+        drop: FunctionValue<'ctx>,
+        ty: Type,
+    ) -> Option<BasicBlock<'ctx>> {
+        if !self.counts(ty) {
+            return None;
+        }
+        let (i64_type, bool_type) = (self.context.i64_type(), self.context.bool_type());
+        let depth = self
+            .drop_global("sisu_rc.depth", i64_type.into())
+            .as_pointer_value();
+        let deferred = self
+            .drop_global("sisu_rc.deferred", bool_type.into())
+            .as_pointer_value();
+        let weight = i64_type.const_int(u64::from(self.drop_weight(ty)), false);
+        let block = |name| self.context.append_basic_block(drop, name);
+        let (defer, run) = (block("defer"), block("run"));
+        let current = self
+            .builder
+            .build_load(i64_type, depth, "depth")
+            .expect(POSITIONED);
+        let full = self.int_compare(
+            IntPredicate::UGE,
+            current.into_int_value(),
+            i64_type.const_int(DEPTH_LIMIT, false),
+        );
+        self.branch_on(full, defer, run);
+        self.builder.position_at_end(defer);
+        let this = drop.as_global_value().as_pointer_value();
+        self.call(
+            self.runtime("sisu_drop_defer"),
+            &[param(drop).into(), this.into()],
+        );
+        self.store(deferred, bool_type.const_all_ones().into());
+        self.builder.build_return(None).expect(POSITIONED);
+        // The end of the function: take the weight off, and empty the queue at depth 0.
+        let (exit, flagged, drain, done) = (
+            block("exit"),
+            block("flagged"),
+            block("drain"),
+            block("done"),
+        );
+        self.builder.position_at_end(exit);
+        let before = self
+            .builder
+            .build_load(i64_type, depth, "depth")
+            .expect(POSITIONED);
+        let after = self
+            .builder
+            .build_int_sub(before.into_int_value(), weight, "depth.left")
+            .expect(POSITIONED);
+        self.store(depth, after.into());
+        let zero = self.int_compare(IntPredicate::EQ, after, i64_type.const_zero());
+        self.branch_on(zero, flagged, done);
+        self.builder.position_at_end(flagged);
+        let set = self
+            .builder
+            .build_load(bool_type, deferred, "deferred")
+            .expect(POSITIONED);
+        self.branch_on(set.into_int_value(), drain, done);
+        self.builder.position_at_end(drain);
+        self.call(self.runtime("sisu_drop_drain"), &[]);
+        self.store(deferred, bool_type.const_zero().into());
+        self.branch_to(done);
+        self.builder.position_at_end(done);
+        self.builder.build_return(None).expect(POSITIONED);
+        self.builder.position_at_end(run);
+        let raised = self
+            .builder
+            .build_int_add(current.into_int_value(), weight, "depth.new")
+            .expect(POSITIONED);
+        self.store(depth, raised.into());
+        Some(exit)
+    }
+
+    /// Ends the body of a drop function that `begin_drop` started: a return when `exit` is
+    /// `None`, and otherwise a branch to the block that takes the weight off.
+    pub(super) fn end_drop(&self, exit: Option<BasicBlock<'ctx>>) {
+        match exit {
+            Some(exit) => self.branch_to(exit),
+            None => {
+                self.builder.build_return(None).expect(POSITIONED);
+            }
+        }
+    }
+
+    /// The internal global `name` of type `ty`, zero at the start. It is made at the first call
+    /// for it, so a program with no counting drop function does not have it.
+    fn drop_global(&self, name: &str, ty: BasicTypeEnum<'ctx>) -> GlobalValue<'ctx> {
+        self.module.get_global(name).unwrap_or_else(|| {
+            let global = self.module.add_global(ty, None, name);
+            global.set_linkage(Linkage::Internal);
+            global.set_initializer(&ty.const_zero());
+            global
+        })
     }
 }

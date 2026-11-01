@@ -1,0 +1,16 @@
+// A chain of 300 000 objects that each hold the next in an array `[A]`, run under a 256 KiB
+// stack. The drop of the array is not a loop over the objects, so it needs a frame for each
+// level until the depth limit, and then defers the rest.
+class A {
+    _next: [A]
+}
+
+fn main() {
+    let mut a = A(_next: [])
+    let mut i = 0
+    while i < 300_000 {
+        i += 1
+        a = A(_next: [a])
+    }
+    print(1)
+}

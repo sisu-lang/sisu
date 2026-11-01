@@ -1,0 +1,22 @@
+// An array of 1000 elements that are each a chain of 1000 objects through `[A]`, run under a
+// 256 KiB stack. Each chain is deeper than the depth limit, so the drop defers one block for each
+// chain. The queue must hold every one of them and free each one.
+class A {
+    _next: [A]
+}
+
+fn main() {
+    let mut _chains: [A] = []
+    let mut j = 0
+    while j < 1000 {
+        j += 1
+        let mut a = A(_next: [])
+        let mut i = 0
+        while i < 1000 {
+            i += 1
+            a = A(_next: [a])
+        }
+        _chains.push(a)
+    }
+    print(1)
+}

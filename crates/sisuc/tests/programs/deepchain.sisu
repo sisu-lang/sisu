@@ -1,6 +1,6 @@
-// The control for `longlist.sisu`: 500 000 objects that each hold the next in an array. The
-// drop of an array is not a loop over the objects, so it recurses once per object and overflows
-// the same 256 KiB stack.
+// 500 000 objects that each hold the next in an array, run under a 256 KiB stack. The drop of an
+// array is not a loop over the objects. Its drop function counts the drop depth and defers its
+// block at the depth limit, so no frame is needed for each object.
 class A {
     next: [A]
 }
