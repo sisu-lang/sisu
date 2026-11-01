@@ -2477,11 +2477,11 @@ mod tests {
     fn an_upper_case_prefix_after_a_dot_should_have_no_fix() {
         let too_large_binary = format!("x.0B{}", "1".repeat(68));
         for (row, src, col) in [
-            ("p1", "x.0XFFFFFFFFFFFFFFFFFFFF", 3),
-            ("p3", too_large_binary.as_str(), 3),
-            ("p4", "x.0O7777777777777777777777777", 3),
-            ("p5", "x?.0XFFFFFFFFFFFFFFFFFFFF", 4),
-            ("p10", "x.0XFFFF_FFFF_FFFF_FFFF_FFFF", 3),
+            ("too large hex", "x.0XFFFFFFFFFFFFFFFFFFFF", 3),
+            ("too large binary", too_large_binary.as_str(), 3),
+            ("too large octal", "x.0O7777777777777777777777777", 3),
+            ("too large optional", "x?.0XFFFFFFFFFFFFFFFFFFFF", 4),
+            ("too large with _", "x.0XFFFF_FFFF_FFFF_FFFF_FFFF", 3),
             ("small", "x.0X1", 3),
             ("optional", "x?.0X1", 4),
             ("min magnitude", "x.0X8000000000000000", 3),

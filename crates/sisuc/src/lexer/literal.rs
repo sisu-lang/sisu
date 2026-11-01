@@ -110,6 +110,8 @@ fn number(
     // Reported last, so that its fix leaves a literal that lexes. A bare 2^63 still fails to
     // parse; only a `-` before it makes it valid, which the lexer cannot see. After a `.` the
     // parser takes only a name, so no change of the prefix gives a clean program: no fix.
+    // shortcut: no fix after a `.` while the parser takes only a name there; give it back when
+    // element access by position (`t.0`) lands.
     if let Some((_, p)) = prefix.filter(|(_, p)| p.is_ascii_uppercase()) {
         let at = Span::new(start, start + 2);
         let safe = if after_dot {
