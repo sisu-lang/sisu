@@ -50,6 +50,8 @@ CHECK_LINE = '  306,067 ( 4.09%)  ???:sisuc::check::check [/src/target/release/s
 EXPECTED_COUNTS = {'lex': 183335, 'parse': 118740, 'check': 306067, 'mono': 20561, 'mir': 61582,
                    'codegen': 355831}
 KNOWN_344 = [('array literal depth', 'check', 344)]
+# The callgrind counts of commit 85c95105, where issue #344 is open.
+SAVED = Path(__file__).resolve().parent.parent / 'bench' / 'compile' / 'scaling-85c95105.json'
 # The 12 rows of the table in scenario S10: check growths at n, 2n, 4n and 8n, the ratios, and
 # the verdict.
 S10 = [
@@ -615,6 +617,23 @@ class ScalingTest(unittest.TestCase):
         self.assertEqual(sc.stage_counts(ANNOTATE + longer), EXPECTED_COUNTS)
         clone = ANNOTATE.replace('sisuc::check::check ', 'sisuc::check::check.llvm.123 ')
         self.assertEqual(sc.stage_counts(clone), EXPECTED_COUNTS)
+
+    def test_rule_should_find_issue_344_in_the_saved_counts(self):
+        """
+        GIVEN the callgrind counts of 85c95105, where #344 is open
+        WHEN scaling.py reads them
+        THEN array literal depth is superlinear in check only, and functions in no stage
+        """
+        verdicts = sc.verdicts(sc.load(SAVED))
+        for stage, _ in sc.STAGES:
+            array_superlinear = verdicts[('array literal depth', stage)][0] == 'superlinear'
+            self.assertEqual(array_superlinear, stage == 'check', stage)
+            self.assertNotEqual(verdicts[('functions', stage)][0], 'superlinear', stage)
+        # Frozen: the rows of this pull request's known list for the two measured shapes, so a
+        # later row for another case does not change the test.
+        known_at_85c95105 = [('array literal depth', 'check', 344)]
+        self.assertEqual(
+            sc.compare(verdicts, known_at_85c95105, {'array literal depth', 'functions'})[2], 0)
 
     def test_known_rows_should_name_a_shape_and_a_stage(self):
         """
