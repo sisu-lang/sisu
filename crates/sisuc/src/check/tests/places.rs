@@ -942,8 +942,9 @@ fn a_failed_push_should_count_as_a_change_of_its_receiver() {
     }
 }
 
-/// A method of a class or an optional class named `push` writes nothing, and so does any other
-/// method that is not found: `let mut` is never reassigned.
+/// A `push` on a class, an enum, a type parameter or an associated type may be a method of its
+/// own, which writes nothing, and so does a method that is not found: `let mut` is never
+/// reassigned.
 #[test]
 fn a_push_that_may_be_a_method_should_not_stamp_its_receiver() {
     let pile = "class Pile {\n    mut n: i64\n    fn push(self, x: i64) { self.n += x }\n}\n";

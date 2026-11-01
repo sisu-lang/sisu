@@ -225,8 +225,7 @@ impl Checker<'_> {
             .as_ref()
             .is_some_and(|(_, place)| place.guard.is_some());
         let held = type_of(&read).map(|ty| if guarded { as_optional(ty) } else { ty });
-        let in_place = matches!(held.map(Type::kind),
-            Some(TypeKind::Optional(payload)) if matches!(payload.kind(), TypeKind::Array(_)));
+        let in_place = held.is_some_and(is_optional_array);
         let read = match read {
             Ok(mut array) if in_place => {
                 // The array inside the optional that the place stores.
