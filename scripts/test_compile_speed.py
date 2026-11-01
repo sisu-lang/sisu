@@ -857,12 +857,14 @@ done
                     self.assertEqual(env['CCACHE_DISABLE'], '1')
                     self.assertEqual(env['GOMAXPROCS'], '1' if lang == 'go' else '2')
 
-    def test_units_should_put_the_copy_number_in_a_string_that_the_sum_counts(self):
+    def test_units_should_put_the_copy_number_in_a_label_string(self):
         """
         GIVEN the four committed units
         WHEN `generate` writes three copies of each
-        THEN each copy has its own number in a label string, the same text in all four languages
-        AND so no two copies are the same function, which a compiler could merge
+        THEN each copy has its own number in one label string
+        AND so no two `run` functions are the same
+        The full run keeps the rest: its totals check finds a label of another text, and a label
+        that the sum does not use makes the build warn.
         """
         here = Path(__file__).resolve().parent.parent / 'bench' / 'compile'
         for lang, ext in compile_speed.EXTENSIONS.items():

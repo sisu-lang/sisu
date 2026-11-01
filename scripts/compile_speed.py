@@ -139,8 +139,8 @@ def main_of(lang, copies):
     bonus, and the inliner of Go has no such bonus. They use the same form, so that the programs
     are the same.
 
-    The copies must also differ in more than their names, because rustc runs the LLVM pass
-    MergeFunctions at -O2, and it would merge identical copies into one function. So the label
+    The copies must also differ in more than their names. Otherwise rustc merges their `run`
+    functions into one, because it runs the LLVM pass MergeFunctions at -O2. So the label
     string of each unit has the number of the copy, and its length goes into the sum.
     """
     calls = [f'total = total + run{i}() + run{i}()' for i in range(copies)]
