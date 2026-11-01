@@ -23,7 +23,7 @@ use crate::source::Span;
 use crate::tir::{
     Align, Arm, Block, ChoicePlace, Class, ClassId, CompareOp, Conformance, Conformances, Enum,
     EnumId, Expr, ExprKind, Field, FuncId, Function, InterfaceId, Local, Place, Program, Stmt,
-    Type, TypeArgs, TypeKind, layout_enums,
+    Type, TypeArgs, TypeKind, head_of, layout_enums,
 };
 use crate::types::{Head, write_args, write_method, write_type};
 
@@ -43,6 +43,7 @@ thread_local! {
 /// reached only by a call, never with its class. A function of the prelude is reached the same
 /// way, by a call from a body that is in the program, so a program holds only the prelude
 /// functions it uses.
+///
 /// A program takes a fast path that instantiates nothing and drops the prelude's items when no
 /// declaration is generic, the checker recorded no use of the prelude (`Program::instantiates`),
 /// and no conformance has a method of the prelude for a type outside the prelude.
@@ -63,9 +64,9 @@ pub(crate) fn instantiate(mut program: Program) -> Result<Program, Vec<Diagnosti
         program.fast_path = true;
         // Reaching a generic item records a type argument, and so does a use of any other item
         // of the prelude (see `tir::Program::instantiates`). An implicit call, such as `print`,
-        // does not: codegen finds the method through the conformance. The prelude's items are
-        // then all templates or unused, unless a conformance holds a prelude method for a type
-        // outside the prelude (`prelude_method_of_outside_type`).
+        // does not: codegen finds the method through the conformance. No conformance holds a
+        // prelude method for a type outside the prelude (`prelude_method_of_outside_type`), so
+        // the prelude's items are all templates or unused.
         program.functions.truncate(prelude.funcs);
         program.classes.truncate(prelude.classes);
         program.enums.truncate(prelude.enums);
@@ -96,10 +97,12 @@ pub(crate) fn instantiate(mut program: Program) -> Result<Program, Vec<Diagnosti
 fn prelude_method_of_outside_type(program: &Program) -> bool {
     let prelude = program.prelude;
     program.conformances.iter().any(|(_, conformance)| {
-        let in_prelude = match conformance.target.kind() {
-            TypeKind::Class(id, _) => id.0 >= prelude.classes,
-            TypeKind::Enum(id, _) => id.0 >= prelude.enums,
-            _ => false,
+        let in_prelude = match head_of(conformance.target) {
+            Some(Head::Class(id)) => id.0 >= prelude.classes,
+            Some(Head::Enum(id)) => id.0 >= prelude.enums,
+            // `Conformances::add` admits no other target today. `false` leaves the fast path,
+            // where the normal path keeps every method that it reaches.
+            Some(Head::Assoc(..)) | None => false,
         };
         !in_prelude && conformance.methods.iter().any(|f| f.0 >= prelude.funcs)
     })
@@ -1828,6 +1831,14 @@ mod tests {
             ["main"],
             "a target in the prelude"
         );
+        let before = FAST_PATHS.get();
+        let prelude =
+            "enum Q {\n    A\n}\nextend Q {\n    fn to_string(self) -> string { \"q\" }\n}\n";
+        let (program, diagnostics) =
+            crate::front_end::front_end_with(prelude, "fn main() {\n    print(1)\n}");
+        let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+        assert_eq!(FAST_PATHS.get(), before + 1, "an enum in the prelude");
+        assert_eq!(function_names(&program), ["main"], "an enum in the prelude");
     }
 
     /// The prelude of the tests below: a class and an enum that are not generic, so `mono` roots
