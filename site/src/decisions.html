@@ -13,7 +13,7 @@ The design decisions behind Sisu, each written down as a short record with its r
     <p class="lede">Every design choice in Sisu is written down with its reasons, as a short decision record. This page lists them all.</p>
     <p class="meta">{{adr-count}} records · at commit e4b0113</p>
   </div></section>
-  <!-- source: docs/adr/ (40 files, 0001 to 0041; 0038 is claimed by an open branch), README.md ("Read why a design choice was made") -->
+  <!-- source: docs/adr/ (41 files, 0001 to 0041), README.md ("Read why a design choice was made") -->
 
   <div class="w doc">
     <nav class="toc" aria-label="On this page"><h2>On this page</h2><ol>
@@ -82,8 +82,9 @@ The design decisions behind Sisu, each written down as a short record with its r
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0029-parameters-are-borrowed-unless-consumed.md"><span class="num">0029</span><b>Parameters are borrowed unless the function consumes them</b><span>A function that only reads a counted parameter borrows it: the caller keeps its reference, and neither side counts it.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0030-match-takes-its-scrutinee-apart.md"><span class="num">0030</span><b><code>match</code> takes its scrutinee apart</b><span>An arm moves the parts it binds out of an owned scrutinee, and a box it held alone becomes a block the arm builds the next box into.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0031-compiled-programs-allocate-with-mimalloc.md"><span class="num">0031</span><b>Compiled programs allocate with mimalloc</b><span>Programs link mimalloc v3 by default, and <code>--allocator system</code> links the System allocator for Valgrind and ASan.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0038-deep-drops-defer-past-a-depth-limit.md"><span class="num">0038</span><b>Deep drops defer past a depth limit</b><span>A drop counts its depth. Past 256 frames, it puts the rest of the value on a queue, and the outermost drop empties the queue. So a drop of any depth uses a bounded amount of stack.</span></a></li>
       </ul>
-      <!-- source: docs/adr/0005-reference-counting.md, docs/adr/0008-weak-references.md, docs/adr/0012-methods-borrow-self.md, docs/adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md, docs/adr/0025-mir-holds-every-count.md, docs/adr/0029-parameters-are-borrowed-unless-consumed.md, docs/adr/0030-match-takes-its-scrutinee-apart.md, docs/adr/0031-compiled-programs-allocate-with-mimalloc.md -->
+      <!-- source: docs/adr/0005-reference-counting.md, docs/adr/0008-weak-references.md, docs/adr/0012-methods-borrow-self.md, docs/adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md, docs/adr/0025-mir-holds-every-count.md, docs/adr/0029-parameters-are-borrowed-unless-consumed.md, docs/adr/0030-match-takes-its-scrutinee-apart.md, docs/adr/0031-compiled-programs-allocate-with-mimalloc.md, docs/adr/0038-deep-drops-defer-past-a-depth-limit.md -->
 
       <h2 id="types">Types</h2>
       <ul class="rows">

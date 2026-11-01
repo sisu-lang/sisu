@@ -695,6 +695,7 @@ fn enum_of(variants: Vec<Vec<Type>>) -> tir::Enum {
         variants,
         counted: false,
         cycle: None,
+        reaches: false,
     }
 }
 

@@ -307,6 +307,12 @@ pub(crate) struct Enum {
     /// The enum's strongly connected component of the holds-inline graph, when that component
     /// has a boxed field.
     pub(crate) cycle: Option<usize>,
+    /// The reach flag of the enum's component (ADR 0038). It is set when a payload field of a
+    /// member, with each `?` removed, is counted and is none of these: a `string`, an enum of
+    /// the same component, or an enum of another component whose flag is clear. With a clear
+    /// flag, the source fixes the number of frames that a drop opens. With a set flag, a drop
+    /// may reach a class or an array, and so start a chain of drops.
+    pub(crate) reaches: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -763,13 +769,29 @@ impl Type {
             TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) => true,
             TypeKind::Enum(id, _) => enums[id.0].counted,
             TypeKind::Optional(payload) => payload.is_counted(enums),
-            _ => false,
+            TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::Unit
+            | TypeKind::Never
+            | TypeKind::Param(..)
+            | TypeKind::Assoc(..) => false,
         }
     }
 
     /// Whether a value of this type may be counted: it is, or a type argument may make it so.
     pub(crate) fn may_be_counted(self, enums: &[Enum]) -> bool {
         self.is_counted(enums) || self.has_param()
+    }
+
+    /// This type with each `?` removed: `T` for `T`, `T?` and `T??`.
+    pub(crate) fn without_optionals(mut self) -> Self {
+        while let TypeKind::Optional(payload) = self.kind() {
+            self = payload;
+        }
+        self
     }
 
     /// The enum a payload field of this type holds inline unless boxed: `F`'s for `F` or `F?`.
@@ -784,10 +806,10 @@ impl Type {
 }
 
 /// Lays out `enums`, whose payload types are final: boxes each payload field that closes a
-/// cycle of the holds-inline graph, and sets each enum's `cycle` and `counted`. The box goes on
-/// the declaring enum's own field rather than one inside a generic type. There is a pass per
-/// `Rank`: `Plain`, `Own`, `Open`, `Late`, then `Assoc`. Each pass boxes its fields that are on
-/// a cycle of what the passes before it left unboxed. A cycle that `Plain` leaves holds an
+/// cycle of the holds-inline graph, and sets each enum's `cycle`, `counted` and `reaches`. The
+/// box goes on the declaring enum's own field rather than one inside a generic type. There is a
+/// pass per `Rank`: `Plain`, `Own`, `Open`, `Late`, then `Assoc`. Each pass boxes its fields that
+/// are on a cycle of what the passes before it left unboxed. A cycle that `Plain` leaves holds an
 /// `Own`, `Open` or `Late` field, or an `Assoc` field. Take a cycle with no associated type.
 /// A generic field of one enum on it names the declaration of the next, so the names close a
 /// cycle of declarations. The choice of an associated type is a third source of enum names. It
@@ -858,13 +880,29 @@ pub(crate) fn layout_enums(enums: &mut [Enum]) {
     // when it has a box, so counting in component order sees each other held enum counted.
     let mut order: Vec<usize> = (0..enums.len()).collect();
     order.sort_by_key(|&e| component[e]);
-    for e in order {
+    // The reach flag of each component. The components a component holds are before it, so
+    // their flags are final when it reads them. A type parameter sets the flag: it may be a class.
+    let mut reaches = vec![false; enums.len()];
+    for &e in &order {
         let boxed = has_box[component[e]];
         enums[e].cycle = boxed.then_some(component[e]);
         let counted = boxed
             || (enums[e].variants.iter().flat_map(|v| &v.fields))
                 .any(|p| p.ty.may_be_counted(enums));
         enums[e].counted = counted;
+        let fields = enums[e].variants.iter().flat_map(|v| &v.fields);
+        let sets = fields
+            .map(|p| p.ty.without_optionals())
+            .any(|ty| match ty.kind() {
+                TypeKind::String => false,
+                TypeKind::Enum(held, _) if component[held.0] == component[e] => false,
+                TypeKind::Enum(held, _) => reaches[component[held.0]],
+                _ => ty.may_be_counted(enums),
+            });
+        reaches[component[e]] |= sets;
+    }
+    for (e, info) in enums.iter_mut().enumerate() {
+        info.reaches = reaches[component[e]];
     }
 }
 
@@ -1978,7 +2016,7 @@ mod tests {
     #[test]
     #[expect(
         clippy::too_many_lines,
-        reason = "the enum, the match and the function stay in one test, so the printed tree reads in one place"
+        reason = "the program is one literal, and each `Enum` literal lists every field"
     )]
     fn tir_should_print_a_match_over_an_enum() {
         let state = Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE));
@@ -2048,6 +2086,7 @@ mod tests {
                 ],
                 counted: false,
                 cycle: None,
+                reaches: false,
             }],
             functions: vec![Function {
                 span: Span::new(0, 0),
@@ -2903,6 +2942,7 @@ mod tests {
                 variants: vec![],
                 counted: false,
                 cycle: None,
+                reaches: false,
             }],
             functions: vec![],
             ..Program::default()

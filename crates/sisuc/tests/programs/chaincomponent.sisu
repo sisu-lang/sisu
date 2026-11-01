@@ -1,0 +1,25 @@
+// A chain of 300 000 objects of `A`, each in an array `[Second]`. `First` and `Second` hold each
+// other, so they are one component of two enums, and each enum has its own reach flag.
+enum First {
+    End
+    Next(Second)
+    Hold(A)
+}
+
+enum Second {
+    Back(First)
+}
+
+class A {
+    _items: [Second]
+}
+
+fn main() {
+    let mut a = A(_items: [Second.Back(First.Next(Second.Back(First.End)))])
+    let mut i = 0
+    while i < 300_000 {
+        i += 1
+        a = A(_items: [Second.Back(First.Hold(a))])
+    }
+    print(1)
+}

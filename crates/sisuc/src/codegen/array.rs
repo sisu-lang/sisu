@@ -467,6 +467,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     fn define_array_drop(&self, element: Type, function: FunctionValue<'ctx>) {
         self.builder
             .position_at_end(self.context.append_basic_block(function, "entry"));
+        let exit = self.begin_drop(function, Type::intern(TypeKind::Array(element)));
         let array = param(function);
         if element.is_counted(&self.program.enums) {
             self.count_loop(self.array_len(array), |index| {
@@ -479,7 +480,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             cap: self.array_cap(array),
         });
         self.call(self.free, &[array.into(), size.into(), align.into()]);
-        self.builder.build_return(None).expect(POSITIONED);
+        self.end_drop(exit);
     }
 
     /// `@sisu_rc.eq.[T](a, b)`: see `eq_entry` for the same pointer and `null`; otherwise the

@@ -1026,10 +1026,16 @@ fn class_drop_should_call_no_drop_or_release_of_the_other_class_in_its_cycle() {
             &format!("define internal void @sisu_rc.drop.{name}(ptr"),
         )
     };
+    // `B` holds a class `C` outside the cycle, so the cycle counts the drop depth. A drop then
+    // names its own function when it defers, and that is not a call.
     for name in ["A", "B"] {
         let body = drop(name);
         assert!(body.contains("@sisu_rc.drain.A("), "{body}");
-        for unwanted in ["@sisu_free(", "@sisu_rc.drop.", "@sisu_rc.release."] {
+        for unwanted in [
+            "@sisu_free(",
+            "call void @sisu_rc.drop.",
+            "@sisu_rc.release.",
+        ] {
             assert!(!body.contains(unwanted), "{unwanted:?} in\n{body}");
         }
     }
@@ -4476,4 +4482,699 @@ fn lay_out_enums_should_panic_on_an_enum_that_holds_itself_inline() {
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
     let context = Context::create();
     compile(&context, &program, &mir, "test.sisu", src, &machine, false);
+}
+
+/// Runs `check` on the `Codegen` of `src`, which needs no layout for the drop decisions.
+fn with_codegen(src: &str, check: impl FnOnce(&Codegen<'_, '_>)) {
+    let context = Context::create();
+    let (program, diagnostics) = check_alone(&parse_ok(src), src, &[]);
+    let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+    let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
+    let machine = target_machine(OptLevel::O0).expect("the host is a target");
+    let mir = mir::build(&program);
+    let codegen = Codegen::new(&context, &program, &mir, "test.sisu", src, &machine, false);
+    check(&codegen);
+}
+
+/// The class type named `name` in the program of `codegen`.
+fn class_type(codegen: &Codegen<'_, '_>, name: &str) -> Type {
+    let id = codegen.program.classes.iter().position(|c| c.name == name);
+    let id = id.unwrap_or_else(|| panic!("the program should declare class {name}"));
+    Type::intern(TypeKind::Class(ClassId(id), TypeArgs::NONE))
+}
+
+/// The program of `recursing_should_follow_the_spec_table`.
+const SPEC_TABLE_PROGRAM: &str = "class A {
+    _next: A?
+    _array: [A]
+    _optional_elements: [A?]
+    _nested: [[A]]
+    _optional_array: [A]?
+    _link: Link
+    _generic: Box<A>
+    _boxed: L
+    _tree: Tree
+    _mutual: Second
+    _other: B?
+    _text: string
+    _texts: [string?]
+    _numbers: [i64]
+    _kind: Kind
+    _kinds: [Kind]
+    _outer: Outer
+    _numbers_tree: Expr
+    _bounded_outer: Wrap
+    _texts_nested: [[string]]
+}
+
+class B {
+    _n: i64
+}
+
+enum Link {
+    End
+    To(A)
+}
+
+enum Box<N> {
+    Empty
+    Full(N)
+}
+
+enum L {
+    Nil
+    Cons(A?, L)
+}
+
+enum Tree {
+    Leaf
+    Node([Tree])
+}
+
+enum First {
+    End
+    Next(Second)
+    Hold(A)
+}
+
+enum Second {
+    Back(First)
+}
+
+enum Kind {
+    X
+    Y(i64, string)
+}
+
+enum Outer {
+    End
+    To(Inner)
+}
+
+enum Inner {
+    End
+    To(A)
+}
+
+enum Expr {
+    Num(i64)
+    Add(Expr, Expr)
+}
+
+enum Wrap {
+    W(Kind)
+}
+
+fn main() {}";
+
+/// Class `A` holds a field of each type of the table in the spec ("Which drop functions
+/// count"): the field name says the row. `A` is the holder, so the `A?` of its own cycle is a
+/// link, and `B` is a class that is not in that cycle.
+#[test]
+fn recursing_should_follow_the_spec_table() {
+    let rows = [
+        ("_next", false),
+        ("_array", true),
+        ("_optional_elements", true),
+        ("_nested", true),
+        ("_optional_array", true),
+        ("_link", true),
+        ("_generic", true),
+        ("_boxed", true),
+        ("_tree", true),
+        ("_mutual", true),
+        ("_other", true),
+        ("_text", false),
+        ("_texts", false),
+        ("_numbers", false),
+        ("_kind", false),
+        ("_kinds", false),
+        // Only the flag of the earlier component `Inner` sets the flag of `Outer`.
+        ("_outer", true),
+        // `Add` holds its own component, which sets nothing; the other payload is a number.
+        ("_numbers_tree", false),
+        // The flag of the earlier component `Kind` is clear.
+        ("_bounded_outer", false),
+        // An array of a bounded type is bounded, and `_nested: [[A]]` above recurses.
+        ("_texts_nested", false),
+    ];
+    with_codegen(SPEC_TABLE_PROGRAM, |codegen| {
+        let a = class_type(codegen, "A");
+        let TypeKind::Class(holder, _) = a.kind() else {
+            unreachable!("class_type should give a class");
+        };
+        for (name, want) in rows {
+            let field = codegen.program.classes[holder.0]
+                .fields
+                .iter()
+                .find(|f| f.name == name)
+                .unwrap_or_else(|| panic!("class A should have field {name}"));
+            assert_eq!(codegen.recursing(Some(holder), field.ty), want, "{name}");
+        }
+        // An array element has no holder: a class there is never a link.
+        assert!(codegen.recursing(None, a));
+    });
+}
+
+/// `drop_weight` counts the frames from a counting drop function to the next one. `class A {
+/// _next: [A] }` has `drop.A`, `release.[A]`, then `drop.[A]` counts. A string adds `release`
+/// and `drop`; a class whose drop does not count adds its own weight.
+#[test]
+fn drop_weight_should_count_the_helper_frames_between_counting_drops() {
+    let src = "class A {
+    _next: [A]
+}
+
+fn main() {}";
+    with_codegen(src, |codegen| {
+        let a = class_type(codegen, "A");
+        let array = Type::intern(TypeKind::Array(a));
+        assert!(codegen.counts(a));
+        assert!(codegen.counts(array));
+        assert_eq!(
+            codegen.drop_weight(array),
+            2,
+            "release.A, then drop.A counts"
+        );
+        assert_eq!(
+            codegen.drop_weight(a),
+            2,
+            "release.[A], then drop.[A] counts"
+        );
+    });
+
+    // `E0` holds `E1` inline, and `E1` holds an array of `C`.
+    let src = "class C {
+    _next: E0
+}
+
+enum E0 {
+    End
+    To(E1)
+}
+
+enum E1 {
+    End
+    To([C])
+}
+
+fn main() {}";
+    with_codegen(src, |codegen| {
+        let c = class_type(codegen, "C");
+        assert_eq!(
+            codegen.drop_weight(c),
+            4,
+            "drop.C, release.E0, release.E1, release.[C]"
+        );
+    });
+
+    // `S` does not count, so `W` adds the weight of `S`: `release.S`, `drop.S`, then the
+    // `release.string` and `drop.string` of its text.
+    let src = "class S {
+    _text: string
+}
+
+class W {
+    _s: S
+    _next: [W]
+}
+
+fn main() {}";
+    with_codegen(src, |codegen| {
+        let (s, w) = (class_type(codegen, "S"), class_type(codegen, "W"));
+        assert!(!codegen.counts(s));
+        assert_eq!(codegen.drop_weight(s), 3);
+        assert_eq!(
+            codegen.drop_weight(w),
+            5,
+            "drop.W, release.S, drop.S, 2 string frames"
+        );
+    });
+
+    // An enum with boxes adds `release`, `drain` and `walk`, then the release of its class.
+    let src = "class A {
+    _l: L
+}
+
+enum L {
+    Nil
+    Cons(A?, L)
+}
+
+fn main() {}";
+    with_codegen(src, |codegen| {
+        let a = class_type(codegen, "A");
+        assert_eq!(
+            codegen.drop_weight(a),
+            5,
+            "drop.A, release.L, drain.L, walk.L, release.A"
+        );
+    });
+}
+
+/// `A` and `B` hold each other, so one drain frees both. `A` has only a link, but the drain
+/// of its cycle releases `B`'s `E`, which reaches `A` again. So `A` counts, or the chain
+/// `drop.A`, `drain.A`, `release.E`, `release.A` would never meet a counting drop.
+#[test]
+fn counts_should_follow_a_recursing_part_of_any_class_in_the_cycle() {
+    let src = "class A {
+    _b: B?
+}
+
+class B {
+    _a: A?
+    _e: E
+}
+
+enum E {
+    End
+    To(A)
+}
+
+fn main() {}";
+    with_codegen(src, |codegen| {
+        let (a, b) = (class_type(codegen, "A"), class_type(codegen, "B"));
+        assert!(codegen.counts(a));
+        assert!(codegen.counts(b));
+        assert_eq!(
+            codegen.drop_weight(a),
+            4,
+            "drop.A, drain.A, release.E, release.A"
+        );
+        assert_eq!(codegen.drop_weight(b), codegen.drop_weight(a));
+    });
+}
+
+/// A link of the class cycle opens no frame: `define_drop` lists it. The cycle of `N` does not
+/// count, so a drop weight that took the link for a part would ask for the weight of `N` while
+/// it works that weight out.
+#[test]
+fn drop_weight_should_open_no_frame_for_a_link_of_the_class_cycle() {
+    let src = "class N {
+    _next: N?
+    _text: string
+}
+
+fn main() {}";
+    with_codegen(src, |codegen| {
+        let n = class_type(codegen, "N");
+        assert!(!codegen.counts(n));
+        assert_eq!(
+            codegen.drop_weight(n),
+            3,
+            "drop.N, then release.string and drop.string"
+        );
+    });
+}
+
+/// The source nests `LEVELS` enums, each in the one before: `E0` holds `E1`, and the last holds
+/// `A`. The weight and the decision follow the chain one level at a time, so the compiler's own
+/// stack must not set a limit on how long the chain is. Without the guard, a debug build
+/// overflows the stack of a test thread at about 1 700 levels, so the chain is about 10 times
+/// that.
+#[test]
+fn drop_weight_should_follow_a_chain_of_enums_longer_than_the_stack() {
+    const LEVELS: usize = 20_000;
+    let held = |level: usize| match level + 1 {
+        next if next == LEVELS => "A".to_string(),
+        next => format!("E{next}"),
+    };
+    let enums = (0..LEVELS)
+        .map(|level| format!("enum E{level} {{\n    End\n    To({})\n}}\n", held(level)))
+        .collect::<Vec<_>>()
+        .concat();
+    let src = format!("class A {{\n    _next: E0\n}}\n{enums}fn main() {{}}\n");
+    with_codegen(&src, |codegen| {
+        let a = class_type(codegen, "A");
+        assert!(codegen.counts(a));
+        let frames = u32::try_from(LEVELS).expect("the chain length should fit a u32");
+        // `drop.A`, the `release.E` of each level, and the `release.A` of the last.
+        assert_eq!(codegen.drop_weight(a), frames + 2);
+    });
+}
+
+/// The fields that the drop weight walks read while `drop_weight` and `counts` run on each class
+/// of `src`, as the depth check of every drop function asks for them.
+fn weight_reads(src: &str) -> usize {
+    let mut reads = 0;
+    with_codegen(src, |codegen| {
+        deep::PART_READS.set(0);
+        for id in 0..codegen.program.classes.len() {
+            let class = Type::intern(TypeKind::Class(ClassId(id), TypeArgs::NONE));
+            codegen.counts(class);
+            codegen.drop_weight(class);
+        }
+        reads = deep::PART_READS.get();
+    });
+    reads
+}
+
+/// Codegen asks `counts` for each array type of a program. A generic function can build one array
+/// level for each function. So the parser's limit on the nesting of a type does not bound the
+/// levels. Each level of `[[...[i64]...]]` must be decided once. The test asks for the levels from
+/// the outermost to the innermost, as the drop functions are defined, and the other way.
+#[test]
+fn counts_should_read_each_level_of_nested_arrays_once() {
+    let reads = |levels: usize, outermost_first: bool| {
+        let mut reads = 0;
+        with_codegen("fn main() {}", |codegen| {
+            let mut arrays = vec![Type::intern(TypeKind::Array(Type::I64))];
+            for _ in 1..levels {
+                let inner = arrays[arrays.len() - 1];
+                arrays.push(Type::intern(TypeKind::Array(inner)));
+            }
+            if outermost_first {
+                arrays.reverse();
+            }
+            deep::PART_READS.set(0);
+            for array in arrays {
+                assert!(
+                    !codegen.counts(array),
+                    "an array of numbers should not count"
+                );
+            }
+            reads = deep::PART_READS.get();
+        });
+        reads
+    };
+    for outermost_first in [true, false] {
+        assert_near_linear(
+            reads(100, outermost_first),
+            reads(200, outermost_first),
+            reads(300, outermost_first),
+        );
+    }
+}
+
+/// The weight of an enum is worked out once for each component. A diamond of enums has two
+/// ways from each level to the next, so a walk with no memo for enums reads `2^n` fields. The
+/// sizes are small because that walk, run without the memo, is the failure the test shows.
+#[test]
+fn drop_weight_should_read_the_fields_of_a_diamond_of_enums_linearly() {
+    let reads = |levels: usize| {
+        let enums = (0..levels)
+            .flat_map(|i| {
+                ["E", "F"].map(|name| {
+                    let (left, right) = if i + 1 == levels {
+                        ("A".to_string(), "A".to_string())
+                    } else {
+                        (format!("E{}", i + 1), format!("F{}", i + 1))
+                    };
+                    format!("enum {name}{i} {{\n    End\n    L({left})\n    R({right})\n}}\n")
+                })
+            })
+            .collect::<Vec<_>>()
+            .concat();
+        weight_reads(&format!(
+            "class A {{\n    _next: E0\n}}\n{enums}fn main() {{}}\n"
+        ))
+    };
+    assert_near_linear(reads(6), reads(12), reads(18));
+}
+
+/// A class cycle that does not count, and a class for each of its members that holds it. The
+/// decision and the weight of the cycle are made once: without the memos, each holder scans the
+/// whole cycle, which reads the fields `n * n` times.
+#[test]
+fn drop_weight_should_read_the_fields_of_a_cycle_once_for_all_its_holders() {
+    let reads = |n: usize| {
+        let ring = (0..n)
+            .map(|i| {
+                format!(
+                    "class K{i} {{\n    _next: K{}?\n    _text: string\n}}\n",
+                    (i + 1) % n
+                )
+            })
+            .collect::<Vec<_>>()
+            .concat();
+        let holders = (0..n)
+            .map(|i| format!("class H{i} {{\n    _ring: K0\n}}\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        weight_reads(&format!("{ring}{holders}fn main() {{}}\n"))
+    };
+    assert_near_linear(reads(50), reads(100), reads(150));
+}
+
+/// `Expr` and `Two<Expr>` hold each other, with the box on the field of `Pair`. `Both` holds an
+/// `Expr` inline, a link of the component. `Both` also holds a class `C` outside the component.
+/// By hand, the longest chain from `drop.H` is: `drop.H`, `release.Expr`, `drain`, `walk.Two`,
+/// `release.C`, `drop.C`, `release.string`, `drop.string`. That is 8 frames. The walk bound counts
+/// `walk` once for each of the 2 members, so the weight is 9: 1 for `drop.H`, 1 for `release`,
+/// 1 for `drain`, 2 for `walk`, and 4 for the part `C` (`release.C`, then the weight 3 of `C`).
+/// The inline link adds nothing: if it did, `enum_frames` would ask for its own component.
+#[test]
+fn drop_weight_should_leave_out_the_inline_links_of_an_enum_component() {
+    let src = "class C {
+    _text: string
+}
+
+class H {
+    _expr: Expr
+}
+
+enum Two<T> {
+    Both(T, C)
+}
+
+enum Expr {
+    Lit(i64)
+    Pair(Two<Expr>)
+}
+
+fn main() {}";
+    with_codegen(src, |codegen| {
+        let (c, h) = (class_type(codegen, "C"), class_type(codegen, "H"));
+        assert!(!codegen.counts(c));
+        assert_eq!(
+            codegen.drop_weight(c),
+            3,
+            "drop.C, release.string, drop.string"
+        );
+        assert!(codegen.counts(h));
+        assert_eq!(codegen.drop_weight(h), 9);
+    });
+}
+
+/// The basic blocks of `body`, a function body from `function_body`: each label with the
+/// trimmed instruction lines under it.
+fn blocks(body: &str) -> Vec<(&str, Vec<&str>)> {
+    let mut blocks: Vec<(&str, Vec<&str>)> = Vec::new();
+    // The first line is the rest of the header.
+    for line in body.lines().skip(1) {
+        if !line.starts_with(' ') && line.contains(':') {
+            let label = line.split(':').next().unwrap_or_default();
+            blocks.push((label, Vec::new()));
+        } else if let Some((_, lines)) = blocks.last_mut().filter(|_| !line.is_empty()) {
+            lines.push(line.trim());
+        }
+    }
+    blocks
+}
+
+/// The labels that the last instruction of the block `label` of `blocks` can branch to.
+fn successors<'a>(blocks: &[(&'a str, Vec<&'a str>)], label: &str) -> Vec<&'a str> {
+    let (_, lines) = blocks
+        .iter()
+        .find(|(name, _)| *name == label)
+        .unwrap_or_else(|| panic!("no block {label} in {blocks:?}"));
+    successors_of(lines.last().copied().unwrap_or_default())
+}
+
+/// The labels of the blocks that can run after the block `label`, with `label` itself.
+fn reachable<'a>(blocks: &[(&'a str, Vec<&'a str>)], label: &'a str) -> Vec<&'a str> {
+    let mut found = vec![label];
+    let mut next = 0;
+    while let Some(&current) = found.get(next) {
+        next += 1;
+        for target in successors(blocks, current) {
+            if !found.contains(&target) {
+                found.push(target);
+            }
+        }
+    }
+    found
+}
+
+/// The two targets of the `br i1 <condition>, label %then, label %other` line in `lines`.
+fn branch_targets<'a>(lines: &[&'a str], condition: &str) -> [&'a str; 2] {
+    let prefix = format!("br i1 {condition}, ");
+    let line = lines
+        .iter()
+        .find(|line| line.starts_with(&prefix))
+        .unwrap_or_else(|| panic!("no branch on {condition} in {lines:?}"));
+    let mut targets = successors_of(line);
+    [targets.remove(0), targets.remove(0)]
+}
+
+/// The labels that the branch `line` names.
+fn successors_of(line: &str) -> Vec<&str> {
+    line.split("label %")
+        .skip(1)
+        .map(|rest| rest.split([',', ' ']).next().unwrap_or_default())
+        .collect()
+}
+
+/// The IR of `src` before optimization, with the RC checks off.
+fn ir_of(src: &str) -> String {
+    let context = Context::create();
+    compiled(&context, src).print_to_string().to_string()
+}
+
+const DROP_OF_A_ARRAY: &str = "define internal void @\"sisu_rc.drop.[A]\"(ptr";
+const CHAIN_THROUGH_AN_ARRAY: &str = "class A {\n    _next: [A]\n}\nfn main() {}";
+
+/// The lines of the block `label` of `blocks`.
+fn block_lines<'b, 'a>(blocks: &'b [(&'a str, Vec<&'a str>)], label: &str) -> &'b [&'a str] {
+    let (_, lines) = (blocks.iter().find(|(name, _)| *name == label))
+        .unwrap_or_else(|| panic!("no block {label} in {blocks:?}"));
+    lines
+}
+
+/// The name of the parameter of the function whose body is `body`, from the rest of its header.
+fn parameter_name(body: &str) -> &str {
+    let header = body.lines().next().unwrap_or_default();
+    header.trim().split(')').next().unwrap_or_default()
+}
+
+/// Whether the block `from` of `blocks`, or a block that follows it, has the line `call`. A label
+/// that is not a block fails the test.
+fn reaches_call<'a>(blocks: &[(&'a str, Vec<&'a str>)], from: &'a str, call: &str) -> bool {
+    (reachable(blocks, from).into_iter()).any(|name| block_lines(blocks, name).contains(&call))
+}
+
+/// The class `A` holds an array of itself, so the drop of that array counts. The entry block
+/// compares the depth with the limit: `icmp uge`. The `true` side calls the function that adds a
+/// deferred drop, with the parameter and the address of the drop function, sets the flag of the
+/// deferral and returns. The `false` side adds the weight to the depth.
+#[test]
+fn counting_drop_should_defer_at_the_depth_limit() {
+    let ir = ir_of(CHAIN_THROUGH_AN_ARRAY);
+    let body = function_body(&ir, DROP_OF_A_ARRAY);
+    let blocks = blocks(body);
+    let entry = &blocks[0].1;
+    let (_, depth, _) = instruction(entry, &|text| {
+        text.starts_with("load i64, ptr @sisu_rc.depth")
+    })
+    .unwrap_or_else(|| panic!("no load of the depth in the entry block of\n{body}"));
+    let wanted = format!("icmp uge i64 {depth}, {}", deep::DEPTH_LIMIT);
+    let (_, test, _) = instruction(entry, &|text| text == wanted)
+        .unwrap_or_else(|| panic!("no `{wanted}` in the entry block of\n{body}"));
+    let [full, below] = branch_targets(entry, test);
+    let full = block_lines(&blocks, full);
+    let defer = format!(
+        "call void @sisu_drop_defer(ptr {}, ptr @\"sisu_rc.drop.[A]\")",
+        parameter_name(body)
+    );
+    assert!(
+        full.contains(&defer.as_str()),
+        "no `{defer}` at the limit in\n{body}"
+    );
+    let sets_flag = |line: &&str| line.starts_with("store i1 true, ptr @sisu_rc.deferred");
+    assert!(
+        full.iter().any(sets_flag),
+        "no flag set at the limit in\n{body}"
+    );
+    assert_eq!(
+        full.last(),
+        Some(&"ret void"),
+        "no return at the limit in\n{body}"
+    );
+    let below = block_lines(&blocks, below);
+    let (_, raised, _) = instruction(below, &|text| {
+        text.starts_with(&format!("add i64 {depth}, "))
+    })
+    .unwrap_or_else(|| panic!("no add to the depth below the limit in\n{body}"));
+    let store = format!("store i64 {raised}, ptr @sisu_rc.depth");
+    assert!(
+        below.iter().any(|line| line.starts_with(&store)),
+        "no `{store}` below the limit in\n{body}"
+    );
+}
+
+/// Same program. The exit stores the depth that the entry loaded, and compares that value with 0:
+/// `icmp eq`. When the depth is 0, the exit loads the flag of the deferral. When the flag is set,
+/// the exit calls the function that empties the queue and clears the flag. No other path calls it.
+#[test]
+fn counting_drop_should_empty_the_queue_at_depth_zero() {
+    let ir = ir_of(CHAIN_THROUGH_AN_ARRAY);
+    let body = function_body(&ir, DROP_OF_A_ARRAY);
+    let blocks = blocks(body);
+    let lines: Vec<&str> = blocks
+        .iter()
+        .flat_map(|(_, lines)| lines)
+        .copied()
+        .collect();
+    let (_, depth, _) = instruction(&blocks[0].1, &|text| {
+        text.starts_with("load i64, ptr @sisu_rc.depth")
+    })
+    .unwrap_or_else(|| panic!("no load of the depth in the entry block of\n{body}"));
+    let wanted = format!("icmp eq i64 {depth}, 0");
+    let (_, test, _) = instruction(&lines, &|text| text == wanted)
+        .unwrap_or_else(|| panic!("no `{wanted}` in\n{body}"));
+    let (_, exit) = blocks
+        .iter()
+        .find(|(_, lines)| {
+            lines
+                .iter()
+                .any(|line| line.starts_with(&format!("{test} = ")))
+        })
+        .expect("the block of the test");
+    let restore = format!("store i64 {depth}, ptr @sisu_rc.depth");
+    assert!(
+        exit.iter().any(|line| line.starts_with(&restore)),
+        "no `{restore}` in the block of the test in\n{body}"
+    );
+    let [zero, other] = branch_targets(exit, test);
+    let zero = block_lines(&blocks, zero);
+    let (_, flag, _) = instruction(zero, &|text| {
+        text.starts_with("load i1, ptr @sisu_rc.deferred")
+    })
+    .unwrap_or_else(|| panic!("no load of the flag at depth 0 in\n{body}"));
+    let [set, unset] = branch_targets(zero, flag);
+    let drain = "call void @sisu_drop_drain()";
+    let set_lines = block_lines(&blocks, set);
+    assert!(
+        set_lines.contains(&drain),
+        "no drain when the flag is set in\n{body}"
+    );
+    let clears_flag = |line: &&str| line.starts_with("store i1 false, ptr @sisu_rc.deferred");
+    assert!(
+        set_lines.iter().any(clears_flag),
+        "the flag stays set in\n{body}"
+    );
+    for label in [other, unset] {
+        assert!(
+            !reaches_call(&blocks, label, drain),
+            "{label} drains in\n{body}"
+        );
+    }
+}
+
+/// The `Node` of `bench/binary_trees` holds only links of its own cycle, so its drop frees its
+/// objects in a loop and never recurses. It does not count, and no global of the drop depth and
+/// no function of the queue appears in it.
+#[test]
+fn cycle_link_drop_should_not_count_the_depth() {
+    let ir = ir_of(include_str!("../../../../bench/binary_trees/main.sisu"));
+    let body = function_body(&ir, "define internal void @sisu_rc.drop.Node(ptr");
+    for unwanted in ["@sisu_rc.depth", "@sisu_drop_"] {
+        assert!(!body.contains(unwanted), "{unwanted:?} in\n{body}");
+    }
+}
+
+/// The element of `[string?]` is not a recursing part. `Kind` has a clear reach flag, so
+/// `[Kind]` is bounded too. Neither drop counts.
+#[test]
+fn bounded_array_drops_should_not_count_the_depth() {
+    let ir = ir_of(
+        "enum Kind {\n    X\n    Y(i64, string)\n}\nfn main() {\n    let _a: [string?] = []\n    let _b: [Kind] = []\n}",
+    );
+    for header in [
+        "define internal void @\"sisu_rc.drop.[string?]\"(ptr",
+        "define internal void @\"sisu_rc.drop.[Kind]\"(ptr",
+    ] {
+        let body = function_body(&ir, header);
+        assert!(!body.contains("@sisu_rc.depth"), "{header}\n{body}");
+    }
 }
