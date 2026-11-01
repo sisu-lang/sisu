@@ -426,6 +426,37 @@ fn short_chain_in_deep_parentheses_should_report_the_nesting_form() {
     );
 }
 
+/// GIVEN a sum of 128 `+` that ends with a `<`, inside 125 and inside 126 parentheses
+/// WHEN `check` runs on each
+/// THEN inside 125 the depth runs out at the `<` and the error names the chain, and inside 126
+/// it runs out at the last `+` and the error is the one for nested constructs
+///
+/// The depth runs out at level 257. Inside 125 parentheses the `<` is the chain's 129th link,
+/// more than half the levels; inside 126 the last `+` is its 128th, which is not.
+#[test]
+fn chain_form_should_need_more_links_than_half_the_levels() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    // Column 650 is the `<` inside 125 parentheses; 647 is the last `+` inside 126.
+    for (parentheses, column, form) in [(125, 650, CHAIN), (126, 647, TREE)] {
+        let source = format!(
+            "fn main() {{\n    print({}1{} < 1{})\n}}\n",
+            "(".repeat(parentheses),
+            " + 1".repeat(128),
+            ")".repeat(parentheses)
+        );
+        fs::write(dir.join("nesting_half.sisu"), source).expect("writes");
+        let out = sisu(dir, &["check", "nesting_half.sisu"]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.starts_with(&format!(
+                "error[E0071]: {}\n --> nesting_half.sisu:2:{column}\n",
+                form.0
+            )),
+            "{parentheses}: {stderr}"
+        );
+    }
+}
+
 /// `check`, `build --emit ast` and a build of `source` all exit 1 with the one message of
 /// `form`, however large it is: the parser stops at the first level past the limit and builds
 /// nothing deeper.
