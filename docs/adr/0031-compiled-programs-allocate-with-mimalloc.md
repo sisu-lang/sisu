@@ -1,6 +1,6 @@
 # Compiled programs allocate with mimalloc
 
-Status: accepted when the mimalloc runtime change merges.
+Status: accepted, 2026-10-22 (#130).
 
 CI moved to Ubuntu 26.04, and its glibc 2.43 made compiled programs slower.
 Once a size's tcache bin is full, `free` now coalesces the block
