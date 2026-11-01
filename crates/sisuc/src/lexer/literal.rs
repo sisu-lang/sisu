@@ -108,11 +108,15 @@ fn number(
         return Err(literal_too_large(whole));
     }
     // Reported last, so that its fix leaves a literal that lexes. A bare 2^63 still fails to
-    // parse; only a `-` before it makes it valid, which the lexer cannot see. A too-large run
-    // after a `.` gets no fix, because the parser rejects its lower case form.
+    // parse; only a `-` before it makes it valid, which the lexer cannot see. After a `.` the
+    // parser takes only a name, so no change of the prefix gives a clean program: no fix.
     if let Some((_, p)) = prefix.filter(|(_, p)| p.is_ascii_uppercase()) {
         let at = Span::new(start, start + 2);
-        let safe = value.map(|n| n != MIN_MAGNITUDE);
+        let safe = if after_dot {
+            None
+        } else {
+            Some(value != Some(MIN_MAGNITUDE))
+        };
         return Err(DiagnosticKind::BasePrefixUpperCase {
             prefix: p,
             safe,

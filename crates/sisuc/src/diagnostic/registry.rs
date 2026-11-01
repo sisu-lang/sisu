@@ -321,8 +321,8 @@ pub(crate) enum DiagnosticKind {
     FloatOutOfRange { at: Span },
     /// The base prefix at `at` (`0` and `prefix`, an upper case `X`, `B` or `O`). `safe` is
     /// false when the lower case literal may still be rejected, as a bare 2^63 is. It is `None`
-    /// when the run is too large and follows a `.`, because the parser rejects the lower case
-    /// form then.
+    /// after a `.` or `?.`, where the parser takes only a name, so no change of the prefix gives
+    /// a clean program.
     BasePrefixUpperCase {
         prefix: char,
         safe: Option<bool>,
