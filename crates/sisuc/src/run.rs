@@ -28,18 +28,17 @@ pub(crate) fn run(
     let Some((dir, exe)) = built else {
         return ExitCode::FAILURE;
     };
-    if !complete {
-        return ExitCode::FAILURE;
-    }
-    let spawned = Command::new(&exe).args(args).spawn();
+    // A report that did not reach stderr stops the run, but the directory still goes.
+    let spawned = complete.then(|| Command::new(&exe).args(args).spawn());
     // `spawn` returns once `exec` has worked, and the running program keeps its inode, so the
     // directory can go before the program ends, whatever ends it.
     if let Err(e) = fs::remove_dir_all(&dir) {
         tool_error_after_summary(format, &format!("cannot remove {}: {e}", dir.display()));
     }
     let mut child = match spawned {
-        Ok(child) => child,
-        Err(e) => {
+        None => return ExitCode::FAILURE,
+        Some(Ok(child)) => child,
+        Some(Err(e)) => {
             tool_error_after_summary(format, &format!("cannot run {}: {e}", exe.display()));
             return ExitCode::FAILURE;
         }

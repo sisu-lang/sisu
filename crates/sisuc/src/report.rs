@@ -301,7 +301,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_write_should_end_the_report_and_fail_it() {
+    fn failed_write_should_end_the_report_and_fail_it_unless_the_reader_left() {
         for (kind, complete) in [
             (ErrorKind::StorageFull, false),
             (ErrorKind::BrokenPipe, true),
@@ -313,7 +313,7 @@ mod tests {
             assert_eq!(reporter.finish(), complete, "{kind:?}");
             assert_eq!(
                 out.writes, 1,
-                "the reporter should stop at the first failed write"
+                "{kind:?}: the reporter should stop at the first failed write"
             );
         }
     }

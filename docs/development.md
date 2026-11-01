@@ -657,8 +657,8 @@ $ target/debug/sisu build -e 'fn main() { print(1) }' -o one
 commit, the host and the LLVM version, which a bug report needs because Sisu
 has no releases. A wrong command line exits with 2, so it differs from a
 program that does not compile (1). When stderr cannot take the report, for
-example on a full disk, `sisu` exits with 1, and `run` does not start the
-program. A reader that stops early, as in `sisu check a.sisu 2>&1 | head -1`,
+example on a full disk, `sisu` exits with 1. `build` still writes its output,
+and `run` does not start the program. A reader that stops early, as in `sisu check a.sisu 2>&1 | head -1`,
 is not an error. `sisu help` and `sisu` alone print the usage.
 
 `sisu` links every program with `libsisu_runtime_mimalloc.a`, or with
