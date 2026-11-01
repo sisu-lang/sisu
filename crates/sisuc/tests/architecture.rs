@@ -8,8 +8,9 @@ use std::path::{Path, PathBuf};
 
 use syn::visit::{self, Visit};
 
-/// The top-level modules of `src/`, in pipeline order: the shared modules first, then the stages,
-/// then the modules that run the stages. `crate` names the items of `lib.rs`.
+/// The top-level modules of `src/`, in pipeline order: the shared modules first, then the stages
+/// and the IR modules they share, then the modules that run the stages, then the fuzz modules.
+/// `crate` names the items of `lib.rs`.
 const LAYERS: &[&[&str]] = &[
     &["source", "symbol", "graph", "diagnostic"],
     &["lexer"],
@@ -151,6 +152,15 @@ impl Uses<'_> {
 
 impl<'ast> Visit<'ast> for Uses<'_> {
     fn visit_item(&mut self, item: &'ast syn::Item) {
+        if let syn::Item::ExternCrate(i) = item
+            && i.ident == "self"
+        {
+            // The paths through the alias are bare, so the test cannot see them.
+            panic!(
+                "{} should write `crate::`, not an `extern crate self` alias",
+                self.file.display()
+            );
+        }
         let attrs = match item {
             syn::Item::Const(i) => &i.attrs,
             syn::Item::Enum(i) => &i.attrs,
@@ -207,8 +217,9 @@ impl<'ast> Visit<'ast> for Uses<'_> {
         }
     }
 
-    // shortcut: a path inside a macro's tokens is not read, nor a method that an inherent `impl` in
-    // another module adds; parse the tokens, or map each impl to its module, if a use hides there.
+    // shortcut: the test does not read a path inside a macro's tokens. It also does not see a
+    // method that an inherent `impl` in another module adds. Parse the tokens, or map each impl to
+    // its module, if a use hides there.
     fn visit_path(&mut self, path: &'ast syn::Path) {
         let segments: Vec<String> = path
             .segments

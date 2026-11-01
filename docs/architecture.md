@@ -471,9 +471,10 @@ target checks that no fix shown makes the syntax worse. The explanations in
 
 **Module order.** `crates/sisuc/tests/architecture.rs` puts the top-level
 modules of `crates/sisuc/src` in layers, in `LAYERS`. The shared modules,
-such as `source` and `diagnostic`, come first. The stages come next, in
-pipeline order. The modules that run the stages, such as `lib.rs` and
-`front_end`, come last. A module uses only its own layer and earlier ones,
+such as `source` and `diagnostic`, come first. The stages and the IR
+modules they share come next, in pipeline order. The modules that run the
+stages, such as `lib.rs` and `front_end`, come after them, and the fuzz
+modules come last. A module uses only its own layer and earlier ones,
 so a stage does not depend on what comes after it. The test fails on a use
 of a later layer outside test code. Its `BACK_EDGES` list holds the few uses
 that stay, each with its reason, and the test fails on an entry that no use

@@ -82,11 +82,11 @@ languages do, not by what Sisu did before.
     - It adds a field to `Checker`, `Codegen` or `Gen`.
     - It adds a `_` arm to a match over an enum of the compiler's IR.
     - It states a rule a second time.
-    - It adds an entry to `BACK_EDGES` in `crates/sisuc/tests/architecture.rs`.
 
     Such a diff names the module that owns the rule, or the reason for the
     growth. When it names neither, that is a nit, and the nit proposes a debt
-    row.
+    row. A new entry in `BACK_EDGES` in `crates/sisuc/tests/architecture.rs`
+    is a nit unless its reason says why the item cannot move.
 
 # Diagnostics
 
