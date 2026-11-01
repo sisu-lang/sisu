@@ -219,6 +219,16 @@ fn an_interface_should_not_be_a_type() {
             "fn main() {\n    let e: Eq = 5\n}",
             vec![(Code::InterfaceAsType, (2, 12))],
         ),
+        (
+            "an interface with one `?`",
+            "fn f(_x: Shape?) {}\nfn main() {}",
+            vec![(Code::InterfaceAsType, (1, 10))],
+        ),
+        (
+            "an interface with two `?`",
+            "fn f(_x: Shape??) {}\nfn main() {}",
+            vec![(Code::InterfaceAsType, (1, 10))],
+        ),
     ]);
 }
 
@@ -651,18 +661,114 @@ fn an_interface_value_should_be_named_as_one_where_an_interface_belongs() {
     ] {
         codes_after(row, src, &expected);
     }
-    for (row, src, expected) in [
+}
+
+/// The join does not depend on the order of its members: every order of a class, a second class
+/// and an `any` value, and of a class, an `any` value and a `None`, joins at every site that joins.
+/// An `else if` chain nests its joins, and a chain of joins that each hold an `any` member is
+/// checked once for each branch.
+#[test]
+fn a_join_should_not_depend_on_the_order_of_its_members() {
+    let sites = [
         (
-            "an interface with one `?`",
-            "fn f(_x: Shape?) {}\nfn main() {}",
-            vec![(Code::InterfaceAsType, (1, 10))],
+            "a `match`",
+            "match n {\n        0 => {1}\n        1 => {2}\n        _ => {3}\n    }",
         ),
         (
-            "an interface with two `?`",
-            "fn f(_x: Shape??) {}\nfn main() {}",
-            vec![(Code::InterfaceAsType, (1, 10))],
+            "an `else if` chain",
+            "if c { {1} } else if d { {2} } else { {3} }",
+        ),
+        ("an array literal", "[{1}, {2}, {3}][0]"),
+        (
+            "a `loop`",
+            "loop {\n        if c { break {1} }\n        if d { break {2} }\n        break {3}\n    }",
+        ),
+    ];
+    // A `None` joins without an expected type everywhere but in a loop, whose values do not.
+    let sets: [([&str; 3], &str, bool); 3] = [
+        (["Circle(r: 1.0)", "Rect(w: 1.0)", "s"], "", true),
+        (["Circle(r: 1.0)", "s", "None"], ": (any Shape)?", true),
+        (["Circle(r: 1.0)", "s", "None"], "", false),
+    ];
+    for (site, shape) in sites {
+        for (members, ann, in_loop) in sets {
+            if !in_loop && site == "a `loop`" {
+                continue;
+            }
+            for order in [
+                [0, 1, 2],
+                [0, 2, 1],
+                [1, 0, 2],
+                [1, 2, 0],
+                [2, 0, 1],
+                [2, 1, 0],
+            ] {
+                let [x, y, z] = order.map(|i| members[i]);
+                let join = shape.replace("{1}", x).replace("{2}", y).replace("{3}", z);
+                let src = format!(
+                    "fn main() {{\n    let c = true\n    let d = false\n    let n = 1\n    let s: any Shape = Circle(r: 1.0)\n    let r{ann} = {join}\n}}"
+                );
+                clean_row(&format!("{site}: {x}, {y}, {z}"), &format!("{DECLS}{src}"));
+            }
+        }
+    }
+}
+
+/// Each branch of a join is checked once, however deep the joins nest: the expressions checked
+/// grow in step with the source. A branch checked again when an `any` member widens the join would
+/// double them at each level.
+#[test]
+fn nested_joins_with_an_any_member_should_check_each_branch_once() {
+    let checks = |depth: usize| {
+        let mut join = "Circle(r: 1.0)".to_owned();
+        for _ in 0..depth {
+            join = format!("if c {{ Circle(r: 1.0) }} else if d {{ s }} else {{ {join} }}");
+        }
+        let src = format!(
+            "{DECLS}fn main() {{\n    let c = true\n    let d = false\n    let s: any Shape = Circle(r: 1.0)\n    let r = {join}\n}}"
+        );
+        EXPR_CHECKS.set(0);
+        assert!(checked(&src).0.is_some(), "{src}");
+        EXPR_CHECKS.get()
+    };
+    assert_near_linear(checks(4), checks(8), checks(12));
+}
+
+/// `??` joins its payload and its default as the arms of an `if` do: a class and an `any` value
+/// make the `any` value, on either side, with an optional on either side.
+#[test]
+fn coalesce_should_join_its_payload_and_its_default_to_the_any_type() {
+    for (row, src) in [
+        (
+            "a class payload and an `any` default",
+            "fn main() {\n    let c: Circle? = None\n    let s: any Shape = Rect(w: 1.0)\n    let r = c ?? s\n}",
+        ),
+        (
+            "with an expected `any` type",
+            "fn main() {\n    let c: Circle? = None\n    let s: any Shape = Rect(w: 1.0)\n    let r: any Shape = c ?? s\n}",
+        ),
+        (
+            "with an expected optional `any` type",
+            "fn main() {\n    let c: Circle? = None\n    let s: any Shape = Rect(w: 1.0)\n    let r: (any Shape)? = c ?? s\n}",
+        ),
+        (
+            "an `any` payload and a class default",
+            "fn main() {\n    let o: (any Shape)? = None\n    let r = o ?? Circle(r: 1.0)\n}",
+        ),
+        (
+            "a class payload and an optional `any` default",
+            "fn main() {\n    let c: Circle? = None\n    let o: (any Shape)? = None\n    let r = c ?? o\n}",
+        ),
+        (
+            "a chain, in either grouping",
+            "fn main() {\n    let c: Circle? = None\n    let d: Rect? = None\n    let s: any Shape = Rect(w: 1.0)\n    let r = c ?? d ?? s\n    let t = c ?? (d ?? s)\n}",
         ),
     ] {
-        codes_after(row, src, &expected);
+        clean_row(row, &format!("{DECLS}{src}"));
     }
+    codes_after(
+        "two classes that both conform",
+        "fn main() {\n    let c: Circle? = None\n    let r = c ?? Rect(w: 1.0)\n}",
+        &[(Code::Mismatch, (3, 18))],
+    );
 }

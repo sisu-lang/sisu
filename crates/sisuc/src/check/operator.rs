@@ -1,5 +1,6 @@
 //! Operators: arithmetic, comparison, equality, `is` and `??`.
 
+use super::any::{widen, widen_to};
 use super::expr::{fits, if_some, int_literal, literal_type, local, operator, path, typed};
 use super::generic::{Rank, mismatched};
 use super::interface::Operation;
@@ -912,15 +913,20 @@ impl Checker<'_> {
             // `x ?? 5` on an `i64??`: the payload of an optional `P` is wrapped to `P`.
             Some(ty) if optional_of(ty) == payload => (other.map(|e| wrap(e, payload)), payload),
             Some(ty) => {
-                let d = self.mismatch(rhs.span, Some(rhs), payload, ty);
-                self.diagnostics.push(d);
-                return Err(Poisoned::error());
+                // An object and an `any` type that it converts to join to the `any` type.
+                let Some(joined) = self.any_join(payload, ty) else {
+                    let d = self.mismatch(rhs.span, Some(rhs), payload, ty);
+                    self.diagnostics.push(d);
+                    return Err(Poisoned::error());
+                };
+                self.instantiates = true;
+                (other.map(|e| widen_to(e, joined)), joined)
             }
             None => return Err(Poisoned::error()),
         };
         let bind = self.fresh(payload);
         let read = local(bind, payload, lhs.span);
-        let value = if read.ty == ty { read } else { wrap(read, ty) };
+        let value = if read.ty == ty { read } else { widen(read, ty) };
         match (scrutinee, other) {
             (Ok(scrutinee), Ok(other)) => Ok(if_some(bind, scrutinee, value, Some(other), span)),
             _ => Err(Poisoned::typed(ty)),

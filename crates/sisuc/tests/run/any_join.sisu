@@ -45,6 +45,7 @@ fn or_minus(o: (any I)?) -> i64 {
 fn main() {
     let cond = true
     let n = 1
+    let n2 = 2
     let a: any I = C()
     let o: (any I)? = D()
     let j: any J = K()
@@ -162,4 +163,71 @@ fn main() {
     print(or_minus(xs[0]) + or_minus(xs[1])) // 49
     let xs: [(any I)?] = [a, C(), None]
     print(or_minus(xs[0]) + or_minus(xs[1]) + or_minus(xs[2])) // 83
+
+    // The order of the members does not matter: an `else if` chain, a `match`, an array and a
+    // loop take the `any` value last, or in the middle, with another class or a `None`.
+    let c2 = false
+    let r = if cond { C() } else if c2 { D() } else { a }
+    print(r.v()) // 42
+    let r = if c2 { C() } else if cond { a } else { D() }
+    print(r.v()) // 42
+    let r: (any I)? = if c2 { C() } else if c2 { a } else { None }
+    print(or_minus(r)) // -1
+    let r = if cond { C() } else if c2 { a } else { None }
+    print(or_minus(r)) // 42
+    let r = if c2 { C() } else if c2 { a } else { None }
+    print(or_minus(r)) // -1
+    let r = match n2 {
+        0 => C()
+        1 => D()
+        _ => a
+    }
+    print(r.v()) // 42
+    let r: (any I)? = match n {
+        0 => C()
+        1 => a
+        _ => None
+    }
+    print(or_minus(r)) // 42
+    let r = match n {
+        0 => C()
+        1 => a
+        _ => None
+    }
+    print(or_minus(r)) // 42
+    let xs = [C(), D(), a]
+    print(xs[0].v() + xs[1].v() + xs[2].v()) // 91
+    let xs = [C(), a, None]
+    print(or_minus(xs[0]) + or_minus(xs[2])) // 41
+    let r = loop {
+        if c2 {
+            break C()
+        }
+        if cond {
+            break D()
+        }
+        break a
+    }
+    print(r.v()) // 7
+    let r = loop {
+        if c2 {
+            break D()
+        }
+        if c2 {
+            break C()
+        }
+        break a
+    }
+    print(r.v()) // 42
+
+    // `??` joins its payload and its default.
+    let oc: C? = None
+    let od: D? = D()
+    print((oc ?? a).v()) // 42
+    let r: (any I)? = oc ?? o
+    print(or_minus(r)) // 7
+    print((o ?? C()).v()) // 7
+    print((oc ?? od ?? a).v()) // 7
+    let r: any I = oc ?? a
+    print(r.v()) // 42
 }

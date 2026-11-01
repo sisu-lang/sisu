@@ -21,6 +21,33 @@ thread_local! {
     pub(super) static ANY_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// What `any_join_all` found.
+pub(super) enum AnyJoin {
+    /// No member is an `any` type: the caller joins as before.
+    NoAny,
+    /// The members join to `ty`, the widest `any` type, first met at member `first`.
+    Joined { first: usize, ty: Type },
+    /// Two members do not join: the later one, an index and its type, does not convert to the
+    /// earlier one, or the other way round when the `any` type is the later one.
+    Fails {
+        earlier: (usize, Type),
+        later: (usize, Type),
+    },
+}
+
+impl AnyJoin {
+    /// The failure of the member `other` against `ours`, the join so far, as a fold in the
+    /// order of the members reports it: the later member against the earlier one.
+    fn fails(ours: (usize, Type), other: (usize, Type)) -> AnyJoin {
+        let (earlier, later) = if other.0 < ours.0 {
+            (other, ours)
+        } else {
+            (ours, other)
+        };
+        AnyJoin::Fails { earlier, later }
+    }
+}
+
 /// Why an interface cannot be `any`. The interface `owner` is the interface itself or one that it
 /// inherits. `kind` names its requirement or associated type, by place.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -386,13 +413,35 @@ impl Checker<'_> {
     /// The type that values of types `a` and `b` join to when one converts to the other: the `any`
     /// type, with its optional layer. A join never makes an `any` type that neither side has.
     pub(super) fn any_join(&mut self, a: Type, b: Type) -> Option<Type> {
-        if self.converts_to_any(b, a) {
+        if a == b || self.converts_to_any(b, a) {
             Some(a)
         } else if self.converts_to_any(a, b) {
             Some(b)
         } else {
             None
         }
+    }
+
+    /// The join of the typed `members`, each an index and a type, when one of them is an `any`
+    /// type. The join is the widest of those, and each other member must convert to it. It does
+    /// not depend on the order of the members, as `any_join` of two does not see a third.
+    pub(super) fn any_join_all(&mut self, members: &[(usize, Type)]) -> AnyJoin {
+        let mut targets = members.iter().filter(|&&(_, ty)| is_target(ty));
+        let Some(&(first, mut ty)) = targets.next() else {
+            return AnyJoin::NoAny;
+        };
+        for &(other, t) in targets {
+            match self.any_join(ty, t) {
+                Some(wider) => ty = wider,
+                None => return AnyJoin::fails((first, ty), (other, t)),
+            }
+        }
+        for &(other, t) in members {
+            if !is_target(t) && t != ty && !self.converts_to_any(t, ty) {
+                return AnyJoin::fails((first, ty), (other, t));
+            }
+        }
+        AnyJoin::Joined { first, ty }
     }
 
     /// Whether a value of type `got`, which conforms, converts to `any` without a box. The type
@@ -440,6 +489,11 @@ pub(super) fn widen(e: tir::Expr, want: Type) -> tir::Expr {
         }
         _ => wrap(e, want),
     }
+}
+
+/// `e` as `want`, unless it has that type already.
+pub(super) fn widen_to(e: tir::Expr, want: Type) -> tir::Expr {
+    if e.ty == want { e } else { widen(e, want) }
 }
 
 /// `e` as the `any` type `target`.

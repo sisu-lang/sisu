@@ -1,6 +1,6 @@
 //! Array expressions: literals and their element join, `[v; n]`, indexing and methods.
 
-use super::any::widen;
+use super::any::{AnyJoin, widen};
 use super::expr::{fits, literal_type, no_member, path, typed};
 use super::generic::{Rank, mark};
 use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, payload, type_of};
@@ -99,39 +99,10 @@ impl Checker<'_> {
         let mut failed = slots.iter().flatten().any(|c| type_of(c).is_none());
         let mut joined: Option<Type> = None;
         if !failed {
-            for (slot, e) in slots.iter().zip(elements) {
-                let Some(ty) = slot.as_ref().and_then(type_of) else {
-                    continue;
-                };
-                match joined {
-                    Some(t) if fits(t, ty) => {}
-                    // An object and an `any` type that it converts to join to the `any` type.
-                    Some(t) if !fits(ty, t) => {
-                        if let Some(w) = self.any_join(t, ty) {
-                            self.instantiates = true;
-                            joined = Some(w);
-                        } else {
-                            let d = self.mismatch(e.span, Some(e), t, ty);
-                            self.diagnostics.push(d);
-                            failed = true;
-                            break;
-                        }
-                    }
-                    _ => joined = Some(ty),
-                }
-            }
-            // The join can grow past an earlier element: each converts through one layer only.
-            if let Some(t) = joined.filter(|_| !failed) {
-                let short = slots.iter().zip(elements).find_map(|(slot, e)| {
-                    let ty = slot.as_ref().and_then(type_of)?;
-                    (!fits(t, ty) && !self.converts_to_any(ty, t)).then_some((e, ty))
-                });
-                if let Some((e, ty)) = short {
-                    let d = self.mismatch(e.span, Some(e), t, ty);
-                    self.diagnostics.push(d);
-                    failed = true;
-                }
-            }
+            let typed: Vec<(usize, Type)> = (slots.iter().enumerate())
+                .filter_map(|(i, slot)| Some((i, slot.as_ref().and_then(type_of)?)))
+                .collect();
+            (joined, failed) = self.fold_elements(elements, &typed);
         }
         let Some(joined) = joined.filter(|_| !failed) else {
             let waiting = elements
@@ -176,6 +147,53 @@ impl Checker<'_> {
             })
             .collect();
         self.array(span, element, checked, mismatched)
+    }
+
+    /// The type that the typed `elements` join to, each an index and a type, and whether the join
+    /// failed (reported). With an `any` element, the join is that type, whatever the order. Else
+    /// the types fold in source order.
+    fn fold_elements(
+        &mut self,
+        elements: &[ast::Expr],
+        typed: &[(usize, Type)],
+    ) -> (Option<Type>, bool) {
+        let report = |c: &mut Self, at: usize, want: Type, got: Type| {
+            let d = c.mismatch(elements[at].span, Some(&elements[at]), want, got);
+            c.diagnostics.push(d);
+        };
+        match self.any_join_all(typed) {
+            AnyJoin::Joined { ty, .. } => {
+                self.instantiates = true;
+                return (Some(ty), false);
+            }
+            AnyJoin::Fails {
+                earlier: (_, want),
+                later: (at, got),
+            } => {
+                report(self, at, want, got);
+                return (None, true);
+            }
+            AnyJoin::NoAny => {}
+        }
+        let mut joined: Option<Type> = None;
+        for &(i, ty) in typed {
+            match joined {
+                Some(t) if fits(t, ty) => {}
+                Some(t) if !fits(ty, t) => {
+                    report(self, i, t, ty);
+                    return (joined, true);
+                }
+                _ => joined = Some(ty),
+            }
+        }
+        // The join can grow past an earlier element: each converts through one layer only.
+        if let Some(t) = joined
+            && let Some(&(i, ty)) = typed.iter().find(|&&(_, ty)| !fits(t, ty))
+        {
+            report(self, i, t, ty);
+            return (joined, true);
+        }
+        (joined, false)
     }
 
     /// The `ArrayLit` of `checked`, an `[element]`, unless an element failed. `mismatched`

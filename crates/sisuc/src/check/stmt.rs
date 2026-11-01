@@ -1110,6 +1110,7 @@ impl Checker<'_> {
         let mut frame = LoopFrame::new(LoopKind::Loop, keyword, label.cloned(), expected);
         frame.quiet = self.quiet(span, expected);
         let (mut checked, mut frame) = self.loop_body(frame, |c| c.block(body, None));
+        self.join_deferred(&mut frame);
         if let Ok(checked) = &mut checked {
             self.discard_tail(body, checked);
             if let (true, Some((ty, _))) = (frame.widened, frame.first) {
@@ -1128,6 +1129,26 @@ impl Checker<'_> {
                 span,
             }),
             (_, ty) => Err(Poisoned::of(ty)),
+        }
+    }
+
+    /// The values of objects that did not join the first value of the loop (see `join_break`),
+    /// now that every `break` is known: each converts to the type of the loop, or is reported.
+    fn join_deferred(&mut self, frame: &mut LoopFrame) {
+        for (v, got) in std::mem::take(&mut frame.deferred) {
+            let Some((first, at)) = frame.first else {
+                continue;
+            };
+            // The loop grew to this type when a later value made it, so `wrap_breaks` converts
+            // the value.
+            if self.converts_to_any(got, first) {
+                self.instantiates = true;
+            } else {
+                let source = Some(MismatchSource::Break(at));
+                let d = self.mismatch_from(v.span, Some(&v), first, got, source);
+                self.diagnostics.push(d);
+                frame.failed = true;
+            }
         }
     }
 
@@ -1256,6 +1277,13 @@ impl Checker<'_> {
             self.any_join(first, got)
         };
         let Some(joined) = joined else {
+            // An object after an object: a later `any` value can join them both.
+            let objects = matches!(got.kind(), TypeKind::Class(..))
+                && matches!(first.kind(), TypeKind::Class(..) | TypeKind::Any(..));
+            if objects {
+                self.frame(target).deferred.push((v.clone(), got));
+                return Ok(value);
+            }
             return self
                 .against(v, Ok(value), Some(first), Some(MismatchSource::Break(at)))
                 .0;

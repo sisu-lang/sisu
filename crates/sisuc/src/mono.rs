@@ -14,9 +14,8 @@ use std::rc::Rc;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::conformance::{
-    BOUND_CLOSURE_LIMIT, Cause, Decide, Holds, Source, Stuck, StuckChoices, ensure_stack,
-    fields_of, find, holds, interface_closure, makes_group, normalize_noting, parts,
-    prints_by_helper,
+    Cause, Decide, Holds, Source, Stuck, StuckChoices, any_closure, ensure_stack, fields_of, find,
+    holds, makes_group, normalize_noting, parts, prints_by_helper,
 };
 use crate::diagnostic::{Diagnostic, DiagnosticKind, UnknownForm};
 use crate::lang::{self, Cx, Dispatch};
@@ -478,15 +477,10 @@ impl Mono {
         if let Some(layout) = self.layouts.get(&any) {
             return Rc::clone(layout);
         }
-        let TypeKind::Any(interface, args) = any.kind() else {
-            unreachable!("only an `any` type has a layout");
-        };
         let interfaces = &self.out.interfaces;
-        let mut closure = interface_closure(
+        let mut closure = any_closure(
             |inherited: InterfaceId| interfaces[inherited.0].inherits.iter().copied(),
-            (interface, args),
             any,
-            BOUND_CLOSURE_LIMIT,
             || {
                 #[cfg(test)]
                 LAYOUT_STEPS.set(LAYOUT_STEPS.get() + 1);

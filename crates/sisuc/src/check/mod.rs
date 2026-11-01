@@ -304,6 +304,9 @@ struct LoopFrame {
     first: Option<(Type, Span)>,
     /// Whether `first` went from a `T` to a `T?`, so the `T` values before need wrapping.
     widened: bool,
+    /// The values of objects that did not join the first one yet, with their types. A later
+    /// `any` value can join them, so the loop reports them when its body is checked.
+    deferred: Vec<(ast::Expr, Type)>,
     /// Whether the loop is a quiet value (see `Body::quiet_at`), and so its values are too.
     quiet: bool,
     /// Whether a `break` inside a nested loop has targeted it, so its values lie in one.
@@ -336,6 +339,7 @@ impl LoopFrame {
             valued: None,
             failed: false,
             widened: false,
+            deferred: Vec::new(),
             quiet: false,
             crossed: false,
         }
