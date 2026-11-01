@@ -1,6 +1,6 @@
 //! Array expressions: literals and their element join, `[v; n]`, indexing and methods.
 
-use super::any::{AnyJoin, widen};
+use super::any::{AnyJoin, is_target, widen};
 use super::expr::{fits, literal_type, no_member, path, typed};
 use super::generic::{Rank, mark};
 use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, payload, type_of};
@@ -116,11 +116,10 @@ impl Checker<'_> {
             elements.iter().map(|e| self.sibling_ranked(e)).unzip();
         let outer = self.body.quiet_at;
         // The first typed element that is an `any` type, widened by the later ones, is a hint
-        // for the elements after it, as the first branch of an `if` is for the others.
-        // The element type of a sibling array that holds an `any` type is the first anchor. An
-        // `any` type joins with the elements as one more member (see `fold_elements`).
+        // for the elements after it, as the first branch of an `if` is for the others. The
+        // element type of a sibling array that holds an `any` type is the first anchor, and
+        // joins with the elements (see `fold_elements`).
         let mut anchor = sibling.map(payload);
-        let sibling = anchor.filter(|ty| matches!(ty.kind(), TypeKind::Any(..)));
         for (i, e) in elements.iter().enumerate() {
             if ranks[i] == Rank::Concrete {
                 self.body.quiet_at = if quiet { Some(e.span) } else { outer };
@@ -193,6 +192,9 @@ impl Checker<'_> {
                 });
             }
         }
+        if self.reject_unconverted(elements, &slots, sibling) {
+            return Err(Poisoned::error());
+        }
         let element = if optional.contains(&true) {
             want
         } else {
@@ -214,6 +216,29 @@ impl Checker<'_> {
         self.array(span, element, checked, mismatched)
     }
 
+    /// Reports the first element that is not of the `any` type that the element type of a sibling
+    /// array is, and does not convert to it, as it is in a written array. `false` when there is
+    /// none, or the element type of the sibling is no bare `any` type.
+    fn reject_unconverted(
+        &mut self,
+        elements: &[ast::Expr],
+        slots: &[Option<Checked>],
+        sibling: Option<Type>,
+    ) -> bool {
+        let Some(any) = sibling.filter(|ty| matches!(ty.kind(), TypeKind::Any(..))) else {
+            return false;
+        };
+        for (e, slot) in elements.iter().zip(slots) {
+            let got = slot.as_ref().and_then(type_of);
+            if let Some(got) = got.filter(|&got| got != any && !self.joins_to_any(got, any)) {
+                let d = self.mismatch(e.span, Some(e), any, got);
+                self.diagnostics.push(d);
+                return true;
+            }
+        }
+        false
+    }
+
     /// How the `typed` elements join when a `Some` of an object is in the way: such an element
     /// joins an `any` element as the object, and the join is optional, as the branches of an `if`
     /// do. The `sibling` is one more member. The `Some` of each such slot is taken off, for
@@ -227,7 +252,11 @@ impl Checker<'_> {
     ) -> ObjectJoin {
         let mut members = typed.to_vec();
         // No element has this index, and only an element leaves the join.
-        members.extend(sibling.map(|ty| (usize::MAX, ty)));
+        members.extend(
+            sibling
+                .filter(|&ty| is_target(ty))
+                .map(|ty| (usize::MAX, ty)),
+        );
         if !members
             .iter()
             .any(|&(_, ty)| matches!(ty.kind(), TypeKind::Any(..)))
@@ -307,6 +336,10 @@ impl Checker<'_> {
         typed: &[(usize, Type)],
         sibling: Option<Type>,
     ) -> (Option<Type>, bool) {
+        // Elements that all wait take the type of the sibling.
+        if typed.is_empty() {
+            return (sibling, false);
+        }
         let report = |c: &mut Self, at: usize, want: Type, got: Type| {
             let d = c.mismatch(elements[at].span, Some(&elements[at]), want, got);
             c.diagnostics.push(d);
@@ -314,7 +347,11 @@ impl Checker<'_> {
         // The `any` element type of a sibling array joins as one more member that no element
         // is, and only an element leaves the join.
         let mut members = typed.to_vec();
-        members.extend(sibling.map(|ty| (usize::MAX, ty)));
+        members.extend(
+            sibling
+                .filter(|&ty| is_target(ty))
+                .map(|ty| (usize::MAX, ty)),
+        );
         match self.any_join_all(&members) {
             AnyJoin::Joined { ty } => {
                 self.instantiates = true;

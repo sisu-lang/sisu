@@ -1367,6 +1367,10 @@ fn a_join_of_an_any_value_and_an_optional_should_stay_optional() {
 /// object before an `any` element joins as the object. A `Some` of another value before it, and
 /// an optional local, are the mistake, in the `if` too.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one row for each way an array literal joins a `Some` with an `any` element"
+)]
 fn an_array_literal_should_join_a_some_with_an_any_element_as_an_if_does() {
     for (row, src) in [
         (
@@ -1392,6 +1396,22 @@ fn an_array_literal_should_join_a_some_with_an_any_element_as_an_if_does() {
         (
             "a `Some` of an `any` value before an `any` value",
             "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let d: any Display = 1\n    let r = [Some(s), d]\n}",
+        ),
+        (
+            "an array of an `any` value beside an array of an optional `any` value",
+            "fn main() {\n    let d: any Display = 1\n    let o: (any Display)? = None\n    let c = true\n    let r = if c { [o] } else { [d] }\n}",
+        ),
+        (
+            "an array of a number beside an array of an optional `any` value",
+            "fn main() {\n    let o: (any Display)? = None\n    let c = true\n    let r = if c { [o] } else { [2] }\n}",
+        ),
+        (
+            "an empty array in an array beside an array of an array of an `any` value",
+            "fn main() {\n    let d: any Display = 1\n    let c = true\n    let r = if c { [[d]] } else { [[]] }\n}",
+        ),
+        (
+            "an empty array in an array beside an array that holds one",
+            "fn main() {\n    let ys: [[any Display]] = [[]]\n    let c = true\n    let r = if c { ys } else { [[]] }\n}",
         ),
         (
             "an empty array beside an array of an `any` value",
@@ -1431,9 +1451,19 @@ fn an_array_literal_should_join_a_some_with_an_any_element_as_an_if_does() {
             vec![(Code::Mismatch, (4, 39))],
         ),
         (
+            "an array of an optional number beside an array of an optional `any` value",
+            "fn main() {\n    let o: (any Display)? = None\n    let x: i64? = Some(5)\n    let c = true\n    let r = if c { [o] } else { [x] }\n}",
+            vec![(Code::Mismatch, (5, 34))],
+        ),
+        (
+            "a `None` in an array in an array beside an array of an array of an `any` value",
+            "fn main() {\n    let d: any Display = 1\n    let c = true\n    let r = if c { [[d]] } else { [[None]] }\n}",
+            vec![(Code::Mismatch, (4, 37))],
+        ),
+        (
             "an array of a `Some` beside an array of an `any` value, in an `if`",
             "fn main() {\n    let d: any Display = 1\n    let c = true\n    let r = if c { [d] } else { [Some(2)] }\n}",
-            vec![(Code::Mismatch, (4, 33))],
+            vec![(Code::Mismatch, (4, 34))],
         ),
         (
             "an optional number after a `Some` of a class and an `any` value",

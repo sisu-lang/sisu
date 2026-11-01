@@ -175,6 +175,12 @@ fn main() {
     for item in from_some {
         print(item ?? 0) // Circle, 1
     }
+    // A hint that is an array of optional `any` values keeps its `?`, and an empty array in an array
+    // takes the type of its sibling, as a value does in an `if`.
+    let optional_row = if true { [first] } else { [lone] }
+    print(optional_row.len()) // 1
+    let nested_row = if true { [[lone]] } else { [[]] }
+    print(nested_row[0][0]) // 1
     let flat: any Shape = Slab.Plain
     let shapes = [Some(Circle(r: 1.0)), flat, None]
     for shape in shapes {
