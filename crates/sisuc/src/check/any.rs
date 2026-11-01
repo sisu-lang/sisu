@@ -9,7 +9,7 @@ use super::interface::{BOUND_CLOSURE_LIMIT, Bound, Check};
 use super::unused_names::Used;
 use super::{Checked, CheckedBlock, Checker, Poisoned, block_type, wrap};
 use crate::ast;
-use crate::conformance::interface_closure;
+use crate::conformance::{any_closure, interface_closure};
 use crate::diagnostic::{DiagnosticKind, NotAny, NotConformForm};
 use crate::source::Span;
 use crate::tir::{self, InterfaceId, Type, TypeArgs, TypeKind};
@@ -222,20 +222,15 @@ impl Checker<'_> {
         if let Some(closure) = self.any_closures.get(&any_ty) {
             return Rc::clone(closure);
         }
-        let TypeKind::Any(interface, args) = any_ty.kind() else {
-            unreachable!("only an `any` type should be asked for its interfaces");
-        };
         let interfaces = &self.interfaces;
-        let closure: Rc<[(InterfaceId, TypeArgs)]> = interface_closure(
+        let closure: Rc<[(InterfaceId, TypeArgs)]> = any_closure(
             |inherited: InterfaceId| {
                 interfaces[inherited.0]
                     .inherits
                     .iter()
                     .map(|b| (b.interface, b.args))
             },
-            (interface, args),
             any_ty,
-            BOUND_CLOSURE_LIMIT,
             || {},
         )
         .into();

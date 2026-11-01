@@ -1045,6 +1045,7 @@ impl Mono {
             conformances: &self.conformances,
             enums: self.input_payloads.as_slice(),
             lang: self.out.lang,
+            interfaces: self.out.interfaces.as_slice(),
         };
         holds(&mut self.decide, &src, ty, interface, TypeArgs::NONE)
     }
