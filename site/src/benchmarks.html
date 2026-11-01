@@ -30,7 +30,7 @@ Eight small programs timed in Sisu, C, Rust, Go, Java and Python, with the numbe
   <section class="ph"><div class="w">
     <h1>How fast is Sisu?</h1>
     <p class="lede">Eight small programs, each written with the same algorithm in Sisu, C, Rust, Go, Java and Python. The numbers show where Sisu stands today, not how fast it will be.</p>
-    <p class="meta">Intel Core i9-14900K under Linux 7.0 · The commit and date are named below the table · Prose checked against the repository at commit 02f1115c</p>
+    <p class="meta">Intel Core i9-14900K under Linux 7.0 · The commit and date are named below the table · Prose checked against the repository at commit 01b4d427</p>
   </div></section>
   <!-- source: docs/benchmarks.md (intro, Results) -->
 
@@ -118,30 +118,30 @@ $ RUNS=10 BENCH_CPU=4 make bench
     <div class="s-h"><h2 id="h-compile">Compile speed</h2><p>How long Sisu, <code>rustc</code>, <code>clang++</code> and Go take to compile the same program, in five steps. The compilers do different work, so a ratio shows where Sisu is, not who wins.</p></div>
     <div class="prose">
       <p><code>scripts/compile_speed.py</code> repeats one unit, in each language, 10, 100 and 1000 times. Size 1000 is about 140k lines in Sisu, and 138k to 158k lines in the other languages. The unit has generic classes, an interface with an associated type, a generic function with a bound, an enum and string interpolation. The <code>main</code> calls each copy twice. With one call, LLVM inlines every copy into <code>main</code> at <code>-O2</code>, and the time of the optimizer on one huge function grows much faster than the program: <code>rustc -O2</code> took 14 minutes of CPU at size 100.</p>
-      <p>The table shows size 1000, from commit 02f1115c on 2026-11-01. The load average was 17.6 at the start of the run and 3.8 at the end, on 32 CPUs. Each time is the best of 5 runs. The sizes 10 and 100, the lines, the tokens and the instructions per token are in <a href="https://github.com/sisu-lang/sisu/blob/main/docs/benchmarks.md">docs/benchmarks.md</a>.</p>
+      <p>The table shows size 1000, from commit 01b4d427 on 2026-11-01. The load average was 1.9 at the start of the run and 6.7 at the end, on 32 CPUs. Each time is the best of 5 runs. The sizes 10 and 100, the lines, the tokens and the instructions per token are in <a href="https://github.com/sisu-lang/sisu/blob/main/docs/benchmarks.md">docs/benchmarks.md</a>.</p>
       <div class="tbl-wrap"><table class="tbl">
         <thead><tr><th>Row</th><th>Language</th><th>Time</th><th>Tokens/s past empty</th></tr></thead>
         <tbody>
-          <tr><td>type check</td><td>Sisu</td><td>207.9 ms</td><td>3.6M</td></tr>
-          <tr><td>type check</td><td>Rust</td><td>3.69 s</td><td>262.7k</td></tr>
-          <tr><td>type check</td><td>C++</td><td>1.38 s</td><td>727.0k</td></tr>
-          <tr><td>type check</td><td>Go</td><td>1.45 s</td><td>624.6k</td></tr>
-          <tr><td>type check and mir</td><td>Sisu</td><td>519.9 ms</td><td>1.4M</td></tr>
-          <tr><td>type check and mir</td><td>Rust</td><td>3.69 s</td><td>262.7k</td></tr>
-          <tr><td>type check and mir</td><td>C++</td><td>1.38 s</td><td>727.0k</td></tr>
-          <tr><td>type check and mir</td><td>Go</td><td>1.45 s</td><td>624.6k</td></tr>
-          <tr><td>LLVM IR, no optimization</td><td>Sisu</td><td>2.17 s</td><td>343.0k</td></tr>
-          <tr><td>LLVM IR, no optimization</td><td>Rust</td><td>7.60 s</td><td>129.4k</td></tr>
-          <tr><td>LLVM IR, no optimization</td><td>C++</td><td>3.35 s</td><td>306.2k</td></tr>
+          <tr><td>type check</td><td>Sisu</td><td>221.9 ms</td><td>3.4M</td></tr>
+          <tr><td>type check</td><td>Rust</td><td>3.60 s</td><td>269.5k</td></tr>
+          <tr><td>type check</td><td>C++</td><td>1.33 s</td><td>749.9k</td></tr>
+          <tr><td>type check</td><td>Go</td><td>1.51 s</td><td>598.2k</td></tr>
+          <tr><td>type check and mir</td><td>Sisu</td><td>515.6 ms</td><td>1.4M</td></tr>
+          <tr><td>type check and mir</td><td>Rust</td><td>3.60 s</td><td>269.5k</td></tr>
+          <tr><td>type check and mir</td><td>C++</td><td>1.33 s</td><td>749.9k</td></tr>
+          <tr><td>type check and mir</td><td>Go</td><td>1.51 s</td><td>598.2k</td></tr>
+          <tr><td>LLVM IR, no optimization</td><td>Sisu</td><td>2.15 s</td><td>345.0k</td></tr>
+          <tr><td>LLVM IR, no optimization</td><td>Rust</td><td>7.12 s</td><td>135.8k</td></tr>
+          <tr><td>LLVM IR, no optimization</td><td>C++</td><td>2.69 s</td><td>370.4k</td></tr>
           <tr><td>LLVM IR, no optimization</td><td>Go</td><td>none</td><td>-</td></tr>
-          <tr><td>executable, no optimization</td><td>Sisu</td><td>3.37 s</td><td>223.4k</td></tr>
-          <tr><td>executable, no optimization</td><td>Rust</td><td>9.12 s</td><td>108.9k</td></tr>
-          <tr><td>executable, no optimization</td><td>C++</td><td>6.65 s</td><td>152.0k</td></tr>
-          <tr><td>executable, no optimization</td><td>Go</td><td>9.51 s</td><td>97.0k</td></tr>
-          <tr><td>executable, optimized</td><td>Sisu</td><td>27.93 s</td><td>26.6k</td></tr>
-          <tr><td>executable, optimized</td><td>Rust</td><td>23.16 s</td><td>42.2k</td></tr>
-          <tr><td>executable, optimized</td><td>C++</td><td>43.79 s</td><td>22.7k</td></tr>
-          <tr><td>executable, optimized</td><td>Go</td><td>13.39 s</td><td>67.9k</td></tr>
+          <tr><td>executable, no optimization</td><td>Sisu</td><td>3.36 s</td><td>224.1k</td></tr>
+          <tr><td>executable, no optimization</td><td>Rust</td><td>8.68 s</td><td>111.8k</td></tr>
+          <tr><td>executable, no optimization</td><td>C++</td><td>6.46 s</td><td>154.5k</td></tr>
+          <tr><td>executable, no optimization</td><td>Go</td><td>9.65 s</td><td>94.8k</td></tr>
+          <tr><td>executable, optimized</td><td>Sisu</td><td>26.69 s</td><td>27.8k</td></tr>
+          <tr><td>executable, optimized</td><td>Rust</td><td>18.54 s</td><td>52.2k</td></tr>
+          <tr><td>executable, optimized</td><td>C++</td><td>44.41 s</td><td>22.3k</td></tr>
+          <tr><td>executable, optimized</td><td>Go</td><td>14.00 s</td><td>65.0k</td></tr>
         </tbody>
       </table></div>
       <ul>
@@ -153,7 +153,7 @@ $ RUNS=10 BENCH_CPU=4 make bench
         <li>The Instructions/token column needs <code>perf</code> to read the counters. It shows <code>-</code> when it cannot, as on this machine, where <code>kernel.perf_event_paranoid</code> is 4. Set it to 2 or lower to allow <code>:u</code> events.</li>
       </ul>
       <h3>Run it yourself</h3>
-      <p>The target builds <code>sisu</code> in release mode and prints the full table. If mise installs Go, put it on <code>PATH</code> with <code>mise exec go -- make compile-speed</code>. The full run takes about 20 minutes.</p>
+      <p>The target builds <code>sisu</code> in release mode and prints the full table. If mise installs Go, put it on <code>PATH</code> with <code>mise exec go -- make compile-speed</code>. The full run takes about 18 minutes.</p>
       <figure class="code"><figcaption class="cap">terminal</figcaption><pre data-lang="sh">
 $ make compile-speed
 $ make compile-speed ARGS='--check-only'
