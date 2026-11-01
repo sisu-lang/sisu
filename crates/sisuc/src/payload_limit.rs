@@ -130,6 +130,8 @@ fn layout_of(ty: Type, known: &Known) -> Option<Layout> {
                 payload.align,
             ))
         }
+        // The pointer to the data and the pointer to the table.
+        TypeKind::Any(..) => Some(Layout::new(2 * WORD, WORD)),
         TypeKind::Param(..) | TypeKind::Assoc(..) => None,
     }
 }

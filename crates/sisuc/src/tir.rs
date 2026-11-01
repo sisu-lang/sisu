@@ -142,6 +142,31 @@ pub(crate) struct Program {
     pub(crate) choice_ats: FxHashMap<ChoicePlace, Span>,
     /// Where the language interfaces are among `interfaces`. Only the checker sets it.
     pub(crate) lang: LangInterfaces,
+    /// The layout of the table of each `any` type that the program names. Only `mono` sets it.
+    pub(crate) any_layouts: Vec<AnyLayout>,
+    /// The table of each object type for each `any` type that an object converts to. Only `mono`
+    /// sets it.
+    pub(crate) any_tables: Vec<AnyTable>,
+}
+
+/// The interfaces that the table of the `any` type `any` holds methods for, each with its
+/// arguments (without `Self`): the interface of `any` first, then each interface it inherits,
+/// depth first, and `Display` last when `any` does not inherit it, since every table holds
+/// `to_string`. The methods of the table follow this order, one for each requirement.
+#[derive(Clone, Debug)]
+pub(crate) struct AnyLayout {
+    pub(crate) any: Type,
+    pub(crate) interfaces: Vec<(InterfaceId, TypeArgs)>,
+}
+
+/// The table of the class `ty` for the `any` type `any`: for each interface of the layout of
+/// `any`, the function that meets each of its requirements, `None` for the `to_string` that the
+/// compiler writes.
+#[derive(Clone, Debug)]
+pub(crate) struct AnyTable {
+    pub(crate) ty: Type,
+    pub(crate) any: Type,
+    pub(crate) methods: Vec<Vec<Option<FuncId>>>,
 }
 
 /// An interface, as the typed tree names it.
@@ -152,6 +177,9 @@ pub(crate) struct Interface {
     pub(crate) methods: Vec<String>,
     /// The names of its associated types, in the order of `TypeKind::Assoc`'s index.
     pub(crate) assoc: Vec<String>,
+    /// The interfaces it inherits, in the order of its list, each with its arguments over the
+    /// interface's own parameters, `Self` first.
+    pub(crate) inherits: Vec<(InterfaceId, TypeArgs)>,
 }
 
 /// The place of a choice of an associated type: the interface, the index of the conformance among
@@ -590,6 +618,18 @@ pub(crate) enum ExprKind {
     },
     /// A `T` where a `T?` is expected.
     Wrap(Box<Expr>),
+    /// A value of an object type, or of an `any` of another interface, where the `any` type of
+    /// the node is expected.
+    ToAny(Box<Expr>),
+    /// A call through the table of the receiver, an `any` value that `args` hold first, of the
+    /// requirement `method` of `interface` with the arguments `iargs`. `mono` makes it from an
+    /// `InterfaceCall` whose receiver is an `any` value.
+    DynCall {
+        interface: InterfaceId,
+        iargs: TypeArgs,
+        method: u32,
+        args: Vec<Expr>,
+    },
     /// `u8(e)`, `i64(e)` or `char(e)`: `e` converted to the node's own type, a `u8?` or a
     /// `char?` for a conversion that can fail.
     Convert(Box<Expr>),
@@ -754,7 +794,8 @@ impl Type {
     /// which codegen counts. `enums` are the program's.
     pub(crate) fn is_counted(self, enums: &[Enum]) -> bool {
         match self.kind() {
-            TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) => true,
+            // An `any` is counted through its data pointer, an object or a box.
+            TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) | TypeKind::Any(..) => true,
             TypeKind::Enum(id, _) => enums[id.0].counted,
             TypeKind::Optional(payload) => payload.is_counted(enums),
             _ => false,
@@ -877,6 +918,7 @@ impl Expr {
             ExprKind::Break { .. } | ExprKind::Continue { .. } | ExprKind::Return(_) => true,
             ExprKind::Call { args, .. }
             | ExprKind::InterfaceCall { args, .. }
+            | ExprKind::DynCall { args, .. }
             | ExprKind::New { args, .. }
             | ExprKind::Variant { args, .. } => args.iter().any(Expr::exits),
             ExprKind::Compare { operands, .. }
@@ -892,6 +934,7 @@ impl Expr {
             | ExprKind::Words(operand)
             | ExprKind::FromChars(operand)
             | ExprKind::Wrap(operand)
+            | ExprKind::ToAny(operand)
             | ExprKind::Convert(operand)
             | ExprKind::Print { operand, .. }
             | ExprKind::Dbg { operand, .. }
@@ -957,6 +1000,7 @@ impl Expr {
             | ExprKind::Return(None) => {}
             ExprKind::Call { args, .. }
             | ExprKind::InterfaceCall { args, .. }
+            | ExprKind::DynCall { args, .. }
             | ExprKind::New { args, .. }
             | ExprKind::Variant { args, .. }
             | ExprKind::Compare { operands: args, .. }
@@ -970,6 +1014,7 @@ impl Expr {
             | ExprKind::Words(operand)
             | ExprKind::FromChars(operand)
             | ExprKind::Wrap(operand)
+            | ExprKind::ToAny(operand)
             | ExprKind::Convert(operand)
             | ExprKind::Print { operand, .. }
             | ExprKind::Dbg { operand, .. }
@@ -1109,6 +1154,7 @@ impl Expr {
             | K::Return(None) => {}
             K::Call { args, .. }
             | K::InterfaceCall { args, .. }
+            | K::DynCall { args, .. }
             | K::New { args, .. }
             | K::Variant { args, .. }
             | K::ArrayLit(args)
@@ -1117,6 +1163,7 @@ impl Expr {
             | K::Compare { operands: args, .. } => args.iter().for_each(|a| a.exprs(out)),
             K::Field { base: e, .. }
             | K::Wrap(e)
+            | K::ToAny(e)
             | K::Convert(e)
             | K::Print { operand: e, .. }
             | K::Dbg { operand: e, .. }
@@ -1217,6 +1264,7 @@ impl fmt::Display for Type {
             TypeKind::Assoc(base, _, _, k) => return write!(f, "{base}.assoc#{k}"),
             TypeKind::Class(id, _) => return write!(f, "class#{}", id.0),
             TypeKind::Enum(id, _) => return write!(f, "enum#{}", id.0),
+            TypeKind::Any(id, _) => return write!(f, "any#{}", id.0),
             TypeKind::Array(element) => return write!(f, "[{element}]"),
             TypeKind::Optional(payload) => return write!(f, "{payload}?"),
         })
@@ -1338,7 +1386,23 @@ impl Printer<'_> {
                 self.list(f, format_args!("variant {}.{name}", e.name), args)
             }
             ExprKind::Field { base, index } => self.field(f, base, *index),
+            ExprKind::DynCall {
+                interface,
+                iargs,
+                method,
+                args,
+            } => {
+                let info = &self.program.interfaces[interface.0];
+                let name = format!(
+                    "{}{}.{}",
+                    info.name,
+                    self.program.args_name(&iargs.get()[1..]),
+                    info.methods[*method as usize],
+                );
+                self.list(f, format_args!("dyn-call {name}"), args)
+            }
             ExprKind::Wrap(operand) => self.unary(f, "wrap", operand),
+            ExprKind::ToAny(operand) => self.unary(f, "to-any", operand),
             ExprKind::Convert(operand) => self.unary(f, &expr.ty.to_string(), operand),
             ExprKind::Print { stream, operand } => self.unary(f, stream.name(), operand),
             ExprKind::Dbg { text, operand, .. } => self.unary(f, &format!("dbg {text:?}"), operand),
@@ -1664,6 +1728,7 @@ impl Program {
         match head {
             Head::Class(id) => &self.classes[id.0].name,
             Head::Enum(id) => &self.enums[id.0].name,
+            Head::Interface(id) => &self.interfaces[id.0].name,
             Head::Assoc(interface, k) => &self.interfaces[interface.0].assoc[k as usize],
         }
     }
@@ -2235,6 +2300,7 @@ mod tests {
             interfaces: vec![Interface {
                 methods: Vec::new(),
                 assoc: Vec::new(),
+                inherits: Vec::new(),
                 name: "Label".into(),
             }],
             functions: vec![caller, method, own],
@@ -3095,6 +3161,16 @@ mod tests {
             (ExprKind::Words(n(1)), 1),
             (ExprKind::FromChars(n(1)), 1),
             (ExprKind::Wrap(n(1)), 1),
+            (ExprKind::ToAny(n(1)), 1),
+            (
+                ExprKind::DynCall {
+                    interface: InterfaceId(0),
+                    iargs: TypeArgs::NONE,
+                    method: 0,
+                    args: ints([1, 2]),
+                },
+                2,
+            ),
             (ExprKind::Convert(n(1)), 1),
             (
                 ExprKind::Print {

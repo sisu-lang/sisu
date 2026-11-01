@@ -1,0 +1,10 @@
+error[E0163]: `any` takes one interface
+  --> E0163-several.sisu:10:28
+   |
+10 |     let people: [any Named & Aged] = []
+   |                            ^^^^^^
+   |
+   = help: declare an interface that inherits `Named` and `Aged`, and use it after `any`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0163

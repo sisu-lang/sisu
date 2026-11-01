@@ -1,0 +1,8 @@
+error[E0111]: precision needs an `f64`
+ --> E0111-any.sisu:6:8
+  |
+6 |     "{s:.2}"
+  |        ^^^ the value is `any Shape`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0111

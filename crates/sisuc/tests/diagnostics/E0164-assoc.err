@@ -1,0 +1,10 @@
+error[E0164]: `Source` cannot be used as `any Source`: `Source` has an associated type, `Item`
+ --> E0164-assoc.sisu:6:18
+  |
+6 | fn _show(_x: any Source) {
+  |                  ^^^^^^ used after `any` here
+  |
+  = help: use a type parameter: `T: Source`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0164

@@ -1,0 +1,12 @@
+interface Named {
+    fn name(self) -> string
+}
+
+interface Aged {
+    fn age(self) -> i64
+}
+
+fn main() {
+    let people: [any Named & Aged] = []
+    print(people.len())
+}

@@ -25,7 +25,7 @@ pub(crate) const SEEDS: u64 = 64;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.
-const EXCLUDED: [(&str, &str); 16] = [
+const EXCLUDED: [(&str, &str); 17] = [
     (
         "ast::BrokenKind::Function",
         "only an item with a syntax error is broken",
@@ -84,6 +84,10 @@ const EXCLUDED: [(&str, &str); 16] = [
     ),
     (
         "types::Head::Enum",
+        "the key by which `types::write_type` asks for a name, which is no type",
+    ),
+    (
+        "types::Head::Interface",
         "the key by which `types::write_type` asks for a name, which is no type",
     ),
     (
@@ -584,7 +588,7 @@ fn names_bounded_then_inside(f: &ast::Function) -> bool {
         match &ty.kind {
             ast::TypeKind::Name(n) => n.as_str() == name,
             ast::TypeKind::Applied(applied) => applied.args.iter().any(|arg| names(arg, name)),
-            ast::TypeKind::Array(element) => names(element, name),
+            ast::TypeKind::Array(element) | ast::TypeKind::Any(element) => names(element, name),
             ast::TypeKind::Member { base, .. } => names(base, name),
             ast::TypeKind::SelfType => false,
         }
@@ -650,6 +654,19 @@ impl Walk {
     /// and costs far more.
     fn built(&mut self, program: tir::Program) {
         let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
+        // `mono` makes the call through a table of a call on an `any` value.
+        let mut exprs = Vec::new();
+        for function in &program.functions {
+            exprs.clear();
+            function.body.exprs(&mut exprs);
+            if exprs
+                .iter()
+                .any(|e| matches!(e.kind, tir::ExprKind::DynCall { .. }))
+            {
+                self.mark("tir::ExprKind::DynCall");
+                break;
+            }
+        }
         let mir = crate::mir::lowered(&program);
         let mut held = FxHashMap::default();
         for function in &mir.functions {
@@ -1076,6 +1093,10 @@ impl Walk {
             ast::TypeKind::Member { base, .. } => {
                 self.mark("ast::TypeKind::Member");
                 self.type_expr(base);
+            }
+            ast::TypeKind::Any(interface) => {
+                self.mark("ast::TypeKind::Any");
+                self.type_expr(interface);
             }
         }
     }
@@ -2124,6 +2145,7 @@ impl Walk {
             TypeKind::Array(element) => ("types::TypeKind::Array", Some(element)),
             TypeKind::Optional(inner) => ("types::TypeKind::Optional", Some(inner)),
             TypeKind::Assoc(base, ..) => ("types::TypeKind::Assoc", Some(base)),
+            TypeKind::Any(..) => ("types::TypeKind::Any", None),
         };
         self.mark(key);
         if let Some(inner) = inner {
@@ -2194,7 +2216,9 @@ impl Walk {
     /// type parameter of a generic body may stand for a class.
     fn holds_class(&self, ty: Type, seen: &mut Vec<tir::EnumId>) -> bool {
         match ty.kind() {
-            TypeKind::Class(..) | TypeKind::Param(..) | TypeKind::Assoc(..) => true,
+            TypeKind::Class(..) | TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..) => {
+                true
+            }
             TypeKind::Array(inner) | TypeKind::Optional(inner) => self.holds_class(inner, seen),
             TypeKind::Enum(id, args) => {
                 !seen.contains(&id) && {
@@ -2269,7 +2293,8 @@ impl Walk {
                 | TypeKind::Class(..)
                 | TypeKind::Enum(..)
                 | TypeKind::Param(..)
-                | TypeKind::Assoc(..) => {}
+                | TypeKind::Assoc(..)
+                | TypeKind::Any(..) => {}
             }
         }
         if written && left && matches!(e.ty.kind(), TypeKind::I64 | TypeKind::U8) {
@@ -2374,6 +2399,12 @@ impl Walk {
                 self.mark("tir::ExprKind::Wrap");
                 self.tir_expr(inner, Parent::Other);
             }
+            tir::ExprKind::ToAny(inner) => {
+                self.mark("tir::ExprKind::ToAny");
+                self.tir_expr(inner, Parent::Other);
+            }
+            // Only `mono` makes it; `built` marks it.
+            tir::ExprKind::DynCall { args, .. } => self.tir_exprs(args),
             tir::ExprKind::Convert(operand) => {
                 self.mark("tir::ExprKind::Convert");
                 // A conversion that can fail gives an optional.
@@ -2714,6 +2745,7 @@ fn kind_name(ty: Type) -> &'static str {
         TypeKind::Array(_) => "Array",
         TypeKind::Optional(_) => "Optional",
         TypeKind::Assoc(..) => "Assoc",
+        TypeKind::Any(..) => "Any",
     }
 }
 
@@ -2771,7 +2803,7 @@ fn names_self_in(f: &ast::Function) -> bool {
 fn names_self(ty: &ast::TypeExpr) -> bool {
     match &ty.kind {
         ast::TypeKind::SelfType => true,
-        ast::TypeKind::Array(element) => names_self(element),
+        ast::TypeKind::Array(element) | ast::TypeKind::Any(element) => names_self(element),
         ast::TypeKind::Applied(applied) => applied.args.iter().any(names_self),
         ast::TypeKind::Member { base, .. } => names_self(base),
         ast::TypeKind::Name(_) => false,
@@ -3190,8 +3222,8 @@ fn the_ast_walk_should_mark_what_interfaces_and_extend_blocks_hold() {
 }
 
 /// A program may declare as many interfaces as `MAX_INTERFACES` and give one as many requirements
-/// as `MAX_REQUIREMENTS`. `Pinned` and `Nest`, which `shapes` declares at a fixed place, are not
-/// among them.
+/// as `MAX_REQUIREMENTS`. `Pinned`, `Nest`, `Seen` and `Heard`, which `shapes` declares at a fixed
+/// place, are not among them.
 #[test]
 fn generated_interfaces_should_reach_their_maxima() {
     let (mut most, mut requirements) = (0, 0);
@@ -3202,7 +3234,8 @@ fn generated_interfaces_should_reach_their_maxima() {
             .iter()
             .filter_map(|item| match item {
                 ast::Item::Interface(interface)
-                    if !["Pinned", "Nest"].contains(&interface.name.name.as_str()) =>
+                    if !["Pinned", "Nest", "Seen", "Heard"]
+                        .contains(&interface.name.name.as_str()) =>
                 {
                     Some(interface)
                 }
@@ -5830,6 +5863,7 @@ impl<'f> Lets<'f> {
             }
             tir::ExprKind::Call { args, .. }
             | tir::ExprKind::InterfaceCall { args, .. }
+            | tir::ExprKind::DynCall { args, .. }
             | tir::ExprKind::New { args, .. }
             | tir::ExprKind::Variant { args, .. }
             | tir::ExprKind::ArrayLit(args)
@@ -5841,6 +5875,7 @@ impl<'f> Lets<'f> {
             }
             tir::ExprKind::Field { base: x, .. }
             | tir::ExprKind::Wrap(x)
+            | tir::ExprKind::ToAny(x)
             | tir::ExprKind::Convert(x)
             | tir::ExprKind::Print { operand: x, .. }
             | tir::ExprKind::Dbg { operand: x, .. }
@@ -5941,6 +5976,7 @@ impl<'f> Lets<'f> {
             tir::ExprKind::Field { base, .. } => reads && self.pure(base, reads),
             tir::ExprKind::Call { func, args, .. } => self.pure_calls[func.0] && all(args),
             tir::ExprKind::InterfaceCall { .. }
+            | tir::ExprKind::DynCall { .. }
             | tir::ExprKind::Print { .. }
             | tir::ExprKind::Dbg { .. }
             | tir::ExprKind::Panic(_)
@@ -5970,6 +6006,7 @@ impl<'f> Lets<'f> {
             | tir::ExprKind::Interpolate { parts: args, .. }
             | tir::ExprKind::Compare { operands: args, .. } => all(args),
             tir::ExprKind::Wrap(x)
+            | tir::ExprKind::ToAny(x)
             | tir::ExprKind::Convert(x)
             | tir::ExprKind::Len(x)
             | tir::ExprKind::Chars(x)

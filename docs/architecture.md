@@ -275,6 +275,10 @@ and a copy can become a borrow across it. A user function is never quiet.
 Debug builds of the compiler end with the certifier (`certify.rs`), which
 checks on every path that each owned reference is moved or released once and
 that nothing writes or changes what a borrow reads.
+A call through the table of an `any` value (`dyn_call`) has a fixed convention, not an inferred
+one: its receiver is borrowed and every other argument is owned, and the entry of the table adapts
+to the method's own flags. It may run any written method, so it is a clobber, as a call is. A
+conversion to `any` (`to_any`) consumes its operand.
 `tir` carries no moves. `--emit mir` prints the result.
 
 **Codegen** (`codegen/`). Walks `mir` and builds an LLVM module through the

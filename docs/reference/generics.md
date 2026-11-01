@@ -613,7 +613,7 @@ fn main() {
 
 `any Shape` is a type for a value of any type that conforms to `Shape`. A value converts to it where an `any` type is expected. A call of a method on it uses the method of the type that the value has. An interface that inherits `AnyObject` is class-only, as [Bounds](#bounds) says.
 
-```sisu pending
+```sisu
 interface Shape {
     fn area(self) -> f64
 }
@@ -637,9 +637,9 @@ class Rect: Shape {
 
 fn main() {
     let shapes: [any Shape] = [Circle(r: 1.0), Rect(w: 2.0, h: 3.0)]
-    for s in shapes {
-        print(s.area())
-    }
+    print(shapes[0].area())            // 3.141592653589793
+    print(shapes[1].area())            // 6.0
+    print(shapes[1])                   // Rect
 }
 ```
 

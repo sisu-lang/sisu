@@ -127,12 +127,12 @@ impl Checker<'_> {
     }
 
     /// Whether `ty` is a concrete type that no `Ord` orders, though it has the look of one that
-    /// a program may compare: a `bool`, an array, an enum or a class.
+    /// a program may compare: a `bool`, an array, an enum, a class or an `any` value.
     fn unordered(&mut self, ty: Type) -> bool {
         (ty == Type::BOOL
             || matches!(
                 ty.kind(),
-                TypeKind::Array(_) | TypeKind::Enum(..) | TypeKind::Class(..)
+                TypeKind::Array(_) | TypeKind::Enum(..) | TypeKind::Class(..) | TypeKind::Any(..)
             ))
             && self.operation(ty, self.lang.ord) == Operation::Missing
     }
@@ -703,8 +703,24 @@ impl Checker<'_> {
             }
             // A type parameter, or an associated type of one, is an object when its bounds say
             // so: `mono` then makes it a class.
-            let object_param = matches!(base.kind(), TypeKind::Param(..) | TypeKind::Assoc(..))
-                && self.conforms(base, self.lang.any_object, TypeArgs::NONE);
+            let object_param = matches!(
+                base.kind(),
+                TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..)
+            ) && self.conforms(base, self.lang.any_object, TypeArgs::NONE);
+            // An `any` of an interface that no class-only interface leads to may hold anything.
+            if let TypeKind::Any(interface, _) = base.kind()
+                && !object_param
+            {
+                let info = &self.interfaces[interface.0];
+                let make = (!info.name.span.in_prelude()).then(|| info.name.name.to_string());
+                let kind = DiagnosticKind::AnyMayNotHold {
+                    found: self.type_name(ty),
+                    at: side.span,
+                    make,
+                };
+                self.diagnostics.push(kind.into());
+                return Err(Poisoned::error());
+            }
             let nested = matches!(ty.kind(), TypeKind::Optional(p) if matches!(p.kind(), TypeKind::Optional(_)));
             // Peeling a layer helps only when an object is under the rest.
             if extra > 0 {
@@ -767,7 +783,7 @@ impl Checker<'_> {
         }
         let object = match base.kind() {
             TypeKind::Class(..) => true,
-            TypeKind::Param(..) | TypeKind::Assoc(..) => {
+            TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..) => {
                 self.conforms(base, self.lang.any_object, TypeArgs::NONE)
             }
             _ => false,
@@ -790,6 +806,11 @@ impl Checker<'_> {
                     (l, r.map(|e| wrap(e, lt)))
                 } else if fits(rt, lt) {
                     (l.map(|e| wrap(e, rt)), r)
+                } else if self.converts_to_any(rt, lt) {
+                    // A class beside an `any` converts to it first.
+                    (l, r.map(|e| self.make_any(e, lt)))
+                } else if self.converts_to_any(lt, rt) {
+                    (l.map(|e| self.make_any(e, rt)), r)
                 } else {
                     let kind = DiagnosticKind::CannotCompare {
                         left: self.type_name(lt),
@@ -874,6 +895,16 @@ impl Checker<'_> {
         // The right side expects `P` for an optional `P`, else `P?`: a value converts through
         // one `?` only.
         let other = self.fallback(rhs, as_optional(payload));
+        // A value converts to an `any` payload.
+        let other = match type_of(&other) {
+            Some(got) if got != payload => {
+                match self.any_conversion(rhs.span, other, payload, got) {
+                    Ok((_, true)) => return Err(Poisoned::error()),
+                    Ok((converted, false)) | Err(converted) => converted,
+                }
+            }
+            _ => other,
+        };
         let (other, ty) = match type_of(&other) {
             // `a ?? panic("x")`: only the payload reaches the result.
             Some(Type::NEVER) => (other, payload),

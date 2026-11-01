@@ -7,6 +7,7 @@ use std::{fmt, iter};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::alias::{Through, Via};
+use super::any;
 use super::expr::{bare_hole, dbg_argument, int_literal, option_written};
 use super::interface::{Bound, Required};
 use super::pattern::{LetPattern, LetValue, arm_key, matchable};
@@ -41,6 +42,9 @@ fn meets(ty: Type, want: Type) -> bool {
         (TypeKind::Enum(a, p), TypeKind::Enum(b, v)) if a == b => {
             iter::zip(p.get(), v.get()).all(|(&p, &v)| meets(p, v))
         }
+        (TypeKind::Any(a, p), TypeKind::Any(b, v)) if a == b => {
+            iter::zip(p.get(), v.get()).all(|(&p, &v)| meets(p, v))
+        }
         _ => false,
     }
 }
@@ -57,7 +61,7 @@ fn mark_params(ty: Type, named: &mut [bool]) {
     match ty.kind() {
         TypeKind::Param(_, j) => named[j as usize] = true,
         TypeKind::Array(inner) | TypeKind::Optional(inner) => mark_params(inner, named),
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
             for &arg in args.get() {
                 mark_params(arg, named);
             }
@@ -81,7 +85,7 @@ fn names_outside_assoc(ty: Type, param: usize) -> bool {
     match ty.kind() {
         TypeKind::Param(_, j) => j as usize == param,
         TypeKind::Array(inner) | TypeKind::Optional(inner) => names_outside_assoc(inner, param),
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
             (args.get().iter()).any(|&arg| names_outside_assoc(arg, param))
         }
         TypeKind::Assoc(..) => false,
@@ -103,7 +107,7 @@ fn mark_by_assoc(ty: Type, under: bool, inside: &mut [bool], outside: &mut [bool
             marks[j as usize] = true;
         }
         TypeKind::Array(t) | TypeKind::Optional(t) => mark_by_assoc(t, under, inside, outside),
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
             for &arg in args.get() {
                 mark_by_assoc(arg, under, inside, outside);
             }
@@ -331,7 +335,7 @@ impl Makes {
 fn holds_param(ty: Type, param: Type) -> bool {
     match ty.kind() {
         TypeKind::Array(t) => t == param || holds_param(t, param),
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
             (args.get().iter()).any(|&arg| arg == param || holds_param(arg, param))
         }
         _ => false,
@@ -347,7 +351,7 @@ fn names_marked(ty: Type, marked: &[bool]) -> bool {
     match ty.kind() {
         TypeKind::Param(_, j) => marked[j as usize],
         TypeKind::Array(inner) | TypeKind::Optional(inner) => names_marked(inner, marked),
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
             (args.get().iter()).any(|&arg| names_marked(arg, marked))
         }
         TypeKind::Assoc(..) => false,
@@ -511,7 +515,7 @@ impl Bindings {
                     TypeKind::Array(p) | TypeKind::Optional(p) => {
                         self.bind(p, value);
                     }
-                    TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+                    TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
                         for &p in args.get() {
                             self.bind(p, value);
                         }
@@ -528,6 +532,7 @@ impl Bindings {
             }
             (TypeKind::Class(a, p), TypeKind::Class(b, v)) if a == b => self.bind_all(p, v),
             (TypeKind::Enum(a, p), TypeKind::Enum(b, v)) if a == b => self.bind_all(p, v),
+            (TypeKind::Any(a, p), TypeKind::Any(b, v)) if a == b => self.bind_all(p, v),
             // An associated type binds nothing: the type it stands for is known once its base is
             // bound, and the argument is then checked against it (see `Checker::known`).
             (TypeKind::Assoc(..), _) => true,
@@ -567,6 +572,11 @@ impl Bindings {
                     self.hint(p, v);
                 }
             }
+            (TypeKind::Any(a, p), TypeKind::Any(b, v)) if a == b => {
+                for (&p, &v) in iter::zip(p.get(), v.get()) {
+                    self.hint(p, v);
+                }
+            }
             _ => {}
         }
     }
@@ -596,7 +606,7 @@ impl Bindings {
                 _ => Some(i as usize),
             },
             TypeKind::Array(inner) | TypeKind::Optional(inner) => self.unknown_param(inner),
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+            TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
                 args.get().iter().find_map(|&arg| self.unknown_param(arg))
             }
             TypeKind::Assoc(base, _, args, _) => self
@@ -664,6 +674,9 @@ impl Bindings {
             }
             TypeKind::Enum(id, args) => {
                 Type::intern(TypeKind::Enum(id, self.resolve_all(args, unbound)?))
+            }
+            TypeKind::Any(id, args) => {
+                Type::intern(TypeKind::Any(id, self.resolve_all(args, unbound)?))
             }
             TypeKind::Assoc(base, interface, args, k) => {
                 let base = self.resolve(base, unbound)?;
@@ -1153,15 +1166,18 @@ impl Checker<'_> {
         // Whether every call in an argument fits its declaration.
         let mut fit = vec![true; args.len()];
         let (ranks, holds, through) = self.rank_arguments(&call, sig, args, &mut fit);
+        // A context that is an `any` type binds no parameter before the arguments do: the result
+        // converts to it once the arguments have bound the parameters they can.
+        let (plain, into_any) = any::split_context(expected);
         // A context that holds a hole gives the arguments below more context (see `hint`).
-        if let (Some(ret), Some(want)) = (sig.ret, expected) {
+        if let (Some(ret), Some(want)) = (sig.ret, plain) {
             call.bindings.hint(ret, want);
         }
         for (i, arg) in args.iter().enumerate().filter(|&(i, _)| ranks[i] == 0) {
             self.infer_arg(&mut call, i, &arg.value, sig.params[i], None);
         }
         let mut misfit = None;
-        if let (Some(ret), Some(want)) = (sig.ret, expected.filter(|&ty| ty != UNKNOWN)) {
+        if let (Some(ret), Some(want)) = (sig.ret, plain.filter(|&ty| ty != UNKNOWN)) {
             // The return type meets `want` whole if it can and an argument waits for it, or
             // makes the optional itself and has the type of the return type (`through`):
             // `let x: i64? = pick(5, None)` binds `T = i64?`, and so does `id(Some(1))`. Else it
@@ -1188,6 +1204,10 @@ impl Checker<'_> {
             for (i, arg) in args.iter().enumerate().filter(wanted) {
                 self.infer_arg(&mut call, i, &arg.value, sig.params[i], None);
             }
+        }
+        // A parameter that no argument bound takes the `any` context, as pass 2 would bind it.
+        if let (Some(ret), Some(want)) = (sig.ret, into_any) {
+            let _ = call.bindings.unify(ret, want) || call.bindings.constrain(ret, payload(want));
         }
         self.sweep_waiting(&mut call, sig, args, &ranks, &fit);
         for (i, ty) in std::mem::take(&mut call.last) {
@@ -1431,10 +1451,11 @@ impl Checker<'_> {
             let Some(fit) = self.known(&context, param) else {
                 continue;
             };
-            // As `against`: the type, or its payload wrapped.
+            // As `against`: the type, or its payload wrapped, or an `any` that it converts to.
             if got == fit
                 || matches!(got, Type::UNIT | Type::NEVER)
                 || matches!(fit.kind(), TypeKind::Optional(inner) if inner == got)
+                || self.converts_to_any(got, fit)
             {
                 continue;
             }
@@ -2361,7 +2382,9 @@ impl Checker<'_> {
         };
         match ty.kind() {
             TypeKind::Class(..) | TypeKind::Enum(..) => {}
-            TypeKind::Param(..) | TypeKind::Assoc(..) => return self.bound_shape(ty, method, args),
+            TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..) => {
+                return self.bound_shape(ty, method, args);
+            }
             _ => return CallShape::default(),
         }
         // The method the call will find, as `find_method` finds it, without its reports.
@@ -2433,7 +2456,9 @@ impl Checker<'_> {
             ty = payload;
         }
         match ty.kind() {
-            TypeKind::Param(..) | TypeKind::Assoc(..) => self.required(ty, method.name).len() > 1,
+            TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..) => {
+                self.required(ty, method.name).len() > 1
+            }
             TypeKind::Class(..) | TypeKind::Enum(..) => {
                 if self.applicable_method(ty, method.name).is_some() {
                     return false;

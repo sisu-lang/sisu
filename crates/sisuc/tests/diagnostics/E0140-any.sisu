@@ -1,0 +1,19 @@
+interface Run {
+    fn run(self)
+}
+
+class Box<T> {
+    value: T
+}
+
+extend<T> Box<T>: Run {
+    fn run(self) {
+        let next: any Run = Box(value: self)
+        next.run()
+    }
+}
+
+fn main() {
+    let first: any Run = Box(value: 0)
+    first.run()
+}

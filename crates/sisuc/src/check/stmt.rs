@@ -1222,7 +1222,14 @@ impl Checker<'_> {
                         frame.first = Some((got, span));
                         checked
                     }
-                    (Some(ty), _) => self.against(v, checked, Some(ty), None).0,
+                    // A value that converts to the expected `any` type gives the loop that type.
+                    (Some(ty), _) => {
+                        let converted = self.against(v, checked, Some(ty), None).0;
+                        if converted.is_ok() {
+                            self.frame(target).first.get_or_insert((ty, span));
+                        }
+                        converted
+                    }
                     (None, Some((first, at))) => {
                         self.against(v, checked, Some(first), Some(MismatchSource::Break(at)))
                             .0

@@ -4440,3 +4440,60 @@ fn lay_out_enums_should_panic_on_an_enum_that_holds_itself_inline() {
     let context = Context::create();
     compile(&context, &program, &mir, "test.sisu", src, &machine, false);
 }
+
+/// Converting an object to an `any` value makes no allocation: the value is the object's pointer
+/// and the table, which is a constant global named for the type and the interface.
+#[test]
+fn converting_an_object_to_any_should_allocate_nothing() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "interface Shape {\n    fn area(self) -> f64\n}\nclass Circle: Shape {\n    r: f64\n    fn area(self) -> f64 { self.r }\n}\nfn main() {\n    let c = Circle(r: 2.0)\n    let s: any Shape = c\n    print(s.area())\n}",
+    )
+    .print_to_string()
+    .to_string();
+    assert!(
+        ir.contains("@\"sisu.Circle:Shape\" = internal constant"),
+        "missing the table in\n{ir}"
+    );
+    let main = function_body(&ir, "define internal void @sisu.main()");
+    // The object is the only block that `main` allocates.
+    assert_eq!(main.matches("@sisu_alloc(").count(), 1, "{main}");
+    // The call loads its entry from the table and calls it through the pointer.
+    assert!(main.contains("call double %"), "{main}");
+}
+
+/// A chain of interfaces that each inherit the two before them makes a table for each, and its
+/// code grows with the interfaces, not with the paths between them.
+#[test]
+fn a_diamond_of_interfaces_should_build_one_table_for_each() {
+    let mut src = String::from(
+        "interface I1 {\n    fn f1(self)\n}\ninterface I2: I1 {\n    fn f2(self)\n}\n",
+    );
+    for k in 3..=30 {
+        writeln!(
+            src,
+            "interface I{k}: I{}, I{} {{\n    fn f{k}(self)\n}}",
+            k - 1,
+            k - 2
+        )
+        .expect("writing to a string should not fail");
+    }
+    src.push_str("class C: I30 {\n");
+    for k in 1..=30 {
+        writeln!(src, "    fn f{k}(self) {{}}").expect("writing to a string should not fail");
+    }
+    src.push_str("}\nfn main() {\n    let x: any I30 = C()\n    x.f30()\n    x.f1()\n}");
+    let context = Context::create();
+    let ir = compiled(&context, &src).print_to_string().to_string();
+    for k in 1..=30 {
+        assert!(
+            ir.contains(&format!("@\"sisu.C:I{k}\" = internal constant")),
+            "I{k} in\n{ir}"
+        );
+    }
+    assert!(
+        ir.contains("@\"sisu.C:Display\" = internal constant"),
+        "{ir}"
+    );
+}

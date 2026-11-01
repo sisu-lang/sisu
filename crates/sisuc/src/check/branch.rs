@@ -197,6 +197,12 @@ impl Checker<'_> {
             .into_iter()
             .map(|block| block.expect("`join` should check every branch"))
             .collect();
+        // Each branch converts to an `any` type that is expected, as a value does.
+        if let Some(want) = expected.filter(|&want| want != UNKNOWN) {
+            for (block, source) in blocks.iter_mut().zip(sources) {
+                self.any_block(block, want, source.span);
+            }
+        }
         // The type so far, and the branch it came from, folded in source order.
         let (mut joined, mut error, mut failed) = (None::<(usize, Type)>, false, false);
         for (i, block) in blocks.iter().enumerate() {

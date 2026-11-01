@@ -19,6 +19,11 @@
 //! call reads a borrowed argument in place, and the caller releases a temporary it passed there
 //! after the call. A borrowed parameter has no scope release.
 //!
+//! A call through the table of an `any` value (`DynCall`) has a fixed convention: its receiver is
+//! borrowed, read in place, and every other argument is owned, so the entry of the table adapts to
+//! the concrete method's own flags (ADR 0029). A conversion to `any` (`ToAny`) consumes its
+//! operand. Each may run any written method, so each is a clobber (`may_call_written`).
+//!
 //! The reuse pass (`reuse.rs`) then gives each boxed field of a construction a token of its
 //! enum that every path into it holds, so the box is built into the token's block.
 //!
@@ -264,6 +269,20 @@ pub(crate) enum Rvalue {
         span: Span,
     },
     Wrap(Operand),
+    /// The object or `any` value of the operand, as the destination's `any` type: it takes the
+    /// operand's reference, and the destination holds the data pointer and its table.
+    ToAny(Operand),
+    /// A call through the table of the receiver, the first of `args`, an `any` value, of the
+    /// requirement `method` of `interface`, with `iargs` as its type arguments (the receiver's
+    /// type first). Its convention is fixed, not inferred: the receiver is read in place, and the
+    /// callee holds no reference to it that the caller keeps; every other argument is owned, so
+    /// the table's entry adapts to the concrete method's flags.
+    DynCall {
+        interface: tir::InterfaceId,
+        iargs: tir::TypeArgs,
+        method: u32,
+        args: Vec<Operand>,
+    },
     Concat {
         lhs: Operand,
         rhs: Operand,
@@ -342,13 +361,15 @@ pub(crate) enum Rvalue {
 
 impl Rvalue {
     /// Whether the statement may run a written method, which can store through a `mut` field and
-    /// free what a borrow reads: a `Call` that is not quiet, an `Equal` whose helper
-    /// reaches a written `eq`, and a `Print`, `Dbg` or `Interpolate` whose helper reaches a
-    /// written `to_string`.
+    /// free what a borrow reads: a `Call` that is not quiet, a `DynCall`, whose table may hold any
+    /// written method, an `Equal` whose helper reaches a written `eq`, and a `Print`, `Dbg` or
+    /// `Interpolate` whose helper reaches a written `to_string`.
     /// Pair removal and the certifier both ask this, so they agree.
     pub(crate) fn may_call_written(&self) -> bool {
         match self {
             Rvalue::Call { quiet, .. } => !*quiet,
+            // The table of an `any` value may hold any written method of the type inside.
+            Rvalue::DynCall { .. } => true,
             Rvalue::Equal { calls, .. }
             | Rvalue::Print { calls, .. }
             | Rvalue::Dbg { calls, .. }

@@ -1,0 +1,89 @@
+// GIVEN a generic interface `Source<T>`, an interface `Named` that inherits `Source<i64>`, a class
+// that conforms to `Named`, a generic function over `any Source<T>`, a generic function whose bound
+// is `Named`, and an `is` on an optional `any` value
+// WHEN the program is built and run
+// THEN each call goes through the tables of the interface and of the interface it inherits, `T`
+// binds to `i64` from the arguments of an `any Source<T>`, and `any Named` meets the bound `Named`
+interface Source<T> {
+    fn get(self) -> T
+}
+
+interface Named: Source<i64>, AnyObject {
+    fn name(self) -> string
+}
+
+class Box1: Named {
+    n: i64
+
+    fn get(self) -> i64 {
+        self.n
+    }
+
+    fn name(self) -> string {
+        "box"
+    }
+}
+
+fn read<T>(s: any Source<T>) -> T {
+    s.get()
+}
+
+interface Chain<T> {
+    fn next(self) -> any Source<T>
+}
+
+class Link: Chain<i64> {
+    fn next(self) -> any Source<i64> {
+        Box1(n: 5)
+    }
+}
+
+interface Describe {
+    fn describe(self) -> string
+}
+
+class Stack<T> {
+    items: [T]
+}
+
+// An extension for a class whose argument is an `any` type with its own argument.
+extend<T> Stack<any Source<T>>: Describe {
+    fn describe(self) -> string {
+        "stack of {self.items.len()}"
+    }
+}
+
+fn say<D: Describe>(d: D) -> string {
+    d.describe()
+}
+
+fn follow<T>(c: any Chain<T>) -> T {
+    c.next().get()
+}
+
+fn tell<T: Named>(x: T) -> string {
+    x.name()
+}
+
+fn both(n: any Named) -> i64 {
+    let s: any Source<i64> = n
+    read(s)
+}
+
+fn main() {
+    let b = Box1(n: 7)
+    let s: any Source<i64> = b
+    print(read(s))
+    let n: any Named = Box1(n: 9)
+    print(both(n))
+    print(tell(n))
+    let link: any Chain<i64> = Link()
+    print(follow(link))
+    let items: [any Source<i64>] = [b, b]
+    print(say(Stack(items: items)))
+    print(link.next().get())
+    let m: (any Named)? = b
+    print(m is b)
+    let o: (any Source<i64>)? = None
+    print(o ?? s)
+}

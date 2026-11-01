@@ -6,7 +6,7 @@ use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, payload,
 use crate::ast;
 use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Literal};
 use crate::source::Span;
-use crate::tir::{self, Type, TypeKind};
+use crate::tir::{self, Type, TypeArgs, TypeKind};
 
 /// The methods of an array that the compiler writes, with their parameter counts. `push` is not
 /// answered here: it writes its receiver's place, which `Checker::push` checks. The prelude's
@@ -212,14 +212,19 @@ impl Checker<'_> {
         let class = type_of(&checked).map(innermost).filter(|ty| {
             matches!(
                 ty.kind(),
-                TypeKind::Class(..) | TypeKind::Param(..) | TypeKind::Assoc(..)
+                TypeKind::Class(..) | TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..)
             ) && !self.none_written(value)
         });
         if let Some(class) = class {
+            let any = matches!(class.kind(), TypeKind::Any(..));
+            // An `any` of a class-only interface holds an object, as a class is one.
+            let may_be_class = matches!(class.kind(), TypeKind::Param(..) | TypeKind::Assoc(..))
+                || (any && !self.conforms(class, self.lang.any_object, TypeArgs::NONE));
             self.report(DiagnosticKind::SameObject {
                 class: self.type_name(class),
                 at: value.span,
-                param: matches!(class.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)),
+                param: may_be_class,
+                any,
             });
         }
         let (checked, mismatched) = match element {

@@ -1,0 +1,2 @@
+any_classes.sisu:208:9: plain = H(s: "x")
+any_classes.sisu:209:9: [plain] = [H(s: "x")]

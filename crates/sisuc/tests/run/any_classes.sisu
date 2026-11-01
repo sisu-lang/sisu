@@ -1,0 +1,246 @@
+// GIVEN interfaces `Shape`, `Named`, `Solid` (which inherits `Named`) and `Observer` (which
+// inherits `AnyObject`), and classes that conform to them, with and without a written `to_string`
+// WHEN `any` values of these classes are converted, stored, passed, called, compared with `is`,
+// converted to the `any` of an interface they inherit, shown with `print`, `dbg` and `{...}`,
+// dropped at their last use and assigned over
+// THEN each call runs the method of the class inside, each value shows as its class does, and
+// Valgrind and `--rc-checks` find every object freed once
+interface Shape {
+    fn area(self) -> f64
+}
+
+interface Named {
+    fn name(self) -> string
+}
+
+interface Solid: Named {
+    fn volume(self) -> f64
+}
+
+interface Observer: AnyObject {
+    fn notify(self, event: string) -> string
+}
+
+class Circle: Shape {
+    r: f64
+
+    fn area(self) -> f64 {
+        self.r * self.r * 3.0
+    }
+}
+
+class Rect: Shape {
+    w: f64
+    h: f64
+
+    fn area(self) -> f64 {
+        self.w * self.h
+    }
+}
+
+class Cube: Solid {
+    side: f64
+
+    fn name(self) -> string {
+        "cube {self.side}"
+    }
+
+    fn volume(self) -> f64 {
+        self.side * self.side * self.side
+    }
+}
+
+// A class whose `to_string` is written: an `any Display` shows its text.
+class Tag {
+    label: string
+
+    fn to_string(self) -> string {
+        "tag {self.label}"
+    }
+}
+
+// A class with no written `to_string`: `print` shows its name, `dbg` its fields.
+class H {
+    s: string
+}
+
+class Button: Observer {
+    id: i64
+
+    fn notify(self, event: string) -> string {
+        "button {self.id} saw {event}"
+    }
+}
+
+class Cell<T> {
+    value: T
+    next: Cell<T>?
+}
+
+class Stack<T> {
+    mut top: Cell<T>?
+
+    fn push(self, x: T) {
+        self.top = Cell(value: x, next: self.top)
+    }
+
+    fn pop(self) -> T? {
+        if let cell = self.top {
+            self.top = cell.next
+            cell.value
+        } else {
+            None
+        }
+    }
+}
+
+class Holder {
+    mut shape: (any Shape)?
+}
+
+enum Slot {
+    Empty
+    Full(any Shape)
+}
+
+fn total<T: Shape>(xs: [T]) -> f64 {
+    let mut sum = 0.0
+    for x in xs {
+        sum += x.area()
+    }
+    sum
+}
+
+fn same<T: AnyObject>(a: T, b: T) -> bool {
+    a is b
+}
+
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn head<T>(xs: [T]) -> T {
+    xs[0]
+}
+
+fn keep<T: Observer>(x: T) -> any Observer {
+    x
+}
+
+fn make(wide: bool) -> any Shape {
+    if wide { Rect(w: 4.0, h: 1.0) } else { Circle(r: 1.0) }
+}
+
+fn describe(s: any Shape) -> string {
+    "area {s.area()}"
+}
+
+fn main() {
+    // An array of two classes: each call runs the method of the class inside.
+    let shapes: [any Shape] = [Circle(r: 1.0), Rect(w: 2.0, h: 3.0)]
+    for s in shapes {
+        print(s.area())
+        print(s)
+    }
+    print(total(shapes)) // 9.0
+    print("{shapes[0]} {shapes[1]}") // Circle Rect
+
+    // A stack of interface values, pushed and popped.
+    let stack: Stack<any Shape> = Stack(top: None)
+    stack.push(Circle(r: 2.0))
+    stack.push(Rect(w: 1.0, h: 1.0))
+    print((stack.pop() ?? make(false)).area()) // 1.0
+    print((stack.pop() ?? make(false)).area()) // 12.0
+    print(stack.pop() == None) // true
+
+    // An optional interface value: `None`, and a value, in an array and in a field.
+    let maybe: (any Shape)? = None
+    let some: (any Shape)? = Circle(r: 3.0)
+    let both: [(any Shape)?] = [maybe, some, None, make(true)]
+    for slot in both {
+        if let s = slot {
+            print(s.area())
+        } else {
+            print("none")
+        }
+    }
+    let holder = Holder(shape: None)
+    print(holder.shape == None) // true
+    holder.shape = Rect(w: 1.0, h: 5.0)
+    print((holder.shape ?? make(false)).area()) // 5.0
+    holder.shape = None
+    print(holder.shape == None) // true
+
+    // Two optionals: the middle state `Some(None)` is its own.
+    let none_none: (any Shape)?? = None
+    let some_none: (any Shape)?? = Some(None)
+    let some_some: (any Shape)?? = Some(Circle(r: 1.0))
+    print(none_none.to_string()) // None
+    print(some_none.to_string()) // Some(None)
+    print(some_some.to_string()) // Circle
+
+    // Inference: the argument binds `T`, and the result converts.
+    let from_id: any Shape = id(Circle(r: 1.0))
+    print(from_id.area()) // 3.0
+    let circles = [Circle(r: 2.0), Circle(r: 3.0)]
+    let from_head: any Shape = head(circles)
+    print(from_head.area()) // 12.0
+
+    // An interface value of an inheriting interface converts up, keeping its object.
+    let solid: any Solid = Cube(side: 2.0)
+    let named: any Named = solid
+    print(named.name()) // cube 2.0
+    print(solid.volume()) // 8.0
+    let printed: any Display = named
+    print(printed) // Cube
+
+    // `any Display` shows what its class shows, and `to_string` is a method of its table.
+    let tag: any Display = Tag(label: "{1}")
+    print(tag) // tag 1
+    print(tag.to_string()) // tag 1
+    let h = H(s: "x")
+    print(h.s) // x
+    let plain: any Display = h
+    print(plain) // H
+    print(plain.to_string()) // H
+    print([plain, tag]) // [H, tag 1]
+    print("{tag:>8}|{plain:<4}|") // "   tag 1|H   |"
+    dbg(plain) // H(s: "x")
+    dbg([plain]) // [H(s: "x")]
+
+    // `is` compares the objects, through an interface value and through `AnyObject`.
+    let button = Button(id: 1)
+    let other = Button(id: 2)
+    let a: any Observer = button
+    let b: any Observer = button
+    let c: any Observer = other
+    print(a is b) // true
+    print(a is c) // false
+    print(a is button) // true
+    print(button is c) // false
+    print(same(a, b)) // true
+    print(same(a, c)) // false
+    let object: any AnyObject = a
+    print(object is button) // true
+    print(object is other) // false
+    print(a.notify("click")) // button 1 saw click
+    // The identity conversion of `keep` makes no new value.
+    print(keep(c).notify("tap")) // button 2 saw tap
+
+    // An interface value in a payload of an enum.
+    for slot in [Slot.Full(Circle(r: 1.0)), Slot.Empty] {
+        match slot {
+            Slot.Empty => print("empty")
+            Slot.Full(shape) => print(describe(shape)) // area 3.0
+        }
+    }
+
+    // Each value drops at its last use, and a reassignment drops the old value.
+    let mut changing: any Shape = Circle(r: 1.0)
+    print(changing.area()) // 3.0
+    changing = Rect(w: 2.0, h: 2.0)
+    print(changing.area()) // 4.0
+    changing = make(true)
+    print(changing.area()) // 4.0
+    let _ = make(false)
+}

@@ -1,0 +1,4 @@
+fn main() {
+    let x: any Eq = 5
+    print(x)
+}

@@ -9,21 +9,23 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::mem;
+use std::rc::Rc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::conformance::{
-    Cause, Decide, Holds, Source, Stuck, StuckChoices, ensure_stack, fields_of, find, holds,
-    makes_group, normalize_noting, parts, prints_by_helper,
+    BOUND_CLOSURE_LIMIT, Cause, Decide, Holds, Source, Stuck, StuckChoices, ensure_stack,
+    fields_of, find, holds, interface_closure, makes_group, normalize_noting, parts,
+    prints_by_helper,
 };
 use crate::diagnostic::{Diagnostic, DiagnosticKind, UnknownForm};
 use crate::lang::{self, Cx, Dispatch};
 use crate::payload_limit;
 use crate::source::Span;
 use crate::tir::{
-    Align, Arm, Block, ChoicePlace, Class, ClassId, CompareOp, Conformance, Conformances, Enum,
-    EnumId, Expr, ExprKind, Field, FuncId, Function, InterfaceId, Local, Place, Program, Stmt,
-    Type, TypeArgs, TypeKind, layout_enums,
+    Align, AnyLayout, AnyTable, Arm, Block, ChoicePlace, Class, ClassId, CompareOp, Conformance,
+    Conformances, Enum, EnumId, Expr, ExprKind, Field, FuncId, Function, InterfaceId, Local, Place,
+    Program, Stmt, Type, TypeArgs, TypeKind, layout_enums,
 };
 use crate::types::{Head, write_args, write_method, write_type};
 
@@ -33,6 +35,9 @@ thread_local! {
     static FAST_PATHS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many `(type, interface)` pairs the record walk has entered on this thread.
     pub(crate) static WALK_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many tables `Mono::table` has expanded on this thread, each of an object type for an
+    /// `any` type, once.
+    pub(crate) static TABLES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// `program` with each generic function, class and enum replaced by the instantiations it
@@ -152,6 +157,11 @@ struct Mono {
     /// The span of the expression that `expr` lowers, `None` outside one and inside the
     /// prelude's: the place that an instance is first reached from.
     at: Option<Span>,
+    /// The interfaces of the table of each checked `any` type that `output` has met, with the
+    /// checked arguments: see `tir::AnyLayout`.
+    layouts: FxHashMap<Type, Rc<[(InterfaceId, TypeArgs)]>>,
+    /// The checked class types and `any` types whose table the output holds.
+    tabled: FxHashSet<(Type, Type)>,
     /// The first use of each output enum, in its ids: where an instance first comes from an
     /// expression. The enums of `out.enums` and this table have the same length. An instance
     /// that only a local's type or a class field reaches has none until an expression meets
@@ -193,6 +203,8 @@ impl Mono {
             locals: Vec::new(),
             work: VecDeque::new(),
             at: None,
+            layouts: FxHashMap::default(),
+            tabled: FxHashSet::default(),
             uses: Vec::new(),
         };
         let user_funcs = program.prelude.funcs;
@@ -422,6 +434,15 @@ impl Mono {
                 let id = self.enum_id(id, args);
                 (Type::intern(TypeKind::Enum(id, TypeArgs::NONE)), Some(id))
             }
+            TypeKind::Any(interface, args) => {
+                // Meeting an `any` type is how its layout reaches the output.
+                self.layout(ty);
+                let args: Vec<Type> = args.get().iter().map(|&arg| self.output(arg)).collect();
+                (
+                    Type::intern(TypeKind::Any(interface, TypeArgs::intern(&args))),
+                    None,
+                )
+            }
             TypeKind::Array(element) => {
                 let inner = self.output(element);
                 (Type::array(inner), self.held_by(element))
@@ -437,6 +458,91 @@ impl Mono {
         });
         self.types.insert(ty, (done, held));
         done
+    }
+
+    /// The interfaces of the table of the checked `any` type `any`: see `tir::AnyLayout`. The
+    /// first time, the output gets the layout, with the arguments as the output names them.
+    fn layout(&mut self, any: Type) -> Rc<[(InterfaceId, TypeArgs)]> {
+        if let Some(layout) = self.layouts.get(&any) {
+            return Rc::clone(layout);
+        }
+        let TypeKind::Any(interface, args) = any.kind() else {
+            unreachable!("only an `any` type has a layout");
+        };
+        let interfaces = &self.out.interfaces;
+        let mut closure = interface_closure(
+            |inherited: InterfaceId| interfaces[inherited.0].inherits.iter().copied(),
+            (interface, args),
+            any,
+            BOUND_CLOSURE_LIMIT,
+            || {},
+        );
+        let display = self.out.lang.display;
+        if !closure.iter().any(|&(interface, _)| interface == display) {
+            closure.push((display, TypeArgs::NONE));
+        }
+        let closure: Rc<[(InterfaceId, TypeArgs)]> = closure.into();
+        self.layouts.insert(any, Rc::clone(&closure));
+        let shown = closure
+            .iter()
+            .map(|&(interface, args)| {
+                let args: Vec<Type> = args.get().iter().map(|&arg| self.output(arg)).collect();
+                (interface, TypeArgs::intern(&args))
+            })
+            .collect();
+        let any = self.output(any);
+        self.out.any_layouts.push(AnyLayout {
+            any,
+            interfaces: shown,
+        });
+        closure
+    }
+
+    /// Reaches the table of the checked type `source`, a class, for the checked `any` type
+    /// `target`, and of each interface in its layout: the methods that meet their requirements
+    /// are instantiated, and so are the written `to_string` that each show helper may call.
+    fn table(&mut self, source: Type, target: Type) {
+        if !self.tabled.insert((source, target)) {
+            return;
+        }
+        #[cfg(test)]
+        TABLES.set(TABLES.get() + 1);
+        let layout = self.layout(target);
+        let (display, any_object) = (self.out.lang.display, self.out.lang.any_object);
+        let mut tables = Vec::new();
+        for &(interface, args) in layout.iter() {
+            let inner = Type::intern(TypeKind::Any(interface, args));
+            if inner != target {
+                self.table(source, inner);
+            }
+            tables.push(if interface == any_object {
+                Vec::new()
+            } else if interface == display {
+                // The helpers show the value in both modes, through the written `to_string`.
+                self.walk(source, display, false);
+                self.walk(source, display, true);
+                match self.holds(source, display) {
+                    Holds::Written(k, stands) => {
+                        let method = self.conformances.get(display, k).methods[0];
+                        vec![Some(self.function_id(method, stands))]
+                    }
+                    Holds::Generated | Holds::No => vec![None],
+                }
+            } else {
+                let (k, stands) = find(&self.conformances, interface, source, args)
+                    .expect("the checker should have found the conformance of a converted type");
+                let methods = self.conformances.get(interface, k).methods.clone();
+                (methods.into_iter())
+                    .map(|method| Some(self.function_id(method, stands)))
+                    .collect()
+            });
+        }
+        let (ty, any) = (self.output(source), self.output(target));
+        self.out.any_tables.push(AnyTable {
+            ty,
+            any,
+            methods: tables,
+        });
     }
 
     /// The output enum that the type `ty` holds, through arrays and optionals, for a type that
@@ -500,6 +606,7 @@ impl Mono {
     fn head(&self, head: Head) -> &str {
         match head {
             Head::Assoc(..) => unreachable!("mono should replace every associated type"),
+            Head::Interface(id) => &self.out.interfaces[id.0].name,
             Head::Class(id) => match &self.class_decls[id.0] {
                 Some(decl) => &decl.name,
                 None => &self.out.classes[self.class_ids[&(id, TypeArgs::NONE)].0].name,
@@ -685,6 +792,19 @@ impl Mono {
                 let (operands, ops) = (mem::take(operands), mem::take(ops));
                 e.kind = self.compare(operands, &ops, e.span, args);
             }
+            K::ToAny(operand) => {
+                // The table of an object reaches the methods that meet the interface.
+                let (source, target) = (self.subst(operand.ty, args), self.subst(e.ty, args));
+                if source == target {
+                    // A type parameter that stands for the `any` type is already one.
+                    let inner = hole(operand);
+                    *e = inner;
+                    return self.expr_kind(e, args);
+                }
+                if matches!(source.kind(), TypeKind::Class(..)) {
+                    self.table(source, target);
+                }
+            }
             K::Print { operand, .. } => {
                 // The helper for a compound operand calls a written `to_string` at each part
                 // that has one.
@@ -771,6 +891,21 @@ impl Mono {
                 if self.failed() {
                     return;
                 }
+                // An `any` receiver calls through its table.
+                if matches!(receiver.kind(), TypeKind::Any(..)) {
+                    let checked = self.subst_args(*iargs, args);
+                    let called: Vec<Type> =
+                        checked.get().iter().map(|&ty| self.output(ty)).collect();
+                    let mut operands = mem::take(operands);
+                    self.exprs(&mut operands, args);
+                    e.kind = K::DynCall {
+                        interface: *interface,
+                        iargs: TypeArgs::intern(&called),
+                        method: *method,
+                        args: operands,
+                    };
+                    return;
+                }
                 // A `Display` that the compiler writes: also for a type whose written record fails
                 // its bounds, which `find` would match.
                 if *interface == self.out.lang.display
@@ -847,7 +982,9 @@ impl Mono {
                 parts: operands, ..
             }
             | K::Compare { operands, .. } => self.exprs(operands, args),
+            K::DynCall { .. } => unreachable!("the checker should make no call through a table"),
             K::Field { base: operand, .. }
+            | K::ToAny(operand)
             | K::Wrap(operand)
             | K::Convert(operand)
             | K::Print { operand, .. }
@@ -1114,6 +1251,7 @@ fn concrete(ty: Type) -> bool {
     match ty.kind() {
         TypeKind::Param(..) | TypeKind::Assoc(..) => false,
         TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args == TypeArgs::NONE,
+        TypeKind::Any(_, args) => args.get().iter().all(|&arg| concrete(arg)),
         TypeKind::Array(inner) | TypeKind::Optional(inner) => concrete(inner),
         _ => true,
     }
@@ -1167,6 +1305,68 @@ mod tests {
         };
         let (a, b, c) = (reads(400), reads(800), reads(1200));
         crate::mir::tests::assert_near_linear(a, b, c);
+    }
+
+    /// A chain of interfaces `I1` to `In`, each of which inherits the two before it, a class `C`
+    /// that conforms to the last, and a `main` that converts a `C` to an `any In` and calls its
+    /// last requirement: `2^n` paths lead from `In` to `I1`, and `n` interfaces are in the
+    /// chain.
+    fn diamond(n: usize) -> String {
+        let mut src = String::from("interface I1 {\n    fn f1(self)\n}\n");
+        src.push_str("interface I2: I1 {\n    fn f2(self)\n}\n");
+        for k in 3..=n {
+            let _ = writeln!(
+                src,
+                "interface I{k}: I{}, I{} {{\n    fn f{k}(self)\n}}",
+                k - 1,
+                k - 2
+            );
+        }
+        let _ = writeln!(src, "class C: I{n} {{");
+        for k in 1..=n {
+            let _ = writeln!(src, "    fn f{k}(self) {{}}");
+        }
+        let _ = write!(
+            src,
+            "}}\nfn main() {{\n    let x: any I{n} = C()\n    x.f{n}()\n}}"
+        );
+        src
+    }
+
+    /// A conversion to `any I` makes a table for `I`, one for each interface that it inherits, and
+    /// one for `Display`, each once: a chain of thirty interfaces, each inheriting the two before
+    /// it, makes thirty-one tables, not a table for each of its `2^30` paths.
+    #[test]
+    fn a_conversion_should_make_one_table_for_each_inherited_interface() {
+        TABLES.set(0);
+        let program = instantiated(&diamond(30));
+        assert_eq!(TABLES.get(), 31);
+        assert_eq!(program.any_tables.len(), 31);
+        // The layout of `any I30` holds each interface once, and `Display` after them.
+        let widest = program.any_layouts.iter().map(|l| l.interfaces.len()).max();
+        assert_eq!(widest, Some(31));
+    }
+
+    /// The methods of the table of a converted class are instantiated, though nothing calls them.
+    #[test]
+    fn a_conversion_should_reach_the_methods_of_the_table() {
+        let program = instantiated(
+            "interface Run {\n    fn run(self)\n    fn stop(self)\n}\nclass C: Run {\n    fn run(self) {}\n    fn stop(self) {}\n}\nfn main() {\n    let r: any Run = C()\n    r.run()\n}",
+        );
+        let names = function_names(&program);
+        assert!(
+            names.contains(&"C.run") && names.contains(&"C.stop"),
+            "{names:?}"
+        );
+        // The table for `any Run` holds both methods, then the `to_string` that the compiler
+        // writes; the table for `any Display` holds that one alone.
+        let lengths: Vec<Vec<usize>> = (program.any_tables.iter())
+            .map(|table| table.methods.iter().map(Vec::len).collect())
+            .collect();
+        assert!(
+            lengths.contains(&vec![2, 1]) && lengths.contains(&vec![1]),
+            "{lengths:?}"
+        );
     }
 
     /// The program `front_end` gives for `src`, which checks without an error.

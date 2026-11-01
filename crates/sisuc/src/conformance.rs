@@ -92,6 +92,52 @@ pub(crate) fn find_with(
     })
 }
 
+/// The most interfaces that the closure of one bound or one `any` type holds. An interface that
+/// inherits another twice, with different arguments, doubles the number at each level of
+/// inheritance, so a walk stops here (E0157).
+pub(crate) const BOUND_CLOSURE_LIMIT: usize = 256;
+
+/// The interface `root` with the arguments `args`, and every interface it inherits, each
+/// interface with its arguments once, depth first in the order of the lists. `inherits` gives the
+/// interfaces that one inherits, with arguments over its own parameters, `Self` first, and
+/// `receiver` stands for `Self`. `tick` is called for each entry that the walk adds, so that a
+/// test counts them. The walk stops at `limit` entries, which a bound's closure may reach when
+/// an interface inherits another with two arguments (E0157).
+pub(crate) fn interface_closure<I: IntoIterator<Item = (InterfaceId, TypeArgs)>>(
+    inherits: impl Fn(InterfaceId) -> I,
+    root: (InterfaceId, TypeArgs),
+    receiver: Type,
+    limit: usize,
+    mut tick: impl FnMut(),
+) -> Vec<(InterfaceId, TypeArgs)> {
+    let mut seen = rustc_hash::FxHashSet::default();
+    let mut out = Vec::new();
+    let mut stack = vec![root];
+    let mut with = Vec::new();
+    while let Some(entry) = stack.pop() {
+        if !seen.insert(entry) {
+            continue;
+        }
+        tick();
+        out.push(entry);
+        if out.len() >= limit {
+            break;
+        }
+        with.clear();
+        with.push(receiver);
+        with.extend_from_slice(entry.1.get());
+        let first = stack.len();
+        stack.extend(
+            inherits(entry.0)
+                .into_iter()
+                .map(|(interface, args)| (interface, args.subst(&with))),
+        );
+        // The first interface of the list is the next one to pop.
+        stack[first..].reverse();
+    }
+    out
+}
+
 /// What the generated rule of an interface asks of a type, for the caller to settle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Generated {
@@ -343,19 +389,24 @@ pub(crate) fn parts<P: Payloads + ?Sized>(
 }
 
 /// Whether `print` of a value of type `ty` writes it through a helper that may reach a written
-/// `to_string`: an array, an optional, a class or an enum. A scalar and a `string` print as they
-/// always did and reach none.
+/// `to_string`: an array, an optional, a class, an enum or an `any` value, whose table holds the
+/// helper of the type inside. A scalar and a `string` print as they always did and reach none.
 pub(crate) fn prints_by_helper(ty: Type) -> bool {
     matches!(
         ty.kind(),
-        TypeKind::Array(_) | TypeKind::Optional(_) | TypeKind::Class(..) | TypeKind::Enum(..)
+        TypeKind::Array(_)
+            | TypeKind::Optional(_)
+            | TypeKind::Class(..)
+            | TypeKind::Enum(..)
+            | TypeKind::Any(..)
     )
 }
 
 /// Whether the text of a value of type `ty` can hold a group, which `{x:#}` may break.
 /// An array, an enum and an optional of an optional (the `Some(` of the `Some` rule) can.
 /// So can an optional of an array or of an enum.
-/// A type parameter or an associated type can, because its argument may be one of these.
+/// A type parameter or an associated type can, because its argument may be one of these, and so
+/// can an `any` value, whose type inside may be one.
 /// A scalar, a `string` and a class write one piece.
 /// An optional of one of those is transparent.
 pub(crate) fn makes_group(mut ty: Type) -> bool {
@@ -367,7 +418,11 @@ pub(crate) fn makes_group(mut ty: Type) -> bool {
     }
     matches!(
         ty.kind(),
-        TypeKind::Array(_) | TypeKind::Enum(..) | TypeKind::Param(..) | TypeKind::Assoc(..)
+        TypeKind::Array(_)
+            | TypeKind::Enum(..)
+            | TypeKind::Param(..)
+            | TypeKind::Assoc(..)
+            | TypeKind::Any(..)
     )
 }
 
@@ -650,7 +705,9 @@ pub(crate) fn calls_written<P: Payloads + ?Sized, F: Fields + ?Sized>(
         (ty, interface, dbg),
         |(key, _, dbg), parts_of| {
             // A written `eq` is the whole comparison: the helper compares no part of the type.
-            if has_written(conformances, interface, key) {
+            // The table of an `any` value may hold the written method of any conforming type.
+            if has_written(conformances, interface, key) || matches!(key.kind(), TypeKind::Any(..))
+            {
                 return true;
             }
             if dbg && matches!(key.kind(), TypeKind::Class(..)) {
@@ -668,10 +725,11 @@ pub(crate) fn calls_written<P: Payloads + ?Sized, F: Fields + ?Sized>(
 }
 
 /// Whether the concrete type `ty` holds a class with no written `Display`. It does when it is
-/// one, or when an array, an optional or an enum payload (any depth) is. Only such a class is
-/// written with its fields by `dbg`. A class or an enum with a written `Display` shows that text,
-/// so the walk stops at it. A `dbg` helper of a type that holds none is the `print` helper. The
-/// answers of `held` are the types decided so far, which later queries read.
+/// one or an `any` value, whose table may hold one, or when an array, an optional or an enum
+/// payload (any depth) is. Only such a class is written with its fields by `dbg`. A class or an
+/// enum with a written `Display` shows that text, so the walk stops at it. A `dbg` helper of a
+/// type that holds none is the `print` helper. The answers of `held` are the types decided so
+/// far, which later queries read.
 pub(crate) fn holds_class<P: Payloads + ?Sized>(
     (conformances, display): (&Conformances, InterfaceId),
     enums: &P,
@@ -682,7 +740,8 @@ pub(crate) fn holds_class<P: Payloads + ?Sized>(
         if has_written(conformances, display, key) {
             return false;
         }
-        if matches!(key.kind(), TypeKind::Class(..)) {
+        // The table of an `any` value may hold a class.
+        if matches!(key.kind(), TypeKind::Class(..) | TypeKind::Any(..)) {
             return true;
         }
         parts(conformances, enums, key, parts_of);
@@ -872,6 +931,7 @@ impl Normalizer<'_> {
             TypeKind::Optional(payload) => Type::optional(self.walk(payload)?),
             TypeKind::Class(id, args) => Type::intern(TypeKind::Class(id, self.all(args)?)),
             TypeKind::Enum(id, args) => Type::intern(TypeKind::Enum(id, self.all(args)?)),
+            TypeKind::Any(id, args) => Type::intern(TypeKind::Any(id, self.all(args)?)),
             TypeKind::Assoc(base, interface, args, k) => {
                 let base = self.walk(base)?;
                 let args = self.all(args)?;
@@ -1021,6 +1081,9 @@ fn matches(pattern: Type, ty: Type, slots: &mut [Option<Type>]) -> Option<()> {
         (TypeKind::Enum(a, p), TypeKind::Enum(b, t))
             if a == b && p.get().len() == t.get().len() =>
         {
+            matches_all(p, t, slots)
+        }
+        (TypeKind::Any(a, p), TypeKind::Any(b, t)) if a == b && p.get().len() == t.get().len() => {
             matches_all(p, t, slots)
         }
         _ => (pattern == ty).then_some(()),
@@ -1180,6 +1243,7 @@ impl Unifier {
             TypeKind::Optional(payload) => Type::optional(self.resolve(payload)?),
             TypeKind::Class(id, args) => Type::intern(TypeKind::Class(id, self.resolve_all(args)?)),
             TypeKind::Enum(id, args) => Type::intern(TypeKind::Enum(id, self.resolve_all(args)?)),
+            TypeKind::Any(id, args) => Type::intern(TypeKind::Any(id, self.resolve_all(args)?)),
             _ => ty,
         })
     }
@@ -1227,6 +1291,11 @@ impl Unifier {
                 self.join(left, right) || self.unify_all(l, r)
             }
             (TypeKind::Enum(from, l), TypeKind::Enum(to, r))
+                if from == to && l.get().len() == r.get().len() =>
+            {
+                self.join(left, right) || self.unify_all(l, r)
+            }
+            (TypeKind::Any(from, l), TypeKind::Any(to, r))
                 if from == to && l.get().len() == r.get().len() =>
             {
                 self.join(left, right) || self.unify_all(l, r)

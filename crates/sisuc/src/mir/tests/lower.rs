@@ -1091,3 +1091,39 @@ fn a_binding_under_a_boxed_optional_field_should_be_copied_once() {
     assert!(!f.contains("token"), "a token in\n{f}");
     has(&printed, "f", &["take_apart _: rest _"]);
 }
+
+/// A conversion to `any` consumes its operand, and the call `s.area()` reads a temporary that owns
+/// its receiver in place and runs through the table; the temporary is released after the call.
+#[test]
+fn an_any_conversion_and_its_call_should_lower_to_to_any_and_dyn_call() {
+    let printed = lowered(&format!(
+        "{ANY_SHAPE}fn f(c: Circle) -> f64 {{\n    let s: any Shape = c\n    s.area()\n}}"
+    ));
+    has(
+        &printed,
+        "f",
+        &[
+            "s#1 = to_any use c#0",
+            "_ = use s#1",
+            "_ = dyn_call Shape.area(_)",
+            "release _",
+        ],
+    );
+}
+
+/// `mono` removes a conversion whose operand has the type already: `keep` at `T = any Tag`
+/// converts nothing, and at `T = Label` it converts.
+#[test]
+fn an_identity_conversion_should_leave_no_to_any() {
+    let printed = built(&format!(
+        "{ANY_SHAPE}fn keep<T: Tag>(x: T) -> any Tag {{ x }}\nfn main() {{\n    let t: any Tag = Label(n: \"a\")\n    let k = keep(t)\n    let l = keep(Label(n: \"b\"))\n    print(k.mark(\"x\"))\n    print(l.mark(\"y\"))\n}}"
+    ));
+    assert!(
+        !function(&printed, "keep<any Tag>").contains("to_any"),
+        "{printed}"
+    );
+    assert!(
+        function(&printed, "keep<Label>").contains("to_any"),
+        "{printed}"
+    );
+}

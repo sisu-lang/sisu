@@ -1,0 +1,10 @@
+error[E0164]: `Plain` cannot be used as `any Plain`: it inherits `Holds`, which has an associated type, `Item`
+ --> E0164-inherited-assoc.sisu:9:20
+  |
+9 | fn _show(_xs: [any Plain]) {
+  |                    ^^^^^ used after `any` here
+  |
+  = help: use a type parameter: `T: Plain`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0164

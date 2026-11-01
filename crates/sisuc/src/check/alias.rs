@@ -201,7 +201,9 @@ impl Checker<'_> {
                     self.alias_refs(arg, params, out);
                 }
             }
-            ast::TypeKind::Array(element) => self.alias_refs(element, params, out),
+            ast::TypeKind::Array(element) | ast::TypeKind::Any(element) => {
+                self.alias_refs(element, params, out);
+            }
             ast::TypeKind::Member { base, .. } => self.alias_refs(base, params, out),
             ast::TypeKind::SelfType => {}
         }

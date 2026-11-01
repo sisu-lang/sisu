@@ -349,6 +349,9 @@ impl Checker<'_> {
                 };
                 return (wrapped, false);
             }
+            if let Ok(done) = self.any_conversion(e.span, checked, want, got) {
+                return done;
+            }
             let d = self.mismatch_from(e.span, Some(e), want, got, source);
             self.diagnostics.push(d);
             return (Err(Poisoned::error()), true);
