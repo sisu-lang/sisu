@@ -3483,9 +3483,9 @@ fn check_should_reject_an_optimization_level() {
 /// AND standard error does not say that `sisu check` does not take the flag
 #[test]
 fn check_should_keep_clap_text_for_a_flag_after_the_double_dash() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    fs::write(dir.join("after_dashes.sisu"), CLEAN).expect("writes");
     for flag in ["-o", "--emit", "-O2", "--timings"] {
-        let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
-        fs::write(dir.join("after_dashes.sisu"), CLEAN).expect("writes");
         let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
             .current_dir(dir)
             .args(["check", "after_dashes.sisu", "--", flag])
@@ -3493,6 +3493,10 @@ fn check_should_keep_clap_text_for_a_flag_after_the_double_dash() {
             .expect("sisu starts");
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(out.status.code(), Some(2), "{flag}: {stderr}");
+        assert!(
+            stderr.contains(&format!("unexpected argument '{flag}'")),
+            "{flag}: {stderr}"
+        );
         assert!(!stderr.contains("does not take"), "{flag}: {stderr}");
     }
 }
