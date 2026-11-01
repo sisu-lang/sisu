@@ -1,0 +1,14 @@
+error[E0062]: this value may be `None`
+  --> E0062-push-method.sisu:13:5
+   |
+13 |     shop?.bag().items.push(1)
+   |     ^^^^^^^^^^^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`
+help: if a `None` result is fine, use `?.`
+   |
+13 |     shop?.bag()?.items.push(1)
+   |                +
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0062
