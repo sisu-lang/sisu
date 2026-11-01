@@ -36,13 +36,38 @@ echo "ran $0" >> {log}
 printf '{output}'
 """
 
+# A trimmed copy of the `-bench` file of a real run: `go build -gcflags='-bench=<file> -c=1' -p=1`
+# of a small program (go1.27.2, 15 lines). Its `fe:parse` time is 29747546 ns.
+GO_BENCH = """commit: go1.27.2
+goos: linux
+goarch: amd64
+BenchmarkCompile:main:fe:init                       1     5813643 ns/op      6.94 %
+BenchmarkCompile:main:fe:parse                      1    29747546 ns/op     35.51 %    15 lines    504 lines/s
+BenchmarkCompile:main:fe:subtotal                   1    48121701 ns/op     57.44 %
+BenchmarkCompile:main:total                         1    83781280 ns/op    100.00 %
+"""
+GO_FE_PARSE = 0.029747546
+# perf runs the command after `--` and then prints a count, as `perf stat -x,` does.
+PERF = """#!/bin/sh
+case "$*" in "stat -e instructions:u true") exit 0;; esac
+while [ "$1" != -- ]; do shift; done
+shift
+"$@"
+code=$?
+echo '1234,,instructions:u,100,100.00,,' >&2
+exit $code
+"""
 
-def stub_text(tmp, name, output='45\\n', stderr='', fail=False, out=''):
+
+def stub_text(tmp, name, output='45\\n', stderr='', fail=False, out='', bench='',
+              linker='GNU ld stub 1.0'):
     """The text of a stub for tool `name`.
 
-    A compiler stub logs its arguments and $GOMAXPROCS, writes a program at the path after `-o`,
-    and prints `stderr` to standard error. `fail` makes it exit 1. `out` is what a formatter
-    prints to standard output.
+    A compiler stub logs its arguments, the first line of its last argument and $GOMAXPROCS. It
+    writes a program at the path after `-o`, and prints `stderr` to standard error. `fail` makes
+    it exit 1. `out` is what a formatter prints to standard output. `bench` is the text that a
+    Go stub appends to the file of a `-gcflags=-bench=<file>` argument. `linker` is what a stub
+    prints for `-Wl,--version`.
     """
     log = tmp / 'log'
     if name == 'gofmt':
@@ -56,18 +81,26 @@ def stub_text(tmp, name, output='45\\n', stderr='', fail=False, out=''):
         body = f"echo '{out}'\n" if out else ''
         return f'#!/bin/sh\n{version}{body}{echo_stderr}{exit_code}'
     program = PROGRAM.format(log=log, output=output)
+    bench_block = f'if [ -n "$bench" ]; then /bin/cat >> "$bench" <<\'BENCH\'\n{bench}BENCH\nfi\n' \
+        if bench else ''
     return f"""#!/bin/sh
-echo "{name} $* GOMAXPROCS=$GOMAXPROCS" >> {log}
+last=
+for a in "$@"; do last=$a; done
+first=$(/usr/bin/head -n 1 "$last" 2>/dev/null)
+echo "{name} $* first=[$first] GOMAXPROCS=$GOMAXPROCS" >> {log}
 case "$1 $2" in "tool link") echo "{name} link 1.0"; exit 0;; esac
+case "$*" in *-Wl,--version*) echo "{linker}"; exit 0;; esac
 {version}out=
 outdir=
+bench=
 prev=
 for a in "$@"; do
     if [ "$prev" = -o ]; then out=$a; fi
     if [ "$prev" = --out-dir ]; then outdir=$a; fi
+    case "$a" in -gcflags=-bench=*) bench=${{a#-gcflags=-bench=}}; bench=${{bench%% *}};; esac
     prev=$a
 done
-{echo_stderr}if [ -n "$out" ]; then
+{bench_block}{echo_stderr}if [ -n "$out" ]; then
     /bin/cat > "$out" <<'PROGRAM'
 {program}PROGRAM
     /bin/chmod +x "$out"
@@ -136,9 +169,6 @@ class CompileSpeed(unittest.TestCase):
         except (OSError, ValueError):
             pass
 
-    def kill_stub_sleep(self):
-        self.kill_pidfile(self.tmp / 'pid')
-
     def log_lines(self):
         log = self.tmp / 'log'
         return log.read_text().splitlines() if log.exists() else []
@@ -203,7 +233,9 @@ class CompileSpeed(unittest.TestCase):
                 ('comment in the directive', '#/**/ include <vector>', 3, '#/**/ include <vector>'),
                 ('comment over lines', '/* a\nb */ #include <vector>', 4, 'b */ #include <vector>'),
                 ('line splice', '#inc\\\nlude <vector>', 3, '#inc\\'),
-                ('digraph', '%:include <vector>', 3, '%:include <vector>'))
+                ('digraph', '%:include <vector>', 3, '%:include <vector>'),
+                ('import', '#import <vector>', 3, '#import <vector>'),
+                ('include_next', '#include_next <vector>', 3, '#include_next <vector>'))
         for label, directive, line, shown in rows:
             with self.subTest(label):
                 (self.units / 'unit.cpp').write_text(head + directive + tail)
@@ -246,7 +278,7 @@ class CompileSpeed(unittest.TestCase):
         # The background sleep does not hold the pipes, so only the kill of the group ends it.
         script = (f'#!/bin/sh\n/bin/sleep 300 >/dev/null 2>&1 &\necho $! > {self.tmp}/pid\nwait\n')
         env = stubs(self.tmp, rustc=script)
-        self.addCleanup(self.kill_stub_sleep)
+        self.addCleanup(self.kill_pidfile, self.tmp / 'pid')
         # The timeout is only a stop for a script that does not kill the group.
         r = self.run_script('--sizes', '1', '--check-only', env=env, time_bound='1', timeout=20)
         self.assertEqual(r.returncode, 1)
@@ -444,6 +476,184 @@ class CompileSpeed(unittest.TestCase):
                     else:
                         self.assertIn('-p=1', go)
                         self.assertTrue(any('-c=1' in arg for arg in go), go)
+    def table_rows(self, stdout):
+        """The cells of each row of the markdown table in `stdout`, as lists of text."""
+        return [[c.strip() for c in line.strip('|').split('|')] for line in stdout.splitlines()
+                if line.startswith('| ') and not line.startswith(('| Row', '| ---'))]
+
+    def test_tokens_should_count_words_numbers_literals_and_each_punctuation_character(self):
+        """
+        GIVEN source text in each language
+        WHEN `tokens` counts it
+        THEN a word, a number, a literal and each other character is one token
+        AND a comment is none
+        """
+        rows = (
+            ('fn f(x: i64) -> i64 { x + 1 } // c\n', 'u.rs', 15, 'the arrow is two'),
+            ('print("a {b} c")', 'u.sisu', 4, 'one string with an interpolation'),
+            ('print("a {f("{x}")} c")', 'u.sisu', 4, 'a nested interpolation'),
+            ('printf("{")', 'u.cpp', 4, 'no interpolation outside Sisu'),
+            ('"a\\"b"', 'u.rs', 1, 'an escaped quote'),
+            ('0..10', 'u.sisu', 4, 'a range is two numbers and two points'),
+            ('1.2_3 + 1e5 + 2.5E-3', 'u.go', 5, 'numbers with a point, an exponent and a sign'),
+            ("x = 'a'", 'u.go', 3, 'a character literal'),
+            ('/* a */', 'u.go', 0, 'a block comment'),
+            ('a /* b\nc */ d', 'u.go', 2, 'a block comment over lines'),
+            ('x := 5u8', 'u.rs', 4, 'a suffix is part of the number'),
+        )
+        for text, path, expected, label in rows:
+            with self.subTest(label):
+                self.assertEqual(compile_speed.tokens(text, path), expected)
+
+    def test_tokens_should_stop_on_a_quote_with_no_close_on_its_line(self):
+        """
+        GIVEN source text with a `'` that has no closing `'` on its line
+        WHEN `tokens` counts it
+        THEN it raises Fail with the file and the line
+        """
+        for text, named in (("fn f<'a>()", 'u.rs:1'), ("x\ny = 'a\n'", 'u.rs:2')):
+            with self.subTest(text), self.assertRaises(compile_speed.Fail) as caught:
+                compile_speed.tokens(text, 'u.rs')
+            self.assertIn(named, str(caught.exception))
+
+    def test_go_fe_parse_should_read_one_phase_time(self):
+        """
+        GIVEN the `-bench` file of a real Go run
+        WHEN `go_fe_parse` reads it
+        THEN it gives the `fe:parse` time in seconds
+        """
+        self.assertAlmostEqual(compile_speed.go_fe_parse(GO_BENCH), GO_FE_PARSE, places=9)
+
+    def test_go_run_without_one_fe_parse_line_should_stop_the_script(self):
+        """
+        GIVEN the `-bench` file of a cached build, or one with a repeated line
+        WHEN `go_fe_parse` reads it
+        THEN it raises Fail that names Go
+        """
+        header = 'commit: go1.27.2\n'
+        parse = GO_BENCH.splitlines()[4] + '\n'
+        rows = (('empty', ''), ('no fe:parse line', header),
+                ('two headers', header + header + parse), ('two fe:parse lines', header + parse * 2))
+        for label, text in rows:
+            with self.subTest(label), self.assertRaises(compile_speed.Fail) as caught:
+                compile_speed.go_fe_parse(text)
+            self.assertIn('Go', str(caught.exception))
+
+    def test_past_empty_should_print_a_dash_when_the_difference_is_not_positive(self):
+        """
+        GIVEN a time, the time of the empty program and a count of tokens
+        WHEN `past_empty` gives the rate
+        THEN it is a dash when the time less the empty time is 0 or less
+        """
+        self.assertEqual(compile_speed.past_empty(1000, 0.5, 0.5), '-')
+        self.assertEqual(compile_speed.past_empty(1000, 0.4, 0.5), '-')
+        self.assertEqual(compile_speed.past_empty(1000, 1.5, 0.5), '1.0k')
+
+    def test_missing_toolchain_should_be_skipped(self):
+        """
+        GIVEN a `PATH` with no `go`
+        WHEN `scripts/compile_speed.py` runs
+        THEN it exits with code 0
+        AND each Go cell of the table says `skipped`
+        AND each Sisu, Rust and C++ cell has a time
+        """
+        r = self.run_script('--sizes', '1', '--runs', '1', env=stubs(self.tmp, omit=('go',)))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rows = self.table_rows(r.stdout)
+        self.assertEqual(len(rows), 20, r.stdout)
+        for cells in rows:
+            if cells[2] == 'Go':
+                self.assertEqual(cells[5], 'skipped', cells)
+            else:
+                self.assertRegex(cells[5], r'^\d+\.\d+ m?s$', cells)
+
+    def test_full_run_should_print_a_row_for_each_command_language_and_size(self):
+        """
+        GIVEN stub compilers for the four languages, a stub `perf`, and two sizes
+        WHEN `scripts/compile_speed.py --sizes 2,1 --runs 2` runs twice on one `--out`
+        THEN the table has one line for each row, size and language
+        AND the Go LLVM IR cells say `none`
+        AND the Go type-check cells have the `fe:parse` time
+        AND the Go type-check instruction cells are `-` and every other filled one is a number
+        AND no Go input has the same first line twice
+        AND the header has a version line for each tool and a linker line for each language
+        """
+        env = stubs(self.tmp, go={'bench': GO_BENCH}, perf=PERF, git={'out': 'abc1234'},
+                    clangxx={'linker': 'Ubuntu LLD 20.1'})
+        for _ in range(2):
+            r = self.run_script('--sizes', '2,1', '--runs', '2', env=env)
+            self.assertEqual(r.returncode, 0, r.stderr)
+        rows = self.table_rows(r.stdout)
+        keys = [tuple(cells[:3]) for cells in rows]
+        names = [compile_speed.NAMES[lang] for lang in compile_speed.LANGS]
+        wanted = {(row, str(size), name) for row in compile_speed.ROWS for size in (2, 1)
+                  for name in names}
+        self.assertEqual(len(keys), len(set(keys)), keys)
+        self.assertEqual(set(keys), wanted)
+        for cells in rows:
+            row, language, time, instructions = cells[0], cells[2], cells[5], cells[-1]
+            go = language == 'Go'
+            if go and row == compile_speed.ROWS[2]:
+                self.assertEqual((time, instructions), ('none', '-'), cells)
+            elif go and row in compile_speed.ROWS[:2]:
+                self.assertEqual((time, instructions), ('29.7 ms', '-'), cells)
+            else:
+                self.assertRegex(time, r'^\d+\.\d+ m?s$', cells)
+                self.assertRegex(instructions, r'^\d+$', cells)
+        log = self.log_lines()
+        go_lines = [line for line in log if line.startswith('go ')]
+        self.assertTrue(go_lines)
+        for line in go_lines:
+            self.assertTrue(line.endswith('GOMAXPROCS=1'), line)
+        # The check builds keep the plain first line `// run`; the measured runs change it.
+        firsts = [line.split(' first=[')[1].split('] ')[0] for line in go_lines
+                  if ' first=[// run ' in line]
+        self.assertTrue(firsts)
+        self.assertEqual(len(firsts), len(set(firsts)), firsts)
+        # The linker of clang++ is LLD, so its optimized builds get a thread limit. The linker of
+        # the stub rustc is not LLD. The check builds do not use -O2.
+        clang = [line for line in log if line.startswith('clang++ ') and ' -O2 ' in line]
+        self.assertTrue(clang)
+        for line in clang:
+            self.assertIn('-Wl,--threads=1', line)
+        self.assertFalse([line for line in log if line.startswith('rustc ') and 'threads=1' in line])
+        header = r.stdout.split('| Row')[0]
+        for text in ('commit: abc1234', 'sisu 1.0', 'rustc 1.0', 'clang++ 1.0', 'go 1.0',
+                     'rustfmt 1.0', 'clang-format 1.0', 'gofmt: from go 1.0',
+                     'linker (Sisu): GNU ld stub 1.0', 'linker (Rust): GNU ld stub 1.0',
+                     'linker (C++): Ubuntu LLD 20.1', 'linker (Go): go link 1.0'):
+            self.assertIn(text, header)
+
+    def test_table_should_print_times_and_rates(self):
+        """
+        GIVEN fixed measurements
+        WHEN `table` prints them
+        THEN a time below 1 s is in milliseconds and a longer one in seconds
+        AND a rate has the suffix of part A's `rate`
+        AND a cell with no perf, no empty time or no time is a dash
+        """
+        row = compile_speed.ROWS[0]
+        Result = compile_speed.Result
+        results = [
+            Result(row, 10, 'sisu', 100, 1000, 0.25, 0.05, 2_000_000),
+            Result(row, 10, 'rust', 300, 999_960, 1.0, None, None),
+            Result(row, 10, 'cpp', 300, 3000, 1.5, 1.5, None),
+            Result(row, 10, 'go', 100, 1000, note='skipped'),
+        ]
+        text = compile_speed.table(['commit: abc'], results)
+        self.assertIn('commit: abc', text.splitlines()[0])
+        # (language, lines, tokens, time, tokens/s, tokens/s past empty, lines/s, instructions/token)
+        expected = {
+            'Sisu': ['100', '1000', '250.0 ms', '4.0k', '5.0k', '400', '2000'],
+            'Rust': ['300', '999960', '1.00 s', '1.0M', '-', '300', '-'],
+            'C++': ['300', '3000', '1.50 s', '2.0k', '-', '200', '-'],
+            'Go': ['100', '1000', 'skipped', '-', '-', '-', '-'],
+        }
+        rows = self.table_rows(text)
+        self.assertEqual(len(rows), 4, text)
+        for cells in rows:
+            self.assertEqual(cells[3:], expected[cells[2]], cells)
+
 
 if __name__ == '__main__':
     unittest.main()
