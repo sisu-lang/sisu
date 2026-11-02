@@ -6236,6 +6236,124 @@ mod tests {
         assert_eq!(nesting_span(&src), (at, at + "else if".len()));
     }
 
+    /// An expression that is deep enough to pass the limit under a run of 150 `else if`s.
+    fn deep_expr() -> String {
+        format!("print({}1{})", "(".repeat(100), ")".repeat(100))
+    }
+
+    /// The report points at the last `else if` of the longest run of `else if`s on the deepest
+    /// path, not at a shorter run, whether the shorter run is before the longest run, after it or
+    /// inside a block under it.
+    #[test]
+    fn nesting_report_should_point_at_the_longest_else_if_run() {
+        let head = "if a { }";
+        let link = " else if a { }";
+        let deep = deep_expr();
+        let else_if = |src: &str, at: usize| {
+            assert_eq!(&src[at..][.."else if".len()], "else if", "{src}");
+            (at, at + "else if".len())
+        };
+        // A run of 200, then a block with a chain of one `else if` that passes the limit.
+        let src = format!(
+            "{head}{} else if a {{ if a {{ }} else if a {{ {deep} }} }}",
+            link.repeat(199)
+        );
+        let at = head.len() + link.len() * 199 + 1;
+        assert_eq!(nesting_span(&src), else_if(&src, at), "run of 200");
+        // A run of 150, a block, and a run that is shorter when the limit passes.
+        let block = " else { if a { }";
+        let src = format!("{head}{}{block}{} }}", link.repeat(150), link.repeat(150));
+        let at = head.len() + link.len() * 149 + 1;
+        assert_eq!(nesting_span(&src), else_if(&src, at), "first run longer");
+        // A run of 20, a block, a run of 150, then a chain of one `else if` that passes the limit.
+        // The longest run is not the first run on the path.
+        let src = format!(
+            "{head}{}{block}{} else if a {{ if a {{ }} else if a {{ {deep} }} }} }}",
+            link.repeat(20),
+            link.repeat(149)
+        );
+        let at = head.len() + link.len() * 20 + block.len() + link.len() * 149 + 1;
+        assert_eq!(nesting_span(&src), else_if(&src, at), "later run longer");
+    }
+
+    /// Of two runs of the same length on one path, the report keeps the later one, so it stays
+    /// near the place where the limit passed. Many short runs of the same length give the same.
+    /// This holds at the base too: it guards the tie rule.
+    #[test]
+    fn nesting_report_should_keep_the_later_run_on_a_tie() {
+        let head = "if a { }";
+        let link = " else if a { }";
+        let block = " else { if a { }";
+        let deep = deep_expr();
+        let src = format!(
+            "{head}{}{block}{} else if a {{ {deep} }} }}",
+            link.repeat(100),
+            link.repeat(99)
+        );
+        let at = src.rfind("else if").expect("the last `else if`");
+        assert_eq!(nesting_span(&src), (at, at + "else if".len()), "two runs");
+        // 90 units of a run of 3: the limit passes after about 50 units, and the report is in
+        // that unit, not in the first one.
+        let unit = format!("{}{block}", link.repeat(3));
+        let src = format!("{head}{}{}", unit.repeat(90), " }".repeat(90));
+        let (start, end) = nesting_span(&src);
+        assert_eq!(&src[start..end], "else if", "{src}");
+        assert!(start > head.len() + unit.len() * 40, "reported at {start}");
+    }
+
+    /// A run in a block beside the deepest path never draws the report, even when it is longer.
+    /// This holds at the base too: it guards the scope of the longest run.
+    #[test]
+    fn nesting_report_should_ignore_a_run_beside_the_path() {
+        let head = "if a { }";
+        let link = " else if a { }";
+        let deep = deep_expr();
+        // The then-block of the outer `if` holds a run of 200. The path is the run of 160 after it.
+        let src = format!(
+            "if a {{ {head}{} }}{} else if a {{ {deep} }}",
+            link.repeat(200),
+            link.repeat(159)
+        );
+        let at = src.rfind("else if").expect("the last `else if`");
+        assert_eq!(nesting_span(&src), (at, at + "else if".len()));
+    }
+
+    /// When `if` is on the line after `else`, the report underlines `else` alone. When `else` and
+    /// `if` are on one line, it underlines both, however much space is between them.
+    #[test]
+    fn nesting_report_should_underline_only_else_across_a_line_break() {
+        let head = "if a { }";
+        let else_len = "else".len();
+        // One run, `if` on the next line, with `\n` and with `\r\n`.
+        for line_end in ["\n", "\r\n"] {
+            let link = format!(" else{line_end}if a {{ }}");
+            let src = format!("{head}{}", link.repeat(300));
+            let at = head.len() + link.len() * (MAX_DEPTH - 2) + 1;
+            assert_eq!(&src[at..][..else_len], "else", "{src:?}");
+            assert_eq!(nesting_span(&src), (at, at + else_len), "{line_end:?}");
+        }
+        // A run of 150 with a line break in each link, then a block and a shorter run.
+        let link = " else\nif a { }";
+        let src = format!(
+            "{head}{}{}{} }}",
+            link.repeat(150),
+            " else {\nif a { }",
+            link.repeat(150)
+        );
+        let at = head.len() + link.len() * 149 + 1;
+        assert_eq!(&src[at..][..else_len], "else", "{src}");
+        assert_eq!(nesting_span(&src), (at, at + else_len), "first run longer");
+        // Spaces on one line are no line break: the span stays whole.
+        let link = " else    if a { }";
+        let src = format!("{head}{}", link.repeat(300));
+        let at = head.len() + link.len() * (MAX_DEPTH - 2) + 1;
+        assert_eq!(
+            nesting_span(&src),
+            (at, at + "else    if".len()),
+            "one line"
+        );
+    }
+
     /// A chain of operators reports at the token that passed the limit, even under an `else if`.
     #[test]
     fn nesting_report_of_a_chain_should_stay_on_the_token_that_passed_the_limit() {
