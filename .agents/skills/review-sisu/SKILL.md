@@ -113,7 +113,9 @@ work. Send it to the later-round reviewers in the table; their reports
 go to `RUN/sol-<round>.md` and `RUN/opus-<round>.md`. Allow at most two
 fix rounds. After the review of the second fix round, ask the user about
 each blocking finding that is still open: a third round, or a deferral.
-Defer the nits.
+A blocking finding whose fix changes fewer than 10 lines and no `sisu`
+output, such as a pattern in a hook, needs no question: give it one more
+round, reviewed by `opus-medium` alone. Defer the nits.
 
 ### 6. Report
 

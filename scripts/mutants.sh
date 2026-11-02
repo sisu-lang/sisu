@@ -51,7 +51,8 @@ trap cleanup EXIT
 
 # The summary names the commit it measured, so a log is checked by its last line alone.
 head=$(git rev-parse HEAD)
-base=${1:-$(git merge-base main HEAD)}
+# origin/main, not main: a local main falls behind, and then the range takes in merged work.
+base=${1:-$(git merge-base origin/main HEAD)}
 [[ $# -gt 0 ]] && shift
 not_run=
 test_args=
