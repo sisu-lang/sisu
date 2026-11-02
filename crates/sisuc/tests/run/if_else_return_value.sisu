@@ -1,0 +1,12 @@
+// GIVEN a function `f(c: bool) -> i64` whose body is `let x = if c { 1 } else { return 0 }` and then `x + 1`
+// WHEN `main` prints `f(true)` and `f(false)`
+// THEN it prints `2` and then `0`
+fn f(c: bool) -> i64 {
+    let x = if c { 1 } else { return 0 }
+    x + 1
+}
+
+fn main() {
+    print(f(true)) // 2: the `if` is the value of `x`
+    print(f(false)) // 0: the `else` branch returns
+}

@@ -1,0 +1,8 @@
+error[E0079]: `_` is not a value
+ --> E0079-jump-in-interpolation.sisu:5:22
+  |
+5 |     match "{return { _ }}" {
+  |                      ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0079

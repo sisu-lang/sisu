@@ -1,0 +1,9 @@
+// GIVEN an `if` whose `(` ends its line with a non-ASCII comment, and a `return { true }` and the `)` on the next line
+// WHEN `sisu check` runs on it
+// THEN it reports one E0011 at the end of line 6 (6:25), not a jump that takes the body, and does not stop
+fn f() {
+    if (//äää
+        return { true })
+}
+
+fn main() {}

@@ -869,8 +869,18 @@ impl Gen<'_> {
     }
 
     /// `(a ?? b)`: of a `T?` `a` and a `T` `b` for a `T`, of two `T?` for a `T?`, or of a
-    /// named `T??` `a` and a `T?` `b` for a `T?`: `??` takes one layer off.
+    /// named `T??` `a` and a `T?` `b` for a `T?`: `??` takes one layer off. Now and then, for a
+    /// `ty` that is no optional, `b` is a `return`, `break` or `continue`, where one can go.
     fn coalesce(&mut self, ty: &Ty, max: u64) -> Info {
+        if self.leaves && !matches!(ty, Ty::Optional(_)) && self.can_jump() && self.pick(4) == 0 {
+            self.w.text("(");
+            self.synth = true;
+            let lhs = self.expr(&Ty::Optional(Box::new(ty.clone())), max);
+            self.w.text(" ?? ");
+            self.conditionally(Self::jump_operand);
+            self.w.text(")");
+            return Info::of(&[lhs], lhs.size, false);
+        }
         let optional = match ty {
             Ty::Optional(_) => ty.clone(),
             _ => Ty::Optional(Box::new(ty.clone())),

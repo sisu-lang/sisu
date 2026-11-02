@@ -1,0 +1,8 @@
+error[E0011]: expected `{`, found end of line
+ --> E0011-grouped-jump-comment.sisu:6:25
+  |
+6 |         return { true })
+  |                         ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011

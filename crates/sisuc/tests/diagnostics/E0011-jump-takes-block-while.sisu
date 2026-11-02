@@ -1,0 +1,12 @@
+// GIVEN a `while` whose condition `o ?? break` is followed by the `{` of its body
+// WHEN `sisu check` runs on it
+// THEN it reports E0011 at the `break` (5:16) with no help, as `( )` would give E0082
+fn f(o: bool?) {
+    while o ?? break {
+        print(1)
+    }
+}
+
+fn main() {
+    f(None)
+}

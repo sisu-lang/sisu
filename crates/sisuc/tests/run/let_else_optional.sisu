@@ -1,0 +1,14 @@
+// let ... else on an optional binds the value.
+// GIVEN a function `first(xs: [i64?]) -> i64` whose body is `let v = xs[0] else { return -1 }`
+//   and then `v * 2`
+// WHEN `main` prints `first([Some(4)])` and `first([None])`
+// THEN it prints `8` and then `-1`
+fn first(xs: [i64?]) -> i64 {
+    let v = xs[0] else { return -1 }
+    v * 2
+}
+
+fn main() {
+    print(first([Some(4)])) // 8
+    print(first([None]))    // -1
+}

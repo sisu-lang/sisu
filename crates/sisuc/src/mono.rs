@@ -924,6 +924,14 @@ impl Mono {
                     self.place(place, args);
                     self.expr(value, args);
                 }
+                Stmt::LetElse {
+                    scrutinee,
+                    else_block,
+                    ..
+                } => {
+                    self.expr(scrutinee, args);
+                    self.block(else_block, args);
+                }
             }
         }
         if let Some(value) = &mut block.value {

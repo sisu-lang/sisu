@@ -1,3 +1,5 @@
 fn main() {
-    let 1__2 = 1
+    let xs = [1]
+    for 1__2 in xs {
+    }
 }

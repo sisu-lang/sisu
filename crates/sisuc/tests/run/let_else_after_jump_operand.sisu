@@ -1,0 +1,25 @@
+// A jump as the operand of `??` before the `else` of a let-else.
+// GIVEN `fn f(o: i64??) -> i64` whose body is `let v = o ?? return -1 else { return -2 }` and
+//   then `v`, and a loop with `let v = o ?? break else { return -2 }`
+// WHEN `f` runs on `None`, `Some(None)` and `Some(Some(3))`, and the loop on a list
+// THEN `f` prints `-1`, `-2` and `3`, and the loop stops at the `None`
+fn f(o: i64??) -> i64 {
+    let v = o ?? return -1 else { return -2 }
+    v
+}
+
+fn total(os: [i64??]) -> i64 {
+    let mut sum = 0
+    for o in os {
+        let v = o ?? break else { return -2 }
+        sum += v
+    }
+    sum
+}
+
+fn main() {
+    print(f(None))                                    // -1
+    print(f(Some(None)))                              // -2
+    print(f(Some(Some(3))))                           // 3
+    print(total([Some(Some(1)), None, Some(Some(5))])) // 1: the loop stops at the `None`
+}

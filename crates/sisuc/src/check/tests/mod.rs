@@ -20,6 +20,7 @@ mod floats;
 mod for_loops;
 mod generics;
 pub(crate) mod interfaces;
+mod let_else;
 mod loop_condition;
 mod optionals;
 mod parity;

@@ -368,6 +368,7 @@ The rules:
 - When `a` is a `T?` and `b` is a `T`, the result is a `T`.
 - When `b` is a `T?` too, the result is a `T?`. So `a ?? b ?? 0` tries `a`, then `b`, then gives `0`.
 - `b` can be an expression that never finishes, such as `panic("...")` ([Types](types.md#never)). Then the result is a `T`.
+- `b` can be a `return`, a `break` or a `continue`, with its value or loop label. Then `a ?? return b` gives the value of `a`, or leaves the function with `b` ([return, break and continue](expressions.md#return-break-and-continue)). It takes everything to its right.
 
 ```sisu
 fn main() {
@@ -376,6 +377,19 @@ fn main() {
     print(a ?? b ?? 0)           // 3
     print(b ?? panic("no b"))    // 3
 }
+```
+
+```sisu
+fn main() {
+    for o in [Some(1), None, Some(3)] {
+        print(o ?? continue)
+    }
+}
+```
+
+```output
+1
+3
 ```
 
 ## Optional chaining

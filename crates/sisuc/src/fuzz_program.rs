@@ -930,6 +930,7 @@ mod tests {
                 cost: 0,
                 plain: String::new(),
                 made: Vec::new(),
+                leaving_if_depth: 0,
             };
             let scratch = Scratch::new();
             let (failure, builds) =
@@ -1530,6 +1531,7 @@ mod tests {
             cost: 0,
             plain: String::new(),
             made: Vec::new(),
+            leaving_if_depth: 0,
         }
     }
 
@@ -1730,6 +1732,7 @@ mod tests {
             cost: 0,
             plain: String::new(),
             made: Vec::new(),
+            leaving_if_depth: 0,
         }
     }
 

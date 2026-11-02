@@ -1,0 +1,7 @@
+// GIVEN a `main` with `let o: i64? = Some(1)` and `let v = o else { return }`, and `v` is never read
+// WHEN `sisu check` runs on it
+// THEN it reports W0014 at the `v` on line 6
+fn main() {
+    let o: i64? = Some(1)
+    let v = o else { return }
+}

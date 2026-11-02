@@ -1,0 +1,10 @@
+error[E0011]: `return` takes the `{ ... }` after it as its value
+ --> E0011-jump-takes-block-before-comment.sisu:5:12
+  |
+5 |     if a < return { 1 } // c
+  |            ^^^^^^
+  |
+  = help: to keep the block as the body, put the jump in `( )`: `(a < return)`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011

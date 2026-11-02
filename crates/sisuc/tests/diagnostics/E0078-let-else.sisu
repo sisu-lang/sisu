@@ -1,0 +1,7 @@
+// GIVEN a `main` whose line 6 is `let mut _ = o else { return }`, with the `_` at 6:13
+// WHEN `sisu check` runs on it
+// THEN it reports E0078 at 6:13
+fn main() {
+    let o: i64? = Some(1)
+    let mut _ = o else { return }
+}
