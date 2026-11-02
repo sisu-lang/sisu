@@ -311,7 +311,7 @@ impl Checker<'_> {
                 false
             }
             ExprKind::Range(range) => {
-                let d = self.range_outside(range, RangePlace::Elsewhere);
+                let d = Self::range_outside(range, RangePlace::Elsewhere);
                 self.diagnostics.push(d);
                 false
             }

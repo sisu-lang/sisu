@@ -4,7 +4,7 @@ error[E0023]: a range with a missing bound can only be an index or a string's `g
 3 |     let r = 5..=
   |             ^^^^ this range has no end
   |
-  = help: write `5..`
+  = help: write the range where it is used: in an index or in a string's `get`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0023

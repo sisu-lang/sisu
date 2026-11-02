@@ -2095,8 +2095,9 @@ pub(crate) enum RangeForm {
         missing: MissingBound,
         place: RangePlace,
     },
-    /// `start..=` with no end, which is no range.
-    NoEnd { start: String },
+    /// `start..=` with no end in an index or a string's `get`, which is no range there: `range` is
+    /// its source text.
+    NoEnd { range: String, start: String },
     /// `base[..]` or `base[..=]`: the whole of `base`, which is `base`.
     NoBounds { base: String, inclusive: bool },
 }
@@ -2107,6 +2108,8 @@ pub(crate) enum MissingBound {
     End,
     /// `..`: both.
     Both,
+    /// `..=`: both.
+    BothInclusive,
 }
 
 /// Where a range with a missing bound stands, which gives the help.
@@ -2127,35 +2130,31 @@ impl RangeForm {
                 "a range can only be a `for` source, a pattern, an index or a string's `get` argument",
             ),
             Self::MissingBound { missing, place } => {
-                let (label, help) = match (&missing, place) {
-                    (MissingBound::Both, _) => (
-                        "this range has no bounds",
-                        "`..` alone is the whole value; write the value itself",
-                    ),
-                    (_, RangePlace::ForSource) => (
-                        if matches!(missing, MissingBound::Start) {
-                            "this range has no start"
-                        } else {
-                            "this range has no end"
-                        },
-                        "write both bounds, such as `0..n`, or use `loop` with a counter",
-                    ),
-                    (_, RangePlace::Elsewhere) => (
-                        if matches!(missing, MissingBound::Start) {
-                            "this range has no start"
-                        } else {
-                            "this range has no end"
-                        },
-                        "write the range where it is used: in an index or in a string's `get`",
-                    ),
+                let label = match missing {
+                    MissingBound::Start => "this range has no start",
+                    MissingBound::End => "this range has no end",
+                    MissingBound::Both | MissingBound::BothInclusive => "this range has no bounds",
+                };
+                let help = match (missing, place) {
+                    (MissingBound::Both, _) => {
+                        "`..` alone is the whole value; write the value itself"
+                    }
+                    (_, RangePlace::ForSource) => {
+                        "write both bounds, such as `0..n`, or use `loop` with a counter"
+                    }
+                    (_, RangePlace::Elsewhere) => {
+                        "write the range where it is used: in an index or in a string's `get`"
+                    }
                 };
                 Diagnostic::coded(code, at, MISSING)
                     .with_label(label)
                     .with_help(help)
             }
-            Self::NoEnd { start } => Diagnostic::coded(code, at, MISSING)
-                .with_label("this range has no end")
-                .with_help(format!("write `{start}..`")),
+            Self::NoEnd { range, start } => {
+                Diagnostic::coded(code, at, format!("`{range}` has no end"))
+                    .with_label("this range has no end")
+                    .with_help(format!("write `{start}..`"))
+            }
             Self::NoBounds { base, inclusive } => {
                 let dots = if inclusive { "..=" } else { ".." };
                 let help = if inclusive {
@@ -2187,20 +2186,24 @@ pub(crate) struct RangeTarget {
 pub(crate) enum RangeWrite {
     /// `xs[a..b] op v` on an array.
     Array,
-    /// `xs[a..b][i]tail op v` on an array: `index` is `i`, and `tail` the indexes after it, if
-    /// any. `op` is `=` or a compound operator such as `+=`.
+    /// `xs[a..b][i]tail op v` on an array: `index` is the index into `xs` that `i` stands for,
+    /// `a + i`, or `i` when there is no `a`, and `tail` the indexes after it, if any. `op` is `=`
+    /// or a compound operator such as `+=`.
     Element {
         index: String,
         tail: String,
         op: String,
         value: String,
     },
-    /// `s[a..b] = t` on a string.
+    /// `s[a..b] = t` on a string: `value` is `t`, in parentheses if it is more than one term.
     Replace { value: String },
-    /// `s[a..b] += t` on a string.
-    Append { value: String },
+    /// `s[a..b] += t` on a string: `value` is `t`, and `grouped` is `t` in parentheses if it is
+    /// more than one term.
+    Append { value: String, grouped: String },
     /// Any other compound assignment to a range of a string.
     Other,
+    /// Any of these on a base that is no place, such as a call: no write to it is allowed.
+    Temporary,
 }
 
 impl RangeTarget {
@@ -2221,10 +2224,6 @@ impl RangeTarget {
                 op,
                 value,
             } => {
-                let index = match start {
-                    Some(start) => format!("{start} + {index}"),
-                    None => index,
-                };
                 format!(
                     "write `{base}[{index}]{tail} {op} {value}`; a range index counts from its start"
                 )
@@ -2238,13 +2237,14 @@ impl RangeTarget {
                     after.unwrap_or_default()
                 )
             }
-            RangeWrite::Append { value } => match end {
+            RangeWrite::Append { value, grouped } => match end {
                 Some(end) => format!(
-                    "build the new string, such as `{base} = {base}[..{end}] + {value} + {base}[{end}..]`"
+                    "build the new string, such as `{base} = {base}[..{end}] + {grouped} + {base}[{end}..]`"
                 ),
                 None => format!("write `{base} += {value}`"),
             },
             RangeWrite::Other => return d,
+            RangeWrite::Temporary => "store the value in a `let mut` binding first".to_string(),
         };
         d.with_help(help)
     }

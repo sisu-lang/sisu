@@ -167,7 +167,7 @@ impl Checker<'_> {
 
     /// Whether the chain of indexes of the place `e` ends in a field or in a local: not in a
     /// constant, a function or an unknown name.
-    fn rooted(&mut self, e: &ast::Expr) -> bool {
+    pub(super) fn rooted(&mut self, e: &ast::Expr) -> bool {
         match &e.kind {
             ast::ExprKind::Index { base, .. } => self.rooted(base),
             &ast::ExprKind::Name(name) => self.lookup(name).is_some(),

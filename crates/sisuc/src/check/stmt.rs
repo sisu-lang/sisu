@@ -703,7 +703,7 @@ impl Checker<'_> {
         let inclusive = range.inclusive;
         let (Some(start), Some(end)) = (&range.start, &range.end) else {
             // A bound is missing: one report, and the bound that is there checks itself.
-            let d = self.range_outside(range, RangePlace::ForSource);
+            let d = Self::range_outside(range, RangePlace::ForSource);
             self.diagnostics.push(d);
             for bound in [&range.start, &range.end].into_iter().flatten() {
                 drop(self.expect(bound, Some(Type::I64)));

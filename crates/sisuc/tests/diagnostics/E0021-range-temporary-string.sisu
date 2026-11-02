@@ -1,0 +1,6 @@
+fn text() -> string { "abc" }
+
+fn main() {
+    print(1)
+    text()[0..1] = "x"
+}

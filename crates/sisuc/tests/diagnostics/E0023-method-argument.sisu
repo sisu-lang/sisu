@@ -1,0 +1,7 @@
+fn main() {
+    let xs = [1, 2, 3]
+    let s = "abc"
+    print(xs.get(0..1))
+    print(s.get(..2))
+    print(xs.get(..))
+}

@@ -1,0 +1,12 @@
+fn main() {
+    let o: i64? = None
+    let t: string? = None
+    let mut s = "abc"
+    print(o ?? 0)
+    print(t ?? "")
+    s[0..1] = t ?? "x"
+    s[0..2] += t ?? "x"
+    s[1..] += t ?? "x"
+    s[0..=o ?? 1] += "x"
+    print(s)
+}

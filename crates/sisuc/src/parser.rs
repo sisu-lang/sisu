@@ -3411,12 +3411,20 @@ impl<'a> Parser<'a> {
         } else {
             Some(self.expr()?)
         };
-        let Some(colon) = self.eat(&TokenKind::Colon).map(|colon| colon.span) else {
+        // A bound that is a range has no colon form: `xs[0..1:2]` is a step to the `]` check.
+        let ranged = matches!(start.as_ref().map(|e| &e.kind), Some(ExprKind::Range(_)));
+        let colon = if ranged {
+            None
+        } else {
+            self.eat(&TokenKind::Colon).map(|colon| colon.span)
+        };
+        let Some(colon) = colon else {
             let close = self.expect(&TokenKind::RBracket)?.span;
             return Ok((start, close));
         };
+        // Not `expr`: `xs[0:1..2]` reads `1` and meets the `..` where the `]` should be.
         let end = if range_end_starts(&self.peek().kind, false) {
-            Some(self.expr()?)
+            Some(self.binary(1)?)
         } else {
             None
         };
@@ -3904,7 +3912,7 @@ impl<'a> Parser<'a> {
         let mut reach = base;
         let mut parts: Vec<Part> = text(head, start).into_iter().collect();
         let end = loop {
-            let value = self.child(base, &mut reach, Self::expr)?;
+            let value = self.child(base, &mut reach, |p| p.headed(false, Self::expr))?;
             let mut spec = None;
             let mut bad_spec = false;
             if let TokenKind::FormatSpec(written) = &self.peek().kind {
@@ -7405,6 +7413,29 @@ mod tests {
         }
     }
 
+    /// An interpolation is a bracket: a `{` after dots in it is an end, and a block in it is read
+    /// as in any other bracket, inside a header too.
+    #[test]
+    fn brace_after_dots_should_be_an_end_inside_an_interpolation_in_a_header() {
+        let rows = [
+            (
+                r#"if s == "{0..{ 1 }}" { }"#,
+                r"(if (== s (interp (.. 0 (block 1)))) (block))",
+            ),
+            (
+                r#"if s == "{ { 1 } }" { }"#,
+                r"(if (== s (interp (block 1))) (block))",
+            ),
+            (
+                r#"for i in 0.."{ { 1 } }".len() { }"#,
+                r"(for i (.. 0 (call (. (interp (block 1)) len))) (block))",
+            ),
+        ];
+        for (src, want) in rows {
+            assert_eq!(expr(src), want, "{src}");
+        }
+    }
+
     /// The header flag is restored when a header fails to parse, so the next item reads a block
     /// as an end again.
     #[test]
@@ -7456,15 +7487,34 @@ mod tests {
             assert_eq!(line_col(&program, d.span().start()), at, "{src}");
             let (safe, _) = fix_edits(d).expect("the colon form has a fix");
             assert!(safe, "{src}");
-            assert_eq!(apply_fix(&program, d), format!("fn main() {{ {fixed} }}"));
+            let fixed = format!("fn main() {{ {fixed} }}");
+            assert_eq!(apply_fix(&program, d), fixed);
+            // Every advertised fix is safe, so its result parses with no diagnostic.
+            assert_eq!(parsed_fixed(&fixed), 0, "{src}");
             let Some(Item::Function(f)) = parsed.program.items.first() else {
                 panic!("{src}: expected a function");
             };
             assert_eq!(f.body.stmts[0].to_string(), tree, "{src}");
         }
-        for src in ["xs[::2]", "xs[1:2:3]", "xs[1::2]"] {
+        // A step, and a bound that is a range, which `..` would chain, have no colon form.
+        for src in [
+            "xs[::2]",
+            "xs[1:2:3]",
+            "xs[1::2]",
+            "xs[0:1..2]",
+            "xs[0..1:2]",
+            "xs[0..1:]",
+            "xs[:0..=2]",
+            "xs[0..1:2..3]",
+            "xs[(0..1):2]",
+        ] {
             assert_eq!(expr_err(src).0, Code::Expected, "{src}");
         }
+    }
+
+    /// The number of diagnostics of `program`.
+    fn parsed_fixed(program: &str) -> usize {
+        parsed(program).diagnostics.len()
     }
 
     fn statement_place(src: &str) -> bool {

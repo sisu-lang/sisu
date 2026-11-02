@@ -112,6 +112,7 @@ fn range_index_should_be_e0023_until_the_checker_takes_it() {
 /// THEN it reports E0021 at the range index, and no warning follows
 #[test]
 fn assignment_to_a_range_index_should_be_e0021_at_the_range_index() {
+    judge_unused();
     let rows = [
         ("array", "xs[0..2] = [7, 8]"),
         ("element", "xs[0..2][0] = 9"),
@@ -165,4 +166,104 @@ fn assignment_to_a_range_index_should_check_the_value() {
             (Code::BindingNotFound, (3, 16)),
         ],
     );
+}
+
+/// GIVEN a range argument of a method, whichever bound is missing and whether or not the method
+///       exists
+/// WHEN the program is checked
+/// THEN it reports the first form of E0023, once, and no other error follows
+#[test]
+fn method_range_argument_should_be_the_first_e0023_form() {
+    let rows = [
+        ("contains", "xs.contains(..)", ".."),
+        ("array get", "xs.get(0..1)", "0..1"),
+        ("array get, no bounds", "xs.get(..)", ".."),
+        ("string get", "s.get(..2)", "..2"),
+        ("string contains", "s.contains(1..)", "1.."),
+        ("inclusive no end", "xs.get(1..=)", "1..="),
+        ("second argument", "xs.get(1, ..2)", "..2"),
+        ("unknown method", "xs.nope(0..1)", "0..1"),
+    ];
+    for (row, call, range) in rows {
+        let src = format!(
+            "fn main() {{\n    let xs = [1, 2]\n    let s = \"abc\"\n    print({call})\n}}"
+        );
+        let ds = diags(&src);
+        let [d] = ds.as_slice() else {
+            panic!("row `{row}`: {ds:?}");
+        };
+        assert_eq!(d.code(), Code::RangeOutsideFor, "row `{row}`");
+        assert_eq!(&src[d.span().range()], range, "row `{row}`");
+    }
+}
+
+/// GIVEN `xs[..][i] op v`
+/// WHEN the program is checked
+/// THEN it reports E0021, and `xs[..] = ys` keeps E0023
+#[test]
+fn element_of_a_whole_range_should_be_e0021_and_a_whole_range_target_e0023() {
+    let rows = [
+        ("assignment", "xs[..][0] = 9", Code::AssignToExpression),
+        ("compound", "xs[..][0] += 9", Code::AssignToExpression),
+        ("deep", "xs[..][0][1] = 9", Code::AssignToExpression),
+        ("whole assignment", "xs[..] = [3]", Code::RangeOutsideFor),
+        ("whole compound", "xs[..] += [3]", Code::RangeOutsideFor),
+        ("inclusive element", "xs[..=][0] = 9", Code::RangeOutsideFor),
+    ];
+    for (row, statement, code) in rows {
+        let src =
+            format!("fn main() {{\n    let mut xs = [[1, 2]]\n    {statement}\n    print(xs)\n}}");
+        let found: Vec<_> = diags(&src).iter().map(Diagnostic::code).collect();
+        assert_eq!(found, [code], "row `{row}`");
+    }
+}
+
+/// GIVEN a range that is an error for good, on a base that is wrong
+/// WHEN the program is checked
+/// THEN the base reports its own mistake, and the range its own
+#[test]
+fn range_error_for_good_should_check_its_base() {
+    for (row, body) in [
+        ("whole target", "ys[..] = [1]"),
+        ("whole read", "print(ys[..])"),
+        ("inclusive whole", "print(ys[..=])"),
+        ("no end", "print(ys[1..=])"),
+    ] {
+        let found = codes_of(&main_with(body));
+        let codes: Vec<_> = found.iter().map(|f| f.0).collect();
+        assert_eq!(
+            codes,
+            [Code::BindingNotFound, Code::RangeOutsideFor],
+            "row `{row}`"
+        );
+    }
+}
+
+/// GIVEN a `push` onto a range index
+/// WHEN the program is checked
+/// THEN it reports E0023, and no warning follows
+#[test]
+fn push_onto_a_range_index_should_report_e0023_alone() {
+    judge_unused();
+    for (row, body) in [
+        (
+            "array",
+            "let mut xs = [1, 2]\n    xs[1..].push(4)\n    print(xs)",
+        ),
+        (
+            "nested",
+            "let mut xs = [[1, 2]]\n    xs[0][1..].push(4)\n    print(xs)",
+        ),
+    ] {
+        let found = codes_of(&main_with(body));
+        let codes: Vec<_> = found.iter().map(|f| f.0).collect();
+        assert_eq!(codes, [Code::RangeOutsideFor], "row `{row}`");
+    }
+}
+
+fn codes_of(src: &str) -> Vec<(Code, (usize, usize))> {
+    diags(src)
+        .iter()
+        .map(|d| (d.code(), at(src, d.span())))
+        .collect()
 }

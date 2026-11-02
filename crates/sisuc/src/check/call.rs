@@ -579,6 +579,12 @@ impl Checker<'_> {
         let method = site.name;
         // The arguments are not part of the chain that an index ends; `expr` restores the flag.
         let indexed = std::mem::take(&mut self.body.indexed);
+        if args
+            .iter()
+            .any(|a| matches!(a.value.kind, ExprKind::Range(_)))
+        {
+            return self.range_arguments(receiver_expr, args);
+        }
         let receiver = match self.generated_operator(span, receiver, site, args) {
             Ok(checked) => return checked,
             Err(receiver) => receiver,

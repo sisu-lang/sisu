@@ -118,7 +118,7 @@ impl Checker<'_> {
             ExprKind::ArrayFill { value, len } => self.array_fill(e.span, value, len, expected),
             ExprKind::Index { base, index } => self.index(e.span, base, index),
             ExprKind::Range(range) => {
-                let d = self.range_outside(range, RangePlace::Elsewhere);
+                let d = Self::range_outside(range, RangePlace::Elsewhere);
                 self.diagnostics.push(d);
                 Err(Poisoned::error())
             }

@@ -523,7 +523,7 @@ fn literal(spelling: &str) -> String {
 /// Whether `e` is one term as written: a name, a literal, a call, a field or index read, or an
 /// expression in parentheses. Anything else needs its parentheses once it sits beside other code.
 /// A parenthesized node is the only one whose span reaches past its parts.
-fn single_term(e: &ast::Expr) -> bool {
+pub(super) fn single_term(e: &ast::Expr) -> bool {
     match &e.kind {
         ExprKind::Int { .. }
         | ExprKind::Float(_)

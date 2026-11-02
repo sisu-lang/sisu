@@ -1,0 +1,20 @@
+error[E0023]: a range can only be a `for` source, a pattern, an index or a string's `get` argument
+ --> E0023-method-argument.sisu:4:18
+  |
+4 |     print(xs.get(0..1))
+  |                  ^^^^
+
+error[E0023]: a range can only be a `for` source, a pattern, an index or a string's `get` argument
+ --> E0023-method-argument.sisu:5:17
+  |
+5 |     print(s.get(..2))
+  |                 ^^^
+
+error[E0023]: a range can only be a `for` source, a pattern, an index or a string's `get` argument
+ --> E0023-method-argument.sisu:6:18
+  |
+6 |     print(xs.get(..))
+  |                  ^^
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0023
