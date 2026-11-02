@@ -4529,6 +4529,49 @@ fn nested_generic_calls_should_rank_each_expression_once() {
     });
 }
 
+/// An operator nested `d` deep, over integer literals: `int_literal` answers for the whole
+/// subtree at each level (the ranking of a sibling, and the first operand of an operator), so a
+/// walk that is not kept reads each operand again at each level, and the work grows with the
+/// square of the depth (#367). The leaf at the end can end the chain of literals, as a name, a
+/// float or a string, and the context can be a type. The depths are far below the nesting limit
+/// of the parser (256), and small enough for the stack of a debug test thread. One level has no
+/// operator inside an operand, so the counter is checked at two.
+#[test]
+fn nested_int_literals_should_be_walked_once() {
+    crate::on_compiler_stack(|| {
+        // The statement is `before`, then `open` repeated `depth` times, `inner`, `close` likewise.
+        let steps = |(before, open, inner, close): (&str, &str, &str, &str), depth: usize| {
+            let src = format!(
+                "fn main() {{\n    let y = 1\n    {before}{}{inner}{}\n}}",
+                open.repeat(depth),
+                close.repeat(depth),
+            );
+            INT_LITERAL_STEPS.set(0);
+            clean(&src);
+            INT_LITERAL_STEPS.get()
+        };
+        for row in [
+            ("let r = ", "1 + (", "1", ")"),
+            ("let r = ", "(", "1", ") + 1"),
+            ("let r = ", "1 + (", "y", ")"),
+            ("let r = ", "(", "1.1", ") + 1.1"),
+            ("let r = ", "(", "\"a\"", ") + \"a\""),
+            ("let r: f64 = ", "1 + (", "1", ")"),
+        ] {
+            assert!(
+                steps(row, 2) > 0,
+                "{row:?}: the counter should count the walk"
+            );
+            assert_near_linear_for(
+                &format!("{row:?}: "),
+                steps(row, 10),
+                steps(row, 20),
+                steps(row, 30),
+            );
+        }
+    });
+}
+
 /// The program of `a_nested_array_literal_should_resolve_its_type_a_linear_number_of_times`: an
 /// array literal `depth` deep, for a parameter type with `end` at its end. `bottom` is what the
 /// innermost level holds, and `setup` is the line before the call.

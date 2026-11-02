@@ -1,0 +1,5 @@
+interface Named {
+    fn name(self) -> string
+}
+fn show(x: (any Named)?) -> i64 { if let _ = x { 1 } else { 0 } }
+fn main() { print(1) }

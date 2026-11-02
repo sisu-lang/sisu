@@ -1,0 +1,10 @@
+error[E0147]: `Box` is an interface, not a type
+ --> E0147-lines.sisu:4:10
+  |
+4 | fn f(_x: Box<
+  |          ^^^
+  |
+  = help: use a type parameter: `T: Box<i64>`, or `any Box<i64>` for a value of any conforming type
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0147

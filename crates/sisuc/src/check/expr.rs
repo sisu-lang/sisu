@@ -31,6 +31,31 @@ impl Checker<'_> {
         checked
     }
 
+    /// Whether `e` is an integer literal, or `+ - * / %` and unary `-` over such operands only
+    /// (spec rule 2). The answer for each operator is kept in `body.int_literals`, so the nested
+    /// operators of a chain walk their operands once, not once for each level.
+    pub(super) fn int_literal(&mut self, e: &ast::Expr) -> bool {
+        let (op, lhs, rhs) = match &e.kind {
+            ExprKind::Int { .. } => return true,
+            ExprKind::Unary {
+                op: UnaryOp::Neg,
+                operand,
+            } => (None, &**operand, None),
+            ExprKind::Binary { op, lhs, rhs, .. } => (Some(*op), &**lhs, Some(&**rhs)),
+            _ => return false,
+        };
+        if let Some(&known) = self.body.int_literals.get(&e.span) {
+            return known;
+        }
+        #[cfg(test)]
+        super::INT_LITERAL_STEPS.set(super::INT_LITERAL_STEPS.get() + 1);
+        let found = op.is_none_or(|op| operator(op).is_some_and(|(_, ty)| ty == Type::I64))
+            && self.int_literal(lhs)
+            && rhs.is_none_or(|rhs| self.int_literal(rhs));
+        self.body.int_literals.insert(e.span, found);
+        found
+    }
+
     /// The integer literal `value` at `at`, whose token is `literal`, typed by `expected`. An
     /// `f64` must hold it exactly.
     fn integer(&mut self, at: Span, value: i64, literal: Span, expected: Option<Type>) -> Checked {
@@ -470,23 +495,6 @@ pub(super) fn operator(op: ast::BinaryOp) -> Option<(tir::BinaryOp, Type)> {
         ast::BinaryOp::And => (tir::BinaryOp::And, Type::BOOL),
         ast::BinaryOp::Or => (tir::BinaryOp::Or, Type::BOOL),
     })
-}
-
-/// An integer literal, or `+ - * / %` and unary `-` over such operands only (spec rule 2).
-pub(super) fn int_literal(e: &ast::Expr) -> bool {
-    match &e.kind {
-        ExprKind::Int { .. } => true,
-        ExprKind::Unary {
-            op: UnaryOp::Neg,
-            operand,
-        } => int_literal(operand),
-        ExprKind::Binary { op, lhs, rhs, .. } => {
-            operator(*op).is_some_and(|(_, ty)| ty == Type::I64)
-                && int_literal(lhs)
-                && int_literal(rhs)
-        }
-        _ => false,
-    }
 }
 
 /// The type literals take beside a value of type `ty`: `u8` if `ty` is `u8` or `u8?`, `f64` if

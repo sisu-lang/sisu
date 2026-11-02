@@ -380,6 +380,9 @@ pub(crate) enum DiagnosticKind {
         any: bool,
         /// How many `?` follow the name, which the `any` the help offers must keep.
         layers: usize,
+        /// Whether the name is in the body of a type alias, which takes no bound: the help then
+        /// offers `any` only.
+        alias: bool,
     },
     /// The type `written` at `at`, which is a `kind` and no interface, where a bound, a
     /// conformance or an inherited interface belongs.
@@ -2735,6 +2738,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 any,
                 layers,
+                alias,
             } => {
                 let d = Diagnostic::coded(
                     code,
@@ -2752,6 +2756,10 @@ impl From<DiagnosticKind> for Diagnostic {
                     )
                 };
                 match written {
+                    Some(_) if alias && any => d.with_help(format!(
+                        "use `{value}` for a value of any conforming type"
+                    )),
+                    Some(_) if alias => d,
                     Some(written) if any => d.with_help(format!(
                         "use a type parameter: `T: {written}`, or `{value}` for a value of any conforming type"
                     )),
@@ -3235,6 +3243,10 @@ impl From<DiagnosticKind> for Diagnostic {
             .with_label(format!(
                 "`{name}` has the most so far: {}",
                 instances(count)
+            ))
+            .with_help(format!(
+                "use fewer different type arguments, or put a non-generic item in the chain \
+                 that reaches `{name}`"
             )),
             DiagnosticKind::InheritedArgument {
                 arg,

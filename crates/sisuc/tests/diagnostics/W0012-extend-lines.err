@@ -1,0 +1,39 @@
+warning[W0013]: field `b` is never read
+ --> W0012-extend-lines.sisu:3:5
+  |
+3 |     b: B
+  |     ^ never read
+  |
+  = help: delete it, or name it `_b` if it is kept on purpose
+
+warning[W0012]: the `extend` block of `Pair<i64, i64>` is never used
+ --> W0012-extend-lines.sisu:5:1
+  |
+5 | / extend Pair<i64, // first
+6 | |     i64> {
+  | |________^ never used
+  |
+  = help: delete it
+
+warning[W0012]: interface `Shape` is never used
+  --> W0012-extend-lines.sisu:9:11
+   |
+ 9 | interface Shape {
+   |           ^^^^^ never used
+...
+16 | extend<T: Shape> Crate<T, // second
+   |           ----- used here, in the `extend` block of `Crate<T, i64>`, which is never used
+   |
+   = help: delete it, or name it `_Shape` if it is kept on purpose
+
+warning[W0012]: the `extend` block of `Crate<T, i64>` is never used
+  --> W0012-extend-lines.sisu:16:1
+   |
+16 | / extend<T: Shape> Crate<T, // second
+17 | |     i64> {
+   | |________^ never used
+   |
+   = help: delete it
+
+sisu: 4 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0012, W0013

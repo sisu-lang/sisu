@@ -1,0 +1,12 @@
+error[E0154]: `string` does not conform to `Iter`
+ --> E0154-implied-lines.sisu:7:12
+  |
+5 |   type X<T> = T // the base
+  |  _____________-
+6 | |   .Item
+  | |_______- `T.Item` needs `T: Iter`
+7 |   fn item(x: X<string>) {}
+  |              ^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154

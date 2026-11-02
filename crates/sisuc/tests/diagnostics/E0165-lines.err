@@ -1,0 +1,17 @@
+error[E0165]: `any Shape?` needs parentheses
+ --> E0165-lines.sisu:4:10
+  |
+4 |   fn f(_x: any
+  |  __________^
+5 | |   Shape?) {}
+  | |________^
+  |
+  = help: write `(any Shape)?` for an optional interface value
+help: add parentheses
+  |
+4 ~ fn f(_x: (any
+5 ~   Shape)?) {}
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0165

@@ -560,7 +560,7 @@ class ScalingTest(unittest.TestCase):
 
     def test_each_shape_should_have_its_size_in_its_structure(self):
         """
-        GIVEN the 14 shapes
+        GIVEN the 17 shapes
         WHEN each makes its program at size k
         THEN the repeated part of the program has a size of base + k
         AND the base is what the program at size 0 needs to check clean
@@ -570,7 +570,8 @@ class ScalingTest(unittest.TestCase):
                  ('block depth', 12), ('generic call depth', 24), ('array literal depth', 24),
                  ('array literal width', 250), ('match arms', 50), ('fields', 50),
                  ('conformers', 50), ('type depth', 24), ('interpolations', 50),
-                 ('live locals', 50), ('method chain', 24)]
+                 ('live locals', 50), ('method chain', 24), ('float left', 12),
+                 ('string left', 12), ('string call depth', 12)]
         self.assertEqual([(name, n) for name, (n, _) in sc.SHAPES.items()], sizes)
 
         def depth(text, opening, closing):
@@ -615,6 +616,9 @@ class ScalingTest(unittest.TestCase):
             'interpolations': (lambda t: t.count('{x}'), 1),
             'live locals': (lambda t: t.count('let live'), 0),
             'method chain': (chain, 1),
+            'float left': (lambda t: depth(line(t, 'let x'), '(', ')'), 0),
+            'string left': (lambda t: depth(line(t, 'let x'), '(', ')'), 0),
+            'string call depth': (lambda t: depth(line(t, 'let x'), '(', ')'), 0),
         }
         self.assertEqual(list(parts), list(sc.SHAPES))
         for name, (_, make) in sc.SHAPES.items():
@@ -625,7 +629,7 @@ class ScalingTest(unittest.TestCase):
 
     def test_text_of_each_shape_should_grow_linearly_with_its_size(self):
         """
-        GIVEN the 14 shapes at their sizes 0, n, 2n, 4n and 8n
+        GIVEN the 17 shapes at their sizes 0, n, 2n, 4n and 8n
         WHEN the bytes of each program are counted
         THEN the growth in bytes at each size is below 2.01 times the growth at half that size
         """

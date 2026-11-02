@@ -188,6 +188,14 @@ impl Checker<'_> {
         }
     }
 
+    /// Records a use of the interface of each `any` type in `ty`, written at `at`, by the body
+    /// being checked.
+    pub(super) fn record_anys(&mut self, ty: Type, at: Span) {
+        for interface in ty.anys() {
+            self.record(Used::Interface(interface), at);
+        }
+    }
+
     /// Records a use of each interface in the bounds of the `extend` block `block`, by the block:
     /// one use for each bound, however many methods the block has.
     pub(super) fn record_block_bounds(&mut self, block: usize) {
@@ -246,18 +254,22 @@ impl Checker<'_> {
         let named = |o: Owner| match o {
             Owner::Func(f) => (
                 UsedBy::Item(function_kind(f.0)),
-                self.text(self.signatures[f.0].span),
+                self.text(self.signatures[f.0].span).into(),
             ),
             Owner::Block(b) => {
                 let block = &self.extensions[b];
                 let built = built(block.holder);
-                (UsedBy::Block { built }, self.text(block.written))
+                (
+                    UsedBy::Block { built },
+                    self.source.type_text(block.written),
+                )
             }
             Owner::Const(c) => (
                 UsedBy::Item(Definition::Constant),
                 self.text(
                     constants[c].expect("a constant with a use should be the first of its name"),
-                ),
+                )
+                .into(),
             ),
         };
         let describe = |sites: &[usize]| -> Vec<(Span, UsedBy, String)> {
@@ -358,7 +370,7 @@ impl Checker<'_> {
         for (b, block) in self.extensions.iter().enumerate() {
             let owner = self.owner_index(Owner::Block(b));
             if !reached.live[owner] && built(block.holder) && !block.header.in_prelude() {
-                let name = self.text(block.written).to_string();
+                let name = self.source.type_text(block.written).into_owned();
                 let at = block.header;
                 let uses = describe(&std::mem::take(&mut cited[owner]));
                 found.push(DiagnosticKind::UnusedBlock { name, at, uses }.into());
@@ -593,6 +605,7 @@ impl Checker<'_> {
             .collect();
         let conforming = self.conformance_methods();
         let conforming_blocks = self.conformance_blocks();
+        let chosen = self.chosen_types();
         let mut enum_started = vec![false; self.enums.len()];
         // The interfaces live code uses, and those not yet followed to the ones they name.
         let mut interfaces = vec![false; self.interfaces.len()];
@@ -625,17 +638,9 @@ impl Checker<'_> {
                     for &b in conforming_blocks.get(&holder).into_iter().flatten() {
                         make_live(&mut live, &mut stack, self.owner_index(Owner::Block(b)));
                     }
-                    // A class or an enum that is built names the interfaces of its bounds.
-                    let bounds = match holder {
-                        Holder::Class(c) => &self.classes[c.0].bounds,
-                        Holder::Enum(e) => &self.enums[e.0].bounds,
-                        Holder::Array | Holder::I64 => {
-                            unreachable!("only a class or an enum is started by a use")
-                        }
-                    };
-                    let bounds = bounds.iter().flatten().map(|bound| bound.interface.0);
-                    for interface in bounds {
-                        use_interface(&mut interfaces, &mut to_follow, interface);
+                    // A class or an enum that is built names the interfaces it holds.
+                    for interface in self.held_interfaces(holder, &chosen) {
+                        use_interface(&mut interfaces, &mut to_follow, interface.0);
                     }
                 }
                 match to {
@@ -701,7 +706,59 @@ impl Checker<'_> {
             for bound in inherited.chain(requirements).chain(own).chain(assoc) {
                 use_interface(used, &mut to_follow, bound.interface.0);
             }
+            // The `any` types in the types of its requirements.
+            let written = (info.requirements.iter())
+                .flat_map(|r| r.params.iter().copied().chain([r.ret]).flatten());
+            for interface in written.flat_map(Type::anys) {
+                use_interface(used, &mut to_follow, interface.0);
+            }
         }
+    }
+
+    /// The associated types that the conformances of each class and enum choose, when one holds an
+    /// `any` type.
+    fn chosen_types(&self) -> FxHashMap<Holder, Vec<Type>> {
+        let mut chosen: FxHashMap<Holder, Vec<Type>> = FxHashMap::default();
+        for (_, conformance) in self.conformances.iter() {
+            let holder = holder_of(conformance.target)
+                .expect("the target of a conformance should be a class or an enum");
+            let types = conformance
+                .assoc
+                .iter()
+                .flatten()
+                .filter(|ty| ty.holds_any());
+            chosen.entry(holder).or_default().extend(types);
+        }
+        chosen
+    }
+
+    /// The interfaces that a class or an enum names: in its bounds, and in the `any` types it
+    /// holds, in the type of a field, in the type of a variant's payload, and in an associated
+    /// type that `chosen` gives for it.
+    fn held_interfaces(
+        &self,
+        holder: Holder,
+        chosen: &FxHashMap<Holder, Vec<Type>>,
+    ) -> impl Iterator<Item = tir::InterfaceId> {
+        let (bounds, declared): (_, Box<dyn Iterator<Item = Type>>) = match holder {
+            Holder::Class(c) => (
+                &self.classes[c.0].bounds,
+                Box::new((self.classes[c.0].fields.iter()).filter_map(|f| f.ty)),
+            ),
+            Holder::Enum(e) => (
+                &self.enums[e.0].bounds,
+                Box::new(
+                    (self.enums[e.0].variants.iter())
+                        .flat_map(|v| v.fields.iter().flatten().copied()),
+                ),
+            ),
+            Holder::Array | Holder::I64 => {
+                unreachable!("only a class or an enum is started by a use")
+            }
+        };
+        let bounds = bounds.iter().flatten().map(|bound| bound.interface);
+        let chosen = chosen.get(&holder).into_iter().flatten().copied();
+        bounds.chain(declared.chain(chosen).flat_map(Type::anys))
     }
 
     /// The class or enum of each function that is a method, by its `FuncId`.

@@ -1,0 +1,21 @@
+warning[W0012]: interface `Named` is never used
+ --> W0012-any.sisu:1:11
+  |
+1 | interface Named {
+  |           ^^^^^ never used
+...
+4 | fn show(x: (any Named)?) -> i64 { if let _ = x { 1 } else { 0 } }
+  |            ------------ used here, in `show`, which is never called
+  |
+  = help: delete it, or name it `_Named` if it is kept on purpose
+
+warning[W0012]: function `show` is never called
+ --> W0012-any.sisu:4:4
+  |
+4 | fn show(x: (any Named)?) -> i64 { if let _ = x { 1 } else { 0 } }
+  |    ^^^^ never called
+  |
+  = help: delete it, or name it `_show` if it is kept on purpose
+
+sisu: 2 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0012

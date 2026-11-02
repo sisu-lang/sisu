@@ -170,21 +170,16 @@ fn open_tokens_should_stay_bounded() {
     src.push_str("\n}");
     // The front end recurses once per nested `match`, so it runs on a stack of the compiler's
     // own size.
-    let most = std::thread::Builder::new()
-        .stack_size(crate::STACK_SIZE)
-        .spawn(move || {
-            let program = checked(&src);
-            let built = build(&program);
-            let f = built
-                .functions
-                .iter()
-                .find(|f| f.name == "f")
-                .expect("the program should hold `f`");
-            available(f, &program).iter().map(Vec::len).max()
-        })
-        .expect("the thread should start")
-        .join()
-        .expect("the thread should not panic");
+    let most = crate::on_compiler_stack(|| {
+        let program = checked(&src);
+        let built = build(&program);
+        let f = built
+            .functions
+            .iter()
+            .find(|f| f.name == "f")
+            .expect("the program should hold `f`");
+        available(f, &program).iter().map(Vec::len).max()
+    });
     assert_eq!(most, Some(MAX_OPEN));
 }
 
