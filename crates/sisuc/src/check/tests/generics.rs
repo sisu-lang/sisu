@@ -6179,6 +6179,17 @@ const PARITY_ROWS: &[ParityRow<'static>] = &[
         "let y: i64 = 1 + if true { mk2() } else { 2 }\nprint(y)",
     ),
     ("", "print(fi(0) == if true { 1 } else { mk2() })"),
+    // An operator with no concrete operand: the first operand gets the operator's list, as a
+    // concrete leader does, not the `i64` that the operator takes by default.
+    ("", "print(mk2() + 1)"),
+    ("", "print(mk2() + mk2())"),
+    ("", "let x = mk2() * mk2()\nprint(x)"),
+    ("", "print(mk2() - 1)"),
+    ("", "let y: string = mk2() + mk2()"),
+    ("", "let y: i64 = mk2() + 1"),
+    ("", "let mut z = 0\nz = mk2() + mk2()\nprint(z)"),
+    ("", "let mut w = 0\nw += mk2() + 1\nprint(w)"),
+    ("", "print(mk2() % 2 == 0)"),
 ];
 
 /// A class with a method that takes an optional, for a row of `PARITY_ROWS`.
@@ -6248,15 +6259,123 @@ fn a_misfit_that_no_code_reports_should_give_e0050_at_the_call() {
     assert_eq!(codes, [Code::CannotInfer], "{found:?}");
 }
 
-/// A call with an argument that waits for context and no failed argument rejects nothing: it
-/// visits no type.
+/// A `return` or a `panic` before a misfit tail makes the block `never`, so no code uses the
+/// tail's value and none reports its misfit. The call gives its E0050, and the rest is what the
+/// concrete twin gives: no crash, and no "found `never`".
 #[test]
-fn a_call_with_no_failed_argument_should_reject_nothing() {
+fn a_never_statement_before_a_misfit_tail_should_give_e0050_at_the_call() {
     with_prelude();
-    let src = "fn tk<T>(_x: T, _y: T?) -> i64 { 0 }\nfn none<T>() -> T? { None }\n\
-        fn main() {\n    print(tk(1, none()))\n}";
-    generic::DISTINCT.set(0);
-    let (_, ds) = checked(src);
-    assert!(ds.is_empty(), "{ds:?}");
-    assert_eq!(generic::DISTINCT.get(), 0);
+    let rows: &[ParityRow<'static>] = &[
+        (
+            "fn f() -> i64 {\n    panic(\"x\")\n    mk2()\n}\n",
+            "print(f())",
+        ),
+        (
+            "fn f() -> i64 {\n    return 1\n    mk2()\n}\n",
+            "print(f())",
+        ),
+        (
+            "fn f(o: O?) -> i64 {\n    return 1\n    o?.m()\n}\n",
+            "print(f(None))",
+        ),
+        (
+            "class S {\n    fn g(self) -> i64 {\n        return 1\n        mk2()\n    }\n}\n",
+            "print(S().g())",
+        ),
+        (
+            "fn f() -> i64 {\n    return 1\n    if true { mk2() } else { mk2() }\n}\n",
+            "print(f())",
+        ),
+        (
+            "fn f() -> i64 {\n    match 1 {\n        _ => {\n            return 1\n            mk2()\n        }\n    }\n}\n",
+            "print(f())",
+        ),
+        ("", "let y: i64 = {\n    return\n    mk2()\n}\nprint(y)"),
+        (
+            "",
+            "let y: i64 = match 1 {\n    _ => {\n        return\n        mk2()\n    }\n}\nprint(y)",
+        ),
+        (
+            "",
+            "let y: i64 = if true {\n    return\n    mk2()\n} else {\n    return\n}\nprint(y)",
+        ),
+    ];
+    for &row in rows {
+        let (failed, mut generic) = parity_found(&parity_program(row, false));
+        let (_, concrete) = parity_found(&parity_program(row, true));
+        let before = generic.len();
+        generic.retain(|(code, ..)| *code != Code::CannotInfer);
+        assert!(failed, "row `{}`", row.1);
+        assert_eq!(before - generic.len(), 1, "row `{}`: one E0050", row.1);
+        assert_eq!(generic, concrete, "row `{}`", row.0);
+    }
+}
+
+/// Rows where a generic call that misfits still gives E0050, or gives one diagnostic less or more
+/// than its concrete twin. Each text is true, and none of the programs is accepted.
+const KEPT_E0050_ROWS: &[(ParityRow<'static>, &[Code])] = &[
+    // A comparison holds its operands to the first one's type. A generic call gives none, so
+    // nothing names the type that has no `<`: the call cannot infer `X`.
+    (("", "print(mk2() < mk2())"), &[Code::CannotInfer]),
+    // No context at all: nothing to misfit.
+    (("", "print(mk2() == mk2())"), &[Code::CannotInfer]),
+    (("", "print(-mk2())"), &[Code::CannotInfer]),
+    // The `never` branch gives the join no type, so the comparison has no type to report.
+    (
+        ("", "print(1 == if true { mk2() } else { panic(\"x\") })"),
+        &[Code::CannotInfer],
+    ),
+    // An `Error` branch may be the mistake, so the join reports nothing more.
+    (
+        ("", "print(1 == if true { mk2() } else { nope })"),
+        &[Code::BindingNotFound],
+    ),
+    (
+        (
+            "",
+            "print(1 == match 1 {\n    1 => mk2()\n    _ => nope\n})",
+        ),
+        &[Code::BindingNotFound],
+    ),
+    // The join reports the branch that does not fit first, and the other branch's misfit has no
+    // code that reports it.
+    (
+        ("", "let y: i64 = if true { mk2() } else { None }\nprint(y)"),
+        &[Code::CannotInfer, Code::Mismatch],
+    ),
+    (
+        (
+            "",
+            "let y: i64 = if true { mk2() } else if false { mk2() } else { 3 }\nprint(y)",
+        ),
+        &[Code::CannotInfer, Code::Mismatch],
+    ),
+    // The side of the type parameter has no `==`, which is the first mistake.
+    (
+        (
+            "fn h<X>(v: X) -> bool {\n    v == mk2()\n}\n",
+            "print(h(1))",
+        ),
+        &[Code::ParamLacks, Code::CannotInfer],
+    ),
+    (
+        (
+            "",
+            "let a: any Display = 1\nprint(1 == if true { a } else { mk2() })",
+        ),
+        &[Code::NoOperator, Code::CannotInfer],
+    ),
+];
+
+/// A misfit that no code can report against a type the user wrote keeps a true diagnostic: the
+/// pinned codes of `KEPT_E0050_ROWS`.
+#[test]
+fn a_misfit_with_no_type_to_report_against_should_keep_a_true_diagnostic() {
+    with_prelude();
+    for &(row, codes) in KEPT_E0050_ROWS {
+        let (failed, found) = parity_found(&parity_program(row, false));
+        let got: Vec<_> = found.iter().map(|(code, ..)| *code).collect();
+        assert!(failed, "row `{}`", row.1);
+        assert_eq!(got, codes, "row `{}`: {found:?}", row.1);
+    }
 }
