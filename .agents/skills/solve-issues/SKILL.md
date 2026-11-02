@@ -108,6 +108,7 @@ options when there are some. Ask with `AskUserQuestion`, as at Stop 1.
 1. Put the issues whose fixes touch the same code into one task.
 2. Order the tasks so that each one builds on the last.
 3. Write one brief for each task from [brief.md](brief.md). Fill every slot.
+4. Before you give a brief that changes behaviour to an executor, have its test list reviewed. Launch one `opus-medium` with the brief and the `origin/main` build. It probes the cases, and reports each neighbouring case that the list does not hold and each wanted output that is wrong. It writes its report to `<ledger folder>/<group>-task-<N>-tests-review.md`. Rule on each finding, as `review-sisu` does, and correct the list. Do the same for each fix-round brief, with the round's head build.
 
 ### 5. Set up the group
 
@@ -128,7 +129,7 @@ Do this once for each group. On resume, use the worktree in the ledger.
    - **BLOCKED:** the stated cause is wrong. Do step 3 again for that issue, then Stop 2 again.
    - **DONE_WITH_CONCERNS:** check each concern.
 5. Run `review-sisu` on `<BASE>..HEAD`. It writes the review brief, launches the reviewers, and says how to rule and when to ask the user.
-6. Write each fix-round brief from the "Fix round" part of [brief.md](brief.md). Give it to a `sonnet-high` executor.
+6. Write each fix-round brief from the "Fix round" part of [brief.md](brief.md). Have its test list reviewed (step 4.4). Then give it to a `sonnet-high` executor.
 
 ### 7. Finish the group
 

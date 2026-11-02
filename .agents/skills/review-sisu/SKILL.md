@@ -97,8 +97,9 @@ Rules for ruling:
 ### 5. Fix and review again
 
 Fix the accepted findings in the target. Fix the class, not only the repro: for each finding, list the neighbouring cases (the same rule in each position the language allows it), try each one, and fix the cause so that all of them are right. A brief for a fix round asks for that list and its results, and for the command and its output behind each claim about what `sisu` does. Its executor writes each probe program to `RUN/probes/<round>/`, and compares the probes of every round with `python3 scripts/diag_diff.py BASE_SISU HEAD_SISU RUN/probes`, where `BASE_SISU` is the build before the round. A fix to code keeps `make test`
-passing, and a fix that changes behavior adds a test that fails without
-it.
+passing. A fix that changes behavior adds its tests in a commit before the
+fix, red at the round base. The reviewer runs those tests at that commit:
+each must fail, and for the stated cause.
 
 In the final review of a diff whose flow runs mutation tests, a fix round that changes more than 50 Rust lines outside the tests, such as a new algorithm, runs one mutation test on its head before the re-review. The stage's or group's run came before that round, so no line is mutated twice. `git diff --shortstat <round base> HEAD -- '*.rs' ':!**/tests/**' ':!**/tests.rs'` gives the count. Run `(cd <worktree> && env CARGO_MUTANTS_JOBS=2 nice -n 19 make mutation-test BASE=<round base> LOG=RUN/mutation-<round>.log)` with Bash `run_in_background`. Put each surviving mutant into the round, with a test that kills it or a reason it is equivalent, and pass the log as `--mutation-log`.
 
