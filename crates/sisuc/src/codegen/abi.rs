@@ -7,7 +7,10 @@ use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::context::ContextRef;
 use inkwell::module::Module;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
-use inkwell::values::FunctionValue;
+use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue};
+
+use super::Codegen;
+use crate::tir::Type;
 
 /// How a value crosses into the runtime. `Bool` and `U8` are passed `zeroext`, as the C
 /// ABI wants for integers narrower than 32 bits: the callee may read all 32 bits of the
@@ -481,6 +484,61 @@ pub(super) const PAD_CENTER: u64 = 2;
 pub(super) const SINK_SIZE: u64 = 48;
 pub(super) const SINK_LEN: u64 = 24;
 pub(super) const SINK_CAP: u64 = 32;
+
+/// How a Sisu value crosses a function boundary (ADR 0029). Every function type that takes a
+/// Sisu value, every call that passes one and every function entry that receives one goes
+/// through these three, so a change to the layout of a value is a change here.
+impl<'ctx> Codegen<'ctx, '_> {
+    /// The LLVM types of the parameters that one value of type `ty` takes, in order.
+    pub(super) fn param_types(&self, ty: Type) -> Vec<BasicMetadataTypeEnum<'ctx>> {
+        let part = self
+            .llvm_type(ty)
+            .expect("the checker should reject a `unit` or `never` parameter, so each parameter has a value type");
+        vec![part.into()]
+    }
+
+    /// The arguments that pass `value`, of type `ty`, at a call: one for each of `param_types`.
+    pub(super) fn split(
+        &self,
+        ty: Type,
+        value: BasicValueEnum<'ctx>,
+    ) -> Vec<BasicMetadataValueEnum<'ctx>> {
+        debug_assert_eq!(
+            self.llvm_type(ty),
+            Some(value.get_type()),
+            "a value should have the LLVM type of its Sisu type"
+        );
+        vec![value.into()]
+    }
+
+    /// The value of type `ty` that the parameters `parts` of a function hold at its entry: the
+    /// inverse of `split`, with one part for each of `param_types`.
+    pub(super) fn join(&self, ty: Type, parts: &[BasicValueEnum<'ctx>]) -> BasicValueEnum<'ctx> {
+        debug_assert_eq!(
+            parts.len(),
+            self.param_types(ty).len(),
+            "a value should be joined from one part for each of its parameter types"
+        );
+        parts[0]
+    }
+
+    /// The values of the parameters of `function` from the `first`, one for each of `tys`:
+    /// `join` of the parts of each.
+    pub(super) fn joined_params(
+        &self,
+        function: FunctionValue<'ctx>,
+        first: u32,
+        tys: &[Type],
+    ) -> Vec<BasicValueEnum<'ctx>> {
+        let mut parts = function.get_param_iter().skip(first as usize);
+        tys.iter()
+            .map(|&ty| {
+                let own: Vec<_> = parts.by_ref().take(self.param_types(ty).len()).collect();
+                self.join(ty, &own)
+            })
+            .collect()
+    }
+}
 
 /// The row of `RUNTIME` named `name`.
 pub(super) fn row(name: &str) -> &'static RuntimeFn {

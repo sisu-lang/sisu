@@ -495,11 +495,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         let mut params: Vec<BasicMetadataTypeEnum<'_>> = f.locals[..f.params]
             .iter()
-            .map(|p| {
-                self.llvm_type(p.ty)
-                    .expect("the checker should reject a `unit` or `never` parameter, so each parameter has a value type")
-                    .into()
-            })
+            .flat_map(|p| self.param_types(p.ty))
             .collect();
         // A prelude function takes its caller's location: a pointer and a length.
         if f.prelude {
@@ -568,20 +564,21 @@ impl<'ctx> Codegen<'ctx, '_> {
                 Some((self.entry_alloca(ty, name), ty))
             })
             .collect();
-        for (local, param) in (0..f.params).map(LocalId).zip(function.get_param_iter()) {
+        let tys: Vec<Type> = f.locals[..f.params].iter().map(|p| p.ty).collect();
+        for (local, param) in (0..f.params)
+            .map(LocalId)
+            .zip(self.joined_params(function, 0, &tys))
+        {
             self.store(self.slot(local).0, param);
         }
         self.caller.set(f.prelude.then(|| {
-            let hidden = |at| {
-                function.get_nth_param(
-                    u32::try_from(at).expect("a function should have fewer than 2^32 parameters"),
-                )
-            };
+            // The location follows the Sisu parameters, so it is the last two.
+            let hidden = |from_end| function.get_nth_param(function.count_params() - from_end);
             (
-                hidden(f.params)
+                hidden(2)
                     .expect("a prelude function should have its location pointer")
                     .into_pointer_value(),
-                hidden(f.params + 1)
+                hidden(1)
                     .expect("a prelude function should have its location length")
                     .into_int_value(),
             )
@@ -749,8 +746,12 @@ impl<'ctx> Codegen<'ctx, '_> {
             Rvalue::Call {
                 func, args, span, ..
             } => {
-                let mut args: Vec<BasicMetadataValueEnum<'_>> =
-                    args.iter().map(|arg| self.operand(arg).0.into()).collect();
+                let mut args: Vec<BasicMetadataValueEnum<'_>> = (args.iter())
+                    .flat_map(|arg| {
+                        let (value, ty) = self.operand(arg);
+                        self.split(ty, value)
+                    })
+                    .collect();
                 if self.mir.functions[func.0].prelude {
                     // The caller's own location when the caller is the prelude's too, and the
                     // call's when it is the user's.
@@ -786,7 +787,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 args,
             } => {
                 let (receiver, any) = self.operand(&args[0]);
-                let owned = self.values(&args[1..]);
+                let owned: Vec<_> = args[1..].iter().map(|arg| self.operand(arg)).collect();
                 let rest = TypeArgs::intern(&iargs.get()[1..]);
                 return self.dyn_call(any, (*interface, rest, *method), receiver, &owned, dest_ty);
             }
@@ -1111,10 +1112,8 @@ impl<'ctx> Codegen<'ctx, '_> {
         let passed = if sisu_main.count_params() == 0 {
             Vec::new()
         } else {
-            vec![
-                self.args(count.into_int_value(), strings.into_pointer_value())
-                    .into(),
-            ]
+            let args = self.args(count.into_int_value(), strings.into_pointer_value());
+            self.split(Type::intern(TypeKind::Array(Type::STRING)), args.into())
         };
         self.builder
             .build_call(sisu_main, &passed, "")

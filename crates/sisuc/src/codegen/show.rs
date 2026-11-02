@@ -390,7 +390,8 @@ impl<'ctx> Codegen<'ctx, '_> {
                 );
             }
             TypeKind::Array(_) | TypeKind::Class(..) => {
-                self.call(self.helper(Helper::Show(mode), ty), &args(value));
+                let args = [vec![sink.into()], self.split(ty, value)].concat();
+                self.call(self.helper(Helper::Show(mode), ty), &args);
             }
             TypeKind::Any(..) => self.show_any(sink, ty, value, quoted, mode),
             _ => {
@@ -435,33 +436,44 @@ impl<'ctx> Codegen<'ctx, '_> {
         let entry = self.context.append_basic_block(function, "entry");
         self.builder.position_at_end(entry);
         let sink = param(function);
-        let value = function
-            .get_nth_param(1)
-            .expect("a `show` helper should be declared with two parameters")
-            .into_pointer_value();
+        // An enum comes by the address of its slot; an array or a class by the calling convention.
+        let value = if let TypeKind::Enum(..) = ty.kind() {
+            function
+                .get_nth_param(1)
+                .expect("a `show` helper should be declared with a value after the sink")
+        } else {
+            self.joined_params(function, 1, &[ty])[0]
+        };
         match ty.kind() {
-            TypeKind::Array(element) => self.show_array(sink, element, value, mode),
+            TypeKind::Array(element) => {
+                self.show_array(sink, element, value.into_pointer_value(), mode);
+            }
             TypeKind::Class(id, _) => match self.written_display(ty) {
-                Some(method) => self.show_written(sink, method, ty, value.into()),
-                None if mode == Mode::Dbg => self.show_fields(sink, (id, ty), value),
+                Some(method) => self.show_written(sink, method, ty, value),
+                None if mode == Mode::Dbg => {
+                    self.show_fields(sink, (id, ty), value.into_pointer_value());
+                }
                 None => self.show_text("sisu_show_str", sink, &self.program.type_name(ty)),
             },
-            TypeKind::Enum(id, _) => match self.written_display(ty) {
-                Some(method) => {
-                    self.show_written(sink, method, ty, self.load_value(ty, value));
-                }
-                None => match &self.components[id.0] {
-                    Some(Component { members, index }) => {
-                        let first = Type::intern(TypeKind::Enum(members[0], TypeArgs::NONE));
-                        let kind = self.kind(*index);
-                        self.call(
-                            self.helper(Helper::ShowComponent(mode), first),
-                            &[sink.into(), kind.into(), value.into()],
-                        );
+            TypeKind::Enum(id, _) => {
+                let slot = value.into_pointer_value();
+                match self.written_display(ty) {
+                    Some(method) => {
+                        self.show_written(sink, method, ty, self.load_value(ty, slot));
                     }
-                    None => self.show_variants(sink, id, value, mode),
-                },
-            },
+                    None => match &self.components[id.0] {
+                        Some(Component { members, index }) => {
+                            let first = Type::intern(TypeKind::Enum(members[0], TypeArgs::NONE));
+                            let kind = self.kind(*index);
+                            self.call(
+                                self.helper(Helper::ShowComponent(mode), first),
+                                &[sink.into(), kind.into(), slot.into()],
+                            );
+                        }
+                        None => self.show_variants(sink, id, slot, mode),
+                    },
+                }
+            }
             _ => unreachable!("only an array, a class or an enum should have a `show` helper"),
         }
         self.builder.build_return(None).expect(POSITIONED);
@@ -523,7 +535,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.retain(receiver, ty);
         }
         let text = self
-            .call_written(method, &[receiver.into()])
+            .call_written(method, &self.split(ty, receiver))
             .expect("a written `to_string` should return a `string`")
             .into_pointer_value();
         self.show_call(

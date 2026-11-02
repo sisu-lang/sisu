@@ -486,7 +486,11 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// `@sisu_rc.eq.[T](a, b)`: see `eq_entry` for the same pointer and `null`; otherwise the
     /// lengths, then each pair of elements by `T`'s `==`, up to the first difference.
     fn define_array_eq(&self, element: Type, function: FunctionValue<'ctx>) {
-        let (a, b, equal, unequal) = self.eq_entry(function, self.reflexive(element));
+        let (a, b, equal, unequal) = self.eq_entry(
+            function,
+            Type::intern(TypeKind::Array(element)),
+            self.reflexive(element),
+        );
         let len = self.array_len(a);
         let same_len = self.int_compare(IntPredicate::EQ, len, self.array_len(b));
         let elements = self.context.append_basic_block(function, "elements");

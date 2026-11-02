@@ -300,17 +300,12 @@ impl<'ctx> Codegen<'ctx, '_> {
         );
         // The receiver is the data, a pointer, whatever the method's `self` is.
         let ptr = self.context.ptr_type(AddressSpace::default());
-        let params: Vec<BasicMetadataTypeEnum<'ctx>> = function.locals[..function.params]
+        let others: Vec<Type> = function.locals[1..function.params]
             .iter()
-            .enumerate()
-            .map(|(i, param)| {
-                if i == 0 {
-                    return ptr.into();
-                }
-                self.llvm_type(param.ty)
-                    .expect("a parameter should have a value type")
-                    .into()
-            })
+            .map(|param| param.ty)
+            .collect();
+        let params: Vec<BasicMetadataTypeEnum<'ctx>> = std::iter::once(ptr.into())
+            .chain(others.iter().flat_map(|&ty| self.param_types(ty)))
             .collect();
         let fn_type = match self.llvm_type(function.ret) {
             Some(ret) => ret.fn_type(&params, false),
@@ -321,15 +316,23 @@ impl<'ctx> Codegen<'ctx, '_> {
             .add_function(&name, fn_type, Some(Linkage::Internal));
         let entry = self.context.append_basic_block(glue, "entry");
         self.builder.position_at_end(entry);
-        let mut args: Vec<BasicValueEnum<'ctx>> = glue.get_param_iter().collect();
+        let data = glue
+            .get_first_param()
+            .expect("an entry glue should have its receiver")
+            .into_pointer_value();
         // The receiver is the object, or the value in the box. A method that owns `self` gets a
         // reference of its own, as the caller of a borrowing method keeps its.
-        args[0] = self.data_value(ty, args[0].into_pointer_value());
+        let receiver = self.data_value(ty, data);
         if !function.borrowed[0] {
-            self.retain(args[0], ty);
+            self.retain(receiver, ty);
         }
-        let call_args: Vec<BasicMetadataValueEnum<'ctx>> =
-            args.iter().map(|&arg| arg.into()).collect();
+        let mut args = vec![receiver];
+        args.extend(self.joined_params(glue, 1, &others));
+        let call_args: Vec<BasicMetadataValueEnum<'ctx>> = (std::iter::once(ty))
+            .chain(others.iter().copied())
+            .zip(&args)
+            .flat_map(|(ty, &arg)| self.split(ty, arg))
+            .collect();
         let result = self.call_value(method, &call_args);
         // An argument that the method borrows is the entry's to release, after the call.
         for (i, local) in function.locals[..function.params]
@@ -358,9 +361,12 @@ impl<'ctx> Codegen<'ctx, '_> {
             return glue;
         }
         let ptr = self.context.ptr_type(AddressSpace::default());
+        let string = self
+            .llvm_type(Type::STRING)
+            .expect("a `string` should have a value type");
         let glue = self.module.add_function(
             &name,
-            ptr.fn_type(&[ptr.into()], false),
+            string.fn_type(&[ptr.into()], false),
             Some(Linkage::Internal),
         );
         let entry = self.context.append_basic_block(glue, "entry");
@@ -445,13 +451,14 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// `DynCall`: the requirement `method` of `interface`, with the arguments `iargs` after
-    /// `Self`, called on `receiver`, an `any` value of type `any`, with the owned `args`.
+    /// `Self`, called on `receiver`, an `any` value of type `any`, with the owned `args`, each
+    /// with its type.
     pub(super) fn dyn_call(
         &self,
         any: Type,
         (interface, iargs, method): (InterfaceId, TypeArgs, u32),
         receiver: BasicValueEnum<'ctx>,
-        args: &[BasicValueEnum<'ctx>],
+        args: &[(BasicValueEnum<'ctx>, Type)],
         ret: Option<Type>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let at = self
@@ -464,16 +471,13 @@ impl<'ctx> Codegen<'ctx, '_> {
         let entry = self.table_slot(any, table, slot);
         let mut params: Vec<BasicMetadataTypeEnum<'ctx>> =
             vec![self.context.ptr_type(AddressSpace::default()).into()];
-        params.extend(
-            args.iter()
-                .map(|arg| BasicMetadataTypeEnum::from(arg.get_type())),
-        );
+        params.extend(args.iter().flat_map(|&(_, ty)| self.param_types(ty)));
         let fn_type = match ret.and_then(|ret| self.llvm_type(ret)) {
             Some(ret) => ret.fn_type(&params, false),
             None => self.context.void_type().fn_type(&params, false),
         };
         let mut call_args: Vec<BasicMetadataValueEnum<'ctx>> = vec![data.into()];
-        call_args.extend(args.iter().map(|&arg| BasicMetadataValueEnum::from(arg)));
+        call_args.extend(args.iter().flat_map(|&(arg, ty)| self.split(ty, arg)));
         self.builder
             .build_indirect_call(fn_type, entry, &call_args, "dyn")
             .expect(POSITIONED)

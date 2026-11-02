@@ -7,8 +7,10 @@
 
 use inkwell::basic_block::BasicBlock;
 use inkwell::module::Linkage;
-use inkwell::types::ArrayType;
-use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
+use inkwell::types::{ArrayType, BasicMetadataTypeEnum};
+use inkwell::values::{
+    BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, PointerValue,
+};
 use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 
 use super::abi::{RC_FAULT_MOVED, RC_FAULT_RELEASE, RC_FAULT_RETAIN};
@@ -186,9 +188,10 @@ impl<'ctx> Codegen<'ctx, '_> {
             Helper::Drop => ("drop", takes_object),
             Helper::Eq => (
                 "eq",
-                self.context
-                    .bool_type()
-                    .fn_type(&[ptr_type.into(), ptr_type.into()], false),
+                self.context.bool_type().fn_type(
+                    &[self.helper_value(ty), self.helper_value(ty)].concat(),
+                    false,
+                ),
             ),
             Helper::Unique => ("unique", ptr_type.fn_type(&[ptr_type.into()], false)),
             Helper::Walk => (
@@ -206,9 +209,10 @@ impl<'ctx> Codegen<'ctx, '_> {
             Helper::Reuse => ("reuse", ptr_type.fn_type(&[ptr_type.into()], false)),
             Helper::Show(_) => (
                 "",
-                self.context
-                    .void_type()
-                    .fn_type(&[ptr_type.into(); 2], false),
+                self.context.void_type().fn_type(
+                    &[vec![ptr_type.into()], self.helper_value(ty)].concat(),
+                    false,
+                ),
             ),
             Helper::ShowComponent(_) => (
                 "",
@@ -246,6 +250,29 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.helpers.borrow_mut().insert(key, function);
         self.pending.borrow_mut().push(key);
         function
+    }
+
+    /// The parameter types of a helper for one value of the counted type `ty`: an enum is passed
+    /// by the address of its slot, and any other value by the calling convention.
+    fn helper_value(&self, ty: Type) -> Vec<BasicMetadataTypeEnum<'ctx>> {
+        if let TypeKind::Enum(..) = ty.kind() {
+            vec![self.context.ptr_type(AddressSpace::default()).into()]
+        } else {
+            self.param_types(ty)
+        }
+    }
+
+    /// The arguments that pass `value` to a helper for `ty`; see `helper_value`.
+    pub(super) fn helper_args(
+        &self,
+        ty: Type,
+        value: BasicValueEnum<'ctx>,
+    ) -> Vec<BasicMetadataValueEnum<'ctx>> {
+        if let TypeKind::Enum(..) = ty.kind() {
+            vec![value.into()]
+        } else {
+            self.split(ty, value)
+        }
     }
 
     /// Defines the counting helpers, which take their object without taking ownership:
@@ -545,7 +572,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         };
         let (a, b) = if let TypeKind::Class(..) = ty.kind() {
             // The blocks that `eq_entry` returns answer the `null` cases; both are real here.
-            let (a, b, _, _) = self.eq_entry(function, false);
+            let (a, b, _, _) = self.eq_entry(function, ty, false);
             (a, b)
         } else {
             let entry = self.context.append_basic_block(function, "entry");
@@ -578,7 +605,10 @@ impl<'ctx> Codegen<'ctx, '_> {
                 self.retain(*value, ty);
             }
         }
-        let args: Vec<_> = values.iter().map(|&value| value.into()).collect();
+        let args: Vec<_> = values
+            .iter()
+            .flat_map(|&value| self.split(ty, value))
+            .collect();
         self.call_written(method, &args)
             .expect("a written `eq` should return a `bool`")
             .into_int_value()
@@ -591,6 +621,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     pub(super) fn eq_entry(
         &self,
         function: FunctionValue<'ctx>,
+        ty: Type,
         reflexive: bool,
     ) -> (
         PointerValue<'ctx>,
@@ -600,13 +631,10 @@ impl<'ctx> Codegen<'ctx, '_> {
     ) {
         let entry = self.context.append_basic_block(function, "entry");
         let (equal, unequal) = self.eq_returns(function);
-        let nth = |n| {
-            function
-                .get_nth_param(n)
-                .expect("the generated `eq` helper should be declared with two parameters")
-                .into_pointer_value()
+        let [a, b] = self.joined_params(function, 0, &[ty, ty])[..] else {
+            unreachable!("two types should give two values");
         };
-        let (a, b) = (nth(0), nth(1));
+        let (a, b) = (a.into_pointer_value(), b.into_pointer_value());
         self.builder.position_at_end(entry);
         self.compare_at_once(reflexive, true, a, b, equal, unequal);
         (a, b, equal, unequal)
@@ -787,7 +815,11 @@ impl<'ctx> Codegen<'ctx, '_> {
         b: BasicValueEnum<'ctx>,
     ) -> IntValue<'ctx> {
         self.builder
-            .build_call(self.helper(Helper::Eq, ty), &[a.into(), b.into()], "eq")
+            .build_call(
+                self.helper(Helper::Eq, ty),
+                &[self.helper_args(ty, a), self.helper_args(ty, b)].concat(),
+                "eq",
+            )
             .expect(POSITIONED)
             .try_as_basic_value()
             .basic()

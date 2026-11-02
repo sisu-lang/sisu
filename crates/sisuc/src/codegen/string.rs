@@ -554,7 +554,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// `@sisu_rc.eq.string(a, b)`: see `eq_entry` for the same pointer and `null`; otherwise
     /// the lengths, then the bytes by `sisu_str_compare`.
     fn define_string_eq(&self, function: FunctionValue<'ctx>) {
-        let (a, b, equal, unequal) = self.eq_entry(function, true);
+        let (a, b, equal, unequal) = self.eq_entry(function, Type::STRING, true);
         let same_len = self.int_compare(IntPredicate::EQ, self.string_len(a), self.string_len(b));
         let bytes = self.context.append_basic_block(function, "bytes");
         self.builder

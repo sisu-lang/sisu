@@ -5235,3 +5235,60 @@ fn bounded_array_drops_should_not_count_the_depth() {
         assert!(!body.contains("@sisu_rc.depth"), "{header}\n{body}");
     }
 }
+
+/// `param_types` and `split` agree for every kind of value.
+///
+/// GIVEN a value of each kind: `i64`, `string`, `[i64]`, a class, `[i64]?` and an `any I`
+/// WHEN `param_types` gives the types of its parts, and `split` cuts the value `join` made of
+/// parts of those types
+/// THEN `split` gives as many parts as `param_types` has types, each of the same LLVM type
+#[test]
+fn convention_should_give_one_type_per_part() {
+    let context = Context::create();
+    let src = "interface Shape {\n    fn area(self) -> f64\n}\nclass Circle: Shape {\n    r: f64\n    fn area(self) -> f64 { self.r }\n}\nfn main() {}";
+    let (program, diagnostics) = check_alone(&parse_ok(src), src, &[]);
+    let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+    let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
+    let machine = target_machine(OptLevel::O0).expect("the host is a target");
+    let mir = mir::build(&program);
+    let mut codegen = Codegen::new(&context, &program, &mir, "test.sisu", src, &machine, false);
+    codegen.lay_out_types();
+    let class = program
+        .classes
+        .iter()
+        .position(|class| class.name == "Circle")
+        .expect("the program should declare `Circle`");
+    let shape = program
+        .interfaces
+        .iter()
+        .position(|interface| interface.name == "Shape")
+        .expect("the program should declare `Shape`");
+    let array = Type::intern(TypeKind::Array(Type::I64));
+    let kinds = [
+        Type::I64,
+        Type::STRING,
+        array,
+        Type::intern(TypeKind::Class(ClassId(class), TypeArgs::NONE)),
+        Type::optional(array),
+        Type::intern(TypeKind::Any(InterfaceId(shape), TypeArgs::NONE)),
+    ];
+    for ty in kinds {
+        let types = codegen.param_types(ty);
+        let function = codegen.module.add_function(
+            "convention",
+            context.void_type().fn_type(&types, false),
+            None,
+        );
+        let parts: Vec<_> = function.get_param_iter().collect();
+        let split = codegen.split(ty, codegen.join(ty, &parts));
+        assert_eq!(split.len(), types.len(), "the parts of {ty:?}");
+        for (part, expected) in split.into_iter().zip(types) {
+            let part = BasicValueEnum::try_from(part).expect("a part should be a basic value");
+            assert_eq!(
+                BasicMetadataTypeEnum::from(part.get_type()),
+                expected,
+                "a part of {ty:?}"
+            );
+        }
+    }
+}
