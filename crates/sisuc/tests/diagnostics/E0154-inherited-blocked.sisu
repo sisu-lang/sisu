@@ -1,0 +1,83 @@
+class Node {
+    v: i64
+}
+
+class Plain<A> {
+    a: A
+}
+
+extend<A: Eq> Plain<A>: Eq {
+    fn eq(self, other: Plain<A>) -> bool {
+        self.a == other.a
+    }
+}
+
+extend<A> Plain<A>: Ord {
+    fn less(self, other: Plain<A>) -> bool {
+        false
+    }
+}
+
+class Listed<A>: Ord {
+    a: A
+
+    fn less(self, other: Listed<A>) -> bool {
+        false
+    }
+}
+
+extend<A: Eq> Listed<A>: Eq {
+    fn eq(self, other: Listed<A>) -> bool {
+        self.a == other.a
+    }
+}
+
+class Fixed<A> {
+    a: A
+}
+
+extend<A: Eq> Fixed<A>: Eq {
+    fn eq(self, other: Fixed<A>) -> bool {
+        self.a == other.a
+    }
+}
+
+extend Fixed<Node>: Ord {
+    fn less(self, other: Fixed<Node>) -> bool {
+        false
+    }
+}
+
+class Shown<A> {
+    a: A
+}
+
+extend<A: Eq> Shown<A>: Eq {
+    fn eq(self, other: Shown<A>) -> bool {
+        self.a == other.a
+    }
+}
+
+extend<A: Display> Shown<A>: Ord {
+    fn less(self, other: Shown<A>) -> bool {
+        false
+    }
+}
+
+class Cross<B> {
+    b: B
+}
+
+extend<B: Ord> Cross<B>: Eq {
+    fn eq(self, other: Cross<B>) -> bool {
+        true
+    }
+}
+
+extend<B: Eq> Cross<B>: Ord {
+    fn less(self, other: Cross<B>) -> bool {
+        false
+    }
+}
+
+fn main() {}

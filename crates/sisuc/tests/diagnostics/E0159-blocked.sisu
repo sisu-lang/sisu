@@ -1,0 +1,72 @@
+interface Shape {
+    fn area(self) -> f64
+}
+
+class Node {
+    v: i64
+}
+
+class Pair<A> {
+    a: A
+}
+
+extend<A: Eq> Pair<A>: Eq {
+    fn eq(self, other: Pair<A>) -> bool {
+        self.a == other.a
+    }
+}
+
+extend<A: Ord> Pair<A>: Ord {
+    fn less(self, other: Pair<A>) -> bool {
+        self.a < other.a
+    }
+}
+
+enum Outer {
+    Has(Pair<Node>)
+}
+
+enum Chain {
+    Cons(Pair<Chain>)
+    Leaf(Node)
+}
+
+fn equal() {
+    print(Pair(a: Node(v: 1)) == Pair(a: Node(v: 1)))
+}
+
+fn unequal() {
+    print(Pair(a: Node(v: 1)) != Pair(a: Node(v: 1)))
+    let o: Pair<Node>? = None
+    print(o == o)
+}
+
+fn ordered() {
+    print(Pair(a: Node(v: 1)) < Pair(a: Node(v: 1)))
+    print(Pair(a: true) < Pair(a: true))
+}
+
+fn arrays() {
+    print([Pair(a: Node(v: 1))] == [Pair(a: Node(v: 1))])
+}
+
+fn holder() {
+    print(Outer.Has(Pair(a: Node(v: 1))) == Outer.Has(Pair(a: Node(v: 1))))
+}
+
+fn no_help(x: Pair<any Shape>, y: Pair<bool>) -> bool {
+    x == x || y < y
+}
+
+fn cycle() {
+    print(Pair(a: Chain.Leaf(Node(v: 1))) == Pair(a: Chain.Leaf(Node(v: 1))))
+}
+
+fn main() {
+    equal()
+    unequal()
+    ordered()
+    arrays()
+    holder()
+    cycle()
+}

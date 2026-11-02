@@ -1,0 +1,18 @@
+error[E0139]: `Pair<T>` has no `==`
+  --> E0139-blocked-param.sisu:12:5
+   |
+12 |     x == x
+   |     ^ this has type `Pair<T>`
+   |
+   = help: add a bound: `T: Eq`
+
+error[E0139]: `Pair<T>` has no `==`
+  --> E0139-blocked-param.sisu:16:5
+   |
+16 |     x == x
+   |     ^ this has type `Pair<T>`
+   |
+   = help: add a bound: `T: Display & Eq`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0139

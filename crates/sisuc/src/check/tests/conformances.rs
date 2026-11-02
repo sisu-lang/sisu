@@ -5458,3 +5458,121 @@ fn is_should_report_a_parameter_with_no_object_bound() {
         codes_row(row, &src, &[(Code::NotConform, argument(&src, call))]);
     }
 }
+
+/// `Pair<A>` and `Box<B>` conform to `Eq` when their argument does, as a written block says.
+const EQ_IF_ARGUMENT: &str = "class Node {}\nclass Pair<A> {\n    a: A\n}\nextend<A: Eq> Pair<A>: Eq {\n    fn eq(self, other: Pair<A>) -> bool { true }\n}\nclass Box<B> {\n    b: B\n}\nextend<B: Eq> Box<B>: Eq {\n    fn eq(self, other: Box<B>) -> bool { true }\n}\n";
+
+/// The part that `blocked_part` gives for `ty` and `interface`, written as the program does: the
+/// part and the interface with its arguments. `None` when it gives none.
+fn blocked_of(src: &str, (params, ty): (&str, &str), interface: &str) -> Option<(String, String)> {
+    with_probe(src, (params, ty), interface, |checker, ty, interface| {
+        let leaf = checker.failing_leaf(ty, interface, TypeArgs::NONE);
+        let (part, interface, args) = checker.blocked_part(leaf, interface, TypeArgs::NONE)?;
+        Some((checker.type_name(part), checker.bound_text(interface, args)))
+    })
+}
+
+/// Each row is a part inside a type that has a written conformance whose bound fails.
+#[test]
+fn blocked_part_should_reach_the_part_under_each_written_conformance() {
+    let conv = "interface Conv<T> {\n    fn conv(self) -> T\n}\nclass Node {}\nclass Pair<A> {\n    a: A\n}\nextend<A: Conv<i64>> Pair<A>: Eq {\n    fn eq(self, other: Pair<A>) -> bool { true }\n}\n";
+    let ord = "class Node {}\nclass Pair<A> {\n    a: A\n}\nextend<A: Ord> Pair<A>: Eq {\n    fn eq(self, other: Pair<A>) -> bool { true }\n}\n";
+    let rows = [
+        (
+            "under two written conformances",
+            EQ_IF_ARGUMENT,
+            "T",
+            "Box<Pair<Node>>",
+            "Eq",
+            ("Node", "Eq"),
+        ),
+        (
+            "under a conformance of another interface",
+            ord,
+            "T",
+            "Pair<Node>",
+            "Eq",
+            ("Node", "Ord"),
+        ),
+        (
+            "under a bound with an argument",
+            conv,
+            "T",
+            "Pair<Node>",
+            "Eq",
+            ("Node", "Conv<i64>"),
+        ),
+        (
+            "a type parameter",
+            EQ_IF_ARGUMENT,
+            "T",
+            "Pair<T>",
+            "Eq",
+            ("T", "Eq"),
+        ),
+        (
+            "past the layers that the compiler writes",
+            EQ_IF_ARGUMENT,
+            "T",
+            "Pair<[Box<Pair<Node>>?]>",
+            "Eq",
+            ("Node", "Eq"),
+        ),
+    ];
+    for (row, src, params, ty, interface, (part, bound)) in rows {
+        let expected = Some((part.to_string(), bound.to_string()));
+        assert_eq!(
+            blocked_of(src, (params, ty), interface),
+            expected,
+            "row `{row}`"
+        );
+    }
+}
+
+/// A type with no written conformance that fails has no part to change. The walk ends on a
+/// type that it has read, as in a cycle through the payload of an enum.
+#[test]
+fn blocked_part_should_give_none_when_the_type_has_no_failing_conformance() {
+    let cycle =
+        format!("{EQ_IF_ARGUMENT}enum Chain {{\n    Cons(Pair<Chain>)\n    Leaf(Node)\n}}\n");
+    let rows = [
+        ("a class with no conformance", EQ_IF_ARGUMENT, "Node", "Eq"),
+        ("a bool, which has no Ord", EQ_IF_ARGUMENT, "bool", "Ord"),
+        (
+            "a cycle through an enum payload",
+            cycle.as_str(),
+            "Chain",
+            "Eq",
+        ),
+    ];
+    for (row, src, ty, interface) in rows {
+        assert_eq!(blocked_of(src, ("T", ty), interface), None, "row `{row}`");
+    }
+}
+
+/// `blocked_part` goes one level in for each written conformance: it does not start again from
+/// the type at each level. The steps of `failing_leaf` cannot show that, as it keeps its answers.
+#[test]
+fn blocked_part_should_take_steps_linear_in_the_depth() {
+    let count = |depth: usize| {
+        with_probe(
+            EQ_IF_ARGUMENT,
+            ("T", "Pair<Node>"),
+            "Eq",
+            |checker, pair, eq| {
+                let ty = nested(checker, "Box", depth, pair);
+                let leaf = checker.failing_leaf(ty, eq, TypeArgs::NONE);
+                BLOCKED_STEPS.set(0);
+                let part = checker.blocked_part(leaf, eq, TypeArgs::NONE);
+                assert_eq!(
+                    part.map(|(part, ..)| checker.type_name(part)),
+                    Some("Node".to_string()),
+                    "depth {depth}"
+                );
+                BLOCKED_STEPS.get()
+            },
+        )
+    };
+    // The depths are n, 2n and 3n.
+    assert_near_linear(count(30), count(60), count(90));
+}

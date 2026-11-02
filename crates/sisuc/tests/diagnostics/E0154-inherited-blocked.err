@@ -1,0 +1,57 @@
+error[E0154]: `Plain<A>` does not conform to `Eq`
+  --> E0154-inherited-blocked.sisu:15:21
+   |
+ 9 | extend<A: Eq> Plain<A>: Eq {
+   |           -- this conformance needs `A: Eq`
+...
+15 | extend<A> Plain<A>: Ord {
+   |                     ^^^ `Ord` requires `Eq`
+   |
+   = help: add a bound: `A: Eq`
+
+error[E0154]: `Listed<A>` does not conform to `Eq`
+  --> E0154-inherited-blocked.sisu:21:18
+   |
+21 | class Listed<A>: Ord {
+   |                  ^^^ `Ord` requires `Eq`
+...
+29 | extend<A: Eq> Listed<A>: Eq {
+   |           -- this conformance needs `A: Eq`
+   |
+   = help: add a bound: `A: Eq`
+
+error[E0154]: `Fixed<Node>` does not conform to `Eq`
+  --> E0154-inherited-blocked.sisu:45:21
+   |
+39 | extend<A: Eq> Fixed<A>: Eq {
+   |           -- this conformance needs `A: Eq`
+...
+45 | extend Fixed<Node>: Ord {
+   |                     ^^^ `Ord` requires `Eq`
+   |
+   = help: make `Node` conform to `Eq`
+
+error[E0154]: `Shown<A>` does not conform to `Eq`
+  --> E0154-inherited-blocked.sisu:61:30
+   |
+55 | extend<A: Eq> Shown<A>: Eq {
+   |           -- this conformance needs `A: Eq`
+...
+61 | extend<A: Display> Shown<A>: Ord {
+   |                              ^^^ `Ord` requires `Eq`
+   |
+   = help: add a bound: `A: Display & Eq`
+
+error[E0154]: `Cross<B>` does not conform to `Eq`
+  --> E0154-inherited-blocked.sisu:77:25
+   |
+71 | extend<B: Ord> Cross<B>: Eq {
+   |           --- this conformance needs `B: Ord`
+...
+77 | extend<B: Eq> Cross<B>: Ord {
+   |                         ^^^ `Ord` requires `Eq`
+   |
+   = help: add a bound: `B: Eq & Ord`
+
+sisu: 5 errors
+sisu: for more on a code, run `sisu explain <code>`: E0154

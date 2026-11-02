@@ -489,6 +489,8 @@ thread_local! {
     /// How many times `failing_leaf` has read a class or an enum for the part that fails, not
     /// counting an answer it kept.
     pub(super) static LEAF_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many steps `blocked_part` has taken, one for each written conformance it goes into.
+    pub(super) static BLOCKED_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many conformances and choices the checks of the choices have read, or looked up by
     /// the name of an associated type, on this thread.
     pub(super) static CHOICE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };

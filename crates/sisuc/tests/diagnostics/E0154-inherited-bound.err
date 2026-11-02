@@ -9,6 +9,8 @@ error[E0154]: `Heap<T>` does not conform to `Same`
 ...
 19 | extend<T: Same> Heap<T>: Ord2 {
    |                          ^^^^
+   |
+   = help: add a bound: `T: Same & Ord2`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0154

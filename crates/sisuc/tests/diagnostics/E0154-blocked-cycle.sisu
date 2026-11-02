@@ -1,0 +1,23 @@
+class Node {
+    v: i64
+}
+
+class Pair<A> {
+    a: A
+}
+
+extend<A: Eq> Pair<A>: Eq {
+    fn eq(self, other: Pair<A>) -> bool {
+        self.a == other.a
+    }
+}
+
+enum Chain {
+    Cons(Pair<Chain>)
+    Leaf(Node)
+}
+
+fn main() {
+    let xs = [Chain.Leaf(Node(v: 1))]
+    print(xs.contains(Chain.Leaf(Node(v: 1))))
+}

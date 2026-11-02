@@ -1,0 +1,24 @@
+error[E0154]: `Pair<Node>` does not conform to `Eq`
+  --> E0154-blocked-other-interface.sisu:30:11
+   |
+13 | extend<A: Ord> Pair<A>: Eq {
+   |           --- this conformance needs `A: Ord`
+...
+30 |     print([Pair(a: Node(v: 1))].contains(Pair(a: Node(v: 1))))
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `contains` needs `Pair<Node>: Eq`
+   |
+   = help: make `Node` conform to `Ord`
+
+error[E0154]: `Wrap<Node>` does not conform to `Eq`
+  --> E0154-blocked-other-interface.sisu:31:11
+   |
+23 | extend<A: Conv<i64>> Wrap<A>: Eq {
+   |           --------- this conformance needs `A: Conv<i64>`
+...
+31 |     print([Wrap(a: Node(v: 1))].contains(Wrap(a: Node(v: 1))))
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `contains` needs `Wrap<Node>: Eq`
+   |
+   = help: make `Node` conform to `Conv<i64>`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0154

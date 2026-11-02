@@ -1490,6 +1490,18 @@ impl Checker<'_> {
         found.unwrap_or(ty)
     }
 
+    /// A stub, so that the tests of `blocked_part` compile before the fix: it gives no part.
+    #[cfg(test)]
+    pub(super) fn blocked_part(
+        &mut self,
+        leaf: Type,
+        interface: InterfaceId,
+        args: TypeArgs,
+    ) -> Option<(Type, InterfaceId, TypeArgs)> {
+        let _ = self.failing_leaf(leaf, interface, args);
+        None
+    }
+
     /// Closes the strongly connected component that is on `walk.stack` from `from`: each of its
     /// types takes `answer` as its final answer. Each of them reaches the type that closes the
     /// component, and so reaches all that the walk of that type reached. A type that already has

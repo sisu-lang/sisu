@@ -1,0 +1,104 @@
+error[E0159]: `Pair<Node>` has no `==`
+  --> E0159-blocked.sisu:35:11
+   |
+13 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
+...
+35 |     print(Pair(a: Node(v: 1)) == Pair(a: Node(v: 1)))
+   |           ^^^^^^^^^^^^^^^^^^^ this has type `Pair<Node>`
+   |
+   = help: make `Node` conform to `Eq`
+
+error[E0159]: `Pair<Node>` has no `!=`
+  --> E0159-blocked.sisu:39:11
+   |
+13 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
+...
+39 |     print(Pair(a: Node(v: 1)) != Pair(a: Node(v: 1)))
+   |           ^^^^^^^^^^^^^^^^^^^ this has type `Pair<Node>`
+   |
+   = help: make `Node` conform to `Eq`
+
+error[E0159]: `Pair<Node>?` has no `==`, since `Pair<Node>` has none
+  --> E0159-blocked.sisu:41:11
+   |
+13 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
+...
+41 |     print(o == o)
+   |           ^ this has type `Pair<Node>?`
+   |
+   = help: make `Node` conform to `Eq`
+
+error[E0159]: `Pair<Node>` has no `<`
+  --> E0159-blocked.sisu:45:11
+   |
+19 | extend<A: Ord> Pair<A>: Ord {
+   |           --- this conformance needs `A: Ord`
+...
+45 |     print(Pair(a: Node(v: 1)) < Pair(a: Node(v: 1)))
+   |           ^^^^^^^^^^^^^^^^^^^ this has type `Pair<Node>`
+   |
+   = help: make `Node` conform to `Ord`
+
+error[E0159]: `Pair<bool>` has no `<`
+  --> E0159-blocked.sisu:46:11
+   |
+19 | extend<A: Ord> Pair<A>: Ord {
+   |           --- this conformance needs `A: Ord`
+...
+46 |     print(Pair(a: true) < Pair(a: true))
+   |           ^^^^^^^^^^^^^ this has type `Pair<bool>`
+
+error[E0159]: `[Pair<Node>]` has no `==`, since `Pair<Node>` has none
+  --> E0159-blocked.sisu:50:11
+   |
+13 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
+...
+50 |     print([Pair(a: Node(v: 1))] == [Pair(a: Node(v: 1))])
+   |           ^^^^^^^^^^^^^^^^^^^^^ this has type `[Pair<Node>]`
+   |
+   = help: make `Node` conform to `Eq`
+
+error[E0159]: `Outer` has no `==`, since `Pair<Node>` has none
+  --> E0159-blocked.sisu:54:11
+   |
+13 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
+...
+54 |     print(Outer.Has(Pair(a: Node(v: 1))) == Outer.Has(Pair(a: Node(v: 1))))
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this has type `Outer`
+   |
+   = help: make `Node` conform to `Eq`
+
+error[E0159]: `Pair<any Shape>` has no `==`
+  --> E0159-blocked.sisu:58:5
+   |
+13 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
+...
+58 |     x == x || y < y
+   |     ^ this has type `Pair<any Shape>`
+
+error[E0159]: `Pair<bool>` has no `<`
+  --> E0159-blocked.sisu:58:15
+   |
+19 | extend<A: Ord> Pair<A>: Ord {
+   |           --- this conformance needs `A: Ord`
+...
+58 |     x == x || y < y
+   |               ^ this has type `Pair<bool>`
+
+error[E0159]: `Pair<Chain>` has no `==`
+  --> E0159-blocked.sisu:62:11
+   |
+13 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
+...
+62 |     print(Pair(a: Chain.Leaf(Node(v: 1))) == Pair(a: Chain.Leaf(Node(v: 1))))
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this has type `Pair<Chain>`
+
+sisu: 10 errors
+sisu: for more on a code, run `sisu explain <code>`: E0159
