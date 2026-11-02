@@ -559,7 +559,9 @@ impl Checker<'_> {
             }
         }
         for (block, ext) in self.extensions.iter().enumerate() {
-            if let (None, Some(&func)) = (ext.interface, ext.methods.get(&name)) {
+            // A built-in type has `Display` from the compiler: its `to_string` is a plain method.
+            let user_type = matches!(ext.holder, Holder::Class(_) | Holder::Enum(_));
+            if let (true, None, Some(&func)) = (user_type, ext.interface, ext.methods.get(&name)) {
                 named.push((ext.holder, ext.target, Source::Block(block), func));
             }
         }

@@ -212,18 +212,19 @@ impl Checker<'_> {
             let takes = self.method_arguments(func, owner, args, first_checked);
             // The first argument was checked without its parameter's type, so `takes` can be
             // false for a correct call. The bound help says to fix the arguments only when the
-            // count, a label or a type argument makes the call wrong.
-            let certain = args.len() == self.signatures[func.0].params.len()
+            // count, a label or a type argument makes the call wrong. `can_take` is true when none
+            // of them does, so the call can be right.
+            let can_take = args.len() == self.signatures[func.0].params.len()
                 && unlabeled
                 && site.written.is_empty();
-            let bound = self.method_block_bound(func, owner, name, certain);
+            let bound = self.method_block_bound(func, owner, name, can_take);
             self.report(DiagnosticKind::MethodAsFunction {
                 name: callee.name.to_string(),
                 at: callee.span,
                 receiver: MethodReceiver::SelfValue {
                     // `self.name<T>(args)` keeps the type arguments, which a method call
                     // does not take (E0137).
-                    safe: takes && unlabeled && site.written.is_empty(),
+                    safe: takes && can_take,
                 },
                 bound,
             });
