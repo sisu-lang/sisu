@@ -736,12 +736,12 @@ fn holds_param(ty: Type, param: Type) -> bool {
 
 /// Whether `ty` names a type parameter that `marked` marks by its place, other than under an
 /// associated type (see `names_outside_assoc`), and under an optional only if `optionals`.
-fn names_marked(ty: Type, marked: &[bool], optionals: bool) -> bool {
+fn names_marked(ty: Type, marked: impl Fn(usize) -> bool + Copy, optionals: bool) -> bool {
     if !ty.has_param() {
         return false;
     }
     match ty.kind() {
-        TypeKind::Param(_, j) => marked[j as usize],
+        TypeKind::Param(_, j) => marked(j as usize),
         TypeKind::Array(inner) => names_marked(inner, marked, optionals),
         TypeKind::Optional(inner) => optionals && names_marked(inner, marked, optionals),
         TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
@@ -758,9 +758,9 @@ fn carried_places(params: impl Iterator<Item = Option<Type>>, marked: &[bool]) -
     let mut places = Places::default();
     for (i, param) in params.take(u64::BITS as usize).enumerate() {
         let Some(param) = param else { continue };
-        if names_marked(param, marked, true) {
+        if names_marked(param, |j| marked[j], true) {
             places.carried |= 1 << i;
-            if names_marked(param, marked, false) {
+            if names_marked(param, |j| marked[j], false) {
                 places.plain |= 1 << i;
             }
         }
@@ -1220,6 +1220,8 @@ thread_local! {
     pub(super) static MARKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many types the walk of `mark_distinct` has visited on this thread.
     pub(super) static DISTINCT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many parameter origins `bound_by_context` has read on this thread.
+    pub(super) static ORIGINS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many entries of the substitution lists of early bound checks have been written on this
     /// thread.
     pub(super) static LISTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -1319,10 +1321,12 @@ struct Inference<'s> {
 /// Whether `pattern` names a parameter that the context of `call` bound (see `report_fresh`): a
 /// hint or a type the user wrote.
 fn bound_by_context(call: &Inference<'_>, pattern: Type) -> bool {
-    let marked: Vec<bool> = (call.origin.iter())
-        .map(|&at| at == Some(call.at))
-        .collect();
-    names_marked(pattern, &marked, true)
+    let from_context = |j: usize| {
+        #[cfg(test)]
+        ORIGINS.set(ORIGINS.get() + 1);
+        call.origin[j] == Some(call.at)
+    };
+    names_marked(pattern, from_context, true)
 }
 
 /// `found`, a parameter's binding, as a bound sees it: `UNKNOWN` while it is unbound or rejected.

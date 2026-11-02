@@ -1,0 +1,20 @@
+error[E0032]: expected `i64`, found `Two<i64, bool>`
+  --> E0032-comparison-branch.sisu:15:34
+   |
+15 |     print(x == if b { 1 } else { made() })
+   |                                  ^^^^^^
+
+error[E0032]: expected `u8`, found `i64`
+  --> E0032-comparison-branch.sisu:16:23
+   |
+16 |     print(u == if b { x } else { 1 })
+   |                       ^
+
+error[E0032]: expected `string`, found `i64`
+  --> E0032-comparison-branch.sisu:17:36
+   |
+17 |     print(s == if b { "a" } else { 1 })
+   |                                    ^
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

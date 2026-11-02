@@ -5512,9 +5512,9 @@ fn an_array_literal_should_not_make_the_call_that_holds_it_optional() {
     ]);
 }
 
-/// An element that is a call of `dbg` with a type argument does not fit its declaration, so it
-/// keeps the order of a call also when the array is the argument of a generic call: it is checked
-/// first, with no expected type, and reports its own `[]` (E0050), not a mismatch with the other
+/// An element that is a call of `dbg` with a type argument does not fit its declaration. So it
+/// keeps the order of a call, also when the array is the argument of a generic call. It is checked
+/// first, with no expected type. It reports its own `[]` (E0050), not a mismatch with the other
 /// element.
 #[test]
 fn a_call_that_does_not_fit_should_be_checked_first_in_an_array_argument() {
@@ -5998,11 +5998,10 @@ fn a_call_that_cannot_meet_its_known_context_should_report_the_mismatch() {
     check_partial_rows(KNOWN_CONTEXT_ROWS);
 }
 
-/// The text of a mismatch for a generic call that cannot meet its context. The call's return type
-/// prints its unbound parameters by the callee's names, and `?` after it when the call is safe.
-/// A comparison names its two sides in source order.
+/// A generic call that cannot meet its context gives one diagnostic, at the call or at the
+/// comparison. The fixtures `E0032-known-context-safe` and `E0047-generic-call` pin the text.
 #[test]
-fn a_call_that_cannot_meet_its_context_should_print_the_type_it_returns() {
+fn a_call_that_cannot_meet_its_context_should_give_one_error_at_its_place() {
     const DECLS: &str = "class O {\n    fn n(self) -> Box<i64, bool> { panic(\"no\") }\n    \
         fn m<A>(self) -> Box<A, bool> { panic(\"no\") }\n}\n\
         fn mko() -> O? { None }\n\
@@ -6010,60 +6009,44 @@ fn a_call_that_cannot_meet_its_context_should_print_the_type_it_returns() {
         fn mkc() -> Box<i64, bool> { panic(\"no\") }\n\
         fn fi(_x: i64?) -> i64 { 0 }\n";
     with_prelude();
-    let rows: &[(&str, &str)] = &[
+    // Each row: the lines of `main`, and the code and the place of its one diagnostic, by its
+    // line in `main` and its column.
+    let rows: &[(&str, Code, (usize, usize))] = &[
         (
             "let o = mko()\nlet x: i64? = o?.n()",
-            "expected `i64?`, found `Box<i64, bool>?`",
+            Code::Mismatch,
+            (2, 19),
         ),
         (
             "let o = mko()\nlet y: i64? = o?.m()",
-            "expected `i64?`, found `Box<A, bool>?`",
+            Code::Mismatch,
+            (2, 19),
         ),
-        (
-            "let o = mko()\nprint(fi(o?.m()))",
-            "expected `i64?`, found `Box<A, bool>?`",
-        ),
+        ("let o = mko()\nprint(fi(o?.m()))", Code::Mismatch, (2, 14)),
         (
             "let o = mko()\nlet y: i64 = o?.m()",
-            "expected `i64`, found `Box<A, bool>?`",
+            Code::Mismatch,
+            (2, 18),
         ),
-        (
-            "let o = O()\nlet y: i64? = o.m()",
-            "expected `i64?`, found `Box<A, bool>`",
-        ),
-        (
-            "print(1 == mkc())",
-            "cannot compare `i64` with `Box<i64, bool>`",
-        ),
-        (
-            "print(1 == mk2())",
-            "cannot compare `i64` with `Box<A, bool>`",
-        ),
-        (
-            "print(mk2() != 1)",
-            "cannot compare `Box<A, bool>` with `i64`",
-        ),
-        (
-            "print(Some(1) == mk2())",
-            "cannot compare `i64?` with `Box<A, bool>`",
-        ),
-        (
-            "print(mk2() == Some(1))",
-            "cannot compare `Box<A, bool>` with `i64?`",
-        ),
+        ("let o = O()\nlet y: i64? = o.m()", Code::Mismatch, (2, 19)),
+        ("print(1 == mkc())", Code::CannotCompare, (1, 11)),
+        ("print(1 == mk2())", Code::CannotCompare, (1, 11)),
+        ("print(mk2() != 1)", Code::CannotCompare, (1, 11)),
+        ("print(Some(1) == mk2())", Code::CannotCompare, (1, 11)),
+        ("print(mk2() == Some(1))", Code::CannotCompare, (1, 11)),
         (
             "let o = mko()\nprint(1 == o?.m())",
-            "cannot compare `i64` with `Box<A, bool>?`",
+            Code::CannotCompare,
+            (2, 11),
         ),
     ];
-    for &(body, want) in rows {
-        let src = format!(
-            "{PARTIAL_DECLS}{DECLS}fn main() {{\n    {}\n}}",
-            body.replace('\n', "\n    ")
-        );
+    for &(body, code, (line, column)) in rows {
+        let head = format!("{PARTIAL_DECLS}{DECLS}fn main() {{\n");
+        let src = format!("{head}    {}\n}}", body.replace('\n', "\n    "));
         let (_, ds) = checked(&src);
-        let messages: Vec<_> = ds.iter().map(Diagnostic::message).collect();
-        assert_eq!(messages, [want], "row `{body}`");
+        let found: Vec<_> = ds.iter().map(|d| (d.code(), at(&src, d.span()))).collect();
+        let line = head.lines().count() + line;
+        assert_eq!(found, [(code, (line, column))], "row `{body}`");
     }
 }
 
@@ -6090,6 +6073,36 @@ fn rejecting_the_parameters_of_failed_arguments_should_visit_each_type_once() {
         generic::DISTINCT.get()
     };
     assert_near_linear(visits(10), visits(20), visits(30));
+}
+
+/// A call with many type parameters and many arguments that misfit reads the origin of each
+/// parameter that an argument's type names, not of every parameter for each argument.
+#[test]
+fn misfitting_arguments_should_read_the_origins_of_their_own_parameters_only() {
+    let reads = |n: usize| {
+        let params: Vec<_> = (0..n).map(|k| format!("T{k}")).collect();
+        let lead: Vec<_> = (0..n).map(|k| format!("_a{k}: T{k}")).collect();
+        let trail: Vec<_> = (0..n).map(|k| format!("_b{k}: T{k}")).collect();
+        let args: Vec<_> = (0..n)
+            .map(|_| "one()")
+            .chain((0..n).map(|_| "{ mk() }"))
+            .collect();
+        let src = format!(
+            "class Two<A, B> {{\n    a: A\n    b: B\n}}\nfn one() -> i64 {{ 1 }}\n\
+             fn mk<X>() -> Two<X, bool> {{ panic(\"no\") }}\n\
+             fn h<{}>({}, {}) -> i64 {{ 0 }}\nfn main() {{\n    print(h({}))\n}}",
+            params.join(", "),
+            lead.join(", "),
+            trail.join(", "),
+            args.join(", ")
+        );
+        generic::ORIGINS.set(0);
+        let (_, ds) = checked(&src);
+        assert_eq!(ds.len(), n, "{ds:?}");
+        assert!(ds.iter().all(|d| d.code() == Code::Mismatch), "{ds:?}");
+        generic::ORIGINS.get()
+    };
+    assert_near_linear(reads(20), reads(40), reads(60));
 }
 
 /// The declarations of the parity tables. Each generic callee has a concrete twin of the same
@@ -6150,7 +6163,7 @@ fn parity_found(src: &str) -> (bool, Vec<ParityFound>) {
     let found = ds
         .iter()
         .map(|d| {
-            // Only the two forms are compared, so no wording is pinned here.
+            // wording compared: the generic and the concrete forms, so no text is pinned.
             let message = Diagnostic::message(d).replace("Two<X, bool>", "Two<i64, bool>");
             (d.code(), at(src, d.span()), message)
         })
@@ -6522,6 +6535,65 @@ fn a_misfit_with_no_type_to_report_against_should_keep_a_true_diagnostic() {
         let got: Vec<_> = found.iter().map(|(code, ..)| *code).collect();
         assert!(failed, "row `{}`", row.1);
         assert_eq!(got, codes, "row `{}`: {found:?}", row.1);
+    }
+}
+
+/// A diagnostic's code and its line in `main` and column there.
+type Placed = (Code, (usize, usize));
+
+/// Rows where a generic call that misfits reports at another place or with another code than its
+/// concrete twin. Each row pins the code and the place of each diagnostic, by its line in `main`
+/// and its column there. Each text is true, and none of the programs is accepted.
+const DEPARTURE_ROWS: &[(ParityRow<'static>, &[Placed])] = &[
+    // The first element gives no whole type, so the `1` leads and the call is held to `i64`.
+    (("", "print([mk2(), 1])"), &[(Code::Mismatch, (1, 8))]),
+    // The misfit has no class type, so no E0067 tells that each element is the same object.
+    (
+        ("", "let xs: [i64] = [mk2(); 3]\nprint(xs)"),
+        &[(Code::Mismatch, (1, 18))],
+    ),
+    // The call gives no whole type, so the `1` leads and the call is held to `i64`.
+    (("", "print(1 < mk2())"), &[(Code::Mismatch, (1, 11))]),
+    (("", "print(0 <= mk2() < 3)"), &[(Code::Mismatch, (1, 12))]),
+    // No side gives a type, so no class has a missing `!=`, and the call cannot infer `X`.
+    (
+        ("", "print(mk2() != mk2())"),
+        &[(Code::CannotInfer, (1, 7))],
+    ),
+    // The first `break` gives the loop no type, and the later `break 1` does not report the
+    // misfit that came before it.
+    (
+        (
+            "",
+            "let b = true\nprint(loop { if b { break mk2() }; break 1 })",
+        ),
+        &[(Code::CannotInfer, (2, 27))],
+    ),
+    // The first branch gives the join no type, so the `1` leads and the call is held to `i64`.
+    (
+        ("", "print(1 == if true { mk2() } else { 1 })"),
+        &[(Code::Mismatch, (1, 22))],
+    ),
+];
+
+/// A generic call that misfits and departs from its concrete twin gives the pinned diagnostics of
+/// `DEPARTURE_ROWS`. A row that comes to match its twin moves to `PARITY_ROWS`.
+#[test]
+fn a_misfit_that_departs_from_its_twin_should_give_its_pinned_diagnostics() {
+    with_prelude();
+    for &(row, want) in DEPARTURE_ROWS {
+        let program = parity_program(row, false);
+        let main = (program.lines())
+            .position(|l| l == "fn main() {")
+            .map_or(0, |i| i + 1);
+        let (failed, found) = parity_found(&program);
+        let got: Vec<_> = (found.iter())
+            .map(|&(code, (line, column), _)| (code, (line - main, column - 4)))
+            .collect();
+        assert!(failed, "row `{}`", row.1);
+        assert_eq!(got, want, "row `{}`", row.1);
+        let (_, concrete) = parity_found(&parity_program(row, true));
+        assert_ne!(found, concrete, "row `{}` matches its twin", row.1);
     }
 }
 

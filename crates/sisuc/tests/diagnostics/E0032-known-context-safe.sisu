@@ -7,9 +7,21 @@ class Source {
     fn make<X>(self) -> Two<X, bool> {
         panic("no")
     }
+
+    fn made(self) -> Two<i64, bool> {
+        panic("no")
+    }
+}
+
+fn takes(_x: i64?) -> i64 {
+    0
 }
 
 fn main() {
     let source: Source? = None
     let x: i64? = source?.make()
+    print(takes(source?.make()))
+    let y: i64 = source?.make()
+    let z: i64? = Source().make()
+    let w: i64? = source?.made()
 }

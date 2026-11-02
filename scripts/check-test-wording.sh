@@ -9,6 +9,9 @@
 # shortcut: a `#[cfg(test)] fn` helper before the test module is checked as
 # production code too, so its wording reads pass; move it into the module if
 # a hit matters.
+# The path forms, such as `Diagnostic::message`, count too. A hit passes when
+# the line before it is a comment that starts `// wording compared:`, for a
+# test that compares two outputs and pins no text.
 # shortcut: between `#[cfg(test)]` and `mod`, the pattern takes blank lines,
 # `//` comments and attributes with one level of inner brackets, not a
 # `/* */` comment; add the form when a file uses it.
@@ -23,8 +26,10 @@ done
 
 perl -0777 -ne '
   pos = $ARGV =~ m{/tests/|/tests\.rs$} ? 0 : /^#\[cfg\(test\)\]\n(?:#\[(?:[^][]|\[[^]]*\])*\]\n|\/\/[^\n]*\n|\n)*(?:pub(?:\([^)\n]*\))? )?mod \w+ \{/m ? $-[0] : length;
-  while (/\.(?:message|label)\(\)|\.help\(\)(?!\.is_(?:some|none)\(\)|,\s*None\b)/g) {
-    my $line = 1 + (substr($_, 0, $-[0]) =~ tr/\n//);
+  while (/\.(?:message|label)\(\)|\bDiagnostic::(?:message|label)\b|(?:\.help\(\)|\bDiagnostic::help\b(?:\([^()]*\))?+)(?!\.is_(?:some|none)\(\)|,\s*None\b)/g) {
+    my $before = substr($_, 0, $-[0]);
+    next if $before =~ m{^[ \t]*// wording compared:[^\n]*\n[^\n]*\z}m;
+    my $line = 1 + ($before =~ tr/\n//);
     print "$ARGV:$line: a unit test reads diagnostic wording; assert the code, and pin the text in a tests/diagnostics fixture\n";
     $bad = 1;
   }

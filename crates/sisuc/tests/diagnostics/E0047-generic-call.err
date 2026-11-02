@@ -1,8 +1,38 @@
 error[E0047]: cannot compare `i64` with `Two<X, bool>`
-  --> E0047-generic-call.sisu:11:11
+  --> E0047-generic-call.sisu:21:11
    |
-11 |     print(1 == make())
+21 |     print(1 == make())
    |           ^^^^^^^^^^^
 
-sisu: 1 error
+error[E0047]: cannot compare `Two<X, bool>` with `i64`
+  --> E0047-generic-call.sisu:22:11
+   |
+22 |     print(make() != 1)
+   |           ^^^^^^^^^^^
+
+error[E0047]: cannot compare `i64?` with `Two<X, bool>`
+  --> E0047-generic-call.sisu:23:11
+   |
+23 |     print(Some(1) == make())
+   |           ^^^^^^^^^^^^^^^^^
+
+error[E0047]: cannot compare `Two<X, bool>` with `i64?`
+  --> E0047-generic-call.sisu:24:11
+   |
+24 |     print(make() == Some(1))
+   |           ^^^^^^^^^^^^^^^^^
+
+error[E0047]: cannot compare `i64` with `Two<i64, bool>`
+  --> E0047-generic-call.sisu:25:11
+   |
+25 |     print(1 == made())
+   |           ^^^^^^^^^^^
+
+error[E0047]: cannot compare `i64` with `Two<X, bool>?`
+  --> E0047-generic-call.sisu:27:11
+   |
+27 |     print(1 == source?.make())
+   |           ^^^^^^^^^^^^^^^^^^^
+
+sisu: 6 errors
 sisu: for more on a code, run `sisu explain <code>`: E0047

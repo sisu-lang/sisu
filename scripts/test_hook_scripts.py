@@ -102,6 +102,21 @@ class TestWording(unittest.TestCase):
                 self.assertIn(f'f.rs:{line}: a unit test reads diagnostic wording', out)
 
 
+    def test_a_path_form_in_the_test_module_should_fail(self):
+        for read in ('ds.iter().map(Diagnostic::message)', 'Diagnostic::label(d)',
+                     'Diagnostic::help(d).unwrap()'):
+            with self.subTest(read=read):
+                code, out = run_hook('check-test-wording.sh', HEADERS[0] + f'    {read};\n}}\n')
+                self.assertEqual(code, 1)
+                self.assertIn('f.rs:3: a unit test reads diagnostic wording', out)
+
+    def test_a_help_check_or_a_marked_comparison_should_pass(self):
+        for body in ('    Diagnostic::help(d).is_none();\n',
+                     '    assert_eq!(Diagnostic::help(d), None);\n',
+                     '    // wording compared: two outputs.\n    Diagnostic::message(d);\n'):
+            with self.subTest(body=body):
+                self.assertEqual(run_hook('check-test-wording.sh', HEADERS[0] + body + '}\n'), (0, ''))
+
 class SessionUrl(unittest.TestCase):
     def test_a_session_line_or_url_should_fail_at_its_line(self):
         for line in ('Claude-Session: https://claude.ai/code/session_01ab',
