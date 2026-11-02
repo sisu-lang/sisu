@@ -6231,6 +6231,16 @@ const PARITY_ROWS: &[ParityRow<'static>] = &[
     ("", "let mut z = 0\nz = mk2() + mk2()\nprint(z)"),
     ("", "let mut w = 0\nw += mk2() + 1\nprint(w)"),
     ("", "print(mk2() % 2 == 0)"),
+    ("", "print(mk2() + fi(1))"),
+    ("", "print(fi(1) + mk2())"),
+    ("", "print(mk2() - fi(1))"),
+    ("", "let s: string = mk2() + \"a\""),
+    ("", "print(mk2() + 1.5)"),
+    ("", "print(mk2() + fi(1) + mk2())"),
+    ("", "let o = mko()\nprint(o?.m() + fi(1))"),
+    ("", "let u: u8 = 1\nprint(mk2() + u)"),
+    ("", "let y: i64 = mk2() + fi(1)"),
+    ("", "let y: u8 = mk2() + fi(1)"),
 ];
 
 /// A class with a method that takes an optional, for a row of `PARITY_ROWS`.
@@ -6442,11 +6452,16 @@ fn a_never_statement_before_a_misfit_tail_should_give_e0050_at_the_call() {
 }
 
 /// Rows where a generic call that misfits still gives E0050, or gives one diagnostic less or more
-/// than its concrete twin. Each text is true, and none of the programs is accepted.
+/// than its concrete twin, or one at another place. Each text is true, and none of the programs
+/// is accepted.
 const KEPT_E0050_ROWS: &[(ParityRow<'static>, &[Code])] = &[
     // A comparison holds its operands to the first one's type. A generic call gives none, so
     // nothing names the type that has no `<`: the call cannot infer `X`.
     (("", "print(mk2() < mk2())"), &[Code::CannotInfer]),
+    // The concrete leader holds the later operand to its own type. The generic call gives no
+    // whole type, so the later operand leads, and the call is held to the leader's type.
+    (("", "print(mk2() < fi(1))"), &[Code::Mismatch]),
+    (("", "print(mk2() < 'a')"), &[Code::Mismatch]),
     // No context at all: nothing to misfit.
     (("", "print(mk2() == mk2())"), &[Code::CannotInfer]),
     (("", "print(-mk2())"), &[Code::CannotInfer]),
@@ -6508,4 +6523,18 @@ fn a_misfit_with_no_type_to_report_against_should_keep_a_true_diagnostic() {
         assert!(failed, "row `{}`", row.1);
         assert_eq!(got, codes, "row `{}`: {found:?}", row.1);
     }
+}
+
+/// An argument that checks with no error rejects no parameter, though it binds none: a `panic`
+/// is `never`. So the waiting call after it still binds the parameter to `never`, and the call
+/// reports that `never` cannot be a type argument.
+#[test]
+fn a_never_argument_before_a_waiting_call_should_keep_its_type_argument_error() {
+    with_prelude();
+    let src = "fn h<U>(_a: U, _b: U) -> i64 { 0 }\nfn mk<T>() -> T { panic(\"x\") }\n\
+        fn main() {\n    print(h(panic(\"x\"), mk()))\n}";
+    let (program, ds) = checked(src);
+    let found: Vec<_> = ds.iter().map(|d| (d.code(), at(src, d.span()))).collect();
+    assert!(program.is_none());
+    assert_eq!(found, [(Code::TypeArgument, (4, 13))]);
 }
