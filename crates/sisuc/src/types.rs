@@ -105,8 +105,8 @@ impl Names {
 
 impl TypeKind {
     /// What a type of this kind names, from what its children say.
-    // `check::cycle::Graph::parts` looks into the same kinds: a kind that holds a type goes in
-    // both.
+    // `check::cycle::Graph::parts` and `Type::anys` look into the same kinds: a kind that holds a
+    // type goes in all three.
     fn names(self) -> Names {
         #[cfg(test)]
         NAMED.set(NAMED.get() + 1);
@@ -596,9 +596,9 @@ impl Type {
         self.names().any
     }
 
-    /// The interface of each `any` type inside the type, also inside the arguments of another.
-    /// The walk reads each distinct type once, however many paths lead to it, and enters none
-    /// that holds no `any` type.
+    /// Each interface of an `any` type inside the type, also inside the arguments of another, once
+    /// (`any I<i64>` and `any I<bool>` give `I` once). The walk reads each distinct type once,
+    /// however many paths lead to it, and enters none that holds no `any` type.
     pub(crate) fn anys(self) -> Vec<InterfaceId> {
         if !self.holds_any() {
             return Vec::new();
@@ -617,10 +617,20 @@ impl Type {
                 }
                 TypeKind::Class(_, args) | TypeKind::Enum(_, args) => stack.extend(args.get()),
                 TypeKind::Any(interface, args) => {
-                    found.push(interface);
+                    if !found.contains(&interface) {
+                        found.push(interface);
+                    }
                     stack.extend(args.get());
                 }
-                _ => {}
+                TypeKind::I64
+                | TypeKind::U8
+                | TypeKind::F64
+                | TypeKind::Bool
+                | TypeKind::Char
+                | TypeKind::String
+                | TypeKind::Unit
+                | TypeKind::Never
+                | TypeKind::Param(..) => {}
             }
         }
         found
@@ -985,6 +995,15 @@ mod tests {
         READS.set(0);
         assert_eq!(plain.anys(), []);
         assert_eq!(READS.get(), 1);
+    }
+
+    /// One interface in two `any` types of one type is found once.
+    #[test]
+    fn anys_should_give_an_interface_once() {
+        let any = |args| Type::intern(TypeKind::Any(InterfaceId(7), TypeArgs::intern(&[args])));
+        let pair = TypeArgs::intern(&[any(Type::I64), any(Type::BOOL)]);
+        let class = Type::intern(TypeKind::Class(ClassId(0), pair));
+        assert_eq!(class.anys(), [InterfaceId(7)]);
     }
 
     /// An `any` type is found inside an array, an optional, the arguments of a class, an enum and
