@@ -3802,6 +3802,50 @@ fn growth_should_read_each_type_of_an_operand_once() {
     assert_eq!(c - b, b - a, "each level should cost the same: {a} {b} {c}");
 }
 
+/// A cycle with `n` lowered `==` calls of written `eq` methods before one call through `Eq`, where
+/// no operand holds a type of the class that declares the method it reaches, reads the operand of
+/// each step once, so the report stays linear in the length of the cycle.
+#[test]
+fn growth_should_read_the_operands_of_a_cycle_once() {
+    let steps = |n: usize| {
+        let mut src = String::from("enum Y<A> {\n    One(A)\n}\nclass W<T> {\n    x: T\n}\n");
+        for k in 0..n {
+            let field = if k + 1 < n {
+                format!("Q{}<U>", k + 1)
+            } else {
+                "U".to_owned()
+            };
+            writeln!(
+                src,
+                "class Q{k}<U> {{\n    v: {field}\n}}\nextend<U: Eq> Q{k}<U>: Eq {{\n    fn eq(self, other: Self) -> bool {{\n        self.v == other.v\n    }}\n}}"
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        let wrap = |name: &str| {
+            let mut value = format!("Y.One([{name}.x])");
+            for k in (0..n).rev() {
+                value = format!("Q{k}(v: {value})");
+            }
+            value
+        };
+        let compare = format!("{} == {}", wrap("self"), wrap("other"));
+        write!(
+            src,
+            "extend<T: Eq> W<T>: Eq {{\n    fn eq(self, other: Self) -> bool {{\n        {compare}\n    }}\n}}\nfn main() {{\n    print(W(x: 1) == W(x: 2))\n}}"
+        )
+        .expect("writing to a `String` should succeed");
+        cycle::GROWTH_VISITS.set(0);
+        codes(
+            &src,
+            &[(Code::InstantiationCycle, where_is(&src, &compare))],
+        );
+        cycle::GROWTH_VISITS.get()
+    };
+    let (a, b, c) = (steps(6), steps(12), steps(18));
+    assert!(a >= 6, "the operands should be read: {a}");
+    assert_eq!(c - b, b - a, "each step should cost the same: {a} {b} {c}");
+}
+
 #[test]
 fn implicit_interpolation_should_close_an_instantiation_cycle() {
     let w = "class W<T> {\n    x: T\n}\n";

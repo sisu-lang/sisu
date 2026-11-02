@@ -172,18 +172,6 @@ fn calls_through(instance: Instance) -> Option<tir::InterfaceId> {
     }
 }
 
-/// The operand of the call that `instance` is, when the program writes it as an operator, an
-/// interpolation or a built-in function. A generated node has none: its operand is a payload that
-/// the enum's declaration writes.
-fn operand_of(instance: Instance) -> Option<Type> {
-    match instance {
-        Instance::Operator(_, written, operand) if !matches!(written, Written::Generated(_)) => {
-            Some(operand)
-        }
-        _ => None,
-    }
-}
-
 /// An instantiation, which a diagnostic writes as the program does.
 #[derive(Clone, Copy)]
 enum Instance {
@@ -1114,21 +1102,25 @@ impl Checker<'_> {
         let mut shown = FxHashSet::from_iter([edge.site]);
         // The last call in the user's file, which a step inside the prelude came through.
         let mut entered = label_spelled.clone();
-        // The operand of the call through the interface, until the edge out of its hub says which
-        // method the cycle takes.
-        let (mut operand, mut grows): (Option<Type>, _) = (None, None);
+        // The operands of the steps that the program writes, until an edge out of a hub says which
+        // method the cycle takes. The label counts, and so does a step that reaches a generated
+        // node: the type that grows may be in the operand of any of them.
+        let mut operands: Vec<Type> = self.written_operand(label_instance).into_iter().collect();
+        let mut grows = None;
         if let Some(interface) = calls_through(label_instance) {
             reach = Some((interface, label_spelled.clone()));
-            operand = operand_of(label_instance);
         }
         // A call through a hub, until the edge out of the hub says which method it may run.
         let mut calling: Option<(Span, tir::InterfaceId, Option<Spelled>)> = None;
         for &i in &cycle[1..] {
             let e = &edges[i];
             if e.out {
-                if let Some(operand) = operand.take() {
-                    grows = self.growth(functions, operand, e.holder);
+                // The newest first: the nearest step to the method is the one that holds the type.
+                if grows.is_none() {
+                    grows = (operands.iter().rev())
+                        .find_map(|&operand| self.growth(functions, operand, e.holder));
                 }
+                operands.clear();
                 if let Some((mark, interface, by)) = calling.take() {
                     through.push((
                         mark,
@@ -1159,12 +1151,10 @@ impl Checker<'_> {
             }
             let spelled = self.spell(functions, graph, e.holder, instance);
             entered = spelled.clone();
+            operands.extend(self.written_operand(instance));
             if let Some(interface) = calls_through(instance) {
                 let by = matches!(instance, Instance::Operator(..)).then(|| spelled.clone());
-                reach.get_or_insert_with(|| {
-                    operand = operand_of(instance);
-                    (interface, spelled)
-                });
+                reach.get_or_insert((interface, spelled));
                 calling = Some((e.mark, interface, by));
             } else {
                 through.push((
@@ -1184,6 +1174,27 @@ impl Checker<'_> {
             choice,
             grows,
         });
+    }
+
+    /// The operand of the step that `instance` is, when the program writes the step: an operator,
+    /// an interpolation or a built-in function on it; a type that a call reaches the generated
+    /// node of; or a call that the typed tree lowered an operator to, whose operand is the first
+    /// parameter. A generated node has none: its operand is a payload that the enum's declaration
+    /// writes.
+    fn written_operand(&self, instance: Instance) -> Option<Type> {
+        match instance {
+            Instance::Operator(_, written, operand)
+                if !matches!(written, Written::Generated(_)) =>
+            {
+                Some(operand)
+            }
+            Instance::Type(ty, Some(_)) => Some(ty),
+            Instance::Call(func, args, Some(_)) => {
+                let first = self.signatures[func.0].params.first().copied().flatten()?;
+                self.subst(first, args.get())
+            }
+            _ => None,
+        }
     }
 
     /// Takes a call through a language interface on `operand`, whose cycle takes the method

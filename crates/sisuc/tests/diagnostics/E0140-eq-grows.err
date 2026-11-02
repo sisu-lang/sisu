@@ -7,7 +7,7 @@ error[E0140]: `W<T>.eq` instantiates itself without end
 10 |         Wrap.Item(W(x: [self.x])) == Wrap.Item(W(x: [other.x]))
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `==` here
    |
-   = help: a call through `Eq` counts as reaching every conformance to `Eq`
+   = help: a call through `Eq` counts as reaching every conformance to `Eq`. `Wrap<W<[T]>>` holds `W<[T]>`, whose argument grows
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0140

@@ -1,0 +1,16 @@
+// The cycle passes the generated `Display` of an enum, through an interpolation.
+enum Wrap<T> {
+    Item(T)
+    Nothing
+}
+class W<T> {
+    x: T
+}
+extend<T: Display> W<T>: Display {
+    fn to_string(self) -> string {
+        "{Wrap.Item(W(x: [self.x]))}"
+    }
+}
+fn main() {
+    print(W(x: 1))
+}
