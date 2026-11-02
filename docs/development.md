@@ -99,7 +99,7 @@ The end-to-end cases are files. The `cases` test binary runs one test per
 | `diagnostics/` | report diagnostics under `sisu check` (`sisu build --emit mir` for a code that only `mono` reports, such as E0163, because `check` does not run `mono`), exiting 1 if one is an error and 0 if all are warnings; a case named `<CODE>.sisu` or `<CODE>-<case>.sisu` reports that code | `<name>.err`: the diagnostics; `<name>.json`: the same under `--format json` |
 
 The in-process tests in `crates/sisuc/src/diagnostic/explanations.rs` also read these fixtures.
-They apply each safe fix alone, and all safe fixes of a fixture together.
+They also run each program again with multi-byte comments put in (except the slow E0162 and E0163 programs),
 They also run each program again with multi-byte comments put in,
 and check that no span splits a character.
 A new diagnostic with a fix needs a program in `diagnostics/` that shows the fix.
