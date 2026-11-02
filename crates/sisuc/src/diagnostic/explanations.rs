@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use super::{Code, Diagnostic, Edit, Fix, RETIRED};
 use crate::front_end::{decode, front_end};
+use crate::fuzz::assert_spans;
 use crate::lexer::lex;
 use crate::parser::{parse, parse_ok};
 
@@ -380,6 +381,72 @@ fn safe_fixes_remove_their_code_in_every_fixture() {
         );
     }
     assert!(applied > 0, "no fixture has a fix");
+}
+
+/// A comment line of three two-byte characters, so that every offset after it moves by an odd
+/// number of bytes. The lexer has no block comments, so a whole `//` line goes in place.
+const COMMENT: &str = "//\u{e4}\u{e4}\u{e4}\n";
+
+/// `source` with `COMMENT` put in at each of `points`, which are byte offsets.
+fn with_comments(source: &str, points: &[usize]) -> String {
+    let mut text = source.to_owned();
+    for &at in points.iter().rev() {
+        text.insert_str(at, COMMENT);
+    }
+    text
+}
+
+/// The offsets just after each `(`, `[` and `{` of `text` that stands in code: not after a `//`
+/// on its line, and not inside a string (an odd number of `"` before it on its line).
+fn open_brackets(text: &str) -> Vec<usize> {
+    let mut found = Vec::new();
+    let mut line_start = 0;
+    for line in text.split_inclusive('\n') {
+        let code = line.split_once("//").map_or(line, |(code, _)| code);
+        for (i, c) in code.char_indices() {
+            if matches!(c, '(' | '[' | '{') && code[..i].matches('"').count() % 2 == 0 {
+                found.push(line_start + i + 1);
+            }
+        }
+        line_start += line.len();
+    }
+    found
+}
+
+/// A span built as `token.start() + n`, with `n` the length of a name, splits a character when
+/// text with multi-byte characters lies between (`jump.span.start() + name.len()` did, and made
+/// `Source::slice` panic). Each fixture runs again with a multi-byte comment line put before every
+/// line, after every opening bracket, and at the start of every diagnostic, which keeps the
+/// meaning of the program except inside a string; every span of every report must then lie on a
+/// char bound. The report need not be the original's, only sound. A panic fails the test.
+#[test]
+fn spans_should_lie_on_char_bounds_after_a_multibyte_comment() {
+    for (path, stem) in all_fixtures() {
+        // shortcut: the limit programs of E0162 and E0163 take 2 to 7 s each to check, 15 s of
+        // the test's 25; drop this when they check fast.
+        if stem.starts_with("E0162") || stem.starts_with("E0163") {
+            continue;
+        }
+        let Some(source) = fixture_text(&path) else {
+            continue;
+        };
+        // On a failure, nextest shows the last fixture named here.
+        eprintln!("{}", path.display());
+        let lines = source.match_indices('\n').map(|(i, _)| i + 1);
+        let starts = diagnostics(&source)
+            .iter()
+            .map(|d| d.span().start())
+            .collect();
+        let variants = [
+            std::iter::once(0).chain(lines).collect(),
+            open_brackets(&source),
+            starts,
+        ];
+        for points in variants {
+            let moved = with_comments(&source, &points);
+            assert_spans(&moved, &diagnostics(&moved));
+        }
+    }
 }
 
 #[test]

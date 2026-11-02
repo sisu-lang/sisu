@@ -14,12 +14,6 @@
 //! A `selfhost_lexer` case is a Sisu file of the tests, of `selfhost/` or of the compiler's own
 //! Sisu sources. The lexer in Sisu must print the tokens that `sisu build --emit tokens` prints for
 //! it, unless the file has a lexer error, which excludes it.
-//! A `safe_fixes` case is a program of `tests/diagnostics` or `site/programs/diagnostics`, and an
-//! `explanation_safe_fixes` case the Broken program of an explanation: each safe fix that `sisu
-//! check --format json` shows, applied alone, must remove its diagnostic and add no error code
-//! (`fixes`).
-//! A `non_ascii_spans` case runs such a program again with multi-byte comments inserted, and checks
-//! that every span of its reports lies on a character bound (`fixes`).
 //! An `every_program_certifies` case builds the mir of a program in `tests/run`, `tests/run-fail`,
 //! `tests/programs`, `bench` or `selfhost`, which a debug build certifies.
 //!
@@ -29,7 +23,6 @@
 use std::path::Path;
 use std::process::Command;
 
-mod fixes;
 mod site;
 #[expect(dead_code, reason = "this binary uses only part of the shared helpers")]
 mod support;
@@ -132,28 +125,6 @@ fn selfhost_lexer(path: &Path) -> datatest_stable::Result<()> {
     Ok(())
 }
 
-fn safe_fixes(path: &Path) -> datatest_stable::Result<()> {
-    fixes::safe_fixes(path, &std::fs::read(path)?);
-    Ok(())
-}
-
-fn explanation_safe_fixes(path: &Path) -> datatest_stable::Result<()> {
-    let markdown = std::fs::read_to_string(path)?;
-    if !markdown.lines().any(|l| l.starts_with("Status: retired")) {
-        let code = path
-            .file_stem()
-            .and_then(std::ffi::OsStr::to_str)
-            .unwrap_or_default();
-        fixes::safe_fixes(path, &site::broken_program(code, &markdown));
-    }
-    Ok(())
-}
-
-fn non_ascii_spans(path: &Path) -> datatest_stable::Result<()> {
-    fixes::non_ascii_spans(path, &std::fs::read(path)?);
-    Ok(())
-}
-
 /// Asserts that `sisu build --emit mir` builds `path`, which the debug build the tests use
 /// certifies function by function, and that a traversal from each function's `bb0` visits every
 /// block.
@@ -219,11 +190,6 @@ datatest_stable::harness! {
     { test = site_diagnostics, root = "../../site/programs/diagnostics", pattern = r"\.sisu$" },
     { test = site_pending, root = "../../site/programs/pending", pattern = r"\.sisu$" },
     { test = explanation, root = "../../docs/diagnostics", pattern = r"[EW]\d{4}\.md$" },
-    { test = safe_fixes, root = "tests/diagnostics", pattern = r"\.sisu$" },
-    { test = safe_fixes, root = "../../site/programs/diagnostics", pattern = r"\.sisu$" },
-    { test = explanation_safe_fixes, root = "../../docs/diagnostics", pattern = r"[EW]\d{4}\.md$" },
-    { test = non_ascii_spans, root = "tests/diagnostics", pattern = r"\.sisu$" },
-    { test = non_ascii_spans, root = "../../site/programs/diagnostics", pattern = r"\.sisu$" },
     { test = every_program_certifies, root = "tests", pattern = r"^(run|run-fail|programs)/[^/]+\.sisu$" },
     { test = every_program_certifies, root = "../../bench", pattern = r"main\.sisu$" },
     { test = every_program_certifies, root = "../../selfhost", pattern = r"^lexer\.sisu$" },
