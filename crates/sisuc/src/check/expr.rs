@@ -52,6 +52,7 @@ impl Checker<'_> {
                 return Err(Poisoned {
                     ty: Some(ty),
                     mismatch: true,
+                    found: None,
                 });
             }
             return Ok(tir::Expr::new(tir::ExprKind::Float(x), ty, at));
@@ -70,6 +71,7 @@ impl Checker<'_> {
             return Err(Poisoned {
                 ty: Some(ty),
                 mismatch: true,
+                found: None,
             });
         }
         Ok(tir::Expr::new(tir::ExprKind::Int(value), ty, at))
@@ -343,6 +345,16 @@ impl Checker<'_> {
             self.diagnostics.push(d);
             return (Err(Poisoned::error()), true);
         }
+        // A generic call that cannot meet `want` is reported with the type it found, as a
+        // concrete call is with its type.
+        if let Some(want) = want.filter(|&want| want != UNKNOWN)
+            && let Some(found) = self.misfit_type(&checked).filter(|&found| found != want)
+        {
+            let d = self.mismatch_from(e.span, Some(e), want, found, source);
+            self.diagnostics.push(d);
+            self.settle_misfit(&checked);
+            return (Err(Poisoned::error()), true);
+        }
         (checked, false)
     }
 
@@ -422,7 +434,11 @@ impl Checker<'_> {
             ),
         };
         self.diagnostics.push(kind.into());
-        Err(Poisoned { ty: None, mismatch })
+        Err(Poisoned {
+            ty: None,
+            mismatch,
+            found: None,
+        })
     }
 
     /// What the `let` whose whole initializer is the literal at `span` writes before its type,

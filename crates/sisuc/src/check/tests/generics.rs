@@ -6151,7 +6151,38 @@ const PARITY_ROWS: &[ParityRow<'static>] = &[
     ("", "let a: [i64] = [mk2()]"),
     ("", "let s: i64? = Some(mk2())"),
     ("", "let x: i64? = None\nlet v: i64 = x ?? mk2()"),
+    // Neighbours: other places that give a value a context.
+    (Q_DECL, "let q = Q()\nprint(q.take(mk2()))"),
+    ("", "print(P(a: { mk2() }).a)"),
+    (
+        "",
+        "let x: i64? = None\nlet y: i64 = if let v = x { v } else { mk2() }\nprint(y)",
+    ),
+    ("", "while mk2() {\n    print(1)\n}"),
+    ("", "if mk2() {\n    print(1)\n}"),
+    ("", "let xs = [1, 2]\nprint(xs[mk2()])"),
+    ("", "print(!mk2())"),
+    ("", "print(1 + mk2())"),
+    ("", "let a: [i64] = [1, mk2()]\nprint(a)"),
+    ("", "let y: i64 = loop {\n    break mk2()\n}\nprint(y)"),
+    (
+        "",
+        "let c = true\nlet y = loop {\n    if c {\n        break 1\n    }\n    break mk2()\n}\nprint(y)",
+    ),
+    ("", "let mut y = 0\ny += mk2()\nprint(y)"),
+    (
+        "",
+        "let x: i64 = 1\nprint(x == if true { 1 } else { mk2() })",
+    ),
+    (
+        "",
+        "let y: i64 = 1 + if true { mk2() } else { 2 }\nprint(y)",
+    ),
+    ("", "print(fi(0) == if true { 1 } else { mk2() })"),
 ];
+
+/// A class with a method that takes an optional, for a row of `PARITY_ROWS`.
+const Q_DECL: &str = "class Q {\n    fn take(self, _x: i64?) -> i64 { 0 }\n}\n";
 
 /// A generic call whose result cannot meet its context hands the type it found to the code that
 /// uses the value. That code reports what it reports for a concrete callee. So the two programs
@@ -6187,6 +6218,7 @@ fn a_misfit_under_an_outer_generic_call_should_give_a_true_diagnostic() {
         ("", "print(id(mk2()) == 1)"),
         ("", "let y: i64? = id(mk2())"),
         ("", "print(1 == id(id(mk2())))"),
+        ("", "let y: i64 = id(mk2())"),
     ];
     for &row in rows {
         let src = parity_program(row, false);

@@ -2,7 +2,7 @@
 
 use super::any::{is_target, widen};
 use super::expr::{fits, if_some, int_literal, literal_type, local, operator, path, typed};
-use super::generic::{CompareHint, Rank, mismatched};
+use super::generic::{Rank, mismatched};
 use super::interface::Operation;
 use super::{
     Checked, Checker, Lowered, Poisoned, UNKNOWN, as_optional, beyond_one_layer, block_expr,
@@ -46,6 +46,7 @@ impl Checker<'_> {
             return Err(Poisoned {
                 ty: None,
                 mismatch: literal,
+                found: None,
             });
         }
         let want = if type_of(&checked).map(payload) == Some(Type::F64) {
@@ -215,20 +216,22 @@ impl Checker<'_> {
         if self.body.joins.contains(&span) {
             return self.integers(operands, None, operator, op);
         }
-        let (diagnostics, locals, pending) = (
+        let (diagnostics, locals, pending, misfits) = (
             self.diagnostics.len(),
             self.body.locals.len(),
             self.pending.len(),
+            self.body.misfits.len(),
         );
         let result = self.integers(operands, expected, operator, op);
         if result.1 != Some(Type::STRING) {
             return result;
         }
-        // The first check is dropped, and its locals and their findings with it, so none is left
-        // that nothing binds, and none is judged twice.
+        // The first check is dropped, and its locals, misfits and findings with it, so none is
+        // left that nothing binds, and none is judged twice.
         self.diagnostics.truncate(diagnostics);
         self.body.locals.truncate(locals);
         self.pending.truncate(pending);
+        self.body.misfits.truncate(misfits);
         self.body.joins.insert(span);
         self.integers(operands, None, operator, op)
     }
@@ -569,17 +572,12 @@ impl Checker<'_> {
         let (first, second) = if swapped { (rhs, lhs) } else { (lhs, rhs) };
         let checked = self.value(first, None);
         let want = type_of(&checked).map_or_else(|| UNKNOWN, as_optional);
-        // A generic call as the second side cannot meet `want`, a convenience: it reports the
-        // comparison, as a callee that is not generic does.
-        let outer = self.body.compare_hint;
-        self.body.compare_hint = type_of(&checked).map(|first| CompareHint {
-            at: second.span,
-            whole: span,
-            first,
-            swapped,
-        });
+        // The first side's type is a hint to the second, as a sibling's is (see `Body::hint_at`):
+        // an `if` there reports a branch against it, as one checked first reports against its
+        // first branch.
+        let outer_hint = self.pass_hint(Some(second.span), type_of(&checked));
         let other = self.value(second, Some(want));
-        self.body.compare_hint = outer;
+        self.body.hint_at = outer_hint;
         // A side converts through one `?` only: `x == 5` on an `i64??` holds `5` to `i64??`.
         if let (Some(a), Some(b)) = (type_of(&checked), type_of(&other))
             && let Some((side, want, got)) = [(second, a, b), (first, b, a)]
@@ -814,6 +812,24 @@ impl Checker<'_> {
         r: Checked,
         kind: impl FnOnce(Box<tir::Expr>, Box<tir::Expr>) -> tir::ExprKind,
     ) -> Checked {
+        // A generic call that cannot meet its context is compared by the type it found, as a
+        // concrete call is by its type.
+        let shown = |c: &Self, side: &Checked| type_of(side).or_else(|| c.misfit_type(side));
+        if let (Some(lt), Some(rt)) = (shown(self, &l), shown(self, &r))
+            && (type_of(&l).is_none() || type_of(&r).is_none())
+            && !fits(lt, rt)
+            && !fits(rt, lt)
+        {
+            let kind = DiagnosticKind::CannotCompare {
+                left: self.type_name(lt),
+                right: self.type_name(rt),
+                at: span,
+            };
+            self.diagnostics.push(kind.into());
+            self.settle_misfit(&l);
+            self.settle_misfit(&r);
+            return Err(Poisoned::error());
+        }
         let (l, r) = match (type_of(&l), type_of(&r)) {
             (Some(lt), Some(rt)) if lt != rt => {
                 if fits(lt, rt) {
@@ -942,7 +958,9 @@ impl Checker<'_> {
             }
             _ => other,
         };
-        let (other, ty) = match type_of(&other) {
+        // A generic call that cannot meet its context joins by the type it found, as a concrete
+        // call does by its type. The value stays `Error`.
+        let (other, ty) = match type_of(&other).or_else(|| self.misfit_type(&other)) {
             // `a ?? panic("x")`: only the payload reaches the result.
             Some(Type::NEVER) => (other, payload),
             Some(ty) if ty == payload || ty == optional_of(payload) => (other, ty),
@@ -973,6 +991,7 @@ impl Checker<'_> {
                         (None, None) => self.mismatch(rhs.span, Some(rhs), payload, ty),
                     };
                     self.diagnostics.push(d);
+                    self.settle_misfit(&other);
                     return Err(Poisoned::error());
                 };
                 self.instantiates = true;

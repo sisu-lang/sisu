@@ -704,7 +704,14 @@ pub(super) fn safe_value(
     let ty = match type_of(&member) {
         Some(Type::UNIT) => Type::UNIT,
         Some(ty) => as_optional(ty),
-        None => return Err(Poisoned::error()),
+        // A misfit's found type is optional already (see `Checker::report_unbound`).
+        None => {
+            let found = member.err().and_then(|poisoned| poisoned.found);
+            return Err(Poisoned {
+                found,
+                ..Poisoned::error()
+            });
+        }
     };
     let (Ok(scrutinee), Ok(member)) = (scrutinee, member) else {
         return Err(Poisoned::typed(ty));

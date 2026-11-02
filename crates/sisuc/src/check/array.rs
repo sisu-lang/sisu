@@ -87,7 +87,11 @@ impl Checker<'_> {
                 ),
             };
             self.report(d);
-            return Err(Poisoned { ty: None, mismatch });
+            return Err(Poisoned {
+                ty: None,
+                mismatch,
+                found: None,
+            });
         }
         self.ranked(|c| c.joined(span, elements, quiet))
     }
@@ -417,6 +421,7 @@ impl Checker<'_> {
             _ => Err(Poisoned {
                 ty: (!mismatched).then_some(ty),
                 mismatch: mismatched,
+                found: None,
             }),
         }
     }
