@@ -4,12 +4,13 @@
 
 use inkwell::AddressSpace;
 use inkwell::attributes::{Attribute, AttributeLoc};
-use inkwell::context::ContextRef;
+use inkwell::context::{AsContextRef, Context, ContextRef};
 use inkwell::module::Module;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue};
 
 use super::Codegen;
+use super::layout::three_words;
 use crate::tir::Type;
 
 /// How a value crosses into the runtime. `Bool` and `U8` are passed `zeroext`, as the C
@@ -487,10 +488,17 @@ pub(super) const SINK_CAP: u64 = 32;
 
 /// How a Sisu value crosses a function boundary (ADR 0029). Every function type that takes a
 /// Sisu value, every call that passes one and every function entry that receives one goes
-/// through these three, so a change to the layout of a value is a change here.
+/// through these three, so a change to the layout of a value is a change here. An array or a
+/// string, or the optional of one, crosses as three scalar parameters: its block, its data and
+/// its length. LLVM puts `range` only on an integer, so it is never one struct parameter.
 impl<'ctx> Codegen<'ctx, '_> {
     /// The LLVM types of the parameters that one value of type `ty` takes, in order.
     pub(super) fn param_types(&self, ty: Type) -> Vec<BasicMetadataTypeEnum<'ctx>> {
+        if three_words(ty) {
+            return (self.value_type().get_field_types().into_iter())
+                .map(Into::into)
+                .collect();
+        }
         let part = self
             .llvm_type(ty)
             .expect("the checker should reject a `unit` or `never` parameter, so each parameter has a value type");
@@ -508,6 +516,13 @@ impl<'ctx> Codegen<'ctx, '_> {
             Some(value.get_type()),
             "a value should have the LLVM type of its Sisu type"
         );
+        if three_words(ty) {
+            return vec![
+                self.value_block(value).into(),
+                self.value_data(value).into(),
+                self.value_len(value).into(),
+            ];
+        }
         vec![value.into()]
     }
 
@@ -525,6 +540,13 @@ impl<'ctx> Codegen<'ctx, '_> {
                 .is_some_and(|block| block.get_terminator().is_none()),
             "`join` may emit instructions, so the builder should be in an open block"
         );
+        if three_words(ty) {
+            return self.make_value(
+                parts[0].into_pointer_value(),
+                parts[1].into_pointer_value(),
+                parts[2].into_int_value(),
+            );
+        }
         parts[0]
     }
 
@@ -544,6 +566,54 @@ impl<'ctx> Codegen<'ctx, '_> {
             })
             .collect()
     }
+
+    /// Gives the length parameter of each array or string value in `tys` the facts that a length
+    /// has: `noundef`, and `range(i64 0, 2^63)`, as `mark_len` gives a length that is loaded. The
+    /// parameters of `tys` start at parameter `first` of `function`, as `joined_params` reads them.
+    pub(super) fn mark_len_params(&self, function: FunctionValue<'ctx>, first: u32, tys: &[Type]) {
+        let mut at = first;
+        for &ty in tys {
+            let count = u32::try_from(self.param_types(ty).len())
+                .expect("a value should take few parameters");
+            if three_words(ty) {
+                let len = AttributeLoc::Param(at + count - 1);
+                function.add_attribute(
+                    len,
+                    self.context
+                        .create_enum_attribute(Attribute::get_named_enum_kind_id("noundef"), 0),
+                );
+                function.add_attribute(len, non_negative(self.context));
+            }
+            at += count;
+        }
+    }
+}
+
+/// The attribute `range(i64 0, 2^63)`: a value that is not negative. Inkwell at `c9d9734` has
+/// no constructor for a constant-range attribute.
+#[expect(
+    unsafe_code,
+    reason = "inkwell has no constructor for a constant-range attribute, so this calls llvm-sys"
+)]
+fn non_negative(context: &Context) -> Attribute {
+    const BITS: u32 = 64;
+    let lower = [0_u64];
+    // The upper bound is exclusive, and `1 << 63` is 2^63; LLVM prints it as
+    // `i64 -9223372036854775808`.
+    let upper = [1_u64 << 63];
+    // SAFETY: `context` is a live context, and `lower` and `upper` each hold the one word that
+    // `BITS` bits need, as `LLVMCreateConstantRangeAttribute` reads.
+    let raw = unsafe {
+        llvm_sys::core::LLVMCreateConstantRangeAttribute(
+            context.as_ctx_ref(),
+            Attribute::get_named_enum_kind_id("range"),
+            BITS,
+            lower.as_ptr(),
+            upper.as_ptr(),
+        )
+    };
+    // SAFETY: `raw` is the valid, non-null attribute that LLVM just made in `context`.
+    unsafe { Attribute::new(raw) }
 }
 
 /// The row of `RUNTIME` named `name`.

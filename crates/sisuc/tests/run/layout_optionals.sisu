@@ -1,0 +1,136 @@
+// GIVEN optionals of a string and of an array: an argument, a result, a local, a field, an element,
+// a layer of `string??`, and the payload of an enum that is its field's storage
+// WHEN each holds a value and each holds `None`, and is tested with `== None`, `if let`, `match`
+// and `??`, passed, returned, kept in a field and in an array, copied, and dropped
+// THEN a `None` never reads as a value and no value reads as `None`, an empty array is a value,
+// and Valgrind and `--rc-checks` find every block freed exactly once
+class Holder {
+    mut name: string?
+    mut items: [i64]?
+}
+
+// An enum that is its field's storage: the `Anon` variant is a `null` block.
+enum Named {
+    Anon
+    Name(string)
+}
+
+enum Listed {
+    Nobody
+    Items([i64])
+}
+
+fn text(n: i64) -> string {
+    "s{n}"
+}
+
+fn maybe_text(n: i64) -> string? {
+    if n < 0 { None } else { text(n) }
+}
+
+fn maybe_items(n: i64) -> [i64]? {
+    if n < 0 { None } else { [n; n] }
+}
+
+fn show_text(s: string?) -> string {
+    let by_if = if let v = s { "<{v}>" } else { "None" }
+    let by_match = match s {
+        None => "None"
+        Some(v) => "<{v}>"
+    }
+    let or = s ?? "?"
+    "{s == None} {by_if} {by_match} {or}"
+}
+
+fn show_items(xs: [i64]?) -> string {
+    let by_if = if let v = xs { "{v.len()}" } else { "None" }
+    let by_match = match xs {
+        None => "None"
+        Some(v) => "{v.len()}"
+    }
+    let or = xs ?? [7]
+    "{xs == None} {by_if} {by_match} {or.len()}"
+}
+
+fn show_text2(s: string??) -> string {
+    match s {
+        None => "None"
+        Some(None) => "Some(None)"
+        Some(Some(v)) => "Some(Some({v}))"
+    }
+}
+
+fn show_named(n: Named) -> string {
+    match n {
+        Anon => "Anon"
+        Name(s) => "Name({s})"
+    }
+}
+
+fn show_listed(l: Listed) -> string {
+    match l {
+        Nobody => "Nobody"
+        Items(xs) => "Items({xs})"
+    }
+}
+
+fn pass(s: string?) -> string? {
+    s
+}
+
+fn main() {
+    print(show_text(None))
+    print(show_text("a" + "b"))
+    print(show_text(""))
+    print(show_text(maybe_text(-1)))
+    print(show_text(maybe_text(3)))
+    print(show_text(pass(maybe_text(4))))
+    print(show_text(pass(None)))
+    print(show_items(None))
+    print(show_items([]))
+    print(show_items([1, 2, 3]))
+    print(show_items(maybe_items(-1)))
+    print(show_items(maybe_items(2)))
+    print(show_text2(None))
+    print(show_text2(Some(maybe_text(-1))))
+    print(show_text2(Some(Some(text(5)))))
+    let none2: string?? = None
+    let some_none: string?? = Some(None)
+    print(show_text2(none2))
+    print(show_text2(some_none))
+    print(show_named(Named.Anon))
+    print(show_named(Named.Name("x" + "y")))
+    print(show_listed(Listed.Nobody))
+    print(show_listed(Listed.Items([])))
+    print(show_listed(Listed.Items([4, 5])))
+    print(Named.Anon == Named.Anon)
+    print(Named.Anon == Named.Name(""))
+    print(Named.Name("p" + "q") == Named.Name("p" + "q"))
+    let holder = Holder(name: None, items: None)
+    print(show_text(holder.name))
+    print(show_items(holder.items))
+    holder.name = text(8)
+    holder.items = [1, 2]
+    print(show_text(holder.name))
+    print(show_items(holder.items))
+    holder.items?.push(3)
+    print(show_items(holder.items))
+    let kept = holder.name
+    holder.name = None
+    print(show_text(holder.name))
+    print(show_text(kept))
+    let mut row: [string?] = [None, text(1), None]
+    row.push(text(2))
+    row[0] = text(0)
+    let mut shown = ""
+    for s in row {
+        shown = shown + show_text(s) + ";"
+    }
+    print(shown)
+    let mut grid: [[i64]?] = [None; 2]
+    grid.push([9])
+    grid[1] = [8, 8]
+    for g in grid {
+        print(show_items(g))
+    }
+}

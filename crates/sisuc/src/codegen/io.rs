@@ -1,7 +1,7 @@
 //! Standard input and the program's arguments: `read_line`, through the runtime's
 //! `sisu_read_line`, and `main`'s `args`, through `sisu_args_len` and `sisu_arg`.
 
-use inkwell::values::{FunctionValue, IntValue, PointerValue};
+use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
 
 use super::{Codegen, POSITIONED};
 use crate::tir::Type;
@@ -16,7 +16,7 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// `ReadLine`: the next line of standard input as a new string, copied at once, before
     /// anything can call `sisu_read_line` again; `null`, which is `None`, at the end of input.
-    pub(super) fn read_line(&self) -> PointerValue<'ctx> {
+    pub(super) fn read_line(&self) -> BasicValueEnum<'ctx> {
         let i64_type = self.context.i64_type();
         let len_slot = self.entry_alloca(i64_type.into(), "len");
         let bytes = self
@@ -49,12 +49,11 @@ impl<'ctx> Codegen<'ctx, '_> {
         let string = self.string_from_bytes(bytes, len);
         let ty = Type::optional(Type::STRING);
         let some = self.context.bool_type().const_int(1, false);
-        let line = self.optional(ty, some, string.into());
+        let line = self.optional(ty, some, string);
         self.branch_to(join);
         self.builder.position_at_end(join);
         let absent = self.empty(ty);
         self.phi(absent.get_type(), &[(absent, ended), (line, copy)])
-            .into_pointer_value()
     }
 
     /// The C `main`'s `argc` and `argv`, passed as `count` and `strings`, as `main`'s `args`: a
@@ -66,7 +65,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         &self,
         count: IntValue<'ctx>,
         strings: PointerValue<'ctx>,
-    ) -> PointerValue<'ctx> {
+    ) -> BasicValueEnum<'ctx> {
         let i64_type = self.context.i64_type();
         let args_len = self.runtime("sisu_args_len");
         let arg = self.runtime("sisu_arg");
@@ -79,6 +78,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect("`sisu_args_len` should return an `i64`, as the runtime declares it")
             .into_int_value();
         let array = self.alloc_array(Type::STRING, len, None);
+        let data = self.array_data(Type::STRING, array);
         let len_slot = self.entry_alloca(i64_type.into(), "len");
         self.count_loop(len, |index| {
             let bytes = self
@@ -91,8 +91,8 @@ impl<'ctx> Codegen<'ctx, '_> {
                 .into_pointer_value();
             let n = self.load(i64_type.into(), len_slot).into_int_value();
             let string = self.string_from_bytes(bytes, n);
-            self.store(self.element_ptr(Type::STRING, array, index), string.into());
+            self.store(self.element_ptr(Type::STRING, data, index), string);
         });
-        array
+        self.make_value(array, data, len)
     }
 }

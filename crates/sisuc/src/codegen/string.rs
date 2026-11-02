@@ -1,8 +1,11 @@
-//! Strings at run time. A string is a pointer to one block: a header of three `i64`s, the count,
-//! the length and the capacity, then `cap` bytes. A literal's block is a writable global that
-//! holds a reference of its own, so it is never freed and never reused in place. This module is the
-//! only one that reads a string header; `layout.rs` owns the layout. This module owns the string
-//! nodes and the bodies of the string helpers, which `define_helpers` reaches through
+//! Strings at run time. A string block is one heap block: a header of three `i64`s, the count,
+//! the length and the capacity, then `cap` bytes. A string value is three words, `{ block, data,
+//! len }`: the block, the first byte and the number of bytes (`layout.rs`, `make_value`). A value
+//! that covers its whole block has `data` at the block's first byte and `len` equal to the
+//! header's `len`; every value has that shape for now. A literal's block is a writable global
+//! that holds a reference of its own, so it is never freed and never reused in place. This module
+//! is the only one that reads a string header; `layout.rs` owns the layout. This module owns the
+//! string nodes and the bodies of the string helpers, which `define_helpers` reaches through
 //! `define_string_helper`.
 
 use inkwell::attributes::AttributeLoc;
@@ -32,16 +35,21 @@ impl<'ctx> Codegen<'ctx, '_> {
             .into_int_value()
     }
 
-    /// The length of `string` in bytes.
-    pub(super) fn string_len(&self, string: PointerValue<'ctx>) -> IntValue<'ctx> {
-        self.load_string_field(string, LEN)
+    /// `Str`: `string_const` for this literal node, retained.
+    pub(super) fn string_lit(&self, text: &str) -> BasicValueEnum<'ctx> {
+        let string = self.string_const(text);
+        self.retain(string, Type::STRING);
+        string
     }
 
-    /// `Str`: `string_global` for this literal node, retained.
-    pub(super) fn string_lit(&self, text: &str) -> PointerValue<'ctx> {
-        let string = self.string_global(text);
-        self.retain(string.into(), Type::STRING);
-        string
+    /// The string value of a literal `text`: the global of `string_global` and its bytes, borrowed.
+    pub(super) fn string_const(&self, text: &str) -> BasicValueEnum<'ctx> {
+        let block = self.string_global(text);
+        let len = self.context.i64_type().const_int(
+            u64::try_from(text.len()).expect("a literal should be shorter than 2^64 bytes"),
+            false,
+        );
+        self.make_value(block, self.string_field(block, BYTES), len)
     }
 
     /// A private global `{ i64 1, i64 len, i64 len, [len x i8] }` holding `text`, borrowed. The
@@ -71,27 +79,19 @@ impl<'ctx> Codegen<'ctx, '_> {
         global.as_pointer_value()
     }
 
-    /// The address of byte `offset` of `string`, which is at most its capacity.
+    /// The address of byte `offset` of the bytes that start at `bytes`: at most the capacity of
+    /// the block, which is one past its end at most.
     #[expect(
         unsafe_code,
         reason = "inkwell marks GEP unsafe for a wrong index list; this GEP takes one `i64` index"
     )]
-    fn string_byte(
-        &self,
-        string: PointerValue<'ctx>,
-        offset: IntValue<'ctx>,
-    ) -> PointerValue<'ctx> {
+    fn string_byte(&self, bytes: PointerValue<'ctx>, offset: IntValue<'ctx>) -> PointerValue<'ctx> {
         // SAFETY: the one `i64` index steps over `i8`s, so the index list is valid for its
         // pointee type. `inbounds` is sound because the block holds `cap` bytes after the
         // header and every caller passes an offset of at most `cap`, one past the end at most.
         unsafe {
             self.builder
-                .build_in_bounds_gep(
-                    self.context.i8_type(),
-                    self.string_field(string, BYTES),
-                    &[offset],
-                    "byte",
-                )
+                .build_in_bounds_gep(self.context.i8_type(), bytes, &[offset], "byte")
                 .expect(POSITIONED)
         }
     }
@@ -103,17 +103,18 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// `lhs + rhs`, which takes both owned references and returns an owned one. When
-    /// the count of `lhs` is 1, the bytes of `rhs` are appended into its block, which is first
-    /// reallocated to `max(needed, 2 * cap)` when its capacity is below the `needed` length.
+    /// the count of the block of `lhs` is 1, the bytes of `rhs` are appended into it, after it is
+    /// first reallocated to `max(needed, 2 * cap)` when its capacity is below the `needed` length.
     /// Otherwise a new block with capacity `needed` receives both byte runs, and `lhs` is
-    /// released. Either way `rhs` is released last.
+    /// released. Either way `rhs` is released last. The result covers its block.
     pub(super) fn concat(
         &self,
-        lhs: PointerValue<'ctx>,
-        rhs: PointerValue<'ctx>,
-    ) -> PointerValue<'ctx> {
+        lhs_value: BasicValueEnum<'ctx>,
+        rhs: BasicValueEnum<'ctx>,
+    ) -> BasicValueEnum<'ctx> {
         let i64_type = self.context.i64_type();
-        let (len, rhs_len) = (self.string_len(lhs), self.string_len(rhs));
+        let lhs = self.value_block(lhs_value);
+        let (len, rhs_len) = (self.value_len(lhs_value), self.value_len(rhs));
         // Both strings exist in memory, which on every host Sisu supports is below 2^57 bytes,
         // so no length, capacity or block size here can overflow.
         let needed = self
@@ -169,8 +170,12 @@ impl<'ctx> Codegen<'ctx, '_> {
 
         self.builder.position_at_end(copy);
         let fresh = self.new_string(needed);
-        self.copy_bytes(self.string_field(fresh, BYTES), lhs, len);
-        self.release(lhs.into(), Type::STRING);
+        self.copy_bytes(
+            self.string_field(fresh, BYTES),
+            self.value_data(lhs_value),
+            len,
+        );
+        self.release(lhs_value, Type::STRING);
         let copied = self.current_block();
         self.branch_to(join);
 
@@ -181,10 +186,11 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect(POSITIONED);
         result.add_incoming(&[(&lhs, owned), (&grown, grow), (&fresh, copied)]);
         let result = result.as_basic_value().into_pointer_value();
-        self.copy_bytes(self.string_byte(result, len), rhs, rhs_len);
+        let bytes = self.string_field(result, BYTES);
+        self.copy_bytes(self.string_byte(bytes, len), self.value_data(rhs), rhs_len);
         self.store(self.string_field(result, LEN), needed.into());
-        self.release(rhs.into(), Type::STRING);
-        result
+        self.release(rhs, Type::STRING);
+        self.make_value(result, bytes, needed)
     }
 
     /// A new string holding a copy of the `len` bytes at `bytes`, which are valid UTF-8.
@@ -192,16 +198,18 @@ impl<'ctx> Codegen<'ctx, '_> {
         &self,
         bytes: PointerValue<'ctx>,
         len: IntValue<'ctx>,
-    ) -> PointerValue<'ctx> {
+    ) -> BasicValueEnum<'ctx> {
         let string = self.new_string(len);
+        let first = self.string_field(string, BYTES);
         self.builder
-            .build_memcpy(self.string_field(string, BYTES), 1, bytes, 1, len)
+            .build_memcpy(first, 1, bytes, 1, len)
             .expect("an alignment of 1 should be a power of two");
         self.store(self.string_field(string, LEN), len.into());
-        string
+        self.make_value(string, first, len)
     }
 
-    /// A new block with count 1 and capacity `cap`, whose length is not yet stored.
+    /// A new block with count 1 and capacity `cap`, whose length is not yet stored. The caller
+    /// stores it, and makes the value that covers the block.
     fn new_string(&self, cap: IntValue<'ctx>) -> PointerValue<'ctx> {
         let (size, align) = self.heap_size(&HeapBlock::String { cap });
         let string = self
@@ -225,7 +233,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         &self,
         parts: &[(BasicValueEnum<'ctx>, Type)],
         formats: &[Format],
-    ) -> PointerValue<'ctx> {
+    ) -> BasicValueEnum<'ctx> {
         let i64_type = self.context.i64_type();
         let add = |a, b| {
             self.builder
@@ -245,7 +253,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .fold(i64_type.const_zero(), |cap, (i, &(value, ty))| {
                 let format = formats_in_order.next_if(|format| format.part == i);
                 let text = match ty {
-                    Type::STRING => self.string_len(value.into_pointer_value()),
+                    Type::STRING => self.value_len(value),
                     Type::I64 => bound(20),
                     Type::U8 => bound(3),
                     Type::BOOL => bound(5),
@@ -266,16 +274,16 @@ impl<'ctx> Codegen<'ctx, '_> {
                 }
             });
         let result = self.new_string(cap);
+        let bytes = self.string_field(result, BYTES);
         let mut formats_in_order = formats.iter().peekable();
         let mut len = i64_type.const_zero();
         for (i, &(value, ty)) in parts.iter().enumerate() {
             let format = formats_in_order.next_if(|format| format.part == i);
-            let at = self.string_byte(result, len);
+            let at = self.string_byte(bytes, len);
             let written = match ty {
                 Type::STRING => {
-                    let string = value.into_pointer_value();
-                    let part_len = self.string_len(string);
-                    self.copy_bytes(at, string, part_len);
+                    let part_len = self.value_len(value);
+                    self.copy_bytes(at, self.value_data(value), part_len);
                     part_len
                 }
                 Type::U8 => {
@@ -317,40 +325,41 @@ impl<'ctx> Codegen<'ctx, '_> {
             len = add(len, written);
         }
         self.store(self.string_field(result, LEN), len.into());
-        result
+        self.make_value(result, bytes, len)
     }
 
     /// The `[char]` of `string`.
-    pub(super) fn chars(&self, string: PointerValue<'ctx>) -> PointerValue<'ctx> {
-        let (bytes, len) = (self.string_field(string, BYTES), self.string_len(string));
+    pub(super) fn chars(&self, string: BasicValueEnum<'ctx>) -> BasicValueEnum<'ctx> {
+        let (bytes, len) = (self.value_data(string), self.value_len(string));
         let count = self.utf8_size("sisu_utf8_count", bytes, len);
         let array = self.alloc_array(Type::CHAR, count, None);
-        let first = self.element_ptr(Type::CHAR, array, self.context.i64_type().const_zero());
+        let first = self.array_data(Type::CHAR, array);
         self.utf8_fill("sisu_utf8_decode", bytes, len, first);
-        array
+        self.make_value(array, first, count)
     }
 
     /// The `[u8]` of `string`.
-    pub(super) fn bytes(&self, string: PointerValue<'ctx>) -> PointerValue<'ctx> {
-        let len = self.string_len(string);
+    pub(super) fn bytes(&self, string: BasicValueEnum<'ctx>) -> BasicValueEnum<'ctx> {
+        let len = self.value_len(string);
         let array = self.alloc_array(Type::U8, len, None);
-        let first = self.element_ptr(Type::U8, array, self.context.i64_type().const_zero());
-        self.copy_bytes(first, string, len);
-        array
+        let first = self.array_data(Type::U8, array);
+        self.copy_bytes(first, self.value_data(string), len);
+        self.make_value(array, first, len)
     }
 
     /// The number of words in `string`.
-    pub(super) fn len_words(&self, string: PointerValue<'ctx>) -> IntValue<'ctx> {
-        let (bytes, len) = (self.string_field(string, BYTES), self.string_len(string));
+    pub(super) fn len_words(&self, string: BasicValueEnum<'ctx>) -> IntValue<'ctx> {
+        let (bytes, len) = (self.value_data(string), self.value_len(string));
         self.call_word_function("sisu_words_count", &[bytes.into(), len.into()])
     }
 
     /// The `[string]` of the words of `string`.
-    pub(super) fn words(&self, string: PointerValue<'ctx>) -> PointerValue<'ctx> {
+    pub(super) fn words(&self, string: BasicValueEnum<'ctx>) -> BasicValueEnum<'ctx> {
         let i64_type = self.context.i64_type();
-        let (bytes, len) = (self.string_field(string, BYTES), self.string_len(string));
+        let (bytes, len) = (self.value_data(string), self.value_len(string));
         let count = self.call_word_function("sisu_words_count", &[bytes.into(), len.into()]);
         let array = self.alloc_array(Type::STRING, count, None);
+        let data = self.array_data(Type::STRING, array);
         // `count_loop` gives its body only the index, so the offset where the last word ended,
         // and the start of the word just found, live in slots.
         let from = self.entry_alloca(i64_type.into(), "from");
@@ -369,12 +378,12 @@ impl<'ctx> Codegen<'ctx, '_> {
                 .builder
                 .build_int_nuw_sub(end, first, "word_len")
                 .expect(POSITIONED);
-            let word = self.string_from_bytes(self.string_byte(string, first), word_len);
-            let slot = self.element_ptr(Type::STRING, array, index);
-            self.store(slot, word.into());
+            let word = self.string_from_bytes(self.string_byte(bytes, first), word_len);
+            let slot = self.element_ptr(Type::STRING, data, index);
+            self.store(slot, word);
             self.store(from, end.into());
         });
-        array
+        self.make_value(array, data, count)
     }
 
     /// A call of the runtime's `name`, which returns an `i64`: `sisu_words_count(bytes, len)`
@@ -395,22 +404,14 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// The string of the `[char]` `array`.
-    pub(super) fn string_from_chars(&self, array: PointerValue<'ctx>) -> PointerValue<'ctx> {
-        let zero = self.context.i64_type().const_zero();
-        let (chars, count) = (
-            self.element_ptr(Type::CHAR, array, zero),
-            self.array_len(array),
-        );
+    pub(super) fn string_from_chars(&self, array: BasicValueEnum<'ctx>) -> BasicValueEnum<'ctx> {
+        let (chars, count) = (self.value_data(array), self.value_len(array));
         let len = self.utf8_size("sisu_utf8_len", chars, count);
         let string = self.new_string(len);
-        self.utf8_fill(
-            "sisu_utf8_encode",
-            chars,
-            count,
-            self.string_byte(string, zero),
-        );
+        let bytes = self.string_field(string, BYTES);
+        self.utf8_fill("sisu_utf8_encode", chars, count, bytes);
         self.store(self.string_field(string, LEN), len.into());
-        string
+        self.make_value(string, bytes, len)
     }
 
     /// A call of the runtime's `name(text, n) -> i64`, which sizes the `n` units at `text`;
@@ -464,24 +465,24 @@ impl<'ctx> Codegen<'ctx, '_> {
             .into_int_value()
     }
 
-    /// Copies the first `len` bytes of `string` to `to`.
-    fn copy_bytes(&self, to: PointerValue<'ctx>, string: PointerValue<'ctx>, len: IntValue<'ctx>) {
+    /// Copies the `len` bytes at `from` to `to`.
+    fn copy_bytes(&self, to: PointerValue<'ctx>, from: PointerValue<'ctx>, len: IntValue<'ctx>) {
         self.builder
-            .build_memcpy(to, 1, self.string_field(string, BYTES), 1, len)
+            .build_memcpy(to, 1, from, 1, len)
             .expect("an alignment of 1 should be a power of two");
     }
 
-    /// `sisu_str_compare` on the bytes of `a` and `b`: -1, 0 or 1.
+    /// `sisu_str_compare` on the bytes of the strings `a` and `b`: -1, 0 or 1.
     pub(super) fn str_compare(
         &self,
-        a: PointerValue<'ctx>,
-        b: PointerValue<'ctx>,
+        a: BasicValueEnum<'ctx>,
+        b: BasicValueEnum<'ctx>,
     ) -> IntValue<'ctx> {
         let args = [
-            self.string_field(a, BYTES).into(),
-            self.string_len(a).into(),
-            self.string_field(b, BYTES).into(),
-            self.string_len(b).into(),
+            self.value_data(a).into(),
+            self.value_len(a).into(),
+            self.value_data(b).into(),
+            self.value_len(b).into(),
         ];
         self.builder
             .build_call(self.str_compare, &args, "order")
@@ -493,27 +494,27 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// `print` or `eprint` of a string: `sisu_print_str(bytes, len)`, or `sisu_eprint_str`.
-    pub(super) fn print_string(&self, stream: Stream, string: PointerValue<'ctx>) {
+    pub(super) fn print_string(&self, stream: Stream, string: BasicValueEnum<'ctx>) {
         self.call(
             self.printers[stream.index()].str,
             &[
-                self.string_field(string, BYTES).into(),
-                self.string_len(string).into(),
+                self.value_data(string).into(),
+                self.value_len(string).into(),
             ],
         );
     }
 
     /// `panic(message)` at `span`: `sisu_panic_message(at, at_len, bytes, len)`, then
     /// `unreachable`. The message is not released: the process exits.
-    pub(super) fn panic_value(&self, string: PointerValue<'ctx>, span: Span) {
+    pub(super) fn panic_value(&self, string: BasicValueEnum<'ctx>, span: Span) {
         let (at, at_len) = self.report_site(span);
         self.call(
             self.panic_message,
             &[
                 at.into(),
                 at_len.into(),
-                self.string_field(string, BYTES).into(),
-                self.string_len(string).into(),
+                self.value_data(string).into(),
+                self.value_len(string).into(),
             ],
         );
         self.builder.build_unreachable().expect(POSITIONED);
@@ -551,11 +552,11 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.build_return(None).expect(POSITIONED);
     }
 
-    /// `@sisu_rc.eq.string(a, b)`: see `eq_entry` for the same pointer and `null`; otherwise
+    /// `@sisu_rc.eq.string(a, b)`: see `eq_entry` for the same block and `null`; otherwise
     /// the lengths, then the bytes by `sisu_str_compare`.
     fn define_string_eq(&self, function: FunctionValue<'ctx>) {
         let (a, b, equal, unequal) = self.eq_entry(function, Type::STRING, true);
-        let same_len = self.int_compare(IntPredicate::EQ, self.string_len(a), self.string_len(b));
+        let same_len = self.int_compare(IntPredicate::EQ, self.value_len(a), self.value_len(b));
         let bytes = self.context.append_basic_block(function, "bytes");
         self.builder
             .build_conditional_branch(same_len, bytes, unequal)

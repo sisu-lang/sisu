@@ -3064,7 +3064,8 @@ impl From<DiagnosticKind> for Diagnostic {
                 };
                 d.with_help(format!(
                     "a payload must be less than {PAYLOAD_LIMIT_GIB} GiB. Hold a part in a class or an array. \
-                     Such a field adds only the size of a pointer to the payload."
+                     A class field adds the size of a pointer to the payload, and an array field adds \
+                     the size of three pointers."
                 ))
             }
             DiagnosticKind::NotAnInterface { written, at, kind } => {

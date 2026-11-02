@@ -1227,7 +1227,7 @@ fn alloc_array_should_set_the_capacity_to_the_length() {
     )
     .print_to_string()
     .to_string();
-    let body = function_body(&ir, "define internal ptr @sisu.make(i64");
+    let body = function_body(&ir, "define internal { ptr, ptr, i64 } @sisu.make(i64");
     // The pointer that the one allocation returns.
     let block = body
         .lines()
@@ -1657,6 +1657,10 @@ fn niche_should_run_out_past_its_storage() {
 /// with no payload and one with one field. It is that field's storage in either order of its
 /// variants, and its payload-free variant is the field's spare value. Every other enum is tagged.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one table of rows, each a type and its layout"
+)]
 fn niche_layouts_should_follow_the_payload() {
     let rows = [
         ("char?", "None", "i32", Some("i32 1114112")),
@@ -1665,6 +1669,18 @@ fn niche_layouts_should_follow_the_payload() {
         ("bool??", "None", "i8", Some("i8 3")),
         ("E?", "None", "%sisu.E", Some("%sisu.E { i8 2 }")),
         ("Node?", "None", "ptr", Some("ptr null")),
+        (
+            "[i64]?",
+            "None",
+            "{ ptr, ptr, i64 }",
+            Some("{ ptr, ptr, i64 } zeroinitializer"),
+        ),
+        (
+            "string??",
+            "None",
+            "{ i1, { ptr, ptr, i64 } }",
+            Some("{ i1, { ptr, ptr, i64 } } zeroinitializer"),
+        ),
         (
             "Node??",
             "None",
@@ -1735,7 +1751,15 @@ fn niche_layouts_should_follow_the_payload() {
                     .is_some_and(|f| f.get_name().to_str() == Ok(&format!("sisu.take{i}")))
             })
             .unwrap_or_else(|| panic!("no call of `take{i}` in\n{}", module.print_to_string()));
-        let (initial, slot) = stored_trail(&code, operand_of(*call, 0));
+        // An array or a string is passed as its three words: take the value they came from.
+        let mut argument = operand_of(*call, 0);
+        if let Some(part) = argument
+            .as_instruction_value()
+            .filter(|part| part.get_opcode() == InstructionOpcode::ExtractValue)
+        {
+            argument = operand_of(part, 0);
+        }
+        let (initial, slot) = stored_trail(&code, argument);
         let slot = slot.unwrap_or_else(|| panic!("the argument of `take{i}` should be a load"));
         let allocated = slot
             .get_allocated_type()
@@ -1891,7 +1915,7 @@ fn rc_checks_should_guard_retain_release_drop_and_exit() {
     let fill = function_body(&ir, "@sisu.fill(");
     // The loop's counter steps with `add nuw`; the count gains its extra references with `add`.
     assert_count_checked(fill, 0, &|t| t.starts_with("add i64 "));
-    let unique = function_body(&ir, "define internal ptr @\"sisu_rc.unique.[i64]\"(ptr");
+    let unique = function_body(&ir, "define internal void @\"sisu_rc.unique.[i64]\"(ptr");
     assert_count_checked(unique, 1, &|t| {
         t.starts_with("icmp eq i64 ") && t.ends_with(", 1")
     });
@@ -1943,7 +1967,7 @@ fn print_after_move() -> mir::Function {
 }
 
 #[test]
-fn read_after_move_faults() {
+fn read_after_move_should_fault() {
     let context = Context::create();
     let module = compiled_from(
         &context,
@@ -1959,11 +1983,13 @@ fn main() {}",
     let main = function_body(&ir, "@sisu.main(");
     let lines: Vec<&str> = main.lines().map(str::trim).collect();
     // The move empties `s`'s slot; the print then reads the slot, and null tests what it loaded.
+    let (slot_ty, zero) = moved_slot(Type::STRING);
+    let moved = format!("store {slot_ty} {zero}, ptr ");
     let moved_at = lines
         .iter()
-        .position(|l| l.starts_with("store ptr null, ptr "))
+        .position(|l| l.starts_with(moved.as_str()))
         .unwrap_or_else(|| panic!("no move in\n{main}"));
-    let slot = lines[moved_at]["store ptr null, ptr ".len()..]
+    let slot = lines[moved_at][moved.len()..]
         .split(',')
         .next()
         .expect("a store should name its address");
@@ -1972,17 +1998,47 @@ fn main() {}",
         .position(|l| l.starts_with("call void @sisu_print_str("))
         .unwrap_or_else(|| panic!("no print in\n{main}"));
     let between = &lines[moved_at..print_at];
-    let (_, loaded, _) = instruction(between, &|t| {
-        t.starts_with(&format!("load ptr, ptr {slot},"))
-    })
-    .unwrap_or_else(|| panic!("the print should read {slot} in\n{main}"));
-    let (_, null, _) = instruction(between, &|t| t == format!("icmp eq ptr {loaded}, null"))
-        .unwrap_or_else(|| panic!("no null test of {loaded} in\n{main}"));
+    let (_, _, null) = null_test(between, (slot, slot_ty), main);
     let branch_at = assert_faults_on(&lines, null, 2, main);
     assert!(branch_at < print_at, "{main}");
 }
 
 const MOVED_ROOT_SOURCE: &str = "enum Shape {\n    Dot\n    Circle(i64)\n}\nclass Holder {\n    mut n: i64\n    mut xs: [i64]\n    mut shape: Shape\n}\nfn make_holder() -> Holder { Holder(n: 1, xs: [1, 2], shape: Shape.Dot) }\nfn make_array() -> [i64] { [1, 2] }\nfn take_holder(h: Holder) {}\nfn take_array(xs: [i64]) {}\nfn main() {}";
+
+/// The LLVM type of the slot of a local of the counted type `ty`, and the zero that a move leaves
+/// in it: an array or a string is three words, and an object a pointer.
+fn moved_slot(ty: Type) -> (&'static str, &'static str) {
+    if layout::three_words(ty) {
+        ("{ ptr, ptr, i64 }", "zeroinitializer")
+    } else {
+        ("ptr", "null")
+    }
+}
+
+/// In `lines`, the test for `null` of the object that the slot `slot` of type `slot_ty` holds:
+/// the load of the slot, then, for three words, the extraction of the block, then the `icmp`.
+/// Returns the line indexes of the load and the `icmp`, and the `icmp`'s value.
+fn null_test<'a>(
+    lines: &[&'a str],
+    (slot, slot_ty): (&str, &str),
+    body: &str,
+) -> (usize, usize, &'a str) {
+    let (load_at, loaded, _) = instruction(lines, &|t| {
+        t.starts_with(&format!("load {slot_ty}, ptr {slot},"))
+    })
+    .unwrap_or_else(|| panic!("no load of {slot} in\n{body}"));
+    let object = if slot_ty == "ptr" {
+        loaded
+    } else {
+        let extract = format!("extractvalue {slot_ty} {loaded}, 0");
+        instruction(lines, &|t| t == extract)
+            .unwrap_or_else(|| panic!("no block of {loaded} in\n{body}"))
+            .1
+    };
+    let (null_at, null, _) = instruction(lines, &|t| t == format!("icmp eq ptr {object}, null"))
+        .unwrap_or_else(|| panic!("no null test of {object} in\n{body}"));
+    (load_at, null_at, null)
+}
 
 /// Builds `main` as `r = make(); take(move r); <what>(r)`, which the certifier would reject, and
 /// asserts that `<what>` reaches `r`'s root slot only after a null test that calls
@@ -2038,21 +2094,21 @@ fn assert_root_read_faults(
         .iter()
         .position(|l| l.starts_with("call void @sisu.take_"))
         .unwrap_or_else(|| panic!("no call to take in\n{main}"));
+    let (slot_ty, zero) = moved_slot(root);
+    let moved = format!("store {slot_ty} {zero}, ptr ");
     let slot = lines[..take_at]
         .iter()
         .rev()
-        .find_map(|l| l.strip_prefix("store ptr null, ptr "))
+        .find_map(|l| l.strip_prefix(moved.as_str()))
         .and_then(|rest| rest.split(',').next())
         .unwrap_or_else(|| panic!("no move in\n{main}"));
     let after = &lines[take_at + 1..];
-    let (load_at, loaded, _) =
-        instruction(after, &|t| t.starts_with(&format!("load ptr, ptr {slot},")))
-            .unwrap_or_else(|| panic!("no load of {slot} after the move in\n{main}"));
-    let (null_at, null, _) = instruction(after, &|t| t == format!("icmp eq ptr {loaded}, null"))
-        .unwrap_or_else(|| panic!("no null test of {loaded} in\n{main}"));
-    assert_eq!((load_at, null_at), (0, 1), "{main}");
+    let (load_at, null_at, null) = null_test(after, (slot, slot_ty), main);
+    // The load, the extraction of a block, the test, then the branch.
+    let words = usize::from(layout::three_words(root));
+    assert_eq!((load_at, null_at), (0, 1 + words), "{main}");
     let branch_at = assert_faults_on(&lines, null, 2, main);
-    assert_eq!(branch_at, take_at + 3, "{main}");
+    assert_eq!(branch_at, take_at + 3 + words, "{main}");
 }
 
 fn whole_place(local: LocalId) -> Place {
@@ -2263,7 +2319,7 @@ fn literal_should_allocate_header_and_elements() {
 
 /// Reading `xs[i]` from a local neither retains nor releases the array.
 #[test]
-fn fast_path_skips_base_count() {
+fn fast_path_should_skip_the_base_count() {
     let context = Context::create();
     let ir = compiled(
         &context,
@@ -2271,7 +2327,7 @@ fn fast_path_skips_base_count() {
     )
     .print_to_string()
     .to_string();
-    let body = function_body(&ir, "define internal ptr @sisu.f(ptr");
+    let body = function_body(&ir, "define internal { ptr, ptr, i64 } @sisu.f(ptr");
     let (before, _) = body
         .split_once("call void @sisu_print_int(")
         .unwrap_or_else(|| panic!("no print in\n{body}"));
@@ -2633,7 +2689,7 @@ fn args_declarations_carry_memory_effects() {
 /// alive. A counted field read that escapes still retains the field: `counted` hands `a` to
 /// `keep`. A copy that is only read is a pair, which `mir/pairs.rs` makes a borrow.
 #[test]
-fn len_and_field_of_a_local_skip_base_count() {
+fn len_and_field_of_a_local_should_skip_the_base_count() {
     let context = Context::create();
     let ir = compiled(
         &context,
@@ -2648,7 +2704,7 @@ fn len_and_field_of_a_local_skip_base_count() {
     .to_string();
     for (header, release) in [
         (
-            "define internal ptr @sisu.len(ptr",
+            "define internal { ptr, ptr, i64 } @sisu.len(ptr",
             "@\"sisu_rc.release.[i64]\"(",
         ),
         ("define internal ptr @sisu.field(ptr", "@sisu_rc.release.O("),
@@ -2917,73 +2973,58 @@ fn binary_should_take_and_and_or_as_the_eager_operations_of_two_computed_bools()
     assert_eq!(operand_of(ret, 0), either);
 }
 
-/// A string's length is field 1 of its header, read without a tag; an array's is field 1 of
-/// its own header, the `i64` that carries the "array header" tag. Each load reads the
-/// field of the pointer its own parameter gave, through the slots it moved through: `len`
-/// picks by the base's type.
+/// The length of a string and of an array is the third word of its value: `s.len()` and `a.len()`
+/// read it with no load, whatever the value is made of.
+///
+/// ```text
+/// GIVEN a function that adds the lengths of a string and of an array
+/// WHEN its slots become values
+/// THEN it loads nothing, and its sum adds the third word of the string to that of the array
+/// ```
 #[test]
-fn len_should_read_a_string_by_its_field_and_an_array_by_its_header() {
+fn len_should_read_the_length_word_of_a_string_and_an_array_with_no_load() {
     let context = Context::create();
     let module = compiled(
         &context,
         "fn size(s: string, a: [i64]) -> i64 {\n    s.len() + a.len()\n}\nfn main() {}",
     );
-    let ir = module.print_to_string().to_string();
+    let machine = target_machine(OptLevel::O0).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O0).expect("the module should optimize");
     let function = module
         .get_function("sisu.size")
         .expect("the module should define `size`");
-    let param = |n| {
-        function
-            .get_nth_param(n)
-            .expect("the function should have two parameters")
-    };
-    let entry = entry_instructions(function);
-    let loads: Vec<_> = entry
-        .iter()
-        .filter(|i| {
-            i.get_opcode() == InstructionOpcode::Load
-                && address_of(**i, 0).get_opcode() == InstructionOpcode::GetElementPtr
-        })
-        .map(|&load| {
-            let gep = address_of(load, 0);
-            let text = load.print_to_string().to_string();
-            (
-                gep.get_gep_source_element_type()
-                    .expect("a GEP should have a source element type")
-                    .print_to_string()
-                    .to_string(),
-                operand_of(gep, 2)
-                    .into_int_value()
-                    .get_zero_extended_constant(),
-                stored_origin(&entry, operand_of(gep, 0)),
-                text.contains("!tbaa").then(|| tbaa_name(&ir, &text)),
-            )
-        })
-        .collect();
-    assert_eq!(
-        loads,
-        [
-            (
-                "{ i64, i64, i64, [0 x i8] }".to_string(),
-                Some(1),
-                param(0),
-                None
-            ),
-            (
-                "{ i64, i64, i64 }".to_string(),
-                Some(1),
-                param(1),
-                Some("array header")
-            ),
-        ],
+    let code = instructions(function);
+    let ir = module.print_to_string().to_string();
+    assert!(
+        code.iter()
+            .all(|i| i.get_opcode() != InstructionOpcode::Load),
         "{ir}"
     );
+    let sum = code
+        .iter()
+        .find(|i| {
+            CallSiteValue::try_from(**i)
+                .ok()
+                .and_then(CallSiteValue::get_called_fn_value)
+                .is_some_and(|f| f.get_name().to_string_lossy().starts_with("llvm.sadd"))
+        })
+        .unwrap_or_else(|| panic!("no checked add in\n{ir}"));
+    for n in 0..2 {
+        let word = operand_of(*sum, n)
+            .as_instruction_value()
+            .filter(|word| word.get_opcode() == InstructionOpcode::ExtractValue)
+            .unwrap_or_else(|| panic!("operand {n} should be a word of a value in\n{ir}"));
+        assert!(
+            word.print_to_string().to_string().ends_with(", 2"),
+            "operand {n} should be the third word in\n{ir}"
+        );
+    }
 }
 
 /// `words()` of a string that is not a local releases it, once the words are copied out; of a
 /// local it leaves the string to its owner.
 #[test]
-fn words_releases_a_base_that_is_not_a_local() {
+fn words_should_release_a_base_that_is_not_a_local() {
     let context = Context::create();
     let ir = compiled(
         &context,
@@ -2992,7 +3033,7 @@ fn words_releases_a_base_that_is_not_a_local() {
     )
     .print_to_string()
     .to_string();
-    let value = function_body(&ir, "define internal ptr @sisu.value()");
+    let value = function_body(&ir, "define internal { ptr, ptr, i64 } @sisu.value()");
     let local = function_body(&ir, "define internal i64 @sisu.local()");
     let release = "@sisu_rc.release.string(";
     assert_eq!(value.matches(release).count(), 1, "{value}");
@@ -3063,7 +3104,7 @@ fn general_path_releases_base() {
 /// the ownership pass makes a move, and `xs` is still read in place:
 /// `base_borrowed_when_the_sibling_moves_another_local` (`mir/tests/lower.rs`) covers that rule.
 #[test]
-fn fast_path_follows_the_index_whitelist() {
+fn fast_path_should_follow_the_index_whitelist() {
     let context = Context::create();
     let ir = compiled(
         &context,
@@ -3085,7 +3126,7 @@ fn fast_path_follows_the_index_whitelist() {
         ("call", false),
         ("moved", true),
     ] {
-        let body = function_body(&ir, &format!("define internal ptr @sisu.{name}("));
+        let body = function_body(&ir, &format!("@sisu.{name}("));
         let (before, _) = body
             .split_once("call void @sisu_print_int(")
             .unwrap_or_else(|| panic!("no print in\n{body}"));
@@ -3097,7 +3138,7 @@ fn fast_path_follows_the_index_whitelist() {
 /// An element write checks the index before `unique` copies the array, so an
 /// out-of-bounds write copies nothing, and stores the value into the unique array.
 #[test]
-fn write_checks_bounds_before_unique() {
+fn write_should_check_bounds_before_unique() {
     let context = Context::create();
     let ir = compiled(
         &context,
@@ -3114,10 +3155,10 @@ fn write_checks_bounds_before_unique() {
     };
     // `check_bounds` panics when `index uge len`: `0 <= index < len` negated.
     let bounds = find(&|t| t.starts_with("icmp uge i64 0, "), "bounds check");
-    let unique = find(
-        &|t| t.starts_with("call ptr @\"sisu_rc.unique.[i64]\"(ptr "),
-        "`unique` call",
-    );
+    let unique = lines
+        .iter()
+        .position(|l| l.starts_with("call void @\"sisu_rc.unique.[i64]\"(ptr "))
+        .unwrap_or_else(|| panic!("no `unique` call in\n{body}"));
     let store = lines
         .iter()
         .position(|l| l.starts_with("store i64 1, ptr "))
@@ -3126,28 +3167,21 @@ fn write_checks_bounds_before_unique() {
 }
 
 /// The slot of the first parameter of the function whose text is `body`: where the entry block
-/// stores that parameter.
+/// stores that parameter, which is the first store, since the entry stores each parameter in
+/// order.
 fn first_parameter_slot(body: &str) -> &str {
-    let (params, _) = body
-        .split_once(')')
-        .unwrap_or_else(|| panic!("no parameter list in\n{body}"));
-    let param = params
-        .trim_start_matches("ptr ")
-        .split(',')
-        .next()
-        .expect("a split should yield a first part");
-    let entry_store = format!("store ptr {param}, ptr ");
     body.lines()
-        .find_map(|l| l.trim().strip_prefix(entry_store.as_str()))
-        .and_then(|rest| rest.split(',').next())
-        .unwrap_or_else(|| panic!("no store of {param} in\n{body}"))
+        .find_map(|l| l.trim().strip_prefix("store "))
+        .and_then(|store| store.rsplit_once(", ptr "))
+        .and_then(|(_, rest)| rest.split(',').next())
+        .unwrap_or_else(|| panic!("no store of a parameter in\n{body}"))
 }
 
 /// `Move` takes the local's reference and leaves `null` in its slot only where a conditional
 /// release reads the slot (or under the RC checks, which test it): `xs` has no `release?`, so
 /// the plain build stores nothing.
 #[test]
-fn move_stores_null_only_for_a_flag() {
+fn move_should_store_null_only_for_a_flag() {
     let context = Context::create();
     let src = "fn f(xs: [i64]) -> [i64] { xs }\nfn main() {}";
     for (rc_checks, stores) in [(false, false), (true, true)] {
@@ -3157,7 +3191,9 @@ fn move_stores_null_only_for_a_flag() {
         let body = function_body(&ir, "@sisu.f(");
         let slot = first_parameter_slot(body);
         assert_eq!(
-            body.contains(&format!("store ptr null, ptr {slot},")),
+            body.contains(&format!(
+                "store {{ ptr, ptr, i64 }} zeroinitializer, ptr {slot},"
+            )),
             stores,
             "{body}"
         );
@@ -3167,7 +3203,7 @@ fn move_stores_null_only_for_a_flag() {
 /// `xs` is moved on one branch and released at the join by a `release?`, which reads the zero
 /// that the move left: the plain build keeps the store.
 #[test]
-fn conditional_release_keeps_null_store() {
+fn conditional_release_should_keep_the_null_store() {
     let context = Context::create();
     let ir = compiled(
         &context,
@@ -3178,7 +3214,9 @@ fn conditional_release_keeps_null_store() {
     let body = function_body(&ir, "@sisu.f(");
     let slot = first_parameter_slot(body);
     assert!(
-        body.contains(&format!("store ptr null, ptr {slot},")),
+        body.contains(&format!(
+            "store {{ ptr, ptr, i64 }} zeroinitializer, ptr {slot},"
+        )),
         "{body}"
     );
 }
@@ -3186,7 +3224,7 @@ fn conditional_release_keeps_null_store() {
 /// A static `release s` tests its slot under the RC checks: a null slot is a read after a move,
 /// kind 2, and the test comes before the release helper's call. The plain build has no check.
 #[test]
-fn static_release_checks_its_slot_under_rc_checks() {
+fn static_release_should_check_its_slot_under_rc_checks() {
     let context = Context::create();
     let src = "fn name() -> string { \"n\" }\nfn f() {\n    let s = name()\n}\nfn main() {}";
     let plain = compiled(&context, src).print_to_string().to_string();
@@ -3202,20 +3240,18 @@ fn static_release_checks_its_slot_under_rc_checks() {
         .position(|l| l.starts_with("call void @sisu_rc.release.string("))
         .unwrap_or_else(|| panic!("no release in\n{body}"));
     // `s`'s slot is where the call to `name` stores its result.
-    let (_, value, _) = instruction(&lines, &|t| t.starts_with("call ptr @sisu.name("))
-        .unwrap_or_else(|| panic!("no call to name in\n{body}"));
-    let store = format!("store ptr {value}, ptr ");
+    let (slot_ty, _) = moved_slot(Type::STRING);
+    let (_, value, _) = instruction(&lines, &|t| {
+        t.starts_with(&format!("call {slot_ty} @sisu.name("))
+    })
+    .unwrap_or_else(|| panic!("no call to name in\n{body}"));
+    let store = format!("store {slot_ty} {value}, ptr ");
     let slot = lines
         .iter()
         .find_map(|l| l.strip_prefix(store.as_str()))
         .and_then(|rest| rest.split(',').next())
         .unwrap_or_else(|| panic!("no store of {value} in\n{body}"));
-    let (_, loaded, _) = instruction(&lines, &|t| {
-        t.starts_with(&format!("load ptr, ptr {slot},"))
-    })
-    .unwrap_or_else(|| panic!("the release should read {slot} in\n{body}"));
-    let (_, null, _) = instruction(&lines, &|t| t == format!("icmp eq ptr {loaded}, null"))
-        .unwrap_or_else(|| panic!("no null test of {loaded} in\n{body}"));
+    let (_, _, null) = null_test(&lines, (slot, slot_ty), body);
     let branch_at = assert_faults_on(&lines, null, 2, body);
     assert!(branch_at < release_at, "{body}");
 }
@@ -3418,17 +3454,19 @@ fn integer_min_max_clamp_should_be_smin_and_smax_at_o2() {
 }
 
 /// The names of the two hidden last parameters of the function that starts with `header` in
-/// `ir`, a location pointer and its length, after its one array parameter.
+/// `ir`, a location pointer and its length, after its one array parameter, which is three: the
+/// block, the data and the length, whose `range` attribute the names skip.
 fn hidden_location(ir: &str, header: &str) -> (String, String) {
     let (_, rest) = ir
         .split_once(header)
         .unwrap_or_else(|| panic!("no {header} in\n{ir}"));
+    let rest = rest.replace(" range(i64 0, -9223372036854775808)", "");
     let (params, _) = rest.split_once(')').expect("the header should close");
     let names: Vec<&str> = params
         .split(", ")
         .map(|param| param.rsplit(' ').next().expect("a parameter has a name"))
         .collect();
-    let [_, at, at_len] = names[..] else {
+    let [_, _, _, at, at_len] = names[..] else {
         panic!("the function should take its array and the location: {params}");
     };
     assert!(params.contains("ptr") && params.contains("i64"), "{params}");
@@ -3660,7 +3698,7 @@ fn sum_should_be_inlined_at_o2() {
 /// of `a[j]` and `a[i]`, but drops those of the writes. It needs the TBAA tags, so that an
 /// element store keeps the length; without them `-O2` keeps three bounds checks. The loop has
 /// no copy path, so the order in which `unique` releases and allocates is guarded by
-/// `a_barred_partition_makes_its_array_unique_once` instead.
+/// `a_barred_partition_should_make_its_array_unique_once` instead.
 #[test]
 fn partition_makes_its_array_unique_once() {
     let context = Context::create();
@@ -3700,6 +3738,107 @@ fn an_index_modulo_the_length_should_have_no_bounds_check_at_o2() {
     assert!(!wrap.contains("@sisu_panic_bounds("), "{wrap}");
 }
 
+/// `an_index_modulo_the_length_should_have_no_bounds_check_at_o2` with the array from a callee
+/// that `-O2` does not inline: the facts about a returned length are the caller's. The callee
+/// returns the three words, and a `range` attribute holds for a parameter and not for a returned
+/// struct, so the caller asserts that the length is not negative with `llvm.assume`. The callee's
+/// length comes from a runtime call, so that the optimizer cannot prove the assumption itself and
+/// drop it, as it does for a length that it sees the callee compute.
+///
+/// ```text
+/// GIVEN an array that a function returns, which is not inlined
+/// WHEN a loop indexes it with `i % ys.len()` for a non-negative `i`
+/// THEN the loop has no bounds check
+/// ```
+#[test]
+fn an_index_modulo_the_length_of_a_returned_array_should_have_no_bounds_check_at_o2() {
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "fn make(s: string) -> [char] {\n    s.chars()\n}\n\nfn wrap(s: string, n: i64) -> i64 {\n    let ys = make(s)\n    let mut t = 0\n    for i in 0..n {\n        t += i64(ys[i % ys.len()])\n    }\n    t\n}\n\nfn main(args: [string]) {\n    print(wrap(\"abc\", args.len()))\n}",
+    );
+    keep_functions(&module, "make,wrap");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    let wrap = function_body(&ir, "@sisu.wrap(");
+    assert!(wrap.contains("rem i64"), "{wrap}");
+    assert!(
+        wrap.contains("@sisu.make("),
+        "the array should come from a call: {wrap}"
+    );
+    assert!(!wrap.contains("@sisu_panic_bounds("), "{wrap}");
+}
+
+/// An array is three scalar parameters, and its length has the range of a length. Once the slots
+/// are values, the body of `len` is the length parameter itself: it loads nothing.
+///
+/// ```text
+/// GIVEN a function that takes an array and returns its length
+/// WHEN it is compiled and its slots become values
+/// THEN it takes ptr, ptr and an i64 that is noundef and in [0, 2^63), and its body has no load
+/// ```
+#[test]
+fn array_parameter_should_be_three_scalars_with_a_ranged_length() {
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "fn f(xs: [i64]) -> i64 {\n    xs.len()\n}\n\nfn main() {\n    print(f([1]))\n}",
+    );
+    // `mem2reg` only, so that `f` stays a function and its slots become values.
+    let machine = target_machine(OptLevel::O0).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O0).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    let header = ir
+        .lines()
+        .find(|line| line.contains("@sisu.f("))
+        .unwrap_or_else(|| panic!("no `f` in\n{ir}"));
+    // LLVM prints the exclusive bound 2^63 as an `i64`, which is -9223372036854775808.
+    assert!(
+        header.contains("(ptr ") && header.contains(", ptr "),
+        "{header}"
+    );
+    assert!(
+        header.contains("i64 noundef range(i64 0, -9223372036854775808)"),
+        "{header}"
+    );
+    let body = function_body(&ir, "@sisu.f(");
+    assert!(!body.contains("load "), "{body}");
+}
+
+/// An optional array keeps its `None` in a null block: it is the same three words, and `None` is
+/// all zeros.
+///
+/// ```text
+/// GIVEN an optional array
+/// WHEN it is compared with None, and None is returned
+/// THEN the type is { ptr, ptr, i64 }, the test reads the first word, and None is zero
+/// ```
+#[test]
+fn optional_array_should_use_a_null_block_as_none() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "fn present(xs: [i64]?) -> bool {\n    xs != None\n}\n\nfn none() -> [i64]? {\n    None\n}\n\nfn main() {\n    print(present(none()))\n}",
+    )
+    .print_to_string()
+    .to_string();
+    let none = function_body(&ir, "@sisu.none(");
+    assert!(
+        none.contains("store { ptr, ptr, i64 } zeroinitializer"),
+        "{none}"
+    );
+    let present = function_body(&ir, "@sisu.present(");
+    assert!(
+        present.contains("extractvalue { ptr, ptr, i64 }"),
+        "{present}"
+    );
+    assert!(
+        present.contains("icmp ne ptr ") && present.contains(", null"),
+        "{present}"
+    );
+}
+
 /// `binary_trees`' `Node.check` borrows `self.left` and `self.right` and passes each payload in
 /// place: its `-O2` IR calls no counting helper.
 #[test]
@@ -3723,11 +3862,11 @@ fn optional_field_method_counts_nothing() {
 /// the writes in the loop call `unique` again, so the copy path that the TBAA tags and
 /// `unique`'s early release fold away is still there to guard. Same assertions.
 #[test]
-fn a_barred_partition_makes_its_array_unique_once() {
+fn a_barred_partition_should_make_its_array_unique_once() {
     let context = Context::create();
     let module = compiled(
         &context,
-        "fn partition(xs: [i64], pivot: i64, stop: i64) -> [i64] {\n    let mut a = xs\n    let mut i = 0\n    for j in 0..a.len() {\n        if j == stop {\n            return a\n        }\n        if a[j] < pivot {\n            let t = a[i]\n            a[i] = a[j]\n            a[j] = t\n            i += 1\n        }\n    }\n    a\n}\n\nfn main() {\n    print(partition([3, 1, 2], 2, 5).sum())\n}",
+        "fn partition(xs: [i64], pivot: i64, stop: i64) -> [i64] {\n    let mut a = xs\n    let mut i = 0\n    for j in 0..a.len() {\n        if j == stop {\n            return a\n        }\n        if a[j] < pivot {\n            let t = a[i]\n            a[i] = a[j]\n            a[j] = t\n            i += 1\n        }\n    }\n    a\n}\n\nfn main(args: [string]) {\n    print(partition([3; args.len() + 1], 2, 5).sum())\n}",
     );
     keep_functions(&module, "partition");
     let machine = target_machine(OptLevel::O2).expect("the host is a target");
@@ -3803,12 +3942,12 @@ fn element_comparison_in_a_loop_retains_nothing() {
 /// `look` passes its borrowed array to `size`, which borrows it too: at `-O2` neither function
 /// counts it. Before inference, `look` moved `xs` into `size`, which released it.
 #[test]
-fn size_of_a_borrowed_array_counts_nothing() {
+fn size_of_a_borrowed_array_should_count_nothing() {
     let context = Context::create();
     let module = compiled(
         &context,
-        "fn size(xs: [i64]) -> i64 {\n    xs.len()\n}\nfn look(xs: [i64]) -> i64 { size(xs) }\n\
-         fn main() {\n    print(look([1, 2]))\n}",
+        "fn size(xs: [i64]) -> i64 {\n    xs.len() + 1\n}\nfn look(xs: [i64]) -> i64 { size(xs) }\n\
+         fn main(args: [string]) {\n    print(look([0; args.len()]) + look([1, 2]))\n}",
     );
     keep_functions(&module, "look,size");
     let machine = target_machine(OptLevel::O2).expect("the host is a target");
@@ -3825,7 +3964,7 @@ fn size_of_a_borrowed_array_counts_nothing() {
 /// piece from a loop body on. The blocks are in mir's order, where a loop's exit block may sit
 /// in another loop's piece, so no `f` writes after a loop.
 #[test]
-fn a_loop_makes_its_written_arrays_unique_before_it_starts() {
+fn a_loop_should_make_its_written_arrays_unique_before_it_starts() {
     use crate::mir::tests::hoist::{
         APPEND, B6, BOTH_WRITE, GRID, OUTER_BARRED_INNER_HOISTS, PARTITION,
     };
@@ -3849,7 +3988,7 @@ fn a_loop_makes_its_written_arrays_unique_before_it_starts() {
             if line.starts_with("loop.body") {
                 pieces.push(0);
             }
-            *pieces.last_mut().unwrap() += line.matches("call ptr @\"sisu_rc.unique.").count();
+            *pieces.last_mut().unwrap() += line.matches("call void @\"sisu_rc.unique.").count();
         }
         irs.push(format!("{name}:\n{f}"));
         found.push((name, pieces));

@@ -348,9 +348,10 @@ kernel refuses a request far beyond RAM plus swap
 Sisu type, the layouts of an object, an array block and a string block, the
 count word (`load_count`, `store_count`, `init_count`), the optional accessors
 (`empty`, `has_value`, `optional`, `optional_value`), the niche of an optional
-(`niche`): the spare payload value that holds its `None`, the size of every heap
-block (`heap_size`), and the TBAA tags with the tagged loads and stores that
-use them.
+(`niche`): the spare payload value that holds its `None`, the three words of an
+array or string value (`value_block`, `value_data`, `value_len`, `make_value`,
+`load_words`), the size of every heap block (`heap_size`), and the TBAA tags with
+the tagged loads and stores that use them.
 
 Objects live on the heap, with a reference count in front of their fields
 ([ADR 0005](adr/0005-reference-counting.md)). Codegen lays the fields out
@@ -421,7 +422,13 @@ must not become undefined behaviour.
 
 An array is one counted heap block too: a header of three `i64`s, the count,
 the length and the capacity, then the elements. A new block's capacity is its
-length. Each array type gets the same helpers, such as
+length. An array value is three words, `{ block, data, len }`: the block, its
+first element and its length. A value that covers its whole block has `data` at
+the block's first element and `len` equal to the header's `len`. A function
+takes an array as three scalar parameters, and its length parameter carries
+`noundef` and `range(i64 0, 2^63)`. A function returns the three words, and its
+caller asserts with `llvm.assume` that the returned length is not negative. A
+`[T]?` keeps its `None` in a null `block`. Each array type gets the same helpers, such as
 `sisu_rc.release.[i64]`, plus `sisu_rc.unique.[i64]`, which copies the block
 before a write when another holder shares it. A loop makes the arrays it
 writes unique once, before it starts, when nothing in the loop shares them,
@@ -430,12 +437,14 @@ bounds calls `sisu_panic_bounds`. Codegen tags the loads and stores of an
 array's count, length and capacity, and every count update and check, with
 one TBAA tag, and those of an array element with another, so LLVM knows that
 writing an element changes none of them. A length load also carries `!range`
-and `!noundef`, so LLVM knows that a length is never negative. `alloc_array` and
+and `!noundef`, so LLVM knows that a length is never negative; `xs.len()` reads
+the length word of the value, with no load. `alloc_array` and
 `array_push` are the only writers of a length. `array_push` stores `len + 1` only
 after it checks that this many elements fit.
 
 A string is one counted block with a header of three `i64`s: the count, the
-length and the capacity, then the UTF-8 bytes. A literal is a private global
+length and the capacity, then the UTF-8 bytes. A string value is three words
+too, as an array value is: the block, the first byte and the length. A literal is a private global
 that holds a reference of its own, so it is never freed, and each use of it
 adds one more. `+` appends in place when the left operand's count is 1,
 growing the block through `sisu_realloc`, and copies otherwise, so a literal

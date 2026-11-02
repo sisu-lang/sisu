@@ -72,12 +72,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .builder
             .build_struct_gep(self.value_box(ty), data, 1, "boxed")
             .expect("a box should hold its value after its count");
-        let value_type = self
-            .llvm_type(ty)
-            .expect("a boxed value should have a value type");
-        self.builder
-            .build_load(value_type, value, "value")
-            .expect(POSITIONED)
+        self.load_place(ty, value, "value", None)
     }
 
     /// A new box with count 1 that holds `value`, of type `ty`, which the box takes over from
@@ -314,6 +309,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let glue = self
             .module
             .add_function(&name, fn_type, Some(Linkage::Internal));
+        self.mark_len_params(glue, 1, &others);
         let entry = self.context.append_basic_block(glue, "entry");
         self.builder.position_at_end(entry);
         let data = glue
@@ -478,11 +474,16 @@ impl<'ctx> Codegen<'ctx, '_> {
         };
         let mut call_args: Vec<BasicMetadataValueEnum<'ctx>> = vec![data.into()];
         call_args.extend(args.iter().flat_map(|&(arg, ty)| self.split(ty, arg)));
-        self.builder
+        let result = self
+            .builder
             .build_indirect_call(fn_type, entry, &call_args, "dyn")
             .expect(POSITIONED)
             .try_as_basic_value()
-            .basic()
+            .basic()?;
+        if let Some(ret) = ret {
+            self.assume_len(ret, result);
+        }
+        Some(result)
     }
 
     /// Writes the text of the `any` value `value`, of type `any`, through the show helper of its

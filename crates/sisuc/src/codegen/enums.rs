@@ -31,7 +31,7 @@ use inkwell::values::{
     BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, PhiValue, PointerValue,
 };
 
-use super::layout::{HeapBlock, Niche, Storage, next_niche};
+use super::layout::{HeapBlock, Niche, Storage, next_niche, three_words};
 use super::rc::{Helper, param};
 use super::{Codegen, POSITIONED, enum_of};
 use crate::mir::{Place, Projection};
@@ -602,6 +602,9 @@ impl<'ctx> Codegen<'ctx, '_> {
         let (true, TypeKind::Optional(_)) = (payload.boxed, ty.kind()) else {
             let place = self.payload_place(value_addr, id, variant, field);
             let layout = &self.enums[id.0];
+            if three_words(ty) {
+                return self.load_words(place, None);
+            }
             if layout.shape.is_some() && !payload.boxed {
                 let stored = self
                     .builder
@@ -1221,10 +1224,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         for (binding, place) in bindings {
             let (address, _, value) = self.unboxed_at(scrutinee, &place.projections, &unboxed);
             let (slot, ty) = self.slot(*binding);
-            let moved = self
-                .builder
-                .build_load(ty, address, "moved")
-                .expect(POSITIONED);
+            let moved = self.load_place(self.types[binding.0], address, "moved", None);
             self.store(slot, moved);
             if kept[value] {
                 self.store(address, ty.const_zero());

@@ -1,0 +1,63 @@
+// GIVEN an array and a string held in `any Display`, and an interface `Picker` with methods that
+// take an array and a string and return one of them, which a class and an enum conform to
+// WHEN `to_string` runs on the `any Display` values, and the methods run through `any Picker`
+// THEN the array and the string cross the table's entry as their three words, in and out, and
+// Valgrind and `--rc-checks` find every block freed exactly once
+interface Picker {
+    fn pick_items(self, xs: [i64], s: string) -> [i64]
+    fn pick_text(self, xs: [i64], s: string) -> string
+}
+
+class Chooser: Picker {
+    _n: i64
+
+    fn pick_items(self, xs: [i64], _s: string) -> [i64] {
+        xs
+    }
+
+    fn pick_text(self, _xs: [i64], s: string) -> string {
+        s
+    }
+}
+
+enum Flip: Picker {
+    Left
+    Right(string)
+
+    fn pick_items(self, xs: [i64], _s: string) -> [i64] {
+        match self {
+            Flip.Left => xs
+            Flip.Right(_) => [xs.len()]
+        }
+    }
+
+    fn pick_text(self, _xs: [i64], s: string) -> string {
+        match self {
+            Flip.Left => s
+            Flip.Right(t) => t + s
+        }
+    }
+}
+
+fn through(p: any Picker, xs: [i64], s: string) -> string {
+    let items = p.pick_items(xs, s)
+    let text = p.pick_text(xs, s)
+    "{items} {text} {items.len()} {text.len()}"
+}
+
+fn main() {
+    let a: any Display = [1, 2]
+    let b: any Display = "ab"
+    let c: any Display = [[3], []]
+    print(a.to_string())
+    print(b.to_string())
+    print(c.to_string())
+    print(a.to_string().len())
+    let chooser: any Picker = Chooser(_n: 1)
+    let left: any Picker = Flip.Left
+    let right: any Picker = Flip.Right("r" + "r")
+    print(through(chooser, [4, 5, 6], "x" + "y"))
+    print(through(left, [4, 5, 6], "x" + "y"))
+    print(through(right, [4, 5, 6], "x" + "y"))
+    print(through(chooser, [], ""))
+}

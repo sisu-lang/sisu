@@ -19,6 +19,9 @@ rustc-hash = "2.1.3"
 # pins a master commit (docs/llvm.md); deny.toml allows the repository.
 # `version` keeps cargo-deny's `wildcards = "deny"` passing.
 inkwell = { version = "0.10.0", git = "https://github.com/TheDan64/inkwell", rev = "c9d9734ae17dbaf1d9902dab3b8ee9d2041781ff", features = ["llvm23-1"] }
+# One call that inkwell lacks: a constant-range parameter attribute (codegen/abi.rs). The version is
+# the one inkwell's `llvm23-1` feature uses, so the lock file holds one llvm-sys.
+llvm-sys = "231.0.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 # Grows the call stack for the conformance walks, which follow the depth of a type (conformance::ensure_stack).

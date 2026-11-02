@@ -1,7 +1,8 @@
 //! Reference counting: retaining, releasing and comparing counted values, and the helpers
 //! that do it. Each counted type gets one helper of each kind, declared on first use and
-//! defined by `define_helpers` in one worklist pass. A string, an object or an array is a
-//! pointer, which `@sisu_rc.retain` and its `release` helper take; an enum is a value, which its
+//! defined by `define_helpers` in one worklist pass. A string or an array is a value of three
+//! words and an object is a pointer; `@sisu_rc.retain` and its `release` helper take the pointer
+//! to the block of a string or an array, or the object itself. An enum is a value, which its
 //! `retain`, `release` and `eq` helpers take by address. An enum whose component has boxes also
 //! has `walk`, `drain` and `eq_component` helpers (see `codegen/enums.rs`).
 
@@ -14,7 +15,7 @@ use inkwell::values::{
 use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 
 use super::abi::{RC_FAULT_MOVED, RC_FAULT_RELEASE, RC_FAULT_RETAIN};
-use super::layout::HeapBlock;
+use super::layout::{HeapBlock, three_words};
 use super::{Codegen, POSITIONED};
 use crate::conformance::find;
 use crate::graph::components;
@@ -141,10 +142,11 @@ fn held_class(mut ty: Type) -> Option<ClassId> {
     }
 }
 
-/// The type whose helpers a pointer-shaped `ty` uses: a `string`, a class or an array, with
-/// the `?` of a `null` niche removed. `None` for every other type, an enum, its optional and an
-/// optional of an optional included: those are not pointers, and a `None` of theirs is not
-/// `null`.
+/// The type whose helpers a counted-object-shaped `ty` uses: a `string`, a class or an array,
+/// with the `?` of a `null` niche removed. The object is a class's pointer, and the block of a
+/// string or an array: `counted_pointer` gives it. `None` for every other type, an enum, its
+/// optional and an optional of an optional included: those are not objects, and a `None` of
+/// theirs is not `null`.
 pub(super) fn counted_core(ty: Type) -> Option<Type> {
     match ty.kind() {
         TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) => Some(ty),
@@ -193,7 +195,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                     false,
                 ),
             ),
-            Helper::Unique => ("unique", ptr_type.fn_type(&[ptr_type.into()], false)),
+            Helper::Unique => ("unique", takes_object),
             Helper::Walk => (
                 "walk",
                 self.context
@@ -247,6 +249,11 @@ impl<'ctx> Codegen<'ctx, '_> {
         let function = self
             .module
             .add_function(&symbol, fn_type, Some(Linkage::Internal));
+        match kind {
+            Helper::Eq => self.mark_len_params(function, 0, &[ty, ty]),
+            Helper::Show(_) => self.mark_len_params(function, 1, &[ty]),
+            _ => {}
+        }
         self.helpers.borrow_mut().insert(key, function);
         self.pending.borrow_mut().push(key);
         function
@@ -262,7 +269,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
     }
 
-    /// The values of the parameters of `function` from the `first` that hold one value of the
+    /// The value of the parameters of `function` from the `first` that hold one value of the
     /// counted type `ty` at the entry of a helper: the inverse of `helper_args`.
     pub(super) fn helper_params(
         &self,
@@ -590,7 +597,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let (a, b) = if let TypeKind::Class(..) = ty.kind() {
             // The blocks that `eq_entry` returns answer the `null` cases; both are real here.
             let (a, b, _, _) = self.eq_entry(function, ty, false);
-            (a, b)
+            (a.into_pointer_value(), b.into_pointer_value())
         } else {
             let entry = self.context.append_basic_block(function, "entry");
             self.builder.position_at_end(entry);
@@ -632,17 +639,17 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// Starts `eq` helper `function` for a type that is `reflexive` or not: returns its two
-    /// parameters and the blocks that return `true` and `false`. It returns `true` at once for
-    /// what `equal_at_once` finds equal and `false` when one is `null`; the builder is left
-    /// where both are real, and distinct when `reflexive`.
+    /// parameters, as values of `ty`, and the blocks that return `true` and `false`. It returns
+    /// `true` at once for what `equal_at_once` finds equal, and `false` when one object is
+    /// `null`; the builder is left where both are real, and distinct when `reflexive`.
     pub(super) fn eq_entry(
         &self,
         function: FunctionValue<'ctx>,
         ty: Type,
         reflexive: bool,
     ) -> (
-        PointerValue<'ctx>,
-        PointerValue<'ctx>,
+        BasicValueEnum<'ctx>,
+        BasicValueEnum<'ctx>,
         BasicBlock<'ctx>,
         BasicBlock<'ctx>,
     ) {
@@ -653,8 +660,11 @@ impl<'ctx> Codegen<'ctx, '_> {
         let [a, b] = self.joined_params(function, 0, &[ty, ty])[..] else {
             unreachable!("two types should give two values");
         };
-        let (a, b) = (a.into_pointer_value(), b.into_pointer_value());
-        self.compare_at_once(reflexive, true, a, b, equal, unequal);
+        // The objects are the pointers of classes, and the blocks of arrays and strings. A value
+        // that covers only part of its block, as a slice does, needs more than the blocks to be
+        // known equal at once.
+        let (block_a, block_b) = (self.counted_pointer(ty, a), self.counted_pointer(ty, b));
+        self.compare_at_once(reflexive, true, block_a, block_b, equal, unequal);
         (a, b, equal, unequal)
     }
 
@@ -817,12 +827,7 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// The value of type `ty` at `place`.
     pub(super) fn load_value(&self, ty: Type, place: PointerValue<'ctx>) -> BasicValueEnum<'ctx> {
-        let llvm_ty = self
-            .llvm_type(ty)
-            .expect("the checker should give every field a value type, never `unit` or `never`");
-        self.builder
-            .build_load(llvm_ty, place, "field")
-            .expect(POSITIONED)
+        self.load_place(ty, place, "field", None)
     }
 
     /// A call of the `eq` helper of `ty` on `a` and `b`.
@@ -905,7 +910,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         if self.rc_fault.is_none() || counted_core(ty) != Some(ty) {
             return;
         }
-        let slot = self.load_local(local).into_pointer_value();
+        let slot = self.counted_pointer(ty, self.load_local(local));
         let null = self.builder.build_is_null(slot, "moved").expect(POSITIONED);
         self.fault_if(null, RC_FAULT_MOVED);
     }
@@ -970,15 +975,8 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// Makes the array in `slot`, of array type `ty`, the only holder of its block:
     /// `@sisu_rc.unique.[T]` copies the block into `slot` when another holder shares it.
-    /// Returns the block `slot` then holds.
-    pub(super) fn unique(&self, slot: PointerValue<'ctx>, ty: Type) -> PointerValue<'ctx> {
-        self.builder
-            .build_call(self.helper(Helper::Unique, ty), &[slot.into()], "unique")
-            .expect(POSITIONED)
-            .try_as_basic_value()
-            .basic()
-            .expect("the generated `unique` helper should return a pointer")
-            .into_pointer_value()
+    pub(super) fn unique(&self, slot: PointerValue<'ctx>, ty: Type) {
+        self.call(self.helper(Helper::Unique, ty), &[slot.into()]);
     }
 
     /// Adds 1 to the count of each reference `value` holds when `ty` is counted.
@@ -1007,21 +1005,32 @@ impl<'ctx> Codegen<'ctx, '_> {
     fn retain_or_release_at(&self, kind: Helper, place: PointerValue<'ctx>, ty: Type) {
         if let TypeKind::Enum(..) = ty.kind() {
             self.call(self.helper(kind, ty), &[place.into()]);
+        } else if three_words(ty) {
+            // Only the block is counted, and it is the first word.
+            let block = self.load_pointer(place);
+            self.count_object(kind, ty, block);
         } else {
             self.retain_or_release(kind, self.load_value(ty, place), ty);
         }
     }
 
-    /// `retain` or `release`, as `kind` says. A string, object or array is the pointer itself,
-    /// `null` for `None`; an enum goes to its helper by address; the payload of any other
+    /// `retain` or `release` of `object`, the pointer of a class, or the block of a string or an
+    /// array, `null` for a `None`; `ty` is the type of its value, or the optional of it.
+    fn count_object(&self, kind: Helper, ty: Type, object: PointerValue<'ctx>) {
+        let core = counted_core(ty).expect("an object should be counted");
+        let function = match kind {
+            Helper::Retain => self.rc_retain,
+            _ => self.helper(Helper::Release, core),
+        };
+        self.call(function, &[object.into()]);
+    }
+
+    /// `retain` or `release`, as `kind` says. A string, object or array counts its block or
+    /// itself, `null` for `None`; an enum goes to its helper by address; the payload of any other
     /// optional is counted only when the optional holds a value, one layer at a time.
     fn retain_or_release(&self, kind: Helper, value: BasicValueEnum<'ctx>, ty: Type) {
-        if let Some(core) = counted_core(ty) {
-            let function = match kind {
-                Helper::Retain => self.rc_retain,
-                _ => self.helper(Helper::Release, core),
-            };
-            self.call(function, &[value.into()]);
+        if counted_core(ty).is_some() {
+            self.count_object(kind, ty, self.counted_pointer(ty, value));
             return;
         }
         if !ty.is_counted(&self.program.enums) {
