@@ -1,0 +1,75 @@
+class Two<A, B> {
+    a: A
+    b: B
+}
+
+class Cell<T> {
+    v: T
+}
+
+class Fixed {
+    v: i64
+}
+
+class Slot {
+    mut n: i64
+}
+
+enum Gen<T> {
+    Z
+    C(T)
+}
+
+enum Plain {
+    Z
+    C(i64)
+}
+
+fn mk2<X>() -> Two<X, bool> { panic("no") }
+fn id<V>(v: V) -> V { v }
+fn pair<A>(a: A, b: A) -> Two<A, A> { Two(a: a, b: b) }
+fn takes(_x: i64) {}
+fn takes2(x: i64) -> i64 { x }
+fn accept(_r: Result<i64, string>) {}
+
+fn fail() -> Result<i64, string> {
+    Err(mk2())
+}
+
+fn tail() -> i64 {
+    id(mk2())
+}
+
+fn early() -> i64 {
+    return id(mk2())
+}
+
+fn main() {
+    let a1: Result<i64, string> = Result.Ok(mk2())
+    let a2: Cell<i64> = Cell(v: mk2())
+    let a3: Gen<i64> = Gen.C(mk2())
+    accept(Ok(mk2()))
+    let a4: i64? = Some(id(mk2()))
+    let a5: [i64] = [id(mk2())]
+    let a6: i64 = id(id(mk2()))
+    let a7: i64 = id(mk2())
+    let a8: i64? = id(mk2())
+    print(1 + id(mk2()))
+    print(1 * id(mk2()))
+    print(1 < id(mk2()))
+    let a9: [i64] = [1, id(mk2())]
+    let b1: [i64?] = [1, Some(id(mk2()))]
+    takes(id(mk2()))
+    let mut b2: i64 = 0
+    b2 = id(mk2())
+    let b3 = Slot(n: 0)
+    b3.n = id(mk2())
+    let b4 = Fixed(v: id(mk2()))
+    let b5 = Plain.C(id(mk2()))
+    let b6: i64 = id(id(id(mk2())))
+    let b7: i64?? = id(mk2())
+    let b8: Two<i64, i64> = pair(1, mk2())
+    let c = true
+    let b9: i64 = if c { 1 } else { id(mk2()) }
+    print(1 == takes2(id(mk2())))
+}

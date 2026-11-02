@@ -1,0 +1,50 @@
+error[E0050]: cannot infer `X` for `mk2`
+  --> E0050-generic-hint.sisu:10:19
+   |
+10 |     print(1 == id(mk2()))
+   |                   ^^^
+   |
+   = help: annotate the result, or write the type: `mk2<...>(...)`
+
+error[E0050]: cannot infer `X` for `mk2`
+  --> E0050-generic-hint.sisu:11:14
+   |
+11 |     print(id(mk2()) == 1)
+   |              ^^^
+   |
+   = help: annotate the result, or write the type: `mk2<...>(...)`
+
+error[E0050]: cannot infer `X` for `mk2`
+  --> E0050-generic-hint.sisu:12:22
+   |
+12 |     print(1 == id(id(mk2())))
+   |                      ^^^
+   |
+   = help: annotate the result, or write the type: `mk2<...>(...)`
+
+warning[W0015]: this value can be `None`, and then this writes the word "None"
+  --> E0050-generic-hint.sisu:14:11
+   |
+14 |     print(o ?? id(id(mk2())))
+   |           ^^^^^^^^^^^^^^^^^^
+   |
+   = help: use `if let`, give a default with `??`, or call `.to_string()` on the value to write "None" on purpose
+
+error[E0050]: cannot infer `X` for `mk2`
+  --> E0050-generic-hint.sisu:14:22
+   |
+14 |     print(o ?? id(id(mk2())))
+   |                      ^^^
+   |
+   = help: annotate the result, or write the type: `mk2<...>(...)`
+
+error[E0050]: cannot infer `X` for `mk2`
+  --> E0050-generic-hint.sisu:16:35
+   |
+16 |     print(if c { 1 } else { id(id(mk2())) })
+   |                                   ^^^
+   |
+   = help: annotate the result, or write the type: `mk2<...>(...)`
+
+sisu: 5 errors, 1 warning
+sisu: for more on a code, run `sisu explain <code>`: E0050, W0015

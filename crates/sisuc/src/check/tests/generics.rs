@@ -6035,17 +6035,22 @@ fn rejecting_the_parameters_of_failed_arguments_should_visit_each_type_once() {
 #[test]
 fn misfitting_arguments_should_read_the_origins_of_their_own_parameters_only() {
     let reads = |n: usize| {
-        let params: Vec<_> = (0..n).map(|k| format!("T{k}")).collect();
+        let params: Vec<_> = (0..n)
+            .map(|k| format!("T{k}"))
+            .chain(["R".to_owned()])
+            .collect();
         let lead: Vec<_> = (0..n).map(|k| format!("_a{k}: T{k}")).collect();
         let trail: Vec<_> = (0..n).map(|k| format!("_b{k}: T{k}")).collect();
         let args: Vec<_> = (0..n)
             .map(|_| "one()")
             .chain((0..n).map(|_| "{ mk() }"))
             .collect();
+        // The call returns the type parameter `R`, so it waits for its context, and the other
+        // side of `==` hints it: only a hinted call reads the origins (see `Inference::hinted`).
         let src = format!(
             "class Two<A, B> {{\n    a: A\n    b: B\n}}\nfn one() -> i64 {{ 1 }}\n\
              fn mk<X>() -> Two<X, bool> {{ panic(\"no\") }}\n\
-             fn h<{}>({}, {}) -> i64 {{ 0 }}\nfn main() {{\n    print(h({}))\n}}",
+             fn h<{}>({}, {}) -> R {{ panic(\"no\") }}\nfn main() {{\n    print(1 == h({}))\n}}",
             params.join(", "),
             lead.join(", "),
             trail.join(", "),
@@ -6219,33 +6224,30 @@ fn a_generic_call_that_cannot_meet_its_context_should_report_as_a_concrete_call_
 }
 
 /// An outer generic call binds its parameter to what an argument gives. It does not pass on a
-/// type that the argument found and could not meet its context with. So the argument's misfit
-/// reaches no code that reports it: it gives E0050 for `X` at the inner call, as the call did
-/// before it reported misfits. Or it gives the concrete twin's text.
+/// type that the argument found and could not meet its context with. When the context is a hint,
+/// the type of a sibling (the other side of `==`), a report against it would be false: the
+/// misfit keeps its E0050 at the inner call, once. When the user wrote the context (a `let`
+/// type), the argument is reported against it: one E0032 at the inner call.
 #[test]
 fn a_misfit_under_an_outer_generic_call_should_give_a_true_diagnostic() {
     with_prelude();
-    let rows: &[ParityRow<'static>] = &[
-        ("", "print(1 == id(mk2()))"),
-        ("", "print(id(mk2()) == 1)"),
-        ("", "let y: i64? = id(mk2())"),
-        ("", "print(1 == id(id(mk2())))"),
-        ("", "let y: i64 = id(mk2())"),
+    // (the statement, the code that the one diagnostic has)
+    let rows: &[(&str, Code)] = &[
+        ("print(1 == id(mk2()))", Code::CannotInfer),
+        ("print(id(mk2()) == 1)", Code::CannotInfer),
+        ("print(1 == id(id(mk2())))", Code::CannotInfer),
+        ("let y: i64? = id(mk2())", Code::Mismatch),
+        ("let y: i64 = id(mk2())", Code::Mismatch),
     ];
-    for &row in rows {
-        let src = parity_program(row, false);
+    for &(body, want) in rows {
+        let src = parity_program(("", body), false);
         let (failed, generic) = parity_found(&src);
         let call = src.rfind("mk2()").expect("the row should call `mk2`");
         let line = src[..call].lines().count();
         let col = call - src[..call].rfind('\n').expect("`main` should come first");
         let places: Vec<_> = generic.iter().map(|(code, at, _)| (*code, *at)).collect();
-        let concrete = parity_found(&parity_program(row, true)).1;
-        assert!(failed, "row `{}`", row.1);
-        assert!(
-            places == [(Code::CannotInfer, (line, col))] || generic == concrete,
-            "row `{}`: {generic:?}",
-            row.1
-        );
+        assert!(failed, "row `{body}`");
+        assert_eq!(places, [(want, (line, col))], "row `{body}`: {generic:?}");
     }
 }
 
@@ -6339,11 +6341,12 @@ fn a_clash_with_an_unbound_shape_should_report_the_argument() {
 }
 
 /// A misfit that reaches no code that reports it is not lost. The outer generic call drops the
-/// type that its argument found, so the inner call's E0050 is pushed when the body ends.
+/// type that its argument found, so the inner call's E0050 is pushed when the body ends. The
+/// context is a hint, as it is not a type that the user wrote.
 #[test]
 fn a_misfit_that_no_code_reports_should_give_e0050_at_the_call() {
     with_prelude();
-    let src = parity_program(("", "let y: i64? = id(mk2())"), false);
+    let src = parity_program(("", "print(1 == id(mk2()))"), false);
     let (_, found) = parity_found(&src);
     let codes: Vec<_> = found.iter().map(|(code, ..)| *code).collect();
     assert_eq!(codes, [Code::CannotInfer], "{found:?}");
