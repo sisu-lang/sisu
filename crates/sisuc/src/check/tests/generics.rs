@@ -5615,9 +5615,9 @@ const WAIT_CALL_ROWS: &[(&str, &[(Code, &str)])] = {
         ("print(gh(mkxh(), mkh(), mks()))", &[]),
         // `T.Item` has an interface argument, `U`. `unbound_params` reaches it.
         ("print(gh2(mkxa(), mkh(), mks()))", &[]),
-        // This one gives E0050 as it did before. The fault is a mismatch (`X` is `Two<..>` and
-        // `W` is not): a separate diagnostic issue.
-        ("print(gaa(mkxx(), mkw()))", &[(CannotInfer, "mkxx()")]),
+        // The fault is a mismatch (`Two<X, bool>` where `i64` is expected, once `mkw()` binds
+        // `T`), so the call reports it, and not E0050 for `X` (#346).
+        ("print(gaa(mkxx(), mkw()))", &[(Mismatch, "mkxx()")]),
         // `mkdv()` waits for `T` and `U`, its `X` at two places. Only `mk()` binds `T`, and no
         // argument binds `U`, so nothing wakes it: it is checked when the sweep ends, in order.
         // In `fc`, `mk2()` needs the `V` that `mkdv()` binds and comes first: E0050. In `fc2`,
@@ -5781,4 +5781,97 @@ fn waiting_calls_should_be_tested_a_linear_number_of_times() {
         generic::WAIT_STEPS.get() + generic::WALKED.get()
     };
     assert_near_linear(shuffled(100), shuffled(200), shuffled(300));
+}
+
+/// The rows of `a_waiting_call_after_a_failed_argument_should_not_report_e0050`.
+const FAILED_ARGUMENT_ROWS: &[PartialRow<'static>] = {
+    use Code::{BindingNotFound, Mismatch};
+    const DECLS: &str = "fn none<T>() -> T? { None }\n\
+        fn h<T>(_a: T, _b: T?) -> i64 { 1 }\n\
+        fn ha<T>(_a: T, _b: [T?]) -> i64 { 1 }\n\
+        fn hr<T>(_b: T?, _a: T) -> i64 { 1 }\n\
+        fn h3<T>(_a: T, _b: T, _c: T) -> i64 { 1 }\n";
+    &[
+        (
+            DECLS,
+            "print(h(nope, none()))",
+            &[(BindingNotFound, "nope")],
+        ),
+        (
+            DECLS,
+            "print(ha(nope, [none()]))",
+            &[(BindingNotFound, "nope")],
+        ),
+        // The waiting call comes first, so the sweep meets it before the failed argument.
+        (
+            DECLS,
+            "print(hr(none(), nope))",
+            &[(BindingNotFound, "nope")],
+        ),
+        (
+            DECLS,
+            "print(h(nope, id(none())))",
+            &[(BindingNotFound, "nope")],
+        ),
+        (DECLS, "print(h(1 + true, none()))", &[(Mismatch, "true")]),
+        // `1` binds `T` before the sweep, so the failed argument rejects nothing: `"s"` is
+        // still checked against `i64`, and `1` is blamed, as it was.
+        (
+            DECLS,
+            "print(h3(nope, 1, \"s\"))",
+            &[(BindingNotFound, "nope"), (Mismatch, "1,")],
+        ),
+        (
+            DECLS,
+            "print(h(nope, Some(none())))",
+            &[(BindingNotFound, "nope")],
+        ),
+        // A safe call gets the same context as a plain one.
+        (
+            "class O {\n    fn m<X>(self, x: X?) -> X? { x }\n}\n\
+             fn mko() -> O? { None }\n\
+             fn none<T>() -> T? { None }\n\
+             fn h<T>(_a: T, _b: T?) -> i64 { 1 }\n",
+            "let o = mko()\nprint(h(nope, o?.m(none())))",
+            &[(BindingNotFound, "nope")],
+        ),
+    ]
+};
+
+/// A failed argument binds nothing, so a parameter that only it could bind stays unbound. The
+/// call that waits for that parameter is not the fault: the argument reported the fault.
+#[test]
+fn a_waiting_call_after_a_failed_argument_should_not_report_e0050() {
+    check_partial_rows(FAILED_ARGUMENT_ROWS);
+}
+
+/// The rows of `a_call_that_cannot_meet_its_known_context_should_report_the_mismatch`.
+const KNOWN_CONTEXT_ROWS: &[PartialRow<'static>] = {
+    use Code::{CannotInfer, Mismatch};
+    const DECLS: &str = "fn mkp<X>() -> Box<X, bool>? { None }\n\
+        fn mk2<X>() -> Box<X, bool> { panic(\"no\") }\n\
+        fn mkr<E>() -> Result<i64, E> { Ok(1) }\n\
+        fn fi(_x: i64?) -> i64 { 0 }\n\
+        fn g<T>(_c: T?, _d: Result<T, string>) -> i64 { 0 }\n\
+        fn g2<T>(_c: T?, _d: T) -> i64 { 0 }\n";
+    &[
+        (DECLS, "print(g(mkp(), mkr()))", &[(Mismatch, "mkp()")]),
+        (DECLS, "let x: i64? = mkp()", &[(Mismatch, "mkp()")]),
+        (DECLS, "let x: i64 = mkp()", &[(Mismatch, "mkp()")]),
+        (DECLS, "print(fi(mkp()))", &[(Mismatch, "mkp()")]),
+        (DECLS, "print(g2(mkp(), 1))", &[(Mismatch, "mkp()")]),
+        (DECLS, "let x: i64 = mk2()", &[(Mismatch, "mk2()")]),
+        (DECLS, "print(g2(1, mk2()))", &[(Mismatch, "mk2()")]),
+        (DECLS, "let x: [i64] = mk2()", &[(Mismatch, "mk2()")]),
+        // No context: the call has nothing to meet, and E0050 is the fault.
+        (DECLS, "let x = mkp()", &[(CannotInfer, "mkp()")]),
+        (DECLS, "let x: Box<i64, bool>? = mkp()", &[]),
+    ]
+};
+
+/// A call whose context is known, and which cannot meet it with its return type, reports the
+/// mismatch. It left a parameter unbound only because it could not meet the context.
+#[test]
+fn a_call_that_cannot_meet_its_known_context_should_report_the_mismatch() {
+    check_partial_rows(KNOWN_CONTEXT_ROWS);
 }

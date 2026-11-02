@@ -1010,6 +1010,43 @@ impl Bindings {
         self.found[i] = Some(*REJECTED);
     }
 
+    /// Rejects each parameter that `ty`, a callee's, names and that is unbound, as `reject` does
+    /// for a bound parameter; a bound one stays. It gives whether it rejected one. The work is one
+    /// walk of `ty` as the user wrote it, linear in its size, so it needs no step counter.
+    fn reject_unbound(&mut self, ty: Type) -> bool {
+        if !ty.has_param() {
+            return false;
+        }
+        match ty.kind() {
+            TypeKind::Param(_, i) => {
+                let unbound = self.found[i as usize].is_none();
+                if unbound {
+                    self.found[i as usize] = Some(*REJECTED);
+                }
+                unbound
+            }
+            TypeKind::Array(inner) | TypeKind::Optional(inner) => self.reject_unbound(inner),
+            TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
+                self.reject_unbound_all(args.get())
+            }
+            TypeKind::Assoc(base, _, args, _) => {
+                // Both walks run: neither may skip the other's parameters.
+                let in_base = self.reject_unbound(base);
+                self.reject_unbound_all(args.get()) || in_base
+            }
+            _ => unreachable!("only a kind with a child can name a parameter"),
+        }
+    }
+
+    /// `reject_unbound` for each of `types`, every one of them walked.
+    fn reject_unbound_all(&mut self, types: &[Type]) -> bool {
+        let mut any = false;
+        for &ty in types {
+            any |= self.reject_unbound(ty);
+        }
+        any
+    }
+
     /// The first parameter that `ty`, a callee's, names and that is unbound or rejected, which
     /// `known` has no type for. `None` when `ty` names none.
     fn unknown_param(&self, ty: Type) -> Option<usize> {
@@ -1634,7 +1671,7 @@ impl Checker<'_> {
             let whole = through || ranks.contains(&2) || layers > 0 && !wider_than(want, layers);
             let met = (whole && call.bindings.unify(ret, want))
                 || call.bindings.constrain(ret, payload(want));
-            misfit = self.misfit(span, ret, want, met).then_some(ret);
+            misfit = self.misfit(span, ret, want, met).then_some((ret, want));
             if !met && written.is_empty() && !call.failed {
                 self.blame_arguments(&mut call, sig, args, ret, want, span);
             }
@@ -1685,8 +1722,9 @@ impl Checker<'_> {
                     // A parameter that meets a rejected part only is rejected as well: the
                     // failed bound of the outer call is its only fault.
                     if let Some(i) = call.bindings.first_unbound_not_rejected(first) {
-                        let found = misfit.map(|ret| self.printed(&call.bindings, ret));
-                        self.report_unbound(span, sig, i, found);
+                        let misfit =
+                            misfit.map(|(ret, want)| (self.printed(&call.bindings, ret), want));
+                        self.report_unbound(span, sig, i, misfit);
                     }
                 }
                 None
@@ -1856,14 +1894,14 @@ impl Checker<'_> {
         (self.body.context_hint).is_some_and(|hint| hint.at == span && hint.safe)
     }
 
-    /// Whether the call at `span` is a misfit: `want`, its context, holds a hole, and the result
-    /// cannot meet it. `met` says if the return type `ret` met `want`. The result of a safe
+    /// Whether the call at `span` is a misfit: the result cannot meet `want`, its context. `met`
+    /// says if the return type `ret` met `want`. When `want` holds a hole, the result of a safe
     /// call is optional, as is a result whose return type is, so a context that is not optional
     /// cannot meet it, whatever the return type meets.
     fn misfit(&self, span: Span, ret: Type, want: Type, met: bool) -> bool {
         let safe = self.is_safe_call(span);
         let optional = |ty: Type| matches!(ty.kind(), TypeKind::Optional(_));
-        want.holds_hole() && (!met || ((safe || optional(ret)) && !optional(want)))
+        !met || (want.holds_hole() && (safe || optional(ret)) && !optional(want))
     }
 
     /// Reports each argument already checked whose type is not what `want`, the call's context,
@@ -1987,6 +2025,17 @@ impl Checker<'_> {
     ) {
         if !ranks.contains(&2) {
             return;
+        }
+        // Passes 1 to 3 are done. A failed argument binds nothing, so a parameter that only it
+        // could bind stays unbound, and a call that waits would add an E0050 to the fault the
+        // argument reported. Such a parameter is rejected, as a failed bound rejects its own.
+        for (slot, param) in iter::zip(&call.slots, sig.params) {
+            if let (Some(checked), Some(param)) = (slot, param)
+                && type_of(checked).is_none()
+                && call.bindings.reject_unbound(*param)
+            {
+                call.rejected = true;
+            }
         }
         let unchecked = |call: &Inference<'_>, i: usize| ranks[i] == 2 && call.slots[i].is_none();
         call.bound.clear();
@@ -2538,8 +2587,11 @@ impl Checker<'_> {
 
     /// Reports the call at `span` that leaves parameter `param` unbound, the first one that is not
     /// rejected-only (see `Bindings::first_unbound_not_rejected`): E0050, unless its result
-    /// `found` cannot meet the context its caller gave (see `infer_waiting`). Then the mismatch is
-    /// the fault, and it reports the mismatch instead. A call that returns `unit` or `never` never
+    /// cannot meet its context. `misfit` holds that result `found` and the context `want` the call
+    /// met. The mismatch is then the fault, and it reports the mismatch instead. The outer call
+    /// gave the context when a `ContextHint` stands at `span` (see `infer_waiting`): `want` is
+    /// the parameter type as that call prints it. Else a context that holds a hole says nothing
+    /// to the user, and the call keeps its E0050. A call that returns `unit` or `never` never
     /// gets here: it names no type parameter in its return type, and no type parameter can be
     /// `unit` (E0138), so it does not wait for a context.
     fn report_unbound(
@@ -2547,16 +2599,25 @@ impl Checker<'_> {
         span: Span,
         sig: &GenericSig<'_>,
         param: usize,
-        found: Option<Type>,
+        misfit: Option<(Type, Type)>,
     ) {
         let hint = self.body.context_hint.filter(|hint| hint.at == span);
-        if let Some((found, hint)) = found.zip(hint) {
+        let reported = misfit.and_then(|(found, context)| {
             // The result of a safe call is optional (see `Checker::member`).
-            let found = if hint.safe { as_optional(found) } else { found };
-            let d = self.mismatch(span, None, hint.want, found);
-            self.diagnostics.push(d);
-        } else {
-            self.cannot_infer(sig, param);
+            let found = if hint.is_some_and(|hint| hint.safe) {
+                as_optional(found)
+            } else {
+                found
+            };
+            match hint {
+                Some(hint) => Some(self.mismatch(span, None, hint.want, found)),
+                None if !context.holds_hole() => Some(self.mismatch(span, None, context, found)),
+                None => None,
+            }
+        });
+        match reported {
+            Some(d) => self.diagnostics.push(d),
+            None => self.cannot_infer(sig, param),
         }
     }
 
