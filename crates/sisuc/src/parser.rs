@@ -3407,8 +3407,11 @@ impl<'a> Parser<'a> {
         );
         let value = match self.child(base, &mut reach, Self::expr) {
             Ok(value) => value,
-            // A value that fails leaves no `else` after it, so the `.` is the first mistake.
-            Err(_) if qualified => return Err(self.dot_error(first)),
+            // With no `else` in the statement, it is no `let ... else`, so the `.` is the first
+            // mistake. With one, the pattern is right and the value's error is the mistake.
+            Err(_) if qualified && !self.else_in_statement(first) => {
+                return Err(self.dot_error(first));
+            }
             Err(error) => return Err(error),
         };
         self.depth = reach;
@@ -3431,6 +3434,24 @@ impl<'a> Parser<'a> {
             value,
             else_block: None,
         })
+    }
+
+    /// Whether an `else` of the statement that starts at token `first` is not the `else` of an
+    /// `if` in it: one at the statement's own level, before its line break. A line break inside
+    /// `{ }` does not end the statement. It runs on an error path only.
+    fn else_in_statement(&self, first: usize) -> bool {
+        let (mut depth, mut elses, mut ifs) = (0_usize, 0_usize, 0_usize);
+        for token in &self.tokens[first..] {
+            match token.kind {
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace | TokenKind::Newline | TokenKind::Eof if depth == 0 => break,
+                TokenKind::RBrace => depth -= 1,
+                TokenKind::Else if depth == 0 => elses += 1,
+                TokenKind::If if depth == 0 => ifs += 1,
+                _ => {}
+            }
+        }
+        elses > ifs
     }
 
     /// "expected `=`, found `.`", as a `let` that reads a name reports `Enum.Variant`. The
@@ -6979,9 +7000,34 @@ mod tests {
             ("let p.x = 1 + * 2", Code::Expected, 18),
             ("let Shape.Dot =", Code::Expected, 22),
             ("let Option.None = 1 +", Code::Expected, 23),
+            (
+                "let Shape.Dot = if c { 1 } else { 2 } +",
+                Code::Expected,
+                22,
+            ),
             ("let 99999999999999999999 = 1", Code::IntegerTooLarge, 17),
         ] {
             assert_eq!(expr_err(src), (code, 1, col), "{src}");
+        }
+        // The `else` that follows makes it a `let ... else` with a bad value: the value's error.
+        for (src, col) in [
+            ("let Shape.Dot = mk(1 +) else { return }", 35),
+            ("let Shape.Dot = s + else { return }", 33),
+            ("let Option.None = o. else { return }", 34),
+            (
+                "let Shape.Dot = if c { 1 + } else { 2 } else { return }",
+                40,
+            ),
+            ("let Shape.Dot = f({ 1 + }) else { return }", 37),
+        ] {
+            assert_eq!(expr_err(src), (Code::Expected, 1, col), "{src}");
+        }
+        // An `else` on the next line, or in another statement, is no part of the `let`.
+        for src in [
+            "fn main() {\n    let Shape.Dot = (1 +)\n    else { return }\n}",
+            "fn main() {\n    let Shape.Dot = (1 +); if c { 1 } else { 2 }\n}",
+        ] {
+            assert_eq!(parse_err(src), (Code::Expected, 2, 14), "{src}");
         }
     }
 
