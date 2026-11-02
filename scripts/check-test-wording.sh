@@ -3,7 +3,7 @@
 # or its help text beyond whether there is one. Unit tests assert codes and
 # positions; the tests/diagnostics fixtures pin the wording (CODING_STANDARDS.md,
 # Tests). The writers' own tests in render.rs, json.rs and report.rs may read it.
-# So may check/tests/parity.rs, which holds only `parity_found`: it compares the
+# So may crates/sisuc/src/check/tests/parity.rs, which holds only `parity_found`: it compares the
 # output of a generic call with that of its concrete twin and pins no text.
 # Test code is files under tests/, tests.rs, and an inline
 # `#[cfg(test)] mod name { ... }`, which clippy's items_after_test_module keeps
@@ -20,7 +20,7 @@ set -euo pipefail
 
 files=()
 for file in "$@"; do
-  [[ $file == */diagnostic/render.rs || $file == */diagnostic/json.rs || $file == */src/report.rs || $file == */check/tests/parity.rs ]] || files+=("$file")
+  [[ $file == */diagnostic/render.rs || $file == */diagnostic/json.rs || $file == */src/report.rs || $file == crates/sisuc/src/check/tests/parity.rs || $file == */crates/sisuc/src/check/tests/parity.rs ]] || files+=("$file")
 done
 [[ ${#files[@]} -eq 0 ]] && exit 0
 

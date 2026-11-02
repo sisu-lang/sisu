@@ -1331,7 +1331,7 @@ mod origins {
             Self(vec![None; count])
         }
 
-        /// Where parameter `i` was bound.
+        /// Where parameter `i` was bound. Panics when `i` is not a parameter of the call.
         pub(super) fn get(&self, i: usize) -> Option<Span> {
             #[cfg(test)]
             super::ORIGINS.set(super::ORIGINS.get() + 1);

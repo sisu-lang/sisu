@@ -125,8 +125,12 @@ class TestWording(unittest.TestCase):
 
     def test_a_read_in_the_parity_file_should_pass(self):
         text = 'use super::*;\nfn f(d: &Diagnostic) -> String {\n    d.message().to_owned()\n}\n'
-        self.assertEqual(run_hook('check-test-wording.sh', text, 'check/tests/parity.rs'), (0, ''))
-        self.assertEqual(run_hook('check-test-wording.sh', text, 'check/tests/other.rs')[0], 1)
+        self.assertEqual(
+            run_hook('check-test-wording.sh', text, 'crates/sisuc/src/check/tests/parity.rs'), (0, ''))
+        for name in ('crates/sisuc/src/check/tests/other.rs',
+                     'crates/runtime/src/check/tests/parity.rs'):
+            with self.subTest(name=name):
+                self.assertEqual(run_hook('check-test-wording.sh', text, name)[0], 1)
 
 class SessionUrl(unittest.TestCase):
     def test_a_session_line_or_url_should_fail_at_its_line(self):
