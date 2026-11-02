@@ -3355,8 +3355,8 @@ impl From<DiagnosticKind> for Diagnostic {
                 instances(count)
             ))
             .with_help(format!(
-                "use fewer different type arguments, or put a non-generic item in the chain \
-                 that reaches `{name}`"
+                "use fewer different type arguments, or put a non-generic item between `{name}` \
+                 and the generic items that use it with different type arguments"
             )),
             DiagnosticKind::InheritedArgument {
                 arg,
