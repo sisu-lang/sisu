@@ -1,0 +1,11 @@
+class Box {
+    s: string?
+}
+
+fn main() {
+    let o: string? = "abc"
+    let c: Box? = Box(s: o)
+    print(o?.get(..) ?? "")
+    print(o?.get(..=) ?? "")
+    print(c?.s?.get(..) ?? "")
+}

@@ -1,0 +1,26 @@
+error[E0023]: `o?.get(..)` has no bounds
+ --> E0023-string-get-safe-no-bounds.sisu:8:18
+  |
+8 |     print(o?.get(..) ?? "")
+  |                  ^^ this range has no bounds
+  |
+  = help: `o?.get(..)` is `o`
+
+error[E0023]: `o?.get(..=)` has no bounds
+ --> E0023-string-get-safe-no-bounds.sisu:9:18
+  |
+9 |     print(o?.get(..=) ?? "")
+  |                  ^^^ this range has no bounds
+  |
+  = help: write `o`
+
+error[E0023]: `c?.s?.get(..)` has no bounds
+  --> E0023-string-get-safe-no-bounds.sisu:10:21
+   |
+10 |     print(c?.s?.get(..) ?? "")
+   |                     ^^ this range has no bounds
+   |
+   = help: `c?.s?.get(..)` is `c?.s`
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0023

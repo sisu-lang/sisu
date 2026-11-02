@@ -109,8 +109,7 @@ impl Checker<'_> {
         if error_for_good(range) {
             self.stamp_push(base);
             drop(self.value(base, None));
-            self.diagnostics
-                .push(self.index_outside(base, range, false));
+            self.diagnostics.push(self.index_outside(base, range, None));
             return Err(Poisoned::error());
         }
         let outer = std::mem::replace(&mut self.body.indexed, true);
@@ -171,13 +170,14 @@ impl Checker<'_> {
         }))
     }
 
-    /// `receiver.get(args)` on a string, `receiver_expr` its source: the string's substring in a
-    /// range written in the call, an `ast::ExprKind::Range`, as a `Slice` that is `safe` and has
-    /// type `string?`. An argument that is no range is E0032; `..`, `..=` and `a..=` are E0023, as
-    /// they are in an index; a wrong count is E0053; a label is E0055.
+    /// `receiver.get(args)` on a string, `receiver_expr` its source, or `receiver?.get(args)` when
+    /// `safe`: the string's substring in a range written in the call, an `ast::ExprKind::Range`,
+    /// as a `Slice` that is `safe` and has type `string?`. An argument that is no range is E0032;
+    /// `..`, `..=` and `a..=` are E0023, as they are in an index; a wrong count is E0053; a label
+    /// is E0055.
     pub(super) fn string_get(
         &mut self,
-        span: Span,
+        (span, safe): (Span, bool),
         (receiver, receiver_expr): (Checked, &ast::Expr),
         args: &[ast::Arg],
     ) -> Checked {
@@ -204,7 +204,7 @@ impl Checker<'_> {
         if error_for_good(range) {
             self.stamp_push(receiver_expr);
             self.diagnostics
-                .push(self.index_outside(receiver_expr, range, true));
+                .push(self.index_outside(receiver_expr, range, Some(safe)));
             return Err(Poisoned::error());
         }
         let sliced = self.slice_of(span, (receiver, Type::STRING), range, true);
@@ -261,13 +261,14 @@ impl Checker<'_> {
     }
 
     /// E0023 for `range`, which is an error for good (`error_for_good`) in the index of `base`, or
-    /// with `get` in the argument of its `get`.
-    fn index_outside(&self, base: &ast::Expr, range: &ast::Range, get: bool) -> Diagnostic {
+    /// with `get` in the argument of its `get`: `Some(safe)`, where `safe` says `base?.get(..)`.
+    fn index_outside(&self, base: &ast::Expr, range: &ast::Range, get: Option<bool>) -> Diagnostic {
         let text = |e: &ast::Expr| self.source.text(e.span).to_string();
         let form = match (&range.start, &range.end) {
-            (None, None) if get => RangeForm::NoBoundsGet {
+            (None, None) if let Some(safe) = get => RangeForm::NoBoundsGet {
                 base: text(base),
                 inclusive: range.inclusive,
+                safe,
             },
             (None, None) => RangeForm::NoBounds {
                 base: text(base),
@@ -305,7 +306,7 @@ impl Checker<'_> {
         // `xs[..][i]` is an element of `xs`, which E0021 helps; `xs[..]` is `xs`.
         let element_of_all = found.parent.is_some() && range.start.is_none() && !range.inclusive;
         let d = if error_for_good(range) && !element_of_all {
-            Some(self.index_outside(found.base, range, false))
+            Some(self.index_outside(found.base, range, None))
         } else {
             let place = is_place(found.base) && self.rooted(found.base);
             base_type.map(|ty| self.range_write(&found, op, (target, value), (ty, place)))

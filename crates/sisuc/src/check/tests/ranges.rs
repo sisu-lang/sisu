@@ -200,6 +200,15 @@ fn string_get_on_an_optional_string_should_be_e0062_at_the_receiver() {
     }
 }
 
+/// GIVEN `o?.get(1..2)` on a `string??`
+/// WHEN the program is checked
+/// THEN it reports E0062 at the receiver, once, and no E0023 follows at the range
+#[test]
+fn string_get_through_safe_access_on_a_nested_optional_should_be_e0062_once() {
+    let src = main_with("let o: string?? = Some(Some(\"abc\"))\n    print(o?.get(1..2) ?? \"\")");
+    codes(&src, &[(Code::MayBeNone, (3, 11))]);
+}
+
 /// GIVEN a label on the argument of a string's `get`, with a range and with a value, and through
 ///       `?.`
 /// WHEN the program is checked

@@ -2127,8 +2127,13 @@ pub(crate) enum RangeForm {
     NoEnd { range: String, start: String },
     /// `base[..]` or `base[..=]`: the whole of `base`, which is `base`.
     NoBounds { base: String, inclusive: bool },
-    /// `base.get(..)` or `base.get(..=)`, a string's `get` of its whole value.
-    NoBoundsGet { base: String, inclusive: bool },
+    /// `base.get(..)` or `base.get(..=)`, a string's `get` of its whole value; with `safe`,
+    /// `base?.get(..)`, which is `base`.
+    NoBoundsGet {
+        base: String,
+        inclusive: bool,
+        safe: bool,
+    },
 }
 
 /// Which bound of a range is missing.
@@ -2195,14 +2200,23 @@ impl RangeForm {
                     .with_label("this range has no bounds")
                     .with_help(help)
             }
-            Self::NoBoundsGet { base, inclusive } => {
+            Self::NoBoundsGet {
+                base,
+                inclusive,
+                safe,
+            } => {
                 let dots = if inclusive { "..=" } else { ".." };
-                let help = if inclusive {
-                    format!("write `Some({base})`")
+                let (call, value) = if safe {
+                    (format!("{base}?.get"), base)
                 } else {
-                    format!("`{base}.get(..)` is `Some({base})`")
+                    (format!("{base}.get"), format!("Some({base})"))
                 };
-                Diagnostic::coded(code, at, format!("`{base}.get({dots})` has no bounds"))
+                let help = if inclusive {
+                    format!("write `{value}`")
+                } else {
+                    format!("`{call}(..)` is `{value}`")
+                };
+                Diagnostic::coded(code, at, format!("`{call}({dots})` has no bounds"))
                     .with_label("this range has no bounds")
                     .with_help(help)
             }

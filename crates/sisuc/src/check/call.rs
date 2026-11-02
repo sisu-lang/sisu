@@ -625,7 +625,7 @@ impl Checker<'_> {
                 return self.array_method(span, receiver, ty, method, args);
             }
             Some(Type::STRING) => {
-                return self.string_method(span, (receiver, receiver_expr), method, args);
+                return self.string_method(span, safe, (receiver, receiver_expr), method, args);
             }
             Some(ty @ (Type::I64 | Type::F64)) => {
                 return self.number_method(span, receiver, ty, method, args);

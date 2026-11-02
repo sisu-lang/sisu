@@ -320,12 +320,13 @@ impl Checker<'_> {
     pub(super) fn string_method(
         &mut self,
         span: Span,
+        safe: bool,
         (receiver, receiver_expr): (Checked, &ast::Expr),
         method: &ast::Ident,
         args: &[ast::Arg],
     ) -> Checked {
         let (ty, node): (_, fn(Box<tir::Expr>) -> tir::ExprKind) = match method.name.as_str() {
-            "get" => return self.string_get(span, (receiver, receiver_expr), args),
+            "get" => return self.string_get((span, safe), (receiver, receiver_expr), args),
             "len" => (Type::I64, tir::ExprKind::Len),
             "chars" => (Type::array(Type::CHAR), tir::ExprKind::Chars),
             "bytes" => (Type::array(Type::U8), tir::ExprKind::Bytes),

@@ -114,7 +114,13 @@ impl Checker<'_> {
                 unwrap: UnwrapHelp::It,
             };
             self.diagnostics.push(kind.into());
-            return Err(Poisoned::error());
+            // The member is checked on the type that the `??` peeled, so that its arguments
+            // report only their own mistakes.
+            let mut inner = payload;
+            while let TypeKind::Optional(next) = inner.kind() {
+                inner = next;
+            }
+            return Err(Poisoned::typed(inner));
         }
         Ok(payload)
     }
