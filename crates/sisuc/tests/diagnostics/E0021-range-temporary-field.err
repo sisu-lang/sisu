@@ -1,26 +1,42 @@
 error[E0021]: cannot assign to this expression
-  --> E0021-range-temporary-field.sisu:16:5
+  --> E0021-range-temporary-field.sisu:23:5
    |
-16 |     outer().v[0..1] = [9]
+23 |     outer().v[0..1] = [9]
    |     ^^^^^^^^^^^^^^^ a range index gives a new value
    |
-   = help: store `outer().v` in a `let mut` variable first
+   = help: assign to each element, `outer().v[i] = ...`, in a loop
 
 error[E0021]: cannot assign to this expression
-  --> E0021-range-temporary-field.sisu:17:5
+  --> E0021-range-temporary-field.sisu:24:5
    |
-17 |     outer().inner.w[0..1] = [9]
+24 |     outer().inner.w[0..1] = [9]
    |     ^^^^^^^^^^^^^^^^^^^^^ a range index gives a new value
    |
-   = help: store `outer().inner.w` in a `let mut` variable first
+   = help: assign to each element, `outer().inner.w[i] = ...`, in a loop
 
 error[E0021]: cannot assign to this expression
-  --> E0021-range-temporary-field.sisu:18:5
+  --> E0021-range-temporary-field.sisu:25:5
    |
-18 |     all()[0].v[0..1] = [9]
+25 |     all()[0].v[0..1] = [9]
    |     ^^^^^^^^^^^^^^^^ a range index gives a new value
    |
-   = help: store `all()[0].v` in a `let mut` variable first
+   = help: assign to each element, `all()[0].v[i] = ...`, in a loop
 
-sisu: 3 errors
+error[E0021]: cannot assign to this expression
+  --> E0021-range-temporary-field.sisu:27:5
+   |
+27 |     h.get().v[0..1] = [9]
+   |     ^^^^^^^^^^^^^^^ a range index gives a new value
+   |
+   = help: assign to each element, `h.get().v[i] = ...`, in a loop
+
+error[E0021]: cannot assign to this expression
+  --> E0021-range-temporary-field.sisu:28:5
+   |
+28 |     rows()[0][0..1] = [9]
+   |     ^^^^^^^^^^^^^^^ a range index gives a new value
+   |
+   = help: store `rows()[0]` in a `let mut` variable first
+
+sisu: 5 errors
 sisu: for more on a code, run `sisu explain <code>`: E0021

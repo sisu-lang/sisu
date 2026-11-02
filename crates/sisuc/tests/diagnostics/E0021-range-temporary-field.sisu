@@ -9,6 +9,13 @@ class Outer {
 
 fn outer() -> Outer { Outer(v: [1, 2], inner: Inner(w: [3])) }
 
+class H {
+    p: Outer
+    fn get(self) -> Outer { self.p }
+}
+
+fn rows() -> [[i64]] { [[1, 2]] }
+
 fn all() -> [Outer] { [outer()] }
 
 fn main() {
@@ -16,4 +23,7 @@ fn main() {
     outer().v[0..1] = [9]
     outer().inner.w[0..1] = [9]
     all()[0].v[0..1] = [9]
+    let h = H(p: outer())
+    h.get().v[0..1] = [9]
+    rows()[0][0..1] = [9]
 }
