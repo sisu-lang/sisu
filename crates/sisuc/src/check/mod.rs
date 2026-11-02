@@ -145,6 +145,9 @@ struct Signature {
     /// Without a method's `self`.
     params: Vec<Option<Type>>,
     ret: Option<Type>,
+    /// The interface of each `any` type that the parameter and return types write, with the
+    /// span as written: the function records them as uses.
+    anys: Vec<(tir::InterfaceId, Span)>,
     /// Each parameter's type as written, when the function is not generic and the type names an
     /// alias: a mismatch shows it so.
     param_shown: Vec<Option<Rc<str>>>,
@@ -656,6 +659,9 @@ struct Checker<'src> {
     parse_errors: Vec<Span>,
     /// The body being checked.
     body: Body,
+    /// While `signature` resolves the parameter and return types: the interface of each `any`
+    /// type they write, with the span as written.
+    signature_anys: Option<Vec<(tir::InterfaceId, Span)>>,
     /// Each use of an item that a function, method or constant has, in check order.
     uses: Vec<Use>,
     /// Each binding of a function or a method that nothing reads, in check order.
@@ -1238,6 +1244,7 @@ impl<'src> Checker<'src> {
             diagnostics: Diagnostics::default(),
             parse_errors: Vec::new(),
             body: Body::default(),
+            signature_anys: None,
             uses: Vec::new(),
             pending: Vec::new(),
             instantiates: false,
@@ -1750,6 +1757,7 @@ impl Checker<'_> {
         let func = tir::FuncId(self.signatures.len());
         // A mismatch shows an alias as written only where the type is the declaration's own.
         let plain = type_params.is_empty();
+        self.signature_anys = Some(Vec::new());
         let (params, param_shown): (Vec<_>, Vec<_>) = (f.params.iter().enumerate())
             .map(|(i, p)| {
                 let from = self.queued();
@@ -1769,6 +1777,7 @@ impl Checker<'_> {
             .and_then(|ty| self.shown_text(ty, uses))
             .filter(|_| plain);
         self.keep_at(from..self.queued(), Slot::Ret(func));
+        let anys = self.signature_anys.take().unwrap_or_default();
         self.body.set_type_params(&[]);
         self.signatures.push(Signature {
             name,
@@ -1777,6 +1786,7 @@ impl Checker<'_> {
             bounds,
             params,
             ret,
+            anys,
             param_shown,
             ret_shown,
             span: f.name.span,
@@ -2085,6 +2095,7 @@ impl Checker<'_> {
     ) -> Option<tir::Function> {
         let sig = &self.signatures[id.0];
         let (name, param_types, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
+        let anys = sig.anys.clone();
         let (conformance, prelude) = (sig.conformance, sig.span.in_prelude());
         // The parameters of a method's owner: its class's, or its `extend` block's.
         let owner_params = sig.type_params.len() - sig.own;
@@ -2115,14 +2126,9 @@ impl Checker<'_> {
                     c.record(Used::Interface(bound.interface), bound.at);
                 }
             }
-            // So do the `any` types in its parameter and return types, as written.
-            for (ty, p) in param_types.iter().zip(&f.params) {
-                if let Some(ty) = *ty {
-                    c.record_anys(ty, p.ty.span);
-                }
-            }
-            if let (Some(ty), Some(written)) = (ret, &f.ret) {
-                c.record_anys(ty, written.span);
+            // So do the `any` types in its parameter and return types, each as written.
+            for (interface, at) in anys {
+                c.record(Used::Interface(interface), at);
             }
             c.body.scopes.push(FxHashMap::default());
             // `self` is a keyword, so it needs no binding: `ExprKind::SelfValue` reads local 0.
