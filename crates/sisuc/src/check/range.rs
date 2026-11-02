@@ -70,23 +70,14 @@ impl Checker<'_> {
         .into()
     }
 
-    /// E0023 for each range in the arguments of a method, which Task 5 replaces for an array's: the
-    /// first form, whichever bound is missing and whether or not the method exists. A string's
-    /// `get` takes its range (`string_get`). The other arguments
+    /// E0032 for each range in the arguments of the `get` of an array: it takes an `i64`. The
+    /// call is poisoned, so no error follows. The other arguments, and the bounds of a range,
     /// report their own mistakes.
-    pub(super) fn range_arguments(&mut self, receiver: &ast::Expr, args: &[ast::Arg]) -> Checked {
-        // A `push` has checked its receiver as a place, which waits for the `push` that is not
-        // reached.
-        drop(self.take_pushed(receiver));
+    pub(super) fn array_get_range(&mut self, args: &[ast::Arg]) -> Checked {
         for arg in args {
             if let ExprKind::Range(range) = &arg.value.kind {
-                self.diagnostics.push(
-                    DiagnosticKind::RangeOutsideFor {
-                        at: range.span,
-                        form: RangeForm::Anywhere,
-                    }
-                    .into(),
-                );
+                self.report(DiagnosticKind::ArrayGetTakesIndex { at: range.span });
+                self.bounds(range);
             } else {
                 // Only its diagnostics matter.
                 drop(self.expr(&arg.value, Some(UNKNOWN)));

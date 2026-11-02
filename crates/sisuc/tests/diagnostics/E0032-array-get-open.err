@@ -1,0 +1,10 @@
+error[E0032]: an array's `get` takes an `i64`, not a range
+ --> E0032-array-get-open.sisu:3:18
+  |
+3 |     print(xs.get(1..))
+  |                  ^^^ this is a range
+  |
+  = help: use `xs[a..b]`, which stops the program when the range is out of bounds
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

@@ -86,7 +86,7 @@ codes! {
     MainSignature = "E0029",
     UnknownType = "E0030",
     BodyHasNoValue = "E0031",
-    Mismatch | PatternMismatch | StringGetNeedsRange = "E0032",
+    Mismatch | PatternMismatch | StringGetNeedsRange | ArrayGetTakesIndex = "E0032",
     BindingNotFound = "E0033",
     DefinedTwice | InheritedRequirement = "E0034",
     ForNeedsArray = "E0035",
@@ -868,6 +868,8 @@ pub(crate) enum DiagnosticKind {
     StringIndex { at: Span },
     /// The argument at `at` of a string's `get`, which is no range written in the call.
     StringGetNeedsRange { at: Span },
+    /// The range at `at`, given to an array's `get`, which takes an `i64`.
+    ArrayGetTakesIndex { at: Span },
     /// The method `method` at `at`, called on an array of type `ty`. The prelude gives the method
     /// to the array types `targets`, and none of them is `ty`. `function` is whether the call
     /// writes the method as a function, `method(xs)`, and the label then says it is a method: it
@@ -4437,6 +4439,13 @@ impl From<DiagnosticKind> for Diagnostic {
                 Diagnostic::coded(code, at, "a string's `get` takes a range")
                     .with_label("this is not a range")
                     .with_help("write a range, such as `s.get(1..3)`")
+            }
+            DiagnosticKind::ArrayGetTakesIndex { at } => {
+                Diagnostic::coded(code, at, "an array's `get` takes an `i64`, not a range")
+                    .with_label("this is a range")
+                    .with_help(
+                        "use `xs[a..b]`, which stops the program when the range is out of bounds",
+                    )
             }
             DiagnosticKind::SumNeedsNumbers {
                 method,

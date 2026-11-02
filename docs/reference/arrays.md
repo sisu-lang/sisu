@@ -160,6 +160,9 @@ An array has these methods:
 | `xs.len()` | `i64` | The number of elements |
 | `xs.sum()` | The element type | The sum of the elements of an `[i64]` or an `[f64]` |
 | `xs.contains(x)` | `bool` | `true` when an element is equal to `x`, as `==` tells |
+| `xs.first()` | The element type, optional | The first element, or `None` when `xs` is empty |
+| `xs.last()` | The element type, optional | The last element, or `None` when `xs` is empty |
+| `xs.get(i)` | The element type, optional | The element at `i`, or `None` when `i` is outside the array |
 | `xs.push(x)` | none | Adds `x` after the last element, and writes `xs` |
 
 ```sisu
@@ -172,6 +175,8 @@ fn main() {
     print(weights.sum())         // 0.75
     print(xs.contains(4))        // true
     print(maybe.contains(None))  // true
+    print(xs.first() ?? 0)       // 3
+    print(xs.get(3) ?? -1)       // -1
 }
 ```
 
@@ -179,11 +184,13 @@ The rules:
 
 - `len` is a method, so write `xs.len()`. `xs.len` is an error ([E0057](../diagnostics/E0057.md)), and so is `len(xs)` ([E0070](../diagnostics/E0070.md)).
 - `sum` takes only an `[i64]` or an `[f64]` ([E0069](../diagnostics/E0069.md)). It adds the elements in order, and the sum of an empty array is zero.
-- The prelude writes `sum` in Sisu, in an `extend [i64]` block and an `extend [f64]` block, and `contains` in an `extend<T: Eq> [T]` block. The compiler writes `len`. A program cannot write an `extend` block for an array: only the prelude can.
+- The prelude writes `sum` in Sisu, in an `extend [i64]` block and an `extend [f64]` block, `contains` in an `extend<T: Eq> [T]` block, and `first`, `last` and `get` in an `extend<T> [T]` block. The compiler writes `len`. A program cannot write an `extend` block for an array: only the prelude can.
 - On an `[i64]`, a sum outside the range of `i64` stops the program with a panic ([Overflow](operators.md#overflow)). The panic names the line of the `.sum()` call, not a line of the prelude.
 - The argument of `contains` has the element type ([E0032](../diagnostics/E0032.md)). So `None` is valid only when the elements are optional.
 - `contains` needs `==` on the element type, so an array of objects has it only when the class conforms to `Eq`, and an array of a type parameter `T` only with the bound `T: Eq` ([E0154](../diagnostics/E0154.md)). The error stands at the call, and no line of the prelude shows in it.
 - `contains` uses `==`, so `contains(f64.nan)` is always `false` ([Types](types.md#floating-point-numbers)).
+- `first`, `last` and `get` give `None` where `xs[i]` would stop the program: `get(i)` for a negative `i` and for `i` from `xs.len()` on, and `first` and `last` for an empty array. They are the safe form of an index. On a slice they read the slice ([Range index](#range-indexes)).
+- `get` takes an `i64`, not a range. `xs.get(1..3)` is an error ([E0032](../diagnostics/E0032.md)): write `xs[1..3]`, which stops the program when the range is out of bounds.
 - `push` writes the array, as `xs[i] = x` does, so it needs a place that can change: a `let mut` variable, a `mut` field, or an element of one. A `let` variable, a parameter and a field without `mut` are errors ([E0001](../diagnostics/E0001.md)). A value that is not stored, such as `f().push(1)`, is an error too ([E0021](../diagnostics/E0021.md)).
 - `push` has no value. The argument has the element type, so `push(1)` on an `[i64?]` adds `Some(1)` ([E0032](../diagnostics/E0032.md)), and `push` takes exactly one argument ([E0053](../diagnostics/E0053.md)).
 - A `push` onto an array that another variable holds does not change that variable. Arrays are values ([Arrays are values](#arrays-are-values)).

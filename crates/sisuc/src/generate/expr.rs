@@ -88,6 +88,9 @@ pub(crate) fn arithmetic_value(ty: &Ty, op: usize, l: i64, r: i64) -> Result<i64
 const DBG_EVERY: u64 = 37;
 /// Every this many expressions, one that wants an array is a range of an array.
 const SLICE_EVERY: u64 = 200;
+/// Every this many expressions, one that an array local's element can be is that element through
+/// `first`, `last` or `get`, under a default.
+const SAFE_ELEMENT_EVERY: u64 = 11;
 /// Every this many expressions, one that wants a string is a substring.
 const SUBSTRING_EVERY: u64 = 40;
 
@@ -106,6 +109,9 @@ enum Rule {
     Name,
     /// `(v[i])` of an array local, in bounds.
     Element,
+    /// `(v.first() ?? d)`, `(v.last() ?? d)` or `(v.get(i) ?? d)` of an array local, with `i` in
+    /// bounds or not.
+    SafeElement,
     Negate,
     Not,
     Arithmetic,
@@ -303,6 +309,15 @@ impl Gen<'_> {
             } else if *ty == Ty::String && self.expressions.is_multiple_of(SUBSTRING_EVERY) {
                 rule = Rule::StrSlice;
             }
+        }
+        // On a turn of its own by count, an element comes through `first`, `last` or `get`, if no
+        // slice or substring takes the turn.
+        if !matches!(rule, Rule::Slice | Rule::StrSlice)
+            && self.nesting < MAX_NESTING
+            && self.expressions.is_multiple_of(SAFE_ELEMENT_EVERY)
+            && self.scope.vars.iter().any(|var| holds(var, ty, max))
+        {
+            rule = Rule::SafeElement;
         }
         let start = self.w.mark();
         if debugged {
@@ -569,6 +584,7 @@ impl Gen<'_> {
             Rule::Slice => self.slice(ty, max),
             Rule::StrSlice => self.substring(max),
             Rule::Element => self.element(ty, max),
+            Rule::SafeElement => self.safe_element(ty, max),
             Rule::Field => self.field(ty, max, false),
             Rule::SafeField => self.field(ty, max, true),
             Rule::SafeMethod => self.safe_method(ty, max),
@@ -961,6 +977,27 @@ impl Gen<'_> {
         let at = self.upto(len - 1);
         self.w.text(&format!("({name}[{at}])"));
         Info::of(&[], elem, false)
+    }
+
+    /// `(v.first() ?? d)`, `(v.last() ?? d)` or `(v.get(i) ?? d)` of an array local `v` whose
+    /// elements are `ty`s of at most `max`, with `i` from `-1` to two past its length: `get`
+    /// gives `None` where an index would panic, and `d` is the value then.
+    fn safe_element(&mut self, ty: &Ty, max: u64) -> Info {
+        let vars: Vec<usize> = (0..self.scope.vars.len())
+            .filter(|&v| holds(&self.scope.vars[v], ty, max))
+            .collect();
+        let pick = self.pick(vars.len());
+        let var = &self.scope.vars[vars[pick]];
+        let (name, len, elem) = (var.name.clone(), var.len, var.elem);
+        let call = match self.pick(3) {
+            0 => "first()".to_string(),
+            1 => "last()".to_string(),
+            _ => format!("get({})", self.upto(len + 2).cast_signed() - 1),
+        };
+        self.w.text(&format!("({name}.{call} ?? "));
+        let default = self.conditionally(|g| g.expr(ty, max));
+        self.w.text(")");
+        Info::of(&[default], default.size.max(elem), false)
     }
 
     /// `xs[a..b]` of an array local `xs` of type `ty`, or of a block's own local `b` that an array
@@ -2284,9 +2321,14 @@ fn safe_member(ty: &Ty) -> &Ty {
     }
 }
 
+/// Whether `var` is an array whose elements are `ty`s of at most `max`.
+fn holds(var: &Var, ty: &Ty, max: u64) -> bool {
+    matches!(&var.ty, Ty::Array(element) if **element == *ty) && var.elem <= max
+}
+
 /// Whether an index into `var` reads a `ty` of at most `max` in bounds.
 fn indexable(var: &Var, ty: &Ty, max: u64) -> bool {
-    matches!(&var.ty, Ty::Array(element) if **element == *ty) && var.len > 0 && var.elem <= max
+    holds(var, ty, max) && var.len > 0
 }
 
 /// `n` with a `_` between each group of three digits.
@@ -2307,7 +2349,8 @@ mod tests {
     use arbitrary::Unstructured;
 
     use super::{
-        Gen, MAX_BLOCKS, MAX_NESTING, MAX_SIZE, Rule, SLICE_EVERY, Ty, Var, arithmetic_value,
+        Gen, MAX_BLOCKS, MAX_NESTING, MAX_SIZE, Rule, SAFE_ELEMENT_EVERY, SLICE_EVERY, Ty, Var,
+        arithmetic_value,
     };
     use crate::generate::writer::Rewrite;
 
@@ -2467,6 +2510,39 @@ mod tests {
         let text = &g.w.out.program;
         assert_eq!(text.matches("({ ").count(), 1, "{text}");
         assert_eq!(g.blocks, MAX_BLOCKS - 1);
+    }
+
+    /// GIVEN an `[i64]` local `xs` of 3 elements in scope
+    /// WHEN the generator writes an `i64` on the turn of the safe-element rule
+    /// THEN it reads `xs` through `first`, `last` or `get` under a default
+    /// AND over many bytes of data each of the three comes up, and `get` takes an index from `-1`
+    /// to two past the length
+    #[test]
+    fn a_safe_element_should_use_first_last_or_get_with_a_default() {
+        let ty = Ty::Array(Box::new(Ty::I64));
+        let (mut first, mut last, mut gets) = (false, false, [false; 6]);
+        for byte in 0..=255_u8 {
+            let bytes: Vec<u8> = (0..32_u8)
+                .map(|i| byte.wrapping_mul(i + 1).wrapping_add(i))
+                .collect();
+            let mut g = Gen::new(&bytes);
+            g.scope
+                .vars
+                .push(Var::new("xs".to_string(), ty.clone(), false, 4, 0, 0));
+            g.scope.vars[0].len = 3;
+            g.scope.vars[0].elem = 1;
+            g.expressions = SAFE_ELEMENT_EVERY - 1;
+            g.expr(&Ty::I64, MAX_SIZE);
+            let text = &g.w.out.program;
+            assert!(text.starts_with("(xs.") && text.contains(" ?? "), "{text}");
+            first |= text.starts_with("(xs.first() ?? ");
+            last |= text.starts_with("(xs.last() ?? ");
+            for (at, seen) in (-1..=4).zip(&mut gets) {
+                *seen |= text.starts_with(&format!("(xs.get({at}) ?? "));
+            }
+        }
+        assert!(first && last, "first {first}, last {last}");
+        assert_eq!(gets, [true; 6], "an index from -1 to two past the length");
     }
 
     /// GIVEN the generator's substring rule on `string`, with no string local in scope

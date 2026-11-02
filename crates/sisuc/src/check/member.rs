@@ -2,6 +2,7 @@
 
 use rustc_hash::FxHashMap;
 
+use super::array::innermost;
 use super::call::takes_range;
 use super::expr::{if_some, local, no_member, path};
 use super::extend::{holder_of, method_holder};
@@ -116,11 +117,7 @@ impl Checker<'_> {
             self.diagnostics.push(kind.into());
             // The member is checked on the type that the `??` peeled, so that its arguments
             // report only their own mistakes.
-            let mut inner = payload;
-            while let TypeKind::Optional(next) = inner.kind() {
-                inner = next;
-            }
-            return Err(Poisoned::typed(inner));
+            return Err(Poisoned::typed(innermost(payload)));
         }
         Ok(payload)
     }

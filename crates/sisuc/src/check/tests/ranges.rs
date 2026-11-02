@@ -388,20 +388,44 @@ fn assignment_to_a_range_index_should_check_the_value() {
     );
 }
 
-/// GIVEN a range argument of a method, whichever bound is missing and whether or not the method
-///       exists
+/// GIVEN a range given to an array's `get`, whichever bound is missing
 /// WHEN the program is checked
-/// THEN it reports the first form of E0023, once, and no other error follows
+/// THEN it reports E0032 at the range, once, and not E0023 (S26)
 #[test]
-fn method_range_argument_should_be_the_first_e0023_form() {
+fn array_get_with_a_range_should_be_e0032_at_the_range() {
+    // The prelude's `get` must not answer first.
+    with_prelude();
     let rows = [
-        ("contains", "xs.contains(..)", ".."),
-        ("array get", "xs.get(0..1)", "0..1"),
-        ("array get, no bounds", "xs.get(..)", ".."),
-        ("string contains", "s.contains(1..)", "1.."),
+        ("both bounds", "xs.get(0..1)", "0..1"),
+        ("no end", "xs.get(1..)", "1.."),
+        ("no start", "xs.get(..2)", "..2"),
+        ("no bounds", "xs.get(..)", ".."),
         ("inclusive no end", "xs.get(1..=)", "1..="),
         ("second argument", "xs.get(1, ..2)", "..2"),
-        ("unknown method", "xs.nope(0..1)", "0..1"),
+        ("through safe access", "o?.get(0..1)", "0..1"),
+    ];
+    for (row, call, range) in rows {
+        let src = format!(
+            "fn main() {{\n    let xs = [1, 2]\n    let o: [i64]? = xs\n    print({call})\n}}"
+        );
+        let ds = diags(&src);
+        let [d] = ds.as_slice() else {
+            panic!("row `{row}`: {ds:?}");
+        };
+        assert_eq!(d.code(), Code::Mismatch, "row `{row}`");
+        assert_eq!(&src[d.span().range()], range, "row `{row}`");
+    }
+}
+
+/// GIVEN a range given to a method that is not an array's `get`
+/// WHEN the program is checked
+/// THEN it reports E0023 at the range, once
+#[test]
+fn method_range_argument_should_be_e0023() {
+    with_prelude();
+    let rows = [
+        ("contains", "xs.contains(..)", ".."),
+        ("no end", "xs.contains(1..)", "1.."),
     ];
     for (row, call, range) in rows {
         let src = format!(
@@ -413,6 +437,54 @@ fn method_range_argument_should_be_the_first_e0023_form() {
         };
         assert_eq!(d.code(), Code::RangeOutsideFor, "row `{row}`");
         assert_eq!(&src[d.span().range()], range, "row `{row}`");
+    }
+}
+
+/// GIVEN a range given to the `push` of an array
+/// WHEN the program is checked
+/// THEN it reports E0023 at the range, once
+#[test]
+fn push_range_argument_should_be_e0023() {
+    codes(
+        &main_with("let mut xs = [1, 2]\n    xs.push(0..1)\n    print(xs)"),
+        &[(Code::RangeOutsideFor, (3, 13))],
+    );
+}
+
+/// GIVEN a range argument of a method call that is wrong in another way
+/// WHEN the program is checked
+/// THEN the call's own error comes first, and E0023 reports the range too
+#[test]
+fn method_range_argument_should_not_hide_the_error_of_the_call() {
+    with_prelude();
+    let rows = [
+        (
+            "unknown method",
+            "xs.nope(0..1)",
+            [(Code::NoMember, (4, 14)), (Code::RangeOutsideFor, (4, 19))],
+        ),
+        (
+            "too many arguments",
+            "xs.contains(1, 0..1)",
+            [
+                (Code::ArgumentCount, (4, 11)),
+                (Code::RangeOutsideFor, (4, 26)),
+            ],
+        ),
+        (
+            "safe access on a non-optional",
+            "xs?.contains(0..1)",
+            [
+                (Code::SafeAccessNotOptional, (4, 11)),
+                (Code::RangeOutsideFor, (4, 24)),
+            ],
+        ),
+    ];
+    for (row, call, expected) in rows {
+        let src = format!(
+            "fn main() {{\n    let xs = [1, 2]\n    let s = \"abc\"\n    print({call})\n}}"
+        );
+        codes_row(row, &src, &expected);
     }
 }
 

@@ -581,16 +581,17 @@ impl Checker<'_> {
         let method = site.name;
         // The arguments are not part of the chain that an index ends; `expr` restores the flag.
         let indexed = std::mem::take(&mut self.body.indexed);
-        // A string's `get` takes its range itself, and so does the `get` of a `string?`, which
-        // is E0062 first. An array's `get` is the stopgap until Task 5; a range argument of any
-        // other method is E0023.
-        let string_get = takes_range(type_of(&receiver), method.name);
-        if !string_get
+        // A range argument is E0023 once the call is found, as it is anywhere else. A string's
+        // `get` takes its range (`string_method`), and so does the `get` of a `string?`, which is
+        // E0062 first. An array's `get` takes an `i64`, so a range is E0032 (S26), found before
+        // the lookup.
+        if method.name.as_str() == "get"
             && args
                 .iter()
                 .any(|a| matches!(a.value.kind, ExprKind::Range(_)))
+            && type_of(&receiver).is_some_and(|ty| matches!(ty.kind(), TypeKind::Array(_)))
         {
-            return self.range_arguments(receiver_expr, args);
+            return self.array_get_range(args);
         }
         let receiver = match self.generated_operator(span, receiver, site, args) {
             Ok(checked) => return checked,

@@ -1,7 +1,6 @@
 fn main() {
     let xs = [1, 2, 3]
-    let s = "abc"
-    print(xs.get(0..1))
-    print(s.contains(1..))
-    print(xs.get(..))
+    print(xs.contains(0..1))
+    print(xs.contains(1..))
+    print(xs.contains(..))
 }
