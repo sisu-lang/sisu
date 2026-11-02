@@ -31,6 +31,22 @@ const SEED_LEN: usize = 4_096;
 /// What no generated program holds, and why.
 const EXCLUDED: &[(&str, &str)] = &[
     (
+        "ast::StmtKind::LetElse",
+        "Task 4 of the let-else plan generates it",
+    ),
+    (
+        "tir::Stmt::LetElse",
+        "Task 4 of the let-else plan generates it",
+    ),
+    (
+        "tir::LetElseTest::Some",
+        "Task 4 of the let-else plan generates it",
+    ),
+    (
+        "tir::LetElseTest::Match",
+        "Task 4 of the let-else plan generates it",
+    ),
+    (
         "ast::BrokenKind::Function",
         "only an item with a syntax error is broken",
     ),
@@ -1542,6 +1558,19 @@ impl Walk {
                 name,
                 mutable,
             } => self.ast_let(mutable.is_some(), name.name.as_str(), ty.as_ref(), init),
+            ast::StmtKind::LetElse {
+                pattern,
+                value,
+                else_block,
+                ..
+            } => {
+                self.mark("ast::StmtKind::LetElse");
+                self.ast_pattern(pattern);
+                self.ast_expr(value);
+                if let Some(block) = else_block {
+                    self.ast_block(block);
+                }
+            }
             ast::StmtKind::While {
                 label, cond, body, ..
             } => self.ast_loop("while", label.as_ref(), |walk| {
@@ -2274,6 +2303,22 @@ impl Walk {
                     }
                     self.place(place);
                     self.tir_expr(value, Parent::Other);
+                }
+                tir::Stmt::LetElse {
+                    scrutinee,
+                    test,
+                    else_block,
+                } => {
+                    self.mark("tir::Stmt::LetElse");
+                    self.tir_expr(scrutinee, Parent::Other);
+                    match test {
+                        tir::LetElseTest::Some { .. } => self.mark("tir::LetElseTest::Some"),
+                        tir::LetElseTest::Match { pattern, .. } => {
+                            self.mark("tir::LetElseTest::Match");
+                            self.tir_pattern(pattern);
+                        }
+                    }
+                    self.tir_block(else_block);
                 }
                 tir::Stmt::Expr(e) => {
                     self.mark("tir::Stmt::Expr");
@@ -6654,6 +6699,14 @@ impl<'f> Lets<'f> {
                     self.expr(value);
                 }
             }
+            tir::Stmt::LetElse {
+                scrutinee,
+                else_block,
+                ..
+            } => {
+                self.expr(scrutinee);
+                self.conditionally(|walk| walk.block(else_block));
+            }
         }
     }
 
@@ -7209,7 +7262,8 @@ fn known_answers_should_be_integer() {
             tir::Stmt::Let { .. }
             | tir::Stmt::Assign { .. }
             | tir::Stmt::Append { .. }
-            | tir::Stmt::Push { .. } => None,
+            | tir::Stmt::Push { .. }
+            | tir::Stmt::LetElse { .. } => None,
         });
         let mut sites = 0;
         for e in printed.chain(main.body.value.as_deref()) {

@@ -6,7 +6,7 @@ use super::any::{AnyJoin, is_target, widen};
 use super::array::optional_array;
 use super::expr::{fits, local};
 use super::generic::Ahead;
-use super::pattern::LetPattern;
+use super::pattern::{LetPattern, LetValue};
 use super::prelude::PRELUDE;
 use super::unused_names::{Owner, Pending};
 use super::{
@@ -376,6 +376,12 @@ impl Checker<'_> {
                     init: init.map_err(|_| unit())?,
                 })
             }
+            StmtKind::LetElse {
+                mutable,
+                pattern,
+                value,
+                else_block,
+            } => self.let_else(*mutable, pattern, value, else_block.as_ref()),
             StmtKind::While {
                 label,
                 keyword,
@@ -504,6 +510,109 @@ impl Checker<'_> {
             StmtKind::Expr(e) if e.is_jump() => self.jump_expr(e).map(tir::Stmt::Expr),
             StmtKind::Expr(e) => self.expr(e, expected).map(tir::Stmt::Expr),
         }
+    }
+
+    /// `let pattern = value else { else_block }`. The value and the pattern go through the code
+    /// of `if let`. The block is checked in its own scope, before the pattern binds anything, so
+    /// it cannot read the names, and it must not finish. The names go in the enclosing scope.
+    /// A failed block or value fails the statement, but the names are bound all the same, so
+    /// the lines after it report nothing of them. Without an `else_block`, the parser reported
+    /// the pattern (`RefutablePattern`).
+    fn let_else(
+        &mut self,
+        mutable: Option<Span>,
+        pattern: &ast::Pattern,
+        value: &ast::Expr,
+        else_block: Option<&ast::Block>,
+    ) -> Result<tir::Stmt, Poisoned> {
+        let unit = || Poisoned::typed(Type::UNIT);
+        let word = Unwrap::LetElse;
+        let Some(else_block) = else_block else {
+            // Checked for its own errors. The type is unknown to the pattern, which only declares
+            // its names.
+            drop(self.value(value, None));
+            self.bind_pattern(Some(word), &LetValue::Match { ty: None }, pattern, None);
+            return Err(unit());
+        };
+        let (scrutinee, form, _) = self.let_value(word, pattern, value);
+        let block = self.block(else_block, None);
+        if let Ok(block) = &block
+            && block.ty != Type::NEVER
+        {
+            let close = else_block.span.end();
+            self.report(DiagnosticKind::LetElseCanFinish {
+                at: Span::new(close - 1, close),
+            });
+        }
+        let bound = if let (LetValue::Unwrap { name, bound }, Some(_)) = (&form, mutable) {
+            // A `let mut` owns its value and can change it.
+            LetPattern::Some {
+                bind: self.declare(name, *bound, BindingKind::Var, mutable),
+            }
+        } else {
+            let bound = self.bind_pattern(Some(word), &form, pattern, None).0;
+            self.keep_mut(mutable, pattern, &bound);
+            bound
+        };
+        if let (
+            Some(keyword),
+            LetPattern::Match {
+                pattern: Some((_, bindings)),
+            },
+        ) = (mutable, &bound)
+            && bindings.is_empty()
+        {
+            self.report(DiagnosticKind::Expected {
+                what: "a pattern".to_string(),
+                found: "`mut`".to_string(),
+                at: keyword,
+            });
+        }
+        let (Ok(scrutinee), Ok(else_block)) = (scrutinee, block) else {
+            return Err(unit());
+        };
+        let test = match bound {
+            LetPattern::Some { bind } => tir::LetElseTest::Some { bind },
+            LetPattern::Match {
+                pattern: Some((pattern, bindings)),
+            } => tir::LetElseTest::Match {
+                temp: self.fresh(scrutinee.ty),
+                pattern,
+                bindings,
+            },
+            LetPattern::Match { pattern: None } => return Err(unit()),
+        };
+        Ok(tir::Stmt::LetElse {
+            scrutinee,
+            test,
+            else_block,
+        })
+    }
+
+    /// The name that `pattern` just bound, when the `let mut` at `keyword` has it, as a `let mut`
+    /// variable. The value is an error (E0051 or E0131), so the name has no other use than to
+    /// let the lines after it report nothing of it.
+    fn keep_mut(&mut self, keyword: Option<Span>, pattern: &ast::Pattern, bound: &LetPattern) {
+        let (Some(keyword), ast::PatternKind::Name(name)) = (keyword, &pattern.kind) else {
+            return;
+        };
+        // A name that is a variant binds nothing.
+        if matches!(bound, LetPattern::Match { pattern: Some((_, bindings)) } if bindings.is_empty())
+        {
+            return;
+        }
+        let Some(binding) = self
+            .body
+            .scopes
+            .last_mut()
+            .and_then(|scope| scope.get_mut(&name.name))
+        else {
+            return;
+        };
+        binding.kind = BindingKind::Var;
+        binding.keyword = Some(keyword);
+        let local = binding.local;
+        self.body.locals[local.0].mutable = true;
     }
 
     /// `for`, lowered to a `Loop` as in the spec's table: over an array `s` through `s[i]`
@@ -1739,7 +1848,8 @@ fn stmt_type(stmt: &tir::Stmt) -> Type {
         tir::Stmt::Let { .. }
         | tir::Stmt::Assign { .. }
         | tir::Stmt::Append { .. }
-        | tir::Stmt::Push { .. } => Type::UNIT,
+        | tir::Stmt::Push { .. }
+        | tir::Stmt::LetElse { .. } => Type::UNIT,
         tir::Stmt::Expr(e) => e.ty,
     }
 }

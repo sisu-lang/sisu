@@ -219,6 +219,9 @@ codes! {
     TooManyInstances = "E0163",
     CannotBeAny = "E0164",
     AnyForm = "E0165",
+    LetElseCanFinish = "E0172",
+    LetElseValueEndsInBrace = "E0173",
+    RefutablePattern = "E0174",
     NanComparison = "W0005",
     UnreachableArm = "W0006",
     RedundantSemicolon = "W0007",
@@ -429,6 +432,12 @@ pub(crate) enum DiagnosticKind {
     },
     /// `any` at `at`, written in a way that it does not take.
     AnyForm { at: Span, form: AnyFormKind },
+    /// The `else` block of a `let ... else`, whose `}` is at `at`, which can reach its end.
+    LetElseCanFinish { at: Span },
+    /// The value at `at` of a `let ... else`, which ends in `}`.
+    LetElseValueEndsInBrace { at: Span },
+    /// The pattern at `at`, written `shown`, of a `let` that has no `else` and can fail to match.
+    RefutablePattern { at: Span, shown: String },
     /// The interface `interface`, as written after `any` at `at`, which cannot be `any`. `owner`
     /// is the interface that has the `reason`: `interface` itself, or one it inherits.
     CannotBeAny {
@@ -1613,6 +1622,7 @@ pub(crate) enum Literal {
 pub(crate) enum Unwrap {
     IfLet,
     WhileLet,
+    LetElse,
 }
 
 impl Unwrap {
@@ -1620,6 +1630,7 @@ impl Unwrap {
         match self {
             Unwrap::IfLet => "if let",
             Unwrap::WhileLet => "while let",
+            Unwrap::LetElse => "let ... else",
         }
     }
 }
@@ -3211,6 +3222,40 @@ impl From<DiagnosticKind> for Diagnostic {
                     ))
                 }
             },
+            DiagnosticKind::LetElseCanFinish { at } => Diagnostic::coded(
+                code,
+                at,
+                "the `else` block of a `let ... else` must not finish",
+            )
+            .with_label("the block can finish here")
+            .with_help("end the block with `return`, `break`, `continue` or `panic(...)`"),
+            DiagnosticKind::LetElseValueEndsInBrace { at } => Diagnostic::coded(
+                code,
+                at,
+                "the value of a `let ... else` cannot end in `}`",
+            )
+            .with_label("this ends in `}`")
+            .with_fix(Fix {
+                message: "put the value in `( )`".to_string(),
+                safe: true,
+                edits: vec![
+                    Edit {
+                        span: Span::new(at.start(), at.start()),
+                        replacement: "(".to_string(),
+                    },
+                    Edit {
+                        span: Span::new(at.end(), at.end()),
+                        replacement: ")".to_string(),
+                    },
+                ],
+            }),
+            DiagnosticKind::RefutablePattern { at, shown } => {
+                Diagnostic::coded(code, at, "this pattern can fail to match")
+                    .with_label(format!("`{shown}` may not match"))
+                    .with_help(
+                        "add an `else` block that does not finish, or use `if let` or `match`",
+                    )
+            }
             DiagnosticKind::CannotBeAny {
                 interface,
                 owner,
@@ -4998,8 +5043,12 @@ impl From<DiagnosticKind> for Diagnostic {
                 ))
             }
             DiagnosticKind::AlwaysMatches { keyword, at } => match keyword {
-                Unwrap::IfLet => Diagnostic::coded(code, at, "`if let` always matches here")
-                    .with_help("use `match`"),
+                Unwrap::IfLet | Unwrap::LetElse => Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`{}` always matches here", keyword.word()),
+                )
+                .with_help("use `match`"),
                 Unwrap::WhileLet => Diagnostic::coded(
                     code,
                     at,

@@ -1,0 +1,8 @@
+// GIVEN a `main` with `let o: i64? = None` and `let v = o else { print(v); return }`, with `v` in the `print` at 6:28
+// WHEN `sisu check` runs on it
+// THEN it reports E0033 at 6:28
+fn main() {
+    let o: i64? = None
+    let v = o else { print(v); return }
+    print(v)
+}

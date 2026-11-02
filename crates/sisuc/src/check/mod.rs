@@ -959,6 +959,10 @@ impl Body {
 /// type, which has no enum.
 // `scripts/scaling.py` reads this function's instruction count.
 #[inline(never)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one pass over the whole program, which the sweep counts as a unit"
+)]
 pub(crate) fn check<'src>(
     program: &'src ast::Program,
     prelude: &'src PreludeProgram,
@@ -1066,9 +1070,13 @@ pub(crate) fn check<'src>(
         });
     #[cfg(debug_assertions)]
     program.iter().for_each(tir::assert_exit_flags);
-    // A use of a broken item poisons without a diagnostic of its own.
+    // A use of a broken item poisons without a diagnostic of its own. A `let` with a pattern and
+    // no `else` fails its statement, and the parser reported it.
     debug_assert!(
-        program.is_some() || failed || broken,
+        program.is_some()
+            || failed
+            || broken
+            || parsed.iter().any(|d| d.severity() == Severity::Error),
         "a missing program implies an error diagnostic or a broken item or method"
     );
     (program, diagnostics)

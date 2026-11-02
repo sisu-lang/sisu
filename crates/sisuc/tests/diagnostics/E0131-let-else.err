@@ -1,0 +1,10 @@
+error[E0131]: `let ... else` always matches here
+  --> E0131-let-else.sisu:10:9
+   |
+10 |     let One(n) = v else { return }
+   |         ^^^^^^
+   |
+   = help: use `match`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0131

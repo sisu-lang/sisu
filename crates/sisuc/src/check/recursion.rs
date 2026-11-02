@@ -228,6 +228,17 @@ impl Walk {
                     let place = self.place(place, open, calls);
                     place.then(self.walk(value, open && !place.recurses, calls))
                 }
+                // The `else` block runs on a failed test only; the statements after it run on
+                // the other path.
+                tir::Stmt::LetElse {
+                    scrutinee,
+                    else_block,
+                    ..
+                } => {
+                    let first = self.walk(scrutinee, open, calls);
+                    let other = self.block(else_block, open && !first.recurses, calls);
+                    first.then(other.or(Flow::PASS))
+                }
             });
         }
         match &block.value {

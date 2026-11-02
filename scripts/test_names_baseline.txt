@@ -1312,7 +1312,6 @@ crates/sisuc/src/parser.rs::continue_takes_no_value
 crates/sisuc/src/parser.rs::crlf_end_of_line_column_matches_lf
 crates/sisuc/src/parser.rs::digits_after_a_field_dot_are_not_a_name
 crates/sisuc/src/parser.rs::doubled_semicolon_is_redundant_twice
-crates/sisuc/src/parser.rs::earliest_error_in_an_item_wins
 crates/sisuc/src/parser.rs::else_if_chain
 crates/sisuc/src/parser.rs::else_on_new_line_fix
 crates/sisuc/src/parser.rs::else_on_new_line_has_no_fix_after_anything_else
@@ -1374,7 +1373,6 @@ crates/sisuc/src/parser.rs::mut_self_fix
 crates/sisuc/src/parser.rs::mut_self_in_an_enum_is_an_unsafe_fix
 crates/sisuc/src/parser.rs::mut_self_outside_the_receiver_position
 crates/sisuc/src/parser.rs::nested_switch_calls_parse_in_linear_time
-crates/sisuc/src/parser.rs::new_tokens_are_errors_where_they_do_not_belong
 crates/sisuc/src/parser.rs::one_line_class
 crates/sisuc/src/parser.rs::opposite_comparison_directions
 crates/sisuc/src/parser.rs::optional_types

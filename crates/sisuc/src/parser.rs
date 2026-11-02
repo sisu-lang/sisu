@@ -522,6 +522,18 @@ enum RangeOp {
     Foreign { at: Span, lt: Option<Span> },
 }
 
+/// What the tokens after `let` and `mut` read as (`Parser::let_head`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LetHead {
+    /// A name, which `binding` reads, or whatever is not a pattern.
+    Name,
+    /// A pattern that is not a plain name.
+    Pattern,
+    /// `Enum.Variant` and then `=`: a pattern when an `else` follows the value, else a name
+    /// that `.` ends.
+    Qualified,
+}
+
 struct Parser<'a> {
     /// The text the token spans index.
     source: Source<'a>,
@@ -1423,10 +1435,9 @@ impl<'a> Parser<'a> {
         if let (Ok(_), None) = (&parsed, &lexed) {
             return parsed;
         }
-        let error = self
-            .specs
-            .drain(specs..)
-            .chain(lexed)
+        let error = lexed
+            .into_iter()
+            .chain(self.specs.drain(specs..))
             .chain(parsed.err())
             .reduce(earlier)
             .expect("a broken item should hold an error");
@@ -1462,8 +1473,8 @@ impl<'a> Parser<'a> {
                 self.pos = end;
                 let error = errors
                     .into_iter()
-                    .chain(self.specs.drain(specs..))
                     .chain(outside)
+                    .chain(self.specs.drain(specs..))
                     .chain(parsed.err())
                     .reduce(earlier)
                     .expect("a broken item should hold an error");
@@ -2207,7 +2218,7 @@ impl<'a> Parser<'a> {
             _ => self.loop_label(),
         };
         let kind = match self.peek().kind {
-            TokenKind::Let => self.let_stmt()?,
+            TokenKind::Let => self.let_stmt(true)?,
             TokenKind::Const => return Err(self.local_const()),
             TokenKind::While => {
                 let keyword = self.bump().span;
@@ -3278,11 +3289,28 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn let_stmt(&mut self) -> Result<StmtKind, Diagnostic> {
+    /// A `let`, or with `pattern_forms` off, the `const` that reports like one: the forms with a
+    /// pattern and an `else` are for `let` alone.
+    fn let_stmt(&mut self, pattern_forms: bool) -> Result<StmtKind, Diagnostic> {
         let base = self.depth;
         let mut reach = base;
         self.bump();
-        let mutable = self.eat(&TokenKind::Mut).map(|t| t.span);
+        let keyword = self.eat(&TokenKind::Mut);
+        let mutable = keyword.map(|t| t.span);
+        let head = if pattern_forms {
+            self.let_head()
+        } else {
+            LetHead::Name
+        };
+        match (head, keyword) {
+            (LetHead::Pattern, Some(keyword)) => {
+                return Err(self.expected_at(keyword, "a pattern"));
+            }
+            (LetHead::Pattern | LetHead::Qualified, None) => {
+                return self.let_pattern(base, reach, mutable);
+            }
+            _ => {}
+        }
         let name = self.binding()?;
         let ty = match self.eat(&TokenKind::Colon) {
             Some(_) => Some(self.child(base, &mut reach, Self::parse_type)?),
@@ -3294,17 +3322,30 @@ impl<'a> Parser<'a> {
         }
         let init = self.child(base, &mut reach, Self::expr)?;
         self.depth = reach;
+        let else_follows = pattern_forms && ty.is_none() && self.at(&TokenKind::Else);
         // Reported last, and only where the statement ends, so that the fix leaves a `let` that
         // parses: past a stray token, the block reports that token's own error.
         if let Some(keyword) = mutable
             && name.name.as_str() == "_"
-            && (self.at(&TokenKind::Newline) || self.at(&TokenKind::RBrace))
+            && (else_follows || self.at(&TokenKind::Newline) || self.at(&TokenKind::RBrace))
         {
             return Err(DiagnosticKind::MutOnUnderscore {
                 at: name.span,
                 keyword,
             }
             .into());
+        }
+        if else_follows {
+            let pattern = if name.name.as_str() == "_" {
+                PatternKind::Wild
+            } else {
+                PatternKind::Name(name.clone())
+            };
+            let pattern = Pattern {
+                kind: pattern,
+                span: name.span,
+            };
+            return self.let_else_block(base, reach, mutable, pattern, init);
         }
         Ok(StmtKind::Let {
             mutable,
@@ -3314,12 +3355,108 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// What the tokens after `let` and `mut` read as.
+    fn let_head(&self) -> LetHead {
+        use TokenKind as T;
+        let kind = |n: usize| self.tokens.get(self.pos + n).map(|t| &t.kind);
+        match self.peek().kind {
+            T::NoneKw
+            | T::Minus
+            | T::Int(_)
+            | T::Char(_)
+            | T::Str(_)
+            | T::StrHead(_)
+            | T::True
+            | T::False => LetHead::Pattern,
+            T::Ident(_) => match kind(1) {
+                Some(T::LParen | T::Pipe | T::DotDot | T::DotDotEq) => LetHead::Pattern,
+                Some(T::Dot) if matches!(kind(2), Some(T::Ident(_) | T::NoneKw)) => match kind(3) {
+                    Some(T::LParen | T::Pipe) => LetHead::Pattern,
+                    Some(T::Eq) => LetHead::Qualified,
+                    _ => LetHead::Name,
+                },
+                _ => LetHead::Name,
+            },
+            _ => LetHead::Name,
+        }
+    }
+
+    /// `pattern = value`, then `else` and a block: the rest of a `let` whose pattern is not a
+    /// plain name. Without the `else`, the pattern can fail, which the parser reports and goes on
+    /// from, so that the statement keeps its names. A qualified variant with no payload keeps the
+    /// error of a `let` that reads a name.
+    fn let_pattern(
+        &mut self,
+        base: Height,
+        mut reach: Height,
+        mutable: Option<Span>,
+    ) -> Result<StmtKind, Diagnostic> {
+        let first = self.pos;
+        let pattern = self.child(base, &mut reach, Self::pattern)?;
+        self.expect(&TokenKind::Eq)?;
+        if let Some(error) = self.label_not_on_loop() {
+            return Err(error);
+        }
+        let value = self.child(base, &mut reach, Self::expr)?;
+        self.depth = reach;
+        if self.at(&TokenKind::Else) {
+            return self.let_else_block(base, reach, mutable, pattern, value);
+        }
+        if matches!(
+            &pattern.kind,
+            PatternKind::Variant {
+                qualifier: Some(_),
+                parens: None,
+                ..
+            }
+        ) {
+            return Err(self.expected_at(&self.tokens[first + 1], &TokenKind::Eq.describe()));
+        }
+        self.specs.push(
+            DiagnosticKind::RefutablePattern {
+                at: pattern.span,
+                shown: self.source.text(pattern.span).to_string(),
+            }
+            .into(),
+        );
+        Ok(StmtKind::LetElse {
+            mutable,
+            pattern,
+            value,
+            else_block: None,
+        })
+    }
+
+    /// The `else` and the block of a `let ... else`, after its `value`. A value that ends in `}`
+    /// is an error: the `else` would read as the value's own.
+    fn let_else_block(
+        &mut self,
+        base: Height,
+        mut reach: Height,
+        mutable: Option<Span>,
+        pattern: Pattern,
+        value: Expr,
+    ) -> Result<StmtKind, Diagnostic> {
+        if self.tokens[self.pos - 1].kind == TokenKind::RBrace {
+            return Err(DiagnosticKind::LetElseValueEndsInBrace { at: value.span }.into());
+        }
+        self.bump();
+        let else_block = self.child(base, &mut reach, Self::block)?;
+        self.depth = reach;
+        Ok(StmtKind::LetElse {
+            mutable,
+            pattern,
+            value,
+            else_block: Some(else_block),
+        })
+    }
+
     /// The error of a `const` statement. It is reported only once the statement parses as a `let`
     /// and ends the line, so that its fix leaves a `let` that parses; before that, the first
     /// error in it is reported.
     fn local_const(&mut self) -> Diagnostic {
         let at = self.peek().span;
-        if let Err(error) = self.let_stmt() {
+        if let Err(error) = self.let_stmt(false) {
             return error;
         }
         if !self.at(&TokenKind::Newline) && !self.at(&TokenKind::RBrace) {
@@ -5040,20 +5177,13 @@ mod tests {
     }
 
     #[test]
-    fn new_tokens_are_errors_where_they_do_not_belong() {
+    fn new_tokens_should_be_errors_where_they_do_not_belong() {
         // `self` is an expression now, so its row hits a different error.
-        for src in [
-            "class",
-            "is",
-            "let self = 1",
-            "let None = 1",
-            ".",
-            "?",
-            "?.",
-            "??",
-        ] {
+        for src in ["class", "is", "let self = 1", ".", "?", "?.", "??"] {
             assert_eq!(expr_err(src).0, Code::Expected, "{src}");
         }
+        // `None` starts a pattern in a `let`, which can fail to match.
+        assert_eq!(expr_err("let None = 1").0, Code::RefutablePattern);
     }
 
     #[test]
@@ -6721,6 +6851,169 @@ mod tests {
         );
     }
 
+    /// Each form of `let ... else` reads the pattern as `if let` does.
+    #[test]
+    fn let_else_should_parse_each_form() {
+        let rows = [
+            (
+                "let v = o else { return }",
+                "(let-else v o (block (return)))",
+            ),
+            (
+                "let _ = o else { return }",
+                "(let-else _ o (block (return)))",
+            ),
+            (
+                "let mut n = o else { return }",
+                "(let-else mut n o (block (return)))",
+            ),
+            (
+                "let Circle(r) = s else { return 0.0 }",
+                "(let-else (Circle r) s (block (return 0.0)))",
+            ),
+            (
+                "let Circle(r) | Square(r) = s else { return 0.0 }",
+                "(let-else (| (Circle r) (Square r)) s (block (return 0.0)))",
+            ),
+            (
+                "let None = o else { return }",
+                "(let-else None o (block (return)))",
+            ),
+            (
+                "let Shape.Dot = s else { return 0 }",
+                "(let-else Shape.Dot s (block (return 0)))",
+            ),
+            (
+                "let Option.None = o else { return }",
+                "(let-else Option.None o (block (return)))",
+            ),
+            (
+                "let Shape.Dot | Shape.Line = s else { return 0 }",
+                "(let-else (| Shape.Dot Shape.Line) s (block (return 0)))",
+            ),
+        ];
+        for (src, expected) in rows {
+            assert_eq!(expr(src), expected, "{src}");
+        }
+    }
+
+    /// The `}` rule looks at the last token of the value, and only there: `)` and `]` end values
+    /// that hold a block.
+    #[test]
+    fn let_else_brace_rule_should_look_only_at_the_last_token() {
+        for src in [
+            "let v = f(if c { a } else { b }) else { return }",
+            "let v = xs[{ 0 }] else { return }",
+        ] {
+            assert!(expr(src).starts_with("(let-else v "), "{src}");
+        }
+        for (src, col) in [
+            ("let v = o ?? { p } else { return }", 21),
+            ("let Some(v) = match k { _ => o } else { return }", 27),
+            ("let v = { o } else { return }", 21),
+            ("let v = loop { break o } else { return }", 21),
+        ] {
+            assert_eq!(
+                expr_err(src),
+                (Code::LetElseValueEndsInBrace, 1, col),
+                "{src}"
+            );
+        }
+        let d = parse_diagnostic("fn main() {\n    let v = o ?? { p } else { return }\n}");
+        assert_eq!(
+            fix_edits(&d).map(|(safe, edits)| (safe, edits.len())),
+            Some((true, 2))
+        );
+        assert_eq!(
+            fixed("fn main() {\n    let v = o ?? { p } else { return }\n}"),
+            "fn main() {\n    let v = (o ?? { p }) else { return }\n}"
+        );
+    }
+
+    /// A jump with no value stops before `else`, so it is the value's last operand.
+    #[test]
+    fn let_else_should_follow_a_jump_with_no_value() {
+        assert_eq!(
+            expr("let v = o ?? return else { return }"),
+            "(let-else v (?? o (return)) (block (return)))"
+        );
+        assert_eq!(
+            expr("let v = o ?? break else { break }"),
+            "(let-else v (?? o (break)) (block (break)))"
+        );
+    }
+
+    /// A `let` with no `else` and a name parses as it did before let-else; the errors of the other
+    /// forms keep the base text, code and position.
+    #[test]
+    fn let_without_else_should_parse_as_today() {
+        for src in [
+            "let x = 1",
+            "let x: i64 = 1",
+            "let _ = f()",
+            "let mut x = 1",
+            "let x = if c { 1 } else { return 0 }",
+        ] {
+            assert!(expr(src).starts_with("(let "), "{src}");
+        }
+        for (src, code, col) in [
+            ("let = 1", Code::Expected, 17),
+            ("let loop = 1", Code::Expected, 17),
+            ("let p.x = 5", Code::Expected, 18),
+            ("let mut p.x = 5", Code::Expected, 22),
+            ("let Shape.Dot = s", Code::Expected, 22),
+            ("let 99999999999999999999 = 1", Code::IntegerTooLarge, 17),
+        ] {
+            assert_eq!(expr_err(src), (code, 1, col), "{src}");
+        }
+    }
+
+    /// A type is a non-goal: the `else` after it is a stray token, as before let-else.
+    #[test]
+    fn let_else_with_a_type_should_be_an_error() {
+        assert_eq!(
+            expr_err("let n: i64 = o else { return }"),
+            (Code::Expected, 1, 28)
+        );
+    }
+
+    /// A pattern that is not a name needs an `else`: the parser reports it and keeps the
+    /// statement, so the item still checks.
+    #[test]
+    fn let_pattern_without_else_should_be_reported_and_kept() {
+        let src = "fn main() {\n    let Some(v) = o\n    print(v)\n}";
+        let parsed = parsed(src);
+        let [d] = parsed.diagnostics.as_slice() else {
+            panic!("expected one diagnostic, got {:?}", parsed.diagnostics);
+        };
+        assert_eq!(d.code(), Code::RefutablePattern);
+        assert_eq!(line_col(src, d.span().start()), (2, 9));
+        assert!(parsed.checkable);
+        assert_eq!(parsed.program.broken, []);
+    }
+
+    /// `let mut` before a pattern that is not a name is E0011 at the `mut`; a qualified variant
+    /// with no payload keeps the error of `let mut p.x`.
+    #[test]
+    fn let_mut_before_a_pattern_should_be_an_error_at_mut() {
+        for src in [
+            "let mut Some(v) = o else { return }",
+            "let mut None = o else { return }",
+            "let mut 1 = o else { return }",
+            "let mut A(v) | B(v) = o else { return }",
+        ] {
+            assert_eq!(expr_err(src), (Code::Expected, 1, 17), "{src}");
+        }
+        assert_eq!(
+            expr_err("let mut Shape.Dot = s else { return }"),
+            (Code::Expected, 1, 26)
+        );
+        assert_eq!(
+            expr_err("let mut _ = o else { return }"),
+            (Code::MutOnUnderscore, 1, 21)
+        );
+    }
+
     #[test]
     fn let_patterns() {
         let rows = [
@@ -8284,7 +8577,7 @@ mod tests {
     }
 
     #[test]
-    fn earliest_error_in_an_item_wins() {
+    fn earliest_error_in_an_item_should_win() {
         // The parse error comes first here.
         assert_eq!(
             parse_err("fn main() {\n    let = 1 $\n}\n"),
@@ -8294,6 +8587,11 @@ mod tests {
         assert_eq!(
             parse_err("fn main() {\n    let 99999999999999999999 = 1\n}\n"),
             (Code::IntegerTooLarge, 2, 9)
+        );
+        // A literal pattern that can fail comes before the lexer's error in its own text.
+        assert_eq!(
+            parse_err("fn main() {\n    let 1__2 = 1\n}\n"),
+            (Code::RefutablePattern, 2, 9)
         );
     }
 

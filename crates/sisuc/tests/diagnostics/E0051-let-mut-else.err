@@ -1,0 +1,10 @@
+error[E0051]: `let ... else` needs an enum or an optional; this is `i64`
+ --> E0051-let-mut-else.sisu:5:17
+  |
+5 |     let mut n = 5 else { return }
+  |                 ^
+  |
+  = help: compare with `==`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0051

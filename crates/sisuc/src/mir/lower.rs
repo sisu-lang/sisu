@@ -549,6 +549,7 @@ impl<'a> Lowering<'a> {
             } => unreachable!("only a `push` should write through `Some`"),
             Stmt::Append { place, value } => self.append(place, value)?,
             Stmt::Push { place, value, span } => self.array_push(place, value, *span)?,
+            Stmt::LetElse { .. } => panic!("Stmt::LetElse lands in Task 3"),
             Stmt::Expr(e) => {
                 let value = self.into(e, None)?;
                 self.discard(value);
@@ -1674,6 +1675,7 @@ fn block_mentions(block: &Block, found: &mut Mentions) {
                 place_mentions(place, found);
                 mentions(value, found);
             }
+            Stmt::LetElse { .. } => panic!("Stmt::LetElse lands in Task 3"),
             Stmt::Expr(e) => mentions(e, found),
         }
     }

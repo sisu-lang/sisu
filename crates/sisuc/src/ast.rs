@@ -336,6 +336,16 @@ pub(crate) enum StmtKind {
         ty: Option<TypeExpr>,
         init: Expr,
     },
+    /// `let pattern = value else { else_block }`, or `let mut name = value else { ... }`.
+    /// `else_block` is `None` only after the parser reported `RefutablePattern`: the `let` has
+    /// no `else`.
+    LetElse {
+        /// The `mut` keyword of a `let mut`.
+        mutable: Option<Span>,
+        pattern: Pattern,
+        value: Expr,
+        else_block: Option<Block>,
+    },
     /// `while cond { body }`; `keyword` is the `while` token's span. Each loop's `label` is its
     /// loop label.
     While {
@@ -1125,6 +1135,19 @@ impl fmt::Display for Stmt {
                     write!(f, " {ty}")?;
                 }
                 write!(f, " {init})")
+            }
+            StmtKind::LetElse {
+                mutable,
+                pattern,
+                value,
+                else_block,
+            } => {
+                let mutable = if mutable.is_some() { "mut " } else { "" };
+                write!(f, "(let-else {mutable}{pattern} {value}")?;
+                match else_block {
+                    Some(block) => write!(f, " {block})"),
+                    None => f.write_str(")"),
+                }
             }
             StmtKind::While {
                 label, cond, body, ..
