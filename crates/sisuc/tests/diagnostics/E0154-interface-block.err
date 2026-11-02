@@ -6,6 +6,8 @@ error[E0154]: `Node` does not conform to `Same`
 ...
 17 | extend Feeder: Feed<Node> {
    |                     ^^^^
+   |
+   = help: make `Node` conform to `Same`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0154

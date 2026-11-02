@@ -1,0 +1,13 @@
+error[E0154]: `[Node]` does not conform to `Eq`
+ --> E0154-bound-part.sisu:4:10
+  |
+2 | fn need<U: Eq>(u: U) {}
+  |            -- required by this bound
+3 | fn main() {
+4 |     need([Node()])
+  |          ^^^^^^^^ `[Node]` holds `Node`, which does not conform to `Eq`
+  |
+  = help: make `Node` conform to `Eq`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154

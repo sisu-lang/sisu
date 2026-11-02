@@ -1,0 +1,5 @@
+class Node {}
+fn need<U: Eq>(u: U) {}
+fn main() {
+    need(Node())
+}

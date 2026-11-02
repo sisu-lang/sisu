@@ -1,0 +1,26 @@
+class Box<T> {
+    x: T
+}
+extend<T: Eq> Box<T> {
+    fn scale(self, k: f64) -> f64 {
+        k
+    }
+    fn put(self, k: [f64]) -> i64 {
+        0
+    }
+    fn byte(self, k: u8) -> i64 {
+        0
+    }
+}
+extend<T> Box<T> {
+    fn go(self) -> f64 {
+        scale(2)
+    }
+    fn array(self) -> i64 {
+        put([1, 2])
+    }
+    fn narrow(self) -> i64 {
+        byte(3)
+    }
+}
+fn main() {}

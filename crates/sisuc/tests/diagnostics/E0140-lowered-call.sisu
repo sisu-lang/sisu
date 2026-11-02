@@ -1,0 +1,18 @@
+// The `==` is a call of a written `eq`, which the typed tree lowered.
+class W<T> {
+    x: T
+}
+class P<T> {
+    w: T
+}
+extend<T: Eq> W<T>: Eq {
+    fn eq(self, other: Self) -> bool {
+        P(w: W(x: [self.x])) == P(w: W(x: [other.x]))
+    }
+}
+extend<T: Eq> P<T>: Eq {
+    fn eq(self, other: Self) -> bool { self.w == other.w }
+}
+fn main() {
+    print(W(x: 1) == W(x: 2))
+}

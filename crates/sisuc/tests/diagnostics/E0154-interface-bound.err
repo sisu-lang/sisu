@@ -6,6 +6,8 @@ error[E0154]: `Node` does not conform to `Same`
 ...
 13 | fn first<F: Feed<Node>>(feeder: F) -> i64 {
    |                  ^^^^
+   |
+   = help: make `Node` conform to `Same`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0154

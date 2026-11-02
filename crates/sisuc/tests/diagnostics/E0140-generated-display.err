@@ -1,0 +1,13 @@
+error[E0140]: `W<T>.to_string` instantiates itself without end
+  --> E0140-generated-display.sisu:11:11
+   |
+ 3 |     Item(T)
+   |          - the `to_string` of `Wrap` here may call `W<T>.to_string` through `Display`
+...
+11 |         "{Wrap.Item(W(x: [self.x]))}"
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^ the interpolation here
+   |
+   = help: a call through `Display` counts as reaching every conformance to `Display`. `Wrap<W<[T]>>` holds `W<[T]>`, whose argument grows
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

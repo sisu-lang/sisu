@@ -6,6 +6,8 @@ error[E0154]: `Rankine` does not conform to `Convert<Kelvin>`
 ...
 28 |     print(to_kelvin(Rankine(degrees: 491.67)).degrees)
    |                     ^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: make `Rankine` conform to `Convert<Kelvin>`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0154

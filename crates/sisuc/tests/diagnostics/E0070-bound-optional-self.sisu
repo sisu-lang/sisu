@@ -1,0 +1,14 @@
+class Node {}
+class Box<T> {
+    x: T
+}
+extend<T: Eq> Box<T> {
+    fn has(self, y: T, z: i64) -> bool {
+        self.x == y
+    }
+}
+fn main() {
+    let b: Box<Node>? = Box(x: Node())
+    print(has(b, Node(), 1))
+    print(has(b, Node(), "no"))
+}
