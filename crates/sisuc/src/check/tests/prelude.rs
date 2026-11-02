@@ -592,6 +592,10 @@ fn dbg_of_another_shape_should_keep_the_order_of_a_call() {
         ("let _ = [dbg([], 1), 1]", &[Code::PrintArgument][..]),
         ("let _ = [dbg(), 1]", &[Code::PrintArgument][..]),
         ("let _ = [dbg<i64>(1), 1]", &[Code::TypeArguments][..]),
+        (
+            "let _ = [dbg<i64>([]), 1]",
+            &[Code::TypeArguments, Code::CannotInfer][..],
+        ),
     ] {
         let src = body("", statement);
         let found: Vec<_> = diags(&src).iter().map(Diagnostic::code).collect();

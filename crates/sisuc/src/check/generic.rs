@@ -18,7 +18,7 @@ use super::{
     as_optional, built_in_type, optional_of, own_args, payload, type_of,
 };
 use crate::ast::{self, StmtKind};
-use crate::diagnostic::{ArgumentsForm, Diagnostic, MainForm, Unwrap};
+use crate::diagnostic::{ArgumentsForm, Diagnostic, Expected, MainForm, Unwrap};
 use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -2432,16 +2432,15 @@ impl Checker<'_> {
         match type_of(&checked) {
             Some(Type::UNIT | Type::NEVER) | None => checked,
             Some(ty) if !self.bind_param(call, pattern, ty, e.span) => {
-                let d = if let Some(words) = self.shape_words(call, pattern, ty) {
+                let d = if let Some(want) = self.clashing_shape(call, pattern, ty) {
                     DiagnosticKind::Mismatch {
-                        want: vec![words],
+                        want,
                         got: self.type_name(ty),
                         at: e.span,
                         source: None,
                         fix: None,
                         conversion: false,
                         layers: false,
-                        words: true,
                     }
                     .into()
                 } else {
@@ -2462,23 +2461,23 @@ impl Checker<'_> {
         }
     }
 
-    /// The outer shape of `pattern` in words, when an argument of type `ty` clashes with it and
-    /// `pattern` still names an unbound or rejected parameter of the callee: `an array`, or the
-    /// class or enum, as ``a `Box` ``. The name of the callee's parameter would mislead there,
-    /// as the arguments that come later may bind it. Another clash, or a shape that `ty` has,
+    /// The outer shape of `pattern`, when an argument of type `ty` clashes with it and
+    /// `pattern` still names an unbound or rejected parameter of the callee: an array, or the
+    /// class or enum. The name of the callee's parameter would mislead there, as the arguments
+    /// that come later may bind it. Another clash, or a shape that `ty` has,
     /// gives `None`, and the report writes the type. One walk of `pattern`, on the error path.
-    fn shape_words(&self, call: &Inference<'_>, pattern: Type, ty: Type) -> Option<String> {
-        let words = match (pattern.kind(), ty.kind()) {
+    fn clashing_shape(&self, call: &Inference<'_>, pattern: Type, ty: Type) -> Option<Expected> {
+        let shape = match (pattern.kind(), ty.kind()) {
             (TypeKind::Array(_), TypeKind::Array(_)) => return None,
-            (TypeKind::Array(_), _) => "an array".to_string(),
+            (TypeKind::Array(_), _) => Expected::Array,
             (TypeKind::Class(a, _), TypeKind::Class(b, _)) if a == b => return None,
             (TypeKind::Enum(a, _), TypeKind::Enum(b, _)) if a == b => return None,
-            (TypeKind::Class(id, _), _) => format!("a `{}`", self.head(Head::Class(id))),
-            (TypeKind::Enum(id, _), _) => format!("a `{}`", self.head(Head::Enum(id))),
+            (TypeKind::Class(id, _), _) => Expected::Named(self.head(Head::Class(id)).to_string()),
+            (TypeKind::Enum(id, _), _) => Expected::Named(self.head(Head::Enum(id)).to_string()),
             _ => return None,
         };
         // The walk comes last: only a clash of shapes pays for it.
-        call.bindings.partial(pattern).holds_hole().then_some(words)
+        call.bindings.partial(pattern).holds_hole().then_some(shape)
     }
 
     /// The elements of `e` and the element type of `pattern`, when `e` is a non-empty array

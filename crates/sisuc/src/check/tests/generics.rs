@@ -5512,15 +5512,19 @@ fn an_array_literal_should_not_make_the_call_that_holds_it_optional() {
     ]);
 }
 
-/// An element that is a call of `dbg` with two arguments does not fit its declaration, so it keeps
-/// the order of a call also when the array is the argument of a generic call: it is checked first,
-/// with no expected type, and reports its own mistakes, not a mismatch with the other element.
+/// An element that is a call of `dbg` with a type argument does not fit its declaration, so it
+/// keeps the order of a call also when the array is the argument of a generic call: it is checked
+/// first, with no expected type, and reports its own `[]` (E0050), not a mismatch with the other
+/// element.
 #[test]
 fn a_call_that_does_not_fit_should_be_checked_first_in_an_array_argument() {
     with_prelude();
     let src =
-        with_generics("fn g() {\n    take_all([dbg([], 2), 1])\n}\nfn take_all<T>(xs: [T]) {}");
-    codes(&src, &[(Code::PrintArgument, (2, 15))]);
+        with_generics("fn g() {\n    take_all([dbg<i64>([]), [1]])\n}\nfn take_all<T>(xs: [T]) {}");
+    codes(
+        &src,
+        &[(Code::TypeArguments, (2, 18)), (Code::CannotInfer, (2, 24))],
+    );
 }
 
 /// The declarations that the rows of
@@ -6288,8 +6292,9 @@ fn a_misfit_under_an_outer_generic_call_should_give_a_true_diagnostic() {
 /// An argument that is checked before its parameter is bound clashes with a shape that still
 /// names the callee's unbound parameter, as `[U]` does: the E0032 is at the argument, and the
 /// bound that fails is reported beside it. Where the shape holds no unbound parameter, or is an
-/// optional or a bare parameter, the clash is reported as before. The words of the report are
-/// pinned by the fixture `E0032-generic-shape`.
+/// optional or a bare parameter, the clash is reported as before. The rows guard these
+/// neighbours: they pass on the base too. The words of the report are pinned by the fixture
+/// `E0032-generic-shape`.
 #[test]
 fn a_clash_with_an_unbound_shape_should_report_the_argument() {
     // (the parameter list of `h`, the type of `b`, the statement, the diagnostics: code and the

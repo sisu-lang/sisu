@@ -580,22 +580,19 @@ pub(crate) enum DiagnosticKind {
         want: String,
         at: Span,
     },
-    /// A value of type `got`, at `at`, where one of the types `want` is expected; `fix` is the
+    /// A value of type `got`, at `at`, where `want` is expected; `fix` is the
     /// rewrite that would fit. `source` is the place the expectation came from, if the report
     /// points at it. `conversion` is whether the value is a conversion that can fail, whose
     /// optional stands where its payload is expected. `layers` is whether `got` is `want` with
     /// two or more `?` layers taken off: a value converts through one `?` only.
     Mismatch {
-        want: Vec<String>,
+        want: Expected,
         got: String,
         at: Span,
         source: Option<MismatchSource>,
         fix: Option<MismatchFix>,
         conversion: bool,
         layers: bool,
-        /// Whether `want` holds one entry that is words, as ``a `Box` ``, not a type: it prints
-        /// without backticks.
-        words: bool,
     },
     /// The binding `name`, at `at`, which no scope holds.
     BindingNotFound {
@@ -1909,6 +1906,27 @@ pub(crate) struct Conversion {
     pub(crate) to: &'static str,
     pub(crate) through: Option<&'static str>,
     pub(crate) operand: Span,
+}
+
+/// What a mismatch expected.
+pub(crate) enum Expected {
+    /// One of these types.
+    Types(Vec<String>),
+    /// Any array, as the outer shape of a type that still names an unbound parameter.
+    Array,
+    /// Any class or enum with this name, as `Box`, for the same reason.
+    Named(String),
+}
+
+impl Expected {
+    /// The text of the expectation: the types in backticks, or the shape in words.
+    fn text(&self) -> String {
+        match self {
+            Self::Types(types) => listed(types, "or"),
+            Self::Array => "an array".to_string(),
+            Self::Named(name) => format!("a `{name}`"),
+        }
+    }
 }
 
 /// Where a mismatch's expected type came from.
@@ -3461,9 +3479,8 @@ impl From<DiagnosticKind> for Diagnostic {
                 fix,
                 conversion,
                 layers,
-                words,
             } => {
-                let want = if words { want.concat() } else { listed(&want, "or") };
+                let want = want.text();
                 let mut d =
                     Diagnostic::coded(code, at, format!("expected {want}, found `{got}`"));
                 match source {

@@ -6,7 +6,7 @@ use super::generic::Site;
 use super::{Checked, Checker, Poisoned, UNKNOWN, payload, tail, type_of, wrap};
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
-    Definition, Diagnostic, DiagnosticKind, Literal, MismatchSource, suggestion,
+    Definition, Diagnostic, DiagnosticKind, Expected, Literal, MismatchSource, suggestion,
 };
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -438,14 +438,13 @@ impl Checker<'_> {
             Some(Type::NEVER) => return Err(Poisoned::error()),
             Some(ty) => (
                 DiagnosticKind::Mismatch {
-                    want: vec![self.want_name(span, ty)],
+                    want: Expected::Types(vec![self.want_name(span, ty)]),
                     got: "None".to_string(),
                     at: span,
                     source: self.expected_from(span),
                     fix: None,
                     conversion: false,
                     layers: false,
-                    words: false,
                 },
                 true,
             ),

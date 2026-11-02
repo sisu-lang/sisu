@@ -38,8 +38,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::ast;
 use crate::conformance::{self, StuckChoices};
 use crate::diagnostic::{
-    BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, MainForm, MismatchFix,
-    MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
+    BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, Expected, MainForm,
+    MismatchFix, MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
 };
 use crate::front_end::PreludeProgram;
 use crate::payload_limit;
@@ -2423,7 +2423,7 @@ impl Checker<'_> {
         let conversion = matches!(got.kind(), TypeKind::Optional(p) if p == want)
             && source.is_some_and(|e| self.can_fail(e));
         DiagnosticKind::Mismatch {
-            want: vec![self.want_name(span, want)],
+            want: Expected::Types(vec![self.want_name(span, want)]),
             got: self.type_name(got),
             at: span,
             source: from,
@@ -2445,7 +2445,6 @@ impl Checker<'_> {
                 }),
             conversion,
             layers: beyond_one_layer(want, got),
-            words: false,
         }
         .into()
     }

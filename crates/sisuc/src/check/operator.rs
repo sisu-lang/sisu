@@ -9,7 +9,7 @@ use super::{
     optional_of, payload, type_of, wrap,
 };
 use crate::ast::{self, CompareOp, ExprKind};
-use crate::diagnostic::{Diagnostic, DiagnosticKind, Literal, PeelIs, PeelLayers};
+use crate::diagnostic::{Diagnostic, DiagnosticKind, Expected, Literal, PeelIs, PeelLayers};
 use crate::lang::{self, Dispatch};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
@@ -567,14 +567,13 @@ impl Checker<'_> {
     /// "expected `takes`, found `got`" at `at`: the types an operator takes, `got` not among them.
     pub(super) fn takes_mismatch(&self, at: Span, takes: &[Type], got: Type) -> Diagnostic {
         DiagnosticKind::Mismatch {
-            want: takes.iter().map(|&ty| self.type_name(ty)).collect(),
+            want: Expected::Types(takes.iter().map(|&ty| self.type_name(ty)).collect()),
             got: self.type_name(got),
             at,
             source: None,
             fix: None,
             conversion: false,
             layers: false,
-            words: false,
         }
         .into()
     }

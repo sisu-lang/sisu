@@ -12,7 +12,7 @@ use super::{Checked, Checker, Poisoned, block_expr, type_of};
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::conformance::makes_group;
 use crate::diagnostic::{
-    Code, Definition, Diagnostic, DiagnosticKind, MismatchFix, MismatchSource, Operand,
+    Code, Definition, Diagnostic, DiagnosticKind, Expected, MismatchFix, MismatchSource, Operand,
     PrecisionHelp, invisible,
 };
 use crate::lexer::{TokenKind, lex};
@@ -205,7 +205,7 @@ impl Checker<'_> {
             lhs.span
         };
         DiagnosticKind::Mismatch {
-            want: vec![self.type_name(Type::STRING)],
+            want: Expected::Types(vec![self.type_name(Type::STRING)]),
             got: self.type_name(got),
             at: e.span,
             source: (beside == Some(Type::STRING)).then_some(MismatchSource::Concat(other)),
@@ -215,7 +215,6 @@ impl Checker<'_> {
             }),
             conversion: false,
             layers: false,
-            words: false,
         }
         .into()
     }
@@ -235,14 +234,13 @@ impl Checker<'_> {
                 .filter(|d| d.code() == Code::Mismatch && d.span() == e.span)
             {
                 *d = DiagnosticKind::Mismatch {
-                    want: want.clone(),
+                    want: Expected::Types(want.clone()),
                     got: got.to_string(),
                     at: e.span,
                     source: Some(MismatchSource::Concat(other.span)),
                     fix: None,
                     conversion: false,
                     layers: false,
-                    words: false,
                 }
                 .into();
             }
@@ -415,14 +413,13 @@ impl Checker<'_> {
                 }
                 [only] => self.mismatch(arg.value.span, Some(&arg.value), only, ty),
                 _ => DiagnosticKind::Mismatch {
-                    want: from.iter().map(|&ty| self.type_name(ty)).collect(),
+                    want: Expected::Types(from.iter().map(|&ty| self.type_name(ty)).collect()),
                     got: self.type_name(ty),
                     at: arg.value.span,
                     source: None,
                     fix: None,
                     conversion: false,
                     layers: false,
-                    words: false,
                 }
                 .into(),
             },
@@ -480,7 +477,7 @@ impl Checker<'_> {
             return self.mismatch(arg.span, Some(arg), want, got);
         }
         DiagnosticKind::Mismatch {
-            want: vec![self.type_name(want)],
+            want: Expected::Types(vec![self.type_name(want)]),
             got: self.type_name(got),
             at: arg.span,
             source: None,
@@ -490,7 +487,6 @@ impl Checker<'_> {
             }),
             conversion: false,
             layers: false,
-            words: false,
         }
         .into()
     }

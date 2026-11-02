@@ -18,7 +18,12 @@ fn k<U>(a: U, b: Box<U>) -> i64 {
     2
 }
 
+fn e<U>(a: U, b: Result<U, string>) -> i64 {
+    3
+}
+
 fn main() {
     print(h(5, id(true)))
     print(k(5, id(true)))
+    print(e(5, id(true)))
 }
