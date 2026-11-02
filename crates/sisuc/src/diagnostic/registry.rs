@@ -2277,9 +2277,12 @@ fn conform_help(add: Option<&AddBound>, make: Option<&str>, interface: &str) -> 
 #[derive(Clone)]
 pub(crate) struct BlockBound {
     pub(crate) interface: String,
-    pub(crate) label: Option<BoundLabel>,
+    pub(crate) label: BoundLabel,
     pub(crate) make: Option<String>,
     pub(crate) add: Option<AddBound>,
+    /// Whether the method takes the other arguments of the call. The help says to fix them when
+    /// it does not, except for the `self` form.
+    pub(crate) takes: bool,
 }
 
 /// The method of a prelude block that has the bound, and the type that stands for the block's
@@ -4086,16 +4089,24 @@ impl From<DiagnosticKind> for Diagnostic {
                 bound: Some(bound),
             } => {
                 let d = Diagnostic::coded(code, at, format!("`{name}` is a method, not a function"));
-                let d = match &bound.label {
-                    Some(label) => d.with_label(label.text("", &bound.interface)),
-                    None => d,
+                // The label always has a `need`, so `Holds`, which reads the type, does not occur.
+                let d = d.with_label(bound.label.text("", &bound.interface));
+                // The `self` form does not say that the arguments are wrong: its `safe` covers the
+                // type arguments and the labels too.
+                let (call, fix) = match receiver {
+                    MethodReceiver::SelfValue { .. } => {
+                        (format!("call `{name}` as a method of `self`"), false)
+                    }
+                    MethodReceiver::Optional { .. } => {
+                        (format!("call `{name}` with `?.`"), !bound.takes)
+                    }
+                    MethodReceiver::Argument { .. } => {
+                        (format!("call `{name}` as a method"), !bound.takes)
+                    }
                 };
-                let call = match receiver {
-                    MethodReceiver::SelfValue { .. } => format!("call `{name}` as a method of `self`"),
-                    _ => format!("call `{name}` as a method"),
-                };
+                let fix = if fix { " and fix its arguments" } else { "" };
                 match conform_help(bound.add.as_ref(), bound.make.as_deref(), &bound.interface) {
-                    Some(help) => d.with_help(format!("{help}, then {call}")),
+                    Some(help) => d.with_help(format!("{help}, then {call}{fix}")),
                     None => d,
                 }
             }

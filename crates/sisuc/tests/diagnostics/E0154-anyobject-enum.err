@@ -1,0 +1,29 @@
+error[E0154]: `Color` does not conform to `AnyObject`
+ --> E0154-anyobject-enum.sisu:5:17
+  |
+1 | interface Holder<T: AnyObject> {}
+  |                     --------- required by this bound
+...
+5 | class H: Holder<Color> {}
+  |                 ^^^^^ only classes conform to `AnyObject`
+
+error[E0154]: `Color` does not conform to `AnyObject`
+ --> E0154-anyobject-enum.sisu:8:10
+  |
+6 | fn keep<U: AnyObject>(u: U) {}
+  |            --------- required by this bound
+7 | fn main() {
+8 |     keep(Color.Red)
+  |          ^^^^^^^^^ only classes conform to `AnyObject`
+
+error[E0154]: `[Color]` does not conform to `AnyObject`
+ --> E0154-anyobject-enum.sisu:9:10
+  |
+6 | fn keep<U: AnyObject>(u: U) {}
+  |            --------- required by this bound
+...
+9 |     keep([Color.Red])
+  |          ^^^^^^^^^^^ only classes conform to `AnyObject`
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0154

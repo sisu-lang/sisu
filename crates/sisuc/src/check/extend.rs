@@ -8,7 +8,9 @@ use super::interface::Bound;
 use super::{Checker, Choices, Declared, Definition, DiagnosticKind, Holder, Symbol, UNKNOWN};
 use crate::ast;
 use crate::conformance::{bind, overlap};
-use crate::diagnostic::{BlockBound, BlockNeed, CannotExtendForm, Earlier, Owner as MethodOwner};
+use crate::diagnostic::{
+    BlockBound, BlockNeed, BoundLabel, CannotExtendForm, Earlier, Owner as MethodOwner,
+};
 use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
@@ -238,37 +240,51 @@ impl<'a> Checker<'_> {
             .expect("a block that fails its bounds should cover the receiver");
         let (i, bound) = (self.first_failed_bound(extension, stands))
             .expect("a block that fails its bounds should have a bound that fails");
-        let need = BlockNeed {
-            method: method.to_string(),
-            stands: self.type_name(stands.get()[i]),
-        };
+        let need = self.block_need(method, stands.get()[i]);
         self.check_bound_of(span, stands.get()[i], bound, stands.get(), Some(need), None);
     }
 
+    /// What a call of `method` needs of `ty`, the type that stands for a type parameter of its
+    /// block.
+    fn block_need(&self, method: &str, ty: Type) -> BlockNeed {
+        BlockNeed {
+            method: method.to_string(),
+            stands: self.type_name(ty),
+        }
+    }
+
     /// The first bound of the block of the method `func` that fails for `stands`, what the
-    /// block's type parameters stand for, as the report of a call of `method` names it. `None`
-    /// when the method has no block, or its bounds hold.
+    /// block's type parameters stand for, as the report of a call of `method` names it. `takes`
+    /// is whether the method takes the arguments of the call. `None` when the method has no
+    /// block, or its bounds hold.
     pub(super) fn method_block_bound(
         &mut self,
         func: tir::FuncId,
         stands: tir::TypeArgs,
         method: &str,
+        takes: bool,
     ) -> Option<BlockBound> {
         let extension = self.signatures[func.0].extension?;
         let (i, bound) = self.first_failed_bound(extension, stands)?;
         let ty = stands.get()[i];
         let args = self.subst_args(bound.args, stands.get());
-        let need = BlockNeed {
-            method: method.to_string(),
-            stands: self.type_name(ty),
-        };
-        let advice =
-            self.bound_advice(ty, bound.interface, args, bound.at.in_prelude(), Some(need));
+        let need = self.block_need(method, ty);
+        let advice = self.bound_advice(
+            ty,
+            bound.interface,
+            args,
+            bound.at.in_prelude(),
+            Some(need.clone()),
+        );
         Some(BlockBound {
             interface: self.bound_text(bound.interface, args),
-            label: advice.label,
+            // `AnyObject` has no label of its own, but a call of a method always names its need.
+            label: advice
+                .label
+                .unwrap_or(BoundLabel::Call { need: Some(need) }),
             make: advice.make,
             add: advice.add,
+            takes,
         })
     }
 

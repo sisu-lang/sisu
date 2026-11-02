@@ -210,7 +210,7 @@ impl Checker<'_> {
             .and_then(|ty| self.idiom_of(callee.name, ty));
         if let Some(Idiom::Method(func, owner)) = own {
             let takes = self.method_arguments(func, owner, args, first_checked);
-            let bound = self.method_block_bound(func, owner, name);
+            let bound = self.method_block_bound(func, owner, name, takes);
             self.report(DiagnosticKind::MethodAsFunction {
                 name: callee.name.to_string(),
                 at: callee.span,
@@ -346,10 +346,10 @@ impl Checker<'_> {
     ) -> (bool, Option<BlockBound>) {
         match idiom {
             Idiom::Built => (self.idiom_arguments(name, ty, rest), None),
-            Idiom::Method(func, owner) => (
-                self.method_arguments(*func, *owner, rest, None),
-                self.method_block_bound(*func, *owner, name),
-            ),
+            Idiom::Method(func, owner) => {
+                let takes = self.method_arguments(*func, *owner, rest, None);
+                (takes, self.method_block_bound(*func, *owner, name, takes))
+            }
         }
     }
 

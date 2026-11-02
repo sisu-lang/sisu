@@ -1782,17 +1782,22 @@ impl Checker<'_> {
         // A class or an enum with no conformance gets the help to write one.
         let none = matches!(leaf.kind(), TypeKind::Class(..) | TypeKind::Enum(..))
             && find(&self.conformances, interface, leaf, args).is_none();
-        let make = none.then(|| self.type_name(leaf));
+        // Only a class conforms to `AnyObject`: no help can make a class or an enum conform.
+        let class_only = interface == self.lang.any_object;
+        let make = (none && !class_only).then(|| self.type_name(leaf));
         let part_fails = leaf != ty
             && (none || matches!(leaf.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)));
         let part = part_fails.then(|| self.type_name(leaf));
         let on_call = prelude || need.is_some();
-        let label = match part {
-            _ if interface == self.lang.any_object => None,
-            Some(part) if on_call => Some(BoundLabel::Since { part, need }),
-            Some(part) => Some(BoundLabel::Holds { part }),
-            None if on_call => Some(BoundLabel::Call { need }),
-            None => None,
+        let label = if class_only {
+            None
+        } else {
+            match part {
+                Some(part) if on_call => Some(BoundLabel::Since { part, need }),
+                Some(part) => Some(BoundLabel::Holds { part }),
+                None if on_call => Some(BoundLabel::Call { need }),
+                None => None,
+            }
         };
         BoundAdvice {
             leaf,
