@@ -6050,3 +6050,181 @@ fn rejecting_the_parameters_of_failed_arguments_should_visit_each_type_once() {
     };
     assert_near_linear(visits(10), visits(20), visits(30));
 }
+
+/// The declarations of the parity tables. Each generic callee has a concrete twin of the same
+/// name length (see `CONCRETE_TWINS`), which returns `Two<i64, bool>` where it returns
+/// `Two<X, bool>`.
+const PARITY_DECLS: &str = "class Two<A, B> {\n    a: A\n    b: B\n}\n\
+    class P {\n    a: i64\n}\n\
+    fn mk2<X>() -> Two<X, bool> { panic(\"no\") }\n\
+    fn mkc() -> Two<i64, bool> { panic(\"no\") }\n\
+    fn mkq<X>(_b: bool) -> Two<X, bool> { panic(\"no\") }\n\
+    fn mkd(_b: bool) -> Two<i64, bool> { panic(\"no\") }\n\
+    fn id<T>(x: T) -> T { x }\n\
+    class O {\n    \
+        fn m<X>(self) -> Two<X, bool> { panic(\"no\") }\n    \
+        fn n(self) -> Two<i64, bool> { panic(\"no\") }\n    \
+        fn w<X>(self, _x: i64?) -> Two<X, bool> { panic(\"no\") }\n    \
+        fn v(self, _x: i64?) -> Two<i64, bool> { panic(\"no\") }\n    \
+        fn k<X>(self) -> Two<X, bool> { panic(\"no\") }\n    \
+        fn j(self) -> Two<i64, bool> { panic(\"no\") }\n\
+    }\n\
+    fn mko() -> O? { None }\n\
+    fn fi(_x: i64?) -> i64 { 0 }\n";
+
+/// Each generic callee of `PARITY_DECLS` at a call, and its concrete twin there.
+const CONCRETE_TWINS: [(&str, &str); 5] = [
+    ("mk2(", "mkc("),
+    ("mkq(", "mkd("),
+    (".m(", ".n("),
+    (".w(", ".v("),
+    (".k(", ".j("),
+];
+
+/// A row of a parity table: declarations after `PARITY_DECLS`, and the lines of `main`. The row
+/// calls generic callees of `PARITY_DECLS`; its twin calls their concrete twins.
+type ParityRow<'a> = (&'a str, &'a str);
+
+/// The program of `row`, with the generic callees, or with their concrete twins.
+fn parity_program((decls, body): ParityRow<'_>, concrete: bool) -> String {
+    let mut main = format!(
+        "{decls}fn main() {{\n    {}\n}}",
+        body.replace('\n', "\n    ")
+    );
+    if concrete {
+        for (generic, twin) in CONCRETE_TWINS {
+            main = main.replace(generic, twin);
+        }
+    }
+    format!("{PARITY_DECLS}{main}")
+}
+
+/// A diagnostic's code, its primary position and its message.
+type ParityFound = (Code, (usize, usize), String);
+
+/// Each diagnostic of `src`: its code, its place and its message. The message names `Two<X, bool>`
+/// as the concrete twin's `Two<i64, bool>`.
+fn parity_found(src: &str) -> (bool, Vec<ParityFound>) {
+    let (program, ds) = checked(src);
+    let found = ds
+        .iter()
+        .map(|d| {
+            // Only the two forms are compared, so no wording is pinned here.
+            let message = Diagnostic::message(d).replace("Two<X, bool>", "Two<i64, bool>");
+            (d.code(), at(src, d.span()), message)
+        })
+        .collect();
+    (program.is_none(), found)
+}
+
+/// The rows of `a_generic_call_that_cannot_meet_its_context_should_report_as_a_concrete_call_does`.
+const PARITY_ROWS: &[ParityRow<'static>] = &[
+    // Comparisons.
+    ("", "print(1 == mk2())"),
+    ("", "print(mk2() != 1)"),
+    ("", "print(Some(1) == mk2())"),
+    ("", "print(1 == { mk2() })"),
+    ("", "print(1 == { let _z = 1; mk2() })"),
+    ("", "print({ mk2() } == 1)"),
+    ("", "let x: i64? = None\nprint(x == { mk2() })"),
+    ("", "print(1 == if true { mk2() } else { mk2() })"),
+    ("", "print(1 == if true { 1 } else { mk2() })"),
+    ("", "print(1 == match 1 { _ => mk2() })"),
+    ("", "print(1 == (mk2()))"),
+    ("", "let o = mko()\nprint(1 == o?.m())"),
+    ("", "let b: i64 = 1 == mk2()"),
+    ("", "print(1 == mkq(2 == 3))"),
+    // Rules.
+    ("", "let y: i64 = mk2()"),
+    ("", "let y: i64? = mk2()"),
+    ("", "let y: i64? = { mk2() }"),
+    ("", "let y: i64? = if true { mk2() } else { None }"),
+    ("", "let o = mko()\nlet y: i64? = o?.m()"),
+    ("", "let o = mko()\nlet y: i64 = o?.m()"),
+    ("", "let o = mko()\nlet y: i64? = o?.w(o?.k())"),
+    ("", "print(fi(mk2()))"),
+    ("", "print(1 == fi(mk2()))"),
+    ("fn f() -> i64 { mk2() }\n", "print(f())"),
+    ("fn f() -> i64 {\n    return mk2()\n}\n", "print(f())"),
+    ("", "let mut y = 0\ny = mk2()\nprint(y)"),
+    ("", "print(P(a: mk2()).a)"),
+    ("", "let a: [i64] = [mk2()]"),
+    ("", "let s: i64? = Some(mk2())"),
+    ("", "let x: i64? = None\nlet v: i64 = x ?? mk2()"),
+];
+
+/// A generic call whose result cannot meet its context hands the type it found to the code that
+/// uses the value. That code reports what it reports for a concrete callee. So the two programs
+/// give the same codes at the same places. Only the found type differs: `Two<X, bool>` for
+/// `Two<i64, bool>`.
+#[test]
+fn a_generic_call_that_cannot_meet_its_context_should_report_as_a_concrete_call_does() {
+    with_prelude();
+    let mut differ = Vec::new();
+    for &row in PARITY_ROWS {
+        let (concrete_failed, concrete) = parity_found(&parity_program(row, true));
+        let (generic_failed, generic) = parity_found(&parity_program(row, false));
+        assert!(concrete_failed, "row `{}`: the twin should fail", row.1);
+        if (generic_failed, &generic) != (concrete_failed, &concrete) {
+            differ.push(format!(
+                "row `{}`:\n  generic  {generic:?}\n  concrete {concrete:?}",
+                row.1
+            ));
+        }
+    }
+    assert!(differ.is_empty(), "{}", differ.join("\n"));
+}
+
+/// An outer generic call binds its parameter to what an argument gives. It does not pass on a
+/// type that the argument found and could not meet its context with. So the argument's misfit
+/// reaches no code that reports it: it gives E0050 for `X` at the inner call, as the call did
+/// before it reported misfits. Or it gives the concrete twin's text.
+#[test]
+fn a_misfit_under_an_outer_generic_call_should_give_a_true_diagnostic() {
+    with_prelude();
+    let rows: &[ParityRow<'static>] = &[
+        ("", "print(1 == id(mk2()))"),
+        ("", "print(id(mk2()) == 1)"),
+        ("", "let y: i64? = id(mk2())"),
+        ("", "print(1 == id(id(mk2())))"),
+    ];
+    for &row in rows {
+        let src = parity_program(row, false);
+        let (failed, generic) = parity_found(&src);
+        let call = src.rfind("mk2()").expect("the row should call `mk2`");
+        let line = src[..call].lines().count();
+        let col = call - src[..call].rfind('\n').expect("`main` should come first");
+        let places: Vec<_> = generic.iter().map(|(code, at, _)| (*code, *at)).collect();
+        let concrete = parity_found(&parity_program(row, true)).1;
+        assert!(failed, "row `{}`", row.1);
+        assert!(
+            places == [(Code::CannotInfer, (line, col))] || generic == concrete,
+            "row `{}`: {generic:?}",
+            row.1
+        );
+    }
+}
+
+/// A misfit that reaches no code that reports it is not lost. The outer generic call drops the
+/// type that its argument found, so the inner call's E0050 is pushed when the body ends.
+#[test]
+fn a_misfit_that_no_code_reports_should_give_e0050_at_the_call() {
+    with_prelude();
+    let src = parity_program(("", "let y: i64? = id(mk2())"), false);
+    let (_, found) = parity_found(&src);
+    let codes: Vec<_> = found.iter().map(|(code, ..)| *code).collect();
+    assert_eq!(codes, [Code::CannotInfer], "{found:?}");
+}
+
+/// A call with an argument that waits for context and no failed argument rejects nothing: it
+/// visits no type.
+#[test]
+fn a_call_with_no_failed_argument_should_reject_nothing() {
+    with_prelude();
+    let src = "fn tk<T>(_x: T, _y: T?) -> i64 { 0 }\nfn none<T>() -> T? { None }\n\
+        fn main() {\n    print(tk(1, none()))\n}";
+    generic::DISTINCT.set(0);
+    let (_, ds) = checked(src);
+    assert!(ds.is_empty(), "{ds:?}");
+    assert_eq!(generic::DISTINCT.get(), 0);
+}
