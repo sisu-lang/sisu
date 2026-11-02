@@ -13,7 +13,7 @@ use crate::ast::{
     UnaryOp, Variant,
 };
 use crate::diagnostic::{
-    self, AnyFormKind, BuiltIn, ClashForm, Diagnostic, DiagnosticKind, ForeignPattern,
+    self, AnyFormKind, BuiltIn, ClashForm, Diagnostic, DiagnosticKind, ElseOf, ForeignPattern,
     ForeignRange, InterfaceBodyForm, Join, LetField, MatchIdiomForm, NestingForm, Owner, PowerFix,
     SpecForm, SpecLimit,
 };
@@ -387,6 +387,23 @@ fn parenthesised(tokens: &[Token]) -> bool {
     true
 }
 
+/// The bracket depth after a token of `kind` at bracket depth `depth`: `(`, `[`, `{` and the head
+/// of an interpolation open one level, and `)`, `]`, `}` and the tail of an interpolation close
+/// one. The middle of an interpolation closes one and opens the next, so it keeps the depth.
+/// `None` when the token closes a bracket that the scan did not open. The error-path scans of
+/// the parser share this rule.
+fn nested(kind: &TokenKind, depth: usize) -> Option<usize> {
+    match kind {
+        TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace | TokenKind::StrHead(_) => {
+            Some(depth + 1)
+        }
+        TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace | TokenKind::StrTail(_) => {
+            depth.checked_sub(1)
+        }
+        _ => Some(depth),
+    }
+}
+
 /// Whether `kind` begins a postfix link (`.`, `?.` or `[`); `postfix` and `at_min_literal`
 /// share it.
 fn starts_postfix(kind: &TokenKind) -> bool {
@@ -396,24 +413,60 @@ fn starts_postfix(kind: &TokenKind) -> bool {
     )
 }
 
-/// The `return` or `break` at the right end of `e` whose value is a block `{ ... }`: the rightmost
-/// operand, through binary operators such as `??`. A jump takes everything to its right, so in a
-/// header it takes the body block when it has no value of its own.
-fn block_taking_jump(e: &Expr) -> Option<&Expr> {
+/// The `return` or `break` at the right end of `e` whose value is a block `{ ... }` that ends at
+/// byte `end`, the end of the header: the rightmost operand, through binary operators such as
+/// `??`. A jump takes everything to its right, so in a header it takes the body block when it has
+/// no value of its own. A `)` after the block ends the jump, so the block is then no body.
+fn block_taking_jump(e: &Expr, end: usize) -> Option<&Expr> {
+    if let ExprKind::Return {
+        value: Some(value), ..
+    }
+    | ExprKind::Break {
+        value: Some(value), ..
+    } = &e.kind
+        && matches!(&value.kind, ExprKind::Block(block) if block.span.end() == end)
+    {
+        return Some(e);
+    }
+    right_operand(e).and_then(|last| block_taking_jump(last, end))
+}
+
+/// The operand at the right end of `e`: what a binary or unary operator, or a jump, takes last.
+fn right_operand(e: &Expr) -> Option<&Expr> {
     match &e.kind {
-        ExprKind::Return(Some(value))
+        ExprKind::Return {
+            value: Some(last), ..
+        }
         | ExprKind::Break {
-            value: Some(value), ..
-        } => match value.kind {
-            ExprKind::Block(_) => Some(e),
-            _ => block_taking_jump(value),
-        },
-        ExprKind::Binary { rhs: last, .. }
+            value: Some(last), ..
+        }
+        | ExprKind::Binary { rhs: last, .. }
         | ExprKind::Coalesce { rhs: last, .. }
         | ExprKind::Is { rhs: last, .. }
-        | ExprKind::Unary { operand: last, .. } => block_taking_jump(last),
-        ExprKind::Compare { operands, .. } => operands.last().and_then(block_taking_jump),
+        | ExprKind::Unary { operand: last, .. } => Some(last),
+        ExprKind::Compare { operands, .. } => operands.last(),
         _ => None,
+    }
+}
+
+/// Whether `e` ends in an `if` that has no `else` yet, so that an `else` after `e` is the `if`'s.
+/// An `else if` chain is as open as its last `if`.
+fn ends_in_open_if(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::If { else_block, .. } | ExprKind::IfLet { else_block, .. } => {
+            match else_block {
+                None => true,
+                Some(block) => match &block.stmts[..] {
+                    // The parser gives an `else if` the span of its inner `if`, and an
+                    // `else { if ... }` the span of its braces.
+                    [stmt] if stmt.span == block.span => {
+                        matches!(&stmt.kind, StmtKind::Expr(inner) if ends_in_open_if(inner))
+                    }
+                    _ => false,
+                },
+            }
+        }
+        _ => right_operand(e).is_some_and(ends_in_open_if),
     }
 }
 
@@ -2441,7 +2494,10 @@ impl<'a> Parser<'a> {
         let keyword_pos = self.pos;
         let keyword = self.bump();
         let kind = match keyword.kind {
-            TokenKind::Return => ExprKind::Return(self.jump_value(base, reach, keyword_pos)?),
+            TokenKind::Return => ExprKind::Return {
+                keyword: keyword.span,
+                value: self.jump_value(base, reach, keyword_pos)?,
+            },
             TokenKind::Break => {
                 let label = self.jump_label(false);
                 if let Some(error) = label.as_ref().and_then(|label| self.label_clash(label)) {
@@ -2449,6 +2505,7 @@ impl<'a> Parser<'a> {
                 }
                 ExprKind::Break {
                     label,
+                    keyword: keyword.span,
                     value: self.jump_value(base, reach, keyword_pos)?,
                 }
             }
@@ -2499,16 +2556,10 @@ impl<'a> Parser<'a> {
     fn brackets_closed(&self, first: usize, last: usize) -> bool {
         let mut open = 0usize;
         for token in &self.tokens[first..last] {
-            match token.kind {
-                TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => open += 1,
-                TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
-                    let Some(rest) = open.checked_sub(1) else {
-                        return false;
-                    };
-                    open = rest;
-                }
-                _ => {}
-            }
+            let Some(next) = nested(&token.kind, open) else {
+                return false;
+            };
+            open = next;
         }
         open == 0
     }
@@ -2542,17 +2593,16 @@ impl<'a> Parser<'a> {
         if self.at(&TokenKind::LBrace) {
             return Ok(());
         }
-        let Some(jump) = block_taking_jump(header) else {
+        let header_end = self.tokens[self.pos - 1].span.end();
+        let Some(jump) = block_taking_jump(header, header_end) else {
             return Ok(());
         };
-        let (name, label) = match &jump.kind {
-            ExprKind::Return(_) => ("return", None),
-            ExprKind::Break { label, .. } => ("break", label.as_ref()),
+        let (name, keyword, label) = match &jump.kind {
+            ExprKind::Return { keyword, .. } => ("return", *keyword, None),
+            ExprKind::Break { label, keyword, .. } => ("break", *keyword, label.as_ref()),
             _ => unreachable!("`block_taking_jump` should find a jump"),
         };
-        let keyword_end = jump.span.start() + name.len();
-        let end = label.map_or(keyword_end, |label| label.span.end());
-        let keyword = Span::new(jump.span.start(), keyword_end);
+        let end = label.map_or_else(|| keyword.end(), |label| label.span.end());
         Err(self.jump_takes_block(name, keyword, header.span.start(), end, loop_header))
     }
 
@@ -2592,6 +2642,19 @@ impl<'a> Parser<'a> {
     /// The `else` that starts a line, after `previous`, the statement before it. The `else` can
     /// move up to the `if` it follows when that has none, and a block or an `if` follows it.
     fn else_on_new_line(&self, previous: Option<&Stmt>) -> Diagnostic {
+        let value = previous.and_then(|stmt| match &stmt.kind {
+            StmtKind::Let { init, .. } => Some(init),
+            StmtKind::LetElse {
+                value,
+                else_block: None,
+                ..
+            } => Some(value),
+            _ => None,
+        });
+        // The `else` of a `let` value that ends in an `if` without `else` belongs to that `if`.
+        if value.is_some_and(|value| !ends_in_open_if(value)) {
+            return self.let_else_on_new_line(self.pos);
+        }
         let at = self.peek().span;
         let lacks_else = previous.is_some_and(|stmt| {
             matches!(
@@ -2620,7 +2683,35 @@ impl<'a> Parser<'a> {
             gap: Span::new(gap.start, gap.end),
             safe: self.source.slice(gap.clone()).trim().is_empty(),
         });
-        DiagnosticKind::ElseOnNewLine { at, join }.into()
+        DiagnosticKind::ElseOnNewLine {
+            at,
+            of: ElseOf::If,
+            join,
+        }
+        .into()
+    }
+
+    /// The `else` at token `else_at`, which starts a line after the value of a `let`. A `{`
+    /// follows the `else` of a `let ... else`; the join puts it after the value. A value that
+    /// ends in `}` would then read the `else` as its own (E0173), so the join is only a hint.
+    fn let_else_on_new_line(&self, else_at: usize) -> Diagnostic {
+        let at = self.tokens[else_at].span;
+        let end = self.last_code_end();
+        let ends_in_brace = self.tokens[..self.pos]
+            .iter()
+            .rfind(|t| t.kind != TokenKind::Newline)
+            .is_some_and(|t| t.kind == TokenKind::RBrace);
+        let join =
+            (self.tokens[else_at + 1].kind == TokenKind::LBrace && !ends_in_brace).then(|| Join {
+                gap: Span::new(end, at.start()),
+                safe: self.source.slice(end..at.start()).trim().is_empty(),
+            });
+        DiagnosticKind::ElseOnNewLine {
+            at,
+            of: ElseOf::Let,
+            join,
+        }
+        .into()
     }
 
     /// Where the code before the next token ends: the `}` of the statement before it.
@@ -3098,7 +3189,9 @@ impl<'a> Parser<'a> {
             return error;
         };
         let tail = match &tail.kind {
-            ExprKind::Return(Some(value)) => value.as_ref(),
+            ExprKind::Return {
+                value: Some(value), ..
+            } => value.as_ref(),
             _ => tail,
         };
         let switch = match &tail.kind {
@@ -3422,6 +3515,18 @@ impl<'a> Parser<'a> {
         if self.at(&TokenKind::Else) {
             return self.let_else_block(base, reach, mutable, pattern, value);
         }
+        // The pattern and its value, then an `else` on the next line: the `let ... else` that
+        // E0006 reports, which comes before the error of a pattern that can fail.
+        let next = self.tokens[self.pos..]
+            .iter()
+            .position(|t| t.kind != TokenKind::Newline)
+            .map(|n| self.pos + n);
+        if let Some(at) = next
+            && self.tokens[at].kind == TokenKind::Else
+            && !ends_in_open_if(&value)
+        {
+            return Err(self.let_else_on_new_line(at));
+        }
         if qualified {
             return Err(self.dot_error(first));
         }
@@ -3446,10 +3551,13 @@ impl<'a> Parser<'a> {
     fn else_in_statement(&self, first: usize) -> bool {
         let (mut depth, mut elses, mut ifs) = (0_usize, 0_usize, 0_usize);
         for token in &self.tokens[first..] {
+            // A closing bracket at the statement's own level ends the statement.
+            let Some(next) = nested(&token.kind, depth) else {
+                break;
+            };
+            depth = next;
             match token.kind {
-                TokenKind::LBrace => depth += 1,
-                TokenKind::RBrace | TokenKind::Newline | TokenKind::Eof if depth == 0 => break,
-                TokenKind::RBrace => depth -= 1,
+                TokenKind::Newline | TokenKind::Eof if depth == 0 => break,
                 TokenKind::Else if depth == 0 => elses += 1,
                 TokenKind::If if depth == 0 => ifs += 1,
                 _ => {}
@@ -4907,7 +5015,7 @@ mod tests {
         assert!(
             matches!(
                 &rhs.kind,
-                ExprKind::Break { label: Some(label), value: Some(value) }
+                ExprKind::Break { label: Some(label), value: Some(value), .. }
                     if label.name.as_str() == "outer" && matches!(value.kind, ExprKind::Int { value: 2, .. })
             ),
             "{rhs:?}"
@@ -4951,7 +5059,7 @@ mod tests {
                     matches!(
                         stmt.kind,
                         StmtKind::Expr(Expr {
-                            kind: ExprKind::Return(None),
+                            kind: ExprKind::Return { value: None, .. },
                             ..
                         })
                     ),

@@ -2796,7 +2796,7 @@ impl Checker<'_> {
                 else_block: None, ..
             }
             | K::Loop { .. }
-            | K::Return(_)
+            | K::Return { .. }
             | K::Break { .. }
             | K::Continue { .. } => Ranked::CONCRETE,
         }

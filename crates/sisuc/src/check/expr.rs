@@ -250,7 +250,7 @@ impl Checker<'_> {
                 keyword,
                 body,
             } => self.loop_expr(e.span, (*keyword, label.as_ref()), body, expected),
-            ExprKind::Return(_) | ExprKind::Break { .. } | ExprKind::Continue { .. } => {
+            ExprKind::Return { .. } | ExprKind::Break { .. } | ExprKind::Continue { .. } => {
                 failed_jump(self.jump_expr(e))
             }
             ExprKind::Block(block) => {
@@ -271,8 +271,8 @@ impl Checker<'_> {
     /// The `return`, `break` or `continue` `e`, of type `never` even when it fails.
     pub(super) fn jump_expr(&mut self, e: &ast::Expr) -> Checked {
         match &e.kind {
-            ExprKind::Return(value) => self.return_expr(e.span, value.as_deref()),
-            ExprKind::Break { label, value } => {
+            ExprKind::Return { value, .. } => self.return_expr(e.span, value.as_deref()),
+            ExprKind::Break { label, value, .. } => {
                 self.jump(e.span, "break", label.as_ref(), value.as_deref())
             }
             ExprKind::Continue { label } => self.jump(e.span, "continue", label.as_ref(), None),

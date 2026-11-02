@@ -549,7 +549,7 @@ fn single_term(e: &ast::Expr) -> bool {
         // A jump has no value to convert either.
         ExprKind::Is { .. }
         | ExprKind::Compare { .. }
-        | ExprKind::Return(_)
+        | ExprKind::Return { .. }
         | ExprKind::Break { .. }
         | ExprKind::Continue { .. } => false,
         ExprKind::Unary { operand, .. } => e.span.end() != operand.span.end(),

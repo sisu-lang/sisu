@@ -1412,7 +1412,10 @@ impl Walk {
                 && int(rhs) == Some(0)
                 && let [jump] = &then_block.stmts[..]
                 && let ast::StmtKind::Expr(ast::Expr {
-                    kind: ast::ExprKind::Break { label: None, value },
+                    kind:
+                        ast::ExprKind::Break {
+                            label: None, value, ..
+                        },
                     ..
                 }) = &jump.kind
             {
@@ -1465,7 +1468,7 @@ impl Walk {
             return;
         };
         self.mark(match &last.kind {
-            ast::ExprKind::Return(_) => "let-else block return",
+            ast::ExprKind::Return { .. } => "let-else block return",
             ast::ExprKind::Break { .. } => "let-else block break",
             ast::ExprKind::Continue { .. } => "let-else block continue",
             ast::ExprKind::If { .. } => "let-else block if",
@@ -1480,7 +1483,7 @@ impl Walk {
     /// Marks a jump on the right of `??`, and whether it names a loop label.
     fn jump_operand(&mut self, rhs: &ast::Expr) {
         let label = match &rhs.kind {
-            ast::ExprKind::Return(_) => {
+            ast::ExprKind::Return { .. } => {
                 self.mark("?? return");
                 return;
             }
@@ -1991,13 +1994,13 @@ impl Walk {
                 }
                 self.ast_loop("loop", label.as_ref(), |walk| walk.ast_block(body));
             }
-            ast::ExprKind::Return(value) => {
+            ast::ExprKind::Return { value, .. } => {
                 self.mark("ast::ExprKind::Return");
                 if let Some(value) = value {
                     self.ast_expr(value);
                 }
             }
-            ast::ExprKind::Break { label, value } => {
+            ast::ExprKind::Break { label, value, .. } => {
                 self.mark("ast::ExprKind::Break");
                 self.jump_label("break", label.as_ref());
                 if let Some(value) = value {
@@ -2355,6 +2358,8 @@ impl Walk {
                     match scrutinee.ty.kind() {
                         TypeKind::Optional(_) => self.mark("let-else on Optional"),
                         TypeKind::Enum(..) => self.mark("let-else on Enum"),
+                        // `check::pattern::let_value` owns the rule that the value is an
+                        // optional or an enum.
                         _ => {}
                     }
                     self.tir_expr(scrutinee, Parent::Other);

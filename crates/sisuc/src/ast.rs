@@ -411,7 +411,7 @@ impl Expr {
     pub(crate) fn is_jump(&self) -> bool {
         matches!(
             self.kind,
-            ExprKind::Return(_) | ExprKind::Break { .. } | ExprKind::Continue { .. }
+            ExprKind::Return { .. } | ExprKind::Break { .. } | ExprKind::Continue { .. }
         )
     }
 }
@@ -545,10 +545,17 @@ pub(crate) enum ExprKind {
     /// `{ ... }` where an expression belongs: its value is its last expression.
     Block(Block),
     /// `return`, or `return value`. Like `Break` and `Continue`, it has the type `never`.
-    Return(Option<Box<Expr>>),
-    /// `break`, or `break value`, which only a `loop` takes.
+    /// `keyword` is the `return` token's span, which parentheses around the expression do not
+    /// widen.
+    Return {
+        keyword: Span,
+        value: Option<Box<Expr>>,
+    },
+    /// `break`, or `break value`, which only a `loop` takes. `keyword` is the `break` token's
+    /// span, which parentheses around the expression do not widen.
     Break {
         label: Option<Ident>,
+        keyword: Span,
         value: Option<Box<Expr>>,
     },
     Continue {
@@ -1314,12 +1321,15 @@ impl fmt::Display for Expr {
                 f.write_str(")")
             }
             ExprKind::Loop { label, body, .. } => write!(f, "(loop{} {body})", Label(label)),
-            ExprKind::Return(None) => f.write_str("(return)"),
-            ExprKind::Return(Some(e)) => write!(f, "(return {e})"),
-            ExprKind::Break { label, value: None } => write!(f, "(break{})", Label(label)),
+            ExprKind::Return { value: None, .. } => f.write_str("(return)"),
+            ExprKind::Return { value: Some(e), .. } => write!(f, "(return {e})"),
+            ExprKind::Break {
+                label, value: None, ..
+            } => write!(f, "(break{})", Label(label)),
             ExprKind::Break {
                 label,
                 value: Some(value),
+                ..
             } => write!(f, "(break{} {value})", Label(label)),
             ExprKind::Continue { label } => write!(f, "(continue{})", Label(label)),
             ExprKind::Block(block) => write!(f, "{block}"),
@@ -1469,10 +1479,14 @@ mod tests {
                         op: UnaryOp::Not,
                         operand: Box::new(expr(ExprKind::Bool(true))),
                     })),
-                    then_block: block(vec![stmt(StmtKind::Expr(expr(ExprKind::Return(None))))]),
-                    else_block: Some(block(vec![stmt(StmtKind::Expr(expr(ExprKind::Return(
-                        Some(Box::new(cmp)),
-                    ))))])),
+                    then_block: block(vec![stmt(StmtKind::Expr(expr(ExprKind::Return {
+                        keyword: Span::new(0, 0),
+                        value: None,
+                    })))]),
+                    else_block: Some(block(vec![stmt(StmtKind::Expr(expr(ExprKind::Return {
+                        keyword: Span::new(0, 0),
+                        value: Some(Box::new(cmp)),
+                    })))])),
                 }))),
             ]),
         );

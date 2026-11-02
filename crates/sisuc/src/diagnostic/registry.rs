@@ -306,8 +306,13 @@ pub(crate) enum DiagnosticKind {
     BraceOnNewLine { at: Span, join: Option<Join> },
     /// A `[` at `at` that starts a line inside brackets, after an expression.
     BracketOnNewLine { at: Span },
-    /// An `else` at `at` that starts a line; `join`, when a `}` ends the line above, moves it up.
-    ElseOnNewLine { at: Span, join: Option<Join> },
+    /// An `else` at `at` that starts a line; `of` is what the `else` should follow, and `join`,
+    /// when the line above can take it, moves it up.
+    ElseOnNewLine {
+        at: Span,
+        of: ElseOf,
+        join: Option<Join>,
+    },
     /// A closing `bracket` at `at` with no match; `opened` is the bracket that is open instead.
     UnexpectedClosingBracket {
         bracket: char,
@@ -2027,6 +2032,15 @@ pub(crate) struct Join {
     pub(crate) safe: bool,
 }
 
+/// What an `else` at the start of a line should follow (E0006).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ElseOf {
+    /// The `}` that closes an `if`.
+    If,
+    /// The value of a `let`, in `let pattern = value else { ... }`.
+    Let,
+}
+
 /// What a comma follows, in a list that puts each on its own line.
 #[derive(Clone, Copy)]
 pub(crate) enum Member {
@@ -2525,18 +2539,22 @@ impl From<DiagnosticKind> for Diagnostic {
                 Diagnostic::coded(code, at, "`[` cannot start a line here")
                     .with_help("add a comma, or put `[` on the line of its array")
             }
-            DiagnosticKind::ElseOnNewLine { at, join } => {
-                let d = Diagnostic::coded(
-                    code,
-                    at,
-                    "`else` must be on the same line as the closing `}`",
-                );
-                match join {
-                    Some(join) => d.with_fix(join_fix(
+            DiagnosticKind::ElseOnNewLine { at, of, join } => {
+                let (message, fix, unsafe_fix) = match of {
+                    ElseOf::If => (
+                        "`else` must be on the same line as the closing `}`",
                         "move `else` after the `}`",
                         "if this `else` belongs to the `if` above, move it after the `}`",
-                        join,
-                    )),
+                    ),
+                    ElseOf::Let => (
+                        "`else` must be on the same line as the value of the `let`",
+                        "move `else` after the value",
+                        "if this `else` belongs to the `let` above, move it after the value",
+                    ),
+                };
+                let d = Diagnostic::coded(code, at, message);
+                match join {
+                    Some(join) => d.with_fix(join_fix(fix, unsafe_fix, join)),
                     None => d,
                 }
             }

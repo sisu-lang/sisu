@@ -129,10 +129,10 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
     g.ru = Unstructured::new(&reversed);
     g.au = Unstructured::new(&rotated);
     g.cu = Unstructured::new(&mixed);
-    // The choice of whether the program leaves with `let ... else` and `??` reads every byte, so
-    // that it shares no bits with an early choice, and one program in eight does: the others are
-    // the same as they were. The value 5 keeps the seeds that the tests pin outside the gate, and
-    // the weight of the `??` jump in `coalesce` is tuned to the same seeds.
+    // One program in eight leaves with `let ... else` and `??`. The choice reads every byte, so
+    // that it shares no bits with an early choice. The other programs are the same as they were.
+    // The value 5 keeps the seeds that the tests pin outside the gate. The weight of the `??`
+    // jump in `coalesce` is tuned to the same seeds.
     let fold = data.iter().fold(0, |fold, byte| fold ^ byte);
     g.leaves = fold % 8 == 5;
     let (cost, known, expected) = g.program();
