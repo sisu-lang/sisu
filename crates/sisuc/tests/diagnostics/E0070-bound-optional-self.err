@@ -1,0 +1,18 @@
+error[E0070]: `has` is a method, not a function
+  --> E0070-bound-optional-self.sisu:12:11
+   |
+12 |     print(has(b, Node(), 1))
+   |           ^^^ `has` needs `Node: Eq`
+   |
+   = help: make `Node` conform to `Eq`, then call `has` with `?.`
+
+error[E0070]: `has` is a method, not a function
+  --> E0070-bound-optional-self.sisu:13:11
+   |
+13 |     print(has(b, Node(), "no"))
+   |           ^^^ `has` needs `Node: Eq`
+   |
+   = help: make `Node` conform to `Eq`, then call `has` with `?.` and fix its arguments
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0070

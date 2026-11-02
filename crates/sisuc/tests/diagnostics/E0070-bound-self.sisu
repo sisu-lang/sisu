@@ -1,0 +1,17 @@
+class Node {
+    v: i64
+}
+class Box<T> {
+    x: T
+}
+extend<T: Eq> Box<T> {
+    fn has(self, y: T) -> bool {
+        self.x == y
+    }
+}
+extend<T> Box<T> {
+    fn probe(self, y: T) -> bool {
+        has(y)
+    }
+}
+fn main() {}

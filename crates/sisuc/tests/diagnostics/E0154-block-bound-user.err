@@ -5,7 +5,9 @@ error[E0154]: `Node` does not conform to `Eq`
    |           -- required by this bound
 ...
 14 |     box.has(n)
-   |     ^^^^^^^^^^
+   |     ^^^^^^^^^^ `has` needs `Node: Eq`
+   |
+   = help: make `Node` conform to `Eq`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0154

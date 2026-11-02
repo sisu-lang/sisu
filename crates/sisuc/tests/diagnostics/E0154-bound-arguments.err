@@ -6,6 +6,8 @@ error[E0154]: `Node` does not conform to `Convert<i64>`
 ...
 14 |     print(show(Node(id: 1)))
    |                ^^^^^^^^^^^
+   |
+   = help: make `Node` conform to `Convert<i64>`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0154

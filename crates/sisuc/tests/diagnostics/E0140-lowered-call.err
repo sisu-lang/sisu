@@ -1,0 +1,13 @@
+error[E0140]: `W<T>.eq` instantiates itself without end
+  --> E0140-lowered-call.sisu:10:9
+   |
+10 |         P(w: W(x: [self.x])) == P(w: W(x: [other.x]))
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `==` here
+...
+14 |     fn eq(self, other: Self) -> bool { self.w == other.w }
+   |                                        ----------------- `==` here may call `W<T>.eq` through `Eq`
+   |
+   = help: `==` is a call through `Eq`, and a call through `Eq` counts as reaching every conformance to `Eq`. `P<W<[T]>>` holds `W<[T]>`, whose argument grows
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140
