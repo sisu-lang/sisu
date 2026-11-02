@@ -128,6 +128,21 @@ enum Stage {
 /// four times that and more. The pages are mapped but touched only when used.
 pub const STACK_SIZE: usize = 64 << 20;
 
+/// Runs `f` on a thread with the stack of the compiler, as `main` does. A debug build of the
+/// parser uses about 30 KiB of stack for each level of nesting, so a test that parses a program
+/// some 60 levels deep overflows the 2 MiB stack of a test thread, first on ARM64.
+#[cfg(test)]
+pub(crate) fn on_compiler_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(STACK_SIZE)
+            .spawn_scoped(scope, f)
+            .expect("the thread should start")
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    })
+}
+
 /// Parses the arguments, does what they ask for, and reports.
 pub fn cli() -> ExitCode {
     let (format, mode) = match args::parse(&std::env::args_os().collect::<Vec<_>>()) {
