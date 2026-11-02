@@ -348,11 +348,12 @@ pub(crate) enum DiagnosticKind {
     },
     /// The `return` or `break` `keyword` at `at`, at the end of the header of an `if`, a `while`,
     /// a `for` or a `match`, which took the `{ ... }` of the body as its value. `grouped` is the
-    /// header through the jump.
+    /// header through the jump, for the help that puts it in `( )`; it is `None` for a `break`
+    /// in the header of a loop, where that help would be E0082.
     JumpTakesBlock {
         keyword: &'static str,
         at: Span,
-        grouped: String,
+        grouped: Option<String>,
     },
     /// A `var` at `at`, on a field or on a binding.
     Var { at: Span, field: bool },
@@ -2619,14 +2620,19 @@ impl From<DiagnosticKind> for Diagnostic {
                 keyword,
                 at,
                 grouped,
-            } => Diagnostic::coded(
-                code,
-                at,
-                format!("`{keyword}` takes the `{{ ... }}` after it as its value"),
-            )
-            .with_help(format!(
-                "to keep the block as the body, put the jump in `( )`: `({grouped})`"
-            )),
+            } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`{keyword}` takes the `{{ ... }}` after it as its value"),
+                );
+                match grouped {
+                    Some(grouped) => d.with_help(format!(
+                        "to keep the block as the body, put the jump in `( )`: `({grouped})`"
+                    )),
+                    None => d,
+                }
+            }
             DiagnosticKind::Var { at, field } => {
                 let d = Diagnostic::coded(code, at, "there is no `var` in Sisu");
                 if field {

@@ -2176,7 +2176,7 @@ impl<'a> Parser<'a> {
             TokenKind::While => {
                 let keyword = self.bump().span;
                 if let Some((pattern, value)) = self.child(base, &mut reach, Self::let_binding)? {
-                    self.header_body(&value)?;
+                    self.header_body(&value, true)?;
                     StmtKind::WhileLet {
                         label,
                         keyword,
@@ -2186,7 +2186,7 @@ impl<'a> Parser<'a> {
                     }
                 } else {
                     let cond = self.child(base, &mut reach, Self::expr)?;
-                    self.header_body(&cond)?;
+                    self.header_body(&cond, true)?;
                     StmtKind::While {
                         label,
                         keyword,
@@ -2219,9 +2219,12 @@ impl<'a> Parser<'a> {
                         inclusive: matches!(op, RangeOp::Inclusive),
                     },
                 };
-                self.header_body(match &source {
-                    ForSource::Array(e) | ForSource::Range { end: e, .. } => e,
-                })?;
+                self.header_body(
+                    match &source {
+                        ForSource::Array(e) | ForSource::Range { end: e, .. } => e,
+                    },
+                    true,
+                )?;
                 StmtKind::For {
                     label,
                     keyword,
@@ -2438,7 +2441,7 @@ impl<'a> Parser<'a> {
                         "break"
                     };
                     let header = self.tokens[first].span.start();
-                    Err(self.jump_takes_block(name, keyword.span, header, end))
+                    Err(self.jump_takes_block(name, keyword.span, header, end, false))
                 }
                 _ => Err(error),
             },
@@ -2465,18 +2468,22 @@ impl<'a> Parser<'a> {
 
     /// The error of the `return` or `break` `name` at `keyword`, whose value is the `{ ... }`
     /// that should be the body of the header that starts at byte `header`. The header through
-    /// the jump, which ends at byte `end`, goes in `( )` to keep the block as the body.
+    /// the jump, which ends at byte `end`, goes in `( )` to keep the block as the body. In the
+    /// header of a loop (`loop_header`) that is no help for a `break`: it is E0082 there.
     fn jump_takes_block(
         &self,
         name: &'static str,
         keyword: Span,
         header: usize,
         end: usize,
+        loop_header: bool,
     ) -> Diagnostic {
+        let grouped = (name == "return" || !loop_header)
+            .then(|| self.source.text(Span::new(header, end)).to_string());
         DiagnosticKind::JumpTakesBlock {
             keyword: name,
             at: keyword,
-            grouped: self.source.text(Span::new(header, end)).to_string(),
+            grouped,
         }
         .into()
     }
@@ -2484,7 +2491,7 @@ impl<'a> Parser<'a> {
     /// The error of a header (`header`, the condition, value or source of an `if`, `while`, `for`
     /// or `match`) whose body block is missing because a jump at its end took that block as its
     /// value: `if o ?? return {`. Nothing when a `{` follows, or the header ends in no such jump.
-    fn header_body(&self, header: &Expr) -> Result<(), Diagnostic> {
+    fn header_body(&self, header: &Expr, loop_header: bool) -> Result<(), Diagnostic> {
         if self.at(&TokenKind::LBrace) {
             return Ok(());
         }
@@ -2499,7 +2506,7 @@ impl<'a> Parser<'a> {
         let keyword_end = jump.span.start() + name.len();
         let end = label.map_or(keyword_end, |label| label.span.end());
         let keyword = Span::new(jump.span.start(), keyword_end);
-        Err(self.jump_takes_block(name, keyword, header.span.start(), end))
+        Err(self.jump_takes_block(name, keyword, header.span.start(), end, loop_header))
     }
 
     /// The loop label after `break` or `continue`: a name, when it is an open loop label or
@@ -3105,7 +3112,7 @@ impl<'a> Parser<'a> {
         let scrutinee = self.child(base, &mut reach, Self::expr);
         self.scrutinee = outer;
         let scrutinee = scrutinee?;
-        self.header_body(&scrutinee)?;
+        self.header_body(&scrutinee, false)?;
         self.expect(&TokenKind::LBrace)?;
         self.skip_newlines();
         let mut arms = Vec::new();
@@ -3976,9 +3983,12 @@ impl<'a> Parser<'a> {
             Some((pattern, value)) => Head::Let(pattern, value),
             None => Head::Cond(self.child(base, &mut reach, Self::expr)?),
         };
-        self.header_body(match &head {
-            Head::Cond(e) | Head::Let(_, e) => e,
-        })?;
+        self.header_body(
+            match &head {
+                Head::Cond(e) | Head::Let(_, e) => e,
+            },
+            false,
+        )?;
         let then_block = self.child(base, &mut reach, Self::block)?;
         let mut end = then_block.span;
         let else_block = if self.eat(&TokenKind::Else).is_some() {
@@ -4814,36 +4824,52 @@ mod tests {
     /// followed by the `{` of its body
     /// WHEN the parser reads it
     /// THEN the error is E0011 at the jump, not after the body
-    /// AND the same header with the jump in `( )` parses
+    /// AND the error has the help that puts the jump in `( )`, except for a `break` in the header
+    /// of a loop, where that is E0082
+    /// AND a `continue`, which takes no value, and the same header with the jump in `( )` parse
     #[test]
     fn jump_that_takes_a_header_block_should_be_reported_at_the_jump() {
+        let body = "{\n        f()\n    }";
         let rows = [
-            ("if o ?? return {\n        f()\n    }", 13),
-            ("if let Some(x) = o ?? return {\n        f()\n    }", 27),
-            ("if c { f() } else if o ?? break {\n        f()\n    }", 31),
-            ("while o ?? break {\n        f()\n    }", 16),
-            ("while let Some(x) = o ?? break {\n        f()\n    }", 30),
-            ("for x in xs ?? return {\n        f()\n    }", 20),
-            ("for x in 0..n ?? return {\n        f()\n    }", 22),
-            ("match o ?? return {\n        _ => f()\n    }", 16),
-            ("outer: while o ?? break outer {\n        f()\n    }", 23),
+            ("if o ?? return", 13, true),
+            ("if let Some(x) = o ?? return", 27, true),
+            ("if c { f() } else if o ?? break", 31, true),
+            ("while o ?? return", 16, true),
+            ("while o ?? break", 16, false),
+            ("while let Some(x) = o ?? break", 30, false),
+            ("while let Some(x) = o ?? return", 30, true),
+            ("for x in xs ?? return", 20, true),
+            ("for x in xs ?? break", 20, false),
+            ("for x in 0..n ?? break", 22, false),
+            ("outer: while o ?? break outer", 23, false),
+            ("match o ?? return", 16, true),
+            ("match o ?? break", 16, true),
         ];
-        for (header, column) in rows {
-            let src = format!("fn main() {{\n    {header}\n}}");
+        for (header, column, help) in rows {
+            let src = format!("fn main() {{\n    {header} {body}\n}}");
             assert_eq!(parse_err(&src), (Code::Expected, 2, column), "{src}");
+            let found = parse_diagnostic(&src).help().is_some();
+            assert_eq!(found, help, "{src}");
         }
-        for src in [
-            "if (o ?? return) {\n        f()\n    }",
-            "for x in (xs ?? return) {\n        f()\n    }",
-            "while (o ?? break) {\n        f()\n    }",
-            "match (o ?? return) {\n        _ => f()\n    }",
+        // A `match` has arms, not statements, in its body.
+        let arms = "fn main() {\n    match o ?? return {\n        _ => f()\n    }\n}";
+        assert_eq!(parse_err(arms), (Code::Expected, 2, 16));
+        for header in [
+            "while o ?? continue",
+            "while o ?? continue outer",
+            "for x in xs ?? continue",
+            "if (o ?? return)",
+            "for x in (xs ?? return)",
+            "while (o ?? break)",
         ] {
-            assert!(
-                parsed(&format!("fn main() {{\n    {src}\n}}"))
-                    .diagnostics
-                    .is_empty()
-            );
+            let src = format!("fn main() {{\n    {header} {body}\n}}");
+            assert!(parsed(&src).diagnostics.is_empty(), "{src}");
         }
+        assert!(
+            parsed("fn main() {\n    match (o ?? return) {\n        _ => f()\n    }\n}")
+                .diagnostics
+                .is_empty()
+        );
     }
 
     #[test]
