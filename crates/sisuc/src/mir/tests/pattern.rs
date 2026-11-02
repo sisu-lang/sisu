@@ -858,6 +858,24 @@ fn let_mut_else_should_own_its_value() {
     assert!(!borrowed_n, "`n` should own its value: {f:?}");
 }
 
+/// GIVEN `enum Shape { Circle(string) Square }`, `fn make() -> Shape?`, and `fn f() -> i64` whose
+///   body is `let Some(Circle(s)) = make() else { return 0 }` and then `s.len()`
+/// WHEN it is lowered
+/// THEN the pass edge copies `s` out of the temporary and releases it, and takes nothing apart
+///
+/// The scrutinee is a counted optional, not an enum, and `match` keeps the copying commit for it.
+#[test]
+fn let_else_on_an_optional_enum_should_keep_the_copying_commit() {
+    let printed = built(
+        "enum Shape {\n    Circle(string)\n    Square\n}\n\
+         fn make() -> Shape? {\n    Some(Shape.Circle(\"c\"))\n}\n\
+         fn f() -> i64 {\n    let Some(Circle(s)) = make() else { return 0 }\n    s.len()\n}",
+    );
+    let f = function(&printed, "f");
+    assert!(!f.contains("take_apart"), "{f}");
+    has(&printed, "f", &["s#0 = copy s#0", "release _"]);
+}
+
 // The take-apart commit.
 
 const SWAP: &str = "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n}\n\
