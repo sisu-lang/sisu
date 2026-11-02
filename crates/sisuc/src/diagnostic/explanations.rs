@@ -413,12 +413,14 @@ fn open_brackets(text: &str) -> Vec<usize> {
     found
 }
 
-/// A span built as `token.start() + n`, with `n` the length of a name, splits a character when
-/// text with multi-byte characters lies between (`jump.span.start() + name.len()` did, and made
-/// `Source::slice` panic). Each fixture runs again with a multi-byte comment line put before every
-/// line, after every opening bracket, and at the start of every diagnostic, which keeps the
-/// meaning of the program except inside a string; every span of every report must then lie on a
-/// char bound. The report need not be the original's, only sound. A panic fails the test.
+/// A span built as `token.start() + n`, with `n` the length of a name, can split a character.
+/// It does when text with multi-byte characters lies between. `jump.span.start() + name.len()`
+/// did, and made `Source::slice` panic.
+///
+/// Each fixture runs again with a multi-byte comment line put before every line, after every
+/// opening bracket and at the start of every diagnostic. The insertions change the byte offsets.
+/// They may also change what the program means, so the report may differ from the original's.
+/// The test checks only that no span of any report splits a character. A panic fails it.
 #[test]
 fn spans_should_lie_on_char_bounds_after_a_multibyte_comment() {
     for (path, stem) in all_fixtures() {
@@ -430,21 +432,28 @@ fn spans_should_lie_on_char_bounds_after_a_multibyte_comment() {
         let Some(source) = fixture_text(&path) else {
             continue;
         };
-        // On a failure, nextest shows the last fixture named here.
-        eprintln!("{}", path.display());
         let lines = source.match_indices('\n').map(|(i, _)| i + 1);
         let starts = diagnostics(&source)
             .iter()
             .map(|d| d.span().start())
             .collect();
-        let variants = [
-            std::iter::once(0).chain(lines).collect(),
-            open_brackets(&source),
-            starts,
+        let variants: [(&str, Vec<usize>); 3] = [
+            (
+                "before every line",
+                std::iter::once(0).chain(lines).collect(),
+            ),
+            ("after every opening bracket", open_brackets(&source)),
+            ("at every diagnostic", starts),
         ];
-        for points in variants {
+        for (variant, points) in variants {
             let moved = with_comments(&source, &points);
-            assert_spans(&moved, &diagnostics(&moved));
+            let check = || assert_spans(&moved, &diagnostics(&moved));
+            if let Err(panic) = std::panic::catch_unwind(check) {
+                let why = (panic.downcast_ref::<String>().map(String::as_str))
+                    .or_else(|| panic.downcast_ref::<&str>().copied())
+                    .unwrap_or("a panic");
+                panic!("{}, comment {variant}: {why}\n{moved}", path.display());
+            }
         }
     }
 }

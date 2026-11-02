@@ -98,11 +98,12 @@ The end-to-end cases are files. The `cases` test binary runs one test per
 | `run-fail/` | panic with exit code 101, the same in a plain and an `-O2` build | `<name>.out`: stdout; `<name>.err`: stderr |
 | `diagnostics/` | report diagnostics under `sisu check` (`sisu build --emit mir` for a code that only `mono` reports, such as E0163, because `check` does not run `mono`), exiting 1 if one is an error and 0 if all are warnings; a case named `<CODE>.sisu` or `<CODE>-<case>.sisu` reports that code | `<name>.err`: the diagnostics; `<name>.json`: the same under `--format json` |
 
-Two in-process tests in `crates/sisuc/src/diagnostic/explanations.rs` also read these fixtures: one
-applies each safe fix alone, and one runs each program again with multi-byte comments put in,
-and checks that every span stays on a character bound.
-A new diagnostic with a fix needs a program in `diagnostics/` that shows the fix on the shape
-that is most likely to go wrong, such as a typed `let` or a `(` before the token.
+The in-process tests in `crates/sisuc/src/diagnostic/explanations.rs` also read these fixtures.
+They apply each safe fix alone, and all safe fixes of a fixture together.
+They also run each program again with multi-byte comments put in,
+and check that no span splits a character.
+A new diagnostic with a fix needs a program in `diagnostics/` that shows the fix.
+Use the shape that is most likely to go wrong, such as a typed `let` or a `(` before the token.
 
 To add a case, write the `.sisu` file and an empty expected file beside it,
 then fill the expected file with `make bless`. Read what it wrote before
