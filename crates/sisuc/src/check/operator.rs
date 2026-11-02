@@ -1,7 +1,7 @@
 //! Operators: arithmetic, comparison, equality, `is` and `??`.
 
 use super::any::{is_target, widen};
-use super::expr::{fits, if_some, int_literal, literal_type, local, operator, path, typed};
+use super::expr::{fits, if_some, literal_type, local, operator, path, typed};
 use super::generic::{Rank, mismatched};
 use super::interface::Operation;
 use super::{
@@ -330,8 +330,8 @@ impl Checker<'_> {
             want = None;
         }
         // An integer literal first is the operator's `i64`, as is an `i64` wanted: no list then.
-        let takes =
-            (!wants_i64 && !int_literal(operands[0]) && by_ord.is_none()).then(|| operator.takes());
+        let takes = (!wants_i64 && !self.int_literal(operands[0]) && by_ord.is_none())
+            .then(|| operator.takes());
         let by_char = arithmetic && first.as_ref().and_then(|f| type_of(&f.1)) == Some(Type::CHAR);
         let (mut checked, mut mismatched) = (Vec::with_capacity(operands.len()), false);
         // The diagnostics of the operator's type: mismatches, and a literal's, which that type
