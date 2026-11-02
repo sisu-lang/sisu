@@ -45,9 +45,7 @@ STAGES = [
 ]
 # The cases that are superlinear today, and the cases just under the rule that have a known cause:
 # (shape, stage, issue). The pull request that fixes a case removes its row.
-KNOWN = [
-    ('expression depth', 'check', 367),
-]
+KNOWN = []
 ANNOTATE = ['callgrind_annotate', '--inclusive=yes', '--threshold=100', '--show=Ir', '--auto=no']
 DIAGNOSTIC = re.compile(r'^(error|warning)\[([EW]\d{4})\]')
 DEFAULT_SISU = 'target/release/sisu'
@@ -87,6 +85,22 @@ def statements(k):
 
 def expression_depth(k):
     return f'fn main() {{\n    let x = {nest(k, lambda s: f"1 + ({s})", "1")}\n    print("{{x}}")\n}}\n'
+
+
+def float_left(k):
+    chain = nest(k, lambda s: f'({s}) + 1.1', '1.1')
+    return f'fn main() {{\n    let x = {chain}\n    print("{{x}}")\n}}\n'
+
+
+def string_left(k):
+    chain = nest(k, lambda s: f'({s}) + "a"', '"a"')
+    return f'fn main() {{\n    let x = {chain}\n    print("{{x}}")\n}}\n'
+
+
+def string_call_depth(k):
+    call = nest(k, lambda s: f'_g("a", {s})', '"a"')
+    return ('fn _g(_a: string, b: string) -> string {\n    b\n}\n\n'
+            f'fn main() {{\n    let x = {call}\n    print("{{x}}")\n}}\n')
 
 
 def block_depth(k):
@@ -178,6 +192,9 @@ SHAPES = {
     'interpolations': (50, interpolations),
     'live locals': (50, live_locals),
     'method chain': (24, method_chain),
+    'float left': (12, float_left),
+    'string left': (12, string_left),
+    'string call depth': (12, string_call_depth),
 }
 
 

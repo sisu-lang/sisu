@@ -439,6 +439,9 @@ thread_local! {
     pub(super) static FIELD_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many expressions `Checker::expr` has checked on this thread.
     pub(super) static EXPR_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many unary `-` and operator expressions `int_literal` has walked on this thread, those
+    /// it answers from `body.int_literals` not counted.
+    pub(super) static INT_LITERAL_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many nested loops the walk that wraps a widened loop's values has entered.
     pub(super) static WRAP_LOOPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many type parameter names have been indexed or looked up on this thread.
@@ -876,6 +879,9 @@ struct Body {
     /// cleared `fit`. A span is checked in one scope only (there are no closures yet), so the
     /// answer holds for every call that ranks it.
     ranked: FxHashMap<Span, (generic::Ranked, bool)>,
+    /// What `int_literal` answered for each unary `-` and operator, by its span. The answer
+    /// depends only on the node, and no two operator nodes have one span.
+    int_literals: FxHashMap<Span, bool>,
 }
 
 impl Body {
