@@ -1,0 +1,10 @@
+error[E0071]: this chain makes the nesting deeper than 256 levels
+ --> E0071-chain-prefix.sisu:2:264
+  |
+2 | ...!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!true)
+  |                                     ^ each operator, call, field or index in a chain adds one level
+  |
+  = help: put a part of the chain in a `let`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0071

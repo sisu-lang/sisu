@@ -236,6 +236,12 @@ const CHAIN: (&str, &str) = (
     "put a part of the chain in a `let`",
 );
 
+/// The message and help of the nesting error for a chain of `else if`.
+const ELSE_IF: (&str, &str) = (
+    "this `else if` chain makes the nesting deeper than 256 levels",
+    "write the branches as `match` arms with `if` guards",
+);
+
 /// One level past the limit: `check` exits 1 with the one message of `form`, at the failing
 /// token.
 fn errors_past_the_limit(
@@ -301,8 +307,8 @@ macro_rules! construct {
 construct!(parentheses, paren, 253, TREE);
 construct!(calls, call, 253, TREE);
 construct!(array_literals, array, 254, TREE);
-construct!(unary_minus, neg, 253, TREE);
-construct!(unary_not, not, 253, TREE);
+construct!(unary_minus, neg, 253, CHAIN);
+construct!(unary_not, not, 253, CHAIN);
 construct!(sum_chain, plus, 253, CHAIN);
 construct!(and_chain, and, 253, CHAIN);
 construct!(coalesce_chain, coalesce, 253, CHAIN);
@@ -311,7 +317,7 @@ construct!(method_chains, method_chain, 254, CHAIN);
 construct!(safe_field_chain, safe_chain, 254, CHAIN);
 construct!(ifs, nested_if, 126, TREE);
 construct!(if_lets, nested_if_let, 126, TREE);
-construct!(else_if_chain, else_if, 252, TREE);
+construct!(else_if_chain, else_if, 252, ELSE_IF);
 construct!(whiles, nested_while, 253, TREE);
 construct!(fors, nested_for, 253, TREE);
 construct!(loops, nested_loop, 126, TREE);
@@ -530,7 +536,7 @@ fn programs_nested_a_hundred_thousand_levels_should_fail_with_one_nesting_error(
             "fn main() {{\n    let x = 1\n    if x == 0 {{\n    }}{} else {{\n    }}\n}}\n",
             " else if x == 0 {\n    }".repeat(n)
         ),
-        TREE,
+        ELSE_IF,
     );
     assert_too_deep(
         "nesting_huge_pattern",
@@ -573,7 +579,8 @@ fn wrapped_chains(suffix: &str, links: usize, rounds: usize) -> String {
 
 /// GIVEN programs that wrap a chain in parentheses and chain onto it again, for many rounds
 /// WHEN `check`, `build --emit ast` and `build` run on each
-/// THEN each run exits 1 with the one nesting error
+/// THEN each run exits 1 with the one nesting error, in the form that names a chain when the
+/// links are more than half the levels
 ///
 /// Each round builds a subtree about `links` high and wraps it in parentheses, which are no node
 /// of their own. The parser must still see the height when the next round's chain stacks onto it:
@@ -602,7 +609,9 @@ fn chains_stacked_on_wrapped_chains_should_add_their_heights() {
     for (i, (suffix, links)) in shapes.into_iter().enumerate() {
         let rounds = if links == 1 { 300 } else { 100 };
         let name = format!("nesting_wrapped_{i}");
-        assert_too_deep(&name, &wrapped_chains(suffix, links, rounds), TREE);
+        // A round of one link adds a pair of parentheses to it: half the levels, not more.
+        let form = if links == 1 { TREE } else { CHAIN };
+        assert_too_deep(&name, &wrapped_chains(suffix, links, rounds), form);
     }
 }
 
@@ -614,7 +623,11 @@ fn chains_stacked_on_wrapped_chains_should_add_their_heights() {
 /// checker.
 #[test]
 fn sums_wrapped_a_hundred_times_should_fail_with_one_nesting_error() {
-    assert_too_deep("nesting_wrapped_sum", &wrapped_chains("+1", 100, 100), TREE);
+    assert_too_deep(
+        "nesting_wrapped_sum",
+        &wrapped_chains("+1", 100, 100),
+        CHAIN,
+    );
 }
 
 /// GIVEN a sum and a method chain of ten thousand steps

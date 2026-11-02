@@ -1,0 +1,10 @@
+error[E0071]: nesting is too deep
+ --> E0071-tree.sisu:2:265
+  |
+2 | ...((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1)))))))))))))))))))...
+  |                                                                    ^
+  |
+  = help: the limit is 256 levels
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0071
