@@ -1,0 +1,14 @@
+class Node {}
+
+enum Mix<T> {
+    A(T)
+    B(Node)
+}
+
+fn need<U: Eq>(u: U) {}
+
+fn second<T: Eq>(a: Mix<T>) {
+    need(a)
+}
+
+fn main() {}

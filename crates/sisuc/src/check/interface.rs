@@ -12,8 +12,8 @@ use super::{
 use crate::ast;
 use crate::conformance::{CHOICE_DEPTH_LIMIT, Entered, Generated, ensure_stack, find, generated};
 use crate::diagnostic::{
-    AddBound, BlockNeed, BoundSite, Definition as Kind, DiagnosticKind, Implied, NoOperatorForm,
-    NotConformForm, NotInterface, PreludeBound, UnknownForm, WideKind,
+    AddBound, BlockNeed, BoundLabel, BoundSite, Definition as Kind, DiagnosticKind, Implied,
+    NoOperatorForm, NotConformForm, NotInterface, UnknownForm, WideKind,
 };
 use crate::graph::{components, cycle_through};
 use crate::lang::Dispatch;
@@ -24,6 +24,16 @@ use crate::tir::{ClassId, EnumId, FuncId, InterfaceId, Type, TypeArgs, TypeKind}
 /// The most interfaces that one bound, or one list of interfaces a type conforms to, may give
 /// with the interfaces they inherit (see `conformance::BOUND_CLOSURE_LIMIT`).
 pub(super) use crate::conformance::BOUND_CLOSURE_LIMIT;
+
+/// What the report of a failed bound says besides the failure (see `Checker::bound_advice`).
+pub(super) struct BoundAdvice {
+    /// The part of the type that fails: the type itself, when no part does.
+    pub(super) leaf: Type,
+    pub(super) label: Option<BoundLabel>,
+    /// The class or enum that the help shows how to give a conformance.
+    pub(super) make: Option<String>,
+    pub(super) add: Option<AddBound>,
+}
 
 /// The state of one root walk of `Checker::leaf`: Tarjan's search for strongly connected
 /// components. A type is on `stack` from the walk that reads it until its component closes;
@@ -1724,32 +1734,15 @@ impl Checker<'_> {
             self.probe_associated(ty, bound.interface, args);
             return true;
         }
-        // The bound goes to the type parameter inside `ty` that makes it fail: `T` for `[T?]`.
-        let leaf = self.failing_leaf(ty, bound.interface, args);
-        let add = self.add_bound(leaf, bound.interface);
-        // No label points into the prelude: its bound is named on the call instead, and a class or
-        // an enum with no conformance gets the help to write one. The conformance that fails is
-        // the one of the part that fails, as for `==`.
         let prelude = bound.at.in_prelude();
-        // A class or an enum may conform, when the types that stand for its parameters do.
+        let advice = self.bound_advice(ty, bound.interface, args, prelude, need);
+        let leaf = advice.leaf;
+        // A class or an enum may conform, when the types that stand for its parameters do. The
+        // conformance that fails for a bound of the prelude is the one of the part that fails,
+        // as for `==`.
         let owner = if prelude { leaf } else { ty };
         let needs = find(&self.conformances, bound.interface, owner, args)
             .map(|(k, stands)| self.failed_bound(bound.interface, k, stands));
-        let none = matches!(leaf.kind(), TypeKind::Class(..) | TypeKind::Enum(..))
-            && find(&self.conformances, bound.interface, leaf, args).is_none();
-        let make = (prelude && none).then(|| self.type_name(leaf));
-        let label = (prelude && bound.interface != self.lang.any_object).then(|| {
-            let part_fails = leaf != ty
-                && (none || matches!(leaf.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)));
-            if part_fails {
-                PreludeBound::Since {
-                    part: self.type_name(leaf),
-                    need,
-                }
-            } else {
-                PreludeBound::Call { need }
-            }
-        });
         self.report(DiagnosticKind::NotConform {
             ty: self.type_name(ty),
             interface: self.bound_text(bound.interface, args),
@@ -1760,14 +1753,58 @@ impl Checker<'_> {
                     written: self.source.type_text(bound.at).into_owned(),
                     base: self.source.type_text(base).into_owned(),
                 }),
-                label,
-                make,
+                label: advice.label,
+                make: advice.make,
                 class_only: bound.interface == self.lang.any_object,
-                add,
+                add: advice.add,
                 needs,
             },
         });
         false
+    }
+
+    /// What the report of a bound that `ty` fails says besides the failure: the part of `ty` that
+    /// fails, and the help to make it meet `interface`. `prelude` is whether the prelude writes
+    /// the bound: no label points into the prelude, so the call names the bound. A bound that the
+    /// program writes gets a label only when a call of the method `need` names has it, or a part
+    /// of `ty` fails.
+    pub(super) fn bound_advice(
+        &mut self,
+        ty: Type,
+        interface: InterfaceId,
+        args: TypeArgs,
+        prelude: bool,
+        need: Option<BlockNeed>,
+    ) -> BoundAdvice {
+        // The bound goes to the type parameter inside `ty` that makes it fail: `T` for `[T?]`.
+        let leaf = self.failing_leaf(ty, interface, args);
+        let add = self.add_bound(leaf, interface);
+        // A class or an enum with no conformance gets the help to write one.
+        let none = matches!(leaf.kind(), TypeKind::Class(..) | TypeKind::Enum(..))
+            && find(&self.conformances, interface, leaf, args).is_none();
+        // Only a class conforms to `AnyObject`: no help can make a class or an enum conform.
+        let class_only = interface == self.lang.any_object;
+        let make = (none && !class_only).then(|| self.type_name(leaf));
+        let part_fails = leaf != ty
+            && (none || matches!(leaf.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)));
+        let part = part_fails.then(|| self.type_name(leaf));
+        let on_call = prelude || need.is_some();
+        let label = if class_only {
+            None
+        } else {
+            match part {
+                Some(part) if on_call => Some(BoundLabel::Since { part, need }),
+                Some(part) => Some(BoundLabel::Holds { part }),
+                None if on_call => Some(BoundLabel::Call { need }),
+                None => None,
+            }
+        };
+        BoundAdvice {
+            leaf,
+            label,
+            make,
+            add,
+        }
     }
 
     /// Normalizes each associated type that a bound of `interface` gives `ty`, a class or an

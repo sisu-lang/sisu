@@ -1,0 +1,26 @@
+error[E0070]: `scale` is a method, not a function
+  --> E0070-bound-self-literal.sisu:17:9
+   |
+17 |         scale(2)
+   |         ^^^^^ `scale` needs `T: Eq`
+   |
+   = help: add a bound: `T: Eq`, then call `scale` as a method of `self`
+
+error[E0070]: `put` is a method, not a function
+  --> E0070-bound-self-literal.sisu:20:9
+   |
+20 |         put([1, 2])
+   |         ^^^ `put` needs `T: Eq`
+   |
+   = help: add a bound: `T: Eq`, then call `put` as a method of `self`
+
+error[E0070]: `byte` is a method, not a function
+  --> E0070-bound-self-literal.sisu:23:9
+   |
+23 |         byte(3)
+   |         ^^^^ `byte` needs `T: Eq`
+   |
+   = help: add a bound: `T: Eq`, then call `byte` as a method of `self`
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0070
