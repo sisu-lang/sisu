@@ -1,5 +1,5 @@
-//! Ranges: the E0023 report of a range where it is not allowed, and the E0021 report of an
-//! assignment to a range index.
+//! Ranges: the E0023 report of a range where it is not allowed, the range index of an array, and
+//! the E0021 report of an assignment to a range index.
 
 use super::array::optional_array;
 use super::string::single_term;

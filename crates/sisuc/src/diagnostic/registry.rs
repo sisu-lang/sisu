@@ -2090,7 +2090,8 @@ pub(crate) enum ForeignRange {
 /// How a range is wrong where the checker finds it.
 pub(crate) enum RangeForm {
     /// A range with both bounds, where only a `for` source, a pattern, an index or a string's
-    /// `get` argument can be one. Also the report of a range index, until the checker takes it.
+    /// `get` argument can be one. Also the report of a range index of a string, until the checker
+    /// takes it.
     Anywhere,
     /// A range with a missing bound, where only an index or a string's `get` can have one.
     MissingBound {
