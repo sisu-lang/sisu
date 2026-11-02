@@ -1496,7 +1496,7 @@ impl Checker<'_> {
     /// The walk goes into the first bound that fails, and again into the part that fails it, while
     /// the part has a written conformance whose bound fails. `None` when `leaf` has no such
     /// conformance, or when the walk comes back to a part it has seen: `failing_leaf` goes into
-    /// the payloads of an enum, which are no arguments of its type, so a part can reach itself.
+    /// the payloads of an enum, which are not arguments of its type, so a part can reach itself.
     ///
     /// The walk takes one step for each written conformance it goes into, each with the cached
     /// answers of `conforms` and `failing_leaf`. It runs on the path of an error only.
@@ -1555,12 +1555,15 @@ impl Checker<'_> {
         // A part behind the bound of a written conformance is the part to change.
         let blocked = self.blocked_part(leaf, interface, TypeArgs::NONE);
         let (fix, wants, wants_args) = blocked.unwrap_or((leaf, interface, TypeArgs::NONE));
-        if is_parameter(fix) {
+        let add = self.add_bound(fix, wants);
+        // A blocked parameter with no help to write keeps the `needs` label of E0159, which is
+        // the only text that names the bound.
+        if is_parameter(fix) && (blocked.is_none() || add.is_some()) {
             return DiagnosticKind::ParamLacks {
                 ty: self.type_name(ty),
                 op: op.to_string(),
                 at,
-                add: self.add_bound(fix, wants),
+                add,
             };
         }
         let record = find(&self.conformances, interface, leaf, TypeArgs::NONE);
@@ -1838,7 +1841,7 @@ impl Checker<'_> {
         let (fix, wants, wants_args) =
             (self.blocked_part(leaf, interface, args)).unwrap_or((leaf, interface, args));
         let add = self.add_bound(fix, wants);
-        // A class or an enum with no conformance gets the help to write one.
+        // `none` is for the label: `make_for` decides the help to write a conformance.
         let none = matches!(leaf.kind(), TypeKind::Class(..) | TypeKind::Enum(..))
             && find(&self.conformances, interface, leaf, args).is_none();
         let class_only = interface == self.lang.any_object;
