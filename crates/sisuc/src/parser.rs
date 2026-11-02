@@ -6224,7 +6224,7 @@ mod tests {
     }
 
     /// An `else if` chain reports at the `else if` of the last link on the path, whatever token
-    /// in its branch passed the limit; a chain of operators reports at the token that passed it.
+    /// in its branch passed the limit.
     #[test]
     fn nesting_report_should_point_at_the_last_else_if() {
         let head = "if a { }";
@@ -6234,6 +6234,11 @@ mod tests {
         // whose `if` passes the limit. The caret is on its `else if`, not on the `a` that follows.
         let at = head.len() + link.len() * (MAX_DEPTH - 2) + 1;
         assert_eq!(nesting_span(&src), (at, at + "else if".len()));
+    }
+
+    /// A chain of operators reports at the token that passed the limit, even under an `else if`.
+    #[test]
+    fn nesting_report_of_a_chain_should_stay_on_the_token_that_passed_the_limit() {
         // A chain keeps the report on the token where the limit passed, an operator.
         let chain = vec!["a"; 300].join(" + ");
         let (start, end) = nesting_span(&chain);
