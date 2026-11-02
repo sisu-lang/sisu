@@ -170,6 +170,10 @@ vague or generic error, or with none.
 - When "Focus" lists lines removed from the tests, find for each one its
   keeper or its reason, as "A deleted test names its keeper" in
   `CODING_STANDARDS.md` says. A removal with neither blocks.
+- When the range has a commit titled "Add failing tests", run its tests
+  at that commit. Each one must fail, and for the cause that the commit
+  names. A test that passes there, or fails for another reason, does not
+  prove its name.
 - For each new regression test, revert the fix, or apply the mutation
   that the test names, in your copy, and run the test. A test that still
   passes does not prove its name.
