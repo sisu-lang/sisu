@@ -4091,11 +4091,9 @@ impl From<DiagnosticKind> for Diagnostic {
                 let d = Diagnostic::coded(code, at, format!("`{name}` is a method, not a function"));
                 // The label always has a `need`, so `Holds`, which reads the type, does not occur.
                 let d = d.with_label(bound.label.text("", &bound.interface));
-                // The `self` form does not say that the arguments are wrong: its `safe` covers the
-                // type arguments and the labels too.
                 let (call, fix) = match receiver {
-                    MethodReceiver::SelfValue { .. } => {
-                        (format!("call `{name}` as a method of `self`"), false)
+                    MethodReceiver::SelfValue { safe } => {
+                        (format!("call `{name}` as a method of `self`"), !safe)
                     }
                     MethodReceiver::Optional { .. } => {
                         (format!("call `{name}` with `?.`"), !bound.takes)
