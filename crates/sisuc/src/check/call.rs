@@ -584,11 +584,12 @@ impl Checker<'_> {
         // A range argument is E0023 once the call is found, as it is anywhere else. A string's
         // `get` takes its range (`string_method`), and so does the `get` of a `string?`, which is
         // E0062 first. An array's `get` takes an `i64`, so a range is E0032 (S26), found before
-        // the lookup.
-        if method.name.as_str() == "get"
+        // the lookup. The `get` of an optional array reports E0062 in the lookup, then E0032.
+        let gets_range = method.name.as_str() == "get"
             && args
                 .iter()
-                .any(|a| matches!(a.value.kind, ExprKind::Range(_)))
+                .any(|a| matches!(a.value.kind, ExprKind::Range(_)));
+        if gets_range
             && type_of(&receiver).is_some_and(|ty| matches!(ty.kind(), TypeKind::Array(_)))
         {
             return self.array_get_range(args);
@@ -646,6 +647,14 @@ impl Checker<'_> {
             Some(Found::Func(func)) => self.invoke(span, func, Some(receiver), site, args),
             Some(Found::GeneratedDisplay { listed }) => {
                 self.generated_display(span, receiver, site, args, listed)
+            }
+            // An optional array's `get` is E0062 first, then E0032 for the range, as through `?.`.
+            None if gets_range
+                && ty.is_some_and(|ty| {
+                    matches!(array::innermost(ty).kind(), TypeKind::Array(_))
+                }) =>
+            {
+                self.array_get_range(args)
             }
             None => {
                 self.labels(args);

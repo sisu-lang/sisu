@@ -980,7 +980,7 @@ impl Gen<'_> {
     }
 
     /// `(v.first() ?? d)`, `(v.last() ?? d)` or `(v.get(i) ?? d)` of an array local `v` whose
-    /// elements are `ty`s of at most `max`, with `i` from `-1` to two past its length: `get`
+    /// elements are `ty`s of at most `max`, with `i` from `-1` through `len + 1`: `get`
     /// gives `None` where an index would panic, and `d` is the value then.
     fn safe_element(&mut self, ty: &Ty, max: u64) -> Info {
         let vars: Vec<usize> = (0..self.scope.vars.len())
@@ -2516,7 +2516,7 @@ mod tests {
     /// WHEN the generator writes an `i64` on the turn of the safe-element rule
     /// THEN it reads `xs` through `first`, `last` or `get` under a default
     /// AND over many bytes of data each of the three comes up, and `get` takes an index from `-1`
-    /// to two past the length
+    /// through `len + 1`
     #[test]
     fn a_safe_element_should_use_first_last_or_get_with_a_default() {
         let ty = Ty::Array(Box::new(Ty::I64));
@@ -2542,7 +2542,7 @@ mod tests {
             }
         }
         assert!(first && last, "first {first}, last {last}");
-        assert_eq!(gets, [true; 6], "an index from -1 to two past the length");
+        assert_eq!(gets, [true; 6], "an index from -1 through len + 1");
     }
 
     /// GIVEN the generator's substring rule on `string`, with no string local in scope
