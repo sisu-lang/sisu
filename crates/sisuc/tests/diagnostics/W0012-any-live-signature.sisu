@@ -1,0 +1,8 @@
+interface Named<T> {
+    fn get(self) -> T
+}
+fn stale() {}
+fn used(_x: (any Named<i64>)?) {}
+fn main() {
+    used(None)
+}

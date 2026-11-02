@@ -185,6 +185,8 @@ impl Checker<'_> {
         self.reaches_prelude(of_prelude, at);
         if let Some(from) = self.body.owner {
             self.uses.push(Use { from, to, at });
+        } else if let (Some(anys), Used::Interface(interface)) = (&mut self.signature_anys, to) {
+            anys.push((interface, at));
         }
     }
 

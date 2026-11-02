@@ -1060,15 +1060,15 @@ fn interface_should_warn_when_only_dead_code_names_it_in_an_any_type() {
         found(&format!(
             "{named}fn show(x: (any Named)?) -> i64 {{ if let _ = x {{ 1 }} else {{ 0 }} }}\nfn main() {{}}"
         )),
-        [(W0012, (1, 11), vec![(4, 12)]), (W0012, (4, 4), vec![])]
+        [(W0012, (1, 11), vec![(4, 17)]), (W0012, (4, 4), vec![])]
     );
-    // One interface in two `any` types of one written type is cited once.
+    // One interface in two `any` types of one written type is cited at each, as in a body.
     assert_eq!(
         found(
             "interface I<T> {}\nenum P<A, B> { X(A, B) }\nfn dead(x: P<any I<i64>, any I<bool>>?) {}\nfn main() {}"
         ),
         [
-            (W0012, (1, 11), vec![(3, 12)]),
+            (W0012, (1, 11), vec![(3, 18), (3, 30)]),
             (W0012, (2, 6), vec![]),
             (W0012, (3, 4), vec![])
         ]
