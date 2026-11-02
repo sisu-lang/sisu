@@ -64,10 +64,11 @@ HEADERS = (
 )
 
 
-def run_hook(script, text):
-    """The exit code and output of `scripts/<script>` on one file holding `text`."""
+def run_hook(script, text, name='f.rs'):
+    """The exit code and output of `scripts/<script>` on one file, `name`, holding `text`."""
     with tempfile.TemporaryDirectory() as d:
-        path = os.path.join(d, 'f.rs')
+        path = os.path.join(d, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w', encoding='utf-8') as f:
             f.write(text)
         done = subprocess.run([os.path.join(os.path.dirname(__file__), script), path],
@@ -110,12 +111,22 @@ class TestWording(unittest.TestCase):
                 self.assertEqual(code, 1)
                 self.assertIn('f.rs:3: a unit test reads diagnostic wording', out)
 
-    def test_a_help_check_or_a_marked_comparison_should_pass(self):
+    def test_a_help_check_should_pass(self):
         for body in ('    Diagnostic::help(d).is_none();\n',
-                     '    assert_eq!(Diagnostic::help(d), None);\n',
-                     '    // wording compared: two outputs.\n    Diagnostic::message(d);\n'):
+                     '    assert_eq!(Diagnostic::help(d), None);\n'):
             with self.subTest(body=body):
                 self.assertEqual(run_hook('check-test-wording.sh', HEADERS[0] + body + '}\n'), (0, ''))
+
+    def test_a_read_after_a_marker_comment_should_fail(self):
+        body = '    // wording compared: two outputs.\n    assert_eq!(ds[0].message(), "x");\n'
+        code, out = run_hook('check-test-wording.sh', HEADERS[0] + body + '}\n')
+        self.assertEqual(code, 1)
+        self.assertIn('f.rs:4: a unit test reads diagnostic wording', out)
+
+    def test_a_read_in_the_parity_file_should_pass(self):
+        text = 'use super::*;\nfn f(d: &Diagnostic) -> String {\n    d.message().to_owned()\n}\n'
+        self.assertEqual(run_hook('check-test-wording.sh', text, 'check/tests/parity.rs'), (0, ''))
+        self.assertEqual(run_hook('check-test-wording.sh', text, 'check/tests/other.rs')[0], 1)
 
 class SessionUrl(unittest.TestCase):
     def test_a_session_line_or_url_should_fail_at_its_line(self):

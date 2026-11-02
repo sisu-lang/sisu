@@ -1220,7 +1220,7 @@ thread_local! {
     pub(super) static MARKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many types the walk of `mark_distinct` has visited on this thread.
     pub(super) static DISTINCT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many parameter origins `bound_by_context` has read on this thread.
+    /// How many parameter origins `Origins::get` has read on this thread.
     pub(super) static ORIGINS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many entries of the substitution lists of early bound checks have been written on this
     /// thread.
@@ -1309,7 +1309,7 @@ struct Inference<'s> {
     /// that parameter (see `Bindings::first_unbound_not_rejected`).
     rejected: bool,
     /// Where each parameter was bound: the argument, or the type argument written for it.
-    origin: Vec<Option<Span>>,
+    origin: Origins,
     /// The bounds that the call checks as soon as a parameter is bound; none when the callee has
     /// no bound and no parameter type writes an associated type.
     early: Option<Early<'s>>,
@@ -1318,15 +1318,44 @@ struct Inference<'s> {
     bound: Vec<usize>,
 }
 
+mod origins {
+    use crate::source::Span;
+
+    /// Where each parameter of a call was bound (see `Inference::origin`). The list is private,
+    /// so each read goes through `get`, which a test counts.
+    pub(super) struct Origins(Vec<Option<Span>>);
+
+    impl Origins {
+        /// No place yet for each of `count` parameters.
+        pub(super) fn new(count: usize) -> Self {
+            Self(vec![None; count])
+        }
+
+        /// Where parameter `i` was bound.
+        pub(super) fn get(&self, i: usize) -> Option<Span> {
+            #[cfg(test)]
+            super::ORIGINS.set(super::ORIGINS.get() + 1);
+            self.0[i]
+        }
+
+        /// Records that parameter `i` was bound at `at`.
+        pub(super) fn set(&mut self, i: usize, at: Option<Span>) {
+            self.0[i] = at;
+        }
+
+        /// Records that parameter `i` was bound at `at`, unless it has a place already.
+        pub(super) fn set_first(&mut self, i: usize, at: Span) {
+            self.0[i].get_or_insert(at);
+        }
+    }
+}
+
+use origins::Origins;
+
 /// Whether `pattern` names a parameter that the context of `call` bound (see `report_fresh`): a
 /// hint or a type the user wrote.
 fn bound_by_context(call: &Inference<'_>, pattern: Type) -> bool {
-    let from_context = |j: usize| {
-        #[cfg(test)]
-        ORIGINS.set(ORIGINS.get() + 1);
-        call.origin[j] == Some(call.at)
-    };
-    names_marked(pattern, from_context, true)
+    names_marked(pattern, |j| call.origin.get(j) == Some(call.at), true)
 }
 
 /// `found`, a parameter's binding, as a bound sees it: `UNKNOWN` while it is unbound or rejected.
@@ -1661,7 +1690,7 @@ impl Checker<'_> {
             last: Vec::new(),
             failed: false,
             rejected: false,
-            origin: vec![None; sig.declared.len()],
+            origin: Origins::new(sig.declared.len()),
             early: Early::of(sig),
             bound: Vec::new(),
         };
@@ -1674,7 +1703,7 @@ impl Checker<'_> {
             // `type_args` rejects each type that `report_fresh` would.
             for (i, &ty) in list.get().iter().enumerate() {
                 call.bindings.found[owned + i] = Some(ty);
-                call.origin[owned + i] = written.get(i).map(|ty| ty.span);
+                call.origin.set(owned + i, written.get(i).map(|ty| ty.span));
             }
             let bound: Vec<usize> = (owned..sig.declared.len()).collect();
             self.check_early(&mut call, &bound, span);
@@ -1914,7 +1943,7 @@ impl Checker<'_> {
                 LISTED.set(LISTED.get() + bindings.found.len());
                 bindings.found.iter().map(|&t| listed(t)).collect()
             });
-            if !self.check_bound(origin[i].unwrap_or(at), ty, bound, with) {
+            if !self.check_bound(origin.get(i).unwrap_or(at), ty, bound, with) {
                 *failed = true;
                 rejected.push(i);
             }
@@ -2645,7 +2674,7 @@ impl Checker<'_> {
         for &i in &call.bindings.fresh {
             #[cfg(test)]
             VISITS.set(VISITS.get() + 1);
-            call.origin[i].get_or_insert(at);
+            call.origin.set_first(i, at);
             call.bound.push(i);
             let ty = call.bindings.found[i].expect("a fresh parameter should be bound");
             // The context rejected it, and the outer call reported why.

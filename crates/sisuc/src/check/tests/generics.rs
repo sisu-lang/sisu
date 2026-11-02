@@ -1,6 +1,7 @@
 //! Generic declarations: the scopes of type parameters, type arguments in types and
 //! expressions, what a value of a type parameter may do, and which generic enums can be built.
 
+use super::parity::parity_found;
 use super::*;
 
 /// The classes the rows name, and an empty `main`, after the line a row tests.
@@ -5964,6 +5965,12 @@ const KNOWN_CONTEXT_ROWS: &[PartialRow<'static>] = {
             "let o = mko()\nlet y: i64 = o?.m()",
             &[(Mismatch, "o?.m()")],
         ),
+        // A plain method call is checked against it too.
+        (
+            DECLS,
+            "let o = O()\nlet y: i64? = o.m()",
+            &[(Mismatch, "o.m()")],
+        ),
         // The context of a comparison is a convenience: a result that cannot meet it is a
         // comparison that cannot be made, as for a callee that is not generic.
         (DECLS, "print(1 == mk2())", &[(CannotCompare, "1 ==")]),
@@ -5998,58 +6005,6 @@ fn a_call_that_cannot_meet_its_known_context_should_report_the_mismatch() {
     check_partial_rows(KNOWN_CONTEXT_ROWS);
 }
 
-/// A generic call that cannot meet its context gives one diagnostic, at the call or at the
-/// comparison. The fixtures `E0032-known-context-safe` and `E0047-generic-call` pin the text.
-#[test]
-fn a_call_that_cannot_meet_its_context_should_give_one_error_at_its_place() {
-    const DECLS: &str = "class O {\n    fn n(self) -> Box<i64, bool> { panic(\"no\") }\n    \
-        fn m<A>(self) -> Box<A, bool> { panic(\"no\") }\n}\n\
-        fn mko() -> O? { None }\n\
-        fn mk2<A>() -> Box<A, bool> { panic(\"no\") }\n\
-        fn mkc() -> Box<i64, bool> { panic(\"no\") }\n\
-        fn fi(_x: i64?) -> i64 { 0 }\n";
-    with_prelude();
-    // Each row: the lines of `main`, and the code and the place of its one diagnostic, by its
-    // line in `main` and its column.
-    let rows: &[(&str, Code, (usize, usize))] = &[
-        (
-            "let o = mko()\nlet x: i64? = o?.n()",
-            Code::Mismatch,
-            (2, 19),
-        ),
-        (
-            "let o = mko()\nlet y: i64? = o?.m()",
-            Code::Mismatch,
-            (2, 19),
-        ),
-        ("let o = mko()\nprint(fi(o?.m()))", Code::Mismatch, (2, 14)),
-        (
-            "let o = mko()\nlet y: i64 = o?.m()",
-            Code::Mismatch,
-            (2, 18),
-        ),
-        ("let o = O()\nlet y: i64? = o.m()", Code::Mismatch, (2, 19)),
-        ("print(1 == mkc())", Code::CannotCompare, (1, 11)),
-        ("print(1 == mk2())", Code::CannotCompare, (1, 11)),
-        ("print(mk2() != 1)", Code::CannotCompare, (1, 11)),
-        ("print(Some(1) == mk2())", Code::CannotCompare, (1, 11)),
-        ("print(mk2() == Some(1))", Code::CannotCompare, (1, 11)),
-        (
-            "let o = mko()\nprint(1 == o?.m())",
-            Code::CannotCompare,
-            (2, 11),
-        ),
-    ];
-    for &(body, code, (line, column)) in rows {
-        let head = format!("{PARTIAL_DECLS}{DECLS}fn main() {{\n");
-        let src = format!("{head}    {}\n}}", body.replace('\n', "\n    "));
-        let (_, ds) = checked(&src);
-        let found: Vec<_> = ds.iter().map(|d| (d.code(), at(&src, d.span()))).collect();
-        let line = head.lines().count() + line;
-        assert_eq!(found, [(code, (line, column))], "row `{body}`");
-    }
-}
-
 /// Rejecting the parameters that failed arguments name visits each distinct type once. A
 /// declaration with shared children costs its size, not the number of paths through it.
 #[test]
@@ -6075,8 +6030,8 @@ fn rejecting_the_parameters_of_failed_arguments_should_visit_each_type_once() {
     assert_near_linear(visits(10), visits(20), visits(30));
 }
 
-/// A call with many type parameters and many arguments that misfit reads the origin of each
-/// parameter that an argument's type names, not of every parameter for each argument.
+/// Each trailing argument misfits and names one of n parameters. Reading every origin for each
+/// would cost n².
 #[test]
 fn misfitting_arguments_should_read_the_origins_of_their_own_parameters_only() {
     let reads = |n: usize| {
@@ -6151,24 +6106,6 @@ fn parity_program((decls, body): ParityRow<'_>, concrete: bool) -> String {
         }
     }
     format!("{PARITY_DECLS}{main}")
-}
-
-/// A diagnostic's code, its primary position and its message.
-type ParityFound = (Code, (usize, usize), String);
-
-/// Each diagnostic of `src`: its code, its place and its message. The message names `Two<X, bool>`
-/// as the concrete twin's `Two<i64, bool>`.
-fn parity_found(src: &str) -> (bool, Vec<ParityFound>) {
-    let (program, ds) = checked(src);
-    let found = ds
-        .iter()
-        .map(|d| {
-            // wording compared: the generic and the concrete forms, so no text is pinned.
-            let message = Diagnostic::message(d).replace("Two<X, bool>", "Two<i64, bool>");
-            (d.code(), at(src, d.span()), message)
-        })
-        .collect();
-    (program.is_none(), found)
 }
 
 /// The rows of `a_generic_call_that_cannot_meet_its_context_should_report_as_a_concrete_call_does`.
@@ -6547,7 +6484,7 @@ type Placed = (Code, (usize, usize));
 const DEPARTURE_ROWS: &[(ParityRow<'static>, &[Placed])] = &[
     // The first element gives no whole type, so the `1` leads and the call is held to `i64`.
     (("", "print([mk2(), 1])"), &[(Code::Mismatch, (1, 8))]),
-    // The misfit has no class type, so no E0067 tells that each element is the same object.
+    // The misfit gives no whole type, so the rule of E0067 sees no class.
     (
         ("", "let xs: [i64] = [mk2(); 3]\nprint(xs)"),
         &[(Code::Mismatch, (1, 18))],
