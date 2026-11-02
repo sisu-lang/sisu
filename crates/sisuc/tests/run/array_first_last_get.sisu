@@ -7,6 +7,7 @@ fn main() {
     let xs = [1, 2, 3]
     let e: [i64] = []
     print(xs.first() ?? -1)           // 1
+    print(xs.last() ?? -1)            // 3
     print(xs[1..].last() ?? -1)       // 3
     print(e.first() ?? -1)            // -1
     print(e.last() ?? -1)             // -1
@@ -22,6 +23,7 @@ fn main() {
     print(xs[3..].first() ?? -1)      // -1
 
     let words = ["a", "b"]
+    print(words.first() ?? "none")    // a
     print(words.get(1) ?? "none")     // b
     print(words.get(2) ?? "none")     // none
     print(words.last() ?? "none")     // b

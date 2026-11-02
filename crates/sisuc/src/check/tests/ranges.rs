@@ -479,6 +479,11 @@ fn optional_array_get_with_a_range_should_be_e0062_then_e0032() {
             "fn g<T>(o: [T]?) {\n    print(o.get(1..).is_none())\n}\nfn main() {}",
             &[(Code::MayBeNone, (2, 11)), (Code::Mismatch, (2, 17))],
         ),
+        (
+            "other method",
+            "fn main() {\n    let o: [i64]? = Some([1, 2])\n    print(o.contains(0..1) ?? 0)\n}",
+            &[(Code::MayBeNone, (3, 11)), (Code::RangeOutsideFor, (3, 22))],
+        ),
         // The inner type is no array, so the range keeps E0023.
         (
             "generic optional",
