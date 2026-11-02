@@ -43,6 +43,17 @@ extend<A: Eq, B: Eq> Two<A, B>: Eq {
     }
 }
 
+class Mix<A, B> {
+    a: A
+    b: B
+}
+
+extend<A: Eq, B: Ord> Mix<A, B>: Eq {
+    fn eq(self, other: Mix<A, B>) -> bool {
+        true
+    }
+}
+
 fn need_eq<T: Eq>(_x: T) {}
 
 fn from_contains() {
@@ -88,6 +99,18 @@ fn between_blocks() {
     let o: Box<Pair<Node>>? = None
     let xs = [Pair(a: [o])]
     print(xs.contains(Pair(a: [o])))
+}
+
+fn two_fail_contains<T>(x: Mix<T, bool>) -> bool {
+    [x].contains(x)
+}
+
+fn two_fail_bound<T>(x: Mix<T, bool>) {
+    need_eq(x)
+}
+
+fn one_fails_bound<T>(x: Mix<T, i64>) {
+    need_eq(x)
 }
 
 fn main() {

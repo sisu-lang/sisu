@@ -136,5 +136,132 @@ error[E0159]: `P<S.Item>` has no `==`
 112 |     x == x
     |     ^ this has type `P<S.Item>`
 
-sisu: 14 errors
-sisu: for more on a code, run `sisu explain <code>`: E0159
+error[E0159]: `Two<T, bool>` has no `==`
+   --> E0159-blocked.sisu:158:5
+    |
+120 | extend<A: Eq, B: Ord> Two<A, B>: Eq {
+    |           -- this conformance needs `A: Eq`
+...
+158 |     x == x
+    |     ^ this has type `Two<T, bool>`
+
+error[E0159]: `Two<T, Node>` has no `==`
+   --> E0159-blocked.sisu:162:5
+    |
+120 | extend<A: Eq, B: Ord> Two<A, B>: Eq {
+    |           -- this conformance needs `A: Eq`
+...
+162 |     x == x
+    |     ^ this has type `Two<T, Node>`
+
+error[E0159]: `Two<Node, bool>` has no `==`
+   --> E0159-blocked.sisu:166:5
+    |
+120 | extend<A: Eq, B: Ord> Two<A, B>: Eq {
+    |           -- this conformance needs `A: Eq`
+...
+166 |     x == x
+    |     ^ this has type `Two<Node, bool>`
+
+error[E0159]: `Two<T, U>` has no `==`
+   --> E0159-blocked.sisu:170:5
+    |
+120 | extend<A: Eq, B: Ord> Two<A, B>: Eq {
+    |           -- this conformance needs `A: Eq`
+...
+170 |     x == x
+    |     ^ this has type `Two<T, U>`
+
+error[E0159]: `Two<T, T>` has no `==`
+   --> E0159-blocked.sisu:174:5
+    |
+120 | extend<A: Eq, B: Ord> Two<A, B>: Eq {
+    |           -- this conformance needs `A: Eq`
+...
+174 |     x == x
+    |     ^ this has type `Two<T, T>`
+
+error[E0159]: `Q<T>` has no `==`
+   --> E0159-blocked.sisu:178:5
+    |
+130 | extend<A: Eq & Conv<i64>> Q<A>: Eq {
+    |           -- this conformance needs `A: Eq`
+...
+178 |     x == x
+    |     ^ this has type `Q<T>`
+
+error[E0159]: `R<T>` has no `==`
+   --> E0159-blocked.sisu:182:5
+    |
+140 | extend<A: Eq & Ord> R<A>: Eq {
+    |           -- this conformance needs `A: Eq`
+...
+182 |     x == x
+    |     ^ this has type `R<T>`
+
+error[E0159]: `Pair<Two<T, bool>>` has no `==`
+   --> E0159-blocked.sisu:186:5
+    |
+ 13 | extend<A: Eq> Pair<A>: Eq {
+    |           -- this conformance needs `A: Eq`
+...
+186 |     x == x
+    |     ^ this has type `Pair<Two<T, bool>>`
+
+error[E0159]: `Two<T, bool>?` has no `==`, since `Two<T, bool>` has none
+   --> E0159-blocked.sisu:190:5
+    |
+120 | extend<A: Eq, B: Ord> Two<A, B>: Eq {
+    |           -- this conformance needs `A: Eq`
+...
+190 |     x == x
+    |     ^ this has type `Two<T, bool>?`
+
+error[E0139]: `Two<T, i64>` has no `==`
+   --> E0159-blocked.sisu:194:5
+    |
+194 |     x == x
+    |     ^ this has type `Two<T, i64>`
+    |
+    = help: add a bound: `T: Eq`
+
+error[E0159]: `Two<Node, i64>` has no `==`
+   --> E0159-blocked.sisu:198:5
+    |
+120 | extend<A: Eq, B: Ord> Two<A, B>: Eq {
+    |           -- this conformance needs `A: Eq`
+...
+198 |     x == x
+    |     ^ this has type `Two<Node, i64>`
+    |
+    = help: make `Node` conform to `Eq`
+
+error[E0139]: `Same2<T, T>` has no `==`
+   --> E0159-blocked.sisu:202:5
+    |
+202 |     x == x
+    |     ^ this has type `Same2<T, T>`
+    |
+    = help: add a bound: `T: Eq`
+
+error[E0139]: `Same2<T, T?>` has no `==`
+   --> E0159-blocked.sisu:206:5
+    |
+206 |     x == x
+    |     ^ this has type `Same2<T, T?>`
+    |
+    = help: add a bound: `T: Eq`
+
+error[E0159]: `Same2<Node, Node>` has no `==`
+   --> E0159-blocked.sisu:210:5
+    |
+151 | extend<A: Eq, B: Eq> Same2<A, B>: Eq {
+    |           -- this conformance needs `A: Eq`
+...
+210 |     x == x
+    |     ^ this has type `Same2<Node, Node>`
+    |
+    = help: make `Node` conform to `Eq`
+
+sisu: 28 errors
+sisu: for more on a code, run `sisu explain <code>`: E0139, E0159

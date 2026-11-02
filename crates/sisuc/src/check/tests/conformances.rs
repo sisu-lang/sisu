@@ -5550,6 +5550,53 @@ fn blocked_part_should_give_none_when_the_type_has_no_failing_conformance() {
     }
 }
 
+/// One change to the part behind a bound is the whole fix only when each bound that fails leads
+/// to that same part. With two parts, or two interfaces, there is no one part to change.
+#[test]
+fn blocked_part_should_give_none_when_more_than_one_bound_fails() {
+    let src = format!(
+        "{EQ_IF_ARGUMENT}class Two<A, B> {{\n    a: A\n    b: B\n}}\nextend<A: Eq, B: Ord> Two<A, B>: Eq {{\n    fn eq(self, other: Two<A, B>) -> bool {{ true }}\n}}\nclass R<A> {{\n    a: A\n}}\nextend<A: Eq & Ord> R<A>: Eq {{\n    fn eq(self, other: R<A>) -> bool {{ true }}\n}}\nclass Same2<A, B> {{\n    a: A\n    b: B\n}}\nextend<A: Eq, B: Eq> Same2<A, B>: Eq {{\n    fn eq(self, other: Same2<A, B>) -> bool {{ true }}\n}}\n"
+    );
+    let rows = [
+        ("a part that no help fixes", "T", "Two<T, bool>", None),
+        ("two parameters", "T, U", "Two<T, U>", None),
+        ("two interfaces of one part", "T", "R<T>", None),
+        (
+            "one part for two bounds of different interfaces",
+            "T",
+            "Two<T, T>",
+            None,
+        ),
+        (
+            "two bounds behind a first step",
+            "T",
+            "Pair<Two<T, bool>>",
+            None,
+        ),
+        ("one bound that fails", "T", "Two<T, i64>", Some("T")),
+        (
+            "one bound that fails behind a first step",
+            "T",
+            "Pair<Two<T, i64>>",
+            Some("T"),
+        ),
+        (
+            "two bounds that lead to one part",
+            "T",
+            "Same2<T, T>",
+            Some("T"),
+        ),
+    ];
+    for (row, params, ty, part) in rows {
+        let expected = part.map(|part| (part.to_string(), "Eq".to_string()));
+        assert_eq!(
+            blocked_of(&src, (params, ty), "Eq"),
+            expected,
+            "row `{row}`"
+        );
+    }
+}
+
 /// `blocked_part` goes one level in for each written conformance: it does not start again from
 /// the type at each level. The steps of `failing_leaf` cannot show that, as it keeps its answers.
 #[test]
