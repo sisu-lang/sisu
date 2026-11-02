@@ -29,6 +29,7 @@ The caller names one target. Infer its kind; ask when it is unclear.
 3. Delete the build directories that have not changed for a day, because a run that never reaches step 6 keeps its builds: `find "${TMPDIR:-/tmp}"/sisu-review-*/ -mindepth 1 -maxdepth 1 -type d ! -name probes -mtime +0 -exec rm -rf {} +`.
 4. Run `git fetch origin` before every review: the brief and its script come from `origin/main`, so a branch that started before a change to the criteria gets the current ones.
 5. For the final diff of a branch, review what will merge. When `git merge-base --is-ancestor origin/main <head>` fails, `main` has moved: bring it in, run `make test` and `make site`, and review the range from `origin/main` to the new head. Rebase onto `origin/main` when the branch's commits replay cleanly. Merge `origin/main` instead when a rebase conflicts in commits that later fix rounds rewrote: one merge resolves the conflict against the final code. A new check on `main`, such as a warning, can fail the branch's own tests with no conflict, so `make test` is part of the merge.
+6. For the final diff of a branch that changes `crates/sisuc/src/parser.rs` or `crates/sisuc/src/lexer/`, run `make fuzz SECS=300` (the `front_end` target) on the head in the branch's worktree, with Bash `run_in_background`. Put each crash it leaves in `fuzz/artifacts/front_end/` into the first round as a finding, with the input and the panic message. The fuzz target needs cargo-fuzz (`make setup`); `docs/development.md` (Fuzz the front end) says how to replay an input.
 
 ### 2. Write the brief
 
