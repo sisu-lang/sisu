@@ -234,7 +234,7 @@ const MAX_DEPTH: usize = 256;
 /// The height of a path through the tree: its levels, and how many of them are links of a chain
 /// or `else if`s. `Ord` puts the deeper path first, so the maximum of two heights is the deeper
 /// path with its own counts, and the report can name what made that path deep. Two heights with the
-/// same counts are equally deep, so the order and the equality ignore `else_if_at`.
+/// same counts are equally deep, so the order and the equality ignore `run` and `longest`.
 #[derive(Clone, Copy, Default)]
 struct Height {
     /// The levels on the path.
@@ -243,8 +243,11 @@ struct Height {
     links: usize,
     /// The levels that an `else if` added.
     else_ifs: usize,
-    /// The `else if`, from `else` to `if`, that added the last of those levels.
-    else_if_at: Option<Span>,
+    /// The `else if`s in a row that end the path. A level of another kind ends the run.
+    run: usize,
+    /// The longest run of `else if`s on the path, with its length and its last `else if`, from
+    /// `else` to `if`. Of two runs of the same length, the later one.
+    longest: Option<(usize, Span)>,
 }
 
 impl Height {
@@ -257,6 +260,7 @@ impl Height {
     fn deeper(self) -> Self {
         Self {
             depth: self.depth + 1,
+            run: 0,
             ..self
         }
     }
@@ -271,9 +275,15 @@ impl Height {
 
     /// One level more, which the `else if` at `at` adds.
     fn else_if(self, at: Span) -> Self {
+        let run = self.run + 1;
+        let longest = match self.longest {
+            Some((len, _)) if len > run => self.longest,
+            _ => Some((run, at)),
+        };
         Self {
             else_ifs: self.else_ifs + 1,
-            else_if_at: Some(at),
+            run,
+            longest,
             ..self.deeper()
         }
     }
@@ -605,14 +615,17 @@ impl<'a> Parser<'a> {
     }
 
     /// Sets `self.depth`, or reports that the tree is too deep. The report names what made the
-    /// path deep. For an `else if` chain, it points at the last `else if` on the path, not at the
-    /// token in its branch where the depth passed the limit.
+    /// path deep. For an `else if` chain, it points at the last `else if` of the longest run on
+    /// the path, not at the token in its branch where the depth passed the limit. When `if` is on
+    /// the line after `else`, it points at the `else` alone, so that the span stays on one line.
     fn reach(&mut self, height: Height) -> Result<(), Diagnostic> {
         self.depth = height;
         if height.depth > MAX_DEPTH {
             let form = height.form();
-            let at = match height.else_if_at {
-                Some(else_if) if matches!(form, NestingForm::ElseIf) => else_if,
+            let at = match height.longest {
+                Some((_, else_if)) if matches!(form, NestingForm::ElseIf) => {
+                    self.same_line_start(else_if, "else".len())
+                }
                 _ => self.peek().span,
             };
             return Err(DiagnosticKind::NestingTooDeep {
@@ -623,6 +636,17 @@ impl<'a> Parser<'a> {
             .into());
         }
         Ok(())
+    }
+
+    /// `span`, or its first `len` bytes when a line break is inside `span`.
+    fn same_line_start(&self, span: Span, len: usize) -> Span {
+        // `breaks` is sorted, so the lookup is a binary search.
+        let at = self.breaks.partition_point(|&b| b < span.start());
+        if self.breaks.get(at).is_some_and(|&b| b < span.end()) {
+            Span::new(span.start(), span.start() + len)
+        } else {
+            span
+        }
     }
 
     /// Enters one more level of nesting for the children that follow.
