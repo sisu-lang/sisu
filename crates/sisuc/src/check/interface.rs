@@ -1493,13 +1493,16 @@ impl Checker<'_> {
     /// The part to change so that `leaf`, the part that `failing_leaf` gives, meets `interface`
     /// with `args`, and the interface it must meet. A class or an enum that writes a conformance
     /// whose bound fails is not the part to change: the part is inside it, behind that bound.
-    /// The walk goes into the first bound that fails, and again into the part that fails it, while
-    /// the part has a written conformance whose bound fails. `None` when `leaf` has no such
-    /// conformance, or when the walk comes back to a part it has seen: `failing_leaf` goes into
-    /// the payloads of an enum, which are not arguments of its type, so a part can reach itself.
+    /// The walk goes into a conformance only when each bound that fails leads to the same part,
+    /// because one change to that part is then the whole fix. It goes on into that part while the
+    /// part has a written conformance whose bound fails. `None` when `leaf` has no such
+    /// conformance, when the bounds that fail of a conformance on the walk lead to different
+    /// parts, or when the walk comes back to a part it has seen: `failing_leaf` goes into the
+    /// payloads of an enum, which are not arguments of its type, so a part can reach itself.
     ///
     /// The walk takes one step for each written conformance it goes into, each with the cached
-    /// answers of `conforms` and `failing_leaf`. It runs on the path of an error only.
+    /// answers of `conforms` and `failing_leaf` for each bound of that conformance. It runs on the
+    /// path of an error only.
     pub(super) fn blocked_part(
         &mut self,
         leaf: Type,
@@ -1517,12 +1520,29 @@ impl Checker<'_> {
             }
             #[cfg(test)]
             super::BLOCKED_STEPS.set(super::BLOCKED_STEPS.get() + 1);
-            let (i, bound, args) = self.first_failing_bound(part.1, k, stands);
-            part = (
-                self.failing_leaf(stands.get()[i], bound.interface, args),
-                bound.interface,
-                args,
-            );
+            let (_, bounds) = (self.conformance_bounds.get(&(part.1, k)))
+                .expect("a conformance that a type does not meet should have bounds")
+                .clone();
+            let mut next = None;
+            for (i, bound) in
+                (bounds.iter().enumerate()).flat_map(|(i, b)| b.iter().map(move |&b| (i, b)))
+            {
+                let args = self.subst_args(bound.args, stands.get());
+                if self.conforms(stands.get()[i], bound.interface, args) {
+                    continue;
+                }
+                let step = (
+                    self.failing_leaf(stands.get()[i], bound.interface, args),
+                    bound.interface,
+                    args,
+                );
+                if next.is_some_and(|next| next != step) {
+                    return None;
+                }
+                next = Some(step);
+            }
+            part = next
+                .expect("a conformance that a type does not meet should have a bound that fails");
             blocked = true;
         }
         blocked.then_some(part)
