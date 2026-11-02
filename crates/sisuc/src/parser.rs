@@ -12,8 +12,9 @@ use crate::ast::{
     UnaryOp, Variant,
 };
 use crate::diagnostic::{
-    self, BuiltIn, ClashForm, Diagnostic, DiagnosticKind, ForeignPattern, ForeignRange,
-    InterfaceBodyForm, Join, LetField, MatchIdiomForm, NestingForm, Owner, PowerFix, SpecForm,
+    self, AnyFormKind, BuiltIn, ClashForm, Diagnostic, DiagnosticKind, ForeignPattern,
+    ForeignRange, InterfaceBodyForm, Join, LetField, MatchIdiomForm, NestingForm, Owner, PowerFix,
+    SpecForm,
 };
 use crate::lexer::{Lexed, MIN_MAGNITUDE, Token, TokenKind, literal_too_large};
 use crate::source::{Source, Span};
@@ -650,32 +651,38 @@ impl<'a> Parser<'a> {
     fn parse_type(&mut self) -> Result<TypeExpr, Diagnostic> {
         self.descend()?;
         let start = self.peek().span;
+        let mut optional = 0;
+        let mut grouped = false;
+        let mut inner_bare = None;
         let (mut kind, mut span) = if self.eat(&TokenKind::LBracket).is_some() {
             let element = self.parse_type()?;
             let close = self.expect(&TokenKind::RBracket)?;
             (TypeKind::Array(Box::new(element)), start.to(close.span))
+        } else if self.eat(&TokenKind::LParen).is_some() {
+            // `( type )` is the type, so `(any Observer)?` is an optional interface value.
+            let inner = self.parse_type()?;
+            let close = self.expect(&TokenKind::RParen)?;
+            optional = inner.optional;
+            grouped = true;
+            if matches!(inner.kind, TypeKind::Name(_) | TypeKind::Applied(_)) {
+                // The checker finds a name at the start of its span: `(Shape)` keeps `Shape`'s.
+                inner_bare = Some(inner.bare);
+                (inner.kind, inner.span)
+            } else {
+                (inner.kind, start.to(close.span))
+            }
         } else if let Some(token) = self.eat(&TokenKind::SelfType) {
             (TypeKind::SelfType, token.span)
+        } else if self.at_any() {
+            return self.parse_any();
         } else {
-            let ident = self.ident("a type")?;
-            if self.at(&TokenKind::Lt) {
-                let (args, angles) = self.type_args()?;
-                (
-                    TypeKind::Applied(Box::new(Applied {
-                        name: ident.name,
-                        args,
-                        angles,
-                    })),
-                    Span::new(ident.span.start(), self.closing_angle()),
-                )
-            } else {
-                (TypeKind::Name(ident.name), ident.span)
-            }
+            self.named_type()?
         };
         // `.Name` after a name, `Self` or a type with arguments is an associated type, one level
         // deeper each. A `.` and a name are always a member here: a type is never followed by a
         // field access.
-        while !matches!(kind, TypeKind::Array(_))
+        while !grouped
+            && !matches!(kind, TypeKind::Array(_))
             && self.at(&TokenKind::Dot)
             && let TokenKind::Ident(member) = self.tokens[self.pos + 1].kind
         {
@@ -698,8 +705,7 @@ impl<'a> Parser<'a> {
             };
         }
         // Each `?` is one layer and one level of depth; `??` is one token of two.
-        let bare = span;
-        let mut optional = 0;
+        let bare = inner_bare.unwrap_or(span);
         loop {
             let layers = match self.peek().kind {
                 TokenKind::Question => 1,
@@ -718,6 +724,84 @@ impl<'a> Parser<'a> {
             span,
             bare,
         })
+    }
+
+    /// A name, and its type arguments if `<` follows.
+    fn named_type(&mut self) -> Result<(TypeKind, Span), Diagnostic> {
+        let ident = self.ident("a type")?;
+        if !self.at(&TokenKind::Lt) {
+            return Ok((TypeKind::Name(ident.name), ident.span));
+        }
+        let (args, angles) = self.type_args()?;
+        Ok((
+            TypeKind::Applied(Box::new(Applied {
+                name: ident.name,
+                args,
+                angles,
+            })),
+            Span::new(ident.span.start(), self.closing_angle()),
+        ))
+    }
+
+    /// Whether `any` and a name come next: `any` before a name is the keyword, and anywhere else
+    /// it is a type's name.
+    fn at_any(&self) -> bool {
+        matches!(self.peek().kind, TokenKind::Ident(name) if name.as_str() == "any")
+            && matches!(self.tokens[self.pos + 1].kind, TokenKind::Ident(_))
+    }
+
+    /// `any I` or `any I<A>`, at the `any`. A `?` or a `&` after it is `AnyForm`: `any` binds
+    /// tighter than `?`, and takes one interface.
+    fn parse_any(&mut self) -> Result<TypeExpr, Diagnostic> {
+        let keyword = self.bump().span;
+        self.descend()?;
+        let (kind, name_span) = self.named_type()?;
+        let interface = TypeExpr {
+            kind,
+            optional: 0,
+            span: name_span,
+            bare: name_span,
+        };
+        let span = keyword.to(name_span);
+        if self.peek().kind == TokenKind::Amp {
+            let amp = self.bump().span;
+            let other = self.parse_type()?;
+            return Err(DiagnosticKind::AnyForm {
+                at: amp.to(other.span),
+                form: AnyFormKind::Several {
+                    first: self.source.slice(name_span.range()).to_string(),
+                    second: self.source.slice(other.bare.range()).to_string(),
+                },
+            }
+            .into());
+        }
+        // Each `?` after the interface is a layer, and a `??` token is two.
+        let (mut layers, mut mark) = (0, span);
+        while let Some(count) = match self.peek().kind {
+            TokenKind::Question => Some(1),
+            TokenKind::QuestionQuestion => Some(2),
+            _ => None,
+        } {
+            layers += count;
+            mark = self.bump().span;
+        }
+        if layers == 0 {
+            return Ok(TypeExpr {
+                kind: TypeKind::Any(Box::new(interface)),
+                optional: 0,
+                span,
+                bare: span,
+            });
+        }
+        Err(DiagnosticKind::AnyForm {
+            at: span.to(mark),
+            form: AnyFormKind::Optional {
+                written: self.source.slice(span.range()).to_string(),
+                bare: span,
+                layers,
+            },
+        }
+        .into())
     }
 
     /// `<` types `>` at the next token, with an optional trailing comma, and its span. The caller
@@ -805,13 +889,22 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Scans a type: a name or `Self` and its list and `.Name`s, or `[type]`, then its `?` layers,
-    /// each one level deep.
-    fn scan_type(&self, at: &mut usize, depth: usize) -> bool {
+    /// Whether the tokens at `at` start with `any` and a name, as `at_any` asks of the next token.
+    fn scans_any(&self, at: usize) -> bool {
+        matches!(self.scanned(at), TokenKind::Ident(name) if name.as_str() == "any")
+            && matches!(self.scanned(at + 1), TokenKind::Ident(_))
+    }
+
+    /// Scans a type: a name or `Self` and its list and `.Name`s, `any` and a name and its list,
+    /// or `[type]`, then its `?` layers, each one level deep. A type in parentheses is one in an
+    /// expression only when it starts with `any` or a `?` follows its `)`, since the other
+    /// parentheses after a `<` are an expression's: `f(a < (b), c > (d))` is two comparisons.
+    fn scan_type(&self, at: &mut usize, mut depth: usize) -> bool {
         if depth > MAX_DEPTH {
             return false;
         }
         let mut members = 0;
+        let mut interface = false;
         match self.scanned(*at) {
             TokenKind::LBracket => {
                 *at += 1;
@@ -820,13 +913,36 @@ impl<'a> Parser<'a> {
                 }
                 *at += 1;
             }
+            TokenKind::LParen => {
+                let any = self.scans_any(*at + 1);
+                *at += 1;
+                if !self.scan_type(at, depth + 1) || *self.scanned(*at) != TokenKind::RParen {
+                    return false;
+                }
+                *at += 1;
+                if !any
+                    && !matches!(
+                        self.scanned(*at),
+                        TokenKind::Question | TokenKind::QuestionQuestion
+                    )
+                {
+                    return false;
+                }
+            }
             TokenKind::Ident(_) | TokenKind::SelfType => {
+                if self.scans_any(*at) {
+                    // The interface is a level deeper, as `parse_any` counts it.
+                    *at += 1;
+                    depth += 1;
+                    interface = true;
+                }
                 *at += 1;
                 if *self.scanned(*at) == TokenKind::Lt && !self.scan_list(at, depth) {
                     return false;
                 }
                 // Each `.Name` is a level deeper, as `parse_type` counts it.
-                while *self.scanned(*at) == TokenKind::Dot
+                while !interface
+                    && *self.scanned(*at) == TokenKind::Dot
                     && matches!(self.scanned(*at + 1), TokenKind::Ident(_))
                 {
                     members += 1;
@@ -6001,13 +6117,20 @@ mod tests {
     /// linear: each token is then scanned by at most `MAX_DEPTH + 1` of them.
     #[test]
     fn long_comparison_chains_should_scan_linearly() {
-        let scanned = |n: usize| {
-            let chain = vec!["a"; n].join(" < ");
+        let scanned = |n: usize, unit: &str| {
+            let chain = vec![unit; n].join(" < ");
             SCANNED.set(0);
             first_fn(&format!("fn main() {{ print({chain}) }}"));
             SCANNED.get()
         };
-        crate::mir::tests::assert_near_linear(scanned(1000), scanned(2000), scanned(3000));
+        // A parenthesis after each `<` opens a type to scan, and `any` is a name there.
+        for unit in ["a", "a < (a)", "a < any"] {
+            crate::mir::tests::assert_near_linear(
+                scanned(1000, unit),
+                scanned(2000, unit),
+                scanned(3000, unit),
+            );
+        }
     }
 
     #[test]
@@ -6696,6 +6819,82 @@ mod tests {
         assert_eq!(f.ret.expect("has a return type").span, Span::new(10, 16));
         // After a value, `??` still coalesces.
         assert_eq!(expr("a ?? b"), "(?? a b)");
+    }
+
+    /// `any` is a keyword only before a name in a type, and a type in parentheses is that type.
+    /// The expression forms read their type arguments through `scan_type`'s lookahead.
+    #[test]
+    fn any_types_should_parse_where_a_type_goes() {
+        let rows = [
+            ("let x: any Shape = y", "(let x any Shape y)"),
+            ("let x: (any Shape)? = y", "(let x (any Shape)? y)"),
+            ("let x: (any Shape)?? = y", "(let x (any Shape)?? y)"),
+            ("let x: [(any Shape)?] = y", "(let x [(any Shape)?] y)"),
+            ("let x: [any Shape] = y", "(let x [any Shape] y)"),
+            ("let x: (i64) = y", "(let x i64 y)"),
+            ("let x: (i64?)? = y", "(let x i64?? y)"),
+            ("let x: Stack<any Shape> = y", "(let x Stack<any Shape> y)"),
+            (
+                "let x: any Convert<Kelvin> = y",
+                "(let x any Convert<Kelvin> y)",
+            ),
+            // `any` with no name after it is a type named `any`.
+            ("let x: any = y", "(let x any y)"),
+            ("let x: [any]? = y", "(let x [any]? y)"),
+            ("f<any Shape>(x)", "(call f<any Shape> x)"),
+            ("f<(any Shape)?>(x)", "(call f<(any Shape)?> x)"),
+            ("Stack<(any Shape)?>()", "(call Stack<(any Shape)?>)"),
+            (
+                "Stack<any Convert<Kelvin>>()",
+                "(call Stack<any Convert<Kelvin>>)",
+            ),
+            // `any` after a `.` or in a value position stays a name.
+            ("xs.any(f)", "(call (. xs any) f)"),
+            ("let any = 1", "(let any 1)"),
+            ("any + 1", "(+ any 1)"),
+            // The parentheses and `any` are comparisons unless the list is a type's.
+            ("f(a < any, b > c)", "(call f (< a any) (> b c))"),
+            ("f(a < (b), c > (d))", "(call f (< a b) (> c d))"),
+        ];
+        for (src, expected) in rows {
+            assert_eq!(expr(src), expected, "{src}");
+        }
+        // `(any Shape)?` starts at its `(` and its `?` ends it; the bare type ends at the `)`.
+        let src = "fn main() { let x: (any Shape)? = y }";
+        let StmtKind::Let { ty: Some(ty), .. } = &first_fn(src).body.stmts[0].kind else {
+            panic!("expected a typed let");
+        };
+        assert_eq!(&src[ty.span.range()], "(any Shape)?");
+        assert_eq!(&src[ty.bare.range()], "(any Shape)");
+    }
+
+    /// `any` binds tighter than `?` and takes one interface.
+    #[test]
+    fn any_written_with_a_question_mark_or_an_ampersand_should_be_any_form() {
+        for (src, col) in [
+            ("fn f(x: any Observer?) {}", 9),
+            ("fn f(x: any Observer??) {}", 9),
+            ("fn f(x: any Observer???) {}", 9),
+            ("fn f(x: [any Shape?]) {}", 10),
+            ("fn f(x: any Convert<Kelvin>?) {}", 9),
+            ("fn f(x: any A & B) {}", 15),
+            ("fn f(x: [any A & B]) {}", 16),
+        ] {
+            assert_eq!(parse_err(src), (Code::AnyForm, 1, col), "{src}");
+        }
+        for (src, fixed_src) in [
+            ("fn f(x: any Observer?) {}", "fn f(x: (any Observer)?) {}"),
+            ("fn f(x: any Observer??) {}", "fn f(x: (any Observer)??) {}"),
+            (
+                "fn f(x: any Observer???) {}",
+                "fn f(x: (any Observer)???) {}",
+            ),
+            ("fn f(x: [any Shape?]) {}", "fn f(x: [(any Shape)?]) {}"),
+        ] {
+            assert_eq!(fixed(src), fixed_src, "{src}");
+        }
+        // Only the optional form has a fix.
+        assert_eq!(parse_diagnostic("fn f(x: any A & B) {}").fixes().len(), 0);
     }
 
     /// Each `.Name` of a member type is a level of the tree, as each `?` is: a chain that

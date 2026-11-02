@@ -5,10 +5,10 @@ proves it works. Its design is settled in a working spec before work starts.
 The specs are not published. The decisions they settled are listed below,
 and the lasting ones are recorded as ADRs in [adr](adr).
 
-## Milestones 1 to 7
+## Milestones 1 to 8
 
-These are adopted. Together they give Sisu a working imperative core, and
-enums with `match`.
+These are adopted. Together they give Sisu a working imperative core, enums
+with `match`, and generics with interfaces.
 
 | # | Milestone | Done when | Status |
 | --- | --- | --- | --- |
@@ -19,6 +19,7 @@ enums with `match`.
 | 5 | Standard streams and arguments | A word-count tool reads standard input | Done |
 | 6 | Floats and conversions: `f64`, conversions that can fail return an optional, an unused-value warning, format specs | A Mandelbrot set prints as text, and a projectile table prints with format specs and a conversion to `i64?`, all clean under Valgrind | Done |
 | 7 | Enums with payloads, `match` with destructuring, alternatives, guards, literal and range patterns and an exhaustiveness check, `if let` and `while let` with enum patterns, and `..=` in `for` | An evaluator over a recursive `enum Expr` of `Num(i64)`, `Add` and `Mul` prints correct results, and a state machine runs with `match`, `if let` and `while let`, all clean under Valgrind; a non-exhaustive `match` is a compile error | Done |
+| 8 | Generics, compiled by monomorphization, and interfaces that bound them; `Option` and `Result` in the prelude, with the bare names `Some`, `None`, `Ok` and `Err`, and `T?` as shorthand for `Option<T>`, nested optionals included; `Display`, `Eq` and `Ord`, so that every type prints; classes that compare by identity; `dbg`; a prelude written in Sisu; array `push`; type aliases; and interface values, `any Shape`. `weak` on `T?` and on `(any I)?` moved to milestone 9 | `print(x)` works for any printable type; a generic `Stack<T>`, `largest<T: Ord>`, a generic interface and an associated type run; a `[any Shape]` that holds a class and an enum prints each area; Sisu's lexer, written in Sisu (`selfhost/lexer.sisu`), prints the tokens that `sisu build --emit tokens` prints for every test program that lexes without errors; every program clean under Valgrind; every diagnostic of the milestone has a fixture | Done |
 
 ### What works today
 
@@ -85,8 +86,25 @@ enums with `match`.
   replaces it with a call of the conformance's method. A type that does not
   meet its conformance, a conformance twice, an interface used as a type and a
   call that more than one conformance answers are errors (`E0146` to
-  `E0157`). There are no interface values (`any`) yet
+  `E0157`)
   ([ADR 0023](adr/0023-generics-are-monomorphized-and-checked-at-the-definition.md))
+- interface values: `any Shape` is the type of a value of any type that
+  conforms to `Shape`, so `[any Shape]` holds a `Circle` and a `Rect`, and a
+  call such as `s.area()` runs the method of the type that the value holds. A
+  value converts to an `any` type where one is expected: in a `let` with a
+  type, an argument, a field, an array element, a `return`, a tail, an
+  assignment, the join of two branches, a `break` value, the default of `??`
+  and a variant payload. A class object is its own data; every other value, an
+  enum, a number or a `string`, goes into a counted box that copies of the
+  value share. An `any Shape` conforms to `Shape`, so `total<T: Shape>` takes
+  an `[any Shape]`. It prints as the value inside prints, and has no `==` or
+  `<` (`E0159`). An optional does not convert: an `i64?` is no `any Display`
+  and a `Circle?` is no `(any Shape)?` (`E0032`), while a `Circle` converts to
+  `(any Shape)?` and wraps. An interface with a generic method, a `Self`
+  besides the receiver, an associated type, or an inherited interface with
+  `Self` in its arguments cannot be `any` (`E0164`), a bare
+  interface name is not a type (`E0147`), and `any Shape?` and `any A & B` are
+  errors (`E0165`)
 - type aliases, `type Grid = [[char?]]` and `type Pairs<T> = [[T]]`: another
   name for a type, so a `Grid` is a `[[char?]]` everywhere, inside type
   arguments too. An alias of a class or an enum builds values as the type does
@@ -104,6 +122,15 @@ enums with `match`.
   `AnyObject` (`E0158`); `a is b` on a `T: AnyObject` tests identity. Printing
   an optional at the top level warns (`W0015`), and `.to_string()` does not
   ([ADR 0036](adr/0036-every-type-prints-and-printing-an-optional-warns.md))
+- `dbg(x)`, which writes `file:line:column: source = value` to standard error
+  and returns `x`, so it can wrap any expression; it shows a class one level
+  deep and lays a value out as `{x:#}` does, and it does not warn. `{x:#}` in
+  interpolation lays a value out to fit 80 columns: a part that does not fit
+  breaks into one element per line, indented by four spaces. `#` does not
+  combine with a width, an alignment or a precision (`E0109`)
+- `selfhost/lexer.sisu`, Sisu's lexer written in Sisu, which uses generics and
+  interfaces. The tests check that it prints the same tokens as
+  `sisu build --emit tokens` for every test program that lexes without errors
 - `match` on an enum, `i64`, `u8`, `bool`, `char` or `string`, as an
   expression or a statement, with one arm per line or a `;` between arms; a
   pattern is a variant, bare or through its enum (`Num(n)`, `Expr.Num(n)`),
@@ -331,9 +358,84 @@ These came out of the milestone 2 design and are now part of its spec:
 - The proof programs are `expr.sisu` and `state.sisu` in
   `crates/sisuc/tests/run/`.
 
+### Decided in milestone 8
+
+- Classes compare by identity. A class has no generated `==`, and it prints
+  its name. `a is b` tests whether two references hold one object, and a class
+  gets `==` only when it lists `Eq` and writes the method. This reverses
+  milestone 2's structural comparison, which never ended on a cycle
+  ([ADR 0022](adr/0022-classes-compare-by-identity.md)).
+- Generics are monomorphized and checked at the definition. A generic body is
+  checked once, with each type parameter opaque, and compiled once for each
+  list of type arguments the program reaches. Bounds combine with `&`. After a
+  name in an expression, `<` starts a type-argument list only when the tokens
+  up to its `>` read as types and a `(` or `.` follows, so `f(a < b, c > d)`
+  stays two comparisons. An interface can take both type parameters and
+  associated types, and a type conforms to an interface with the same
+  arguments once
+  ([ADR 0023](adr/0023-generics-are-monomorphized-and-checked-at-the-definition.md)).
+- Optionals nest. `i64??` is `Option<Option<i64>>`, `??` and `if let` take off
+  one layer, and `?.` flattens one. An `Option`-shaped enum stores its empty
+  variant in a niche, a value its payload never holds. An assignment through
+  `?.` writes only when every step holds a value
+  ([ADR 0024](adr/0024-optionals-nest.md),
+  [ADR 0037](adr/0037-assignment-through-optional-chaining.md)).
+- The prelude is written in Sisu. `prelude.sisu` in `crates/sisuc/src/`
+  declares `Option` and `Result`, with the bare names `Some`, `None`, `Ok` and
+  `Err`, and the `min`, `max`, `clamp`, `sum` and `contains` that the compiler
+  built in before. `lang.sisu` beside it declares the language interfaces
+  `Display`, `Eq`, `Ord` and `AnyObject`. The compiler checks both before
+  every program. `print`, `eprint` and `dbg` stay built in
+  ([ADR 0015](adr/0015-the-prelude-holds-only-what-almost-every-program-uses.md)).
+- `dbg(x)` writes `file:line:column: source = value` to standard error and
+  returns `x`. It shows a class one level deep, lays the value out as `{x:#}`
+  does, and does not warn.
+- Every type but `unit` and `never` prints, through a generated `Display`. A
+  value prints as the code that built it reads: a class prints its name, a
+  variant prints without its enum, and a `string` or a `char` is quoted inside
+  an array or a payload. The `Some` rule: a `T?` that holds `x` prints the
+  text of `x`, except when `x` is an optional that holds `None` at its
+  innermost layer. Then it prints `Some(`, the text of `x` and `)`, so every
+  state of an `i64??` prints differently. `{x:#}` lays a value out to fit 80
+  columns, with four spaces of indent, and `#` does not combine with a width,
+  an alignment or a precision. `print`, `eprint` and `"{x}"` of an optional at
+  the top level warn (`W0015`)
+  ([ADR 0036](adr/0036-every-type-prints-and-printing-an-optional-warns.md)).
+- A type alias is another name for the same type, not a new type. The checker
+  resolves it and no later stage sees one; a message about a value that does
+  not fit a declared type shows the alias as the declaration writes it. An
+  alias of a class, an enum, a number type or an optional builds values as
+  the type does: with `type P = Point`, `P(x: 1.0, y: 2.0)` is a `Point`. An
+  alias takes parameters with no bounds, and a bound that its body names is
+  checked at each use. For a distinct type, milestone 10 brings newtypes.
+- Interface values, `any I`. A value converts to `any I` where one is
+  expected, when its type conforms to `I` and is not an optional. An optional
+  `any` is written `(any I)?`, and the parentheses are required (`any I?` is
+  `E0165`). An optional does not convert to a bare `any I`: unwrap it first,
+  for example with `??`. An `X?` does not convert to `(any I)?`, and arguments
+  bind a type parameter before the expected `any` type does:
+  `let s: any Shape = id(c)` makes `id<Circle>` and converts the result. An
+  interface that has a generic method, a `Self` besides the receiver, an
+  associated type, or an inherited interface with `Self` in its arguments
+  cannot be `any` (`E0164`), and the message names the requirement. `any I` conforms to `I` and
+  to every interface that `I` inherits, so `total<any Shape>` is one
+  instantiation whose calls go through the table, and a program cannot write
+  that conformance. An `any` value is two pointers, the data and a table of
+  the methods. A class object is its own data, and any other value goes into
+  a counted box. `any I` has no `==` or `<`, and `a is b` works on one only
+  when `I` inherits `AnyObject`
+  ([ADR 0029](adr/0029-parameters-are-borrowed-unless-consumed.md) records the
+  calling convention of the table).
+- The growing proof program starts: `selfhost/lexer.sisu`, Sisu's lexer
+  written in Sisu. The tests compare its output with `sisu build --emit tokens`
+  for every test program that lexes without errors, and a milestone is done
+  only when the program uses its feature where the feature fits.
+- `weak` on `T?` and on `(any I)?` moved to milestone 9, with the `weak`
+  fields that it needs.
+
 ### What panics
 
-After milestone 7, these are all the ways a Sisu program panics, each with
+After milestone 8, these are all the ways a Sisu program panics, each with
 how to avoid it. Each milestone keeps the table current.
 
 | Operation | Panics when | Without the panic |
@@ -550,11 +652,10 @@ The compiler is fuzzed in two stages:
    answers stop finding bugs, and runs under Valgrind, which `--rc-checks`
    and signal detection stand in for first.
 
-## Proposed milestones 8 to 12
+## Proposed milestones 9 to 12
 
 | # | Milestone | Done when |
 | --- | --- | --- |
-| 8 | Generics (monomorphization) and interfaces, with `print` generic through a `Display`-like interface; `Option` and `Result` join the prelude, with the bare names `Some`, `None`, `Ok` and `Err` in expressions and patterns, and on a `T?` the patterns `Some(p)` and `None` match the optional itself, a variant, a literal or a range matches the value inside it, and a name or `_` matches the whole optional | `print(x)` works for any printable type; `T?` is shorthand for a library `Option<T>` |
 | 9 | Closures and lazy iterator methods (`map`, `filter`, `count`, `sum`), plus a `filter_some`-style method on `[T?]` | Closures first: a function that takes an `(i64) -> bool` runs with a closure that captures a local. Then `words.filter(w => w.len() > 3).count()` runs |
 | 10 | Records, named arguments, default parameters, and `p as name` to bind a whole sub-pattern | A `Point` record prints and compares with no hand-written methods |
 | 11 | Modules, `pub` visibility, and a standard library written in Sisu (`Map`), including `os.env(name)`, `os.exit(code)`, and an `io` module with `read_lines()`, read-everything and `read_bytes()` | Modules first: a program of two files, each with a class of the same name, builds and runs. Then a word-frequency tool reads like a Python script |
@@ -764,9 +865,9 @@ settle before work starts.
 | Milestone 5: standard streams and arguments | 4 | The word-count tool |
 | Milestone 6: floats and conversions | None | Float formatting in `"{x}"`; its Mandelbrot proof printed text, so it landed after 4 |
 | Milestone 7: enums and `match` | Done | 8, 12 |
-| Milestone 8: generics and interfaces | 4, 7 | 12, iterator methods (9), generated conformances on request (10), the standard library (11) |
+| Milestone 8: generics and interfaces | Done | 12, iterator methods (9), generated conformances on request (10), the standard library (11) |
 | Milestone 12: `Result` and `?` | 7, 8 | File I/O, the standard library (11), concurrency |
-| `weak` fields (ADR 0008). The rule covers a `T?` with `T: AnyObject` and an `(any I)?` with a class-only `I`, so the `weak` examples for `any` in milestone 8 wait for it | None | Closures that capture their owner |
+| `weak` fields (ADR 0008). The rule covers a `T?` with `T: AnyObject` and an `(any I)?` with a class-only `I`, so the `weak` examples for `any` wait for it | None | Closures that capture their owner |
 | Milestone 9: closures and function types | `weak` fields. Decisions: closure syntax, weak captures, argument labels, `return` inside a closure | Iterator methods (9), concurrency |
 | Milestone 9: lazy iterator methods | 8, closures | The standard library (11) |
 | Milestone 10: named arguments, default parameters | Decision: argument labels | Records (10) |
@@ -778,7 +879,7 @@ settle before work starts.
 
 ### What can start now
 
-With milestones 1 to 7 done, each of these tracks can run beside the others
+With milestones 1 to 8 done, each of these tracks can run beside the others
 once the decisions it needs are settled:
 
 - **Decisions**: every entry in "Open decisions" is design work with no
@@ -818,10 +919,10 @@ milestone 4's strings keep one count, so the shared `@sisu_rc.retain` splits
 by kind. Land `weak` fields and strings one after the other, not as two
 rewrites of `codegen/rc.rs` at once.
 
-Once 7 is done, milestone 8 starts. Once 8 is done, milestone 12 and
-the Sisu prelude can start, iterator methods once closures are done too, and
-generated conformances on request once records are done too. The standard
-library comes after them, and concurrency last.
+Milestone 8 is done, so milestone 12 and the Sisu prelude can start,
+iterator methods once closures are done too, and generated conformances on
+request once records are done too. The standard library comes after them, and
+concurrency last.
 
 ### Smaller additions to milestones 8 to 11
 
@@ -829,11 +930,14 @@ Each is small once its milestone's main feature exists:
 
 - Milestone 8: type aliases, `type Index = Map<string, [i64]>`. An alias is
   another name for the same type, so it adds no type safety; for a distinct
-  type, use a newtype (milestone 10). Done in milestone 8, stage 9. Done in
-  milestone 8, stage 6: `dbg(x)`, which prints `x` with its file, line, column
-  and source text on standard error and returns `x`, so it can wrap any
-  expression while debugging. It shows a class one level deep, and lays a value
-  out as `{x:#}` does.
+  type, use a newtype (milestone 10). Done in milestone 8, stage 9. An alias
+  of a class or an enum builds values as the type does: `P(x: 1.0, y: 2.0)`
+  with `type P = Point` is a `Point`, and `E.Num(1)` with `type E = Expr` is
+  an `Expr`.
+- Milestone 8: `dbg(x)`, which prints `x` with its file, line, column and
+  source text on standard error and returns `x`, so it can wrap any expression
+  while debugging. Done in milestone 8, stage 6. It shows a class one level
+  deep, and lays a value out as `{x:#}` does.
 - Milestone 8: `Eq` and `Ord` interfaces in the prelude; milestone 11:
   `Hash`, with `Map` and `Set`. `Map` keys need `Hash`, and `sort` needs
   `Ord`. `Hash` has the shape
@@ -1526,9 +1630,23 @@ accepted.
     methods, which also holds the drop code and ADR 0010's copy code. A class
     object is pointed at directly. A record, an enum or a number is boxed on
     the heap first, as Go does. `any` takes one interface. In milestone 8, an
-    interface with a generic method, with `Self` outside the receiver, or
-    with an associated type can be a bound but not an `any` type. The first
-    two follow Rust's dyn-compatibility rule.
+    interface with a generic method, with `Self` outside the receiver, with
+    an associated type, or with an inherited interface that has `Self` in its
+    arguments can be a bound but not an `any` type. The first two follow
+    Rust's dyn-compatibility rule.
+  - Built in milestone 8, stage 10. An `any I` conforms to `I` and to every
+    interface that `I` inherits (the user's decision, 2026-10-20), so
+    `fn total<T: Shape>(xs: [T])` takes an `[any Shape]`, and `total<any Shape>`
+    is one instantiation whose calls go through the table. The program cannot
+    write or replace that conformance. `dbg` of an `any` shows what `dbg` of
+    its value shows, a class's fields included, and `print` shows what `print`
+    of the value shows. An `any` has no `==` or `<`. A value converts to `any I`
+    when its type conforms to `I` and it is not an optional. An `X?` does not
+    convert to `(any I)?`, and an optional does not convert to a bare `any I`;
+    lifting either later breaks no program. Arguments bind a type parameter
+    before the expected `any` type does, so `let s: any Shape = id(c)` makes
+    `id<Circle>` and converts the result, and `pair(c, r)` against `any Shape`
+    is a mismatch at `r`. Lifting that breaks no program either.
   - An interface with a `mut self` requirement can be `any` only when it is
     class-only (milestone 9 part 4): copies of a record share one box, so a
     `mut self` call would change every copy. Decided 2026-10-29:

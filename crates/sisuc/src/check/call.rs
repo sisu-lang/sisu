@@ -591,7 +591,12 @@ impl Checker<'_> {
             Some(ty @ (Type::I64 | Type::F64)) => {
                 return self.number_method(span, receiver, ty, method, args);
             }
-            Some(ty) if matches!(ty.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)) => {
+            Some(ty)
+                if matches!(
+                    ty.kind(),
+                    TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..)
+                ) =>
+            {
                 return self.bound_method(span, receiver, ty, site, args);
             }
             _ => {}

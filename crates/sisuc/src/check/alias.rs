@@ -82,7 +82,8 @@ fn count_visit() {
 /// as it names a parameter of the alias.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum UseCheck {
-    /// An applied class or enum whose declaration has bounds.
+    /// An applied class or enum whose declaration has bounds, or an `any` type whose interface
+    /// has bounds on its arguments.
     Applied(Type),
     /// A type that conforms to an interface, which `T.Item` needs of `T`: `T.Item` is written at
     /// `at`, with `T` at `base`.
@@ -208,7 +209,9 @@ impl Checker<'_> {
                     self.alias_refs(arg, params, out);
                 }
             }
-            ast::TypeKind::Array(element) => self.alias_refs(element, params, out),
+            ast::TypeKind::Array(element) | ast::TypeKind::Any(element) => {
+                self.alias_refs(element, params, out);
+            }
             ast::TypeKind::Member { base, .. } => self.alias_refs(base, params, out),
             ast::TypeKind::SelfType => {}
         }
@@ -653,7 +656,18 @@ impl Checker<'_> {
             return true;
         }
         match check {
-            UseCheck::Applied(ty) => self.check_applied(ty, vec![at; count]),
+            UseCheck::Applied(ty) => match ty.kind() {
+                TypeKind::Any(interface, args) => {
+                    let bound = Bound {
+                        interface,
+                        args,
+                        at,
+                    };
+                    self.check_arguments(bound, ty, vec![at; count]);
+                    true
+                }
+                _ => self.check_applied(ty, vec![at; count]),
+            },
             UseCheck::Conforms {
                 ty,
                 interface,
@@ -997,7 +1011,9 @@ impl Checker<'_> {
 /// How many type arguments the applied class or enum `ty` has.
 fn ty_args(ty: Type) -> usize {
     match ty.kind() {
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args.get().len(),
-        _ => unreachable!("only an applied class or enum has bounds to check"),
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
+            args.get().len()
+        }
+        _ => unreachable!("only an applied class, enum or `any` type has bounds to check"),
     }
 }

@@ -306,8 +306,32 @@ allocation_counts! {
     (show_string_tree, "Add(Num(1), Mul(Num(2), Num(3)))\n", "-\n", 1000),
     // An interpolation with a compound part is one block too.
     (show_interp, "Add(Num(1), Mul(Num(2), Num(3)))!\n", "-\n", 1000),
+    // A class object converts to `any Shape` with no allocation.
+    (any_alloc_object, "2000\n", "0\n", 0),
+    // An enum value converts into one counted box: one block for each conversion.
+    (any_alloc_enum, "1500\n", "0\n", 1000),
     // `print` of an `i64` allocates nothing.
     (print_int, super::numbered_lines("start", 1000), "start\n", 0),
+}
+
+/// GIVEN the benchmark `bench/features/any_shapes`, which converts an enum value to `any Shape`
+/// 3 times in each of 50 000 rounds, and passes each to a function that calls itself twice
+/// WHEN it is built with `-O2` and run under Valgrind
+/// THEN it makes at least 150 000 allocations, one box for each conversion: the optimizer did not
+/// take the boxes out, so the benchmark measures them
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "reads Valgrind's output, and Valgrind runs only on Linux"
+)]
+fn any_shapes_should_keep_its_boxes_at_o2() {
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bench/features/any_shapes/main.sisu");
+    let source = fs::read_to_string(path).expect("reads the benchmark");
+    let (stdout, allocs) =
+        heap_allocs(&compile_tmp_for_valgrind("any_shapes_bench", &source, true));
+    assert_eq!(stdout, "99985\n749977\n");
+    assert!(allocs >= 150_000, "{allocs} allocations");
 }
 
 /// Compiles `tests/programs/<name>.sisu` without `-O2` and runs it under a 256 KiB stack.

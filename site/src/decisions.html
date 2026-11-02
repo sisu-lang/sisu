@@ -11,7 +11,7 @@ The design decisions behind Sisu, each written down as a short record with its r
   <section class="ph"><div class="w">
     <h1>Design decisions</h1>
     <p class="lede">Every design choice in Sisu is written down with its reasons, as a short decision record. This page lists them all.</p>
-    <p class="meta">{{adr-count}} records · at commit e4b0113</p>
+    <p class="meta">{{adr-count}} records · at commit d23f67e</p>
   </div></section>
   <!-- source: docs/adr/ (41 files, 0001 to 0041), README.md ("Read why a design choice was made") -->
 
@@ -146,9 +146,9 @@ The design decisions behind Sisu, each written down as a short record with its r
         <li><strong>Mutable memory shared between tasks.</strong> Tasks share no objects, so counts stay non-atomic and Sisu code cannot have a data race (ADR 0010, proposed).</li>
         <li><strong>A package registry, for a long time.</strong> A registry means hosting, security and name squatting.</li>
       </ul>
-      <p>Interfaces work as bounds on type parameters. Interface values are <span class="soon">planned</span>. Planned work has no promised date and may change.</p>
+      <p>Interfaces work as bounds on type parameters, and <code>any Shape</code> holds a value of any type that conforms to one.</p>
       <p>Compile-time evaluation and reflection are left open, to decide once Sisu has grown; the roadmap's <a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#open-decisions">Open decisions</a> lists what has to be settled first.</p>
-      <!-- source: docs/roadmap.md "Deliberately avoided", "Open decisions" ("Compile-time evaluation and reflection"), "Proposed milestones 8 to 12"; docs/adr/0010-tasks-share-no-objects.md; README.md (interfaces proposed) -->
+      <!-- source: docs/roadmap.md "Deliberately avoided", "Open decisions" ("Compile-time evaluation and reflection"), "Proposed milestones 9 to 12"; docs/adr/0010-tasks-share-no-objects.md; README.md (interfaces proposed) -->
 
       <h2 id="propose">Proposing a change</h2>
       <p>Open a <a href="https://github.com/sisu-lang/sisu/issues">GitHub issue</a> that names the record and the change you propose. A change that is accepted becomes a new record that supersedes the old one. See <a href="contribute.html">how to contribute</a>.</p>

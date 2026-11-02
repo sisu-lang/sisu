@@ -1,0 +1,11 @@
+interface Shape {
+    fn area(self) -> f64
+}
+
+fn _text(s: any Shape) -> string {
+    "{s:.2}"
+}
+
+fn main() {
+    print(1)
+}

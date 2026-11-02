@@ -1,0 +1,10 @@
+error[E0164]: `Mapper` cannot be used as `any Mapper`: `map` is generic
+ --> E0164-generic.sisu:5:18
+  |
+5 | fn _show(_x: any Mapper) {
+  |                  ^^^^^^ used after `any` here
+  |
+  = help: use a type parameter: `T: Mapper`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0164

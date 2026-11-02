@@ -147,6 +147,7 @@ impl Checker<'_> {
         arms: &[ast::Arm],
         expected: Option<Type>,
     ) -> Checked {
+        let (expected, siblings) = self.hinted(span, expected);
         let checked = self.value_kept(scrutinee);
         let mut position = type_of(&checked);
         let cannot = position.take_if(|&mut ty| !matchable(ty));
@@ -163,7 +164,7 @@ impl Checker<'_> {
         let form = LetValue::Match { ty: position };
         let (blocks, ty) = self.ranked(|c| {
             let sources = c.arm_branches(arms, &form, expected);
-            c.join(span, &sources, expected, |c, i, expected| {
+            c.join(span, &sources, (expected, siblings), |c, i, expected| {
                 let arm = &arms[i];
                 let (bound, guard, so_far) = c.bound_branch(arm_key(arm), |c| {
                     c.bind_pattern(None, &form, &arm.pattern, Some(arm))

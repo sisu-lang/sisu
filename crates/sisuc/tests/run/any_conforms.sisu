@@ -1,0 +1,162 @@
+// GIVEN generic classes with a written `Display` or `Eq` whose block has a bound `T: I`, and
+// values of `any I`, of `any J` where `J` inherits `I`, of `any Sink<string>`, and of an `any`
+// interface that has `AnyObject`, standing for `T`
+// WHEN the program prints them, compares them and passes them to a function with the bound
+// THEN each behaves as the value inside it: the written methods run, as for the object itself,
+// and an `any` value whose interface is not the bound gets the generated `Display`
+interface Shape {
+    fn area(self) -> f64
+}
+
+interface Named {
+    fn name(self) -> string
+}
+
+interface Solid: Named {
+    fn volume(self) -> f64
+}
+
+interface Sink<T> {
+    fn put(self, x: T) -> i64
+}
+
+interface Obs: AnyObject {
+    fn hit(self) -> i64
+}
+
+interface Deep: Obs {
+    fn deep(self) -> i64
+}
+
+class Circle: Shape {
+    r: f64
+
+    fn area(self) -> f64 {
+        self.r * 3.0
+    }
+}
+
+class Cube: Solid {
+    side: f64
+
+    fn name(self) -> string {
+        "cube"
+    }
+
+    fn volume(self) -> f64 {
+        self.side
+    }
+}
+
+class Log: Sink<string> {
+    n: i64
+
+    fn put(self, x: string) -> i64 {
+        if x == "x" { self.n } else { 0 }
+    }
+}
+
+class E: Deep {
+    n: i64
+
+    fn hit(self) -> i64 {
+        self.n
+    }
+
+    fn deep(self) -> i64 {
+        self.n
+    }
+}
+
+class Wrap<T> {
+    v: T
+}
+
+extend<T: Shape> Wrap<T>: Display {
+    fn to_string(self) -> string {
+        "wrap of area {self.v.area()}"
+    }
+}
+
+extend<T: Shape> Wrap<T>: Eq {
+    fn eq(self, other: Wrap<T>) -> bool {
+        self.v.area() == other.v.area()
+    }
+}
+
+class Named_<T> {
+    v: T
+}
+
+extend<T: Named> Named_<T>: Display {
+    fn to_string(self) -> string {
+        "named {self.v.name()}"
+    }
+}
+
+class Put<T> {
+    v: T
+}
+
+extend<T: Sink<string>> Put<T>: Display {
+    fn to_string(self) -> string {
+        "sink {self.v.put("x")}"
+    }
+}
+
+class Obj<T> {
+    v: T
+}
+
+extend<T: AnyObject> Obj<T>: Display {
+    fn to_string(self) -> string {
+        "object wrap {same_object(self.v, self.v)}"
+    }
+}
+
+fn same<T: Eq>(a: T, b: T) -> bool {
+    a == b
+}
+
+fn same_object<T: AnyObject>(a: T, b: T) -> bool {
+    a is b
+}
+
+fn main() {
+    let s: any Shape = Circle(r: 1.0)
+    let t: any Shape = Circle(r: 2.0)
+
+    // A written `Display` with a bound on the interface: print, interpolation, array, `any`.
+    let b = Wrap(v: s)
+    print(Wrap(v: Circle(r: 1.0))) // wrap of area 3.0
+    print(b) // wrap of area 3.0
+    print("{b}") // wrap of area 3.0
+    print([b, Wrap(v: t)]) // [wrap of area 3.0, wrap of area 6.0]
+    let d: any Display = b
+    print(d.to_string()) // wrap of area 3.0
+
+    // A written `Eq`, through a generic function and through `==` on an optional.
+    print(same(b, Wrap(v: s))) // true
+    print(same(b, Wrap(v: t))) // false
+    let o: Wrap<any Shape>? = b
+    print(o == Wrap(v: s)) // true
+    print(o == Wrap(v: t)) // false
+
+    // The bound is an interface that `any Solid` inherits, and a generic interface.
+    let solid: any Solid = Cube(side: 1.0)
+    let named: any Named = solid
+    print(Named_(v: solid)) // named cube
+    print(Named_(v: named)) // named cube
+    let sink: any Sink<string> = Log(n: 4)
+    print(Put(v: sink)) // sink 4
+
+    // `AnyObject` through an inherited interface.
+    let deep: any Deep = E(n: 1)
+    let obs: any Obs = deep
+    print(Obj(v: deep)) // object wrap true
+    print(same_object(obs, obs)) // true
+
+    // An `any` value of another interface does not meet the bound, so the generated `Display`
+    // shows: the name of the class and of its type argument.
+    print(Named_(v: s)) // Named_<any Shape>
+}

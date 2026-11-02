@@ -4,7 +4,7 @@ A tour of the Sisu language as it works today, one small program at a time.
   <section class="ph"><div class="w">
     <h1>A tour of Sisu</h1>
     <p class="lede">The language as it works today, one small program at a time, in about ten minutes of reading.</p>
-    <p class="meta">The working programs on this page compile with sisu today. Every output and error shown is what sisu really prints. Checked against the repository at commit 04f8d68.</p>
+    <p class="meta">The working programs on this page compile with sisu today. Every output and error shown is what sisu really prints. Checked against the repository at commit d23f67e.</p>
   </div></section>
 
   <div class="w doc">
@@ -16,6 +16,7 @@ A tour of the Sisu language as it works today, one small program at a time.
       <li><a href="#optionals">Optionals instead of null</a></li>
       <li><a href="#classes">Classes</a></li>
       <li><a href="#enums">Enums and match</a></li>
+      <li><a href="#interfaces">Interfaces and any</a></li>
       <li><a href="#arrays">Arrays are values</a></li>
       <li><a href="#overflow">Integers panic on overflow</a></li>
       <li><a href="#strings">Strings</a></li>
@@ -108,6 +109,17 @@ A tour of the Sisu language as it works today, one small program at a time.
 {{text programs/run/describe.out}}</pre></figure>
       <!-- source: docs/roadmap.md ("What works today": enums, match, literal and range patterns, alternatives, guards, exhaustiveness), docs/adr/0019-enums-are-values-named-through-their-enum.md, docs/adr/0020-labels-belong-to-the-declaration.md, crates/sisuc/tests/run/match_alternatives.sisu, crates/sisuc/tests/run/match_ranges.sisu; diagnostic is real sisu output -->
 
+      <h2 id="interfaces">Interfaces and any</h2>
+      <p>An interface lists method signatures. A class or an enum conforms to it after its name, and writes the methods. A function can take the interface as a bound on a type parameter, as in <code>T: Shape</code>. The compiler then makes one copy of the function for each type argument.</p>
+      <p><code>any Shape</code> is the type of a value of any type that conforms to <code>Shape</code>. One array can hold a <code>Circle</code> and a <code>Rect</code>, and a call on each element runs the method of the type that the value has. The value carries a table of its methods for this. An object is its own data. Any other value, such as the enum below, goes into a counted box first.</p>
+      <figure class="code"><figcaption class="cap">shapes.sisu</figcaption><pre data-lang="sisu">
+{{text programs/run/shapes.sisu}}</pre></figure>
+      <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
+{{text programs/run/shapes.out}}</pre></figure>
+      <p>An <code>any Shape</code> conforms to <code>Shape</code>, so <code>total</code> takes the <code>[any Shape]</code> as it takes a <code>[Circle]</code>.</p>
+      <div class="callout info"><p>Not every interface can be <code>any</code>. <code>Eq</code> cannot, because <code>eq</code> takes another value of the same type, and two <code>any</code> values may hold different types. An <code>any</code> value has no <code>==</code>. An optional does not convert to a bare <code>any Shape</code>: unwrap it first, for example with <code>??</code> or a <code>match</code>. The type of an optional <code>any</code> value is <code>(any Shape)?</code>, with the parentheses.</p></div>
+      <!-- source: docs/reference/generics.md (Bounds, Interfaces, Interface values), docs/adr/0023-generics-are-monomorphized-and-checked-at-the-definition.md, docs/diagnostics/E0164.md, docs/diagnostics/E0159.md, site/programs/run/shapes.sisu -->
+
       <h2 id="arrays">Arrays are values</h2>
       <p>Assigning an array, or passing it to a function, behaves as a copy. No other holder can change your array. The copy is made only when one holder writes, so reading or passing an array never copies it.</p>
       <figure class="code"><figcaption class="cap">arrays.sisu</figcaption><pre data-lang="sisu">
@@ -141,13 +153,12 @@ $ ./factorial
       <h2 id="not-yet">What is not here yet</h2>
       <p>Sisu is early, and much of an everyday language is still missing. Some of what is planned:</p>
       <ul>
-        <li>Interface values, <code>any Shape</code> <span class="soon">planned</span></li>
         <li>Closures and iterators <span class="soon">planned</span></li>
         <li>Errors with <code>Result</code> and <code>?</code> <span class="soon">planned</span></li>
         <li>Modules <span class="soon">planned</span></li>
       </ul>
       <p>Planned work can change and has no promised date. The <a href="status.html">status page</a> lists what works today and what is planned.</p>
-      <!-- source: docs/roadmap.md ("Proposed milestones 8 to 12"), site/assets/site.js AREAS -->
+      <!-- source: docs/roadmap.md ("Proposed milestones 9 to 12"), site/assets/site.js AREAS -->
     </article>
   </div>
 </main>

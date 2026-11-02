@@ -1,0 +1,10 @@
+error[E0164]: `Source` cannot be used as `any Source`: `get` returns `Self.Item`
+  --> E0164-returns-assoc.sisu:15:17
+   |
+15 |     let _s: any Source = Numbers()
+   |                 ^^^^^^ used after `any` here
+   |
+   = help: use a type parameter: `T: Source`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0164

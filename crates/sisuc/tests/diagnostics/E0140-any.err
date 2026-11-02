@@ -1,0 +1,10 @@
+error[E0140]: `Box<T>.run` instantiates itself without end
+  --> E0140-any.sisu:11:29
+   |
+11 |         let next: any Run = Box(value: self)
+   |                             ^^^^^^^^^^^^^^^^ the conversion to `any Run` here
+   |
+   = help: the conversion to `any Run` is a call through `Run`, and a call through `Run` counts as reaching every conformance to `Run`. The argument of `Box<Box<T>>` grows
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

@@ -2037,12 +2037,12 @@ mod tests {
         ]);
         let Run { exit, stdout, .. } = o0_run(&g);
         assert_eq!(exit, Exit::Code(0), "{}", g.program);
-        // One line from each pass of the innermost loop: every loop ran to its bound. The six
-        // more lines are the two that `lang_both` prints, the three that `nest` prints and the
-        // one that prints its result.
+        // One line from each pass of the innermost loop: every loop ran to its bound. The eight
+        // more lines are the two that `lang_both` prints, the two that print an `any` value, the
+        // three that `nest` prints and the one that prints its result.
         assert_eq!(
             String::from_utf8_lossy(&stdout).lines().count(),
-            8 * 8 * 8 + 6
+            8 * 8 * 8 + 8
         );
     }
 
@@ -2106,10 +2106,11 @@ mod tests {
         let builds = [
             stderr.find("==> stdin\n"),
             // Output without a final line break gets one. The empty input's program prints the
-            // two lines of `lang_both`, the three of `nest` and the one that prints its result.
+            // two lines of `lang_both`, the two of the `any` values, the three of `nest` and the
+            // one that prints its result.
             stderr.find("==> program -O2 stdout\nforced\n==> program -O2 stderr\n"),
             stderr.find(
-                "==> program --rc-checks stdout\nRanked\n[1, 2]\nA(A(End))\ntrue\nfalse\n2\n==> program --rc-checks stderr\n",
+                "==> program --rc-checks stdout\nRanked\n[1, 2]\nEye\n[\"s\", 'c', 5, Wide(1)]\nA(A(End))\ntrue\nfalse\n2\n==> program --rc-checks stderr\n",
             ),
             stderr.find("program fuzzer: property 3 failed"),
         ];

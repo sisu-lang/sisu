@@ -1,0 +1,46 @@
+3.0
+Circle
+6.0
+Rect
+9.0
+Circle Rect
+1.0
+12.0
+true
+none
+27.0
+none
+4.0
+true
+5.0
+true
+None
+Some(None)
+Circle
+3.0
+12.0
+cube 2.0
+8.0
+Cube
+tag 1
+tag 1
+x
+H
+H
+[H, tag 1]
+   tag 1|H   |
+true
+false
+true
+false
+true
+false
+true
+false
+button 1 saw click
+button 2 saw tap
+area 3.0
+empty
+3.0
+4.0
+4.0

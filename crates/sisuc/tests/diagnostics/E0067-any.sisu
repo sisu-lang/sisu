@@ -1,0 +1,11 @@
+interface Shape {
+    fn area(self) -> f64
+}
+
+fn _copies(s: any Shape) -> [any Shape] {
+    [s; 3]
+}
+
+fn main() {
+    print(1)
+}

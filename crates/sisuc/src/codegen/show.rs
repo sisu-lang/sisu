@@ -205,7 +205,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// Starts a sink in a new slot that builds a block with a string's header, and gives the slot.
-    fn buffer_sink(&self) -> PointerValue<'ctx> {
+    pub(super) fn buffer_sink(&self) -> PointerValue<'ctx> {
         let sink = self.sink_slot();
         let header = self
             .context
@@ -217,7 +217,7 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// Ends the buffer sink `sink`: its block is a string once its header holds the count, the
     /// length and the capacity that the sink ended with.
-    fn finish_buffer_sink(&self, sink: PointerValue<'ctx>) -> PointerValue<'ctx> {
+    pub(super) fn finish_buffer_sink(&self, sink: PointerValue<'ctx>) -> PointerValue<'ctx> {
         let block = self
             .show_call("sisu_show_finish", &[sink.into()])
             .try_as_basic_value()
@@ -392,6 +392,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             TypeKind::Array(_) | TypeKind::Class(..) => {
                 self.call(self.helper(Helper::Show(mode), ty), &args(value));
             }
+            TypeKind::Any(..) => self.show_any(sink, ty, value, quoted, mode),
             _ => {
                 unreachable!("only a type with a value should be written, never `unit` or `never`")
             }

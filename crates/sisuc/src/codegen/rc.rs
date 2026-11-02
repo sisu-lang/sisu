@@ -979,6 +979,8 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
         match ty.kind() {
             TypeKind::Enum(..) => self.retain_or_release_at(kind, self.enum_slot(value), ty),
+            TypeKind::Any(..) if kind == Helper::Retain => self.retain_any(value),
+            TypeKind::Any(..) => self.release_any(value),
             TypeKind::Optional(payload) => {
                 let function = self.current_function();
                 let some = self.context.append_basic_block(function, "some");

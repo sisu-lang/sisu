@@ -1,0 +1,42 @@
+// GIVEN a program that names `any Display` in many places (a local, an array, two layers of
+// optional, a class field, an enum payload, an alias, a parameter, an array of optionals), has no
+// generic item, and converts no value to an `any` type
+// WHEN it is built and run
+// THEN it prints the text of each `None` and of the empty array: the compiler gives every written
+// `any` type its table layout, as it does when a conversion is made
+class Holder {
+    item: (any Display)?
+}
+
+enum Slot {
+    Empty
+    Held((any Display)?)
+}
+
+type Shown = any Display
+
+fn show(o: (any Display)?) -> string {
+    o.to_string()
+}
+
+fn main() {
+    let o: (any Display)? = None
+    print(o.to_string()) // None
+    let xs: [any Display] = []
+    print(xs) // []
+    let oo: (any Display)?? = None
+    print(oo.to_string()) // None
+    let holder = Holder(item: None)
+    print(holder.item.to_string()) // None
+    for slot in [Slot.Held(None), Slot.Empty] {
+        match slot {
+            Slot.Held(item) => print(item.to_string()) // None
+            Slot.Empty => print("empty")
+        }
+    }
+    let aliased: Shown? = None
+    print(aliased.to_string()) // None
+    print(show(None)) // None
+    let row: [(any Display)?] = [None]
+    print(row.to_string()) // [None]
+}

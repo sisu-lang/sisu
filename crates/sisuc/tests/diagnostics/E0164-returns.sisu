@@ -1,0 +1,11 @@
+interface Copy2 {
+    fn copy2(self) -> [Self]
+}
+
+fn _show(_x: any Copy2) {
+    print(1)
+}
+
+fn main() {
+    print(2)
+}

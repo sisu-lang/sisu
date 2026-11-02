@@ -1,0 +1,10 @@
+class Circle {
+    r: f64
+}
+class Rect {
+    w: f64
+}
+fn main() {
+    let c = true
+    let r = if c { Some(Circle(r: 1.0)) } else { Some(Rect(w: 1.0)) }
+}

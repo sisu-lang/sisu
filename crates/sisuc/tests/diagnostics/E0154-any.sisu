@@ -1,0 +1,12 @@
+interface Shape {
+    fn area(self) -> f64
+}
+
+class Dot {
+    x: f64
+}
+
+fn main() {
+    let s: any Shape = Dot(x: 1.0)
+    print(s.area())
+}

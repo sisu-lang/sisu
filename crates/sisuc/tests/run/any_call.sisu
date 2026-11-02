@@ -1,0 +1,18 @@
+// GIVEN an interface `Run`, a class `C` that conforms to it, and a `main` that converts a `C` to
+// an `any Run` and calls `run` on it, with no generic function, no prelude call and nothing
+// printed
+// WHEN the program is built and run
+// THEN it exits 0 with no output: the conversion makes a table and the call goes through it, which
+// no unchanged-program shortcut of the compiler may skip
+interface Run {
+    fn run(self)
+}
+
+class C: Run {
+    fn run(self) {}
+}
+
+fn main() {
+    let r: any Run = C()
+    r.run()
+}

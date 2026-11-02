@@ -1,0 +1,12 @@
+interface Source {
+    type Item
+    fn done(self) -> bool
+}
+
+fn _show(_x: any Source) {
+    print(1)
+}
+
+fn main() {
+    print(2)
+}

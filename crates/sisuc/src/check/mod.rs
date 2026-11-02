@@ -2,6 +2,7 @@
 //! checks, and records every error instead of stopping at the first.
 
 mod alias;
+mod any;
 mod array;
 mod assoc;
 mod bound;
@@ -301,8 +302,16 @@ struct LoopFrame {
     /// The type of the first value whose type is neither `never` nor `Error`, and its `break`'s
     /// span; under an expected `T?`, a `T?` value after `T` ones replaces it.
     first: Option<(Type, Span)>,
+    /// The span of the value that first set `first`.
+    first_value: Span,
     /// Whether `first` went from a `T` to a `T?`, so the `T` values before need wrapping.
     widened: bool,
+    /// The values of objects that did not join the first one yet, by span, with their types. A
+    /// later `any` value can join them, so the loop reports them when its body is checked.
+    deferred: Vec<(Span, Type)>,
+    /// The type of the siblings of a hinted loop (see `Body::hint_at`): `expected` is then a
+    /// hint, which no value converts to.
+    siblings: Option<Type>,
     /// Whether the loop is a quiet value (see `Body::quiet_at`), and so its values are too.
     quiet: bool,
     /// Whether a `break` inside a nested loop has targeted it, so its values lie in one.
@@ -331,10 +340,13 @@ impl LoopFrame {
             broken: false,
             expected,
             first: None,
+            first_value: keyword,
             bare: None,
             valued: None,
             failed: false,
             widened: false,
+            deferred: Vec::new(),
+            siblings: None,
             quiet: false,
             crossed: false,
         }
@@ -492,6 +504,17 @@ struct Checker<'src> {
     waiting: Option<Waiting>,
     /// Where each bound is written whose closure went past the limit and was reported.
     wide_reported: FxHashSet<Span>,
+    /// The interfaces written where a type belongs before every interface has its requirements:
+    /// the report waits to say whether the interface can be `any`.
+    deferred_as_type: Vec<(tir::InterfaceId, String, String, (Span, usize))>,
+    /// Why each interface cannot be `any`, `None` when it can (`why_not_any`).
+    any_roots: FxHashMap<tir::InterfaceId, Option<any::AnyReason>>,
+    /// The same for each interface with its arguments in the walk of one root (`entry_reason`).
+    any_entries: FxHashMap<(tir::InterfaceId, TypeArgs), Option<any::AnyReason>>,
+    /// The interfaces that each `any` type conforms to (`any_interfaces`).
+    any_closures: FxHashMap<Type, Rc<[(tir::InterfaceId, TypeArgs)]>>,
+    /// Where each `any` type is first written in the user's program.
+    any_written: FxHashMap<Type, Span>,
     /// A buffer for the walk of an interface closure, kept from one closure to the next.
     closure_seen: FxHashSet<(tir::InterfaceId, TypeArgs)>,
     /// The first interface of each name, and every broken one.
@@ -782,6 +805,13 @@ struct Body {
     /// too, and a quiet value that cannot be inferred is not reported, as the failed context
     /// was reported. Only the expression at this span is quiet, not its operands.
     quiet_at: Option<Span>,
+    /// Where the hinted value is, and the type of its siblings: an expression whose expected
+    /// type comes from the siblings it joins (the branches before it, the earlier values of its
+    /// loop, the left side of its `??`), not from its context. That type steers inference as an
+    /// expected type does, but the value does not convert to an `any` type for it, and a join in
+    /// it takes the siblings' type as its first anchor, not as its expected type (see `hinted`).
+    /// Its value parts are hinted too. Only the expression at this span is hinted.
+    hint_at: Option<(Span, Type)>,
     /// Whether an index follows the expression being checked in its chain (field bases, method
     /// receivers, indexed bases). A `?.` that fixes a `.` there leads to an index on an optional.
     indexed: bool,
@@ -1006,6 +1036,8 @@ pub(crate) fn check<'src>(
             conformances,
             choice_ats,
             lang,
+            any_layouts: Vec::new(),
+            any_tables: Vec::new(),
         });
     // A use of a broken item poisons without a diagnostic of its own.
     debug_assert!(
@@ -1115,6 +1147,11 @@ impl<'src> Checker<'src> {
             scopes: Vec::new(),
             waiting: None,
             wide_reported: FxHashSet::default(),
+            deferred_as_type: Vec::new(),
+            any_roots: FxHashMap::default(),
+            any_entries: FxHashMap::default(),
+            any_closures: FxHashMap::default(),
+            any_written: FxHashMap::default(),
             closure_seen: FxHashSet::default(),
             interface_ids: FxHashMap::default(),
             extensions: Vec::new(),
@@ -1225,6 +1262,9 @@ impl Checker<'_> {
                     .collect(),
                 assoc: (info.assoc.iter())
                     .map(|assoc| assoc.name.name.to_string())
+                    .collect(),
+                inherits: (info.inherits.iter())
+                    .map(|bound| (bound.interface, bound.args))
                     .collect(),
             })
             .collect()
@@ -1802,6 +1842,7 @@ impl Checker<'_> {
                 declared
             }
             ast::TypeKind::Member { base, name } => self.member_type(ty, base, name)?,
+            ast::TypeKind::Any(interface) => self.resolve_any(ty, interface)?,
         };
         // Only an applied name can be an instance that grows: a plain name has no arguments.
         // Arguments on a parameter or a built-in type are E0137, and no instance has that type.
@@ -1864,12 +1905,8 @@ impl Checker<'_> {
         // A class or an enum that took a language interface's name is the type.
         let taken = matches!(declared, (Some(_), _) | (_, Some(_)));
         if let (false, Some(found)) = (taken, self.interface_ids.get(&name)) {
-            if matches!(found, Declared::Known(_)) {
-                self.report(DiagnosticKind::InterfaceAsType {
-                    name: name.to_string(),
-                    written: Some(self.source.slice(ty.bare.range()).to_string()),
-                    at: ident().span,
-                });
+            if let Declared::Known(id) = *found {
+                self.interface_as_type(id, name.to_string(), ty, ident().span);
             }
             return None;
         }
@@ -1960,6 +1997,10 @@ impl Checker<'_> {
     /// is `Error` or its body failed; an `Error` parameter still yields one, and `check` drops
     /// it for the error behind it.
     /// A method, of the class or enum `owner`, gets `self` as its first local.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one pass over a function: its signature, locals, body and result"
+    )]
     fn function(
         &mut self,
         f: &ast::Function,
@@ -2027,6 +2068,9 @@ impl Checker<'_> {
             let mut body = c.block(&f.body, expected);
             if let (Some(Type::UNIT), Ok(checked)) = (ret, &body) {
                 c.discard_tail(&f.body, checked);
+            }
+            if let Some(want) = ret {
+                c.any_block(&mut body, want, value_span(&f.body));
             }
             if let Some(want) = ret
                 && let TypeKind::Optional(payload) = want.kind()
@@ -2233,6 +2277,7 @@ impl Checker<'_> {
         match head {
             Head::Class(id) => self.classes[id.0].name.name.as_str(),
             Head::Enum(id) => self.enums[id.0].name.name.as_str(),
+            Head::Interface(id) => self.interfaces[id.0].name.name.as_str(),
             Head::Assoc(interface, k) => self.interfaces[interface.0].assoc[k as usize]
                 .name
                 .name

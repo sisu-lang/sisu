@@ -1,0 +1,20 @@
+error[E0032]: expected `any Display`, found `i64?`
+  --> E0032-branch-array-element.sisu:12:34
+   |
+12 |     let a = if c { [d] } else { [Some(2)] }
+   |                                  ^^^^^^^
+
+error[E0032]: expected `any Display`, found `None`
+  --> E0032-branch-array-element.sisu:13:34
+   |
+13 |     let b = if c { [d] } else { [None] }
+   |                                  ^^^^
+
+error[E0032]: expected `any Shape`, found `Circle?`
+  --> E0032-branch-array-element.sisu:14:34
+   |
+14 |     let k = if c { [s] } else { [Some(Circle(r: 2.0))] }
+   |                                  ^^^^^^^^^^^^^^^^^^^^
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

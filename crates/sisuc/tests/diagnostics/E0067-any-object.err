@@ -1,0 +1,10 @@
+error[E0067]: every element would be the same `any Observer` object
+ --> E0067-any-object.sisu:6:6
+  |
+6 |     [o; 3]
+  |      ^
+  |
+  = help: start from `[None; n]` with type `[(any Observer)?]` and fill it in a loop
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0067

@@ -1,0 +1,27 @@
+receiver r
+argument a
+argument b
+1:2:2
+receiver r
+argument a
+argument b
+b1
+receiver k
+argument a
+argument b
+keeper 2
+receiver t
+argument a
+late 1:2:1
+receiver t
+argument a
+early
+receiver t
+argument a
+early
+receiver t
+argument a
+early
+receiver t
+argument a
+late keeper 2

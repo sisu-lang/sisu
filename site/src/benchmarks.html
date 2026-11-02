@@ -30,7 +30,7 @@ Eight small programs timed in Sisu, C, Rust, Go, Java and Python, with the numbe
   <section class="ph"><div class="w">
     <h1>How fast is Sisu?</h1>
     <p class="lede">Eight small programs, each written with the same algorithm in Sisu, C, Rust, Go, Java and Python. The numbers show where Sisu stands today, not how fast it will be.</p>
-    <p class="meta">Intel Core i9-14900K under Linux 7.0 · The commit and date are named below the table · Prose checked against the repository at commit 556e8467</p>
+    <p class="meta">Intel Core i9-14900K under Linux 7.0 · The commit and date are named below the table · Prose checked against the repository at commit d23f67e</p>
   </div></section>
   <!-- source: docs/benchmarks.md (intro, Results) -->
 
@@ -158,24 +158,9 @@ $ RUNS=10 BENCH_CPU=4 make bench
 $ make compile-speed
 $ make compile-speed ARGS='--check-only'
 </pre></figure>
-      <h3>The scaling sweep</h3>
-      <p><code>make scaling</code> finds the programs for which a compiler stage costs more than a fixed amount for each unit of input. A shape is a kind of program that grows in one direction, such as more functions, deeper nesting or more match arms. <code>scripts/scaling.py</code> compiles each of 14 shapes at size 0 and at four sizes that double: n, 2n, 4n and 8n. It counts the instructions of each stage under callgrind: <code>lex</code>, <code>parse</code>, <code>check</code>, <code>mono</code>, <code>mir</code> and <code>codegen</code>. The count does not depend on the load of the machine. It also changes a little with the file paths and the C library. So on another machine, such as the runner of the nightly job, a ratio near a number of the rule can fall on the other side. It needs <code>valgrind</code>, and a full run takes about 3 minutes on the machine above.</p>
-      <p>The script prints one table for each shape. It also writes <code>table.md</code> and <code>counts.json</code> to <code>target/scaling/</code>.</p>
-      <ul>
-        <li><strong>Growth</strong> is the count of a stage at one size, less its count at size 0. Size 0 takes away the fixed cost, such as the prelude.</li>
-        <li><strong>Ratio</strong> is the growth at one size divided by the growth at half that size. A sweep has three: r1 (n to 2n), r2 (2n to 4n) and r3 (4n to 8n). A linear stage has ratios near 2.0, and a quadratic stage near 4.0.</li>
-        <li>A stage is <strong>judged</strong> when its growth at 8n is positive and at least 1% of the sum of the growth of the six stages at 8n. A stage that hardly grows with the shape is not judged. Its counts are noise.</li>
-        <li>A judged stage is <strong>superlinear</strong> when r3 &gt; 2.3 and r2 &ge; 2.1, and when r3 &ge; r1 &minus; 0.05 or r3 &ge; 3.0. The second test keeps a stage whose ratios fall a little toward 4.0.</li>
-      </ul>
-      <p>The rule has two limits. It does not find a small quadratic part under a large linear part, such as 10000n + n&sup2;. It also marks a linear stage that has one step in r2 and a rise in r3.</p>
-      <p>One shape and one stage that is superlinear for it is a case. The known list <code>KNOWN</code> in <code>scripts/scaling.py</code> has one row for each case that has an open issue: the shape, the stage and the issue number. A known case is a row of <code>KNOWN</code> that does not look fixed. A known row can be linear but just under the rule, as generic call depth is. The script exits with code 1 when a superlinear case has no row, when a row looks fixed, and when a check or a command fails. A row looks fixed when its stage is not judged, has no ratio, has r3 &lt; 2.15, or has ratios that fall. The pull request that fixes a known case removes its row. At commit 556e8467, the sweep finds four superlinear cases, all in the <code>check</code> stage: array literal depth (#344), expression depth (#367), and type depth and method chain (#366). Generic call depth in <code>check</code> has the same cause as #366 and is just under the rule (r3 = 2.30). <code>KNOWN</code> has a row for each of the five. A nightly job runs the sweep and fails on a new superlinear case.</p>
-      <figure class="code"><figcaption class="cap">terminal</figcaption><pre data-lang="sh">
-$ make scaling
-$ make scaling ARGS='--shapes functions,fields'
-</pre></figure>
     </div>
   </div></section>
-  <!-- source: docs/benchmarks.md (Compile speed, The scaling sweep), scripts/compile_speed.py, scripts/scaling.py, Makefile (compile-speed, scaling) -->
+  <!-- source: docs/benchmarks.md (Compile speed), scripts/compile_speed.py, Makefile (compile-speed) -->
 
   <section class="s tint" aria-labelledby="h-codspeed"><div class="w">
     <div class="s-h"><h2 id="h-codspeed">Regression tracking</h2><p>The tables above compare Sisu with other languages. CodSpeed does something else: it compares Sisu with itself, change by change, so a slowdown shows on the pull request that causes it.</p></div>
@@ -189,7 +174,7 @@ $ make scaling ARGS='--shapes functions,fields'
       </ul>
       <p>It runs in CodSpeed's simulation mode, which counts instructions rather than timing the run. It measures three things:</p>
       <ul>
-        <li>Seven of the programs above, all but <code>hello</code>, at reduced inputs, and eight programs that only CodSpeed runs, in <code>bench/features/</code>: <code>strings</code>, <code>enum_match</code>, <code>shared_arrays</code>, <code>compare</code>, <code>tree_rewrite</code>, <code>interp</code>, <code>interfaces</code> and <code>show</code>.</li>
+        <li>Seven of the programs above, all but <code>hello</code>, at reduced inputs, and nine programs that only CodSpeed runs, in <code>bench/features/</code>: <code>strings</code>, <code>enum_match</code>, <code>shared_arrays</code>, <code>compare</code>, <code>tree_rewrite</code>, <code>interp</code>, <code>interfaces</code>, <code>any_shapes</code> and <code>show</code>.</li>
         <li>The lexer written in Sisu, <code>selfhost/lexer.sisu</code>: <code>selfhost_lexer</code> runs its <code>-O2</code> build once on a fixed input of Sisu source, and <code>build_selfhost_lexer</code> is an <code>-O2</code> build of it.</li>
         <li>The compiler itself: an <code>-O2</code> build of <code>bench/hello</code>, a <code>sisu check</code> and an <code>-O2</code> build of <code>bench/binary_trees</code>, a <code>sisu check</code> of a generated 200-section input that uses most of the language, and an <code>-O2</code> build of a 20-section one. Pushes to <code>main</code> also build the 200-section input, from <code>codspeed-main.yml</code>.</li>
       </ul>

@@ -1,0 +1,15 @@
+interface Shape {
+    fn area(self) -> f64
+}
+class Circle: Shape {
+    r: f64
+    fn area(self) -> f64 { self.r }
+}
+fn main() {
+    let c = true
+    let d: any Display = 1
+    let s: any Shape = Circle(r: 1.0)
+    let a = if c { [d] } else { [Some(2)] }
+    let b = if c { [d] } else { [None] }
+    let k = if c { [s] } else { [Some(Circle(r: 2.0))] }
+}

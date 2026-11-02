@@ -49,8 +49,9 @@ the code of a copy written by hand.
   type `T` is an interface call in the checked tree. `mono` replaces it with
   a call of the method of the conformance that the type argument has. So
   `total<Circle>` calls `Circle.area` directly, and the later stages
-  see an ordinary call. Interface values and dynamic dispatch
-  are a later milestone. ADR 0029 infers the modes of a conformance method
+  see an ordinary call. A call on an interface value, `any Shape`, is not
+  static: it goes through a table that the value carries (milestone 8,
+  stage 10). ADR 0029 infers the modes of a conformance method
   for each instantiation: `Circle.area` can borrow `self` while
   `Square.area` takes it, because a requirement's signature carries no
   ownership.

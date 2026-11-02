@@ -2,6 +2,7 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use super::any::{AnyJoin, is_target, widen};
 use super::array::optional_array;
 use super::expr::{fits, local};
 use super::generic::Ahead;
@@ -10,7 +11,7 @@ use super::prelude::PRELUDE;
 use super::unused_names::{Owner, Pending};
 use super::{
     Binding, BindingKind, Checked, CheckedBlock, Checker, Declared, LoopContext, LoopFrame,
-    LoopKind, Poisoned, UNKNOWN, block_expr, built_in_type, starts_in, tail, type_of, wrap,
+    LoopKind, Poisoned, UNKNOWN, block_expr, built_in_type, starts_in, tail, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{
@@ -1110,7 +1111,9 @@ impl Checker<'_> {
     ) -> Checked {
         let mut frame = LoopFrame::new(LoopKind::Loop, keyword, label.cloned(), expected);
         frame.quiet = self.quiet(span, expected);
+        frame.siblings = self.hinted(span, expected).1;
         let (mut checked, mut frame) = self.loop_body(frame, |c| c.block(body, None));
+        self.join_deferred(&mut frame);
         if let Ok(checked) = &mut checked {
             self.discard_tail(body, checked);
             if let (true, Some((ty, _))) = (frame.widened, frame.first) {
@@ -1130,6 +1133,63 @@ impl Checker<'_> {
             }),
             (_, ty) => Err(Poisoned::of(ty)),
         }
+    }
+
+    /// The values of objects that did not join the first value of the loop (see `join_break`),
+    /// now that every `break` is known: they join it as `if` branches do, also to an `any` type
+    /// that the siblings of a hinted loop give (see `seeded_join`), or one is reported.
+    fn join_deferred(&mut self, frame: &mut LoopFrame) {
+        let deferred = std::mem::take(&mut frame.deferred);
+        let Some((first, at)) = frame.first.filter(|_| !deferred.is_empty()) else {
+            return;
+        };
+        // The first value is member 0, and each deferred value its place after it.
+        let members: Vec<(usize, Type)> = std::iter::once((0, first))
+            .chain((1..).zip(deferred.iter().map(|&(_, t)| t)))
+            .collect();
+        let span = |i: usize| match i.checked_sub(1) {
+            Some(i) => deferred[i].0,
+            None => frame.first_value,
+        };
+        let join = match self.any_join_all(&members) {
+            joined @ AnyJoin::Joined { .. } => joined,
+            failed => match self.seeded_join(frame.siblings, &members) {
+                seeded @ (AnyJoin::Joined { .. } | AnyJoin::Leaves { .. }) => seeded,
+                AnyJoin::NoAny | AnyJoin::Fails { .. } => failed,
+            },
+        };
+        // A value of an object reads no conversion from its expression.
+        let d = match join {
+            AnyJoin::Joined { ty } => {
+                // The loop grew to this type, so `wrap_breaks` converts the values.
+                if ty != first {
+                    frame.first = Some((ty, at));
+                    frame.widened = true;
+                }
+                self.instantiates = true;
+                return;
+            }
+            AnyJoin::Leaves {
+                ty,
+                member: (i, got),
+            } => self.leaves_any(span(i), None, ty, got),
+            AnyJoin::Fails {
+                earlier: (_, want),
+                later: (i, got),
+            } => self.mismatch_from(span(i), None, want, got, Some(MismatchSource::Break(at))),
+            // Objects that join to no `any` type: each is not the first value's.
+            AnyJoin::NoAny => {
+                for &(at_value, got) in &deferred {
+                    let source = Some(MismatchSource::Break(at));
+                    let d = self.mismatch_from(at_value, None, first, got, source);
+                    self.diagnostics.push(d);
+                }
+                frame.failed = true;
+                return;
+            }
+        };
+        self.diagnostics.push(d);
+        frame.failed = true;
     }
 
     /// The loop body open at `at` in `self.body.loops`.
@@ -1180,6 +1240,11 @@ impl Checker<'_> {
             .expected
             .map(|ty| (ty, None))
             .or_else(|| frame.first.map(|(ty, at)| (ty, Some(at))));
+        // An earlier value gives a hint, as the siblings of a hinted loop do.
+        let siblings = match hint {
+            Some((_, None)) => frame.siblings,
+            first => first.map(|(ty, _)| ty),
+        };
         let from = hint
             .and_then(|(_, first)| first)
             .map(|first| (v.span, first));
@@ -1190,7 +1255,9 @@ impl Checker<'_> {
             self.body.quiet_at = Some(v.span);
         }
         self.body.label_typo = typo.map(|name| name.span);
+        let outer_hint = self.pass_hint(Some(v.span), siblings);
         let checked = self.expr(v, hint.map(|(ty, _)| ty));
+        self.body.hint_at = outer_hint;
         self.body.label_typo = None;
         self.body.break_hint = outer;
         self.body.quiet_at = outer_quiet;
@@ -1212,32 +1279,86 @@ impl Checker<'_> {
                 // Checking `v` can set the first type, through a `break` of this loop inside it.
                 let frame = self.frame(target);
                 frame.valued.get_or_insert(span);
-                match (frame.expected, frame.first) {
-                    (Some(ty), _) if ty == UNKNOWN => checked,
-                    // A value that fits the expected type keeps its own, as a block's value does,
-                    // and joins the others as `if` branches do: a `T` and a `T?` make a `T?`.
-                    (Some(ty), Some((first, _))) if fits(ty, got) && fits(first, got) => {
-                        self.against(v, checked, Some(first), None).0
-                    }
-                    (Some(ty), first) if fits(ty, got) => {
-                        frame.widened = first.is_some();
-                        frame.first = Some((got, span));
-                        checked
-                    }
-                    (Some(ty), _) => self.against(v, checked, Some(ty), None).0,
-                    (None, Some((first, at))) => {
-                        self.against(v, checked, Some(first), Some(MismatchSource::Break(at)))
-                            .0
-                    }
-                    (None, None) => {
-                        frame.first = Some((got, span));
-                        checked
-                    }
+                let (expected, first) = (frame.expected, frame.first);
+                let hinted = frame.siblings.is_some();
+                if expected == Some(UNKNOWN) {
+                    checked
+                } else {
+                    let want = (expected, hinted, first);
+                    self.join_break((v, span), (checked, got), want, target)
                 }
             }
         };
         if checked.is_err() {
             self.frame(target).failed = true;
+        }
+        checked
+    }
+
+    /// The value `checked` of the `break` `v`, of type `got`, joined with the loop's first value.
+    /// A value that fits the expected type keeps its own, as a block's value does. The values join
+    /// as `if` branches do: a `T` and a `T?` make a `T?`. An object and an `any` type that it
+    /// converts to make the `any` type. The values before it are converted at the loop's end when
+    /// the type grows. With `hinted`, `expected` is a hint (see `Body::hint_at`).
+    fn join_break(
+        &mut self,
+        (v, span): (&ast::Expr, Span),
+        (checked, got): (Checked, Type),
+        (expected, hinted, first): (Option<Type>, bool, Option<(Type, Span)>),
+        target: usize,
+    ) -> Checked {
+        // A value that does not fit the expected type converts to it, or is the mismatch. No
+        // value converts to an `any` hint: the join of the values does.
+        let (checked, got) = match expected {
+            Some(ty) if !fits(ty, got) && (!hinted || !is_target(ty)) => {
+                (self.against(v, checked, Some(ty), None).0, ty)
+            }
+            _ => (checked, got),
+        };
+        let value = checked?;
+        let Some((first, at)) = first else {
+            let frame = self.frame(target);
+            frame.first = Some((got, span));
+            frame.first_value = v.span;
+            return Ok(value);
+        };
+        // Without an expected type, a `T` and a `T?` do not join.
+        let joined = if first == got || expected.is_some() && fits(first, got) {
+            Some(first)
+        } else if expected.is_some() && fits(got, first) {
+            Some(got)
+        } else {
+            self.any_join(first, got)
+        };
+        let Some(joined) = joined else {
+            // Objects and `any` values: a later `any` value can join them all.
+            let object = |ty: Type| matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Any(..));
+            let objects = object(got) && object(first);
+            if objects {
+                self.frame(target).deferred.push((v.span, got));
+                return Ok(value);
+            }
+            // A `Some` of an object is the mistake at the object, as in a branch.
+            if let Some((at, want, object)) = self.object_in_some(&value, first) {
+                let d = self.leaves_any(at, None, want, object);
+                self.diagnostics.push(d);
+                return Err(Poisoned::error());
+            }
+            return self
+                .against(v, Ok(value), Some(first), Some(MismatchSource::Break(at)))
+                .0;
+        };
+        let checked = if got == joined {
+            Ok(value)
+        } else {
+            self.against(v, Ok(value), Some(joined), None).0
+        };
+        if joined != first {
+            let frame = self.frame(target);
+            frame.widened = true;
+            frame.first = Some((joined, span));
+            // Converting the values before makes a table, as a conversion does.
+            self.instantiates |= is_target(joined);
         }
         checked
     }
@@ -1646,7 +1767,7 @@ fn wrap_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool) {
             span: value.span,
         };
         let payload = std::mem::replace(&mut **value, placeholder);
-        **value = wrap(payload, ty);
+        **value = widen(payload, ty);
     }
 }
 

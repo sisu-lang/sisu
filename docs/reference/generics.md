@@ -613,9 +613,9 @@ fn main() {
 
 ## Interface values
 
-`any Shape` is a type for a value of any type that conforms to `Shape`. A value converts to it where an `any` type is expected. A call of a method on it uses the method of the type that the value has. An interface that inherits `AnyObject` is class-only, as [Bounds](#bounds) says.
+`any Shape` is a type for a value of any type that conforms to `Shape`. A value converts to it where an `any` type is expected. An object converts as itself. Any other value, such as an enum, a number or a `string`, goes into a box that holds it. A call of a method on it uses the method of the type that the value has. An interface that inherits `AnyObject` is class-only, as [Bounds](#bounds) says.
 
-```sisu pending
+```sisu
 interface Shape {
     fn area(self) -> f64
 }
@@ -639,15 +639,47 @@ class Rect: Shape {
 
 fn main() {
     let shapes: [any Shape] = [Circle(r: 1.0), Rect(w: 2.0, h: 3.0)]
-    for s in shapes {
-        print(s.area())
-    }
+    print(shapes[0].area())            // 3.141592653589793
+    print(shapes[1].area())            // 6.0
+    print(shapes[1])                   // Rect
 }
 ```
 
 The rules:
 
 - An interface name alone is not a type. Write `T: Shape` for a type parameter, or `any Shape` for a value.
-- An interface whose methods are generic, or that uses `Self` besides the receiver, cannot be `any`. So `any Eq` and `any Ord` are errors.
-- An `any` value prints through the `Display` of the type that it holds. It has no `==` and no `<`.
+- An interface whose methods are generic, that uses `Self` besides the receiver, that has an associated type, or that has an inherited interface with `Self` in its arguments (`interface Node: Link<Self>`), cannot be `any` ([E0164](../diagnostics/E0164.md)). So `any Eq` and `any Ord` are errors. The same holds for an interface that inherits one with such a requirement.
+- A value converts to `any Shape` when its type conforms to `Shape` and it is not an optional. An optional interface value has the type `(any Shape)?`, and the parentheses are required: `any Shape?` is an error ([E0165](../diagnostics/E0165.md)). A `Circle` converts to `(any Shape)?` and is wrapped. A `Circle?` converts to neither `any Shape` nor `(any Shape)?` ([E0032](../diagnostics/E0032.md)). In a generic body, a value of a type parameter `T` converts, whatever type the call gives to `T`.
+- An `any` value prints through the `Display` of the type that it holds. It has no `==` and no `<`, also against a value that converts to it ([E0159](../diagnostics/E0159.md)).
 - A generic function with the bound `T: Shape` accepts an `[any Shape]`.
+- An object converts with no allocation. Any other value goes into one box, which allocates once. Copies of an `any` value share its box, and the box is freed with its last copy.
+
+A value that is no object converts in the same way. A number, a `string` and a `char` conform to `Display`, and an enum can list an interface as a class does:
+
+```sisu
+interface Shape {
+    fn area(self) -> f64
+}
+
+enum Slab: Shape {
+    Plain
+    Labeled(string)
+
+    fn area(self) -> f64 {
+        match self {
+            Slab.Plain => 2.0
+            Slab.Labeled(text) => 1.0 + f64(text.len())
+        }
+    }
+}
+
+fn main() {
+    let items: [any Display] = ["hi", 'c', 5, [1, 2]]
+    print(items)                       // ["hi", 'c', 5, [1, 2]]
+    let slab: any Shape = Slab.Labeled("abc")
+    let copy = slab
+    print(slab.area())                 // 4.0
+    print(copy.area())                 // 4.0
+    print(Slab.Plain.area())           // 2.0
+}
+```

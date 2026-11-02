@@ -1,0 +1,11 @@
+interface Shape {
+    fn area(self) -> f64
+}
+
+fn _same(a: any Shape, b: any Shape) -> bool {
+    a == b
+}
+
+fn main() {
+    print(1)
+}

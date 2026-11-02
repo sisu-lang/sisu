@@ -90,6 +90,7 @@ impl Walk {
             }
             ExprKind::Call { args, .. }
             | ExprKind::InterfaceCall { args, .. }
+            | ExprKind::DynCall { args, .. }
             | ExprKind::New { args, .. }
             | ExprKind::Variant { args, .. }
             | ExprKind::Math { operands: args, .. }
@@ -97,6 +98,7 @@ impl Walk {
             | ExprKind::Interpolate { parts: args, .. } => self.all(args, open, calls),
             ExprKind::Field { base: operand, .. }
             | ExprKind::Wrap(operand)
+            | ExprKind::ToAny(operand)
             | ExprKind::Convert(operand)
             | ExprKind::Print { operand, .. }
             | ExprKind::Dbg { operand, .. }
