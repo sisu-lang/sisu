@@ -103,10 +103,12 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             .map(|stream| declare_printers(&module, stream.symbol_prefix()));
         let str_compare = abi::declare(&module, abi::row("sisu_str_compare"));
         // `sisu_panic(msg, len)` prints the message and exits; `sisu_panic_bounds(msg, len,
-        // index, length)` prints a bounds panic and exits; `sisu_panic_message(at, at_len, msg,
-        // msg_len)` prints a `panic` call's panic and exits.
+        // index, length)` prints a bounds panic and exits; `sisu_panic_range(at, at_len, kind,
+        // start, end, length)` prints a range panic and exits; `sisu_panic_message(at, at_len,
+        // msg, msg_len)` prints a `panic` call's panic and exits.
         let panic = abi::declare(&module, abi::row("sisu_panic"));
         let panic_bounds = abi::declare(&module, abi::row("sisu_panic_bounds"));
+        let panic_range = abi::declare(&module, abi::row("sisu_panic_range"));
         let panic_message = abi::declare(&module, abi::row("sisu_panic_message"));
         // Declared only with the checks, so that a plain build's module stays as it was.
         let rc_fault = rc_checks.then(|| abi::declare(&module, abi::row("sisu_rc_fault")));
@@ -120,6 +122,7 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             str_compare,
             panic,
             panic_bounds,
+            panic_range,
             panic_message,
             alloc,
             free,
@@ -254,6 +257,7 @@ struct Codegen<'ctx, 'src> {
     str_compare: FunctionValue<'ctx>,
     panic: FunctionValue<'ctx>,
     panic_bounds: FunctionValue<'ctx>,
+    panic_range: FunctionValue<'ctx>,
     panic_message: FunctionValue<'ctx>,
     alloc: FunctionValue<'ctx>,
     free: FunctionValue<'ctx>,
@@ -797,6 +801,21 @@ impl<'ctx> Codegen<'ctx, '_> {
                 let (filler, _) = self.operand(value);
                 let (count, _) = self.operand(len);
                 self.array_fill(filler, count.into_int_value(), ty(), *span)
+            }
+            Rvalue::Slice {
+                base,
+                start,
+                end,
+                inclusive,
+                safe,
+                span,
+            } => {
+                let (value, base_ty) = self.operand(base);
+                let bound = |op: &Option<Operand>| {
+                    op.as_ref().map(|op| self.operand(op).0.into_int_value())
+                };
+                let (start, end) = (bound(start), bound(end));
+                self.slice((value, base_ty), (start, end), (*inclusive, *safe), *span)
             }
             Rvalue::Wrap(op) => self.wrap(ty(), self.operand(op).0),
             Rvalue::ToAny(op) => {

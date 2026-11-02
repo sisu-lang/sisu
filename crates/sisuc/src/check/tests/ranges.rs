@@ -95,16 +95,13 @@ fn range_index_with_no_bounds_should_be_e0023() {
     }
 }
 
-/// Until the checker takes a range index, one is E0023 whatever its base is.
+/// Until Task 4, a range index of a string is E0023.
 #[test]
-fn range_index_should_be_e0023_until_the_checker_takes_it() {
-    let rows = [
-        ("array", "let xs = [1, 2, 3]\n    print(xs[0..2])", (3, 14)),
-        ("string", "let s = \"abc\"\n    print(s[0..2])", (3, 13)),
-    ];
-    for (row, body, at) in rows {
-        codes_row(row, &main_with(body), &[(Code::RangeOutsideFor, at)]);
-    }
+fn range_index_of_a_string_should_be_e0023_until_the_checker_takes_it() {
+    codes(
+        &main_with("let s = \"abc\"\n    print(s[0..2])"),
+        &[(Code::RangeOutsideFor, (3, 13))],
+    );
 }
 
 /// GIVEN `let mut xs = [1, 2, 3]` and `let mut s = "abc"` and a statement on line 4, column 5
@@ -154,6 +151,29 @@ fn assignment_to_a_range_index_should_report_a_wrong_base_once() {
         &main_with("ys[0..2] = [1]"),
         &[(Code::BindingNotFound, (2, 5))],
     );
+}
+
+/// GIVEN an assignment to a range index of a number, and of an optional array
+/// WHEN the program is checked
+/// THEN it reports E0068 at the number, and E0062 at the optional array, and no warning follows
+#[test]
+fn assignment_to_a_range_of_no_array_should_report_the_base_alone() {
+    judge_unused();
+    let rows = [
+        (
+            "number",
+            "let mut n = 5\n    n[0..1] = 5\n    print(n)",
+            Code::CannotIndex,
+        ),
+        (
+            "optional array",
+            "let mut o: [i64]? = [1]\n    o[0..1] = [2]\n    print(o == None)",
+            Code::MayBeNone,
+        ),
+    ];
+    for (row, body, code) in rows {
+        codes_row(row, &main_with(body), &[(code, (3, 5))]);
+    }
 }
 
 /// The value of a range target is checked for its own mistakes.
@@ -241,23 +261,23 @@ fn range_error_for_good_should_check_its_base() {
 
 /// GIVEN a `push` onto a range index
 /// WHEN the program is checked
-/// THEN it reports E0023, and no warning follows
+/// THEN it reports E0021 at the range index, and no warning follows
 #[test]
-fn push_onto_a_range_index_should_report_e0023_alone() {
+fn push_onto_a_range_index_should_report_e0021_alone() {
     judge_unused();
-    for (row, body) in [
+    for (row, body, at) in [
         (
             "array",
             "let mut xs = [1, 2]\n    xs[1..].push(4)\n    print(xs)",
+            (3, 5),
         ),
         (
             "nested",
             "let mut xs = [[1, 2]]\n    xs[0][1..].push(4)\n    print(xs)",
+            (3, 5),
         ),
     ] {
-        let found = codes_of(&main_with(body));
-        let codes: Vec<_> = found.iter().map(|f| f.0).collect();
-        assert_eq!(codes, [Code::RangeOutsideFor], "row `{row}`");
+        codes_row(row, &main_with(body), &[(Code::AssignToExpression, at)]);
     }
 }
 
@@ -266,4 +286,84 @@ fn codes_of(src: &str) -> Vec<(Code, (usize, usize))> {
         .iter()
         .map(|d| (d.code(), at(src, d.span())))
         .collect()
+}
+
+/// GIVEN `let mut xs` that a range index reads and nothing writes
+/// WHEN the program is checked
+/// THEN it reports W0002 at `xs`: a range index is a read, and only a `push` onto one counts as
+/// a write
+#[test]
+fn a_range_index_read_should_leave_the_never_reassigned_warning() {
+    judge_unused();
+    codes(
+        &main_with("let mut xs = [1, 2]\n    print(xs[1..])\n    print(xs)"),
+        &[(Code::NeverReassigned, (2, 13))],
+    );
+}
+
+/// GIVEN a range index on an array, a number, an optional array and a string
+/// WHEN the program is checked
+/// THEN the array is an array again, a number is E0068 at the base, an optional array is E0062
+/// at the base, and each reports once, with no word on its bounds
+#[test]
+fn range_index_should_report_a_base_that_is_no_array_once() {
+    let rows = [
+        (
+            "array",
+            "let xs = [1, 2, 3]\n    let t: [i64] = xs[0..2]\n    print(t)",
+            vec![],
+        ),
+        (
+            "number",
+            "let n = 5\n    print(n[0..true])",
+            vec![(Code::CannotIndex, (3, 11))],
+        ),
+        (
+            "optional array",
+            "let opt: [i64]? = [1]\n    print(opt[true..])",
+            vec![(Code::MayBeNone, (3, 11))],
+        ),
+    ];
+    for (row, body, expected) in rows {
+        codes_row(row, &main_with(body), &expected);
+    }
+}
+
+/// GIVEN a bound that is no `i64`
+/// WHEN the program is checked
+/// THEN it reports E0032 at the bound, and a `push` onto the range reports nothing else
+#[test]
+fn range_bound_should_be_an_i64() {
+    let rows = [
+        ("start", "let xs = [1, 2]\n    print(xs[true..])", (3, 14)),
+        ("end", "let xs = [1, 2]\n    print(xs[0..true])", (3, 17)),
+        (
+            "inclusive end",
+            "let xs = [1, 2]\n    print(xs[..='a'])",
+            (3, 17),
+        ),
+    ];
+    for (row, body, at) in rows {
+        codes_row(row, &main_with(body), &[(Code::Mismatch, at)]);
+    }
+    judge_unused();
+    codes(
+        &main_with("let mut xs = [1, 2, 3]\n    xs[0..true].push(4)\n    print(xs)"),
+        &[(Code::Mismatch, (3, 11))],
+    );
+}
+
+/// GIVEN a range index of an array
+/// WHEN the program is checked
+/// THEN it has the type of the array, with every bound an `i64`
+#[test]
+fn range_index_of_an_array_should_have_the_array_type() {
+    let (program, ds) = checked(&main_with(
+        "let xs = [1, 2, 3]\n    let a = xs[1..]\n    let b = xs[..=1]\n    print(a)\n    print(b)",
+    ));
+    assert!(ds.is_empty(), "{ds:?}");
+    let program = program.expect("the program should check");
+    let printed = program.to_string();
+    assert!(printed.contains("(slice "), "{printed}");
+    assert!(printed.contains("(slice..= "), "{printed}");
 }

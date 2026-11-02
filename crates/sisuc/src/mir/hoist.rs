@@ -312,6 +312,14 @@ impl Walk {
                     self.operand(operand);
                 }
             }
+            Rvalue::Slice {
+                base, start, end, ..
+            } => {
+                self.operand(base);
+                for bound in start.iter().chain(end) {
+                    self.operand(bound);
+                }
+            }
             Rvalue::ArrayFill {
                 value: lhs,
                 len: rhs,

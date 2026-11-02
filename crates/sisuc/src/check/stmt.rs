@@ -1659,6 +1659,15 @@ impl Checker<'_> {
                 base: lhs,
                 index: rhs,
             } => self.read_locals(lhs, locals) && self.read_locals(rhs, locals),
+            ExprKind::Slice {
+                base, start, end, ..
+            } => {
+                self.read_locals(base, locals)
+                    && start
+                        .iter()
+                        .chain(end)
+                        .all(|bound| self.read_locals(bound, locals))
+            }
             ExprKind::Compare { operands, .. } => operands
                 .iter()
                 .all(|operand| self.read_locals(operand, locals)),

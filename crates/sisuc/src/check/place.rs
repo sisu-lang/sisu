@@ -13,7 +13,7 @@ use super::{
 };
 use crate::ast;
 use crate::diagnostic::{DiagnosticKind, Immutable, UnwrapHelp};
-use crate::parser::is_place;
+use crate::parser::{is_place, is_range_target};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, ExprKind, Type, TypeKind};
@@ -311,7 +311,9 @@ impl Checker<'_> {
         };
         // `push_receiver` stamped the place that it checked. Only a receiver it did not check
         // is stamped here, so a receiver is stamped once.
-        if place.is_none() && is_place(receiver_expr) {
+        // So is a range index: `xs[0..true].push(4)` reports its bound alone, with no warning that
+        // `xs` is never reassigned.
+        if place.is_none() && (is_place(receiver_expr) || is_range_target(receiver_expr)) {
             self.stamp_push(receiver_expr);
         }
         // A receiver that failed has reported itself.
@@ -320,7 +322,12 @@ impl Checker<'_> {
         }
         if !is_place(receiver_expr) {
             let at = receiver_expr.span;
-            return not_pushed(self, Some(DiagnosticKind::PushToTemporary { at }));
+            let range = matches!(
+                &receiver_expr.kind,
+                ast::ExprKind::Index { index, .. } if matches!(index.kind, ast::ExprKind::Range(_))
+            )
+            .then(|| self.source.text(at).to_string());
+            return not_pushed(self, Some(DiagnosticKind::PushToTemporary { at, range }));
         }
         // Only a receiver checked ahead of its turn has no place: its call is an argument, whose
         // `unit` is reported.

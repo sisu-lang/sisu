@@ -1205,6 +1205,14 @@ impl Mono {
                 self.expr(a, args);
                 self.expr(b, args);
             }
+            K::Slice {
+                base, start, end, ..
+            } => {
+                self.expr(base, args);
+                for bound in start.iter_mut().chain(end) {
+                    self.expr(bound, args);
+                }
+            }
             K::If {
                 cond: first,
                 then_block,

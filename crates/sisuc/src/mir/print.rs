@@ -170,6 +170,24 @@ impl Printer<'_> {
             Rvalue::ArrayFill { value, len, .. } => {
                 format!("array[{}; {}]", self.operand(value), self.operand(len))
             }
+            Rvalue::Slice {
+                base,
+                start,
+                end,
+                inclusive,
+                safe,
+                ..
+            } => {
+                let bound = |bound: &Option<Operand>| bound.as_ref().map(|op| self.operand(op));
+                format!(
+                    "slice{} {}[{}..{}{}]",
+                    if *safe { "?" } else { "" },
+                    self.operand(base),
+                    bound(start).unwrap_or_default(),
+                    if *inclusive { "=" } else { "" },
+                    bound(end).unwrap_or_default(),
+                )
+            }
             Rvalue::Wrap(operand) => format!("wrap {}", self.operand(operand)),
             Rvalue::ToAny(operand) => format!("to_any {}", self.operand(operand)),
             Rvalue::DynCall {

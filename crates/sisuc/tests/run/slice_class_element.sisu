@@ -1,0 +1,16 @@
+class Node {
+    mut n: i64
+    mut items: [i64]
+}
+
+// GIVEN `class Node` with a `mut n` and `let xs = [Node(n: 1), Node(n: 2)]`
+// WHEN the program runs `xs[..1][0].n = 9` and `xs[1..][0].items.push(5)` and prints the elements
+// THEN the objects that `xs` holds changed: a range index shares its elements, and a class
+// element stays shared (S29)
+fn main() {
+    let xs = [Node(n: 1, items: []), Node(n: 2, items: [])]
+    xs[..1][0].n = 9
+    xs[1..][0].items.push(5)
+    print(xs[0].n)                   // 9
+    print(xs[1].items)               // [5]
+}

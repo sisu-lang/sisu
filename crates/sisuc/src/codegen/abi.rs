@@ -49,7 +49,8 @@ pub(super) struct Attrs {
     pub(super) noreturn: bool,
     pub(super) memory: Option<u64>,
     pub(super) allocator: Allocator,
-    /// The `i64` that it returns is a length or a count, so never negative: `declare` gives the
+    /// The `i64` that it returns is a length, a count or an offset into a string, so never
+    /// negative: `declare` gives the
     /// return value the range `[0, 2^63)`, as `mark_len` does a length that is loaded.
     pub(super) returns_len: bool,
 }
@@ -220,6 +221,12 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn {
         name: "sisu_panic_bounds",
         params: &[Abi::Ptr, Abi::I64, Abi::I64, Abi::I64],
+        ret: None,
+        attrs: NORETURN,
+    },
+    RuntimeFn {
+        name: "sisu_panic_range",
+        params: &[Abi::Ptr, Abi::I64, Abi::I64, Abi::I64, Abi::I64, Abi::I64],
         ret: None,
         attrs: NORETURN,
     },
@@ -497,6 +504,18 @@ pub(super) const PAD_CENTER: u64 = 2;
 pub(super) const SINK_SIZE: u64 = 48;
 pub(super) const SINK_LEN: u64 = 24;
 pub(super) const SINK_CAP: u64 = 32;
+
+/// The `kind` of `sisu_panic_range`, a bit set: bits 0 and 1 are the check that failed, `RANGE_*`
+/// below are the rest. The runtime defines them in `crates/runtime/src/lib.rs`, and a test here
+/// compares them.
+pub(super) const RANGE_NEGATIVE_START: u64 = 0;
+pub(super) const RANGE_END_PAST_LENGTH: u64 = 1;
+pub(super) const RANGE_START_PAST_END: u64 = 2;
+#[cfg_attr(not(test), expect(dead_code, reason = "Task 4's string check uses it"))]
+pub(super) const RANGE_INSIDE_CHARACTER: u64 = 3;
+pub(super) const RANGE_INCLUSIVE: u64 = 4;
+pub(super) const RANGE_HAS_END: u64 = 8;
+pub(super) const RANGE_STRING: u64 = 16;
 
 /// How a Sisu value crosses a function boundary (ADR 0029). Every function type that takes a
 /// Sisu value, every call that passes one and every function entry that receives one goes
@@ -838,6 +857,36 @@ mod tests {
             panic.contains("noreturn"),
             "missing \"noreturn\" in\n{panic}"
         );
+    }
+
+    /// The kinds of `sisu_panic_range` in `RANGE_*` are the runtime's.
+    #[test]
+    fn range_kinds_should_match_the_runtime() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../runtime/src/lib.rs");
+        let source = std::fs::read_to_string(dir).expect("the runtime's lib.rs should read");
+        let file = syn::parse_file(&source).expect("lib.rs should parse");
+        let constant = |name: &str| -> u64 {
+            file.items
+                .iter()
+                .find_map(|item| match item {
+                    syn::Item::Const(item) if item.ident == name => match &*item.expr {
+                        syn::Expr::Lit(syn::ExprLit {
+                            lit: syn::Lit::Int(number),
+                            ..
+                        }) => Some(number.base10_parse().expect("a kind should parse")),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("lib.rs should define {name} as a number"))
+        };
+        assert_eq!(constant("RANGE_NEGATIVE_START"), RANGE_NEGATIVE_START);
+        assert_eq!(constant("RANGE_END_PAST_LENGTH"), RANGE_END_PAST_LENGTH);
+        assert_eq!(constant("RANGE_START_PAST_END"), RANGE_START_PAST_END);
+        assert_eq!(constant("RANGE_INSIDE_CHARACTER"), RANGE_INSIDE_CHARACTER);
+        assert_eq!(constant("RANGE_INCLUSIVE"), RANGE_INCLUSIVE);
+        assert_eq!(constant("RANGE_HAS_END"), RANGE_HAS_END);
+        assert_eq!(constant("RANGE_STRING"), RANGE_STRING);
     }
 
     /// The numbers of the sink in `SINK_SIZE`, `SINK_LEN` and `SINK_CAP` are the runtime's.

@@ -4081,7 +4081,7 @@ pub(crate) fn is_place(e: &Expr) -> bool {
 
 /// A range index, or an index of one, as `xs[1..3]` and `xs[1..][0]`. It is no place, but the
 /// checker, which knows the type of `xs`, reports the assignment to it.
-fn is_range_target(e: &Expr) -> bool {
+pub(crate) fn is_range_target(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Index { base, index } => {
             matches!(index.kind, ExprKind::Range(_)) || is_range_target(base)

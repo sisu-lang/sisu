@@ -149,6 +149,14 @@ impl Placer<'_> {
                     self.operand(op);
                 }
             }
+            Rvalue::Slice {
+                base, start, end, ..
+            } => {
+                self.operand(base);
+                for bound in start.iter_mut().chain(end) {
+                    self.operand(bound);
+                }
+            }
             Rvalue::ArrayFill {
                 value: lhs,
                 len: rhs,

@@ -693,3 +693,18 @@ fn labeled_break_keeps_outer_exit_out_of_inner_loop() {
         [Vec::<String>::new(), vec!["a".to_owned()]]
     );
 }
+
+/// GIVEN a loop that writes `a` after it takes `let u = a[..2]`, which shares `a`'s block
+/// WHEN the hoist reads the loop
+/// THEN `a` is not hoisted, where the same loop with `let u = a[0]` hoists it: the copy of the
+/// block for the write must come after the slice, in each pass (S20)
+#[test]
+fn slice_of_a_live_local_should_bar_the_hoist() {
+    let program = |read: &str| {
+        format!(
+            "fn f(xs: [i64]) -> [i64] {{\n    let mut a = xs\n    for i in 0..2 {{\n        let u = {read}\n        a[0] = 9 + i\n        print(u)\n    }}\n    a\n}}"
+        )
+    };
+    assert_eq!(loops(&program("a[0]")), [["a"]]);
+    assert_eq!(loops(&program("a[..2]")), [Vec::<String>::new()]);
+}

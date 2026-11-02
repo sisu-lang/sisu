@@ -283,6 +283,7 @@ fn kind<'a>(function: &Function, stmt: &'a Statement) -> Kind<'a> {
                 | Rvalue::Variant { .. }
                 | Rvalue::ArrayLit(_)
                 | Rvalue::ArrayFill { .. }
+                | Rvalue::Slice { .. }
                 | Rvalue::Wrap(_)
                 | Rvalue::Concat { .. }
                 | Rvalue::Interpolate { .. }
@@ -341,6 +342,7 @@ fn borrowed(stmt: Statement) -> Statement {
                 | Rvalue::Variant { .. }
                 | Rvalue::ArrayLit(_)
                 | Rvalue::ArrayFill { .. }
+                | Rvalue::Slice { .. }
                 | Rvalue::Wrap(_)
                 | Rvalue::Concat { .. }
                 | Rvalue::Interpolate { .. }

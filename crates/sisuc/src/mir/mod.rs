@@ -268,6 +268,19 @@ pub(crate) enum Rvalue {
         len: Operand,
         span: Span,
     },
+    /// `base[start..end]`, or `..=` with `inclusive`: the part of the array or string `base`
+    /// that the range covers, as a new value that shares `base`'s block. It takes `base`'s
+    /// reference, so a `base` at its last use gives the slice its count and a copy of `base`
+    /// gives it one. A missing bound is `None`. A range that fails a check panics at `span`,
+    /// the whole range; with `safe` it releases `base` and gives `None`.
+    Slice {
+        base: Operand,
+        start: Option<Operand>,
+        end: Option<Operand>,
+        inclusive: bool,
+        safe: bool,
+        span: Span,
+    },
     Wrap(Operand),
     /// The object or `any` value of the operand, as the destination's `any` type: it takes the
     /// operand's reference, and the destination holds the data pointer and its table.
@@ -384,6 +397,7 @@ impl Rvalue {
             | Rvalue::Variant { .. }
             | Rvalue::ArrayLit(_)
             | Rvalue::ArrayFill { .. }
+            | Rvalue::Slice { .. }
             | Rvalue::Wrap(_)
             | Rvalue::Concat { .. }
             | Rvalue::ReadLine

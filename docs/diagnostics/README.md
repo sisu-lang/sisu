@@ -77,7 +77,7 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0065](E0065.md) | error | constructor argument without a label |
 | [E0066](E0066.md) | error | constructor that names its fields out of order |
 | [E0067](E0067.md) | error | array filled with one object |
-| [E0068](E0068.md) | error | index of something that is not an array |
+| [E0068](E0068.md) | error | index of something that does not take that index |
 | [E0069](E0069.md) | error | `sum` of an array that is not `[i64]` or `[f64]` |
 | [E0070](E0070.md) | error | method called as a function |
 | [E0071](E0071.md) | error | nesting too deep |

@@ -86,6 +86,8 @@ pub(crate) fn arithmetic_value(ty: &Ty, op: usize, l: i64, r: i64) -> Result<i64
 
 /// Every this many expressions, the value of one goes through `dbg`.
 const DBG_EVERY: u64 = 37;
+/// Every this many expressions, one that wants an array is a range of an array.
+const SLICE_EVERY: u64 = 200;
 
 /// The types a `const` can have.
 const CONSTANT: &[Ty] = Ty::VALUES;
@@ -142,6 +144,9 @@ enum Rule {
     /// `string(e)` of a `[char]`.
     FromChars,
     Index,
+    /// `({ let a = i % (xs.len() + 1); xs[a..a + j % (xs.len() - a + 1)] })` of an array local,
+    /// or another of the range forms: a range in bounds, whatever the length of `xs`.
+    Slice,
     /// `((e).g)` of a class object.
     Field,
     /// `((o)?.g)` of an optional class object.
@@ -281,7 +286,16 @@ impl Gen<'_> {
             rules.retain(|rule| !matches!(rule, Rule::Fallible));
             rules.insert(0, Rule::Fallible);
         }
-        let rule = rules[self.pick(rules.len())];
+        let mut rule = rules[self.pick(rules.len())];
+        // Now and then an array is a range of an array. The turn comes by count, as `dbg`'s does,
+        // so that it moves no byte of the data in a program that has none.
+        if matches!(ty, Ty::Array(_))
+            && !self.one_line
+            && self.blocks < MAX_BLOCKS
+            && self.expressions.is_multiple_of(SLICE_EVERY)
+        {
+            rule = Rule::Slice;
+        }
         let start = self.w.mark();
         if debugged {
             self.w.text("dbg(");
@@ -544,6 +558,7 @@ impl Gen<'_> {
                 Info::of(&[chars], chars.size, true)
             }
             Rule::Index => self.index(ty, max),
+            Rule::Slice => self.slice(ty, max),
             Rule::Element => self.element(ty, max),
             Rule::Field => self.field(ty, max, false),
             Rule::SafeField => self.field(ty, max, true),
@@ -927,6 +942,60 @@ impl Gen<'_> {
         let at = self.upto(len - 1);
         self.w.text(&format!("({name}[{at}])"));
         Info::of(&[], elem, false)
+    }
+
+    /// `xs[a..b]` of an array local `xs` of type `ty`, or of a block's own local `b` that an array
+    /// literal gives when `ty` has no local or by chance, in one of the five forms of range, with
+    /// `a = i % (xs.len() + 1)` and `b = a + j % (xs.len() - a + 1)` for non-negative literals
+    /// `i` and `j`: so `0 <= a <= b <= xs.len()` for any length. `..=b - 1` and `a..=b - 1` are
+    /// the `..=` forms; `a..=a - 1` is an empty range in bounds. A block binds `a`.
+    fn slice(&mut self, ty: &Ty, max: u64) -> Info {
+        let Ty::Array(element) = ty else {
+            unreachable!("only an array is sliced")
+        };
+        let vars: Vec<usize> = (0..self.scope.vars.len())
+            .filter(|&v| self.scope.vars[v].ty == *ty && self.scope.vars[v].size <= max)
+            .collect();
+        self.w.text("({ ");
+        // `None` for a literal that the block binds, whose parts are the literal's.
+        let local = if !vars.is_empty() && self.pick(2) == 0 {
+            let pick = self.pick(vars.len());
+            let var = &self.scope.vars[vars[pick]];
+            Some((var.name.clone(), var.size))
+        } else {
+            None
+        };
+        let (name, base) = if let Some((name, size)) = local {
+            (name, Info::leaf(size))
+        } else {
+            // The type is written, as an empty literal has none of its own.
+            self.w.text(&format!("let b: {ty} = "));
+            let literal = self.array_literal(element, max, false);
+            self.w.text("; ");
+            ("b".to_string(), literal)
+        };
+        let (i, j) = (self.offset(), self.offset());
+        let end = format!("a + {j} % ({name}.len() - a + 1)");
+        let range = match self.pick(5) {
+            0 => format!("a..{end}"),
+            1 => format!("a..={end} - 1"),
+            2 => "a..".to_string(),
+            3 => format!("..{end}"),
+            _ => format!("..={end} - 1"),
+        };
+        self.w.text(&format!(
+            "let a = {i} % ({name}.len() + 1); {name}[{range}] }})"
+        ));
+        // It reads a local that a write may change.
+        Info::of(&[base], base.size, false)
+    }
+
+    /// A non-negative `i64` literal: small, or the largest.
+    fn offset(&mut self) -> String {
+        match self.pick(8) {
+            0 => i64::MAX.to_string(),
+            _ => self.upto(99).to_string(),
+        }
     }
 
     /// `([a, b, ...][i])` of a literal, with `i` in bounds.
@@ -2262,6 +2331,29 @@ mod tests {
         for n in [29794, 96755] {
             crate::generate::generate(&crate::generate::coverage::seed(n));
         }
+    }
+
+    /// GIVEN the generator's range rule on an array type
+    /// WHEN it writes a range from many bytes of data
+    /// THEN each of the five forms of range comes up, and each has `a` as its start or in its end
+    #[test]
+    fn a_slice_should_be_written_in_each_form_of_range() {
+        let ty = Ty::Array(Box::new(Ty::I64));
+        let forms = ["[a..a + ", "[a..=a + ", "[a..]", "[..a + ", "[..=a + "];
+        let mut seen = [false; 5];
+        for byte in 0..=255_u8 {
+            let bytes: Vec<u8> = (0..32_u8)
+                .map(|i| byte.wrapping_mul(i + 1).wrapping_add(i))
+                .collect();
+            let mut g = Gen::new(&bytes);
+            g.rule(Rule::Slice, &ty, MAX_SIZE, false);
+            let text = &g.w.out.program;
+            assert!(text.starts_with("({ ") && text.ends_with(" })"), "{text}");
+            for (form, seen) in forms.iter().zip(&mut seen) {
+                *seen |= text.contains(form);
+            }
+        }
+        assert_eq!(seen, [true; 5], "forms {forms:?}");
     }
 
     #[test]

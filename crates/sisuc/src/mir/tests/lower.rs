@@ -1148,3 +1148,75 @@ fn a_bounded_conversion_should_lower_to_to_any_only_where_it_makes_a_value() {
         );
     }
 }
+
+/// GIVEN `let a = make()` and `let t = a[..1]`, where `a` is not used again
+/// WHEN the function is built
+/// THEN the slice is taken from `move a`, and nothing retains the block: the slice has the count
+/// that `a` had, which a non-tail `push` onto it relies on to be in place (S6)
+#[test]
+fn slice_at_last_use_should_move_its_base() {
+    let printed = built(
+        "fn make() -> [i64] { [1, 2, 3] }\nfn main() {\n    let a = make()\n    let t = a[..1]\n    print(t)\n}",
+    );
+    has(&printed, "main", &["t#1 = slice move a#0[..1]"]);
+    let f = function(&printed, "main");
+    assert!(!f.contains("copy"), "{f}");
+}
+
+/// GIVEN `xs` that is used again after a range index of it
+/// WHEN the function is built
+/// THEN the slice is taken from a copy of `xs`, which adds the reference that the slice holds
+#[test]
+fn slice_of_a_live_local_should_take_a_copy() {
+    let printed = built(
+        "fn main() {\n    let xs = [1, 2, 3]\n    let t = xs[1..]\n    print(t)\n    print(xs)\n}",
+    );
+    has(&printed, "main", &["= copy xs#0", "slice move _[1..]"]);
+}
+
+/// GIVEN a start and an end that assign the locals that the slice reads
+/// WHEN the function is lowered
+/// THEN the base is read first, then the start, then the end, and each is pinned before the
+/// later ones can change it (S31's order): the base `xs` is read before the end's block assigns
+/// it, and the start `s` before the end's block assigns it
+#[test]
+fn slice_should_lower_its_base_then_its_bounds() {
+    let printed = lowered(
+        "fn main() {\n    let mut xs = [1, 2, 3]\n    print(xs[{ xs = [8, 9, 10]; 0 }..2])\n    print(xs)\n}",
+    );
+    has(
+        &printed,
+        "main",
+        &["_ = use xs#0", "xs#0 = ", "_ = 0", "slice move _[_..2]"],
+    );
+    let printed = lowered(
+        "fn main() {\n    let xs = [1, 2, 3, 4]\n    let mut s = 0\n    print(xs[s..{ s = 2; 3 }])\n    print(s)\n}",
+    );
+    has(
+        &printed,
+        "main",
+        &["_ = s#1", "s#1 = 2", "_ = 3", "slice use xs#0[_.._]"],
+    );
+}
+
+/// GIVEN a range index in each form, with a bound or without
+/// WHEN the function is lowered and printed
+/// THEN each prints as `slice base[start..end]`, with `..=` for an inclusive range and nothing
+/// where a bound is missing
+#[test]
+fn a_slice_should_print_each_form_of_range() {
+    let printed = lowered(
+        "fn f(xs: [i64]) -> i64 {\n    print(xs[1..3])\n    print(xs[1..=3])\n    print(xs[2..])\n    print(xs[..2])\n    print(xs[..=1])\n    0\n}",
+    );
+    has(
+        &printed,
+        "f",
+        &[
+            "slice use xs#0[1..3]",
+            "slice use xs#0[1..=3]",
+            "slice use xs#0[2..]",
+            "slice use xs#0[..2]",
+            "slice use xs#0[..=1]",
+        ],
+    );
+}

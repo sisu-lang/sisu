@@ -1182,3 +1182,33 @@ fn a_dyn_call_argument_should_be_owned() {
         "fn marked(t#0: borrow any Tag, s#1: string)",
     );
 }
+
+/// GIVEN `t = xs[1..]` in a named local, and `xs[..2]` returned
+/// WHEN the parameters are inferred
+/// THEN `xs` is owned: the slice shares the parameter's block, so keeping it or returning it
+/// consumes the parameter, as `let q = p` does
+#[test]
+fn slice_of_a_parameter_kept_in_a_local_should_own_it() {
+    let printed = built(
+        "fn keep(xs: [i64]) -> i64 {\n    let t = xs[1..]\n    t.len()\n}\nfn head(xs: [i64]) -> [i64] { xs[..2] }",
+    );
+    signature(&printed, "keep", "fn keep(xs#0: [i64])");
+    signature(&printed, "head", "fn head(xs#0: [i64])");
+}
+
+/// GIVEN `xs[1..]` passed to a call that only reads it
+/// WHEN the parameters are inferred
+/// THEN `xs` stays borrowed, and the function takes a copy only for the slice, which the call
+/// releases
+#[test]
+fn slice_of_a_parameter_passed_on_should_stay_borrowed() {
+    let printed = built(
+        "fn pass(xs: [i64], n: i64) -> i64 {\n    if n == 0 { return xs.len() }\n    pass(xs[1..], n - 1) + xs[0]\n}",
+    );
+    signature(&printed, "pass", "fn pass(xs#0: borrow [i64]");
+    has(
+        &printed,
+        "pass",
+        &["= copy xs#0", "slice move _[1..]", "call pass"],
+    );
+}

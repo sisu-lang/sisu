@@ -312,6 +312,68 @@ allocation_counts! {
     (any_alloc_enum, "1500\n", "0\n", 1000),
     // `print` of an `i64` allocates nothing.
     (print_int, super::numbered_lines("start", 1000), "start\n", 0),
+    // A range index shares the block of `xs`: taking `xs[1..4]` 1000 times allocates nothing.
+    (slice_alloc, "5000\n", "0\n", 0),
+    // Each of the 1000 calls of `make()` allocates the one block of `[0; 1000]`, and the search
+    // on the slices of that array allocates nothing: the array is the slices' only holder, and a
+    // borrowed slice is never copied.
+    (slice_search_owned, "0\n", "0\n", 1000),
+}
+
+/// One test, `allocations_should_match_the_reference`: each pair is a program and the reference
+/// program that does the same work without the feature under test. Both run under Valgrind at
+/// both optimization levels, and their extra allocations must be equal.
+const REFERENCES: &[(&str, &str)] = &[
+    // The push onto `a[..3]`, the last use of a block with room, is in place (S6).
+    ("slice_push_grow", "slice_push_grow_ref"),
+    // The binary search on slices allocates what the search with `lo` and `hi` does (S15).
+    ("slice_search", "slice_search_ref"),
+    // `Some(xs[1..3])` allocates what `Some(xs)` does: `Some` is not a trim point (S19).
+    ("slice_some", "slice_some_ref"),
+];
+
+/// GIVEN a program and its reference program, each with an `iterations()` loop
+/// WHEN both run under Valgrind, built with `-O2` and without
+/// THEN they make the same number of extra allocations
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "reads Valgrind's output, and Valgrind runs only on Linux"
+)]
+fn allocations_should_match_the_reference() {
+    for (program, reference) in REFERENCES {
+        for o2 in [false, true] {
+            assert_eq!(
+                extra_allocs(program, o2).2,
+                extra_allocs(reference, o2).2,
+                "{program} against {reference}, o2: {o2}"
+            );
+        }
+    }
+}
+
+/// GIVEN a queue of 1000 elements and a loop of `iterations() * 10` steps that drops its front
+/// with `q = q[1..]` and pushes at its back
+/// WHEN the program runs under Valgrind
+/// THEN it makes fewer than 20 extra allocations, where a copy on each push would make 10 000
+/// (S32)
+///
+/// A push onto a window that does not cover its block copies it into a block twice as large, so
+/// the loop copies about once in 1000 steps: about 10 copies.
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "reads Valgrind's output, and Valgrind runs only on Linux"
+)]
+fn slice_queue_should_copy_fewer_than_20_times() {
+    for o2 in [false, true] {
+        let (stdout, base_stdout, extra) = extra_allocs("slice_queue", o2);
+        assert_eq!(
+            (stdout.as_str(), base_stdout.as_str()),
+            ("1000\n9999\n", "1000\n0\n")
+        );
+        assert!(extra < 20, "{extra} extra allocations, o2: {o2}");
+    }
 }
 
 /// GIVEN the benchmark `bench/features/any_shapes`, which converts an enum value to `any Shape`

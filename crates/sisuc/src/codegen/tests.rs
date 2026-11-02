@@ -3901,6 +3901,39 @@ fn an_index_modulo_the_length_of_a_returned_array_should_have_no_bounds_check_at
     assert!(!wrap.contains("@sisu_panic_bounds("), "{wrap}");
 }
 
+/// `an_index_modulo_the_length_of_a_returned_array_should_have_no_bounds_check_at_o2` with a
+/// callee that returns a slice on one path. The length of `ys[1..]` is a difference that the
+/// callee computes, and with the other path's length, which `ipsccp` cannot prove, the union is
+/// not provable: the caller's `llvm.assume` stays, and keeps the fact. A callee that returns only
+/// slices, such as `ys[1..]` alone, has a length that `ipsccp` proves not negative from the
+/// ranges of its parts, so it folds the assumption to `true` and the caller loses the fact: the
+/// known gap of the test above, with no test.
+///
+/// ```text
+/// GIVEN a function that returns a slice `ys[1..]` or the array `ys`, and is not inlined
+/// WHEN a loop indexes its result with `i % ys.len()` for a non-negative `i`
+/// THEN the loop has no bounds check
+/// ```
+#[test]
+fn an_index_modulo_the_length_of_a_returned_slice_should_have_no_bounds_check_at_o2() {
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "fn make(n: i64) -> [u8] {\n    let ys = \"abc{n}\".bytes()\n    if n > 3 { ys[1..] } else { ys }\n}\n\nfn wrap(n: i64, m: i64) -> i64 {\n    let ys = make(n)\n    let mut t = 0\n    for i in 0..m {\n        t += i64(ys[i % ys.len()])\n    }\n    t\n}\n\nfn main(args: [string]) {\n    print(wrap(args.len() + 1, args.len() * 7))\n}",
+    );
+    keep_functions(&module, "make,wrap");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    let wrap = function_body(&ir, "@sisu.wrap(");
+    assert!(wrap.contains("rem i64"), "{wrap}");
+    assert!(
+        wrap.contains("@sisu.make("),
+        "the slice should come from a call: {wrap}"
+    );
+    assert!(!wrap.contains("@sisu_panic_bounds("), "{wrap}");
+}
+
 /// The same holds with no call: a length that a function builds itself, with a checked count or
 /// from a runtime call, is a value and not a load too.
 ///
@@ -5598,4 +5631,186 @@ fn convention_should_give_one_type_per_part() {
             );
         }
     }
+}
+
+/// The three compares of a range index, in the order of the checks: `s < 0`, `e > len`, and
+/// `s > e`; the lines of `body` that hold them, in order.
+fn range_checks(body: &str) -> Vec<&str> {
+    body.lines()
+        .map(str::trim)
+        .filter(|line| line.contains("icmp s"))
+        .collect()
+}
+
+/// A range index runs its checks before it builds the value, and allocates nothing: the value is
+/// the base's block, a moved `data`, and the difference of the bounds.
+///
+/// ```text
+/// GIVEN `xs[a..b]` of an array parameter and two bounds
+/// WHEN it is compiled without optimization
+/// THEN it compares `a < 0`, then `b > len`, then `a > b`, all before the length and the data of
+/// the new value, every failure reaches `sisu_panic_range`, and it calls `sisu_alloc` never
+/// ```
+#[test]
+fn slice_should_check_the_range_before_it_builds_the_value() {
+    let ir = ir_of("fn f(xs: [i64], a: i64, b: i64) -> [i64] {\n    xs[a..b]\n}\nfn main() {}");
+    let body = function_body(&ir, "@sisu.f(");
+    let checks = range_checks(body);
+    let predicates: Vec<&str> = checks
+        .iter()
+        .map(|line| line.split_whitespace().nth(3).unwrap_or_default())
+        .collect();
+    assert_eq!(predicates, ["slt", "sgt", "sgt"], "{body}");
+    // The start against 0 first.
+    assert!(checks[0].ends_with(", 0"), "{body}");
+    let at = |wanted: &str| {
+        body.find(wanted)
+            .unwrap_or_else(|| panic!("no `{wanted}` in\n{body}"))
+    };
+    // The new length and the new `data` come after the last check.
+    let last = checks
+        .iter()
+        .map(|check| at(check))
+        .max()
+        .unwrap_or_default();
+    assert!(at("%slice.len = sub nuw") > last, "{body}");
+    assert!(at("%element = getelementptr") > last, "{body}");
+    assert_eq!(
+        body.matches("call void @sisu_panic_range(").count(),
+        3,
+        "{body}"
+    );
+    assert!(!body.contains("@sisu_alloc("), "{body}");
+}
+
+/// `..=` compares `b >= len` before it adds one to `b`, so `i64::MAX` cannot overflow; a missing
+/// start has no `s < 0` check and a missing end has no `e > len` check.
+///
+/// ```text
+/// GIVEN `xs[a..=b]`, `xs[..b]` and `xs[a..]`
+/// WHEN they are compiled without optimization
+/// THEN the first compares `sge` on its end before an `add nsw`, the second has no negative-start
+/// compare, and the third has no compare of its end with the length
+/// ```
+#[test]
+fn slice_should_skip_the_checks_of_a_missing_bound() {
+    let ir = ir_of(
+        "fn inclusive(xs: [i64], a: i64, b: i64) -> [i64] { xs[a..=b] }\nfn no_start(xs: [i64], b: i64) -> [i64] { xs[..b] }\nfn no_end(xs: [i64], a: i64) -> [i64] { xs[a..] }\nfn main() {}",
+    );
+    let inclusive = function_body(&ir, "@sisu.inclusive(");
+    let predicates = |body: &str| -> Vec<String> {
+        range_checks(body)
+            .iter()
+            .map(|line| {
+                line.split_whitespace()
+                    .nth(3)
+                    .unwrap_or_default()
+                    .to_string()
+            })
+            .collect()
+    };
+    assert_eq!(predicates(inclusive), ["slt", "sge", "sgt"], "{inclusive}");
+    let compare = inclusive
+        .find("icmp sge")
+        .expect("an inclusive end compares sge");
+    let add = inclusive
+        .find("add nsw")
+        .expect("an inclusive end adds one");
+    assert!(compare < add, "{inclusive}");
+    let no_start = function_body(&ir, "@sisu.no_start(");
+    assert_eq!(predicates(no_start), ["sgt", "sgt"], "{no_start}");
+    let no_end = function_body(&ir, "@sisu.no_end(");
+    assert_eq!(predicates(no_end), ["slt", "sgt"], "{no_end}");
+}
+
+/// A copy of a shared array holds only the value: a block of the value's length, copied from the
+/// value's first element, not a block of the header's length copied from the block's first.
+///
+/// ```text
+/// GIVEN the helper that makes an array unique
+/// WHEN it is compiled
+/// THEN it copies from the value's `data`, sizes the copy by the value's `len`, and reads no
+/// header of the old block but its count
+/// ```
+#[test]
+fn copy_on_write_should_copy_only_the_value() {
+    let ir = ir_of(
+        "fn f(xs: [i64]) -> [i64] {\n    let mut ys = xs\n    ys[0] = 1\n    ys\n}\nfn main() {}",
+    );
+    let body = function_body(&ir, "define internal void @\"sisu_rc.unique.[i64]\"(ptr");
+    let lines: Vec<&str> = body.lines().map(str::trim).collect();
+    // The word of the old value that `name` takes: `extractvalue { ptr, ptr, i64 } %v, <word>`.
+    let word_of = |name: &str| {
+        let text = defined_by(&lines, name).unwrap_or_else(|| panic!("no {name} in\n{body}"));
+        assert!(
+            text.starts_with("extractvalue { ptr, ptr, i64 } "),
+            "{body}"
+        );
+        text.rsplit(", ").next().unwrap_or_default()
+    };
+    // The copy reads the value's data, word 1.
+    let copy = lines
+        .iter()
+        .find(|line| line.starts_with("call void @llvm.memcpy"))
+        .unwrap_or_else(|| panic!("no copy in\n{body}"));
+    let from = copy
+        .split("ptr align 8 ")
+        .nth(2)
+        .and_then(|rest| rest.split(',').next())
+        .unwrap_or_else(|| panic!("no source in {copy}"));
+    assert_eq!(word_of(from), "1", "{body}");
+    // The size of the copy comes from the value's length, word 2.
+    let size = lines
+        .iter()
+        .find_map(|line| line.contains("= mul nuw i64 ").then_some(*line))
+        .unwrap_or_else(|| panic!("no size in\n{body}"));
+    let length = size
+        .split("mul nuw i64 ")
+        .nth(1)
+        .and_then(|rest| rest.split(',').next())
+        .unwrap_or_else(|| panic!("no length in {size}"));
+    assert_eq!(word_of(length), "2", "{body}");
+    // The header of the old block is read for the count only.
+    assert!(!body.contains("{ i64, i64, i64 }, ptr %pointer"), "{body}");
+}
+
+/// A length that comes from the runtime is loaded from a slot or a sink, and carries the facts of
+/// a length: `!range [0, 2^63)` and `!noundef`. Without them the length of a line, of a text a
+/// sink wrote or of a program argument would lose the facts that an array's length has.
+///
+/// ```text
+/// GIVEN a line read, an interpolation of an array, and the arguments of the program
+/// WHEN each is compiled
+/// THEN the load of its length is marked `!range` and `!noundef`
+/// ```
+#[test]
+fn a_length_from_the_runtime_should_carry_the_facts_of_a_length() {
+    let marked = |src: &str, function: &str, name: &str| {
+        let ir = ir_of(src);
+        let body = function_body(&ir, function);
+        let load = body
+            .lines()
+            .map(str::trim)
+            .find(|line| line.starts_with(&format!("%{name} = load i64, ptr ")))
+            .unwrap_or_else(|| panic!("no load of {name} in\n{body}"));
+        assert!(
+            load.contains("!range ") && load.contains("!noundef "),
+            "{load}"
+        );
+    };
+    marked(
+        "fn main() {\n    print(read_line() ?? \"\")\n}",
+        "@sisu.main(",
+        "len1",
+    );
+    marked(
+        "fn main() {\n    print(\"{[1, 2]}\")\n}",
+        "@sisu.main(",
+        "sink.word",
+    );
+    marked(
+        "fn main(args: [string]) {\n    print(args.len())\n}",
+        "define i32 @main(",
+        "old",
+    );
 }

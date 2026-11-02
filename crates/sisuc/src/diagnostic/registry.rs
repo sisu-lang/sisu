@@ -545,8 +545,9 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         range: Option<RangeTarget>,
     },
-    /// A `push` at `at` onto something that is not a place.
-    PushToTemporary { at: Span },
+    /// A `push` at `at` onto something that is not a place; `range` holds the source text of the
+    /// range index when it is one.
+    PushToTemporary { at: Span, range: Option<String> },
     /// A range at `at` where it is not allowed, in the way that `form` says.
     RangeOutsideFor { at: Span, form: RangeForm },
     /// A second `==`, `!=` or `is` at `at` in one chain.
@@ -837,8 +838,9 @@ pub(crate) enum DiagnosticKind {
         param: bool,
         any: bool,
     },
-    /// An index into the value at `at`, of type `ty`, which is no array.
-    CannotIndex { ty: String, at: Span },
+    /// An index into the value at `at`, of type `ty`, which is no array; with `range`, a range
+    /// index into one that is neither an array nor a string.
+    CannotIndex { ty: String, at: Span, range: bool },
     /// The method `method` at `at`, called on an array of type `ty`. The prelude gives the method
     /// to the array types `targets`, and none of them is `ty`. `function` is whether the call
     /// writes the method as a function, `method(xs)`, and the label then says it is a method: it
@@ -3472,11 +3474,19 @@ impl From<DiagnosticKind> for Diagnostic {
                 Some(range) => range.diagnostic(code, at),
                 None => Diagnostic::coded(code, at, "cannot assign to this expression"),
             },
-            DiagnosticKind::PushToTemporary { at } => {
+            DiagnosticKind::PushToTemporary { at, range: None } => {
                 Diagnostic::coded(code, at, "cannot push to a temporary value")
                     .with_label("this value is not stored in a variable")
                     .with_help("store it in a `let mut` variable first")
             }
+            DiagnosticKind::PushToTemporary {
+                at,
+                range: Some(range),
+            } => Diagnostic::coded(code, at, "cannot push to a temporary value")
+                .with_label("a range index gives a new value")
+                .with_help(format!(
+                    "keep the slice in a variable first: `let mut t = {range}`, then `t.push(...)`"
+                )),
             DiagnosticKind::RangeOutsideFor { at, form } => form.diagnostic(code, at),
             DiagnosticKind::EqualityChain { at } => {
                 Diagnostic::coded(code, at, "`==`, `!=` and `is` do not chain")
@@ -4251,9 +4261,12 @@ impl From<DiagnosticKind> for Diagnostic {
             } else {
                 format!("`{class}` may be a class, and every element would be the same object")
             }),
-            DiagnosticKind::CannotIndex { ty, at } => {
-                Diagnostic::coded(code, at, format!("cannot index `{ty}`"))
-                    .with_help("only arrays can be indexed")
+            DiagnosticKind::CannotIndex { ty, at, range } => {
+                Diagnostic::coded(code, at, format!("cannot index `{ty}`")).with_help(if range {
+                    "only arrays and strings take a range index"
+                } else {
+                    "only arrays can be indexed"
+                })
             }
             DiagnosticKind::SumNeedsNumbers {
                 method,

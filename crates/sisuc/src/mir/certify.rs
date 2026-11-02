@@ -327,6 +327,7 @@ impl Clobbers {
                         | Rvalue::Variant { .. }
                         | Rvalue::ArrayLit(_)
                         | Rvalue::ArrayFill { .. }
+                        | Rvalue::Slice { .. }
                         | Rvalue::Wrap(_)
                         | Rvalue::Concat { .. }
                         | Rvalue::Interpolate { .. }
@@ -820,6 +821,15 @@ fn rvalue<'a>(
         Rvalue::ArrayFill { value, len, .. } => {
             consumed(value, lowered, f);
             operand(len, lowered, f);
+        }
+        // The slice takes the base's reference; the bounds are numbers.
+        Rvalue::Slice {
+            base, start, end, ..
+        } => {
+            consumed(base, lowered, f);
+            for bound in start.iter().chain(end) {
+                operand(bound, lowered, f);
+            }
         }
         Rvalue::Concat { lhs, rhs } => {
             consumed(lhs, lowered, f);

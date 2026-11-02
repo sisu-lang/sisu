@@ -86,6 +86,38 @@ fn main() {
 }
 ```
 
+## Range indexes
+
+`xs[a..b]` is the part of `xs` from the index `a` up to, and not including, the index `b`. The bounds are `i64`s ([E0032](../diagnostics/E0032.md)). `xs[a..=b]` includes the index `b`. A range without `a` starts at 0, and a range without `b` runs to the end: `xs[a..]`, `xs[..b]` and `xs[..=b]`. The result is an array of the same type. `xs[..]` is not a range index; write `xs` ([E0023](../diagnostics/E0023.md)).
+
+```sisu
+fn main() {
+    let xs = [1, 2, 3, 4, 5]
+    print(xs[1..3])                  // [2, 3]
+    print(xs[1..=3])                 // [2, 3, 4]
+    print(xs[2..])                   // [3, 4, 5]
+    print(xs[..2])                   // [1, 2]
+    print(xs[2..2])                  // []
+}
+```
+
+A range index copies no element. The new array shares its elements with `xs`, and a write or a `push` to either array does not change the other. Changing a part of an array in place, such as `xs[1..3] = ys`, is an error, because a range index gives a new array ([E0021](../diagnostics/E0021.md)). A range index is not a place. A `push` to one is an error too; keep the part in a `let mut` variable and push to that.
+
+The range must satisfy `0 <= start <= end <= length`, where `a..=b` ends at `b + 1`. A range that does not stops the program with a panic, as a bad index does. The panic names the first check that fails, in this order: a negative start, an end past the length, and a start past the end.
+
+```sisu panics
+fn main() {
+    let xs = [1, 2, 3, 4, 5]
+    print(xs[2..9])
+}
+```
+
+```stderr
+sisu: panic at example.sisu:3:14: range end 9 is past length 5
+```
+
+The base is evaluated first, then the start, then the end, and then the checks run. A range index on a value that is not an array or a string, such as an `i64`, is an error ([E0068](../diagnostics/E0068.md)). An optional array has no range index either ([E0062](../diagnostics/E0062.md)).
+
 The rules:
 
 - A binding without `mut` cannot change its array, also not an element of an inner array ([E0001](../diagnostics/E0001.md)).

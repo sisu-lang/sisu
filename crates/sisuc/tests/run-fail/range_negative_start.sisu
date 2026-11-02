@@ -1,0 +1,7 @@
+// GIVEN `let xs = [1, 2, 3, 4, 5]` and `print(xs[-1..2])`
+// WHEN the program runs
+// THEN it exits with code 101 and the panic is `range start -1 is negative` (the start is negative)
+fn main() {
+    let xs = [1, 2, 3, 4, 5]
+    print(xs[-1..2])
+}

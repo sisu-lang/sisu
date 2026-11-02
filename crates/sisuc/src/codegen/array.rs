@@ -10,7 +10,10 @@ use inkwell::intrinsics::Intrinsic;
 use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, IntPredicate};
 
-use super::abi::{RC_FAULT_RELEASE, RC_FAULT_RETAIN};
+use super::abi::{
+    RANGE_END_PAST_LENGTH, RANGE_HAS_END, RANGE_INCLUSIVE, RANGE_NEGATIVE_START,
+    RANGE_START_PAST_END, RANGE_STRING, RC_FAULT_RELEASE, RC_FAULT_RETAIN,
+};
 use super::layout::HeapBlock;
 use super::rc::{Helper, counted_core, param};
 use super::{Codegen, POSITIONED};
@@ -196,14 +199,114 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.position_at_end(done);
     }
 
+    /// `base[start..end]`, or `..=` with `inclusive`, of the array `base`: the value with the
+    /// same block, `data` moved to the start, and the length of the range. It takes `base`'s
+    /// reference, so the block's count does not change, and it allocates nothing. A missing bound
+    /// is `None`. With `s` the start (0 when missing) and `e` the end (the length when missing),
+    /// the checks run in this order, and the first that fails panics at `span` with
+    /// `sisu_panic_range`: `s < 0`; `e > len`, or for `..=` `b >= len`, compared before any
+    /// `+ 1` so that `i64::MAX` does not overflow; `s > e`, where `e` is `b + 1` for `..=`.
+    pub(super) fn slice(
+        &self,
+        (base, ty): (BasicValueEnum<'ctx>, Type),
+        (start, end): (Option<IntValue<'ctx>>, Option<IntValue<'ctx>>),
+        (inclusive, safe): (bool, bool),
+        span: Span,
+    ) -> BasicValueEnum<'ctx> {
+        let string = ty == Type::STRING;
+        assert!(
+            !safe && !string,
+            "a string's slice and a safe slice land in Task 4"
+        );
+        let element = element_of(ty);
+        let i64_type = self.context.i64_type();
+        let (block, data, len) = (
+            self.value_block(base),
+            self.value_data(base),
+            self.value_len(base),
+        );
+        let kind = |check: u64| {
+            let flags = [
+                (inclusive, RANGE_INCLUSIVE),
+                (end.is_some(), RANGE_HAS_END),
+                (string, RANGE_STRING),
+            ];
+            let bits = flags
+                .into_iter()
+                .filter_map(|(on, bit)| on.then_some(bit))
+                .fold(check, |kind, bit| kind | bit);
+            i64_type.const_int(bits, false)
+        };
+        let from = start.unwrap_or_else(|| i64_type.const_zero());
+        // What the program wrote as the end, for the text of the panic.
+        let written = end.unwrap_or(len);
+        let report = |check: u64| {
+            move |codegen: &Self| {
+                let (at, at_len) = codegen.report_site(span);
+                (
+                    codegen.panic_range,
+                    vec![
+                        at.into(),
+                        at_len.into(),
+                        kind(check).into(),
+                        from.into(),
+                        written.into(),
+                        len.into(),
+                    ],
+                )
+            }
+        };
+        if start.is_some() {
+            let negative = self.int_compare(IntPredicate::SLT, from, i64_type.const_zero());
+            self.panic_with(negative, report(RANGE_NEGATIVE_START));
+        }
+        if let Some(end) = end {
+            let predicate = if inclusive {
+                IntPredicate::SGE
+            } else {
+                IntPredicate::SGT
+            };
+            let past = self.int_compare(predicate, end, len);
+            self.panic_with(past, report(RANGE_END_PAST_LENGTH));
+        }
+        // `b < len` here for `..=`, so `b + 1` cannot overflow.
+        let to = match end {
+            Some(end) if inclusive => self
+                .builder
+                .build_int_nsw_add(end, i64_type.const_int(1, false), "end")
+                .expect(POSITIONED),
+            Some(end) => end,
+            None => len,
+        };
+        let inverted = self.int_compare(IntPredicate::SGT, from, to);
+        self.panic_with(inverted, report(RANGE_START_PAST_END));
+        let len = self
+            .builder
+            .build_int_nuw_sub(to, from, "slice.len")
+            .expect(POSITIONED);
+        self.make_value(block, self.element_ptr(element, data, from), len)
+    }
+
     /// `slot.push(value)`: appends `value`, which it consumes, to the array of type `ty` that
-    /// `slot` holds. A block with count 1 and room for the element takes it in place. A full
-    /// one is reallocated to `max(len + 1, min(2 * cap, largest))` elements, as a string grows.
-    /// A shared one is copied into a block of `len + 1` elements, and the slot's reference to
-    /// the old block is released. Every way, the value in `slot` ends as the one that covers the
-    /// block with `len + 1` elements: a block that grew or was copied is stored into `slot` with
-    /// its `data`, and the length is stored last. A block that has `largest` elements cannot take
-    /// another: that panics at `span`.
+    /// `slot` holds. The value in `slot` has the block `array`, its `data` and its `len`, and the
+    /// block has a header `len` of set elements and a capacity. There are three ways:
+    /// 1. The count is 1, the value ends at the block's last set element (`data + len` is where
+    ///    the header's `len` ends), and the header's `len` is below the capacity: the element
+    ///    goes in place.
+    /// 2. The count is 1, the value covers its block, and the block is full: the block is
+    ///    reallocated to `max(len + 1, min(2 * cap, largest))` elements.
+    /// 3. Otherwise the value is copied into a new block, and the old block is released. The new
+    ///    block has `len + 1` elements of room when the value covers its old block, else
+    ///    `max(len + 1, min(2 * (len + 1), largest))`, so that a queue that drops its front
+    ///    and pushes at its back copies once in about `len` steps.
+    ///
+    /// Every way, the header's `len` is raised by one and ends equal to the set elements, and the
+    /// value in `slot` ends one element longer. A block that has `largest` elements cannot take
+    /// another: that panics at `span`. No way writes over an element that another value can see.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the three paths of a push read best in one place"
+    )]
     pub(super) fn array_push(
         &self,
         slot: PointerValue<'ctx>,
@@ -215,14 +318,33 @@ impl<'ctx> Codegen<'ctx, '_> {
         let i64_type = self.context.i64_type();
         let layout = self.array_layout(element);
         let largest = i64_type.const_int(layout.largest(), false);
-        let array = self.load_pointer(slot);
+        let old = self.load_place(ty, slot, "old", None);
+        let (array, data, len) = (
+            self.value_block(old),
+            self.value_data(old),
+            self.value_len(old),
+        );
         // A dead block, count below 1, would otherwise pass for a shared one and be copied.
         self.check_count(array, RC_FAULT_RELEASE);
-        let len = self.header_len(array);
+        let held = self.header_len(array);
+        let first = self.array_data(element, array);
+        // The set elements after the push: the header's `len` and one, or for a copy, which holds
+        // only the value's elements, the value's `len` and one.
+        let one = i64_type.const_int(1, false);
+        let raised = self
+            .builder
+            .build_int_nuw_add(held, one, "held")
+            .expect(POSITIONED);
+        let new_len = self
+            .builder
+            .build_int_nuw_add(len, one, "len")
+            .expect(POSITIONED);
         let function = self.current_function();
         let block = |name| self.context.append_basic_block(function, name);
-        let (owned, resize, copy, join) = (
-            block("owned"),
+        let (alone, ends, full, resize, copy, join) = (
+            block("alone"),
+            block("ends"),
+            block("full"),
             block("resize"),
             block("copy"),
             block("join"),
@@ -230,14 +352,36 @@ impl<'ctx> Codegen<'ctx, '_> {
         let count = self.load_count(array, "count");
         let one = self.int_compare(IntPredicate::EQ, count, i64_type.const_int(1, false));
         self.builder
-            .build_conditional_branch(one, owned, copy)
+            .build_conditional_branch(one, alone, copy)
             .expect(POSITIONED);
 
-        self.builder.position_at_end(owned);
-        let cap = self.array_cap(array);
-        let full = self.int_compare(IntPredicate::UGE, len, cap);
+        // Path 1 needs the value to end at the block's last set element.
+        self.builder.position_at_end(alone);
+        let value_end = self.element_ptr(element, data, len);
+        let block_end = self.element_ptr(element, first, held);
+        let at_end = self
+            .builder
+            .build_int_compare(IntPredicate::EQ, value_end, block_end, "at.end")
+            .expect(POSITIONED);
         self.builder
-            .build_conditional_branch(full, resize, join)
+            .build_conditional_branch(at_end, ends, copy)
+            .expect(POSITIONED);
+
+        self.builder.position_at_end(ends);
+        let cap = self.array_cap(array);
+        let room = self.int_compare(IntPredicate::ULT, held, cap);
+        self.builder
+            .build_conditional_branch(room, join, full)
+            .expect(POSITIONED);
+
+        // Path 2 needs the value to cover its block, which it ends already.
+        self.builder.position_at_end(full);
+        let starts = self
+            .builder
+            .build_int_compare(IntPredicate::EQ, data, first, "at.start")
+            .expect(POSITIONED);
+        self.builder
+            .build_conditional_branch(starts, resize, copy)
             .expect(POSITIONED);
 
         self.builder.position_at_end(resize);
@@ -276,6 +420,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .into_pointer_value();
         self.store_tagged(self.cap_ptr(grown), new_cap.into(), self.header_tag);
         self.store_block(slot, element, grown);
+        let grown_data = self.array_data(element, grown);
         let grew = self.current_block();
         self.branch_to(join);
 
@@ -286,36 +431,60 @@ impl<'ctx> Codegen<'ctx, '_> {
             .builder
             .build_int_nuw_add(len, i64_type.const_int(1, false), "needed")
             .expect(POSITIONED);
-        // Releasing the slot's reference never frees the block: its count was above 1.
-        self.add_to_count(array, i64_type.const_int((-1_i64).cast_unsigned(), false));
-        let fresh = self.alloc_array(element, needed, None);
-        self.copy_elements(
-            element,
-            self.array_data(element, array),
-            self.array_data(element, fresh),
-            len,
-        );
+        // A value that covers its block gets room for one element, as a copy always did. One that
+        // does not gets room to grow in, up to twice its length, so that its pushes take path 1.
+        let covers = self
+            .builder
+            .build_and(
+                self.builder
+                    .build_int_compare(IntPredicate::EQ, data, first, "at.start")
+                    .expect(POSITIONED),
+                self.int_compare(IntPredicate::EQ, len, held),
+                "covers",
+            )
+            .expect(POSITIONED);
+        // `needed` is at most `largest`, which is below 2^63, so the double fits.
+        let double = self
+            .builder
+            .build_int_nuw_mul(needed, i64_type.const_int(2, false), "double")
+            .expect(POSITIONED);
+        let doubled = self.unsigned_extreme("llvm.umin", double, largest);
+        let roomy = self.unsigned_extreme("llvm.umax", doubled, needed);
+        let room = self
+            .builder
+            .build_select(covers, needed, roomy, "room")
+            .expect(POSITIONED)
+            .into_int_value();
+        let fresh = self.alloc_array(element, room, None);
+        let fresh_data = self.array_data(element, fresh);
+        self.copy_elements(element, data, fresh_data, len);
         self.store_block(slot, element, fresh);
+        // The copy holds its own references to the elements. The old block loses the slot's, and
+        // is freed, with its elements, when that was its last.
+        self.release(old, ty);
         let copied = self.current_block();
         self.branch_to(join);
 
         self.builder.position_at_end(join);
-        let result = self
-            .builder
-            .build_phi(self.context.ptr_type(AddressSpace::default()), "array")
-            .expect(POSITIONED);
-        result.add_incoming(&[(&array, owned), (&grown, grew), (&fresh, copied)]);
-        let result = result.as_basic_value().into_pointer_value();
+        let pointer = self.context.ptr_type(AddressSpace::default());
+        let result = self.builder.build_phi(pointer, "array").expect(POSITIONED);
+        result.add_incoming(&[(&array, ends), (&grown, grew), (&fresh, copied)]);
+        // Where the value's elements start, in the block that now holds them.
+        let start = self.builder.build_phi(pointer, "start").expect(POSITIONED);
+        start.add_incoming(&[(&data, ends), (&grown_data, grew), (&fresh_data, copied)]);
+        let set = self.builder.build_phi(i64_type, "set").expect(POSITIONED);
+        set.add_incoming(&[(&raised, ends), (&raised, grew), (&new_len, copied)]);
+        // The element goes after the value's last.
         self.store_tagged(
-            self.element_ptr(element, self.array_data(element, result), len),
+            self.element_ptr(element, start.as_basic_value().into_pointer_value(), len),
             value,
             self.element_tag,
         );
-        let new_len = self
-            .builder
-            .build_int_nuw_add(len, i64_type.const_int(1, false), "len")
-            .expect(POSITIONED);
-        self.store_tagged(self.len_ptr(result), new_len.into(), self.header_tag);
+        self.store_tagged(
+            self.len_ptr(result.as_basic_value().into_pointer_value()),
+            set.as_basic_value(),
+            self.header_tag,
+        );
         self.store(self.words_ptr(slot, 2), new_len.into());
     }
 

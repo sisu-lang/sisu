@@ -5,7 +5,7 @@
 //! emitting into that block, and a block is created only when an edge reaches it, so every
 //! block is reachable from the entry. The order, which the ownership pass reads off the blocks:
 //! - `Call`, `New`, `Variant`, `ArrayLit` and `Math` evaluate their arguments left to right, and
-//!   `Interpolate` its parts; `Index` evaluates base then index;
+//!   `Interpolate` its parts; `Index` evaluates base then index; `Slice` its base, start and end;
 //!   `ArrayFill` value then length; `Equal`, `Is`, `Concat`, arithmetic and a string comparison
 //!   lhs then rhs.
 //! - `If` and `IfSome` evaluate the condition or scrutinee, then one branch. `Match` evaluates
@@ -32,6 +32,7 @@
 
 mod pattern;
 
+use std::iter::once;
 use std::ptr;
 
 use rustc_hash::FxHashMap;
@@ -814,6 +815,32 @@ impl<'a> Lowering<'a> {
                     span: len.span,
                 }
             }
+            ExprKind::Slice {
+                base,
+                start,
+                end,
+                inclusive,
+                safe,
+                span,
+            } => {
+                // The base, then the bounds, each pinned against the ones after it: a bound
+                // that assigns the base's local does not change the value that is sliced.
+                let parts: Vec<&Expr> = once(&**base)
+                    .chain(start.iter().chain(end).map(|bound| &**bound))
+                    .collect();
+                let mut ops = self.operands(&parts)?.into_iter();
+                let base = ops.next().expect("a slice should have a base");
+                let start = start.as_ref().and_then(|_| ops.next());
+                let end = end.as_ref().and_then(|_| ops.next());
+                Rvalue::Slice {
+                    base,
+                    start,
+                    end,
+                    inclusive: *inclusive,
+                    safe: *safe,
+                    span: *span,
+                }
+            }
             ExprKind::Index { base, index } => {
                 let (mut place, temp) = self.base(base, leaves_locals(index))?;
                 let at = self.operand(index)?;
@@ -1451,6 +1478,7 @@ fn leaves_locals(expr: &Expr) -> bool {
         | ExprKind::ArrayLit(_)
         | ExprKind::ArrayFill { .. }
         | ExprKind::Index { .. }
+        | ExprKind::Slice { .. }
         | ExprKind::Chars(_)
         | ExprKind::Bytes(_)
         | ExprKind::Words(_)
@@ -1654,6 +1682,14 @@ fn expr_mentions(e: &Expr, found: &mut Mentions) {
                     mentions(guard, found);
                 }
                 block_mentions(&arm.body, found);
+            }
+        }
+        ExprKind::Slice {
+            base, start, end, ..
+        } => {
+            mentions(base, found);
+            for bound in start.iter().chain(end) {
+                mentions(bound, found);
             }
         }
         ExprKind::Loop(block) | ExprKind::Block(block) => block_mentions(block, found),

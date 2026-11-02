@@ -1,11 +1,13 @@
 //! Ranges: the E0023 report of a range where it is not allowed, and the E0021 report of an
 //! assignment to a range index.
 
+use super::array::optional_array;
 use super::string::single_term;
 use super::{Checked, Checker, Poisoned, UNKNOWN, type_of};
 use crate::ast::{self, ExprKind};
 use crate::diagnostic::{
     Diagnostic, DiagnosticKind, MissingBound, RangeForm, RangePlace, RangeTarget, RangeWrite,
+    UnwrapHelp,
 };
 use crate::parser::is_place;
 use crate::source::Span;
@@ -92,18 +94,104 @@ impl Checker<'_> {
         Err(Poisoned::error())
     }
 
-    /// E0023 for the range index `base[range]`. Until the checker takes a range index of an array
-    /// (Task 3), of a string (Task 4) and a method's range argument (Task 5), the report is the
-    /// one of a range anywhere, except `base[..]` and `a..=`, which are errors for good. The root
-    /// of `base` is stamped as a `push` onto the index would stamp it, so no warning follows; the
-    /// base of an error for good reports its own mistakes.
-    pub(super) fn range_index(&mut self, base: &ast::Expr, range: &ast::Range) -> Checked {
-        self.stamp_push(base);
+    /// The range index `base[range]` at `span`. `base[..]` and `a..=` are errors for good: E0023,
+    /// with the root of `base` stamped as a `push` onto the index would stamp it, so no warning
+    /// follows. On an array it is a `Slice` of type `[T]`, each bound an `i64`. A base that is no
+    /// array or string is E0068, and an optional one E0062, with the bounds not checked, for the
+    /// one report. A string keeps the stopgap E0023 until Task 4.
+    pub(super) fn range_index(
+        &mut self,
+        span: Span,
+        base: &ast::Expr,
+        range: &ast::Range,
+    ) -> Checked {
         if error_for_good(range) {
+            self.stamp_push(base);
             drop(self.value(base, None));
+            self.diagnostics.push(self.index_outside(base, range));
+            return Err(Poisoned::error());
         }
-        self.diagnostics.push(self.index_outside(base, range));
-        Err(Poisoned::error())
+        let outer = std::mem::replace(&mut self.body.indexed, true);
+        let checked = self.value(base, None);
+        // The bounds are not part of the chain that the index ends.
+        self.body.indexed = false;
+        let Some(ty) = type_of(&checked) else {
+            // The base has reported itself; the bounds report their own mistakes.
+            self.bounds(range);
+            self.body.indexed = outer;
+            return Err(Poisoned::error());
+        };
+        if !matches!(ty.kind(), TypeKind::Array(_)) {
+            self.body.indexed = outer;
+            let d = if ty == Type::STRING {
+                // Until Task 4.
+                self.stamp_push(base);
+                self.index_outside(base, range)
+            } else {
+                self.cannot_slice(base, ty)
+            };
+            self.diagnostics.push(d);
+            return Err(Poisoned::error());
+        }
+        let (start, end, mismatched) = self.bounds(range);
+        self.body.indexed = outer;
+        let (has_start, has_end) = (start.is_some(), end.is_some());
+        let parts = [Some(checked), start, end].into_iter().flatten();
+        let Ok(operands) = parts.collect::<Result<Vec<_>, _>>() else {
+            return Err(Poisoned::of((!mismatched).then_some(ty)));
+        };
+        Ok(self.spilled(span, ty, operands, |operands| {
+            let mut operands = operands.into_iter().map(Box::new);
+            let mut next = || {
+                operands
+                    .next()
+                    .expect("`spilled` should return each operand")
+            };
+            let base = next();
+            let start = has_start.then(&mut next);
+            let end = has_end.then(&mut next);
+            tir::ExprKind::Slice {
+                base,
+                start,
+                end,
+                inclusive: range.inclusive,
+                safe: false,
+                span: range.span,
+            }
+        }))
+    }
+
+    /// E0062 for the optional array or string `base`, else E0068, of the range index of `base`,
+    /// which has type `ty` and is neither an array nor a string.
+    fn cannot_slice(&self, base: &ast::Expr, ty: Type) -> Diagnostic {
+        match ty.kind() {
+            TypeKind::Optional(inner)
+                if inner == Type::STRING || matches!(inner.kind(), TypeKind::Array(_)) =>
+            {
+                optional_array(base, UnwrapHelp::It)
+            }
+            _ => DiagnosticKind::CannotIndex {
+                ty: self.type_name(ty),
+                at: base.span,
+                range: true,
+            }
+            .into(),
+        }
+    }
+
+    /// The checked bounds of `range`, each against `i64`, and whether one was a mistake.
+    fn bounds(&mut self, range: &ast::Range) -> (Option<Checked>, Option<Checked>, bool) {
+        let mut mismatched = false;
+        let mut bound = |checker: &mut Self, bound: &Option<Box<ast::Expr>>| {
+            bound.as_ref().map(|bound| {
+                let (checked, wrong) = checker.operand(bound, Some(Type::I64));
+                mismatched |= wrong;
+                checked
+            })
+        };
+        let start = bound(self, &range.start);
+        let end = bound(self, &range.end);
+        (start, end, mismatched)
     }
 
     fn index_outside(&self, base: &ast::Expr, range: &ast::Range) -> Diagnostic {
@@ -202,9 +290,9 @@ impl Checker<'_> {
                 },
                 Some(_) => RangeWrite::Other,
             },
-            // A string's element, and a base that is neither an array nor a string, wait for
-            // the range forms of E0068 (Tasks 3 and 4).
-            _ => return self.index_outside(found.base, found.range),
+            // A string's element waits for E0068's string form (Task 4).
+            _ if ty == Type::STRING => return self.index_outside(found.base, found.range),
+            _ => return self.cannot_slice(found.base, ty),
         };
         DiagnosticKind::AssignToExpression {
             at: found.index.span,

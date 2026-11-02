@@ -254,6 +254,14 @@ fn rvalue(value: &Rvalue, read: &mut impl FnMut(LocalId)) {
                 operand(op, read);
             }
         }
+        Rvalue::Slice {
+            base, start, end, ..
+        } => {
+            operand(base, read);
+            for bound in start.iter().chain(end) {
+                operand(bound, read);
+            }
+        }
         Rvalue::ArrayFill {
             value: lhs,
             len: rhs,

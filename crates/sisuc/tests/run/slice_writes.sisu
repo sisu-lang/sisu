@@ -1,0 +1,59 @@
+fn name(i: i64) -> string { "a" + i.to_string() }
+
+fn unique() -> [i64] { [1, 2, 3, 4] }
+
+// GIVEN a `[string]` `a` grown by `push` to 3 elements in a block of capacity 4, each element
+// built at run time, and `let mut t = a[..1]` as the last use of `a`, so the block's count is 1
+// WHEN the program runs `t.push("z")` and prints `t`
+// THEN `t` holds `a0` and `z`, because a push may write in place only after the value's last
+// element, and `t` ends at element 1 while the block holds 3: it copies the one element it
+// covers, and the block's drop releases the other two. A write in place would overwrite `a1`
+// and leak it, which Valgrind reports.
+fn push_to_a_head() {
+    let mut a = [name(0)]
+    a.push(name(1))
+    a.push(name(2))
+    let mut t = a[..1]
+    t.push("z")
+    print(t)                         // [a0, z]
+}
+
+// GIVEN `let xs = [1, 2, 3]` and `let mut t = xs[..2]`
+// WHEN the program runs `t[0] = 9`, then prints `xs` and `t`
+// THEN it prints `[1, 2, 3]` and then `[9, 2]` (S4)
+fn write_to_a_slice() {
+    let xs = [1, 2, 3]
+    let mut t = xs[..2]
+    t[0] = 9
+    print(xs)                        // [1, 2, 3]
+    print(t)                         // [9, 2]
+}
+
+// GIVEN `let mut xs = [1, 2, 3]` and `let mut t = xs[..2]`
+// WHEN the program runs `t.push(7)`, then prints `xs` and `t`
+// THEN it prints `[1, 2, 3]` and then `[1, 2, 7]` (S5)
+fn push_to_a_slice() {
+    let mut xs = [1, 2, 3]
+    let mut t = xs[..2]
+    t.push(7)
+    print(xs)                        // [1, 2, 3]
+    print(t)                         // [1, 2, 7]
+}
+
+// GIVEN a slice that is the only holder of its block
+// WHEN the program writes to it
+// THEN the write is in place, and the elements it does not cover keep their values for the
+// block's drop
+fn write_to_the_only_holder() {
+    let mut u = unique()[1..3]
+    u[0] = 20
+    u.push(30)
+    print(u)                         // [20, 3, 30]
+}
+
+fn main() {
+    push_to_a_head()
+    write_to_a_slice()
+    push_to_a_slice()
+    write_to_the_only_holder()
+}

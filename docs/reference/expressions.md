@@ -272,6 +272,8 @@ sisu: panic at example.sisu:3:14: index 3 out of bounds for length 3
 
 Only an array has an index. An index on another value, such as a `string`, is an error ([E0068](../diagnostics/E0068.md)).
 
+`xs[a..b]` is a range index. It gives the part of the array `xs` from `a` up to, and not including, `b`, and it stops the program with a panic when the range is outside the array ([Range indexes](arrays.md#range-indexes)).
+
 ## Expressions as statements
 
 An expression can stand as a statement, such as a call of `print`. When its value is not used, and it is not a call that returns no value, the program builds with a warning ([W0004](../diagnostics/W0004.md)).
