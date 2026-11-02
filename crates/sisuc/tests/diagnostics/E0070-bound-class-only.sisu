@@ -1,0 +1,14 @@
+class Box<T> {
+    x: T
+}
+
+extend<T: AnyObject> Box<T> {
+    fn same(self) -> bool {
+        true
+    }
+}
+
+fn main() {
+    let b = Box(x: 1)
+    print(same(b))
+}

@@ -1,0 +1,10 @@
+error[E0070]: `has` is a method, not a function
+  --> E0070-bound-self.sisu:14:9
+   |
+14 |         has(y)
+   |         ^^^ `has` needs `T: Eq`
+   |
+   = help: add a bound: `T: Eq`, then call `has` as a method of `self`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0070

@@ -1,0 +1,20 @@
+enum Wrap<T> {
+    Item(T)
+    Nothing
+}
+class W<T> {
+    x: T
+}
+extend<T: Eq & Display> W<T>: Display {
+    fn to_string(self) -> string {
+        if Wrap.Item(W(x: [self.x])) == Wrap.Item(W(x: [self.x])) { "{self.x}" } else { "b" }
+    }
+}
+extend<T: Eq & Display> W<T>: Eq {
+    fn eq(self, other: Self) -> bool {
+        "{self}" == "{other}"
+    }
+}
+fn main() {
+    print(W(x: 1))
+}
