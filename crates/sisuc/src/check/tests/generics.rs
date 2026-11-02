@@ -5848,6 +5848,19 @@ const FAILED_ARGUMENT_ROWS: &[PartialRow<'static>] = {
         ),
         (
             "fn none<T>() -> T? { None }\n\
+             fn he<T>(_a: Two<T, i64>, _b: T?) -> i64 { 1 }\n",
+            "print(he(nope, none()))",
+            &[(BindingNotFound, "nope")],
+        ),
+        (
+            "interface K<X> {\n}\n\
+             fn none<T>() -> T? { None }\n\
+             fn hy<T>(_a: any K<T>, _b: T?) -> i64 { 1 }\n",
+            "print(hy(nope, none()))",
+            &[(BindingNotFound, "nope")],
+        ),
+        (
+            "fn none<T>() -> T? { None }\n\
              fn hs<T: I>(_a: Box<T.Item, T>, _b: T?) -> i64 { 1 }\n",
             "print(hs(nope, none()))",
             &[(BindingNotFound, "nope")],
