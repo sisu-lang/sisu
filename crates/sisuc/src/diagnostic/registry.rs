@@ -4093,18 +4093,14 @@ impl From<DiagnosticKind> for Diagnostic {
                 let d = Diagnostic::coded(code, at, format!("`{name}` is a method, not a function"));
                 // The label always has a `need`, so `Holds`, which reads the type, does not occur.
                 let d = d.with_label(bound.label.text("", &bound.interface));
-                let (call, fix) = match receiver {
+                let call = match receiver {
                     MethodReceiver::SelfValue { .. } => {
-                        (format!("call `{name}` as a method of `self`"), !bound.takes)
+                        format!("call `{name}` as a method of `self`")
                     }
-                    MethodReceiver::Optional { .. } => {
-                        (format!("call `{name}` with `?.`"), !bound.takes)
-                    }
-                    MethodReceiver::Argument { .. } => {
-                        (format!("call `{name}` as a method"), !bound.takes)
-                    }
+                    MethodReceiver::Optional { .. } => format!("call `{name}` with `?.`"),
+                    MethodReceiver::Argument { .. } => format!("call `{name}` as a method"),
                 };
-                let fix = if fix { " and fix its arguments" } else { "" };
+                let fix = if bound.takes { "" } else { " and fix its arguments" };
                 match conform_help(bound.add.as_ref(), bound.make.as_deref(), &bound.interface) {
                     Some(help) => d.with_help(format!("{help}, then {call}{fix}")),
                     None => d,

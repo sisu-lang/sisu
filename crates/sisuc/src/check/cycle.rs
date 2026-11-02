@@ -1178,9 +1178,9 @@ impl Checker<'_> {
 
     /// The operand of the step that `instance` is, when the program writes the step: an operator,
     /// an interpolation or a built-in function on it; a type that a call reaches the generated
-    /// node of; or a call that the typed tree lowered an operator to, whose operand is the first
-    /// parameter. A generated node has none: its operand is a payload that the enum's declaration
-    /// writes.
+    /// node of; or a call that the typed tree lowered an operator to, whose operand is the type of
+    /// its `other` parameter, which is the receiver's type. A generated node has none: its operand
+    /// is a payload that the enum's declaration writes.
     fn written_operand(&self, instance: Instance) -> Option<Type> {
         match instance {
             Instance::Operator(_, written, operand)
