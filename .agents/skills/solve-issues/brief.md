@@ -25,7 +25,7 @@ Cause: <function, file and line at the base, and why it gives this output>.
 
 Fix: <what to change, and where>.
 
-Cost: <each walk the fix adds, its worst input, and the step counter that guards it>.
+Cost: <each walk the fix adds, its worst input, and the step counter that guards it>. The counter ticks in the one accessor that reads the data, so a scan anywhere ticks. Its proof is an un-ticked mutation (`CODING_STANDARDS.md`, Tests): put back the old scan, add no tick, and show that the test fails.
 
 Diagnostic text: <the message, label, secondary labels and help; each fix with its message, edit, and safe or unsafe; as the controller wrote them for a probe with user names>.
 
@@ -66,4 +66,5 @@ A fix-round brief has these parts, in this order:
 2. The rulings file and the reports.
 3. Each accepted finding: its severity, the cause you checked, the probe that shows it, the fix, and the test list with the wanted outputs, as in "Tests" above.
 4. "Fix the class": the neighbouring cases to list and probe, the probe folder (`review-sisu` names it), and the `scripts/diag_diff.py` command to run.
-5. The job: the tests first, red at the round base, in one commit titled "Add failing tests"; then the fix in a second commit; `make test`; `make coverage BASE=<round base>` into `<ledger folder>/<group>-task-<N>-fix<round>-coverage.txt`. No mutation test. One report, with each test red before and green after.
+5. "Report, do not add": when a check (a hook, a lint, a test table) seems to need a new exemption or opt-out, the executor reports the hit and the reason, and adds nothing. The controller rules on it.
+6. The job: the tests first, red at the round base, in one commit titled "Add failing tests"; then the fix in a second commit; `make test`; `make coverage BASE=<round base>` into `<ledger folder>/<group>-task-<N>-fix<round>-coverage.txt`. No mutation test. One report, with each test red before and green after.
