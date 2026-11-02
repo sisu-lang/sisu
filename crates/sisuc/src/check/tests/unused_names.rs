@@ -1064,6 +1064,19 @@ fn interface_should_warn_when_only_dead_code_names_it_in_an_any_type() {
     );
 }
 
+/// A type argument of an alias records its own `any` type where it is written, so the use of the
+/// alias adds none: the warning cites `Named` once.
+#[test]
+fn interface_should_be_cited_once_when_an_alias_argument_names_it_in_dead_code() {
+    judge_unused();
+    assert_eq!(
+        found(
+            "interface Named {\n    fn name(self) -> string\n}\ntype Opt<T> = T?\nfn dead() { let _x: Opt<any Named> = None }\nfn main() {}"
+        ),
+        [(W0012, (1, 11), vec![(5, 29)]), (W0012, (5, 4), vec![])]
+    );
+}
+
 /// An interface of the prelude is out of the user's sight: nothing in it is unused, as nothing
 /// else in the prelude is.
 #[test]

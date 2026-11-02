@@ -634,18 +634,8 @@ impl Checker<'_> {
                     for &b in conforming_blocks.get(&holder).into_iter().flatten() {
                         make_live(&mut live, &mut stack, self.owner_index(Owner::Block(b)));
                     }
-                    // A class or an enum that is built names the interfaces of its bounds.
-                    let bounds = match holder {
-                        Holder::Class(c) => &self.classes[c.0].bounds,
-                        Holder::Enum(e) => &self.enums[e.0].bounds,
-                        Holder::Array | Holder::I64 => {
-                            unreachable!("only a class or an enum is started by a use")
-                        }
-                    };
-                    let bounds = bounds.iter().flatten().map(|bound| bound.interface);
-                    // It names the interfaces of the `any` types it holds too.
-                    let anys = self.held_anys(holder, &chosen).into_iter();
-                    for interface in bounds.chain(anys) {
+                    // A class or an enum that is built names the interfaces it holds.
+                    for interface in self.held_interfaces(holder, &chosen) {
                         use_interface(&mut interfaces, &mut to_follow, interface.0);
                     }
                 }
@@ -738,30 +728,33 @@ impl Checker<'_> {
         chosen
     }
 
-    /// The interface of each `any` type that a class or an enum holds: in the type of a field, in
-    /// the type of a variant's payload, and in an associated type that `chosen` gives for it.
-    fn held_anys(
+    /// The interfaces that a class or an enum names: in its bounds, and in the `any` types it
+    /// holds, in the type of a field, in the type of a variant's payload, and in an associated
+    /// type that `chosen` gives for it.
+    fn held_interfaces(
         &self,
         holder: Holder,
         chosen: &FxHashMap<Holder, Vec<Type>>,
-    ) -> Vec<tir::InterfaceId> {
-        let declared: Vec<Type> = match holder {
-            Holder::Class(c) => (self.classes[c.0].fields.iter())
-                .filter_map(|field| field.ty)
-                .collect(),
-            Holder::Enum(e) => (self.enums[e.0].variants.iter())
-                .flat_map(|variant| variant.fields.iter().flatten().copied())
-                .collect(),
+    ) -> impl Iterator<Item = tir::InterfaceId> {
+        let (bounds, declared): (_, Box<dyn Iterator<Item = Type>>) = match holder {
+            Holder::Class(c) => (
+                &self.classes[c.0].bounds,
+                Box::new((self.classes[c.0].fields.iter()).filter_map(|f| f.ty)),
+            ),
+            Holder::Enum(e) => (
+                &self.enums[e.0].bounds,
+                Box::new(
+                    (self.enums[e.0].variants.iter())
+                        .flat_map(|v| v.fields.iter().flatten().copied()),
+                ),
+            ),
             Holder::Array | Holder::I64 => {
                 unreachable!("only a class or an enum is started by a use")
             }
         };
+        let bounds = bounds.iter().flatten().map(|bound| bound.interface);
         let chosen = chosen.get(&holder).into_iter().flatten().copied();
-        declared
-            .into_iter()
-            .chain(chosen)
-            .flat_map(Type::anys)
-            .collect()
+        bounds.chain(declared.chain(chosen).flat_map(Type::anys))
     }
 
     /// The class or enum of each function that is a method, by its `FuncId`.

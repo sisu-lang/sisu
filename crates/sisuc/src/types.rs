@@ -600,6 +600,9 @@ impl Type {
     /// The walk reads each distinct type once, however many paths lead to it, and enters none
     /// that holds no `any` type.
     pub(crate) fn anys(self) -> Vec<InterfaceId> {
+        if !self.holds_any() {
+            return Vec::new();
+        }
         let (mut found, mut seen, mut stack) = (Vec::new(), FxHashSet::default(), vec![self]);
         while let Some(ty) = stack.pop() {
             let (kind, names) = ty.entry();
