@@ -40,9 +40,11 @@ interface I12<T> {
 enum P<A, B> { X(A, B) }
 class Cls {
     _v: i64
+    fn dead_method(self, _x: P<any I10<i64>, any I10<bool>>?) {}
 }
 enum En {
     Leaf
+    fn dead_variant_method(self, _x: P<any I11<i64>, any I11<bool>>?) {}
 }
 class Ext {
     _v: i64
@@ -67,12 +69,6 @@ fn dead_alias_arg(_x: Al7<any I7<i64>>) {}
 fn dead_nested(_x: (any I8<any J8>)?) {}
 fn dead_array<T>(_x: [any I9<T>]) {}
 fn dead_optional<T>(_x: (any I9<T>)?) {}
-extend Cls {
-    fn dead_method(self, _x: P<any I10<i64>, any I10<bool>>?) {}
-}
-extend En {
-    fn dead_variant_method(self, _x: P<any I11<i64>, any I11<bool>>?) {}
-}
 extend Ext {
     fn dead_extend_method(self, _x: P<any I12<i64>, any I12<bool>>?) {}
 }
