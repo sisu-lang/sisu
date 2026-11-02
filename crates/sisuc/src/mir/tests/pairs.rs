@@ -482,3 +482,27 @@ fn copy_should_stay_across_a_written_eq_reached_through_a_cycle() {
         assert_eq!(f.matches(" [calls]").count(), 2, "{first} first: {f}");
     }
 }
+
+/// The table of an `any Display` may hold the `to_string` of any class, so showing the value may
+/// run a written method. The copy `old` of the string that a `to_string` could replace stays a
+/// copy across `{d}`, `dbg(d)` and `print(d)`, and the statement is flagged.
+#[test]
+fn copy_should_stay_across_a_show_of_an_any_value() {
+    let decls = "class H {\n    mut s: string\n}\n";
+    for (shown, last) in [
+        ("let t = \"{d}\"", "\n    print(t)"),
+        ("let _ = dbg(d)", ""),
+        ("print(d)", ""),
+    ] {
+        let src = format!(
+            "{decls}fn main() {{\n    let h = H(s: \"x {{1}}\")\n    let d: any Display = h\n    let old = h.s\n    {shown}\n    print(old){last}\n}}"
+        );
+        let f = function(&built(&src), "main");
+        let copy = f
+            .lines()
+            .find(|l| l.contains("old#") && l.contains(" = "))
+            .unwrap_or_else(|| panic!("{shown}: no binding of `old` in\n{f}"));
+        assert!(copy.contains("= copy "), "{shown}: {copy}\n{f}");
+        assert_eq!(f.matches(" [calls]").count(), 1, "{shown}: {f}");
+    }
+}

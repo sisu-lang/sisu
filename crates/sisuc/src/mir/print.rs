@@ -171,6 +171,17 @@ impl Printer<'_> {
                 format!("array[{}; {}]", self.operand(value), self.operand(len))
             }
             Rvalue::Wrap(operand) => format!("wrap {}", self.operand(operand)),
+            Rvalue::ToAny(operand) => format!("to_any {}", self.operand(operand)),
+            Rvalue::DynCall {
+                interface,
+                method,
+                args,
+                ..
+            } => {
+                let info = &self.tir.interfaces[interface.0];
+                let name = format!("{}.{}", info.name, info.methods[*method as usize]);
+                format!("dyn_call {name}({})", self.list(args))
+            }
             Rvalue::Concat { lhs, rhs } => {
                 format!("concat({}, {})", self.operand(lhs), self.operand(rhs))
             }

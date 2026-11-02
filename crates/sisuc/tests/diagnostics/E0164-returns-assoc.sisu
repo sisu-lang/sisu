@@ -1,0 +1,16 @@
+interface Base {
+    type Item
+}
+
+interface Source: Base {
+    fn get(self) -> Self.Item
+}
+
+class Numbers: Source {
+    type Item = i64
+    fn get(self) -> i64 { 1 }
+}
+
+fn main() {
+    let _s: any Source = Numbers()
+}

@@ -1,0 +1,10 @@
+error[E0164]: `Eq` cannot be used as `any Eq`: `eq` takes another `Self`
+ --> E0164.sisu:2:16
+  |
+2 |     let x: any Eq = 5
+  |                ^^ used after `any` here
+  |
+  = help: use a type parameter: `T: Eq`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0164

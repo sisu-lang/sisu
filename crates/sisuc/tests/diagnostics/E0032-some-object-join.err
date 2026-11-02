@@ -1,0 +1,8 @@
+error[E0032]: expected `Circle`, found `Rect`
+ --> E0032-some-object-join.sisu:9:55
+  |
+9 |     let r = if c { Some(Circle(r: 1.0)) } else { Some(Rect(w: 1.0)) }
+  |                                                       ^^^^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

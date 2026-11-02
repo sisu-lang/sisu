@@ -17,7 +17,7 @@ small_sections=20
 
 cargo build --release --locked -p sisuc -p sisu-runtime-mimalloc
 rm -rf "$out"
-mkdir -p "$out"/{fib,sieve,binary_trees,quicksort,nbody,mandelbrot,fannkuch_redux,large,large_20,build_hello,build_binary_trees,build_large,build_large_20,strings,enum_match,shared_arrays,compare,tree_rewrite,interp,interfaces,show,selfhost_lexer,build_selfhost_lexer}
+mkdir -p "$out"/{fib,sieve,binary_trees,quicksort,nbody,mandelbrot,fannkuch_redux,large,large_20,build_hello,build_binary_trees,build_large,build_large_20,strings,enum_match,shared_arrays,compare,tree_rewrite,interp,interfaces,any_shapes,show,selfhost_lexer,build_selfhost_lexer}
 
 fail() {
     echo "codspeed-prep: $*" >&2
@@ -71,7 +71,7 @@ reduce nbody 's/let steps = 5_000_000/let steps = 100_000/'
 reduce mandelbrot 's/let n = 4000/let n = 400/'
 reduce fannkuch_redux 's/fannkuch(10)/fannkuch(9)/'
 # bench/features/ programs are sized for simulation and Sisu-only: no reduction.
-for b in strings enum_match shared_arrays compare tree_rewrite interp interfaces show; do
+for b in strings enum_match shared_arrays compare tree_rewrite interp interfaces any_shapes show; do
     build "$b" "bench/features/$b/main.sisu" "$out/$b/main"
 done
 # The lexer in Sisu, which the benchmark runs on a fixed input.
@@ -85,7 +85,8 @@ build selfhost_lexer selfhost/lexer.sisu "$out/selfhost_lexer/main"
 # a class conforms to in its declaration and another in `extend` blocks, a
 # bound with &, and a call through each bound, a bounded `largest` over
 # numbers and over a class with a written `Eq` and `Ord`, `==` on an array of
-# such classes, `is` on a class through a bound `T: AnyObject`, and the text of an array,
+# such classes, `is` on a class through a bound `T: AnyObject`, a call through the table of an
+# `any Tag` array that holds two classes and an enum in a box, and the text of an array,
 # an enum and an interpolated array, which add 0, and a `dbg` of a class in a
 # branch that never runs;
 # then it calls step(i-1).
@@ -174,6 +175,16 @@ extend Bar$i: Tag$i {
     fn tag(self) -> i64 { 1 }
 }
 
+enum Beam$i: Tag$i {
+    Wide(i64)
+
+    fn tag(self) -> i64 {
+        match self {
+            Beam$i.Wide(n) => n - n + 1
+        }
+    }
+}
+
 fn both$i<T: Gauge$i & Tag$i>(t: T) -> i64 { t.read() + t.tag() }
 
 fn unit_of$i<T: Gauge$i>(t: T) -> T.Unit { t.unit() }
@@ -243,12 +254,15 @@ fn step$i(x: i64) -> i64 {
     let rowed = row[1] - 1
     let alias = Bar$i(n: K$i)
     let same = if same$i(alias, alias) { 0 } else { 1 }
+    let marks: [any Tag$i] = [Dial$i(n: K$i), Bar$i(n: K$i), Beam$i.Wide(K$i)]
+    let mut tagged = 0
+    for m in marks { tagged += m.tag() }
     let shown = shapes.to_string().len() + t.to_string().len() + "{[x, K$i]}".len() + "{[x, K$i]:#}".len()
     // The run keeps standard error empty, so this dbg never runs.
     if shown < 0 {
         let _ = dbg(q)
     }
-    let generic = t.size() + u.size() - 3 + q.b - K$i + parsed + peeled + gauge + top + kept + same + rowed + (if shown > 0 { 0 } else { 1 })
+    let generic = t.size() + u.size() - 3 + q.b - K$i + parsed + peeled + gauge + top + kept + same + rowed + tagged - 3 + (if shown > 0 { 0 } else { 1 })
     step$((i - 1))(x + (c?.get() ?? 0) + zero + generic)
 }
 SISU
@@ -331,6 +345,7 @@ expected() {
         tree_rewrite) printf '%s\n' 732347 163697 ;;
         interp) printf '%s\n' 549000 126 ;;
         interfaces) printf '%s\n' 699988 949994 1010000 ;;
+        any_shapes) printf '%s\n' 99985 749977 ;;
         show) printf '%s\n' 1091750 40900 ;;
         # The tokens of the input from the compiler's lexer, which the lexer in Sisu must match.
         selfhost_lexer)

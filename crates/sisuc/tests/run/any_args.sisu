@@ -1,0 +1,87 @@
+// GIVEN `Tag`, an interface that inherits `AnyObject` with `label(self, a: string, b: string)`,
+// and three classes that conform to it: `Reader`, whose `label` only reads its arguments,
+// `Passer`, whose `label` returns its second argument, and `Keeper`, whose `label` stores `self`
+// in a new object and returns a `string` read from it
+// WHEN `label` runs on an `any Tag` that a call makes, with arguments that are calls too, and one
+// run leaves through a `match` arm that returns while an argument is being made
+// THEN the receiver and each argument are made in source order, each result is right, and
+// Valgrind and `--rc-checks` find every object and string released once
+interface Tag: AnyObject {
+    fn label(self, a: string, b: string) -> string
+}
+
+// Both arguments are borrowed: the table's entry releases them after the call.
+class Reader: Tag {
+    n: i64
+
+    fn label(self, a: string, b: string) -> string {
+        "{self.n}:{a.len()}:{b.len()}"
+    }
+}
+
+// The second argument is owned: the entry passes it on.
+class Passer: Tag {
+    _n: i64
+
+    fn label(self, _a: string, b: string) -> string {
+        b
+    }
+}
+
+class Holder {
+    kept: Keeper
+}
+
+// `self` is owned, since it is stored in a new object: the entry copies the receiver.
+class Keeper: Tag {
+    name: string
+
+    fn label(self, _a: string, _b: string) -> string {
+        let holder = Holder(kept: self)
+        holder.kept.name
+    }
+}
+
+fn pick(k: i64) -> string? {
+    if k > 0 { Some("{k}") } else { None }
+}
+
+// Each of these prints its name before it returns, so the output pins the order of evaluation.
+fn receiver(name: string, which: i64) -> any Tag {
+    print("receiver {name}")
+    if which == 0 {
+        Reader(n: 1)
+    } else if which == 1 {
+        Passer(_n: 2)
+    } else {
+        Keeper(name: "keeper {which}")
+    }
+}
+
+fn word(name: string) -> string {
+    print("argument {name}")
+    "{name}{1}"
+}
+
+fn tail(k: i64, which: i64) -> string {
+    let text = receiver("t", which).label(word("a"), match pick(k) {
+        Some(s) => s
+        None => return "early"
+    })
+    "late {text}"
+}
+
+fn main() {
+    // The result of each class, and the order: the receiver, then each argument.
+    print(receiver("r", 0).label(word("a"), word("b"))) // 1:2:2
+    print(receiver("r", 1).label(word("a"), word("b"))) // b1
+    // The result outlives the receiver: the `any` is gone before the text is printed.
+    let text = receiver("k", 2).label(word("a"), word("b"))
+    print(text) // keeper 2
+    // A later argument that returns frees the receiver and the first argument.
+    print(tail(1, 0)) // late 1:2:1
+    print(tail(0, 0)) // early
+    print(tail(0, 1)) // early
+    print(tail(0, 2)) // early
+    print(tail(3, 2)) // late keeper 2
+}

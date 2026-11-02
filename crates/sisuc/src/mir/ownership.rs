@@ -125,6 +125,7 @@ impl Placer<'_> {
             Rvalue::Use(op)
             | Rvalue::Unwrap(op)
             | Rvalue::Wrap(op)
+            | Rvalue::ToAny(op)
             | Rvalue::Chars(op)
             | Rvalue::Bytes(op)
             | Rvalue::Words(op)
@@ -138,6 +139,7 @@ impl Placer<'_> {
             Rvalue::Copy(place) | Rvalue::Borrow(place) => self.place(place),
             Rvalue::CopyStr(_) | Rvalue::ReadLine => {}
             Rvalue::Call { args, .. }
+            | Rvalue::DynCall { args, .. }
             | Rvalue::New { args, .. }
             | Rvalue::Variant { args, .. }
             | Rvalue::ArrayLit(args)

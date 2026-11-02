@@ -173,6 +173,8 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0161](E0161.md) | error | type alias that refers to itself |
 | [E0162](E0162.md) | error | type that holds too many distinct types |
 | [E0163](E0163.md) | error | generic items with too many instances |
+| [E0164](E0164.md) | error | interface that cannot be used after `any` |
+| [E0165](E0165.md) | error | `any` written in a form that it does not take |
 | [W0001](W0001.md) | warning | unreachable code |
 | [W0002](W0002.md) | warning | variable that is never reassigned |
 | [W0003](W0003.md) | warning | `todo` left in the program |

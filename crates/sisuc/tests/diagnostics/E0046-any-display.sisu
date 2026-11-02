@@ -1,0 +1,7 @@
+fn _same(a: any Display, b: any Display) -> bool {
+    a is b
+}
+
+fn main() {
+    print(1)
+}

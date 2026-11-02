@@ -704,6 +704,35 @@ impl<'a> Lowering<'a> {
             ExprKind::InterfaceCall { .. } => {
                 panic!("mono should replace every interface call")
             }
+            ExprKind::ToAny(operand) => Rvalue::ToAny(self.operand(operand)?),
+            ExprKind::DynCall {
+                interface,
+                iargs,
+                method,
+                args,
+            } => {
+                // The receiver is read in place, as `is` reads its operands, and the other
+                // arguments are consumed.
+                let (receiver, rest) = args
+                    .split_first()
+                    .expect("a call through a table should have a receiver");
+                let (mut operands, temps) = self.borrowed(&[receiver])?;
+                operands.extend(self.operands(&rest.iter().collect::<Vec<_>>())?);
+                let dest = self.assign(
+                    e.ty,
+                    dest,
+                    Rvalue::DynCall {
+                        interface: *interface,
+                        iargs: *iargs,
+                        method: *method,
+                        args: operands,
+                    },
+                );
+                for temp in temps {
+                    self.release(Some(temp));
+                }
+                return Some(dest);
+            }
             ExprKind::New { class, args } => Rvalue::New {
                 class: *class,
                 args: self.operands(&args.iter().collect::<Vec<_>>())?,
@@ -1408,9 +1437,11 @@ fn leaves_locals(expr: &Expr) -> bool {
         | ExprKind::None
         | ExprKind::Call { .. }
         | ExprKind::InterfaceCall { .. }
+        | ExprKind::DynCall { .. }
         | ExprKind::New { .. }
         | ExprKind::Variant { .. }
         | ExprKind::Wrap(_)
+        | ExprKind::ToAny(_)
         | ExprKind::Print { .. }
         | ExprKind::Dbg { .. }
         | ExprKind::Panic(_)
@@ -1551,6 +1582,7 @@ fn expr_mentions(e: &Expr, found: &mut Mentions) {
         ExprKind::Local(local) => found.found.push(local.0),
         ExprKind::InterfaceCall { .. } => unreachable!("mono should replace every interface call"),
         ExprKind::Call { args, .. }
+        | ExprKind::DynCall { args, .. }
         | ExprKind::New { args, .. }
         | ExprKind::Variant { args, .. }
         | ExprKind::ArrayLit(args)
@@ -1568,6 +1600,7 @@ fn expr_mentions(e: &Expr, found: &mut Mentions) {
         | ExprKind::Words(operand)
         | ExprKind::FromChars(operand)
         | ExprKind::Wrap(operand)
+        | ExprKind::ToAny(operand)
         | ExprKind::Convert(operand)
         | ExprKind::Print { operand, .. }
         | ExprKind::Dbg { operand, .. }

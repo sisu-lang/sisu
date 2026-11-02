@@ -1,0 +1,10 @@
+interface Keyed<T: Eq> {}
+
+class Key {}
+
+type ByKey<T> = any Keyed<T>
+
+fn main() {
+    let _a: ByKey<i64>? = None
+    let _b: ByKey<Key>? = None
+}

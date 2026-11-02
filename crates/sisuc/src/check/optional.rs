@@ -3,8 +3,9 @@
 //! these makes an enum value.
 
 use super::alias::Through;
+use super::any::is_target;
 use super::generic::{GenericSig, Site, mark, mismatched};
-use super::{Checked, Checker, DiagnosticKind, Poisoned, optional_of};
+use super::{Checked, Checker, DiagnosticKind, Poisoned, optional_of, type_of};
 use crate::ast;
 use crate::diagnostic::{Definition, suggestion};
 use crate::source::Span;
@@ -39,13 +40,37 @@ impl Checker<'_> {
             matches!(t.ty.kind(), TypeKind::Optional(p)
                 if t.params.len() == 1 && p == Type::intern(TypeKind::Param(t.params[0], 0)))
         });
+        let hinted = self.hinted(span, None).1.is_some();
         let (arg, found) = match site.expected.map(|ty| (ty, ty.kind())) {
             // An expected `T?` fixes `T`, so a literal in the argument takes that type: the
             // generic call would type an `if` of integer literals by their default first.
             Some((want, TypeKind::Optional(payload)))
                 if site.written.is_empty() && !want.holds_hole() && plain =>
             {
-                (mark(self.operand(&args[0].value, Some(payload))), want)
+                let e = &args[0].value;
+                // A hinted `Some` gives its hint to the argument (see `Body::hint_at`).
+                let outer_hint = self.pass_hint(Some(e.span), hinted.then_some(payload));
+                let checked = self.value(e, Some(payload));
+                self.body.hint_at = outer_hint;
+                match type_of(&checked) {
+                    // An object that does not convert to the hint keeps its own type: the join
+                    // converts it to an `any` type, or the other values to it, or reports it. So
+                    // does a `Some` of one, which kept its type. So does an optional beside an
+                    // `any` type, which does not convert: the join reports the `Some`.
+                    Some(got)
+                        if hinted
+                            && got != payload
+                            && (matches!(
+                                beneath(got).kind(),
+                                TypeKind::Class(..) | TypeKind::Any(..)
+                            ) || matches!(got.kind(), TypeKind::Optional(_))
+                                && is_target(payload))
+                            && !self.converts_to_any(got, payload) =>
+                    {
+                        (checked, optional_of(got))
+                    }
+                    _ => (mark(self.settled(e, checked, Some(payload))), want),
+                }
             }
             _ => {
                 let param = Symbol::intern("T");
@@ -169,5 +194,13 @@ impl Checker<'_> {
                 Err(Poisoned::error())
             }
         }
+    }
+}
+
+/// `ty` without its optional layers.
+fn beneath(ty: Type) -> Type {
+    match ty.kind() {
+        TypeKind::Optional(payload) => beneath(payload),
+        _ => ty,
     }
 }

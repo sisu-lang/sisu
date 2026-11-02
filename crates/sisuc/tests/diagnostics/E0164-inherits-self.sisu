@@ -1,0 +1,9 @@
+interface Link<T> {}
+
+interface Node: Link<Self> {}
+
+class Leaf: Node {}
+
+fn main() {
+    let _n: any Node = Leaf()
+}

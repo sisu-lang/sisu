@@ -227,6 +227,12 @@ fn main() {
     print(["sauna", "kiuas"].contains("kiuas"))           // true
     print([1.5, 2.5, 3.0].sum())                          // 7.0
 
+    // 7. A `[any Shape]` holds a `Circle` and a `Rect` and prints each area.
+    let shapes: [any Shape] = [Circle(r: 1.5), Rect(w: 2.0, h: 3.0)]
+    for s in shapes {
+        print(s.area())                                   // 6.75, then 6.0
+    }
+
     // 8. Combined bounds: `Shape` and `Ord` on a `Circle`, which conforms to `Ord` by hand.
     biggest([Circle(r: 1.0), Circle(r: 3.0), Circle(r: 2.0)])  // circle of radius 3.0 has area 27.0
     let no_circles: [Circle] = []

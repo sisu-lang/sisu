@@ -1,0 +1,7 @@
+interface Shape {}
+
+fn main() {
+    let _x: (
+        Shape
+    ) = 1
+}

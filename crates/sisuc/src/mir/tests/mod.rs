@@ -318,3 +318,10 @@ pub(crate) fn assert_near_linear_for(row: &str, one: usize, two: usize, three: u
         "{row}{one}, {two}, {three} reads: the second step adds {second}, the first {first}"
     );
 }
+
+/// An interface `Shape`, the class `Circle` that conforms to it, and `Tag`, a class-only
+/// interface with an argument that `Label` conforms to: the interface values of the `any` rows.
+pub(super) const ANY_SHAPE: &str = "interface Shape {\n    fn area(self) -> f64\n}\n\
+    class Circle: Shape {\n    r: f64\n    fn area(self) -> f64 { self.r }\n}\n\
+    interface Tag: AnyObject {\n    fn mark(self, s: string) -> string\n}\n\
+    class Label: Tag {\n    n: string\n    fn mark(self, s: string) -> string { s }\n}\n";

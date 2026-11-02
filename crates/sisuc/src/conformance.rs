@@ -3,13 +3,14 @@
 //! of its `extend` block in it; they are the `Param`s numbered from 0.
 
 use std::cmp::Ordering;
+use std::rc::Rc;
 
 use rustc_hash::FxHashMap;
 
 use crate::graph::components;
 use crate::symbol::Symbol;
 use crate::tir::{
-    ChoicePlace, Class, ClassId, Conformance, Conformances, Enum, EnumId, InterfaceId,
+    ChoicePlace, Class, ClassId, Conformance, Conformances, Enum, EnumId, Interface, InterfaceId,
     LangInterfaces, Type, TypeArgs, TypeKind, head_of,
 };
 
@@ -90,6 +91,72 @@ pub(crate) fn find_with(
         let bound = bind(c.target, c.type_params, ty)?;
         (c.args.subst(bound.get()) == args && accept(c)).then_some((k, bound))
     })
+}
+
+/// The most interfaces that the closure of one bound or one `any` type holds. An interface that
+/// inherits another twice, with different arguments, doubles the number at each level of
+/// inheritance, so a walk stops here (E0157).
+pub(crate) const BOUND_CLOSURE_LIMIT: usize = 256;
+
+/// The interface `root` with the arguments `args`, and every interface it inherits, each
+/// interface with its arguments once, depth first in the order of the lists. `inherits` gives the
+/// interfaces that one inherits, with arguments over its own parameters, `Self` first, and
+/// `receiver` stands for `Self`. `tick` is called for each entry that the walk adds, so that a
+/// test counts them. The walk stops at `limit` entries, which a bound's closure may reach when
+/// an interface inherits another with two arguments (E0157).
+pub(crate) fn interface_closure<I: IntoIterator<Item = (InterfaceId, TypeArgs)>>(
+    inherits: impl Fn(InterfaceId) -> I,
+    root: (InterfaceId, TypeArgs),
+    receiver: Type,
+    limit: usize,
+    mut tick: impl FnMut(),
+) -> Vec<(InterfaceId, TypeArgs)> {
+    let mut seen = rustc_hash::FxHashSet::default();
+    let mut out = Vec::new();
+    let mut stack = vec![root];
+    let mut with = Vec::new();
+    while let Some(entry) = stack.pop() {
+        if !seen.insert(entry) {
+            continue;
+        }
+        tick();
+        out.push(entry);
+        if out.len() >= limit {
+            break;
+        }
+        with.clear();
+        with.push(receiver);
+        with.extend_from_slice(entry.1.get());
+        let first = stack.len();
+        stack.extend(
+            inherits(entry.0)
+                .into_iter()
+                .map(|(interface, args)| (interface, args.subst(&with))),
+        );
+        // The first interface of the list is the next one to pop.
+        stack[first..].reverse();
+    }
+    out
+}
+
+/// The interfaces that the `any` type `any_ty` conforms to: its own interface and every interface
+/// that one inherits, each with its arguments once (see `interface_closure`). The checker and
+/// `mono` both answer "does `any I` conform to `J`" with this list.
+pub(crate) fn any_closure<I: IntoIterator<Item = (InterfaceId, TypeArgs)>>(
+    inherits: impl Fn(InterfaceId) -> I,
+    any_ty: Type,
+    tick: impl FnMut(),
+) -> Vec<(InterfaceId, TypeArgs)> {
+    let TypeKind::Any(interface, args) = any_ty.kind() else {
+        unreachable!("only an `any` type has an interface closure");
+    };
+    interface_closure(
+        inherits,
+        (interface, args),
+        any_ty,
+        BOUND_CLOSURE_LIMIT,
+        tick,
+    )
 }
 
 /// What the generated rule of an interface asks of a type, for the caller to settle.
@@ -322,9 +389,9 @@ impl Payloads for [Vec<Type>] {
 
 /// The parts of `ty`, whatever the interface: an array's element, an optional's contents and each
 /// payload type of an enum, with the type's arguments in place of its parameters. Nothing for a
-/// scalar, `string`, a class (it compares by identity, or through a written `Eq`) or a type
-/// parameter. A part whose associated type has no choice is poison, and is left out. A generated
-/// `Display`, which asks no part, still lists them.
+/// scalar, `string`, a class (it compares by identity, or through a written `Eq`), a type
+/// parameter or an `any` value. A part whose associated type has no choice is poison, and is
+/// left out. A generated `Display`, which asks no part, still lists them.
 pub(crate) fn parts<P: Payloads + ?Sized>(
     conformances: &Conformances,
     enums: &P,
@@ -348,24 +415,30 @@ pub(crate) fn parts<P: Payloads + ?Sized>(
         | TypeKind::Never
         | TypeKind::Class(..)
         | TypeKind::Param(..)
-        | TypeKind::Assoc(..) => {}
+        | TypeKind::Assoc(..)
+        | TypeKind::Any(..) => {}
     }
 }
 
 /// Whether `print` of a value of type `ty` writes it through a helper that may reach a written
-/// `to_string`: an array, an optional, a class or an enum. A scalar and a `string` print as they
-/// always did and reach none.
+/// `to_string`: an array, an optional, a class, an enum or an `any` value, whose table holds the
+/// helper of the type inside. A scalar and a `string` print as they always did and reach none.
 pub(crate) fn prints_by_helper(ty: Type) -> bool {
     matches!(
         ty.kind(),
-        TypeKind::Array(_) | TypeKind::Optional(_) | TypeKind::Class(..) | TypeKind::Enum(..)
+        TypeKind::Array(_)
+            | TypeKind::Optional(_)
+            | TypeKind::Class(..)
+            | TypeKind::Enum(..)
+            | TypeKind::Any(..)
     )
 }
 
 /// Whether the text of a value of type `ty` can hold a group, which `{x:#}` may break.
 /// An array, an enum and an optional of an optional (the `Some(` of the `Some` rule) can.
 /// So can an optional of an array or of an enum.
-/// A type parameter or an associated type can, because its argument may be one of these.
+/// A type parameter or an associated type can, because its argument may be one of these, and so
+/// can an `any` value, whose type inside may be one.
 /// A scalar, a `string` and a class write one piece.
 /// An optional of one of those is transparent.
 pub(crate) fn makes_group(mut ty: Type) -> bool {
@@ -377,7 +450,11 @@ pub(crate) fn makes_group(mut ty: Type) -> bool {
     }
     matches!(
         ty.kind(),
-        TypeKind::Array(_) | TypeKind::Enum(..) | TypeKind::Param(..) | TypeKind::Assoc(..)
+        TypeKind::Array(_)
+            | TypeKind::Enum(..)
+            | TypeKind::Param(..)
+            | TypeKind::Assoc(..)
+            | TypeKind::Any(..)
     )
 }
 
@@ -405,6 +482,8 @@ pub(crate) struct Source<'a, P: Payloads + ?Sized> {
     pub(crate) conformances: &'a Conformances,
     pub(crate) enums: &'a P,
     pub(crate) lang: LangInterfaces,
+    /// The interfaces of the program, for those that an `any` type inherits.
+    pub(crate) interfaces: &'a [Interface],
 }
 
 /// The state of `holds` for a program: the answer for each class or enum key, and the `Open`
@@ -415,6 +494,8 @@ pub(crate) struct Decide {
     open: Open,
     /// The answer of each key that held and left, until it is final.
     held: FxHashMap<Key, Holds>,
+    /// The interfaces that each `any` type conforms to, read once (see `any_closure`).
+    any_closures: FxHashMap<Type, Rc<[(InterfaceId, TypeArgs)]>>,
 }
 
 /// How `interface` holds for the concrete type `ty` with the arguments `args`: the rule of the
@@ -436,6 +517,19 @@ pub(crate) fn holds<P: Payloads + ?Sized>(
     }
     ensure_stack(|| match ty.kind() {
         TypeKind::Class(..) | TypeKind::Enum(..) => holder_holds(cx, src, ty, interface, args),
+        // An `any` value has the interface that it is made from, and those that it inherits.
+        TypeKind::Any(..) => {
+            let closure = cx.any_closures.entry(ty).or_insert_with(|| {
+                let inherits =
+                    |inherited: InterfaceId| src.interfaces[inherited.0].inherits.iter().copied();
+                any_closure(inherits, ty, || {}).into()
+            });
+            if closure.contains(&(interface, args)) {
+                Holds::Generated
+            } else {
+                Holds::No
+            }
+        }
         _ => match generated(src.lang, ty, interface) {
             Generated::Holds => Holds::Generated,
             Generated::Element(part) => {
@@ -660,7 +754,9 @@ pub(crate) fn calls_written<P: Payloads + ?Sized, F: Fields + ?Sized>(
         (ty, interface, dbg),
         |(key, _, dbg), parts_of| {
             // A written `eq` is the whole comparison: the helper compares no part of the type.
-            if has_written(conformances, interface, key) {
+            // The table of an `any` value may hold the written method of any conforming type.
+            if has_written(conformances, interface, key) || matches!(key.kind(), TypeKind::Any(..))
+            {
                 return true;
             }
             if dbg && matches!(key.kind(), TypeKind::Class(..)) {
@@ -678,10 +774,11 @@ pub(crate) fn calls_written<P: Payloads + ?Sized, F: Fields + ?Sized>(
 }
 
 /// Whether the concrete type `ty` holds a class with no written `Display`. It does when it is
-/// one, or when an array, an optional or an enum payload (any depth) is. Only such a class is
-/// written with its fields by `dbg`. A class or an enum with a written `Display` shows that text,
-/// so the walk stops at it. A `dbg` helper of a type that holds none is the `print` helper. The
-/// answers of `held` are the types decided so far, which later queries read.
+/// one or an `any` value, whose table may hold one, or when an array, an optional or an enum
+/// payload (any depth) is. Only such a class is written with its fields by `dbg`. A class or an
+/// enum with a written `Display` shows that text, so the walk stops at it. A `dbg` helper of a
+/// type that holds none is the `print` helper. The answers of `held` are the types decided so
+/// far, which later queries read.
 pub(crate) fn holds_class<P: Payloads + ?Sized>(
     (conformances, display): (&Conformances, InterfaceId),
     enums: &P,
@@ -692,7 +789,8 @@ pub(crate) fn holds_class<P: Payloads + ?Sized>(
         if has_written(conformances, display, key) {
             return false;
         }
-        if matches!(key.kind(), TypeKind::Class(..)) {
+        // The table of an `any` value may hold a class.
+        if matches!(key.kind(), TypeKind::Class(..) | TypeKind::Any(..)) {
             return true;
         }
         parts(conformances, enums, key, parts_of);
@@ -882,6 +980,7 @@ impl Normalizer<'_> {
             TypeKind::Optional(payload) => Type::optional(self.walk(payload)?),
             TypeKind::Class(id, args) => Type::intern(TypeKind::Class(id, self.all(args)?)),
             TypeKind::Enum(id, args) => Type::intern(TypeKind::Enum(id, self.all(args)?)),
+            TypeKind::Any(id, args) => Type::intern(TypeKind::Any(id, self.all(args)?)),
             TypeKind::Assoc(base, interface, args, k) => {
                 let base = self.walk(base)?;
                 let args = self.all(args)?;
@@ -1033,6 +1132,9 @@ fn matches(pattern: Type, ty: Type, slots: &mut [Option<Type>]) -> Option<()> {
         {
             matches_all(p, t, slots)
         }
+        (TypeKind::Any(a, p), TypeKind::Any(b, t)) if a == b && p.get().len() == t.get().len() => {
+            matches_all(p, t, slots)
+        }
         (
             TypeKind::I64
             | TypeKind::U8
@@ -1046,7 +1148,8 @@ fn matches(pattern: Type, ty: Type, slots: &mut [Option<Type>]) -> Option<()> {
             | TypeKind::Optional(_)
             | TypeKind::Class(..)
             | TypeKind::Enum(..)
-            | TypeKind::Assoc(..),
+            | TypeKind::Assoc(..)
+            | TypeKind::Any(..),
             _,
         ) => (pattern == ty).then_some(()),
     }
@@ -1205,6 +1308,7 @@ impl Unifier {
             TypeKind::Optional(payload) => Type::optional(self.resolve(payload)?),
             TypeKind::Class(id, args) => Type::intern(TypeKind::Class(id, self.resolve_all(args)?)),
             TypeKind::Enum(id, args) => Type::intern(TypeKind::Enum(id, self.resolve_all(args)?)),
+            TypeKind::Any(id, args) => Type::intern(TypeKind::Any(id, self.resolve_all(args)?)),
             // An associated type is opaque here, as it is to `unify`.
             TypeKind::I64
             | TypeKind::U8
@@ -1265,6 +1369,11 @@ impl Unifier {
             {
                 self.join(left, right) || self.unify_all(l, r)
             }
+            (TypeKind::Any(from, l), TypeKind::Any(to, r))
+                if from == to && l.get().len() == r.get().len() =>
+            {
+                self.join(left, right) || self.unify_all(l, r)
+            }
             (
                 TypeKind::I64
                 | TypeKind::U8
@@ -1278,7 +1387,8 @@ impl Unifier {
                 | TypeKind::Optional(_)
                 | TypeKind::Class(..)
                 | TypeKind::Enum(..)
-                | TypeKind::Assoc(..),
+                | TypeKind::Assoc(..)
+                | TypeKind::Any(..),
                 _,
             ) => false,
         }
@@ -2216,6 +2326,7 @@ mod tests {
             conformances: &program.conformances,
             enums: program.enums.as_slice(),
             lang: program.lang,
+            interfaces: program.interfaces.as_slice(),
         };
         ask(&program, &mut Decide::default(), &source)
     }
@@ -2236,6 +2347,69 @@ mod tests {
             EnumId(at.expect("the program should hold the enum")),
             TypeArgs::intern(args),
         ))
+    }
+
+    /// An `any I` conforms to `I`, to each interface that `I` inherits, with the arguments of the
+    /// interface, and to nothing else: the answer of the checker (`any_conforms`), which `mono`
+    /// reads through `holds` for a bound of a written conformance.
+    #[test]
+    fn holds_should_give_an_any_type_its_interface_and_those_it_inherits() {
+        let src = "interface Named {\n    fn name(self) -> string\n}\n\
+                   interface Solid: Named {\n    fn volume(self) -> f64\n}\n\
+                   interface Sink<T> {\n    fn put(self, x: T) -> i64\n}\n\
+                   interface Obs: AnyObject {\n    fn hit(self) -> i64\n}\n\
+                   interface Deep: Obs {\n    fn deep(self) -> i64\n}\n\
+                   class Cube: Solid {\n    fn name(self) -> string { \"c\" }\n    fn volume(self) -> f64 { 1.0 }\n}\n\
+                   class Log: Sink<string> {\n    fn put(self, x: string) -> i64 { 1 }\n}\n\
+                   class B: Deep {\n    fn hit(self) -> i64 { 1 }\n    fn deep(self) -> i64 { 2 }\n}\n\
+                   fn main() {\n    let a: any Solid = Cube()\n    let b: any Sink<string> = Log()\n    let c: any Deep = B()\n}";
+        deciding(src, |program, cx, source| {
+            let lang = program.lang;
+            let id = |name: &str| {
+                InterfaceId(
+                    program
+                        .interfaces
+                        .iter()
+                        .position(|i| i.name == name)
+                        .unwrap(),
+                )
+            };
+            let any = |name: &str, args: &[Type]| {
+                Type::intern(TypeKind::Any(id(name), TypeArgs::intern(args)))
+            };
+            let mut ask = |ty, interface, args| holds(cx, source, ty, interface, args);
+            let solid = any("Solid", &[]);
+            assert_eq!(ask(solid, id("Solid"), TypeArgs::NONE), Holds::Generated);
+            assert_eq!(ask(solid, id("Named"), TypeArgs::NONE), Holds::Generated);
+            assert_eq!(
+                ask(solid, id("Sink"), TypeArgs::intern(&[Type::STRING])),
+                Holds::No
+            );
+            assert_eq!(ask(solid, lang.any_object, TypeArgs::NONE), Holds::No);
+            assert_eq!(ask(solid, lang.ord, TypeArgs::NONE), Holds::No);
+            // The arguments of the interface are part of the answer.
+            let sink = any("Sink", &[Type::STRING]);
+            let string = TypeArgs::intern(&[Type::STRING]);
+            assert_eq!(ask(sink, id("Sink"), string), Holds::Generated);
+            assert_eq!(
+                ask(sink, id("Sink"), TypeArgs::intern(&[Type::I64])),
+                Holds::No
+            );
+            // `AnyObject` is in the closure of an interface that inherits it, at any depth.
+            let deep = any("Deep", &[]);
+            assert_eq!(ask(deep, lang.any_object, TypeArgs::NONE), Holds::Generated);
+            assert_eq!(ask(deep, id("Obs"), TypeArgs::NONE), Holds::Generated);
+            assert_eq!(ask(deep, id("Named"), TypeArgs::NONE), Holds::No);
+            // An optional or an array of an `any` value is no `any` value.
+            assert_eq!(
+                ask(Type::optional(solid), id("Named"), TypeArgs::NONE),
+                Holds::No
+            );
+            assert_eq!(
+                ask(Type::array(solid), id("Solid"), TypeArgs::NONE),
+                Holds::No
+            );
+        });
     }
 
     /// The generated rule over concrete types, with a written conformance deciding where it
@@ -2439,6 +2613,7 @@ mod tests {
             conformances: &conformances,
             enums: payloads.as_slice(),
             lang,
+            interfaces: &[],
         };
         let mut cx = Decide::default();
         let enum_type = Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE));

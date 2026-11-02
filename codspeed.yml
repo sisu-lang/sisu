@@ -42,6 +42,9 @@ benchmarks:
   - name: interfaces
     id: interfaces
     exec: target/codspeed/interfaces/main
+  - name: any_shapes
+    id: any_shapes
+    exec: target/codspeed/any_shapes/main
   - name: show
     id: show
     exec: target/codspeed/show/main

@@ -1,0 +1,11 @@
+interface Observer: AnyObject {
+    fn notify(self)
+}
+
+fn _same(a: any Observer, b: any Observer) -> bool {
+    a == b
+}
+
+fn main() {
+    print(1)
+}

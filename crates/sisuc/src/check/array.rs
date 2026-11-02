@@ -1,12 +1,31 @@
 //! Array expressions: literals and their element join, `[v; n]`, indexing and methods.
 
+use super::any::{AnyJoin, is_target, widen};
 use super::expr::{fits, literal_type, no_member, path, typed};
 use super::generic::{Rank, mark};
-use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, payload, type_of, wrap};
+use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, payload, type_of};
 use crate::ast;
 use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Literal, UnwrapHelp};
 use crate::source::Span;
-use crate::tir::{self, Type, TypeKind};
+use crate::tir::{self, Type, TypeArgs, TypeKind};
+
+/// How the elements of a literal join when a `Some` of an object is in the way (`join_objects`).
+enum ObjectJoin {
+    /// The elements join, optional, with each such `Some` taken off.
+    Joined(Type),
+    /// The objects do not join: the element at `at`, of type `got`, leaves the `any` type `want`.
+    Leaves { at: usize, want: Type, got: Type },
+    /// No such join: the elements join as they are.
+    Not,
+}
+
+/// Whether `ty` is an `any` type, or an array or an optional of one, at any depth.
+fn holds_any(mut ty: Type) -> bool {
+    while let TypeKind::Array(part) | TypeKind::Optional(part) = ty.kind() {
+        ty = part;
+    }
+    matches!(ty.kind(), TypeKind::Any(..))
+}
 
 /// The methods of an array that the compiler writes, with their parameter counts. `push` is not
 /// answered here: it writes its receiver's place, which `Checker::push` checks. The prelude's
@@ -22,6 +41,18 @@ impl Checker<'_> {
         elements: &[ast::Expr],
         expected: Option<Type>,
     ) -> Checked {
+        // The type of an earlier branch is a hint, not a written type (see `Body::hint_at`). A
+        // hint of an array of an `any` type is not an expected type: each element joins the
+        // elements of the siblings (see `hinted_elements`). Any other hint is an expected type.
+        let siblings = self.hinted(span, expected).1;
+        if let Some(element) = expected_element(siblings).filter(|&element| holds_any(element)) {
+            return if elements.is_empty() {
+                // A `[]` has no element to join, so it takes the type of its siblings.
+                self.array(span, element, Vec::new(), false)
+            } else {
+                self.ranked(|c| c.hinted_elements(span, elements, element))
+            };
+        }
         if let Some(element) = expected_element(expected) {
             let (checked, mismatched): (Vec<_>, Vec<_>) = elements
                 .iter()
@@ -61,6 +92,70 @@ impl Checker<'_> {
         self.ranked(|c| c.joined(span, elements, quiet))
     }
 
+    /// The `elements` of a literal whose siblings are arrays of `element`, a type that holds an
+    /// `any` type (see `Body::hint_at`). Each is a hinted value beside an `element` value, and
+    /// they join as the branches of an `if` do (`join`), with `element` as the siblings' type.
+    /// An array does not widen: the join must go into `element`, or the first element that does
+    /// not is the mistake, named by its own type.
+    fn hinted_elements(&mut self, span: Span, elements: &[ast::Expr], element: Type) -> Checked {
+        let fits_element =
+            |c: &mut Self, ty: Type| fits(element, ty) || c.converts_to_any(ty, element);
+        // The type of each element as written: a `Some` that converted its value is the
+        // optional of the value's type.
+        let mut own: Vec<Option<Type>> = vec![None; elements.len()];
+        let sources: Vec<_> = elements.iter().map(|e| self.value_branch(e)).collect();
+        let siblings = (None, Some(element));
+        let (blocks, joined) = self.join(span, &sources, siblings, |c, i, expected| {
+            let checked = c.value(&elements[i], expected);
+            own[i] = checked.as_ref().ok().map(|e| {
+                if let tir::ExprKind::Wrap(inner) = &e.kind
+                    && let tir::ExprKind::ToAny(value) = &inner.kind
+                {
+                    Type::optional(value.ty)
+                } else {
+                    e.ty
+                }
+            });
+            checked.map(|value| tir::Block {
+                stmts: Vec::new(),
+                ty: value.ty,
+                value: Some(Box::new(value)),
+            })
+        });
+        let Ok(joined) = joined else {
+            return Err(Poisoned::error());
+        };
+        if joined != Type::NEVER && !fits_element(self, joined) {
+            let at = (0..elements.len())
+                .find(|&i| own[i].is_some_and(|ty| !fits_element(self, ty)))
+                .unwrap_or(0);
+            let e = &elements[at];
+            if matches!(e.kind, ast::ExprKind::NoneLit) {
+                // As in a written array: "found `None`".
+                drop(self.none(e.span, Some(element)));
+            } else {
+                let d = self.leaves_any(e.span, Some(e), element, own[at].unwrap_or(joined));
+                self.diagnostics.push(d);
+            }
+            return Err(Poisoned::error());
+        }
+        let checked = blocks
+            .into_iter()
+            .map(|block| {
+                let value =
+                    block.map(|b| *b.value.expect("an element's block should be its value"));
+                match value {
+                    Ok(e) if e.ty != element => {
+                        self.instantiates |= is_target(element);
+                        Ok(widen(e, element))
+                    }
+                    value => value,
+                }
+            })
+            .collect();
+        self.array(span, element, checked, false)
+    }
+
     /// The elements of a literal with no expected array type, joined in three waves by
     /// `sibling_ranked`: the concrete elements; the elements that take a literal's type, typed
     /// beside the first concrete element; then the elements that wait, against the join. The join
@@ -76,10 +171,18 @@ impl Checker<'_> {
         let (ranks, optional): (Vec<Rank>, Vec<bool>) =
             elements.iter().map(|e| self.sibling_ranked(e)).unzip();
         let outer = self.body.quiet_at;
+        // The first typed element that is an `any` type, widened by the later ones, is a hint
+        // for the elements after it, as the first branch of an `if` is for the others.
+        let mut anchor: Option<Type> = None;
         for (i, e) in elements.iter().enumerate() {
             if ranks[i] == Rank::Concrete {
                 self.body.quiet_at = if quiet { Some(e.span) } else { outer };
-                slots[i] = Some(self.value(e, None));
+                let checked = match anchor {
+                    Some(any) => self.value_beside(e, any),
+                    None => self.value(e, None),
+                };
+                anchor = self.widen_anchor(anchor, type_of(&checked));
+                slots[i] = Some(checked);
             }
         }
         self.body.quiet_at = outer;
@@ -98,31 +201,24 @@ impl Checker<'_> {
         let mut failed = slots.iter().flatten().any(|c| type_of(c).is_none());
         let mut joined: Option<Type> = None;
         if !failed {
-            for (slot, e) in slots.iter().zip(elements) {
-                let Some(ty) = slot.as_ref().and_then(type_of) else {
-                    continue;
-                };
-                match joined {
-                    Some(t) if fits(t, ty) => {}
-                    Some(t) if !fits(ty, t) => {
-                        let d = self.mismatch(e.span, Some(e), t, ty);
-                        self.diagnostics.push(d);
-                        failed = true;
-                        break;
-                    }
-                    _ => joined = Some(ty),
-                }
-            }
-            // The join can grow past an earlier element: each converts through one layer only.
-            if let Some(t) = joined.filter(|_| !failed) {
-                let short = slots.iter().zip(elements).find_map(|(slot, e)| {
-                    let ty = slot.as_ref().and_then(type_of)?;
-                    (!fits(t, ty)).then_some((e, ty))
-                });
-                if let Some((e, ty)) = short {
-                    let d = self.mismatch(e.span, Some(e), t, ty);
+            let typed: Vec<(usize, Type)> = (slots.iter().enumerate())
+                .filter_map(|(i, slot)| Some((i, slot.as_ref().and_then(type_of)?)))
+                .collect();
+            match self.join_objects(&mut slots, &typed) {
+                ObjectJoin::Joined(ty) => joined = Some(ty),
+                ObjectJoin::Leaves { at, want, got } => {
+                    let value = slots[at].as_ref().and_then(|slot| slot.as_ref().ok());
+                    let (at_span, source, want, got) =
+                        match value.and_then(|v| self.object_in_some(v, want)) {
+                            Some((span, want, object)) => (span, None, want, object),
+                            None => (elements[at].span, Some(&elements[at]), want, got),
+                        };
+                    let d = self.leaves_any(at_span, source, want, got);
                     self.diagnostics.push(d);
                     failed = true;
+                }
+                ObjectJoin::Not => {
+                    (joined, failed) = self.fold_elements(elements, &typed);
                 }
             }
         }
@@ -163,12 +259,147 @@ impl Checker<'_> {
             .into_iter()
             .map(|slot| {
                 match slot.expect("the three waves should check every element, one rank each") {
-                    Ok(e) if e.ty != element => Ok(wrap(e, element)),
+                    Ok(e) if e.ty != element => Ok(widen(e, element)),
                     checked => checked,
                 }
             })
             .collect();
         self.array(span, element, checked, mismatched)
+    }
+
+    /// How the `typed` elements join when a `Some` of an object is in the way: such an element
+    /// joins an `any` element as the object, and the join is optional, as the branches of an `if`
+    /// do. The `Some` of each such slot is taken off, for `widen` to convert and wrap. When the
+    /// objects do not join either, the member that leaves the `any` type is the mistake, as in an
+    /// `if`.
+    fn join_objects(
+        &mut self,
+        slots: &mut [Option<Checked>],
+        typed: &[(usize, Type)],
+    ) -> ObjectJoin {
+        if !typed
+            .iter()
+            .any(|&(_, ty)| matches!(ty.kind(), TypeKind::Any(..)))
+            || matches!(
+                self.any_join_all(typed),
+                AnyJoin::Joined { .. } | AnyJoin::NoAny
+            )
+        {
+            return ObjectJoin::Not;
+        }
+        let object = |slot: &Option<Checked>| {
+            let e = slot.as_ref()?.as_ref().ok()?;
+            match &e.kind {
+                tir::ExprKind::Wrap(inner)
+                    if matches!(inner.ty.kind(), TypeKind::Class(..) | TypeKind::Any(..)) =>
+                {
+                    Some(inner.ty)
+                }
+                _ => None,
+            }
+        };
+        let objects: Vec<(usize, Type)> = typed
+            .iter()
+            .map(|&(i, ty)| (i, object(&slots[i]).unwrap_or(ty)))
+            .collect();
+        if objects == typed {
+            return ObjectJoin::Not;
+        }
+        let ty = match self.any_join_all(&objects) {
+            AnyJoin::Joined { ty } => ty,
+            AnyJoin::Leaves {
+                ty,
+                member: (at, got),
+            } => return ObjectJoin::Leaves { at, want: ty, got },
+            AnyJoin::NoAny | AnyJoin::Fails { .. } => return ObjectJoin::Not,
+        };
+        for &(i, _) in typed {
+            if object(&slots[i]).is_some()
+                && let Some(Ok(e)) = &mut slots[i]
+                && let tir::ExprKind::Wrap(inner) =
+                    std::mem::replace(&mut e.kind, tir::ExprKind::None)
+            {
+                *e = *inner;
+            }
+        }
+        self.instantiates = true;
+        ObjectJoin::Joined(as_optional(ty))
+    }
+
+    /// The value `e`, typed beside an element of the `any` type `any`: with `any` made optional as
+    /// a hint (see `Body::hint_at`), as the branch of an `if` after an `any` branch is. So the
+    /// payload of a `Some` converts to `any`.
+    fn value_beside(&mut self, e: &ast::Expr, any: Type) -> Checked {
+        let outer = self.pass_hint(Some(e.span), Some(any));
+        let checked = self.value(e, Some(as_optional(any)));
+        self.body.hint_at = outer;
+        checked
+    }
+
+    /// `anchor`, the `any` type that the elements before give, widened by an element of type
+    /// `got`: the first element that is an `any` type, or the join of the two.
+    fn widen_anchor(&mut self, anchor: Option<Type>, got: Option<Type>) -> Option<Type> {
+        let bare = |ty: Type| matches!(ty.kind(), TypeKind::Any(..)).then_some(ty);
+        match (anchor, got) {
+            (None, Some(ty)) => bare(ty),
+            (Some(any), Some(ty)) => Some(self.any_join(any, ty).and_then(bare).unwrap_or(any)),
+            (anchor, None) => anchor,
+        }
+    }
+
+    /// The type that the typed `elements` join to, each an index and a type, and whether the join
+    /// failed (reported). With an `any` element, the join is that type, whatever the order. Else
+    /// the types fold in source order.
+    fn fold_elements(
+        &mut self,
+        elements: &[ast::Expr],
+        typed: &[(usize, Type)],
+    ) -> (Option<Type>, bool) {
+        let report = |c: &mut Self, at: usize, want: Type, got: Type| {
+            let d = c.mismatch(elements[at].span, Some(&elements[at]), want, got);
+            c.diagnostics.push(d);
+        };
+        match self.any_join_all(typed) {
+            AnyJoin::Joined { ty } => {
+                self.instantiates = true;
+                return (Some(ty), false);
+            }
+            AnyJoin::Fails {
+                earlier: (_, want),
+                later: (at, got),
+            } => {
+                report(self, at, want, got);
+                return (None, true);
+            }
+            AnyJoin::Leaves {
+                ty,
+                member: (at, got),
+            } => {
+                let d = self.leaves_any(elements[at].span, Some(&elements[at]), ty, got);
+                self.diagnostics.push(d);
+                return (None, true);
+            }
+            AnyJoin::NoAny => {}
+        }
+        let mut joined: Option<Type> = None;
+        for &(i, ty) in typed {
+            match joined {
+                Some(t) if fits(t, ty) => {}
+                Some(t) if !fits(ty, t) => {
+                    report(self, i, t, ty);
+                    return (joined, true);
+                }
+                _ => joined = Some(ty),
+            }
+        }
+        // The join can grow past an earlier element: each converts through one layer only.
+        if let Some(t) = joined
+            && let Some(&(i, ty)) = typed.iter().find(|&&(_, ty)| !fits(t, ty))
+        {
+            report(self, i, t, ty);
+            return (joined, true);
+        }
+        (joined, false)
     }
 
     /// The `ArrayLit` of `checked`, an `[element]`, unless an element failed. `mismatched`
@@ -212,14 +443,19 @@ impl Checker<'_> {
         let class = type_of(&checked).map(innermost).filter(|ty| {
             matches!(
                 ty.kind(),
-                TypeKind::Class(..) | TypeKind::Param(..) | TypeKind::Assoc(..)
+                TypeKind::Class(..) | TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..)
             ) && !self.none_written(value)
         });
         if let Some(class) = class {
+            let any = matches!(class.kind(), TypeKind::Any(..));
+            // An `any` of a class-only interface holds an object, as a class is one.
+            let may_be_class = matches!(class.kind(), TypeKind::Param(..) | TypeKind::Assoc(..))
+                || (any && !self.conforms(class, self.lang.any_object, TypeArgs::NONE));
             self.report(DiagnosticKind::SameObject {
                 class: self.type_name(class),
                 at: value.span,
-                param: matches!(class.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)),
+                param: may_be_class,
+                any,
             });
         }
         let (checked, mismatched) = match element {

@@ -35,14 +35,17 @@ pub(crate) enum TypeKind {
     Param(Symbol, u32),
     /// `[T]`.
     Array(Type),
-    /// Holds `I64`, `U8`, `F64`, `Bool`, `Char`, `String`, `Class`, `Enum`, `Param`, `Assoc` or
-    /// `Array`.
+    /// Holds `I64`, `U8`, `F64`, `Bool`, `Char`, `String`, `Class`, `Enum`, `Param`, `Assoc`,
+    /// `Any` or `Array`.
     Optional(Type),
     /// An associated type of a base: `S.Item`. It is the type at the index of the associated type
     /// among the interface's, through the interface with its arguments (without `Self`). The base
     /// is a type parameter, another associated type, or (until `conformance::normalize` replaces
     /// it) a class or an enum.
     Assoc(Type, InterfaceId, TypeArgs, u32),
+    /// `any I`: a value of any type that conforms to the interface `I`, with the arguments of a
+    /// generic interface (`TypeArgs::NONE` when it takes none, and without `Self`).
+    Any(InterfaceId, TypeArgs),
 }
 
 /// The index of the hole, the type parameter that stands for a part a context has not fixed yet
@@ -116,10 +119,14 @@ impl TypeKind {
                 assoc: true,
                 ..base.names().or(args.names()).deeper()
             },
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) if args == TypeArgs::NONE => {
+            TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args)
+                if args == TypeArgs::NONE =>
+            {
                 Names::default()
             }
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args.names().deeper(),
+            TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
+                args.names().deeper()
+            }
             TypeKind::I64
             | TypeKind::U8
             | TypeKind::F64
@@ -223,12 +230,13 @@ impl fmt::Debug for TypeArgs {
 /// The bytes of type text that `write_type` writes before it cuts the text.
 pub(crate) const NAME_LIMIT: usize = 256;
 
-/// A class, an enum or an associated type (an interface and the index of the associated type
-/// among its), which a type's text names by its head.
+/// A class, an enum, an interface or an associated type (an interface and the index of the
+/// associated type among its), which a type's text names by its head.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Head {
     Class(ClassId),
     Enum(EnumId),
+    Interface(InterfaceId),
     Assoc(InterfaceId, u32),
 }
 
@@ -414,13 +422,24 @@ fn write_steps<'n>(
                 out.push_str(head(Head::Enum(id)));
                 args
             }
+            TypeKind::Any(id, args) => {
+                out.push_str("any ");
+                out.push_str(head(Head::Interface(id)));
+                args
+            }
             TypeKind::Array(element) => {
                 out.push('[');
                 steps.extend([Step::Close("]"), Step::Type(element)]);
                 continue;
             }
             TypeKind::Optional(payload) => {
-                steps.extend([Step::Close("?"), Step::Type(payload)]);
+                // `any I?` is not a type: the interface value is grouped.
+                if matches!(payload.kind(), TypeKind::Any(..)) {
+                    out.push('(');
+                    steps.extend([Step::Close(")?"), Step::Type(payload)]);
+                } else {
+                    steps.extend([Step::Close("?"), Step::Type(payload)]);
+                }
                 continue;
             }
             TypeKind::Assoc(base, interface, _, k) => {
@@ -661,6 +680,7 @@ impl Type {
                 Type::intern(TypeKind::Class(id, list.subst_in(args, memo)))
             }
             TypeKind::Enum(id, list) => Type::intern(TypeKind::Enum(id, list.subst_in(args, memo))),
+            TypeKind::Any(id, list) => Type::intern(TypeKind::Any(id, list.subst_in(args, memo))),
             TypeKind::Assoc(base, interface, list, k) => Type::intern(TypeKind::Assoc(
                 base.subst_in(args, memo),
                 interface,
@@ -813,7 +833,7 @@ mod tests {
             let cut = write_type(&mut out, ty, |head| match head {
                 Head::Class(_) => &long,
                 Head::Assoc(_, k) => ["B", "C"][k as usize],
-                Head::Enum(_) => unreachable!("the type holds no enum"),
+                Head::Enum(_) | Head::Interface(_) => unreachable!("the type holds no enum"),
             });
             (out, cut)
         };

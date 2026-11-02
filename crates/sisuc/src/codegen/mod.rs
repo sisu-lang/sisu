@@ -3,6 +3,7 @@
 //! emitters in the submodules build the code of each statement, rvalue and terminator.
 
 mod abi;
+mod any;
 mod arith;
 mod array;
 mod deep;
@@ -31,8 +32,8 @@ use inkwell::targets::{
 };
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
 use inkwell::values::{
-    BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, IntValue, MetadataValue,
-    PointerValue,
+    BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, GlobalValue, IntValue,
+    MetadataValue, PointerValue,
 };
 use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
 
@@ -46,7 +47,8 @@ use crate::mir::{
 };
 use crate::source::{LineIndex, Span};
 use crate::tir::{
-    ClassId, EnumId, FuncId, LocalId, Program, Stream, Type, TypeArgs, TypeKind, UnaryOp,
+    ClassId, EnumId, FuncId, InterfaceId, LocalId, Program, Stream, Type, TypeArgs, TypeKind,
+    UnaryOp,
 };
 
 /// The `expect` message for a builder call: codegen positions the builder before it emits code.
@@ -131,6 +133,10 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             unreflexive: rc::reaching_unreflexive(program),
             class_cycles: rc::class_cycles(program),
             components: enums::components(&program.enums),
+            any_layouts: (program.any_layouts.iter())
+                .map(|layout| (layout.any, layout.interfaces.clone()))
+                .collect(),
+            any_tables: RefCell::new(FxHashMap::default()),
             helpers: RefCell::new(FxHashMap::default()),
             pending: RefCell::new(Vec::new()),
             written: RefCell::new(Written::default()),
@@ -169,6 +175,7 @@ pub(crate) fn compile<'ctx>(
 ) -> Module<'ctx> {
     let mut codegen = Codegen::new(context, program, mir, path, source, machine, rc_checks);
     codegen.lay_out_types();
+    codegen.declare_any_tables();
     // Every class gets its release helper, used or not; an `eq` helper is made on first use.
     for id in 0..program.classes.len() {
         codegen.helper(
@@ -184,6 +191,7 @@ pub(crate) fn compile<'ctx>(
         let function = codegen.functions[i];
         codegen.define(f, function);
     }
+    codegen.define_any_tables();
     codegen.c_main();
     codegen.define_helpers();
     codegen.module
@@ -281,6 +289,10 @@ struct Codegen<'ctx, 'src> {
     /// For each enum, indexed by `EnumId`, its component when the component has boxes; see
     /// `enums::components`.
     components: Vec<Option<Component>>,
+    /// The interfaces of the table of each `any` type, as `mono` laid them out.
+    any_layouts: FxHashMap<Type, Vec<(InterfaceId, TypeArgs)>>,
+    /// The global of the table of each object type for each `any` type.
+    any_tables: RefCell<FxHashMap<(Type, Type), GlobalValue<'ctx>>>,
     /// The helpers declared so far, by kind and counted type; see `rc::helper`.
     helpers: RefCell<FxHashMap<(Helper, Type), FunctionValue<'ctx>>>,
     /// The helpers declared but not yet defined; `define_helpers` empties it.
@@ -716,6 +728,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         reason = "one arm per rvalue kind, so the emission reads in one place"
     )]
     fn rvalue(&self, rvalue: &Rvalue, ty: Option<Type>) -> Option<BasicValueEnum<'ctx>> {
+        let dest_ty = ty;
         let ty =
             || ty.expect("lowering should give this rvalue a destination, whose type it needs");
         let value = match rvalue {
@@ -760,6 +773,21 @@ impl<'ctx> Codegen<'ctx, '_> {
                     .into()
             }
             Rvalue::Wrap(op) => self.wrap(ty(), self.operand(op).0),
+            Rvalue::ToAny(op) => {
+                let (value, source) = self.operand(op);
+                self.to_any(source, value, ty())
+            }
+            Rvalue::DynCall {
+                interface,
+                iargs,
+                method,
+                args,
+            } => {
+                let (receiver, any) = self.operand(&args[0]);
+                let owned = self.values(&args[1..]);
+                let rest = TypeArgs::intern(&iargs.get()[1..]);
+                return self.dyn_call(any, (*interface, rest, *method), receiver, &owned, dest_ty);
+            }
             Rvalue::Concat { lhs, rhs } => {
                 let lhs = self.pointer(lhs);
                 self.concat(lhs, self.pointer(rhs)).into()
@@ -836,8 +864,8 @@ impl<'ctx> Codegen<'ctx, '_> {
                 self.equal_value(*negated, ty, lhs, rhs).into()
             }
             Rvalue::Is { lhs, rhs } => {
-                let lhs = self.pointer(lhs);
-                self.same_object(lhs, self.pointer(rhs)).into()
+                let lhs = self.object(lhs);
+                self.same_object(lhs, self.object(rhs)).into()
             }
             Rvalue::Print {
                 stream, operand, ..
@@ -865,6 +893,19 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// An operand the checker gives a pointer: a string, an array or an object.
     fn pointer(&self, op: &Operand) -> PointerValue<'ctx> {
         self.operand(op).0.into_pointer_value()
+    }
+
+    /// The object that an operand of `is` holds: an object, or the data of an `any` value, which
+    /// is `null` for a `None`.
+    fn object(&self, op: &Operand) -> PointerValue<'ctx> {
+        let (value, ty) = self.operand(op);
+        match ty.kind() {
+            TypeKind::Any(..) => self.any_data(value),
+            TypeKind::Optional(payload) if matches!(payload.kind(), TypeKind::Any(..)) => {
+                self.any_data(value)
+            }
+            _ => value.into_pointer_value(),
+        }
     }
 
     /// The value of `op` and its type. A read takes no reference; a move leaves its local

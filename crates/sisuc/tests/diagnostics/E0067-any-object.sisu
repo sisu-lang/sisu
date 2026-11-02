@@ -1,0 +1,11 @@
+interface Observer: AnyObject {
+    fn notify(self)
+}
+
+fn _copies(o: any Observer) -> [any Observer] {
+    [o; 3]
+}
+
+fn main() {
+    print(1)
+}

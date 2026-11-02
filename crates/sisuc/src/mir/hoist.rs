@@ -288,6 +288,7 @@ impl Walk {
             Rvalue::Use(operand)
             | Rvalue::Unwrap(operand)
             | Rvalue::Wrap(operand)
+            | Rvalue::ToAny(operand)
             | Rvalue::Chars(operand)
             | Rvalue::Bytes(operand)
             | Rvalue::Words(operand)
@@ -299,6 +300,7 @@ impl Walk {
             | Rvalue::Print { operand, .. }
             | Rvalue::Dbg { operand, .. } => self.operand(operand),
             Rvalue::Call { args: operands, .. }
+            | Rvalue::DynCall { args: operands, .. }
             | Rvalue::New { args: operands, .. }
             | Rvalue::Variant { args: operands, .. }
             | Rvalue::ArrayLit(operands)

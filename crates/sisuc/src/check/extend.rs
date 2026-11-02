@@ -298,6 +298,8 @@ impl<'a> Checker<'_> {
                 name: name.to_string(),
                 written: None,
                 at: ty.bare,
+                any: false,
+                layers: 0,
             });
             return None;
         }
@@ -321,6 +323,7 @@ impl<'a> Checker<'_> {
                 return Some(resolved);
             }
             TypeKind::Param(..) => CannotExtendForm::TypeParam,
+            TypeKind::Any(..) => CannotExtendForm::Any,
             _ => CannotExtendForm::BuiltIn,
         };
         // An alias is the type it names, so the report names that type.

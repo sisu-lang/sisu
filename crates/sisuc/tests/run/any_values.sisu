@@ -1,0 +1,249 @@
+// GIVEN interfaces `Shape`, `Named` and `Held`, a class `Circle`, an enum `Num` with a written
+// `to_string`, an `Expr` enum with a deep chain, an enum `Slab` with a `string` payload that
+// conforms to `Shape` and `Named`, an enum `Crate` that conforms to `Held`, and optionals
+// WHEN values that are no objects (a `string`, a `char`, a number, an enum) are converted
+// to `any`, stored, passed, called through the table, shown, copied and dropped
+// THEN each call runs the method of the value inside, each value shows as its type does, and
+// Valgrind and `--rc-checks` find every box and every payload freed once
+interface Shape {
+    fn area(self) -> f64
+}
+
+interface Named {
+    fn name(self) -> string
+}
+
+class Circle: Shape {
+    r: f64
+
+    fn area(self) -> f64 {
+        self.r * self.r * 3.0
+    }
+}
+
+// A number whose `to_string` is written.
+enum Num {
+    Of(i64)
+
+    fn to_string(self) -> string {
+        match self {
+            Num.Of(n) => "Num({n})"
+        }
+    }
+}
+
+enum Expr {
+    Lit(i64)
+    Add(Expr, Expr)
+}
+
+// An enum with a `string` payload: the box owns the payload.
+enum Slab: Shape, Named {
+    Plain
+    Label(string)
+
+    fn area(self) -> f64 {
+        match self {
+            Slab.Plain => 2.0
+            Slab.Label(text) => 1.0 + f64(text.len())
+        }
+    }
+
+    fn name(self) -> string {
+        match self {
+            Slab.Plain => "plain"
+            Slab.Label(text) => "label {text}"
+        }
+    }
+}
+
+fn wrap<T: Shape>(x: T) -> any Shape {
+    x
+}
+
+fn total<T: Shape>(xs: [T]) -> f64 {
+    let mut sum = 0.0
+    for x in xs {
+        sum += x.area()
+    }
+    sum
+}
+
+fn wrap_shown<T: Display>(v: T) -> any Display {
+    v
+}
+
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn describe(s: any Shape) -> string {
+    "area {s.area()}"
+}
+
+// The payload comes back as the box's own `string`, not a copy of it.
+interface Held {
+    fn payload(self) -> string
+}
+
+enum Crate: Held {
+    Empty
+    Of(string)
+
+    fn payload(self) -> string {
+        match self {
+            Crate.Empty => ""
+            Crate.Of(text) => text
+        }
+    }
+}
+
+fn consume(held: any Held) -> i64 {
+    held.payload().len()
+}
+
+// `first` and `copy` share one box. `first` is released inside `consume`, and `copy` is read
+// after that. The payload that this returns outlives both.
+fn owned_payload() -> string {
+    let first: any Held = Crate.Of("owned")
+    let copy = first
+    let calls = first.payload().len() + first.payload().len() + first.payload().len()
+    let moved = consume(first)
+    print(calls + moved + copy.payload().len()) // 25
+    print(Crate.Empty.payload() == "") // true
+    copy.payload()
+}
+
+fn deep(n: i64) -> Expr {
+    let mut e = Expr.Lit(0)
+    for i in 0..n {
+        e = Expr.Add(Expr.Lit(i), e)
+    }
+    e
+}
+
+fn main() {
+    // An array of values that are no objects: each prints as its type does.
+    let shown: [any Display] = ["hi", 'c', 5, Num.Of(1)]
+    print(shown) // ["hi", 'c', 5, Num(1)]
+    for d in shown {
+        print(d)
+    }
+    print(shown[0].to_string()) // hi
+    print("{shown[3]}") // Num(1)
+
+    // The enum with a deep chain, so long that `{:#}` wraps it over lines: `{s:#}` against
+    // `{e:#}` writes the same text.
+    let e = deep(12)
+    let s: any Display = deep(12)
+    print("{e:#}".len() > "{e}".len()) // true: the layout adds line breaks
+    print("{s:#}" == "{e:#}") // true
+
+    // An optional does not convert to an `any` type: `??` takes its value out first.
+    let some: i64? = Some(3)
+    let none: i64? = None
+    let boxed: [any Display] = [some ?? 0, none ?? 0]
+    print(boxed) // [3, 0]
+    let wrapped: (any Display)? = Some(some ?? 0)
+    let inner: any Display = wrapped ?? 0
+    print("{inner}") // 3
+    // A bound type parameter boxes its value, an optional too: it converts a `T`.
+    print(wrap_shown(some)) // 3
+    print(wrap_shown(none)) // None
+
+    // An `any` value beside `None`, `Some` or an optional `any` value joins to an optional `any`.
+    let lone: any Display = 1
+    let beside_none = if true { lone } else { None }
+    print(beside_none ?? 9) // 1
+    let beside_some = if false { lone } else { Some(2) }
+    print(beside_some ?? 9) // 2
+    let first: (any Display)? = None
+    let second: (any Display)? = None
+    let either = first ?? second
+    print(either ?? 9) // 9
+    let rest = first ?? None
+    let rested: (any Display)? = rest
+    print(rested ?? 9) // 9
+
+    // In an array literal, a `Some` beside an `any` value converts its payload, as in an `if`.
+    let row = [lone, Some(2), None]
+    for item in row {
+        print(item ?? 0) // 1, 2, 0
+    }
+    // The `any` types join as `any Display`, a `Some` after them converts, and a `Some` of an `any`
+    // value joins as the `any` value.
+    let round: any Shape = Circle(r: 1.0)
+    let mixed = [round, lone, Some(2)]
+    for item in mixed {
+        print(item ?? 0) // Circle, 1, 2
+    }
+    let from_some = [Some(round), lone]
+    for item in from_some {
+        print(item ?? 0) // Circle, 1
+    }
+    // A hint that is an array of optional `any` values keeps its `?`, and an empty array in an array
+    // takes the type of its sibling, as a value does in an `if`.
+    let optional_row = if true { [first] } else { [lone] }
+    print(optional_row.len()) // 1
+    let nested_row = if true { [[lone]] } else { [[]] }
+    print(nested_row[0][0]) // 1
+    // The same joins where the program takes the later branch, whose array joins as its elements
+    // would beside the elements of the earlier branch: each value is converted and wrapped.
+    let later_optional = if false { [first] } else { [lone] }
+    print(later_optional[0] ?? 0) // 1
+    let later_number = if false { [first] } else { [2] }
+    print(later_number[0] ?? 0) // 2
+    let later_nested = if false { [[lone]] } else { [[]] }
+    print(later_nested[0].len()) // 0
+    let later_some = if false { [Some([lone])] } else { [[lone]] }
+    let inner = later_some[0] ?? [lone, lone]
+    print(inner.len()) // 1
+    let optionals: [(any Display)?] = [first]
+    let later_written = if false { optionals } else { [lone] }
+    print(later_written[0] ?? 0) // 1
+    let flat: any Shape = Slab.Plain
+    let shapes = [Some(Circle(r: 1.0)), flat, None]
+    for shape in shapes {
+        print((shape ?? flat).area()) // 3.0, 2.0, 2.0
+    }
+
+    // An enum that conforms to `Shape`, called through the table.
+    let plain: any Shape = Slab.Plain
+    let label: any Shape = Slab.Label("abc")
+    print(plain.area()) // 2.0
+    print(label.area()) // 4.0
+    let named: any Named = Slab.Label("x")
+    print(named.name()) // label x
+
+    // `wrap` converts a class, an enum, and keeps an `any`.
+    print(wrap(Circle(r: 1.0)).area()) // 3.0
+    print(wrap(Slab.Label("hello")).area()) // 6.0
+    print(wrap(plain).area()) // 2.0
+
+    // An `any Shape` that holds an enum converts to `any Display`.
+    let text: any Display = label
+    print(text) // Label("abc")
+
+    // `total` over one array of a class and an enum: one instance, `total<any Shape>`.
+    let mixed: [any Shape] = [Circle(r: 2.0), Slab.Label("ab"), Slab.Plain]
+    print(total(mixed)) // 17.0
+
+    // Inference: the argument binds `T` to a number, and the result converts.
+    let from_id: any Display = id(5)
+    print(from_id) // 5
+
+    // Ownership through a box: the copy keeps the payload alive after the first is dropped.
+    let first: any Shape = Slab.Label("owned")
+    let copy = first
+    print(first.area()) // 6.0
+    print(first.area()) // 6.0
+    print(first.area()) // 6.0
+    print(copy.area()) // 6.0
+    print(describe(copy)) // area 6.0
+    let again: any Named = Slab.Label("kept")
+    let kept = again.name()
+    print(kept) // label kept
+
+    // The payload outlives the two `any` values that held it.
+    print(owned_payload()) // owned
+}

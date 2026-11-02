@@ -1,0 +1,92 @@
+// Calls through the table of an `any Shape`. `total` reads an array that holds two classes and two
+// enums: a class is its own data, and an enum value goes into a counted box when it converts, so
+// each call is an indirect call whose entry reads the box. `converted` makes the conversions in
+// its loop: one box for each enum value, none for a class object. It passes each value to `weigh`,
+// which calls itself twice and so stays a call at `-O2`: LLVM cannot take the box out, and the
+// benchmark allocates 3 boxes for each round (the test `any_shapes_should_keep_its_boxes_at_o2`
+// counts them). Every sum depends on each call.
+interface Shape {
+    fn area(self) -> i64
+    fn grow(self, by: i64) -> i64
+}
+
+class Square: Shape {
+    side: i64
+
+    fn area(self) -> i64 {
+        self.side * self.side
+    }
+
+    fn grow(self, by: i64) -> i64 {
+        (self.side + by) * (self.side + by)
+    }
+}
+
+class Rect: Shape {
+    w: i64
+    h: i64
+
+    fn area(self) -> i64 {
+        self.w * self.h
+    }
+
+    fn grow(self, by: i64) -> i64 {
+        (self.w + by) * (self.h + 1)
+    }
+}
+
+enum Wedge: Shape {
+    Thin(i64)
+    Wide(w: i64, h: i64)
+    Named(string)
+
+    fn area(self) -> i64 {
+        match self {
+            Wedge.Thin(n) => n
+            Wedge.Wide(w, h) => w * h / 2
+            Wedge.Named(text) => text.len()
+        }
+    }
+
+    fn grow(self, by: i64) -> i64 {
+        self.area() + by
+    }
+}
+
+fn total(shapes: [any Shape], rounds: i64) -> i64 {
+    let mut acc = 0
+    for r in 0..rounds {
+        for s in shapes {
+            acc = (acc + s.grow(r % 5) + s.area()) % 1_000_003
+        }
+    }
+    acc
+}
+
+// `depth` is 1, 2 or 3: `weigh(s, depth)` is `depth` times `s.area()`.
+fn weigh(s: any Shape, depth: i64) -> i64 {
+    if depth > 1 {
+        weigh(s, depth - 1) + weigh(s, depth - 2)
+    } else {
+        s.area()
+    }
+}
+
+fn converted(square: Square, rounds: i64) -> i64 {
+    let mut acc = 0
+    for k in 0..rounds {
+        let thin: any Shape = Wedge.Thin(k % 7 + 1)
+        let wide: any Shape = Wedge.Wide(w: k % 5 + 1, h: 4)
+        let named: any Shape = Wedge.Named("abc")
+        let kept: any Shape = square
+        let depth = k % 3 + 1
+        acc = (acc + weigh(thin, depth) + weigh(wide, depth) + weigh(named, depth) + kept.grow(1)) % 1_000_003
+    }
+    acc
+}
+
+fn main() {
+    let shapes: [any Shape] = [Square(side: 3), Wedge.Thin(2), Rect(w: 2, h: 5), Wedge.Wide(w: 4, h: 6)]
+    print(total(shapes, 50_000))
+    print(converted(Square(side: 2), 50_000))
+}
