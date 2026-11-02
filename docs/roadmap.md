@@ -411,11 +411,13 @@ These came out of the milestone 2 design and are now part of its spec:
 - Interface values, `any I`. A value converts to `any I` where one is
   expected, when its type conforms to `I` and is not an optional. An optional
   `any` is written `(any I)?`, and the parentheses are required (`any I?` is
-  `E0165`). An `X?` does not convert to `(any I)?`, and arguments bind a type
-  parameter before the expected `any` type does: `let s: any Shape = id(c)`
-  makes `id<Circle>` and converts the result. An interface that has a generic
-  method, a `Self` besides the receiver or an associated type cannot be
-  `any`, and the message names the requirement. `any I` conforms to `I` and
+  `E0165`). An optional does not convert to a bare `any I`: unwrap it first,
+  for example with `??`. An `X?` does not convert to `(any I)?`, and arguments
+  bind a type parameter before the expected `any` type does:
+  `let s: any Shape = id(c)` makes `id<Circle>` and converts the result. An
+  interface that has a generic method, a `Self` besides the receiver, an
+  associated type, or an inherited interface with `Self` in its arguments
+  cannot be `any` (`E0164`), and the message names the requirement. `any I` conforms to `I` and
   to every interface that `I` inherits, so `total<any Shape>` is one
   instantiation whose calls go through the table, and a program cannot write
   that conformance. An `any` value is two pointers, the data and a table of
@@ -1628,9 +1630,10 @@ accepted.
     methods, which also holds the drop code and ADR 0010's copy code. A class
     object is pointed at directly. A record, an enum or a number is boxed on
     the heap first, as Go does. `any` takes one interface. In milestone 8, an
-    interface with a generic method, with `Self` outside the receiver, or
-    with an associated type can be a bound but not an `any` type. The first
-    two follow Rust's dyn-compatibility rule.
+    interface with a generic method, with `Self` outside the receiver, with
+    an associated type, or with an inherited interface that has `Self` in its
+    arguments can be a bound but not an `any` type. The first two follow
+    Rust's dyn-compatibility rule.
   - Built in milestone 8, stage 10. An `any I` conforms to `I` and to every
     interface that `I` inherits (the user's decision, 2026-10-20), so
     `fn total<T: Shape>(xs: [T])` takes an `[any Shape]`, and `total<any Shape>`
