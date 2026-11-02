@@ -252,7 +252,17 @@ impl<'ctx> Codegen<'ctx, '_> {
         match kind {
             Helper::Eq => self.mark_len_params(function, 0, &[ty, ty]),
             Helper::Show(_) => self.mark_len_params(function, 1, &[ty]),
-            _ => {}
+            Helper::Retain
+            | Helper::Release
+            | Helper::Drop
+            | Helper::Unique
+            | Helper::Walk
+            | Helper::Drain
+            | Helper::EqComponent
+            | Helper::Unbox
+            | Helper::Free
+            | Helper::Reuse
+            | Helper::ShowComponent(_) => {}
         }
         self.helpers.borrow_mut().insert(key, function);
         self.pending.borrow_mut().push(key);
@@ -640,8 +650,9 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// Starts `eq` helper `function` for a type that is `reflexive` or not: returns its two
     /// parameters, as values of `ty`, and the blocks that return `true` and `false`. It returns
-    /// `true` at once for what `equal_at_once` finds equal, and `false` when one object is
-    /// `null`; the builder is left where both are real, and distinct when `reflexive`.
+    /// `true` at once for what `equal_at_once` finds equal (for a reflexive array or string, the
+    /// same data and length), and `false` when one object is `null`; the builder is left where
+    /// both are real, and distinct when `reflexive`.
     pub(super) fn eq_entry(
         &self,
         function: FunctionValue<'ctx>,
@@ -661,10 +672,20 @@ impl<'ctx> Codegen<'ctx, '_> {
             unreachable!("two types should give two values");
         };
         // The objects are the pointers of classes, and the blocks of arrays and strings. A value
-        // that covers only part of its block, as a slice does, needs more than the blocks to be
-        // known equal at once.
+        // that covers only part of its block, as a slice does, is the same value as another only
+        // when it has the same data and length too.
         let (block_a, block_b) = (self.counted_pointer(ty, a), self.counted_pointer(ty, b));
-        self.compare_at_once(reflexive, true, block_a, block_b, equal, unequal);
+        let at_once = if reflexive && three_words(ty) {
+            // The same data and length are the same bytes or elements, whatever the blocks are.
+            let same_data = self.same_object(self.value_data(a), self.value_data(b));
+            let same_len = self.int_compare(IntPredicate::EQ, self.value_len(a), self.value_len(b));
+            self.builder
+                .build_and(same_data, same_len, "same_value")
+                .expect(POSITIONED)
+        } else {
+            self.equal_at_once(reflexive, block_a, block_b)
+        };
+        self.compare_at_once(at_once, true, block_a, block_b, equal, unequal);
         (a, b, equal, unequal)
     }
 
@@ -685,13 +706,13 @@ impl<'ctx> Codegen<'ctx, '_> {
         (equal, unequal)
     }
 
-    /// Compares the pointers `a` and `b` of a counted type that is `reflexive` or not, with no
-    /// look inside: branches to `equal` when `equal_at_once` finds them equal, and, when either
-    /// may be `null` (`nullable`), to `unequal` when only one is. Leaves the builder where they
-    /// are two pointers to compare by what they point at.
+    /// Compares the pointers `a` and `b` of a counted type with no look inside: branches to
+    /// `equal` when `at_once` says they are equal, and, when either may be `null` (`nullable`), to
+    /// `unequal` when only one is. Leaves the builder where they are two pointers to compare by
+    /// what they point at.
     pub(super) fn compare_at_once(
         &self,
-        reflexive: bool,
+        at_once: IntValue<'ctx>,
         nullable: bool,
         a: PointerValue<'ctx>,
         b: PointerValue<'ctx>,
@@ -700,7 +721,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     ) {
         let function = self.current_function();
         let differ = self.context.append_basic_block(function, "differ");
-        self.branch_on(self.equal_at_once(reflexive, a, b), equal, differ);
+        self.branch_on(at_once, equal, differ);
         self.builder.position_at_end(differ);
         if nullable {
             let distinct = self.context.append_basic_block(function, "distinct");
@@ -721,7 +742,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// Whether two pointers of a counted type are equal with no look inside: the same pointer
     /// when the type is `reflexive`, else both `null`. One block or object that holds a `nan`
     /// is not equal to itself, so only a reflexive type may stop at the same pointer.
-    fn equal_at_once(
+    pub(super) fn equal_at_once(
         &self,
         reflexive: bool,
         a: PointerValue<'ctx>,

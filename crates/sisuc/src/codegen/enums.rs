@@ -1482,7 +1482,8 @@ impl<'ctx> Codegen<'ctx, '_> {
         unequal: BasicBlock<'ctx>,
     ) {
         let nullable = matches!(ty.kind(), TypeKind::Optional(_));
-        self.compare_at_once(self.reflexive(ty), nullable, a, b, same, unequal);
+        let at_once = self.equal_at_once(self.reflexive(ty), a, b);
+        self.compare_at_once(at_once, nullable, a, b, same, unequal);
     }
 
     /// The `kind` of `member` in its component: its index, as an `i32`.

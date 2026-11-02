@@ -619,7 +619,6 @@ crates/sisuc/src/codegen/tests.rs::field_assignment_to_a_local_skips_base_count
 crates/sisuc/src/codegen/tests.rs::field_read_retains_before_releasing_base
 crates/sisuc/src/codegen/tests.rs::float_ops_have_no_fast_math
 crates/sisuc/src/codegen/tests.rs::float_to_int_saturates
-crates/sisuc/src/codegen/tests.rs::format_specs_pass_zero_extended_i8s
 crates/sisuc/src/codegen/tests.rs::general_path_releases_base
 crates/sisuc/src/codegen/tests.rs::helper_names_cannot_collide
 crates/sisuc/src/codegen/tests.rs::helpers_are_generated
@@ -653,7 +652,6 @@ crates/sisuc/src/codegen/tests.rs::user_function_names_are_prefixed
 crates/sisuc/src/codegen/tests.rs::verifies_field_assignment_through_a_call
 crates/sisuc/src/codegen/tests.rs::verifies_one_returning_branch
 crates/sisuc/src/codegen/tests.rs::words_declarations_carry_memory_effects
-crates/sisuc/src/codegen/tests.rs::write_bool_passes_a_zero_extended_i1
 crates/sisuc/src/diagnostic/explanations.rs::broken_examples_produce_exactly_their_code
 crates/sisuc/src/diagnostic/explanations.rs::every_code_has_a_diagnostics_fixture
 crates/sisuc/src/diagnostic/explanations.rs::every_code_has_an_explanation_of_the_fixed_shape

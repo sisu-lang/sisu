@@ -135,9 +135,10 @@ pub(super) enum Storage {
 /// optional is a `{ flag, value }` pair.
 pub(super) fn three_words(ty: Type) -> bool {
     let words = |ty: Type| matches!(ty.kind(), TypeKind::String | TypeKind::Array(_));
-    match ty.kind() {
-        TypeKind::Optional(payload) => words(payload),
-        _ => words(ty),
+    if let TypeKind::Optional(payload) = ty.kind() {
+        words(payload)
+    } else {
+        words(ty)
     }
 }
 
@@ -832,6 +833,32 @@ impl<'ctx> Codegen<'ctx, '_> {
         .expect("an empty node should be a metadata node");
     }
 
+    /// Word `index` of the array or string value at `place`, named `name` and loaded with the
+    /// TBAA tag `tag` when given. The length word, 2, is marked as `mark_len` does: a length that
+    /// is loaded from anywhere carries the facts of a length.
+    pub(super) fn load_word(
+        &self,
+        place: PointerValue<'ctx>,
+        index: u32,
+        name: &str,
+        tag: Option<MetadataValue<'ctx>>,
+    ) -> BasicValueEnum<'ctx> {
+        let ty: BasicTypeEnum<'ctx> = if index == 2 {
+            self.context.i64_type().into()
+        } else {
+            self.context.ptr_type(AddressSpace::default()).into()
+        };
+        let at = self.words_ptr(place, index);
+        let word = match tag {
+            Some(tag) => self.load_tagged(ty, at, name, tag),
+            None => self.builder.build_load(ty, at, name).expect(POSITIONED),
+        };
+        if index == 2 {
+            self.mark_len(word.into_int_value());
+        }
+        word
+    }
+
     /// The array or string value at `place`, as three loads, so that its length carries `!range`
     /// and `!noundef`. Each load has the TBAA tag `tag`, when `place` has one.
     pub(super) fn load_words(
@@ -839,18 +866,9 @@ impl<'ctx> Codegen<'ctx, '_> {
         place: PointerValue<'ctx>,
         tag: Option<MetadataValue<'ctx>>,
     ) -> BasicValueEnum<'ctx> {
-        let ptr_type: BasicTypeEnum<'ctx> = self.context.ptr_type(AddressSpace::default()).into();
-        let load = |index, ty: BasicTypeEnum<'ctx>, name| {
-            let at = self.words_ptr(place, index);
-            match tag {
-                Some(tag) => self.load_tagged(ty, at, name, tag),
-                None => self.builder.build_load(ty, at, name).expect(POSITIONED),
-            }
-        };
-        let block = load(0, ptr_type, "block").into_pointer_value();
-        let data = load(1, ptr_type, "data").into_pointer_value();
-        let len = load(2, self.context.i64_type().into(), "len").into_int_value();
-        self.mark_len(len);
+        let block = self.load_word(place, 0, "block", tag).into_pointer_value();
+        let data = self.load_word(place, 1, "data", tag).into_pointer_value();
+        let len = self.load_word(place, 2, "len", tag).into_int_value();
         self.make_value(block, data, len)
     }
 

@@ -46,6 +46,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .build_load(i64_type, len_slot, "len")
             .expect(POSITIONED)
             .into_int_value();
+        self.mark_len(len);
         let string = self.string_from_bytes(bytes, len);
         let ty = Type::optional(Type::STRING);
         let some = self.context.bool_type().const_int(1, false);
@@ -90,6 +91,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 .expect("`sisu_arg` should return a pointer, as the runtime declares it")
                 .into_pointer_value();
             let n = self.load(i64_type.into(), len_slot).into_int_value();
+            self.mark_len(n);
             let string = self.string_from_bytes(bytes, n);
             self.store(self.element_ptr(Type::STRING, data, index), string);
         });

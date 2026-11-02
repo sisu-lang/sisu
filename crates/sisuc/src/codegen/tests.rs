@@ -656,7 +656,7 @@ fn eprint_calls_the_stderr_functions() {
 
 /// Interpolation passes a `bool` to the runtime as `print` does.
 #[test]
-fn write_bool_passes_a_zero_extended_i1() {
+fn write_bool_should_pass_a_zero_extended_i1() {
     let context = Context::create();
     let ir = compiled(
         &context,
@@ -665,7 +665,7 @@ fn write_bool_passes_a_zero_extended_i1() {
     .print_to_string()
     .to_string();
     for wanted in [
-        "declare i64 @sisu_write_bool(i1 zeroext, ptr)",
+        "declare range(i64 0, -9223372036854775808) i64 @sisu_write_bool(i1 zeroext, ptr)",
         "call i64 @sisu_write_bool(i1 zeroext",
     ] {
         assert!(ir.contains(wanted), "missing {wanted:?} in\n{ir}");
@@ -675,7 +675,7 @@ fn write_bool_passes_a_zero_extended_i1() {
 /// The precision and the alignment cross to the runtime as a C `u8`, which the caller extends
 /// with zeros, as for a `bool`; a `char` is already 32 bits and gets no extension.
 #[test]
-fn format_specs_pass_zero_extended_i8s() {
+fn format_specs_should_pass_zero_extended_i8s() {
     let context = Context::create();
     let ir = compiled(
         &context,
@@ -684,12 +684,12 @@ fn format_specs_pass_zero_extended_i8s() {
     .print_to_string()
     .to_string();
     for wanted in [
-        "declare i64 @sisu_write_f64_fixed(double, i8 zeroext, ptr)",
+        "declare range(i64 0, -9223372036854775808) i64 @sisu_write_f64_fixed(double, i8 zeroext, ptr)",
         "call i64 @sisu_write_f64_fixed(double %",
         ", i8 zeroext 2, ptr",
-        "declare i64 @sisu_pad(ptr, i64, i64, i8 zeroext)",
+        "declare range(i64 0, -9223372036854775808) i64 @sisu_pad(ptr, i64, i64, i8 zeroext)",
         ", i64 8, i8 zeroext 1)",
-        "declare i64 @sisu_write_char(i32, ptr)",
+        "declare range(i64 0, -9223372036854775808) i64 @sisu_write_char(i32, ptr)",
     ] {
         assert!(ir.contains(wanted), "missing {wanted:?} in\n{ir}");
     }
@@ -1507,6 +1507,42 @@ fn same_pointer_shortcut_should_be_taken_only_when_equality_is_reflexive() {
             .lines()
             .any(|line| line.contains("icmp eq ptr ") && line.ends_with(", null"));
         assert!(against_null, "{helper}:\n{body}");
+    }
+}
+
+/// A value of an array or a string may cover only part of its block, so the same block on both
+/// sides is not the same value: the "equal at once" branch of an `eq` helper also needs the same
+/// data and the same length. Each word is found by data flow, from the parameters of the helper
+/// (block, data and length of `a`, then of `b`) to the `icmp` operands of that branch.
+#[test]
+fn eq_helpers_should_compare_data_and_length_before_answering_equal_at_once() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "fn same(a: [i64], b: [i64], s: string, t: string) -> bool { a == b && s == t }\nfn main() {}",
+    )
+    .print_to_string()
+    .to_string();
+    for helper in ["@\"sisu_rc.eq.[i64]\"(ptr", "@sisu_rc.eq.string(ptr"] {
+        let body = function_body(&ir, &format!("define internal i1 {helper}"));
+        let lines: Vec<&str> = body.lines().map(str::trim).collect();
+        let [_, data_a, len_a, _, data_b, len_b] = parameters(body)[..] else {
+            panic!("{helper} should take two values of three words:\n{body}");
+        };
+        let at_once = lines
+            .iter()
+            .find_map(|l| l.strip_prefix("br i1 ")?.split_once(", label %equal,"))
+            .map_or_else(
+                || panic!("no branch to `equal` in {helper}:\n{body}"),
+                |(cond, _)| cond,
+            );
+        let pairs = compared_pairs(&lines, at_once);
+        for (a, b, word) in [(data_a, data_b, "data"), (len_a, len_b, "length")] {
+            assert!(
+                pairs.contains(&(a, b)) || pairs.contains(&(b, a)),
+                "{helper}: no comparison of the {word} in {pairs:?}:\n{body}"
+            );
+        }
     }
 }
 
@@ -3166,15 +3202,114 @@ fn write_should_check_bounds_before_unique() {
     assert!([bounds, unique, store].is_sorted(), "{body}");
 }
 
-/// The slot of the first parameter of the function whose text is `body`: where the entry block
-/// stores that parameter, which is the first store, since the entry stores each parameter in
-/// order.
+/// The `%` values that the instruction text `text` reads.
+fn operands(text: &str) -> impl Iterator<Item = &str> {
+    text.split([' ', ',', '(', ')'])
+        .filter(|token| token.starts_with('%'))
+}
+
+/// The parameters of the function whose text is `body`, as `function_body` gives it: the `%`
+/// values in its first line, which still holds the parameters.
+fn parameters(body: &str) -> Vec<&str> {
+    operands(body.lines().next().unwrap_or_default()).collect()
+}
+
+/// The instruction that defines `value` in `lines`, without its `<value> = `.
+fn defined_by<'a>(lines: &[&'a str], value: &str) -> Option<&'a str> {
+    let prefix = format!("{value} = ");
+    lines.iter().find_map(|line| line.strip_prefix(&prefix))
+}
+
+/// The operands of the instruction `text` (`insertvalue`, `extractvalue`), after the aggregate
+/// type: `"insertvalue {ptr, i64} %v, i64 %n, 1"` gives `["%v", "i64 %n", "1"]`.
+fn after_type(text: &str) -> Vec<&str> {
+    text.split_once("} ")
+        .map_or(Vec::new(), |(_, rest)| rest.split(", ").collect())
+}
+
+/// Element `index` of the aggregate `value`, followed back through the `insertvalue` chain of
+/// `lines` to the value that was put there; `value` itself when the chain does not reach it.
+fn element<'a>(lines: &[&'a str], value: &'a str, index: &str) -> &'a str {
+    let mut at = value;
+    while let Some(text) = defined_by(lines, at).filter(|t| t.starts_with("insertvalue ")) {
+        let [base, put, position] = after_type(text)[..] else {
+            break;
+        };
+        if position == index {
+            return put.rsplit(' ').next().unwrap_or(put);
+        }
+        at = base;
+    }
+    value
+}
+
+/// The scalar `value`, with an `extractvalue` of a built aggregate replaced by the value that
+/// was put in: the parameter of a function that a value of three words came from.
+fn source<'a>(lines: &[&'a str], value: &'a str) -> &'a str {
+    match defined_by(lines, value).filter(|t| t.starts_with("extractvalue ")) {
+        Some(text) => match after_type(text)[..] {
+            [aggregate, index] => source(lines, element(lines, aggregate, index)),
+            _ => value,
+        },
+        None => value,
+    }
+}
+
+/// The pairs of values (by `source`) that `icmp eq` compares in the `and` tree that makes the
+/// condition `cond`.
+fn compared_pairs<'a>(lines: &[&'a str], cond: &'a str) -> Vec<(&'a str, &'a str)> {
+    let Some(text) = defined_by(lines, cond) else {
+        return Vec::new();
+    };
+    let [first, second] = operands(text).collect::<Vec<_>>()[..] else {
+        return Vec::new();
+    };
+    if text.starts_with("and ") {
+        let mut pairs = compared_pairs(lines, first);
+        pairs.extend(compared_pairs(lines, second));
+        pairs
+    } else if text.starts_with("icmp eq ") {
+        vec![(source(lines, first), source(lines, second))]
+    } else {
+        Vec::new()
+    }
+}
+
+/// The slot where `lines`, the trimmed lines of a function, store the value built from `root`: a
+/// parameter, or the result of a call. It follows the `insertvalue`s that read `root`, or a value
+/// built on it, to the `store`.
+fn slot_of_built<'a>(lines: &[&'a str], root: &str) -> &'a str {
+    let mut built = vec![root];
+    for line in lines {
+        let Some((value, text)) = line.split_once(" = ") else {
+            continue;
+        };
+        if text.starts_with("insertvalue ") && operands(text).any(|o| built.contains(&o)) {
+            built.push(value);
+        }
+    }
+    lines
+        .iter()
+        .copied()
+        .find_map(|line| {
+            let (stored, slot) = line.strip_prefix("store ")?.rsplit_once(", ptr ")?;
+            let value = stored.rsplit(' ').next()?;
+            built
+                .contains(&value)
+                .then(|| slot.split(',').next())
+                .flatten()
+        })
+        .unwrap_or_else(|| panic!("no store of a value built from {root} in\n{lines:#?}"))
+}
+
+/// The slot of the first parameter of the function whose text is `body`.
 fn first_parameter_slot(body: &str) -> &str {
-    body.lines()
-        .find_map(|l| l.trim().strip_prefix("store "))
-        .and_then(|store| store.rsplit_once(", ptr "))
-        .and_then(|(_, rest)| rest.split(',').next())
-        .unwrap_or_else(|| panic!("no store of a parameter in\n{body}"))
+    let first = parameters(body)
+        .first()
+        .copied()
+        .unwrap_or_else(|| panic!("no parameter in\n{body}"));
+    let lines: Vec<&str> = body.lines().map(str::trim).collect();
+    slot_of_built(&lines, first)
 }
 
 /// `Move` takes the local's reference and leaves `null` in its slot only where a conditional
@@ -3245,12 +3380,7 @@ fn static_release_should_check_its_slot_under_rc_checks() {
         t.starts_with(&format!("call {slot_ty} @sisu.name("))
     })
     .unwrap_or_else(|| panic!("no call to name in\n{body}"));
-    let store = format!("store {slot_ty} {value}, ptr ");
-    let slot = lines
-        .iter()
-        .find_map(|l| l.strip_prefix(store.as_str()))
-        .and_then(|rest| rest.split(',').next())
-        .unwrap_or_else(|| panic!("no store of {value} in\n{body}"));
+    let slot = slot_of_built(&lines, value);
     let (_, _, null) = null_test(&lines, (slot, slot_ty), body);
     let branch_at = assert_faults_on(&lines, null, 2, body);
     assert!(branch_at < release_at, "{body}");
@@ -3741,9 +3871,11 @@ fn an_index_modulo_the_length_should_have_no_bounds_check_at_o2() {
 /// `an_index_modulo_the_length_should_have_no_bounds_check_at_o2` with the array from a callee
 /// that `-O2` does not inline: the facts about a returned length are the caller's. The callee
 /// returns the three words, and a `range` attribute holds for a parameter and not for a returned
-/// struct, so the caller asserts that the length is not negative with `llvm.assume`. The callee's
-/// length comes from a runtime call, so that the optimizer cannot prove the assumption itself and
-/// drop it, as it does for a length that it sees the callee compute.
+/// struct, so the caller states that the length is not negative with `llvm.smax(len, 0)`. An
+/// `llvm.assume` does not do it: `ipsccp` folds it to `true` when it sees the callee compute the
+/// length, and then no later pass has the fact. The callees here build the length in each way:
+/// the first from a runtime call that the optimizer cannot see into, the others from a checked
+/// count and a checked sum, which it can.
 ///
 /// ```text
 /// GIVEN an array that a function returns, which is not inlined
@@ -3753,21 +3885,69 @@ fn an_index_modulo_the_length_should_have_no_bounds_check_at_o2() {
 #[test]
 fn an_index_modulo_the_length_of_a_returned_array_should_have_no_bounds_check_at_o2() {
     let context = Context::create();
-    let module = compiled(
-        &context,
-        "fn make(s: string) -> [char] {\n    s.chars()\n}\n\nfn wrap(s: string, n: i64) -> i64 {\n    let ys = make(s)\n    let mut t = 0\n    for i in 0..n {\n        t += i64(ys[i % ys.len()])\n    }\n    t\n}\n\nfn main(args: [string]) {\n    print(wrap(\"abc\", args.len()))\n}",
-    );
-    keep_functions(&module, "make,wrap");
-    let machine = target_machine(OptLevel::O2).expect("the host is a target");
-    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
-    let ir = module.print_to_string().to_string();
-    let wrap = function_body(&ir, "@sisu.wrap(");
-    assert!(wrap.contains("rem i64"), "{wrap}");
-    assert!(
-        wrap.contains("@sisu.make("),
-        "the array should come from a call: {wrap}"
-    );
-    assert!(!wrap.contains("@sisu_panic_bounds("), "{wrap}");
+    // `wrap` loops over indexes of the array that `make` returns. Each `make` builds its length
+    // another way, from a runtime call, a checked count or a checked sum, so that the length is
+    // a value that LLVM sees and not a load.
+    let program = |make: &str| {
+        format!(
+            "{make}\n\nfn wrap(n: i64, m: i64) -> i64 {{\n    let ys = make(n)\n    let mut t = 0\n    for i in 0..m {{\n        t += ys[i % ys.len()]\n    }}\n    t\n}}\n\nfn main(args: [string]) {{\n    print(wrap(args.len() + 1, args.len() * 7))\n}}"
+        )
+    };
+    for (name, src) in [
+        (
+            "runtime call",
+            "fn make(s: string) -> [char] {\n    s.chars()\n}\n\nfn wrap(s: string, n: i64) -> i64 {\n    let ys = make(s)\n    let mut t = 0\n    for i in 0..n {\n        t += i64(ys[i % ys.len()])\n    }\n    t\n}\n\nfn main(args: [string]) {\n    print(wrap(\"abc\", args.len()))\n}".to_string(),
+        ),
+        ("checked count", program("fn make(n: i64) -> [i64] {\n    [n; n]\n}")),
+        ("checked sum", program("fn make(n: i64) -> [i64] {\n    [n; n + 1]\n}")),
+    ] {
+        let module = compiled(&context, &src);
+        keep_functions(&module, "make,wrap");
+        let machine = target_machine(OptLevel::O2).expect("the host is a target");
+        optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+        let ir = module.print_to_string().to_string();
+        let wrap = function_body(&ir, "@sisu.wrap(");
+        assert!(wrap.contains("rem i64"), "{name}: {wrap}");
+        assert!(
+            wrap.contains("@sisu.make("),
+            "{name}: the array should come from a call: {wrap}"
+        );
+        assert!(!wrap.contains("@sisu_panic_bounds("), "{name}: {wrap}");
+    }
+}
+
+/// The same holds with no call: a length that a function builds itself, with a checked count or
+/// from a runtime call, is a value and not a load too.
+///
+/// ```text
+/// GIVEN an array that a function builds, with `[v; n]` or from a string
+/// WHEN a loop in that function indexes it with `i % ys.len()` for a non-negative `i`
+/// THEN the loop has no bounds check
+/// ```
+#[test]
+fn an_index_modulo_the_length_of_a_built_array_should_have_no_bounds_check_at_o2() {
+    let context = Context::create();
+    for (name, build, read) in [
+        ("fill", "let ys = [n; n]", "ys[i % ys.len()]"),
+        ("fill with a sum", "let ys = [n; n + 1]", "ys[i % ys.len()]"),
+        (
+            "chars",
+            "let ys = \"abc{n}\".chars()",
+            "i64(ys[i % ys.len()])",
+        ),
+    ] {
+        let src = format!(
+            "fn wrap(n: i64, m: i64) -> i64 {{\n    {build}\n    let mut t = 0\n    for i in 0..m {{\n        t += {read}\n    }}\n    t\n}}\n\nfn main(args: [string]) {{\n    print(wrap(args.len() + 1, args.len() * 7))\n}}"
+        );
+        let module = compiled(&context, &src);
+        keep_functions(&module, "wrap");
+        let machine = target_machine(OptLevel::O2).expect("the host is a target");
+        optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+        let ir = module.print_to_string().to_string();
+        let wrap = function_body(&ir, "@sisu.wrap(");
+        assert!(wrap.contains("rem i64"), "{name}: {wrap}");
+        assert!(!wrap.contains("@sisu_panic_bounds("), "{name}: {wrap}");
+    }
 }
 
 /// An array is three scalar parameters, and its length has the range of a length. Once the slots

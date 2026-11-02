@@ -440,24 +440,38 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect(POSITIONED)
             .try_as_basic_value()
             .basic()?;
-        self.assume_len(self.mir.functions[func.0].ret, result);
-        Some(result)
+        Some(self.bound_len(self.mir.functions[func.0].ret, result))
     }
 
-    /// States to LLVM that the length of `value`, a value returned by a call, is not negative:
-    /// a callee's `range` attribute holds for a parameter and not for a returned struct, so the
-    /// caller asserts it. Does nothing unless `ty` is an array, a string, or the optional of one.
-    fn assume_len(&self, ty: Type, value: BasicValueEnum<'ctx>) {
+    /// `value`, a value that a call returned, with the fact that its length is not negative. A
+    /// callee's `range` attribute holds for a parameter and not for a returned struct, so the
+    /// caller states it again, with `llvm.smax(len, 0)`. A comparison does not do it: when
+    /// `-O2` sees the callee's length, `ipsccp` folds `llvm.assume(len >= 0)`, and an `and` that
+    /// clears the sign bit, to nothing, and no pass after it knows the length is not negative.
+    /// Does nothing unless `ty` is an array, a string, or the optional of one.
+    fn bound_len(&self, ty: Type, value: BasicValueEnum<'ctx>) -> BasicValueEnum<'ctx> {
         if !layout::three_words(ty) {
-            return;
+            return value;
         }
-        let len = self.value_len(value);
-        let not_negative =
-            self.int_compare(IntPredicate::SGE, len, self.context.i64_type().const_zero());
-        let assume = Intrinsic::find("llvm.assume")
-            .and_then(|assume| assume.get_declaration(&self.module, &[]))
-            .expect("LLVM should provide `llvm.assume`, which takes no type parameters");
-        self.call(assume, &[not_negative.into()]);
+        let i64_type = self.context.i64_type();
+        let smax = Intrinsic::find("llvm.smax")
+            .and_then(|smax| smax.get_declaration(&self.module, &[i64_type.into()]))
+            .expect("LLVM should provide `llvm.smax`, which is overloaded on an integer type");
+        let len = self
+            .builder
+            .build_call(
+                smax,
+                &[self.value_len(value).into(), i64_type.const_zero().into()],
+                "len",
+            )
+            .expect(POSITIONED)
+            .try_as_basic_value()
+            .basic()
+            .expect("`llvm.smax` should return an integer");
+        self.builder
+            .build_insert_value(value.into_struct_value(), len, 2, "value")
+            .expect("an array or string value should have three words")
+            .as_basic_value_enum()
     }
 
     /// `call_value` for a helper of `to_string` or `eq`, which calls a written method with its
@@ -1092,16 +1106,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         address: PointerValue<'ctx>,
         tag: Option<MetadataValue<'ctx>>,
     ) -> PointerValue<'ctx> {
-        let ptr_type = self.context.ptr_type(AddressSpace::default());
-        let at = self.words_ptr(address, 1);
-        match tag {
-            Some(tag) => self.load_tagged(ptr_type.into(), at, "data", tag),
-            None => self
-                .builder
-                .build_load(ptr_type, at, "data")
-                .expect(POSITIONED),
-        }
-        .into_pointer_value()
+        self.load_word(address, 1, "data", tag).into_pointer_value()
     }
 
     /// The length of the array at `address`, tagged `tag` when its place has one, and marked as
@@ -1111,18 +1116,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         address: PointerValue<'ctx>,
         tag: Option<MetadataValue<'ctx>>,
     ) -> IntValue<'ctx> {
-        let i64_type = self.context.i64_type();
-        let at = self.words_ptr(address, 2);
-        let len = match tag {
-            Some(tag) => self.load_tagged(i64_type.into(), at, "len", tag),
-            None => self
-                .builder
-                .build_load(i64_type, at, "len")
-                .expect(POSITIONED),
-        }
-        .into_int_value();
-        self.mark_len(len);
-        len
+        self.load_word(address, 2, "len", tag).into_int_value()
     }
 
     /// The pointer at `address`: an object, or the block of an array or a string.

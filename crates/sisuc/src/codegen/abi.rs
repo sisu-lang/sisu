@@ -4,7 +4,7 @@
 
 use inkwell::AddressSpace;
 use inkwell::attributes::{Attribute, AttributeLoc};
-use inkwell::context::{AsContextRef, Context, ContextRef};
+use inkwell::context::{AsContextRef, ContextRef};
 use inkwell::module::Module;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue};
@@ -49,6 +49,9 @@ pub(super) struct Attrs {
     pub(super) noreturn: bool,
     pub(super) memory: Option<u64>,
     pub(super) allocator: Allocator,
+    /// The `i64` that it returns is a length or a count, so never negative: `declare` gives the
+    /// return value the range `[0, 2^63)`, as `mark_len` does a length that is loaded.
+    pub(super) returns_len: bool,
 }
 
 /// A function's part in LLVM's allocator model, which lets `-O2` delete an allocation that
@@ -76,6 +79,7 @@ const NONE: Attrs = Attrs {
     noreturn: false,
     memory: None,
     allocator: Allocator::None,
+    returns_len: false,
 };
 /// The runtime is built with `panic = "abort"`, so it never unwinds.
 const NOUNWIND: Attrs = Attrs {
@@ -96,6 +100,14 @@ const FREE: Attrs = Attrs {
     allocator: Allocator::Free,
     ..NOUNWIND
 };
+
+/// `attrs`, for a function that returns a length or a count.
+const fn returns_len(attrs: Attrs) -> Attrs {
+    Attrs {
+        returns_len: true,
+        ..attrs
+    }
+}
 
 /// `NOUNWIND`, with the `memory` attribute value `memory`.
 const fn nounwind_memory(memory: u64) -> Attrs {
@@ -134,7 +146,7 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
         name: "sisu_args_len",
         params: &[Abi::I32],
         ret: Some(Abi::I64),
-        attrs: nounwind_memory(NO_MEMORY),
+        attrs: returns_len(nounwind_memory(NO_MEMORY)),
     },
     // deferred.rs
     RuntimeFn {
@@ -154,13 +166,13 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
         name: "sisu_write_f64",
         params: &[Abi::F64, Abi::Ptr],
         ret: Some(Abi::I64),
-        attrs: NONE,
+        attrs: returns_len(NONE),
     },
     RuntimeFn {
         name: "sisu_write_f64_fixed",
         params: &[Abi::F64, Abi::U8, Abi::Ptr],
         ret: Some(Abi::I64),
-        attrs: NONE,
+        attrs: returns_len(NONE),
     },
     // lib.rs
     RuntimeFn {
@@ -389,7 +401,7 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
         name: "sisu_pad",
         params: &[Abi::Ptr, Abi::I64, Abi::I64, Abi::U8],
         ret: Some(Abi::I64),
-        attrs: NONE,
+        attrs: returns_len(NONE),
     },
     RuntimeFn {
         name: "sisu_print_char",
@@ -414,7 +426,7 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
         name: "sisu_utf8_count",
         params: &[Abi::Ptr, Abi::I64],
         ret: Some(Abi::I64),
-        attrs: NONE,
+        attrs: returns_len(NONE),
     },
     RuntimeFn {
         name: "sisu_utf8_decode",
@@ -432,38 +444,38 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
         name: "sisu_utf8_len",
         params: &[Abi::Ptr, Abi::I64],
         ret: Some(Abi::I64),
-        attrs: NONE,
+        attrs: returns_len(NONE),
     },
     // Reads the bytes, and writes the word's start.
     RuntimeFn {
         name: "sisu_word_next",
         params: &[Abi::Ptr, Abi::I64, Abi::I64, Abi::Ptr],
         ret: Some(Abi::I64),
-        attrs: nounwind_memory(ARGS),
+        attrs: returns_len(nounwind_memory(ARGS)),
     },
     RuntimeFn {
         name: "sisu_words_count",
         params: &[Abi::Ptr, Abi::I64],
         ret: Some(Abi::I64),
-        attrs: nounwind_memory(READS_ARGS),
+        attrs: returns_len(nounwind_memory(READS_ARGS)),
     },
     RuntimeFn {
         name: "sisu_write_bool",
         params: &[Abi::Bool, Abi::Ptr],
         ret: Some(Abi::I64),
-        attrs: NONE,
+        attrs: returns_len(NONE),
     },
     RuntimeFn {
         name: "sisu_write_char",
         params: &[Abi::I32, Abi::Ptr],
         ret: Some(Abi::I64),
-        attrs: NONE,
+        attrs: returns_len(NONE),
     },
     RuntimeFn {
         name: "sisu_write_int",
         params: &[Abi::I64, Abi::Ptr],
         ret: Some(Abi::I64),
-        attrs: NONE,
+        attrs: returns_len(NONE),
     },
 ];
 
@@ -582,7 +594,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                     self.context
                         .create_enum_attribute(Attribute::get_named_enum_kind_id("noundef"), 0),
                 );
-                function.add_attribute(len, non_negative(self.context));
+                function.add_attribute(len, non_negative(&self.context));
             }
             at += count;
         }
@@ -590,12 +602,14 @@ impl<'ctx> Codegen<'ctx, '_> {
 }
 
 /// The attribute `range(i64 0, 2^63)`: a value that is not negative. Inkwell at `c9d9734` has
-/// no constructor for a constant-range attribute.
+/// no constructor for a constant-range attribute, so this calls the `llvm-sys` that inkwell
+/// re-exports. Do not format the attribute with `{:?}`: inkwell's `Debug` of an `Attribute`
+/// panics for one that is not a string, enum or type attribute (`attributes.rs`).
 #[expect(
     unsafe_code,
-    reason = "inkwell has no constructor for a constant-range attribute, so this calls llvm-sys"
+    reason = "inkwell has no constructor for a constant-range attribute, so this calls its llvm-sys"
 )]
-fn non_negative(context: &Context) -> Attribute {
+fn non_negative<'ctx>(context: &impl AsContextRef<'ctx>) -> Attribute {
     const BITS: u32 = 64;
     let lower = [0_u64];
     // The upper bound is exclusive, and `1 << 63` is 2^63; LLVM prints it as
@@ -604,7 +618,7 @@ fn non_negative(context: &Context) -> Attribute {
     // SAFETY: `context` is a live context, and `lower` and `upper` each hold the one word that
     // `BITS` bits need, as `LLVMCreateConstantRangeAttribute` reads.
     let raw = unsafe {
-        llvm_sys::core::LLVMCreateConstantRangeAttribute(
+        inkwell::llvm_sys::core::LLVMCreateConstantRangeAttribute(
             context.as_ctx_ref(),
             Attribute::get_named_enum_kind_id("range"),
             BITS,
@@ -649,6 +663,9 @@ pub(super) fn declare<'ctx>(module: &Module<'ctx>, row: &RuntimeFn) -> FunctionV
     }
     if let Some(memory) = row.attrs.memory {
         function.add_attribute(AttributeLoc::Function, attribute("memory", memory));
+    }
+    if row.attrs.returns_len {
+        function.add_attribute(AttributeLoc::Return, non_negative(&context));
     }
     if row.attrs.noreturn {
         function.add_attribute(AttributeLoc::Function, attribute("noreturn", 0));

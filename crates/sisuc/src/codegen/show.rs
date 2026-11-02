@@ -227,6 +227,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.init_count(block);
         let sink_type = self.sink_type();
         let len = self.sink_word(sink_type, sink, SINK_LEN);
+        self.mark_len(len);
         self.store(self.string_field(block, LEN), len.into());
         self.store(
             self.string_field(block, CAP),
