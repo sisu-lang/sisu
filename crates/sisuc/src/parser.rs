@@ -1207,6 +1207,13 @@ impl<'a> Parser<'a> {
                     .map(|t| t.span.start())
                     .collect(),
                 breaks: self.breaks.to_vec(),
+                // The lexer ends a line with an empty `Newline`; a `;` gives a `Newline` with text.
+                newlines: self
+                    .tokens
+                    .iter()
+                    .filter(|t| t.kind == TokenKind::Newline && t.span.range().is_empty())
+                    .map(|t| t.span.start())
+                    .collect(),
             },
             diagnostics,
             checkable,

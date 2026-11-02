@@ -18,6 +18,8 @@ pub(crate) struct Program {
     pub(crate) quotes: Vec<usize>,
     /// Where each line break is, so that a fix does not wrap one in a string literal.
     pub(crate) breaks: Vec<usize>,
+    /// Where each line break that ends a statement is, so that a help keeps a block as written.
+    pub(crate) newlines: Vec<usize>,
 }
 
 /// A function, class, enum, constant, alias, interface or `extend` block that holds a syntax
@@ -1404,7 +1406,7 @@ mod tests {
     }
 
     #[test]
-    fn display_every_node() {
+    fn display_should_print_every_node() {
         let cmp = expr(ExprKind::Compare {
             operands: vec![name("a"), name("b"), name("c")],
             ops: vec![CompareOp::Lt, CompareOp::Le],
@@ -1489,6 +1491,7 @@ mod tests {
             comments: Vec::new(),
             quotes: Vec::new(),
             breaks: Vec::new(),
+            newlines: Vec::new(),
         };
         assert_eq!(
             program.to_string(),

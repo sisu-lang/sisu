@@ -56,7 +56,6 @@ crates/runtime/src/text.rs::words_split_on_white_space
 crates/runtime/src/text.rs::write_bool_words
 crates/runtime/src/text.rs::write_char_widths
 crates/runtime/src/text.rs::write_int_extremes
-crates/sisuc/src/ast.rs::display_every_node
 crates/sisuc/src/ast.rs::display_float
 crates/sisuc/src/ast.rs::display_formats
 crates/sisuc/src/check/string.rs::a_match_is_one_term_only_in_parentheses
