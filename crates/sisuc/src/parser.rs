@@ -5119,6 +5119,31 @@ mod tests {
         );
     }
 
+    /// GIVEN a `match` header with a `return` or `break` whose value fails to parse, where the
+    /// value does not start with `{`, or the `{` sits in a bracket that the header opened
+    /// WHEN the parser reads it
+    /// THEN the error is the plain one of the value, not the error of a jump that took the block
+    #[test]
+    fn jump_value_error_should_stay_plain_when_the_jump_took_no_block() {
+        for jump in ["return", "break"] {
+            // The value starts with `+`, not `{`, and the `{` after it is a block.
+            let plus = format!("fn main() {{\n    match {jump} + {{\n        _ => f()\n    }}\n}}");
+            // The `(` is open at the jump, so the block is inside it.
+            let bracket = format!(
+                "fn main() {{\n    match ({jump} {{\n        _ => f()\n    }}) {{\n        _ => f()\n    }}\n}}"
+            );
+            for (src, code, line) in [
+                (plus, Code::Expected, 2),
+                (bracket, Code::UnderscoreValue, 3),
+            ] {
+                let diagnostic = parse_diagnostic(&src);
+                let (found, at, _) = parse_err(&src);
+                assert_eq!((found, at), (code, line), "{src}");
+                assert!(diagnostic.help().is_none(), "{src}");
+            }
+        }
+    }
+
     #[test]
     fn while_loop() {
         assert_eq!(
