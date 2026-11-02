@@ -2280,8 +2280,9 @@ pub(crate) struct BlockBound {
     pub(crate) label: BoundLabel,
     pub(crate) make: Option<String>,
     pub(crate) add: Option<AddBound>,
-    /// Whether the method takes the other arguments of the call. The help says to fix them when
-    /// it does not, except for the `self` form.
+    /// Whether the method can take the other arguments of the call. The help says to fix them
+    /// when it cannot. In the `self` form, only the count, a label or a type argument decide it:
+    /// the checker types the first argument before it knows the method.
     pub(crate) takes: bool,
 }
 
@@ -4092,8 +4093,8 @@ impl From<DiagnosticKind> for Diagnostic {
                 // The label always has a `need`, so `Holds`, which reads the type, does not occur.
                 let d = d.with_label(bound.label.text("", &bound.interface));
                 let (call, fix) = match receiver {
-                    MethodReceiver::SelfValue { safe } => {
-                        (format!("call `{name}` as a method of `self`"), !safe)
+                    MethodReceiver::SelfValue { .. } => {
+                        (format!("call `{name}` as a method of `self`"), !bound.takes)
                     }
                     MethodReceiver::Optional { .. } => {
                         (format!("call `{name}` with `?.`"), !bound.takes)

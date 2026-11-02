@@ -210,7 +210,13 @@ impl Checker<'_> {
             .and_then(|ty| self.idiom_of(callee.name, ty));
         if let Some(Idiom::Method(func, owner)) = own {
             let takes = self.method_arguments(func, owner, args, first_checked);
-            let bound = self.method_block_bound(func, owner, name, takes);
+            // The first argument was checked without its parameter's type, so `takes` can be
+            // false for a correct call. The bound help says to fix the arguments only when the
+            // count, a label or a type argument makes the call wrong.
+            let certain = args.len() == self.signatures[func.0].params.len()
+                && unlabeled
+                && site.written.is_empty();
+            let bound = self.method_block_bound(func, owner, name, certain);
             self.report(DiagnosticKind::MethodAsFunction {
                 name: callee.name.to_string(),
                 at: callee.span,
