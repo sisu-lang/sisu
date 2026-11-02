@@ -2432,12 +2432,11 @@ impl Checker<'_> {
         if let Some(outer_hint) = outer_hint {
             self.body.hint_at = outer_hint;
         }
-        // A hint is the type of a sibling (the other side of `==`, the left side of `??`,
-        // another branch), not a type that the user wrote. So a misfit against it keeps its
-        // E0050 at the call, and the call does not hand it up (see `Misfit`): a report against
-        // a sibling would be false. A written context, and a sibling's type that comes as an
-        // expected type (arithmetic, ordering, later array elements), reports E0032 at the
-        // argument.
+        // A hint is the type of a sibling: the other side of `==`, the left side of `??`, or
+        // another branch. The user did not write it. By rule, a misfit under a hint keeps its
+        // E0050 at the call, and the call does not hand it up (see `Misfit`). A misfit under a
+        // written context gives E0032 at the argument. So does a misfit under a sibling's type
+        // that comes as an expected type: arithmetic, ordering, or a later array element.
         if hinted && self.misfit_type(&checked).is_some() {
             return checked;
         }

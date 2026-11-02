@@ -6030,7 +6030,8 @@ fn rejecting_the_parameters_of_failed_arguments_should_visit_each_type_once() {
     assert_near_linear(visits(10), visits(20), visits(30));
 }
 
-/// Each trailing argument misfits and names one of n parameters. Reading every origin for each
+/// The call is hinted, so each trailing argument that its context bound reads the origins of its
+/// parameter. Each argument misfits and names one of n parameters. Reading every origin for each
 /// would cost n².
 #[test]
 fn misfitting_arguments_should_read_the_origins_of_their_own_parameters_only() {
@@ -6224,10 +6225,9 @@ fn a_generic_call_that_cannot_meet_its_context_should_report_as_a_concrete_call_
 }
 
 /// An outer generic call binds its parameter to what an argument gives. It does not pass on a
-/// type that the argument found and could not meet its context with. When the context is a hint,
-/// the type of a sibling (the other side of `==`), a report against it would be false: the
-/// misfit keeps its E0050 at the inner call, once. When the user wrote the context (a `let`
-/// type), the argument is reported against it: one E0032 at the inner call.
+/// type that the argument found and could not meet its context with. A sibling, such as the other
+/// side of `==`, gives a hint. Under a hint, the misfit keeps one E0050 at the inner call. When
+/// the user wrote the context (a `let` type), the argument gets one E0032 at the inner call.
 #[test]
 fn a_misfit_under_an_outer_generic_call_should_give_a_true_diagnostic() {
     with_prelude();
