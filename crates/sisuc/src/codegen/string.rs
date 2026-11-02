@@ -79,8 +79,8 @@ impl<'ctx> Codegen<'ctx, '_> {
         global.as_pointer_value()
     }
 
-    /// The address of byte `offset` of the bytes that start at `bytes`: at most the capacity of
-    /// the block, which is one past its end at most.
+    /// The address of byte `offset` of the bytes that start at `bytes`, the `data` of a value or
+    /// the first byte of a block: it is within the block, one past its last byte at most.
     #[expect(
         unsafe_code,
         reason = "inkwell marks GEP unsafe for a wrong index list; this GEP takes one `i64` index"
@@ -92,7 +92,9 @@ impl<'ctx> Codegen<'ctx, '_> {
     ) -> PointerValue<'ctx> {
         // SAFETY: the one `i64` index steps over `i8`s, so the index list is valid for its
         // pointee type. `inbounds` is sound because the block holds `cap` bytes after the
-        // header and every caller passes an offset of at most `cap`, one past the end at most.
+        // header, and every caller passes a `bytes` and an `offset` whose sum stays in those
+        // bytes: `data + offset` is at most one past the last of them. The `data` of a value can
+        // be inside the block, so the bound is on that sum and not on `offset` alone.
         unsafe {
             self.builder
                 .build_in_bounds_gep(self.context.i8_type(), bytes, &[offset], "byte")

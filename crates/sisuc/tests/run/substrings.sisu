@@ -11,6 +11,12 @@ fn show(t: string?) {
     }
 }
 
+// A bound that writes a word when it runs, to show whether it ran.
+fn noisy(n: i64) -> i64 {
+    print("bound")
+    n
+}
+
 // `n` is not known at compile time: the string is a block built at run time, which the failed
 // `get` below holds at its last use.
 fn built(n: i64) -> string {
@@ -46,6 +52,16 @@ fn main() {
     show(s.get(-1..2))               // none: a negative start
     show(s.get(4..3))                // none: the start is after the end
     show(s.get(1..=1))               // none: `..=` checks the byte after its end
+
+    // `?.get` takes the range of the string that is there. A receiver that is `None` gives
+    // `None`, and its bounds do not run.
+    let some: string? = s
+    let nothing: string? = None
+    show(some?.get(1..3))            // some[ä]
+    show(some?.get(2..))             // none: the start is inside a character
+    show(some?.get(0..4)?.get(3..))  // some[s]
+    show(nothing?.get(noisy(1)..3))  // none, and no "bound" above it
+    show(some?.get(noisy(1)..3))     // bound, then some[ä]
 
     // `+=` onto a substring copies the substring, and the parent keeps its text (Goal 1.8).
     let mut t = s[..3]

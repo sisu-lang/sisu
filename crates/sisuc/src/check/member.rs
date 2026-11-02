@@ -2,6 +2,7 @@
 
 use rustc_hash::FxHashMap;
 
+use super::call::takes_range;
 use super::expr::{if_some, local, no_member, path};
 use super::extend::{holder_of, method_holder};
 use super::generic::{Site, named_params};
@@ -658,6 +659,15 @@ impl Checker<'_> {
             self.diagnostics.truncate(before);
         }
         types
+    }
+
+    /// `stray` for the arguments of `ty.name(..)`, where a string's `get` allows a range.
+    pub(super) fn stray_call(&mut self, ty: Option<Type>, name: Symbol, args: &[ast::Arg]) {
+        if takes_range(ty, name) {
+            self.get_arguments(args);
+        } else {
+            self.stray(args);
+        }
     }
 
     /// Checks the arguments of a call that cannot take them, for their own mistakes.

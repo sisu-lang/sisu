@@ -1,0 +1,14 @@
+error[E0062]: `o` may be `None`
+ --> E0062-string-get.sisu:3:11
+  |
+3 |     print(o.get(1..3))
+  |           ^
+  |
+  = help: to use the value only when it is present, unwrap it with `if let`
+help: if a `None` result is fine, use `?.`
+  |
+3 |     print(o?.get(1..3))
+  |            +
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0062

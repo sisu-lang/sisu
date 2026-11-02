@@ -1,0 +1,8 @@
+error[E0137]: `s.get` is not generic
+ --> E0137-string-get.sisu:5:11
+  |
+5 |     print(s.get<a, b>())
+  |           ^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0137

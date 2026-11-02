@@ -2488,8 +2488,8 @@ mod tests {
                     .and_then(|rest| rest.strip_suffix('"'))
                     .unwrap_or_else(|| panic!("a literal `t`: {text}"));
                 assert!(
-                    literal.chars().all(|c| "abzQ07".contains(c)),
-                    "an ASCII literal: {text}"
+                    literal.is_ascii() && !literal.contains('\\'),
+                    "an ASCII literal with no escape: {text}"
                 );
                 literals += 1;
                 for (form, seen) in forms.iter().zip(&mut seen) {

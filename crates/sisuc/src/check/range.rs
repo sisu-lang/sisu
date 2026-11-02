@@ -174,13 +174,14 @@ impl Checker<'_> {
     /// `receiver.get(args)` on a string, `receiver_expr` its source: the string's substring in a
     /// range written in the call, an `ast::ExprKind::Range`, as a `Slice` that is `safe` and has
     /// type `string?`. An argument that is no range is E0032; `..`, `..=` and `a..=` are E0023, as
-    /// they are in an index; a wrong count is E0053.
+    /// they are in an index; a wrong count is E0053; a label is E0055.
     pub(super) fn string_get(
         &mut self,
         span: Span,
         (receiver, receiver_expr): (Checked, &ast::Expr),
         args: &[ast::Arg],
     ) -> Checked {
+        let labeled = self.labels(args);
         let [arg] = args else {
             let d = DiagnosticKind::ArgumentCount {
                 name: self.method_name(Type::STRING, "get"),
@@ -189,14 +190,7 @@ impl Checker<'_> {
                 at: span,
             };
             self.diagnostics.push(d.into());
-            // A range is allowed here: only its bounds report.
-            for arg in args {
-                if let ExprKind::Range(range) = &arg.value.kind {
-                    self.bounds(range);
-                } else {
-                    drop(self.expr(&arg.value, Some(UNKNOWN)));
-                }
-            }
+            self.get_arguments(args);
             return Err(Poisoned::error());
         };
         let ExprKind::Range(range) = &arg.value.kind else {
@@ -213,7 +207,24 @@ impl Checker<'_> {
                 .push(self.index_outside(receiver_expr, range, true));
             return Err(Poisoned::error());
         }
-        self.slice_of(span, (receiver, Type::STRING), range, true)
+        let sliced = self.slice_of(span, (receiver, Type::STRING), range, true);
+        // A label is E0055; the call is poisoned, with its type, so that no error follows.
+        match sliced {
+            Ok(_) if labeled => Err(Poisoned::typed(Type::optional(Type::STRING))),
+            sliced => sliced,
+        }
+    }
+
+    /// Checks the arguments of a string's `get` that is not checked as a call, for their own
+    /// mistakes: a range is allowed there, so only its bounds report.
+    pub(super) fn get_arguments(&mut self, args: &[ast::Arg]) {
+        for arg in args {
+            if let ExprKind::Range(range) = &arg.value.kind {
+                self.bounds(range);
+            } else {
+                drop(self.expr(&arg.value, Some(UNKNOWN)));
+            }
+        }
     }
 
     /// E0062 for the optional array or string `base`, else E0068, of the range index of `base`,

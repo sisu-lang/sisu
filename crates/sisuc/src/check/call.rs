@@ -425,7 +425,9 @@ impl Checker<'_> {
             TypeKind::Array(_) => (array::METHODS.iter())
                 .find(|(method, _)| *method == name)
                 .map(|&(_, params)| params),
-            TypeKind::String => string::METHODS.contains(&name).then_some(0),
+            TypeKind::String => (string::METHODS.iter())
+                .find(|(method, _)| *method == name)
+                .map(|&(_, params)| params),
             TypeKind::F64 => number::method(ty, name).map(|(_, params)| params),
             _ => None,
         }
@@ -505,7 +507,7 @@ impl Checker<'_> {
             let mut call = |c: &mut Self, checked: Checked| -> Checked {
                 if !path && let Some((first, _)) = types.split_first() {
                     if let Some(value) = c.method_args(&checked, receiver, method, first, angles) {
-                        c.stray(args);
+                        c.stray_call(type_of(&checked), method.name, args);
                         return Err(value);
                     }
                     // A built-in's generated `to_string`, `eq` and `less` report their own list.
@@ -529,7 +531,7 @@ impl Checker<'_> {
                         && c.could_be_value(first)
                     {
                         deferred = false;
-                        c.stray(args);
+                        c.stray_call(type_of(&checked), method.name, args);
                         let at = receiver.span.to(method.span);
                         let text = c.source;
                         let compare = (arity == 0).then(|| {
@@ -579,10 +581,10 @@ impl Checker<'_> {
         let method = site.name;
         // The arguments are not part of the chain that an index ends; `expr` restores the flag.
         let indexed = std::mem::take(&mut self.body.indexed);
-        // A string's `get` takes its range itself. Any other method with a range argument is
-        // the stopgap until Task 5.
-        let string_get =
-            !safe && method.name.as_str() == "get" && type_of(&receiver) == Some(Type::STRING);
+        // A string's `get` takes its range itself, and so does the `get` of a `string?`, which
+        // is E0062 first. An array's `get` is the stopgap until Task 5; a range argument of any
+        // other method is E0023.
+        let string_get = takes_range(type_of(&receiver), method.name);
         if !string_get
             && args
                 .iter()
@@ -646,7 +648,7 @@ impl Checker<'_> {
             }
             None => {
                 self.labels(args);
-                self.stray(args);
+                self.stray_call(ty, method.name, args);
                 Err(Poisoned::error())
             }
         }
@@ -1168,4 +1170,11 @@ fn generated_display_only(ty: Type) -> bool {
             | TypeKind::Array(_)
             | TypeKind::Optional(_)
     )
+}
+
+/// Whether `ty.name(..)` takes a range as its argument: the `get` of a `string`, or of a `string?`,
+/// which reports that it may be `None` before it reads the range.
+pub(super) fn takes_range(ty: Option<Type>, name: Symbol) -> bool {
+    name.as_str() == "get"
+        && ty.is_some_and(|ty| ty == Type::STRING || ty == Type::optional(Type::STRING))
 }

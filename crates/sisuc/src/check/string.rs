@@ -19,8 +19,15 @@ use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
 
-/// The methods of a `string`: `get` takes a range, and the others no argument.
-pub(super) const METHODS: &[&str] = &["len", "chars", "bytes", "words", "get"];
+/// The methods of a `string` and the count of their arguments: `get` takes a range, and the
+/// others none.
+pub(super) const METHODS: &[(&str, usize)] = &[
+    ("len", 0),
+    ("chars", 0),
+    ("bytes", 0),
+    ("words", 0),
+    ("get", 1),
+];
 
 impl Checker<'_> {
     /// `l + r` over two `string`s, which `mismatched` says were reported against.
@@ -328,7 +335,12 @@ impl Checker<'_> {
                     return self.call_of_rejected_method(method, args);
                 }
                 let owner = self.type_name(Type::STRING);
-                let d = no_member(Definition::Method, owner, method, METHODS.iter().copied());
+                let d = no_member(
+                    Definition::Method,
+                    owner,
+                    method,
+                    METHODS.iter().map(|&(m, _)| m),
+                );
                 return self.rejected(d, args);
             }
         };

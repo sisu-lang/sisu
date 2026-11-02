@@ -153,10 +153,89 @@ fn string_get_with_a_range_should_be_an_optional_string() {
         ("inclusive no start", "s.get(..=1)"),
         ("of a substring", "s[1..].get(0..1)"),
     ] {
-        let src = main_with(&format!(
-            "let s = \"abc\"\n    let t: string? = {call}\n    print(t ?? \"\")"
-        ));
+        // `?? ""` is an error on a `string`, so the type is `string?`.
+        let src = main_with(&format!("let s = \"abc\"\n    print({call} ?? \"\")"));
         clean_row(row, &src);
+    }
+}
+
+/// GIVEN `get` with a range, through `?.` on a `string?` and on a field, and chained
+/// WHEN the program is checked
+/// THEN it checks clean, and its type is `string?`, as the `?.` of a method that gives a
+///      `string?` is
+#[test]
+fn string_get_through_safe_access_should_be_an_optional_string() {
+    let rows = [
+        ("both bounds", "o?.get(1..3)"),
+        ("inclusive", "o?.get(1..=2)"),
+        ("no end", "o?.get(1..)"),
+        ("no start", "o?.get(..2)"),
+        ("chained", "o?.get(0..2)?.get(0..1)"),
+        ("of a field", "c.o?.get(1..3)"),
+        ("of a field of an optional", "d?.o?.get(1..3)"),
+    ];
+    for (row, call) in rows {
+        let src = format!(
+            "class C {{ o: string? }}\nfn main() {{\n    let o: string? = \"abc\"\n    let c = C(o: o)\n    let d: C? = c\n    print({call} ?? \"\")\n}}"
+        );
+        clean_row(row, &src);
+    }
+}
+
+/// GIVEN `get` with a range on a `string?` with no `?.`, on a local and on a field
+/// WHEN the program is checked
+/// THEN it reports E0062 at the receiver, once, as `len()` does, and not E0023 at the range
+#[test]
+fn string_get_on_an_optional_string_should_be_e0062_at_the_receiver() {
+    let rows = [
+        ("local", "o.get(1..3)", (5, 11)),
+        ("field", "c.o.get(1..3)", (5, 11)),
+        ("len", "o.len()", (5, 11)),
+    ];
+    for (row, call, at) in rows {
+        let src = format!(
+            "class C {{ o: string? }}\nfn main() {{\n    let o: string? = \"abc\"\n    let c = C(o: o)\n    print({call})\n}}"
+        );
+        codes_row(row, &src, &[(Code::MayBeNone, at)]);
+    }
+}
+
+/// GIVEN a label on the argument of a string's `get`, with a range and with a value, and through
+///       `?.`
+/// WHEN the program is checked
+/// THEN it reports E0055 at the label, once, as any other method does, and nothing follows
+#[test]
+fn string_get_with_a_label_should_be_e0055_at_the_label() {
+    let rows = [
+        (
+            "range",
+            "s.get(nope: 0..1)",
+            vec![(Code::LabeledArgument, (4, 17))],
+        ),
+        (
+            "value",
+            "s.get(nope: 1)",
+            vec![(Code::LabeledArgument, (4, 17)), (Code::Mismatch, (4, 23))],
+        ),
+        (
+            "safe",
+            "o?.get(nope: 0..1)",
+            vec![(Code::LabeledArgument, (4, 18))],
+        ),
+        (
+            "two arguments",
+            "s.get(nope: 0..1, 2..3)",
+            vec![
+                (Code::ArgumentCount, (4, 11)),
+                (Code::LabeledArgument, (4, 17)),
+            ],
+        ),
+    ];
+    for (row, call, expected) in rows {
+        let src = main_with(&format!(
+            "let s = \"abc\"\n    let o: string? = s\n    print({call} ?? \"\")"
+        ));
+        codes_row(row, &src, &expected);
     }
 }
 
@@ -169,7 +248,11 @@ fn string_get_should_take_one_range() {
     let rows = [
         ("integer", "s.get(1)", (Code::Mismatch, (4, 17))),
         ("string", "s.get(\"a\")", (Code::Mismatch, (4, 17))),
-        ("range in a variable", "s.get(n)", (Code::Mismatch, (4, 17))),
+        (
+            "integer in a variable",
+            "s.get(n)",
+            (Code::Mismatch, (4, 17)),
+        ),
         ("no argument", "s.get()", (Code::ArgumentCount, (4, 11))),
         (
             "two arguments",

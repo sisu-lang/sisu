@@ -1,0 +1,4 @@
+fn main() {
+    let s = "abc"
+    print(s.get(nope: 0..1) ?? "none")
+}
