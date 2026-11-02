@@ -1,0 +1,42 @@
+error[E0070]: `has` is a method, not a function
+  --> E0070-bound-self-arguments.sisu:11:9
+   |
+11 |         has(y, y, y)
+   |         ^^^ `has` needs `T: Eq`
+   |
+   = help: add a bound: `T: Eq`, then call `has` as a method of `self` and fix its arguments
+
+error[E0070]: `has` is a method, not a function
+  --> E0070-bound-self-arguments.sisu:14:9
+   |
+14 |         has()
+   |         ^^^ `has` needs `T: Eq`
+   |
+   = help: add a bound: `T: Eq`, then call `has` as a method of `self` and fix its arguments
+
+error[E0070]: `has` is a method, not a function
+  --> E0070-bound-self-arguments.sisu:17:9
+   |
+17 |         has(y: y)
+   |         ^^^ `has` needs `T: Eq`
+   |
+   = help: add a bound: `T: Eq`, then call `has` as a method of `self` and fix its arguments
+
+error[E0070]: `has` is a method, not a function
+  --> E0070-bound-self-arguments.sisu:20:9
+   |
+20 |         has(y, 5)
+   |         ^^^ `has` needs `T: Eq`
+   |
+   = help: add a bound: `T: Eq`, then call `has` as a method of `self` and fix its arguments
+
+error[E0070]: `has` is a method, not a function
+  --> E0070-bound-self-arguments.sisu:23:9
+   |
+23 |         has<T>(y)
+   |         ^^^ `has` needs `T: Eq`
+   |
+   = help: add a bound: `T: Eq`, then call `has` as a method of `self` and fix its arguments
+
+sisu: 5 errors
+sisu: for more on a code, run `sisu explain <code>`: E0070

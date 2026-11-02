@@ -1,0 +1,26 @@
+class Box<T> {
+    x: T
+}
+extend<T: Eq> Box<T> {
+    fn has(self, y: T) -> bool {
+        self.x == y
+    }
+}
+extend<T> Box<T> {
+    fn many(self, y: T) -> bool {
+        has(y, y, y)
+    }
+    fn none(self) -> bool {
+        has()
+    }
+    fn label(self, y: T) -> bool {
+        has(y: y)
+    }
+    fn wrong(self, y: T) -> bool {
+        has(y, 5)
+    }
+    fn typed(self, y: T) -> bool {
+        has<T>(y)
+    }
+}
+fn main() {}

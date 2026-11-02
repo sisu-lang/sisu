@@ -1,0 +1,8 @@
+class Node {
+    v: i64
+}
+fn main() {
+    let n = Node(v: 1)
+    let nodes: [Node]? = [n]
+    print(contains(nodes, n))
+}

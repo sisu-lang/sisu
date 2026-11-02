@@ -1,0 +1,10 @@
+interface Holder<T: AnyObject> {}
+enum Color {
+    Red
+}
+class H: Holder<Color> {}
+fn keep<U: AnyObject>(u: U) {}
+fn main() {
+    keep(Color.Red)
+    keep([Color.Red])
+}

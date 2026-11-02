@@ -8,13 +8,13 @@ mod render;
 mod suggest;
 
 pub(crate) use registry::{
-    AddBound, Annotate, AnyFormKind, ArgumentsForm, BadRange, BlockNeed, BoundSite, BuiltIn,
-    CannotExtendForm, ClashForm, ClashKind, Code, ConformanceForm, Conversion, Definition,
-    DiagnosticKind, Earlier, ForeignPattern, ForeignRange, GuardHelp, Hop, Immutable, Implied,
-    InterfaceBodyForm, Join, LetField, Literal, LiteralKind, MainForm, MatchIdiomForm, MathFix,
-    Member, MethodReceiver, MismatchFix, MismatchSource, NanFix, NestingForm, NoOperatorForm,
-    NotAny, NotConformForm, NotInterface, Operand, Owner, Panic, Peel, PeelIs, PeelLayers,
-    PowerFix, PrecisionHelp, PreludeBound, PrintProblem, RETIRED, ReceiverArgument, SpecForm,
+    AddBound, Annotate, AnyFormKind, ArgumentsForm, BadRange, BlockBound, BlockNeed, BoundLabel,
+    BoundSite, BuiltIn, CannotExtendForm, ClashForm, ClashKind, Code, ConformanceForm, Conversion,
+    Definition, DiagnosticKind, Earlier, ForeignPattern, ForeignRange, GuardHelp, Hop, Immutable,
+    Implied, InterfaceBodyForm, Join, LetField, Literal, LiteralKind, MainForm, MatchIdiomForm,
+    MathFix, Member, MethodReceiver, MismatchFix, MismatchSource, NanFix, NestingForm,
+    NoOperatorForm, NotAny, NotConformForm, NotInterface, Operand, Owner, Panic, Peel, PeelIs,
+    PeelLayers, PowerFix, PrecisionHelp, PrintProblem, RETIRED, ReceiverArgument, SpecForm,
     SpecLimit, Spelled, TypedLiteral, Unbuilt, Ungenerated, UnknownForm, Unwrap, UnwrapHelp,
     UsedBy, VariantLabels, WideKind, invisible,
 };

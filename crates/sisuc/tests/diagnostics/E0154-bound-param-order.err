@@ -5,7 +5,9 @@ error[E0154]: `Mix<T>` does not conform to `Eq`
    |            -- required by this bound
 ...
 16 |     need(a)
-   |          ^
+   |          ^ `Mix<T>` holds `Node`, which does not conform to `Eq`
+   |
+   = help: make `Node` conform to `Eq`
 
 error[E0154]: `Flip<T>` does not conform to `Eq`
   --> E0154-bound-param-order.sisu:20:10
@@ -14,7 +16,9 @@ error[E0154]: `Flip<T>` does not conform to `Eq`
    |            -- required by this bound
 ...
 20 |     need(a)
-   |          ^
+   |          ^ `Flip<T>` holds `Node`, which does not conform to `Eq`
+   |
+   = help: make `Node` conform to `Eq`
 
 sisu: 2 errors
 sisu: for more on a code, run `sisu explain <code>`: E0154
