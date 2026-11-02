@@ -6243,6 +6243,10 @@ mod tests {
             4 * (MAX_DEPTH - 1) + 2,
             "the `+` that passed the limit"
         );
+        // An `else if` high on the path does not draw the report when a chain made it deep.
+        let mixed = format!("if a {{ }} else if a {{ {chain} }}");
+        let (start, end) = nesting_span(&mixed);
+        assert_eq!(&mixed[start..end], "+");
     }
 
     /// The links of one chain add across the operators, postfix steps and prefix operators on
