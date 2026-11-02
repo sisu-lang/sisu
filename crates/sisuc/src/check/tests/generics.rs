@@ -5826,6 +5826,32 @@ const FAILED_ARGUMENT_ROWS: &[PartialRow<'static>] = {
             "print(h(nope, Some(none())))",
             &[(BindingNotFound, "nope")],
         ),
+        // The declared type of the failed argument names the parameter inside an array, an
+        // optional, a class and an associated type.
+        (
+            "fn none<T>() -> T? { None }\n\
+             fn ho<T>(_a: [T], _b: T?) -> i64 { 1 }\n",
+            "print(ho(nope, none()))",
+            &[(BindingNotFound, "nope")],
+        ),
+        (
+            "fn none<T>() -> T? { None }\n\
+             fn hp<T>(_a: T?, _b: T?) -> i64 { 1 }\n",
+            "print(hp(nope, none()))",
+            &[(BindingNotFound, "nope")],
+        ),
+        (
+            "fn none<T>() -> T? { None }\n\
+             fn hc<T>(_a: Box<T, i64>, _b: T?) -> i64 { 1 }\n",
+            "print(hc(nope, none()))",
+            &[(BindingNotFound, "nope")],
+        ),
+        (
+            "fn none<T>() -> T? { None }\n\
+             fn hs<T: I>(_a: Box<T.Item, T>, _b: T?) -> i64 { 1 }\n",
+            "print(hs(nope, none()))",
+            &[(BindingNotFound, "nope")],
+        ),
         // A safe call gets the same context as a plain one.
         (
             "class O {\n    fn m<X>(self, x: X?) -> X? { x }\n}\n\
