@@ -1540,10 +1540,11 @@ impl Checker<'_> {
     }
 
     /// The report that `ty`, the type of the operand at `at`, has no `op`, which `interface` (`Eq`
-    /// or `Ord`) gives. It is E0139 when the part that fails (`failing_leaf`) is a type
-    /// parameter, with the help to bound it. Else it is `NoOperator`, which names the part, and
-    /// helps only when the part has no conformance at all, a class or an enum that does not write
-    /// one. A part with a conformance whose bound fails says which bound.
+    /// or `Ord`) gives. It is E0139, with the help to bound it, when the part to change is a type
+    /// parameter: either the part that fails (`failing_leaf`), or the part behind a written
+    /// conformance whose bound `add_bound` can write. Else it is `NoOperator`, which names the
+    /// part, and helps only when the part has no conformance at all, a class or an enum that does
+    /// not write one. A part with a conformance whose bound fails says which bound.
     pub(super) fn missing_operator(
         &mut self,
         at: Span,
