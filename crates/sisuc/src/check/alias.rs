@@ -560,6 +560,10 @@ impl Checker<'_> {
         if !self.use_checks(&resolved.checks, list, ty.bare)? {
             return None;
         }
+        // The body of the alias was resolved once, with no owner, so its `any` types name their
+        // interfaces for each use in a body. The type arguments record their own where they are
+        // written.
+        self.record_anys(resolved.body, ty.span);
         self.settle(built)
     }
 
