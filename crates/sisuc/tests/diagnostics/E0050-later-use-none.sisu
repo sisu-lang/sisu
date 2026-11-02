@@ -1,0 +1,83 @@
+fn take(p: [char]) -> i64 { p.len() }
+
+fn handle<T>(p: [T]) -> i64 { p.len() }
+
+fn first<T>(p: [T], q: T) -> T { q }
+
+fn failed_push() {
+    let mut failed = []
+    failed.push(nope)
+    print(failed.len())
+}
+
+fn failed_assign() {
+    let mut best = None
+    best = nope
+    print(best ?? "")
+}
+
+fn new_local() {
+    let again = []
+    let again = ["a"]
+    print(again.len())
+}
+
+fn failed_shadow() {
+    let shadow = []
+    let shadow = nope
+    print(take(shadow))
+}
+
+fn open_parameter() {
+    let open = []
+    print(handle(open))
+}
+
+fn open_argument() {
+    let beside = []
+    print(first(beside, 'a'))
+}
+
+fn pushed_never() {
+    let mut never_pushed = []
+    never_pushed.push(panic("x"))
+    print(never_pushed.len())
+}
+
+fn pushed_unit() {
+    let mut unit_pushed = []
+    unit_pushed.push(print(1))
+    print(unit_pushed.len())
+}
+
+fn assigned_never() {
+    let mut stopped = None
+    stopped = panic("x")
+    print(stopped ?? 0)
+}
+
+fn assigned_failed_typed() {
+    let c = true
+    let mut mixed = None
+    mixed = if c { 1 } else { nope }
+    print(mixed ?? 0)
+}
+
+fn index_write() {
+    let mut indexed = []
+    indexed[0] = 'a'
+    print(indexed.len())
+}
+
+fn else_initializer() {
+    let Some(v) = None else { return }
+    print(v)
+}
+
+fn else_scrutinee() {
+    let scrutinee = None
+    let Some(v) = scrutinee else { return }
+    print(v)
+}
+
+fn main() {}

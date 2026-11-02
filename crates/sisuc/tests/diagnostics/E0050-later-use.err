@@ -1,0 +1,146 @@
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-later-use.sisu:10:22
+   |
+10 |     let mut pushed = []
+   |                      ^^
+   |
+   = help: write the type: `let mut pushed: [char] = []`
+
+error[E0050]: cannot infer the type of `None`
+  --> E0050-later-use.sisu:13:20
+   |
+13 |     let mut best = None
+   |                    ^^^^
+   |
+   = help: write the type: `let mut best: string? = None`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-later-use.sisu:19:18
+   |
+19 |     let passed = []
+   |                  ^^
+   |
+   = help: write the type: `let passed: [char] = []`
+
+error[E0050]: cannot infer the type of `None`
+  --> E0050-later-use.sisu:24:17
+   |
+24 |     let found = None
+   |                 ^^^^
+   |
+   = help: write the type: `let found: string? = None`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-later-use.sisu:29:16
+   |
+29 |     let rest = []
+   |                ^^
+   |
+   = help: write the type: `let rest: [u8] = []`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-later-use.sisu:34:17
+   |
+34 |     let early = []
+   |                 ^^
+   |
+   = help: write the type: `let early: [char] = []`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-later-use.sisu:40:22
+   |
+40 |     let mut floats = []
+   |                      ^^
+   |
+   = help: write the type: `let mut floats: [f64] = []`
+
+error[E0050]: cannot infer the type of `None`
+  --> E0050-later-use.sisu:48:20
+   |
+48 |     let mut kept = None
+   |                    ^^^^
+   |
+   = help: write the type: `let mut kept: char? = None`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-later-use.sisu:54:21
+   |
+54 |     let mut outer = []
+   |                     ^^
+   |
+   = help: write the type: `let mut outer: [char] = []`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-later-use.sisu:64:21
+   |
+64 |     let mut typed = []
+   |                     ^^
+   |
+   = help: write the type: `let mut typed: [T] = []`
+
+error[E0050]: cannot infer the type of `None`
+  --> E0050-later-use.sisu:71:23
+   |
+71 |     let mut wrapped = None
+   |                       ^^^^
+   |
+   = help: write the type: `let mut wrapped: (any Display)? = None`
+
+error[E0050]: cannot infer the type of `None`
+  --> E0050-later-use.sisu:73:21
+   |
+73 |     let mut plain = None
+   |                     ^^^^
+   |
+   = help: write the type: `let mut plain: (any Display)? = None`
+
+error[E0050]: cannot infer the type of `None`
+  --> E0050-later-use.sisu:78:16
+   |
+78 |     let held = None
+   |                ^^^^
+   |
+   = help: write the type: `let held: (any Display)? = None`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-later-use.sisu:83:23
+   |
+83 |     let mut options = []
+   |                       ^^
+   |
+   = help: write the type: `let mut options: [i64?] = []`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-later-use.sisu:90:22
+   |
+90 |     let mut nested = []
+   |                      ^^
+   |
+   = help: write the type: `let mut nested: [[char]] = []`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-later-use.sisu:97:20
+   |
+97 |     let supplied = []
+   |                    ^^
+   |
+   = help: write the type: `let supplied: [char] = []`
+
+error[E0050]: cannot infer the type of `[]`
+   --> E0050-later-use.sisu:103:20
+    |
+103 |     let incoming = []
+    |                    ^^
+    |
+    = help: write the type: `let incoming: [char] = []`
+
+error[E0050]: cannot infer the type of `[]`
+   --> E0050-later-use.sisu:110:17
+    |
+110 |     let maybe = []
+    |                 ^^
+    |
+    = help: write the type: `let maybe: [char] = []`
+
+sisu: 18 errors
+sisu: for more on a code, run `sisu explain <code>`: E0050
