@@ -11,9 +11,9 @@ The design decisions behind Sisu, each written down as a short record with its r
   <section class="ph"><div class="w">
     <h1>Design decisions</h1>
     <p class="lede">Every design choice in Sisu is written down with its reasons, as a short decision record. This page lists them all.</p>
-    <p class="meta">{{adr-count}} records · at commit d23f67e</p>
+    <p class="meta">{{adr-count}} records · at commit 9beddce4</p>
   </div></section>
-  <!-- source: docs/adr/ (41 files, 0001 to 0041), README.md ("Read why a design choice was made") -->
+  <!-- source: docs/adr/ (42 files, 0001 to 0044), README.md ("Read why a design choice was made") -->
 
   <div class="w doc">
     <nav class="toc" aria-label="On this page"><h2>On this page</h2><ol>
@@ -60,8 +60,9 @@ The design decisions behind Sisu, each written down as a short record with its r
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0020-labels-belong-to-the-declaration.md"><span class="num">0020</span><b>Labels belong to the declaration</b><span>A variant labels every field or none, and is built with its labels in declared order.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0035-a-file-is-a-module-and-its-names-are-private-unless-pub.md"><span class="num">0035</span><b>A file is a module, and its names are private unless <code>pub</code><small>not built yet</small></b><span>The path of a file names its module, a folder's front door is <code>pkg.sisu</code>, an import binds only what it shows, and each item, field and method needs its own <code>pub</code>.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0039-sisu-has-no-function-overloading.md"><span class="num">0039</span><b>Sisu has no function overloading</b><span>One name in a scope names one function; a method that takes a closure gets its own name, such as <code>sum_of</code> beside <code>sum</code>.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0044-let-else-and-jumps-are-expressions.md"><span class="num">0044</span><b><code>let ... else</code>, and <code>return</code>, <code>break</code> and <code>continue</code> are expressions</b><span><code>let Circle(r) = s else { return 0.0 }</code> unwraps a pattern or leaves, and a jump has the type <code>never</code>, so <code>o ?? continue</code> works.</span></a></li>
       </ul>
-      <!-- source: docs/adr/0001-newline-terminated-statements.md, docs/adr/0028-a-semicolon-stands-in-for-a-line-break.md, docs/adr/0015-the-prelude-holds-only-what-almost-every-program-uses.md, docs/adr/0019-enums-are-values-named-through-their-enum.md, docs/adr/0020-labels-belong-to-the-declaration.md, docs/adr/0035-a-file-is-a-module-and-its-names-are-private-unless-pub.md, docs/adr/0039-sisu-has-no-function-overloading.md -->
+      <!-- source: docs/adr/0001-newline-terminated-statements.md, docs/adr/0028-a-semicolon-stands-in-for-a-line-break.md, docs/adr/0015-the-prelude-holds-only-what-almost-every-program-uses.md, docs/adr/0019-enums-are-values-named-through-their-enum.md, docs/adr/0020-labels-belong-to-the-declaration.md, docs/adr/0035-a-file-is-a-module-and-its-names-are-private-unless-pub.md, docs/adr/0039-sisu-has-no-function-overloading.md, docs/adr/0044-let-else-and-jumps-are-expressions.md -->
 
       <h2 id="change">Values and change</h2>
       <ul class="rows">

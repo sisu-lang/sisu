@@ -1,0 +1,51 @@
+// A borrowed binding at every exit.
+// GIVEN `fn f(o: string?)` with `for i in 0..3 { let s = o else { continue }; ... }` whose body
+//   then breaks, returns or finishes the turn
+// WHEN `f` runs with a value and with `None`, under Valgrind
+// THEN the borrow temporary and `s` end on `continue`, `break`, the next turn and the return,
+//   and on no other path twice
+//
+// Each function calls itself once before its loop and adds `depth` after the call, so the call
+// is not a tail call. `-O2` then keeps the calls from `main`, and the `string?` crosses a real
+// call into a borrowed parameter.
+// `main` takes its depth from its one argument, so that `-O2` cannot fold the calls.
+// args: x
+// o2-calls: main with_break 2
+// o2-calls: main with_return 2
+fn with_break(o: string?, depth: i64) -> i64 {
+    if depth > 0 {
+        return with_break(o, depth - 1) + depth
+    }
+    let mut n = 0
+    for i in 0..3 {
+        let s = o else { continue }
+        if i == 1 {
+            break
+        }
+        print(s) // a: only the call on `Some("a")` gets here
+        n += 1
+    }
+    n
+}
+
+fn with_return(o: string?, depth: i64) -> i64 {
+    if depth > 0 {
+        return with_return(o, depth - 1) + depth
+    }
+    for i in 0..3 {
+        let s = o else { continue }
+        if i == 1 {
+            return s.len()
+        }
+        print(s) // bc: only the call on `Some("bc")` gets here
+    }
+    0
+}
+
+fn main(args: [string]) {
+    let depth = args.len()
+    print(with_break(Some("a"), depth))   // 2: one turn prints `a` and counts, then `depth`
+    print(with_break(None, depth))        // 1
+    print(with_return(Some("bc"), depth)) // 3: the length 2, then `depth`
+    print(with_return(None, depth))       // 1
+}

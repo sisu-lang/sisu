@@ -1,0 +1,7 @@
+// GIVEN a `main` whose line 5 is `let z = 5 else { return }`, with the value at 5:13
+// WHEN `sisu check` runs on it
+// THEN it reports E0051 at 5:13 and the message names `let ... else`
+fn main() {
+    let z = 5 else { return }
+    print(z)
+}

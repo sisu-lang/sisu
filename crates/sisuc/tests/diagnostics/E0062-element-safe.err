@@ -4,7 +4,7 @@ error[E0062]: `m?.items` may be `None`
 3 |     m?.items[0] = 2
   |     ^^^^^^^^
   |
-  = help: unwrap `m` with `if let`
+  = help: unwrap `m` with `if let`, `let ... else` or `?? return`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0062

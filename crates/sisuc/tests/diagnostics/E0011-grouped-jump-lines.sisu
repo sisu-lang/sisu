@@ -1,0 +1,9 @@
+// GIVEN an `if` whose `(` ends line 5 and whose `return { true })` is on line 6, and no body
+// WHEN `sisu check` runs on it
+// THEN it reports E0011 at the end of line 6 (6:25), because the `)` ended the `return`
+fn f() {
+    if (
+        return { true })
+}
+
+fn main() {}

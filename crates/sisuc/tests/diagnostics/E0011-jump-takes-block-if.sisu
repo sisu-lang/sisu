@@ -1,0 +1,12 @@
+// GIVEN an `if` whose condition `o ?? return` is followed by the `{` of its body
+// WHEN `sisu check` runs on it
+// THEN it reports E0011 at the `return` (5:13), not after the body
+fn f(o: bool?) {
+    if o ?? return {
+        print(1)
+    }
+}
+
+fn main() {
+    f(None)
+}

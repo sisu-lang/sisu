@@ -1,0 +1,8 @@
+// GIVEN a `main` whose line 6 is `let v = o else { panik("x") }`, with `panik` at 6:22
+// WHEN `sisu check` runs on it
+// THEN it reports E0052 at 6:22 and no E0172
+fn main() {
+    let o: i64? = Some(1)
+    let v = o else { panik("x") }
+    print(v)
+}

@@ -320,6 +320,13 @@ pub(crate) struct Stmt {
     pub(crate) span: Span,
 }
 
+impl Stmt {
+    /// Whether this is an expression statement that is a jump (see `Expr::is_jump`).
+    pub(crate) fn is_jump(&self) -> bool {
+        matches!(&self.kind, StmtKind::Expr(e) if e.is_jump())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum StmtKind {
     Let {
@@ -328,6 +335,16 @@ pub(crate) enum StmtKind {
         name: Ident,
         ty: Option<TypeExpr>,
         init: Expr,
+    },
+    /// `let pattern = value else { else_block }`, or `let mut name = value else { ... }`.
+    /// `else_block` is `None` only after the parser reported `RefutablePattern`: the `let` has
+    /// no `else`.
+    LetElse {
+        /// The `mut` keyword of a `let mut`.
+        mutable: Option<Span>,
+        pattern: Pattern,
+        value: Expr,
+        else_block: Option<Block>,
     },
     /// `while cond { body }`; `keyword` is the `while` token's span. Each loop's `label` is its
     /// loop label.
@@ -352,15 +369,6 @@ pub(crate) enum StmtKind {
         name: Ident,
         source: ForSource,
         body: Block,
-    },
-    Return(Option<Expr>),
-    /// `break`, or `break value`, which only a `loop` takes.
-    Break {
-        label: Option<Ident>,
-        value: Option<Expr>,
-    },
-    Continue {
-        label: Option<Ident>,
     },
     /// `target` is a `Name` or a `Field`.
     Assign {
@@ -395,6 +403,17 @@ pub(crate) enum ForSource {
 pub(crate) struct Expr {
     pub(crate) kind: ExprKind,
     pub(crate) span: Span,
+}
+
+impl Expr {
+    /// Whether this is a `return`, a `break` or a `continue`: it has the type `never`, and a
+    /// block that ends in one has no value.
+    pub(crate) fn is_jump(&self) -> bool {
+        matches!(
+            self.kind,
+            ExprKind::Return { .. } | ExprKind::Break { .. } | ExprKind::Continue { .. }
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -525,6 +544,23 @@ pub(crate) enum ExprKind {
     },
     /// `{ ... }` where an expression belongs: its value is its last expression.
     Block(Block),
+    /// `return`, or `return value`. Like `Break` and `Continue`, it has the type `never`.
+    /// `keyword` is the `return` token's span, which parentheses around the expression do not
+    /// widen.
+    Return {
+        keyword: Span,
+        value: Option<Box<Expr>>,
+    },
+    /// `break`, or `break value`, which only a `loop` takes. `keyword` is the `break` token's
+    /// span, which parentheses around the expression do not widen.
+    Break {
+        label: Option<Ident>,
+        keyword: Span,
+        value: Option<Box<Expr>>,
+    },
+    Continue {
+        label: Option<Ident>,
+    },
 }
 
 /// One line of a `match`: `pattern ["if" guard] => body`. The guard covers every alternative of
@@ -1107,6 +1143,19 @@ impl fmt::Display for Stmt {
                 }
                 write!(f, " {init})")
             }
+            StmtKind::LetElse {
+                mutable,
+                pattern,
+                value,
+                else_block,
+            } => {
+                let mutable = if mutable.is_some() { "mut " } else { "" };
+                write!(f, "(let-else {mutable}{pattern} {value}")?;
+                match else_block {
+                    Some(block) => write!(f, " {block})"),
+                    None => f.write_str(")"),
+                }
+            }
             StmtKind::While {
                 label, cond, body, ..
             } => write!(f, "(while{} {cond} {body})", Label(label)),
@@ -1137,14 +1186,6 @@ impl fmt::Display for Stmt {
                     }
                 }
             }
-            StmtKind::Return(None) => f.write_str("(return)"),
-            StmtKind::Return(Some(e)) => write!(f, "(return {e})"),
-            StmtKind::Break { label, value: None } => write!(f, "(break{})", Label(label)),
-            StmtKind::Break {
-                label,
-                value: Some(value),
-            } => write!(f, "(break{} {value})", Label(label)),
-            StmtKind::Continue { label } => write!(f, "(continue{})", Label(label)),
             StmtKind::Assign { target, value } => write!(f, "(= {target} {value})"),
             StmtKind::CompoundAssign {
                 op, target, value, ..
@@ -1280,6 +1321,17 @@ impl fmt::Display for Expr {
                 f.write_str(")")
             }
             ExprKind::Loop { label, body, .. } => write!(f, "(loop{} {body})", Label(label)),
+            ExprKind::Return { value: None, .. } => f.write_str("(return)"),
+            ExprKind::Return { value: Some(e), .. } => write!(f, "(return {e})"),
+            ExprKind::Break {
+                label, value: None, ..
+            } => write!(f, "(break{})", Label(label)),
+            ExprKind::Break {
+                label,
+                value: Some(value),
+                ..
+            } => write!(f, "(break{} {value})", Label(label)),
+            ExprKind::Continue { label } => write!(f, "(continue{})", Label(label)),
             ExprKind::Block(block) => write!(f, "{block}"),
         }
     }
@@ -1385,7 +1437,7 @@ mod tests {
     }
 
     #[test]
-    fn display_every_node() {
+    fn display_should_print_every_node() {
         let cmp = expr(ExprKind::Compare {
             operands: vec![name("a"), name("b"), name("c")],
             ops: vec![CompareOp::Lt, CompareOp::Le],
@@ -1427,8 +1479,14 @@ mod tests {
                         op: UnaryOp::Not,
                         operand: Box::new(expr(ExprKind::Bool(true))),
                     })),
-                    then_block: block(vec![stmt(StmtKind::Return(None))]),
-                    else_block: Some(block(vec![stmt(StmtKind::Return(Some(cmp)))])),
+                    then_block: block(vec![stmt(StmtKind::Expr(expr(ExprKind::Return {
+                        keyword: Span::new(0, 0),
+                        value: None,
+                    })))]),
+                    else_block: Some(block(vec![stmt(StmtKind::Expr(expr(ExprKind::Return {
+                        keyword: Span::new(0, 0),
+                        value: Some(Box::new(cmp)),
+                    })))])),
                 }))),
             ]),
         );

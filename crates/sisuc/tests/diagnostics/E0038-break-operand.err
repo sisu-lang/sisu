@@ -1,0 +1,8 @@
+error[E0038]: `break` outside a loop
+ --> E0038-break-operand.sisu:5:14
+  |
+5 |     let y = -break
+  |              ^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0038

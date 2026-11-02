@@ -691,3 +691,26 @@ fn size(s: Shape?) -> i64 {
     }
 }
 ```
+
+### let ... else
+
+A `let ... else` takes the patterns of an `if let` too ([let ... else](statements.md#let--else)). The names of the pattern are in scope after the statement, and the `else` block leaves. Alternatives bind the same names in each of them.
+
+```sisu
+enum Shape {
+    Circle(f64)
+    Square(f64)
+    Rect(f64, f64)
+}
+
+fn side(s: Shape) -> f64 {
+    let Circle(r) | Square(r) = s else { return 0.0 }
+    r
+}
+
+fn main() {
+    print(side(Shape.Circle(2.0)))      // 2.0
+    print(side(Shape.Square(3.0)))      // 3.0
+    print(side(Shape.Rect(1.0, 1.0)))   // 0.0
+}
+```

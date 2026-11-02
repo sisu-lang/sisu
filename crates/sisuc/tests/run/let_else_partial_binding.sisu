@@ -1,0 +1,46 @@
+// A pattern whose test borrows a name and then fails.
+// GIVEN `enum P { Pair(string, i64); No }` and `let Pair(s, 1) = p else { return 0 }`, with `p`
+//   a parameter and then a local
+// WHEN it runs on `P.Pair("x", 2)`, which borrows `s` and fails on `1`, on `P.No`, which fails
+//   on the tag before any binding, and on `P.Pair("yy", 1)`, the pass edge
+// THEN each fail edge ends the binding and runs the else block, the pass edge reads `s`, and
+//   Valgrind reports no leak and no error
+//
+// `from_param` calls itself once first and adds `depth` after the call, so the call is not a
+// tail call. `-O2` then keeps the calls from `main`, and the enum crosses a real call into a
+// borrowed parameter. `main` takes its depth from its one argument, so that `-O2` cannot fold
+// the calls.
+// args: x
+// o2-calls: main from_param 3
+enum P {
+    Pair(string, i64)
+    No
+}
+
+fn from_param(p: P, depth: i64) -> i64 {
+    if depth > 0 {
+        return from_param(p, depth - 1) + depth
+    }
+    let Pair(s, 1) = p else { return 0 }
+    s.len()
+}
+
+fn from_local(i: i64) -> i64 {
+    let p = match i {
+        0 => P.Pair("x", 2)
+        1 => P.No
+        _ => P.Pair("yy", 1)
+    }
+    let Pair(s, 1) = p else { return 0 }
+    s.len()
+}
+
+fn main(args: [string]) {
+    let depth = args.len()
+    print(from_param(P.Pair("x", 2), depth))  // 1: the test fails on `1`, then `depth`
+    print(from_param(P.No, depth))            // 1: the test fails on the tag, then `depth`
+    print(from_param(P.Pair("yy", 1), depth)) // 3: the length 2, then `depth`
+    print(from_local(0))                      // 0
+    print(from_local(1))                      // 0
+    print(from_local(2))                      // 2
+}

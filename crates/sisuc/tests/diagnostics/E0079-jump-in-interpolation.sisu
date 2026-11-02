@@ -1,0 +1,10 @@
+// GIVEN a `match` whose scrutinee is a string that interpolates `return { _ }`
+// WHEN `sisu check` runs on it
+// THEN it reports E0079 at the `_` (5:22), as the same string does in `print`, not a jump that takes the body
+fn f() {
+    match "{return { _ }}" {
+        _ => print(1)
+    }
+}
+
+fn main() {}

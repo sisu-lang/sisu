@@ -1,0 +1,8 @@
+error[E0011]: expected an expression, found `}`
+  --> E0011-let-else-value-braces.sisu:13:5
+   |
+13 |     } else { return }
+   |     ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011

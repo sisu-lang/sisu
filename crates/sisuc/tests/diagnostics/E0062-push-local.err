@@ -4,7 +4,7 @@ error[E0062]: `xs` may be `None`
 3 |     xs.push(2)
   |     ^^
   |
-  = help: to use the value only when it is present, unwrap it with `if let`
+  = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
 help: to do nothing when it is `None`, use `?.`
   |
 3 |     xs?.push(2)

@@ -1,0 +1,86 @@
+// let-else in an inner block, and a write after it.
+// GIVEN a let-else on a `string?` inside a value block, inside an `if` branch and inside a
+//   `match` arm, each followed by a read of the optional after the block, and a `let mut`
+//   optional and an array element that change after the let-else that read them
+// WHEN the program runs under Valgrind
+// THEN each name ends where its block ends, not where the function ends, and a change after the
+//   let-else does not change the name
+//
+// Each function that takes the optional calls itself once first and adds `depth` after the
+// call, so the call is not a tail call. `-O2` then keeps the calls from `main`, and the
+// `string?` crosses a real call into a borrowed parameter. `main` takes its depth from its one
+// argument, so that `-O2` cannot fold the calls.
+// args: x
+// o2-calls: main in_value 2
+// o2-calls: main in_if 3
+// o2-calls: main in_match 3
+fn in_value(o: string?, depth: i64) -> i64 {
+    if depth > 0 {
+        return in_value(o, depth - 1) + depth
+    }
+    let x = {
+        let v = o else { return 0 }
+        v.len() + 1
+    }
+    print(o ?? "none") // the optional, after the block
+    x
+}
+
+fn in_if(o: string?, c: bool, depth: i64) -> i64 {
+    if depth > 0 {
+        return in_if(o, c, depth - 1) + depth
+    }
+    let mut n = 0
+    if c {
+        let v = o else { return 0 }
+        n = v.len()
+    }
+    print(o ?? "none") // the optional, after the `if`
+    n
+}
+
+fn in_match(o: string?, k: i64, depth: i64) -> i64 {
+    if depth > 0 {
+        return in_match(o, k, depth - 1) + depth
+    }
+    let n = match k {
+        0 => {
+            let v = o else { return -1 }
+            v.len()
+        }
+        _ => 0
+    }
+    print(o ?? "none") // the optional, after the `match`
+    n
+}
+
+fn written() {
+    let mut o: string? = Some("a")
+    let s = o else { return }
+    o = None
+    print(s)           // a: the change did not reach the name
+    print(o ?? "none") // none
+}
+
+fn pushed() {
+    let mut a: [string?] = [Some("b")]
+    let s = a[0] else { return }
+    a.push(None)
+    a[0] = None
+    print(s)     // b: the changes did not reach the name
+    print(a.len()) // 2
+}
+
+fn main(args: [string]) {
+    let depth = args.len()
+    print(in_value(Some("ab"), depth))      // ab, then 4: the length plus 1, then `depth`
+    print(in_value(None, depth))            // 1: the else block returns 0, then `depth`
+    print(in_if(Some("abc"), true, depth))  // abc, then 4: the length 3, then `depth`
+    print(in_if(Some("abc"), false, depth)) // abc, then 1
+    print(in_if(None, true, depth))         // 1
+    print(in_match(Some("abcd"), 0, depth)) // abcd, then 5: the length 4, then `depth`
+    print(in_match(Some("abcd"), 1, depth)) // abcd, then 1
+    print(in_match(None, 0, depth))         // 0: the else block returns -1, then `depth`
+    written()
+    pushed()
+}
