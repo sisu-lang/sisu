@@ -5,6 +5,7 @@ use crate::front_end::{PRELUDE_SOURCE, prelude_program};
 use crate::mir::tests::{assert_near_linear, assert_near_linear_for};
 use crate::parser::parse_ok;
 use crate::source::line_col;
+use crate::tir::EXIT_STEPS;
 
 mod aliases;
 mod any;
@@ -1962,6 +1963,51 @@ fn class_cycle_search_reads_linearly() {
         FIELD_READS.get()
     };
     assert_near_linear(reads(100), reads(200), reads(300));
+}
+
+/// A nested operand sets its exit flag once, from the flags of its direct children. A walk of
+/// the whole operand at each level reads a nest of depth `n` in n^2 steps. Each row nests an
+/// operand that a later operand must not make `spill_before` walk again: an array literal, a call
+/// whose first argument holds an array, and a construction whose first field holds an array.
+#[test]
+fn nested_operands_should_set_their_exit_flags_in_linear_steps() {
+    type Nest = fn(usize) -> String;
+    let rows: [(&str, Nest); 3] = [
+        ("array literal", |n| {
+            format!(
+                "fn main() {{\n    let x = {}1{}\n    print(x.len())\n}}",
+                "[".repeat(n),
+                "]".repeat(n)
+            )
+        }),
+        ("call", |n| {
+            format!(
+                "fn g(a: [i64], b: [i64]) -> [i64] {{ b }}\nfn main() {{\n    print({}[1]{}.len())\n}}",
+                "g([1], ".repeat(n),
+                ")".repeat(n)
+            )
+        }),
+        ("construction", |n| {
+            format!(
+                "class D {{\n    a: [i64]\n    c: D?\n}}\nfn main() {{\n    let x = {}None{}\n    print(x.c == None)\n}}",
+                "D(a: [1], c: ".repeat(n),
+                ")".repeat(n)
+            )
+        }),
+    ];
+    crate::on_compiler_stack(|| {
+        for (row, source) in rows {
+            let steps = |n: usize| {
+                EXIT_STEPS.set(0);
+                assert!(
+                    checked(&source(n)).0.is_some(),
+                    "{row}: depth {n} should check"
+                );
+                EXIT_STEPS.get()
+            };
+            assert_near_linear_for(&format!("{row}: "), steps(40), steps(80), steps(120));
+        }
+    });
 }
 
 /// A class of `n` fields and a generic method `g`. Its `main` makes one object `c`. Then it runs

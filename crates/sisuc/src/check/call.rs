@@ -901,11 +901,7 @@ impl Checker<'_> {
         kind: impl FnOnce(Vec<tir::Expr>) -> tir::ExprKind,
     ) -> tir::Expr {
         let (stmts, operands) = self.spill(operands);
-        let node = tir::Expr {
-            kind: kind(operands),
-            ty,
-            span,
-        };
+        let node = tir::Expr::new(kind(operands), ty, span);
         if stmts.is_empty() {
             return node;
         }

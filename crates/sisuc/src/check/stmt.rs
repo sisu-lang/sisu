@@ -427,11 +427,11 @@ impl Checker<'_> {
                 if endless {
                     // A bare `Loop`: `else Break` would give MIR an exit the checker denies.
                     let ty = if broken { Type::UNIT } else { Type::NEVER };
-                    return Ok(tir::Stmt::Expr(tir::Expr {
-                        kind: ExprKind::Loop(body),
+                    return Ok(tir::Stmt::Expr(tir::Expr::new(
+                        ExprKind::Loop(body),
                         ty,
-                        span: stmt.span,
-                    }));
+                        stmt.span,
+                    )));
                 }
                 // The checker does not see a parser error that the parser kept the loop with.
                 if !nan && !starts_in(&self.parse_errors, cond_ast.span.to(stmt.span)) {
@@ -528,7 +528,7 @@ impl Checker<'_> {
         source: &ast::ForSource,
         body: &ast::Block,
     ) -> Result<tir::Stmt, Poisoned> {
-        let expr = |kind, ty| tir::Expr { kind, ty, span };
+        let expr = |kind, ty| tir::Expr::new(kind, ty, span);
         let (header, bound) = self.in_header(keyword, label.cloned(), |c| match source {
             ast::ForSource::Array(e) => c.for_array(span, e),
             ast::ForSource::Range {
@@ -652,7 +652,7 @@ impl Checker<'_> {
         let (Ok(checked), Some(element)) = (checked, element) else {
             return (None, element);
         };
-        let expr = |kind, ty| tir::Expr { kind, ty, span };
+        let expr = |kind, ty| tir::Expr::new(kind, ty, span);
         let read = || match array {
             Some(array) => local(array, ty, e.span),
             None => reread(&checked),
@@ -736,11 +736,7 @@ impl Checker<'_> {
             };
             stmts.push(tir::Stmt::Let {
                 local: go,
-                init: tir::Expr {
-                    kind: some,
-                    ty: Type::BOOL,
-                    span,
-                },
+                init: tir::Expr::new(some, Type::BOOL, span),
             });
         }
         let item = local(counter, Type::I64, span);
@@ -785,11 +781,11 @@ impl Checker<'_> {
                 Some(Box::new(value))
             }
         };
-        Ok(tir::Stmt::Expr(tir::Expr {
-            kind: ExprKind::Return(value),
-            ty: Type::NEVER,
+        Ok(tir::Stmt::Expr(tir::Expr::new(
+            ExprKind::Return(value),
+            Type::NEVER,
             span,
-        }))
+        )))
     }
 
     /// `f`, inside the header of the loop whose keyword is `keyword` and loop label `label`.
@@ -1021,11 +1017,7 @@ impl Checker<'_> {
         } else {
             ExprKind::Continue { depth }
         };
-        Ok(tir::Stmt::Expr(tir::Expr {
-            kind,
-            ty: Type::NEVER,
-            span,
-        }))
+        Ok(tir::Stmt::Expr(tir::Expr::new(kind, Type::NEVER, span)))
     }
 
     /// The loop the jump at `span` acts on, the one with its loop `label` or else the innermost:
@@ -1126,11 +1118,7 @@ impl Checker<'_> {
         }
         let ty = frame.loop_type();
         match (checked, ty) {
-            (Ok(body), Some(ty)) => Ok(tir::Expr {
-                kind: ExprKind::Loop(body),
-                ty,
-                span,
-            }),
+            (Ok(body), Some(ty)) => Ok(tir::Expr::new(ExprKind::Loop(body), ty, span)),
             (_, ty) => Err(Poisoned::of(ty)),
         }
     }
@@ -1732,11 +1720,7 @@ fn reread(e: &tir::Expr) -> tir::Expr {
         },
         _ => unreachable!("a fixed place should be a local or a field of one"),
     };
-    tir::Expr {
-        kind,
-        ty: e.ty,
-        span: e.span,
-    }
+    tir::Expr::new(kind, e.ty, e.span)
 }
 
 /// Wraps into `ty` each value of another type, `never` aside, that a `break` in `e` gives the
@@ -1761,11 +1745,7 @@ fn wrap_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool) {
         && value.ty != ty
         && value.ty != Type::NEVER
     {
-        let placeholder = tir::Expr {
-            kind: ExprKind::None,
-            ty,
-            span: value.span,
-        };
+        let placeholder = tir::Expr::new(ExprKind::None, ty, value.span);
         let payload = std::mem::replace(&mut **value, placeholder);
         **value = widen(payload, ty);
     }
@@ -1789,7 +1769,7 @@ fn lower_loop(
     span: Span,
     branch: impl FnOnce(tir::Block, tir::Block) -> ExprKind,
 ) -> tir::Expr {
-    let expr = |kind, ty| tir::Expr { kind, ty, span };
+    let expr = |kind, ty| tir::Expr::new(kind, ty, span);
     let exit = tir::Block {
         stmts: vec![tir::Stmt::Expr(expr(
             ExprKind::Break {

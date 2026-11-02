@@ -40,15 +40,15 @@ impl Checker<'_> {
             ty => ty,
         };
         match (cond, then, other.transpose(), ty) {
-            (Ok(cond), Ok(then_block), Ok(else_block), Ok(ty)) => Ok(tir::Expr {
-                kind: tir::ExprKind::If {
+            (Ok(cond), Ok(then_block), Ok(else_block), Ok(ty)) => Ok(tir::Expr::new(
+                tir::ExprKind::If {
                     cond: Box::new(cond),
                     then_block,
                     else_block,
                 },
                 ty,
                 span,
-            }),
+            )),
             (.., ty) => Err(ty.map_or_else(|poisoned| poisoned, Poisoned::typed)),
         }
     }
@@ -112,7 +112,7 @@ impl Checker<'_> {
             ) => self.if_let_match(scrutinee, pattern, then_block, else_block),
             _ => return Err(Poisoned::typed(ty)),
         };
-        Ok(tir::Expr { kind, ty, span })
+        Ok(tir::Expr::new(kind, ty, span))
     }
 
     /// The blocks of the `if` or `if let` at `span`, `then` checking the first, and their type:
