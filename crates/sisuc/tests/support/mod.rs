@@ -363,7 +363,7 @@ const MONO_CODES: [&str; 1] = ["E0163"];
 
 /// The arguments of `sisu` that report the diagnostics of a case of `code`, before `--format`
 /// and the file.
-fn report_args(code: &str) -> &'static [&'static str] {
+pub(crate) fn report_args(code: &str) -> &'static [&'static str] {
     if MONO_CODES.contains(&code) {
         &["build", "--emit", "mir"]
     } else {

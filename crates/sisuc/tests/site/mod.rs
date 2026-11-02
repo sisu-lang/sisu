@@ -40,7 +40,7 @@ pub(crate) fn explanation(path: &Path, bless: bool) {
 /// block between the `## Broken` line and the next `## ` line, read as `sisu_block` in
 /// `src/diagnostic/explanations.rs` reads it, so the two cannot disagree. E0072's is its text
 /// saved in Latin-1, one byte per char, as that explanation says; every other is UTF-8.
-fn broken_program(code: &str, markdown: &str) -> Vec<u8> {
+pub(crate) fn broken_program(code: &str, markdown: &str) -> Vec<u8> {
     let file = format!("docs/diagnostics/{code}.md");
     let (_, rest) = markdown
         .split_once("\n## Broken\n")
