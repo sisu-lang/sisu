@@ -12,4 +12,8 @@ exclude_re = [
     # `after > b` in `starts_item_line`: a break is `\n`, which never starts a keyword, so `>=` gives
     # the same count.
     "replace > with >= in Parser<'a>::starts_item_line",
+    # `self.pick(2) == 1` in `Gen::let_else`: `pick(2)` gives 0 or 1 with equal chance, so `!=` only
+    # swaps which draw takes the enum form. Both forms still come at the same rate, and no test
+    # reads the text of a generated program.
+    "replace == with != in Gen<'_>::let_else",
 ]
