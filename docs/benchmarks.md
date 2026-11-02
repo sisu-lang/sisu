@@ -549,7 +549,12 @@ flag. The checker sets it once, when it makes the expression. So array literal
 depth (#344), type depth, method chain, generic call depth (#366) and string
 call depth are linear in `check`. The checker also keeps the answer of
 `int_literal` for each operator expression of a body. So expression depth,
-float left and string left are linear in `check` (#367). The nightly job runs
+float left and string left are linear in `check` (#367). Array literal depth in
+`codegen` is linear by the rule, but its ratios rise to about 2.26. The cause is
+known and has no row: an array of depth d has d types, and the name of each
+release and drop function spells its whole type, such as
+`sisu_rc.release.[[[i64]]]`. So the text of the names grows as d². The
+nightly job runs
 the sweep (`docs/development.md`, "The nightly compile-speed job").
 
 ## Benchmarks for CodSpeed only
