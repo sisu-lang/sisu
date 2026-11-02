@@ -789,6 +789,29 @@ fn let_else_borrow_should_end_at_the_end_of_the_block() {
     assert_eq!(all_ends(&f, optional), 2, "{f:?}");
 }
 
+/// GIVEN `enum P { Pair(string, i64); No }` and `fn f(p: P) -> i64` whose body is
+///   `let Pair(s, 1) = p else { return 0 }` and then `s.len()`
+/// WHEN it is lowered
+/// THEN the path through the `else` block ends `s` once, and the path that binds it ends it
+///   once, at the end of the function
+///
+/// The fail edge ends the pattern's names and closes the guards before the `else` block runs, so
+/// a jump in the block has no guard binding left to end a second time.
+#[test]
+fn let_else_match_should_end_each_binding_once_on_the_else_path() {
+    let src = "enum P {\n    Pair(string, i64)\n    No\n}\n\
+               fn f(p: P) -> i64 {\n    let Pair(s, 1) = p else { return 0 }\n    s.len()\n}";
+    has(&built(src), "f", &["fn f(p#0: borrow P"]);
+    let f = built_function(src, "f");
+    let s = named(&f, "s");
+    let returns = blocks_where(&f, |term| matches!(term, Terminator::Return(_)));
+    assert_eq!(returns.len(), 2, "{f:?}");
+    for &block in &returns {
+        assert_eq!(ends(&f, block, s), 1, "bb{}: {f:?}", block.0);
+    }
+    assert_eq!(all_ends(&f, s), 2, "{f:?}");
+}
+
 /// GIVEN `fn g(x: string)` and `fn f(o: string?) -> i64 { let s = o else { return 0 }; g(s); 1 }`
 /// WHEN `f` is lowered and then passed through the passes
 /// THEN the lowered operand of `g`'s argument is `Operand::Guarded(s)`, and `f`'s parameter is

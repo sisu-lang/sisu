@@ -1,4 +1,4 @@
-// S6. let mut binds a name that can change.
+// let mut binds a name that can change.
 // GIVEN a `main` with `let o: i64? = Some(1)`, then `let mut n = o else { return }`, then
 //   `n = n + 1` and `print(n)`
 // WHEN the program runs
@@ -7,5 +7,5 @@ fn main() {
     let o: i64? = Some(1)
     let mut n = o else { return }
     n = n + 1
-    print(n)
+    print(n) // 2
 }

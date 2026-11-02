@@ -120,8 +120,9 @@ struct Lowering<'a> {
     frames: Vec<Frame>,
     /// Where the function's body mentions each local, which the pin rule asks.
     mentions: Mentions,
-    /// Each binding of a `match` or a borrowed `if let`, and the local it borrows from; and a
-    /// borrowed `if let`'s optional, and the root of the place it borrows.
+    /// Each binding of a `match`, of a borrowed `if let` or of a `let ... else`, and the local it
+    /// borrows from; and the optional of a borrowed `if let` or of a borrowed `let ... else`, and
+    /// the root of the place it borrows.
     owners: FxHashMap<LocalId, LocalId>,
     /// The bindings of the arms whose test or guard is being lowered, outermost first: they
     /// are borrowed, so an edge that leaves the test or guard ends them.

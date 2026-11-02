@@ -1,4 +1,4 @@
-// S4, the `panic` row: a call of `panic` leaves.
+// A call of `panic` leaves the else block of a let-else.
 // GIVEN a `for o in [Some(1), None, Some(3)]` loop whose body is `let v = o else { panic("none") }`
 //   and then `print(v)`
 // WHEN the program runs
@@ -6,6 +6,6 @@
 fn main() {
     for o in [Some(1), None, Some(3)] {
         let v = o else { panic("none") }
-        print(v)
+        print(v) // 1, then the panic at the `None`
     }
 }

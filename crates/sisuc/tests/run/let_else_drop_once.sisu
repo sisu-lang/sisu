@@ -1,22 +1,31 @@
-// S12. A name bound by let ... else is dropped once.
+// A name bound by let ... else is dropped once.
 // GIVEN a class `Node` and a function that takes a `Node?`, binds it with
 //   `let n = o else { return 0 }` and reads `n.value`, called in a loop of 1000 turns
 // WHEN the program runs under Valgrind
 // THEN Valgrind reports no leak and no error
+//
+// `read` calls itself once before the let-else and adds `depth` after the call, so the call is
+// not a tail call. `-O2` then keeps the call from `main`, and the `Node?` crosses a real call.
+// `main` takes its depth from its one argument, so that `-O2` cannot fold the calls.
+// args: x
+// o2-calls: main read 2
 class Node {
     value: i64
 }
 
-fn read(o: Node?) -> i64 {
+fn read(o: Node?, depth: i64) -> i64 {
+    if depth > 0 {
+        return read(o, depth - 1) + depth
+    }
     let n = o else { return 0 }
     n.value
 }
 
-fn main() {
+fn main(args: [string]) {
     let mut total = 0
     for i in 0..1000 {
         let o: Node? = if i % 2 == 0 { Some(Node(value: i)) } else { None }
-        total += read(o)
+        total += read(o, args.len())
     }
-    print(total) // 0 + 2 + ... + 998
+    print(total) // 250500: (0 + 2 + ... + 998) + 1 for each of 1000 turns
 }

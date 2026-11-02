@@ -1,18 +1,32 @@
-// S21. let mut over a borrowed counted value owns its copy.
+// let mut over a borrowed counted value owns its copy.
 // GIVEN a function `f(o: <type>) -> <type2>` whose body is `let mut n = o else { return <empty> }`,
 //   then a change, then `n`, for `string?` and for `[i64]?`
 // AND a `main` that sets `a` to `Some(..)`, prints `f(a)` and then prints `a ?? <empty>`
 // WHEN the program runs under Valgrind
-// THEN it prints `hi!` then `hi`, and `[1, 2]` then `[1]`, and Valgrind reports no leak and no
+// THEN it prints the changed value, then the original, and Valgrind reports no leak and no
 //   error: an assignment does not release the caller's value, and a change does not write into
 //   the caller's array
-fn grow(o: string?) -> string {
+//
+// Each function calls itself once before the let-else, and appends after the call, so the call
+// is not a tail call. `-O2` then keeps the call from `main`, and the caller's value crosses a
+// real call into a borrowed parameter.
+// o2-calls: main grow 1
+// o2-calls: main pushed 1
+fn grow(o: string?, depth: i64) -> string {
+    if depth > 0 {
+        return grow(o, depth - 1) + "?"
+    }
     let mut n = o else { return "" }
     n = n + "!"
     n
 }
 
-fn pushed(o: [i64]?) -> [i64] {
+fn pushed(o: [i64]?, depth: i64) -> [i64] {
+    if depth > 0 {
+        let mut inner = pushed(o, depth - 1)
+        inner.push(3)
+        return inner
+    }
     let mut n = o else { return [] }
     n.push(2)
     n
@@ -20,9 +34,9 @@ fn pushed(o: [i64]?) -> [i64] {
 
 fn main() {
     let a: string? = Some("hi")
-    print(grow(a))
-    print(a ?? "")
+    print(grow(a, 1))   // hi!?
+    print(a ?? "")      // hi
     let b: [i64]? = Some([1])
-    print(pushed(b))
-    print(b ?? [])
+    print(pushed(b, 1)) // [1, 2, 3]
+    print(b ?? [])      // [1]
 }

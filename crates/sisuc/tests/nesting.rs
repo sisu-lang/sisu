@@ -685,16 +685,21 @@ fn comparison_chain_of_ten_thousand_operands_should_compile_as_a_shallow_tree() 
 /// GIVEN a function `f(o: i64?) -> i64` with 10 000 lines `let v<i> = o else { return 0 }` and
 /// then `v0`
 /// WHEN `build` runs on it and the program prints `f(Some(1))`
-/// THEN it builds and the program prints `1`
+/// THEN it builds with no output and the program prints `1`
 ///
-/// S13. The statement does not nest the rest of the block, so a long chain is a flat list. The
-/// names that no line reads give warnings, which the test does not look at.
+/// The statement does not nest the rest of the block, so a long chain is a flat list. The names
+/// that nothing reads start with `_`, so the build gives no warning.
 #[test]
 fn let_else_chain_of_ten_thousand_lines_should_build_and_run() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let mut lines = String::new();
     for i in 0..10_000 {
-        writeln!(lines, "    let v{i} = o else {{ return 0 }}").expect("writes to a string");
+        let name = if i == 0 {
+            "v0".to_owned()
+        } else {
+            format!("_v{i}")
+        };
+        writeln!(lines, "    let {name} = o else {{ return 0 }}").expect("writes to a string");
     }
     let source = format!(
         "fn f(o: i64?) -> i64 {{\n{lines}    v0\n}}\n\nfn main() {{\n    print(f(Some(1)))\n}}\n"
@@ -710,10 +715,8 @@ fn let_else_chain_of_ten_thousand_lines_should_build_and_run() {
         ],
     );
     assert_eq!(
-        build.status.code(),
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&build.stderr)
+        (build.status.code(), String::from_utf8_lossy(&build.stderr)),
+        (Some(0), "".into())
     );
     let run = Command::new(dir.join("nesting_let_else.out"))
         .output()

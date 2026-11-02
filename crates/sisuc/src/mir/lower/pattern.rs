@@ -25,15 +25,20 @@
 //! reachable: an arm whose pattern cannot fail and has no guard leaves the arms after it
 //! unlowered.
 //!
-//! `let pattern = scrutinee else { block }` is the one form whose bindings outlive the form: they
-//! stay to the end of the enclosing block, and so does the borrow temporary or the owned
-//! temporary of the scrutinee. The `else` block runs on the fail edge, with the temporary on the
-//! scope stack, so its jump releases it; the pass edge commits as an `if let` or a `match` does,
-//! and pops nothing, so the enclosing block's release and the release of each jump end the
-//! bindings. This is safe because `borrowed_place` gives only places that nothing in the
-//! function can write: a borrowed parameter, a field without `mut`, a guarded binding. Every
-//! other scrutinee is copied or moved into a temporary, so a later write to it cannot change a
-//! binding. A `let mut` name takes no borrow: it can change, so it owns a copy.
+//! `let pattern = scrutinee else { block }` is the one form whose bindings outlive the form. A
+//! borrowed binding stays to the end of the enclosing block. So does the borrow temporary of a
+//! borrowed place. The `else` block runs on the fail edge, with the scrutinee's counted
+//! temporary on the scope stack, so its jump releases it.
+//!
+//! The pass edge commits as a `match` does. It releases an owned temporary or takes it apart.
+//! In the `Some` form, the owned optional moves its payload out on the pass edge, and holds
+//! `None` on the fail edge. After the commit the form pops nothing. The release of the enclosing
+//! block, and of each jump, ends the bindings.
+//!
+//! This is safe because `borrowed_place` gives only places that nothing in the function can
+//! write: a borrowed parameter, a field without `mut`, a guarded binding. Every other scrutinee
+//! is copied or moved into a temporary, so a later write to it cannot change a binding. A
+//! `let mut` name takes no borrow: it can change, so it owns a copy.
 
 use std::mem;
 
@@ -240,9 +245,10 @@ impl Lowering<'_> {
 
     /// `let pattern = scrutinee else { else_block }`. The scrutinee is evaluated, then `test`
     /// branches to the fail block, where `else_block` runs, and to the pass block, where the names
-    /// are bound. Nothing leaves the scope stack at the end: the names and the temporary of the
-    /// scrutinee stay to the end of the enclosing block. `None` when the scrutinee cannot fall
-    /// through.
+    /// are bound. The borrowed bindings and the borrow temporary of a borrowed place stay on the
+    /// scope stack to the end of the enclosing block. An owned temporary is released or taken
+    /// apart where the pass edge commits. The form adds no pop or truncate of its own after the
+    /// commit. `None` when the scrutinee cannot fall through.
     pub(super) fn let_else(
         &mut self,
         scrutinee: &Expr,
@@ -295,10 +301,10 @@ impl Lowering<'_> {
         Some(())
     }
 
-    /// `let pattern = scrutinee else { else_block }` on an enum, or an optional with a pattern:
-    /// the scrutinee is in `temp`, or tested in place when it is a borrowed place, as
-    /// `match_expr` does for one arm. The fail edge ends the pattern's names, then runs
-    /// `else_block` with `temp` on the scope stack; the pass edge commits.
+    /// The form `let pattern = scrutinee else { else_block }` for an enum, or for an optional
+    /// with a pattern. It lowers one arm of a `match`. The scrutinee is in `temp`, or is tested
+    /// in place when it is a borrowed place. The fail edge ends the pattern's names, then runs
+    /// `else_block` with a counted `temp` on the scope stack. The pass edge commits.
     fn let_else_match(
         &mut self,
         scrutinee: &Expr,

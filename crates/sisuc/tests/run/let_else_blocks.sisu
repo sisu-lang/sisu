@@ -1,4 +1,4 @@
-// S4. Each kind of leaving block compiles and runs (the rows that exit with code 0; the `panic`
+// Each kind of leaving block compiles and runs (the rows that exit with code 0; the `panic`
 // row is `run-fail/let_else_panic`).
 // GIVEN a `for o in [Some(1), None, Some(3)]` loop whose body is `let v = o else <block>` and
 //   then `print(v)`
@@ -8,21 +8,21 @@
 fn with_continue() {
     for o in [Some(1), None, Some(3)] {
         let v = o else { continue }
-        print(v)
+        print(v) // 1, then 3
     }
 }
 
 fn with_break() {
     for o in [Some(1), None, Some(3)] {
         let v = o else { break }
-        print(v)
+        print(v) // 1
     }
 }
 
 fn with_return() {
     for o in [Some(1), None, Some(3)] {
         let v = o else { return }
-        print(v)
+        print(v) // 1
     }
 }
 
@@ -35,16 +35,16 @@ fn with_if() {
                 return
             }
         }
-        print(v)
+        print(v) // 1
     }
 }
 
 fn main() {
     with_continue()
-    print("--")
+    print("--") // --
     with_break()
-    print("--")
+    print("--") // --
     with_return()
-    print("--")
+    print("--") // --
     with_if()
 }

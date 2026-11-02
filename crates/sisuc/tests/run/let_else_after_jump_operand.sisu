@@ -18,8 +18,8 @@ fn total(os: [i64??]) -> i64 {
 }
 
 fn main() {
-    print(f(None))
-    print(f(Some(None)))
-    print(f(Some(Some(3))))
-    print(total([Some(Some(1)), None, Some(Some(5))]))
+    print(f(None))                                    // -1
+    print(f(Some(None)))                              // -2
+    print(f(Some(Some(3))))                           // 3
+    print(total([Some(Some(1)), None, Some(Some(5))])) // 1: the loop stops at the `None`
 }
