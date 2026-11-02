@@ -38,8 +38,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::ast;
 use crate::conformance::{self, StuckChoices};
 use crate::diagnostic::{
-    BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, MainForm, MismatchFix,
-    MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
+    BuiltIn, Code, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, MainForm,
+    MismatchFix, MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
 };
 use crate::front_end::PreludeProgram;
 use crate::payload_limit;
@@ -959,10 +959,6 @@ impl Body {
 /// type, which has no enum.
 // `scripts/scaling.py` reads this function's instruction count.
 #[inline(never)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one pass over the whole program, which the sweep counts as a unit"
-)]
 pub(crate) fn check<'src>(
     program: &'src ast::Program,
     prelude: &'src PreludeProgram,
@@ -1070,16 +1066,18 @@ pub(crate) fn check<'src>(
         });
     #[cfg(debug_assertions)]
     program.iter().for_each(tir::assert_exit_flags);
-    // A use of a broken item poisons without a diagnostic of its own. A `let` with a pattern and
-    // no `else` fails its statement, and the parser reported it.
+    // A use of a broken item poisons without a diagnostic of its own.
     debug_assert!(
-        program.is_some()
-            || failed
-            || broken
-            || parsed.iter().any(|d| d.severity() == Severity::Error),
+        program.is_some() || failed || broken || refutable(parsed),
         "a missing program implies an error diagnostic or a broken item or method"
     );
     (program, diagnostics)
+}
+
+/// Whether the parser reported a `let` with a pattern and no `else`. The checker fails that
+/// statement and adds no diagnostic, so the function has no `tir`.
+fn refutable(parsed: &[Diagnostic]) -> bool {
+    parsed.iter().any(|d| d.code() == Code::RefutablePattern)
 }
 
 /// `check` over a program with no prelude but the language interfaces, for the tests of what

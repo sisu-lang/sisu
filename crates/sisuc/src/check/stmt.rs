@@ -544,16 +544,7 @@ impl Checker<'_> {
                 at: Span::new(close - 1, close),
             });
         }
-        let bound = if let (LetValue::Unwrap { name, bound }, Some(_)) = (&form, mutable) {
-            // A `let mut` owns its value and can change it.
-            LetPattern::Some {
-                bind: self.declare(name, *bound, BindingKind::Var, mutable),
-            }
-        } else {
-            let bound = self.bind_pattern(Some(word), &form, pattern, None).0;
-            self.keep_mut(mutable, pattern, &bound);
-            bound
-        };
+        let (bound, _) = self.bind_pattern_as(Some(word), mutable, &form, pattern, None);
         if let (
             Some(keyword),
             LetPattern::Match {
@@ -587,32 +578,6 @@ impl Checker<'_> {
             test,
             else_block,
         })
-    }
-
-    /// The name that `pattern` just bound, when the `let mut` at `keyword` has it, as a `let mut`
-    /// variable. The value is an error (E0051 or E0131), so the name has no other use than to
-    /// let the lines after it report nothing of it.
-    fn keep_mut(&mut self, keyword: Option<Span>, pattern: &ast::Pattern, bound: &LetPattern) {
-        let (Some(keyword), ast::PatternKind::Name(name)) = (keyword, &pattern.kind) else {
-            return;
-        };
-        // A name that is a variant binds nothing.
-        if matches!(bound, LetPattern::Match { pattern: Some((_, bindings)) } if bindings.is_empty())
-        {
-            return;
-        }
-        let Some(binding) = self
-            .body
-            .scopes
-            .last_mut()
-            .and_then(|scope| scope.get_mut(&name.name))
-        else {
-            return;
-        };
-        binding.kind = BindingKind::Var;
-        binding.keyword = Some(keyword);
-        let local = binding.local;
-        self.body.locals[local.0].mutable = true;
     }
 
     /// `for`, lowered to a `Loop` as in the spec's table: over an array `s` through `s[i]`

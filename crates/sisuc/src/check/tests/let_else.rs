@@ -102,8 +102,26 @@ fn let_else_alternatives_should_bind_in_each() {
     let tir::PatternKind::Or(alternatives) = &pattern.kind else {
         panic!("the pattern should keep its alternatives");
     };
-    assert_eq!(alternatives.len(), 2);
-    assert_eq!(bindings.len(), 1);
+    // Each alternative binds the local that the statement binds, which the lines after it read.
+    let [bind] = bindings.as_slice() else {
+        panic!("the pattern should bind one name");
+    };
+    let bound: Vec<_> = alternatives
+        .iter()
+        .map(|alternative| match &alternative.kind {
+            tir::PatternKind::Variant { fields, .. } => match fields.as_slice() {
+                [
+                    tir::Pattern {
+                        kind: tir::PatternKind::Bind(local),
+                        ..
+                    },
+                ] => Some(*local),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(bound, [Some(*bind), Some(*bind)]);
 }
 
 /// GIVEN `outer: for i in 0..3` with an inner `for o in [Some(i), None]` whose body is
@@ -165,4 +183,21 @@ fn let_else_should_warn_when_nothing_reads_the_name() {
     let ds = diags("fn main() {\n    let o: i64? = Some(1)\n    let v = o else { return }\n}");
     let codes: Vec<_> = ds.iter().map(Diagnostic::code).collect();
     assert_eq!(codes, [Code::UnusedVariable]);
+}
+
+/// A name has nothing to compare, so E0051 offers `==` only for a pattern that is a value.
+#[test]
+fn let_else_on_a_plain_value_should_offer_a_comparison_only_for_a_literal_pattern() {
+    let src = |line: &str| format!("fn main() {{\n    let z = 5\n    {line}\n}}");
+    for (line, help) in [
+        ("let w = z else { return }", false),
+        ("let mut n = z else { return }", false),
+        ("if let x = z {}", false),
+        ("let 3 = z else { return }", true),
+    ] {
+        let ds = diags(&src(line));
+        let d = (ds.iter().find(|d| d.code() == Code::UnwrapNeedsOptional))
+            .unwrap_or_else(|| panic!("{line}: {ds:?}"));
+        assert_eq!(d.help().is_some(), help, "{line}");
+    }
 }

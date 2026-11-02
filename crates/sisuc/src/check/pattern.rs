@@ -25,6 +25,9 @@ use crate::tir::{self, Type, TypeKind};
 struct Bound<'a> {
     top: Span,
     arm: Option<&'a ast::Arm>,
+    /// The `mut` of a `let mut` whose one name this pattern binds: it is a variable, not a
+    /// name `keyword` unwrapped.
+    mutable: Option<Span>,
     /// Each name bound so far on the way through the pattern, where, and its local; an `|`
     /// counts as its first alternative once it is checked.
     names: FxHashMap<Symbol, (Span, tir::LocalId)>,
@@ -35,6 +38,17 @@ struct Bound<'a> {
     /// For each `|` whose later alternatives are being checked, innermost last: the locals of
     /// its first alternative, which the later ones bind again.
     alternatives: Vec<Alternatives>,
+}
+
+impl Bound<'_> {
+    /// How the pattern's names are declared: as variables of the `let mut` that `mutable` holds,
+    /// else as names that `keyword` unwrapped. The second is the keyword of a `let mut`.
+    fn binding_kind(&self, keyword: &'static str) -> (super::BindingKind, Option<Span>) {
+        match self.mutable {
+            Some(_) => (super::BindingKind::Var, self.mutable),
+            None => (super::BindingKind::Unwrapped(keyword), None),
+        }
+    }
 }
 
 /// The names the first alternative of an `|` binds, and the first name a later alternative
@@ -383,6 +397,8 @@ impl Checker<'_> {
             | ast::PatternKind::Range { .. }
             | ast::PatternKind::Or(_) => None,
         };
+        // A name has no value to compare with `==`.
+        let plain = name.is_some();
         match (ty.map(|ty| (ty, ty.kind())), name) {
             (Some((_, TypeKind::Optional(payload))), Some(name)) => {
                 let bound = Some(payload);
@@ -392,14 +408,15 @@ impl Checker<'_> {
                 (checked, LetValue::Match { ty }, false)
             }
             (Some((ty, kind)), _) => {
-                let compare = matches!(
-                    kind,
-                    TypeKind::I64
-                        | TypeKind::U8
-                        | TypeKind::Bool
-                        | TypeKind::String
-                        | TypeKind::Char
-                );
+                let compare = !plain
+                    && matches!(
+                        kind,
+                        TypeKind::I64
+                            | TypeKind::U8
+                            | TypeKind::Bool
+                            | TypeKind::String
+                            | TypeKind::Char
+                    );
                 let found = self.type_name(ty);
                 self.report(DiagnosticKind::UnwrapNeedsOptional {
                     keyword,
@@ -456,13 +473,29 @@ impl Checker<'_> {
         pattern: &ast::Pattern,
         arm: Option<&ast::Arm>,
     ) -> (LetPattern, Option<Checked>) {
+        self.bind_pattern_as(keyword, None, value, pattern, arm)
+    }
+
+    /// `bind_pattern`, where `mutable`, the `mut` of a `let ... else`, makes the one name a
+    /// `let mut` variable.
+    pub(super) fn bind_pattern_as(
+        &mut self,
+        keyword: Option<Unwrap>,
+        mutable: Option<Span>,
+        value: &LetValue,
+        pattern: &ast::Pattern,
+        arm: Option<&ast::Arm>,
+    ) -> (LetPattern, Option<Checked>) {
         let word = keyword.map_or("match", Unwrap::word);
         let bound = match value {
             LetValue::Unwrap { name, bound } => LetPattern::Some {
-                bind: self.bind_unwrapped(word, name, *bound),
+                bind: match mutable {
+                    Some(_) => self.declare(name, *bound, super::BindingKind::Var, mutable),
+                    None => self.bind_unwrapped(word, name, *bound),
+                },
             },
             &LetValue::Match { ty } => {
-                let pattern = self.pattern_in_scope(pattern, ty, word, arm);
+                let pattern = self.pattern_in_scope(pattern, ty, word, arm, mutable);
                 // `_`, or a name that is no variant inside, unwraps an optional: never here.
                 if let (Some(keyword), Some(ty), Some((pattern, _))) = (keyword, ty, &pattern)
                     && let TypeKind::Enum(..) | TypeKind::Optional(_) = ty.kind()
@@ -499,10 +532,12 @@ impl Checker<'_> {
         ty: Option<Type>,
         keyword: &'static str,
         arm: Option<&ast::Arm>,
+        mutable: Option<Span>,
     ) -> Option<(tir::Pattern, Vec<tir::LocalId>)> {
         let mut bound = Bound {
             top: pattern.span,
             arm,
+            mutable,
             names: FxHashMap::default(),
             order: Vec::new(),
             locals: Vec::new(),
@@ -798,9 +833,9 @@ impl Checker<'_> {
                 } else {
                     // Read as the binding the fix makes it, so the body does not cascade. The
                     // name is not checked as a binding's: this error is the one it gets.
+                    let (kind, mutable) = bound.binding_kind(keyword);
                     if let Entry::Vacant(entry) = bound.names.entry(name.name) {
-                        let kind = super::BindingKind::Unwrapped(keyword);
-                        let local = self.insert_local(name, None, kind, None);
+                        let local = self.insert_local(name, None, kind, mutable);
                         entry.insert((name.span, local));
                         bound.order.push(name.name);
                         bound.locals.push(local);
@@ -1243,7 +1278,7 @@ impl Checker<'_> {
             });
             return None;
         }
-        let kind = super::BindingKind::Unwrapped(keyword);
+        let (kind, mutable) = bound.binding_kind(keyword);
         // A later alternative binds the first's local; its type must agree, but the name is
         // bound either way, so no alternative is reported as lacking it.
         let mut agrees = true;
@@ -1274,10 +1309,10 @@ impl Checker<'_> {
                 local
             } else {
                 alternatives.extra.get_or_insert(name.name);
-                self.declare(name, None, kind, None)
+                self.declare(name, None, kind, mutable)
             }
         } else {
-            let local = self.declare(name, ty, kind, None);
+            let local = self.declare(name, ty, kind, mutable);
             bound.locals.push(local);
             local
         };

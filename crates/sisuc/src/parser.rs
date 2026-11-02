@@ -3397,20 +3397,26 @@ impl<'a> Parser<'a> {
         if let Some(error) = self.label_not_on_loop() {
             return Err(error);
         }
-        let value = self.child(base, &mut reach, Self::expr)?;
-        self.depth = reach;
-        if self.at(&TokenKind::Else) {
-            return self.let_else_block(base, reach, mutable, pattern, value);
-        }
-        if matches!(
+        let qualified = matches!(
             &pattern.kind,
             PatternKind::Variant {
                 qualifier: Some(_),
                 parens: None,
                 ..
             }
-        ) {
-            return Err(self.expected_at(&self.tokens[first + 1], &TokenKind::Eq.describe()));
+        );
+        let value = match self.child(base, &mut reach, Self::expr) {
+            Ok(value) => value,
+            // A value that fails leaves no `else` after it, so the `.` is the first mistake.
+            Err(_) if qualified => return Err(self.dot_error(first)),
+            Err(error) => return Err(error),
+        };
+        self.depth = reach;
+        if self.at(&TokenKind::Else) {
+            return self.let_else_block(base, reach, mutable, pattern, value);
+        }
+        if qualified {
+            return Err(self.dot_error(first));
         }
         self.specs.push(
             DiagnosticKind::RefutablePattern {
@@ -3425,6 +3431,12 @@ impl<'a> Parser<'a> {
             value,
             else_block: None,
         })
+    }
+
+    /// "expected `=`, found `.`", as a `let` that reads a name reports `Enum.Variant`. The
+    /// pattern starts at token `first`.
+    fn dot_error(&self, first: usize) -> Diagnostic {
+        self.expected_at(&self.tokens[first + 1], &TokenKind::Eq.describe())
     }
 
     /// The `else` and the block of a `let ... else`, after its `value`. A value that ends in `}`
@@ -6962,6 +6974,11 @@ mod tests {
             ("let p.x = 5", Code::Expected, 18),
             ("let mut p.x = 5", Code::Expected, 22),
             ("let Shape.Dot = s", Code::Expected, 22),
+            // A value that fails to parse is no reason to hide the `.`: no `else` can follow it.
+            ("let Shape.Dot = 1 +", Code::Expected, 22),
+            ("let p.x = 1 + * 2", Code::Expected, 18),
+            ("let Shape.Dot =", Code::Expected, 22),
+            ("let Option.None = 1 +", Code::Expected, 23),
             ("let 99999999999999999999 = 1", Code::IntegerTooLarge, 17),
         ] {
             assert_eq!(expr_err(src), (code, 1, col), "{src}");
