@@ -1,0 +1,67 @@
+// Review Focus 3: let-else in an inner block, and a write after it.
+// GIVEN a let-else on a `string?` inside a value block, inside an `if` branch and inside a
+//   `match` arm, each followed by a read of the optional after the block, and a `let mut`
+//   optional and an array element that change after the let-else that read them
+// WHEN the program runs under Valgrind
+// THEN each name ends where its block ends, not where the function ends, and a change after the
+//   let-else does not change the name
+fn in_value(o: string?) -> i64 {
+    let x = {
+        let v = o else { return 0 }
+        v.len() + 1
+    }
+    print(o ?? "none")
+    x
+}
+
+fn in_if(o: string?, c: bool) -> i64 {
+    let mut n = 0
+    if c {
+        let v = o else { return 0 }
+        n = v.len()
+    }
+    print(o ?? "none")
+    n
+}
+
+fn in_match(o: string?, k: i64) -> i64 {
+    let n = match k {
+        0 => {
+            let v = o else { return -1 }
+            v.len()
+        }
+        _ => 0
+    }
+    print(o ?? "none")
+    n
+}
+
+fn written() {
+    let mut o: string? = Some("a")
+    let s = o else { return }
+    o = None
+    print(s)
+    print(o ?? "none")
+}
+
+fn pushed() {
+    let mut a: [string?] = [Some("b")]
+    let s = a[0] else { return }
+    a.push(None)
+    a[0] = None
+    print(s)
+    print(a.len())
+}
+
+fn main() {
+    print(in_value(Some("ab")))
+    print(in_value(None))
+    print(in_if(Some("abc"), true))
+    print(in_if(Some("abc"), false))
+    print(in_if(None, true))
+    print(in_match(Some("abcd"), 0))
+    print(in_match(Some("abcd"), 1))
+    print(in_match(None, 0))
+    written()
+    pushed()
+}

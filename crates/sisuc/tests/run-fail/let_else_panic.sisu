@@ -1,0 +1,11 @@
+// S4, the `panic` row: a call of `panic` leaves.
+// GIVEN a `for o in [Some(1), None, Some(3)]` loop whose body is `let v = o else { panic("none") }`
+//   and then `print(v)`
+// WHEN the program runs
+// THEN it prints `1`, then panics with `none` and exits with code 101
+fn main() {
+    for o in [Some(1), None, Some(3)] {
+        let v = o else { panic("none") }
+        print(v)
+    }
+}

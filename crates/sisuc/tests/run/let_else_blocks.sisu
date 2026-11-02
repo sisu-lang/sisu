@@ -1,0 +1,50 @@
+// S4. Each kind of leaving block compiles and runs (the rows that exit with code 0; the `panic`
+// row is `run-fail/let_else_panic`).
+// GIVEN a `for o in [Some(1), None, Some(3)]` loop whose body is `let v = o else <block>` and
+//   then `print(v)`
+// WHEN the program runs
+// THEN `continue` prints `1` and `3`, and `break`, `return` and an `if` whose branches both
+//   return print `1`
+fn with_continue() {
+    for o in [Some(1), None, Some(3)] {
+        let v = o else { continue }
+        print(v)
+    }
+}
+
+fn with_break() {
+    for o in [Some(1), None, Some(3)] {
+        let v = o else { break }
+        print(v)
+    }
+}
+
+fn with_return() {
+    for o in [Some(1), None, Some(3)] {
+        let v = o else { return }
+        print(v)
+    }
+}
+
+fn with_if() {
+    for o in [Some(1), None, Some(3)] {
+        let v = o else {
+            if true {
+                return
+            } else {
+                return
+            }
+        }
+        print(v)
+    }
+}
+
+fn main() {
+    with_continue()
+    print("--")
+    with_break()
+    print("--")
+    with_return()
+    print("--")
+    with_if()
+}

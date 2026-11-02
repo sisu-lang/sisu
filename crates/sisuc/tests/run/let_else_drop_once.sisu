@@ -1,0 +1,22 @@
+// S12. A name bound by let ... else is dropped once.
+// GIVEN a class `Node` and a function that takes a `Node?`, binds it with
+//   `let n = o else { return 0 }` and reads `n.value`, called in a loop of 1000 turns
+// WHEN the program runs under Valgrind
+// THEN Valgrind reports no leak and no error
+class Node {
+    value: i64
+}
+
+fn read(o: Node?) -> i64 {
+    let n = o else { return 0 }
+    n.value
+}
+
+fn main() {
+    let mut total = 0
+    for i in 0..1000 {
+        let o: Node? = if i % 2 == 0 { Some(Node(value: i)) } else { None }
+        total += read(o)
+    }
+    print(total) // 0 + 2 + ... + 998
+}

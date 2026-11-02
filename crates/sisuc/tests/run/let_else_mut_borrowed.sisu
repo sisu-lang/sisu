@@ -1,0 +1,28 @@
+// S21. let mut over a borrowed counted value owns its copy.
+// GIVEN a function `f(o: <type>) -> <type2>` whose body is `let mut n = o else { return <empty> }`,
+//   then a change, then `n`, for `string?` and for `[i64]?`
+// AND a `main` that sets `a` to `Some(..)`, prints `f(a)` and then prints `a ?? <empty>`
+// WHEN the program runs under Valgrind
+// THEN it prints `hi!` then `hi`, and `[1, 2]` then `[1]`, and Valgrind reports no leak and no
+//   error: an assignment does not release the caller's value, and a change does not write into
+//   the caller's array
+fn grow(o: string?) -> string {
+    let mut n = o else { return "" }
+    n = n + "!"
+    n
+}
+
+fn pushed(o: [i64]?) -> [i64] {
+    let mut n = o else { return [] }
+    n.push(2)
+    n
+}
+
+fn main() {
+    let a: string? = Some("hi")
+    print(grow(a))
+    print(a ?? "")
+    let b: [i64]? = Some([1])
+    print(pushed(b))
+    print(b ?? [])
+}

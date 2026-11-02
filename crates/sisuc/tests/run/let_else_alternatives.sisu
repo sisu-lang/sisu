@@ -1,0 +1,21 @@
+// S3. An alternative pattern binds in each alternative.
+// GIVEN the `Shape` of S2 with a third variant `Square(f64)` and a function whose body is
+//   `let Circle(r) | Square(r) = s else { return 0.0 }` and then `r`
+// WHEN `main` prints the function of `Shape.Square(3.0)` and of `Shape.Rect(1.0, 1.0)`
+// THEN it prints `3.0` and then `0.0`
+enum Shape {
+    Circle(f64)
+    Rect(f64, f64)
+    Square(f64)
+}
+
+fn side(s: Shape) -> f64 {
+    let Circle(r) | Square(r) = s else { return 0.0 }
+    r
+}
+
+fn main() {
+    let _circle = Shape.Circle(1.0) // builds `Circle`, so that W0013 stays away
+    print(side(Shape.Square(3.0)))
+    print(side(Shape.Rect(1.0, 1.0)))
+}

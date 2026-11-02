@@ -479,10 +479,6 @@ pub(crate) enum LetElseTest {
     Match {
         temp: LocalId,
         pattern: Pattern,
-        #[cfg_attr(
-            not(test),
-            expect(dead_code, reason = "Task 3 of the let-else plan lowers the bindings")
-        )]
         bindings: Vec<LocalId>,
     },
 }

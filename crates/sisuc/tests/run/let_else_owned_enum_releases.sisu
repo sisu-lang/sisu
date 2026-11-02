@@ -1,0 +1,41 @@
+// Review Focus 1: a failing enum value that the program owns.
+// GIVEN `let Circle(r) = make(i) else { return 0.0 }`, where `make` gives `Named(string)` for
+//   some `i`, and `let Label(s) = make(i) else { return 0 }` on the same value
+// WHEN the program runs a loop of 100 turns, with `make` giving each variant in turn, under
+//   Valgrind
+// THEN the else edge releases the temporary's payload once and the pass edge releases it at the
+//   end of the block, so Valgrind reports no leak and no double free
+enum Shape {
+    Circle(f64)
+    Named(string)
+    Label(string)
+}
+
+fn make(i: i64) -> Shape {
+    match i % 3 {
+        0 => Shape.Circle(1.5)
+        1 => Shape.Named("name {i}")
+        _ => Shape.Label("label {i}")
+    }
+}
+
+fn radius(i: i64) -> f64 {
+    let Circle(r) = make(i) else { return 0.0 }
+    r
+}
+
+fn label(i: i64) -> i64 {
+    let Label(s) = make(i) else { return 0 }
+    s.len()
+}
+
+fn main() {
+    let mut r = 0.0
+    let mut n = 0
+    for i in 0..100 {
+        r += radius(i)
+        n += label(i)
+    }
+    print(r)
+    print(n)
+}

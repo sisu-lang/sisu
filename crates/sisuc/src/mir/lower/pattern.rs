@@ -24,6 +24,16 @@
 //! A failure target becomes a block only when an edge reaches it, so every block stays
 //! reachable: an arm whose pattern cannot fail and has no guard leaves the arms after it
 //! unlowered.
+//!
+//! `let pattern = scrutinee else { block }` is the one form whose bindings outlive the form: they
+//! stay to the end of the enclosing block, and so does the borrow temporary or the owned
+//! temporary of the scrutinee. The `else` block runs on the fail edge, with the temporary on the
+//! scope stack, so its jump releases it; the pass edge commits as an `if let` or a `match` does,
+//! and pops nothing, so the enclosing block's release and the release of each jump end the
+//! bindings. This is safe because `borrowed_place` gives only places that nothing in the
+//! function can write: a borrowed parameter, a field without `mut`, a guarded binding. Every
+//! other scrutinee is copied or moved into a temporary, so a later write to it cannot change a
+//! binding. A `let mut` name takes no borrow: it can change, so it owns a copy.
 
 use std::mem;
 
@@ -34,8 +44,8 @@ use super::{DEDUPED, SEEDED};
 use super::{Lowered, Lowering, valued, whole};
 use crate::mir::{BlockId, Const, Operand, Place, Projection, Rvalue, Statement, Terminator};
 use crate::tir::{
-    Arm, BinaryOp, Block, CompareOp, EnumId, Expr, ExprKind, LocalId, Pattern, PatternKind, Type,
-    TypeKind,
+    Arm, BinaryOp, Block, CompareOp, EnumId, Expr, ExprKind, LetElseTest, LocalId, Pattern,
+    PatternKind, Type, TypeKind,
 };
 
 /// An index into `Lowering::targets`: a failure target that has no block until an edge needs it.
@@ -202,6 +212,152 @@ impl Lowering<'_> {
             self.push(Statement::End(optional));
         }
         value
+    }
+
+    /// `bind`, the name that unwraps `optional`, takes the payload where the optional holds one,
+    /// in the current block, which is its scope. From a `borrowed` optional it borrows the
+    /// payload, and is guarded; otherwise it moves the payload out.
+    pub(super) fn bind_payload(&mut self, bind: LocalId, optional: LocalId, borrowed: bool) {
+        self.locals[bind.0].scope = self.here();
+        let payload = if borrowed {
+            self.owners.insert(bind, optional);
+            self.guarded[bind.0] = true;
+            Rvalue::Borrow(Place {
+                projections: vec![Projection::Some],
+                ..whole(optional)
+            })
+        } else {
+            Rvalue::Unwrap(self.owned(optional))
+        };
+        self.push(Statement::Assign {
+            dest: Some(bind),
+            value: payload,
+        });
+        if self.locals[bind.0].counted {
+            self.scope.push((bind, borrowed));
+        }
+    }
+
+    /// `let pattern = scrutinee else { else_block }`. The scrutinee is evaluated, then `test`
+    /// branches to the fail block, where `else_block` runs, and to the pass block, where the names
+    /// are bound. Nothing leaves the scope stack at the end: the names and the temporary of the
+    /// scrutinee stay to the end of the enclosing block. `None` when the scrutinee cannot fall
+    /// through.
+    pub(super) fn let_else(
+        &mut self,
+        scrutinee: &Expr,
+        test: &LetElseTest,
+        else_block: &Block,
+    ) -> Option<()> {
+        match test {
+            LetElseTest::Some { bind } => self.let_else_some(*bind, scrutinee, else_block),
+            LetElseTest::Match {
+                temp,
+                pattern,
+                bindings,
+            } => self.let_else_match(scrutinee, *temp, pattern, bindings, else_block),
+        }
+    }
+
+    /// `let bind = optional else { else_block }`, as `if_some` lowers `if let`: a borrowed place
+    /// is borrowed into a temporary, which stays on the scope stack, and `bind` borrows the
+    /// payload. A `let mut` name, or any other scrutinee, is copied into an owned optional, whose
+    /// payload `bind` takes.
+    fn let_else_some(&mut self, bind: LocalId, scrutinee: &Expr, else_block: &Block) -> Option<()> {
+        let place = if self.declared[bind.0].mutable {
+            None
+        } else {
+            self.borrowed_place(scrutinee)
+        };
+        let (optional, borrowed) = if let Some(place) = place {
+            let optional = self.temp(scrutinee.ty);
+            self.owners.insert(optional, place.local);
+            self.push(Statement::Assign {
+                dest: Some(optional),
+                value: Rvalue::Borrow(place),
+            });
+            self.scope.push((optional, true));
+            (optional, true)
+        } else {
+            (self.temp_of(scrutinee)?, false)
+        };
+        let (pass, fail) = (self.new_block(), self.new_block());
+        self.terminate(Terminator::IfPresent {
+            optional,
+            some: pass,
+            none: fail,
+        });
+        // No name exists yet on the fail edge.
+        self.current = Some(fail);
+        self.else_edge(else_block);
+        self.current = Some(pass);
+        self.bind_payload(bind, optional, borrowed);
+        Some(())
+    }
+
+    /// `let pattern = scrutinee else { else_block }` on an enum, or an optional with a pattern:
+    /// the scrutinee is in `temp`, or tested in place when it is a borrowed place, as
+    /// `match_expr` does for one arm. The fail edge ends the pattern's names, then runs
+    /// `else_block` with `temp` on the scope stack; the pass edge commits.
+    fn let_else_match(
+        &mut self,
+        scrutinee: &Expr,
+        temp: LocalId,
+        pattern: &Pattern,
+        bindings: &[LocalId],
+        else_block: &Block,
+    ) -> Option<()> {
+        let borrowed = self.borrowed_place(scrutinee);
+        let borrows = borrowed.is_some();
+        let (place, counted) = if let Some(place) = borrowed {
+            (place, false)
+        } else {
+            self.locals[temp.0].scope = self.here();
+            self.into(scrutinee, Some(temp))?;
+            (whole(temp), self.locals[temp.0].counted)
+        };
+        for &binding in bindings {
+            self.owners.insert(binding, place.local);
+        }
+        let guards = self.guard.len();
+        if counted {
+            self.scope.push((temp, false));
+        }
+        let start = self.here();
+        for &binding in bindings {
+            self.locals[binding.0].scope = start;
+        }
+        self.open_guards(bindings);
+        let fail = self.target(Kind::Fail);
+        self.test(pattern, &place, scrutinee.ty, fail);
+        let pass = self.here();
+        self.close_guards(guards);
+        let fail = self.targets[fail.0]
+            .block
+            .expect("the checker should reject a pattern that cannot fail (E0131)");
+        self.blocks[fail.0]
+            .stmts
+            .extend(bindings.iter().map(|&binding| Statement::End(binding)));
+        self.current = Some(fail);
+        self.else_edge(else_block);
+        self.current = Some(pass);
+        let parts = if counted && matches!(scrutinee.ty.kind(), TypeKind::Enum(..)) {
+            self.parts(pattern, &place, scrutinee.ty, bindings)
+        } else {
+            None
+        };
+        self.commit(temp, counted, borrows, guards, bindings, parts);
+        Some(())
+    }
+
+    /// `else_block` of a `let ... else`, lowered at the current block. The checker proved that it
+    /// does not finish, so it gives no value, and its jumps release what the scope stack holds.
+    fn else_edge(&mut self, else_block: &Block) {
+        let value = self.block(else_block, None);
+        debug_assert!(
+            value.is_none(),
+            "the checker should prove that the `else` block does not finish"
+        );
     }
 
     /// `match scrutinee { arms }`, with the scrutinee in `temp`, or tested in place when it is a

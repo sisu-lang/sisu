@@ -7,6 +7,7 @@
 //! `while` adds a block, so `limit` differs between constructs. The programs are too large to
 //! keep as files.
 
+use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -679,6 +680,45 @@ fn comparison_chain_of_ten_thousand_operands_should_compile_as_a_shallow_tree() 
         .output()
         .expect("program starts");
     assert_eq!(String::from_utf8_lossy(&run.stdout), "false\n");
+}
+
+/// GIVEN a function `f(o: i64?) -> i64` with 10 000 lines `let v<i> = o else { return 0 }` and
+/// then `v0`
+/// WHEN `build` runs on it and the program prints `f(Some(1))`
+/// THEN it builds and the program prints `1`
+///
+/// S13. The statement does not nest the rest of the block, so a long chain is a flat list. The
+/// names that no line reads give warnings, which the test does not look at.
+#[test]
+fn let_else_chain_of_ten_thousand_lines_should_build_and_run() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let mut lines = String::new();
+    for i in 0..10_000 {
+        writeln!(lines, "    let v{i} = o else {{ return 0 }}").expect("writes to a string");
+    }
+    let source = format!(
+        "fn f(o: i64?) -> i64 {{\n{lines}    v0\n}}\n\nfn main() {{\n    print(f(Some(1)))\n}}\n"
+    );
+    fs::write(dir.join("nesting_let_else.sisu"), source).expect("writes");
+    let build = sisu(
+        dir,
+        &[
+            "build",
+            "nesting_let_else.sisu",
+            "-o",
+            "nesting_let_else.out",
+        ],
+    );
+    assert_eq!(
+        build.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(dir.join("nesting_let_else.out"))
+        .output()
+        .expect("program starts");
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "1\n");
 }
 
 /// GIVEN a sum of `k` links inside an operand of a comparison, a method call, an index or a call

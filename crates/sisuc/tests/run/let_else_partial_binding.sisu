@@ -1,0 +1,35 @@
+// A pattern whose test borrows a name and then fails.
+// GIVEN `enum P { Pair(string, i64); No }` and `let Pair(s, 1) = p else { return 0 }`, with `p`
+//   a parameter and then a local
+// WHEN it runs on `P.Pair("x", 2)`, which borrows `s` and fails on `1`, on `P.No`, which fails
+//   on the tag before any binding, and on `P.Pair("yy", 1)`, the pass edge
+// THEN each fail edge ends the binding and runs the else block, the pass edge reads `s`, and
+//   Valgrind reports no leak and no error
+enum P {
+    Pair(string, i64)
+    No
+}
+
+fn from_param(p: P) -> i64 {
+    let Pair(s, 1) = p else { return 0 }
+    s.len()
+}
+
+fn from_local(i: i64) -> i64 {
+    let p = match i {
+        0 => P.Pair("x", 2)
+        1 => P.No
+        _ => P.Pair("yy", 1)
+    }
+    let Pair(s, 1) = p else { return 0 }
+    s.len()
+}
+
+fn main() {
+    print(from_param(P.Pair("x", 2)))
+    print(from_param(P.No))
+    print(from_param(P.Pair("yy", 1)))
+    print(from_local(0))
+    print(from_local(1))
+    print(from_local(2))
+}

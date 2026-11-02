@@ -1,0 +1,36 @@
+// Review Focus 2: a borrowed binding at every exit.
+// GIVEN `fn f(o: string?)` with `for i in 0..3 { let s = o else { continue }; ... }` whose body
+//   then breaks, returns or finishes the turn
+// WHEN `f` runs with a value and with `None`, under Valgrind
+// THEN the borrow temporary and `s` end on `continue`, `break`, the next turn and the return,
+//   and on no other path twice
+fn with_break(o: string?) -> i64 {
+    let mut n = 0
+    for i in 0..3 {
+        let s = o else { continue }
+        if i == 1 {
+            break
+        }
+        print(s)
+        n += 1
+    }
+    n
+}
+
+fn with_return(o: string?) -> i64 {
+    for i in 0..3 {
+        let s = o else { continue }
+        if i == 1 {
+            return s.len()
+        }
+        print(s)
+    }
+    0
+}
+
+fn main() {
+    print(with_break(Some("a")))
+    print(with_break(None))
+    print(with_return(Some("bc")))
+    print(with_return(None))
+}
