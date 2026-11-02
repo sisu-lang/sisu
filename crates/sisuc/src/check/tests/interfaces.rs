@@ -4133,28 +4133,29 @@ fn nests_within_should_count_each_level_and_measure_a_shared_type_once() {
 /// choices), or the chain that ends needs more steps than the limit (`W<Leaf>.B` is the 129th).
 #[test]
 fn mono_should_report_a_chain_that_the_probe_did_not_follow() {
-    let direct = "fn main() {\n    get(Leaf())\n}";
-    let through = "fn pass<S: Holder>(s: S) {\n    get(s)\n}\nfn main() {\n    pass(Leaf())\n}";
-    // `plain<i64>` waits on the worklist when `get<Leaf>` fails, and is not walked.
-    let queued =
-        "fn plain<T>(t: T) -> T {\n    t\n}\nfn main() {\n    get(Leaf())\n    print(plain(1))\n}";
-    for levels in [CHOICE_DEPTH_LIMIT + 1, 200] {
-        for (how, uses) in [
-            ("direct", direct),
-            ("through a generic function", through),
-            ("with more work queued", queued),
-        ] {
-            let src = long_loop(levels, uses);
-            let (program, diagnostics) = crate::front_end::front_end(&src);
-            let found: Vec<_> = (diagnostics.iter())
-                .filter(|d| d.severity() == Severity::Error)
-                .map(|d| (d.code(), at(&src, d.span())))
-                .collect();
-            let row = format!("{levels} levels, {how}");
-            assert_eq!(found, [(Code::UnknownType, (17, 14))], "{row}");
-            assert!(program.is_none(), "{row}: no program after an error");
+    crate::on_compiler_stack(|| {
+        let direct = "fn main() {\n    get(Leaf())\n}";
+        let through = "fn pass<S: Holder>(s: S) {\n    get(s)\n}\nfn main() {\n    pass(Leaf())\n}";
+        // `plain<i64>` waits on the worklist when `get<Leaf>` fails, and is not walked.
+        let queued = "fn plain<T>(t: T) -> T {\n    t\n}\nfn main() {\n    get(Leaf())\n    print(plain(1))\n}";
+        for levels in [CHOICE_DEPTH_LIMIT + 1, 200] {
+            for (how, uses) in [
+                ("direct", direct),
+                ("through a generic function", through),
+                ("with more work queued", queued),
+            ] {
+                let src = long_loop(levels, uses);
+                let (program, diagnostics) = crate::front_end::front_end(&src);
+                let found: Vec<_> = (diagnostics.iter())
+                    .filter(|d| d.severity() == Severity::Error)
+                    .map(|d| (d.code(), at(&src, d.span())))
+                    .collect();
+                let row = format!("{levels} levels, {how}");
+                assert_eq!(found, [(Code::UnknownType, (17, 14))], "{row}");
+                assert!(program.is_none(), "{row}: no program after an error");
+            }
         }
-    }
+    });
 }
 
 /// A bound whose argument names an associated type of a sibling parameter finds that parameter's

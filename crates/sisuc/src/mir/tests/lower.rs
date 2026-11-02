@@ -765,28 +765,30 @@ fn loops_record_their_blocks() {
 /// a wide operand list and a right-deep sum cost a visit per node, not a walk of the later
 /// operands per operand. Each `x` but the last is still pinned, as `x` comes again later.
 #[test]
-fn pins_walk_the_body_once() {
-    let wide = 200;
-    let deep = 60;
-    let src = format!(
-        "fn f(x: i64, y: i64) {{\n    print([{}0].len())\n    print({}x{})\n    print([x, y, x, y, 0].len())\n}}",
-        "x, ".repeat(wide),
-        "x + (".repeat(deep),
-        ")".repeat(deep),
-    );
-    let program = checked(&src);
-    WALKED.set(0);
-    let printed = print(&lowered_of(&program), &program);
-    // Print, Len, ArrayLit and its elements; Print, the sums and their operands; the last line.
-    let nodes = (3 + wide + 1) + (1 + 2 * deep + 1) + (3 + 5);
-    assert_eq!(WALKED.get(), nodes);
-    let f = function(&printed, "f");
-    assert_eq!(f.matches("_ = x#0\n").count(), (wide - 1) + deep + 1);
-    has(
-        &printed,
-        "f",
-        &["_ = x#0\n    _ = y#1\n    _ = array[_, _, x#0, y#1, 0]"],
-    );
+fn lowering_should_walk_the_body_once_for_pins() {
+    crate::on_compiler_stack(|| {
+        let wide = 200;
+        let deep = 60;
+        let src = format!(
+            "fn f(x: i64, y: i64) {{\n    print([{}0].len())\n    print({}x{})\n    print([x, y, x, y, 0].len())\n}}",
+            "x, ".repeat(wide),
+            "x + (".repeat(deep),
+            ")".repeat(deep),
+        );
+        let program = checked(&src);
+        WALKED.set(0);
+        let printed = print(&lowered_of(&program), &program);
+        // Print, Len, ArrayLit and its elements; Print, the sums and their operands; the last line.
+        let nodes = (3 + wide + 1) + (1 + 2 * deep + 1) + (3 + 5);
+        assert_eq!(WALKED.get(), nodes);
+        let f = function(&printed, "f");
+        assert_eq!(f.matches("_ = x#0\n").count(), (wide - 1) + deep + 1);
+        has(
+            &printed,
+            "f",
+            &["_ = x#0\n    _ = y#1\n    _ = array[_, _, x#0, y#1, 0]"],
+        );
+    });
 }
 
 /// `break` and `continue` scope-release the locals the loop's body declared, and only those:

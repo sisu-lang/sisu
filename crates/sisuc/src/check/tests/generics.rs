@@ -4487,44 +4487,46 @@ fn nested_some_context_should_cost_one_step_for_each_level() {
 /// depth, not with its square. The depths are far below the nesting limit of the parser (256).
 #[test]
 fn nested_generic_calls_should_rank_each_expression_once() {
-    with_prelude();
-    // The statement is `before`, then `open` repeated `depth` times, `inner`, `close` likewise.
-    let steps = |(before, open, inner, close): (&str, &str, &str, &str), depth: usize| {
-        let src = format!(
-            "fn k<T>(a: T, b: T) -> T {{ b }}\nfn id<T>(x: T) -> T {{ x }}\n\
+    crate::on_compiler_stack(|| {
+        with_prelude();
+        // The statement is `before`, then `open` repeated `depth` times, `inner`, `close` likewise.
+        let steps = |(before, open, inner, close): (&str, &str, &str, &str), depth: usize| {
+            let src = format!(
+                "fn k<T>(a: T, b: T) -> T {{ b }}\nfn id<T>(x: T) -> T {{ x }}\n\
              fn k2<T, U>(a: T, b: U) -> U {{ b }}\n\
              fn main() {{\n    let c = true\n    let x: u8 = 3\n    {before}{}{inner}{}\n}}",
-            open.repeat(depth),
-            close.repeat(depth),
-        );
-        generic::RANK_STEPS.set(0);
-        clean(&src);
-        generic::RANK_STEPS.get()
-    };
-    for row in [
-        ("let r: u8 = ", "k(1, ", "1", ")"),
-        ("let r: u8? = ", "id(", "1", ")"),
-        ("let r: u8? = ", "k(Some(1), ", "None", ")"),
-        // Only the second argument gives the call its type. The first row nests at that place,
-        // and the second at the place that is not carried, which ranking does not walk.
-        ("let r: u8 = ", "k2(x, ", "1", ")"),
-        ("let r: u8 = ", "k2(", "1", ", 1)"),
-    ] {
-        assert!(steps(row, 1) > 0, "the counter should count the walk");
-        assert_near_linear(steps(row, 20), steps(row, 40), steps(row, 60));
-    }
-    // Joins and operators rank their siblings too: an array in an array, an `if` in an `if`, an
-    // operator in an operator. Each level recurses deeper than a call does, and 60 levels
-    // overflow the stack of a debug test thread, so the depths are smaller.
-    for row in [
-        ("let r = ", "[1, ", "1", "].len()"),
-        ("let r = ", "if c { x } else { ", "1", " }"),
-        ("let r = ", "x + (", "1", ")"),
-        ("let r = ", "{ 1 } + (", "x", ")"),
-    ] {
-        assert!(steps(row, 1) > 0, "the counter should count the walk");
-        assert_near_linear(steps(row, 10), steps(row, 20), steps(row, 30));
-    }
+                open.repeat(depth),
+                close.repeat(depth),
+            );
+            generic::RANK_STEPS.set(0);
+            clean(&src);
+            generic::RANK_STEPS.get()
+        };
+        for row in [
+            ("let r: u8 = ", "k(1, ", "1", ")"),
+            ("let r: u8? = ", "id(", "1", ")"),
+            ("let r: u8? = ", "k(Some(1), ", "None", ")"),
+            // Only the second argument gives the call its type. The first row nests at that place,
+            // and the second at the place that is not carried, which ranking does not walk.
+            ("let r: u8 = ", "k2(x, ", "1", ")"),
+            ("let r: u8 = ", "k2(", "1", ", 1)"),
+        ] {
+            assert!(steps(row, 1) > 0, "the counter should count the walk");
+            assert_near_linear(steps(row, 20), steps(row, 40), steps(row, 60));
+        }
+        // Joins and operators rank their siblings too: an array in an array, an `if` in an `if`, an
+        // operator in an operator. Each level recurses deeper than a call does, and 60 levels
+        // overflow the stack of a debug test thread, so the depths are smaller.
+        for row in [
+            ("let r = ", "[1, ", "1", "].len()"),
+            ("let r = ", "if c { x } else { ", "1", " }"),
+            ("let r = ", "x + (", "1", ")"),
+            ("let r = ", "{ 1 } + (", "x", ")"),
+        ] {
+            assert!(steps(row, 1) > 0, "the counter should count the walk");
+            assert_near_linear(steps(row, 10), steps(row, 20), steps(row, 30));
+        }
+    });
 }
 
 /// The program of `a_nested_array_literal_should_resolve_its_type_a_linear_number_of_times`: an
@@ -4549,23 +4551,25 @@ fn nested_array_program(depth: usize, end: &str, bottom: &str, setup: &str) -> S
 /// context from the level above, and does not walk the type below it.
 #[test]
 fn a_nested_array_literal_should_resolve_its_type_a_linear_number_of_times() {
-    with_prelude();
-    for (end, bottom, setup) in [
-        ("Two<T, i64>", "mk(true)", ""),
-        ("Two<T, i64>", "y", "let y = mk(true)"),
-        ("Two<T, i64>?", "mk(true), None", ""),
-    ] {
-        let walked = |depth: usize| {
-            generic::WALKED.set(0);
-            clean(&nested_array_program(depth, end, bottom, setup));
-            generic::WALKED.get()
-        };
-        assert!(
-            walked(1) > 0,
-            "{bottom}: the counter should count the walks"
-        );
-        assert_near_linear_for(&format!("{bottom}: "), walked(20), walked(40), walked(60));
-    }
+    crate::on_compiler_stack(|| {
+        with_prelude();
+        for (end, bottom, setup) in [
+            ("Two<T, i64>", "mk(true)", ""),
+            ("Two<T, i64>", "y", "let y = mk(true)"),
+            ("Two<T, i64>?", "mk(true), None", ""),
+        ] {
+            let walked = |depth: usize| {
+                generic::WALKED.set(0);
+                clean(&nested_array_program(depth, end, bottom, setup));
+                generic::WALKED.get()
+            };
+            assert!(
+                walked(1) > 0,
+                "{bottom}: the counter should count the walks"
+            );
+            assert_near_linear_for(&format!("{bottom}: "), walked(20), walked(40), walked(60));
+        }
+    });
 }
 
 /// The declarations that the rows of `nested_array_literals_should_keep_their_types` share. Each

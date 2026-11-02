@@ -1077,8 +1077,6 @@ crates/sisuc/src/mir/tests/certify.rs::missing_release
 crates/sisuc/src/mir/tests/certify.rs::move_after_a_move_or_a_release
 crates/sisuc/src/mir/tests/certify.rs::move_into_a_borrowed_position_leaks
 crates/sisuc/src/mir/tests/certify.rs::move_of_a_borrowed_parameter_is_rejected
-crates/sisuc/src/mir/tests/certify.rs::nested_guards_mark_last_uses
-crates/sisuc/src/mir/tests/certify.rs::nested_loop_conditions_read_linearly
 crates/sisuc/src/mir/tests/certify.rs::none_stored_with_no_take
 crates/sisuc/src/mir/tests/certify.rs::none_target_applies_its_own_events
 crates/sisuc/src/mir/tests/certify.rs::order_and_pair_alternatives
@@ -1163,7 +1161,6 @@ crates/sisuc/src/mir/tests/lower.rs::lowers_chains_and_exits
 crates/sisuc/src/mir/tests/lower.rs::mentions_every_kind_of_node
 crates/sisuc/src/mir/tests/lower.rs::nested_read_copies_the_middle_level
 crates/sisuc/src/mir/tests/lower.rs::operand_read_before_a_later_sibling_assigns
-crates/sisuc/src/mir/tests/lower.rs::pins_walk_the_body_once
 crates/sisuc/src/mir/tests/lower.rs::some_projection_prints_as_a_pattern
 crates/sisuc/src/mir/tests/lower.rs::store_order_field_base_before_the_value
 crates/sisuc/src/mir/tests/lower.rs::store_order_index_then_value_then_check

@@ -116,7 +116,7 @@ slow-timeout = { period = "10s", terminate-after = 3 }
 # A guard walked again inside each guard around it is exponential in the depth, so this test
 # hangs instead of failing.
 [[profile.default.overrides]]
-filter = 'test(nested_guards_mark_last_uses)'
+filter = 'test(nested_guards_should_mark_last_uses)'
 slow-timeout = { period = "10s", terminate-after = 3 }
 
 # A harness that writes all of standard input before it reads the output would fill both pipes
