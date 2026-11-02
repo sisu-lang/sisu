@@ -149,7 +149,7 @@ The rules:
 - The names of the pattern are not in scope in the `else` block ([E0033](../diagnostics/E0033.md)). A name that the pattern binds and that nothing reads builds with a warning ([W0014](../diagnostics/W0014.md)).
 - The block must not finish. It ends, for example, in `return`, `break`, `continue`, a call of `panic`, `todo`, or an `if` or a `match` whose branches do not finish. Any expression that does not finish is enough ([Reachability](#reachability)). A block that can reach its end is an error ([E0172](../diagnostics/E0172.md)).
 - A `break` or a `continue` in the `else` block acts on the loops around the statement, with their loop labels ([break and continue](#break-and-continue), [Loop labels](#loop-labels)).
-- The value cannot end in `}`, because the parser then reads an `else` as part of an `if`. Put the value in parentheses ([E0173](../diagnostics/E0173.md)).
+- The value cannot end in `}`, because an `else` after a `}` reads as part of the expression that the `}` closes. Put the value in parentheses ([E0173](../diagnostics/E0173.md)).
 
 ```sisu
 fn main() {
