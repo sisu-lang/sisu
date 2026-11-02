@@ -1,0 +1,8 @@
+interface Iter {
+    type Item
+    fn first(self) -> Item
+}
+type X<T> = T
+  .Item
+  .Item
+fn main() {}

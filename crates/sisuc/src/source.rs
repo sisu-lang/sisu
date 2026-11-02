@@ -122,7 +122,7 @@ impl<'a> Source<'a> {
         while at < text.len() {
             let rest = &text[at..];
             if !rest.starts_with(char::is_whitespace) && !rest.starts_with("//") {
-                let ch = rest.chars().next().expect("the rest should not be empty");
+                let Some(ch) = rest.chars().next() else { break };
                 out.push(ch);
                 at += ch.len_utf8();
                 continue;
