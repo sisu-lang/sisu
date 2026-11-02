@@ -164,6 +164,8 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
 /// class or array local that was moved, call `sisu_rc_fault`, and `@main` calls
 /// `sisu_rc_check_exit` after `sisu.main` returns. `@main` always calls `sisu_flush_stdout`
 /// first.
+// `scripts/scaling.py` reads this function's instruction count.
+#[inline(never)]
 pub(crate) fn compile<'ctx>(
     context: &'ctx Context,
     program: &Program,

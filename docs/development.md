@@ -315,6 +315,39 @@ A pull request that changes `codegen`, the runtime or ownership is merged
 only after someone has read its CodSpeed report, including changes below the
 threshold. Any regression that is kept is explained in the description.
 
+### The nightly compile-speed job
+
+The `Compile speed` workflow (`.github/workflows/compile-speed.yml`) runs
+every night at 03:41 UTC, and by hand with `workflow_dispatch`. It builds
+`sisu` in release mode and installs `valgrind` and Go. Then it runs two
+scripts:
+
+1. `scripts/compile_speed.py --check-only` builds the smallest size of the
+   compile-speed program in each language and compares the output of the
+   four programs. It times nothing.
+2. `scripts/scaling.py` runs the scaling sweep
+   (`docs/benchmarks.md`, "The scaling sweep"). A failed check in step 1 does
+   not skip it.
+
+The job fails when a check fails, when a stage is superlinear for a shape
+and `KNOWN` in `scripts/scaling.py` has no row for it, and when a row looks
+fixed. A known case is a line on stdout and a warning annotation on the run.
+It does not fail the job. The job never fails on a measured time.
+
+The table of the sweep is in the summary of the run. The artifact `scaling`
+holds `table.md`, `counts.json` and the program of each shape at each size.
+A sweep that stops early still writes the shapes that it measured, then a line
+`scaling: <message>`. To run the sweep on
+your machine, use `make scaling`. In the job, each script has a total time
+bound. The job gives `--time-bound 300` to step 1 and `--time-bound 900` to
+the sweep. A script that runs over exits with code 1. The bound is a guard
+against a hang. A local `make scaling` has a bound of 1800 seconds, the
+default of `scripts/scaling.py`.
+
+The scheduled run starts only from the default branch. After a change to the
+workflow, start it once by hand from the Actions tab. GitHub disables a
+`schedule` trigger as the fuzz job below says.
+
 ## Fuzz the front end
 
 The fuzz target, `fuzz/fuzz_targets/front_end.rs`, feeds arbitrary bytes to
@@ -881,11 +914,11 @@ must accept any syntax those programs use.
 | `crates/sisuc/tests/programs` | The programs the small-stack tests run. |
 | `crates/runtime` | `sisu-runtime`, the runtime's code: a Rust library with a C ABI. |
 | `crates/runtime-mimalloc`, `crates/runtime-system` | `sisu-runtime-mimalloc` and `sisu-runtime-system`, the static archives that link it, on mimalloc and on the System allocator. Every compiled program links one. |
-| `bench` | The benchmark programs, and under `features/` the Sisu-only ones for CodSpeed. |
+| `bench` | The benchmark programs, under `features/` the Sisu-only ones for CodSpeed, and under `compile/` the compile-speed units and the saved counts that the tests of `scripts/scaling.py` read. |
 | `selfhost` | The lexer in Sisu, `lexer.sisu`, which the tests check against `sisu build --emit tokens` (see [The growing proof program](#the-growing-proof-program)). |
 | `codspeed.yml`, `codspeed-main.yml` | The CodSpeed benchmark lists: `codspeed.yml` on every run, `codspeed-main.yml` on pushes to `main` only. |
 | `fuzz` | The fuzz targets, `front_end` and `program`, in their own Cargo workspace, run by `scripts/fuzz.sh`. |
 | `Makefile` | The entry point for the commands; `make help` lists its targets. |
-| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `codspeed-prep.sh`, `fuzz.sh`, `fuzz_program_plan.py`, which plans each run of the program fuzz workflow, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, `golden_diff.py`, which checks that a re-bless only reworded expected files, `merge_pr.py`, which squash-merges a pull request once its checks pass, and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
+| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `codspeed-prep.sh`, `fuzz.sh`, `fuzz_program_plan.py`, which plans each run of the program fuzz workflow, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, `golden_diff.py`, which checks that a re-bless only reworded expected files, `scaling.py`, which finds the shapes of program for which a compiler stage is superlinear, `merge_pr.py`, which squash-merges a pull request once its checks pass, and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
 | `site` | The website's pages, data and build script (`make site`). |
 | `docs` | Architecture, roadmap, decisions (`adr/`) and agent guides (`agents/`). |

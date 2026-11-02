@@ -357,6 +357,8 @@ pub(crate) fn lex_at(text: &str, base: usize) -> Result<Lexed<'_>, Diagnostic> {
 /// file is left to the parser.
 /// A `;` that separates statements becomes a `Newline`, and a redundant one is dropped with a
 /// warning (`separate`).
+// `scripts/scaling.py` reads this function's instruction count.
+#[inline(never)]
 pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
     let (mut tokens, mut diagnostics) = (Vec::new(), Vec::new());
     let (mut comments, mut breaks) = (Vec::new(), Vec::new());

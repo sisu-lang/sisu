@@ -9,7 +9,7 @@ BENCH =
 ARGS =
 
 .DEFAULT_GOAL := help
-.PHONY: help setup audit-setup build test test-health bless lint deny miri check coverage mutation-test fuzz fuzz-coverage bench compile-speed callgrind site
+.PHONY: help setup audit-setup build test test-health bless lint deny miri check coverage mutation-test fuzz fuzz-coverage bench compile-speed scaling callgrind site
 
 help: ## List the targets
 	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  %-13s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -70,6 +70,10 @@ bench: ## Time the benchmarks in bench/ (BENCH='fib sieve' picks some)
 compile-speed: ## Compare compile speed with rustc, clang++ and Go (ARGS='--check-only')
 	cargo build --release --quiet -p sisuc -p sisu-runtime-mimalloc
 	python3 scripts/compile_speed.py $(ARGS)
+
+scaling: ## Find the shapes of program for which a compiler stage is superlinear (ARGS='--shapes ...')
+	cargo build --release --quiet -p sisuc
+	python3 scripts/scaling.py $(ARGS)
 
 callgrind: ## Count the instructions of sisu check, as CodSpeed does
 	scripts/codspeed-prep.sh

@@ -932,6 +932,8 @@ impl Body {
 /// it: `front_end` takes one that does for an internal error. `source` is the user's text, and
 /// `prelude` holds the prelude's. The prelude's `Option` is no item here: it defines the optional
 /// type, which has no enum.
+// `scripts/scaling.py` reads this function's instruction count.
+#[inline(never)]
 pub(crate) fn check<'src>(
     program: &'src ast::Program,
     prelude: &'src PreludeProgram,

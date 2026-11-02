@@ -494,6 +494,63 @@ less. `make compile-speed` has run on Linux only. Build outputs go to
 style of the units with `rustfmt`, `clang-format` and `gofmt`, and skips a
 check when its tool is not on `PATH`. It needs `perf` for the last column.
 
+### The scaling sweep
+
+`make scaling` finds the programs for which a compiler stage costs more than
+a fixed amount for each unit of input. A shape is a kind of program that
+grows in one direction, such as more functions, deeper nesting or more match
+arms. `scripts/scaling.py` compiles each of 14 shapes at size 0 and at four
+sizes that double: n, 2n, 4n and 8n. It counts the instructions of each stage
+under callgrind: `lex`, `parse`, `check`, `mono`, `mir` and `codegen`. The
+count does not depend on the load of the machine. It also changes a little with
+the file paths and the C library. So on another machine, such as the runner of
+the nightly job, a ratio near a number of the rule can fall on the other side.
+It needs `valgrind`, and a full run takes
+about 3 minutes on the machine above.
+
+The script prints one table for each shape. It also writes `table.md` and
+`counts.json` to `target/scaling/`. `ARGS='--shapes functions,fields'`
+measures only those shapes. `ARGS='--counts FILE'` reads the `counts.json` of
+an earlier run and measures nothing.
+
+- **Growth** is the count of a stage at one size, less its count at size 0.
+  Size 0 takes away the fixed cost, such as the prelude.
+- **Ratio** is the growth at one size divided by the growth at half that
+  size. A sweep has three: r1 (n to 2n), r2 (2n to 4n) and r3 (4n to 8n). A
+  linear stage has ratios near 2.0, and a quadratic stage near 4.0.
+- A stage is **judged** when its growth at 8n is positive and at least 1% of
+  the sum of the growth of the six stages at 8n. A stage that hardly grows
+  with the shape is not judged. Its counts are noise.
+- A judged stage is **superlinear** when r3 > 2.3 and r2 ≥ 2.1, and when
+  r3 ≥ r1 − 0.05 or r3 ≥ 3.0. The second test keeps a stage whose ratios
+  fall a little toward 4.0.
+
+The rule has two limits. It does not find a small quadratic part under a
+large linear part, such as 10000n + n². It also marks a linear stage that has
+one step in r2 and a rise in r3.
+
+One shape and one stage that is superlinear for it is a case. The known list
+`KNOWN` in `scripts/scaling.py` has one row for each case that has an open
+issue: the shape, the stage and the issue number. A known case is a row of
+`KNOWN` that does not look fixed. A known row can be linear but just under
+the rule, as generic call depth is. The script exits with
+code 0 when every superlinear case has a row and no row looks fixed. It prints
+each known case on stdout. It exits with code 1 when:
+
+- a superlinear case has no row. Open an issue and add a row.
+- a row looks fixed. Its stage is not judged, has no ratio, has r3 < 2.15, or
+  has ratios that fall (r3 < 3.0 and r3 < r1 − 0.15). Remove the row.
+- a check or a command fails.
+
+The pull request that fixes a known case removes its row. The gaps between
+the numbers keep a row from changing between known and fixed when a change
+moves a ratio a little. At commit 556e8467, the sweep finds four superlinear
+cases, all in the `check` stage: array literal depth (#344), expression
+depth (#367), and type depth and method chain (#366). Generic call depth in
+`check` has the same cause as #366 and is just under the rule (r3 = 2.30).
+`KNOWN` has a row for each of the five. The nightly job runs the sweep
+(`docs/development.md`, "The nightly compile-speed job").
+
 ## Benchmarks for CodSpeed only
 
 `bench/features/` holds Sisu-only programs sized for CodSpeed's simulation.
