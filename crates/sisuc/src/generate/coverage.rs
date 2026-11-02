@@ -15,6 +15,7 @@ use super::item::{MAX_ALIASES, MAX_INTERFACES, MAX_KNOWN, MAX_REQUIREMENTS, MOST
 use super::scope::{
     Applied, Class, Const, Enum, Field, Func, Nodes, RESULT, Scope, Ty, Var, Variant,
 };
+use super::stmt::MAX_BLOCKS;
 use super::writer::{Rewrite, Site, Writer, allowed};
 use super::{Answer, BUDGET, Cost, DEPTHS, FUEL, Gen, MAX_BOUND, MAX_NESTING, MAX_SIZE, generate};
 use crate::conformance::holds_class;
@@ -8405,4 +8406,12 @@ fn main() {
             );
         }
     }
+}
+
+// One program in eight leaves with `let ... else`. With a broken bound, the first seed that
+// writes an `if` at it is seed 14, so 256 seeds is over 10 times that.
+#[test]
+fn a_leaving_if_should_nest_no_deeper_than_the_block_bound() {
+    let deepest = (0..256).map(|n| generate(&seed(n)).leaving_if_depth).max();
+    assert_eq!(deepest, Some(MAX_BLOCKS - 1));
 }

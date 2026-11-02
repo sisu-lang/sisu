@@ -40,6 +40,9 @@ pub(crate) struct Generated {
     /// The rewrites `rewritten` holds.
     #[cfg(test)]
     pub(crate) made: Vec<writer::Rewrite>,
+    /// The most blocks open around an `if` of which every branch jumps.
+    #[cfg(test)]
+    pub(crate) leaving_if_depth: u32,
 }
 
 /// An argument of a call of a bounded generic function or class, whose parameter is a bare type
@@ -159,6 +162,8 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
         plain,
         #[cfg(test)]
         made: g.w.made,
+        #[cfg(test)]
+        leaving_if_depth: g.leaving_if_depth,
     }
 }
 
@@ -193,6 +198,9 @@ struct Gen<'a> {
     jumps: stmt::Jumps,
     /// How many blocks are open around the point being written.
     blocks: u32,
+    /// The most blocks open around an `if` of which every branch jumps (`Gen::if_stmt`).
+    #[cfg(test)]
+    leaving_if_depth: u32,
     /// Whether the next expression is in a position with no expected type, where a `u8` must
     /// be one by its own type (`Gen::expr`).
     synth: bool,
@@ -239,6 +247,8 @@ impl<'a> Gen<'a> {
             budget: BUDGET - FUEL * STATEMENT_MOST,
             jumps: stmt::Jumps::default(),
             blocks: 0,
+            #[cfg(test)]
+            leaving_if_depth: 0,
             synth: false,
             typed: false,
             bare: false,

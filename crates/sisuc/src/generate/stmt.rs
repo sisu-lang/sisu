@@ -729,6 +729,10 @@ impl Gen<'_> {
     /// a jump: an `if` that cannot finish leaves a value block after it no value (E0043). If
     /// `last`, the block's last statement, every branch ends in a jump and the `else` is there.
     fn if_stmt(&mut self, last: bool) {
+        #[cfg(test)]
+        if last {
+            self.leaving_if_depth = self.leaving_if_depth.max(self.blocks);
+        }
         let branch = |g: &mut Self| {
             if last {
                 g.jumping_block();
