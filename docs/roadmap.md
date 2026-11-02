@@ -101,7 +101,8 @@ with `match`, and generics with interfaces.
   `<` (`E0159`). An optional does not convert: an `i64?` is no `any Display`
   and a `Circle?` is no `(any Shape)?` (`E0032`), while a `Circle` converts to
   `(any Shape)?` and wraps. An interface with a generic method, a `Self`
-  besides the receiver or an associated type cannot be `any` (`E0164`), a bare
+  besides the receiver, an associated type, or an inherited interface with
+  `Self` in its arguments cannot be `any` (`E0164`), a bare
   interface name is not a type (`E0147`), and `any Shape?` and `any A & B` are
   errors (`E0165`)
 - type aliases, `type Grid = [[char?]]` and `type Pairs<T> = [[T]]`: another

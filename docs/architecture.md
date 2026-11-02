@@ -196,7 +196,8 @@ the call becomes an `InterfaceCall` node in `tir`. `conformance.rs` finds the
 conformance that covers a type, for the checker and for `mono`.
 `check/any.rs` handles interface values. `any I` is `TypeKind::Any`. An
 interface cannot be `any` when it, or an interface that it inherits, has a
-generic method, a `Self` besides the receiver or an associated type (E0164);
+generic method, a `Self` besides the receiver, an associated type, or an
+inherited interface with `Self` in its arguments (E0164);
 `why_not_any` keeps each answer, so a long chain of inheritance costs no more
 than its length. A value converts to an `any` type wherever the checker expects
 one: an annotation, an argument, a field, an element, a `return`, a tail, an

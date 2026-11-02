@@ -79,6 +79,27 @@ fn an_alias_of_a_bounded_any_type_should_check_the_bounds_at_each_use() {
     );
 }
 
+/// An argument of a written `any I<..>` that fails a bound of `I` is reported at the argument,
+/// outside an alias body and in an alias body with no parameter.
+#[test]
+fn a_bound_of_an_any_argument_should_be_reported_at_the_argument() {
+    codes_row(
+        "a parameter of a generic function",
+        "interface I<T: Eq> {}\nfn f<T>(_x: (any I<T>)?) {}\nfn main() {\n    f<i64>(None)\n}\n",
+        &[(NotConform, (2, 20))],
+    );
+    codes_row(
+        "an alias with no parameter",
+        "interface I<T: Eq> {}\nclass K {}\ntype A = any I<K>\nfn main() {\n    let _x: A? = None\n}\n",
+        &[(NotConform, (3, 16))],
+    );
+    codes_row(
+        "a field of a generic class",
+        "interface I<T: Eq> {}\nclass K {}\nclass C<T> {\n    x: (any I<T>)?\n}\nfn main() {\n    let _c = C<K>(x: None)\n}\n",
+        &[(NotConform, (4, 15))],
+    );
+}
+
 /// A class or an enum that names itself with a larger argument inside `any` grows without end.
 #[test]
 fn a_type_that_grows_through_an_any_argument_should_report_the_cycle() {
