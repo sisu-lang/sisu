@@ -440,38 +440,24 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect(POSITIONED)
             .try_as_basic_value()
             .basic()?;
-        Some(self.bound_len(self.mir.functions[func.0].ret, result))
+        self.assume_len(self.mir.functions[func.0].ret, result);
+        Some(result)
     }
 
-    /// `value`, a value that a call returned, with the fact that its length is not negative. A
-    /// callee's `range` attribute holds for a parameter and not for a returned struct, so the
-    /// caller states it again, with `llvm.smax(len, 0)`. A comparison does not do it: when
-    /// `-O2` sees the callee's length, `ipsccp` folds `llvm.assume(len >= 0)`, and an `and` that
-    /// clears the sign bit, to nothing, and no pass after it knows the length is not negative.
-    /// Does nothing unless `ty` is an array, a string, or the optional of one.
-    fn bound_len(&self, ty: Type, value: BasicValueEnum<'ctx>) -> BasicValueEnum<'ctx> {
+    /// States to LLVM that the length of `value`, a value returned by a call, is not negative:
+    /// a callee's `range` attribute holds for a parameter and not for a returned struct, so the
+    /// caller asserts it. Does nothing unless `ty` is an array, a string, or the optional of one.
+    fn assume_len(&self, ty: Type, value: BasicValueEnum<'ctx>) {
         if !layout::three_words(ty) {
-            return value;
+            return;
         }
-        let i64_type = self.context.i64_type();
-        let smax = Intrinsic::find("llvm.smax")
-            .and_then(|smax| smax.get_declaration(&self.module, &[i64_type.into()]))
-            .expect("LLVM should provide `llvm.smax`, which is overloaded on an integer type");
-        let len = self
-            .builder
-            .build_call(
-                smax,
-                &[self.value_len(value).into(), i64_type.const_zero().into()],
-                "len",
-            )
-            .expect(POSITIONED)
-            .try_as_basic_value()
-            .basic()
-            .expect("`llvm.smax` should return an integer");
-        self.builder
-            .build_insert_value(value.into_struct_value(), len, 2, "value")
-            .expect("an array or string value should have three words")
-            .as_basic_value_enum()
+        let len = self.value_len(value);
+        let not_negative =
+            self.int_compare(IntPredicate::SGE, len, self.context.i64_type().const_zero());
+        let assume = Intrinsic::find("llvm.assume")
+            .and_then(|assume| assume.get_declaration(&self.module, &[]))
+            .expect("LLVM should provide `llvm.assume`, which takes no type parameters");
+        self.call(assume, &[not_negative.into()]);
     }
 
     /// `call_value` for a helper of `to_string` or `eq`, which calls a written method with its

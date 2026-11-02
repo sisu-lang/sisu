@@ -480,7 +480,10 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect(POSITIONED)
             .try_as_basic_value()
             .basic()?;
-        Some(ret.map_or(result, |ret| self.bound_len(ret, result)))
+        if let Some(ret) = ret {
+            self.assume_len(ret, result);
+        }
+        Some(result)
     }
 
     /// Writes the text of the `any` value `value`, of type `any`, through the show helper of its

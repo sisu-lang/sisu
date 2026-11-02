@@ -427,7 +427,7 @@ first element and its length. A value that covers its whole block has `data` at
 the block's first element and `len` equal to the header's `len`. A function
 takes an array as three scalar parameters, and its length parameter carries
 `noundef` and `range(i64 0, 2^63)`. A function returns the three words, and its
-caller states with `llvm.smax(len, 0)` that the returned length is not negative. A
+caller asserts with `llvm.assume` that the returned length is not negative. A
 `[T]?` keeps its `None` in a null `block`. Each array type gets the same helpers, such as
 `sisu_rc.release.[i64]`, plus `sisu_rc.unique.[i64]`, which copies the block
 before a write when another holder shares it. A loop makes the arrays it

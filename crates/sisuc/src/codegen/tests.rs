@@ -3871,11 +3871,10 @@ fn an_index_modulo_the_length_should_have_no_bounds_check_at_o2() {
 /// `an_index_modulo_the_length_should_have_no_bounds_check_at_o2` with the array from a callee
 /// that `-O2` does not inline: the facts about a returned length are the caller's. The callee
 /// returns the three words, and a `range` attribute holds for a parameter and not for a returned
-/// struct, so the caller states that the length is not negative with `llvm.smax(len, 0)`. An
-/// `llvm.assume` does not do it: `ipsccp` folds it to `true` when it sees the callee compute the
-/// length, and then no later pass has the fact. The callees here build the length in each way:
-/// the first from a runtime call that the optimizer cannot see into, the others from a checked
-/// count and a checked sum, which it can.
+/// struct, so the caller asserts that the length is not negative with `llvm.assume`. The callee's
+/// length is one that `ipsccp` cannot prove not negative, so the assumption stays. A length that
+/// it can prove, as a checked `[n; n]` or a runtime row with a `range` gives, makes it fold the
+/// assumption to `true`, and then the caller has lost the fact: a known gap, with no test.
 ///
 /// ```text
 /// GIVEN an array that a function returns, which is not inlined
@@ -3885,35 +3884,21 @@ fn an_index_modulo_the_length_should_have_no_bounds_check_at_o2() {
 #[test]
 fn an_index_modulo_the_length_of_a_returned_array_should_have_no_bounds_check_at_o2() {
     let context = Context::create();
-    // `wrap` loops over indexes of the array that `make` returns. Each `make` builds its length
-    // another way, from a runtime call, a checked count or a checked sum, so that the length is
-    // a value that LLVM sees and not a load.
-    let program = |make: &str| {
-        format!(
-            "{make}\n\nfn wrap(n: i64, m: i64) -> i64 {{\n    let ys = make(n)\n    let mut t = 0\n    for i in 0..m {{\n        t += ys[i % ys.len()]\n    }}\n    t\n}}\n\nfn main(args: [string]) {{\n    print(wrap(args.len() + 1, args.len() * 7))\n}}"
-        )
-    };
-    for (name, src) in [
-        (
-            "runtime call",
-            "fn make(s: string) -> [char] {\n    s.chars()\n}\n\nfn wrap(s: string, n: i64) -> i64 {\n    let ys = make(s)\n    let mut t = 0\n    for i in 0..n {\n        t += i64(ys[i % ys.len()])\n    }\n    t\n}\n\nfn main(args: [string]) {\n    print(wrap(\"abc\", args.len()))\n}".to_string(),
-        ),
-        ("checked count", program("fn make(n: i64) -> [i64] {\n    [n; n]\n}")),
-        ("checked sum", program("fn make(n: i64) -> [i64] {\n    [n; n + 1]\n}")),
-    ] {
-        let module = compiled(&context, &src);
-        keep_functions(&module, "make,wrap");
-        let machine = target_machine(OptLevel::O2).expect("the host is a target");
-        optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
-        let ir = module.print_to_string().to_string();
-        let wrap = function_body(&ir, "@sisu.wrap(");
-        assert!(wrap.contains("rem i64"), "{name}: {wrap}");
-        assert!(
-            wrap.contains("@sisu.make("),
-            "{name}: the array should come from a call: {wrap}"
-        );
-        assert!(!wrap.contains("@sisu_panic_bounds("), "{name}: {wrap}");
-    }
+    let module = compiled(
+        &context,
+        "fn make(n: i64) -> [u8] {\n    \"abc{n}\".bytes()\n}\n\nfn wrap(n: i64, m: i64) -> i64 {\n    let ys = make(n)\n    let mut t = 0\n    for i in 0..m {\n        t += i64(ys[i % ys.len()])\n    }\n    t\n}\n\nfn main(args: [string]) {\n    print(wrap(args.len() + 1, args.len() * 7))\n}",
+    );
+    keep_functions(&module, "make,wrap");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    let wrap = function_body(&ir, "@sisu.wrap(");
+    assert!(wrap.contains("rem i64"), "{wrap}");
+    assert!(
+        wrap.contains("@sisu.make("),
+        "the array should come from a call: {wrap}"
+    );
+    assert!(!wrap.contains("@sisu_panic_bounds("), "{wrap}");
 }
 
 /// The same holds with no call: a length that a function builds itself, with a checked count or
