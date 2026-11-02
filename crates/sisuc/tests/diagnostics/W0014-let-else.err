@@ -1,0 +1,14 @@
+warning[W0014]: variable `v` is never read
+ --> W0014-let-else.sisu:6:9
+  |
+6 |     let v = o else { return }
+  |         ^ never read
+  |
+help: replace `v` with `_`
+  |
+6 -     let v = o else { return }
+6 +     let _ = o else { return }
+  |
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0014

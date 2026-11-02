@@ -1,0 +1,12 @@
+// GIVEN a `let v = if c { 1 }` whose `else { 2 }` starts the next line
+// WHEN `sisu check` runs on it
+// THEN it reports E0006 at the `else` (6:5) in the words for an `if`, because the `else` belongs to the `if`
+fn f(c: bool) -> i64 {
+    let v = if c { 1 }
+    else { 2 }
+    v
+}
+
+fn main() {
+    print(f(true))
+}

@@ -4,7 +4,7 @@ error[E0062]: `xs` may be `None`
 3 |     for x in xs {
   |              ^^
   |
-  = help: unwrap it with `if let`
+  = help: unwrap it with `if let`, `let ... else` or `?? return`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0062

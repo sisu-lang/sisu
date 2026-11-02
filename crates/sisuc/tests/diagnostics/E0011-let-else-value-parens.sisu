@@ -1,0 +1,13 @@
+// GIVEN `let E.A = (if true { 1 + }) else { return }`
+// WHEN `sisu check` runs on it
+// THEN it reports E0011 at the `}` after the `+` (10:30), not "expected `=`, found `.`"
+enum E {
+    A
+    B
+}
+
+fn f(o: E) {
+    let E.A = (if true { 1 + }) else { return }
+}
+
+fn main() {}

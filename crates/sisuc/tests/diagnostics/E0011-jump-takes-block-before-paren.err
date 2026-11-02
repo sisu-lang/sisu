@@ -1,0 +1,10 @@
+error[E0011]: `return` takes the `{ ... }` after it as its value
+ --> E0011-jump-takes-block-before-paren.sisu:5:21
+  |
+5 |     let x = (if a < return { 1 })
+  |                     ^^^^^^
+  |
+  = help: to keep the block as the body, put the jump in `( )`: `(a < return)`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011

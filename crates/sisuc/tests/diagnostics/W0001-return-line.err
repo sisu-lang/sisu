@@ -1,0 +1,8 @@
+warning[W0001]: unreachable code
+ --> W0001-return-line.sisu:6:5
+  |
+6 |     print(1)
+  |     ^^^^^^^^
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0001

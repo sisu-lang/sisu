@@ -1,0 +1,8 @@
+error[E0011]: expected `=`, found `.`
+  --> E0011-let-qualified-block-value.sisu:10:10
+   |
+10 |     let E.A = { if c { 1 } else { 2 } } +
+   |          ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011

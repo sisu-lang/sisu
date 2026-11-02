@@ -1,0 +1,13 @@
+// A loop label reaches the outer loop from the else block.
+// GIVEN `outer: for i in 0..3` with an inner `for o in [Some(i), None]` whose body is
+//   `let v = o else { continue outer }` and then `print(v)`
+// WHEN the program runs
+// THEN it prints `0`, `1` and `2`
+fn main() {
+    outer: for i in 0..3 {
+        for o in [Some(i), None] {
+            let v = o else { continue outer }
+            print(v) // 0, then 1, then 2
+        }
+    }
+}

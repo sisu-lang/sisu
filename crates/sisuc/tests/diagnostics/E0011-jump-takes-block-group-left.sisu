@@ -1,0 +1,12 @@
+// GIVEN an `if` whose condition `(a) < return` starts with a group and is followed by the `{` of its body
+// WHEN `sisu check` runs on it
+// THEN it reports E0011 at the `return` (5:14), with the help `((a) < return)`
+fn f(a: i64) {
+    if (a) < return {
+        print(1)
+    }
+}
+
+fn main() {
+    f(1)
+}

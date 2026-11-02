@@ -68,7 +68,7 @@ codes! {
     DigitSeparator = "E0008",
     IntegerTooLarge = "E0009",
     UnexpectedCharacter | LogicalOperatorWritten = "E0010",
-    Expected = "E0011",
+    Expected | JumpTakesBlock = "E0011",
     Var = "E0013",
     FieldComma = "E0015",
     FieldLet = "E0016",
@@ -219,6 +219,9 @@ codes! {
     TooManyInstances = "E0163",
     CannotBeAny = "E0164",
     AnyForm = "E0165",
+    LetElseCanFinish = "E0172",
+    LetElseValueEndsInBrace = "E0173",
+    RefutablePattern = "E0174",
     NanComparison = "W0005",
     UnreachableArm = "W0006",
     RedundantSemicolon = "W0007",
@@ -303,8 +306,13 @@ pub(crate) enum DiagnosticKind {
     BraceOnNewLine { at: Span, join: Option<Join> },
     /// A `[` at `at` that starts a line inside brackets, after an expression.
     BracketOnNewLine { at: Span },
-    /// An `else` at `at` that starts a line; `join`, when a `}` ends the line above, moves it up.
-    ElseOnNewLine { at: Span, join: Option<Join> },
+    /// An `else` at `at` that starts a line; `of` is what the `else` should follow, and `join`,
+    /// when the line above can take it, moves it up.
+    ElseOnNewLine {
+        at: Span,
+        of: ElseOf,
+        join: Option<Join>,
+    },
     /// A closing `bracket` at `at` with no match; `opened` is the bracket that is open instead.
     UnexpectedClosingBracket {
         bracket: char,
@@ -345,6 +353,15 @@ pub(crate) enum DiagnosticKind {
         what: String,
         found: String,
         at: Span,
+    },
+    /// The `return` or `break` `keyword` at `at`, at the end of the header of an `if`, a `while`,
+    /// a `for` or a `match`, which took the `{ ... }` of the body as its value. `grouped` is the
+    /// header through the jump, for the help that puts it in `( )`; it is `None` for a `break`
+    /// in the header of a loop, where that help would be E0082.
+    JumpTakesBlock {
+        keyword: &'static str,
+        at: Span,
+        grouped: Option<String>,
     },
     /// A `var` at `at`, on a field or on a binding.
     Var { at: Span, field: bool },
@@ -420,6 +437,12 @@ pub(crate) enum DiagnosticKind {
     },
     /// `any` at `at`, written in a way that it does not take.
     AnyForm { at: Span, form: AnyFormKind },
+    /// The `else` block of a `let ... else`, whose `}` is at `at`, which can reach its end.
+    LetElseCanFinish { at: Span },
+    /// The value at `at` of a `let ... else`, which ends in `}`.
+    LetElseValueEndsInBrace { at: Span },
+    /// The pattern at `at`, written `shown`, of a `let` that has no `else` and can fail to match.
+    RefutablePattern { at: Span, shown: String },
     /// The interface `interface`, as written after `any` at `at`, which cannot be `any`. `owner`
     /// is the interface that has the `reason`: `interface` itself, or one it inherits.
     CannotBeAny {
@@ -1604,6 +1627,7 @@ pub(crate) enum Literal {
 pub(crate) enum Unwrap {
     IfLet,
     WhileLet,
+    LetElse,
 }
 
 impl Unwrap {
@@ -1611,6 +1635,7 @@ impl Unwrap {
         match self {
             Unwrap::IfLet => "if let",
             Unwrap::WhileLet => "while let",
+            Unwrap::LetElse => "let ... else",
         }
     }
 }
@@ -2026,6 +2051,15 @@ pub(crate) struct Join {
     pub(crate) gap: Span,
     /// Whether the move is always right, not only likely.
     pub(crate) safe: bool,
+}
+
+/// What an `else` at the start of a line should follow (E0006).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ElseOf {
+    /// The `}` that closes an `if`.
+    If,
+    /// The value of a `let`, in `let pattern = value else { ... }`.
+    Let,
 }
 
 /// What a comma follows, in a list that puts each on its own line.
@@ -2538,18 +2572,22 @@ impl From<DiagnosticKind> for Diagnostic {
                 Diagnostic::coded(code, at, "`[` cannot start a line here")
                     .with_help("add a comma, or put `[` on the line of its array")
             }
-            DiagnosticKind::ElseOnNewLine { at, join } => {
-                let d = Diagnostic::coded(
-                    code,
-                    at,
-                    "`else` must be on the same line as the closing `}`",
-                );
-                match join {
-                    Some(join) => d.with_fix(join_fix(
+            DiagnosticKind::ElseOnNewLine { at, of, join } => {
+                let (message, fix, unsafe_fix) = match of {
+                    ElseOf::If => (
+                        "`else` must be on the same line as the closing `}`",
                         "move `else` after the `}`",
                         "if this `else` belongs to the `if` above, move it after the `}`",
-                        join,
-                    )),
+                    ),
+                    ElseOf::Let => (
+                        "`else` must be on the same line as the value of the `let`",
+                        "move `else` after the value",
+                        "if this `else` belongs to the `let` above, move it after the value",
+                    ),
+                };
+                let d = Diagnostic::coded(code, at, message);
+                match join {
+                    Some(join) => d.with_fix(join_fix(fix, unsafe_fix, join)),
                     None => d,
                 }
             }
@@ -2642,6 +2680,23 @@ impl From<DiagnosticKind> for Diagnostic {
             }
             DiagnosticKind::Expected { what, found, at } => {
                 Diagnostic::coded(code, at, format!("expected {what}, found {found}"))
+            }
+            DiagnosticKind::JumpTakesBlock {
+                keyword,
+                at,
+                grouped,
+            } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`{keyword}` takes the `{{ ... }}` after it as its value"),
+                );
+                match grouped {
+                    Some(grouped) => d.with_help(format!(
+                        "to keep the block as the body, put the jump in `( )`: `({grouped})`"
+                    )),
+                    None => d,
+                }
             }
             DiagnosticKind::Var { at, field } => {
                 let d = Diagnostic::coded(code, at, "there is no `var` in Sisu");
@@ -3223,6 +3278,40 @@ impl From<DiagnosticKind> for Diagnostic {
                     ))
                 }
             },
+            DiagnosticKind::LetElseCanFinish { at } => Diagnostic::coded(
+                code,
+                at,
+                "the `else` block of a `let ... else` must not finish",
+            )
+            .with_label("the block can finish here")
+            .with_help("end the block with `return`, `break`, `continue` or `panic(...)`"),
+            DiagnosticKind::LetElseValueEndsInBrace { at } => Diagnostic::coded(
+                code,
+                at,
+                "the value of a `let ... else` cannot end in `}`",
+            )
+            .with_label("this ends in `}`")
+            .with_fix(Fix {
+                message: "put the value in `( )`".to_string(),
+                safe: true,
+                edits: vec![
+                    Edit {
+                        span: Span::new(at.start(), at.start()),
+                        replacement: "(".to_string(),
+                    },
+                    Edit {
+                        span: Span::new(at.end(), at.end()),
+                        replacement: ")".to_string(),
+                    },
+                ],
+            }),
+            DiagnosticKind::RefutablePattern { at, shown } => {
+                Diagnostic::coded(code, at, "this pattern can fail to match")
+                    .with_label(format!("`{shown}` may not match"))
+                    .with_help(
+                        "add an `else` block that does not finish, or use `if let` or `match`",
+                    )
+            }
             DiagnosticKind::CannotBeAny {
                 interface,
                 owner,
@@ -4014,15 +4103,17 @@ impl From<DiagnosticKind> for Diagnostic {
                             "if a `None` result is fine, use `?.`"
                         };
                         d.with_help(
-                            "to use the value only when it is present, unwrap it with `if let`",
+                            "to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`",
                         )
                         .with_fix(unsafe_fix(fix, access, "?."))
                     }
                     None => match unwrap {
-                        UnwrapHelp::It => d.with_help("unwrap it with `if let`"),
-                        UnwrapHelp::Object(object) => {
-                            d.with_help(format!("unwrap `{object}` with `if let`"))
+                        UnwrapHelp::It => {
+                            d.with_help("unwrap it with `if let`, `let ... else` or `?? return`")
                         }
+                        UnwrapHelp::Object(object) => d.with_help(format!(
+                            "unwrap `{object}` with `if let`, `let ... else` or `?? return`"
+                        )),
                         UnwrapHelp::Nothing => d,
                     },
                 }
@@ -5010,8 +5101,12 @@ impl From<DiagnosticKind> for Diagnostic {
                 ))
             }
             DiagnosticKind::AlwaysMatches { keyword, at } => match keyword {
-                Unwrap::IfLet => Diagnostic::coded(code, at, "`if let` always matches here")
-                    .with_help("use `match`"),
+                Unwrap::IfLet | Unwrap::LetElse => Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`{}` always matches here", keyword.word()),
+                )
+                .with_help("use `match`"),
                 Unwrap::WhileLet => Diagnostic::coded(
                     code,
                     at,

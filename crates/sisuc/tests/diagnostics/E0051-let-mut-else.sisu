@@ -1,0 +1,7 @@
+// GIVEN a `main` whose line 5 is `let mut n = 5 else { return }`
+// WHEN `sisu check` runs on it
+// THEN it reports E0051 at 5:17 and no other diagnostic
+fn main() {
+    let mut n = 5 else { return }
+    n = n + 1
+}

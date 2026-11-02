@@ -1,0 +1,10 @@
+// GIVEN a `main` whose line 8 is `let Some(v) = match k { _ => o } else { return }`, with `match` at 8:19
+// WHEN `sisu check` runs on it
+// THEN it reports E0173 at 8:19
+// AND the fix puts the `match` in `( )`, and the fixed program checks clean
+fn main() {
+    let k = 1
+    let o: i64? = Some(2)
+    let Some(v) = match k { _ => o } else { return }
+    print(v)
+}

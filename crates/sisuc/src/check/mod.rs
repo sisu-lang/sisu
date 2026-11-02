@@ -38,7 +38,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::ast;
 use crate::conformance::{self, StuckChoices};
 use crate::diagnostic::{
-    BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, Expected, MainForm,
+    BuiltIn, Code, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, Expected, MainForm,
     MismatchFix, MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
 };
 use crate::front_end::PreludeProgram;
@@ -1092,10 +1092,16 @@ pub(crate) fn check<'src>(
     program.iter().for_each(tir::assert_exit_flags);
     // A use of a broken item poisons without a diagnostic of its own.
     debug_assert!(
-        program.is_some() || failed || broken,
+        program.is_some() || failed || broken || refutable(parsed),
         "a missing program implies an error diagnostic or a broken item or method"
     );
     (program, diagnostics)
+}
+
+/// Whether the parser reported a `let` with a pattern and no `else`. The checker fails that
+/// statement and adds no diagnostic, so the function has no `tir`.
+fn refutable(parsed: &[Diagnostic]) -> bool {
+    parsed.iter().any(|d| d.code() == Code::RefutablePattern)
 }
 
 /// `check` over a program with no prelude but the language interfaces, for the tests of what
@@ -2488,13 +2494,13 @@ fn payload(ty: Type) -> Type {
     }
 }
 
-/// The expression a block ends in, if it ends in one: its value.
+/// The expression a block ends in, if it ends in one: its value. A jump is no value.
 fn tail(block: &ast::Block) -> Option<&ast::Expr> {
     match block.stmts.last() {
         Some(ast::Stmt {
             kind: ast::StmtKind::Expr(e),
             ..
-        }) => Some(e),
+        }) if !e.is_jump() => Some(e),
         _ => None,
     }
 }

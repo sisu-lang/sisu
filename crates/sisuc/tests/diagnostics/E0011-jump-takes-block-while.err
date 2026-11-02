@@ -1,0 +1,8 @@
+error[E0011]: `break` takes the `{ ... }` after it as its value
+ --> E0011-jump-takes-block-while.sisu:5:16
+  |
+5 |     while o ?? break {
+  |                ^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011
