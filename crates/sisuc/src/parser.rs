@@ -6376,6 +6376,15 @@ mod tests {
             (at, at + "else    if".len()),
             "one line"
         );
+        // A line break right after `if` is outside the span: the span stays whole.
+        let link = " else if\na { }";
+        let src = format!("{head}{}", link.repeat(300));
+        let at = head.len() + link.len() * (MAX_DEPTH - 2) + 1;
+        assert_eq!(
+            nesting_span(&src),
+            (at, at + "else if".len()),
+            "break after `if`"
+        );
     }
 
     /// A chain of operators reports at the token that passed the limit, even under an `else if`.
