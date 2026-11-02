@@ -445,6 +445,7 @@ impl Checker<'_> {
                     fix: None,
                     conversion: false,
                     layers: false,
+                    words: false,
                 },
                 true,
             ),
@@ -517,8 +518,10 @@ pub(super) fn bare_hole(e: &ast::Expr) -> bool {
     bare_none(e) || matches!(&e.kind, ExprKind::ArrayLit(elements) if elements.is_empty())
 }
 
-/// The argument of `e`, if `e` is a call of `dbg` with one unlabeled argument and no type
-/// argument. No user item can have the name `dbg` (see `generic_callee`), so the name tells.
+/// The argument of `e`, if `e` is a call of `dbg` with one argument, labeled or not, and no
+/// type argument. A label is an error (E0055), and the argument still takes the context, so
+/// the label adds no second error. No user item can have the name `dbg` (see
+/// `generic_callee`), so the name tells.
 pub(super) fn dbg_argument(e: &ast::Expr) -> Option<&ast::Expr> {
     match &e.kind {
         ExprKind::Call {
@@ -527,7 +530,7 @@ pub(super) fn dbg_argument(e: &ast::Expr) -> Option<&ast::Expr> {
             args,
             ..
         } if types.is_empty() && callee.name.as_str() == "dbg" => match &args[..] {
-            [arg] if arg.label.is_none() => Some(&arg.value),
+            [arg] => Some(&arg.value),
             _ => None,
         },
         _ => None,

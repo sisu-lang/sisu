@@ -582,17 +582,13 @@ fn dbg_should_have_the_order_of_its_argument() {
     }
 }
 
-/// A call of `dbg` with a label, a type argument or another count of arguments than one is no
-/// `dbg(x)`, so it keeps the order of a call: its `[]` is checked first, with no expected type,
-/// and gives its own error beside the one of the call.
+/// A call of `dbg` with a type argument or another count of arguments than one is no `dbg(x)`,
+/// so it keeps the order of a call: its `[]` is checked first, with no expected type, and gives
+/// its own error beside the one of the call.
 #[test]
 fn dbg_of_another_shape_should_keep_the_order_of_a_call() {
     with_prelude();
     for (statement, expected) in [
-        (
-            "let _ = [dbg(x: []), 1]",
-            &[Code::LabeledArgument, Code::CannotInfer][..],
-        ),
         ("let _ = [dbg([], 1), 1]", &[Code::PrintArgument][..]),
         ("let _ = [dbg(), 1]", &[Code::PrintArgument][..]),
         ("let _ = [dbg<i64>(1), 1]", &[Code::TypeArguments][..]),
@@ -601,6 +597,76 @@ fn dbg_of_another_shape_should_keep_the_order_of_a_call() {
         let found: Vec<_> = diags(&src).iter().map(Diagnostic::code).collect();
         assert_eq!(found, expected, "row `{statement}`: {src}");
     }
+}
+
+/// A label on the one argument of `dbg` is an error (E0055), and the argument still waits for
+/// its context as without the label: the label adds no E0050, and the code after it is the one
+/// that the form without the label gives (#327). Each row has a `[]` or `None` that nothing but
+/// a sibling can type.
+#[test]
+fn a_labeled_dbg_should_give_the_errors_of_the_form_without_the_label() {
+    with_prelude();
+    let fn_p = "fn p<T>(a: [T], b: T) -> i64 { 1 }\n";
+    for (labeled, plain) in [
+        ("print([dbg(x: []), 1])", "print([dbg([]), 1])"),
+        (
+            "print([dbg(x: None), Some(1)])",
+            "print([dbg(None), Some(1)])",
+        ),
+        ("print([dbg(x: []), [1]])", "print([dbg([]), [1]])"),
+        ("let a = [dbg(x: []), [1]]", "let a = [dbg([]), [1]]"),
+        ("print(p(dbg(x: []), 1))", "print(p(dbg([]), 1))"),
+        ("let xs: [i64] = dbg(x: [])", "let xs: [i64] = dbg([])"),
+    ] {
+        let run = |statement: &str| {
+            let src = format!("{fn_p}fn main() {{\n    {statement}\n}}");
+            let found: Vec<_> = diags(&src).iter().map(Diagnostic::code).collect();
+            (found, src)
+        };
+        let (mut want, _) = run(plain);
+        want.insert(0, Code::LabeledArgument);
+        let (found, src) = run(labeled);
+        assert_eq!(found, want, "row `{labeled}`: {src}");
+    }
+}
+
+/// A labeled `dbg` has a poisoned result, so it binds no `T`. The `[]` of a later argument that
+/// is a labeled `dbg` too is a hole to skip, as it is without the label. The two labels are the
+/// only errors: the `[]` was not a hole, and the call reported a mismatch with the hole `_`.
+#[test]
+fn a_labeled_dbg_array_beside_a_labeled_dbg_should_add_no_mismatch() {
+    with_prelude();
+    let src = format!(
+        "fn q<T>(a: T, b: [T]) {{}}\n{}",
+        body("", "q(dbg(x: 1), [dbg(x: [])])")
+    );
+    let found: Vec<_> = diags(&src).iter().map(Diagnostic::code).collect();
+    assert_eq!(
+        found,
+        [Code::LabeledArgument, Code::LabeledArgument],
+        "{src}"
+    );
+}
+
+/// A second label, or a second argument, makes `dbg` a call of another shape: each error stays.
+/// A call of `print` with a label is not a `dbg`: its `[]` has no context in either form.
+#[test]
+fn a_labeled_dbg_with_more_than_one_argument_should_keep_all_its_errors() {
+    with_prelude();
+    let src = body("", "print([dbg(x: 1, y: 2), 1])");
+    let found: Vec<_> = diags(&src).iter().map(Diagnostic::code).collect();
+    assert_eq!(
+        found,
+        [
+            Code::PrintArgument,
+            Code::LabeledArgument,
+            Code::LabeledArgument
+        ],
+        "{src}"
+    );
+    let src = body("", "print(x: [])");
+    let found: Vec<_> = diags(&src).iter().map(Diagnostic::code).collect();
+    assert_eq!(found, [Code::LabeledArgument, Code::CannotInfer], "{src}");
 }
 
 /// A user's `class dbg` is rejected, but `dbg(...)` is still the prelude's call: the class

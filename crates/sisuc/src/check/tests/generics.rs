@@ -5512,21 +5512,15 @@ fn an_array_literal_should_not_make_the_call_that_holds_it_optional() {
     ]);
 }
 
-/// An element that is a call of `dbg` with a label does not fit its declaration, so it keeps the
-/// order of a call also when the array is the argument of a generic call: it is checked first,
+/// An element that is a call of `dbg` with two arguments does not fit its declaration, so it keeps
+/// the order of a call also when the array is the argument of a generic call: it is checked first,
 /// with no expected type, and reports its own mistakes, not a mismatch with the other element.
 #[test]
 fn a_call_that_does_not_fit_should_be_checked_first_in_an_array_argument() {
     with_prelude();
     let src =
-        with_generics("fn g() {\n    take_all([dbg(x: []), 1])\n}\nfn take_all<T>(xs: [T]) {}");
-    codes(
-        &src,
-        &[
-            (Code::LabeledArgument, (2, 19)),
-            (Code::CannotInfer, (2, 22)),
-        ],
-    );
+        with_generics("fn g() {\n    take_all([dbg([], 2), 1])\n}\nfn take_all<T>(xs: [T]) {}");
+    codes(&src, &[(Code::PrintArgument, (2, 15))]);
 }
 
 /// The declarations that the rows of
@@ -6291,6 +6285,94 @@ fn a_misfit_under_an_outer_generic_call_should_give_a_true_diagnostic() {
     }
 }
 
+/// An argument that is checked before its parameter is bound clashes with a shape that still
+/// names the callee's unbound parameter, as `[U]` does: the E0032 is at the argument, and the
+/// bound that fails is reported beside it. Where the shape holds no unbound parameter, or is an
+/// optional or a bare parameter, the clash is reported as before. The words of the report are
+/// pinned by the fixture `E0032-generic-shape`.
+#[test]
+fn a_clash_with_an_unbound_shape_should_report_the_argument() {
+    // (the parameter list of `h`, the type of `b`, the statement, the diagnostics: code and the
+    // text of the argument it points at)
+    type Row = (
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static [(Code, &'static str)],
+    );
+    let decls = "fn id<X>(x: X) -> X {\n    x\n}\nclass Box<A> {\n    v: A\n}\n\
+        interface Shape {\n    fn area(self) -> i64\n}\n";
+    let rows: &[Row] = &[
+        (
+            "U",
+            "[U]",
+            "h(5, id(true))",
+            &[(Code::Mismatch, "id(true)")],
+        ),
+        (
+            "U",
+            "[[U]]",
+            "h(5, id(true))",
+            &[(Code::Mismatch, "id(true)")],
+        ),
+        (
+            "U",
+            "Box<U>",
+            "h(5, id(true))",
+            &[(Code::Mismatch, "id(true)")],
+        ),
+        (
+            "U: Shape",
+            "[U]",
+            "h(5, id(true))",
+            &[(Code::NotConform, "5"), (Code::Mismatch, "id(true)")],
+        ),
+        (
+            "U",
+            "[U]",
+            "h(id(5), id(true))",
+            &[(Code::Mismatch, "id(true)")],
+        ),
+        (
+            "U",
+            "[U]",
+            "let n: i64 = 5\n    h(n, id(true))",
+            &[(Code::Mismatch, "true")],
+        ),
+        ("U", "[U]", "h(5, id([true]))", &[(Code::Mismatch, "5")]),
+        ("U", "U?", "h(5, id(true))", &[(Code::Mismatch, "5")]),
+        (
+            "U",
+            "[U]?",
+            "h(5, id(true))",
+            &[(Code::Mismatch, "id(true)")],
+        ),
+    ];
+    for &(bound, param, call, expected) in rows {
+        let src = format!(
+            "{decls}fn h<{bound}>(a: U, b: {param}) -> i64 {{\n    1\n}}\nfn main() {{\n    {call}\n}}"
+        );
+        let found: Vec<_> = diags(&src)
+            .iter()
+            .map(|d| (d.code(), at(&src, d.span())))
+            .collect();
+        let want: Vec<_> = expected
+            .iter()
+            .map(|&(code, needle)| {
+                (
+                    code,
+                    line_col(
+                        &src,
+                        src.rfind(needle)
+                            .expect("the call should hold the argument"),
+                    ),
+                )
+            })
+            .collect();
+        assert_eq!(found, want, "row `{param}` with `{call}`: {src}");
+    }
+}
+
 /// A misfit that reaches no code that reports it is not lost. The outer generic call drops the
 /// type that its argument found, so the inner call's E0050 is pushed when the body ends.
 #[test]
@@ -6350,7 +6432,7 @@ fn a_never_statement_before_a_misfit_tail_should_give_e0050_at_the_call() {
         generic.retain(|(code, ..)| *code != Code::CannotInfer);
         assert!(failed, "row `{}`", row.1);
         assert_eq!(before - generic.len(), 1, "row `{}`: one E0050", row.1);
-        assert_eq!(generic, concrete, "row `{}`", row.0);
+        assert_eq!(generic, concrete, "row `{}`", row.1);
     }
 }
 

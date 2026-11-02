@@ -73,6 +73,7 @@ impl Checker<'_> {
                         fix: None,
                         conversion: false,
                         layers: false,
+                        words: false,
                     },
                     true,
                 ),

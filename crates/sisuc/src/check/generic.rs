@@ -23,7 +23,7 @@ use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
-use crate::types::{HOLE_INDEX, REJECTED_INDEX};
+use crate::types::{HOLE_INDEX, Head, REJECTED_INDEX};
 
 /// Whether `ty` is `want`, where a hole of `want` meets any part of `ty`.
 fn meets(ty: Type, want: Type) -> bool {
@@ -2432,8 +2432,22 @@ impl Checker<'_> {
         match type_of(&checked) {
             Some(Type::UNIT | Type::NEVER) | None => checked,
             Some(ty) if !self.bind_param(call, pattern, ty, e.span) => {
-                let want = self.printed(&call.bindings, pattern);
-                let d = self.mismatch(e.span, Some(e), want, ty);
+                let d = if let Some(words) = self.shape_words(call, pattern, ty) {
+                    DiagnosticKind::Mismatch {
+                        want: vec![words],
+                        got: self.type_name(ty),
+                        at: e.span,
+                        source: None,
+                        fix: None,
+                        conversion: false,
+                        layers: false,
+                        words: true,
+                    }
+                    .into()
+                } else {
+                    let want = self.printed(&call.bindings, pattern);
+                    self.mismatch(e.span, Some(e), want, ty)
+                };
                 self.diagnostics.push(d);
                 mark((checked, true))
             }
@@ -2446,6 +2460,25 @@ impl Checker<'_> {
                 mark(self.against(e, checked, want, None))
             }
         }
+    }
+
+    /// The outer shape of `pattern` in words, when an argument of type `ty` clashes with it and
+    /// `pattern` still names an unbound or rejected parameter of the callee: `an array`, or the
+    /// class or enum, as ``a `Box` ``. The name of the callee's parameter would mislead there,
+    /// as the arguments that come later may bind it. Another clash, or a shape that `ty` has,
+    /// gives `None`, and the report writes the type. One walk of `pattern`, on the error path.
+    fn shape_words(&self, call: &Inference<'_>, pattern: Type, ty: Type) -> Option<String> {
+        let words = match (pattern.kind(), ty.kind()) {
+            (TypeKind::Array(_), TypeKind::Array(_)) => return None,
+            (TypeKind::Array(_), _) => "an array".to_string(),
+            (TypeKind::Class(a, _), TypeKind::Class(b, _)) if a == b => return None,
+            (TypeKind::Enum(a, _), TypeKind::Enum(b, _)) if a == b => return None,
+            (TypeKind::Class(id, _), _) => format!("a `{}`", self.head(Head::Class(id))),
+            (TypeKind::Enum(id, _), _) => format!("a `{}`", self.head(Head::Enum(id))),
+            _ => return None,
+        };
+        // The walk comes last: only a clash of shapes pays for it.
+        call.bindings.partial(pattern).holds_hole().then_some(words)
     }
 
     /// The elements of `e` and the element type of `pattern`, when `e` is a non-empty array
@@ -3426,13 +3459,14 @@ impl Checker<'_> {
     /// generic class, or builds `Some`, `Ok` or `Err`, or calls `dbg`.
     fn generic_callee(&mut self, name: Symbol, args: &[ast::Arg]) -> CallShape {
         // `dbg<T>(x: T) -> T`: its type is its argument's, so it waits when that argument waits;
-        // its parameter names `T`, so it is not `open`.
+        // its parameter names `T`, so it is not `open`. One argument is the shape, with or
+        // without a label: the label is E0055, and the argument still waits.
         // It comes first, as `call` runs the prelude's call before it looks up a user's item: a
         // user's `class dbg` or `fn dbg` is rejected, and never the callee.
         if name.as_str() == "dbg" {
             return CallShape {
                 generic: true,
-                shaped: matches!(args, [arg] if arg.label.is_none()),
+                shaped: args.len() == 1,
                 makes: Makes::Through {
                     bare: 1,
                     inside: 0,

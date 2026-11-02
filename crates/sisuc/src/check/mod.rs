@@ -2445,6 +2445,7 @@ impl Checker<'_> {
                 }),
             conversion,
             layers: beyond_one_layer(want, got),
+            words: false,
         }
         .into()
     }

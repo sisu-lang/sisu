@@ -215,6 +215,7 @@ impl Checker<'_> {
             }),
             conversion: false,
             layers: false,
+            words: false,
         }
         .into()
     }
@@ -241,6 +242,7 @@ impl Checker<'_> {
                     fix: None,
                     conversion: false,
                     layers: false,
+                    words: false,
                 }
                 .into();
             }
@@ -420,6 +422,7 @@ impl Checker<'_> {
                     fix: None,
                     conversion: false,
                     layers: false,
+                    words: false,
                 }
                 .into(),
             },
@@ -487,6 +490,7 @@ impl Checker<'_> {
             }),
             conversion: false,
             layers: false,
+            words: false,
         }
         .into()
     }

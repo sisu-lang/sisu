@@ -1,0 +1,24 @@
+class Box<A> {
+    value: A
+}
+
+interface Shape {
+    fn area(self) -> i64
+}
+
+fn id<X>(x: X) -> X {
+    x
+}
+
+fn h<U: Shape>(a: U, b: [U]) -> i64 {
+    1
+}
+
+fn k<U>(a: U, b: Box<U>) -> i64 {
+    2
+}
+
+fn main() {
+    print(h(5, id(true)))
+    print(k(5, id(true)))
+}

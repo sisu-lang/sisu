@@ -593,6 +593,9 @@ pub(crate) enum DiagnosticKind {
         fix: Option<MismatchFix>,
         conversion: bool,
         layers: bool,
+        /// Whether `want` holds one entry that is words, as ``a `Box` ``, not a type: it prints
+        /// without backticks.
+        words: bool,
     },
     /// The binding `name`, at `at`, which no scope holds.
     BindingNotFound {
@@ -3458,8 +3461,9 @@ impl From<DiagnosticKind> for Diagnostic {
                 fix,
                 conversion,
                 layers,
+                words,
             } => {
-                let want = listed(&want, "or");
+                let want = if words { want.concat() } else { listed(&want, "or") };
                 let mut d =
                     Diagnostic::coded(code, at, format!("expected {want}, found `{got}`"));
                 match source {

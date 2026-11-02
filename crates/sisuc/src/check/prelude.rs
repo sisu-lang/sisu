@@ -235,6 +235,7 @@ impl Checker<'_> {
                 .then_some(MismatchFix::WrapInString(arg.span)),
             conversion: false,
             layers: false,
+            words: false,
         });
         Err(Poisoned::error())
     }
