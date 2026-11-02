@@ -23,6 +23,7 @@ pub(crate) mod interfaces;
 mod let_else;
 mod loop_condition;
 mod optionals;
+mod parity;
 mod patterns;
 mod places;
 mod prelude;

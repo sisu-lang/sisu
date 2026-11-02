@@ -11,7 +11,7 @@ use super::prelude::PRELUDE;
 use super::unused_names::{Owner, Pending};
 use super::{
     Binding, BindingKind, Checked, CheckedBlock, Checker, Declared, LoopContext, LoopFrame,
-    LoopKind, Poisoned, UNKNOWN, block_expr, built_in_type, starts_in, tail, type_of,
+    LoopKind, Misfit, Poisoned, UNKNOWN, block_expr, built_in_type, starts_in, tail, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{
@@ -32,6 +32,8 @@ pub(super) struct BlockSoFar {
     warned: bool,
     /// Whether the value rejected the type expected of it.
     mismatch: bool,
+    /// What the value found and could not meet its context with (see `Misfit`).
+    found: Option<Misfit>,
     /// How many of the block's statements are checked.
     done: usize,
 }
@@ -44,6 +46,7 @@ impl Default for BlockSoFar {
             failed: false,
             warned: false,
             mismatch: false,
+            found: None,
             done: 0,
         }
     }
@@ -90,15 +93,21 @@ impl Checker<'_> {
             ty,
             failed,
             mismatch,
+            found,
             ..
         } = so_far;
         self.pop_scope();
         let ty = match ty {
             Some(ty) if !failed => ty,
-            // A tail that rejected `expected` fails the block, unless a `never` came first.
+            // A tail that rejected `expected` fails the block, unless a `never` came first: then
+            // no code uses the tail's value, so its misfit is not handed up.
             ty => {
                 let mismatch = mismatch && ty.is_none();
-                return Err(Poisoned { ty, mismatch });
+                return Err(Poisoned {
+                    ty,
+                    mismatch,
+                    found: found.filter(|_| ty.is_none()),
+                });
             }
         };
         let ends_in_expr = tail(block).is_some();
@@ -152,6 +161,7 @@ impl Checker<'_> {
                 Err(poisoned) => {
                     so_far.failed = true;
                     so_far.mismatch = last && poisoned.mismatch;
+                    so_far.found = poisoned.found.filter(|_| last);
                     // An invalid jump made the block `never` only by error; what follows is no
                     // new news. Any other failed `never` statement still leaves the block.
                     so_far.warned |= invalid_jump && poisoned.ty == Some(Type::NEVER);
@@ -1305,12 +1315,14 @@ impl Checker<'_> {
         self.body.label_typo = None;
         self.body.break_hint = outer;
         self.body.quiet_at = outer_quiet;
-        // A failed value fails the loop, and gives it no type and no second report.
-        if checked.is_err() {
+        // A failed value fails the loop, and gives it no type and no second report. A generic
+        // call's misfit is joined by the type it found, as a concrete call is by its type.
+        let misfit = self.misfit_type(&checked);
+        if checked.is_err() && misfit.is_none() {
             self.frame(target).failed = true;
             return checked;
         }
-        let checked = match type_of(&checked) {
+        let checked = match type_of(&checked).or(misfit) {
             Some(Type::UNIT) => {
                 self.report(DiagnosticKind::NoValue {
                     at: v.span,
@@ -1359,6 +1371,12 @@ impl Checker<'_> {
             }
             _ => (checked, got),
         };
+        // A misfit left is reported against the first value, as a value of its type is.
+        if let Some((first, at)) = first
+            && self.misfit_type(&checked).is_some()
+        {
+            return (self.against(v, checked, Some(first), Some(MismatchSource::Break(at)))).0;
+        }
         let value = checked?;
         let Some((first, at)) = first else {
             let frame = self.frame(target);

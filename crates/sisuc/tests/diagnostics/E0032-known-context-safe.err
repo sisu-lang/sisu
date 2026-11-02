@@ -1,0 +1,32 @@
+error[E0032]: expected `i64?`, found `Two<X, bool>?`
+  --> E0032-known-context-safe.sisu:22:19
+   |
+22 |     let x: i64? = source?.make()
+   |                   ^^^^^^^^^^^^^^
+
+error[E0032]: expected `i64?`, found `Two<X, bool>?`
+  --> E0032-known-context-safe.sisu:23:17
+   |
+23 |     print(takes(source?.make()))
+   |                 ^^^^^^^^^^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>?`
+  --> E0032-known-context-safe.sisu:24:18
+   |
+24 |     let y: i64 = source?.make()
+   |                  ^^^^^^^^^^^^^^
+
+error[E0032]: expected `i64?`, found `Two<X, bool>`
+  --> E0032-known-context-safe.sisu:25:19
+   |
+25 |     let z: i64? = Source().make()
+   |                   ^^^^^^^^^^^^^^^
+
+error[E0032]: expected `i64?`, found `Two<i64, bool>?`
+  --> E0032-known-context-safe.sisu:26:19
+   |
+26 |     let w: i64? = source?.made()
+   |                   ^^^^^^^^^^^^^^
+
+sisu: 5 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

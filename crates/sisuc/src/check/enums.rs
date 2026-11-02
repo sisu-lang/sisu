@@ -412,9 +412,8 @@ impl Checker<'_> {
             if through.is_some() { &[] } else { site.written },
             site.angles,
         );
-        let Some((args, list, Some(ty))) =
-            self.generic_call(span, &sig, written, args, site.expected)
-        else {
+        let (args, list, ty) = self.generic_call(span, &sig, written, args, site.expected)?;
+        let Some(ty) = ty else {
             return Err(Poisoned::error());
         };
         let failed = labeled || args.iter().any(mismatched);

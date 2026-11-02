@@ -1,0 +1,29 @@
+error[E0154]: `i64` does not conform to `Shape`
+  --> E0032-generic-shape.sisu:26:13
+   |
+13 | fn h<U: Shape>(a: U, b: [U]) -> i64 {
+   |         ----- required by this bound
+...
+26 |     print(h(5, id(true)))
+   |             ^
+
+error[E0032]: expected an array, found `bool`
+  --> E0032-generic-shape.sisu:26:16
+   |
+26 |     print(h(5, id(true)))
+   |                ^^^^^^^^
+
+error[E0032]: expected a `Box`, found `bool`
+  --> E0032-generic-shape.sisu:27:16
+   |
+27 |     print(k(5, id(true)))
+   |                ^^^^^^^^
+
+error[E0032]: expected a `Result`, found `bool`
+  --> E0032-generic-shape.sisu:28:16
+   |
+28 |     print(e(5, id(true)))
+   |                ^^^^^^^^
+
+sisu: 4 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032, E0154
