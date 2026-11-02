@@ -545,8 +545,8 @@ on stdout. It exits with code 1 when:
 The pull request that fixes a known case removes its row. The gaps between
 the numbers keep a row from changing between known and fixed when a change
 moves a ratio a little. `KNOWN` has one row: expression depth in `check`
-(#367). Each `tir::Expr` holds its exit flag, which the checker sets once when
-it makes the expression, so array literal depth (#344), type depth, method
+(#367). Each `tir::Expr` holds its exit flag. The checker sets it once, when
+it makes the expression. So array literal depth (#344), type depth, method
 chain and generic call depth (#366) are linear in `check`. The nightly job
 runs the sweep (`docs/development.md`, "The nightly compile-speed job").
 

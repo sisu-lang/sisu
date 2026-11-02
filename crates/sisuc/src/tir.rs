@@ -486,8 +486,9 @@ pub(crate) struct Expr {
     pub(crate) span: Span,
     /// Whether a `Return`, `Break` or `Continue` sits anywhere inside. `Expr::new` sets it from
     /// the flags of the direct children, so a walk of the tree does not repeat at each level.
-    /// Code that changes `kind` in place, or a block that an `Expr` holds, sets it again with
-    /// `Expr::refresh_exits`.
+    /// Code that changes `kind` in place, or a block that an `Expr` holds, so that the result
+    /// can exit when it could not before, or the reverse, sets it again with
+    /// `Expr::refresh_exits`. A swap for `Wrap` or `ToAny` of the same child keeps the flag.
     exits: bool,
 }
 
