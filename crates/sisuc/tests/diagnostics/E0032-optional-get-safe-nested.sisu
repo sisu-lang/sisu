@@ -1,0 +1,4 @@
+fn main() {
+    let oo: [i64]?? = Some(Some([1, 2]))
+    print(oo?.get(..) ?? 0)
+}

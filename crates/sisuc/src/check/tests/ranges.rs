@@ -417,6 +417,85 @@ fn array_get_with_a_range_should_be_e0032_at_the_range() {
     }
 }
 
+/// GIVEN a range given to the `get` of an optional array, however the optional array is named
+/// WHEN the program is checked
+/// THEN `.` reports E0062 once, and the range is E0032 as it is through `?.`, never E0023 (S26)
+#[test]
+fn optional_array_get_with_a_range_should_be_e0062_then_e0032() {
+    with_prelude();
+    let rows = [
+        (
+            "optional array",
+            "fn main() {\n    let o: [i64]? = Some([1, 2])\n    print(o.get(1..) ?? 0)\n}",
+            [(Code::MayBeNone, (3, 11)), (Code::Mismatch, (3, 17))].as_slice(),
+        ),
+        (
+            "both bounds",
+            "fn main() {\n    let o: [i64]? = Some([1, 2])\n    print(o.get(0..1) ?? 0)\n}",
+            &[(Code::MayBeNone, (3, 11)), (Code::Mismatch, (3, 17))],
+        ),
+        (
+            "doubly optional",
+            "fn main() {\n    let oo: [i64]?? = Some(Some([1, 2]))\n    print(oo.get(..) ?? 0)\n}",
+            &[(Code::MayBeNone, (3, 11)), (Code::Mismatch, (3, 18))],
+        ),
+        (
+            "through safe access",
+            "fn main() {\n    let o: [i64]? = Some([1, 2])\n    print(o?.get(1..) ?? 0)\n}",
+            &[(Code::Mismatch, (3, 18))],
+        ),
+        (
+            "no range",
+            "fn main() {\n    let o: [i64]? = Some([1, 2])\n    print(o.first() ?? 0)\n}",
+            &[(Code::MayBeNone, (3, 11))],
+        ),
+        (
+            "string",
+            "fn main() {\n    let s: string? = Some(\"abc\")\n    print(s.get(1..) ?? \"\")\n}",
+            &[(Code::MayBeNone, (3, 11))],
+        ),
+        (
+            "field",
+            "class C { o: [i64]? }\nfn main() {\n    let c = C(o: Some([1, 2]))\n    print(c.o.get(1..) ?? 0)\n}",
+            &[(Code::MayBeNone, (4, 11)), (Code::Mismatch, (4, 19))],
+        ),
+        (
+            "call result",
+            "fn f() -> [i64]? { Some([1]) }\nfn main() {\n    print(f().get(1..) ?? 0)\n}",
+            &[(Code::MayBeNone, (3, 11)), (Code::Mismatch, (3, 19))],
+        ),
+        (
+            "element",
+            "fn main() {\n    let a: [[i64]?] = [Some([1])]\n    print(a[0].get(1..) ?? 0)\n}",
+            &[(Code::MayBeNone, (3, 11)), (Code::Mismatch, (3, 20))],
+        ),
+        (
+            "alias",
+            "type V = [i64]?\nfn main() {\n    let o: V = Some([1, 2])\n    print(o.get(1..) ?? 0)\n}",
+            &[(Code::MayBeNone, (4, 11)), (Code::Mismatch, (4, 17))],
+        ),
+        (
+            "generic element",
+            "fn g<T>(o: [T]?) {\n    print(o.get(1..).is_none())\n}\nfn main() {}",
+            &[(Code::MayBeNone, (2, 11)), (Code::Mismatch, (2, 17))],
+        ),
+        // The inner type is no array, so the range keeps E0023.
+        (
+            "generic optional",
+            "fn g<T>(o: T?) {\n    print(o.get(1..).is_none())\n}\nfn main() {}",
+            &[(Code::MayBeNone, (2, 11)), (Code::RangeOutsideFor, (2, 17))],
+        ),
+        (
+            "doubly optional through safe access",
+            "fn main() {\n    let oo: [i64]?? = Some(Some([1, 2]))\n    print(oo?.get(..) ?? 0)\n}",
+            &[(Code::MayBeNone, (3, 11)), (Code::Mismatch, (3, 19))],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        codes_row(row, src, expected);
+    }
+}
+
 /// GIVEN a range given to a method that is not an array's `get`
 /// WHEN the program is checked
 /// THEN it reports E0023 at the range, once
@@ -470,6 +549,11 @@ fn method_range_argument_should_not_hide_the_error_of_the_call() {
                 (Code::ArgumentCount, (4, 11)),
                 (Code::RangeOutsideFor, (4, 26)),
             ],
+        ),
+        (
+            "unknown string method",
+            "s.contains(1..)",
+            [(Code::NoMember, (4, 13)), (Code::RangeOutsideFor, (4, 22))],
         ),
         (
             "safe access on a non-optional",
