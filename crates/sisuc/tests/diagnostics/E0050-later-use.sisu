@@ -112,4 +112,10 @@ fn optional_parameter() {
     print(take_optional([]))
 }
 
+fn array_assigned() {
+    let mut replaced = []
+    replaced = ['a']
+    print(replaced.len())
+}
+
 fn main() {}

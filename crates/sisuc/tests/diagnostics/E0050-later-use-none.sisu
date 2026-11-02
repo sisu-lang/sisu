@@ -2,6 +2,8 @@ fn take(p: [char]) -> i64 { p.len() }
 
 fn handle<T>(p: [T]) -> i64 { p.len() }
 
+fn wants_optional(p: i64?) -> i64 { 0 }
+
 fn first<T>(p: [T], q: T) -> T { q }
 
 fn failed_push() {
@@ -78,6 +80,43 @@ fn else_scrutinee() {
     let scrutinee = None
     let Some(v) = scrutinee else { return }
     print(v)
+}
+
+fn optional_for_array() {
+    let wrong = []
+    print(wants_optional(wrong))
+}
+
+fn unknown_target() {
+    let waits = None
+    nowhere = 1
+}
+
+fn other_target() {
+    let mut count = 1
+    let left = None
+    count = 2
+    print(count)
+}
+
+fn scalar_for_array() {
+    let mut hold = []
+    hold = 'x'
+}
+
+fn none_pushed() {
+    let mut nothing = None
+    nothing.push(1)
+}
+
+fn rolled_back() {
+    let early = []
+    let n: u8 = "a" + if true {
+        let inner = []
+        "b"
+    } else {
+        "c"
+    }
 }
 
 fn main() {}

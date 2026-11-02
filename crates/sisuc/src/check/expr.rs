@@ -514,21 +514,18 @@ impl Checker<'_> {
     /// `None`, `[payload]` for a `[]`), if it has an E0050 that no use has settled and `payload`
     /// is a concrete type. The first use that gives a type settles it.
     pub(super) fn inferred_by_use(&mut self, local: tir::LocalId, payload: Type) {
-        let Some(uninferred) = self.body.uninferred.get(&local) else {
-            return;
-        };
         if payload.holds_hole() || matches!(payload, Type::NEVER | Type::UNIT) {
             return;
         }
-        let ty = match uninferred.literal {
-            Literal::None => Type::optional(payload),
-            Literal::EmptyArray => Type::array(payload),
-        };
         let uninferred = self
             .body
             .uninferred
             .remove(&local)
-            .expect("the entry that `get` found should be there");
+            .expect("a caller should pass a local that has an uninferred literal");
+        let ty = match uninferred.literal {
+            Literal::None => Type::optional(payload),
+            Literal::EmptyArray => Type::array(payload),
+        };
         // Inside one expression the list can change (`truncate`, `drain`, `insert`): a place that
         // no longer holds this E0050 is left as it is.
         let reported = self

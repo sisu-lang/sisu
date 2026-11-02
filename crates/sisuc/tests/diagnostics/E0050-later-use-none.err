@@ -1,136 +1,210 @@
 error[E0050]: cannot infer the type of `[]`
- --> E0050-later-use-none.sisu:8:22
-  |
-8 |     let mut failed = []
-  |                      ^^
-  |
-  = help: write the type: `let mut failed: [...] = []`
+  --> E0050-later-use-none.sisu:10:22
+   |
+10 |     let mut failed = []
+   |                      ^^
+   |
+   = help: write the type: `let mut failed: [...] = []`
 
 error[E0033]: cannot find binding `nope`
- --> E0050-later-use-none.sisu:9:17
-  |
-9 |     failed.push(nope)
-  |                 ^^^^
+  --> E0050-later-use-none.sisu:11:17
+   |
+11 |     failed.push(nope)
+   |                 ^^^^
 
 error[E0050]: cannot infer the type of `None`
-  --> E0050-later-use-none.sisu:14:20
+  --> E0050-later-use-none.sisu:16:20
    |
-14 |     let mut best = None
+16 |     let mut best = None
    |                    ^^^^
    |
    = help: write the type: `let mut best: ...? = None`
 
 error[E0033]: cannot find binding `nope`
-  --> E0050-later-use-none.sisu:15:12
+  --> E0050-later-use-none.sisu:17:12
    |
-15 |     best = nope
+17 |     best = nope
    |            ^^^^
 
 error[E0050]: cannot infer the type of `[]`
-  --> E0050-later-use-none.sisu:20:17
+  --> E0050-later-use-none.sisu:22:17
    |
-20 |     let again = []
+22 |     let again = []
    |                 ^^
    |
    = help: write the type: `let again: [...] = []`
 
 error[E0050]: cannot infer the type of `[]`
-  --> E0050-later-use-none.sisu:26:18
+  --> E0050-later-use-none.sisu:28:18
    |
-26 |     let shadow = []
+28 |     let shadow = []
    |                  ^^
    |
    = help: write the type: `let shadow: [...] = []`
 
 error[E0033]: cannot find binding `nope`
-  --> E0050-later-use-none.sisu:27:18
+  --> E0050-later-use-none.sisu:29:18
    |
-27 |     let shadow = nope
+29 |     let shadow = nope
    |                  ^^^^
 
 error[E0050]: cannot infer the type of `[]`
-  --> E0050-later-use-none.sisu:32:16
+  --> E0050-later-use-none.sisu:34:16
    |
-32 |     let open = []
+34 |     let open = []
    |                ^^
    |
    = help: write the type: `let open: [...] = []`
 
 error[E0050]: cannot infer the type of `[]`
-  --> E0050-later-use-none.sisu:37:18
+  --> E0050-later-use-none.sisu:39:18
    |
-37 |     let beside = []
+39 |     let beside = []
    |                  ^^
    |
    = help: write the type: `let beside: [...] = []`
 
 error[E0050]: cannot infer the type of `[]`
-  --> E0050-later-use-none.sisu:42:28
+  --> E0050-later-use-none.sisu:44:28
    |
-42 |     let mut never_pushed = []
+44 |     let mut never_pushed = []
    |                            ^^
    |
    = help: write the type: `let mut never_pushed: [...] = []`
 
 error[E0050]: cannot infer the type of `[]`
-  --> E0050-later-use-none.sisu:48:27
+  --> E0050-later-use-none.sisu:50:27
    |
-48 |     let mut unit_pushed = []
+50 |     let mut unit_pushed = []
    |                           ^^
    |
    = help: write the type: `let mut unit_pushed: [...] = []`
 
 error[E0050]: cannot infer the type of `None`
-  --> E0050-later-use-none.sisu:54:23
+  --> E0050-later-use-none.sisu:56:23
    |
-54 |     let mut stopped = None
+56 |     let mut stopped = None
    |                       ^^^^
    |
    = help: write the type: `let mut stopped: ...? = None`
 
 error[E0043]: expression has no value
-  --> E0050-later-use-none.sisu:55:15
+  --> E0050-later-use-none.sisu:57:15
    |
-55 |     stopped = panic("x")
+57 |     stopped = panic("x")
    |               ^^^^^^^^^^ never finishes
 
 error[E0050]: cannot infer the type of `None`
-  --> E0050-later-use-none.sisu:61:21
+  --> E0050-later-use-none.sisu:63:21
    |
-61 |     let mut mixed = None
+63 |     let mut mixed = None
    |                     ^^^^
    |
    = help: write the type: `let mut mixed: ...? = None`
 
 error[E0033]: cannot find binding `nope`
-  --> E0050-later-use-none.sisu:62:31
+  --> E0050-later-use-none.sisu:64:31
    |
-62 |     mixed = if c { 1 } else { nope }
+64 |     mixed = if c { 1 } else { nope }
    |                               ^^^^
 
 error[E0050]: cannot infer the type of `[]`
-  --> E0050-later-use-none.sisu:67:23
+  --> E0050-later-use-none.sisu:69:23
    |
-67 |     let mut indexed = []
+69 |     let mut indexed = []
    |                       ^^
    |
    = help: write the type: `let mut indexed: [...] = []`
 
 error[E0050]: cannot infer the type of `None`
-  --> E0050-later-use-none.sisu:73:19
+  --> E0050-later-use-none.sisu:75:19
    |
-73 |     let Some(v) = None else { return }
+75 |     let Some(v) = None else { return }
    |                   ^^^^
    |
    = help: write the type: `let x: ...? = None`
 
 error[E0050]: cannot infer the type of `None`
-  --> E0050-later-use-none.sisu:78:21
+  --> E0050-later-use-none.sisu:80:21
    |
-78 |     let scrutinee = None
+80 |     let scrutinee = None
    |                     ^^^^
    |
    = help: write the type: `let scrutinee: ...? = None`
 
-sisu: 18 errors
-sisu: for more on a code, run `sisu explain <code>`: E0033, E0043, E0050
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-later-use-none.sisu:86:17
+   |
+86 |     let wrong = []
+   |                 ^^
+   |
+   = help: write the type: `let wrong: [...] = []`
+
+error[E0050]: cannot infer the type of `None`
+  --> E0050-later-use-none.sisu:91:17
+   |
+91 |     let waits = None
+   |                 ^^^^
+   |
+   = help: write the type: `let waits: ...? = None`
+
+error[E0033]: cannot find binding `nowhere`
+  --> E0050-later-use-none.sisu:92:5
+   |
+92 |     nowhere = 1
+   |     ^^^^^^^
+
+error[E0050]: cannot infer the type of `None`
+  --> E0050-later-use-none.sisu:97:16
+   |
+97 |     let left = None
+   |                ^^^^
+   |
+   = help: write the type: `let left: ...? = None`
+
+error[E0050]: cannot infer the type of `[]`
+   --> E0050-later-use-none.sisu:103:20
+    |
+103 |     let mut hold = []
+    |                    ^^
+    |
+    = help: write the type: `let mut hold: [...] = []`
+
+error[E0050]: cannot infer the type of `None`
+   --> E0050-later-use-none.sisu:108:23
+    |
+108 |     let mut nothing = None
+    |                       ^^^^
+    |
+    = help: write the type: `let mut nothing: ...? = None`
+
+error[E0050]: cannot infer the type of `[]`
+   --> E0050-later-use-none.sisu:113:17
+    |
+113 |     let early = []
+    |                 ^^
+    |
+    = help: write the type: `let early: [...] = []`
+
+error[E0032]: expected `u8`, found `string`
+   --> E0050-later-use-none.sisu:114:17
+    |
+114 |       let n: u8 = "a" + if true {
+    |  _________________^
+115 | |         let inner = []
+116 | |         "b"
+117 | |     } else {
+118 | |         "c"
+119 | |     }
+    | |_____^
+
+error[E0050]: cannot infer the type of `[]`
+   --> E0050-later-use-none.sisu:115:21
+    |
+115 |         let inner = []
+    |                     ^^
+    |
+    = help: write the type: `let inner: [...] = []`
+
+sisu: 27 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032, E0033, E0043, E0050
