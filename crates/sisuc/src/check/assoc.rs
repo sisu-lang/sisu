@@ -259,8 +259,8 @@ impl Checker<'_> {
                     name: name.name.to_string(),
                     at: ty.bare,
                     form: UnknownForm::OfAssociatedInAlias {
-                        written: self.source.text(ty.bare).to_string(),
-                        base: self.source.text(base.span).to_string(),
+                        written: self.source.type_text(ty.bare).into_owned(),
+                        base: self.source.type_text(base.span).into_owned(),
                     },
                 });
                 return None;
@@ -452,7 +452,7 @@ impl Checker<'_> {
     pub(super) fn too_wide_assoc(&mut self, ty: Type, at: Span) {
         self.body.wide_assoc.insert(ty);
         if self.wide_reported.insert(at) {
-            let text = self.source.text(at);
+            let text = self.source.type_text(at);
             self.report(DiagnosticKind::BoundTooWide {
                 kind: WideKind::Bound,
                 written: format!("{}: {text}", self.type_name(ty)),

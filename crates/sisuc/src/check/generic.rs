@@ -8,7 +8,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::alias::{Through, Via};
 use super::any;
-use super::expr::{bare_hole, dbg_argument, int_literal, option_written};
+use super::expr::{bare_hole, dbg_argument, option_written};
 use super::interface::{Bound, Required};
 use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
@@ -2699,7 +2699,7 @@ impl Checker<'_> {
                 holds_optional: true,
                 ..Ranked::WAITS
             },
-            _ if int_literal(e) => Ranked::LITERAL,
+            _ if self.int_literal(e) => Ranked::LITERAL,
             K::ArrayLit(elements) => {
                 let found = combine(elements.iter().map(|e| self.rank_value(e, fit)));
                 Ranked {
@@ -3789,14 +3789,12 @@ impl Checker<'_> {
             format!(
                 "{}{}.{}",
                 text.text(base.span),
-                text.text(angles),
+                text.type_text(angles),
                 variant.name
             )
         });
         self.report(DiagnosticKind::TypeArguments {
-            name: text
-                .slice(base.span.start()..variant.span.end())
-                .to_string(),
+            name: text.type_text(base.span.to(variant.span)).into_owned(),
             at: angles,
             form: ArgumentsForm::Variant { instead },
         });

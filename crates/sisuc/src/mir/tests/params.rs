@@ -584,24 +584,18 @@ fn parameter_matched_in_a_loop_should_stay_borrowed() {
 /// parameters marked in `reuses`. The front end recurses once per nested `match`, so it runs on
 /// a stack of the compiler's own size; the counters are that thread's.
 fn seed_counts(src: &str) -> (usize, usize, usize, Vec<bool>) {
-    let src = src.to_string();
-    std::thread::Builder::new()
-        .stack_size(crate::STACK_SIZE)
-        .spawn(move || {
-            let program = checked(&src);
-            let id = (program.functions.iter())
-                .position(|f| f.name == "f")
-                .expect("the program should define `f`");
-            let borrowed = vec![true; program.functions[id].params.len()];
-            SEEDED.set(0);
-            DEDUPED.set(0);
-            let (_, _, reuses) =
-                lower::function(&program, FuncId(id), &borrowed, &mut Written::default());
-            (SEEDED.get(), DEDUPED.get(), COUNTERS.get(), reuses)
-        })
-        .expect("the thread should start")
-        .join()
-        .expect("the front end and lowering should not overflow the stack")
+    crate::on_compiler_stack(|| {
+        let program = checked(src);
+        let id = (program.functions.iter())
+            .position(|f| f.name == "f")
+            .expect("the program should define `f`");
+        let borrowed = vec![true; program.functions[id].params.len()];
+        SEEDED.set(0);
+        DEDUPED.set(0);
+        let (_, _, reuses) =
+            lower::function(&program, FuncId(id), &borrowed, &mut Written::default());
+        (SEEDED.get(), DEDUPED.get(), COUNTERS.get(), reuses)
+    })
 }
 
 /// Each construction writes one counter and each arm on a parameter reads one twice, so `n`

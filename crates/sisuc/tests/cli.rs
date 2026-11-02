@@ -3445,6 +3445,48 @@ fn run_should_reject_timings() {
 }
 
 /// GIVEN a program that runs
+/// WHEN a command gets a flag of the root command, such as `-v` or `--version`, in any place
+/// THEN the exit code is 2
+/// AND standard error says that the command does not take the flag
+/// AND standard error says that only `sisu` with no command takes it
+/// AND standard error has no `--` tip for the flag
+#[test]
+fn commands_should_reject_a_root_flag_with_no_tip_for_a_value() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    fs::write(dir.join("root_flag.sisu"), CLEAN).expect("writes");
+    let rows: [(&[&str], &str, &str); 7] = [
+        (&["check", "-v", "root_flag.sisu"], "check", "-v"),
+        (
+            &["check", "--verbose", "root_flag.sisu"],
+            "check",
+            "--verbose",
+        ),
+        (&["build", "-V", "root_flag.sisu"], "build", "-V"),
+        (&["run", "--version", "root_flag.sisu"], "run", "--version"),
+        (&["check", "root_flag.sisu", "-v"], "check", "-v"),
+        (&["explain", "-v", "E0001"], "explain", "-v"),
+        (&["check", "-vV", "root_flag.sisu"], "check", "-v"),
+    ];
+    for (args, command, flag) in rows {
+        let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .expect("sisu starts");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {stderr}");
+        let want = format!(
+            "`sisu {command}` does not take `{flag}`; only `sisu` with no command takes it"
+        );
+        assert!(stderr.contains(&want), "{args:?}: {stderr}");
+        assert!(
+            !stderr.contains(&format!("-- {flag}")),
+            "{args:?}: {stderr}"
+        );
+    }
+}
+
+/// GIVEN a program that runs
 /// WHEN `sisu run -o out` runs on it
 /// THEN the exit code is 2
 /// AND standard error says that `sisu run` does not take `-o`

@@ -170,10 +170,8 @@ impl Checker<'_> {
         self.body.todo = true;
         self.report(DiagnosticKind::TodoLeft { at: keyword });
         let labeled = self.labels(args);
-        let text = |text: &str| tir::Expr {
-            kind: tir::ExprKind::Str(text.to_string()),
-            ty: Type::STRING,
-            span: keyword,
+        let text = |text: &str| {
+            tir::Expr::new(tir::ExprKind::Str(text.to_string()), Type::STRING, keyword)
         };
         let message = match args {
             [] => Ok(text("not yet implemented")),

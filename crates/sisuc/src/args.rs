@@ -306,7 +306,7 @@ fn build_mode(
 }
 
 /// `error` as a usage error of the subcommand on `args`, when `error` is an unknown flag that
-/// other subcommands take; else `error`, which clap's own text explains.
+/// other subcommands or the root command take; else `error`, which clap's own text explains.
 fn foreign_flag(args: &[OsString], error: clap::Error) -> clap::Error {
     // clap gives an unknown argument its flag alone, as a string.
     let (ErrorKind::UnknownArgument, Some(ContextValue::String(flag))) =
@@ -348,6 +348,16 @@ fn foreign_flag(args: &[OsString], error: clap::Error) -> clap::Error {
         .map(|sub| format!("`sisu {}`", sub.get_name()))
         .collect();
     let Some((last, first)) = others.split_last() else {
+        // No subcommand takes the flag. A root flag still gets no false `--` tip from clap.
+        if cli.get_arguments().any(takes) {
+            return usage_error(
+                used.get_name(),
+                format!(
+                    "`sisu {}` does not take `{flag}`; only `sisu` with no command takes it",
+                    used.get_name()
+                ),
+            );
+        }
         return error;
     };
     let (names, verb) = if first.is_empty() {

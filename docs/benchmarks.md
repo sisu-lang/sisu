@@ -499,7 +499,7 @@ check when its tool is not on `PATH`. It needs `perf` for the last column.
 `make scaling` finds the programs for which a compiler stage costs more than
 a fixed amount for each unit of input. A shape is a kind of program that
 grows in one direction, such as more functions, deeper nesting or more match
-arms. `scripts/scaling.py` compiles each of 14 shapes at size 0 and at four
+arms. `scripts/scaling.py` compiles each of 17 shapes at size 0 and at four
 sizes that double: n, 2n, 4n and 8n. It counts the instructions of each stage
 under callgrind: `lex`, `parse`, `check`, `mono`, `mir` and `codegen`. The
 count does not depend on the load of the machine. It also changes a little with
@@ -533,9 +533,9 @@ One shape and one stage that is superlinear for it is a case. The known list
 `KNOWN` in `scripts/scaling.py` has one row for each case that has an open
 issue: the shape, the stage and the issue number. A known case is a row of
 `KNOWN` that does not look fixed. A known row can be linear but just under
-the rule, as generic call depth is. The script exits with
-code 0 when every superlinear case has a row and no row looks fixed. It prints
-each known case on stdout. It exits with code 1 when:
+the rule, when its cause is known. The script exits with code 0 when every
+superlinear case has a row and no row looks fixed. It prints each known case
+on stdout. It exits with code 1 when:
 
 - a superlinear case has no row. Open an issue and add a row.
 - a row looks fixed. Its stage is not judged, has no ratio, has r3 < 2.15, or
@@ -544,12 +544,18 @@ each known case on stdout. It exits with code 1 when:
 
 The pull request that fixes a known case removes its row. The gaps between
 the numbers keep a row from changing between known and fixed when a change
-moves a ratio a little. At commit 556e8467, the sweep finds four superlinear
-cases, all in the `check` stage: array literal depth (#344), expression
-depth (#367), and type depth and method chain (#366). Generic call depth in
-`check` has the same cause as #366 and is just under the rule (r3 = 2.30).
-`KNOWN` has a row for each of the five. The nightly job runs the sweep
-(`docs/development.md`, "The nightly compile-speed job").
+moves a ratio a little. `KNOWN` has no row. Each `tir::Expr` holds its exit
+flag. The checker sets it once, when it makes the expression. So array literal
+depth (#344), type depth, method chain, generic call depth (#366) and string
+call depth are linear in `check`. The checker also keeps the answer of
+`int_literal` for each operator expression of a body. So expression depth,
+float left and string left are linear in `check` (#367). Array literal depth in
+`codegen` is linear by the rule, but its ratios rise to about 2.26. The cause is
+known and has no row: an array of depth d has d types, and the name of each
+release and drop function spells its whole type, such as
+`sisu_rc.release.[[[i64]]]`. So the text of the names grows as d². The
+nightly job runs
+the sweep (`docs/development.md`, "The nightly compile-speed job").
 
 ## Benchmarks for CodSpeed only
 
