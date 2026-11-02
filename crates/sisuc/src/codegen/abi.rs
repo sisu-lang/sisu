@@ -50,8 +50,8 @@ pub(super) struct Attrs {
     pub(super) memory: Option<u64>,
     pub(super) allocator: Allocator,
     /// The `i64` that it returns is a length, a count or an offset into a string, so never
-    /// negative: `declare` gives the
-    /// return value the range `[0, 2^63)`, as `mark_len` does a length that is loaded.
+    /// negative: `declare` gives the return value the range `[0, 2^63)`, as `mark_len` does a
+    /// length that is loaded.
     pub(super) returns_len: bool,
 }
 

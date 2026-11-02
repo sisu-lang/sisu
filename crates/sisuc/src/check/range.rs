@@ -6,8 +6,8 @@ use super::string::single_term;
 use super::{Checked, Checker, Poisoned, UNKNOWN, type_of};
 use crate::ast::{self, ExprKind};
 use crate::diagnostic::{
-    Diagnostic, DiagnosticKind, MissingBound, RangeForm, RangePlace, RangeTarget, RangeWrite,
-    UnwrapHelp,
+    Diagnostic, DiagnosticKind, MissingBound, RangeForm, RangePlace, RangePush, RangeTarget,
+    RangeWrite, UnwrapHelp,
 };
 use crate::parser::is_place;
 use crate::source::Span;
@@ -253,40 +253,20 @@ impl Checker<'_> {
         (target, value): (&ast::Expr, &ast::Expr),
         (ty, place): (Type, bool),
     ) -> Diagnostic {
-        let text = |e: &ast::Expr| self.source.text(e.span).to_string();
-        // A part that is more than one term goes in parentheses where the help adds to it.
-        let term = |e: &ast::Expr| {
-            if single_term(e) {
-                text(e)
-            } else {
-                format!("({})", text(e))
-            }
-        };
-        let start = found.range.start.as_deref();
         let write = match (ty.kind(), found.parent) {
             (TypeKind::Array(_), None) => RangeWrite::Array,
             (TypeKind::Array(_), Some(parent)) => {
-                let ExprKind::Index { index, .. } = &parent.kind else {
-                    unreachable!("the parent of a range index should be an index")
-                };
-                RangeWrite::Element {
-                    index: start.map_or_else(
-                        || text(index),
-                        |start| format!("{} + {}", term(start), term(index)),
-                    ),
-                    tail: self
-                        .source
-                        .text(Span::new(parent.span.end(), target.span.end()))
-                        .to_string(),
-                    op: op.map_or_else(|| "=".to_string(), |op| format!("{op}=")),
-                    value: text(value),
-                }
+                let op = op.map_or_else(|| "=".to_string(), |op| format!("{op}="));
+                let store = format!(" {op} {}", self.flat_text(value.span));
+                self.range_element(found, (parent, target), store)
             }
             _ if ty == Type::STRING && found.parent.is_none() => match op {
-                None => RangeWrite::Replace { value: term(value) },
+                None => RangeWrite::Replace {
+                    value: self.term(value),
+                },
                 Some(ast::BinaryOp::Add) => RangeWrite::Append {
-                    value: text(value),
-                    grouped: term(value),
+                    value: self.flat_text(value.span),
+                    grouped: self.term(value),
                 },
                 Some(_) => RangeWrite::Other,
             },
@@ -296,22 +276,81 @@ impl Checker<'_> {
         };
         DiagnosticKind::AssignToExpression {
             at: found.index.span,
-            range: Some(RangeTarget {
-                base: text(found.base),
-                start: start.map(text),
-                end: (found.range.end.as_deref()).map(|end| self.end_text(found.range, end)),
-                write: if place { write } else { RangeWrite::Temporary },
-            }),
+            range: Some(self.range_target(found, write, place)),
         }
         .into()
+    }
+
+    /// The part of the help that names the element `parent` of the range index `found`, in the
+    /// target `target`: the same element of the base, which `store` (` = v`, `.push(v)`) writes.
+    fn range_element(
+        &self,
+        found: &RangeIndex<'_>,
+        (parent, target): (&ast::Expr, &ast::Expr),
+        store: String,
+    ) -> RangeWrite {
+        let ExprKind::Index { index, .. } = &parent.kind else {
+            unreachable!("the parent of a range index should be an index")
+        };
+        RangeWrite::Element {
+            index: found.range.start.as_deref().map_or_else(
+                || self.flat_text(index.span),
+                |start| format!("{} + {}", self.term(start), self.term(index)),
+            ),
+            tail: self.flat_text(Span::new(parent.span.end(), target.span.end())),
+            store,
+        }
+    }
+
+    /// The parts of `found` for the help: `write` says what the help does with them, and `place`
+    /// whether its base is one, else no write to the base is allowed.
+    fn range_target(&self, found: &RangeIndex<'_>, write: RangeWrite, place: bool) -> RangeTarget {
+        RangeTarget {
+            base: self.flat_text(found.base.span),
+            start: (found.range.start.as_deref()).map(|start| self.flat_text(start.span)),
+            end: (found.range.end.as_deref()).map(|end| self.end_text(found.range, end)),
+            write: if place { write } else { RangeWrite::Temporary },
+        }
+    }
+
+    /// The help of a `push` onto `receiver`, which is no place, when `receiver` holds a range
+    /// index; `args` are the arguments of the `push`. The element of a range index is the same
+    /// element of its base: `xs[1..][0].push(4)` is `xs[1 + 0].push(4)`.
+    pub(super) fn push_range(
+        &mut self,
+        receiver: &ast::Expr,
+        args: &[ast::Arg],
+    ) -> Option<RangePush> {
+        let found = range_index(receiver)?;
+        let Some(parent) = found.parent else {
+            return Some(RangePush::Slice(self.flat_text(receiver.span)));
+        };
+        let place = is_place(found.base) && self.rooted(found.base);
+        let arg = match args {
+            [arg] => self.flat_text(arg.value.span),
+            _ => "...".to_string(),
+        };
+        let write = self.range_element(&found, (parent, receiver), format!(".push({arg})"));
+        Some(RangePush::Element(self.range_target(&found, write, place)))
+    }
+
+    /// `e` as the help writes a part that it adds to: in parentheses when it is more than one
+    /// term.
+    fn term(&self, e: &ast::Expr) -> String {
+        let text = self.flat_text(e.span);
+        if single_term(e) {
+            text
+        } else {
+            format!("({text})")
+        }
     }
 
     /// The text of the end that `..end` writes for the same range: `b + 1` for `..=b`, computed
     /// when `b` is an integer literal.
     fn end_text(&self, range: &ast::Range, end: &ast::Expr) -> String {
-        let text = self.source.text(end.span);
+        let text = self.flat_text(end.span);
         match end.kind {
-            _ if !range.inclusive => text.to_string(),
+            _ if !range.inclusive => text,
             ExprKind::Int { value, .. } if value < i64::MAX => (value + 1).to_string(),
             _ if single_term(end) => format!("{text} + 1"),
             _ => format!("({text}) + 1"),

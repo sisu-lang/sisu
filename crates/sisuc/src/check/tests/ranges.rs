@@ -301,10 +301,10 @@ fn a_range_index_read_should_leave_the_never_reassigned_warning() {
     );
 }
 
-/// GIVEN a range index on an array, a number, an optional array and a string
+/// GIVEN a range index on an array, a number, an optional array and an optional string
 /// WHEN the program is checked
-/// THEN the array is an array again, a number is E0068 at the base, an optional array is E0062
-/// at the base, and each reports once, with no word on its bounds
+/// THEN the array is an array again, a number is E0068 at the base, an optional array or string
+/// is E0062 at the base, and each reports once, with no word on its bounds
 #[test]
 fn range_index_should_report_a_base_that_is_no_array_once() {
     let rows = [
@@ -321,6 +321,11 @@ fn range_index_should_report_a_base_that_is_no_array_once() {
         (
             "optional array",
             "let opt: [i64]? = [1]\n    print(opt[true..])",
+            vec![(Code::MayBeNone, (3, 11))],
+        ),
+        (
+            "optional string",
+            "let opt: string? = \"ab\"\n    print(opt[0..2])",
             vec![(Code::MayBeNone, (3, 11))],
         ),
     ];

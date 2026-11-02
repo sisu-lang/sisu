@@ -1,0 +1,95 @@
+error[E0021]: cannot push to a temporary value
+  --> E0021-range-push-element.sisu:15:5
+   |
+15 |     xs[1..][0].push(4)
+   |     ^^^^^^^^^^ a range index gives a new value
+   |
+   = help: write `xs[1 + 0].push(4)`; a range index counts from its start
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-range-push-element.sisu:16:5
+   |
+16 |     xs[1..][i].push(4 + i)
+   |     ^^^^^^^^^^ a range index gives a new value
+   |
+   = help: write `xs[1 + i].push(4 + i)`; a range index counts from its start
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-range-push-element.sisu:17:5
+   |
+17 |     deep[1..][0][0].push(4)
+   |     ^^^^^^^^^^^^^^^ a range index gives a new value
+   |
+   = help: write `deep[1 + 0][0].push(4)`; a range index counts from its start
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-range-push-element.sisu:18:5
+   |
+18 |     xs[..2][0].push(4)
+   |     ^^^^^^^^^^ a range index gives a new value
+   |
+   = help: write `xs[0].push(4)`; a range index counts from its start
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-range-push-element.sisu:19:5
+   |
+19 |     xs[1..=2][0].push(4)
+   |     ^^^^^^^^^^^^ a range index gives a new value
+   |
+   = help: write `xs[1 + 0].push(4)`; a range index counts from its start
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-range-push-element.sisu:20:5
+   |
+20 |     c.xs[1..][0].push(4)
+   |     ^^^^^^^^^^^^ a range index gives a new value
+   |
+   = help: write `c.xs[1 + 0].push(4)`; a range index counts from its start
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-range-push-element.sisu:21:5
+   |
+21 |     make().xs[1..][0].push(4)
+   |     ^^^^^^^^^^^^^^^^^ a range index gives a new value
+   |
+   = help: write `make().xs[1 + 0].push(4)`; a range index counts from its start
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-range-push-element.sisu:22:5
+   |
+22 |     rows()[1..][0].push(4)
+   |     ^^^^^^^^^^^^^^ a range index gives a new value
+   |
+   = help: store `rows()` in a `let mut` variable first
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-range-push-element.sisu:23:5
+   |
+23 | /     xs[1..][
+24 | |         0
+25 | |     ].push(4)
+   | |_____^ a range index gives a new value
+   |
+   = help: write `xs[1 + 0].push(4)`; a range index counts from its start
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-range-push-element.sisu:26:5
+   |
+26 | /     rows(
+27 | |     )[1..][0].push(4)
+   | |_____________^ a range index gives a new value
+   |
+   = help: store `rows()` in a `let mut` variable first
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-range-push-element.sisu:28:5
+   |
+28 | /     xs[
+29 | |         1..
+30 | |     ].push(4)
+   | |_____^ a range index gives a new value
+   |
+   = help: keep the slice in a variable first: `let mut t = xs[1..]`, then `t.push(...)`
+
+sisu: 11 errors
+sisu: for more on a code, run `sisu explain <code>`: E0021

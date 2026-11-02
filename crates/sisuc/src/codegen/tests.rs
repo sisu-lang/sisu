@@ -5633,6 +5633,63 @@ fn convention_should_give_one_type_per_part() {
     }
 }
 
+/// The value that the function whose trimmed `lines` are given returns: the stored value that a
+/// `ret` of a load reads back from its slot, else the value of the `ret` itself.
+fn returned_value<'a>(lines: &[&'a str]) -> &'a str {
+    let value = lines
+        .iter()
+        .find_map(|line| line.strip_prefix("ret "))
+        .and_then(|ret| ret.rsplit(' ').next())
+        .expect("a function should return a value");
+    let Some(slot) = defined_by(lines, value)
+        .filter(|text| text.starts_with("load "))
+        .and_then(|text| operands(text).next())
+    else {
+        return value;
+    };
+    lines
+        .iter()
+        .find_map(|line| {
+            let stored = line
+                .strip_prefix("store ")?
+                .split_once(&format!(", ptr {slot},"))?;
+            stored.0.rsplit(' ').next()
+        })
+        .unwrap_or_else(|| panic!("no store to {slot} in {lines:?}"))
+}
+
+/// The `load i64` that reads the length of a string the function builds, when a runtime function
+/// wrote it: the pointer of the load, or the base of it, is an argument of a call of a `@sisu_`
+/// function. It returns the line of the load.
+fn runtime_length_load<'a>(lines: &[&'a str]) -> &'a str {
+    let from_runtime = |root: &str| {
+        lines.iter().any(|line| {
+            line.contains("call ") && line.contains("@sisu_") && operands(line).any(|o| o == root)
+        })
+    };
+    lines
+        .iter()
+        .filter_map(|line| line.split_once(" = ")?.1.strip_prefix("insertvalue "))
+        .filter_map(|text| match after_type(text)[..] {
+            // The length word of a string: `insertvalue { ptr, ptr, i64 } %v, i64 %length, 2`.
+            [_, put, "2"] => put.strip_prefix("i64 "),
+            _ => None,
+        })
+        .find_map(|length| {
+            let line = lines
+                .iter()
+                .find(|l| l.starts_with(&format!("{length} = ")))?;
+            let load = line.split_once(" = ")?.1.strip_prefix("load i64, ptr ")?;
+            let pointer = operands(load).next()?;
+            let root = defined_by(lines, pointer)
+                .filter(|t| t.starts_with("getelementptr "))
+                .and_then(|t| operands(t).next())
+                .unwrap_or(pointer);
+            from_runtime(root).then_some(*line)
+        })
+        .unwrap_or_else(|| panic!("no load of a length from the runtime in {lines:?}"))
+}
+
 /// The three compares of a range index, in the order of the checks: `s < 0`, `e > len`, and
 /// `s > e`; the lines of `body` that hold them, in order.
 fn range_checks(body: &str) -> Vec<&str> {
@@ -5663,18 +5720,33 @@ fn slice_should_check_the_range_before_it_builds_the_value() {
     assert_eq!(predicates, ["slt", "sgt", "sgt"], "{body}");
     // The start against 0 first.
     assert!(checks[0].ends_with(", 0"), "{body}");
-    let at = |wanted: &str| {
-        body.find(wanted)
-            .unwrap_or_else(|| panic!("no `{wanted}` in\n{body}"))
+    let lines: Vec<&str> = body.lines().map(str::trim).collect();
+    let line_of = |value: &str| {
+        let prefix = format!("{value} = ");
+        lines
+            .iter()
+            .position(|line| line.starts_with(&prefix))
+            .unwrap_or_else(|| panic!("no {value} in\n{body}"))
     };
-    // The new length and the new `data` come after the last check.
-    let last = checks
-        .iter()
-        .map(|check| at(check))
-        .max()
-        .unwrap_or_default();
-    assert!(at("%slice.len = sub nuw") > last, "{body}");
-    assert!(at("%element = getelementptr") > last, "{body}");
+    let last = (lines.iter())
+        .rposition(|line| line.contains("icmp s"))
+        .unwrap_or_else(|| panic!("no compare in\n{body}"));
+    // The new length and the new `data` are words of the returned value, and come after the last
+    // check.
+    let returned = returned_value(&lines);
+    let (length, data) = (
+        element(&lines, returned, "2"),
+        element(&lines, returned, "1"),
+    );
+    let length_text = defined_by(&lines, length).unwrap_or_default();
+    let data_text = defined_by(&lines, data).unwrap_or_default();
+    assert!(length_text.starts_with("sub nuw i64 "), "{body}");
+    assert!(
+        data_text.starts_with("getelementptr inbounds i64, ptr "),
+        "{body}"
+    );
+    assert!(line_of(length) > last, "{body}");
+    assert!(line_of(data) > last, "{body}");
     assert_eq!(
         body.matches("call void @sisu_panic_range(").count(),
         3,
@@ -5770,8 +5842,32 @@ fn copy_on_write_should_copy_only_the_value() {
         .and_then(|rest| rest.split(',').next())
         .unwrap_or_else(|| panic!("no length in {size}"));
     assert_eq!(word_of(length), "2", "{body}");
-    // The header of the old block is read for the count only.
-    assert!(!body.contains("{ i64, i64, i64 }, ptr %pointer"), "{body}");
+    // The header of the old block is read for the count only: no header field is addressed from
+    // a pointer that the slot's first word gives, loaded straight from the slot or through its
+    // address.
+    let slot = parameters(body)[0];
+    let old_blocks: Vec<&str> = lines
+        .iter()
+        .filter_map(|line| {
+            let (value, text) = line.split_once(" = ")?;
+            let loaded = text.strip_prefix("load ptr, ptr ")?;
+            let from = operands(loaded).next()?;
+            let first_word = from == slot
+                || defined_by(&lines, from).is_some_and(|t| {
+                    t.starts_with("getelementptr ")
+                        && t.ends_with("i32 0, i32 0")
+                        && operands(t).next() == Some(slot)
+                });
+            first_word.then_some(value)
+        })
+        .collect();
+    assert!(!old_blocks.is_empty(), "{body}");
+    let header = lines.iter().any(|line| {
+        line.contains("getelementptr ")
+            && line.contains("{ i64, i64, i64 }, ptr ")
+            && operands(line).any(|o| old_blocks.contains(&o))
+    });
+    assert!(!header, "{body}");
 }
 
 /// A length that comes from the runtime is loaded from a slot or a sink, and carries the facts of
@@ -5785,14 +5881,11 @@ fn copy_on_write_should_copy_only_the_value() {
 /// ```
 #[test]
 fn a_length_from_the_runtime_should_carry_the_facts_of_a_length() {
-    let marked = |src: &str, function: &str, name: &str| {
+    let marked = |src: &str, function: &str| {
         let ir = ir_of(src);
         let body = function_body(&ir, function);
-        let load = body
-            .lines()
-            .map(str::trim)
-            .find(|line| line.starts_with(&format!("%{name} = load i64, ptr ")))
-            .unwrap_or_else(|| panic!("no load of {name} in\n{body}"));
+        let lines: Vec<&str> = body.lines().map(str::trim).collect();
+        let load = runtime_length_load(&lines);
         assert!(
             load.contains("!range ") && load.contains("!noundef "),
             "{load}"
@@ -5801,16 +5894,10 @@ fn a_length_from_the_runtime_should_carry_the_facts_of_a_length() {
     marked(
         "fn main() {\n    print(read_line() ?? \"\")\n}",
         "@sisu.main(",
-        "len1",
     );
-    marked(
-        "fn main() {\n    print(\"{[1, 2]}\")\n}",
-        "@sisu.main(",
-        "sink.word",
-    );
+    marked("fn main() {\n    print(\"{[1, 2]}\")\n}", "@sisu.main(");
     marked(
         "fn main(args: [string]) {\n    print(args.len())\n}",
         "define i32 @main(",
-        "old",
     );
 }

@@ -291,6 +291,7 @@ impl Gen<'_> {
         // so that it moves no byte of the data in a program that has none.
         if matches!(ty, Ty::Array(_))
             && !self.one_line
+            && self.nesting < MAX_NESTING
             && self.blocks < MAX_BLOCKS
             && self.expressions.is_multiple_of(SLICE_EVERY)
         {
@@ -957,6 +958,7 @@ impl Gen<'_> {
             .filter(|&v| self.scope.vars[v].ty == *ty && self.scope.vars[v].size <= max)
             .collect();
         self.w.text("({ ");
+        self.blocks += 1;
         // `None` for a literal that the block binds, whose parts are the literal's.
         let local = if !vars.is_empty() && self.pick(2) == 0 {
             let pick = self.pick(vars.len());
@@ -986,6 +988,7 @@ impl Gen<'_> {
         self.w.text(&format!(
             "let a = {i} % ({name}.len() + 1); {name}[{range}] }})"
         ));
+        self.blocks -= 1;
         // It reads a local that a write may change.
         Info::of(&[base], base.size, false)
     }
@@ -2230,7 +2233,9 @@ fn separated(n: i64) -> String {
 mod tests {
     use arbitrary::Unstructured;
 
-    use super::{Gen, MAX_SIZE, Rule, Ty, Var, arithmetic_value};
+    use super::{
+        Gen, MAX_BLOCKS, MAX_NESTING, MAX_SIZE, Rule, SLICE_EVERY, Ty, Var, arithmetic_value,
+    };
     use crate::generate::writer::Rewrite;
 
     #[test]
@@ -2354,6 +2359,41 @@ mod tests {
             }
         }
         assert_eq!(seen, [true; 5], "forms {forms:?}");
+    }
+
+    /// GIVEN an array expression at the deepest nesting, on the turn of the range rule
+    /// WHEN the generator writes it
+    /// THEN it writes no range, which opens a block and holds an expression of its own
+    #[test]
+    fn a_slice_should_not_be_written_at_the_deepest_nesting() {
+        let ty = Ty::Array(Box::new(Ty::I64));
+        for nesting in [0, MAX_NESTING] {
+            let mut g = Gen::new(&[0; 32]);
+            g.nesting = nesting;
+            g.expressions = SLICE_EVERY - 1;
+            g.expr(&ty, MAX_SIZE);
+            let text = &g.w.out.program;
+            assert_eq!(
+                text.starts_with("({ "),
+                nesting < MAX_NESTING,
+                "{nesting}: {text}"
+            );
+        }
+    }
+
+    /// GIVEN the range rule on an array of arrays, one block short of the limit
+    /// WHEN it writes the block, whose literal holds arrays on the turn of the range rule
+    /// THEN the block counts as one, so no range comes inside it, and it is closed afterwards
+    #[test]
+    fn a_slice_should_count_its_block() {
+        let ty = Ty::Array(Box::new(Ty::Array(Box::new(Ty::I64))));
+        let mut g = Gen::new(&[1; 64]);
+        g.blocks = MAX_BLOCKS - 1;
+        g.expressions = SLICE_EVERY - 1;
+        g.rule(Rule::Slice, &ty, MAX_SIZE, false);
+        let text = &g.w.out.program;
+        assert_eq!(text.matches("({ ").count(), 1, "{text}");
+        assert_eq!(g.blocks, MAX_BLOCKS - 1);
     }
 
     #[test]

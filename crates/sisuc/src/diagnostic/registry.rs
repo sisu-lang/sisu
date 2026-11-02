@@ -545,9 +545,9 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         range: Option<RangeTarget>,
     },
-    /// A `push` at `at` onto something that is not a place; `range` holds the source text of the
-    /// range index when it is one.
-    PushToTemporary { at: Span, range: Option<String> },
+    /// A `push` at `at` onto something that is not a place; `range` says which range index it
+    /// holds, if any.
+    PushToTemporary { at: Span, range: Option<RangePush> },
     /// A range at `at` where it is not allowed, in the way that `form` says.
     RangeOutsideFor { at: Span, form: RangeForm },
     /// A second `==`, `!=` or `is` at `at` in one chain.
@@ -2189,14 +2189,13 @@ pub(crate) struct RangeTarget {
 pub(crate) enum RangeWrite {
     /// `xs[a..b] op v` on an array.
     Array,
-    /// `xs[a..b][i]tail op v` on an array: `index` is the index into `xs` that `i` stands for,
-    /// `a + i`, or `i` when there is no `a`, and `tail` the indexes after it, if any. `op` is `=`
-    /// or a compound operator such as `+=`.
+    /// `xs[a..b][i]tail op v` on an array, or `xs[a..b][i]tail.push(v)`: `index` is the index
+    /// into `xs` that `i` stands for, `a + i`, or `i` when there is no `a`, and `tail` the indexes
+    /// after it, if any. `store` is what follows: ` = v`, ` += v`, or `.push(v)`.
     Element {
         index: String,
         tail: String,
-        op: String,
-        value: String,
+        store: String,
     },
     /// `s[a..b] = t` on a string: `value` is `t`, in parentheses if it is more than one term.
     Replace { value: String },
@@ -2209,27 +2208,36 @@ pub(crate) enum RangeWrite {
     Temporary,
 }
 
+/// The range index in the receiver of a `push` that is no place.
+pub(crate) enum RangePush {
+    /// The receiver is the range index: the source text of it.
+    Slice(String),
+    /// The receiver is an element of the range index.
+    Element(RangeTarget),
+}
+
 impl RangeTarget {
     fn diagnostic(self, code: Code, at: Span) -> Diagnostic {
+        let d = Diagnostic::coded(code, at, "cannot assign to this expression")
+            .with_label("a range index gives a new value");
+        match self.help() {
+            Some(help) => d.with_help(help),
+            None => d,
+        }
+    }
+
+    /// The help, or `None` where no help fits yet.
+    fn help(self) -> Option<String> {
         let Self {
             base,
             start,
             end,
             write,
         } = self;
-        let d = Diagnostic::coded(code, at, "cannot assign to this expression")
-            .with_label("a range index gives a new value");
-        let help = match write {
+        Some(match write {
             RangeWrite::Array => format!("assign to each element, `{base}[i] = ...`, in a loop"),
-            RangeWrite::Element {
-                index,
-                tail,
-                op,
-                value,
-            } => {
-                format!(
-                    "write `{base}[{index}]{tail} {op} {value}`; a range index counts from its start"
-                )
+            RangeWrite::Element { index, tail, store } => {
+                format!("write `{base}[{index}]{tail}{store}`; a range index counts from its start")
             }
             RangeWrite::Replace { value } => {
                 let before = start.map(|start| format!("{base}[..{start}] + "));
@@ -2246,10 +2254,9 @@ impl RangeTarget {
                 ),
                 None => format!("write `{base} += {value}`"),
             },
-            RangeWrite::Other => return d,
+            RangeWrite::Other => return None,
             RangeWrite::Temporary => format!("store `{base}` in a `let mut` variable first"),
-        };
-        d.with_help(help)
+        })
     }
 }
 
@@ -3483,11 +3490,19 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::PushToTemporary {
                 at,
                 range: Some(range),
-            } => Diagnostic::coded(code, at, "cannot push to a temporary value")
-                .with_label("a range index gives a new value")
-                .with_help(format!(
-                    "keep the slice in a variable first: `let mut t = {range}`, then `t.push(...)`"
-                )),
+            } => {
+                let d = Diagnostic::coded(code, at, "cannot push to a temporary value")
+                    .with_label("a range index gives a new value");
+                match range {
+                    RangePush::Slice(range) => d.with_help(format!(
+                        "keep the slice in a variable first: `let mut t = {range}`, then `t.push(...)`"
+                    )),
+                    RangePush::Element(target) => match target.help() {
+                        Some(help) => d.with_help(help),
+                        None => d,
+                    },
+                }
+            }
             DiagnosticKind::RangeOutsideFor { at, form } => form.diagnostic(code, at),
             DiagnosticKind::EqualityChain { at } => {
                 Diagnostic::coded(code, at, "`==`, `!=` and `is` do not chain")

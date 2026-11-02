@@ -322,11 +322,7 @@ impl Checker<'_> {
         }
         if !is_place(receiver_expr) {
             let at = receiver_expr.span;
-            let range = matches!(
-                &receiver_expr.kind,
-                ast::ExprKind::Index { index, .. } if matches!(index.kind, ast::ExprKind::Range(_))
-            )
-            .then(|| self.source.text(at).to_string());
+            let range = self.push_range(receiver_expr, args);
             return not_pushed(self, Some(DiagnosticKind::PushToTemporary { at, range }));
         }
         // Only a receiver checked ahead of its turn has no place: its call is an argument, whose
