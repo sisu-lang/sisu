@@ -1,0 +1,17 @@
+// GIVEN a loop in `main` over `[Some(1), None, Some(3)]` whose body prints `"{o ?? break}"`,
+//       `"{o ?? continue}"` and `"{o ?? return:>4}"` with no value after the jump
+// WHEN the program runs
+// THEN it prints `break 1`, `continue 1`, `continue 3` and `return    1`, and `None` ends the
+//      first loop with `break`, skips a turn with `continue` and leaves `main` with `return`
+fn main() {
+    for o in [Some(1), None, Some(3)] {
+        print("break {o ?? break}")        // break 1
+    }
+    for o in [Some(1), None, Some(3)] {
+        print("continue {o ?? continue}")  // continue 1, continue 3
+    }
+    for o in [Some(1), None, Some(3)] {
+        print("return {o ?? return:>4}")    // return    1
+    }
+    print("not reached")
+}

@@ -90,6 +90,8 @@ type WrittenRoot<'p> = (MirPlace, Vec<(&'p Expr, Operand)>, Option<LocalId>);
 
 struct Lowering<'a> {
     program: &'a tir::Program,
+    /// The function's locals as the checker declared them: `let ... else` asks which is `mut`.
+    declared: &'a [tir::Local],
     /// The types whose equality may call a written method, settled for the whole program.
     written: &'a mut Written,
     /// Per parameter, whether lowering takes it as borrowed.
@@ -118,8 +120,9 @@ struct Lowering<'a> {
     frames: Vec<Frame>,
     /// Where the function's body mentions each local, which the pin rule asks.
     mentions: Mentions,
-    /// Each binding of a `match` or a borrowed `if let`, and the local it borrows from; and a
-    /// borrowed `if let`'s optional, and the root of the place it borrows.
+    /// Each binding of a `match`, of a borrowed `if let` or of a `let ... else`, and the local it
+    /// borrows from; and the optional of a borrowed `if let` or of a borrowed `let ... else`, and
+    /// the root of the place it borrows.
     owners: FxHashMap<LocalId, LocalId>,
     /// The bindings of the arms whose test or guard is being lowered, outermost first: they
     /// are borrowed, so an edge that leaves the test or guard ends them.
@@ -190,7 +193,7 @@ fn local_of(e: &Expr) -> Option<LocalId> {
 impl<'a> Lowering<'a> {
     fn function(
         program: &'a tir::Program,
-        f: &tir::Function,
+        f: &'a tir::Function,
         borrowed: &'a [bool],
         written: &'a mut Written,
     ) -> (Function, Vec<bool>, Vec<bool>) {
@@ -207,6 +210,7 @@ impl<'a> Lowering<'a> {
             .collect();
         let mut lowering = Lowering {
             program,
+            declared: &f.locals,
             written,
             borrowed,
             consulted: vec![false; f.params.len()],
@@ -549,6 +553,11 @@ impl<'a> Lowering<'a> {
             } => unreachable!("only a `push` should write through `Some`"),
             Stmt::Append { place, value } => self.append(place, value)?,
             Stmt::Push { place, value, span } => self.array_push(place, value, *span)?,
+            Stmt::LetElse {
+                scrutinee,
+                test,
+                else_block,
+            } => self.let_else(scrutinee, test, else_block)?,
             Stmt::Expr(e) => {
                 let value = self.into(e, None)?;
                 self.discard(value);
@@ -1107,24 +1116,7 @@ impl<'a> Lowering<'a> {
         self.current = Some(then);
         let mark = self.scope.len();
         if let Some((bind, optional, borrowed)) = bind {
-            self.locals[bind.0].scope = then;
-            let payload = if borrowed {
-                self.owners.insert(bind, optional);
-                self.guarded[bind.0] = true;
-                Rvalue::Borrow(MirPlace {
-                    projections: vec![Projection::Some],
-                    ..whole(optional)
-                })
-            } else {
-                Rvalue::Unwrap(self.owned(optional))
-            };
-            self.push(Statement::Assign {
-                dest: Some(bind),
-                value: payload,
-            });
-            if self.locals[bind.0].counted {
-                self.scope.push((bind, borrowed));
-            }
+            self.bind_payload(bind, optional, borrowed);
         }
         let mut join = else_block.is_none().then_some(else_);
         self.arm(mark, then_block, dest, &mut join);
@@ -1673,6 +1665,14 @@ fn block_mentions(block: &Block, found: &mut Mentions) {
             | Stmt::Push { place, value, .. } => {
                 place_mentions(place, found);
                 mentions(value, found);
+            }
+            Stmt::LetElse {
+                scrutinee,
+                else_block,
+                ..
+            } => {
+                mentions(scrutinee, found);
+                block_mentions(else_block, found);
             }
             Stmt::Expr(e) => mentions(e, found),
         }

@@ -1,0 +1,8 @@
+// GIVEN a `main` whose line 6 is `let mut Some(v) = o else { return }`, with `mut` at 6:9
+// WHEN `sisu check` runs on it
+// THEN it reports E0011 "expected a pattern, found `mut`" at 6:9
+fn main() {
+    let o: i64? = Some(1)
+    let mut Some(v) = o else { return }
+    print(v)
+}

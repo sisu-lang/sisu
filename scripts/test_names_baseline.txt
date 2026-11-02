@@ -56,7 +56,6 @@ crates/runtime/src/text.rs::words_split_on_white_space
 crates/runtime/src/text.rs::write_bool_words
 crates/runtime/src/text.rs::write_char_widths
 crates/runtime/src/text.rs::write_int_extremes
-crates/sisuc/src/ast.rs::display_every_node
 crates/sisuc/src/ast.rs::display_float
 crates/sisuc/src/ast.rs::display_formats
 crates/sisuc/src/check/string.rs::a_match_is_one_term_only_in_parentheses
@@ -1151,7 +1150,6 @@ crates/sisuc/src/mir/tests/lower.rs::labeled_jumps_release_each_scope_once
 crates/sisuc/src/mir/tests/lower.rs::loop_exits_release_the_body_locals
 crates/sisuc/src/mir/tests/lower.rs::loops_record_their_blocks
 crates/sisuc/src/mir/tests/lower.rs::lowers_chains_and_exits
-crates/sisuc/src/mir/tests/lower.rs::mentions_every_kind_of_node
 crates/sisuc/src/mir/tests/lower.rs::nested_read_copies_the_middle_level
 crates/sisuc/src/mir/tests/lower.rs::operand_read_before_a_later_sibling_assigns
 crates/sisuc/src/mir/tests/lower.rs::some_projection_prints_as_a_pattern
@@ -1313,10 +1311,8 @@ crates/sisuc/src/parser.rs::continue_takes_no_value
 crates/sisuc/src/parser.rs::crlf_end_of_line_column_matches_lf
 crates/sisuc/src/parser.rs::digits_after_a_field_dot_are_not_a_name
 crates/sisuc/src/parser.rs::doubled_semicolon_is_redundant_twice
-crates/sisuc/src/parser.rs::earliest_error_in_an_item_wins
 crates/sisuc/src/parser.rs::else_if_chain
 crates/sisuc/src/parser.rs::else_on_new_line_fix
-crates/sisuc/src/parser.rs::else_on_new_line_has_no_fix_after_anything_else
 crates/sisuc/src/parser.rs::else_on_new_line_is_unsafe_over_a_comment
 crates/sisuc/src/parser.rs::empty_class
 crates/sisuc/src/parser.rs::enum_broken_method_recovers
@@ -1375,7 +1371,6 @@ crates/sisuc/src/parser.rs::mut_self_fix
 crates/sisuc/src/parser.rs::mut_self_in_an_enum_is_an_unsafe_fix
 crates/sisuc/src/parser.rs::mut_self_outside_the_receiver_position
 crates/sisuc/src/parser.rs::nested_switch_calls_parse_in_linear_time
-crates/sisuc/src/parser.rs::new_tokens_are_errors_where_they_do_not_belong
 crates/sisuc/src/parser.rs::one_line_class
 crates/sisuc/src/parser.rs::opposite_comparison_directions
 crates/sisuc/src/parser.rs::optional_types

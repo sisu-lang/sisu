@@ -13,7 +13,7 @@ use crate::ast::{
     UnaryOp, Variant,
 };
 use crate::diagnostic::{
-    self, AnyFormKind, BuiltIn, ClashForm, Diagnostic, DiagnosticKind, ForeignPattern,
+    self, AnyFormKind, BuiltIn, ClashForm, Diagnostic, DiagnosticKind, ElseOf, ForeignPattern,
     ForeignRange, InterfaceBodyForm, Join, LetField, MatchIdiomForm, NestingForm, Owner, PowerFix,
     SpecForm, SpecLimit,
 };
@@ -60,6 +60,7 @@ pub(crate) fn parse(lexed: Lexed<'_>, prelude: bool) -> Parsed {
         window: &tokens,
         halves: &halves,
         halved: None,
+        scrutinee: None,
         pos: 0,
         depth: Height::default(),
         lexer: &diagnostics,
@@ -396,6 +397,23 @@ fn parenthesised(tokens: &[Token]) -> bool {
     true
 }
 
+/// The bracket depth after a token of `kind` at bracket depth `depth`: `(`, `[`, `{` and the head
+/// of an interpolation open one level, and `)`, `]`, `}` and the tail of an interpolation close
+/// one. The middle of an interpolation closes one and opens the next, so it keeps the depth.
+/// `None` when the token closes a bracket that the scan did not open. The error-path scans of
+/// the parser share this rule.
+fn nested(kind: &TokenKind, depth: usize) -> Option<usize> {
+    match kind {
+        TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace | TokenKind::StrHead(_) => {
+            Some(depth + 1)
+        }
+        TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace | TokenKind::StrTail(_) => {
+            depth.checked_sub(1)
+        }
+        _ => Some(depth),
+    }
+}
+
 /// Whether `kind` begins a postfix link (`.`, `?.` or `[`); `postfix` and `at_min_literal`
 /// share it.
 fn starts_postfix(kind: &TokenKind) -> bool {
@@ -403,6 +421,63 @@ fn starts_postfix(kind: &TokenKind) -> bool {
         kind,
         TokenKind::Dot | TokenKind::QuestionDot | TokenKind::LBracket
     )
+}
+
+/// The `return` or `break` at the right end of `e` whose value is a block `{ ... }` that ends at
+/// byte `end`, the end of the header: the rightmost operand, through binary operators such as
+/// `??`. A jump takes everything to its right, so in a header it takes the body block when it has
+/// no value of its own. A `)` after the block ends the jump, so the block is then no body.
+fn block_taking_jump(e: &Expr, end: usize) -> Option<&Expr> {
+    if let ExprKind::Return {
+        value: Some(value), ..
+    }
+    | ExprKind::Break {
+        value: Some(value), ..
+    } = &e.kind
+        && matches!(&value.kind, ExprKind::Block(block) if block.span.end() == end)
+    {
+        return Some(e);
+    }
+    right_operand(e).and_then(|last| block_taking_jump(last, end))
+}
+
+/// The operand at the right end of `e`: what a binary or unary operator, or a jump, takes last.
+fn right_operand(e: &Expr) -> Option<&Expr> {
+    match &e.kind {
+        ExprKind::Return {
+            value: Some(last), ..
+        }
+        | ExprKind::Break {
+            value: Some(last), ..
+        }
+        | ExprKind::Binary { rhs: last, .. }
+        | ExprKind::Coalesce { rhs: last, .. }
+        | ExprKind::Is { rhs: last, .. }
+        | ExprKind::Unary { operand: last, .. } => Some(last),
+        ExprKind::Compare { operands, .. } => operands.last(),
+        _ => None,
+    }
+}
+
+/// Whether `e` ends in an `if` that has no `else` yet, so that an `else` after `e` is the `if`'s.
+/// An `else if` chain is as open as its last `if`.
+fn ends_in_open_if(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::If { else_block, .. } | ExprKind::IfLet { else_block, .. } => {
+            match else_block {
+                None => true,
+                Some(block) => match &block.stmts[..] {
+                    // The parser gives an `else if` the span of its inner `if`, and an
+                    // `else { if ... }` the span of its braces.
+                    [stmt] if stmt.span == block.span => {
+                        matches!(&stmt.kind, StmtKind::Expr(inner) if ends_in_open_if(inner))
+                    }
+                    _ => false,
+                },
+            }
+        }
+        _ => right_operand(e).is_some_and(ends_in_open_if),
+    }
 }
 
 /// Whether `kind` begins an operand that `unary` and `primary` take. A `_`, a leading `.` and
@@ -430,6 +505,9 @@ fn starts_operand(kind: &TokenKind) -> bool {
                 | TokenKind::If
                 | TokenKind::Loop
                 | TokenKind::Match
+                | TokenKind::Return
+                | TokenKind::Break
+                | TokenKind::Continue
                 | TokenKind::Minus
                 | TokenKind::Bang
         ),
@@ -507,6 +585,18 @@ enum RangeOp {
     Foreign { at: Span, lt: Option<Span> },
 }
 
+/// What the tokens after `let` and `mut` read as (`Parser::let_head`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LetHead {
+    /// A name, which `binding` reads, or whatever is not a pattern.
+    Name,
+    /// A pattern that is not a plain name.
+    Pattern,
+    /// `Enum.Variant` and then `=`: a pattern when an `else` follows the value, else a name
+    /// that `.` ends.
+    Qualified,
+}
+
 struct Parser<'a> {
     /// The text the token spans index.
     source: Source<'a>,
@@ -542,6 +632,9 @@ struct Parser<'a> {
     /// The index of the `>=` whose `=` half the last `bump_past_window` took, if the token just
     /// consumed was that half.
     halved: Option<usize>,
+    /// While a `match` reads its scrutinee: the index of its first token. A jump at the end of
+    /// the scrutinee that takes the body's `{` as its value reports that (`jump_value`).
+    scrutinee: Option<usize>,
 }
 
 impl<'a> Parser<'a> {
@@ -1419,10 +1512,9 @@ impl<'a> Parser<'a> {
         if let (Ok(_), None) = (&parsed, &lexed) {
             return parsed;
         }
-        let error = self
-            .specs
-            .drain(specs..)
-            .chain(lexed)
+        let error = lexed
+            .into_iter()
+            .chain(self.specs.drain(specs..))
             .chain(parsed.err())
             .reduce(earlier)
             .expect("a broken item should hold an error");
@@ -1458,8 +1550,8 @@ impl<'a> Parser<'a> {
                 self.pos = end;
                 let error = errors
                     .into_iter()
-                    .chain(self.specs.drain(specs..))
                     .chain(outside)
+                    .chain(self.specs.drain(specs..))
                     .chain(parsed.err())
                     .reduce(earlier)
                     .expect("a broken item should hold an error");
@@ -1807,6 +1899,7 @@ impl<'a> Parser<'a> {
             window: self.tokens,
             halves: self.halves,
             halved: None,
+            scrutinee: None,
         };
         let mutable = rest.eat(&TokenKind::Mut).is_some();
         let mut field = || -> Result<String, Diagnostic> {
@@ -2202,11 +2295,12 @@ impl<'a> Parser<'a> {
             _ => self.loop_label(),
         };
         let kind = match self.peek().kind {
-            TokenKind::Let => self.let_stmt()?,
+            TokenKind::Let => self.let_stmt(true)?,
             TokenKind::Const => return Err(self.local_const()),
             TokenKind::While => {
                 let keyword = self.bump().span;
                 if let Some((pattern, value)) = self.child(base, &mut reach, Self::let_binding)? {
+                    self.header_body(&value, true)?;
                     StmtKind::WhileLet {
                         label,
                         keyword,
@@ -2216,6 +2310,7 @@ impl<'a> Parser<'a> {
                     }
                 } else {
                     let cond = self.child(base, &mut reach, Self::expr)?;
+                    self.header_body(&cond, true)?;
                     StmtKind::While {
                         label,
                         keyword,
@@ -2248,6 +2343,12 @@ impl<'a> Parser<'a> {
                         inclusive: matches!(op, RangeOp::Inclusive),
                     },
                 };
+                self.header_body(
+                    match &source {
+                        ForSource::Array(e) | ForSource::Range { end: e, .. } => e,
+                    },
+                    true,
+                )?;
                 StmtKind::For {
                     label,
                     keyword,
@@ -2256,32 +2357,8 @@ impl<'a> Parser<'a> {
                     body: self.child(base, &mut reach, Self::block)?,
                 }
             }
-            TokenKind::Return => {
-                self.bump();
-                if self.at(&TokenKind::Newline) || self.at(&TokenKind::RBrace) {
-                    StmtKind::Return(None)
-                } else {
-                    StmtKind::Return(Some(self.child(base, &mut reach, Self::expr)?))
-                }
-            }
-            TokenKind::Break => {
-                self.bump();
-                let label = self.jump_label(false);
-                if let Some(error) = label.as_ref().and_then(|label| self.label_clash(label)) {
-                    return Err(error);
-                }
-                let value = if self.jump_ends() {
-                    None
-                } else {
-                    Some(self.child(base, &mut reach, Self::expr)?)
-                };
-                StmtKind::Break { label, value }
-            }
-            TokenKind::Continue => {
-                self.bump();
-                StmtKind::Continue {
-                    label: self.jump_label(true),
-                }
+            TokenKind::Return | TokenKind::Break | TokenKind::Continue => {
+                StmtKind::Expr(self.jump(base, &mut reach)?)
             }
             TokenKind::LBrace => return Err(DiagnosticKind::BlockAsStatement { at: start }.into()),
             _ => self.expr_or_assign()?,
@@ -2435,6 +2512,124 @@ impl<'a> Parser<'a> {
         self.source.text(start.to(end)).to_string()
     }
 
+    /// The `return`, `break` or `continue` at the next token, with its loop label and its value.
+    /// The value takes the whole expression to its right, as `child` counts it from `base`.
+    fn jump(&mut self, base: Height, reach: &mut Height) -> Result<Expr, Diagnostic> {
+        let keyword_pos = self.pos;
+        let keyword = self.bump();
+        let kind = match keyword.kind {
+            TokenKind::Return => ExprKind::Return {
+                keyword: keyword.span,
+                value: self.jump_value(base, reach, keyword_pos)?,
+            },
+            TokenKind::Break => {
+                let label = self.jump_label(false);
+                if let Some(error) = label.as_ref().and_then(|label| self.label_clash(label)) {
+                    return Err(error);
+                }
+                ExprKind::Break {
+                    label,
+                    keyword: keyword.span,
+                    value: self.jump_value(base, reach, keyword_pos)?,
+                }
+            }
+            _ => ExprKind::Continue {
+                label: self.jump_label(true),
+            },
+        };
+        Ok(Expr {
+            kind,
+            span: keyword.span.to(self.last_span()),
+        })
+    }
+
+    /// The value of a `return` or a `break` (its keyword is the token at `keyword_pos`), unless
+    /// the jump ends here. In the scrutinee of a `match`, a `{` after the jump is the body that
+    /// the jump took, and when that body fails to parse as a block, as the arms do, the error is
+    /// the jump's (`header_body` reports the same mistake when the block parses).
+    fn jump_value(
+        &mut self,
+        base: Height,
+        reach: &mut Height,
+        keyword_pos: usize,
+    ) -> Result<Option<Box<Expr>>, Diagnostic> {
+        if self.jump_ends() {
+            return Ok(None);
+        }
+        let braced = self.at(&TokenKind::LBrace);
+        let end = self.tokens[self.pos - 1].span.end();
+        match self.child(base, reach, Self::expr) {
+            Ok(value) => Ok(Some(Box::new(value))),
+            Err(error) => match self.scrutinee {
+                Some(first) if braced && self.brackets_closed(first, keyword_pos) => {
+                    let keyword = &self.tokens[keyword_pos];
+                    let name = if keyword.kind == TokenKind::Return {
+                        "return"
+                    } else {
+                        "break"
+                    };
+                    let header = self.tokens[first].span.start();
+                    Err(self.jump_takes_block(name, keyword.span, header, end, false))
+                }
+                _ => Err(error),
+            },
+        }
+    }
+
+    /// Whether the brackets of the tokens from `first` up to `last` all close in them.
+    fn brackets_closed(&self, first: usize, last: usize) -> bool {
+        let mut open = 0usize;
+        for token in &self.tokens[first..last] {
+            let Some(next) = nested(&token.kind, open) else {
+                return false;
+            };
+            open = next;
+        }
+        open == 0
+    }
+
+    /// The error of the `return` or `break` `name` at `keyword`, whose value is the `{ ... }`
+    /// that should be the body of the header that starts at byte `header`. The header through
+    /// the jump, which ends at byte `end`, goes in `( )` to keep the block as the body. In the
+    /// header of a loop (`loop_header`) that is no help for a `break`: it is E0082 there.
+    fn jump_takes_block(
+        &self,
+        name: &'static str,
+        keyword: Span,
+        header: usize,
+        end: usize,
+        loop_header: bool,
+    ) -> Diagnostic {
+        let grouped = (name == "return" || !loop_header)
+            .then(|| self.source.text(Span::new(header, end)).to_string());
+        DiagnosticKind::JumpTakesBlock {
+            keyword: name,
+            at: keyword,
+            grouped,
+        }
+        .into()
+    }
+
+    /// The error of a header (`header`, the condition, value or source of an `if`, `while`, `for`
+    /// or `match`) whose body block is missing because a jump at its end took that block as its
+    /// value: `if o ?? return {`. Nothing when a `{` follows, or the header ends in no such jump.
+    fn header_body(&self, header: &Expr, loop_header: bool) -> Result<(), Diagnostic> {
+        if self.at(&TokenKind::LBrace) {
+            return Ok(());
+        }
+        let header_end = self.tokens[self.pos - 1].span.end();
+        let Some(jump) = block_taking_jump(header, header_end) else {
+            return Ok(());
+        };
+        let (name, keyword, label) = match &jump.kind {
+            ExprKind::Return { keyword, .. } => ("return", *keyword, None),
+            ExprKind::Break { label, keyword, .. } => ("break", *keyword, label.as_ref()),
+            _ => unreachable!("`block_taking_jump` should find a jump"),
+        };
+        let end = label.map_or_else(|| keyword.end(), |label| label.span.end());
+        Err(self.jump_takes_block(name, keyword, header.span.start(), end, loop_header))
+    }
+
     /// The loop label after `break` or `continue`: a name, when it is an open loop label or
     /// `any` is set.
     fn jump_label(&mut self, any: bool) -> Option<Ident> {
@@ -2447,8 +2642,8 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Whether the next token ends a `break` or `continue`, which then takes no value: only a
-    /// token that can start an expression continues one.
+    /// Whether the next token ends a `return`, `break` or `continue`, which then takes no value:
+    /// only a token that can start an expression continues one.
     fn jump_ends(&self) -> bool {
         matches!(
             self.peek().kind,
@@ -2459,13 +2654,28 @@ impl<'a> Parser<'a> {
                 | TokenKind::RParen
                 | TokenKind::RBracket
                 | TokenKind::FatArrow
+                | TokenKind::Else
                 | TokenKind::Eof
+                // The tokens that end a part of an interpolation: `}`, and a format spec.
+                | TokenKind::StrMiddle(_)
+                | TokenKind::StrTail(_)
+                | TokenKind::FormatSpec(_)
         )
     }
 
     /// The `else` that starts a line, after `previous`, the statement before it. The `else` can
     /// move up to the `if` it follows when that has none, and a block or an `if` follows it.
     fn else_on_new_line(&self, previous: Option<&Stmt>) -> Diagnostic {
+        // A pattern `let` without `else` never comes here: `let_pattern` reports the `else`.
+        let value = previous.and_then(|stmt| match &stmt.kind {
+            // A `let` with a type takes no `else`: the old E0006 stays, with no join.
+            StmtKind::Let { ty: None, init, .. } => Some(init),
+            _ => None,
+        });
+        // The `else` of a `let` value that ends in an `if` without `else` belongs to that `if`.
+        if value.is_some_and(|value| !ends_in_open_if(value)) {
+            return self.let_else_on_new_line(self.pos);
+        }
         let at = self.peek().span;
         let lacks_else = previous.is_some_and(|stmt| {
             matches!(
@@ -2494,7 +2704,35 @@ impl<'a> Parser<'a> {
             gap: Span::new(gap.start, gap.end),
             safe: self.source.slice(gap.clone()).trim().is_empty(),
         });
-        DiagnosticKind::ElseOnNewLine { at, join }.into()
+        DiagnosticKind::ElseOnNewLine {
+            at,
+            of: ElseOf::If,
+            join,
+        }
+        .into()
+    }
+
+    /// The `else` at token `else_at`, which starts a line after the value of a `let`. A `{`
+    /// follows the `else` of a `let ... else`; the join puts it after the value. A value that
+    /// ends in `}` would then read the `else` as its own (E0173), so the join is only a hint.
+    fn let_else_on_new_line(&self, else_at: usize) -> Diagnostic {
+        let at = self.tokens[else_at].span;
+        let last = self.tokens[..self.pos]
+            .iter()
+            .rfind(|t| t.kind != TokenKind::Newline);
+        let end = last.map_or(0, |t| t.span.end());
+        let ends_in_brace = last.is_some_and(|t| t.kind == TokenKind::RBrace);
+        let join =
+            (self.tokens[else_at + 1].kind == TokenKind::LBrace && !ends_in_brace).then(|| Join {
+                gap: Span::new(end, at.start()),
+                safe: self.source.slice(end..at.start()).trim().is_empty(),
+            });
+        DiagnosticKind::ElseOnNewLine {
+            at,
+            of: ElseOf::Let,
+            join,
+        }
+        .into()
     }
 
     /// Where the code before the next token ends: the `}` of the statement before it.
@@ -2965,12 +3203,17 @@ impl<'a> Parser<'a> {
     fn statement_end(&mut self, stmt: &Stmt) -> Diagnostic {
         let error = self.end_of_line();
         let (StmtKind::Expr(tail)
-        | StmtKind::Return(Some(tail))
         | StmtKind::Let { init: tail, .. }
         | StmtKind::Assign { value: tail, .. }
         | StmtKind::CompoundAssign { value: tail, .. }) = &stmt.kind
         else {
             return error;
+        };
+        let tail = match &tail.kind {
+            ExprKind::Return {
+                value: Some(value), ..
+            } => value.as_ref(),
+            _ => tail,
         };
         let switch = match &tail.kind {
             ExprKind::Name(name) if name.as_str() == "switch" => {
@@ -3030,7 +3273,11 @@ impl<'a> Parser<'a> {
         let keyword = self.bump().span;
         let base = self.depth;
         let mut reach = base;
-        let scrutinee = self.child(base, &mut reach, Self::expr)?;
+        let outer = self.scrutinee.replace(self.pos);
+        let scrutinee = self.child(base, &mut reach, Self::expr);
+        self.scrutinee = outer;
+        let scrutinee = scrutinee?;
+        self.header_body(&scrutinee, false)?;
         self.expect(&TokenKind::LBrace)?;
         self.skip_newlines();
         let mut arms = Vec::new();
@@ -3141,10 +3388,11 @@ impl<'a> Parser<'a> {
             }
         };
         let span = stmt.span;
-        if let Stmt {
-            kind: StmtKind::Expr(e),
-            ..
-        } = stmt
+        if !stmt.is_jump()
+            && let Stmt {
+                kind: StmtKind::Expr(e),
+                ..
+            } = stmt
         {
             return Ok(e);
         }
@@ -3159,11 +3407,28 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn let_stmt(&mut self) -> Result<StmtKind, Diagnostic> {
+    /// A `let`, or with `pattern_forms` off, the `const` that reports like one: the forms with a
+    /// pattern and an `else` are for `let` alone.
+    fn let_stmt(&mut self, pattern_forms: bool) -> Result<StmtKind, Diagnostic> {
         let base = self.depth;
         let mut reach = base;
         self.bump();
-        let mutable = self.eat(&TokenKind::Mut).map(|t| t.span);
+        let keyword = self.eat(&TokenKind::Mut);
+        let mutable = keyword.map(|t| t.span);
+        let head = if pattern_forms {
+            self.let_head()
+        } else {
+            LetHead::Name
+        };
+        match (head, keyword) {
+            (LetHead::Pattern, Some(keyword)) => {
+                return Err(self.expected_at(keyword, "a pattern"));
+            }
+            (LetHead::Pattern | LetHead::Qualified, None) => {
+                return self.let_pattern(base, reach, mutable);
+            }
+            _ => {}
+        }
         let name = self.binding()?;
         let ty = match self.eat(&TokenKind::Colon) {
             Some(_) => Some(self.child(base, &mut reach, Self::parse_type)?),
@@ -3175,17 +3440,30 @@ impl<'a> Parser<'a> {
         }
         let init = self.child(base, &mut reach, Self::expr)?;
         self.depth = reach;
+        let else_follows = pattern_forms && ty.is_none() && self.at(&TokenKind::Else);
         // Reported last, and only where the statement ends, so that the fix leaves a `let` that
         // parses: past a stray token, the block reports that token's own error.
         if let Some(keyword) = mutable
             && name.name.as_str() == "_"
-            && (self.at(&TokenKind::Newline) || self.at(&TokenKind::RBrace))
+            && (else_follows || self.at(&TokenKind::Newline) || self.at(&TokenKind::RBrace))
         {
             return Err(DiagnosticKind::MutOnUnderscore {
                 at: name.span,
                 keyword,
             }
             .into());
+        }
+        if else_follows {
+            let pattern = if name.name.as_str() == "_" {
+                PatternKind::Wild
+            } else {
+                PatternKind::Name(name.clone())
+            };
+            let pattern = Pattern {
+                kind: pattern,
+                span: name.span,
+            };
+            return self.let_else_block(base, reach, mutable, pattern, init);
         }
         Ok(StmtKind::Let {
             mutable,
@@ -3195,12 +3473,156 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// What the tokens after `let` and `mut` read as.
+    fn let_head(&self) -> LetHead {
+        use TokenKind as T;
+        let kind = |n: usize| self.tokens.get(self.pos + n).map(|t| &t.kind);
+        match self.peek().kind {
+            T::NoneKw
+            | T::Minus
+            | T::Int(_)
+            | T::Char(_)
+            | T::Str(_)
+            | T::StrHead(_)
+            | T::True
+            | T::False => LetHead::Pattern,
+            T::Ident(_) => match kind(1) {
+                Some(T::LParen | T::Pipe | T::DotDot | T::DotDotEq) => LetHead::Pattern,
+                Some(T::Dot) if matches!(kind(2), Some(T::Ident(_) | T::NoneKw)) => match kind(3) {
+                    Some(T::LParen | T::Pipe) => LetHead::Pattern,
+                    Some(T::Eq) => LetHead::Qualified,
+                    _ => LetHead::Name,
+                },
+                _ => LetHead::Name,
+            },
+            _ => LetHead::Name,
+        }
+    }
+
+    /// `pattern = value`, then `else` and a block: the rest of a `let` whose pattern is not a
+    /// plain name. Without the `else`, the pattern can fail, which the parser reports and goes on
+    /// from, so that the statement keeps its names. A qualified variant with no payload keeps the
+    /// error of a `let` that reads a name.
+    fn let_pattern(
+        &mut self,
+        base: Height,
+        mut reach: Height,
+        mutable: Option<Span>,
+    ) -> Result<StmtKind, Diagnostic> {
+        let first = self.pos;
+        let pattern = self.child(base, &mut reach, Self::pattern)?;
+        self.expect(&TokenKind::Eq)?;
+        if let Some(error) = self.label_not_on_loop() {
+            return Err(error);
+        }
+        let qualified = matches!(
+            &pattern.kind,
+            PatternKind::Variant {
+                qualifier: Some(_),
+                parens: None,
+                ..
+            }
+        );
+        let value = match self.child(base, &mut reach, Self::expr) {
+            Ok(value) => value,
+            // With no `else` in the statement, it is no `let ... else`, so the `.` is the first
+            // mistake. With one, the pattern is right and the value's error is the mistake.
+            Err(_) if qualified && !self.else_in_statement(first) => {
+                return Err(self.dot_error(first));
+            }
+            Err(error) => return Err(error),
+        };
+        self.depth = reach;
+        if self.at(&TokenKind::Else) {
+            return self.let_else_block(base, reach, mutable, pattern, value);
+        }
+        // The pattern and its value, then an `else` on the next line: the `let ... else` that
+        // E0006 reports, which comes before the error of a pattern that can fail.
+        let next = self.tokens[self.pos..]
+            .iter()
+            .position(|t| t.kind != TokenKind::Newline)
+            .map(|n| self.pos + n);
+        if let Some(at) = next
+            && self.tokens[at].kind == TokenKind::Else
+            && !ends_in_open_if(&value)
+        {
+            return Err(self.let_else_on_new_line(at));
+        }
+        if qualified {
+            return Err(self.dot_error(first));
+        }
+        self.specs.push(
+            DiagnosticKind::RefutablePattern {
+                at: pattern.span,
+                shown: self.source.text(pattern.span).to_string(),
+            }
+            .into(),
+        );
+        Ok(StmtKind::LetElse {
+            mutable,
+            pattern,
+            value,
+            else_block: None,
+        })
+    }
+
+    /// Whether an `else` of the statement that starts at token `first` is not the `else` of an
+    /// `if` in it: one at the statement's own level, before its line break. A line break inside
+    /// `{ }` does not end the statement. It runs on an error path only.
+    fn else_in_statement(&self, first: usize) -> bool {
+        let (mut depth, mut elses, mut ifs) = (0_usize, 0_usize, 0_usize);
+        for token in &self.tokens[first..] {
+            // A closing bracket at the statement's own level ends the statement.
+            let Some(next) = nested(&token.kind, depth) else {
+                break;
+            };
+            depth = next;
+            match token.kind {
+                TokenKind::Newline | TokenKind::Eof if depth == 0 => break,
+                TokenKind::Else if depth == 0 => elses += 1,
+                TokenKind::If if depth == 0 => ifs += 1,
+                _ => {}
+            }
+        }
+        elses > ifs
+    }
+
+    /// "expected `=`, found `.`", as a `let` that reads a name reports `Enum.Variant`. The
+    /// pattern starts at token `first`.
+    fn dot_error(&self, first: usize) -> Diagnostic {
+        self.expected_at(&self.tokens[first + 1], &TokenKind::Eq.describe())
+    }
+
+    /// The `else` and the block of a `let ... else`, after its `value`. A value that ends in `}`
+    /// is an error: the `else` would read as the value's own.
+    fn let_else_block(
+        &mut self,
+        base: Height,
+        mut reach: Height,
+        mutable: Option<Span>,
+        pattern: Pattern,
+        value: Expr,
+    ) -> Result<StmtKind, Diagnostic> {
+        if self.tokens[self.pos - 1].kind == TokenKind::RBrace {
+            return Err(DiagnosticKind::LetElseValueEndsInBrace { at: value.span }.into());
+        }
+        self.bump();
+        let else_block = self.child(base, &mut reach, Self::block)?;
+        self.depth = reach;
+        Ok(StmtKind::LetElse {
+            mutable,
+            pattern,
+            value,
+            else_block: Some(else_block),
+        })
+    }
+
     /// The error of a `const` statement. It is reported only once the statement parses as a `let`
     /// and ends the line, so that its fix leaves a `let` that parses; before that, the first
     /// error in it is reported.
     fn local_const(&mut self) -> Diagnostic {
         let at = self.peek().span;
-        if let Err(error) = self.let_stmt() {
+        if let Err(error) = self.let_stmt(false) {
             return error;
         }
         if !self.at(&TokenKind::Newline) && !self.at(&TokenKind::RBrace) {
@@ -3685,6 +4107,13 @@ impl<'a> Parser<'a> {
                 ExprKind::Name(name)
             }
             TokenKind::Todo => return self.todo(),
+            TokenKind::Return | TokenKind::Break | TokenKind::Continue => {
+                let base = self.depth;
+                let mut reach = base;
+                let jump = self.jump(base, &mut reach)?;
+                self.depth = reach;
+                return Ok(jump);
+            }
             TokenKind::LParen => {
                 self.bump();
                 let inner = self.expr()?;
@@ -3893,6 +4322,12 @@ impl<'a> Parser<'a> {
             Some((pattern, value)) => Head::Let(pattern, value),
             None => Head::Cond(self.child(base, &mut reach, Self::expr)?),
         };
+        self.header_body(
+            match &head {
+                Head::Cond(e) | Head::Let(_, e) => e,
+            },
+            false,
+        )?;
         let then_block = self.child(base, &mut reach, Self::block)?;
         let mut end = then_block.span;
         let else_block = if let Some(else_token) = self.eat(&TokenKind::Else) {
@@ -4555,6 +4990,289 @@ mod tests {
         );
     }
 
+    /// GIVEN `return`, `break` and `continue` in the place of an operand
+    /// WHEN the parser reads them
+    /// THEN each is an expression, with its loop label and value, that `Display` prints as it
+    /// printed the statement
+    #[test]
+    fn jump_should_parse_as_an_operand() {
+        for (src, printed) in [
+            ("o ?? return 1", "(?? o (return 1))"),
+            ("o ?? break", "(?? o (break))"),
+            ("o ?? break outer", "(?? o (break outer))"),
+            ("o ?? continue outer", "(?? o (continue :outer))"),
+            ("f(return)", "(call f (return))"),
+            ("(return)", "(return)"),
+            (
+                "outer: loop { o ?? break outer }",
+                "(loop :outer (block (?? o (break :outer))))",
+            ),
+            (
+                "outer: loop { o ?? break outer 2 }",
+                "(loop :outer (block (?? o (break :outer 2))))",
+            ),
+            (
+                "outer: loop { o ?? continue outer }",
+                "(loop :outer (block (?? o (continue :outer))))",
+            ),
+        ] {
+            assert_eq!(expr(src), printed, "{src}");
+        }
+        let function = first_fn("fn main() { outer: loop { o ?? break outer 2 } }");
+        let StmtKind::Expr(Expr {
+            kind: ExprKind::Loop { body, .. },
+            ..
+        }) = &function.body.stmts[0].kind
+        else {
+            panic!("a labeled loop should parse as a loop");
+        };
+        let StmtKind::Expr(Expr {
+            kind: ExprKind::Coalesce { rhs, .. },
+            ..
+        }) = &body.stmts[0].kind
+        else {
+            panic!("`o ?? break outer 2` should parse as a coalesce");
+        };
+        assert!(
+            matches!(
+                &rhs.kind,
+                ExprKind::Break { label: Some(label), value: Some(value), .. }
+                    if label.name.as_str() == "outer" && matches!(value.kind, ExprKind::Int { value: 2, .. })
+            ),
+            "{rhs:?}"
+        );
+        assert!(rhs.is_jump());
+    }
+
+    /// GIVEN `a ?? return b ?? c`
+    /// WHEN the parser reads it
+    /// THEN `return` takes `b ?? c`, everything to its right
+    #[test]
+    fn return_should_take_everything_to_its_right() {
+        assert_eq!(expr("a ?? return b ?? c"), "(?? a (return (?? b c)))");
+    }
+
+    /// GIVEN a `return` before each token that ends a jump
+    /// WHEN the parser reads it
+    /// THEN the `return` takes no value
+    #[test]
+    fn jump_with_no_value_should_end_at_jump_ends() {
+        for (src, printed) in [
+            ("fn main() {\n    return\n}", "(block (return))"),
+            ("fn main() { return; 1 }", "(block (return) 1)"),
+            ("fn main() { return }", "(block (return))"),
+            ("fn main() { f(return, 1) }", "(block (call f (return) 1))"),
+            ("fn main() { [return] }", "(block (array (return)))"),
+            ("fn main() { f(return) }", "(block (call f (return)))"),
+            (
+                "fn main() { match x { _ if return => 1 } }",
+                "(block (match x (arm _ (if (return)) 1)))",
+            ),
+        ] {
+            assert_eq!(body(src), printed, "{src}");
+        }
+        // An `else` and the end of the file cannot sit inside a block, so the parser starts at
+        // the `return`.
+        for src in ["return else", "return"] {
+            parser_at(src, 0, |p| {
+                let stmt = p.stmt().expect("the statement should parse");
+                assert!(
+                    matches!(
+                        stmt.kind,
+                        StmtKind::Expr(Expr {
+                            kind: ExprKind::Return { value: None, .. },
+                            ..
+                        })
+                    ),
+                    "{src}"
+                );
+            });
+        }
+    }
+
+    /// GIVEN a `return`, `break` or `continue` before each token of an interpolation that can
+    /// follow an expression
+    /// WHEN the parser reads it
+    /// THEN the jump takes no value
+    #[test]
+    fn jump_with_no_value_should_end_at_an_interpolation_part() {
+        for (src, printed) in [
+            (
+                r#"print("{o ?? return}")"#,
+                r"(call print (interp (?? o (return))))",
+            ),
+            (
+                r#"print("{o ?? break}")"#,
+                r"(call print (interp (?? o (break))))",
+            ),
+            (
+                r#"print("{o ?? continue}")"#,
+                r"(call print (interp (?? o (continue))))",
+            ),
+            (
+                r#"print("{o ?? return}-{o ?? break}")"#,
+                r#"(call print (interp (?? o (return)) "-" (?? o (break))))"#,
+            ),
+            (
+                r#"print("{o ?? return:>4}")"#,
+                r#"(call print (interp (fmt (?? o (return)) ">4")))"#,
+            ),
+            (
+                r#"print("{o ?? break 1}")"#,
+                r"(call print (interp (?? o (break 1))))",
+            ),
+        ] {
+            assert_eq!(expr(src), printed, "{src}");
+        }
+    }
+
+    /// GIVEN a `return` or a `break` statement whose value is the deepest parenthesized value
+    /// that parses (254 pairs after `return`, and 252 after `break` in a `loop`)
+    /// WHEN the parser reads it, and again with one pair more
+    /// THEN the first parses, and the second is E0071 at the `1` inside the parentheses
+    /// AND a `return` operand that deep is E0071, not a crash
+    #[test]
+    fn jump_statement_should_keep_its_depth_budget() {
+        let source = |pairs: usize, head: &str, tail: &str| {
+            format!(
+                "fn main() {{ {head}{}1{}{tail} }}",
+                "(".repeat(pairs),
+                ")".repeat(pairs)
+            )
+        };
+        // The code and the column of the first error.
+        let first = |src: &str| {
+            parsed(src)
+                .diagnostics
+                .first()
+                .map(|d| (d.code(), line_col(src, d.span().start()).1))
+        };
+        // The parser recurses as deep as the limit allows, which the compiler's own stack holds.
+        let found = std::thread::Builder::new()
+            .stack_size(crate::STACK_SIZE)
+            .spawn(move || {
+                let statements = |extra: usize| {
+                    [
+                        first(&source(254 + extra, "return ", "")),
+                        first(&source(252 + extra, "loop { break ", " }")),
+                    ]
+                };
+                let operand = first(&source(254, "f(return ", ")")).map(|(code, _)| code);
+                (statements(0), statements(1), operand)
+            })
+            .expect("the thread should start")
+            .join()
+            .expect("the parse should not overflow the stack");
+        let too_deep = Code::NestingTooDeep;
+        assert_eq!(
+            found,
+            (
+                [None, None],
+                [Some((too_deep, 275)), Some((too_deep, 279))],
+                Some(too_deep)
+            )
+        );
+    }
+
+    /// GIVEN a function with the jump statements `return`, `return x`, `break`, `break l 1` and
+    /// `continue l`
+    /// WHEN the tree is printed
+    /// THEN the text is the text of the tree at the branch base, where they were statements
+    #[test]
+    fn jump_statement_should_print_as_today() {
+        let src = "fn f(x: i64) -> i64 {\n    l: loop {\n        return\n        return x\n        break\n        break l 1\n        continue l\n        break 1\n        continue\n    }\n}";
+        assert_eq!(
+            program(src),
+            "(fn f ((x i64)) i64 (block (loop :l (block (return) (return x) (break) (break :l 1) (continue :l) (break 1) (continue)))))"
+        );
+    }
+
+    /// GIVEN `return x = 5`
+    /// WHEN the parser reads it
+    /// THEN the error is E0011 at the `=`, as it was when `return` was a statement only
+    #[test]
+    fn jump_before_eq_should_keep_its_error() {
+        assert_eq!(expr_err("return x = 5"), (Code::Expected, 1, 22));
+    }
+
+    /// GIVEN a header of each kind (`if`, `if let`, `else if`, `while`, `while let`, `for` over
+    /// an array and over a range, and `match`) that ends in `return` or `break` with no value,
+    /// followed by the `{` of its body
+    /// WHEN the parser reads it
+    /// THEN the error is E0011 at the jump, not after the body
+    /// AND the error has the help that puts the jump in `( )`, except for a `break` in the header
+    /// of a loop, where that is E0082
+    /// AND a `continue`, which takes no value, and the same header with the jump in `( )` parse
+    #[test]
+    fn jump_that_takes_a_header_block_should_be_reported_at_the_jump() {
+        let body = "{\n        f()\n    }";
+        let rows = [
+            ("if o ?? return", 13, true),
+            ("if let Some(x) = o ?? return", 27, true),
+            ("if c { f() } else if o ?? break", 31, true),
+            ("while o ?? return", 16, true),
+            ("while o ?? break", 16, false),
+            ("while let Some(x) = o ?? break", 30, false),
+            ("while let Some(x) = o ?? return", 30, true),
+            ("for x in xs ?? return", 20, true),
+            ("for x in xs ?? break", 20, false),
+            ("for x in 0..n ?? break", 22, false),
+            ("outer: while o ?? break outer", 23, false),
+            ("match o ?? return", 16, true),
+            ("match o ?? break", 16, true),
+        ];
+        for (header, column, help) in rows {
+            let src = format!("fn main() {{\n    {header} {body}\n}}");
+            assert_eq!(parse_err(&src), (Code::Expected, 2, column), "{src}");
+            let found = parse_diagnostic(&src).help().is_some();
+            assert_eq!(found, help, "{src}");
+        }
+        // A `match` has arms, not statements, in its body.
+        let arms = "fn main() {\n    match o ?? return {\n        _ => f()\n    }\n}";
+        assert_eq!(parse_err(arms), (Code::Expected, 2, 16));
+        for header in [
+            "while o ?? continue",
+            "while o ?? continue outer",
+            "for x in xs ?? continue",
+            "if (o ?? return)",
+            "for x in (xs ?? return)",
+            "while (o ?? break)",
+        ] {
+            let src = format!("fn main() {{\n    {header} {body}\n}}");
+            assert!(parsed(&src).diagnostics.is_empty(), "{src}");
+        }
+        assert!(
+            parsed("fn main() {\n    match (o ?? return) {\n        _ => f()\n    }\n}")
+                .diagnostics
+                .is_empty()
+        );
+    }
+
+    /// GIVEN a `match` header with a `return` or `break` whose value fails to parse, where the
+    /// value does not start with `{`, or the `{` sits in a bracket that the header opened
+    /// WHEN the parser reads it
+    /// THEN the error is the plain one of the value, not the error of a jump that took the block
+    #[test]
+    fn jump_value_error_should_stay_plain_when_the_jump_took_no_block() {
+        for jump in ["return", "break"] {
+            // The value starts with `+`, not `{`, and the `{` after it is a block.
+            let plus = format!("fn main() {{\n    match {jump} + {{\n        _ => f()\n    }}\n}}");
+            // The `(` is open at the jump, so the block is inside it.
+            let bracket = format!(
+                "fn main() {{\n    match ({jump} {{\n        _ => f()\n    }}) {{\n        _ => f()\n    }}\n}}"
+            );
+            for (src, code, line) in [
+                (plus, Code::Expected, 2),
+                (bracket, Code::UnderscoreValue, 3),
+            ] {
+                let diagnostic = parse_diagnostic(&src);
+                let (found, at, _) = parse_err(&src);
+                assert_eq!((found, at), (code, line), "{src}");
+                assert!(diagnostic.help().is_none(), "{src}");
+            }
+        }
+    }
+
     #[test]
     fn while_loop() {
         assert_eq!(
@@ -4634,7 +5352,7 @@ mod tests {
     }
 
     #[test]
-    fn else_on_new_line_has_no_fix_after_anything_else() {
+    fn else_on_new_line_should_have_no_fix_after_anything_else() {
         for src in [
             // A loop's `}` cannot take an `else`.
             "fn main() {\n    while a {\n    }\n    else {\n    }\n}",
@@ -4646,13 +5364,55 @@ mod tests {
             "fn main() {\n    print(1)\n    else {\n    }\n}",
             // The `else` has no block to open.
             "fn main() {\n    if a {\n    }\n    else b\n}",
-            // Only an `if` statement can take it: not a `let`, nor the `if` inside one.
-            "fn main() {\n    let x = 1\n    else {\n    }\n}",
+            // The `else` belongs to the `if` inside the `let`: the `if` wording, with no join.
             "fn main() {\n    let x = if a { 1 }\n    else { 2 }\n}",
+            "fn main() {\n    let x = if a { 1 } else if b { 2 }\n    else { 3 }\n}",
+            // A `let` value that ends in `}` would read the joined `else` as its own (E0173).
+            "fn main() {\n    let x = { 1 }\n    else {\n    }\n}",
+            // A typed `let` takes no `else`: the old wording stays, with no join.
+            "fn main() {\n    let x: i64? = o\n    else { return }\n}",
+            "fn main() {\n    let mut x: i64? = o\n    else { return }\n}",
+            // A `let ... else` has no `else if`.
+            "fn main() {\n    let x = o\n    else if a {\n    }\n}",
         ] {
             let d = parse_diagnostic(src);
             assert_eq!(d.code(), Code::ElseOnNewLine, "{src}");
             assert_eq!(fix_edits(&d), None, "{src}");
+        }
+    }
+
+    #[test]
+    fn else_on_new_line_after_a_let_should_join_it_to_the_value() {
+        // The gap from the end of the value to the `else` becomes one space.
+        for src in [
+            "fn main() {\n    let x = o\n    else { return }\n}",
+            "fn main() {\n    let mut x = o\n    else { return }\n}",
+            "fn main() {\n    let Some(x) = o\n    else { return }\n}",
+            "fn main() {\n    let E.A = o\n    else { return }\n}",
+        ] {
+            let d = parse_diagnostic(src);
+            assert_eq!(d.code(), Code::ElseOnNewLine, "{src}");
+            let else_at = src.find("else").expect("the source should hold an `else`");
+            assert_eq!(d.span().start(), else_at, "{src}");
+            let gap = src.find("= o").expect("the source should hold the value") + 3;
+            assert_eq!(
+                fix_edits(&d),
+                Some((true, vec![(gap, else_at, " ".to_string())])),
+                "{src}"
+            );
+        }
+    }
+
+    #[test]
+    fn else_on_new_line_after_a_let_should_not_join_over_a_comment() {
+        for src in [
+            "fn main() {\n    let x = o // c\n    else { return }\n}",
+            "fn main() {\n    let x = o\n    // c\n    else { return }\n}",
+            "fn main() {\n    let E.A = o // c\n    else { return }\n}",
+        ] {
+            let d = parse_diagnostic(src);
+            assert_eq!(d.code(), Code::ElseOnNewLine, "{src}");
+            assert!(fix_edits(&d).is_some_and(|(safe, _)| !safe), "{src}");
         }
     }
 
@@ -4686,20 +5446,13 @@ mod tests {
     }
 
     #[test]
-    fn new_tokens_are_errors_where_they_do_not_belong() {
+    fn new_tokens_should_be_errors_where_they_do_not_belong() {
         // `self` is an expression now, so its row hits a different error.
-        for src in [
-            "class",
-            "is",
-            "let self = 1",
-            "let None = 1",
-            ".",
-            "?",
-            "?.",
-            "??",
-        ] {
+        for src in ["class", "is", "let self = 1", ".", "?", "?.", "??"] {
             assert_eq!(expr_err(src).0, Code::Expected, "{src}");
         }
+        // `None` starts a pattern in a `let`, which can fail to match.
+        assert_eq!(expr_err("let None = 1").0, Code::RefutablePattern);
     }
 
     #[test]
@@ -6090,6 +6843,7 @@ mod tests {
             window: &lexed.tokens,
             halves: &OnceCell::new(),
             halved: None,
+            scrutinee: None,
         })
     }
 
@@ -6490,6 +7244,199 @@ mod tests {
         assert_eq!(
             body("fn main() { while let n = node { f(n) } }"),
             "(block (while-let n node (block (call f n))))"
+        );
+    }
+
+    /// Each form of `let ... else` reads the pattern as `if let` does.
+    #[test]
+    fn let_else_should_parse_each_form() {
+        let rows = [
+            (
+                "let v = o else { return }",
+                "(let-else v o (block (return)))",
+            ),
+            (
+                "let _ = o else { return }",
+                "(let-else _ o (block (return)))",
+            ),
+            (
+                "let mut n = o else { return }",
+                "(let-else mut n o (block (return)))",
+            ),
+            (
+                "let Circle(r) = s else { return 0.0 }",
+                "(let-else (Circle r) s (block (return 0.0)))",
+            ),
+            (
+                "let Circle(r) | Square(r) = s else { return 0.0 }",
+                "(let-else (| (Circle r) (Square r)) s (block (return 0.0)))",
+            ),
+            (
+                "let None = o else { return }",
+                "(let-else None o (block (return)))",
+            ),
+            (
+                "let Shape.Dot = s else { return 0 }",
+                "(let-else Shape.Dot s (block (return 0)))",
+            ),
+            (
+                "let Option.None = o else { return }",
+                "(let-else Option.None o (block (return)))",
+            ),
+            (
+                "let Shape.Dot | Shape.Line = s else { return 0 }",
+                "(let-else (| Shape.Dot Shape.Line) s (block (return 0)))",
+            ),
+        ];
+        for (src, expected) in rows {
+            assert_eq!(expr(src), expected, "{src}");
+        }
+    }
+
+    /// The `}` rule looks at the last token of the value, and only there: `)` and `]` end values
+    /// that hold a block.
+    #[test]
+    fn let_else_brace_rule_should_look_only_at_the_last_token() {
+        for src in [
+            "let v = f(if c { a } else { b }) else { return }",
+            "let v = xs[{ 0 }] else { return }",
+        ] {
+            assert!(expr(src).starts_with("(let-else v "), "{src}");
+        }
+        for (src, col) in [
+            ("let v = o ?? { p } else { return }", 21),
+            ("let Some(v) = match k { _ => o } else { return }", 27),
+            ("let v = { o } else { return }", 21),
+            ("let v = loop { break o } else { return }", 21),
+        ] {
+            assert_eq!(
+                expr_err(src),
+                (Code::LetElseValueEndsInBrace, 1, col),
+                "{src}"
+            );
+        }
+        let d = parse_diagnostic("fn main() {\n    let v = o ?? { p } else { return }\n}");
+        assert_eq!(
+            fix_edits(&d).map(|(safe, edits)| (safe, edits.len())),
+            Some((true, 2))
+        );
+        assert_eq!(
+            fixed("fn main() {\n    let v = o ?? { p } else { return }\n}"),
+            "fn main() {\n    let v = (o ?? { p }) else { return }\n}"
+        );
+    }
+
+    /// A jump with no value stops before `else`, so it is the value's last operand.
+    #[test]
+    fn let_else_should_follow_a_jump_with_no_value() {
+        assert_eq!(
+            expr("let v = o ?? return else { return }"),
+            "(let-else v (?? o (return)) (block (return)))"
+        );
+        assert_eq!(
+            expr("let v = o ?? break else { break }"),
+            "(let-else v (?? o (break)) (block (break)))"
+        );
+    }
+
+    /// A `let` with no `else` and a name parses as it did before let-else; the errors of the other
+    /// forms keep the base text, code and position.
+    #[test]
+    fn let_without_else_should_parse_as_today() {
+        for src in [
+            "let x = 1",
+            "let x: i64 = 1",
+            "let _ = f()",
+            "let mut x = 1",
+            "let x = if c { 1 } else { return 0 }",
+        ] {
+            assert!(expr(src).starts_with("(let "), "{src}");
+        }
+        for (src, code, col) in [
+            ("let = 1", Code::Expected, 17),
+            ("let loop = 1", Code::Expected, 17),
+            ("let p.x = 5", Code::Expected, 18),
+            ("let mut p.x = 5", Code::Expected, 22),
+            ("let Shape.Dot = s", Code::Expected, 22),
+            // A value that fails to parse is no reason to hide the `.`: no `else` can follow it.
+            ("let Shape.Dot = 1 +", Code::Expected, 22),
+            ("let p.x = 1 + * 2", Code::Expected, 18),
+            ("let Shape.Dot =", Code::Expected, 22),
+            ("let Option.None = 1 +", Code::Expected, 23),
+            (
+                "let Shape.Dot = if c { 1 } else { 2 } +",
+                Code::Expected,
+                22,
+            ),
+            ("let 99999999999999999999 = 1", Code::IntegerTooLarge, 17),
+        ] {
+            assert_eq!(expr_err(src), (code, 1, col), "{src}");
+        }
+        // The `else` that follows makes it a `let ... else` with a bad value: the value's error.
+        for (src, col) in [
+            ("let Shape.Dot = mk(1 +) else { return }", 35),
+            ("let Shape.Dot = s + else { return }", 33),
+            ("let Option.None = o. else { return }", 34),
+            (
+                "let Shape.Dot = if c { 1 + } else { 2 } else { return }",
+                40,
+            ),
+            ("let Shape.Dot = f({ 1 + }) else { return }", 37),
+        ] {
+            assert_eq!(expr_err(src), (Code::Expected, 1, col), "{src}");
+        }
+        // An `else` on the next line, or in another statement, is no part of the `let`.
+        for src in [
+            "fn main() {\n    let Shape.Dot = (1 +)\n    else { return }\n}",
+            "fn main() {\n    let Shape.Dot = (1 +); if c { 1 } else { 2 }\n}",
+        ] {
+            assert_eq!(parse_err(src), (Code::Expected, 2, 14), "{src}");
+        }
+    }
+
+    /// A type is a non-goal: the `else` after it is a stray token, as before let-else.
+    #[test]
+    fn let_else_with_a_type_should_be_an_error() {
+        assert_eq!(
+            expr_err("let n: i64 = o else { return }"),
+            (Code::Expected, 1, 28)
+        );
+    }
+
+    /// A pattern that is not a name needs an `else`: the parser reports it and keeps the
+    /// statement, so the item still checks.
+    #[test]
+    fn let_pattern_without_else_should_be_reported_and_kept() {
+        let src = "fn main() {\n    let Some(v) = o\n    print(v)\n}";
+        let parsed = parsed(src);
+        let [d] = parsed.diagnostics.as_slice() else {
+            panic!("expected one diagnostic, got {:?}", parsed.diagnostics);
+        };
+        assert_eq!(d.code(), Code::RefutablePattern);
+        assert_eq!(line_col(src, d.span().start()), (2, 9));
+        assert!(parsed.checkable);
+        assert_eq!(parsed.program.broken, []);
+    }
+
+    /// `let mut` before a pattern that is not a name is E0011 at the `mut`; a qualified variant
+    /// with no payload keeps the error of `let mut p.x`.
+    #[test]
+    fn let_mut_before_a_pattern_should_be_an_error_at_mut() {
+        for src in [
+            "let mut Some(v) = o else { return }",
+            "let mut None = o else { return }",
+            "let mut 1 = o else { return }",
+            "let mut A(v) | B(v) = o else { return }",
+        ] {
+            assert_eq!(expr_err(src), (Code::Expected, 1, 17), "{src}");
+        }
+        assert_eq!(
+            expr_err("let mut Shape.Dot = s else { return }"),
+            (Code::Expected, 1, 26)
+        );
+        assert_eq!(
+            expr_err("let mut _ = o else { return }"),
+            (Code::MutOnUnderscore, 1, 21)
         );
     }
 
@@ -8056,7 +9003,7 @@ mod tests {
     }
 
     #[test]
-    fn earliest_error_in_an_item_wins() {
+    fn earliest_error_in_an_item_should_win() {
         // The parse error comes first here.
         assert_eq!(
             parse_err("fn main() {\n    let = 1 $\n}\n"),
@@ -8066,6 +9013,11 @@ mod tests {
         assert_eq!(
             parse_err("fn main() {\n    let 99999999999999999999 = 1\n}\n"),
             (Code::IntegerTooLarge, 2, 9)
+        );
+        // A literal pattern that can fail comes before the lexer's error in its own text.
+        assert_eq!(
+            parse_err("fn main() {\n    let 1__2 = 1\n}\n"),
+            (Code::RefutablePattern, 2, 9)
         );
     }
 

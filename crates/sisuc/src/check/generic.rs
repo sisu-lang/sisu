@@ -2982,7 +2982,10 @@ impl Checker<'_> {
             | K::IfLet {
                 else_block: None, ..
             }
-            | K::Loop { .. } => Ranked::CONCRETE,
+            | K::Loop { .. }
+            | K::Return { .. }
+            | K::Break { .. }
+            | K::Continue { .. } => Ranked::CONCRETE,
         }
     }
 
@@ -3161,7 +3164,7 @@ impl Checker<'_> {
         bind: impl FnOnce(&mut Self) -> Option<(LetPattern, Option<Checked>)>,
     ) -> Option<Ranked> {
         match block.stmts.last().map(|stmt| &stmt.kind) {
-            Some(StmtKind::Return(_) | StmtKind::Break { .. } | StmtKind::Continue { .. }) => None,
+            Some(StmtKind::Expr(tail)) if tail.is_jump() => None,
             Some(StmtKind::Expr(tail)) => {
                 Some(self.tail_rank(block.span, Some(block), tail, fit, bind))
             }

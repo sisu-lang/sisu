@@ -1,0 +1,10 @@
+// GIVEN a unit function `f` that passes `return 1` as an argument
+// WHEN `sisu check` runs on it
+// THEN it reports E0037 at 5:18 and no other error
+fn f() {
+    print(return 1)
+}
+
+fn main() {
+    f()
+}

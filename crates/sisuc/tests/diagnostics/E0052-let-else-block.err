@@ -1,0 +1,14 @@
+error[E0052]: cannot find function `panik`
+ --> E0052-let-else-block.sisu:6:22
+  |
+6 |     let v = o else { panik("x") }
+  |                      ^^^^^
+  |
+help: a function with a similar name exists: `panic`
+  |
+6 -     let v = o else { panik("x") }
+6 +     let v = o else { panic("x") }
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0052

@@ -1,0 +1,7 @@
+// GIVEN a `main` with `let o: i64? = None` and `while (o ?? break) > 0 { }`, with `break` at 6:17
+// WHEN `sisu check` runs on it
+// THEN it reports E0082 at 6:17
+fn main() {
+    let o: i64? = None
+    while (o ?? break) > 0 { }
+}

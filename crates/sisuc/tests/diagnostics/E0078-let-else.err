@@ -1,0 +1,14 @@
+error[E0078]: `_` binds nothing, so it cannot be `mut`
+ --> E0078-let-else.sisu:6:13
+  |
+6 |     let mut _ = o else { return }
+  |             ^
+  |
+help: use `let _`
+  |
+6 -     let mut _ = o else { return }
+6 +     let _ = o else { return }
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0078

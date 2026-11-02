@@ -464,3 +464,18 @@ fn function_should_warn_when_an_error_starts_right_after_it() {
         [Code::UnconditionalRecursion, Code::UnexpectedCharacter]
     );
 }
+
+/// The `else` block of a `let ... else` runs on a failed test only, so a call there is no
+/// unconditional call; a call in the value runs on every path.
+#[test]
+fn let_else_should_warn_only_for_a_call_in_its_value() {
+    let src = |line: &str| {
+        format!("fn f(o: i64?) -> i64? {{\n    {line}\n    Some(v)\n}}\nfn main() {{}}")
+    };
+    assert!(diags(&src("let v = o else { return f(o) }")).is_empty());
+    warns(
+        &src("let v = f(o) else { return None }"),
+        (1, 4, "f"),
+        &[(2, 13)],
+    );
+}

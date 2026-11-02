@@ -1,0 +1,11 @@
+// GIVEN a function `g() -> i64` whose body is `let x = return 1`, with the `return` at 5:13
+// WHEN `sisu check` runs on it
+// THEN it reports E0043 "expression has no value" with the label "never finishes" at 5:13
+fn g() -> i64 {
+    let x = return 1
+    x
+}
+
+fn main() {
+    print(g())
+}

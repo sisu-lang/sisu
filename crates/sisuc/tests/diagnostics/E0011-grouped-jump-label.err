@@ -1,0 +1,8 @@
+error[E0011]: expected `{`, found end of line
+ --> E0011-grouped-jump-label.sisu:6:34
+  |
+6 |         if (break outer { true })
+  |                                  ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011

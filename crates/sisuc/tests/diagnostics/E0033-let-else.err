@@ -1,0 +1,14 @@
+error[E0033]: cannot find binding `v`
+ --> E0033-let-else.sisu:6:28
+  |
+6 |     let v = o else { print(v); return }
+  |                            ^
+  |
+help: a binding with a similar name exists: `o`
+  |
+6 -     let v = o else { print(v); return }
+6 +     let v = o else { print(o); return }
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0033

@@ -1,0 +1,12 @@
+// GIVEN a `let v = if a { 1 } else if b { 2 }` whose `else { 3 }` starts the next line
+// WHEN `sisu check` runs on it
+// THEN it reports E0006 at the `else` (6:5) in the words for an `if`, because the `else` belongs to the open `else if`
+fn f(a: bool, b: bool) -> i64 {
+    let v = if a { 1 } else if b { 2 }
+    else { 3 }
+    v
+}
+
+fn main() {
+    print(f(true, true))
+}

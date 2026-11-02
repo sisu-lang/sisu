@@ -1,0 +1,8 @@
+// GIVEN a `main` with `let o: i64? = None` and `let v = o else { print(1) }` on line 6, whose last `}` is at 6:31
+// WHEN `sisu check` runs on it
+// THEN it reports E0172 at 6:31
+fn main() {
+    let o: i64? = None
+    let v = o else { print(1) }
+    print(v)
+}

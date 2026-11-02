@@ -1,0 +1,14 @@
+warning[W0002]: `n` is never reassigned
+ --> W0002-let-else.sisu:6:13
+  |
+6 |     let mut n = o else { return }
+  |             ^
+  |
+help: declare it with `let`
+  |
+6 -     let mut n = o else { return }
+6 +     let n = o else { return }
+  |
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0002

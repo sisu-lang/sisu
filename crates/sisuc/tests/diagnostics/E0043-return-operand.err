@@ -1,0 +1,8 @@
+error[E0043]: expression has no value
+ --> E0043-return-operand.sisu:5:9
+  |
+5 |     1 + return 1
+  |         ^^^^^^^^ never finishes
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0043

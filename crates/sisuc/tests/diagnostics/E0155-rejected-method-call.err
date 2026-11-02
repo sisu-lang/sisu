@@ -76,7 +76,7 @@ error[E0062]: `maybe` may be `None`
 81 |     print(maybe.twice())
    |           ^^^^^
    |
-   = help: to use the value only when it is present, unwrap it with `if let`
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
 help: if a `None` result is fine, use `?.`
    |
 81 |     print(maybe?.twice())

@@ -725,6 +725,157 @@ fn borrowed_if_let_with_no_join_ends_the_optional_at_each_return() {
     assert_eq!(all, 2, "{f:?}");
 }
 
+// `let ... else`.
+
+/// The temporary that borrows the parameter `o#0` of `f`.
+fn borrow_of_parameter(f: &Function) -> LocalId {
+    f.blocks
+        .iter()
+        .flat_map(|block| &block.stmts)
+        .find_map(|stmt| match stmt {
+            Statement::Assign {
+                dest: Some(dest),
+                value: Rvalue::Borrow(place),
+            } if place.local == LocalId(0) => Some(*dest),
+            _ => None,
+        })
+        .expect("the parameter should be borrowed into a temporary")
+}
+
+/// The ends of `local` in all of `f`.
+fn all_ends(f: &Function, local: LocalId) -> usize {
+    (0..f.blocks.len())
+        .map(|block| ends(f, BlockId(block), local))
+        .sum()
+}
+
+/// GIVEN `fn f(o: string?) -> i64 { let s = o else { return 0 }; print(s); 1 }`
+/// WHEN it is lowered
+/// THEN the borrow temporary and `s` have no `End` before the `print`; the path to `1` ends each
+///   once, and the path through the `else` block ends the temporary once and `s` not at all
+#[test]
+fn let_else_borrow_should_end_at_the_end_of_the_block() {
+    let src = "fn f(o: string?) -> i64 {\n    let s = o else { return 0 }\n    print(s)\n    1\n}";
+    has(&built(src), "f", &["fn f(o#0: borrow string?)"]);
+    let f = built_function(src, "f");
+    let (optional, s) = (borrow_of_parameter(&f), named(&f, "s"));
+    let (block, at) = (0..f.blocks.len())
+        .find_map(|block| {
+            let at = f.blocks[block].stmts.iter().position(|stmt| {
+                matches!(
+                    stmt,
+                    Statement::Assign {
+                        value: Rvalue::Print { .. },
+                        ..
+                    }
+                )
+            })?;
+            Some((BlockId(block), at))
+        })
+        .expect("the program should print");
+    let before = f.blocks[block.0].stmts[..at]
+        .iter()
+        .filter(|stmt| matches!(stmt, Statement::End(ended) if *ended == optional || *ended == s))
+        .count();
+    assert_eq!(before, 0, "nothing ends before the print: {f:?}");
+    let returns = blocks_where(&f, |term| matches!(term, Terminator::Return(_)));
+    assert_eq!(returns.len(), 2, "{f:?}");
+    for &block in &returns {
+        assert_eq!(ends(&f, block, optional), 1, "bb{}: {f:?}", block.0);
+    }
+    let through_block: Vec<_> = returns.iter().filter(|&&b| ends(&f, b, s) == 1).collect();
+    assert_eq!(through_block.len(), 1, "one return ends `s`: {f:?}");
+    assert_eq!(all_ends(&f, s), 1, "{f:?}");
+    assert_eq!(all_ends(&f, optional), 2, "{f:?}");
+}
+
+/// GIVEN `enum P { Pair(string, i64); No }` and `fn f(p: P) -> i64` whose body is
+///   `let Pair(s, 1) = p else { return 0 }` and then `s.len()`
+/// WHEN it is lowered
+/// THEN the path through the `else` block ends `s` once, and the path that binds it ends it
+///   once, at the end of the function
+///
+/// The fail edge ends the pattern's names and closes the guards before the `else` block runs, so
+/// a jump in the block has no guard binding left to end a second time.
+#[test]
+fn let_else_match_should_end_each_binding_once_on_the_else_path() {
+    let src = "enum P {\n    Pair(string, i64)\n    No\n}\n\
+               fn f(p: P) -> i64 {\n    let Pair(s, 1) = p else { return 0 }\n    s.len()\n}";
+    has(&built(src), "f", &["fn f(p#0: borrow P"]);
+    let f = built_function(src, "f");
+    let s = named(&f, "s");
+    let returns = blocks_where(&f, |term| matches!(term, Terminator::Return(_)));
+    assert_eq!(returns.len(), 2, "{f:?}");
+    for &block in &returns {
+        assert_eq!(ends(&f, block, s), 1, "bb{}: {f:?}", block.0);
+    }
+    assert_eq!(all_ends(&f, s), 2, "{f:?}");
+}
+
+/// GIVEN `fn g(x: string)` and `fn f(o: string?) -> i64 { let s = o else { return 0 }; g(s); 1 }`
+/// WHEN `f` is lowered and then passed through the passes
+/// THEN the lowered operand of `g`'s argument is `Operand::Guarded(s)`, and `f`'s parameter is
+///   borrowed, so the call passes `s` in place
+#[test]
+fn let_else_borrowed_last_use_should_not_move() {
+    let src = "fn g(x: string) {\n    print(x)\n}\n\
+               fn f(o: string?) -> i64 {\n    let s = o else { return 0 }\n    g(s)\n    1\n}";
+    let mir = lowered_program(src);
+    let f = func(&mir, "f");
+    let s = named(f, "s");
+    let guarded = f.blocks.iter().flat_map(|block| &block.stmts).any(|stmt| {
+        matches!(stmt, Statement::Assign { value: Rvalue::Call { args, .. }, .. }
+                if matches!(args[..], [Operand::Guarded(arg)] if arg == s))
+    });
+    assert!(guarded, "the argument should be `Guarded(s)`: {f:?}");
+    let printed = built(src);
+    has(&printed, "f", &["fn f(o#0: borrow string?)", "call g(s#1)"]);
+}
+
+/// GIVEN `fn f(o: string?) -> string { let mut n = o else { return "" }; n = n + "!"; n }`
+/// WHEN it is lowered
+/// THEN nothing borrows `o`, and `n` is not a borrowed binding
+#[test]
+fn let_mut_else_should_own_its_value() {
+    let src = "fn f(o: string?) -> string {\n    let mut n = o else { return \"\" }\n    n = n + \"!\"\n    n\n}";
+    let mir = lowered_program(src);
+    let f = func(&mir, "f");
+    let borrows = f
+        .blocks
+        .iter()
+        .flat_map(|block| &block.stmts)
+        .filter(|stmt| {
+            matches!(stmt, Statement::Assign { value: Rvalue::Borrow(place), .. }
+                if place.local == LocalId(0))
+        })
+        .count();
+    assert_eq!(borrows, 0, "{f:?}");
+    let n = named(f, "n");
+    let borrowed_n = f.blocks.iter().flat_map(|block| &block.stmts).any(|stmt| {
+        matches!(stmt, Statement::Assign { dest: Some(dest), value: Rvalue::Borrow(_) }
+                if *dest == n)
+    });
+    assert!(!borrowed_n, "`n` should own its value: {f:?}");
+}
+
+/// GIVEN `enum Shape { Circle(string) Square }`, `fn make() -> Shape?`, and `fn f() -> i64` whose
+///   body is `let Some(Circle(s)) = make() else { return 0 }` and then `s.len()`
+/// WHEN it is lowered
+/// THEN the pass edge copies `s` out of the temporary and releases it, and takes nothing apart
+///
+/// The scrutinee is a counted optional, not an enum, and `match` keeps the copying commit for it.
+#[test]
+fn let_else_on_an_optional_enum_should_keep_the_copying_commit() {
+    let printed = built(
+        "enum Shape {\n    Circle(string)\n    Square\n}\n\
+         fn make() -> Shape? {\n    Some(Shape.Circle(\"c\"))\n}\n\
+         fn f() -> i64 {\n    let Some(Circle(s)) = make() else { return 0 }\n    s.len()\n}",
+    );
+    let f = function(&printed, "f");
+    assert!(!f.contains("take_apart"), "{f}");
+    has(&printed, "f", &["s#0 = copy s#0", "release _"]);
+}
+
 // The take-apart commit.
 
 const SWAP: &str = "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n}\n\

@@ -1,0 +1,12 @@
+// GIVEN a `let v = o` whose `else { return 0 }` starts the next line
+// WHEN `sisu check` runs on it
+// THEN it reports E0006 at the `else` (6:5), with the safe fix that joins the two lines
+fn f(o: i64?) -> i64 {
+    let v = o
+    else { return 0 }
+    v
+}
+
+fn main() {
+    print(f(Some(1)))
+}

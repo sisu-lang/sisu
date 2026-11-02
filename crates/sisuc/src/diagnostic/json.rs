@@ -207,7 +207,7 @@ mod tests {
         .into();
         assert_eq!(
             diagnostic(&d, "a.sisu", source, &LineIndex::new(source)),
-            r#"{"version":1,"kind":"diagnostic","code":"E0062","severity":"error","message":"`n` may be `None`","primary":{"file":"a.sisu","start":24,"end":25,"line":2,"column":11,"label":null},"secondary":[],"help":"to use the value only when it is present, unwrap it with `if let`","fixes":[{"message":"if a `None` result is fine, use `?.`","safe":false,"edits":[{"start":25,"end":26,"line":2,"column":12,"replacement":"?."}]}]}"#
+            r#"{"version":1,"kind":"diagnostic","code":"E0062","severity":"error","message":"`n` may be `None`","primary":{"file":"a.sisu","start":24,"end":25,"line":2,"column":11,"label":null},"secondary":[],"help":"to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`","fixes":[{"message":"if a `None` result is fine, use `?.`","safe":false,"edits":[{"start":25,"end":26,"line":2,"column":12,"replacement":"?."}]}]}"#
         );
     }
 

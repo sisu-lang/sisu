@@ -1,0 +1,15 @@
+// GIVEN `let v = wrap(f(n)) else { return f(n - 1) }` in `f`, which calls itself in the value and in the `else`
+// WHEN `sisu check` runs on it
+// THEN it reports W0010 with one label, at the call `f(n)` in the value (9:18): the `else` runs only when the value did not call
+fn wrap(x: i64) -> i64? {
+    Some(x)
+}
+
+fn f(n: i64) -> i64 {
+    let v = wrap(f(n)) else { return f(n - 1) }
+    v
+}
+
+fn main() {
+    print(f(1))
+}

@@ -1,0 +1,10 @@
+error[E0174]: this pattern can fail to match
+ --> E0174.sisu:7:9
+  |
+7 |     let Some(v) = o
+  |         ^^^^^^^ `Some(v)` may not match
+  |
+  = help: add an `else` block that does not finish, or use `if let` or `match`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0174

@@ -458,7 +458,29 @@ pub(crate) enum Stmt {
         value: Expr,
         span: Span,
     },
+    /// `let pattern = scrutinee else { else_block }`: when `test` fails, `else_block` runs, and it
+    /// does not finish. When it passes, the locals that `test` binds are in scope to the end of
+    /// the enclosing block.
+    LetElse {
+        scrutinee: Expr,
+        test: LetElseTest,
+        else_block: Block,
+    },
     Expr(Expr),
+}
+
+/// What a `Stmt::LetElse` tests.
+#[derive(Clone, Debug)]
+pub(crate) enum LetElseTest {
+    /// The scrutinee, an optional, holds a value, which `bind` takes.
+    Some { bind: LocalId },
+    /// The scrutinee, evaluated once into `temp` as a `Match` does, matches `pattern`, which
+    /// binds `bindings`.
+    Match {
+        temp: LocalId,
+        pattern: Pattern,
+        bindings: Vec<LocalId>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -1169,6 +1191,14 @@ impl Block {
                     place.each_expr_mut(f);
                     f(value);
                 }
+                Stmt::LetElse {
+                    scrutinee,
+                    else_block,
+                    ..
+                } => {
+                    f(scrutinee);
+                    else_block.each_expr_mut(f);
+                }
             }
         }
         if let Some(value) = &mut self.value {
@@ -1204,6 +1234,11 @@ impl Stmt {
             Stmt::Assign { place, value }
             | Stmt::Append { place, value }
             | Stmt::Push { place, value, .. } => place.exits() || value.exits(),
+            Stmt::LetElse {
+                scrutinee,
+                else_block,
+                ..
+            } => scrutinee.exits() || else_block.exits(),
         }
     }
 }
@@ -1335,6 +1370,14 @@ impl Block {
                     place.exprs(out);
                     value.exprs(out);
                 }
+                Stmt::LetElse {
+                    scrutinee,
+                    else_block,
+                    ..
+                } => {
+                    scrutinee.exprs(out);
+                    else_block.exprs(out);
+                }
             }
         }
         self.value.iter().for_each(|v| v.exprs(out));
@@ -1437,6 +1480,29 @@ impl Printer<'_> {
             Stmt::Assign { place, value } => self.write(f, "=", place, value),
             Stmt::Append { place, value } => self.write(f, "append", place, value),
             Stmt::Push { place, value, .. } => self.write(f, "push", place, value),
+            Stmt::LetElse {
+                scrutinee,
+                test,
+                else_block,
+            } => {
+                match test {
+                    LetElseTest::Some { bind } => {
+                        f.write_str("(let-else-some ")?;
+                        self.local(f, *bind)?;
+                    }
+                    LetElseTest::Match { temp, pattern, .. } => {
+                        f.write_str("(let-else ")?;
+                        self.local(f, *temp)?;
+                        f.write_str(" ")?;
+                        self.pattern(f, pattern, scrutinee.ty)?;
+                    }
+                }
+                f.write_str(" ")?;
+                self.expr(f, scrutinee)?;
+                f.write_str(" ")?;
+                self.block(f, else_block)?;
+                f.write_str(")")
+            }
             Stmt::Expr(expr) => self.expr(f, expr),
         }
     }
@@ -3246,8 +3312,13 @@ mod tests {
                     place: Place::Local(LocalId(0)),
                     value: int(6),
                 },
+                Stmt::LetElse {
+                    scrutinee: int(7),
+                    test: LetElseTest::Some { bind: LocalId(0) },
+                    else_block: valued(8),
+                },
             ],
-            value: Some(n(7)),
+            value: Some(n(9)),
             ty: Type::I64,
         };
         let cases = [
@@ -3446,7 +3517,7 @@ mod tests {
                 },
                 4,
             ),
-            (ExprKind::Loop(body), 7),
+            (ExprKind::Loop(body), 9),
             (ExprKind::Block(valued(1)), 1),
         ];
         for (kind, children) in cases {
