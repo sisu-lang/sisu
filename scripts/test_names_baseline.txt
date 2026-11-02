@@ -748,15 +748,11 @@ crates/sisuc/src/front_end.rs::unclosed_string_outside_items_stops_the_checker
 crates/sisuc/src/front_end.rs::unnamed_item_runs_to_the_next_line_item
 crates/sisuc/src/front_end.rs::unnamed_item_stops_the_checker
 crates/sisuc/src/front_end.rs::warnings_print_beside_syntax_errors
-crates/sisuc/src/fuzz.rs::a_leading_dot_float_fix_keeps_the_lexer_reports
 crates/sisuc/src/fuzz.rs::accepts_a_safe_fix_that_removes_a_diagnostic_past_a_lexer_error
 crates/sisuc/src/fuzz.rs::accepts_a_safe_fix_that_removes_only_its_diagnostic
 crates/sisuc/src/fuzz.rs::accepts_a_safe_fix_that_renames_another_diagnostic
 crates/sisuc/src/fuzz.rs::accepts_spans_and_edits_at_the_edges
 crates/sisuc/src/fuzz.rs::compiles_a_clean_input_with_and_without_rc_checks
-crates/sisuc/src/fuzz.rs::deepest_nesting_fits_the_stack
-crates/sisuc/src/fuzz.rs::every_seed_passes
-crates/sisuc/src/fuzz.rs::invalid_utf8_reports_over_the_replacement_text
 crates/sisuc/src/fuzz.rs::prints_the_mir_of_a_clean_input
 crates/sisuc/src/fuzz.rs::rejects_a_bad_edit_span
 crates/sisuc/src/fuzz.rs::rejects_a_bad_secondary_span
@@ -774,10 +770,7 @@ crates/sisuc/src/fuzz.rs::rejects_end_past_the_source
 crates/sisuc/src/fuzz.rs::rejects_overlapping_edits
 crates/sisuc/src/fuzz.rs::rejects_start_after_end
 crates/sisuc/src/fuzz.rs::rejects_start_inside_a_char
-crates/sisuc/src/fuzz.rs::reports_in_color_text_then_json
 crates/sisuc/src/fuzz_program.rs::a_clean_program_passes
-crates/sisuc/src/fuzz_program.rs::a_compiler_panic_leaves_the_dump
-crates/sisuc/src/fuzz_program.rs::a_dump_it_cannot_write_is_reported
 crates/sisuc/src/fuzz_program.rs::a_hang_fails_property_3
 crates/sisuc/src/fuzz_program.rs::a_panic_passes_when_every_build_agrees
 crates/sisuc/src/fuzz_program.rs::a_signal_is_its_number

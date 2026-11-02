@@ -716,7 +716,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::process::{Command, Output};
     use std::time::Duration;
-    use std::{env, fs, thread};
+    use std::{env, fs};
 
     use super::dbg_location;
     use super::{
@@ -743,18 +743,6 @@ mod tests {
         fn drop(&mut self) {
             drop(fs::remove_dir_all(&self.0));
         }
-    }
-
-    /// `f` on a thread with a `STACK_SIZE` stack, as `program`'s contract asks.
-    fn on_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
-        thread::scope(|scope| {
-            thread::Builder::new()
-                .stack_size(crate::STACK_SIZE)
-                .spawn_scoped(scope, f)
-                .expect("the OS should start a thread with a 64 MiB stack")
-                .join()
-                .expect("the test's thread should not panic")
-        })
     }
 
     /// The three builds of `source`, each run with `stdin` for at most `limit`.
@@ -1489,7 +1477,7 @@ mod tests {
         let (g, _) = dispatch_of(DISPATCHES[0]);
         let source = swapped(&g.program);
         assert_ne!(source, g.program);
-        let run = on_stack(|| {
+        let run = crate::on_compiler_stack(|| {
             let scratch = Scratch::new();
             let program = checked("swapped", &source).expect("a swapped program should check");
             let stdin = scratch.0.join("stdin.txt");
@@ -1548,7 +1536,7 @@ mod tests {
     /// The failed property of `judge` on `g`, 0 for none, and the record of the builds.
     fn judged(g: &Generated) -> (u8, String) {
         let scratch = Scratch::new();
-        on_stack(|| judge(g, &runtime(), &scratch.0))
+        crate::on_compiler_stack(|| judge(g, &runtime(), &scratch.0))
             .map_or_else(|(f, record)| (f.property, record), |()| (0, String::new()))
     }
 
@@ -1585,7 +1573,7 @@ mod tests {
         } else {
             ("program", &g.program)
         };
-        on_stack(|| {
+        crate::on_compiler_stack(|| {
             let scratch = Scratch::new();
             let program = checked(name, source)
                 .unwrap_or_else(|f| panic!("property {}: {}", f.property, f.detail));
@@ -1672,7 +1660,7 @@ mod tests {
             g.rewritten != g.program && panic_sites(&g) == 1 && g.known.len() > 1,
             "seed 3934 should have rewrites, a value site and a panic site"
         );
-        on_stack(|| program_in(&data, &runtime(), &tmp.0));
+        crate::on_compiler_stack(|| program_in(&data, &runtime(), &tmp.0));
         let left = fs::read_dir(&tmp.0)
             .expect("the test's directory should be readable")
             .count();
@@ -2005,7 +1993,7 @@ mod tests {
 
     /// `g`'s program checked, built at O0 and run on its stdin.
     fn o0_run(g: &Generated) -> Run {
-        on_stack(|| {
+        crate::on_compiler_stack(|| {
             let scratch = Scratch::new();
             let program = checked("program", &g.program).expect("a seed should check clean");
             let stdin = scratch.0.join("stdin.txt");
@@ -2091,7 +2079,7 @@ mod tests {
     #[test]
     fn a_failure_should_print_the_program() {
         if env::var_os(CHILD).is_some() {
-            on_stack(|| {
+            crate::on_compiler_stack(|| {
                 FORCE.set(Some(Force::Stdout));
                 program(&[], &runtime());
             });
@@ -2125,17 +2113,17 @@ mod tests {
 
     /// libFuzzer's panic hook aborts, so the record must be written before the earlier hook runs.
     #[test]
-    fn a_compiler_panic_leaves_the_dump() {
+    fn a_compiler_panic_should_leave_the_dump() {
         if env::var_os(CHILD).is_some() {
             std::panic::set_hook(Box::new(|_| std::process::abort()));
-            on_stack(|| {
+            crate::on_compiler_stack(|| {
                 FORCE.set(Some(Force::CompilerPanic));
                 program(&seed(0), &runtime());
             });
             return;
         }
         let scratch = Scratch::new();
-        let out = child("a_compiler_panic_leaves_the_dump", &scratch.0);
+        let out = child("a_compiler_panic_should_leave_the_dump", &scratch.0);
         let stderr = String::from_utf8_lossy(&out.stderr);
         // SIGABRT is 6 on Linux and macOS.
         assert_eq!(out.status.signal(), Some(6), "{stderr}");
@@ -2160,9 +2148,9 @@ mod tests {
 
     /// A dump that cannot be written is reported, and the record still reaches stderr.
     #[test]
-    fn a_dump_it_cannot_write_is_reported() {
+    fn a_dump_it_cannot_write_should_be_reported() {
         if env::var_os(CHILD).is_some() {
-            on_stack(|| {
+            crate::on_compiler_stack(|| {
                 FORCE.set(Some(Force::CompilerPanic));
                 program(&seed(0), &runtime());
             });
@@ -2171,7 +2159,7 @@ mod tests {
         let scratch = Scratch::new();
         // A file where the dump's directory should be.
         fs::write(scratch.0.join("dump"), "").expect("the test should write the file");
-        let out = child("a_dump_it_cannot_write_is_reported", &scratch.0);
+        let out = child("a_dump_it_cannot_write_should_be_reported", &scratch.0);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(!out.status.success(), "{stderr}");
         let g = generate(&seed(0));
@@ -2192,7 +2180,7 @@ mod tests {
     #[test]
     fn a_failed_bound_should_leave_the_broken_copy_in_the_dump() {
         if env::var_os(CHILD).is_some() {
-            on_stack(|| {
+            crate::on_compiler_stack(|| {
                 FORCE.set(Some(Force::Conforming));
                 program(&seed(bound_seed()), &runtime());
             });

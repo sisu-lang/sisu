@@ -264,7 +264,6 @@ fn conflict(a: Span, b: Span) -> bool {
 mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::thread;
 
     use inkwell::context::Context;
 
@@ -274,18 +273,6 @@ mod tests {
     };
     use crate::diagnostic::{Code, Diagnostic};
     use crate::source::Span;
-
-    /// `front_end` on a thread with a `STACK_SIZE` stack, as its contract asks.
-    fn on_stack(data: &[u8]) -> String {
-        thread::scope(|scope| {
-            thread::Builder::new()
-                .stack_size(crate::STACK_SIZE)
-                .spawn_scoped(scope, || front_end(data))
-                .expect("the OS should start a thread with a 64 MiB stack")
-                .join()
-                .expect("front_end should not panic")
-        })
-    }
 
     /// Every `.sisu` file under `dir`, recursively.
     fn seeds(dir: &Path, found: &mut Vec<PathBuf>) {
@@ -302,12 +289,14 @@ mod tests {
     /// The `0` that fixes `.9223372036854775809` leaves every lexer report of another code: the
     /// lexer reports none for digits after a `.`.
     #[test]
-    fn a_leading_dot_float_fix_keeps_the_lexer_reports() {
-        on_stack(b"fn main() {\n    let x = .9223372036854775809\n}\n");
+    fn a_leading_dot_float_fix_should_keep_the_lexer_reports() {
+        crate::on_compiler_stack(|| {
+            front_end(b"fn main() {\n    let x = .9223372036854775809\n}\n")
+        });
     }
 
     #[test]
-    fn every_seed_passes() {
+    fn every_seed_should_pass() {
         let mut found = Vec::new();
         seeds(
             Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests")),
@@ -315,18 +304,20 @@ mod tests {
         );
         assert!(found.len() > 300, "{} seeds", found.len());
         for path in found {
-            on_stack(&fs::read(&path).expect("a seed should be readable"));
+            crate::on_compiler_stack(|| {
+                front_end(&fs::read(&path).expect("a seed should be readable"))
+            });
         }
     }
 
     #[test]
-    fn reports_in_color_text_then_json() {
+    fn reports_should_come_in_color_text_then_json() {
         let seed = fs::read(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/diagnostics/E0001-const.sisu"
         ))
         .expect("the seed should be readable");
-        let out = on_stack(&seed);
+        let out = crate::on_compiler_stack(|| front_end(&seed));
         let (text, json) = split(&out);
         assert!(text.contains("\x1b["), "{out}");
         // The `.json` fixture of this seed records its one diagnostic at 35.
@@ -358,13 +349,13 @@ mod tests {
     }
 
     #[test]
-    fn invalid_utf8_reports_over_the_replacement_text() {
+    fn invalid_utf8_should_report_over_the_replacement_text() {
         for (data, valid_up_to) in [
             (&b"\xff"[..], 0),
             (b"fn main() {}\n\xff", 13),
             (b"fn main() {}\n\xe2\x82", 13),
         ] {
-            let out = on_stack(data);
+            let out = crate::on_compiler_stack(|| front_end(data));
             let (_, json) = split(&out);
             let d = diagnostic(&json, Code::InvalidUtf8.as_str());
             assert_eq!(d["primary"]["start"], valid_up_to, "{out}");
@@ -375,14 +366,14 @@ mod tests {
     /// Measured in a debug build, `front_end` on this program overflows a 4 MiB stack and every
     /// smaller power of two from 64 KiB, and fits in 8 MiB.
     #[test]
-    fn deepest_nesting_fits_the_stack() {
+    fn deepest_nesting_should_fit_the_stack() {
         let n = 253;
         let source = format!(
             "fn main() {{\n    print({}1{})\n}}\n",
             "(".repeat(n),
             ")".repeat(n)
         );
-        let out = on_stack(source.as_bytes());
+        let out = crate::on_compiler_stack(|| front_end(source.as_bytes()));
         let summary: serde_json::Value =
             serde_json::from_str(out.lines().last().expect("the report should not be empty"))
                 .expect("the summary should be JSON");

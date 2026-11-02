@@ -161,12 +161,12 @@ fn nested_loop(n: usize) -> Generated {
     in_main(&line, open.len() * n + 6)
 }
 
-/// An `else if` chain; the `==` of the last condition.
+/// An `else if` chain; the `else` of the last clause, where the report starts.
 fn else_if(n: usize) -> Generated {
     let first = "    let x = 1\n    if x == 0 {\n";
     let clause = "    } else if x == 0 {\n";
     let body = format!("{first}{}    }}\n", clause.repeat(n));
-    in_main(&body, first.len() + clause.len() * (n - 1) + 16)
+    in_main(&body, first.len() + clause.len() * (n - 1) + 6)
 }
 
 /// The element type `n` brackets deep; fails at its name.
@@ -243,7 +243,7 @@ const ELSE_IF: (&str, &str) = (
 );
 
 /// One level past the limit: `check` exits 1 with the one message of `form`, at the failing
-/// token.
+/// token, or at the last `else if` for a chain of them.
 fn errors_past_the_limit(
     name: &str,
     program: fn(usize) -> Generated,
@@ -290,7 +290,8 @@ macro_rules! construct {
             /// GIVEN a generated program that nests one construct one level past the limit
             /// WHEN `check` runs on it
             /// THEN it exits 1 with the one nesting error at the token where the depth runs out,
-            /// in the form that names a chain for a chain
+            /// or at the last `else if` for an `else if` chain, in the form that names a chain
+            /// for a chain
             #[test]
             fn construct_should_report_nesting_too_deep_one_level_past_the_limit() {
                 super::errors_past_the_limit(
