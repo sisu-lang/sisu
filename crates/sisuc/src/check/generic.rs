@@ -1316,7 +1316,8 @@ struct Inference<'s> {
     bound: Vec<usize>,
 }
 
-/// Whether `pattern` names a parameter that the context of `call` bound (see `report_fresh`).
+/// Whether `pattern` names a parameter that the context of `call` bound (see `report_fresh`): a
+/// hint or a type the user wrote.
 fn bound_by_context(call: &Inference<'_>, pattern: Type) -> bool {
     let marked: Vec<bool> = (call.origin.iter())
         .map(|&at| at == Some(call.at))
@@ -2387,8 +2388,10 @@ impl Checker<'_> {
             return self.infer_unbound(call, e, pattern, context);
         };
         let checked = self.value(e, Some(want));
-        // The call's own context may be only a hint, such as the other side of `==`. A misfit
-        // against what it bound keeps its E0050, as the type is not one the user wrote there.
+        // The call's own context bound this parameter, and the call does not hand a misfit up
+        // (see `Misfit`). That context may be a hint, such as the other side of `==`, or a type
+        // the user wrote, as in `let r: Result<i64, string> = Ok(mk2())`. Either way, a misfit
+        // against it keeps its E0050, and the argument is not reported against it.
         if self.misfit_type(&checked).is_some() && bound_by_context(call, pattern) {
             return checked;
         }

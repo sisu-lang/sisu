@@ -99,13 +99,14 @@ impl Checker<'_> {
         self.pop_scope();
         let ty = match ty {
             Some(ty) if !failed => ty,
-            // A tail that rejected `expected` fails the block, unless a `never` came first.
+            // A tail that rejected `expected` fails the block, unless a `never` came first: then
+            // no code uses the tail's value, so its misfit is not handed up.
             ty => {
                 let mismatch = mismatch && ty.is_none();
                 return Err(Poisoned {
                     ty,
                     mismatch,
-                    found,
+                    found: found.filter(|_| ty.is_none()),
                 });
             }
         };

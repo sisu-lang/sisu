@@ -287,6 +287,8 @@ impl Checker<'_> {
         let wants_i64 = expected.map(payload) == Some(Type::I64);
         let ranks: Vec<Rank> = operands.iter().map(|e| self.sibling_rank(e)).collect();
         let mut first = None;
+        // No operand gives the type, so the operator takes `i64` by default, which no one wrote.
+        let defaulted = literal_type(expected) == Type::I64 && !ranks.contains(&Rank::Concrete);
         let mut ty = if literal_type(expected) != Type::I64 {
             Some(literal_type(expected))
         } else if let Some(k) = ranks.iter().position(|&r| r == Rank::Concrete) {
@@ -445,6 +447,21 @@ impl Checker<'_> {
                 ty = Some(Type::F64);
                 want = Some(Type::F64);
                 (value, true)
+            } else if let Some(takes) =
+                takes.filter(|_| defaulted && i == 0 && self.misfit_type(&value).is_some())
+            {
+                // A generic call first, that cannot meet the default: it is reported as a
+                // concrete leader is, against the operator's list. A comparison holds the
+                // operands to the leader's type, which the call does not give, so it is left to
+                // its E0050.
+                if operator == Operator::Compare {
+                    (value, false)
+                } else {
+                    let start = self.diagnostics.len();
+                    let settled = self.settled_by(e, value, want, Some(takes));
+                    deferred.extend(self.diagnostics.drain(start..));
+                    settled
+                }
             } else {
                 let start = self.diagnostics.len();
                 let settled = self.settled_by(e, value, want, takes.filter(|_| leader == Some(i)));
@@ -533,12 +550,15 @@ impl Checker<'_> {
         takes: Option<&[Type]>,
     ) -> (Checked, bool) {
         // An operand before it that failed has left `want` unset: one error is enough.
+        // A generic call's misfit is held to `takes` by the type it found (see `Misfit`).
         if let Some(takes) = takes
             && want.is_some()
-            && let Some(got) = type_of(&checked).filter(|&got| !takes.contains(&payload(got)))
+            && let Some(got) = (type_of(&checked).or_else(|| self.misfit_type(&checked)))
+                .filter(|&got| !takes.contains(&payload(got)))
         {
             let d = self.takes_mismatch(e.span, takes, got);
             self.diagnostics.push(d);
+            self.settle_misfit(&checked);
             return (Err(Poisoned::error()), true);
         }
         self.settled(e, checked, want)
