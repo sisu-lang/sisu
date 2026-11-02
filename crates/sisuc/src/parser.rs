@@ -860,8 +860,8 @@ impl<'a> Parser<'a> {
             return Err(DiagnosticKind::AnyForm {
                 at: amp.to(other.span),
                 form: AnyFormKind::Several {
-                    first: self.source.slice(name_span.range()).to_string(),
-                    second: self.source.slice(other.bare.range()).to_string(),
+                    first: self.source.type_text(name_span).into_owned(),
+                    second: self.source.type_text(other.bare).into_owned(),
                 },
             }
             .into());
@@ -887,7 +887,7 @@ impl<'a> Parser<'a> {
         Err(DiagnosticKind::AnyForm {
             at: span.to(mark),
             form: AnyFormKind::Optional {
-                written: self.source.slice(span.range()).to_string(),
+                written: self.source.type_text(span).into_owned(),
                 bare: span,
                 layers,
             },

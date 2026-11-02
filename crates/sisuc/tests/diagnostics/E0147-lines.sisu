@@ -1,0 +1,7 @@
+interface Box<T> {
+    fn get(self) -> T
+}
+fn f(_x: Box<
+    i64
+>) {}
+fn main() {}

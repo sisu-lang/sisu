@@ -1,0 +1,13 @@
+error[E0030]: a type alias cannot name `T.Item.Item`
+ --> E0030-alias-associated-base-lines.sisu:5:13
+  |
+5 |   type X<T> = T
+  |  _____________^
+6 | |   .Item
+7 | |   .Item
+  | |_______^
+  |
+  = help: give the alias a parameter that stands for `T.Item`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0030
