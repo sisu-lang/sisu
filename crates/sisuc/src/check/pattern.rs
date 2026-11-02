@@ -235,15 +235,15 @@ impl Checker<'_> {
             })
             .collect();
         match (checked, arms, ty) {
-            (Ok(scrutinee), Some(arms), Ok(ty)) => Ok(tir::Expr {
-                kind: tir::ExprKind::Match {
+            (Ok(scrutinee), Some(arms), Ok(ty)) => Ok(tir::Expr::new(
+                tir::ExprKind::Match {
                     temp: self.fresh(scrutinee.ty),
                     scrutinee: Box::new(scrutinee),
                     arms,
                 },
                 ty,
                 span,
-            }),
+            )),
             (.., ty) => Err(ty.map_or_else(|poisoned| poisoned, Poisoned::typed)),
         }
     }

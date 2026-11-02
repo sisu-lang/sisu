@@ -954,6 +954,8 @@ impl Mono {
             }
         }
         self.expr_kind(e, args);
+        // `expr_kind` rewrites `kind` and the children in place, so the flag is set again.
+        e.refresh_exits();
         self.at = outer;
     }
 
@@ -1361,14 +1363,7 @@ impl Mono {
 /// The expression `expr` holds, which moves out; a placeholder stays, which `mono` overwrites.
 fn hole(expr: &mut Expr) -> Expr {
     let span = expr.span;
-    mem::replace(
-        expr,
-        Expr {
-            kind: ExprKind::None,
-            ty: Type::UNIT,
-            span,
-        },
-    )
+    mem::replace(expr, Expr::new(ExprKind::None, Type::UNIT, span))
 }
 
 /// Asserts that no type in `program` names a type parameter or holds type arguments: `mir` and
@@ -2070,30 +2065,16 @@ mod tests {
         use crate::tir::{LocalId, Pattern, PatternKind};
         let span = Span::new(0, 0);
         let param = Type::intern(TypeKind::Param(crate::symbol::Symbol::intern("T"), 0));
-        let int = || Expr {
-            kind: ExprKind::Int(1),
-            ty: Type::I64,
-            span,
-        };
+        let int = || Expr::new(ExprKind::Int(1), Type::I64, span);
         let block = |ty| Block {
             stmts: Vec::new(),
             value: Some(Box::new(int())),
             ty,
         };
-        let cond = || {
-            Box::new(Expr {
-                kind: ExprKind::Bool(true),
-                ty: Type::BOOL,
-                span,
-            })
-        };
+        let cond = || Box::new(Expr::new(ExprKind::Bool(true), Type::BOOL, span));
         let if_some = |then_block| ExprKind::IfSome {
             bind: LocalId(0),
-            scrutinee: Box::new(Expr {
-                kind: ExprKind::None,
-                ty: Type::optional(Type::I64),
-                span,
-            }),
+            scrutinee: Box::new(Expr::new(ExprKind::None, Type::optional(Type::I64), span)),
             then_block,
             else_block: Some(block(Type::I64)),
         };
@@ -2137,11 +2118,7 @@ mod tests {
             ("block", ExprKind::Block(block(param))),
         ] {
             let mut program = instantiated("fn main() {}");
-            let expr = Expr {
-                kind,
-                ty: Type::I64,
-                span,
-            };
+            let expr = Expr::new(kind, Type::I64, span);
             program.functions[0].body.stmts.push(Stmt::Expr(expr));
             let caught = std::panic::catch_unwind(|| assert_concrete(&program));
             let message = caught.expect_err(case);

@@ -896,7 +896,7 @@ impl Checker<'_> {
                 unreachable!("only a `push` has a `Some` step, and a `push` reads no place")
             }
         };
-        tir::Expr { kind, ty, span }
+        tir::Expr::new(kind, ty, span)
     }
 }
 

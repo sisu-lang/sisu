@@ -3243,6 +3243,10 @@ impl From<DiagnosticKind> for Diagnostic {
             .with_label(format!(
                 "`{name}` has the most so far: {}",
                 instances(count)
+            ))
+            .with_help(format!(
+                "use fewer different type arguments, or put a non-generic item in the chain \
+                 that reaches `{name}`"
             )),
             DiagnosticKind::InheritedArgument {
                 arg,

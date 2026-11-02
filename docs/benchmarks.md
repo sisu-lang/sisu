@@ -533,9 +533,9 @@ One shape and one stage that is superlinear for it is a case. The known list
 `KNOWN` in `scripts/scaling.py` has one row for each case that has an open
 issue: the shape, the stage and the issue number. A known case is a row of
 `KNOWN` that does not look fixed. A known row can be linear but just under
-the rule, as generic call depth is. The script exits with
-code 0 when every superlinear case has a row and no row looks fixed. It prints
-each known case on stdout. It exits with code 1 when:
+the rule, when its cause is known. The script exits with code 0 when every
+superlinear case has a row and no row looks fixed. It prints each known case
+on stdout. It exits with code 1 when:
 
 - a superlinear case has no row. Open an issue and add a row.
 - a row looks fixed. Its stage is not judged, has no ratio, has r3 < 2.15, or
@@ -544,12 +544,11 @@ each known case on stdout. It exits with code 1 when:
 
 The pull request that fixes a known case removes its row. The gaps between
 the numbers keep a row from changing between known and fixed when a change
-moves a ratio a little. At commit 556e8467, the sweep finds four superlinear
-cases, all in the `check` stage: array literal depth (#344), expression
-depth (#367), and type depth and method chain (#366). Generic call depth in
-`check` has the same cause as #366 and is just under the rule (r3 = 2.30).
-`KNOWN` has a row for each of the five. The nightly job runs the sweep
-(`docs/development.md`, "The nightly compile-speed job").
+moves a ratio a little. `KNOWN` has one row: expression depth in `check`
+(#367). Each `tir::Expr` holds its exit flag. The checker sets it once, when
+it makes the expression. So array literal depth (#344), type depth, method
+chain and generic call depth (#366) are linear in `check`. The nightly job
+runs the sweep (`docs/development.md`, "The nightly compile-speed job").
 
 ## Benchmarks for CodSpeed only
 
