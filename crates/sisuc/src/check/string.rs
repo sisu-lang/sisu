@@ -561,7 +561,12 @@ pub(super) fn single_term(e: &ast::Expr) -> bool {
             e.span != lhs.span.to(rhs.span)
         }
         // A `bool`, which no conversion holds: never reached, and grouping is always right.
-        ExprKind::Is { .. } | ExprKind::Compare { .. } => false,
+        // A jump has no value to convert either.
+        ExprKind::Is { .. }
+        | ExprKind::Compare { .. }
+        | ExprKind::Return { .. }
+        | ExprKind::Break { .. }
+        | ExprKind::Continue { .. } => false,
         ExprKind::Unary { operand, .. } => e.span.end() != operand.span.end(),
         ExprKind::Range(range) => e.span != range.span,
         ExprKind::Block(block) => e.span != block.span,

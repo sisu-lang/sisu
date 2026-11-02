@@ -18,9 +18,20 @@
 #   scripts/check-test-wording.sh <file.rs>...
 set -euo pipefail
 
+# Each exempt file by its full path, relative or absolute, so the same file
+# name in another crate is checked.
+exempt=(
+  crates/sisuc/src/diagnostic/render.rs
+  crates/sisuc/src/diagnostic/json.rs
+  crates/sisuc/src/report.rs
+  crates/sisuc/src/check/tests/parity.rs
+)
 files=()
 for file in "$@"; do
-  [[ $file == */diagnostic/render.rs || $file == */diagnostic/json.rs || $file == */src/report.rs || $file == crates/sisuc/src/check/tests/parity.rs || $file == */crates/sisuc/src/check/tests/parity.rs ]] || files+=("$file")
+  for path in "${exempt[@]}"; do
+    [[ $file == "$path" || $file == */"$path" ]] && continue 2
+  done
+  files+=("$file")
 done
 [[ ${#files[@]} -eq 0 ]] && exit 0
 

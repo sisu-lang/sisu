@@ -4,7 +4,7 @@ error[E0062]: `xs` may be `None`
 3 |     print(xs.len())
   |           ^^
   |
-  = help: to use the value only when it is present, unwrap it with `if let`
+  = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
 help: if a `None` result is fine, use `?.`
   |
 3 |     print(xs?.len())

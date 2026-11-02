@@ -1,0 +1,8 @@
+// GIVEN an `if` whose condition `a < return` is followed by a `{ 1 }` and a comment
+// WHEN `sisu check` runs on it
+// THEN it reports E0011 at the `return` (5:12): the comment after the block is not part of the header
+fn f(a: i64) {
+    if a < return { 1 } // c
+}
+
+fn main() {}

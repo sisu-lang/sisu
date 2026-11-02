@@ -1,0 +1,13 @@
+// GIVEN a `let v = o` and a `// why` line, then an `else { return 0 }` on the next line
+// WHEN `sisu check` runs on it
+// THEN it reports E0006 at the `else` (7:5), with an unsafe fix, because the join deletes the comment
+fn f(o: i64?) -> i64 {
+    let v = o
+    // why
+    else { return 0 }
+    v
+}
+
+fn main() {
+    print(f(Some(1)))
+}

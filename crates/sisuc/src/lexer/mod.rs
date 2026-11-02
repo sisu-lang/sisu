@@ -7,7 +7,7 @@ use std::iter::Peekable;
 use std::ops::Range;
 use std::str::CharIndices;
 
-use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, Join};
+use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, ElseOf, Join};
 use crate::source::{LineIndex, Source, Span};
 use crate::symbol::Symbol;
 use literal::End;
@@ -1389,7 +1389,14 @@ fn check_line_start(
                     gap: Span::new(brace.span.end(), span.start()),
                     safe: false,
                 });
-            Some(DiagnosticKind::ElseOnNewLine { at: span, join }.into())
+            Some(
+                DiagnosticKind::ElseOnNewLine {
+                    at: span,
+                    of: ElseOf::If,
+                    join,
+                }
+                .into(),
+            )
         }
         _ => None,
     }

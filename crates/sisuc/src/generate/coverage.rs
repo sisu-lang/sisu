@@ -15,6 +15,7 @@ use super::item::{MAX_ALIASES, MAX_INTERFACES, MAX_KNOWN, MAX_REQUIREMENTS, MOST
 use super::scope::{
     Applied, Class, Const, Enum, Field, Func, Nodes, RESULT, Scope, Ty, Var, Variant,
 };
+use super::stmt::MAX_BLOCKS;
 use super::writer::{Rewrite, Site, Writer, allowed};
 use super::{Answer, BUDGET, Cost, DEPTHS, FUEL, Gen, MAX_BOUND, MAX_NESTING, MAX_SIZE, generate};
 use crate::conformance::holds_class;
@@ -281,6 +282,21 @@ const REACH: &[&str] = &[
     "reach: an assignment goes through `?.`",
 ];
 
+/// The forms of `let ... else` and of a jump after `??`, which no variant shows.
+const JUMPS: &[&str] = &[
+    "let-else on Optional",
+    "let-else on Enum",
+    "let-else block return",
+    "let-else block break",
+    "let-else block continue",
+    "let-else block panic",
+    "let-else block if",
+    "?? return",
+    "?? break",
+    "?? continue",
+    "?? labelled jump",
+];
+
 /// The local that `operand` reads whole: the one place where its type is known here.
 fn whole_local(operand: &crate::mir::Operand) -> Option<crate::mir::LocalId> {
     match operand {
@@ -494,7 +510,7 @@ fn universe() -> FxHashSet<String> {
     for (from, to) in CONVERSIONS {
         universe.insert(format!("tir::ExprKind::Convert from {from} to {to}"));
     }
-    for key in REACH {
+    for key in REACH.iter().chain(JUMPS) {
         universe.insert(key.to_string());
     }
     for (feature, _) in TEXT {
@@ -1440,7 +1456,13 @@ impl Walk {
                 } = &cond.kind
                 && int(rhs) == Some(0)
                 && let [jump] = &then_block.stmts[..]
-                && let ast::StmtKind::Break { label: None, value } = &jump.kind
+                && let ast::StmtKind::Expr(ast::Expr {
+                    kind:
+                        ast::ExprKind::Break {
+                            label: None, value, ..
+                        },
+                    ..
+                }) = &jump.kind
             {
                 Some((name(lhs)?, value.is_some()))
             } else {
@@ -1485,10 +1507,50 @@ impl Walk {
         }
     }
 
+    /// Marks how the `else` block of a `let ... else` leaves: by the jump or the `if` that ends it.
+    fn leaving(&mut self, block: &ast::Block) {
+        let Some(ast::StmtKind::Expr(last)) = block.stmts.last().map(|stmt| &stmt.kind) else {
+            return;
+        };
+        self.mark(match &last.kind {
+            ast::ExprKind::Return { .. } => "let-else block return",
+            ast::ExprKind::Break { .. } => "let-else block break",
+            ast::ExprKind::Continue { .. } => "let-else block continue",
+            ast::ExprKind::If { .. } => "let-else block if",
+            ast::ExprKind::Todo { .. } => "let-else block panic",
+            ast::ExprKind::Call { callee, .. } if callee.name.as_str() == "panic" => {
+                "let-else block panic"
+            }
+            _ => return,
+        });
+    }
+
+    /// Marks a jump on the right of `??`, and whether it names a loop label.
+    fn jump_operand(&mut self, rhs: &ast::Expr) {
+        let label = match &rhs.kind {
+            ast::ExprKind::Return { .. } => {
+                self.mark("?? return");
+                return;
+            }
+            ast::ExprKind::Break { label, .. } => {
+                self.mark("?? break");
+                label
+            }
+            ast::ExprKind::Continue { label } => {
+                self.mark("?? continue");
+                label
+            }
+            _ => return,
+        };
+        if label.is_some() {
+            self.mark("?? labelled jump");
+        }
+    }
+
     /// Marks a `break` spelled `break l -1` that reads as the label `l` and the value `-1`, or
     /// spelled `break x -1` that reads as no label and the value `x - 1`.
-    fn break_reading(&mut self, stmt: &ast::Stmt, label: Option<&ast::Ident>, value: &ast::Expr) {
-        let text = &self.source[stmt.span.range()];
+    fn break_reading(&mut self, jump: &ast::Expr, label: Option<&ast::Ident>, value: &ast::Expr) {
+        let text = &self.source[jump.span.range()];
         match (label, &value.kind) {
             (
                 Some(label),
@@ -1618,6 +1680,20 @@ impl Walk {
                 name,
                 mutable,
             } => self.ast_let(mutable.is_some(), name.name.as_str(), ty.as_ref(), init),
+            ast::StmtKind::LetElse {
+                pattern,
+                value,
+                else_block,
+                ..
+            } => {
+                self.mark("ast::StmtKind::LetElse");
+                self.ast_pattern(pattern);
+                self.ast_expr(value);
+                if let Some(block) = else_block {
+                    self.leaving(block);
+                    self.ast_block(block);
+                }
+            }
             ast::StmtKind::While {
                 label, cond, body, ..
             } => self.ast_loop("while", label.as_ref(), |walk| {
@@ -1643,27 +1719,6 @@ impl Walk {
                 body,
                 ..
             } => self.ast_loop("for", label.as_ref(), |walk| walk.ast_for(source, body)),
-            ast::StmtKind::Return(value) => {
-                self.mark("ast::StmtKind::Return");
-                if let Some(value) = value {
-                    self.ast_expr(value);
-                }
-            }
-            ast::StmtKind::Break { label, value } => {
-                self.mark("ast::StmtKind::Break");
-                self.jump_label("break", label.as_ref());
-                if let Some(value) = value {
-                    if label.is_some() {
-                        self.mark("reach: a labeled `break` gives a value");
-                    }
-                    self.break_reading(stmt, label.as_ref(), value);
-                    self.ast_expr(value);
-                }
-            }
-            ast::StmtKind::Continue { label } => {
-                self.mark("ast::StmtKind::Continue");
-                self.jump_label("continue", label.as_ref());
-            }
             ast::StmtKind::Assign { target, value } => {
                 self.mark("ast::StmtKind::Assign");
                 self.through_optional(target);
@@ -1911,6 +1966,7 @@ impl Walk {
             }
             ast::ExprKind::Coalesce { lhs, rhs } => {
                 self.mark("ast::ExprKind::Coalesce");
+                self.jump_operand(rhs);
                 self.ast_expr(lhs);
                 self.ast_expr(rhs);
             }
@@ -2036,6 +2092,27 @@ impl Walk {
                         .push(format!("a `loop` at byte {}", e.span.start()));
                 }
                 self.ast_loop("loop", label.as_ref(), |walk| walk.ast_block(body));
+            }
+            ast::ExprKind::Return { value, .. } => {
+                self.mark("ast::ExprKind::Return");
+                if let Some(value) = value {
+                    self.ast_expr(value);
+                }
+            }
+            ast::ExprKind::Break { label, value, .. } => {
+                self.mark("ast::ExprKind::Break");
+                self.jump_label("break", label.as_ref());
+                if let Some(value) = value {
+                    if label.is_some() {
+                        self.mark("reach: a labeled `break` gives a value");
+                    }
+                    self.break_reading(e, label.as_ref(), value);
+                    self.ast_expr(value);
+                }
+            }
+            ast::ExprKind::Continue { label } => {
+                self.mark("ast::ExprKind::Continue");
+                self.jump_label("continue", label.as_ref());
             }
             ast::ExprKind::Block(block) => {
                 self.mark("ast::ExprKind::Block");
@@ -2370,6 +2447,29 @@ impl Walk {
                     }
                     self.place(place);
                     self.tir_expr(value, Parent::Other);
+                }
+                tir::Stmt::LetElse {
+                    scrutinee,
+                    test,
+                    else_block,
+                } => {
+                    self.mark("tir::Stmt::LetElse");
+                    match scrutinee.ty.kind() {
+                        TypeKind::Optional(_) => self.mark("let-else on Optional"),
+                        TypeKind::Enum(..) => self.mark("let-else on Enum"),
+                        // `check::pattern::let_value` owns the rule that the value is an
+                        // optional or an enum.
+                        _ => {}
+                    }
+                    self.tir_expr(scrutinee, Parent::Other);
+                    match test {
+                        tir::LetElseTest::Some { .. } => self.mark("tir::LetElseTest::Some"),
+                        tir::LetElseTest::Match { pattern, .. } => {
+                            self.mark("tir::LetElseTest::Match");
+                            self.tir_pattern(pattern);
+                        }
+                    }
+                    self.tir_block(else_block);
                 }
                 tir::Stmt::Expr(e) => {
                     self.mark("tir::Stmt::Expr");
@@ -3119,10 +3219,7 @@ fn steps(stmt: Option<&ast::Stmt>, counted: Option<&str>) -> bool {
 /// Whether `stmt` never finishes: a jump, or an `if` whose every branch ends in one.
 fn jumps(stmt: &ast::Stmt) -> bool {
     let ends = |block: &ast::Block| block.stmts.last().is_some_and(jumps);
-    if matches!(
-        stmt.kind,
-        ast::StmtKind::Return(_) | ast::StmtKind::Break { .. } | ast::StmtKind::Continue { .. }
-    ) {
+    if stmt.is_jump() {
         return true;
     }
     let ast::StmtKind::Expr(e) = &stmt.kind else {
@@ -3204,7 +3301,8 @@ fn inexact(e: &tir::Expr) -> bool {
 /// What the programs of every seed hold.
 fn walk() -> Walk {
     let mut walk = Walk::default();
-    for data in seeds() {
+    // Twice the `SEEDS`: a bare `Ok(..)` is rare, and the seeds of the other tests shift it.
+    for data in (0..2 * SEEDS).map(seed) {
         walk.program(&generate(&data).plain);
     }
     walk
@@ -3347,6 +3445,45 @@ fn every_variant_is_generated() {
         missing.is_empty(),
         "no generated program holds: {missing:#?}"
     );
+}
+
+/// GIVEN a program that holds each form of `let ... else` and of a jump after `??`
+/// WHEN the walk reads it
+/// THEN it marks each of `JUMPS`
+#[test]
+fn the_walk_should_mark_let_else_and_a_jump_after_coalesce() {
+    let source = "enum Shape {
+    Circle(f64)
+    Rect(f64, f64)
+}
+
+fn area(s: Shape) -> f64 {
+    let Circle(r) = s else { return 0.0 }
+    r
+}
+
+fn first(o: i64?) -> i64 {
+    let v = o else { panic(\"none\") }
+    v
+}
+
+fn main() {
+    let o: i64? = Some(1)
+    outer: for i in 0..2 {
+        let w = o else { if i == 0 { continue outer } else { break outer } }
+        let u = o else { break }
+        let z = o else { continue }
+        print(w + u + z + (o ?? continue) + (o ?? break outer))
+    }
+    print(area(Shape.Rect(1.0, 1.0)))
+    print(first(o) + (o ?? return))
+}
+";
+    let mut walk = Walk::default();
+    walk.program(source);
+    for key in JUMPS {
+        assert!(walk.seen.contains(*key), "the walk should mark {key}");
+    }
 }
 
 /// What no generated program writes yet, the walk marks all the same: an `extend` block,
@@ -6801,6 +6938,14 @@ impl<'f> Lets<'f> {
                     self.expr(value);
                 }
             }
+            tir::Stmt::LetElse {
+                scrutinee,
+                else_block,
+                ..
+            } => {
+                self.expr(scrutinee);
+                self.conditionally(|walk| walk.block(else_block));
+            }
         }
     }
 
@@ -7365,7 +7510,8 @@ fn known_answers_should_be_integer() {
             tir::Stmt::Let { .. }
             | tir::Stmt::Assign { .. }
             | tir::Stmt::Append { .. }
-            | tir::Stmt::Push { .. } => None,
+            | tir::Stmt::Push { .. }
+            | tir::Stmt::LetElse { .. } => None,
         });
         let mut sites = 0;
         for e in printed.chain(main.body.value.as_deref()) {
@@ -8422,4 +8568,12 @@ fn main() {
             );
         }
     }
+}
+
+// One program in eight leaves with `let ... else`. With a broken bound, the first seed that
+// writes an `if` at it is seed 14, so 256 seeds is over 10 times that.
+#[test]
+fn a_leaving_if_should_nest_no_deeper_than_the_block_bound() {
+    let deepest = (0..256).map(|n| generate(&seed(n)).leaving_if_depth).max();
+    assert_eq!(deepest, Some(MAX_BLOCKS - 1));
 }

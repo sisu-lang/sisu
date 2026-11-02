@@ -1,0 +1,13 @@
+// GIVEN `let E.A = { if c { 1 } else { 2 } } +` with no `else` after the value
+// WHEN `sisu check` runs on it
+// THEN it reports E0011 "expected `=`, found `.`" at 10:10: the `else` in the braces is the `if`'s
+enum E {
+    A
+    B
+}
+
+fn f(c: bool) {
+    let E.A = { if c { 1 } else { 2 } } +
+}
+
+fn main() {}

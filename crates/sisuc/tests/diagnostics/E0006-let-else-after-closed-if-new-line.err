@@ -1,0 +1,8 @@
+error[E0006]: `else` must be on the same line as the value of the `let`
+ --> E0006-let-else-after-closed-if-new-line.sisu:6:5
+  |
+6 |     else { return 0 }
+  |     ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0006

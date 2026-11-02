@@ -119,6 +119,92 @@ The rules:
 - No binding or parameter can take the name `Option`, `Result`, `Some`, `Ok` or `Err` ([E0026](../diagnostics/E0026.md)). `None` is a keyword.
 - No binding or parameter can take the name of an enum ([E0116](../diagnostics/E0116.md)).
 
+## let ... else
+
+`let pattern = value else { ... }` binds the names of a pattern that can fail to match. When the pattern accepts the value, the names are in scope from the next statement to the end of the block. When it does not, the `else` block runs. That block must not finish: it leaves the function, the pass or the loop, or it ends the program.
+
+```sisu
+enum Shape {
+    Circle(f64)
+    Rect(f64, f64)
+}
+
+fn area(s: Shape) -> f64 {
+    let Circle(r) = s else { return 0.0 }
+    r * r
+}
+
+fn main() {
+    print(area(Shape.Circle(2.0)))      // 4.0
+    print(area(Shape.Rect(1.0, 1.0)))   // 0.0
+}
+```
+
+The rules:
+
+- The value is an optional or an enum, and the pattern is one that `if let` takes ([E0051](../diagnostics/E0051.md), [Patterns](enums.md#patterns), [`if let` and `while let`](enums.md#if-let-and-while-let)). On an optional, a plain name binds the value inside: `let v = o else { return }`.
+- A pattern that accepts every value is an error ([E0131](../diagnostics/E0131.md)). Use a plain `let`.
+- A `let` whose pattern is not a single name or `_` needs an `else` block ([E0174](../diagnostics/E0174.md)).
+- `let mut name = value else { ... }` makes a binding that can change. `mut` is allowed only before a single name. Before any other pattern, it is an error ([E0011](../diagnostics/E0011.md)).
+- The names of the pattern are not in scope in the `else` block ([E0033](../diagnostics/E0033.md)). A name that the pattern binds and that nothing reads builds with a warning ([W0014](../diagnostics/W0014.md)).
+- The block must not finish. It ends, for example, in `return`, `break`, `continue`, a call of `panic`, `todo`, or an `if` or a `match` whose branches do not finish. Any expression that does not finish is enough ([Reachability](#reachability)). A block that can reach its end is an error ([E0172](../diagnostics/E0172.md)).
+- A `break` or a `continue` in the `else` block acts on the loops around the statement, with their loop labels ([break and continue](#break-and-continue), [Loop labels](#loop-labels)).
+- The value cannot end in `}`, because an `else` after a `}` reads as part of the expression that the `}` closes. Put the value in parentheses ([E0173](../diagnostics/E0173.md)).
+
+```sisu
+fn main() {
+    let o: i64? = Some(1)
+    let Some(v) = match o { _ => o } else { return }  // error[E0173]
+    print(v)
+}
+```
+
+A loop body can use a `let ... else` to skip a pass:
+
+```sisu
+fn main() {
+    for o in [Some(1), None, Some(3)] {
+        let v = o else { continue }
+        print(v)
+    }
+}
+```
+
+```output
+1
+3
+```
+
+### let ... else and ?? return
+
+`let v = o else { return 0 }` and `let v = o ?? return 0` do the same job ([Default values](operators.md#default-values)). Use `??` when the value is an optional, the pattern is a plain name, and the exit is one line. Use `let ... else` when the pattern is a variant or has alternatives, or when the `else` block has more than one statement.
+
+```sisu
+fn double(o: i64?) -> i64 {
+    let n = o ?? return 0
+    n * 2
+}
+
+fn describe(o: i64?) -> i64 {
+    let n = o else {
+        print("nothing")
+        return 0
+    }
+    n * 2
+}
+
+fn main() {
+    print(double(Some(4)))
+    print(describe(None))
+}
+```
+
+```output
+8
+nothing
+0
+```
+
 ## Assignment
 
 An assignment `place = value` stores a value in a place. These are the places:

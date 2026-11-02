@@ -6380,6 +6380,26 @@ fn a_never_statement_before_a_misfit_tail_should_give_e0050_at_the_call() {
             "fn f() -> i64 {\n    match 1 {\n        _ => {\n            return 1\n            mk2()\n        }\n    }\n}\n",
             "print(f())",
         ),
+    ];
+    for &row in rows {
+        let (failed, mut generic) = parity_found(&parity_program(row, false));
+        let (_, concrete) = parity_found(&parity_program(row, true));
+        let before = generic.len();
+        generic.retain(|(code, ..)| *code != Code::CannotInfer);
+        assert!(failed, "row `{}`", row.1);
+        assert_eq!(before - generic.len(), 1, "row `{}`: one E0050", row.1);
+        assert_eq!(generic, concrete, "row `{}`", row.1);
+    }
+}
+
+/// The rows of the test above where a `never` block is the value of a `let`. The twin does not
+/// fail, so its block is a `never` that is used as a value: E0043. The generic block failed
+/// (its call gave E0050), and a `never` that failed gives no second report, so the generic
+/// program has the diagnostics of the twin but that one.
+#[test]
+fn a_failed_never_block_as_a_value_should_give_e0050_and_no_e0043() {
+    with_prelude();
+    let rows: &[ParityRow<'static>] = &[
         ("", "let y: i64 = {\n    return\n    mk2()\n}\nprint(y)"),
         (
             "",
@@ -6392,9 +6412,10 @@ fn a_never_statement_before_a_misfit_tail_should_give_e0050_at_the_call() {
     ];
     for &row in rows {
         let (failed, mut generic) = parity_found(&parity_program(row, false));
-        let (_, concrete) = parity_found(&parity_program(row, true));
+        let (_, mut concrete) = parity_found(&parity_program(row, true));
         let before = generic.len();
         generic.retain(|(code, ..)| *code != Code::CannotInfer);
+        concrete.retain(|(code, ..)| *code != Code::NoValue);
         assert!(failed, "row `{}`", row.1);
         assert_eq!(before - generic.len(), 1, "row `{}`: one E0050", row.1);
         assert_eq!(generic, concrete, "row `{}`", row.1);

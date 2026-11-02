@@ -1,0 +1,11 @@
+// GIVEN a function `f() -> i64` whose body is `let x = return` and then `x`
+// WHEN `sisu check` runs on it
+// THEN it reports E0036 at 5:13 and no other error
+fn f() -> i64 {
+    let x = return
+    x
+}
+
+fn main() {
+    print(f())
+}

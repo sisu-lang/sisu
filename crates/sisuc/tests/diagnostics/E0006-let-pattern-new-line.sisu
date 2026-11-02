@@ -1,0 +1,17 @@
+// GIVEN a `let E.A = o` whose `else { return 0 }` starts the next line
+// WHEN `sisu check` runs on it
+// THEN it reports E0006 at the `else` (11:5), not "expected `=`, found `.`", with the safe fix
+enum E {
+    A
+    B
+}
+
+fn f(o: E) -> i64 {
+    let E.A = o
+    else { return 0 }
+    1
+}
+
+fn main() {
+    print(f(E.A))
+}

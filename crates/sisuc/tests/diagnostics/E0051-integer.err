@@ -3,8 +3,6 @@ error[E0051]: `if let` needs an enum or an optional; this is `u8`
   |
 3 |     if let m = n {
   |                ^
-  |
-  = help: compare with `==`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0051

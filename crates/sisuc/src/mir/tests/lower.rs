@@ -441,7 +441,7 @@ fn store_order_field_base_before_the_value() {
 /// `mentions` finds a local wherever an expression or a statement holds it: each named
 /// local of `f` stands in one kind of node.
 #[test]
-fn mentions_every_kind_of_node() {
+fn mentions_should_find_a_local_in_every_kind_of_node() {
     let src = "class O {\n    mut n: i64\n    mut s: string\n}\n\
                enum E {\n    V(i64)\n    W\n}\n\
                fn g(x: i64) -> i64 { x }\n\
@@ -450,7 +450,8 @@ fn mentions_every_kind_of_node() {
                unary: i64, binary: i64, concat: string, equal: i64, is1: O, is2: O, \
                fill: i64, index: [i64], contains: [i64], compare: i64, part: string, lit: i64, \
                variant: i64, cond: bool, some: i64?, scrutinee: E, guard: i64, looped: bool, \
-               assigned: i64, placed: O, at: i64, root: i64, appended: O, returned: i64, panicked: string) -> i64 {\n\
+               assigned: i64, placed: O, at: i64, root: i64, appended: O, returned: i64, panicked: string, \
+               checked: i64?, elsed: i64) -> i64 {\n\
                print(g(call))\n\
                let made = O(n: new, s: \"\")\n\
                print(math.abs())\n\
@@ -486,6 +487,8 @@ fn mentions_every_kind_of_node() {
                xs[at] = root\n\
                appended.s += \"x\"\n\
                if cond { return returned }\n\
+               let kept = checked else { print(elsed)\n return 0 }\n\
+               print(kept)\n\
                panic(panicked)\n\
                }\nfn main() {}";
     let program = checked(src);

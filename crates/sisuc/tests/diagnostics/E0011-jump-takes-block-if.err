@@ -1,0 +1,10 @@
+error[E0011]: `return` takes the `{ ... }` after it as its value
+ --> E0011-jump-takes-block-if.sisu:5:13
+  |
+5 |     if o ?? return {
+  |             ^^^^^^
+  |
+  = help: to keep the block as the body, put the jump in `( )`: `(o ?? return)`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011

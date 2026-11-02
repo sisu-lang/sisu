@@ -79,7 +79,15 @@ reports a malformed or unsupported one without breaking its item. An `enum` item
 an optional payload of labeled or unlabeled fields, and its methods. A `match`
 parses into its scrutinee and its arms, one per line, each a pattern, an
 optional `if` guard, `=>` and a body; a pattern is one or more alternatives
-joined by `|`. `if let` and `while let` take a pattern too. A `name:` before
+joined by `|`. `if let` and `while let` take a pattern too, and so does
+`let pattern = value else { block }` ([ADR 0044](adr/0044-let-else-and-jumps-are-expressions.md)).
+The parser reads the value first, so a value that ends in `}` before `else` is
+E0173 with a fix that puts the value in `( )`, and a pattern with no `else` is
+E0174. `return`, `break` and `continue` are expressions, not statements. Each
+one takes everything to its right that an expression can take, so
+`a ?? return b ?? c` is `a ?? return (b ?? c)`. A jump at the end of the header
+of an `if`, `while`, `for` or `match` that would take the body's `{` as its
+value is an error at the jump. A `name:` before
 `loop`, `while`, `while let` or `for` is a loop label, which stays open to the end of
 that loop's body; after `break` or `continue`, a name is the loop label when a
 loop around the jump has it, and otherwise begins the value
@@ -144,7 +152,12 @@ enum's own field, not on one inside a generic type it names. Building a variant,
 `check/pattern.rs` checks each pattern against the type at its position and
 declares the names it binds. `if let` on an enum becomes a `match` whose `_`
 arm is the `else`, and `while let` on one a loop around a `match` whose `_` arm
-breaks. A `break` or `continue` names its loop in `tir` by depth, the number of
+breaks. `check/stmt.rs` checks a let-else as one `tir::Stmt::LetElse`, not as
+sugar: the value and the pattern go through the code of `if let`, the `else`
+block is checked before the pattern binds anything and in its own scope, and
+the names go in the enclosing scope. An `else` block that can finish is E0172.
+A `return`, `break` or `continue` is an expression of type `never`, and
+a jump where a value must be used is E0043. A `break` or `continue` names its loop in `tir` by depth, the number of
 loops out from the innermost, and a `break` may carry a value; the loop's type
 comes from its `break`s, and `while true` gets W0009. A `while` whose
 condition nothing in the loop changes gets W0011. `check/exhaust.rs` runs
@@ -419,6 +432,12 @@ assigns its value to the same local. `codegen/matching.rs` emits the switches
 on a tag or a value that the tests become, and after the last arm a call to
 `llvm.trap`: the checker has proved that some arm matches, and a checker bug
 must not become undefined behaviour.
+
+The same file lowers a `tir::Stmt::LetElse`. It tests the pattern as a `match`
+arm does, runs the `else` block on the fail edge, and binds the names on the
+pass edge. The names last to the end of the enclosing block, not to the end of
+an arm, and each jump out of the block releases them. A `let mut` name takes no
+borrow: it copies its value.
 
 An array is one counted heap block too: a header of three `i64`s, the count,
 the length and the capacity, then the elements. A new block's capacity is its

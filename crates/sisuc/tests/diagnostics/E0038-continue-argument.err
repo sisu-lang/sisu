@@ -1,0 +1,8 @@
+error[E0038]: `continue` outside a loop
+ --> E0038-continue-argument.sisu:9:13
+  |
+9 |     print(f(continue))
+  |             ^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0038

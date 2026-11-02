@@ -1,0 +1,22 @@
+// A `let ... else` whose only jump is in its `else`, inside a block that is assigned to a field.
+// GIVEN `cs[0].n = { let v = o else { return 0 }; v + "!" }` in `f`
+// WHEN `f` runs with `None` and with a value
+// THEN the `return` leaves `f` before the assignment, and the value assigns once
+class C {
+    mut n: string
+}
+
+fn f(cs: [C], o: string?) -> i64 {
+    cs[0].n = {
+        let v = o else { return 0 }
+        v + "!"
+    }
+    1
+}
+
+fn main() {
+    let cs = [C(n: "a{1}")]
+    print(f(cs, None)) // 0: the `else` returns, so `n` stays `a1`
+    print(f(cs, Some("b{2}"))) // 1: the value assigns
+    print(cs[0].n) // b2!
+}

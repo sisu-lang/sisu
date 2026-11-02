@@ -1,0 +1,12 @@
+// GIVEN a function `f(x: i64?) -> i64` whose body is `let v = x ?? return 0` and then `v + 1`
+// WHEN `main` prints `f(Some(4))` and `f(None)`
+// THEN it prints `5` and then `0`
+fn f(x: i64?) -> i64 {
+    let v = x ?? return 0
+    v + 1
+}
+
+fn main() {
+    print(f(Some(4)))
+    print(f(None))
+}

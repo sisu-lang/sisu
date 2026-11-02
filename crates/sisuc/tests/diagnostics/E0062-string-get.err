@@ -4,7 +4,7 @@ error[E0062]: `o` may be `None`
 3 |     print(o.get(1..3))
   |           ^
   |
-  = help: to use the value only when it is present, unwrap it with `if let`
+  = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
 help: if a `None` result is fine, use `?.`
   |
 3 |     print(o?.get(1..3))

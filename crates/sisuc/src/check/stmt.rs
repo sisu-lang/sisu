@@ -6,7 +6,7 @@ use super::any::{AnyJoin, is_target, widen};
 use super::array::optional_array;
 use super::expr::{fits, local};
 use super::generic::Ahead;
-use super::pattern::LetPattern;
+use super::pattern::{LetPattern, LetValue};
 use super::prelude::PRELUDE;
 use super::unused_names::{Owner, Pending};
 use super::{
@@ -110,13 +110,7 @@ impl Checker<'_> {
                 });
             }
         };
-        let ends_in_expr = matches!(
-            block.stmts.last(),
-            Some(ast::Stmt {
-                kind: StmtKind::Expr(_),
-                ..
-            })
-        );
+        let ends_in_expr = tail(block).is_some();
         let value = match stmts.pop() {
             Some(tir::Stmt::Expr(e)) if ends_in_expr => Some(Box::new(e)),
             last => {
@@ -392,6 +386,12 @@ impl Checker<'_> {
                     init: init.map_err(|_| unit())?,
                 })
             }
+            StmtKind::LetElse {
+                mutable,
+                pattern,
+                value,
+                else_block,
+            } => self.let_else(*mutable, pattern, value, else_block.as_ref()),
             StmtKind::While {
                 label,
                 keyword,
@@ -510,11 +510,6 @@ impl Checker<'_> {
                 source,
                 body,
             } => self.for_loop(stmt.span, (*keyword, label.as_ref()), name, source, body),
-            StmtKind::Return(value) => self.return_stmt(stmt.span, value.as_ref()),
-            StmtKind::Break { label, value } => {
-                self.jump(stmt.span, "break", label.as_ref(), value.as_ref())
-            }
-            StmtKind::Continue { label } => self.jump(stmt.span, "continue", label.as_ref(), None),
             StmtKind::Assign { target, value } => self.assign(stmt.span, target, value),
             StmtKind::CompoundAssign {
                 op,
@@ -522,8 +517,77 @@ impl Checker<'_> {
                 target,
                 value,
             } => self.compound_assign(stmt.span, (*op, *op_span), target, value),
+            StmtKind::Expr(e) if e.is_jump() => self.jump_expr(e).map(tir::Stmt::Expr),
             StmtKind::Expr(e) => self.expr(e, expected).map(tir::Stmt::Expr),
         }
+    }
+
+    /// `let pattern = value else { else_block }`. The value and the pattern go through the code
+    /// of `if let`. The block is checked in its own scope, before the pattern binds anything, so
+    /// it cannot read the names, and it must not finish. The names go in the enclosing scope.
+    /// A failed block or value fails the statement, but the names are bound all the same, so
+    /// the lines after it report nothing of them. Without an `else_block`, the parser reported
+    /// the pattern (`RefutablePattern`).
+    fn let_else(
+        &mut self,
+        mutable: Option<Span>,
+        pattern: &ast::Pattern,
+        value: &ast::Expr,
+        else_block: Option<&ast::Block>,
+    ) -> Result<tir::Stmt, Poisoned> {
+        let unit = || Poisoned::typed(Type::UNIT);
+        let word = Unwrap::LetElse;
+        let Some(else_block) = else_block else {
+            // Checked for its own errors. The type is unknown to the pattern, which only declares
+            // its names.
+            drop(self.value(value, None));
+            self.bind_pattern(Some(word), &LetValue::Match { ty: None }, pattern, None);
+            return Err(unit());
+        };
+        let (scrutinee, form, _) = self.let_value(word, pattern, value);
+        let block = self.block(else_block, None);
+        if let Ok(block) = &block
+            && block.ty != Type::NEVER
+        {
+            let close = else_block.span.end();
+            self.report(DiagnosticKind::LetElseCanFinish {
+                at: Span::new(close - 1, close),
+            });
+        }
+        let (bound, _) = self.bind_pattern_as(Some(word), mutable, &form, pattern, None);
+        if let (
+            Some(keyword),
+            LetPattern::Match {
+                pattern: Some((_, bindings)),
+            },
+        ) = (mutable, &bound)
+            && bindings.is_empty()
+        {
+            self.report(DiagnosticKind::Expected {
+                what: "a pattern".to_string(),
+                found: "`mut`".to_string(),
+                at: keyword,
+            });
+        }
+        let (Ok(scrutinee), Ok(else_block)) = (scrutinee, block) else {
+            return Err(unit());
+        };
+        let test = match bound {
+            LetPattern::Some { bind } => tir::LetElseTest::Some { bind },
+            LetPattern::Match {
+                pattern: Some((pattern, bindings)),
+            } => tir::LetElseTest::Match {
+                temp: self.fresh(scrutinee.ty),
+                pattern,
+                bindings,
+            },
+            LetPattern::Match { pattern: None } => return Err(unit()),
+        };
+        Ok(tir::Stmt::LetElse {
+            scrutinee,
+            test,
+            else_block,
+        })
     }
 
     /// `for`, lowered to a `Loop` as in the spec's table: over an array `s` through `s[i]`
@@ -761,11 +825,7 @@ impl Checker<'_> {
     }
 
     /// `return`, of type `never` even when it fails.
-    fn return_stmt(
-        &mut self,
-        span: Span,
-        value: Option<&ast::Expr>,
-    ) -> Result<tir::Stmt, Poisoned> {
+    pub(super) fn return_expr(&mut self, span: Span, value: Option<&ast::Expr>) -> Checked {
         self.body.exits += 1;
         let never = || Poisoned::typed(Type::NEVER);
         let value = match value {
@@ -791,11 +851,7 @@ impl Checker<'_> {
                 Some(Box::new(value))
             }
         };
-        Ok(tir::Stmt::Expr(tir::Expr::new(
-            ExprKind::Return(value),
-            Type::NEVER,
-            span,
-        )))
+        Ok(tir::Expr::new(ExprKind::Return(value), Type::NEVER, span))
     }
 
     /// `f`, inside the header of the loop whose keyword is `keyword` and loop label `label`.
@@ -972,13 +1028,13 @@ impl Checker<'_> {
 
     /// `break` or `continue`, of type `never` even outside a loop, and `break`'s `value`. In a
     /// loop header it is `Error`, so the condition or source around it reports nothing more.
-    fn jump(
+    pub(super) fn jump(
         &mut self,
         span: Span,
         keyword: &'static str,
         label: Option<&ast::Ident>,
         value: Option<&ast::Expr>,
-    ) -> Result<tir::Stmt, Poisoned> {
+    ) -> Checked {
         self.body.exits += 1;
         let (target, depth) = self.target(span, keyword, label)?;
         if let Some(label) = label
@@ -1027,7 +1083,7 @@ impl Checker<'_> {
         } else {
             ExprKind::Continue { depth }
         };
-        Ok(tir::Stmt::Expr(tir::Expr::new(kind, Type::NEVER, span)))
+        Ok(tir::Expr::new(kind, Type::NEVER, span))
     }
 
     /// The loop the jump at `span` acts on, the one with its loop `label` or else the innermost:
@@ -1784,7 +1840,8 @@ fn stmt_type(stmt: &tir::Stmt) -> Type {
         tir::Stmt::Let { .. }
         | tir::Stmt::Assign { .. }
         | tir::Stmt::Append { .. }
-        | tir::Stmt::Push { .. } => Type::UNIT,
+        | tir::Stmt::Push { .. }
+        | tir::Stmt::LetElse { .. } => Type::UNIT,
         tir::Stmt::Expr(e) => e.ty,
     }
 }

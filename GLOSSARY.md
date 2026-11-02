@@ -346,7 +346,12 @@ _Avoid_: nil, null
 
 **Unwrap**:
 Getting the value out of one layer of an optional when it holds one, with
-`if let`, `while let`, `?.` or `??`. Unwrapping an `i64??` gives an `i64?`.
+`if let`, `while let`, `let ... else`, `?.` or `??`. Unwrapping an `i64??` gives an `i64?`.
+
+**Let-else**:
+A `let` whose pattern can fail to match, written `let pattern = value else { ... }`. When the
+pattern does not match, the `else` block runs, and that block must not finish.
+_Avoid_: guard, let-else statement
 
 **Niche**:
 A bit pattern that a type's values never use, in which an `Option`-shaped

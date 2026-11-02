@@ -4,7 +4,7 @@ error[E0062]: this value may be `None`
 11 |     print(first().value)
    |           ^^^^^^^
    |
-   = help: to use the value only when it is present, unwrap it with `if let`
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
 help: if a `None` result is fine, use `?.`
    |
 11 |     print(first()?.value)

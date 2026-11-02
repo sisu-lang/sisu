@@ -1,0 +1,14 @@
+// GIVEN a `match` whose scrutinee `g(1) ?? return` is followed by the `{` of its arms
+// WHEN `sisu check` runs on it
+// THEN it reports E0011 at the `return` (9:19), with the help `(g(1) ?? return)`
+fn g(x: i64) -> i64? {
+    Some(x)
+}
+
+fn f() -> i64 {
+    match g(1) ?? return {
+        _ => 1
+    }
+}
+
+fn main() {}

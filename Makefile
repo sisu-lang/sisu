@@ -14,7 +14,7 @@ ARGS =
 help: ## List the targets
 	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  %-13s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 	@echo
-	@echo 'BASE=<commit> sets where the changes start: by default where HEAD left main.'
+	@echo 'BASE=<commit> sets where the changes start: by default where HEAD left origin/main.'
 	@echo 'On a stacked branch, pass the stage below, so its changes stay out.'
 
 setup: ## Once per clone: LLVM 23, the pre-commit and commit-msg hooks, cargo-shear, cargo-mutants, cargo-llvm-cov, cargo-fuzz

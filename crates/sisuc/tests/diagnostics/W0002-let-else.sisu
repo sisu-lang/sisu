@@ -1,0 +1,8 @@
+// GIVEN a `main` with `let o: i64? = Some(1)` and `let mut n = o else { return }`, and `n` is never changed
+// WHEN `sisu check` runs on it
+// THEN it reports W0002 at the `n` on line 6, and its safe fix gives a program that checks clean
+fn main() {
+    let o: i64? = Some(1)
+    let mut n = o else { return }
+    print(n)
+}

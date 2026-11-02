@@ -1,0 +1,16 @@
+// GIVEN `let E.A = {` then `let x = 1` and `x +` on lines of their own, then `} else { return }`
+// WHEN `sisu check` runs on it
+// THEN it reports E0011 at the `}` after the `+` (13:5), not "expected `=`, found `.`": a line break in `{ }` does not end the statement
+enum E {
+    A
+    B
+}
+
+fn f(o: E) {
+    let E.A = {
+        let x = 1
+        x +
+    } else { return }
+}
+
+fn main() {}

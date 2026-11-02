@@ -16,7 +16,8 @@
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
-base=${1:-$(git merge-base main HEAD)}
+# origin/main, not main: a local main falls behind, and then the range takes in merged work.
+base=${1:-$(git merge-base origin/main HEAD)}
 head=$(git rev-parse HEAD)
 dirty=
 git diff --quiet HEAD || dirty=' with uncommitted changes'

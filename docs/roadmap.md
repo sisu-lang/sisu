@@ -38,6 +38,10 @@ with `match`, and generics with interfaces.
   (`outer: for ...`) lets `break outer` and `continue outer` reach that loop;
   `while true` warns (`W0009`) and points at `loop`
   ([ADR 0034](adr/0034-loop-and-loop-labels.md))
+- `let pattern = value else { ... }`, whose `else` block must not finish,
+  and `return`, `break` and `continue` as expressions of type `never`, so
+  that `let v = o ?? return 0` unwraps and leaves in one line
+  ([ADR 0044](adr/0044-let-else-and-jumps-are-expressions.md))
 - comparison chains such as `0 <= i < n`, and short-circuit `&&` and `||`
 - integer arithmetic that panics on overflow and division by zero instead of
   wrapping
@@ -1887,6 +1891,12 @@ accepted.
   `[w: w.len() for w in words if w.len() > 3]`, sugar for an iterator chain
   and `to_map()`. Decide once milestone 9's iterator chains exist, so real
   code can be compared.
+- **`mut` inside a pattern.** `let Rect(mut w, h) = s else { ... }`, and the
+  same in `if let` and `match`, which do not take it either. Decide for the
+  three forms together. Milestone 10's `let mut (a, b) = ...`, which makes
+  every name mutable, answers part of it; until then let-else takes `let mut`
+  only before a single name
+  ([ADR 0044](adr/0044-let-else-and-jumps-are-expressions.md)).
 - **Compile-time evaluation and reflection.** Open, to revisit once Sisu has
   grown (the user's decision, 2026-10-20); it was in "Deliberately avoided".
   Zig, C++, Rust and Mojo evaluate code at compile time, and Zig, C++26 and
