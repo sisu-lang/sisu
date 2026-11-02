@@ -860,8 +860,8 @@ struct Body {
     /// cleared `fit`. A span is checked in one scope only (there are no closures yet), so the
     /// answer holds for every call that ranks it.
     ranked: FxHashMap<Span, (generic::Ranked, bool)>,
-    /// What `int_literal` answered for each unary `-` and operator, by its span. The same scope
-    /// rule holds as for `ranked`.
+    /// What `int_literal` answered for each unary `-` and operator, by its span. The answer
+    /// depends only on the node, and no two operator nodes have one span.
     int_literals: FxHashMap<Span, bool>,
 }
 
