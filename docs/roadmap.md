@@ -442,7 +442,7 @@ how to avoid it. Each milestone keeps the table current.
 | --- | --- | --- |
 | `+ - *`, unary `-` on `i64` or `u8` | the result overflows | check the range first; checked arithmetic is a gap |
 | `/` and `%` on `i64` or `u8` | the divisor is zero, or `i64` minimum divided by `-1` | check the divisor first |
-| `xs[i]`, `xs[i] = v` | `i` is outside the array | check `0 <= i < xs.len()`; an optional `get(i)` is a gap |
+| `xs[i]`, `xs[i] = v` | `i` is outside the array | check `0 <= i < xs.len()`, or call `xs.get(i)`, which gives `None` |
 | `[v; n]` | `n` is negative, or the array would be too large to allocate (`[0; 9223372036854775807]`) | check `n` first, and keep it to a size the program can use |
 | `xs.sum()` on `[i64]` | the sum overflows | gap |
 | `panic(msg)`, `todo` | always | they are the deliberate panics |
@@ -656,6 +656,7 @@ The compiler is fuzzed in two stages:
 
 | # | Milestone | Done when |
 | --- | --- | --- |
+| Slices | Range indexes on arrays and strings: `xs[a..b]` and `s[a..b]` give a `[T]` or a `string` that shares the block of its parent, with `first`, `last` and `get` on arrays, `get` with a range on strings, and a compiler trim of small slices ([ADR 0042](adr/0042-a-slice-shares-its-block.md)). It comes before milestone 9, so that the iterators are built on its layout | A binary search over 1000 elements takes and drops slices with no allocation; `selfhost/lexer.sisu` takes the text of a token as `string(cs[start..pos])` |
 | 9 | Closures and lazy iterator methods (`map`, `filter`, `count`, `sum`), plus a `filter_some`-style method on `[T?]` | Closures first: a function that takes an `(i64) -> bool` runs with a closure that captures a local. Then `words.filter(w => w.len() > 3).count()` runs |
 | 10 | Records, named arguments, default parameters, and `p as name` to bind a whole sub-pattern | A `Point` record prints and compares with no hand-written methods |
 | 11 | Modules, `pub` visibility, and a standard library written in Sisu (`Map`), including `os.env(name)`, `os.exit(code)`, and an `io` module with `read_lines()`, read-everything and `read_bytes()` | Modules first: a program of two files, each with a class of the same name, builds and runs. Then a word-frequency tool reads like a Python script |
@@ -866,6 +867,7 @@ settle before work starts.
 | Milestone 6: floats and conversions | None | Float formatting in `"{x}"`; its Mandelbrot proof printed text, so it landed after 4 |
 | Milestone 7: enums and `match` | Done | 8, 12 |
 | Milestone 8: generics and interfaces | Done | 12, iterator methods (9), generated conformances on request (10), the standard library (11) |
+| Slices: range indexes, `first`, `last`, `get` | 8 | `mut` parameters (step 1), milestone 9, the self-host lexer's slice gap |
 | Milestone 12: `Result` and `?` | 7, 8 | File I/O, the standard library (11), concurrency |
 | `weak` fields (ADR 0008). The rule covers a `T?` with `T: AnyObject` and an `(any I)?` with a class-only `I`, so the `weak` examples for `any` wait for it | None | Closures that capture their owner |
 | Milestone 9: closures and function types | `weak` fields. Decisions: closure syntax, weak captures, argument labels, `return` inside a closure | Iterator methods (9), concurrency |
@@ -1276,11 +1278,16 @@ These do not make code nicer to write, so they wait:
 - Parser error recovery, so a syntax error does not hide the next one.
 - A fixed-size inline array: its length is part of its type, and it is stored
   inline (on the stack, or inside the object that holds it) with no header, no
-  count and no heap block. Its type is written `FixedArray<T, N>` (2026-10-17,
-  `docs/register.md`), after Swift's `InlineArray<3, i64>`; Rust's `[i64; 3]`
-  would clash with today's `[x; n]` making a `[T]`. A built-in literal length
-  needs no const generics; generic code over the length does. Build it when a
-  benchmark shows the heap `[T]` costs too much.
+  count and no heap block. Its type is written `FixedArray<T, N>` (the user's
+  decision, 2026-10-17), after Swift's `InlineArray<3, i64>`, so the growable
+  `[T]` stays the one type called an array. Its literal syntax is open: Rust's
+  `[i64; 3]` would clash with today's `[x; n]` making a `[T]`. A built-in
+  literal length needs no const generics; generic code over the length does.
+  Build it when a benchmark shows the heap `[T]` costs too much.
+- Sub-arrays, `xs[a..b]` (the user's decision, 2026-10-17): there is no
+  `Slice` type. A range index gives a `[T]` that shares the block of its
+  parent, and only a write to either side copies
+  ([ADR 0042](adr/0042-a-slice-shares-its-block.md)).
 - A `Value` bound for type parameters, the mirror of `AnyObject`: every type
   that is not a class, nor an optional of one, conforms, and nothing else can.
   Milestone 8 rejects `[x; n]` in a generic body when `x` is a `T` or `T?`,
@@ -1708,11 +1715,10 @@ accepted.
 - **What a string is.** Resolved by
   [ADR 0014](adr/0014-strings-are-utf-8-values.md): UTF-8, always valid, a
   value shared until written, `len()` in bytes and no `s[i]`.
-- **Substring views.** Decided by the slices design (2026-10-26), with no
-  separate `Substring` type: `s[a..b]` gives a `string` that shares the
+- **Substring views.** Resolved by [ADR 0042](adr/0042-a-slice-shares-its-block.md),
+  with no separate `Substring` type: `s[a..b]` gives a `string` that shares the
   parent's bytes. The compiler copies a small part that can outlive its
-  parent. Positions are bytes. ADR 0014 still calls this open until that
-  design's plan updates it. Decided 2026-10-29: the methods that cut a
+  parent. Positions are bytes. Decided 2026-10-29: the methods that cut a
   string (`find`, `split`, `split_once`, `trim`, `starts_with`,
   `strip_prefix`, `char_positions`) come early, so a program seldom
   computes a position. A position found in `chars()` counts characters,

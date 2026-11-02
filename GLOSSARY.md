@@ -108,14 +108,15 @@ _Avoid_: spec, manual
 **Array**:
 A growable sequence of values of one type, written `[T]`, stored side by side
 in one block. An array is a value: binding it, passing it or storing it
-behaves as a copy.
+behaves as a copy. A value can share its block with a slice of it.
 `push` adds an element. The other methods that change an array come later.
 _Avoid_: list, vector
 
 **Copy-on-write**:
 How arrays and strings behave as values without copying eagerly: holders
 share one block, and a write (to an array element, or `+=` on a string)
-copies the block first when another holder exists. A loop that writes an array
+copies the block first when another holder exists. The copy holds only the
+elements that the value covers, not the whole block. A loop that writes an array
 it never shares checks the count once, before it starts, and copies there if
 needed.
 _Avoid_: lazy copy
@@ -128,7 +129,27 @@ _Avoid_: move (see **Move**: the compiler's name for how mir hands it over, not 
 
 **Range**:
 `a..b`, covering `a` up to but not including `b`, or `a..=b`, which includes
-`b`. It appears in a `for` header and as a pattern, and is not a value.
+`b`. It appears in a `for` header, as a pattern, as an index, and as the
+argument of a string's `get`. It is not a value.
+
+**Slice**:
+The array or string that a range index gives, as in `xs[a..b]` or `s[a..b]`.
+It is an ordinary `[T]` or `string`, not a type of its own, and it shares its
+elements with the value it was taken from until one of them is written
+([ADR 0042](docs/adr/0042-a-slice-shares-its-block.md)).
+_Avoid_: sub-array, view, window
+
+**Substring**:
+A slice of a string.
+_Avoid_: string view
+
+**Slicing**:
+Taking a slice with a range index.
+
+**Trim**:
+The compiler's copy of a small slice into a block of its own, made where the
+slice is placed inside another value.
+_Avoid_: compaction, which suggests garbage collection
 
 ## Text
 
