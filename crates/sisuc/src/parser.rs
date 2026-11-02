@@ -9,8 +9,8 @@ use crate::ast::{
     AliasDecl, Align, Applied, Arg, Arm, AssocChoice, AssocType, BinaryOp, Block, Bound, Broken,
     BrokenKind, Class, CompareOp, Const, Enum, Expr, ExprKind, Extend, FieldDecl, ForSource,
     FormatSpec, Function, Ident, Interface, Item, Literal, Member, MutSelf, Param, Part, Pattern,
-    PatternKind, PayloadField, Program, Requirement, Stmt, StmtKind, TypeExpr, TypeKind, TypeParam,
-    UnaryOp, Variant,
+    PatternKind, PayloadField, Program, Range as RangeExpr, Requirement, Stmt, StmtKind, TypeExpr,
+    TypeKind, TypeParam, UnaryOp, Variant,
 };
 use crate::diagnostic::{
     self, AnyFormKind, BuiltIn, ClashForm, Diagnostic, DiagnosticKind, ForeignPattern,
@@ -65,7 +65,8 @@ pub(crate) fn parse(lexed: Lexed<'_>, prelude: bool) -> Parsed {
         lexer: &diagnostics,
         comments: &comments,
         breaks: &breaks,
-        specs: Vec::new(),
+        recovered: Vec::new(),
+        header: false,
         warnings,
         labels: Vec::new(),
         prelude,
@@ -395,6 +396,16 @@ fn starts_postfix(kind: &TokenKind) -> bool {
     )
 }
 
+/// Whether an end follows the `..` or `..=` that was just read, when the next token is `kind`:
+/// an operand does. So does a `{`, a block expression, except in the head of a `for`, `if`,
+/// `while` or `match`, where `header` holds and the `{` opens the body. An integer literal does
+/// too, so that one too large for an `i64` gets its own error, not a range with no end.
+fn range_end_starts(kind: &TokenKind, header: bool) -> bool {
+    starts_operand(kind)
+        || (*kind == TokenKind::LBrace && !header)
+        || matches!(kind, TokenKind::Int(_))
+}
+
 /// Whether `kind` begins an operand that `unary` and `primary` take. A `_`, a leading `.` and
 /// the magnitude of `i64::MIN` start no operand: they are errors there. A `{` does not count:
 /// after an operator it opens the body of an `if`, `while`, `for` or `match` more often than a
@@ -515,8 +526,12 @@ struct Parser<'a> {
     comments: &'a [usize],
     /// Where each line break is.
     breaks: &'a [usize],
-    /// The error of each bad format spec so far that no broken item took.
-    specs: Vec<Diagnostic>,
+    /// The error of each bad format spec and each range written with `:` so far that no broken
+    /// item took. The parser went on, so no other error follows them.
+    recovered: Vec<Diagnostic>,
+    /// Whether the parser reads the head of a `for`, `if`, `while` or `match`, outside any
+    /// bracket or block in it. There, a `{` after `..` opens the body, not the end of the range.
+    header: bool,
     /// The lexer's warnings, which `program` reports whether or not their item is broken.
     warnings: Vec<Diagnostic>,
     /// The loop labels open around the next token, innermost last: from each one's `name:` to the
@@ -1169,7 +1184,7 @@ impl<'a> Parser<'a> {
             }
             self.skip_newlines();
         }
-        diagnostics.append(&mut self.specs);
+        diagnostics.append(&mut self.recovered);
         diagnostics.append(&mut self.warnings);
         // An unnamed item starts where its line does, inside the item before, so items may overlap.
         debug_assert!(rising(&covered), "the covered spans should rise");
@@ -1389,15 +1404,15 @@ impl<'a> Parser<'a> {
         parse: impl FnOnce(&mut Self) -> Result<T, Diagnostic>,
     ) -> Result<T, Diagnostic> {
         let bytes = self.bytes(self.pos, end);
-        let specs = self.specs.len();
+        let recovered = self.recovered.len();
         let parsed = parse(self);
         let lexed = self.lexer_in(bytes).next().cloned();
         if let (Ok(_), None) = (&parsed, &lexed) {
             return parsed;
         }
         let error = self
-            .specs
-            .drain(specs..)
+            .recovered
+            .drain(recovered..)
             .chain(lexed)
             .chain(parsed.err())
             .reduce(earlier)
@@ -1419,7 +1434,7 @@ impl<'a> Parser<'a> {
         ) -> Result<Item, Diagnostic>,
     ) -> Result<(Item, Vec<Diagnostic>), Diagnostic> {
         let bytes = self.bytes(self.pos, end);
-        let specs = self.specs.len();
+        let recovered = self.recovered.len();
         let mut errors = Vec::new();
         let mut methods = Vec::new();
         let parsed = body(self, &mut errors, &mut methods);
@@ -1434,7 +1449,7 @@ impl<'a> Parser<'a> {
                 self.pos = end;
                 let error = errors
                     .into_iter()
-                    .chain(self.specs.drain(specs..))
+                    .chain(self.recovered.drain(recovered..))
                     .chain(outside)
                     .chain(parsed.err())
                     .reduce(earlier)
@@ -1776,7 +1791,8 @@ impl<'a> Parser<'a> {
             lexer: self.lexer,
             comments: self.comments,
             breaks: self.breaks,
-            specs: Vec::new(),
+            recovered: Vec::new(),
+            header: false,
             warnings: Vec::new(),
             labels: Vec::new(),
             prelude: self.prelude,
@@ -2131,6 +2147,11 @@ impl<'a> Parser<'a> {
     }
 
     fn block(&mut self) -> Result<Block, Diagnostic> {
+        self.headed(false, Self::block_inside)
+    }
+
+    /// `block`, with `header` already cleared.
+    fn block_inside(&mut self) -> Result<Block, Diagnostic> {
         self.descend()?;
         let base = self.depth;
         let mut reach = base;
@@ -2191,7 +2212,7 @@ impl<'a> Parser<'a> {
                         body: self.child(base, &mut reach, Self::block)?,
                     }
                 } else {
-                    let cond = self.child(base, &mut reach, Self::expr)?;
+                    let cond = self.child(base, &mut reach, |p| p.headed(true, Self::expr))?;
                     StmtKind::While {
                         label,
                         keyword,
@@ -2204,25 +2225,15 @@ impl<'a> Parser<'a> {
                 let keyword = self.bump().span;
                 let name = self.binding()?;
                 self.expect(&TokenKind::In)?;
-                // A range is only valid here, so the header reads its two sides itself, counted
-                // like `expr` does.
-                let side = |p: &mut Self| {
-                    p.descend()?;
-                    p.binary(1)
-                };
-                let first = self.child(base, &mut reach, side)?;
-                let source = match self.range_op() {
-                    None => ForSource::Array(first),
-                    Some(RangeOp::Foreign { at, lt }) => {
-                        // Reported even when the end does not parse.
-                        let end = self.child(base, &mut reach, side).ok().map(|e| e.span);
-                        return Err(self.foreign_range(at, lt, first.span, end, true));
-                    }
-                    Some(op) => ForSource::Range {
-                        start: first,
-                        end: self.child(base, &mut reach, side)?,
-                        inclusive: matches!(op, RangeOp::Inclusive),
-                    },
+                // Another language's range has a fix only here: the checker takes this range.
+                let source =
+                    self.child(base, &mut reach, |p| p.headed(true, |p| p.range_expr(true)))?;
+                let source = match source {
+                    Expr {
+                        kind: ExprKind::Range(range),
+                        ..
+                    } => ForSource::Range(range),
+                    array => ForSource::Array(array),
                 };
                 StmtKind::For {
                     label,
@@ -2502,7 +2513,7 @@ impl<'a> Parser<'a> {
         let mut reach = base;
         let pattern = self.child(base, &mut reach, Self::pattern)?;
         self.expect(&TokenKind::Eq)?;
-        let value = self.child(base, &mut reach, Self::expr)?;
+        let value = self.child(base, &mut reach, |p| p.headed(true, Self::expr))?;
         self.depth = reach;
         Ok(Some((pattern, value)))
     }
@@ -2950,9 +2961,9 @@ impl<'a> Parser<'a> {
         };
         let switch = match &tail.kind {
             ExprKind::Name(name) if name.as_str() == "switch" => {
-                let specs = self.specs.len();
+                let recovered = self.recovered.len();
                 let expr = self.expr().is_ok();
-                self.specs.truncate(specs);
+                self.recovered.truncate(recovered);
                 expr.then_some(tail.span)
             }
             ExprKind::Call { callee, .. } if callee.name.as_str() == "switch" => Some(callee.span),
@@ -3006,7 +3017,7 @@ impl<'a> Parser<'a> {
         let keyword = self.bump().span;
         let base = self.depth;
         let mut reach = base;
-        let scrutinee = self.child(base, &mut reach, Self::expr)?;
+        let scrutinee = self.child(base, &mut reach, |p| p.headed(true, Self::expr))?;
         self.expect(&TokenKind::LBrace)?;
         self.skip_newlines();
         let mut arms = Vec::new();
@@ -3205,8 +3216,12 @@ impl<'a> Parser<'a> {
         if matches!(target.kind, ExprKind::SelfValue) {
             return Err(DiagnosticKind::AssignToSelf { at: target.span }.into());
         }
-        if !is_place(&target) {
-            return Err(DiagnosticKind::AssignToExpression { at: target.span }.into());
+        if !is_place(&target) && !is_range_target(&target) {
+            return Err(DiagnosticKind::AssignToExpression {
+                at: target.span,
+                range: None,
+            }
+            .into());
         }
         let op_span = self.bump().span;
         if let Some(error) = self.label_not_on_loop() {
@@ -3240,19 +3255,75 @@ impl<'a> Parser<'a> {
     }
 
     fn expr(&mut self) -> Result<Expr, Diagnostic> {
+        self.range_expr(false)
+    }
+
+    /// Runs `parse` with `header` set to `header`, and restores it after, also on an error.
+    fn headed<T>(&mut self, header: bool, parse: impl FnOnce(&mut Self) -> T) -> T {
+        let outer = mem::replace(&mut self.header, header);
+        let parsed = parse(self);
+        self.header = outer;
+        parsed
+    }
+
+    /// An expression, or a range `a..b`, `a..=b`, `a..`, `..b`, `..=b` or `..`, which binds looser
+    /// than every operator. The checker reports a range where it is not allowed. `source` is the
+    /// source of a `for`: only there does another language's range, such as `0..<n`, have a fix.
+    fn range_expr(&mut self, source: bool) -> Result<Expr, Diagnostic> {
         self.descend()?;
-        let e = self.binary(1)?;
-        if matches!(self.peek().kind, TokenKind::DotDot | TokenKind::DotDotEq) {
-            let at = self.peek().span;
-            return Err(match self.range_op() {
-                Some(RangeOp::Foreign { at, lt }) => {
-                    let end = self.binary(1).ok().map(|end| end.span);
-                    self.foreign_range(at, lt, e.span, end, false)
-                }
-                _ => DiagnosticKind::RangeOutsideFor { at }.into(),
-            });
+        let base = self.depth;
+        let start = if self.at_range_op() {
+            None
+        } else {
+            let start = self.binary(1)?;
+            if !self.at_range_op() {
+                return Ok(start);
+            }
+            Some(start)
+        };
+        let dots = self.peek().span;
+        let pos = self.pos;
+        let Some(op) = self.range_op() else {
+            unreachable!("the next token should be a range operator")
+        };
+        if let RangeOp::Foreign { at, lt } = op {
+            let Some(start) = start else {
+                // Nothing to write the fix from: the error is the operand that is missing.
+                self.pos = pos;
+                return self.binary(1);
+            };
+            let end = self.binary(1).ok().map(|end| end.span);
+            return Err(self.foreign_range(at, lt, start.span, end, source));
         }
-        Ok(e)
+        // The range is the parent of its bounds: one level more, as an operator is.
+        let wrapped = self.depth.link();
+        self.reach(wrapped)?;
+        self.depth = base.link();
+        let end = if range_end_starts(&self.peek().kind, self.header) {
+            Some(self.binary(1)?)
+        } else {
+            None
+        };
+        self.depth = self.depth.max(wrapped);
+        let span = start
+            .as_ref()
+            .map_or(dots, |start| start.span)
+            .to(self.last_span());
+        let range = RangeExpr {
+            start: start.map(Box::new),
+            end: end.map(Box::new),
+            inclusive: matches!(op, RangeOp::Inclusive),
+            span,
+        };
+        Ok(Expr {
+            span,
+            kind: ExprKind::Range(range),
+        })
+    }
+
+    /// Whether the next token is `..` or `..=`.
+    fn at_range_op(&self) -> bool {
+        matches!(self.peek().kind, TokenKind::DotDot | TokenKind::DotDotEq)
     }
 
     /// Precedence climbing over levels 1 to 7; `min` is the lowest level to accept.
@@ -3328,6 +3399,54 @@ impl<'a> Parser<'a> {
                 return Ok(lhs);
             }
         }
+    }
+
+    /// The index of `base[`, whose `[` is `open`, up to the `]`, and the span of the `]`. A range
+    /// written with `:`, as Python and Go write it, is reported and read as the range it names;
+    /// `[:]` gives `None`, which is the whole `base`. A step is the error of the `]` that is
+    /// missing.
+    fn index(&mut self, base: Span, open: Span) -> Result<(Option<Expr>, Span), Diagnostic> {
+        let start = if self.at(&TokenKind::Colon) {
+            None
+        } else {
+            Some(self.expr()?)
+        };
+        let Some(colon) = self.eat(&TokenKind::Colon).map(|colon| colon.span) else {
+            let close = self.expect(&TokenKind::RBracket)?.span;
+            return Ok((start, close));
+        };
+        let end = if range_end_starts(&self.peek().kind, false) {
+            Some(self.expr()?)
+        } else {
+            None
+        };
+        let close = self.expect(&TokenKind::RBracket)?.span;
+        let text =
+            |bound: &Option<Expr>| bound.as_ref().map(|e| self.source.text(e.span).to_string());
+        let form = ForeignRange::Colon {
+            base: self.source.text(base).to_string(),
+            start: text(&start),
+            end: text(&end),
+            whole: (start.is_none() && end.is_none()).then(|| open.to(close)),
+        };
+        self.recovered
+            .push(DiagnosticKind::ForeignRange { form, at: colon }.into());
+        if start.is_none() && end.is_none() {
+            return Ok((None, close));
+        }
+        let span = start.as_ref().map_or(colon, |start| start.span);
+        let span = span.to(end.as_ref().map_or(colon, |end| end.span));
+        let range = RangeExpr {
+            start: start.map(Box::new),
+            end: end.map(Box::new),
+            inclusive: false,
+            span,
+        };
+        let index = Expr {
+            span,
+            kind: ExprKind::Range(range),
+        };
+        Ok((Some(index), close))
     }
 
     /// The error for the `**` that is next, after `lhs`: the right side parses as `*`'s would,
@@ -3445,18 +3564,20 @@ impl<'a> Parser<'a> {
             let wrapped = self.depth.link();
             if self.at(&TokenKind::LBracket) {
                 self.reach(wrapped)?;
-                self.bump();
+                let open = self.bump().span;
                 self.depth = base.link();
-                let index = self.expr()?;
-                let close = self.expect(&TokenKind::RBracket)?;
+                let (index, close) = self.headed(false, |p| p.index(expr.span, open))?;
                 self.depth = self.depth.max(wrapped);
-                expr = Expr {
-                    span: expr.span.to(close.span),
-                    kind: ExprKind::Index {
-                        base: Box::new(expr),
-                        index: Box::new(index),
-                    },
-                };
+                // `xs[:]` is `xs`.
+                if let Some(index) = index {
+                    expr = Expr {
+                        span: expr.span.to(close),
+                        kind: ExprKind::Index {
+                            base: Box::new(expr),
+                            index: Box::new(index),
+                        },
+                    };
+                }
                 continue;
             }
             // `[` was handled above, so only `.` and `?.` reach here.
@@ -3663,7 +3784,7 @@ impl<'a> Parser<'a> {
             TokenKind::Todo => return self.todo(),
             TokenKind::LParen => {
                 self.bump();
-                let inner = self.expr()?;
+                let inner = self.headed(false, Self::expr)?;
                 let close = self.expect(&TokenKind::RParen)?;
                 // The parentheses are part of the span, so diagnostics underline them.
                 return Ok(Expr {
@@ -3673,7 +3794,7 @@ impl<'a> Parser<'a> {
             }
             TokenKind::LBracket => {
                 self.bump();
-                return self.array(token.span);
+                return self.headed(false, |p| p.array(token.span));
             }
             TokenKind::If => return self.if_expr(),
             TokenKind::Loop => return self.loop_expr(None),
@@ -3790,7 +3911,7 @@ impl<'a> Parser<'a> {
                 let at = self.bump().span;
                 spec = format_spec(written, at)
                     .map_err(|error| {
-                        self.specs.push(error);
+                        self.recovered.push(error);
                         bad_spec = true;
                     })
                     .ok();
@@ -3827,7 +3948,7 @@ impl<'a> Parser<'a> {
         let mut args = Vec::new();
         if !self.at(&TokenKind::RParen) {
             loop {
-                args.push(self.child(base, &mut reach, Self::arg)?);
+                args.push(self.child(base, &mut reach, |p| p.headed(false, Self::arg))?);
                 if self.eat(&TokenKind::Comma).is_none() {
                     break;
                 }
@@ -3867,7 +3988,7 @@ impl<'a> Parser<'a> {
         let mut reach = base;
         let head = match self.child(base, &mut reach, Self::let_binding)? {
             Some((pattern, value)) => Head::Let(pattern, value),
-            None => Head::Cond(self.child(base, &mut reach, Self::expr)?),
+            None => Head::Cond(self.child(base, &mut reach, |p| p.headed(true, Self::expr))?),
         };
         let then_block = self.child(base, &mut reach, Self::block)?;
         let mut end = then_block.span;
@@ -3938,11 +4059,25 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// A name, a field of any expression, or an index of a place.
+/// A name, a field of any expression, or an index of a place by an `i64`: a range index gives a
+/// new value, so it is no place.
 pub(crate) fn is_place(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Name(_) | ExprKind::Field { .. } => true,
-        ExprKind::Index { base, .. } => is_place(base),
+        ExprKind::Index { base, index } => {
+            !matches!(index.kind, ExprKind::Range(_)) && is_place(base)
+        }
+        _ => false,
+    }
+}
+
+/// A range index, or an index of one, as `xs[1..3]` and `xs[1..][0]`. It is no place, but the
+/// checker, which knows the type of `xs`, reports the assignment to it.
+fn is_range_target(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Index { base, index } => {
+            matches!(index.kind, ExprKind::Range(_)) || is_range_target(base)
+        }
         _ => false,
     }
 }
@@ -6059,7 +6194,8 @@ mod tests {
             lexer: &lexed.diagnostics,
             comments: &lexed.comments,
             breaks: &lexed.breaks,
-            specs: Vec::new(),
+            recovered: Vec::new(),
+            header: false,
             warnings: Vec::new(),
             labels: Vec::new(),
             prelude: false,
@@ -6846,7 +6982,6 @@ mod tests {
                 (2, 13),
                 None,
             ),
-            (main("let r = 0..=3"), Code::RangeOutsideFor, (2, 14), None),
             // A line that starts with `|`, `=>` or a guard's `if` continues the arm above, and
             // the fix joins it, across blank lines too, unless a comment would swallow it.
             (
@@ -7193,10 +7328,8 @@ mod tests {
     }
 
     #[test]
-    fn syntax_errors_for_arrays_and_for() {
+    fn array_and_for_syntax_errors_should_report_their_code_and_position() {
         let rows = [
-            ("let r = 0..3", Code::RangeOutsideFor, 22),
-            ("f(0..3)", Code::RangeOutsideFor, 16),
             ("for i in 0..1..2 {}", Code::Expected, 26),
             ("[1; 2, 3]", Code::Expected, 18),
             ("(1; 2)", Code::Expected, 15),
@@ -7205,6 +7338,167 @@ mod tests {
         for (src, code, col) in rows {
             assert_eq!(expr_err(src), (code, 1, col), "{src}");
         }
+    }
+
+    #[test]
+    fn range_should_parse_in_each_form() {
+        let forms = [
+            ("a..b", "(.. a b)"),
+            ("a..=b", "(..= a b)"),
+            ("a..", "(.. a _)"),
+            ("..b", "(.. _ b)"),
+            ("..=b", "(..= _ b)"),
+            ("..", "(.. _ _)"),
+            // Looser than every operator.
+            ("a + 1..b * 2", "(.. (+ a 1) (* b 2))"),
+            ("a == b..c", "(.. (== a b) c)"),
+        ];
+        for (range, want) in forms {
+            assert_eq!(expr(&format!("f({range})")), format!("(call f {want})"));
+            assert_eq!(expr(&format!("xs[{range}]")), format!("(index xs {want})"));
+        }
+    }
+
+    #[test]
+    fn brace_after_dots_should_start_the_body_in_each_header() {
+        let rows = [
+            ("for i in 0.. { }", "(for i (.. 0 _) (block))"),
+            ("if x == 0.. { }", "(if (.. (== x 0) _) (block))"),
+            ("while x == 0.. { }", "(while (.. (== x 0) _) (block))"),
+            ("match x.. { }", "(match (.. x _))"),
+            (
+                "if let Some(y) = x.. { }",
+                "(if-let (Some y) (.. x _) (block))",
+            ),
+            (
+                "while let Some(y) = x.. { }",
+                "(while-let (Some y) (.. x _) (block))",
+            ),
+        ];
+        for (src, want) in rows {
+            assert_eq!(expr(src), want, "{src}");
+        }
+    }
+
+    #[test]
+    fn brace_after_dots_should_be_an_end_inside_brackets() {
+        let rows = [
+            (
+                "if xs[0..{ 2 }].len() == 2 { }",
+                "(if (== (call (. (index xs (.. 0 (block 2))) len)) 2) (block))",
+            ),
+            (
+                "while f(0..{ 2 }) { }",
+                "(while (call f (.. 0 (block 2))) (block))",
+            ),
+            (
+                "let r = xs[0..{ 2 }]",
+                "(let r (index xs (.. 0 (block 2))))",
+            ),
+            (
+                "if { let r = 0..{ 2 }; true } { }",
+                "(if (block (let r (.. 0 (block 2))) true) (block))",
+            ),
+        ];
+        for (src, want) in rows {
+            assert_eq!(expr(src), want, "{src}");
+        }
+    }
+
+    /// The header flag is restored when a header fails to parse, so the next item reads a block
+    /// as an end again.
+    #[test]
+    fn brace_after_dots_should_be_an_end_after_an_error_in_a_header() {
+        let parsed = parsed("fn f() { for i in 0..* {} }\nfn main() { let r = 0..{ 2 } }");
+        let [d] = parsed.diagnostics.as_slice() else {
+            panic!("expected one diagnostic, got {:?}", parsed.diagnostics);
+        };
+        assert_eq!(
+            line_col("fn f() { for i in 0..* {} }", d.span().start()),
+            (1, 22)
+        );
+    }
+
+    #[test]
+    fn range_end_should_keep_the_literal_error() {
+        assert_eq!(
+            expr_err("f(0..9223372036854775808)"),
+            (Code::IntegerTooLarge, 1, 18)
+        );
+    }
+
+    /// `xs[1:3]` in Python and Go: each form is one E0132 at the `:`, with a safe fix, and the
+    /// range it names for the checker. A step is E0011.
+    #[test]
+    fn colon_slice_should_recover_as_the_range_it_names() {
+        let rows = [
+            ("xs[1:3]", (1, 17), "(index xs (.. 1 3))", "xs[1..3]"),
+            ("xs[1:]", (1, 17), "(index xs (.. 1 _))", "xs[1..]"),
+            ("xs[:3]", (1, 16), "(index xs (.. _ 3))", "xs[..3]"),
+            ("xs[:]", (1, 16), "xs", "xs"),
+            (
+                "f()[1:n]",
+                (1, 18),
+                "(index (call f) (.. 1 n))",
+                "f()[1..n]",
+            ),
+        ];
+        for (src, at, tree, fixed) in rows {
+            let program = format!("fn main() {{ {src} }}");
+            let parsed = parsed(&program);
+            let [d] = parsed.diagnostics.as_slice() else {
+                panic!(
+                    "{src}: expected one diagnostic, got {:?}",
+                    parsed.diagnostics
+                );
+            };
+            assert_eq!(d.code(), Code::ForeignRange, "{src}");
+            assert_eq!(line_col(&program, d.span().start()), at, "{src}");
+            let (safe, _) = fix_edits(d).expect("the colon form has a fix");
+            assert!(safe, "{src}");
+            assert_eq!(apply_fix(&program, d), format!("fn main() {{ {fixed} }}"));
+            let Some(Item::Function(f)) = parsed.program.items.first() else {
+                panic!("{src}: expected a function");
+            };
+            assert_eq!(f.body.stmts[0].to_string(), tree, "{src}");
+        }
+        for src in ["xs[::2]", "xs[1:2:3]", "xs[1::2]"] {
+            assert_eq!(expr_err(src).0, Code::Expected, "{src}");
+        }
+    }
+
+    fn statement_place(src: &str) -> bool {
+        let f = first_fn(&format!("fn main() {{ {src} }}"));
+        let StmtKind::Expr(e) = &f.body.stmts[0].kind else {
+            panic!("{src}: expected an expression");
+        };
+        is_place(e)
+    }
+
+    #[test]
+    fn range_index_should_not_be_a_place() {
+        assert!(!statement_place("xs[1..3]"));
+        assert!(!statement_place("xs[1..][0]"));
+        // A field of an element of a range index is the shared object's, as for a class element.
+        assert!(statement_place("xs[..1][0].n"));
+        assert!(statement_place("xs[0]"));
+    }
+
+    #[test]
+    fn range_target_should_parse_as_an_assignment() {
+        let rows = [
+            ("xs[0..2] = [7, 8]", "(= (index xs (.. 0 2)) (array 7 8))"),
+            ("xs[1..][0] += 5", "(+= (index (index xs (.. 1 _)) 0) 5)"),
+            ("s[0..=1] += \"x\"", "(+= (index s (..= 0 1)) \"x\")"),
+            (
+                "xs[..1][0].n = 9",
+                "(= (. (index (index xs (.. _ 1)) 0) n) 9)",
+            ),
+        ];
+        for (src, want) in rows {
+            assert_eq!(expr(src), want, "{src}");
+        }
+        assert_eq!(expr_err("f() = 1").0, Code::AssignToExpression);
     }
 
     #[test]

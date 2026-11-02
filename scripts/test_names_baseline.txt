@@ -1389,7 +1389,6 @@ crates/sisuc/src/parser.rs::semicolon_beside_a_continuation
 crates/sisuc/src/parser.rs::semicolon_elsewhere_is_an_expected_error
 crates/sisuc/src/parser.rs::semicolon_in_an_interpolation_is_an_error
 crates/sisuc/src/parser.rs::semicolon_mid_line_separates
-crates/sisuc/src/parser.rs::syntax_errors_for_arrays_and_for
 crates/sisuc/src/parser.rs::todo_bang_after_many_lines
 crates/sisuc/src/parser.rs::todo_bang_on_the_next_line
 crates/sisuc/src/parser.rs::todo_fix_before_a_word_is_unsafe

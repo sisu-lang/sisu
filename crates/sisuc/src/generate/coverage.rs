@@ -63,6 +63,10 @@ const EXCLUDED: &[(&str, &str)] = &[
         "a named range bound is an error (E0126)",
     ),
     (
+        "ast::ExprKind::Range",
+        "a range is only a `for` source or an index until Task 3 of the slices plan writes a range index",
+    ),
+    (
         "ast::Part.bad_spec = true",
         "only a format spec with an error sets it",
     ),
@@ -1488,15 +1492,15 @@ impl Walk {
                 }
                 self.ast_expr(array);
             }
-            ast::ForSource::Range {
-                start,
-                end,
-                inclusive,
-            } => {
+            ast::ForSource::Range(range) => {
                 self.mark("ast::ForSource::Range");
-                let runs = int(start)
-                    .zip(int(end))
-                    .map(|(start, end)| end - start + i128::from(*inclusive));
+                self.ast_range(range);
+                let runs = match (&range.start, &range.end) {
+                    (Some(start), Some(end)) => int(start)
+                        .zip(int(end))
+                        .map(|(start, end)| end - start + i128::from(range.inclusive)),
+                    _ => None,
+                };
                 match runs {
                     Some(runs) if runs <= i128::from(MAX_BOUND) => {
                         if runs > 0 {
@@ -1505,14 +1509,19 @@ impl Walk {
                     }
                     _ => self
                         .unbounded
-                        .push(format!("a `for` at byte {}", start.span.start())),
+                        .push(format!("a `for` at byte {}", range.span.start())),
                 }
-                self.mark(&format!("ast::ForSource::Range.inclusive = {inclusive}"));
-                self.ast_expr(start);
-                self.ast_expr(end);
             }
         }
         self.ast_block(body);
+    }
+
+    /// The bounds of a range, and whether it is inclusive.
+    fn ast_range(&mut self, range: &ast::Range) {
+        self.mark(&format!("ast::Range.inclusive = {}", range.inclusive));
+        for bound in [&range.start, &range.end].into_iter().flatten() {
+            self.ast_expr(bound);
+        }
     }
 
     fn ast_let(&mut self, mutable: bool, name: &str, ty: Option<&ast::TypeExpr>, init: &ast::Expr) {
@@ -1876,6 +1885,10 @@ impl Walk {
                 }
                 self.ast_expr(base);
                 self.ast_expr(index);
+            }
+            ast::ExprKind::Range(range) => {
+                self.mark("ast::ExprKind::Range");
+                self.ast_range(range);
             }
             ast::ExprKind::Is { lhs, rhs } => {
                 self.mark("ast::ExprKind::Is");

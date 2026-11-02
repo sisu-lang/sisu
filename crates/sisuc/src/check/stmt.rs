@@ -15,7 +15,7 @@ use super::{
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{
-    ClashForm, ClashKind, DiagnosticKind, MismatchSource, Unwrap, UnwrapHelp, closest,
+    ClashForm, ClashKind, DiagnosticKind, MismatchSource, RangePlace, Unwrap, UnwrapHelp, closest,
 };
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -531,11 +531,7 @@ impl Checker<'_> {
         let expr = |kind, ty| tir::Expr::new(kind, ty, span);
         let (header, bound) = self.in_header(keyword, label.cloned(), |c| match source {
             ast::ForSource::Array(e) => c.for_array(span, e),
-            ast::ForSource::Range {
-                start,
-                end,
-                inclusive,
-            } => c.for_range(span, start, end, *inclusive),
+            ast::ForSource::Range(range) => c.for_range(span, range),
         });
         let frame = LoopFrame::new(LoopKind::For, keyword, label.cloned(), None);
         let ((x, checked), _) = self.loop_body(frame, |c| {
@@ -703,13 +699,17 @@ impl Checker<'_> {
 
     /// The header of `for x in start..end`, or `start..=end` when `inclusive`, and the type of
     /// `x`, `i64`.
-    fn for_range(
-        &mut self,
-        span: Span,
-        start: &ast::Expr,
-        end: &ast::Expr,
-        inclusive: bool,
-    ) -> (Option<ForHeader>, Option<Type>) {
+    fn for_range(&mut self, span: Span, range: &ast::Range) -> (Option<ForHeader>, Option<Type>) {
+        let inclusive = range.inclusive;
+        let (Some(start), Some(end)) = (&range.start, &range.end) else {
+            // A bound is missing: one report, and the bound that is there checks itself.
+            let d = self.range_outside(range, RangePlace::ForSource);
+            self.diagnostics.push(d);
+            for bound in [&range.start, &range.end].into_iter().flatten() {
+                drop(self.expect(bound, Some(Type::I64)));
+            }
+            return (None, Some(Type::I64));
+        };
         let start = self.expect(start, Some(Type::I64));
         let end = self.expect(end, Some(Type::I64));
         let counter = self.fresh_var(Type::I64);

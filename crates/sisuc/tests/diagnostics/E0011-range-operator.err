@@ -1,8 +1,0 @@
-error[E0011]: expected an expression, found `..=`
- --> E0011-range-operator.sisu:2:13
-  |
-2 |     let x = ..= 3
-  |             ^^^
-
-sisu: 1 error
-sisu: for more on a code, run `sisu explain <code>`: E0011

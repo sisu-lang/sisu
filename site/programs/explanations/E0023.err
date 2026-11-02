@@ -1,8 +1,8 @@
-error[E0023]: ranges are only allowed in `for` and in patterns
- --> E0023.sisu:2:14
+error[E0023]: a range can only be a `for` source, a pattern, an index or a string's `get` argument
+ --> E0023.sisu:2:13
   |
 2 |     let r = 0..3
-  |              ^^
+  |             ^^^^
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0023

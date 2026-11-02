@@ -33,7 +33,7 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0019](E0019.md) | error | `mut` parameter |
 | [E0020](E0020.md) | error | `self` that is not the first parameter |
 | [E0021](E0021.md) | error | assignment to something that is not a place |
-| [E0023](E0023.md) | error | range outside `for` and patterns |
+| [E0023](E0023.md) | error | range outside a `for`, a pattern, an index or a string's `get` |
 | [E0024](E0024.md) | error | chained `==`, `!=` or `is` |
 | [E0025](E0025.md) | error | comparison chain that turns around |
 | [E0026](E0026.md) | error | name taken by a built-in |

@@ -1,0 +1,10 @@
+error[E0021]: cannot assign to this expression
+ --> E0021-range-compound.sisu:4:5
+  |
+4 |     xs[1..][0] += 5
+  |     ^^^^^^^ a range index gives a new value
+  |
+  = help: write `xs[1 + 0] += 5`; a range index counts from its start
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0021

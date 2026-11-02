@@ -1,0 +1,5 @@
+const r = 1..
+
+fn main() {
+    print(1)
+}

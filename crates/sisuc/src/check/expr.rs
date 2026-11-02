@@ -6,7 +6,7 @@ use super::generic::Site;
 use super::{Checked, Checker, Poisoned, UNKNOWN, payload, tail, type_of, wrap};
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
-    Definition, Diagnostic, DiagnosticKind, Literal, MismatchSource, suggestion,
+    Definition, Diagnostic, DiagnosticKind, Literal, MismatchSource, RangePlace, suggestion,
 };
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -117,6 +117,11 @@ impl Checker<'_> {
             ExprKind::ArrayLit(elements) => self.array_lit(e.span, elements, expected),
             ExprKind::ArrayFill { value, len } => self.array_fill(e.span, value, len, expected),
             ExprKind::Index { base, index } => self.index(e.span, base, index),
+            ExprKind::Range(range) => {
+                let d = self.range_outside(range, RangePlace::Elsewhere);
+                self.diagnostics.push(d);
+                Err(Poisoned::error())
+            }
             ExprKind::NoneLit => self.none(e.span, expected),
             ExprKind::Name(name) => self.name(e.span, *name),
             ExprKind::Call {

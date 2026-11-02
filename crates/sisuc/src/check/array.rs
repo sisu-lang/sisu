@@ -478,6 +478,9 @@ impl Checker<'_> {
 
     /// `base[index]`: `base` is an array, not an optional one, and `index` an `i64`.
     pub(super) fn index(&mut self, span: Span, base: &ast::Expr, index: &ast::Expr) -> Checked {
+        if let ast::ExprKind::Range(range) = &index.kind {
+            return self.range_index(base, range);
+        }
         let outer = std::mem::replace(&mut self.body.indexed, true);
         let checked = self.value(base, None);
         let element = self.element(base, type_of(&checked));

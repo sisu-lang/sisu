@@ -117,6 +117,9 @@ impl Checker<'_> {
         target: &ast::Expr,
         value: &ast::Expr,
     ) -> Result<tir::Stmt, Poisoned> {
+        if let Some(reported) = self.assign_to_range(target, None, value) {
+            return reported;
+        }
         let place = self.place(span, target, Change::Assign);
         if let (Some(want), Some(text)) = (place.ty, &place.shown) {
             self.show(value.span, want, text);
@@ -407,6 +410,9 @@ impl Checker<'_> {
         value: &ast::Expr,
     ) -> Result<tir::Stmt, Poisoned> {
         let unit = || Poisoned::typed(Type::UNIT);
+        if let Some(reported) = self.assign_to_range(target, Some(op), value) {
+            return reported;
+        }
         if let ast::ExprKind::Name(name) = target.kind {
             // The target is checked as a value only to give its value back to it: no read.
             let outer = self.body.quiet.replace(target.span);
@@ -606,7 +612,7 @@ impl Checker<'_> {
 
     /// Stamps what the place `target` of a `push` writes, as `place` stamps a write. A binding at
     /// the root of a chain of indexes is reassigned. The root of a field's base is written.
-    fn stamp_push(&mut self, target: &ast::Expr) {
+    pub(super) fn stamp_push(&mut self, target: &ast::Expr) {
         let mut root = target;
         while let ast::ExprKind::Index { base, .. } = &root.kind {
             root = base;

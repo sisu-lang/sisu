@@ -1,0 +1,14 @@
+error[E0132]: write `xs`
+ --> E0132-colon-whole.sisu:3:14
+  |
+3 |     print(xs[:])
+  |              ^
+  |
+help: remove the `[:]`
+  |
+3 -     print(xs[:])
+3 +     print(xs)
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0132

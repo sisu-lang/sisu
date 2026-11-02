@@ -24,6 +24,7 @@ mod optional;
 mod pattern;
 mod place;
 mod prelude;
+mod range;
 mod recursion;
 mod stmt;
 mod string;

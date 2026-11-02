@@ -548,6 +548,7 @@ fn single_term(e: &ast::Expr) -> bool {
         // A `bool`, which no conversion holds: never reached, and grouping is always right.
         ExprKind::Is { .. } | ExprKind::Compare { .. } => false,
         ExprKind::Unary { operand, .. } => e.span.end() != operand.span.end(),
+        ExprKind::Range(range) => e.span != range.span,
         ExprKind::Block(block) => e.span != block.span,
         ExprKind::Loop { body, .. } => e.span.end() != body.span.end(),
         // The keyword starts it, unless parentheses do.
