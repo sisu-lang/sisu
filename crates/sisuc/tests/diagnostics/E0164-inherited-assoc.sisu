@@ -1,0 +1,15 @@
+interface Holds {
+    type Item
+}
+
+interface Plain: Holds {
+    fn first(self) -> i64
+}
+
+fn _show(_xs: [any Plain]) {
+    print(1)
+}
+
+fn main() {
+    print(2)
+}

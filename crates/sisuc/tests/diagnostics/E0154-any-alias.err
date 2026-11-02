@@ -1,0 +1,11 @@
+error[E0154]: `Key` does not conform to `Eq`
+ --> E0154-any-alias.sisu:9:13
+  |
+1 | interface Keyed<T: Eq> {}
+  |                    -- required by this bound
+...
+9 |     let _b: ByKey<Key>? = None
+  |             ^^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154

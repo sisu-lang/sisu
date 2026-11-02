@@ -317,6 +317,8 @@ impl Clobbers {
                             false
                         }
                         Rvalue::Call { .. }
+                        | Rvalue::DynCall { .. }
+                        | Rvalue::ToAny(_)
                         | Rvalue::Use(_)
                         | Rvalue::Copy(_)
                         | Rvalue::CopyStr(_)
@@ -754,7 +756,7 @@ fn rvalue<'a>(
 ) {
     match value {
         // `l = use op` makes `l` own what `op` hands on.
-        Rvalue::Use(op) | Rvalue::Unwrap(op) | Rvalue::Wrap(op) => {
+        Rvalue::Use(op) | Rvalue::Unwrap(op) | Rvalue::Wrap(op) | Rvalue::ToAny(op) => {
             consumed(op, lowered, f);
         }
         Rvalue::Chars(op)
@@ -783,6 +785,15 @@ fn rvalue<'a>(
                     Operand::Move(local) if borrowed => f(*local, Effect::ReadInPlace, None),
                     _ if borrowed => operand(op, lowered, f),
                     _ => consumed(op, lowered, f),
+                }
+            }
+        }
+        // The receiver is read in place and stays with the caller; the others are consumed.
+        Rvalue::DynCall { args, .. } => {
+            if let Some((receiver, rest)) = args.split_first() {
+                operand(receiver, lowered, f);
+                for op in rest {
+                    consumed(op, lowered, f);
                 }
             }
         }

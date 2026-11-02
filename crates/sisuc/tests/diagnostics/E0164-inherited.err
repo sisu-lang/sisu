@@ -1,0 +1,10 @@
+error[E0164]: `Sorted` cannot be used as `any Sorted`: it inherits `Ord`, whose `less` takes another `Self`
+ --> E0164-inherited.sisu:5:20
+  |
+5 | fn _show(_xs: [any Sorted]) {
+  |                    ^^^^^^ used after `any` here
+  |
+  = help: use a type parameter: `T: Sorted`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0164

@@ -95,6 +95,8 @@ pub(super) enum HeapBlock<'a, 'ctx> {
     String { cap: IntValue<'ctx> },
     /// A box of the enum.
     Box(EnumId),
+    /// The counted box that holds a value of this type in an `any` value: see `value_box`.
+    Value(Type),
     /// The pending pairs of an `eq_component` helper, with room for `cap` of them.
     Pending { cap: IntValue<'ctx> },
 }
@@ -117,6 +119,9 @@ pub(super) enum Storage {
     Int(u32),
     /// The layout of the enum, with the empty value in its tag.
     Tag(EnumId),
+    /// The pair of an `any` value: the data pointer is `null` when empty, and the table pointer
+    /// is then `null` too. It has no other spare value.
+    Pair,
 }
 
 /// The niche of an optional of a value whose own niche is `niche`: the next spare value, when it
@@ -125,7 +130,7 @@ pub(super) fn next_niche(program: &Program, niche: Niche) -> Option<Niche> {
     let Niche { storage, empty } = niche;
     let empty = empty + 1;
     let fits = match storage {
-        Storage::Pointer => false,
+        Storage::Pointer | Storage::Pair => false,
         Storage::Int(bits) => empty < 1 << bits,
         Storage::Tag(id) => empty < 1 << tag_bits(program.enums[id.0].variants.len()),
     };
@@ -147,6 +152,8 @@ impl<'ctx> Codegen<'ctx, '_> {
                 Some(self.context.ptr_type(AddressSpace::default()).into())
             }
             TypeKind::Enum(id, _) => Some(self.enum_layout(id).ty),
+            // The pointer to the data, then the pointer to the table.
+            TypeKind::Any(..) => Some(self.any_type().into()),
             TypeKind::Param(..) => {
                 panic!("mono should replace every type parameter before codegen")
             }
@@ -169,6 +176,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     pub(super) fn niche(&self, payload: Type) -> Option<Niche> {
         let (storage, empty) = match payload.kind() {
             TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) => (Storage::Pointer, 0),
+            TypeKind::Any(..) => (Storage::Pair, 0),
             TypeKind::Char => (Storage::Int(32), 0x11_0000),
             TypeKind::Bool => (Storage::Int(8), 2),
             TypeKind::Enum(id, _) => return self.enum_layout(id).niche,
@@ -192,6 +200,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 .expect("a niche should be an `i8` or an `i32`, which LLVM has")
                 .into(),
             Storage::Tag(id) => self.enum_layout(id).ty,
+            Storage::Pair => self.any_type().into(),
         }
     }
 
@@ -224,7 +233,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// storage after it.
     pub(super) fn empty_value(&self, Niche { storage, empty }: Niche) -> BasicValueEnum<'ctx> {
         match storage {
-            Storage::Pointer => self.niche_type(storage).const_zero(),
+            Storage::Pointer | Storage::Pair => self.niche_type(storage).const_zero(),
             Storage::Int(_) => self
                 .niche_type(storage)
                 .into_int_type()
@@ -297,6 +306,17 @@ impl<'ctx> Codegen<'ctx, '_> {
                 return self
                     .builder
                     .build_is_not_null(value.into_pointer_value(), name)
+                    .expect(POSITIONED);
+            }
+            Storage::Pair => {
+                let data = self
+                    .builder
+                    .build_extract_value(value.into_struct_value(), 0, "data")
+                    .expect("an `any` value should be a pair of pointers")
+                    .into_pointer_value();
+                return self
+                    .builder
+                    .build_is_not_null(data, name)
                     .expect(POSITIONED);
             }
             Storage::Int(_) => value.into_int_value(),
@@ -571,6 +591,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         match *block {
             HeapBlock::Class(id) => abi(&self.classes[id.0].ty),
             HeapBlock::Box(inner) => abi(&self.enums[inner.0].boxed),
+            HeapBlock::Value(ty) => abi(&self.value_box(ty)),
             // A capacity that reaches here passed the size checks, or is a literal's or an
             // existing block's.
             HeapBlock::Array { layout, cap } => {

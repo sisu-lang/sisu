@@ -1,0 +1,10 @@
+error[E0148]: `any Shape` is an interface value, not an interface
+  --> E0148-any-value.sisu:13:12
+   |
+13 | fn size<T: any Shape>(_shape: T) -> i64 {
+   |            ^^^^^^^^^
+   |
+   = help: name the interface without `any`: `Shape`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0148

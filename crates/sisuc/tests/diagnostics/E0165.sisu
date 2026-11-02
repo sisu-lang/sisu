@@ -1,0 +1,8 @@
+interface Observer {
+    fn notify(self)
+}
+
+fn main() {
+    let watcher: any Observer? = None
+    print(1)
+}

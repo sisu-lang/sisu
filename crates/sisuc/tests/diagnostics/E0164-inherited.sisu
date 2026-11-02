@@ -1,0 +1,11 @@
+interface Sorted: Ord {
+    fn first(self) -> i64
+}
+
+fn _show(_xs: [any Sorted]) {
+    print(1)
+}
+
+fn main() {
+    print(2)
+}

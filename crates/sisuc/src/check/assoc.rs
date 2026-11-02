@@ -398,7 +398,8 @@ impl Checker<'_> {
         match ty.kind() {
             TypeKind::Param(_, place) => self.param_interfaces(place as usize).to_vec(),
             TypeKind::Assoc(..) => self.assoc_interfaces(ty).to_vec(),
-            _ => unreachable!("only a type parameter or an associated type has bounds"),
+            TypeKind::Any(..) => self.any_interfaces(ty).to_vec(),
+            _ => unreachable!("only a type parameter, an associated type or an `any` has bounds"),
         }
     }
 

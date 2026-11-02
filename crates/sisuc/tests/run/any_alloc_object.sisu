@@ -1,0 +1,25 @@
+fn iterations() -> i64 { 1000 }
+
+// A class object converts to `any Shape` with no allocation: the `any` value holds the object
+// itself, and each copy of `c` only adds 1 to its count.
+interface Shape {
+    fn size(self) -> i64
+}
+
+class Circle: Shape {
+    r: i64
+
+    fn size(self) -> i64 {
+        self.r
+    }
+}
+
+fn main() {
+    let c = Circle(r: 2)
+    let mut total = 0
+    for _ in 0..iterations() {
+        let s: any Shape = c
+        total += s.size()
+    }
+    print(total) // 2000 (0 with no iterations)
+}

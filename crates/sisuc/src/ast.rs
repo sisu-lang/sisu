@@ -263,7 +263,7 @@ impl TypeExpr {
                     arg.member_roots(out);
                 }
             }
-            TypeKind::Array(element) => element.member_roots(out),
+            TypeKind::Array(element) | TypeKind::Any(element) => element.member_roots(out),
             TypeKind::Name(_) | TypeKind::SelfType => {}
         }
     }
@@ -274,7 +274,7 @@ impl TypeExpr {
         match &self.kind {
             TypeKind::Member { .. } => true,
             TypeKind::Applied(applied) => applied.args.iter().any(TypeExpr::names_member),
-            TypeKind::Array(element) => element.names_member(),
+            TypeKind::Array(element) | TypeKind::Any(element) => element.names_member(),
             TypeKind::Name(_) | TypeKind::SelfType => false,
         }
     }
@@ -294,6 +294,9 @@ pub(crate) enum TypeKind {
         base: Box<TypeExpr>,
         name: Ident,
     },
+    /// `any I` or `any I<A>`, a value of any type that conforms to the interface. The inner type
+    /// is the interface, a `Name` or an `Applied`, with no `?`.
+    Any(Box<TypeExpr>),
 }
 
 /// `Name<A, B>`; at least one argument. `angles` is `<` through `>`.
@@ -743,6 +746,9 @@ impl fmt::Display for TypeExpr {
             TypeKind::Array(element) => write!(f, "[{element}]")?,
             TypeKind::SelfType => f.write_str("Self")?,
             TypeKind::Member { base, name } => write!(f, "{base}.{}", name.name)?,
+            // Parentheses only where a `?` follows: `any I?` is not written.
+            TypeKind::Any(interface) if self.optional > 0 => write!(f, "(any {interface})")?,
+            TypeKind::Any(interface) => write!(f, "any {interface}")?,
         }
         for _ in 0..self.optional {
             f.write_str("?")?;

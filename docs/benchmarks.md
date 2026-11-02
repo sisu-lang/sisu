@@ -520,6 +520,7 @@ This table lists each feature or path and the benchmark that measures it:
 | A match that takes boxes apart and builds new ones of the same enum | tree_rewrite |
 | Text scanned from `bytes()` into a boxed tree, rewritten and evaluated | interp |
 | Calls through a bound, static at two conforming classes, and an associated type read through a bound | interfaces |
+| Calls through the table of an `any Shape` over classes and enums, and the box that each enum value takes when it converts | any_shapes |
 | Printing compound values; `==` through a written `Eq` | show |
 | Lexing as a real program does it: `read_line`, `chars()`, an enum of tokens with a generated `Display`, `Stack<T>` over a linked class, an interface bound, and `push` onto arrays, on a fixed input of `.sisu` source | selfhost_lexer |
 | The front end | check_binary_trees, check_large |

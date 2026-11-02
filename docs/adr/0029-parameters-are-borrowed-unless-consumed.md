@@ -84,3 +84,11 @@ and its bindings stay borrowed.
 - In Sisu, the tail rule can make a caller's call a tail call, but it never
   bounds the stack of a recursion until releases move to a local's last use.
 - A function called through a closure keeps owned parameters (milestone 9).
+- A call through the table of an `any` value (`DynCall` in mir) has a fixed convention in place of
+  an inferred one, since no single callee stands behind it. The receiver is borrowed: the caller
+  keeps the `any` value, and a receiver that it reads from a `mut` field or from an element is
+  copied first, as for any borrowed argument there. Every other argument is owned. The entry of
+  the table adapts to the concrete method's own flags: it copies the receiver when the method
+  owns `self`, passes on each argument that the method owns, and releases each argument that the
+  method only borrows, after the call, because the caller of a borrowing method holds its
+  arguments for the whole call.

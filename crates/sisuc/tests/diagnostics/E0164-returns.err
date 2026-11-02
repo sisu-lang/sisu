@@ -1,0 +1,10 @@
+error[E0164]: `Copy2` cannot be used as `any Copy2`: `copy2` returns `[Self]`
+ --> E0164-returns.sisu:5:18
+  |
+5 | fn _show(_x: any Copy2) {
+  |                  ^^^^^ used after `any` here
+  |
+  = help: use a type parameter: `T: Copy2`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0164

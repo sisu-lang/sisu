@@ -30,7 +30,7 @@ Eight small programs timed in Sisu, C, Rust, Go, Java and Python, with the numbe
   <section class="ph"><div class="w">
     <h1>How fast is Sisu?</h1>
     <p class="lede">Eight small programs, each written with the same algorithm in Sisu, C, Rust, Go, Java and Python. The numbers show where Sisu stands today, not how fast it will be.</p>
-    <p class="meta">Intel Core i9-14900K under Linux 7.0 · The commit and date are named below the table · Prose checked against the repository at commit 40ec062f</p>
+    <p class="meta">Intel Core i9-14900K under Linux 7.0 · The commit and date are named below the table · Prose checked against the repository at commit d23f67e</p>
   </div></section>
   <!-- source: docs/benchmarks.md (intro, Results) -->
 
@@ -174,7 +174,7 @@ $ make compile-speed ARGS='--check-only'
       </ul>
       <p>It runs in CodSpeed's simulation mode, which counts instructions rather than timing the run. It measures three things:</p>
       <ul>
-        <li>Seven of the programs above, all but <code>hello</code>, at reduced inputs, and eight programs that only CodSpeed runs, in <code>bench/features/</code>: <code>strings</code>, <code>enum_match</code>, <code>shared_arrays</code>, <code>compare</code>, <code>tree_rewrite</code>, <code>interp</code>, <code>interfaces</code> and <code>show</code>.</li>
+        <li>Seven of the programs above, all but <code>hello</code>, at reduced inputs, and nine programs that only CodSpeed runs, in <code>bench/features/</code>: <code>strings</code>, <code>enum_match</code>, <code>shared_arrays</code>, <code>compare</code>, <code>tree_rewrite</code>, <code>interp</code>, <code>interfaces</code>, <code>any_shapes</code> and <code>show</code>.</li>
         <li>The lexer written in Sisu, <code>selfhost/lexer.sisu</code>: <code>selfhost_lexer</code> runs its <code>-O2</code> build once on a fixed input of Sisu source, and <code>build_selfhost_lexer</code> is an <code>-O2</code> build of it.</li>
         <li>The compiler itself: an <code>-O2</code> build of <code>bench/hello</code>, a <code>sisu check</code> and an <code>-O2</code> build of <code>bench/binary_trees</code>, a <code>sisu check</code> of a generated 200-section input that uses most of the language, and an <code>-O2</code> build of a 20-section one. Pushes to <code>main</code> also build the 200-section input, from <code>codspeed-main.yml</code>.</li>
       </ul>

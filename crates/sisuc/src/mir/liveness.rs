@@ -224,6 +224,7 @@ fn rvalue(value: &Rvalue, read: &mut impl FnMut(LocalId)) {
         Rvalue::Use(op)
         | Rvalue::Unwrap(op)
         | Rvalue::Wrap(op)
+        | Rvalue::ToAny(op)
         | Rvalue::Chars(op)
         | Rvalue::Bytes(op)
         | Rvalue::Words(op)
@@ -244,6 +245,7 @@ fn rvalue(value: &Rvalue, read: &mut impl FnMut(LocalId)) {
             reuse.iter().flatten().for_each(|&token| read(token));
         }
         Rvalue::Call { args, .. }
+        | Rvalue::DynCall { args, .. }
         | Rvalue::New { args, .. }
         | Rvalue::ArrayLit(args)
         | Rvalue::Interpolate { parts: args, .. }

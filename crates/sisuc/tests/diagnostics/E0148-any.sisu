@@ -1,0 +1,8 @@
+class Circle {
+    r: f64
+}
+
+fn main() {
+    let shapes: [any Circle] = []
+    print(shapes.len())
+}

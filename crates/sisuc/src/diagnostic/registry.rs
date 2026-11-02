@@ -100,7 +100,7 @@ codes! {
     NoValue | BareBreak = "E0043",
     NeverNone = "E0044",
     IsTestsNone = "E0045",
-    IsNeedsObjects = "E0046",
+    IsNeedsObjects | AnyMayNotHold = "E0046",
     CannotCompare = "E0047",
     CoalesceNotOptional = "E0048",
     SafeAccessNotOptional = "E0049",
@@ -217,6 +217,8 @@ codes! {
     AliasCycle = "E0161",
     AliasTooLarge = "E0162",
     TooManyInstances = "E0163",
+    CannotBeAny = "E0164",
+    AnyForm = "E0165",
     NanComparison = "W0005",
     UnreachableArm = "W0006",
     RedundantSemicolon = "W0007",
@@ -374,6 +376,10 @@ pub(crate) enum DiagnosticKind {
         name: String,
         written: Option<String>,
         at: Span,
+        /// Whether the interface can be `any`, which the help then offers.
+        any: bool,
+        /// How many `?` follow the name, which the `any` the help offers must keep.
+        layers: usize,
     },
     /// The type `written` at `at`, which is a `kind` and no interface, where a bound, a
     /// conformance or an inherited interface belongs.
@@ -408,6 +414,16 @@ pub(crate) enum DiagnosticKind {
         limit: usize,
         /// Whether `limit` is the whole check's, not the written type's.
         check: bool,
+    },
+    /// `any` at `at`, written in a way that it does not take.
+    AnyForm { at: Span, form: AnyFormKind },
+    /// The interface `interface`, as written after `any` at `at`, which cannot be `any`. `owner`
+    /// is the interface that has the `reason`: `interface` itself, or one it inherits.
+    CannotBeAny {
+        interface: String,
+        owner: Option<String>,
+        reason: NotAny,
+        at: Span,
     },
     /// `mono` has made more than `limit` instances of the generic items of the program. `name` is
     /// the generic item with the most instances when `mono` stops, `count` of them. `at` is the
@@ -636,6 +652,13 @@ pub(crate) enum DiagnosticKind {
         add: Option<AddBound>,
         peel: Option<PeelIs>,
     },
+    /// An `is` whose operand at `at`, of the type `found`, which is an `any` type, may hold no
+    /// object. `make` is the interface of the program that would make it so, when it is one.
+    AnyMayNotHold {
+        found: String,
+        at: Span,
+        make: Option<String>,
+    },
     /// A comparison at `at` of a `left` with a `right`.
     CannotCompare {
         left: String,
@@ -798,11 +821,14 @@ pub(crate) enum DiagnosticKind {
         at: Span,
     },
     /// The value at `at` of an array fill, an object of `class` or an optional of one; with
-    /// `param`, `class` is a type parameter, which may be a class.
+    /// `param`, `class` is a type parameter, which may be a class, or an `any` type of an
+    /// interface that is not class-only, which may hold an object. With `any`, `class` is an
+    /// `any` type.
     SameObject {
         class: String,
         at: Span,
         param: bool,
+        any: bool,
     },
     /// An index into the value at `at`, of type `ty`, which is no array.
     CannotIndex { ty: String, at: Span },
@@ -1287,6 +1313,9 @@ pub(crate) enum Spelled {
     Operator(String),
     /// A part of an interpolation, which calls through `Display`.
     Interpolation,
+    /// The conversion of a value to the `any` type named, which calls through the interfaces of
+    /// its table.
+    Conversion(String),
     /// The generated `==` (or `to_string`, when `display`) of the enum `enum_name`, which uses a
     /// payload of type `operand`.
     Generated {
@@ -1316,6 +1345,7 @@ impl Spelled {
             Spelled::Instance(name) | Spelled::Prelude(name) => format!("`{name}`"),
             Spelled::Operator(op) => format!("`{op}`"),
             Spelled::Interpolation => "the interpolation".to_string(),
+            Spelled::Conversion(any) => format!("the conversion to `{any}`"),
             Spelled::Generated {
                 display, enum_name, ..
             } => {
@@ -1335,6 +1365,9 @@ impl Spelled {
             Spelled::Prelude(name) => {
                 Some(format!("`{name}` is a call through `{interface}`, and "))
             }
+            Spelled::Conversion(any) => Some(format!(
+                "the conversion to `{any}` is a call through `{interface}`, and "
+            )),
             Spelled::Instance(_) | Spelled::Generated { .. } => None,
         }
     }
@@ -1798,6 +1831,8 @@ pub(crate) enum NotInterface {
     TypeParam,
     Optional,
     Array,
+    /// `any I`, an interface value.
+    Any,
 }
 
 impl NotInterface {
@@ -1810,6 +1845,7 @@ impl NotInterface {
             NotInterface::TypeParam => "a type parameter",
             NotInterface::Optional => "an optional type",
             NotInterface::Array => "an array type",
+            NotInterface::Any => "an interface value",
         }
     }
 }
@@ -2089,6 +2125,35 @@ pub(crate) enum Ungenerated {
     Since(String),
 }
 
+/// Why an interface cannot be `any` (`CannotBeAny`).
+#[derive(Clone)]
+pub(crate) enum NotAny {
+    /// The requirement `method` takes the type that has it, `Self`, in a place that is not its
+    /// receiver.
+    TakesSelf { method: String },
+    /// The requirement `method` returns `ret`, which names `Self`.
+    Returns { method: String, ret: String },
+    /// The requirement `method` has type parameters of its own.
+    Generic { method: String },
+    /// The interface `owner` has the associated type `assoc`.
+    Assoc { owner: String, assoc: String },
+    /// The interface inherits `inherited`, written with its arguments, one of which names `Self`.
+    InheritsSelf { inherited: String },
+}
+
+/// How `any` is written wrongly (`AnyForm`).
+#[derive(Clone)]
+pub(crate) enum AnyFormKind {
+    /// `any I?`: `bare`, which is `written`, is `any I`, and `layers` `?` follow it.
+    Optional {
+        written: String,
+        bare: Span,
+        layers: usize,
+    },
+    /// `any A & B`, with the interfaces as written.
+    Several { first: String, second: String },
+}
+
 /// Why an `extend` block cannot extend.
 #[derive(Clone)]
 pub(crate) enum CannotExtendForm {
@@ -2105,6 +2170,8 @@ pub(crate) enum CannotExtendForm {
     },
     /// The target or an interface argument, as written, names an associated type.
     Associated,
+    /// The target is an `any` type, an interface value.
+    Any,
 }
 
 /// Why a type must conform to an interface.
@@ -2121,6 +2188,9 @@ pub(crate) enum NotConformForm {
         /// and where it is.
         needs: Option<(String, Span)>,
     },
+    /// The type is converted to `any I`, which asks for the interface. `asks` is where that `any I`
+    /// is written, when the program writes it.
+    Any { asks: Option<Span> },
     /// A bound of a declaration, written at `bound` (nowhere a user can see for the prelude's),
     /// needs it. `implied` holds the text of an associated type and of its base, when `bound` is
     /// that associated type: no one writes the bound there. `add` is the bound that a type
@@ -2173,6 +2243,9 @@ pub(crate) struct BlockNeed {
 pub(crate) enum NoOperatorForm {
     /// `==` or `!=` on a class, which compares by identity. The help shows `is` too.
     Identity { make: String },
+    /// `==` or `!=` on an `any` type, which has no `Eq`. The help shows `is` when the interface
+    /// is class-only (`is`).
+    Any { is: bool },
     /// An operator of the type, with the help to make `make` conform to `interface`; no help when
     /// the type has a conformance already.
     Operator {
@@ -2598,13 +2671,32 @@ impl From<DiagnosticKind> for Diagnostic {
                     InterfaceBodyForm::Field => d,
                 }
             }
-            DiagnosticKind::InterfaceAsType { name, written, at } => {
+            DiagnosticKind::InterfaceAsType {
+                name,
+                written,
+                at,
+                any,
+                layers,
+            } => {
                 let d = Diagnostic::coded(
                     code,
                     at,
                     format!("`{name}` is an interface, not a type"),
                 );
+                // `Shape?` takes `(any Shape)?`, which has parentheses and keeps each `?`.
+                let value = if layers == 0 {
+                    format!("any {}", written.as_deref().unwrap_or_default())
+                } else {
+                    format!(
+                        "(any {}){}",
+                        written.as_deref().unwrap_or_default(),
+                        "?".repeat(layers)
+                    )
+                };
                 match written {
+                    Some(written) if any => d.with_help(format!(
+                        "use a type parameter: `T: {written}`, or `{value}` for a value of any conforming type"
+                    )),
                     Some(written) => d.with_help(format!("use a type parameter: `T: {written}`")),
                     None => d,
                 }
@@ -2709,6 +2801,13 @@ impl From<DiagnosticKind> for Diagnostic {
                             None => d,
                         }
                     }
+                    NotConformForm::Any { asks } => match asks {
+                        Some(asks) => d.with_secondary(
+                            asks,
+                            format!("required by this `any {interface}`"),
+                        ),
+                        None => d,
+                    },
                     NotConformForm::Bound {
                         bound,
                         implied,
@@ -2785,6 +2884,12 @@ impl From<DiagnosticKind> for Diagnostic {
                     }
                     CannotExtendForm::Associated => (
                         format!("an `extend` block cannot name an associated type in `{written}`"),
+                        None,
+                    ),
+                    CannotExtendForm::Any => (
+                        format!(
+                            "`extend` takes a class or enum, and `{written}` is an interface value"
+                        ),
                         None,
                     ),
                 };
@@ -2865,6 +2970,11 @@ impl From<DiagnosticKind> for Diagnostic {
                         format!("this has type `{ty}`"),
                         Some(format!("use `a is b`, or make `{make}` conform to `Eq`")),
                     ),
+                    NoOperatorForm::Any { is } => (
+                        format!("`{ty}` has no `{op}`"),
+                        format!("this has type `{ty}`"),
+                        is.then(|| "use `a is b`".to_string()),
+                    ),
                     NoOperatorForm::Operator { make, interface } => (
                         format!("`{ty}` has no `{op}`{}", since.unwrap_or_default()),
                         format!("this has type `{ty}`"),
@@ -2918,11 +3028,19 @@ impl From<DiagnosticKind> for Diagnostic {
                      Such a field adds only the size of a pointer to the payload."
                 ))
             }
-            DiagnosticKind::NotAnInterface { written, at, kind } => Diagnostic::coded(
-                code,
-                at,
-                format!("`{written}` is {}, not an interface", kind.named()),
-            ),
+            DiagnosticKind::NotAnInterface { written, at, kind } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`{written}` is {}, not an interface", kind.named()),
+                );
+                match (kind, written.strip_prefix("any ")) {
+                    (NotInterface::Any, Some(interface)) => {
+                        d.with_help(format!("name the interface without `any`: `{interface}`"))
+                    }
+                    _ => d,
+                }
+            }
             DiagnosticKind::SelfOutside { at } => Diagnostic::coded(
                 code,
                 at,
@@ -2985,6 +3103,83 @@ impl From<DiagnosticKind> for Diagnostic {
                 },
             )
             .with_help("hold an inner part in a field of a class or an enum"),
+            DiagnosticKind::AnyForm { at, form } => match form {
+                AnyFormKind::Optional {
+                    written,
+                    bare,
+                    layers,
+                } => {
+                    let marks = "?".repeat(layers);
+                    let value = if layers == 1 {
+                        "an optional interface value".to_string()
+                    } else {
+                        format!("an interface value under {layers} optional layers")
+                    };
+                    Diagnostic::coded(code, at, format!("`{written}{marks}` needs parentheses"))
+                        .with_help(format!("write `({written}){marks}` for {value}"))
+                        .with_fix(Fix {
+                            message: "add parentheses".to_string(),
+                            safe: true,
+                            edits: vec![
+                                Edit {
+                                    span: Span::new(bare.start(), bare.start()),
+                                    replacement: "(".to_string(),
+                                },
+                                Edit {
+                                    span: Span::new(bare.end(), bare.end()),
+                                    replacement: ")".to_string(),
+                                },
+                            ],
+                        })
+                }
+                AnyFormKind::Several { first, second } => {
+                    Diagnostic::coded(code, at, "`any` takes one interface").with_help(format!(
+                        "declare an interface that inherits `{first}` and `{second}`, and use it after `any`"
+                    ))
+                }
+            },
+            DiagnosticKind::CannotBeAny {
+                interface,
+                owner,
+                reason,
+                at,
+            } => {
+                let inherited = owner.map(|owner| format!("it inherits `{owner}`"));
+                let why = match (reason, inherited) {
+                    (NotAny::TakesSelf { method }, None) => {
+                        format!("`{method}` takes another `Self`")
+                    }
+                    (NotAny::TakesSelf { method }, Some(inherits)) => {
+                        format!("{inherits}, whose `{method}` takes another `Self`")
+                    }
+                    (NotAny::Returns { method, ret }, None) => {
+                        format!("`{method}` returns `{ret}`")
+                    }
+                    (NotAny::Returns { method, ret }, Some(inherits)) => {
+                        format!("{inherits}, whose `{method}` returns `{ret}`")
+                    }
+                    (NotAny::Generic { method }, None) => format!("`{method}` is generic"),
+                    (NotAny::Generic { method }, Some(inherits)) => {
+                        format!("{inherits}, whose `{method}` is generic")
+                    }
+                    (NotAny::Assoc { owner, assoc }, None) => {
+                        format!("`{owner}` has an associated type, `{assoc}`")
+                    }
+                    (NotAny::Assoc { assoc, .. }, Some(inherits)) => {
+                        format!("{inherits}, which has an associated type, `{assoc}`")
+                    }
+                    (NotAny::InheritsSelf { inherited }, _) => {
+                        format!("it inherits `{inherited}`, whose arguments name `Self`")
+                    }
+                };
+                Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`{interface}` cannot be used as `any {interface}`: {why}"),
+                )
+                .with_label("used after `any` here")
+                .with_help(format!("use a type parameter: `T: {interface}`"))
+            }
             DiagnosticKind::TooManyInstances {
                 name,
                 at,
@@ -3456,6 +3651,15 @@ impl From<DiagnosticKind> for Diagnostic {
                     d
                 }
             }
+            DiagnosticKind::AnyMayNotHold { found, at, make } => {
+                let d = Diagnostic::coded(code, at, format!("`{found}` may not hold an object"));
+                match make {
+                    Some(make) => d.with_help(format!(
+                        "make `{make}` inherit `AnyObject`: `interface {make}: AnyObject`"
+                    )),
+                    None => d,
+                }
+            }
             DiagnosticKind::CannotCompare { left, right, at } => {
                 Diagnostic::coded(code, at, format!("cannot compare `{left}` with `{right}`"))
             }
@@ -3789,26 +3993,38 @@ impl From<DiagnosticKind> for Diagnostic {
                 class,
                 at,
                 param: false,
-            } => Diagnostic::coded(
-                code,
-                at,
-                format!("every element would be the same `{class}` object"),
-            )
-            .with_help(format!(
-                "start from `[None; n]` with type `[{class}?]` and fill it in a loop"
-            )),
+                any,
+            } => {
+                // An `any` type needs parentheses before `?`.
+                let optional = if any {
+                    format!("({class})?")
+                } else {
+                    format!("{class}?")
+                };
+                Diagnostic::coded(
+                    code,
+                    at,
+                    format!("every element would be the same `{class}` object"),
+                )
+                .with_help(format!(
+                    "start from `[None; n]` with type `[{optional}]` and fill it in a loop"
+                ))
+            }
             DiagnosticKind::SameObject {
                 class,
                 at,
                 param: true,
+                any,
             } => Diagnostic::coded(
                 code,
                 at,
                 format!("every element could be the same `{class}` object"),
             )
-            .with_label(format!(
-                "`{class}` may be a class, and every element would be the same object"
-            )),
+            .with_label(if any {
+                format!("`{class}` may hold an object, and every element would be the same object")
+            } else {
+                format!("`{class}` may be a class, and every element would be the same object")
+            }),
             DiagnosticKind::CannotIndex { ty, at } => {
                 Diagnostic::coded(code, at, format!("cannot index `{ty}`"))
                     .with_help("only arrays can be indexed")

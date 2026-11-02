@@ -1,0 +1,112 @@
+// GIVEN an interface that inherits three interfaces, a class and an enum that conform to it, and
+// an associated type of a conformance inside an `any` type of a requirement
+// WHEN the program converts an `any` value of the child interface to each parent interface, in a
+// `let` and in a return, and calls a method of each
+// THEN each call runs the method of the value inside, through the table of that parent
+interface Shape {
+    fn area(self) -> f64
+}
+
+interface Named {
+    fn name(self) -> string
+}
+
+interface Sized {
+    fn size(self) -> i64
+}
+
+interface Part: Shape, Named, Sized {
+    fn id(self) -> i64
+}
+
+class Circle: Part {
+    r: f64
+
+    fn area(self) -> f64 {
+        self.r * 3.0
+    }
+
+    fn name(self) -> string {
+        "circle"
+    }
+
+    fn size(self) -> i64 {
+        10
+    }
+
+    fn id(self) -> i64 {
+        1
+    }
+}
+
+enum Mark: Part {
+    Dot
+    Line(i64)
+
+    fn area(self) -> f64 {
+        0.5
+    }
+
+    fn name(self) -> string {
+        match self {
+            Dot => "dot"
+            Line(_) => "line"
+        }
+    }
+
+    fn size(self) -> i64 {
+        match self {
+            Dot => 1
+            Line(n) => n
+        }
+    }
+
+    fn id(self) -> i64 {
+        2
+    }
+}
+
+fn sized(p: any Part) -> any Sized {
+    p
+}
+
+interface Sink<T> {
+    fn put(self, x: T) -> i64
+}
+
+class Cup: Sink<i64> {
+    n: i64
+
+    fn put(self, x: i64) -> i64 {
+        x + self.n
+    }
+}
+
+interface Source {
+    type Item
+    fn sink(self) -> any Sink<Item>
+}
+
+class Src: Source {
+    type Item = i64
+    c: Cup
+
+    fn sink(self) -> any Sink<i64> {
+        self.c
+    }
+}
+
+fn main() {
+    let parts: [any Part] = [Circle(r: 2.0), Mark.Line(4), Mark.Dot]
+    for p in parts {
+        let s: any Shape = p
+        let n: any Named = p
+        let z: any Sized = p
+        print(s.area())
+        print(n.name())
+        print(z.size())
+        print(sized(p).size())
+        print(p.id())
+    }
+    print(Src(c: Cup(n: 1)).sink().put(2))
+}

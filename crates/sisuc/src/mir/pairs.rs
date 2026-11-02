@@ -272,6 +272,8 @@ fn kind<'a>(function: &Function, stmt: &'a Statement) -> Kind<'a> {
             (value, _) if value.may_call_written() => Kind::Clobber,
             (
                 Rvalue::Call { .. }
+                | Rvalue::DynCall { .. }
+                | Rvalue::ToAny(_)
                 | Rvalue::Use(_)
                 | Rvalue::Copy(_)
                 | Rvalue::CopyStr(_)
@@ -333,6 +335,8 @@ fn borrowed(stmt: Statement) -> Statement {
                 | Rvalue::Borrow(_)
                 | Rvalue::Unwrap(_)
                 | Rvalue::Call { .. }
+                | Rvalue::DynCall { .. }
+                | Rvalue::ToAny(_)
                 | Rvalue::New { .. }
                 | Rvalue::Variant { .. }
                 | Rvalue::ArrayLit(_)

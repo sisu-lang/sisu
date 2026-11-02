@@ -1,0 +1,8 @@
+error[E0046]: `any Display` may not hold an object
+ --> E0046-any-display.sisu:2:5
+  |
+2 |     a is b
+  |     ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0046

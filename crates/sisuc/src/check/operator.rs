@@ -1,5 +1,6 @@
 //! Operators: arithmetic, comparison, equality, `is` and `??`.
 
+use super::any::{is_target, widen};
 use super::expr::{fits, if_some, int_literal, literal_type, local, operator, path, typed};
 use super::generic::{Rank, mismatched};
 use super::interface::Operation;
@@ -127,12 +128,12 @@ impl Checker<'_> {
     }
 
     /// Whether `ty` is a concrete type that no `Ord` orders, though it has the look of one that
-    /// a program may compare: a `bool`, an array, an enum or a class.
+    /// a program may compare: a `bool`, an array, an enum, a class or an `any` value.
     fn unordered(&mut self, ty: Type) -> bool {
         (ty == Type::BOOL
             || matches!(
                 ty.kind(),
-                TypeKind::Array(_) | TypeKind::Enum(..) | TypeKind::Class(..)
+                TypeKind::Array(_) | TypeKind::Enum(..) | TypeKind::Class(..) | TypeKind::Any(..)
             ))
             && self.operation(ty, self.lang.ord) == Operation::Missing
     }
@@ -631,14 +632,21 @@ impl Checker<'_> {
         };
         // A second side that rejected the first's type is the mistake: it has no type to compare.
         if !self.none_written(second) && !mismatched(&l) && !mismatched(&r) {
-            let same = match (type_of(&l), type_of(&r)) {
-                (Some(lt), Some(rt)) => lt == rt || fits(lt, rt) || fits(rt, lt),
-                _ => false,
+            // A pair that converts to one `any` type is compared as two values of it, so only
+            // the `any` side is asked for `Eq`.
+            let (same, any) = match (type_of(&l), type_of(&r)) {
+                (Some(lt), Some(rt)) if lt == rt || fits(lt, rt) || fits(rt, lt) => (true, None),
+                (Some(lt), Some(rt)) => {
+                    let any = self.any_join(lt, rt);
+                    (any.is_some(), any)
+                }
+                _ => (false, None),
             };
             let typed = type_of(&l).is_some() && type_of(&r).is_some();
             for (side, checked) in [(lhs, &l), (rhs, &r)] {
-                let Some(ty) = type_of(checked).filter(|ty| same || (!typed && ty.has_param()))
-                else {
+                let Some(ty) = type_of(checked).filter(|&ty| {
+                    (same && any.is_none_or(|any| any == ty)) || (!typed && ty.has_param())
+                }) else {
                     continue;
                 };
                 let operation = match both {
@@ -703,8 +711,24 @@ impl Checker<'_> {
             }
             // A type parameter, or an associated type of one, is an object when its bounds say
             // so: `mono` then makes it a class.
-            let object_param = matches!(base.kind(), TypeKind::Param(..) | TypeKind::Assoc(..))
-                && self.conforms(base, self.lang.any_object, TypeArgs::NONE);
+            let object_param = matches!(
+                base.kind(),
+                TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..)
+            ) && self.conforms(base, self.lang.any_object, TypeArgs::NONE);
+            // An `any` of an interface that no class-only interface leads to may hold anything.
+            if let TypeKind::Any(interface, _) = base.kind()
+                && !object_param
+            {
+                let info = &self.interfaces[interface.0];
+                let make = (!info.name.span.in_prelude()).then(|| info.name.name.to_string());
+                let kind = DiagnosticKind::AnyMayNotHold {
+                    found: self.type_name(ty),
+                    at: side.span,
+                    make,
+                };
+                self.diagnostics.push(kind.into());
+                return Err(Poisoned::error());
+            }
             let nested = matches!(ty.kind(), TypeKind::Optional(p) if matches!(p.kind(), TypeKind::Optional(_)));
             // Peeling a layer helps only when an object is under the rest.
             if extra > 0 {
@@ -767,7 +791,7 @@ impl Checker<'_> {
         }
         let object = match base.kind() {
             TypeKind::Class(..) => true,
-            TypeKind::Param(..) | TypeKind::Assoc(..) => {
+            TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..) => {
                 self.conforms(base, self.lang.any_object, TypeArgs::NONE)
             }
             _ => false,
@@ -790,6 +814,11 @@ impl Checker<'_> {
                     (l, r.map(|e| wrap(e, lt)))
                 } else if fits(rt, lt) {
                     (l.map(|e| wrap(e, rt)), r)
+                } else if self.converts_to_any(rt, lt) {
+                    // A class beside an `any` converts to it first.
+                    (l, r.map(|e| self.make_any(e, lt)))
+                } else if self.converts_to_any(lt, rt) {
+                    (l.map(|e| self.make_any(e, rt)), r)
                 } else {
                     let kind = DiagnosticKind::CannotCompare {
                         left: self.type_name(lt),
@@ -828,8 +857,14 @@ impl Checker<'_> {
     }
 
     /// `lhs ?? rhs`: `rhs` is a `T` or a `T?` beside the `T?` `lhs`, and gives the result its
-    /// type, or never finishes, and the result is a `T`.
-    pub(super) fn coalesce(&mut self, span: Span, lhs: &ast::Expr, rhs: &ast::Expr) -> Checked {
+    /// type, or never finishes, and the result is a `T`. A type written for an `any` result is
+    /// what a default that does not join is reported against (see `leaves_written`).
+    pub(super) fn coalesce(
+        &mut self,
+        span: Span,
+        (lhs, rhs): (&ast::Expr, &ast::Expr),
+        expected: Option<Type>,
+    ) -> Checked {
         let scrutinee = self.value(lhs, None);
         let Some(TypeKind::Optional(payload)) = type_of(&scrutinee).map(Type::kind) else {
             if type_of(&scrutinee).is_some() {
@@ -871,9 +906,36 @@ impl Checker<'_> {
             drop(self.fallback(tail, UNKNOWN));
             return Err(Poisoned::error());
         }
+        let written = (self.hinted(span, expected).0)
+            .filter(|&want| want != UNKNOWN && (is_target(want) || is_target(payload)));
         // The right side expects `P` for an optional `P`, else `P?`: a value converts through
-        // one `?` only.
-        let other = self.fallback(rhs, as_optional(payload));
+        // one `?` only. That is a hint (see `Body::hint_at`), unless that type is written. Then
+        // the right side is checked against it, so `let r: any I = oa ?? None` reports at the
+        // `None`, and an optional value there at the whole `??`.
+        let other = match written {
+            Some(want)
+                if is_target(payload) && (want == payload || want == as_optional(payload)) =>
+            {
+                self.fallback(rhs, want)
+            }
+            _ => {
+                let outer_hint = self.pass_hint(Some(rhs.span), Some(payload));
+                let other = self.fallback(rhs, as_optional(payload));
+                self.body.hint_at = outer_hint;
+                other
+            }
+        };
+        // A value converts to an `any` payload, unless it is a wider `any` type, which the
+        // payload converts to.
+        let other = match type_of(&other) {
+            Some(got) if got != payload && self.any_join(payload, got) != Some(got) => {
+                match self.any_conversion(rhs.span, other, payload, got) {
+                    Ok((_, true)) => return Err(Poisoned::error()),
+                    Ok((converted, false)) | Err(converted) => converted,
+                }
+            }
+            _ => other,
+        };
         let (other, ty) = match type_of(&other) {
             // `a ?? panic("x")`: only the payload reaches the result.
             Some(Type::NEVER) => (other, payload),
@@ -881,15 +943,42 @@ impl Checker<'_> {
             // `x ?? 5` on an `i64??`: the payload of an optional `P` is wrapped to `P`.
             Some(ty) if optional_of(ty) == payload => (other.map(|e| wrap(e, payload)), payload),
             Some(ty) => {
-                let d = self.mismatch(rhs.span, Some(rhs), payload, ty);
-                self.diagnostics.push(d);
-                return Err(Poisoned::error());
+                // An object and an `any` type that it converts to join to the `any` type.
+                let Some(joined) = self.any_join(payload, ty) else {
+                    let object =
+                        (other.as_ref().ok()).and_then(|v| self.object_in_some(v, payload));
+                    let leaves = written.and_then(|want| {
+                        [(lhs, payload), (rhs, ty)]
+                            .into_iter()
+                            .find(|&(_, t)| !fits(want, t) && !self.converts_to_any(t, want))
+                            .map(|(e, t)| (want, e, t))
+                    });
+                    let d = match (leaves, object) {
+                        // With a written type, the first side that leaves it, as in a join.
+                        (Some((want, e, t)), _) => {
+                            let source = (e.span == rhs.span).then_some(rhs);
+                            self.leaves_any(e.span, source, want, t)
+                        }
+                        // A class payload leaves an `any` default, as a member leaves a join.
+                        _ if is_target(ty) && matches!(payload.kind(), TypeKind::Class(..)) => {
+                            self.leaves_any(lhs.span, None, ty, payload)
+                        }
+                        (None, Some((at, want, object))) => self.leaves_any(at, None, want, object),
+                        (None, None) => self.mismatch(rhs.span, Some(rhs), payload, ty),
+                    };
+                    self.diagnostics.push(d);
+                    return Err(Poisoned::error());
+                };
+                self.instantiates = true;
+                // A default that converts to the payload did so above: the payload converts to
+                // this default's `any` type.
+                (other, joined)
             }
             None => return Err(Poisoned::error()),
         };
         let bind = self.fresh(payload);
         let read = local(bind, payload, lhs.span);
-        let value = if read.ty == ty { read } else { wrap(read, ty) };
+        let value = if read.ty == ty { read } else { widen(read, ty) };
         match (scrutinee, other) {
             (Ok(scrutinee), Ok(other)) => Ok(if_some(bind, scrutinee, value, Some(other), span)),
             _ => Err(Poisoned::typed(ty)),

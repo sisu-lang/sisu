@@ -280,7 +280,8 @@ in `codspeed.yml`:
 - the `fib`, `sieve`, `binary_trees`, `quicksort`, `nbody`, `mandelbrot` and
   `fannkuch_redux` programs, at reduced inputs;
 - the `strings`, `enum_match`, `shared_arrays`, `compare`, `tree_rewrite`,
-  `interp`, `interfaces` and `show` programs from `bench/features/`;
+  `interp`, `interfaces`, `any_shapes` and `show` programs from
+  `bench/features/`;
 - the lexer in Sisu: `selfhost_lexer` runs the `-O2` build of
   `selfhost/lexer.sisu` on `bench/features/selfhost_lexer/input.sisu`, and
   `build_selfhost_lexer` is an `-O2` build of `selfhost/lexer.sisu`;

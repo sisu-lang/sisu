@@ -1,0 +1,8 @@
+error[E0067]: every element could be the same `any Shape` object
+ --> E0067-any.sisu:6:6
+  |
+6 |     [s; 3]
+  |      ^ `any Shape` may hold an object, and every element would be the same object
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0067

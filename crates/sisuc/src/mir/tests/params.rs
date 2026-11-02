@@ -896,9 +896,9 @@ fn quiet_should_mark_only_prelude_functions_without_a_clobber() {
     assert_quiet_rows(rows);
 }
 
-/// These statements are clobbers: a call that is not quiet, a take into a counted local, a store
-/// of a counted value, a `make_unique` and a `push`. The other statements leave a prelude
-/// function quiet.
+/// These statements are clobbers: a call that is not quiet, a call through a table, a take into a
+/// counted local, a store of a counted value, a `make_unique` and a `push`. The other statements
+/// leave a prelude function quiet.
 #[test]
 fn quiet_should_judge_each_kind_of_statement() {
     let rows: Vec<(&str, Vec<Function>, Vec<bool>)> = vec![
@@ -931,6 +931,24 @@ fn quiet_should_judge_each_kind_of_statement() {
                 vec![store(Operand::Const(Const::Int(2, Type::I64)))],
             )],
             vec![true],
+        ),
+        (
+            "a call through a table, which may run any written method",
+            vec![quiet_candidate(
+                "a",
+                true,
+                &[],
+                vec![Statement::Assign {
+                    dest: None,
+                    value: Rvalue::DynCall {
+                        interface: tir::InterfaceId(0),
+                        iargs: TypeArgs::NONE,
+                        method: 0,
+                        args: vec![Operand::Read(whole(LocalId(1)))],
+                    },
+                }],
+            )],
+            vec![false],
         ),
         (
             "a push onto a local",
@@ -1136,5 +1154,37 @@ fn the_equal_in_contains_should_carry_the_calls_flag_of_its_instance() {
     assert!(
         !holder.contains(" == ") && !holder.contains("[calls]"),
         "{holder}"
+    );
+}
+
+/// A parameter that an `any` conversion takes is owned, as one stored in a variant is.
+#[test]
+fn a_parameter_converted_to_any_should_be_owned() {
+    let printed = built(&format!(
+        "{ANY_SHAPE}fn f(c: Circle) -> any Shape {{ c }}\nfn main() {{\n    let s = f(Circle(r: 1.0))\n    print(s.area())\n}}"
+    ));
+    signature(&printed, "f", "fn f(c#0: Circle)");
+}
+
+/// A parameter that is only the receiver of a call through a table stays borrowed.
+#[test]
+fn a_dyn_call_receiver_should_stay_borrowed() {
+    let printed = built(&format!(
+        "{ANY_SHAPE}fn area_of(s: any Shape) -> f64 {{ s.area() }}\nfn main() {{\n    print(area_of(Circle(r: 1.0)))\n}}"
+    ));
+    signature(&printed, "area_of", "fn area_of(s#0: borrow any Shape)");
+}
+
+/// A parameter that a call through a table takes as an argument is owned: the table's entry
+/// passes it on to a method that owns it.
+#[test]
+fn a_dyn_call_argument_should_be_owned() {
+    let printed = built(&format!(
+        "{ANY_SHAPE}fn marked(t: any Tag, s: string) -> string {{ t.mark(s) }}\nfn main() {{\n    print(marked(Label(n: \"a\"), \"{{1}}\"))\n}}"
+    ));
+    signature(
+        &printed,
+        "marked",
+        "fn marked(t#0: borrow any Tag, s#1: string)",
     );
 }

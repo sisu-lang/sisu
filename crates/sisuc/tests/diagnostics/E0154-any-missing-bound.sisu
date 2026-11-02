@@ -1,0 +1,7 @@
+interface Keyed<T: Eq> {}
+
+fn find<T>(_x: (any Keyed<T>)?) {}
+
+fn main() {
+    find<i64>(None)
+}

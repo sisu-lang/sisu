@@ -1,0 +1,10 @@
+error[E0164]: `Node` cannot be used as `any Node`: it inherits `Link<Self>`, whose arguments name `Self`
+ --> E0164-inherits-self.sisu:8:17
+  |
+8 |     let _n: any Node = Leaf()
+  |                 ^^^^ used after `any` here
+  |
+  = help: use a type parameter: `T: Node`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0164

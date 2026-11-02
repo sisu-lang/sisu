@@ -3860,3 +3860,100 @@ fn reuse_of_a_token_twice_is_rejected() {
     );
     rejects(&b.finish(), 0, tok, Rule::Consume);
 }
+
+// `any`: a conversion consumes its operand, and a call through a table reads its receiver in place
+// and consumes its other arguments.
+
+/// An `any` type, of the interface with id 0.
+fn any_value() -> Type {
+    Type::intern(TypeKind::Any(tir::InterfaceId(0), TypeArgs::NONE))
+}
+
+/// `call_through(args)`: the call of the first requirement of interface 0 through a table, with
+/// a `unit` result.
+fn dyn_call(args: Vec<Operand>) -> Statement {
+    Statement::Assign {
+        dest: None,
+        value: Rvalue::DynCall {
+            interface: tir::InterfaceId(0),
+            iargs: TypeArgs::NONE,
+            method: 0,
+            args,
+        },
+    }
+}
+
+/// `s = to_any move c`, then a read of `c`: the conversion took its reference.
+#[test]
+fn a_read_after_a_conversion_to_any_should_be_rejected() {
+    let mut b = Builder::new("f");
+    let c = b.param("c", object());
+    let s = b.local("s", any_value());
+    b.block(
+        vec![
+            assign(s, Rvalue::ToAny(Operand::Move(c))),
+            show(read(c)),
+            Statement::Release(s),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, c, Rule::Read);
+}
+
+/// A call through a table leaves its receiver live: a later read and its release are accepted.
+#[test]
+fn a_call_through_a_table_should_leave_its_receiver_live() {
+    let mut b = Builder::new("f");
+    let s = b.param("s", any_value());
+    b.block(
+        vec![
+            dyn_call(vec![read(s)]),
+            show(read(s)),
+            Statement::Release(s),
+        ],
+        ret(),
+    );
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+/// An argument of a call through a table is consumed, so a read after the call needs a copy
+/// before it: without one, `t` is gone.
+#[test]
+fn a_read_of_an_owned_argument_after_a_call_through_a_table_should_be_rejected() {
+    let mut b = Builder::new("f");
+    let s = b.param("s", any_value());
+    let t = b.local("t", Type::STRING);
+    b.block(
+        vec![
+            literal(t),
+            dyn_call(vec![read(s), Operand::Move(t)]),
+            show(read(t)),
+            Statement::Release(s),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, t, Rule::Read);
+}
+
+/// `b = borrow o.0` through a `mut` field, then a call through a table, which may run any written
+/// method and replace the field: a read of `b` after it is rejected, as after a `Call`.
+#[test]
+fn a_borrow_through_a_mut_field_should_end_at_a_call_through_a_table() {
+    let mut b = Builder::new("f");
+    let o = b.param("o", object());
+    let s = b.param("s", any_value());
+    let x = b.local("b", Type::STRING);
+    b.owner(x, o);
+    b.block(
+        vec![
+            assign(x, Rvalue::Borrow(field(o))),
+            dyn_call(vec![read(s)]),
+            show(read(x)),
+            Statement::End(x),
+            Statement::Release(o),
+            Statement::Release(s),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, x, Rule::Borrow);
+}

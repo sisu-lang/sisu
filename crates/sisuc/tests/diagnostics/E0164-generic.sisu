@@ -1,0 +1,11 @@
+interface Mapper {
+    fn map<U>(self, u: U) -> U
+}
+
+fn _show(_x: any Mapper) {
+    print(1)
+}
+
+fn main() {
+    print(2)
+}

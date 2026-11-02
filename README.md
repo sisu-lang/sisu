@@ -246,6 +246,8 @@ Today it compiles:
 - generic functions, classes and enums, and interfaces: bounds such as
   `T: Shape & Named`, conformance in a declaration or an `extend` block, and
   associated types; `Display`, `Eq` and `Ord` give `print`, `==` and `<`
+- interface values, such as `[any Shape]` that holds a class and an enum, and
+  type aliases such as `type Grid = [[char?]]`
 - `match` with nested, alternative, guarded and range patterns
 - arrays, and strings with `+`, `+=`, `chars()` and interpolation, with width
   and precision specs
@@ -255,8 +257,8 @@ Today it compiles:
 A conversion that can fail returns an optional. An expression statement whose
 value nothing uses gives warning `W0004`; `let _ = e` drops a value on purpose.
 
-The [roadmap](docs/roadmap.md) proposes interface values, closures, records,
-modules with a standard library, and `Result` with `?`.
+The [roadmap](docs/roadmap.md) proposes closures, records, modules with a
+standard library, and `Result` with `?`.
 
 The compiler, `sisu`, is written in Rust and uses LLVM for code generation.
 

@@ -22,9 +22,8 @@ use crate::symbol::Symbol;
 use crate::tir::{ClassId, EnumId, FuncId, InterfaceId, Type, TypeArgs, TypeKind};
 
 /// The most interfaces that one bound, or one list of interfaces a type conforms to, may give
-/// with the interfaces they inherit. An interface that inherits another twice, with different
-/// arguments, doubles the number at each level of inheritance, so the walk stops here (E0157).
-pub(super) const BOUND_CLOSURE_LIMIT: usize = 256;
+/// with the interfaces they inherit (see `conformance::BOUND_CLOSURE_LIMIT`).
+pub(super) use crate::conformance::BOUND_CLOSURE_LIMIT;
 
 /// The state of one root walk of `Checker::leaf`: Tarjan's search for strongly connected
 /// components. A type is on `stack` from the walk that reads it until its component closes;
@@ -160,7 +159,7 @@ pub(super) struct PendingBound {
 }
 
 /// What a pending bound check reads.
-enum Check {
+pub(super) enum Check {
     /// The applied class or enum type `ty`, each of whose arguments is written at the span of
     /// `ats`: each argument meets the bounds of its parameter.
     Applied { ty: Type, ats: Vec<Span> },
@@ -179,6 +178,8 @@ enum Check {
         at: Span,
         base: Span,
     },
+    /// The interface of `bound`, which is written after `any`, can be `any`.
+    Any { bound: Bound },
 }
 
 /// Where a resolved type is kept: the type of a parameter or a result of a signature, of a field,
@@ -275,6 +276,7 @@ impl Checker<'_> {
             }
         }
         self.interfaces_resolved = true;
+        self.report_deferred_as_type();
     }
 
     /// Records the associated types of `interface`, whose id is `id` and whose parameters are
@@ -858,6 +860,7 @@ impl Checker<'_> {
             TypeKind::Param(..) => NotInterface::TypeParam,
             TypeKind::Optional(..) => NotInterface::Optional,
             TypeKind::Array(..) => NotInterface::Array,
+            TypeKind::Any(..) => NotInterface::Any,
             _ => NotInterface::BuiltIn,
         };
         self.not_an_interface(ty, kind);
@@ -1257,6 +1260,7 @@ impl Checker<'_> {
                     || self.body.wide.contains(&place)
             }
             TypeKind::Assoc(..) => self.assoc_conforms(ty, interface, args),
+            TypeKind::Any(..) => self.any_conforms(ty, interface, args),
             TypeKind::Class(..) | TypeKind::Enum(..) => self.conforms_holder(ty, interface, args),
             _ => match generated(self.lang, ty, interface) {
                 Generated::Holds => true,
@@ -1517,7 +1521,13 @@ impl Checker<'_> {
             && matches!(leaf.kind(), TypeKind::Class(..) | TypeKind::Enum(..)))
         .then(|| self.type_name(leaf));
         let object = matches!(ty.kind(), TypeKind::Optional(inner) if inner == leaf) || ty == leaf;
+        let any_object = self.lang.any_object;
         let form = match make {
+            _ if interface == self.lang.eq && matches!(ty.kind(), TypeKind::Any(..)) => {
+                NoOperatorForm::Any {
+                    is: self.conforms(ty, any_object, TypeArgs::NONE),
+                }
+            }
             Some(make)
                 if object
                     && matches!(leaf.kind(), TypeKind::Class(..))
@@ -1876,7 +1886,7 @@ impl Checker<'_> {
     /// Checks that each argument of `bound`, written at `ats`, meets the bounds that its
     /// interface declares for its parameter, as `check_applied` does for a class or an enum. The
     /// type `this` has the interface.
-    fn check_arguments(&mut self, bound: Bound, this: Type, ats: Vec<Span>) {
+    pub(super) fn check_arguments(&mut self, bound: Bound, this: Type, ats: Vec<Span>) {
         self.check_or_wait(Check::Arguments { bound, this, ats });
     }
 
@@ -1893,7 +1903,7 @@ impl Checker<'_> {
 
     /// Queues `check` while the conformances are not yet known, and else runs it. Whether it
     /// holds, or waits.
-    fn check_or_wait(&mut self, check: Check) -> bool {
+    pub(super) fn check_or_wait(&mut self, check: Check) -> bool {
         let scope = self.pending_bounds.is_some().then(|| self.scope());
         if let (Some(scope), Some(pending)) = (scope, &mut self.pending_bounds) {
             pending.push(PendingBound {
@@ -1929,6 +1939,13 @@ impl Checker<'_> {
                 at,
                 base,
             } => self.check_bound_of(*at, *ty, *bound, &[], None, Some(*base)),
+            Check::Any { bound } => match self.why_not_any(bound.interface) {
+                None => true,
+                Some(reason) => {
+                    self.cannot_be_any(*bound, reason);
+                    false
+                }
+            },
         }
     }
 
@@ -2311,7 +2328,7 @@ fn nesting(ty: Type, limit: usize, depths: &mut FxHashMap<Type, usize>) -> Optio
             one = [t];
             &one
         }
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args.get(),
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => args.get(),
         // A normalized type with no type parameter holds no associated type.
         _ => &[],
     };

@@ -120,9 +120,10 @@ use std::collections::VecDeque;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::extend::holder_of;
+use super::interface::BOUND_CLOSURE_LIMIT;
 use super::{Checker, Lowered};
 use crate::ast::angled;
-use crate::conformance::always_written;
+use crate::conformance::{always_written, interface_closure};
 use crate::diagnostic::{DiagnosticKind, Hop, Spelled};
 use crate::graph::components;
 use crate::source::Span;
@@ -214,6 +215,8 @@ enum Written {
     Interpolation,
     /// The generated `==` or `to_string` of an enum, for the payload type given.
     Generated(Type),
+    /// The conversion of a value to the `any` type given, which reaches the methods of the table.
+    Conversion(Type),
     /// A call of the method, as `x.eq(y)` or `x.to_string()` writes it on a type whose conformance
     /// the compiler writes. The typed tree lowers it to the node of the operator.
     Method,
@@ -608,7 +611,9 @@ impl Graph {
     fn parts(&self, ty: Type) -> Vec<(Type, i64)> {
         let (inner, args, weight) = match ty.kind() {
             TypeKind::Array(inner) | TypeKind::Optional(inner) => (Some(inner), &[][..], 1),
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => (None, args.get(), 1),
+            TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
+                (None, args.get(), 1)
+            }
             TypeKind::Assoc(base, interface, args, k) => {
                 let place = self.assocs.first[interface.0] + k as usize;
                 let Some(growth) = self.assocs.growth_of(place, args) else {
@@ -850,6 +855,10 @@ impl Graph {
                     stack.extend(args.get());
                     continue;
                 }
+                TypeKind::Any(_, args) => {
+                    stack.extend(args.get());
+                    continue;
+                }
                 _ => continue,
             };
             let mark = spans.get(&ty).copied().unwrap_or(site);
@@ -970,6 +979,10 @@ fn named(
                     }
                 }
                 stack.push(base);
+                stack.extend(args.get());
+                continue;
+            }
+            TypeKind::Any(_, args) => {
                 stack.extend(args.get());
                 continue;
             }
@@ -1260,6 +1273,7 @@ impl Checker<'_> {
             ),
             Written::Op(op) => Spelled::Operator(op.to_string()),
             Written::Interpolation => Spelled::Interpolation,
+            Written::Conversion(any) => Spelled::Conversion(self.type_name(any)),
             Written::Generated(operand) => Spelled::Generated {
                 display: interface == self.lang.display,
                 enum_name: self.node_owner_name(graph, holder),
@@ -1454,6 +1468,42 @@ impl Checker<'_> {
                         self.operator_edges(&mut graph, holder, e);
                         let shown = shown.get_or_insert_with(|| self.shown_params());
                         self.dbg_show(&mut graph, shown, holder, operand.ty, e.span);
+                    }
+                    tir::ExprKind::ToAny(ref operand) => {
+                        // The table holds the methods of the interface and of those it
+                        // inherits, and both ways to show the value: a call through each hub.
+                        let TypeKind::Any(interface, args) = e.ty.kind() else {
+                            unreachable!("a conversion should be to an `any` type");
+                        };
+                        let written = Written::Conversion(e.ty);
+                        let source = operand.ty;
+                        let interfaces = &self.interfaces;
+                        let closure = interface_closure(
+                            |inherited: tir::InterfaceId| {
+                                interfaces[inherited.0]
+                                    .inherits
+                                    .iter()
+                                    .map(|bound| (bound.interface, bound.args))
+                            },
+                            (interface, args),
+                            e.ty,
+                            BOUND_CLOSURE_LIMIT,
+                            || {},
+                        );
+                        for (called, _) in closure {
+                            let hub = interface_hubs + called.0;
+                            let instance = Instance::Operator(called, written, source);
+                            graph.args(holder, &[source], hub, e.span, e.span, instance);
+                        }
+                        graph.operator(
+                            holder,
+                            source,
+                            self.lang.display,
+                            (e.span, e.span),
+                            Some(written),
+                        );
+                        let shown = shown.get_or_insert_with(|| self.shown_params());
+                        self.dbg_show(&mut graph, shown, holder, source, e.span);
                     }
                     _ => self.operator_edges(&mut graph, holder, e),
                 }
@@ -2241,7 +2291,7 @@ fn depths_and_assoc(ty: Type, count: usize) -> (Vec<Option<i64>>, Vec<AssocUse>)
                 *slot = (*slot).max(Some(depth));
             }
             TypeKind::Array(inner) | TypeKind::Optional(inner) => stack.push((inner, depth + 1)),
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+            TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
                 stack.extend(args.get().iter().map(|&a| (a, depth + 1)));
             }
             TypeKind::Assoc(..) => {
