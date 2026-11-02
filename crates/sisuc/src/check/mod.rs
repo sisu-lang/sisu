@@ -371,9 +371,18 @@ impl LoopFrame {
     }
 }
 
-/// A held report of `Checker::interface_as_type`: the interface, its name, the type as written,
-/// and the place, the number of `?` and whether the name is in an alias body.
-type DeferredAsType = (tir::InterfaceId, String, String, (Span, usize, bool));
+/// A held report of `Checker::interface_as_type`.
+struct DeferredAsType {
+    interface: tir::InterfaceId,
+    name: String,
+    /// The type as written.
+    written: String,
+    at: Span,
+    /// The number of `?` after the name.
+    layers: usize,
+    /// Whether the name is in an alias body.
+    alias: bool,
+}
 
 /// The program's text and the positions the lexer and parser found in it; never changes.
 #[derive(Clone, Copy)]

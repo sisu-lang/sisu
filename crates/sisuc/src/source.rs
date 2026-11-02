@@ -110,8 +110,8 @@ impl<'a> Source<'a> {
 
     /// The type that `span` covers, as one line for a diagnostic. A span with no line break gives
     /// its text as written. Else each `//` comment goes, and a run of white space with a line
-    /// break goes too after `<`, `(`, `[` or `.` and before `>`, `)`, `]`, `.`, `?` or `,`, and
-    /// is one space elsewhere. A type holds no string, so a `//` is always a comment.
+    /// break goes too after `<`, `(`, `[` or `.` and before `<`, `>`, `)`, `]`, `.`, `?` or `,`,
+    /// and is one space elsewhere. A type holds no string, so a `//` is always a comment.
     pub(crate) fn type_text(&self, span: Span) -> Cow<'a, str> {
         let text = self.text(span);
         if !text.contains('\n') {
@@ -119,10 +119,8 @@ impl<'a> Source<'a> {
         }
         let mut out = String::with_capacity(text.len());
         let mut at = 0;
-        while at < text.len() {
-            let rest = &text[at..];
-            if !rest.starts_with(char::is_whitespace) && !rest.starts_with("//") {
-                let Some(ch) = rest.chars().next() else { break };
+        while let Some(ch) = text[at..].chars().next() {
+            if !ch.is_whitespace() && !text[at..].starts_with("//") {
                 out.push(ch);
                 at += ch.len_utf8();
                 continue;
@@ -146,7 +144,7 @@ impl<'a> Source<'a> {
                 out.push_str(&text[at..end]);
             } else if let Some(next) = text[end..].chars().next()
                 && !out.ends_with(['<', '(', '[', '.'])
-                && !matches!(next, '>' | ')' | ']' | '.' | '?' | ',')
+                && !matches!(next, '<' | '>' | ')' | ']' | '.' | '?' | ',')
             {
                 out.push(' ');
             }
@@ -242,6 +240,8 @@ mod tests {
             ("T // the base\n  .Item", "T.Item"),
             ("Pair<A, // first\n  B>", "Pair<A, B>"),
             ("[\n  i64\n]", "[i64]"),
+            ("Box\n  <i64>", "Box<i64>"),
+            ("(\n  any Shape\n)?", "(any Shape)?"),
         ];
         for (written, want) in cases {
             let source = Source::new(written, 0);

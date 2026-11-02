@@ -1,0 +1,12 @@
+class Pair<A, B> {
+    a: A
+    b: B
+}
+extend Pair<i64, // first
+    i64> {
+    fn first(self) -> i64 { return self.a }
+}
+fn main() {
+    let p = Pair<string, string>(a: "x", b: "y")
+    print(p.a)
+}

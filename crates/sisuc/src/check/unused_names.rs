@@ -246,18 +246,22 @@ impl Checker<'_> {
         let named = |o: Owner| match o {
             Owner::Func(f) => (
                 UsedBy::Item(function_kind(f.0)),
-                self.text(self.signatures[f.0].span),
+                self.text(self.signatures[f.0].span).into(),
             ),
             Owner::Block(b) => {
                 let block = &self.extensions[b];
                 let built = built(block.holder);
-                (UsedBy::Block { built }, self.text(block.written))
+                (
+                    UsedBy::Block { built },
+                    self.source.type_text(block.written),
+                )
             }
             Owner::Const(c) => (
                 UsedBy::Item(Definition::Constant),
                 self.text(
                     constants[c].expect("a constant with a use should be the first of its name"),
-                ),
+                )
+                .into(),
             ),
         };
         let describe = |sites: &[usize]| -> Vec<(Span, UsedBy, String)> {
@@ -358,7 +362,7 @@ impl Checker<'_> {
         for (b, block) in self.extensions.iter().enumerate() {
             let owner = self.owner_index(Owner::Block(b));
             if !reached.live[owner] && built(block.holder) && !block.header.in_prelude() {
-                let name = self.text(block.written).to_string();
+                let name = self.source.type_text(block.written).into_owned();
                 let at = block.header;
                 let uses = describe(&std::mem::take(&mut cited[owner]));
                 found.push(DiagnosticKind::UnusedBlock { name, at, uses }.into());

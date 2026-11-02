@@ -3789,14 +3789,12 @@ impl Checker<'_> {
             format!(
                 "{}{}.{}",
                 text.text(base.span),
-                text.text(angles),
+                text.type_text(angles),
                 variant.name
             )
         });
         self.report(DiagnosticKind::TypeArguments {
-            name: text
-                .slice(base.span.start()..variant.span.end())
-                .to_string(),
+            name: text.type_text(base.span.to(variant.span)).into_owned(),
             at: angles,
             form: ArgumentsForm::Variant { instead },
         });

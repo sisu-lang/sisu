@@ -820,7 +820,6 @@ impl Checker<'_> {
             .get(&name.name)
             .cloned()
             .unwrap_or_default();
-        let written = self.source.type_text(base.span).into_owned();
         match declaring[..] {
             // A generic interface needs arguments that no bound writes: no one names it.
             [(interface, k)] if self.interfaces[interface.0].type_params.len() == 1 => {
@@ -846,7 +845,7 @@ impl Checker<'_> {
                     name: name.name.to_string(),
                     at: name.span,
                     form: UnknownForm::NoAssociated {
-                        base: written,
+                        base: self.source.type_text(base.span).into_owned(),
                         add: None,
                     },
                 });
@@ -855,7 +854,7 @@ impl Checker<'_> {
             _ => {
                 self.report(DiagnosticKind::Ambiguous {
                     method: name.name.to_string(),
-                    receiver: written,
+                    receiver: self.source.type_text(base.span).into_owned(),
                     interfaces: (declaring.iter())
                         .map(|&(interface, _)| self.bound_text(interface, TypeArgs::NONE))
                         .collect(),

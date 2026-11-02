@@ -8,7 +8,7 @@ use rustc_hash::FxHashSet;
 use super::alias::UseCheck;
 use super::interface::{BOUND_CLOSURE_LIMIT, Bound, Check};
 use super::unused_names::Used;
-use super::{Checked, CheckedBlock, Checker, Poisoned, block_type, wrap};
+use super::{Checked, CheckedBlock, Checker, DeferredAsType, Poisoned, block_type, wrap};
 use crate::ast;
 use crate::conformance::{any_closure, interface_closure};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, NotAny, NotConformForm};
@@ -105,43 +105,38 @@ impl Checker<'_> {
     ) {
         let written = self.source.type_text(ty.bare).into_owned();
         let alias = self.body.alias.is_some();
-        self.report_as_type(
+        self.report_as_type(DeferredAsType {
             interface,
             name,
             written,
-            (at, usize::from(ty.optional), alias),
-        );
+            at,
+            layers: usize::from(ty.optional),
+            alias,
+        });
     }
 
     /// `interface_as_type` for the name as written and the `?` after it, which a held report
     /// keeps.
-    fn report_as_type(
-        &mut self,
-        interface: InterfaceId,
-        name: String,
-        written: String,
-        (at, layers, alias): (Span, usize, bool),
-    ) {
+    fn report_as_type(&mut self, held: DeferredAsType) {
         if self.interfaces_resolved {
-            let any = self.why_not_any(interface).is_none();
+            let any = self.why_not_any(held.interface).is_none();
             self.report(DiagnosticKind::InterfaceAsType {
-                name,
-                written: Some(written),
-                at,
+                name: held.name,
+                written: Some(held.written),
+                at: held.at,
                 any,
-                layers,
-                alias,
+                layers: held.layers,
+                alias: held.alias,
             });
         } else {
-            self.deferred_as_type
-                .push((interface, name, written, (at, layers, alias)));
+            self.deferred_as_type.push(held);
         }
     }
 
     /// Makes the reports that `interface_as_type` held back.
     pub(super) fn report_deferred_as_type(&mut self) {
-        for (interface, name, written, at) in std::mem::take(&mut self.deferred_as_type) {
-            self.report_as_type(interface, name, written, at);
+        for held in std::mem::take(&mut self.deferred_as_type) {
+            self.report_as_type(held);
         }
     }
 
