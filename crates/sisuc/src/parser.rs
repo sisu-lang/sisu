@@ -2642,13 +2642,9 @@ impl<'a> Parser<'a> {
     /// The `else` that starts a line, after `previous`, the statement before it. The `else` can
     /// move up to the `if` it follows when that has none, and a block or an `if` follows it.
     fn else_on_new_line(&self, previous: Option<&Stmt>) -> Diagnostic {
+        // A pattern `let` without `else` never comes here: `let_pattern` reports the `else`.
         let value = previous.and_then(|stmt| match &stmt.kind {
             StmtKind::Let { init, .. } => Some(init),
-            StmtKind::LetElse {
-                value,
-                else_block: None,
-                ..
-            } => Some(value),
             _ => None,
         });
         // The `else` of a `let` value that ends in an `if` without `else` belongs to that `if`.
