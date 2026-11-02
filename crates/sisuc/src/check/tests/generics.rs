@@ -6030,9 +6030,9 @@ fn rejecting_the_parameters_of_failed_arguments_should_visit_each_type_once() {
     assert_near_linear(visits(10), visits(20), visits(30));
 }
 
-/// The call is hinted, so each trailing argument that its context bound reads the origins of its
-/// parameter. Each argument misfits and names one of n parameters. Reading every origin for each
-/// would cost n².
+/// The call is hinted, so each trailing argument reads the origins of its parameter to find out
+/// whether the context bound it. The lead arguments bound them all. Each trailing argument misfits
+/// and names one of n parameters. Reading every origin for each would cost n².
 #[test]
 fn misfitting_arguments_should_read_the_origins_of_their_own_parameters_only() {
     let reads = |n: usize| {
