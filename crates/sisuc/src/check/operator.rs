@@ -2,7 +2,7 @@
 
 use super::any::{is_target, widen};
 use super::expr::{fits, if_some, int_literal, literal_type, local, operator, path, typed};
-use super::generic::{Rank, mismatched};
+use super::generic::{CompareHint, Rank, mismatched};
 use super::interface::Operation;
 use super::{
     Checked, Checker, Lowered, Poisoned, UNKNOWN, as_optional, beyond_one_layer, block_expr,
@@ -569,7 +569,17 @@ impl Checker<'_> {
         let (first, second) = if swapped { (rhs, lhs) } else { (lhs, rhs) };
         let checked = self.value(first, None);
         let want = type_of(&checked).map_or_else(|| UNKNOWN, as_optional);
+        // A generic call as the second side cannot meet `want`, a convenience: it reports the
+        // comparison, as a callee that is not generic does.
+        let outer = self.body.compare_hint;
+        self.body.compare_hint = type_of(&checked).map(|first| CompareHint {
+            at: second.span,
+            whole: span,
+            first,
+            swapped,
+        });
         let other = self.value(second, Some(want));
+        self.body.compare_hint = outer;
         // A side converts through one `?` only: `x == 5` on an `i64??` holds `5` to `i64??`.
         if let (Some(a), Some(b)) = (type_of(&checked), type_of(&other))
             && let Some((side, want, got)) = [(second, a, b), (first, b, a)]

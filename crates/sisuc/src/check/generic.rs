@@ -93,6 +93,32 @@ fn mark_params(ty: Type, named: &mut [bool]) {
     }
 }
 
+/// `mark_params` for types that share children: `seen` holds each type already visited, so a type
+/// is visited once, whatever the number of paths to it. It can be shared by several calls.
+fn mark_distinct(ty: Type, seen: &mut FxHashSet<Type>, named: &mut [bool]) {
+    #[cfg(test)]
+    DISTINCT.set(DISTINCT.get() + 1);
+    if !ty.has_param() || !seen.insert(ty) {
+        return;
+    }
+    match ty.kind() {
+        TypeKind::Param(_, j) => named[j as usize] = true,
+        TypeKind::Array(inner) | TypeKind::Optional(inner) => mark_distinct(inner, seen, named),
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
+            for &arg in args.get() {
+                mark_distinct(arg, seen, named);
+            }
+        }
+        TypeKind::Assoc(base, _, args, _) => {
+            for child in iter::once(base).chain(args.get().iter().copied()) {
+                mark_distinct(child, seen, named);
+            }
+        }
+        // As in `mark_params`: `has_param` is false for every other kind.
+        _ => unreachable!("only a kind with a child can name a parameter"),
+    }
+}
+
 /// Whether `ty` names the type parameter at place `param` other than under an associated type:
 /// only such a name lets the type that a result is annotated with bind the parameter.
 fn names_outside_assoc(ty: Type, param: usize) -> bool {
@@ -1010,39 +1036,22 @@ impl Bindings {
         self.found[i] = Some(*REJECTED);
     }
 
-    /// Rejects each parameter that `ty`, a callee's, names and that is unbound, as `reject` does
-    /// for a bound parameter; a bound one stays. It gives whether it rejected one. The work is one
-    /// walk of `ty` as the user wrote it, linear in its size, so it needs no step counter.
-    fn reject_unbound(&mut self, ty: Type) -> bool {
-        if !ty.has_param() {
-            return false;
+    /// Rejects each parameter that one of `types`, a callee's, names and that is unbound, as
+    /// `reject` does for a bound parameter. A bound one stays. It gives whether it rejected one.
+    /// The work is one visit for each distinct type in `types`. A type can share its children,
+    /// so a walk of each path would take exponential time.
+    fn reject_unbound(&mut self, types: impl IntoIterator<Item = Type>) -> bool {
+        let mut named = vec![false; self.found.len()];
+        let mut seen = FxHashSet::default();
+        for ty in types {
+            mark_distinct(ty, &mut seen, &mut named);
         }
-        match ty.kind() {
-            TypeKind::Param(_, i) => {
-                let unbound = self.found[i as usize].is_none();
-                if unbound {
-                    self.found[i as usize] = Some(*REJECTED);
-                }
-                unbound
-            }
-            TypeKind::Array(inner) | TypeKind::Optional(inner) => self.reject_unbound(inner),
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
-                self.reject_unbound_all(args.get())
-            }
-            TypeKind::Assoc(base, _, args, _) => {
-                // Both walks run: neither may skip the other's parameters.
-                let in_base = self.reject_unbound(base);
-                self.reject_unbound_all(args.get()) || in_base
-            }
-            _ => unreachable!("only a kind with a child can name a parameter"),
-        }
-    }
-
-    /// `reject_unbound` for each of `types`, every one of them walked.
-    fn reject_unbound_all(&mut self, types: &[Type]) -> bool {
         let mut any = false;
-        for &ty in types {
-            any |= self.reject_unbound(ty);
+        for (found, named) in iter::zip(&mut self.found, named) {
+            if named && found.is_none() {
+                *found = Some(*REJECTED);
+                any = true;
+            }
         }
         any
     }
@@ -1204,6 +1213,8 @@ thread_local! {
     /// How many types the walk for the type parameters that types name has visited on this
     /// thread.
     pub(super) static MARKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many types the walk of `mark_distinct` has visited on this thread.
+    pub(super) static DISTINCT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many entries of the substitution lists of early bound checks have been written on this
     /// thread.
     pub(super) static LISTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -1270,6 +1281,21 @@ pub(super) struct ContextHint {
     want: Type,
     /// Whether the call is `receiver?.method(...)`, whose result is optional.
     safe: bool,
+}
+
+/// The `==` or `!=` that checks the waiting generic call at `at` as its second side (see
+/// `Checker::equal`). Its context is the first side's type made optional. That is a convenience:
+/// a result that cannot meet it is a comparison that cannot be made, as for a concrete callee.
+#[derive(Clone, Copy)]
+pub(super) struct CompareHint {
+    /// The span of the call.
+    pub(super) at: Span,
+    /// The span of the comparison.
+    pub(super) whole: Span,
+    /// The type of the first side.
+    pub(super) first: Type,
+    /// Whether the call is the left side, which `equal` checks second.
+    pub(super) swapped: bool,
 }
 
 /// A generic call while its arguments bind its callee's parameters.
@@ -2027,15 +2053,15 @@ impl Checker<'_> {
             return;
         }
         // Passes 1 to 3 are done. A failed argument binds nothing, so a parameter that only it
-        // could bind stays unbound, and a call that waits would add an E0050 to the fault the
+        // could bind stays unbound. A call that waits would add an E0050 to the fault the
         // argument reported. Such a parameter is rejected, as a failed bound rejects its own.
-        for (slot, param) in iter::zip(&call.slots, sig.params) {
-            if let (Some(checked), Some(param)) = (slot, param)
-                && type_of(checked).is_none()
-                && call.bindings.reject_unbound(*param)
-            {
-                call.rejected = true;
-            }
+        let failed =
+            iter::zip(&call.slots, sig.params).filter_map(|(slot, param)| match (slot, param) {
+                (Some(checked), Some(param)) if type_of(checked).is_none() => Some(*param),
+                _ => None,
+            });
+        if call.bindings.reject_unbound(failed) {
+            call.rejected = true;
         }
         let unchecked = |call: &Inference<'_>, i: usize| ranks[i] == 2 && call.slots[i].is_none();
         call.bound.clear();
@@ -2585,15 +2611,19 @@ impl Checker<'_> {
         }
     }
 
-    /// Reports the call at `span` that leaves parameter `param` unbound, the first one that is not
-    /// rejected-only (see `Bindings::first_unbound_not_rejected`): E0050, unless its result
-    /// cannot meet its context. `misfit` holds that result `found` and the context `want` the call
-    /// met. The mismatch is then the fault, and it reports the mismatch instead. The outer call
-    /// gave the context when a `ContextHint` stands at `span` (see `infer_waiting`): `want` is
-    /// the parameter type as that call prints it. Else a context that holds a hole says nothing
-    /// to the user, and the call keeps its E0050. A call that returns `unit` or `never` never
-    /// gets here: it names no type parameter in its return type, and no type parameter can be
-    /// `unit` (E0138), so it does not wait for a context.
+    /// Reports the call at `span` that leaves a parameter unbound. The parameter is the first
+    /// one that is not rejected-only (see `Bindings::first_unbound_not_rejected`). The report is
+    /// E0050, unless the result of the call cannot meet its context. `misfit` holds that result
+    /// `found` and the context `want` the call met. The mismatch is then the fault, and it is
+    /// reported instead.
+    ///
+    /// The outer call gave the context when a `ContextHint` stands at `span` (see
+    /// `infer_waiting`): `want` is the parameter type as that call prints it. A `CompareHint` at
+    /// `span` makes the fault a comparison that cannot be made, as for a callee that is not
+    /// generic. Else a context that holds a hole says nothing to the user, and the call keeps its
+    /// E0050. A call that returns `unit` or `never` never gets here. It names no type parameter
+    /// in its return type, and no type parameter can be `unit` (E0138), so it does not wait for
+    /// a context.
     fn report_unbound(
         &mut self,
         span: Span,
@@ -2602,17 +2632,32 @@ impl Checker<'_> {
         misfit: Option<(Type, Type)>,
     ) {
         let hint = self.body.context_hint.filter(|hint| hint.at == span);
+        let compare = self.body.compare_hint.filter(|compare| compare.at == span);
+        let safe = hint.is_some_and(|hint| hint.safe) || self.body.safe_call == Some(span);
         let reported = misfit.and_then(|(found, context)| {
             // The result of a safe call is optional (see `Checker::member`).
-            let found = if hint.is_some_and(|hint| hint.safe) {
-                as_optional(found)
-            } else {
-                found
-            };
-            match hint {
-                Some(hint) => Some(self.mismatch(span, None, hint.want, found)),
-                None if !context.holds_hole() => Some(self.mismatch(span, None, context, found)),
-                None => None,
+            let found = if safe { as_optional(found) } else { found };
+            match (hint, compare) {
+                (Some(hint), _) => Some(self.mismatch(span, None, hint.want, found)),
+                (None, Some(compare)) => {
+                    let (left, right) = if compare.swapped {
+                        (found, compare.first)
+                    } else {
+                        (compare.first, found)
+                    };
+                    Some(
+                        DiagnosticKind::CannotCompare {
+                            left: self.type_name(left),
+                            right: self.type_name(right),
+                            at: compare.whole,
+                        }
+                        .into(),
+                    )
+                }
+                (None, None) if !context.holds_hole() => {
+                    Some(self.mismatch(span, None, context, found))
+                }
+                (None, None) => None,
             }
         });
         match reported {

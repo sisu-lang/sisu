@@ -1,0 +1,8 @@
+error[E0032]: expected `i64?`, found `Two<X, bool>?`
+  --> E0032-known-context-safe.sisu:14:19
+   |
+14 |     let x: i64? = source?.make()
+   |                   ^^^^^^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

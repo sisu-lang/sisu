@@ -5886,13 +5886,15 @@ fn a_waiting_call_after_a_failed_argument_should_not_report_e0050() {
 
 /// The rows of `a_call_that_cannot_meet_its_known_context_should_report_the_mismatch`.
 const KNOWN_CONTEXT_ROWS: &[PartialRow<'static>] = {
-    use Code::{CannotInfer, Mismatch};
+    use Code::{CannotCompare, CannotInfer, Mismatch};
     const DECLS: &str = "fn mkp<X>() -> Box<X, bool>? { None }\n\
         fn mk2<X>() -> Box<X, bool> { panic(\"no\") }\n\
         fn mkr<E>() -> Result<i64, E> { Ok(1) }\n\
         fn fi(_x: i64?) -> i64 { 0 }\n\
         fn g<T>(_c: T?, _d: Result<T, string>) -> i64 { 0 }\n\
-        fn g2<T>(_c: T?, _d: T) -> i64 { 0 }\n";
+        fn g2<T>(_c: T?, _d: T) -> i64 { 0 }\n\
+        class O {\n    fn m<X>(self) -> Box<X, bool> { panic(\"no\") }\n}\n\
+        fn mko() -> O? { None }\n";
     &[
         (DECLS, "print(g(mkp(), mkr()))", &[(Mismatch, "mkp()")]),
         (DECLS, "let x: i64? = mkp()", &[(Mismatch, "mkp()")]),
@@ -5905,6 +5907,46 @@ const KNOWN_CONTEXT_ROWS: &[PartialRow<'static>] = {
         // No context: the call has nothing to meet, and E0050 is the fault.
         (DECLS, "let x = mkp()", &[(CannotInfer, "mkp()")]),
         (DECLS, "let x: Box<i64, bool>? = mkp()", &[]),
+        // A safe call is checked against the same context.
+        (
+            DECLS,
+            "let o = mko()\nlet y: i64? = o?.m()",
+            &[(Mismatch, "o?.m()")],
+        ),
+        (
+            DECLS,
+            "let o = mko()\nprint(fi(o?.m()))",
+            &[(Mismatch, "o?.m()")],
+        ),
+        (
+            DECLS,
+            "let o = mko()\nlet y: i64 = o?.m()",
+            &[(Mismatch, "o?.m()")],
+        ),
+        // The context of a comparison is a convenience: a result that cannot meet it is a
+        // comparison that cannot be made, as for a callee that is not generic.
+        (DECLS, "print(1 == mk2())", &[(CannotCompare, "1 ==")]),
+        (DECLS, "print(mk2() != 1)", &[(CannotCompare, "mk2()")]),
+        (
+            DECLS,
+            "print(Some(1) == mk2())",
+            &[(CannotCompare, "Some(1)")],
+        ),
+        (
+            DECLS,
+            "print(mk2() == Some(1))",
+            &[(CannotCompare, "mk2()")],
+        ),
+        (
+            DECLS,
+            "let b: bool = 1 == mk2()",
+            &[(CannotCompare, "1 ==")],
+        ),
+        (
+            DECLS,
+            "let o = mko()\nprint(1 == o?.m())",
+            &[(CannotCompare, "1 ==")],
+        ),
     ]
 };
 
@@ -5913,4 +5955,98 @@ const KNOWN_CONTEXT_ROWS: &[PartialRow<'static>] = {
 #[test]
 fn a_call_that_cannot_meet_its_known_context_should_report_the_mismatch() {
     check_partial_rows(KNOWN_CONTEXT_ROWS);
+}
+
+/// The text of a mismatch for a generic call that cannot meet its context. The call's return type
+/// prints its unbound parameters by the callee's names, and `?` after it when the call is safe.
+/// A comparison names its two sides in source order.
+#[test]
+fn a_call_that_cannot_meet_its_context_should_print_the_type_it_returns() {
+    const DECLS: &str = "class O {\n    fn n(self) -> Box<i64, bool> { panic(\"no\") }\n    \
+        fn m<A>(self) -> Box<A, bool> { panic(\"no\") }\n}\n\
+        fn mko() -> O? { None }\n\
+        fn mk2<A>() -> Box<A, bool> { panic(\"no\") }\n\
+        fn mkc() -> Box<i64, bool> { panic(\"no\") }\n\
+        fn fi(_x: i64?) -> i64 { 0 }\n";
+    with_prelude();
+    let rows: &[(&str, &str)] = &[
+        (
+            "let o = mko()\nlet x: i64? = o?.n()",
+            "expected `i64?`, found `Box<i64, bool>?`",
+        ),
+        (
+            "let o = mko()\nlet y: i64? = o?.m()",
+            "expected `i64?`, found `Box<A, bool>?`",
+        ),
+        (
+            "let o = mko()\nprint(fi(o?.m()))",
+            "expected `i64?`, found `Box<A, bool>?`",
+        ),
+        (
+            "let o = mko()\nlet y: i64 = o?.m()",
+            "expected `i64`, found `Box<A, bool>?`",
+        ),
+        (
+            "let o = O()\nlet y: i64? = o.m()",
+            "expected `i64?`, found `Box<A, bool>`",
+        ),
+        (
+            "print(1 == mkc())",
+            "cannot compare `i64` with `Box<i64, bool>`",
+        ),
+        (
+            "print(1 == mk2())",
+            "cannot compare `i64` with `Box<A, bool>`",
+        ),
+        (
+            "print(mk2() != 1)",
+            "cannot compare `Box<A, bool>` with `i64`",
+        ),
+        (
+            "print(Some(1) == mk2())",
+            "cannot compare `i64?` with `Box<A, bool>`",
+        ),
+        (
+            "print(mk2() == Some(1))",
+            "cannot compare `Box<A, bool>` with `i64?`",
+        ),
+        (
+            "let o = mko()\nprint(1 == o?.m())",
+            "cannot compare `i64` with `Box<A, bool>?`",
+        ),
+    ];
+    for &(body, want) in rows {
+        let src = format!(
+            "{PARTIAL_DECLS}{DECLS}fn main() {{\n    {}\n}}",
+            body.replace('\n', "\n    ")
+        );
+        let (_, ds) = checked(&src);
+        let messages: Vec<_> = ds.iter().map(Diagnostic::message).collect();
+        assert_eq!(messages, [want], "row `{body}`");
+    }
+}
+
+/// Rejecting the parameters that failed arguments name visits each distinct type once. A
+/// declaration with shared children costs its size, not the number of paths through it.
+#[test]
+fn rejecting_the_parameters_of_failed_arguments_should_visit_each_type_once() {
+    let visits = |n: usize| {
+        let levels: Vec<_> = (1..=n)
+            .map(|k| format!("type A{k}<T> = Two<A{}<T>, A{}<T>>\n", k - 1, k - 1))
+            .collect();
+        let levels = levels.join("");
+        let src = format!(
+            "class Two<A, B> {{\n    a: A\n    b: B\n}}\ntype A0<T> = T\n{levels}\
+             fn h<T>(_a: A{n}<T>, _b: T?) -> i64 {{ 1 }}\nfn none<X>() -> X? {{ None }}\n\
+             fn main() {{\n    print(h(nope, none()))\n}}"
+        );
+        generic::DISTINCT.set(0);
+        let (_, ds) = checked(&src);
+        assert_eq!(
+            ds.iter().map(Diagnostic::code).collect::<Vec<_>>(),
+            [Code::BindingNotFound]
+        );
+        generic::DISTINCT.get()
+    };
+    assert_near_linear(visits(10), visits(20), visits(30));
 }

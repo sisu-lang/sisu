@@ -154,7 +154,13 @@ impl Checker<'_> {
                     angles: *angles,
                     expected,
                 };
+                // `report_unbound` reads it: the result of a safe call is optional.
+                let outer = self.body.safe_call;
+                if *safe {
+                    self.body.safe_call = Some(e.span);
+                }
                 let checked = self.method_expr(e.span, *safe, receiver, site, args, *parens);
+                self.body.safe_call = outer;
                 self.misread_unless_checked(e.span, types, &checked);
                 checked
             }

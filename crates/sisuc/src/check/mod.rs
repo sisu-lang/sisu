@@ -786,6 +786,10 @@ struct Body {
     break_hint: Option<(Span, Span)>,
     /// The waiting generic call that the outer call is checking as an argument.
     context_hint: Option<generic::ContextHint>,
+    /// The `==` or `!=` that checks a generic call as its second side.
+    compare_hint: Option<generic::CompareHint>,
+    /// The safe method call being checked: `receiver?.method(...)` at this span.
+    safe_call: Option<Span>,
     /// Set by a `break` or `continue` outside a loop; `scoped_block` reads it per statement.
     invalid_jump: bool,
     /// Where each loop label is declared that a failed jump or a reused loop label names, which

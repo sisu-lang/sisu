@@ -1,0 +1,8 @@
+error[E0047]: cannot compare `i64` with `Two<X, bool>`
+  --> E0047-generic-call.sisu:11:11
+   |
+11 |     print(1 == make())
+   |           ^^^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0047
