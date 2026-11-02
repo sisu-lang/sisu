@@ -122,14 +122,15 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
     let rotated: Vec<u8> = data.iter().map(|b| b.rotate_left(3)).collect();
     // So do the compound parts of an interpolation: a program with none is the same as it was.
     let mixed: Vec<u8> = data.iter().map(|b| b.rotate_left(5)).collect();
-    // So does the choice of whether the program leaves with `let ... else` and `??`, which one
-    // program in eight does: the others are the same as they were.
-    let leaving: Vec<u8> = data.iter().map(|b| b.rotate_left(7)).collect();
     let mut g = Gen::new(data);
     g.ru = Unstructured::new(&reversed);
     g.au = Unstructured::new(&rotated);
     g.cu = Unstructured::new(&mixed);
-    g.leaves = Unstructured::new(&leaving).choose_index(8).unwrap_or(0) == 4;
+    // The choice of whether the program leaves with `let ... else` and `??` reads every byte, so
+    // that it shares no bits with an early choice, and one program in eight does: the others are
+    // the same as they were.
+    let fold = data.iter().fold(0, |fold, byte| fold ^ byte);
+    g.leaves = fold % 8 == 5;
     let (cost, known, expected) = g.program();
     // Only the tests read the cost.
     #[cfg(not(test))]

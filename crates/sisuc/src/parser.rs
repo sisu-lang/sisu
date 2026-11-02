@@ -2582,6 +2582,10 @@ impl<'a> Parser<'a> {
                 | TokenKind::FatArrow
                 | TokenKind::Else
                 | TokenKind::Eof
+                // The tokens that end a part of an interpolation: `}`, and a format spec.
+                | TokenKind::StrMiddle(_)
+                | TokenKind::StrTail(_)
+                | TokenKind::FormatSpec(_)
         )
     }
 
@@ -4954,6 +4958,42 @@ mod tests {
                     "{src}"
                 );
             });
+        }
+    }
+
+    /// GIVEN a `return`, `break` or `continue` before each token of an interpolation that can
+    /// follow an expression
+    /// WHEN the parser reads it
+    /// THEN the jump takes no value
+    #[test]
+    fn jump_with_no_value_should_end_at_an_interpolation_part() {
+        for (src, printed) in [
+            (
+                r#"print("{o ?? return}")"#,
+                r"(call print (interp (?? o (return))))",
+            ),
+            (
+                r#"print("{o ?? break}")"#,
+                r"(call print (interp (?? o (break))))",
+            ),
+            (
+                r#"print("{o ?? continue}")"#,
+                r"(call print (interp (?? o (continue))))",
+            ),
+            (
+                r#"print("{o ?? return}-{o ?? break}")"#,
+                r#"(call print (interp (?? o (return)) "-" (?? o (break))))"#,
+            ),
+            (
+                r#"print("{o ?? return:>4}")"#,
+                r#"(call print (interp (fmt (?? o (return)) ">4")))"#,
+            ),
+            (
+                r#"print("{o ?? break 1}")"#,
+                r"(call print (interp (?? o (break 1))))",
+            ),
+        ] {
+            assert_eq!(expr(src), printed, "{src}");
         }
     }
 

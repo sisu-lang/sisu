@@ -121,7 +121,7 @@ The rules:
 
 ## let ... else
 
-`let pattern = value else { ... }` binds the names of a pattern that can fail to match. When the pattern accepts the value, the names are in scope from the next statement to the end of the block. When it does not, the `else` block runs. That block must not finish: it ends the function, the loop or the program.
+`let pattern = value else { ... }` binds the names of a pattern that can fail to match. When the pattern accepts the value, the names are in scope from the next statement to the end of the block. When it does not, the `else` block runs. That block must not finish: it leaves the function, the turn or the loop, or it ends the program.
 
 ```sisu
 enum Shape {
@@ -144,10 +144,10 @@ The rules:
 
 - The value is an optional or an enum, and the pattern is one that `if let` takes ([E0051](../diagnostics/E0051.md), [Patterns](enums.md#patterns), [`if let` and `while let`](enums.md#if-let-and-while-let)). On an optional, a plain name binds the value inside: `let v = o else { return }`.
 - A pattern that accepts every value is an error ([E0131](../diagnostics/E0131.md)). Use a plain `let`.
-- A `let` whose pattern is not a single name needs an `else` block ([E0174](../diagnostics/E0174.md)).
+- A `let` whose pattern is not a single name or `_` needs an `else` block ([E0174](../diagnostics/E0174.md)).
 - `let mut name = value else { ... }` makes a binding that can change. `mut` is allowed only before a single name. Before any other pattern, it is an error ([E0011](../diagnostics/E0011.md)).
 - The names of the pattern are not in scope in the `else` block ([E0033](../diagnostics/E0033.md)). A name that the pattern binds and that nothing reads builds with a warning ([W0014](../diagnostics/W0014.md)).
-- The block must not finish. It ends in `return`, `break`, `continue`, a call of `panic`, or an `if` or a `match` whose branches do not finish. A block that can reach its end is an error ([E0172](../diagnostics/E0172.md)).
+- The block must not finish. It ends, for example, in `return`, `break`, `continue`, a call of `panic`, `todo`, or an `if` or a `match` whose branches do not finish. Any expression that does not finish is enough ([Reachability](#reachability)). A block that can reach its end is an error ([E0172](../diagnostics/E0172.md)).
 - A `break` or a `continue` in the `else` block acts on the loops around the statement, with their loop labels ([break and continue](#break-and-continue), [Loop labels](#loop-labels)).
 - The value cannot end in `}`, because the parser then reads an `else` as part of an `if`. Put the value in parentheses ([E0173](../diagnostics/E0173.md)).
 
