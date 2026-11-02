@@ -661,7 +661,8 @@ struct Checker<'src> {
     body: Body,
     /// While `signature` resolves the parameter and return types: the interface of each `any`
     /// type they write, with the span as written. `record` keeps a use here when the body has
-    /// no owner, because a signature is resolved outside a body.
+    /// no owner, because a signature is resolved outside a body. No other body is resolved while
+    /// it is `Some`: `resolve_aliases` resolves each alias body before `collect_signatures`.
     signature_anys: Option<Vec<(tir::InterfaceId, Span)>>,
     /// Each use of an item that a function, method or constant has, in check order.
     uses: Vec<Use>,
