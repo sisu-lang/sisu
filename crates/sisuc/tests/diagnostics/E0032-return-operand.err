@@ -1,0 +1,8 @@
+error[E0032]: expected `i64`, found `string`
+ --> E0032-return-operand.sisu:5:20
+  |
+5 |     let x = return "a"
+  |                    ^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

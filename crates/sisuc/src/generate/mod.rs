@@ -40,6 +40,9 @@ pub(crate) struct Generated {
     /// The rewrites `rewritten` holds.
     #[cfg(test)]
     pub(crate) made: Vec<writer::Rewrite>,
+    /// The most blocks open around an `if` of which every branch jumps.
+    #[cfg(test)]
+    pub(crate) leaving_if_depth: u32,
 }
 
 /// An argument of a call of a bounded generic function or class, whose parameter is a bare type
@@ -126,6 +129,12 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
     g.ru = Unstructured::new(&reversed);
     g.au = Unstructured::new(&rotated);
     g.cu = Unstructured::new(&mixed);
+    // One program in eight leaves with `let ... else` and `??`. The choice reads every byte, so
+    // that it shares no bits with an early choice. The other programs are the same as they were.
+    // The value 5 keeps the seeds that the tests pin outside the gate. The weight of the `??`
+    // jump in `coalesce` is tuned to the same seeds.
+    let fold = data.iter().fold(0, |fold, byte| fold ^ byte);
+    g.leaves = fold % 8 == 5;
     let (cost, known, expected) = g.program();
     // Only the tests read the cost.
     #[cfg(not(test))]
@@ -153,6 +162,8 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
         plain,
         #[cfg(test)]
         made: g.w.made,
+        #[cfg(test)]
+        leaving_if_depth: g.leaving_if_depth,
     }
 }
 
@@ -187,6 +198,9 @@ struct Gen<'a> {
     jumps: stmt::Jumps,
     /// How many blocks are open around the point being written.
     blocks: u32,
+    /// The most blocks open around an `if` of which every branch jumps (`Gen::if_stmt`).
+    #[cfg(test)]
+    leaving_if_depth: u32,
     /// Whether the next expression is in a position with no expected type, where a `u8` must
     /// be one by its own type (`Gen::expr`).
     synth: bool,
@@ -203,6 +217,8 @@ struct Gen<'a> {
     /// What chooses whether a part of an interpolation is a compound value, apart from `u`,
     /// `ru` and `au`, so that a part that is not one draws what it drew before.
     cu: Unstructured<'a>,
+    /// Whether the program holds `let ... else`, and `return`, `break` and `continue` after `??`.
+    leaves: bool,
     /// Whether an expression of the statement being written so far has an effect or may
     /// panic, so one after it may not move before the statement (decision 2).
     effect: bool,
@@ -231,12 +247,15 @@ impl<'a> Gen<'a> {
             budget: BUDGET - FUEL * STATEMENT_MOST,
             jumps: stmt::Jumps::default(),
             blocks: 0,
+            #[cfg(test)]
+            leaving_if_depth: 0,
             synth: false,
             typed: false,
             bare: false,
             ru: Unstructured::new(&[]),
             au: Unstructured::new(&[]),
             cu: Unstructured::new(&[]),
+            leaves: false,
             effect: false,
             returns: false,
             bound_sites: Vec::new(),

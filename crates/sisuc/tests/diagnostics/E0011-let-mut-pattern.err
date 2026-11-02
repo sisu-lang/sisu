@@ -1,0 +1,8 @@
+error[E0011]: expected a pattern, found `mut`
+ --> E0011-let-mut-pattern.sisu:6:9
+  |
+6 |     let mut Some(v) = o else { return }
+  |         ^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011

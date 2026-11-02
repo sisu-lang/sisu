@@ -1,0 +1,12 @@
+// GIVEN an `enum Mode { Idle; Busy(i64) }` and a `main` whose line 11 is `let mut Idle = e else { return }`, with `mut` at 11:9
+// WHEN `sisu check` runs on it
+// THEN it reports E0011 "expected a pattern, found `mut`" at 11:9
+enum Mode {
+    Idle
+    Busy(i64)
+}
+
+fn main() {
+    let e = Mode.Idle
+    let mut Idle = e else { return }
+}

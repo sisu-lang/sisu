@@ -1,0 +1,10 @@
+// GIVEN a labeled loop with an `if` whose condition is `(break outer { true })`, and no body
+// WHEN `sisu check` runs on it
+// THEN it reports E0011 at the end of line 6 (6:34), because the `)` ended the `break`
+fn f() {
+    outer: loop {
+        if (break outer { true })
+    }
+}
+
+fn main() {}

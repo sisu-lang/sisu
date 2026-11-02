@@ -1,0 +1,13 @@
+error[E0173]: the value of a `let ... else` cannot end in `}`
+ --> E0173.sisu:4:19
+  |
+4 |     let Some(v) = match k { _ => o } else { return }
+  |                   ^^^^^^^^^^^^^^^^^^ this ends in `}`
+  |
+help: put the value in `( )`
+  |
+4 |     let Some(v) = (match k { _ => o }) else { return }
+  |                   +                  +
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0173

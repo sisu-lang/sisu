@@ -175,6 +175,9 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0163](E0163.md) | error | generic items with too many instances |
 | [E0164](E0164.md) | error | interface that cannot be used after `any` |
 | [E0165](E0165.md) | error | `any` written in a form that it does not take |
+| [E0172](E0172.md) | error | `else` block of a `let ... else` that can finish |
+| [E0173](E0173.md) | error | value of a `let ... else` that ends in `}` |
+| [E0174](E0174.md) | error | pattern that can fail, with no `else` |
 | [W0001](W0001.md) | warning | unreachable code |
 | [W0002](W0002.md) | warning | variable that is never reassigned |
 | [W0003](W0003.md) | warning | `todo` left in the program |

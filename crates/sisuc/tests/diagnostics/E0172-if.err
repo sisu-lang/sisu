@@ -1,0 +1,10 @@
+error[E0172]: the `else` block of a `let ... else` must not finish
+ --> E0172-if.sisu:6:41
+  |
+6 |     let v = o else { if true { return } }
+  |                                         ^ the block can finish here
+  |
+  = help: end the block with `return`, `break`, `continue` or `panic(...)`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0172

@@ -1,0 +1,14 @@
+// GIVEN a function `g() -> i64` whose body is `h(return 1)`, with the `return` at 5:7
+// WHEN `sisu check` runs on it
+// THEN it reports E0043 "expression has no value" with the label "never finishes" at 5:7
+fn g() -> i64 {
+    h(return 1)
+}
+
+fn h(x: i64) -> i64 {
+    x
+}
+
+fn main() {
+    print(g())
+}

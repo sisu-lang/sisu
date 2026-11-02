@@ -1,0 +1,19 @@
+// let ... else on an enum binds the payload.
+// GIVEN `enum Shape { Circle(f64); Rect(f64, f64) }` and a function `area(s: Shape) -> f64`
+//   whose body is `let Circle(r) = s else { return 0.0 }` and then `r * r`
+// WHEN `main` prints `area(Shape.Circle(2.0))` and `area(Shape.Rect(1.0, 1.0))`
+// THEN it prints `4.0` and then `0.0`
+enum Shape {
+    Circle(f64)
+    Rect(f64, f64)
+}
+
+fn area(s: Shape) -> f64 {
+    let Circle(r) = s else { return 0.0 }
+    r * r
+}
+
+fn main() {
+    print(area(Shape.Circle(2.0)))    // 4.0
+    print(area(Shape.Rect(1.0, 1.0))) // 0.0
+}

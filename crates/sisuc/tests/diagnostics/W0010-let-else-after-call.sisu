@@ -1,0 +1,16 @@
+// GIVEN `let a = f(n)` and then `let v = wrap(a) else { return f(n - 1) }` in `f`
+// WHEN `sisu check` runs on it
+// THEN it reports W0010 with one label, at the call `f(n)` in the first `let` (9:13): the later `else` is not on a path that returns
+fn wrap(x: i64) -> i64? {
+    Some(x)
+}
+
+fn f(n: i64) -> i64 {
+    let a = f(n)
+    let v = wrap(a) else { return f(n - 1) }
+    v
+}
+
+fn main() {
+    print(f(1))
+}

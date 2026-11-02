@@ -1,0 +1,12 @@
+// GIVEN a `main` whose line 10 is `let One(n) = v else { return }` (`enum Only { One(i64) }`), with the pattern at 10:9
+// WHEN `sisu check` runs on it
+// THEN it reports E0131 at 10:9 and the message names `let ... else`
+enum Only {
+    One(i64)
+}
+
+fn main() {
+    let v = Only.One(1)
+    let One(n) = v else { return }
+    print(n)
+}

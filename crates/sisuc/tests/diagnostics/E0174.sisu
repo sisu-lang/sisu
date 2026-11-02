@@ -1,0 +1,9 @@
+// GIVEN a `main` with `let o: i64? = None` and, on line 7, `let Some(v) = o`, with `Some` at 7:9
+// WHEN `sisu check` runs on it
+// THEN it reports E0174 at 7:9, with the help "add an `else` block that does not finish, or use `if let` or `match`"
+// AND it reports no other diagnostic
+fn main() {
+    let o: i64? = None
+    let Some(v) = o
+    print(v)
+}
