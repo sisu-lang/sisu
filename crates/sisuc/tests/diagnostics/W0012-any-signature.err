@@ -1,0 +1,280 @@
+warning[W0012]: interface `I1` is never used
+  --> W0012-any-signature.sisu:1:11
+   |
+ 1 | interface I1<T> {
+   |           ^^ never used
+...
+53 | fn dead_param(_x: P<any I1<i64>, any I1<bool>>?) {}
+   |                         -------      -------- used here, in `dead_param`, which is never called
+   |                         |
+   |                         used here, in `dead_param`, which is never called
+   |
+   = help: delete it, or name it `_I1` if it is kept on purpose
+
+warning[W0012]: interface `I2` is never used
+  --> W0012-any-signature.sisu:4:11
+   |
+ 4 | interface I2<T> {
+   |           ^^ never used
+...
+55 |     let _x: P<any I2<i64>, any I2<bool>>? = None
+   |                   -------      -------- used here, in `dead_let`, which is never called
+   |                   |
+   |                   used here, in `dead_let`, which is never called
+   |
+   = help: delete it, or name it `_I2` if it is kept on purpose
+
+warning[W0012]: interface `I3` is never used
+  --> W0012-any-signature.sisu:7:11
+   |
+ 7 | interface I3<T> {
+   |           ^^ never used
+...
+57 | fn dead_ret() -> (any I3<i64>)? { None }
+   |                       ------- used here, in `dead_ret`, which is never called
+   |
+   = help: delete it, or name it `_I3` if it is kept on purpose
+
+warning[W0012]: interface `I4` is never used
+  --> W0012-any-signature.sisu:10:11
+   |
+10 | interface I4<T> {
+   |           ^^ never used
+...
+58 | fn dead_alias(_x: Al4) {}
+   |                   --- used here, in `dead_alias`, which is never called
+   |
+   = help: delete it, or name it `_I4` if it is kept on purpose
+
+warning[W0012]: interface `I5` is never used
+  --> W0012-any-signature.sisu:13:11
+   |
+13 | interface I5<T> {
+   |           ^^ never used
+...
+60 |     let _x: Al5 = None
+   |             --- used here, in `dead_alias_let`, which is never called
+   |
+   = help: delete it, or name it `_I5` if it is kept on purpose
+
+warning[W0012]: interface `I6` is never used
+  --> W0012-any-signature.sisu:16:11
+   |
+16 | interface I6<T> {
+   |           ^^ never used
+...
+64 |     let _x = none<any I6<i64>>()
+   |                       ------- used here, in `dead_type_arg`, which is never called
+   |
+   = help: delete it, or name it `_I6` if it is kept on purpose
+
+warning[W0012]: interface `I7` is never used
+  --> W0012-any-signature.sisu:19:11
+   |
+19 | interface I7<T> {
+   |           ^^ never used
+...
+66 | fn dead_alias_arg(_x: Al7<any I7<i64>>) {}
+   |                               ------- used here, in `dead_alias_arg`, which is never called
+   |
+   = help: delete it, or name it `_I7` if it is kept on purpose
+
+warning[W0012]: interface `I8` is never used
+  --> W0012-any-signature.sisu:22:11
+   |
+22 | interface I8<T> {
+   |           ^^ never used
+...
+67 | fn dead_nested(_x: (any I8<any J8>)?) {}
+   |                         ---------- used here, in `dead_nested`, which is never called
+   |
+   = help: delete it, or name it `_I8` if it is kept on purpose
+
+warning[W0012]: interface `J8` is never used
+  --> W0012-any-signature.sisu:25:11
+   |
+25 | interface J8 {
+   |           ^^ never used
+...
+67 | fn dead_nested(_x: (any I8<any J8>)?) {}
+   |                                -- used here, in `dead_nested`, which is never called
+   |
+   = help: delete it, or name it `_J8` if it is kept on purpose
+
+warning[W0012]: interface `I9` is never used
+  --> W0012-any-signature.sisu:28:11
+   |
+28 | interface I9<T> {
+   |           ^^ never used
+...
+68 | fn dead_array<T>(_x: [any I9<T>]) {}
+   |                           ----- used here, in `dead_array`, which is never called
+69 | fn dead_optional<T>(_x: (any I9<T>)?) {}
+   |                              ----- used here, in `dead_optional`, which is never called
+   |
+   = help: delete it, or name it `_I9` if it is kept on purpose
+
+warning[W0012]: interface `I10` is never used
+  --> W0012-any-signature.sisu:31:11
+   |
+31 | interface I10<T> {
+   |           ^^^ never used
+...
+71 |     fn dead_method(self, _x: P<any I10<i64>, any I10<bool>>?) {}
+   |                                    --------      --------- used here, in `dead_method`, which is never called
+   |                                    |
+   |                                    used here, in `dead_method`, which is never called
+   |
+   = help: delete it, or name it `_I10` if it is kept on purpose
+
+warning[W0012]: interface `I11` is never used
+  --> W0012-any-signature.sisu:34:11
+   |
+34 | interface I11<T> {
+   |           ^^^ never used
+...
+74 |     fn dead_variant_method(self, _x: P<any I11<i64>, any I11<bool>>?) {}
+   |                                            --------      --------- used here, in `dead_variant_method`, which is never called
+   |                                            |
+   |                                            used here, in `dead_variant_method`, which is never called
+   |
+   = help: delete it, or name it `_I11` if it is kept on purpose
+
+warning[W0012]: interface `I12` is never used
+  --> W0012-any-signature.sisu:37:11
+   |
+37 | interface I12<T> {
+   |           ^^^ never used
+...
+77 |     fn dead_extend_method(self, _x: P<any I12<i64>, any I12<bool>>?) {}
+   |                                           --------      --------- used here, in `dead_extend_method`, which is never called
+   |                                           |
+   |                                           used here, in `dead_extend_method`, which is never called
+   |
+   = help: delete it, or name it `_I12` if it is kept on purpose
+
+warning[W0012]: enum `P` is never built
+  --> W0012-any-signature.sisu:40:6
+   |
+40 | enum P<A, B> { X(A, B) }
+   |      ^ never built
+   |
+   = help: delete it, or name it `_P` if it is kept on purpose
+
+warning[W0012]: function `dead_param` is never called
+  --> W0012-any-signature.sisu:53:4
+   |
+53 | fn dead_param(_x: P<any I1<i64>, any I1<bool>>?) {}
+   |    ^^^^^^^^^^ never called
+   |
+   = help: delete it, or name it `_dead_param` if it is kept on purpose
+
+warning[W0012]: function `dead_let` is never called
+  --> W0012-any-signature.sisu:54:4
+   |
+54 | fn dead_let() {
+   |    ^^^^^^^^ never called
+   |
+   = help: delete it, or name it `_dead_let` if it is kept on purpose
+
+warning[W0012]: function `dead_ret` is never called
+  --> W0012-any-signature.sisu:57:4
+   |
+57 | fn dead_ret() -> (any I3<i64>)? { None }
+   |    ^^^^^^^^ never called
+   |
+   = help: delete it, or name it `_dead_ret` if it is kept on purpose
+
+warning[W0012]: function `dead_alias` is never called
+  --> W0012-any-signature.sisu:58:4
+   |
+58 | fn dead_alias(_x: Al4) {}
+   |    ^^^^^^^^^^ never called
+   |
+   = help: delete it, or name it `_dead_alias` if it is kept on purpose
+
+warning[W0012]: function `dead_alias_let` is never called
+  --> W0012-any-signature.sisu:59:4
+   |
+59 | fn dead_alias_let() {
+   |    ^^^^^^^^^^^^^^ never called
+   |
+   = help: delete it, or name it `_dead_alias_let` if it is kept on purpose
+
+warning[W0012]: function `none` is never called
+  --> W0012-any-signature.sisu:62:4
+   |
+62 | fn none<T>() -> T? { None }
+   |    ^^^^ never called
+63 | fn dead_type_arg() {
+64 |     let _x = none<any I6<i64>>()
+   |              ------------------- used here, in `dead_type_arg`, which is never called
+   |
+   = help: delete it, or name it `_none` if it is kept on purpose
+
+warning[W0012]: function `dead_type_arg` is never called
+  --> W0012-any-signature.sisu:63:4
+   |
+63 | fn dead_type_arg() {
+   |    ^^^^^^^^^^^^^ never called
+   |
+   = help: delete it, or name it `_dead_type_arg` if it is kept on purpose
+
+warning[W0012]: function `dead_alias_arg` is never called
+  --> W0012-any-signature.sisu:66:4
+   |
+66 | fn dead_alias_arg(_x: Al7<any I7<i64>>) {}
+   |    ^^^^^^^^^^^^^^ never called
+   |
+   = help: delete it, or name it `_dead_alias_arg` if it is kept on purpose
+
+warning[W0012]: function `dead_nested` is never called
+  --> W0012-any-signature.sisu:67:4
+   |
+67 | fn dead_nested(_x: (any I8<any J8>)?) {}
+   |    ^^^^^^^^^^^ never called
+   |
+   = help: delete it, or name it `_dead_nested` if it is kept on purpose
+
+warning[W0012]: function `dead_array` is never called
+  --> W0012-any-signature.sisu:68:4
+   |
+68 | fn dead_array<T>(_x: [any I9<T>]) {}
+   |    ^^^^^^^^^^ never called
+   |
+   = help: delete it, or name it `_dead_array` if it is kept on purpose
+
+warning[W0012]: function `dead_optional` is never called
+  --> W0012-any-signature.sisu:69:4
+   |
+69 | fn dead_optional<T>(_x: (any I9<T>)?) {}
+   |    ^^^^^^^^^^^^^ never called
+   |
+   = help: delete it, or name it `_dead_optional` if it is kept on purpose
+
+warning[W0012]: the `extend` block of `Cls` is never used
+  --> W0012-any-signature.sisu:70:1
+   |
+70 | extend Cls {
+   | ^^^^^^^^^^ never used
+   |
+   = help: delete it
+
+warning[W0012]: the `extend` block of `En` is never used
+  --> W0012-any-signature.sisu:73:1
+   |
+73 | extend En {
+   | ^^^^^^^^^ never used
+   |
+   = help: delete it
+
+warning[W0012]: the `extend` block of `Ext` is never used
+  --> W0012-any-signature.sisu:76:1
+   |
+76 | extend Ext {
+   | ^^^^^^^^^^ never used
+   |
+   = help: delete it
+
+sisu: 28 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0012
