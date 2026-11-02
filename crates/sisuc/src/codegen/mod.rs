@@ -6,6 +6,7 @@ mod abi;
 mod any;
 mod arith;
 mod array;
+mod deep;
 mod enums;
 mod io;
 mod layout;
@@ -140,6 +141,7 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             pending: RefCell::new(Vec::new()),
             written: RefCell::new(Written::default()),
             class_held: RefCell::new(FxHashMap::default()),
+            deep: RefCell::default(),
             target_data,
             path,
             source,
@@ -299,6 +301,8 @@ struct Codegen<'ctx, 'src> {
     written: RefCell<Written>,
     /// The types that hold a class, settled so far; see `show::holds_class`.
     class_held: RefCell<FxHashMap<Type, bool>>,
+    /// Which drop functions count the drop depth, and their weights; see `deep`.
+    deep: RefCell<deep::DropMemo>,
     /// The target's layout: the sizes and alignments of classes.
     target_data: TargetData,
     /// The input path as given, and its text: panic messages name a position in it.

@@ -43,7 +43,9 @@ with `match`, and generics with interfaces.
   wrapping
 - classes with fields and methods, whose objects are freed by reference
   counting when the last reference goes away; a field is bare, set once by
-  the constructor, or `mut`
+  the constructor, or `mut`; a drop uses a bounded amount of stack, however
+  deep the value is
+  ([ADR 0038](adr/0038-deep-drops-defer-past-a-depth-limit.md))
 - `is` that tests identity; a class has `==` only when it lists `Eq` and writes
   the method (`E0159`)
 - optionals such as `i64?` and `Node?`, with `None`, `?.`, `??`, `if let` and
@@ -69,7 +71,8 @@ with `match`, and generics with interfaces.
   its bounds, and the operators that `Eq` and `Ord` give it, but a `==` or
   `<` on a `T` with no such bound is an error (`E0139`); `unit` and `never`
   are not type arguments (`E0138`); a use that would need copies without end
-  is an error (`E0140`)
+  is an error (`E0140`), and so is a program whose generic items make more
+  than 100,000 instantiations, in `sisu build` (`E0163`)
 - interfaces: `interface Shape { fn area(self) -> f64 }` lists method
   signatures with no body, associated types (`type Item`), type parameters
   and inherited interfaces (`interface Solid: Named`), and `Self` is the
@@ -100,7 +103,7 @@ with `match`, and generics with interfaces.
   `(any Shape)?` and wraps. An interface with a generic method, a `Self`
   besides the receiver or an associated type cannot be `any` (`E0164`), a bare
   interface name is not a type (`E0147`), and `any Shape?` and `any A & B` are
-  errors (`E0163`)
+  errors (`E0165`)
 - type aliases, `type Grid = [[char?]]` and `type Pairs<T> = [[T]]`: another
   name for a type, so a `Grid` is a `[[char?]]` everywhere, inside type
   arguments too. An alias of a class or an enum builds values as the type does
@@ -236,10 +239,10 @@ These came out of the milestone 2 design and are now part of its spec:
 
 ### Decided in milestone 3
 
-- Sisu has no comprehensions. Milestone 9's iterator methods are lazy:
-  `.filter(...).map(...).sum()` builds no intermediate array. A
-  `filter_some`-style method on `[T?]`, which keeps the present elements,
-  comes with them.
+- Milestone 9's iterator methods are lazy: `.filter(...).map(...).sum()`
+  builds no intermediate array. A `filter_some`-style method on `[T?]`, which
+  keeps the present elements, comes with them. Comprehensions were ruled out
+  here and are now open ("Open decisions").
 
 ### Decided in milestone 4
 
@@ -407,7 +410,7 @@ These came out of the milestone 2 design and are now part of its spec:
 - Interface values, `any I`. A value converts to `any I` where one is
   expected, when its type conforms to `I` and is not an optional. An optional
   `any` is written `(any I)?`, and the parentheses are required (`any I?` is
-  `E0163`). An `X?` does not convert to `(any I)?`, and arguments bind a type
+  `E0165`). An `X?` does not convert to `(any I)?`, and arguments bind a type
   parameter before the expected `any` type does: `let s: any Shape = id(c)`
   makes `id<Circle>` and converts the result. An interface that has a generic
   method, a `Self` besides the receiver or an associated type cannot be
@@ -895,12 +898,14 @@ once the decisions it needs are settled:
   Scheduled right after milestone 6: tests in the source file,
   `test "add handles negatives" { assert(add(-1, 1) == 0) }`, with a built-in
   `assert`. A normal build drops `test` blocks; `sisu test` builds a `main`
-  that runs each one and reports which panicked.
+  that runs each one and reports which panicked. A test is now a function
+  marked `@test`, not a `test` block (the user's decision, 2026-10-26); this
+  text changes when the attributes work lands.
   A test is in the same module, so it sees private names. A panic ends the
   whole process (`sisu_panic`), so the spec decides how the other tests still
   run: one child process per test, or stopping at the first failure. Tests
-  sit next to the code, as in Rust and Zig, with no test module or attribute,
-  and the compiler's own `tests/run` cases can use `assert`.
+  sit next to the code, as in Rust and Zig, with no test module, and the
+  compiler's own `tests/run` cases can use `assert`.
 - **Tooling**: everything under "Early tooling", and from "Later and stretch
   goals" parser error recovery, the lints whose features exist, linking with
   `lld`, and debug info.
@@ -1267,12 +1272,12 @@ These do not make code nicer to write, so they wait:
   chooses the linker by hand; the default is still `cc`'s.
 - Parser error recovery, so a syntax error does not hide the next one.
 - A fixed-size inline array: its length is part of its type, and it is stored
-  inline (on the stack, or inside the object that holds it) with no header,
-  no count and no heap block. Name and syntax are open (Swift's
-  `InlineArray<3, i64>`, Rust's `[i64; 3]`, which would clash with today's
-  `[x; n]` making a `[T]`). A built-in literal length needs no const
-  generics; generic code over the length does. Build it when a benchmark shows
-  the heap `[T]` costs too much.
+  inline (on the stack, or inside the object that holds it) with no header, no
+  count and no heap block. Its type is written `FixedArray<T, N>` (2026-10-17,
+  `docs/register.md`), after Swift's `InlineArray<3, i64>`; Rust's `[i64; 3]`
+  would clash with today's `[x; n]` making a `[T]`. A built-in literal length
+  needs no const generics; generic code over the length does. Build it when a
+  benchmark shows the heap `[T]` costs too much.
 - A `Value` bound for type parameters, the mirror of `AnyObject`: every type
   that is not a class, nor an optional of one, conforms, and nothing else can.
   Milestone 8 rejects `[x; n]` in a generic body when `x` is a `T` or `T?`,
@@ -1555,6 +1560,8 @@ accepted.
   rule for each correct program it wrongly rejects.
 - Header files.
 - Unrestricted operator overloading.
+- Function overloading. A closure variant gets its own name, such as `sum_of`
+  beside `sum` ([ADR 0039](adr/0039-sisu-has-no-function-overloading.md)).
 - Inheritance. A `class` is a reference type, not a hierarchy. Composition,
   enums (milestone 7) and interfaces (milestone 8) cover polymorphism, as in
   Rust and Go.
@@ -1692,7 +1699,8 @@ accepted.
   one general form: `@name` or `@name(args)` on the line before it, as in
   Swift and Kotlin. Decide the form before the first attribute lands, so `@`
   is not taken for something else. Later uses could include `@noinline` and
-  `@deprecated("...")`. Tests use `test` blocks, not an attribute.
+  `@deprecated("...")`. Tests use the `@test` attribute (the user's decision,
+  2026-10-26), not `test` blocks.
 - **What a string is.** Resolved by
   [ADR 0014](adr/0014-strings-are-utf-8-values.md): UTF-8, always valid, a
   value shared until written, `len()` in bytes and no `s[i]`.
@@ -1765,7 +1773,9 @@ accepted.
   ([ADR 0019](adr/0019-enums-are-values-named-through-their-enum.md)): a
   variant is built as `Shape.Circle`, a pattern uses the bare name, and the
   type of the matched value decides which enum's variants are searched. Swift's
-  `.circle` short form stays open for expressions only. Resolved for modules
+  `.circle` short form stays open for expressions only. A later ruling
+  (2026-10-31, `docs/register.md`) takes a bare `Circle` instead, where the
+  expected type is the enum. Resolved for modules
   in milestone 11
   ([ADR 0035](adr/0035-a-file-is-a-module-and-its-names-are-private-unless-pub.md)):
   each module has one scope of its items and its imports, an import binds
@@ -1827,9 +1837,9 @@ accepted.
     do. Code after the catch can see class objects left half changed, and
     it is a second way to handle errors beside `Result`.
 
-  The `test` blocks scheduled right after milestone 6 do not wait for this:
-  running each test in a child process isolates its panic with no runtime
-  support.
+  The tests scheduled right after milestone 6 (now `@test` functions) do not
+  wait for this: running each test in a child process isolates its panic with
+  no runtime support.
 - **User drop code.** Decide before milestone 12's file handles, together with
   recovering from a panic. Today drop only frees memory; code the user writes
   to run at drop earns its place when an object holds something outside
@@ -1837,7 +1847,8 @@ accepted.
   calls (Rust's `Drop`) or a block in the class (Swift's `deinit`); what
   happens when the drop code stores `self` somewhere, so the object outlives
   its last reference; how it runs inside the loop that drops the classes of
-  a cycle (ADR 0005); and whether a panic runs it. An object in a cycle
+  a cycle (ADR 0005), and when the depth limit defers its object (ADR 0038);
+  and whether a panic runs it. An object in a cycle
   is never dropped, so drop code cannot be what makes a program correct.
 - **Nested optionals.** Resolved in milestone 8
   ([ADR 0024](adr/0024-optionals-nest.md)): optionals nest, `??` and `if let`
@@ -1861,6 +1872,11 @@ accepted.
   arithmetic in the language, since the runtime's `Hasher` holds it. `u64` and
   wrapping operators wait for the first Sisu code that needs them (ADR 0003),
   and other widths, such as `i32`, for the FFI.
+- **Comprehensions.** Open again (the user's decision, 2026-10-27);
+  milestone 3 had ruled them out. A form that fits the map literal is
+  `[w: w.len() for w in words if w.len() > 3]`, sugar for an iterator chain
+  and `to_map()`. Decide once milestone 9's iterator chains exist, so real
+  code can be compared.
 - **Compile-time evaluation and reflection.** Open, to revisit once Sisu has
   grown (the user's decision, 2026-10-20); it was in "Deliberately avoided".
   Zig, C++, Rust and Mojo evaluate code at compile time, and Zig, C++26 and

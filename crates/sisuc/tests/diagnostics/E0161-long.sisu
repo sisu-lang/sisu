@@ -1,0 +1,13 @@
+type A0 = [A1]
+type A1 = [A2]
+type A2 = [A3]
+type A3 = [A4]
+type A4 = [A5]
+type A5 = [A6]
+type A6 = [A7]
+type A7 = [A8]
+type A8 = [A9]
+type A9 = [A10]
+type A10 = [A11]
+type A11 = [A0]
+fn main() {}

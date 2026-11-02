@@ -216,8 +216,9 @@ codes! {
     PayloadTooLarge = "E0160",
     AliasCycle = "E0161",
     AliasTooLarge = "E0162",
-    AnyForm = "E0163",
+    TooManyInstances = "E0163",
     CannotBeAny = "E0164",
+    AnyForm = "E0165",
     NanComparison = "W0005",
     UnreachableArm = "W0006",
     RedundantSemicolon = "W0007",
@@ -423,6 +424,15 @@ pub(crate) enum DiagnosticKind {
         owner: Option<String>,
         reason: NotAny,
         at: Span,
+    },
+    /// `mono` has made more than `limit` instances of the generic items of the program. `name` is
+    /// the generic item with the most instances when `mono` stops, `count` of them. `at` is the
+    /// name of that item when it is the user's, and else the user code that `mono` was lowering.
+    TooManyInstances {
+        name: String,
+        at: Span,
+        count: usize,
+        limit: usize,
     },
     /// The argument `arg`, at `at`, of an inherited interface of `interface`, which is built from
     /// a type parameter.
@@ -781,6 +791,8 @@ pub(crate) enum DiagnosticKind {
         write: bool,
         /// For a `?.` on an optional of an optional: the optional it leaves, which has no members.
         peel: Option<Peel>,
+        /// What the help says to unwrap, when `access` is `None`.
+        unwrap: UnwrapHelp,
     },
     /// The `kind` member `name`, at `at`, which `owner` does not have.
     NoMember {
@@ -1606,6 +1618,30 @@ fn listed(names: &[String], last: &str) -> String {
     format!("{} {last} `{end}`", rest.join(", "))
 }
 
+/// The most entries of a cycle that a diagnostic shows. A cycle of one more entry shows all, as
+/// "and 1 more" is no shorter than the entry.
+const CYCLE_SHOWN: usize = 5;
+
+/// The first `CYCLE_SHOWN` of the entries of a cycle and the number left out, when the cycle is
+/// longer than `CYCLE_SHOWN + 1`; else all of them and none.
+fn cycle_shown<T>(entries: &[T]) -> (&[T], usize) {
+    if entries.len() <= CYCLE_SHOWN + 1 {
+        return (entries, 0);
+    }
+    (&entries[..CYCLE_SHOWN], entries.len() - CYCLE_SHOWN)
+}
+
+/// The names of a cycle in backticks, as `listed` with "and" gives them, cut as `cycle_shown`
+/// does: "`a`, `b`, `c`, `d`, `e` and 3 more".
+fn cycle_listed(names: &[String]) -> String {
+    let (shown, more) = cycle_shown(names);
+    if more == 0 {
+        return listed(names, "and");
+    }
+    let shown: Vec<_> = shown.iter().map(|name| format!("`{name}`")).collect();
+    format!("{} and {more} more", shown.join(", "))
+}
+
 /// `types` in backticks, each after "an", with "or" before the last one: "an `[i64]`",
 /// "an `[i64]` or an `[f64]`", "an `[i64]`, an `[f64]` or an `[u8]`".
 fn one_of(types: &[String]) -> String {
@@ -1632,6 +1668,12 @@ fn thousands(n: usize) -> String {
         out.push_str(&digits[at..at + 3]);
     }
     out
+}
+
+/// `n` instances, with the singular for 1: `1 instance`, `2 instances`.
+fn instances(n: usize) -> String {
+    let noun = if n == 1 { "instance" } else { "instances" };
+    format!("{} {noun}", thousands(n))
 }
 
 /// What a name is defined as.
@@ -1814,8 +1856,9 @@ pub(crate) enum UnknownForm {
     /// The type parameter or associated type `base` has no associated type of the diagnostic's
     /// name. `add` is the bound that gives it one, when one interface declares it.
     NoAssociated { base: String, add: Option<AddBound> },
-    /// The body of a type alias writes the associated type of an associated type, as `T.Item.Item`.
-    OfAssociatedInAlias,
+    /// The body of a type alias writes the associated type of an associated type, as `T.Item.Item`:
+    /// `written` is that type and `base` the associated type it is taken from.
+    OfAssociatedInAlias { written: String, base: String },
     /// The associated type is written through a class, an enum or another type that is no type
     /// parameter. `own` when the base is `Self` in a conformance, which writes the name alone.
     ConcreteBase { own: bool },
@@ -1923,6 +1966,17 @@ pub(crate) struct Peel {
     pub(crate) receiver: String,
     pub(crate) left: String,
     pub(crate) member: String,
+}
+
+/// What the help of a `MayBeNone` without a `?.` fix tells the user to unwrap with `if let`.
+#[derive(Clone)]
+pub(crate) enum UnwrapHelp {
+    /// The optional itself.
+    It,
+    /// The object, as written, of the `?.` that makes an element place optional.
+    Object(String),
+    /// Nothing: no `if let` of the optional gives a place that can be written.
+    Nothing,
 }
 
 /// Moving a token up to the code before it: the `gap` between them becomes a space.
@@ -2123,11 +2177,13 @@ pub(crate) enum NotConformForm {
     /// is written, when the program writes it.
     Any { asks: Option<Span> },
     /// A bound of a declaration, written at `bound` (nowhere a user can see for the prelude's),
-    /// needs it. `add` is the bound that a type parameter would need. A bound of the prelude has
-    /// `label` in its place, and `make` is the class or enum with no conformance, which the help
-    /// shows how to give one.
+    /// needs it. `implied` holds the text of an associated type and of its base, when `bound` is
+    /// that associated type: no one writes the bound there. `add` is the bound that a type
+    /// parameter would need. A bound of the prelude has `label` in its place, and `make` is the
+    /// class or enum with no conformance, which the help shows how to give one.
     Bound {
         bound: Option<Span>,
+        implied: Option<Implied>,
         label: Option<PreludeBound>,
         make: Option<String>,
         /// Whether the interface is `AnyObject`, which only classes have.
@@ -2137,6 +2193,13 @@ pub(crate) enum NotConformForm {
         /// and where it is.
         needs: Option<(String, Span)>,
     },
+}
+
+/// An associated type, as written, and its base: the text of an implied bound.
+#[derive(Clone)]
+pub(crate) struct Implied {
+    pub(crate) written: String,
+    pub(crate) base: String,
 }
 
 /// How the label names a bound of the prelude, on the call.
@@ -2732,6 +2795,7 @@ impl From<DiagnosticKind> for Diagnostic {
                     },
                     NotConformForm::Bound {
                         bound,
+                        implied,
                         label,
                         make,
                         class_only,
@@ -2763,9 +2827,14 @@ impl From<DiagnosticKind> for Diagnostic {
                             )),
                             None => d,
                         };
-                        let d = match bound {
-                            Some(bound) => d.with_secondary(bound, "required by this bound"),
-                            None => d,
+                        let d = match (bound, implied) {
+                            (Some(bound), Some(Implied { written, base })) => d.with_secondary(
+                                bound,
+                                format!("`{written}` needs `{base}: {interface}`"),
+                            ),
+                            (Some(bound), None) => d.with_secondary(bound, "required by this bound"),
+                            // A bound of the prelude has no span, so `implied` is not shown.
+                            (None, _) => d,
                         };
                         let d = match needs {
                             Some((bound, at)) => {
@@ -2968,7 +3037,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 } else {
                     format!(
                         "`{name}` inherits from itself, through {}",
-                        listed(&through, "and")
+                        cycle_listed(&through)
                     )
                 };
                 Diagnostic::coded(code, at, message)
@@ -2984,9 +3053,14 @@ impl From<DiagnosticKind> for Diagnostic {
                 } else {
                     format!(
                         "type alias `{name}` refers to itself through {}",
-                        listed(&through, "and")
+                        cycle_listed(&through)
                     )
                 };
+                // The labels follow the names: a cut list shows the first steps only.
+                let mut steps = steps;
+                if cycle_shown(&through).1 > 0 {
+                    steps.truncate(CYCLE_SHOWN);
+                }
                 let d = Diagnostic::coded(code, at, message)
                     .with_help("use an enum or a class for a type that holds itself");
                 steps.into_iter().fold(d, |d, (from, to, span)| {
@@ -3088,6 +3162,23 @@ impl From<DiagnosticKind> for Diagnostic {
                 .with_label("used after `any` here")
                 .with_help(format!("use a type parameter: `T: {interface}`"))
             }
+            DiagnosticKind::TooManyInstances {
+                name,
+                at,
+                count,
+                limit,
+            } => Diagnostic::coded(
+                code,
+                at,
+                format!(
+                    "the generic items of this program have more than {} instances",
+                    thousands(limit)
+                ),
+            )
+            .with_label(format!(
+                "`{name}` has the most so far: {}",
+                instances(count)
+            )),
             DiagnosticKind::InheritedArgument {
                 arg,
                 interface,
@@ -3177,11 +3268,14 @@ impl From<DiagnosticKind> for Diagnostic {
                     }],
                 }),
                 Unbuilt::Chain(links) => {
-                    let chain = links
-                        .iter()
+                    let (shown, more) = cycle_shown(&links);
+                    let mut parts: Vec<_> = (shown.iter())
                         .map(|(holder, held)| format!("`{holder}` holds a `{held}`"))
-                        .collect::<Vec<_>>()
-                        .join(", and ");
+                        .collect();
+                    if more > 0 {
+                        parts.push(format!("{more} more"));
+                    }
+                    let chain = parts.join(", and ");
                     Diagnostic::coded(code, at, format!("no value of `{name}` can be built"))
                         .with_label(chain)
                 }
@@ -3233,11 +3327,14 @@ impl From<DiagnosticKind> for Diagnostic {
                         None => d,
                     }
                 }
-                UnknownForm::OfAssociatedInAlias => Diagnostic::coded(
+                UnknownForm::OfAssociatedInAlias { written, base } => Diagnostic::coded(
                     code,
                     at,
-                    "the body of a type alias writes an associated type of a type parameter, as `T.Item`, but not an associated type of that",
-                ),
+                    format!("a type alias cannot name `{written}`"),
+                )
+                .with_help(format!(
+                    "give the alias a parameter that stands for `{base}`"
+                )),
                 UnknownForm::ConcreteBase { own } => {
                     let d = Diagnostic::coded(
                         code,
@@ -3798,6 +3895,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 access,
                 write,
+                unwrap,
                 ..
             } => {
                 let d = Diagnostic::coded(code, at, format!("{} may be `None`", named(value)));
@@ -3813,7 +3911,13 @@ impl From<DiagnosticKind> for Diagnostic {
                         )
                         .with_fix(unsafe_fix(fix, access, "?."))
                     }
-                    None => d.with_help("unwrap it with `if let`"),
+                    None => match unwrap {
+                        UnwrapHelp::It => d.with_help("unwrap it with `if let`"),
+                        UnwrapHelp::Object(object) => {
+                            d.with_help(format!("unwrap `{object}` with `if let`"))
+                        }
+                        UnwrapHelp::Nothing => d,
+                    },
                 }
             }
             DiagnosticKind::NoMember {
@@ -5344,6 +5448,33 @@ mod tests {
         assert_eq!(one_of(&types(1)), "an `[i64]`");
         assert_eq!(one_of(&types(2)), "an `[i64]` or an `[f64]`");
         assert_eq!(one_of(&types(3)), "an `[i64]`, an `[f64]` or an `[u8]`");
+    }
+
+    /// A cycle of up to `CYCLE_SHOWN + 1` entries shows all of them: "and 1 more" is no shorter
+    /// than the entry. A longer one shows `CYCLE_SHOWN` and counts the rest.
+    #[test]
+    fn cycle_listed_should_cut_only_a_list_two_longer_than_the_limit() {
+        let names = |n: usize| -> Vec<String> { (0..n).map(|k| format!("A{k}")).collect() };
+        assert_eq!(
+            cycle_listed(&names(CYCLE_SHOWN + 1)),
+            "`A0`, `A1`, `A2`, `A3`, `A4` and `A5`"
+        );
+        assert_eq!(
+            cycle_listed(&names(CYCLE_SHOWN + 2)),
+            "`A0`, `A1`, `A2`, `A3`, `A4` and 2 more"
+        );
+        assert_eq!(cycle_shown(&names(CYCLE_SHOWN + 1)).1, 0);
+        assert_eq!(
+            cycle_shown(&names(CYCLE_SHOWN + 2)),
+            (&names(CYCLE_SHOWN)[..], 2)
+        );
+    }
+
+    #[test]
+    fn instances_should_write_the_singular_for_one() {
+        assert_eq!(instances(0), "0 instances");
+        assert_eq!(instances(1), "1 instance");
+        assert_eq!(instances(34_466), "34,466 instances");
     }
 
     #[test]

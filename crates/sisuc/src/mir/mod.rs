@@ -365,6 +365,7 @@ impl Rvalue {
     /// written method, an `Equal` whose helper reaches a written `eq`, and a `Print`, `Dbg` or
     /// `Interpolate` whose helper reaches a written `to_string`.
     /// Pair removal and the certifier both ask this, so they agree.
+    #[deny(clippy::wildcard_enum_match_arm)]
     pub(crate) fn may_call_written(&self) -> bool {
         match self {
             Rvalue::Call { quiet, .. } => !*quiet,
@@ -374,7 +375,31 @@ impl Rvalue {
             | Rvalue::Print { calls, .. }
             | Rvalue::Dbg { calls, .. }
             | Rvalue::Interpolate { calls, .. } => *calls,
-            _ => false,
+            Rvalue::Use(_)
+            | Rvalue::Copy(_)
+            | Rvalue::CopyStr(_)
+            | Rvalue::Borrow(_)
+            | Rvalue::Unwrap(_)
+            | Rvalue::New { .. }
+            | Rvalue::Variant { .. }
+            | Rvalue::ArrayLit(_)
+            | Rvalue::ArrayFill { .. }
+            | Rvalue::Wrap(_)
+            | Rvalue::Concat { .. }
+            | Rvalue::ReadLine
+            | Rvalue::Chars(_)
+            | Rvalue::Bytes(_)
+            | Rvalue::Words(_)
+            | Rvalue::FromChars(_)
+            | Rvalue::Len(_)
+            | Rvalue::LenWords(_)
+            | Rvalue::Convert(_)
+            | Rvalue::Math { .. }
+            | Rvalue::Unary { .. }
+            | Rvalue::Binary { .. }
+            | Rvalue::Compare { .. }
+            | Rvalue::Is { .. }
+            | Rvalue::ToAny(_) => false,
         }
     }
 }

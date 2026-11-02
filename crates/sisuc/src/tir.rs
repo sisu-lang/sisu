@@ -309,6 +309,9 @@ pub(crate) struct ItemCounts {
 #[derive(Debug)]
 pub(crate) struct Class {
     pub(crate) name: String,
+    /// Where the declaration names the class. An instance of a generic class has the span of its
+    /// declaration.
+    pub(crate) span: Span,
     /// The names of its type parameters, in order; empty when it is not generic.
     pub(crate) type_params: Vec<String>,
     pub(crate) fields: Vec<Field>,
@@ -332,6 +335,12 @@ pub(crate) struct Enum {
     /// The enum's strongly connected component of the holds-inline graph, when that component
     /// has a boxed field.
     pub(crate) cycle: Option<usize>,
+    /// The reach flag of the enum's component (ADR 0038). It is set when a payload field of a
+    /// member, with each `?` removed, is counted and is none of these: a `string`, an enum of
+    /// the same component, or an enum of another component whose flag is clear. With a clear
+    /// flag, the source fixes the number of frames that a drop opens. With a set flag, a drop
+    /// may reach a class or an array, and so start a chain of drops.
+    pub(crate) reaches: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -387,6 +396,9 @@ pub(crate) struct Field {
 #[derive(Clone, Debug)]
 pub(crate) struct Function {
     pub(crate) name: String,
+    /// Where the declaration names the function or method. An instance has the span of its
+    /// declaration.
+    pub(crate) span: Span,
     /// The type a method is declared on (`self`'s); `None` for a function.
     pub(crate) owner: Option<Type>,
     /// The interface, with its arguments, of the `extend` block that declares a method; `None`
@@ -798,13 +810,29 @@ impl Type {
             TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) | TypeKind::Any(..) => true,
             TypeKind::Enum(id, _) => enums[id.0].counted,
             TypeKind::Optional(payload) => payload.is_counted(enums),
-            _ => false,
+            TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::Unit
+            | TypeKind::Never
+            | TypeKind::Param(..)
+            | TypeKind::Assoc(..) => false,
         }
     }
 
     /// Whether a value of this type may be counted: it is, or a type argument may make it so.
     pub(crate) fn may_be_counted(self, enums: &[Enum]) -> bool {
         self.is_counted(enums) || self.has_param()
+    }
+
+    /// This type with each `?` removed: `T` for `T`, `T?` and `T??`.
+    pub(crate) fn without_optionals(mut self) -> Self {
+        while let TypeKind::Optional(payload) = self.kind() {
+            self = payload;
+        }
+        self
     }
 
     /// The enum a payload field of this type holds inline unless boxed: `F`'s for `F` or `F?`.
@@ -819,10 +847,10 @@ impl Type {
 }
 
 /// Lays out `enums`, whose payload types are final: boxes each payload field that closes a
-/// cycle of the holds-inline graph, and sets each enum's `cycle` and `counted`. The box goes on
-/// the declaring enum's own field rather than one inside a generic type. There is a pass per
-/// `Rank`: `Plain`, `Own`, `Open`, `Late`, then `Assoc`. Each pass boxes its fields that are on
-/// a cycle of what the passes before it left unboxed. A cycle that `Plain` leaves holds an
+/// cycle of the holds-inline graph, and sets each enum's `cycle`, `counted` and `reaches`. The
+/// box goes on the declaring enum's own field rather than one inside a generic type. There is a
+/// pass per `Rank`: `Plain`, `Own`, `Open`, `Late`, then `Assoc`. Each pass boxes its fields that
+/// are on a cycle of what the passes before it left unboxed. A cycle that `Plain` leaves holds an
 /// `Own`, `Open` or `Late` field, or an `Assoc` field. Take a cycle with no associated type.
 /// A generic field of one enum on it names the declaration of the next, so the names close a
 /// cycle of declarations. The choice of an associated type is a third source of enum names. It
@@ -893,13 +921,29 @@ pub(crate) fn layout_enums(enums: &mut [Enum]) {
     // when it has a box, so counting in component order sees each other held enum counted.
     let mut order: Vec<usize> = (0..enums.len()).collect();
     order.sort_by_key(|&e| component[e]);
-    for e in order {
+    // The reach flag of each component. The components a component holds are before it, so
+    // their flags are final when it reads them. A type parameter sets the flag: it may be a class.
+    let mut reaches = vec![false; enums.len()];
+    for &e in &order {
         let boxed = has_box[component[e]];
         enums[e].cycle = boxed.then_some(component[e]);
         let counted = boxed
             || (enums[e].variants.iter().flat_map(|v| &v.fields))
                 .any(|p| p.ty.may_be_counted(enums));
         enums[e].counted = counted;
+        let fields = enums[e].variants.iter().flat_map(|v| &v.fields);
+        let sets = fields
+            .map(|p| p.ty.without_optionals())
+            .any(|ty| match ty.kind() {
+                TypeKind::String => false,
+                TypeKind::Enum(held, _) if component[held.0] == component[e] => false,
+                TypeKind::Enum(held, _) => reaches[component[held.0]],
+                _ => ty.may_be_counted(enums),
+            });
+        reaches[component[e]] |= sets;
+    }
+    for (e, info) in enums.iter_mut().enumerate() {
+        info.reaches = reaches[component[e]];
     }
 }
 
@@ -1870,6 +1914,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -1991,6 +2036,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2033,6 +2079,10 @@ mod tests {
 
     /// `match s { Running(c) => c  Idle => 0  _ => 1 }` over `enum State { Idle  Running(i64) }`.
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the program is one literal, and each `Enum` literal lists every field"
+    )]
     fn tir_should_print_a_match_over_an_enum() {
         let state = Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE));
         let pattern = |kind| Pattern {
@@ -2101,8 +2151,10 @@ mod tests {
                 ],
                 counted: false,
                 cycle: None,
+                reaches: false,
             }],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2189,6 +2241,7 @@ mod tests {
         );
         let program = Program {
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2239,6 +2292,7 @@ mod tests {
 
         let class = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE));
         let method = Function {
+            span: Span::new(0, 0),
             name: "C.name".into(),
             owner: Some(class),
             conformance: Some((InterfaceId(0), TypeArgs::NONE)),
@@ -2268,6 +2322,7 @@ mod tests {
             ..method.clone()
         };
         let caller = Function {
+            span: Span::new(0, 0),
             name: "f".into(),
             owner: None,
             conformance: None,
@@ -2293,6 +2348,7 @@ mod tests {
         };
         let program = Program {
             classes: vec![Class {
+                span: Span::new(0, 0),
                 name: "C".into(),
                 type_params: Vec::new(),
                 fields: Vec::new(),
@@ -2349,6 +2405,7 @@ mod tests {
         // fn first() { return }
         // fn second(a: i64, ok: bool) -> bool { first(); ok && (a == 3 && a < 4) }
         let first = Function {
+            span: Span::new(0, 0),
             name: "first".into(),
             owner: None,
             conformance: None,
@@ -2387,6 +2444,7 @@ mod tests {
         let ok = expr(ExprKind::Local(LocalId(1)), Type::BOOL);
         let value = binary(BinaryOp::And, ok, binary(BinaryOp::And, a_eq_3, a_lt_4));
         let second = Function {
+            span: Span::new(0, 0),
             name: "second".into(),
             owner: None,
             conformance: None,
@@ -2440,6 +2498,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2479,6 +2538,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2513,6 +2573,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2538,6 +2599,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2564,6 +2626,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2598,6 +2661,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2638,6 +2702,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2702,6 +2767,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2733,6 +2799,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2782,6 +2849,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2825,6 +2893,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2864,6 +2933,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![Function {
+                span: Span::new(0, 0),
                 name: "f".into(),
                 owner: None,
                 conformance: None,
@@ -2925,6 +2995,7 @@ mod tests {
         let t = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
         let program = Program {
             classes: vec![Class {
+                span: Span::new(0, 0),
                 name: "Stack".into(),
                 type_params: Vec::new(),
                 fields: vec![],
@@ -2937,6 +3008,7 @@ mod tests {
                 variants: vec![],
                 counted: false,
                 cycle: None,
+                reaches: false,
             }],
             functions: vec![],
             ..Program::default()

@@ -1,14 +1,8 @@
-error[E0163]: `any Observer?` needs parentheses
- --> E0163.sisu:6:18
+error[E0163]: the generic items of this program have more than 100,000 instances
+ --> E0163.sisu:1:7
   |
-6 |     let watcher: any Observer? = None
-  |                  ^^^^^^^^^^^^^
-  |
-  = help: write `(any Observer)?` for an optional interface value
-help: add parentheses
-  |
-6 |     let watcher: (any Observer)? = None
-  |                  +            +
+1 | class C1<T> { a: [T]; b: T? }
+  |       ^^ `C1` has the most so far: 34,466 instances
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0163

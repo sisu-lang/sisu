@@ -66,5 +66,25 @@ class GoldenDiff(unittest.TestCase):
                                  'golden_diff: 2 files, 1 changed lines, 2 problems'])
 
 
+    def test_golden_diff_should_compare_bytes_that_are_not_utf_8(self):
+        with tempfile.TemporaryDirectory() as repo:
+            subprocess.run(['git', 'init', '-q', repo], check=True)
+            path = os.path.join(repo, 'crates/c/tests/b.out')
+            os.makedirs(os.path.dirname(path))
+            for text in (b'\xff old\n', b'\xfe new\n'):
+                with open(path, 'wb') as f:
+                    f.write(text)
+                commit(repo, {})
+            out = io.StringIO()
+            cwd = os.getcwd()
+            os.chdir(repo)
+            try:
+                with contextlib.redirect_stdout(out):
+                    status = gd.main('HEAD~1..HEAD', [('old', 'new')])
+            finally:
+                os.chdir(cwd)
+        self.assertEqual(status, 1)
+        self.assertEqual(out.getvalue().splitlines()[-1], 'golden_diff: 1 files, 1 changed lines, 1 problems')
+
 if __name__ == '__main__':
     unittest.main()

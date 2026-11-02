@@ -116,7 +116,7 @@ impl Ty {
     }
 
     /// The types that have values: every type but `unit`.
-    pub(crate) const VALUES: [Ty; 6] = [Ty::I64, Ty::U8, Ty::F64, Ty::Bool, Ty::Char, Ty::String];
+    pub(crate) const VALUES: &[Ty] = &[Ty::I64, Ty::U8, Ty::F64, Ty::Bool, Ty::Char, Ty::String];
 
     /// Whether a value of it written with no expected type may take another type: an integer
     /// literal is an `i64`, and `None` and `[]` cannot be inferred.
@@ -182,9 +182,11 @@ impl Ty {
     }
 
     /// The most chars `print` or an interpolation writes for a value of this type that holds at
-    /// most `size` chars, with `precision` decimals for an `f64`: `-1.2345678901234568e-300` is
-    /// the longest `f64` without one, and `1e308` with one has 309 digits before the point.
-    pub(crate) fn printed(&self, size: u64, precision: Option<u64>) -> u64 {
+    /// most `size`, with `precision` decimals for an `f64`: `-1.2345678901234568e-300` is the
+    /// longest `f64` without one, and `1e308` with one has 309 digits before the point. `nodes` is
+    /// `Scope::nodes`, which an enum value needs. An array, an optional, a class and an enum take
+    /// their bound from `Text`.
+    pub(crate) fn printed(&self, size: u64, precision: Option<u64>, nodes: Nodes) -> u64 {
         match self {
             Ty::I64 => 20,
             Ty::U8 => 3,
@@ -192,10 +194,148 @@ impl Ty {
             Ty::Bool => 5,
             Ty::Char => 1,
             Ty::String => size,
-            Ty::Unit | Ty::Array(_) | Ty::Optional(_) | Ty::Class { .. } | Ty::Enum { .. } => {
-                unreachable!("only a value of `Ty::VALUES` is printed")
+            Ty::Array(_) | Ty::Optional(_) | Ty::Class { .. } | Ty::Enum { .. } => {
+                Text::of(self, nodes).flat(size)
             }
+            Ty::Unit => unreachable!("`unit` has no text"),
         }
+    }
+
+    /// The most chars that `{x:#}` writes for a value of this type that holds at most `size`: the
+    /// text of `printed`, and the line breaks and the indent of a layout that breaks every group.
+    /// `#` changes nothing for a scalar, a `string` or a class.
+    pub(crate) fn printed_pretty(&self, size: u64, nodes: Nodes) -> u64 {
+        match self {
+            Ty::Array(_) | Ty::Optional(_) | Ty::Enum { .. } => Text::of(self, nodes).pretty(size),
+            _ => self.printed(size, None, nodes),
+        }
+    }
+}
+
+/// The columns that a broken group indents its children by: `INDENT` in
+/// `crates/runtime/src/show.rs`.
+const INDENT: u64 = 4;
+
+/// The chars of `None`.
+const NONE: u64 = 4;
+
+/// The chars of `text`.
+fn chars(text: &str) -> u64 {
+    u64::try_from(text.chars().count()).expect("a name should have fewer than 2^64 chars")
+}
+
+/// The most that one unit of the size of an enum value writes, over the variants of the enums of
+/// the program (`Scope::note`).
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Nodes {
+    /// The chars it writes.
+    pub(crate) text: u64,
+    /// For `#`: the lines it writes, which are the groups and their children.
+    pub(crate) lines: u64,
+}
+
+/// The most text that a value writes, inside a group or at the top, as the line
+/// `per_unit * size + fixed`, where `size` is the value's size (decision 5).
+///
+/// A `string` inside a group is quoted, and each char takes the longest escape: `\u{2028}`, which
+/// is 8 chars. A control char takes `\u{9F}` at most. A `char` is quoted too: `'\u{2028}'` is
+/// 10 chars. A class writes its name. For an instance of a generic class that is the type with
+/// its type arguments, as `Ty`'s `Display` writes it. An optional writes its payload, or `None`.
+///
+/// An array writes `[`, its elements with `, ` between them, and `]`. Each element adds 1 to the
+/// array's size, and its own size. An element of `e` units writes at most `per_unit * e + fixed`
+/// chars, so the text of `n` elements is at most `n * (fixed + 2) + per_unit * (size - n)`: under
+/// `max(per_unit, fixed + 2) * size` as `n` is at most `size`. An empty array writes the 2 chars of
+/// `[]`, which is the `fixed` of an array.
+///
+/// An enum value writes the name of its variant, and in parentheses its fields, with a label and
+/// `: ` for each field that has one. A node adds 1 to the size, and `Nodes::text` is the most
+/// chars that each unit of the size of an enum value writes.
+#[derive(Clone, Copy, Debug)]
+struct Text {
+    /// The chars that each unit of size adds.
+    per_unit: u64,
+    /// The chars that no size changes.
+    fixed: u64,
+    /// For `#`: the lines that each unit of size adds, and the lines that no size changes. A line
+    /// is a group or a child of a group, so a group of `n` children is `n + 1` lines. An array has
+    /// 1 line that no size changes, and at most `max(lines, line_fixed + 1)` lines for each unit
+    /// of size, because `n` is at most the size, as for the chars.
+    lines: u64,
+    line_fixed: u64,
+    /// For `#`: how many groups nest at most, or `None` when it is as many as the size: an enum
+    /// can nest as deep as that.
+    depth: Option<u64>,
+}
+
+impl Text {
+    const fn scalar(fixed: u64) -> Text {
+        Text {
+            per_unit: 0,
+            fixed,
+            lines: 0,
+            line_fixed: 0,
+            depth: Some(0),
+        }
+    }
+
+    /// The text of a value of `ty`.
+    fn of(ty: &Ty, nodes: Nodes) -> Text {
+        match ty {
+            Ty::I64 => Text::scalar(20),
+            Ty::U8 => Text::scalar(3),
+            Ty::F64 => Text::scalar(24),
+            Ty::Bool => Text::scalar(5),
+            Ty::Char => Text::scalar(10),
+            Ty::String => Text {
+                per_unit: 8,
+                fixed: 2,
+                ..Text::scalar(0)
+            },
+            Ty::Optional(payload) => {
+                let text = Text::of(payload, nodes);
+                Text {
+                    fixed: text.fixed.max(NONE),
+                    ..text
+                }
+            }
+            Ty::Array(element) => {
+                let text = Text::of(element, nodes);
+                Text {
+                    per_unit: text.per_unit.max(text.fixed + 2),
+                    fixed: 2,
+                    lines: text.lines.max(text.line_fixed + 1),
+                    line_fixed: 1,
+                    depth: text.depth.map(|depth| depth + 1),
+                }
+            }
+            Ty::Class { .. } => Text::scalar(chars(&ty.to_string())),
+            Ty::Enum { .. } => Text {
+                per_unit: nodes.text,
+                lines: nodes.lines,
+                depth: None,
+                ..Text::scalar(0)
+            },
+            Ty::Unit => unreachable!("`unit` has no text"),
+        }
+    }
+
+    /// The most chars of a value of this size on one line.
+    fn flat(self, size: u64) -> u64 {
+        self.per_unit * size + self.fixed
+    }
+
+    /// The most chars of a value of this size when every group breaks. A group at depth `t` has
+    /// the indent `INDENT * (t - 1)`. Each of its `n` children has a line break and `INDENT * t`
+    /// spaces, and its closing bracket has a line break and `INDENT * (t - 1)` spaces. A `,` and
+    /// a line break replace each `, ` between children. So the group adds `n * INDENT * t +
+    /// INDENT * (t - 1) + 2` chars at most, which is under `INDENT * t * (n + 1)`. The groups hold
+    /// `lines * size + line_fixed` lines between them, at depth `depth` at most. No value nests
+    /// deeper than its size, because each group on a path holds at least one unit, and an empty
+    /// group holds no line.
+    fn pretty(self, size: u64) -> u64 {
+        let depth = self.depth.map_or(size, |depth| depth.min(size));
+        self.flat(size) + INDENT * depth * (self.lines * size + self.line_fixed)
     }
 }
 
@@ -423,6 +563,9 @@ pub(crate) struct Scope {
     lets: usize,
     /// `Generic::result()`, built on first use.
     result: OnceCell<Generic>,
+    /// What one unit of the size of an enum value writes, over every variant noted so far
+    /// (`Scope::note`).
+    pub(crate) nodes: Nodes,
 }
 
 impl Scope {
@@ -463,6 +606,40 @@ impl Scope {
             Ty::Array(inner) | Ty::Optional(inner) => self.contains_class(inner),
             Ty::I64 | Ty::U8 | Ty::F64 | Ty::Bool | Ty::Char | Ty::String | Ty::Unit => false,
         }
+    }
+
+    /// Takes `variant` of an enum into `nodes`. A node of an enum value counts 1, and so does
+    /// each unit of its fields' sizes: a value of size `n` is one node and fields of `n - 1`
+    /// units. A field of `e` units writes at most `per_unit * e + fixed` chars, and `lines * e +
+    /// line_fixed` lines. So the variant writes at most `written + per_unit * (n - 1)` chars.
+    /// `written` is its name, the parentheses, `, ` between fields, the label and `: ` of each
+    /// field that has one, and the `fixed` of each field. That is at most `text * n` when `text`
+    /// is at least the `written` and the `per_unit` of every field.
+    ///
+    /// A field that is an enum is at most `text` for each unit, so `text` covers it, and its
+    /// `per_unit` is 0 here. The lines are the same, with the node's group and one child for each
+    /// field. A field has at most 2 lines for each unit, and a node with such a field has 3 at
+    /// least, so the lines for each unit need no term for the fields. The `fixed` of a field never
+    /// depends on `nodes`.
+    pub(crate) fn note(&mut self, variant: &Variant) {
+        let fields = u64::try_from(variant.fields.len()).expect("a variant should hold few fields");
+        let mut text =
+            chars(&variant.name) + variant.labels.iter().map(|l| chars(l) + 2).sum::<u64>();
+        // The parentheses and `, ` between the fields, and for `#` the group and its children.
+        let mut lines = 0;
+        if fields > 0 {
+            text += 2 * fields;
+            lines = 1 + fields;
+        }
+        let mut per_unit = 0;
+        for field in &variant.fields {
+            let field = Text::of(field, Nodes::default());
+            text += field.fixed;
+            lines += field.line_fixed;
+            per_unit = per_unit.max(field.per_unit);
+        }
+        self.nodes.text = self.nodes.text.max(text).max(per_unit);
+        self.nodes.lines = self.nodes.lines.max(lines);
     }
 
     /// The type of the class `Scope::classes[id]`.
@@ -514,8 +691,36 @@ pub(super) fn fresh_name(counter: &mut usize, prefix: &str) -> String {
 mod tests {
     use rustc_hash::FxHashSet;
 
-    use super::fresh_name;
+    use super::{Scope, Ty, Variant, fresh_name};
     use crate::check::built_in_type;
+
+    #[test]
+    fn note_should_take_the_most_text_and_lines_of_any_variant() {
+        let variant = |name: &str, fields: Vec<Ty>, labels: &[&str]| Variant {
+            name: name.to_string(),
+            fields,
+            labels: labels.iter().map(ToString::to_string).collect(),
+            recursive: false,
+            inferable: false,
+        };
+        let mut scope = Scope::default();
+        // `Z` writes 1 char and no group.
+        scope.note(&variant("Z", Vec::new(), &[]));
+        assert_eq!((scope.nodes.text, scope.nodes.lines), (1, 0));
+        // `Wide(first: i64, second: string, third: i64)` writes 4, 2 for each of 3 fields, 22 for
+        // the labels and their `: `, and 42 for the fields. It has a group and 3 children.
+        let labels = ["first", "second", "third"];
+        let fields = vec![Ty::I64, Ty::String, Ty::I64];
+        scope.note(&variant("Wide", fields, &labels));
+        assert_eq!((scope.nodes.text, scope.nodes.lines), (74, 4));
+        // `S([i64])` writes 22 chars for each unit of the array, which is more than its 9, and its
+        // group, its child and the array's group are 3 lines: under the last variant's 4.
+        scope.note(&variant("S", vec![Ty::Array(Box::new(Ty::I64))], &[]));
+        assert_eq!((scope.nodes.text, scope.nodes.lines), (74, 4));
+        let mut other = Scope::default();
+        other.note(&variant("S", vec![Ty::Array(Box::new(Ty::I64))], &[]));
+        assert_eq!((other.nodes.text, other.nodes.lines), (22, 3));
+    }
 
     #[test]
     fn fresh_name_should_be_unique_and_name_no_built_in_type() {

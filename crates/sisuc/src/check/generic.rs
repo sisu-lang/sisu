@@ -45,7 +45,24 @@ fn meets(ty: Type, want: Type) -> bool {
         (TypeKind::Any(a, p), TypeKind::Any(b, v)) if a == b => {
             iter::zip(p.get(), v.get()).all(|(&p, &v)| meets(p, v))
         }
-        _ => false,
+        (
+            _,
+            TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::String
+            | TypeKind::Unit
+            | TypeKind::Never
+            | TypeKind::Array(_)
+            | TypeKind::Optional(_)
+            | TypeKind::Class(..)
+            | TypeKind::Enum(..)
+            | TypeKind::Param(..)
+            | TypeKind::Assoc(..)
+            | TypeKind::Any(..),
+        ) => false,
     }
 }
 
@@ -284,11 +301,19 @@ fn names_unbound(unbound: &[bool], built: Type) -> bool {
     match built.kind() {
         TypeKind::Param(_, p) => unbound[p as usize],
         TypeKind::Array(inner) | TypeKind::Optional(inner) => names_unbound(unbound, inner),
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
             args.get().iter().any(|&arg| names_unbound(unbound, arg))
         }
         // An associated type binds nothing (see `Bindings::bind`).
-        _ => false,
+        TypeKind::Assoc(..)
+        | TypeKind::I64
+        | TypeKind::U8
+        | TypeKind::F64
+        | TypeKind::Bool
+        | TypeKind::Char
+        | TypeKind::String
+        | TypeKind::Unit
+        | TypeKind::Never => false,
     }
 }
 
@@ -344,7 +369,25 @@ fn needed_params(
         (TypeKind::Enum(a, bs), TypeKind::Enum(c, qs)) if a == c => {
             needed_all(outer, unbound, bs, qs, on)
         }
-        _ => false,
+        (TypeKind::Any(a, bs), TypeKind::Any(c, qs)) if a == c => {
+            needed_all(outer, unbound, bs, qs, on)
+        }
+        (
+            TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::String
+            | TypeKind::Unit
+            | TypeKind::Never
+            | TypeKind::Array(_)
+            | TypeKind::Optional(_)
+            | TypeKind::Class(..)
+            | TypeKind::Enum(..)
+            | TypeKind::Any(..),
+            _,
+        ) => false,
     }
 }
 
@@ -644,7 +687,17 @@ fn holds_param(ty: Type, param: Type) -> bool {
         TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
             (args.get().iter()).any(|&arg| arg == param || holds_param(arg, param))
         }
-        _ => false,
+        TypeKind::I64
+        | TypeKind::U8
+        | TypeKind::F64
+        | TypeKind::Bool
+        | TypeKind::Char
+        | TypeKind::String
+        | TypeKind::Unit
+        | TypeKind::Never
+        | TypeKind::Optional(_)
+        | TypeKind::Param(..)
+        | TypeKind::Assoc(..) => false,
     }
 }
 
@@ -836,7 +889,16 @@ impl Bindings {
                             self.bind(p, value);
                         }
                     }
-                    _ => {}
+                    TypeKind::I64
+                    | TypeKind::U8
+                    | TypeKind::F64
+                    | TypeKind::Bool
+                    | TypeKind::Char
+                    | TypeKind::String
+                    | TypeKind::Unit
+                    | TypeKind::Never
+                    | TypeKind::Param(..)
+                    | TypeKind::Assoc(..) => {}
                 }
                 true
             }
@@ -852,7 +914,22 @@ impl Bindings {
             // An associated type binds nothing: the type it stands for is known once its base is
             // bound, and the argument is then checked against it (see `Checker::known`).
             (TypeKind::Assoc(..), _) => true,
-            _ => false,
+            (
+                TypeKind::I64
+                | TypeKind::U8
+                | TypeKind::F64
+                | TypeKind::Bool
+                | TypeKind::Char
+                | TypeKind::String
+                | TypeKind::Unit
+                | TypeKind::Never
+                | TypeKind::Array(_)
+                | TypeKind::Optional(_)
+                | TypeKind::Class(..)
+                | TypeKind::Enum(..)
+                | TypeKind::Any(..),
+                _,
+            ) => false,
         }
     }
 
@@ -893,7 +970,23 @@ impl Bindings {
                     self.hint(p, v);
                 }
             }
-            _ => {}
+            (
+                TypeKind::I64
+                | TypeKind::U8
+                | TypeKind::F64
+                | TypeKind::Bool
+                | TypeKind::Char
+                | TypeKind::String
+                | TypeKind::Unit
+                | TypeKind::Never
+                | TypeKind::Array(_)
+                | TypeKind::Optional(_)
+                | TypeKind::Class(..)
+                | TypeKind::Enum(..)
+                | TypeKind::Assoc(..)
+                | TypeKind::Any(..),
+                _,
+            ) => {}
         }
     }
 
@@ -2465,8 +2558,8 @@ impl Checker<'_> {
         let name = sig.name;
         // `Some(...)`, or `Option.Some(...)`. A user variant `Some`, which E0026 reports, is
         // neither.
-        let option = sig.variant.is_none_or(|_| name.name.as_str() == "Option");
-        if option && sig.variant.unwrap_or(name).name.as_str() == "Some" {
+        let option = sig.variant.is_none_or(|_| name.name == Symbol::OPTION);
+        if option && sig.variant.unwrap_or(name).name == Symbol::SOME {
             let (callee, at) = match sig.variant {
                 Some(variant) => (
                     format!("{}.{}", name.name, variant.name),
@@ -2478,6 +2571,7 @@ impl Checker<'_> {
             return;
         }
         // `Ok(...)` and `Err(...)` write the variant as the callee and the enum not at all.
+        // `qualifier` (enums.rs) tests for a bare variant in the same way; change both.
         if let Some(variant) = sig.variant.filter(|v| v.span == name.span) {
             self.report(DiagnosticKind::CannotInferResult {
                 param: sig.declared[param].to_string(),
@@ -2585,6 +2679,11 @@ impl Checker<'_> {
     }
 
     /// `rank_value`, for a span not ranked yet.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the match names each expression kind, so a new kind must choose its rank"
+    )]
+    #[deny(clippy::wildcard_enum_match_arm)]
     fn rank_walk(&mut self, e: &ast::Expr, fit: &mut bool) -> Ranked {
         use ast::ExprKind as K;
         match &e.kind {
@@ -2654,16 +2753,42 @@ impl Checker<'_> {
                 combine_branches(arms.iter().map(|arm| {
                     let bind =
                         |c: &mut Self| Some(c.bind_pattern(None, &form, &arm.pattern, Some(arm)));
-                    match &arm.body.kind {
-                        K::Block(block) => self.block_rank(block, fit, bind),
-                        _ => Some(self.tail_rank(arm_key(arm), None, &arm.body, fit, bind)),
+                    if let K::Block(block) = &arm.body.kind {
+                        self.block_rank(block, fit, bind)
+                    } else {
+                        Some(self.tail_rank(arm_key(arm), None, &arm.body, fit, bind))
                     }
                 }))
             }
             K::Block(block) => self
                 .block_rank(block, fit, |_| None)
                 .unwrap_or(Ranked::CONCRETE),
-            _ => Ranked::CONCRETE,
+            K::Int { .. }
+            | K::Float(_)
+            | K::Bool(_)
+            | K::Char(_)
+            | K::Str(_)
+            | K::Interpolate(_)
+            | K::Name(_)
+            | K::Applied { .. }
+            | K::Todo { .. }
+            | K::SelfValue
+            | K::NoneLit
+            | K::Field { safe: true, .. }
+            | K::Unary { .. }
+            | K::Binary { .. }
+            | K::Compare { .. }
+            | K::Coalesce { .. }
+            | K::ArrayFill { .. }
+            | K::Index { .. }
+            | K::Is { .. }
+            | K::If {
+                else_block: None, ..
+            }
+            | K::IfLet {
+                else_block: None, ..
+            }
+            | K::Loop { .. } => Ranked::CONCRETE,
         }
     }
 
@@ -2776,7 +2901,7 @@ impl Checker<'_> {
                         ..CallShape::default()
                     }
                 } else if !safe
-                    && method.name.as_str() == "Some"
+                    && method.name == Symbol::SOME
                     && (option_written(receiver) == Some(false)
                         || matches!(receiver.kind, ast::ExprKind::Name(n) if self.names_option(n)))
                 {
@@ -3238,7 +3363,7 @@ impl Checker<'_> {
             }
             // `Some<T>(x: T) -> T?`, and the prelude's `Ok` and `Err`, which no user item can
             // take the name of.
-            (None, None) if name.as_str() == "Some" => CallShape {
+            (None, None) if name == Symbol::SOME => CallShape {
                 generic: true,
                 shaped: matches!(args, [arg] if arg.label.is_none()),
                 open: false,
@@ -3575,7 +3700,7 @@ impl Checker<'_> {
             _ => return false,
         };
         // No item can take the name of the optional type, whose members are its variants.
-        if name.as_str() == "Option" {
+        if name == Symbol::OPTION {
             return true;
         }
         if let Some(&Declared::Known(id)) = self.enum_ids.get(&name) {

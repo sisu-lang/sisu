@@ -1,0 +1,14 @@
+error[E0165]: `any Observer?` needs parentheses
+ --> E0165.sisu:6:18
+  |
+6 |     let watcher: any Observer? = None
+  |                  ^^^^^^^^^^^^^
+  |
+  = help: write `(any Observer)?` for an optional interface value
+help: add parentheses
+  |
+6 |     let watcher: (any Observer)? = None
+  |                  +            +
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0165

@@ -14,7 +14,9 @@ use super::{
     LoopKind, Poisoned, UNKNOWN, block_expr, built_in_type, starts_in, tail, type_of,
 };
 use crate::ast::{self, StmtKind};
-use crate::diagnostic::{ClashForm, ClashKind, DiagnosticKind, MismatchSource, Unwrap, closest};
+use crate::diagnostic::{
+    ClashForm, ClashKind, DiagnosticKind, MismatchSource, Unwrap, UnwrapHelp, closest,
+};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, ExprKind, Type, TypeKind};
@@ -630,7 +632,7 @@ impl Checker<'_> {
             Some((_, TypeKind::Optional(payload)))
                 if matches!(payload.kind(), TypeKind::Array(_)) =>
             {
-                (None, Some(optional_array(e)))
+                (None, Some(optional_array(e, UnwrapHelp::It)))
             }
             Some((ty, _)) => {
                 let found = self.type_name(ty);

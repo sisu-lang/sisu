@@ -5,7 +5,7 @@ use super::expr::{fits, literal_type, no_member, path, typed};
 use super::generic::{Rank, mark};
 use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, payload, type_of};
 use crate::ast;
-use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Literal};
+use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Literal, UnwrapHelp};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
 
@@ -30,7 +30,7 @@ fn holds_any(mut ty: Type) -> bool {
 /// The methods of an array that the compiler writes, with their parameter counts. `push` is not
 /// answered here: it writes its receiver's place, which `Checker::push` checks. The prelude's
 /// `extend` blocks give an array its other methods.
-pub(super) const METHODS: [(&str, usize); 2] = [("len", 0), ("push", 1)];
+pub(super) const METHODS: &[(&str, usize)] = &[("len", 0), ("push", 1)];
 
 impl Checker<'_> {
     /// `[a, b, ...]`. With an expected `[E]` or `[E]?`, each element is checked against `E`.
@@ -503,7 +503,7 @@ impl Checker<'_> {
         let d = match ty.kind() {
             TypeKind::Array(element) => return Some(element),
             TypeKind::Optional(payload) if matches!(payload.kind(), TypeKind::Array(_)) => {
-                optional_array(base)
+                optional_array(base, UnwrapHelp::It)
             }
             _ => DiagnosticKind::CannotIndex {
                 ty: self.type_name(ty),
@@ -631,15 +631,22 @@ impl Checker<'_> {
 }
 
 /// "`m` may be `None`", at the optional array `base` that an index or a `for` needs unwrapped.
-pub(super) fn optional_array(base: &ast::Expr) -> Diagnostic {
+/// `unwrap` says what the help unwraps.
+pub(super) fn optional_array(base: &ast::Expr, unwrap: UnwrapHelp) -> Diagnostic {
     DiagnosticKind::MayBeNone {
         value: path(base),
         at: base.span,
         access: None,
         write: false,
         peel: None,
+        unwrap,
     }
     .into()
+}
+
+/// Whether `ty` is `[T]?`.
+pub(super) fn is_optional_array(ty: Type) -> bool {
+    matches!(ty.kind(), TypeKind::Optional(payload) if matches!(payload.kind(), TypeKind::Array(_)))
 }
 
 /// `E`, when `expected` is `[E]` or `[E]?`.
@@ -659,7 +666,7 @@ pub(super) fn pair(operands: Vec<tir::Expr>) -> (Box<tir::Expr>, Box<tir::Expr>)
 }
 
 /// `ty` with every layer of optional taken off.
-fn innermost(mut ty: Type) -> Type {
+pub(super) fn innermost(mut ty: Type) -> Type {
     while let TypeKind::Optional(inner) = ty.kind() {
         ty = inner;
     }

@@ -1,0 +1,145 @@
+// One copy of the program that scripts/compile_speed.py repeats. The generator puts the
+// number of the copy in each name that ends in the placeholder. It also puts the number in
+// one string, so that rustc cannot merge the `run` functions of the copies.
+// unit.rs, unit.cpp and unit.go hold the same program.
+class NodeXX<T> {
+    value: T
+    next: NodeXX<T>?
+}
+
+class StackXX<T> {
+    mut top: NodeXX<T>?
+    mut size: i64
+
+    fn push(self, x: T) {
+        self.top = NodeXX(value: x, next: self.top)
+        self.size += 1
+    }
+
+    fn pop(self) -> T? {
+        if let node = self.top {
+            self.top = node.next
+            self.size -= 1
+            node.value
+        } else {
+            None
+        }
+    }
+}
+
+interface SourceXX {
+    type Item: Display
+    fn next(self) -> Item?
+}
+
+class CountdownXX: SourceXX {
+    type Item = i64
+    mut left: i64
+
+    fn next(self) -> Item? {
+        if self.left == 0 {
+            return None
+        }
+        self.left -= 1
+        self.left + 1
+    }
+}
+
+class LettersXX: SourceXX {
+    type Item = string
+    mut taken: i64
+    limit: i64
+
+    fn next(self) -> Item? {
+        if self.taken == self.limit {
+            return None
+        }
+        self.taken += 1
+        "x{self.taken}"
+    }
+}
+
+fn drainXX<S: SourceXX>(s: S) -> i64 {
+    let mut total = 0
+    while let x = s.next() {
+        total = total * 3 + "{x}".len()
+    }
+    total
+}
+
+fn largestXX<T: Ord>(xs: [T]) -> T? {
+    let mut best: T? = None
+    for x in xs {
+        if let b = best {
+            if b < x {
+                best = x
+            }
+        } else {
+            best = x
+        }
+    }
+    best
+}
+
+enum ShapeXX {
+    Dot
+    Line(i64)
+    Rect(i64, i64)
+}
+
+fn areaXX(s: ShapeXX) -> i64 {
+    match s {
+        Dot => 1
+        Line(n) => n
+        Rect(w, h) => w * h
+    }
+}
+
+class TallyXX {
+    mut count: i64
+    mut sum: i64
+
+    fn add(self, n: i64) {
+        self.count += 1
+        self.sum += n
+    }
+
+    fn mean(self) -> i64? {
+        if self.count == 0 {
+            None
+        } else {
+            self.sum / self.count
+        }
+    }
+}
+
+fn runXX() -> i64 {
+    let ints: StackXX<i64> = StackXX(top: None, size: 0)
+    let words: StackXX<string> = StackXX(top: None, size: 0)
+    for i in 0..4 {
+        ints.push(i * 3 + 1)
+        words.push("w{i}")
+    }
+    let mut total = 0
+    while let v = ints.pop() {
+        total = total * 2 + v
+    }
+    while let w = words.pop() {
+        total += w.len()
+    }
+    total += ints.size + words.size
+    total += drainXX(CountdownXX(left: 5))
+    total += drainXX(LettersXX(taken: 0, limit: 4))
+    total += largestXX([3, 9, 2]) ?? 0
+    total += (largestXX(["b", "ccc", "a"]) ?? "").len()
+    let bytes: [u8] = [4, 8, 1]
+    total += i64(largestXX(bytes) ?? 0)
+    let tally = TallyXX(count: 0, sum: 0)
+    let shapes = [ShapeXX.Dot, ShapeXX.Line(4), ShapeXX.Rect(3, 5)]
+    for s in shapes {
+        tally.add(areaXX(s))
+    }
+    total += tally.mean() ?? 0
+    let label = "tally XX {tally.count}/{tally.sum}"
+    total + label.len()
+}

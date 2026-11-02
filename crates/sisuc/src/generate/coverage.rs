@@ -6,12 +6,15 @@
 //! a `_` arm, so a new variant does not compile until they record it.
 
 use std::fmt::Write as _;
+use std::rc::Rc;
 
 use arbitrary::Unstructured;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::item::{MAX_ALIASES, MAX_INTERFACES, MAX_KNOWN, MAX_REQUIREMENTS, MOST};
-use super::scope::{Class, Const, Enum, Field, Func, Ty, Var, Variant};
+use super::scope::{
+    Applied, Class, Const, Enum, Field, Func, Nodes, RESULT, Scope, Ty, Var, Variant,
+};
 use super::writer::{Rewrite, Site, Writer, allowed};
 use super::{Answer, BUDGET, Cost, DEPTHS, FUEL, Gen, MAX_BOUND, MAX_NESTING, MAX_SIZE, generate};
 use crate::conformance::holds_class;
@@ -26,7 +29,7 @@ pub(crate) const SEEDS: u64 = 64;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.
-const EXCLUDED: [(&str, &str); 17] = [
+const EXCLUDED: &[(&str, &str)] = &[
     (
         "ast::BrokenKind::Function",
         "only an item with a syntax error is broken",
@@ -99,7 +102,7 @@ const EXCLUDED: [(&str, &str); 17] = [
 
 /// The receivers of the built-in methods `check/number.rs` does not list, by their typed
 /// tree's variant.
-const RECEIVERS: [(&str, &[&str]); 5] = [
+const RECEIVERS: &[(&str, &[&str])] = &[
     ("tir::ExprKind::Len", &["String", "Array"]),
     ("tir::ExprKind::Chars", &["String"]),
     ("tir::ExprKind::Bytes", &["String"]),
@@ -109,7 +112,7 @@ const RECEIVERS: [(&str, &[&str]); 5] = [
 
 /// The scalar conversions, from and to, as `convert` in `check/string.rs` takes them: `i64(e)`
 /// of a `u8`, a `char` or an `f64`, and `u8(e)`, `char(e)` and `f64(e)` of an `i64`.
-const CONVERSIONS: [(&str, &str); 6] = [
+const CONVERSIONS: &[(&str, &str)] = &[
     ("U8", "I64"),
     ("Char", "I64"),
     ("F64", "I64"),
@@ -123,7 +126,7 @@ const IDENTITY: &str = "reach: a class is compared with `is` or against `None`";
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 111] = [
+const REACH: &[&str] = &[
     "reach: a type alias takes a parameter",
     "reach: a type is written as an alias",
     "reach: a type is written as a generic alias",
@@ -224,6 +227,10 @@ const REACH: [&str; 111] = [
     "reach: an interpolation writes a compound part",
     "reach: a `#` part of a type parameter keeps its row",
     "reach: a `#` part of a compound type keeps its row",
+    "reach: a `#` part is an array",
+    "reach: a `#` part is an enum value",
+    "reach: a `#` part is a class object",
+    "reach: a `#` part holds an optional",
     "reach: `to_string` runs on a generated `Display`",
     "reach: a top-level optional is printed",
     "reach: a top-level optional is interpolated",
@@ -263,11 +270,20 @@ fn is_compound(ty: Type) -> bool {
     )
 }
 
+/// Whether the body of a function of `text` whose name starts with one of `names` holds a marked
+/// statement, `print("@d<n> ...")`: a call of a requirement that prints its result.
+fn marks_in(text: &str, names: &[&str]) -> bool {
+    text.split("\nfn ")
+        .skip(1)
+        .filter(|function| names.iter().any(|name| function.starts_with(name)))
+        .any(|function| function.contains("\"@d"))
+}
+
 /// Whether a program's text holds a form.
 type Holds = fn(&str) -> bool;
 
 /// The forms only a program's text shows, each with how to find it.
-const TEXT: [(&str, Holds); 8] = [
+const TEXT: &[(&str, Holds)] = &[
     ("text: `_` between digits", |text| {
         text.as_bytes()
             .windows(3)
@@ -282,6 +298,24 @@ const TEXT: [(&str, Holds); 8] = [
             .skip(1)
             .any(|rest| rest.bytes().take_while(u8::is_ascii_hexdigit).count() > 3)
     }),
+    (
+        "text: a call of a requirement prints its result in `via` or `both`",
+        |text| marks_in(text, &["via", "both"]),
+    ),
+    (
+        "text: a call of a requirement prints its result in `pick`",
+        |text| marks_in(text, &["pick"]),
+    ),
+    (
+        "text: a result `T` picked by its expected type is printed",
+        |text| {
+            text.lines().any(|line| {
+                let line = line.trim_start();
+                line.strip_prefix("let d")
+                    .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+            })
+        },
+    ),
     ("text: `0b`", |text| text.contains("0b")),
     ("text: `0o`", |text| text.contains("0o")),
     ("text: `\\u{...}`", |text| text.contains("\\u{")),
@@ -416,7 +450,7 @@ fn universe() -> FxHashSet<String> {
         universe.insert(format!("prelude {}", row[0]));
     }
     for (variant, receivers) in RECEIVERS {
-        for receiver in receivers {
+        for receiver in *receivers {
             universe.insert(format!("{variant} on {receiver}"));
         }
     }
@@ -444,7 +478,7 @@ fn bool_fields(owner: &str, fields: &syn::Fields, universe: &mut FxHashSet<Strin
     }
 }
 
-/// The rows of the array `const name`, a tuple row as its elements and any other row as one:
+/// The rows of the table `const name`, a tuple row as its elements and any other row as one:
 /// each element is the last segment of its path, the value of its string literal, or empty
 /// otherwise. `(MathOp::Abs, Receivers::F64, 0)` is `["Abs", "F64", ""]`, and `"print"` is
 /// `["print"]`.
@@ -457,6 +491,11 @@ fn const_rows(file: &syn::File, name: &str) -> Vec<Vec<String>> {
             _ => None,
         })
         .unwrap_or_else(|| panic!("the file should hold `const {name}`"));
+    // A table is a slice, `&[...]`, so that two branches can each add a row.
+    let array = match array {
+        syn::Expr::Reference(r) => &*r.expr,
+        other => other,
+    };
     let syn::Expr::Array(array) = array else {
         panic!("`{name}` should be an array literal");
     };
@@ -530,6 +569,8 @@ struct Walk {
     adds: FxHashSet<usize>,
     /// Where the value of a plain `=` to a name starts.
     assigns: FxHashSet<usize>,
+    /// Where the value of an interpolation part with a `#` spec starts.
+    pretty_parts: FxHashSet<usize>,
     /// Whether the walk is in the target of an assignment, which writes an element, not reads it.
     writing: bool,
     /// Where an arithmetic `+ - * / %` expression outside a constant starts.
@@ -634,6 +675,7 @@ impl Walk {
         self.some_values.clear();
         self.chains.clear();
         self.adds.clear();
+        self.pretty_parts.clear();
         self.assigns.clear();
         self.arithmetic.clear();
         self.compounds.clear();
@@ -1633,6 +1675,9 @@ impl Walk {
                     self.ast_expr(&part.value);
                     if let Some(spec) = part.spec {
                         self.mark(&format!("ast::FormatSpec.pretty = {}", spec.pretty));
+                        if spec.pretty {
+                            self.pretty_parts.insert(part.value.span.start());
+                        }
                     }
                     self.mark(&format!("ast::Part.bad_spec = {}", part.bad_spec));
                     if let Some(align) = part.spec.and_then(|spec| spec.align) {
@@ -2267,6 +2312,36 @@ impl Walk {
         }
     }
 
+    /// Whether a value of `ty` may hold an optional, as its element or in a payload: its text
+    /// can then write `None` inside a group. `seen` are the enums looked into.
+    fn holds_optional(&self, ty: Type, seen: &mut Vec<tir::EnumId>) -> bool {
+        match ty.kind() {
+            TypeKind::Optional(_) => true,
+            TypeKind::Array(inner) => self.holds_optional(inner, seen),
+            TypeKind::Enum(id, args) => {
+                !seen.contains(&id) && {
+                    seen.push(id);
+                    let args = args.get();
+                    self.payloads[id.0]
+                        .iter()
+                        .any(|field| self.holds_optional(field.subst(args), seen))
+                }
+            }
+            TypeKind::Class(..)
+            | TypeKind::Param(..)
+            | TypeKind::Assoc(..)
+            | TypeKind::Any(..)
+            | TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::String
+            | TypeKind::Unit
+            | TypeKind::Never => false,
+        }
+    }
+
     fn place(&mut self, place: &tir::Place) {
         match place {
             tir::Place::Local(_) => self.mark("tir::Place::Local"),
@@ -2531,6 +2606,23 @@ impl Walk {
                 }
                 if parts.iter().any(|part| is_compound(part.ty)) {
                     self.mark("reach: an interpolation writes a compound part");
+                }
+                // The checker keeps no row of `#` for a class, so the part's start tells. The one
+                // fixed `{[1, 2]:#}` of `language_bounds` is no part that a rule writes.
+                for part in parts {
+                    let fixed = &self.source[part.span.range()] == "[1, 2]";
+                    if fixed || !self.pretty_parts.contains(&part.span.start()) {
+                        continue;
+                    }
+                    match part.ty.kind() {
+                        TypeKind::Array(_) => self.mark("reach: a `#` part is an array"),
+                        TypeKind::Enum(..) => self.mark("reach: a `#` part is an enum value"),
+                        TypeKind::Class(..) => self.mark("reach: a `#` part is a class object"),
+                        _ => {}
+                    }
+                    if self.holds_optional(part.ty, &mut Vec::new()) {
+                        self.mark("reach: a `#` part holds an optional");
+                    }
                 }
                 // A call of `to_string` on a type whose `Display` the compiler writes is an
                 // interpolation of one part, with the span of the call. The tree has no other
@@ -3698,22 +3790,25 @@ fn a_constant_string_stays_within_its_most() {
 }
 
 #[test]
-fn printed_sizes_are_the_longest_values() {
+fn printed_should_be_the_longest_text_of_a_scalar() {
     let chars = |text: &str| u64::try_from(text.chars().count()).expect("the count should fit");
-    assert_eq!(Ty::I64.printed(0, None), chars(&i64::MIN.to_string()));
-    assert_eq!(Ty::U8.printed(0, None), chars("255"));
-    assert_eq!(Ty::Bool.printed(0, None), chars("false"));
-    assert_eq!(Ty::Char.printed(0, None), 1);
-    assert_eq!(Ty::String.printed(7, None), 7);
+    assert_eq!(
+        Ty::I64.printed(0, None, Nodes::default()),
+        chars(&i64::MIN.to_string())
+    );
+    assert_eq!(Ty::U8.printed(0, None, Nodes::default()), chars("255"));
+    assert_eq!(Ty::Bool.printed(0, None, Nodes::default()), chars("false"));
+    assert_eq!(Ty::Char.printed(0, None, Nodes::default()), 1);
+    assert_eq!(Ty::String.printed(7, None, Nodes::default()), 7);
     // `print` writes an `f64` as Rust's `{:?}`, and with a precision as `{:.p$}`
     // (`crates/runtime/src/float.rs`).
     assert_eq!(
-        Ty::F64.printed(0, None),
+        Ty::F64.printed(0, None, Nodes::default()),
         chars(&format!("{:?}", -2.225_073_858_507_201_4e-308))
     );
     // With no decimals, the point goes too: one char under the bound.
     assert_eq!(
-        Ty::F64.printed(0, Some(0)),
+        Ty::F64.printed(0, Some(0), Nodes::default()),
         chars(&format!("{:.0}", -f64::MAX)) + 1
     );
     for p in 1..=6 {
@@ -3722,7 +3817,320 @@ fn printed_sizes_are_the_longest_values() {
             -f64::MAX,
             p = usize::try_from(p).expect("a precision should fit a `usize`")
         );
-        assert_eq!(Ty::F64.printed(0, Some(p)), chars(&longest));
+        assert_eq!(
+            Ty::F64.printed(0, Some(p), Nodes::default()),
+            chars(&longest)
+        );
+    }
+}
+
+/// One compound type for `printed_should_bound_the_text_of_the_longest_values`: the type, a long
+/// value of it that holds `size`, and the `Scope::nodes` of its enums.
+struct Longest {
+    name: &'static str,
+    ty: Ty,
+    value: String,
+    size: u64,
+    nodes: Nodes,
+    /// How many percent of the text of the value the bound may be, plain and with `#`. A 0 means
+    /// no check: the text fits in 80 columns, so no group breaks, and the bound counts each group
+    /// broken.
+    loose: [u64; 2],
+}
+
+/// Values of every compound type, each as long as its type allows, or as long as the case needs.
+/// A bound over the longest text is safe, and the factors in `loose` say where it is far over.
+#[expect(clippy::too_many_lines, reason = "one table of cases")]
+fn longest_values() -> Vec<Longest> {
+    const MIN: &str = "(-9223372036854775808)";
+    const F64: &str = "(-2.2250738585072014e-308)";
+    // The longest escape of a `string` or a `char`: 8 chars.
+    const ESCAPE: &str = "\\u{2028}";
+    let many = |text: &str, n: usize| vec![text; n].join(", ");
+    let array = |ty: Ty| Ty::Array(Box::new(ty));
+    let optional = |ty: Ty| Ty::Optional(Box::new(ty));
+    let entry = |name, ty, items: String, size, loose| Longest {
+        name,
+        ty,
+        value: format!("[{items}]"),
+        size,
+        nodes: Nodes::default(),
+        loose,
+    };
+    let string = |chars: usize| format!("\"{}\"", ESCAPE.repeat(chars));
+    let variant = |name: &str, fields: Vec<Ty>, labels: &[&str]| Variant {
+        name: name.to_string(),
+        recursive: fields.iter().any(|f| matches!(f, Ty::Enum { id: 0, .. })),
+        fields,
+        labels: labels.iter().map(ToString::to_string).collect(),
+        inferable: false,
+    };
+    let nodes_of = |variants: Vec<Variant>| {
+        let mut scope = Scope::default();
+        for variant in &variants {
+            scope.note(variant);
+        }
+        scope.nodes
+    };
+    // `enum E0 { V1  V2(g1: i64, g2: string, g3: E0) }`, and `Result<i64, string>`.
+    let chain = Ty::enumeration(0, 1);
+    let chain_nodes = nodes_of(vec![
+        variant("V1", Vec::new(), &[]),
+        variant(
+            "V2",
+            vec![Ty::I64, Ty::String, chain.clone()],
+            &["g1", "g2", "g3"],
+        ),
+    ]);
+    let result = Ty::Enum {
+        id: 0,
+        least: 2,
+        applied: Some(Rc::new(Applied {
+            generic: RESULT,
+            args: vec![Ty::I64, Ty::String],
+        })),
+    };
+    let result_nodes = nodes_of(vec![
+        variant("Ok", vec![Ty::I64], &[]),
+        variant("Err", vec![Ty::String], &[]),
+    ]);
+    let wide = Ty::enumeration(1, 1);
+    let wide_nodes = nodes_of(vec![
+        variant("Zero", Vec::new(), &[]),
+        variant(
+            "Wide",
+            vec![Ty::I64, Ty::String, Ty::I64],
+            &["first", "second", "third"],
+        ),
+    ]);
+    // A variant of one `string`: its name and parentheses are fewer chars than 8, the chars of
+    // each unit of the string.
+    let short = Ty::enumeration(2, 1);
+    let short_nodes = nodes_of(vec![
+        variant("Z", Vec::new(), &[]),
+        variant("S", vec![Ty::String], &[]),
+    ]);
+    // Each node of `E3` writes more than 80 chars, so every group of a chain breaks.
+    let links = Ty::enumeration(3, 1);
+    let links_nodes = nodes_of(vec![
+        variant("Zero", Vec::new(), &[]),
+        variant(
+            "Link",
+            vec![Ty::I64, Ty::I64, links.clone()],
+            &["first_field", "second_field", "next"],
+        ),
+    ]);
+    let link =
+        |inner: &str| format!("E3.Link(first_field: {MIN}, second_field: {MIN}, next: {inner})");
+    let long = link(&link(&link(&link(&link("E3.Zero")))));
+    // An instance of `G0<T, U>`: a class counts its fields, and its text is its name.
+    let instance = Ty::Class {
+        id: 1,
+        size: 5,
+        applied: Some(Rc::new(Applied {
+            generic: 0,
+            args: vec![array(Ty::String), optional(Ty::I64)],
+        })),
+    };
+    // Four nodes of `V2`, each with a one-char `string`, on a `V1`: a chain of size 9.
+    let node = |inner: &str| format!("E0.V2(g1: {MIN}, g2: {}, g3: {inner})", string(1));
+    let deep = node(&node(&node(&node("E0.V1"))));
+    vec![
+        entry("empty array", array(Ty::I64), String::new(), 0, [100, 100]),
+        entry("array of i64", array(Ty::I64), many(MIN, 8), 8, [105, 105]),
+        // `None` is 4 chars, which is more than the 3 of a `u8`.
+        entry(
+            "array of optional u8",
+            array(optional(Ty::U8)),
+            many("None", 8),
+            8,
+            [105, 0],
+        ),
+        // Under 80 columns when written with `#`: no group breaks, and the bound counts each
+        // group broken (the `0` of the cases below that do not break).
+        entry("array of u8", array(Ty::U8), many("255", 8), 8, [110, 0]),
+        entry("array of f64", array(Ty::F64), many(F64, 8), 8, [105, 105]),
+        entry(
+            "array of bool",
+            array(Ty::Bool),
+            many("false", 8),
+            8,
+            [110, 0],
+        ),
+        entry(
+            "array of char",
+            array(Ty::Char),
+            many(&format!("'{ESCAPE}'"), 8),
+            8,
+            [105, 110],
+        ),
+        // The element counts 1 unit more than the chars: the bound takes it as a char of 8.
+        entry(
+            "array of one long string",
+            array(Ty::String),
+            string(15),
+            16,
+            [110, 160],
+        ),
+        // `, ` between the strings is 2 chars, and the bound takes the unit of each as 8.
+        entry(
+            "array of four strings",
+            array(Ty::String),
+            many(&string(3), 4),
+            16,
+            [125, 160],
+        ),
+        // An empty string is 2 chars, and the bound takes the unit of its slot as 8.
+        entry(
+            "array of empty strings",
+            array(Ty::String),
+            many("\"\"", 16),
+            16,
+            [210, 0],
+        ),
+        // The two slots of the outer array count 22 chars each, and write 4.
+        entry(
+            "array of arrays of i64",
+            array(array(Ty::I64)),
+            many(&format!("[{}]", many(MIN, 4)), 2),
+            10,
+            [125, 150],
+        ),
+        // `None` and `-1` are shorter than the 20 chars that the bound takes for each element.
+        entry(
+            "array of arrays of optionals",
+            array(array(optional(Ty::I64))),
+            many(&format!("[{MIN}, None, (-1)]"), 2),
+            8,
+            [270, 0],
+        ),
+        entry(
+            "array of optional strings",
+            array(optional(Ty::String)),
+            [string(2), "None".to_string(), string(2), "None".to_string()].join(", "),
+            8,
+            [135, 0],
+        ),
+        // A variant with no `string` chars: the bound is the text of the value itself.
+        Longest {
+            name: "variant of an empty string and scalars",
+            ty: wide,
+            value: format!("E1.Wide(first: {MIN}, second: \"\", third: {MIN})"),
+            size: 1,
+            nodes: wide_nodes,
+            loose: [100, 0],
+        },
+        // The unit of `E2` is the 8 chars of one char of the `string`, not its own text of 5.
+        Longest {
+            name: "variant of a string",
+            ty: short,
+            value: format!("E2.S({})", string(3)),
+            size: 4,
+            nodes: short_nodes,
+            loose: [112, 0],
+        },
+        // Five nodes and the `Zero`: each group is as deep as its node, and all of them break.
+        Longest {
+            name: "chain of wide enum values",
+            ty: links,
+            value: long,
+            size: 6,
+            nodes: links_nodes,
+            loose: [120, 170],
+        },
+        Longest {
+            name: "class",
+            ty: Ty::class(0, 3),
+            value: "K0(a: 1)".to_string(),
+            size: 3,
+            nodes: Nodes::default(),
+            loose: [100, 100],
+        },
+        // Each object counts 6 units, and writes its 19 chars of name and type arguments.
+        Longest {
+            name: "array of instances of a generic class",
+            ty: array(instance),
+            value: format!("[{}]", many("G0(a: [\"x\"], b: None)", 2)),
+            size: 12,
+            nodes: Nodes::default(),
+            loose: [610, 0],
+        },
+        // Each unit is as many chars as the longest variant, `V2`, and the chain's chars count
+        // as units too. The groups nest as deep as the size, which is 9.
+        Longest {
+            name: "chain of enum values",
+            ty: chain,
+            value: deep,
+            size: 9,
+            nodes: chain_nodes,
+            loose: [190, 580],
+        },
+        // The same: an array of 4 results has 8 units, and nests no deeper than 2 groups.
+        Longest {
+            name: "array of results",
+            ty: array(result),
+            value: format!(
+                "[Err({}), Ok({MIN}), Err({}), Ok({MIN})]",
+                string(2),
+                string(2)
+            ),
+            size: 8,
+            nodes: result_nodes,
+            loose: [195, 620],
+        },
+    ]
+}
+
+#[test]
+fn printed_should_bound_the_text_of_the_longest_values() {
+    let cases = longest_values();
+    let mut source = String::from(
+        "class K0 {\n    a: i64\n}\nclass G0<T, U> {\n    a: T\n    b: U\n}\nenum E0 {\n    V1\n    V2(g1: i64, g2: string, g3: E0)\n}\nenum E1 {\n    Zero\n    Wide(first: i64, second: string, third: i64)\n}\nenum E2 {\n    Z\n    S(string)\n}\nenum E3 {\n    Zero\n    Link(first_field: i64, second_field: i64, next: E3)\n}\nfn main() {\n",
+    );
+    for (i, case) in cases.iter().enumerate() {
+        let (ty, value) = (&case.ty, &case.value);
+        let _ = writeln!(source, "    let v{i}: {ty} = {value}");
+        let _ = writeln!(source, "    print(\"=== {i} plain\")\n    print(v{i})");
+        let _ = writeln!(
+            source,
+            "    print(\"=== {i} pretty\")\n    print(\"{{v{i}:#}}\")"
+        );
+    }
+    source.push_str("}\n");
+    let out = String::from_utf8(crate::fuzz_program::stdout_of(&source))
+        .expect("the output should be UTF-8");
+    let chars = |text: &str| u64::try_from(text.chars().count()).expect("the count should fit");
+    for (i, case) in cases.iter().enumerate() {
+        let (_, from) = out
+            .split_once(&format!("=== {i} plain\n"))
+            .expect("each case should print its plain marker");
+        let (plain, from) = from
+            .split_once(&format!("=== {i} pretty\n"))
+            .expect("each case should print its pretty marker");
+        let pretty = from
+            .split("\n=== ")
+            .next()
+            .expect("a split should have a first part");
+        let texts = [plain, pretty].map(|text| text.trim_end_matches('\n'));
+        let bounds = [
+            case.ty.printed(case.size, None, case.nodes),
+            case.ty.printed_pretty(case.size, case.nodes),
+        ];
+        for (kind, k) in [("plain", 0), ("pretty", 1)] {
+            let (printed, bound) = (chars(texts[k]), bounds[k]);
+            assert!(
+                printed <= bound,
+                "{}: the {kind} text has {printed} chars over the bound {bound}:\n{}",
+                case.name,
+                texts[k]
+            );
+            assert!(
+                case.loose[k] == 0 || 100 * bound <= case.loose[k] * printed,
+                "{}: the bound {bound} of the {kind} text of {printed} chars is over {}%",
+                case.name,
+                case.loose[k]
+            );
+        }
     }
 }
 
@@ -3734,6 +4142,163 @@ fn a_part_whose_spec_does_not_fit_is_written_without_it() {
     let mut g = Gen::new(&data);
     let info = g.interpolate(30);
     assert_eq!((g.w.out.program.as_str(), info.size), ("\"{0.0}\"", 24));
+}
+
+/// What `Gen::interpolate(room)` writes over `data`, after `declare` has put types in the scope,
+/// with a `cu` that always picks a compound part: the program text, its size, and the scope's
+/// `Nodes`. A byte of `data` is read from the front. The first is the number of parts, the second
+/// the length of the text before the part (2, which is `aa` here), then its two chars, the kind
+/// of the part (2: a declared type, or an array of a `bare_type` when the scope declares none)
+/// and the draws of its value; the last one that the value leaves picks `:#` when it is odd.
+fn interpolated(declare: fn(&mut Gen<'_>), data: &[u8], room: u64) -> (String, u64, Nodes) {
+    let mut g = Gen::new(data);
+    g.cu = Unstructured::new(&[1]);
+    declare(&mut g);
+    let info = g.interpolate(room);
+    (g.w.out.program, info.size, g.scope.nodes)
+}
+
+fn declare_nothing(_: &mut Gen<'_>) {}
+
+/// `class K0 { a: i64 }`.
+fn declare_class(g: &mut Gen<'_>) {
+    g.scope.classes.push(Class {
+        fields: vec![Field {
+            name: "a".to_string(),
+            ty: Ty::I64,
+            mutable: false,
+            cap: 0,
+        }],
+        size: 1,
+        applied: None,
+        inferable: false,
+    });
+    g.scope.types.push(Ty::class(0, 1));
+}
+
+/// `enum E0 { V0, V1(bool) }`, with its variants noted as `Gen::enumeration` notes them.
+fn declare_enum(g: &mut Gen<'_>) {
+    let variant = |name: &str, fields: Vec<Ty>| Variant {
+        name: name.to_string(),
+        recursive: false,
+        fields,
+        labels: Vec::new(),
+        inferable: false,
+    };
+    let variants = vec![variant("V0", Vec::new()), variant("V1", vec![Ty::Bool])];
+    for variant in &variants {
+        g.scope.note(variant);
+    }
+    g.scope.enums.push(Enum {
+        variants,
+        least: 1,
+        has_class: false,
+        applied: None,
+    });
+    g.scope.types.push(E0);
+}
+
+/// A part of a compound kind that `interpolated` writes.
+struct CompoundPart {
+    name: &'static str,
+    declare: fn(&mut Gen<'_>),
+    data: [u8; 14],
+    /// The program text that `data` gives.
+    text: &'static str,
+    /// The part's type; its value is of size 1.
+    ty: Ty,
+    /// Whether the spec is `:#`.
+    pretty: bool,
+}
+
+/// A part of each compound kind, with `:#` and with no spec.
+fn compound_parts() -> [CompoundPart; 6] {
+    let array = Ty::Array(Box::new(Ty::I64));
+    [
+        CompoundPart {
+            name: "array, no spec",
+            declare: declare_nothing,
+            data: [0, 2, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            text: "\"aa{[0]}\"",
+            ty: array.clone(),
+            pretty: false,
+        },
+        CompoundPart {
+            name: "array, #",
+            declare: declare_nothing,
+            data: [0, 2, 0, 0, 2, 0, 0, 0, 0, 1, 1, 1, 1, 1],
+            text: "\"aa{[257]:#}\"",
+            ty: array,
+            pretty: true,
+        },
+        CompoundPart {
+            name: "enum, no spec",
+            declare: declare_enum,
+            data: [0, 2, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            text: "\"aa{E0.V0}\"",
+            ty: E0,
+            pretty: false,
+        },
+        CompoundPart {
+            name: "enum, #",
+            declare: declare_enum,
+            data: [0, 2, 0, 0, 2, 0, 0, 1, 1, 1, 1, 1, 1, 1],
+            text: "\"aa{E0.V0:#}\"",
+            ty: E0,
+            pretty: true,
+        },
+        CompoundPart {
+            name: "class, no spec",
+            declare: declare_class,
+            data: [0, 2, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            text: "\"aa{K0(a: 0)}\"",
+            ty: Ty::class(0, 1),
+            pretty: false,
+        },
+        CompoundPart {
+            name: "class, #",
+            declare: declare_class,
+            data: [0, 2, 0, 0, 2, 0, 0, 0, 0, 1, 1, 1, 1, 1],
+            text: "\"aa{K0(a: 0):#}\"",
+            ty: Ty::class(0, 1),
+            pretty: true,
+        },
+    ]
+}
+
+#[test]
+fn interpolate_should_count_a_compound_part_by_the_bound_of_its_text() {
+    // Each value is of size 1. For an array and an enum, `{x:#}` can write more than `{x}`: the
+    // size must be the bound of the text that the spec asks for.
+    for CompoundPart {
+        name,
+        declare,
+        data,
+        text,
+        ty,
+        pretty,
+    } in compound_parts()
+    {
+        let (program, size, nodes) = interpolated(declare, &data, 60);
+        assert_eq!(program, text, "{name}");
+        let (plain, laid_out) = (ty.printed(1, None, nodes), ty.printed_pretty(1, nodes));
+        assert_eq!(
+            laid_out > plain,
+            !matches!(ty, Ty::Class { .. }),
+            "{name}: `#` should change the bound of an array and an enum only"
+        );
+        // The 2 chars of `aa` and the part.
+        assert_eq!(size, 2 + if pretty { laid_out } else { plain }, "{name}");
+    }
+}
+
+#[test]
+fn interpolate_should_write_a_scalar_part_when_no_compound_value_fits() {
+    // The room after `aa` is 28: an array of one element has 24 chars with no spec and 32 with
+    // `:#`, which is what the part is counted at, so no array fits and the part is an `i64`.
+    let (program, size, _) =
+        interpolated(declare_nothing, &[0, 2, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0], 30);
+    assert_eq!((program.as_str(), size), ("\"aa{0}\"", 2 + 20));
 }
 
 #[test]
@@ -4724,7 +5289,9 @@ fn a_push_through_an_optional_should_take_the_place_of_its_local() {
 /// never gives a type of three layers. One program holds both.
 #[test]
 fn a_mutable_array_local_should_now_and_then_hold_optional_arrays() {
-    let held = seeds().any(|data| {
+    // The type is rare, and the compound parts moved the bytes: of the seeds below, only seed 64
+    // holds it now.
+    let held = (0..2 * SEEDS).map(seed).any(|data| {
         let program = generate(&data).program;
         program.contains("]?.push(")
             && program.lines().any(|line| {
@@ -5957,7 +6524,7 @@ fn bound(name: Option<&str>) -> bool {
 /// arguments is pure: `i64`'s `min`, `max` and `clamp`, and the `sum` of an `[f64]`, which
 /// `Math` and `Sum` nodes were. The `sum` of an `[i64]` may overflow. `contains` is not here: it
 /// runs the `eq` of its element type, which a program may write with effects.
-const PURE_PRELUDE: [&str; 4] = ["i64.min", "i64.max", "i64.clamp", "[f64].sum"];
+const PURE_PRELUDE: &[&str] = &["i64.min", "i64.max", "i64.clamp", "[f64].sum"];
 
 /// For each function of `program`: whether a call of it is pure, if its arguments are.
 fn pure_calls(program: &tir::Program) -> Vec<bool> {
@@ -7084,6 +7651,57 @@ fn generated_shapes_should_call_every_requirement_of_a_conformed_interface() {
     assert!(
         calls > 0,
         "some seed's types should conform to an interface"
+    );
+}
+
+/// A method that meets a requirement with an `i64` or `string` result, as `Requirement::method`
+/// writes it: `fn r<n>(self, ...) -> <result> { <value> }`.
+pub(crate) struct Method<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) result: &'a str,
+    pub(crate) value: &'a str,
+}
+
+/// The methods of `source` with an `i64` or `string` result that meet a requirement, each with the
+/// number of its line.
+pub(crate) fn methods(source: &str) -> Vec<(usize, Method<'_>)> {
+    fn method(line: &str) -> Option<Method<'_>> {
+        let (name, rest) = line.trim_start().strip_prefix("fn r")?.split_once('(')?;
+        let (_, rest) = rest.split_once(") -> ")?;
+        let (result, value) = rest.split_once(" { ")?;
+        let named = name.bytes().all(|b| b.is_ascii_digit());
+        (named && ["i64", "string"].contains(&result)).then(|| Method {
+            name,
+            result,
+            value: value.trim_end_matches(" }"),
+        })
+    }
+    (source.lines().enumerate())
+        .filter_map(|(at, line)| method(line).map(|method| (at, method)))
+        .collect()
+}
+
+/// No two methods that meet a requirement return the same value in a program, for each of the
+/// results `i64` and `string`, so a call that reaches the wrong method prints another line.
+#[test]
+fn generated_methods_should_return_values_that_no_other_method_returns() {
+    let mut counts = [0, 0];
+    for data in seeds() {
+        let source = generate(&data).program;
+        let mut values: [FxHashSet<&str>; 2] = Default::default();
+        for (_, method) in methods(&source) {
+            let kind = usize::from(method.result == "string");
+            assert!(
+                values[kind].insert(method.value),
+                "{} twice in {source}",
+                method.value
+            );
+            counts[kind] += 1;
+        }
+    }
+    assert!(
+        counts.iter().all(|&n| n > 0),
+        "methods of {SEEDS} seeds: {counts:?}"
     );
 }
 

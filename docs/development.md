@@ -96,7 +96,7 @@ The end-to-end cases are files. The `cases` test binary runs one test per
 | --- | --- | --- |
 | `run/` | exit 0 with empty stderr unless there is a `<name>.err`, in a plain and an `-O2` build, both also under Valgrind on Linux, in a `--rc-checks` build, and on Linux in an `-O2` build on mimalloc | `<name>.out`: stdout; optional `<name>.err`: stderr |
 | `run-fail/` | panic with exit code 101, the same in a plain and an `-O2` build | `<name>.out`: stdout; `<name>.err`: stderr |
-| `diagnostics/` | report diagnostics under `sisu check`, exiting 1 if one is an error and 0 if all are warnings; a case named `<CODE>.sisu` or `<CODE>-<case>.sisu` reports that code | `<name>.err`: the diagnostics; `<name>.json`: the same under `--format json` |
+| `diagnostics/` | report diagnostics under `sisu check` (`sisu build --emit mir` for a code that only `mono` reports, such as E0163, because `check` does not run `mono`), exiting 1 if one is an error and 0 if all are warnings; a case named `<CODE>.sisu` or `<CODE>-<case>.sisu` reports that code | `<name>.err`: the diagnostics; `<name>.json`: the same under `--format json` |
 
 To add a case, write the `.sisu` file and an empty expected file beside it,
 then fill the expected file with `make bless`. Read what it wrote before
@@ -442,7 +442,14 @@ must pass six properties:
    comparison; the text and the value of a `dbg` line are compared. So no
    rewrite changes the argument of a `dbg`.
 5. The program prints the integer answers the generator worked out itself, or
-   panics with the overflow or division by zero it expects.
+   panics with the overflow or division by zero it expects. Each method that
+   the generator writes for an interface with an `i64` or `string` result (or
+   a `T` result, when the argument of the conformance is one of them) returns
+   a value that no other method returns. Each call of such a method in
+   `shapes`, or in a generic function that it calls, prints a line
+   `@d<n> <value>`. These lines are, in order, a prefix of the values of the methods
+   that a correct dispatch reaches; a `main` that returns before the calls
+   prints none.
 6. A broken bound gives E0154 and nothing else. For each bound site, an
    argument of a call of a bounded generic function or class whose parameter
    is the bare type parameter that no earlier argument names, a copy of the
@@ -657,7 +664,11 @@ $ target/debug/sisu build -e 'fn main() { print(1) }' -o one
 `sisu --version` prints `sisu <version>`. With `--verbose` (`-vV`), it adds the
 commit, the host and the LLVM version, which a bug report needs because Sisu
 has no releases. A wrong command line exits with 2, so it differs from a
-program that does not compile (1). `sisu help` and `sisu` alone print the usage.
+program that does not compile (1). When stderr cannot take the report, for
+example on a full disk, `sisu` exits with 1. `build` still writes its output,
+and `run` does not start the program. A reader that stops early, as in
+`sisu check a.sisu 2>&1 | head -1`, is not an error. `sisu help` and `sisu`
+alone print the usage.
 
 `sisu` links every program with `libsisu_runtime_mimalloc.a`, or with
 `libsisu_runtime_system.a` for `--allocator system`, which it looks for next to

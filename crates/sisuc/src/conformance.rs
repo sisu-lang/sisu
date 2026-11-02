@@ -389,9 +389,9 @@ impl Payloads for [Vec<Type>] {
 
 /// The parts of `ty`, whatever the interface: an array's element, an optional's contents and each
 /// payload type of an enum, with the type's arguments in place of its parameters. Nothing for a
-/// scalar, `string`, a class (it compares by identity, or through a written `Eq`) or a type
-/// parameter. A part whose associated type has no choice is poison, and is left out. A generated
-/// `Display`, which asks no part, still lists them.
+/// scalar, `string`, a class (it compares by identity, or through a written `Eq`), a type
+/// parameter or an `any` value. A part whose associated type has no choice is poison, and is
+/// left out. A generated `Display`, which asks no part, still lists them.
 pub(crate) fn parts<P: Payloads + ?Sized>(
     conformances: &Conformances,
     enums: &P,
@@ -405,7 +405,18 @@ pub(crate) fn parts<P: Payloads + ?Sized>(
                 each(part);
             }
         }),
-        _ => {}
+        TypeKind::I64
+        | TypeKind::U8
+        | TypeKind::F64
+        | TypeKind::Bool
+        | TypeKind::Char
+        | TypeKind::String
+        | TypeKind::Unit
+        | TypeKind::Never
+        | TypeKind::Class(..)
+        | TypeKind::Param(..)
+        | TypeKind::Assoc(..)
+        | TypeKind::Any(..) => {}
     }
 }
 
@@ -1124,7 +1135,23 @@ fn matches(pattern: Type, ty: Type, slots: &mut [Option<Type>]) -> Option<()> {
         (TypeKind::Any(a, p), TypeKind::Any(b, t)) if a == b && p.get().len() == t.get().len() => {
             matches_all(p, t, slots)
         }
-        _ => (pattern == ty).then_some(()),
+        (
+            TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::String
+            | TypeKind::Unit
+            | TypeKind::Never
+            | TypeKind::Array(_)
+            | TypeKind::Optional(_)
+            | TypeKind::Class(..)
+            | TypeKind::Enum(..)
+            | TypeKind::Assoc(..)
+            | TypeKind::Any(..),
+            _,
+        ) => (pattern == ty).then_some(()),
     }
 }
 
@@ -1282,7 +1309,16 @@ impl Unifier {
             TypeKind::Class(id, args) => Type::intern(TypeKind::Class(id, self.resolve_all(args)?)),
             TypeKind::Enum(id, args) => Type::intern(TypeKind::Enum(id, self.resolve_all(args)?)),
             TypeKind::Any(id, args) => Type::intern(TypeKind::Any(id, self.resolve_all(args)?)),
-            _ => ty,
+            // An associated type is opaque here, as it is to `unify`.
+            TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::String
+            | TypeKind::Unit
+            | TypeKind::Never
+            | TypeKind::Assoc(..) => ty,
         })
     }
 
@@ -1338,7 +1374,23 @@ impl Unifier {
             {
                 self.join(left, right) || self.unify_all(l, r)
             }
-            _ => false,
+            (
+                TypeKind::I64
+                | TypeKind::U8
+                | TypeKind::F64
+                | TypeKind::Bool
+                | TypeKind::Char
+                | TypeKind::String
+                | TypeKind::Unit
+                | TypeKind::Never
+                | TypeKind::Array(_)
+                | TypeKind::Optional(_)
+                | TypeKind::Class(..)
+                | TypeKind::Enum(..)
+                | TypeKind::Assoc(..)
+                | TypeKind::Any(..),
+                _,
+            ) => false,
         }
     }
 

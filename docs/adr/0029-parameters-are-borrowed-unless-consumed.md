@@ -1,6 +1,6 @@
 # Parameters are borrowed unless the function consumes them
 
-Status: accepted when part 4 of the mir merges; it replaces ADR 0012, which
+Status: accepted, 2026-10-21 (mir part 4, #112). It replaces ADR 0012, which
 was proposed and never built.
 
 A counted parameter is borrowed when the function only reads it: the caller

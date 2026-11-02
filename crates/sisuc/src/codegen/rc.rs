@@ -86,7 +86,7 @@ impl ClassCycles {
 
     /// The index among the classes of the cycle of `holder` of the class that a field of type
     /// `field` holds, when `holder` is in a cycle and that class is in it too.
-    fn link(&self, holder: ClassId, field: Type) -> Option<usize> {
+    pub(super) fn link(&self, holder: ClassId, field: Type) -> Option<usize> {
         let held = held_class(field)?;
         let cycle = self.cycle[holder.0]?;
         (self.cycle[held.0] == Some(cycle)).then(|| self.position[held.0])
@@ -334,10 +334,11 @@ impl<'ctx> Codegen<'ctx, '_> {
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         let entry = self.context.append_basic_block(drop, "entry");
         self.builder.position_at_end(entry);
+        let exit = self.begin_drop(drop, ty);
         let Some(members) = self.class_cycles.members(id) else {
             self.release_class_fields(id, param(drop), None);
             self.free_class(id, param(drop));
-            self.builder.build_return(None).expect(POSITIONED);
+            self.end_drop(exit);
             return;
         };
         let heads_type = self.heads_type(members.len());
@@ -349,7 +350,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.store(param(drop), ptr_type.const_null().into());
             let first = Type::intern(TypeKind::Class(members[0], TypeArgs::NONE));
             self.call(self.helper(Helper::Drain, first), &[heads.into()]);
-            self.builder.build_return(None).expect(POSITIONED);
+            self.end_drop(exit);
             return;
         }
         let head = self.head(heads_type, heads, 0);
@@ -357,13 +358,15 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.context.append_basic_block(drop, "loop"),
             self.context.append_basic_block(drop, "done"),
         );
+        // The block where the loop starts: `begin_drop` may have moved the builder out of `entry`.
+        let start = self.builder.get_insert_block().expect(POSITIONED);
         self.branch_to(body);
         self.builder.position_at_end(body);
         let phi = self
             .builder
             .build_phi(ptr_type, "object")
             .expect(POSITIONED);
-        phi.add_incoming(&[(&param(drop), entry)]);
+        phi.add_incoming(&[(&param(drop), start)]);
         let object = phi.as_basic_value().into_pointer_value();
         self.release_class_fields(id, object, Some((heads_type, heads)));
         self.free_class(id, object);
@@ -384,7 +387,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         phi.add_incoming(&[(&taken, take)]);
         self.branch_to(body);
         self.builder.position_at_end(done);
-        self.builder.build_return(None).expect(POSITIONED);
+        self.end_drop(exit);
     }
 
     /// `@sisu_rc.drain.<C0>(heads)`, for the cycle of classes whose first class is `C0`: while

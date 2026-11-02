@@ -1,6 +1,6 @@
 ---
 name: audit-sisu
-description: Exploratory audit of sisu and the runtime. Probes IR quality, reference counting, crashes, miscompiles, runtime unsafe code, limits, diagnostics, test blind spots and compile time; reports reproduced findings with a suggested fix and test each. `/audit-sisu` runs every area, `/audit-sisu <area>` one.
+description: Exploratory audit of sisu and the runtime. Probes IR quality, reference counting, crashes, miscompiles, runtime unsafe code, limits, diagnostics, test blind spots, compile time and the growth of structural debt; reports reproduced findings with a suggested fix and test each. `/audit-sisu` runs every area, `/audit-sisu <area>` one.
 disable-model-invocation: true
 ---
 
@@ -29,8 +29,9 @@ in Codex, `$audit-sisu [area...]`.
 | `diagnostics` | Bad programs that get no diagnostic, a wrong span, or a confusing message | [areas/diagnostics.md](areas/diagnostics.md) |
 | `coverage` | Compiler paths no test reaches, surviving mutants | [areas/coverage.md](areas/coverage.md) |
 | `compile-time` | `sisu` doing avoidable work: repeated steps, allocations on hot paths, IR LLVM only deletes, failing late | [areas/compile-time.md](areas/compile-time.md) |
+| `structure` | Growth of the debt that `docs/register.md` lists: fields on the checker's state, name-map reads, number-type lists; new wildcard arms; and the uses that the module-order test keeps | [areas/structure.md](areas/structure.md) |
 
-With no argument, run all nine; otherwise run the named ones.
+With no argument, run all ten; otherwise run the named ones.
 
 ## Steps
 
@@ -110,4 +111,5 @@ Then ask which findings to file. For each one the user picks, create a
 GitHub issue per `docs/agents/issue-tracker.md`, with the `needs-triage`
 label and the finding's text rewritten in that format. Use the fallback
 folder `.scratch/audit-<date>/issues/` only when GitHub cannot be reached. For each one the user rules intended or won't
-fix, add a row to [known-findings.md](known-findings.md).
+fix, add a row to [known-findings.md](known-findings.md). A `structure` finding the user picks is not an issue: it
+becomes an edit to `docs/register.md` in the next pull request.

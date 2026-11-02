@@ -258,7 +258,10 @@ impl Checker<'_> {
                 self.report(DiagnosticKind::UnknownType {
                     name: name.name.to_string(),
                     at: ty.bare,
-                    form: UnknownForm::OfAssociatedInAlias,
+                    form: UnknownForm::OfAssociatedInAlias {
+                        written: self.source.text(ty.bare).to_string(),
+                        base: self.source.text(base.span).to_string(),
+                    },
                 });
                 return None;
             }

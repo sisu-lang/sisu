@@ -3,10 +3,10 @@
 
 use std::ops::Range;
 
-use super::scope::{RESULT, Scope, Ty, Var};
+use super::scope::{Nodes, RESULT, Scope, Ty, Var};
 use super::stmt::MAX_BLOCKS;
 use super::writer::{Mark, Rewrite, Site, allowed};
-use super::{Gen, LINE, MAX_BOUND, MAX_LOOPS, MAX_NESTING, MAX_SIZE};
+use super::{Gen, LINE, MAX_BOUND, MAX_LOOPS, MAX_NESTING, MAX_SIZE, PART_SIZE};
 
 /// What a rule wrote.
 #[derive(Clone, Copy)]
@@ -64,7 +64,7 @@ impl Info {
 }
 
 /// The arithmetic operators, as written.
-pub(crate) const OPS: [&str; 5] = [" + ", " - ", " * ", " / ", " % "];
+pub(crate) const OPS: &[&str] = &[" + ", " - ", " * ", " / ", " % "];
 
 /// `l OPS[op] r` on a `ty`, an `i64` or a `u8`, as the run time has it: the value, or the
 /// message it panics with.
@@ -88,7 +88,7 @@ pub(crate) fn arithmetic_value(ty: &Ty, op: usize, l: i64, r: i64) -> Result<i64
 const DBG_EVERY: u64 = 37;
 
 /// The types a `const` can have.
-const CONSTANT: [Ty; 6] = Ty::VALUES;
+const CONSTANT: &[Ty] = Ty::VALUES;
 
 /// The size of an array of `len` elements of at most `element` each (decision 5).
 pub(crate) fn array_size(len: u64, element: u64) -> u64 {
@@ -154,11 +154,11 @@ enum Rule {
 }
 
 /// The `f64` methods with an exact result and no argument.
-const ROUNDING: [&str; 6] = ["abs", "sqrt", "floor", "ceil", "trunc", "round"];
+const ROUNDING: &[&str] = &["abs", "sqrt", "floor", "ceil", "trunc", "round"];
 /// The methods of `i64` and `f64` that take arguments of the receiver's type.
-const BOUNDS: [(&str, usize); 3] = [("min", 1), ("max", 1), ("clamp", 2)];
+const BOUNDS: &[(&str, usize)] = &[("min", 1), ("max", 1), ("clamp", 2)];
 /// The libm methods, whose results are inexact (decision 11), and their argument counts.
-const LIBM: [(&str, usize); 13] = [
+const LIBM: &[(&str, usize)] = &[
     ("sin", 0),
     ("cos", 0),
     ("tan", 0),
@@ -173,11 +173,11 @@ const LIBM: [(&str, usize); 13] = [
     ("pow", 1),
     ("hypot", 1),
 ];
-const CLASSIFY: [&str; 3] = ["is_nan", "is_finite", "is_infinite"];
+const CLASSIFY: &[&str] = &["is_nan", "is_finite", "is_infinite"];
 
 /// Chars a string literal may hold, as written: no `@` (decision 3), and no raw `{`, `}`, `"` or
 /// `\`. The escapes from `\r` on hold a line break, which a panic message may not.
-const STRING_CHARS: [&str; 26] = [
+const STRING_CHARS: &[&str] = &[
     "a",
     "b",
     "z",
@@ -208,7 +208,7 @@ const STRING_CHARS: [&str; 26] = [
 /// The chars of `STRING_CHARS` a panic message may hold.
 const MESSAGE_CHARS: usize = 24;
 /// Char literals and their values, smallest first.
-pub(crate) const CHARS: [(&str, char); 14] = [
+pub(crate) const CHARS: &[(&str, char)] = &[
     ("'a'", 'a'),
     ("'Z'", 'Z'),
     ("'0'", '0'),
@@ -225,7 +225,7 @@ pub(crate) const CHARS: [(&str, char); 14] = [
     ("'}'", '}'),
 ];
 /// The types a `match` tests by value, besides enums.
-const MATCHED: [Ty; 5] = [Ty::Bool, Ty::I64, Ty::U8, Ty::Char, Ty::String];
+const MATCHED: &[Ty] = &[Ty::Bool, Ty::I64, Ty::U8, Ty::Char, Ty::String];
 /// The strings a `match` on a `string` tests.
 const WORDS: [&str; 5] = ["\"\"", "\"a\"", "\"b\"", "\"ab\"", "\"é\""];
 /// How deep a variant pattern nests in another.
@@ -1129,7 +1129,7 @@ impl Gen<'_> {
     /// An `f64` literal in one of its written forms, a negative one in parentheses, or one of
     /// `f64`'s constants.
     pub(crate) fn float_literal(&mut self) -> String {
-        const CONSTANTS: [&str; 8] = [
+        const CONSTANTS: &[&str] = &[
             "pi",
             "tau",
             "e",
@@ -1228,7 +1228,7 @@ impl Gen<'_> {
 
     /// A chain `a < b <= c` or `a > b >= c` of two or three operands of one ordered type.
     fn order(&mut self) -> Info {
-        const ORDERED: [Ty; 5] = [Ty::I64, Ty::U8, Ty::F64, Ty::Char, Ty::String];
+        const ORDERED: &[Ty] = &[Ty::I64, Ty::U8, Ty::F64, Ty::Char, Ty::String];
         let operand = ORDERED[self.pick(ORDERED.len())].clone();
         let ops = if self.pick(2) == 0 {
             [" < ", " <= "]
@@ -1340,10 +1340,27 @@ impl Gen<'_> {
             let text = self.string_text(text_len, MESSAGE_CHARS);
             self.w.text(&text);
             size += text_len;
+            if let Some((ty, most, nodes)) = self.compound_part(max - size) {
+                self.w.text("{");
+                self.synth = true;
+                let info = self.expr(&ty, most);
+                // No width, no alignment, no precision: no spec, or `#`, one time in two. `nodes`
+                // is from before `expr`: the part's type and every type in it exist before `expr`
+                // runs, and a type that `expr` makes holds no part of this value.
+                if self.pick(2) == 0 {
+                    self.w.text("}");
+                    size += ty.printed(info.size, None, nodes);
+                } else {
+                    self.w.text(":#}");
+                    size += ty.printed_pretty(info.size, nodes);
+                }
+                parts.push(info);
+                continue;
+            }
             // A `string` always fits.
             let mut fitting: Vec<Ty> = Ty::VALUES
                 .iter()
-                .filter(|ty| ty.printed(0, None) <= max - size)
+                .filter(|ty| ty.printed(0, None, Nodes::default()) <= max - size)
                 .cloned()
                 .collect();
             // An `f64` comes twice: only it takes every part of a spec.
@@ -1356,11 +1373,13 @@ impl Gen<'_> {
             self.synth = true;
             let info = self.expr(&ty, room);
             let (spec, width, precision) = self.format_spec(&ty);
-            let printed = ty.printed(info.size, precision).max(width);
+            let printed = ty
+                .printed(info.size, precision, Nodes::default())
+                .max(width);
             if printed > room {
                 // The spec's width or precision does not fit: write the part without it.
                 self.w.text("}");
-                size += ty.printed(info.size, None);
+                size += ty.printed(info.size, None, Nodes::default());
             } else {
                 self.w.text(&format!("{spec}}}"));
                 size += printed;
@@ -1372,9 +1391,55 @@ impl Gen<'_> {
         Info::of(&parts, size, true)
     }
 
+    /// The type of a compound part, now and then, the most size its value may hold, and the
+    /// `Nodes` that bound counts. The choice reads `cu` and the type reads `u`, so that a part for
+    /// which `cu` chooses no compound value draws what it drew before. The size is the greatest
+    /// of at most `PART_SIZE` for which `{x:#}` writes within `room` chars, and so does a plain
+    /// part.
+    fn compound_part(&mut self, room: u64) -> Option<(Ty, u64, Nodes)> {
+        if self.cu.choose_index(2).unwrap_or(0) == 0 {
+            return None;
+        }
+        let ty = self.part_type();
+        let nodes = self.scope.nodes;
+        let most = (ty.least()..=PART_SIZE)
+            .rev()
+            .find(|&size| ty.printed_pretty(size, nodes) <= room)?;
+        Some((ty, most, nodes))
+    }
+
+    /// The type of a compound part: an array of a `bare_type` or of an optional, or a declared or
+    /// generic class or enum, as the type of a `let` can be. Never an optional, which W0015 warns
+    /// of, and never `unit`.
+    fn part_type(&mut self) -> Ty {
+        let choice = self.pick(4);
+        let declared = choice == 2;
+        let len = match choice {
+            2 => self.scope.types.len(),
+            3 => self.scope.generic_types.len(),
+            _ => 0,
+        };
+        if len > 0 {
+            let at = self.pick(len);
+            let pool = if declared {
+                &self.scope.types
+            } else {
+                &self.scope.generic_types
+            };
+            return pool[at].clone();
+        }
+        let element = if choice == 1 {
+            Ty::Optional(Box::new(self.type_within(0, false)))
+        } else {
+            self.bare_type()
+        };
+        Ty::Array(Box::new(element))
+    }
+
     /// A format spec `[:#]` or `[:[align][width][.precision]]`, its width, and its precision;
     /// only an `f64` takes a precision (E0111). A part with no width and no precision gets `#`
-    /// one time in four; every part here is a scalar or a `string`, so `#` changes nothing.
+    /// one time in four; every part here is a scalar or a `string`, so `#` changes nothing. A
+    /// compound part has its own rule (`interpolate`).
     fn format_spec(&mut self, ty: &Ty) -> (String, u64, Option<u64>) {
         let width = if self.pick(3) == 0 {
             0
@@ -2187,6 +2252,16 @@ mod tests {
             .filter(|program| program.contains("let echo") || program.contains("let mut echo"))
             .count();
         assert!(named >= 20, "{named} programs of 100 name a local echo");
+    }
+
+    /// A compound part may make a new enum instance, such as the `G<T>` that a generic call
+    /// lowers. Seeds 29794 and 96755 once counted the nodes of that instance in the size of the
+    /// part, and the size passed `max`.
+    #[test]
+    fn interpolate_should_not_count_the_enum_instances_that_its_part_makes() {
+        for n in [29794, 96755] {
+            crate::generate::generate(&crate::generate::coverage::seed(n));
+        }
     }
 
     #[test]

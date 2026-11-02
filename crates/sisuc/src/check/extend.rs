@@ -242,7 +242,7 @@ impl<'a> Checker<'_> {
             method: method.to_string(),
             stands: self.type_name(stands.get()[i]),
         };
-        self.check_bound_of(span, stands.get()[i], bound, stands.get(), Some(need));
+        self.check_bound_of(span, stands.get()[i], bound, stands.get(), Some(need), None);
     }
 
     /// Reports each type parameter of `extend` that its target, `target`, does not name. The fix

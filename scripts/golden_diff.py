@@ -15,7 +15,9 @@ CASES = (':(glob)crates/*/tests/**', ':(glob)site/programs/**')
 
 
 def git(*args):
-    return subprocess.run(['git', *args], capture_output=True, text=True, check=True).stdout
+    # An `.out` file holds the program's raw bytes, so a byte that is not UTF-8 is kept as a surrogate.
+    return subprocess.run(['git', *args], capture_output=True, text=True, encoding='utf-8',
+                          errors='surrogateescape', check=True).stdout
 
 
 def main(span, subs):

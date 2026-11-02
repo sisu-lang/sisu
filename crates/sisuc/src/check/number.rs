@@ -10,12 +10,13 @@ use super::{Checked, Checker, Declared, Poisoned, UNKNOWN};
 use crate::ast;
 use crate::diagnostic::{Definition, DiagnosticKind, MathFix, NanFix};
 use crate::source::Span;
+use crate::symbol::Symbol;
 use crate::tir::{self, MathOp, Type, TypeKind};
 
 /// Each method of `f64`: its operation and its parameter count. Every parameter is an `f64`. The
 /// result is `bool` for the `is_` methods and `f64` for the rest. `i64`'s `min`, `max` and
 /// `clamp` are the prelude's.
-const METHODS: [(MathOp, usize); 25] = [
+const METHODS: &[(MathOp, usize)] = &[
     (MathOp::Abs, 0),
     (MathOp::Sqrt, 0),
     (MathOp::Floor, 0),
@@ -44,7 +45,7 @@ const METHODS: [(MathOp, usize); 25] = [
 ];
 
 /// The constants on `f64`: `f64.pi` is `PI`.
-const CONSTANTS: [(&str, f64); 8] = [
+const CONSTANTS: &[(&str, f64)] = &[
     ("pi", consts::PI),
     ("tau", consts::TAU),
     ("e", consts::E),
@@ -136,7 +137,7 @@ impl Checker<'_> {
                 self.stray(call.map_or(&[], |(args, _)| args));
                 return Some(Err(Poisoned::error()));
             }
-            None if name.as_str() == "Option" => {
+            None if name == Symbol::OPTION => {
                 return Some(self.option_path(span, site, member, call, None));
             }
             None => {}
@@ -181,7 +182,7 @@ impl Checker<'_> {
                 None
             };
         }
-        let constants: &[(&str, f64)] = if ty == Type::F64 { &CONSTANTS } else { &[] };
+        let constants: &[(&str, f64)] = if ty == Type::F64 { CONSTANTS } else { &[] };
         let Some(&(_, x)) = constants
             .iter()
             .find(|(constant, _)| *constant == member.name.as_str())

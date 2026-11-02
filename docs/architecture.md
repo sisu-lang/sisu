@@ -99,7 +99,7 @@ line, as a `const` does. In a type, `Self` is the conforming type, `S.Item`
 is an associated type, `any` before an interface name makes an interface value
 type, `any Shape`, and a type may stand in parentheses, `(any Shape)?`. `any` is
 a keyword only there, so `xs.any(...)` still names a method; `any Shape?` and
-`any A & B` are E0163. In an expression, a `<` after a name starts type
+`any A & B` are E0165. In an expression, a `<` after a name starts type
 arguments only when the tokens up to its `>` read as types and a `(` or `.`
 follows, as in `first<i64>([])`; any other `<` compares. A `>=` that closes a
 list, as in `let s: Stack<i64>= x`, splits into the `>` and the `=`. It rejects an item that nests deeper than
@@ -115,6 +115,8 @@ no instantiation, so it does not find such a chain. `mono` also reports E0160
 for a payload that can be 4 GiB or more (`payload_limit.rs`) when the checker
 cannot measure it: an enum that holds an instance of a generic enum, or is one.
 The checker finds the error for the other enums, so `sisu check` reports those.
+`mono` reports E0163 when the program reaches more than 100,000 instances, and
+`sisu check` does not report it.
 
 **Checker** (`check/`, `tir.rs`). Resolves every name, types every expression
 and lowers sugar: `while`, `while let` and `for` become loops, `?.` and `??`
@@ -250,7 +252,9 @@ receiver with a `DynCall`, a call through the table of the value, and each
 `ToAny` whose operand already has the target type is removed. It also
 replaces each associated type with the type its conformance chose. It reports E0030 for a chain of more than 128
 choices, or a loop, that the checker's probe did not follow, and then gives no
-program. A method of an `extend` block that names an
+program. It counts each instance it makes and stops with E0163 when the count
+passes 100,000 (`INSTANCE_LIMIT`), because a chain of generic items can double
+the instances at each step. A method of an `extend` block that names an
 interface has the interface between its type and its name,
 `Celsius.Convert<Fahrenheit>.convert`, so two conformances may each hold a
 method of one name. `mir` and codegen see only concrete types, and a program
@@ -379,6 +383,17 @@ stays the same size for a value of any depth. A field of an enum on the same
 cycle that is held inline, such as `Two<Expr>.Both`'s `Expr` in
 `enum Expr { Pair(Two<Expr>) }`, is walked in place with the same lists.
 
+A drop that recurses through an array, an enum or a class outside the cycle
+counts its depth ([ADR 0038](adr/0038-deep-drops-defer-past-a-depth-limit.md)).
+`codegen/deep.rs` finds the drop functions that count, and the drop weight of
+each. A counting drop function adds its weight to the global `sisu_rc.depth`,
+and puts the depth back before it returns. At or above the depth limit, 256,
+it gives its block and its own address to the runtime's `sisu_drop_defer`,
+sets the global `sisu_rc.deferred`, and returns. The drop that brings the
+depth back to 0 calls `sisu_drop_drain` when that flag is set. The fields of
+`binary_trees`' `Node` are all links of its class cycle, so its drop does not
+count.
+
 An `any` value (`codegen/any.rs`) is two pointers: the data and a table. The
 data of a class object is the object itself. Any other value is moved into a
 counted box, `{ i64 count, T value }`, which every copy of the `any` value
@@ -463,6 +478,9 @@ which `chars()` and `string(cs)` call, and `sisu_words_count` and
 expression, calls only `sisu_words_count`. `stdin.rs` holds `sisu_read_line`,
 which `read_line()` calls. `args.rs` holds `sisu_args_len` and `sisu_arg`,
 which the generated `main` calls to build `args` when `sisu.main` takes it.
+`deferred.rs` holds the queue of deferred drops: `sisu_drop_defer` puts a
+block and its drop function at the back, and `sisu_drop_drain` drops each one
+in order until the queue is empty.
 `print(x)` and `"{x}"` share one formatter per
 type. The text of an array, a class, an enum or an optional goes through a
 sink in `show.rs`: generated `sisu_show.<type>` helpers call `sisu_show_int`,
@@ -492,7 +510,11 @@ and every message, label, help and fix: a stage builds a `DiagnosticKind`, and
 the registry turns it into a `Diagnostic` with a stable code
 ([ADR 0013](adr/0013-diagnostics-have-stable-codes.md)). `diagnostic/render.rs`
 writes it in the style of `rustc`: the message, the `file:line:col`, and the
-source line with the code underlined. `diagnostic/json.rs` writes the same
+source line with the code underlined. Before it renders a long ASCII line with
+every span on it, it cuts the line to the bytes near the spans, so the renderer
+gets only those bytes; the text is the same as for the whole line. Each
+diagnostic still scans the line once for its checks (a `shortcut:` in
+`render.rs`). `diagnostic/json.rs` writes the same
 diagnostic as one JSON line, and `diagnostic/suggest.rs` finds the closest
 name for a did-you-mean fix. `report.rs` writes diagnostics and tool errors
 as text or JSON, counts them and ends with the summary. Before it writes one,
@@ -504,6 +526,17 @@ fixes and drops the rest. It does not judge a checker fix: that would cost a
 parse for each one, and the checker runs only on items that parse. The fuzz
 target checks that no fix shown makes the syntax worse. The explanations in
 [`docs/diagnostics`](diagnostics/README.md) are what `sisu explain` prints.
+
+**Module order.** `crates/sisuc/tests/architecture.rs` puts the top-level
+modules of `crates/sisuc/src` in layers, in `LAYERS`. The shared modules,
+such as `source` and `diagnostic`, come first. The stages and the IR
+modules they share come next, in pipeline order. The modules that run the
+stages, such as `lib.rs` and `front_end`, come after them, and the fuzz
+modules come last. A module uses only its own layer and earlier ones,
+so a stage does not depend on what comes after it. The test fails on a use
+of a later layer outside test code. Its `BACK_EDGES` list holds the few uses
+that stay, each with its reason, and the test fails on an entry that no use
+needs.
 
 ## Updating the diagram
 

@@ -3,9 +3,10 @@
 //! 0 and prints its `.out`, and its `.err` on stderr when it has one, else nothing there; a
 //! `run_fail` case panics with its `.out` on stdout and its `.err` on stderr. Both read their
 //! `.in`, when they have one, on stdin. A `diagnostics` case makes `sisu check` report its
-//! `.err` on stderr, and `sisu check --format json` its `.json`. The `orphans` binary checks that
-//! every file in these directories belongs to a case, as a file its mode reads, and that none is
-//! hidden.
+//! `.err` on stderr, and `sisu check --format json` its `.json`; a case of a code that only `mono`
+//! reports (`MONO_CODES` in `support`) runs `sisu build --emit mir` in place of `sisu check`. The
+//! `orphans` binary checks that every file in these directories belongs to a case, as a file its
+//! mode reads, and that none is hidden.
 //!
 //! A `site_pending` case is a program the site shows before it compiles: `sisu check` reports
 //! an error, until the day it compiles. An `explanation` case is the Broken program of a

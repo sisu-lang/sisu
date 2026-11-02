@@ -1,0 +1,21 @@
+// Two chains of 300 000 objects through `[A]`. The assignment to the only local drops the first
+// chain. The program then ends with the second one, so both drops must free all their objects.
+class A {
+    _next: [A]
+}
+
+fn chain() -> A {
+    let mut a = A(_next: [])
+    let mut i = 0
+    while i < 300_000 {
+        i += 1
+        a = A(_next: [a])
+    }
+    a
+}
+
+fn main() {
+    let mut _a = chain()
+    _a = chain()
+    print(1)
+}

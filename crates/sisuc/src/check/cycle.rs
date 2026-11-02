@@ -621,7 +621,15 @@ impl Graph {
                 };
                 (Some(base), args.get(), growth)
             }
-            _ => (None, &[][..], 1),
+            TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::String
+            | TypeKind::Unit
+            | TypeKind::Never
+            | TypeKind::Param(..) => (None, &[][..], 1),
         };
         (inner.into_iter().chain(args.iter().copied()))
             .filter(|part| part.has_param())

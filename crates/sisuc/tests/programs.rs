@@ -24,13 +24,17 @@ const MIN: &str = "    let min = -9_223_372_036_854_775_807 - 1";
 const MAX: &str = "    let big = 9_223_372_036_854_775_807";
 
 /// Compiles `<dir>/<name>.sisu`, run from `dir`, into `<CARGO_TARGET_TMPDIR>/<name>`, or
-/// `<name>-O2` with `o2`, passing `flags` to `sisu` too.
+/// `<name>-O2` with `o2`, passing `flags` to `sisu` too. Each flag adds its words to the file
+/// name, so that two tests that build one program with other flags do not share a file.
 fn compile_to_tmp(dir: &Path, name: &str, o2: bool, flags: &[&str]) -> PathBuf {
-    let exe = Path::new(env!("CARGO_TARGET_TMPDIR")).join(if o2 {
-        format!("{name}-O2")
+    let level = if o2 { "-O2" } else { "" };
+    let words: Vec<&str> = flags.iter().map(|f| f.trim_start_matches('-')).collect();
+    let words = if words.is_empty() {
+        String::new()
     } else {
-        name.to_string()
-    });
+        format!("-{}", words.join("-"))
+    };
+    let exe = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}{level}{words}"));
     let flags: Vec<&str> = o2
         .then_some("-O2")
         .into_iter()
@@ -56,8 +60,8 @@ fn assert_panics(out: &Output, stdout: &str, stderr: &str) {
 }
 
 /// The programs the small-stack tests run. They are not `tests/run` cases: many objects
-/// under Valgrind is too slow, and `deepchain` overflows on purpose.
-const SMALL_STACK: [&str; 23] = [
+/// under Valgrind is too slow.
+const SMALL_STACK: &[&str] = &[
     "longlist",
     "rightskew",
     "deepchain",
@@ -81,6 +85,20 @@ const SMALL_STACK: [&str; 23] = [
     "showmutual",
     "showinline",
     "showoptionallink",
+    "chainarray",
+    "chainoptarray",
+    "chainnested",
+    "chaininline",
+    "chaingeneric",
+    "chainboxed",
+    "chainmutual",
+    "chaintree",
+    "chaincomponent",
+    "widetree",
+    "chaintwice",
+    "nestedenums",
+    "chainwrapped",
+    "chainrepeat",
 ];
 
 /// GIVEN the `tests/programs` directory
@@ -101,7 +119,10 @@ fn programs_directory_should_hold_only_the_small_stack_programs() {
         })
         .collect();
     files.sort();
-    let mut expected = SMALL_STACK.map(|name| format!("{name}.sisu"));
+    let mut expected: Vec<String> = SMALL_STACK
+        .iter()
+        .map(|name| format!("{name}.sisu"))
+        .collect();
     expected.sort();
     assert_eq!(files, expected);
 }
@@ -315,12 +336,12 @@ fn any_shapes_should_keep_its_boxes_at_o2() {
 
 /// Compiles `tests/programs/<name>.sisu` without `-O2` and runs it under a 256 KiB stack.
 fn run_in_small_stack(name: &str) -> Output {
-    run_in_small_stack_at(name, false)
+    run_in_small_stack_at(name, false, &[])
 }
 
-/// `run_in_small_stack` with `-O2` if `o2`.
-fn run_in_small_stack_at(name: &str, o2: bool) -> Output {
-    let exe = compile_to_tmp(Path::new(PROGRAMS), name, o2, &[]);
+/// `run_in_small_stack` with `-O2` if `o2`, and with `flags` passed to `sisu`.
+fn run_in_small_stack_at(name: &str, o2: bool, flags: &[&str]) -> Output {
+    let exe = compile_to_tmp(Path::new(PROGRAMS), name, o2, flags);
     Command::new("sh")
         .args(["-c", r#"ulimit -c 0 && ulimit -s 256 && exec "$0""#])
         .arg(exe)
@@ -364,9 +385,29 @@ fn rightskew_should_free_a_long_tree_in_a_small_stack() {
 /// `assert_small_stack_prints` at both levels: `-O2` must not need more stack either.
 fn assert_small_stack_prints_at_both(name: &str, expected: &str) {
     for o2 in [false, true] {
-        let out = run_in_small_stack_at(name, o2);
+        let out = run_in_small_stack_at(name, o2, &[]);
         assert_eq!(out.status.code(), Some(0), "-O2 {o2}: {:?}", out.status);
         assert_eq!(String::from_utf8_lossy(&out.stdout), expected, "-O2 {o2}");
+    }
+}
+
+/// `assert_small_stack_prints_at_both` for a build with `--rc-checks`, which also checks that
+/// the program freed every object: stderr has no `live objects at exit` line.
+fn assert_small_stack_checks_at_both(name: &str, expected: &str) {
+    for o2 in [false, true] {
+        let out = run_in_small_stack_at(name, o2, &["--rc-checks"]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "-O2 {o2}: {:?} {stderr}",
+            out.status
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout), expected, "-O2 {o2}");
+        assert!(
+            !stderr.contains("live objects at exit"),
+            "-O2 {o2}: {stderr}"
+        );
     }
 }
 
@@ -582,26 +623,171 @@ fn enums_with_a_field_after_the_link_should_compare_in_a_small_stack() {
 }
 
 /// GIVEN the `deepchain` program, which holds 500 000 objects each in an array of the one before
-/// WHEN it runs under a 256 KiB stack
-/// THEN it dies by signal 11 and prints nothing
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`
+/// THEN it prints 500000
+/// AND it exits 0
 ///
-/// The control for `longlist_should_free_a_long_list_in_a_small_stack`: a drop that
-/// recurses once per object, as the drop of an array does, overflows the same stack, so the
-/// limit is in force.
+/// The drop of an array counts the drop depth and defers its block at the limit, so a chain
+/// through arrays needs no frame for each object. The control that still overflows is
+/// `tail_calls_should_overflow_the_small_stack_without_optimization`.
 #[test]
-fn deepchain_should_overflow_the_small_stack() {
-    let out = run_in_small_stack("deepchain");
-    assert_eq!(out.status.signal(), Some(11), "{:?}", out.status);
-    // It dies in the drop, after `print`, but stdout is a pipe and so block-buffered: the
-    // runtime flushes only on a normal exit or a Sisu panic, so a signal loses the line, as
-    // it does in a C program.
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "");
+fn deepchain_should_drop_in_a_small_stack() {
+    assert_small_stack_prints_at_both("deepchain", "500000\n");
+}
+
+/// GIVEN the `deepchain` program, which holds 500 000 objects each in an array of the one before
+/// WHEN it is built with `--rc-checks`, with and without `-O2`, and runs under a 256 KiB stack
+/// THEN it exits 0
+/// AND it prints no `live objects at exit` line on standard error
+#[test]
+fn deepchain_should_free_every_object_before_exit() {
+    assert_small_stack_checks_at_both("deepchain", "500000\n");
+}
+
+/// GIVEN a program that builds a chain of 300000 objects through a field of type `[A]` and then
+/// prints 1
+/// WHEN it is built with `--rc-checks`, with and without `-O2`, and runs under a 256 KiB stack
+/// THEN it prints `1`
+/// AND it exits 0
+#[test]
+fn chain_through_an_array_should_drop_in_a_small_stack() {
+    assert_small_stack_checks_at_both("chainarray", "1\n");
+}
+
+/// GIVEN a program that builds a chain of 300000 objects through a field of type `[A?]` and then
+/// prints 1
+/// WHEN it is built with `--rc-checks`, with and without `-O2`, and runs under a 256 KiB stack
+/// THEN it prints `1`
+/// AND it exits 0
+#[test]
+fn chain_through_optional_elements_should_drop_in_a_small_stack() {
+    assert_small_stack_checks_at_both("chainoptarray", "1\n");
+}
+
+/// GIVEN a program that builds a chain of 300000 objects through a field of type `[[A]]` and then
+/// prints 1
+/// WHEN it is built with `--rc-checks`, with and without `-O2`, and runs under a 256 KiB stack
+/// THEN it prints `1`
+/// AND it exits 0
+#[test]
+fn chain_through_nested_arrays_should_drop_in_a_small_stack() {
+    assert_small_stack_checks_at_both("chainnested", "1\n");
+}
+
+/// GIVEN a program that builds a chain of 300000 objects through a field of enum
+/// `Link { End, To(A) }`, with no box, and then prints 1
+/// WHEN it is built with `--rc-checks`, with and without `-O2`, and runs under a 256 KiB stack
+/// THEN it prints `1`
+/// AND it exits 0
+#[test]
+fn chain_through_an_inline_enum_should_drop_in_a_small_stack() {
+    assert_small_stack_checks_at_both("chaininline", "1\n");
+}
+
+/// GIVEN a program that builds a chain of 300000 objects through a field of the generic enum
+/// `Box<N> { Empty, Full(N) }` and then prints 1
+/// WHEN it is built with `--rc-checks`, with and without `-O2`, and runs under a 256 KiB stack
+/// THEN it prints `1`
+/// AND it exits 0
+#[test]
+fn chain_through_a_generic_enum_should_drop_in_a_small_stack() {
+    assert_small_stack_checks_at_both("chaingeneric", "1\n");
+}
+
+/// GIVEN a program that builds a chain of 300000 objects through a field of the boxed enum
+/// `L { Nil, Cons(A?, L) }` and then prints 1
+/// WHEN it is built with `--rc-checks`, with and without `-O2`, and runs under a 256 KiB stack
+/// THEN it prints `1`
+/// AND it exits 0
+#[test]
+fn chain_through_a_boxed_enum_should_drop_in_a_small_stack() {
+    assert_small_stack_checks_at_both("chainboxed", "1\n");
+}
+
+/// GIVEN a program that builds a chain of 300000 objects through `class A { _b: B? }` and
+/// `class B { _a: [A] }` and then prints 1
+/// WHEN it is built with `--rc-checks`, with and without `-O2`, and runs under a 256 KiB stack
+/// THEN it prints `1`
+/// AND it exits 0
+#[test]
+fn chain_through_two_classes_and_an_array_should_drop_in_a_small_stack() {
+    assert_small_stack_checks_at_both("chainmutual", "1\n");
+}
+
+/// GIVEN a program that builds a chain of 300000 nodes through `enum Tree { Leaf, Node([Tree]) }`,
+/// with no class, and then prints 1
+/// WHEN it is built with `--rc-checks`, with and without `-O2`, and runs under a 256 KiB stack
+/// THEN it prints `1`
+/// AND it exits 0
+#[test]
+fn enum_tree_through_arrays_should_drop_in_a_small_stack() {
+    assert_small_stack_checks_at_both("chaintree", "1\n");
+}
+
+/// GIVEN a program that builds a chain of 300000 objects through a field `[Second]`, with
+/// `enum First { End, Next(Second), Hold(A) }` and `enum Second { Back(First) }`, and then prints 1
+/// WHEN it is built with `--rc-checks`, with and without `-O2`, and runs under a 256 KiB stack
+/// THEN it prints `1`
+/// AND it exits 0
+#[test]
+fn chain_through_an_enum_component_should_drop_in_a_small_stack() {
+    assert_small_stack_checks_at_both("chaincomponent", "1\n");
+}
+
+/// GIVEN a program that builds an array of 1000 elements, each a chain of 1000 objects through
+/// fields of type `[A]`, and then prints 1
+/// WHEN it is built with `--rc-checks`, with and without `-O2`, and runs under a 256 KiB stack
+/// THEN it prints `1`
+/// AND it exits 0 with no `live objects at exit` line on standard error
+#[test]
+fn wide_tree_should_free_each_deferred_block() {
+    assert_small_stack_checks_at_both("widetree", "1\n");
+}
+
+/// GIVEN a program that drops a chain of 300000 objects through fields of type `[A]` by assigning
+/// a new value to its only local, and then builds and drops a second such chain
+/// WHEN it is built with `--rc-checks` and runs under a 256 KiB stack
+/// THEN it exits 0 with no `live objects at exit` line on standard error
+#[test]
+fn deferred_drops_should_be_freed_before_exit() {
+    assert_small_stack_checks_at_both("chaintwice", "1\n");
+}
+
+/// GIVEN 200 enums `E0` ... `E199`, where `Ek` has the variants `End` and `To(E(k+1))`
+/// AND `E199` has the variant `To(A)`, and class `A` has a field of type `E0`
+/// AND a program that builds a chain of 300000 objects of `A` and then prints 1
+/// WHEN it is built with `--rc-checks`, with and without `-O2`, and runs under a 256 KiB stack
+/// THEN it prints `1`
+/// AND it exits 0
+#[test]
+fn chain_through_nested_inline_enums_should_drop_in_a_small_stack() {
+    assert_small_stack_checks_at_both("nestedenums", "1\n");
+}
+
+/// GIVEN a program with `class W<T> { v: [T] }` and `class N { _next: W<N>? }` that builds a
+/// chain of 300000 objects of `N` and then prints 1
+/// WHEN it is built with `--rc-checks`, with and without `-O2`, and runs under a 256 KiB stack
+/// THEN it prints `1`
+/// AND it exits 0
+#[test]
+fn generic_class_through_an_array_should_drop_in_a_small_stack() {
+    assert_small_stack_checks_at_both("chainwrapped", "1\n");
+}
+
+/// GIVEN a program that, in a loop of 3 runs, puts a chain of 300000 objects through `[A]` in
+/// `xs[0]` of an array and then replaces it
+/// WHEN it is built with `--rc-checks`, with and without `-O2`, and runs under a 256 KiB stack
+/// THEN it prints `1`
+/// AND it exits 0 with no `live objects at exit` line on standard error
+#[test]
+fn repeated_deep_drops_should_free_every_object() {
+    assert_small_stack_checks_at_both("chainrepeat", "1\n");
 }
 
 /// Runs `<name>.sisu` at `-O2` under the small stack and checks that it exits 0 and prints
 /// `expected`.
 fn assert_small_stack_prints_at_o2(name: &str, expected: &str) {
-    let out = run_in_small_stack_at(name, true);
+    let out = run_in_small_stack_at(name, true, &[]);
     assert_eq!(out.status.code(), Some(0), "{:?}", out.status);
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
@@ -642,6 +828,37 @@ fn tail_calls_should_overflow_the_small_stack_without_optimization() {
     let out = run_in_small_stack("tailpass");
     assert_eq!(out.status.signal(), Some(11), "{:?}", out.status);
     assert_eq!(String::from_utf8_lossy(&out.stdout), "");
+}
+
+/// GIVEN the `binary_trees` program, whose class `Node` has the fields `left: Node?` and
+/// `right: Node?`
+/// WHEN it is built with `-O2` and its IR is printed
+/// THEN the module after `-O2` names neither the drop-depth global nor a function of the
+/// deferred queue
+#[test]
+fn binary_trees_should_name_no_drop_depth_at_o2() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bench/binary_trees");
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .current_dir(&dir)
+        .args(["build", "-O2", "--emit", "ir", "main.sisu"])
+        .output()
+        .expect("sisu starts");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ir = String::from_utf8_lossy(&out.stdout);
+    let (_, after) = ir
+        .split_once("\n; after default<O2>\n")
+        .expect("the IR should have a `; after default<O2>` line");
+    for unwanted in ["sisu_rc.depth", "sisu_drop_"] {
+        assert!(
+            !after.contains(unwanted),
+            "{unwanted:?} in the IR after -O2"
+        );
+    }
 }
 
 /// Writes `source` to `<CARGO_TARGET_TMPDIR>/<name>.sisu` and compiles it from there, at

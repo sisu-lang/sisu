@@ -629,7 +629,7 @@ impl Checker<'_> {
             ast::PatternKind::Name(name) if variant_inside(&self.enums, payload, name.name) => {
                 some(self.pattern(p, Some(payload), keyword, bound))
             }
-            ast::PatternKind::Name(name) if name.name.as_str() == "Some" => {
+            ast::PatternKind::Name(name) if name.name == Symbol::SOME => {
                 self.report(DiagnosticKind::VariantForm {
                     path: "Some".to_string(),
                     payload: true,
@@ -649,7 +649,7 @@ impl Checker<'_> {
                 name,
                 fields,
                 parens,
-            } if name.name.as_str() == "Some"
+            } if name.name == Symbol::SOME
                 && qualifier
                     .as_ref()
                     .is_none_or(|q| self.names_option_at(q.name, ty)) =>
@@ -680,7 +680,7 @@ impl Checker<'_> {
                 name,
                 fields,
                 parens,
-            } if name.name.as_str() == "None" && self.names_option_at(q.name, ty) => {
+            } if name.name == Symbol::NONE && self.names_option_at(q.name, ty) => {
                 let Some(parens) = parens else {
                     return Some(pattern(tir::PatternKind::None));
                 };
@@ -763,7 +763,7 @@ impl Checker<'_> {
             return None;
         }
         // A name the prelude takes is a binding, which `declare` reports.
-        if reserved_name(text).is_none() {
+        if reserved_name(name.name).is_none() {
             if self.constants.contains_key(&name.name) {
                 let candidates =
                     iter::once("n".to_string()).chain((2..).map(|n: u32| format!("n{n}")));
@@ -1151,7 +1151,8 @@ impl Checker<'_> {
                 .iter()
                 .map(|v| (v.name.name.as_str(), Definition::Variant));
             let kind = DiagnosticKind::UnknownVariant {
-                enum_name: info.name.name.to_string(),
+                // As written: an alias of the enum names itself.
+                enum_name: qualifier.map_or(info.name.name, |q| q.name).to_string(),
                 name: name.name.to_string(),
                 at: name.span,
                 suggestion: suggestion(name.name.as_str(), variants),

@@ -265,7 +265,7 @@ impl Checker<'_> {
                 }
             }
             None => self.constant_use(name, span).unwrap_or_else(|| {
-                let d = if name.as_str() == "Some" || self.result_variant(name).is_some() {
+                let d = if name == Symbol::SOME || self.result_variant(name).is_some() {
                     // These variants of the prelude's enums are written without the enum, and
                     // `Option` makes no enum for `bare_variant` to find.
                     DiagnosticKind::VariantForm {
@@ -548,7 +548,7 @@ fn option_none(e: &ast::Expr) -> Option<bool> {
             base,
             name,
             safe: false,
-        } if name.name.as_str() == "None" => option_written(base),
+        } if name.name == Symbol::NONE => option_written(base),
         _ => None,
     }
 }
@@ -557,8 +557,8 @@ fn option_none(e: &ast::Expr) -> Option<bool> {
 /// can take the name `Option`, so the name alone tells.
 pub(super) fn option_written(e: &ast::Expr) -> Option<bool> {
     match &e.kind {
-        ExprKind::Name(name) if name.as_str() == "Option" => Some(false),
-        ExprKind::Applied { name, .. } if name.name.as_str() == "Option" => Some(true),
+        ExprKind::Name(name) if *name == Symbol::OPTION => Some(false),
+        ExprKind::Applied { name, .. } if name.name == Symbol::OPTION => Some(true),
         _ => None,
     }
 }
