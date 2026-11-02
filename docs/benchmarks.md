@@ -544,12 +544,14 @@ each known case on stdout. It exits with code 1 when:
 
 The pull request that fixes a known case removes its row. The gaps between
 the numbers keep a row from changing between known and fixed when a change
-moves a ratio a little. At commit 556e8467, the sweep finds four superlinear
+moves a ratio a little. At commit 556e8467, the sweep found four superlinear
 cases, all in the `check` stage: array literal depth (#344), expression
 depth (#367), and type depth and method chain (#366). Generic call depth in
-`check` has the same cause as #366 and is just under the rule (r3 = 2.30).
-`KNOWN` has a row for each of the five. The nightly job runs the sweep
-(`docs/development.md`, "The nightly compile-speed job").
+`check` had the same cause as #366 and was just under the rule (r3 = 2.30).
+`KNOWN` had a row for each of the five. The walk of `Expr::exits` at each level
+of nesting made the rows of #344 and #366 superlinear. The fix for it set the
+flag once for each expression, so only the row of expression depth (#367)
+remains. The nightly job runs the sweep (`docs/development.md`, "The nightly compile-speed job").
 
 ## Benchmarks for CodSpeed only
 

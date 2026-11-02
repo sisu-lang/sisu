@@ -288,13 +288,15 @@ impl Checker<'_> {
             })
             .collect();
         let read = |i: usize| local(reads[i].0, Type::STRING, reads[i].1);
-        let pair = |i: usize| tir::Expr {
-            kind: tir::ExprKind::Compare {
-                operands: vec![read(i), read(i + 1)],
-                ops: vec![ops[i]],
-            },
-            ty: Type::BOOL,
-            span,
+        let pair = |i: usize| {
+            tir::Expr::new(
+                tir::ExprKind::Compare {
+                    operands: vec![read(i), read(i + 1)],
+                    ops: vec![ops[i]],
+                },
+                Type::BOOL,
+                span,
+            )
         };
         // From the innermost block out: each binds the right operand of the pair it tests.
         let mut rest = pair(ops.len() - 1);
@@ -565,15 +567,15 @@ fn single_term(e: &ast::Expr) -> bool {
 
 /// `lhs && rhs`, at `span`.
 fn and(lhs: tir::Expr, rhs: tir::Expr, span: Span) -> tir::Expr {
-    tir::Expr {
-        kind: tir::ExprKind::Binary {
+    tir::Expr::new(
+        tir::ExprKind::Binary {
             op: tir::BinaryOp::And,
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
         },
-        ty: Type::BOOL,
+        Type::BOOL,
         span,
-    }
+    )
 }
 
 /// Whether `written` is one expression in a pair of parentheses: its first `(` closes at its last

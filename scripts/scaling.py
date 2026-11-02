@@ -46,11 +46,7 @@ STAGES = [
 # The cases that are superlinear today, and the cases just under the rule that have a known cause:
 # (shape, stage, issue). The pull request that fixes a case removes its row.
 KNOWN = [
-    ('array literal depth', 'check', 344),
     ('expression depth', 'check', 367),
-    ('type depth', 'check', 366),
-    ('method chain', 'check', 366),
-    ('generic call depth', 'check', 366),
 ]
 ANNOTATE = ['callgrind_annotate', '--inclusive=yes', '--threshold=100', '--show=Ir', '--auto=no']
 DIAGNOSTIC = re.compile(r'^(error|warning)\[([EW]\d{4})\]')

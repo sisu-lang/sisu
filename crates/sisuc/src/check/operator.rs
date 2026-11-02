@@ -115,11 +115,7 @@ impl Checker<'_> {
             let written = Lowered::Operator(self.lang.ord, ops[0].text());
             self.spellings.insert(span, written);
         }
-        let node = tir::Expr {
-            kind,
-            ty: Type::BOOL,
-            span,
-        };
+        let node = tir::Expr::new(kind, Type::BOOL, span);
         Ok(if stmts.is_empty() {
             node
         } else {
