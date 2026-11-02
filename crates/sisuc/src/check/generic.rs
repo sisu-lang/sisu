@@ -71,6 +71,7 @@ fn meets(ty: Type, want: Type) -> bool {
 fn mark_params(ty: Type, named: &mut [bool]) {
     #[cfg(test)]
     MARKED.set(MARKED.get() + 1);
+    type_step();
     // A type without a parameter names none: its subtree is not walked again at each call.
     if !ty.has_param() {
         return;
@@ -122,6 +123,7 @@ fn mark_distinct(ty: Type, seen: &mut FxHashSet<Type>, named: &mut [bool]) {
 /// Whether `ty` names the type parameter at place `param` other than under an associated type:
 /// only such a name lets the type that a result is annotated with bind the parameter.
 fn names_outside_assoc(ty: Type, param: usize) -> bool {
+    type_step();
     if !ty.has_param() {
         return false;
     }
@@ -141,6 +143,7 @@ fn names_outside_assoc(ty: Type, param: usize) -> bool {
 /// Each is by its place. One walk finds both: `names_outside_assoc` for each place would cost
 /// the number of places times the size of `ty`.
 fn mark_by_assoc(ty: Type, under: bool, inside: &mut [bool], outside: &mut [bool]) {
+    type_step();
     if !ty.has_param() {
         return;
     }
@@ -294,9 +297,16 @@ fn wait_step() {
     WAIT_STEPS.set(WAIT_STEPS.get() + 1);
 }
 
+/// Counts one visit of a walk over a type (see `TYPE_STEPS`).
+fn type_step() {
+    #[cfg(test)]
+    TYPE_STEPS.set(TYPE_STEPS.get() + 1);
+}
+
 /// Adds to `on` each parameter of `outer` that `ty` names and that is unbound.
 fn unbound_params(outer: &Bindings, ty: Type, on: &mut FxHashSet<usize>) {
     wait_step();
+    type_step();
     if !ty.has_param() {
         return;
     }
@@ -328,6 +338,7 @@ fn unbound_params(outer: &Bindings, ty: Type, on: &mut FxHashSet<usize>) {
 /// Whether `built`, a callee's type, names a parameter of the callee that is `unbound`.
 fn names_unbound(unbound: &[bool], built: Type) -> bool {
     wait_step();
+    type_step();
     if !built.has_param() {
         return false;
     }
@@ -365,6 +376,7 @@ fn needed_params(
     on: &mut FxHashSet<usize>,
 ) -> bool {
     wait_step();
+    type_step();
     if !built.has_param() || !param.has_param() {
         return true;
     }
@@ -715,6 +727,7 @@ fn wider_than(mut ty: Type, layers: usize) -> bool {
 /// Whether `ty` holds `param` other than as itself: under arrays or the type arguments of a class
 /// or an enum, not under an optional nor an associated type.
 fn holds_param(ty: Type, param: Type) -> bool {
+    type_step();
     match ty.kind() {
         TypeKind::Array(t) => t == param || holds_param(t, param),
         TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
@@ -737,6 +750,7 @@ fn holds_param(ty: Type, param: Type) -> bool {
 /// Whether `ty` names a type parameter that `marked` marks by its place, other than under an
 /// associated type (see `names_outside_assoc`), and under an optional only if `optionals`.
 fn names_marked(ty: Type, marked: impl Fn(usize) -> bool + Copy, optionals: bool) -> bool {
+    type_step();
     if !ty.has_param() {
         return false;
     }
@@ -892,6 +906,7 @@ impl Bindings {
     /// `unify` undoes it when the rest fails. A parameter that is rejected meets every type and
     /// binds nothing.
     fn bind(&mut self, pattern: Type, value: Type) -> bool {
+        type_step();
         if !pattern.has_param() && !value.holds_hole() {
             return pattern == value;
         }
@@ -975,6 +990,7 @@ impl Bindings {
     /// so the call does not report the parameter (see `first_unbound_not_rejected`). An argument
     /// can still bind it.
     fn hint(&mut self, pattern: Type, value: Type) {
+        type_step();
         if !pattern.has_param() || !value.holds_hole() || is_hole(value) {
             return;
         }
@@ -1064,6 +1080,7 @@ impl Bindings {
     /// The first parameter that `ty`, a callee's, names and that is unbound or rejected, which
     /// `known` has no type for. `None` when `ty` names none.
     fn unknown_param(&self, ty: Type) -> Option<usize> {
+        type_step();
         if !ty.has_param() {
             return None;
         }
@@ -1114,6 +1131,7 @@ impl Bindings {
     /// becomes. A rejected parameter, which `found` binds to `REJECTED`, is unbound here, but
     /// `partial` keeps `REJECTED` for it. An associated type whose base is rejected is rejected.
     fn resolve(&self, ty: Type, unbound: Unbound) -> Option<Type> {
+        type_step();
         #[cfg(test)]
         if !matches!(unbound, Unbound::Keep) {
             WALKED.set(WALKED.get() + 1);
@@ -1237,6 +1255,11 @@ thread_local! {
     /// How many times `waits_for` has unified the type of a waiting call with its context on this
     /// thread.
     pub(super) static WAIT_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many times a walk over a type has visited a type on this thread, a visit that a memo
+    /// answers too: `Bindings::bind`, `hint`, `resolve` and `unknown_param`, `holds_param`,
+    /// `mark_params`, `mark_by_assoc`, `names_marked`, `names_outside_assoc`, and the walks of
+    /// `needed_params`.
+    pub(super) static TYPE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// A generic callee as a call sees it: a function or method, a class's constructor, or an

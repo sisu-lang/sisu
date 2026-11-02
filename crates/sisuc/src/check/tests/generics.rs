@@ -6571,3 +6571,123 @@ fn a_never_argument_before_a_waiting_call_should_keep_its_type_argument_error() 
     assert!(program.is_none());
     assert_eq!(found, [(Code::TypeArgument, (4, 13))]);
 }
+
+/// A program whose type alias `A<n>` is a chain of depth `n`: each alias names the one before it
+/// twice, so the interned type shares each subtree and has 2^n paths. `shape` says which
+/// walks of the checker meet the chain; each shape is a call, or a pair of calls, that one of
+/// the walks of `TYPE_STEPS` visits.
+fn shared_chain(shape: &str, n: usize) -> String {
+    let mut src = String::from("class Two<A, B> {\n    a: A\n    b: B\n}\n");
+    if shape.starts_with("assoc") {
+        src +=
+            "interface I {\n    type Item\n}\nclass K {}\nextend K: I {\n    type Item = i64\n}\n";
+    }
+    src += "type A1<T> = Two<T, T>\n";
+    for k in 2..=n {
+        let below = format!("A{}<T>", k - 1);
+        src += &[
+            "type A",
+            &k.to_string(),
+            "<T> = Two<",
+            &below,
+            ", ",
+            &below,
+            ">\n",
+        ]
+        .concat();
+    }
+    let tail = match shape {
+        // `bind` and `resolve`: the chain is the declared result, and the context is concrete.
+        "chain" => {
+            "fn poly<T>() -> $A<T> { panic(\"no\") }\nfn main() {\n    let _v: $A<i64> = poly()\n}"
+        }
+        // A misfit: `bind` fails at the last argument, after the chain.
+        "misfit" => {
+            "fn pm<X>() -> Two<$A<X>, bool> { panic(\"no\") }\nfn main() {\n    let _v: Two<$A<i64>, i64> = pm()\n}"
+        }
+        // `resolve` for the context of a call that waits for `T`.
+        "h" => {
+            "fn none<T>() -> T? { None }\nfn h<T>(_a: $A<T>, _b: T?) -> i64 { 0 }\nfn mk() -> $A<i64> { panic(\"no\") }\nfn main() {\n    print(h(mk(), none()))\n}"
+        }
+        "nmk" => {
+            "fn mkx<X>() -> Two<Two<$A<i64>, bool>, X> { panic(\"no\") }\nfn wrap<V, W>(_w: W, _v: Two<Two<$A<W>, i64>, V>) -> V { panic(\"no\") }\nfn main() {\n    let y: string = wrap(1, mkx())\n}"
+        }
+        // `holds_param`: a parameter type that is a chain, for a callee that returns `T`.
+        "holds" => {
+            "fn mk() -> $A<i64> { panic(\"no\") }\nfn f<T>(_a: $A<i64>, _b: T) -> T { panic(\"no\") }\nfn main() {\n    let _v: i64 = f(mk(), 1)\n}"
+        }
+        "holdsu" => {
+            "fn mk() -> $A<i64> { panic(\"no\") }\nfn f<T, U>(_a: $A<U>, _b: T) -> T { panic(\"no\") }\nfn main() {\n    let _v: i64 = f(mk(), 1)\n}"
+        }
+        // `names_marked` through `carried_places`: the call is an argument of another call.
+        "carriedarg" => {
+            "fn mk() -> $A<i64> { panic(\"no\") }\nfn f<T, U>(_a: $A<U>, _b: T) -> T { panic(\"no\") }\nfn id<V>(v: V) -> V { v }\nfn main() {\n    let _v: i64 = id(f(mk(), 1))\n}"
+        }
+        // `mark_params` and `mark_by_assoc`: the inner call has the chain as its context.
+        "idctx" => {
+            "fn poly<T>() -> $A<T> { panic(\"no\") }\nfn id<V>(v: V) -> V { v }\nfn main() {\n    let _v: $A<i64> = id(poly())\n}"
+        }
+        // The chain is over an associated type.
+        "assoc" => {
+            "fn none<T>() -> T? { None }\nfn mk() -> $A<i64> { panic(\"no\") }\nfn f<T: I>(_a: $A<T.Item>, _b: T?) -> i64 { 0 }\nfn main() {\n    print(f(mk(), none<K>()))\n}"
+        }
+        // The argument waits for `T.Item`.
+        "assocw" => {
+            "fn none<T>() -> T? { None }\nfn poly<X>() -> $A<X> { panic(\"no\") }\nfn f<T: I>(_a: $A<T.Item>, _b: T?) -> i64 { 0 }\nfn main() {\n    print(f(poly(), none<K>()))\n}"
+        }
+        // `hint`: a context with a hole in the chain, for a waiting call.
+        "hint" => {
+            "fn poly<X, Y>(_y: Y) -> Two<$A<X>, Y> { panic(\"no\") }\nfn g<T, U>(_a: Two<$A<T>, U>, _b: T?) -> i64 { 0 }\nfn none<T>() -> T? { None }\nfn main() {\n    print(g(poly(1), none()))\n}"
+        }
+        "hole" => {
+            "fn poly<X>() -> $A<X> { panic(\"no\") }\nfn g<T>(_a: $A<T>) -> i64 { 0 }\nfn main() {\n    print(g(poly()))\n}"
+        }
+        // The callee's result is a bare parameter, and the argument's parameter type is the chain.
+        "bareparam" => {
+            "fn mkp<X>() -> X { panic(\"no\") }\nfn none<T>() -> T? { None }\nfn g<T>(_a: $A<T>, _b: T?) -> i64 { 0 }\nfn main() {\n    print(g(mkp(), none()))\n}"
+        }
+        // The callee's result holds the chain over a parameter that the context binds, so the
+        // chain names no unbound parameter, and the argument's parameter type names `T` there.
+        "boundbuilt" => {
+            "fn poly<X, Y>() -> Two<Two<$A<X>, X>, Y> { panic(\"no\") }\nfn none<T>() -> T? { None }\nfn g<T, U>(_a: Two<Two<T, i64>, U>, _b: T?, _c: U?) -> i64 { 0 }\nfn main() {\n    print(g(poly(), none(), none()))\n}"
+        }
+        // A misfit whose pattern names a parameter that the context bound.
+        "ctxmis" => {
+            "fn mk() -> $A<bool> { panic(\"no\") }\nfn take<T, U>(_a: $A<U>, _b: T) -> T { panic(\"no\") }\nfn main() {\n    let _v: i64 = take(mk(), \"s\")\n}"
+        }
+        _ => unreachable!("no shape `{shape}`"),
+    };
+    src + &tail.replace("$A", &format!("A{n}"))
+}
+
+/// A walk over a type that shares children visits each distinct type once, not each path to it.
+/// Each shape puts an alias chain, which has 2^n paths, in a place that one of the walks of
+/// `TYPE_STEPS` meets. At depths 4, 8 and 12 the paths grow 16 times from one step to the next,
+/// so a walk of each path fails the check, and a walk of each distinct type passes.
+#[test]
+fn type_walks_should_visit_each_distinct_type_once() {
+    for shape in [
+        "chain",
+        "misfit",
+        "h",
+        "nmk",
+        "holds",
+        "holdsu",
+        "carriedarg",
+        "idctx",
+        "assoc",
+        "assocw",
+        "hint",
+        "hole",
+        "ctxmis",
+        "bareparam",
+        "boundbuilt",
+    ] {
+        let steps = |n: usize| {
+            generic::TYPE_STEPS.set(0);
+            diags(&shared_chain(shape, n));
+            generic::TYPE_STEPS.get()
+        };
+        assert_near_linear_for(&format!("{shape}: "), steps(4), steps(8), steps(12));
+    }
+}
