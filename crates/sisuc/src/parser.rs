@@ -5339,11 +5339,14 @@ mod tests {
             "fn main() {\n    print(1)\n    else {\n    }\n}",
             // The `else` has no block to open.
             "fn main() {\n    if a {\n    }\n    else b\n}",
-            // The `else` belongs to the `if` inside the `let`, which joins as the `if` does.
+            // The `else` belongs to the `if` inside the `let`: the `if` wording, with no join.
             "fn main() {\n    let x = if a { 1 }\n    else { 2 }\n}",
             "fn main() {\n    let x = if a { 1 } else if b { 2 }\n    else { 3 }\n}",
             // A `let` value that ends in `}` would read the joined `else` as its own (E0173).
             "fn main() {\n    let x = { 1 }\n    else {\n    }\n}",
+            // A typed `let` takes no `else`: the old wording stays, with no join.
+            "fn main() {\n    let x: i64? = o\n    else { return }\n}",
+            "fn main() {\n    let mut x: i64? = o\n    else { return }\n}",
             // A `let ... else` has no `else if`.
             "fn main() {\n    let x = o\n    else if a {\n    }\n}",
         ] {
