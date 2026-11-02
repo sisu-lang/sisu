@@ -1,0 +1,6 @@
+// GIVEN a `main` whose body is `let y = -break`, outside a loop
+// WHEN `sisu check` runs on it
+// THEN it reports E0038 at 5:14 and no other error
+fn main() {
+    let y = -break
+}

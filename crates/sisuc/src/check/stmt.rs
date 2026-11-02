@@ -501,6 +501,7 @@ impl Checker<'_> {
                 target,
                 value,
             } => self.compound_assign(stmt.span, (*op, *op_span), target, value),
+            StmtKind::Expr(e) if e.is_jump() => self.jump_expr(e).map(tir::Stmt::Expr),
             StmtKind::Expr(e) => self.expr(e, expected).map(tir::Stmt::Expr),
         }
     }

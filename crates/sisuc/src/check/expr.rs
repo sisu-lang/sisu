@@ -12,6 +12,16 @@ use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeKind};
 
+/// A jump that failed where its value is read is `Error`, not a `never`: its own diagnostic is
+/// the one report of the mistake, and a `never` would also fail every place that needs a value
+/// with E0043. A jump statement keeps the `never`, so the code after it is still unreachable.
+fn failed_jump(checked: Checked) -> Checked {
+    checked.map_err(|poisoned| Poisoned {
+        ty: None,
+        ..poisoned
+    })
+}
+
 impl Checker<'_> {
     /// `expected` is the type the context wants, `None` when it wants none. It only types a
     /// `None`, a `[]` and an integer literal, and flows into `if` and `if let` branches, a
@@ -215,11 +225,9 @@ impl Checker<'_> {
                 keyword,
                 body,
             } => self.loop_expr(e.span, (*keyword, label.as_ref()), body, expected),
-            ExprKind::Return(value) => self.return_expr(e.span, value.as_deref()),
-            ExprKind::Break { label, value } => {
-                self.jump(e.span, "break", label.as_ref(), value.as_deref())
+            ExprKind::Return(_) | ExprKind::Break { .. } | ExprKind::Continue { .. } => {
+                failed_jump(self.jump_expr(e))
             }
-            ExprKind::Continue { label } => self.jump(e.span, "continue", label.as_ref(), None),
             ExprKind::Block(block) => {
                 let value = tail(block).map(|v| v.span);
                 let outer = self.pass_quiet(e.span, value, expected);
@@ -232,6 +240,18 @@ impl Checker<'_> {
                     tir::Expr::new(tir::ExprKind::Block(block), ty, e.span)
                 })
             }
+        }
+    }
+
+    /// The `return`, `break` or `continue` `e`, of type `never` even when it fails.
+    pub(super) fn jump_expr(&mut self, e: &ast::Expr) -> Checked {
+        match &e.kind {
+            ExprKind::Return(value) => self.return_expr(e.span, value.as_deref()),
+            ExprKind::Break { label, value } => {
+                self.jump(e.span, "break", label.as_ref(), value.as_deref())
+            }
+            ExprKind::Continue { label } => self.jump(e.span, "continue", label.as_ref(), None),
+            _ => unreachable!("`jump_expr` should be called on a jump"),
         }
     }
 
@@ -272,6 +292,9 @@ impl Checker<'_> {
     pub(super) fn value(&mut self, e: &ast::Expr, expected: Option<Type>) -> Checked {
         let checked = self.expr(e, expected);
         match type_of(&checked) {
+            // A `never` that failed, such as a block with a `break` outside a loop, has its
+            // report already, and no second one.
+            Some(Type::NEVER) if checked.is_err() => Err(Poisoned::error()),
             Some(ty @ (Type::UNIT | Type::NEVER)) => {
                 self.no_value(e.span, ty);
                 Err(Poisoned::error())

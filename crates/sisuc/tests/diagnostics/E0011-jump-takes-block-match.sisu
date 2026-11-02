@@ -1,0 +1,14 @@
+// GIVEN a `match` whose scrutinee `o ?? break outer` is followed by the `{` of its arms
+// WHEN `sisu check` runs on it
+// THEN it reports E0011 at the `break` (6:21), not at the first arm
+fn f(o: bool?) {
+    outer: loop {
+        match o ?? break outer {
+            _ => print(1)
+        }
+    }
+}
+
+fn main() {
+    f(None)
+}

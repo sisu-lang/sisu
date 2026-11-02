@@ -59,6 +59,7 @@ pub(crate) fn parse(lexed: Lexed<'_>, prelude: bool) -> Parsed {
         window: &tokens,
         halves: &halves,
         halved: None,
+        scrutinee: None,
         pos: 0,
         depth: Height::default(),
         lexer: &diagnostics,
@@ -365,6 +366,27 @@ fn starts_postfix(kind: &TokenKind) -> bool {
     )
 }
 
+/// The `return` or `break` at the right end of `e` whose value is a block `{ ... }`: the rightmost
+/// operand, through binary operators such as `??`. A jump takes everything to its right, so in a
+/// header it takes the body block when it has no value of its own.
+fn block_taking_jump(e: &Expr) -> Option<&Expr> {
+    match &e.kind {
+        ExprKind::Return(Some(value))
+        | ExprKind::Break {
+            value: Some(value), ..
+        } => match value.kind {
+            ExprKind::Block(_) => Some(e),
+            _ => block_taking_jump(value),
+        },
+        ExprKind::Binary { rhs: last, .. }
+        | ExprKind::Coalesce { rhs: last, .. }
+        | ExprKind::Is { rhs: last, .. }
+        | ExprKind::Unary { operand: last, .. } => block_taking_jump(last),
+        ExprKind::Compare { operands, .. } => operands.last().and_then(block_taking_jump),
+        _ => None,
+    }
+}
+
 /// Whether `kind` begins an operand that `unary` and `primary` take. A `_`, a leading `.` and
 /// the magnitude of `i64::MIN` start no operand: they are errors there. A `{` does not count:
 /// after an operator it opens the body of an `if`, `while`, `for` or `match` more often than a
@@ -505,6 +527,9 @@ struct Parser<'a> {
     /// The index of the `>=` whose `=` half the last `bump_past_window` took, if the token just
     /// consumed was that half.
     halved: Option<usize>,
+    /// While a `match` reads its scrutinee: the index of its first token. A jump at the end of
+    /// the scrutinee that takes the body's `{` as its value reports that (`jump_value`).
+    scrutinee: Option<usize>,
 }
 
 impl<'a> Parser<'a> {
@@ -1750,6 +1775,7 @@ impl<'a> Parser<'a> {
             window: self.tokens,
             halves: self.halves,
             halved: None,
+            scrutinee: None,
         };
         let mutable = rest.eat(&TokenKind::Mut).is_some();
         let mut field = || -> Result<String, Diagnostic> {
@@ -2150,6 +2176,7 @@ impl<'a> Parser<'a> {
             TokenKind::While => {
                 let keyword = self.bump().span;
                 if let Some((pattern, value)) = self.child(base, &mut reach, Self::let_binding)? {
+                    self.header_body(&value)?;
                     StmtKind::WhileLet {
                         label,
                         keyword,
@@ -2159,6 +2186,7 @@ impl<'a> Parser<'a> {
                     }
                 } else {
                     let cond = self.child(base, &mut reach, Self::expr)?;
+                    self.header_body(&cond)?;
                     StmtKind::While {
                         label,
                         keyword,
@@ -2191,6 +2219,9 @@ impl<'a> Parser<'a> {
                         inclusive: matches!(op, RangeOp::Inclusive),
                     },
                 };
+                self.header_body(match &source {
+                    ForSource::Array(e) | ForSource::Range { end: e, .. } => e,
+                })?;
                 StmtKind::For {
                     label,
                     keyword,
@@ -2357,9 +2388,10 @@ impl<'a> Parser<'a> {
     /// The `return`, `break` or `continue` at the next token, with its loop label and its value.
     /// The value takes the whole expression to its right, as `child` counts it from `base`.
     fn jump(&mut self, base: Height, reach: &mut Height) -> Result<Expr, Diagnostic> {
+        let keyword_pos = self.pos;
         let keyword = self.bump();
         let kind = match keyword.kind {
-            TokenKind::Return => ExprKind::Return(self.jump_value(base, reach)?),
+            TokenKind::Return => ExprKind::Return(self.jump_value(base, reach, keyword_pos)?),
             TokenKind::Break => {
                 let label = self.jump_label(false);
                 if let Some(error) = label.as_ref().and_then(|label| self.label_clash(label)) {
@@ -2367,7 +2399,7 @@ impl<'a> Parser<'a> {
                 }
                 ExprKind::Break {
                     label,
-                    value: self.jump_value(base, reach)?,
+                    value: self.jump_value(base, reach, keyword_pos)?,
                 }
             }
             _ => ExprKind::Continue {
@@ -2380,16 +2412,94 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// The value of a `return` or a `break`, unless the jump ends here.
+    /// The value of a `return` or a `break` (its keyword is the token at `keyword_pos`), unless
+    /// the jump ends here. In the scrutinee of a `match`, a `{` after the jump is the body that
+    /// the jump took, and when that body fails to parse as a block, as the arms do, the error is
+    /// the jump's (`header_body` reports the same mistake when the block parses).
     fn jump_value(
         &mut self,
         base: Height,
         reach: &mut Height,
+        keyword_pos: usize,
     ) -> Result<Option<Box<Expr>>, Diagnostic> {
         if self.jump_ends() {
             return Ok(None);
         }
-        Ok(Some(Box::new(self.child(base, reach, Self::expr)?)))
+        let braced = self.at(&TokenKind::LBrace);
+        let end = self.tokens[self.pos - 1].span.end();
+        match self.child(base, reach, Self::expr) {
+            Ok(value) => Ok(Some(Box::new(value))),
+            Err(error) => match self.scrutinee {
+                Some(first) if braced && self.brackets_closed(first, keyword_pos) => {
+                    let keyword = &self.tokens[keyword_pos];
+                    let name = if keyword.kind == TokenKind::Return {
+                        "return"
+                    } else {
+                        "break"
+                    };
+                    let header = self.tokens[first].span.start();
+                    Err(self.jump_takes_block(name, keyword.span, header, end))
+                }
+                _ => Err(error),
+            },
+        }
+    }
+
+    /// Whether the brackets of the tokens from `first` up to `last` all close in them.
+    fn brackets_closed(&self, first: usize, last: usize) -> bool {
+        let mut open = 0usize;
+        for token in &self.tokens[first..last] {
+            match token.kind {
+                TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => open += 1,
+                TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
+                    let Some(rest) = open.checked_sub(1) else {
+                        return false;
+                    };
+                    open = rest;
+                }
+                _ => {}
+            }
+        }
+        open == 0
+    }
+
+    /// The error of the `return` or `break` `name` at `keyword`, whose value is the `{ ... }`
+    /// that should be the body of the header that starts at byte `header`. The header through
+    /// the jump, which ends at byte `end`, goes in `( )` to keep the block as the body.
+    fn jump_takes_block(
+        &self,
+        name: &'static str,
+        keyword: Span,
+        header: usize,
+        end: usize,
+    ) -> Diagnostic {
+        DiagnosticKind::JumpTakesBlock {
+            keyword: name,
+            at: keyword,
+            grouped: self.source.text(Span::new(header, end)).to_string(),
+        }
+        .into()
+    }
+
+    /// The error of a header (`header`, the condition, value or source of an `if`, `while`, `for`
+    /// or `match`) whose body block is missing because a jump at its end took that block as its
+    /// value: `if o ?? return {`. Nothing when a `{` follows, or the header ends in no such jump.
+    fn header_body(&self, header: &Expr) -> Result<(), Diagnostic> {
+        if self.at(&TokenKind::LBrace) {
+            return Ok(());
+        }
+        let Some(jump) = block_taking_jump(header) else {
+            return Ok(());
+        };
+        let (name, label) = match &jump.kind {
+            ExprKind::Return(_) => ("return", None),
+            ExprKind::Break { label, .. } => ("break", label.as_ref()),
+            _ => unreachable!("`block_taking_jump` should find a jump"),
+        };
+        let keyword_end = jump.span.start() + name.len();
+        let end = label.map_or(keyword_end, |label| label.span.end());
+        let keyword = Span::new(jump.span.start(), keyword_end);
+        Err(self.jump_takes_block(name, keyword, header.span.start(), end))
     }
 
     /// The loop label after `break` or `continue`: a name, when it is an open loop label or
@@ -2991,7 +3101,11 @@ impl<'a> Parser<'a> {
         let keyword = self.bump().span;
         let base = self.depth;
         let mut reach = base;
-        let scrutinee = self.child(base, &mut reach, Self::expr)?;
+        let outer = self.scrutinee.replace(self.pos);
+        let scrutinee = self.child(base, &mut reach, Self::expr);
+        self.scrutinee = outer;
+        let scrutinee = scrutinee?;
+        self.header_body(&scrutinee)?;
         self.expect(&TokenKind::LBrace)?;
         self.skip_newlines();
         let mut arms = Vec::new();
@@ -3862,6 +3976,9 @@ impl<'a> Parser<'a> {
             Some((pattern, value)) => Head::Let(pattern, value),
             None => Head::Cond(self.child(base, &mut reach, Self::expr)?),
         };
+        self.header_body(match &head {
+            Head::Cond(e) | Head::Let(_, e) => e,
+        })?;
         let then_block = self.child(base, &mut reach, Self::block)?;
         let mut end = then_block.span;
         let else_block = if self.eat(&TokenKind::Else).is_some() {
@@ -4690,6 +4807,43 @@ mod tests {
     #[test]
     fn jump_before_eq_should_keep_its_error() {
         assert_eq!(expr_err("return x = 5"), (Code::Expected, 1, 22));
+    }
+
+    /// GIVEN a header of each kind (`if`, `if let`, `else if`, `while`, `while let`, `for` over
+    /// an array and over a range, and `match`) that ends in `return` or `break` with no value,
+    /// followed by the `{` of its body
+    /// WHEN the parser reads it
+    /// THEN the error is E0011 at the jump, not after the body
+    /// AND the same header with the jump in `( )` parses
+    #[test]
+    fn jump_that_takes_a_header_block_should_be_reported_at_the_jump() {
+        let rows = [
+            ("if o ?? return {\n        f()\n    }", 13),
+            ("if let Some(x) = o ?? return {\n        f()\n    }", 27),
+            ("if c { f() } else if o ?? break {\n        f()\n    }", 31),
+            ("while o ?? break {\n        f()\n    }", 16),
+            ("while let Some(x) = o ?? break {\n        f()\n    }", 30),
+            ("for x in xs ?? return {\n        f()\n    }", 20),
+            ("for x in 0..n ?? return {\n        f()\n    }", 22),
+            ("match o ?? return {\n        _ => f()\n    }", 16),
+            ("outer: while o ?? break outer {\n        f()\n    }", 23),
+        ];
+        for (header, column) in rows {
+            let src = format!("fn main() {{\n    {header}\n}}");
+            assert_eq!(parse_err(&src), (Code::Expected, 2, column), "{src}");
+        }
+        for src in [
+            "if (o ?? return) {\n        f()\n    }",
+            "for x in (xs ?? return) {\n        f()\n    }",
+            "while (o ?? break) {\n        f()\n    }",
+            "match (o ?? return) {\n        _ => f()\n    }",
+        ] {
+            assert!(
+                parsed(&format!("fn main() {{\n    {src}\n}}"))
+                    .diagnostics
+                    .is_empty()
+            );
+        }
     }
 
     #[test]
@@ -6227,6 +6381,7 @@ mod tests {
             window: &lexed.tokens,
             halves: &OnceCell::new(),
             halved: None,
+            scrutinee: None,
         })
     }
 
