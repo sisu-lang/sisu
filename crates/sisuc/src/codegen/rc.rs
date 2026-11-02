@@ -262,6 +262,23 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
     }
 
+    /// The values of the parameters of `function` from the `first` that hold one value of the
+    /// counted type `ty` at the entry of a helper: the inverse of `helper_args`.
+    pub(super) fn helper_params(
+        &self,
+        function: FunctionValue<'ctx>,
+        first: u32,
+        ty: Type,
+    ) -> BasicValueEnum<'ctx> {
+        if let TypeKind::Enum(..) = ty.kind() {
+            function
+                .get_nth_param(first)
+                .expect("a helper should be declared with a slot pointer for an enum")
+        } else {
+            self.joined_params(function, first, &[ty])[0]
+        }
+    }
+
     /// The arguments that pass `value` to a helper for `ty`; see `helper_value`.
     pub(super) fn helper_args(
         &self,
@@ -631,11 +648,12 @@ impl<'ctx> Codegen<'ctx, '_> {
     ) {
         let entry = self.context.append_basic_block(function, "entry");
         let (equal, unequal) = self.eq_returns(function);
+        // `joined_params` may emit instructions, so the builder goes to `entry` first.
+        self.builder.position_at_end(entry);
         let [a, b] = self.joined_params(function, 0, &[ty, ty])[..] else {
             unreachable!("two types should give two values");
         };
         let (a, b) = (a.into_pointer_value(), b.into_pointer_value());
-        self.builder.position_at_end(entry);
         self.compare_at_once(reflexive, true, a, b, equal, unequal);
         (a, b, equal, unequal)
     }

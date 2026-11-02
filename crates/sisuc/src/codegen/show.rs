@@ -383,14 +383,14 @@ impl<'ctx> Codegen<'ctx, '_> {
                 );
             }
             TypeKind::Optional(_) => self.show_optional(sink, ty, value, (quoted, mode)),
-            TypeKind::Enum(..) => {
-                self.call(
-                    self.helper(Helper::Show(mode), ty),
-                    &[sink.into(), self.enum_slot(value).into()],
-                );
-            }
-            TypeKind::Array(_) | TypeKind::Class(..) => {
-                let args = [vec![sink.into()], self.split(ty, value)].concat();
+            TypeKind::Enum(..) | TypeKind::Array(_) | TypeKind::Class(..) => {
+                // An enum goes by the address of a scratch slot.
+                let value = if let TypeKind::Enum(..) = ty.kind() {
+                    self.enum_slot(value).into()
+                } else {
+                    value
+                };
+                let args = [vec![sink.into()], self.helper_args(ty, value)].concat();
                 self.call(self.helper(Helper::Show(mode), ty), &args);
             }
             TypeKind::Any(..) => self.show_any(sink, ty, value, quoted, mode),
@@ -436,14 +436,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let entry = self.context.append_basic_block(function, "entry");
         self.builder.position_at_end(entry);
         let sink = param(function);
-        // An enum comes by the address of its slot; an array or a class by the calling convention.
-        let value = if let TypeKind::Enum(..) = ty.kind() {
-            function
-                .get_nth_param(1)
-                .expect("a `show` helper should be declared with a value after the sink")
-        } else {
-            self.joined_params(function, 1, &[ty])[0]
-        };
+        let value = self.helper_params(function, 1, ty);
         match ty.kind() {
             TypeKind::Array(element) => {
                 self.show_array(sink, element, value.into_pointer_value(), mode);

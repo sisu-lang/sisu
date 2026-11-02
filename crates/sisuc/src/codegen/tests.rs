@@ -5279,6 +5279,9 @@ fn convention_should_give_one_type_per_part() {
             context.void_type().fn_type(&types, false),
             None,
         );
+        // `join` may emit instructions, so the builder needs an open block.
+        let entry = context.append_basic_block(function, "entry");
+        codegen.builder.position_at_end(entry);
         let parts: Vec<_> = function.get_param_iter().collect();
         let split = codegen.split(ty, codegen.join(ty, &parts));
         assert_eq!(split.len(), types.len(), "the parts of {ty:?}");

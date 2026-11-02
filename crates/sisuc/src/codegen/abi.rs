@@ -519,6 +519,12 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.param_types(ty).len(),
             "a value should be joined from one part for each of its parameter types"
         );
+        debug_assert!(
+            self.builder
+                .get_insert_block()
+                .is_some_and(|block| block.get_terminator().is_none()),
+            "`join` may emit instructions, so the builder should be in an open block"
+        );
         parts[0]
     }
 
