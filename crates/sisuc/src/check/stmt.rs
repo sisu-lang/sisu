@@ -356,6 +356,7 @@ impl Checker<'_> {
                 };
                 self.body.let_init = None;
                 self.body.failed_let = None;
+                let uninferred = self.body.infer_at.take();
                 // `let _ = e` binds nothing: the value is an expression statement, which
                 // codegen releases at once.
                 if name.name.as_str() == "_" {
@@ -380,6 +381,9 @@ impl Checker<'_> {
                     .and_then(|s| s.get_mut(&name.name))
                 {
                     binding.shown = shown;
+                }
+                if let (None, Some(uninferred)) = (ty, uninferred) {
+                    self.body.uninferred.insert(local, uninferred);
                 }
                 Ok(tir::Stmt::Let {
                     local,

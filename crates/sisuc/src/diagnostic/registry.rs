@@ -706,6 +706,9 @@ pub(crate) enum DiagnosticKind {
         literal: Literal,
         /// What the `let` that the literal initializes writes before its type, for the example.
         binding: Option<String>,
+        /// The whole type for the example (`[char]` or `string?`), when a later use of the
+        /// local gives one. Without it, the example writes `...` for the type.
+        ty: Option<String>,
         at: Span,
         /// For the `None` that starts the right side of a `??`, the offset where the left side
         /// of that `??` starts: `??` groups to the right, and parentheses from there to `at`
@@ -3842,17 +3845,26 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::CannotInfer {
                 literal,
                 binding,
+                ty,
                 at,
                 regroup,
             } => {
                 let (literal, example) = match (literal, binding) {
                     (Literal::None, name) => (
                         "None",
-                        format!("let {}: i64? = None", name.as_deref().unwrap_or("x")),
+                        format!(
+                            "let {}: {} = None",
+                            name.as_deref().unwrap_or("x"),
+                            ty.as_deref().unwrap_or("...?")
+                        ),
                     ),
                     (Literal::EmptyArray, name) => (
                         "[]",
-                        format!("let {}: [i64] = []", name.as_deref().unwrap_or("xs")),
+                        format!(
+                            "let {}: {} = []",
+                            name.as_deref().unwrap_or("xs"),
+                            ty.as_deref().unwrap_or("[...]")
+                        ),
                     ),
                 };
                 let d = Diagnostic::coded(code, at, format!("cannot infer the type of `{literal}`"));

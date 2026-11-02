@@ -226,10 +226,11 @@ impl Checker<'_> {
         if result.1 != Some(Type::STRING) {
             return result;
         }
-        // The first check is dropped, and its locals, misfits and findings with it, so none is
-        // left that nothing binds, and none is judged twice.
+        // The first check is dropped, and its locals, uninferred literals, misfits and findings
+        // with it, so none is left that nothing binds, and none is judged twice.
         self.diagnostics.truncate(diagnostics);
         self.body.locals.truncate(locals);
+        self.body.uninferred.retain(|local, _| local.0 < locals);
         self.pending.truncate(pending);
         self.body.misfits.truncate(misfits);
         self.body.joins.insert(span);
@@ -902,6 +903,18 @@ impl Checker<'_> {
         checked
     }
 
+    /// E0050 for the `None` at `none` that starts the right side of a `??` whose left side starts
+    /// at `lhs_start`: the fix groups the left side.
+    fn report_unregrouped(&mut self, none: Span, lhs_start: usize) {
+        self.report(DiagnosticKind::CannotInfer {
+            literal: Literal::None,
+            binding: None,
+            ty: None,
+            at: none,
+            regroup: Some(lhs_start),
+        });
+    }
+
     /// `lhs ?? rhs`: `rhs` is a `T` or a `T?` beside the `T?` `lhs`, and gives the result its
     /// type, or never finishes, and the result is a `T`. A type written for an `any` result is
     /// what a default that does not join is reported against (see `leaves_written`).
@@ -932,12 +945,7 @@ impl Checker<'_> {
             && none.span.start() == rhs.span.start()
             && matches!(payload.kind(), TypeKind::Optional(_))
         {
-            self.report(DiagnosticKind::CannotInfer {
-                literal: Literal::None,
-                binding: None,
-                at: none.span,
-                regroup: Some(lhs.span.start()),
-            });
+            self.report_unregrouped(none.span, lhs.span.start());
             // The next `None` of a run is for the next fix to report.
             let mut tail: &ast::Expr = tail;
             while let ExprKind::Coalesce {

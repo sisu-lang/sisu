@@ -38,8 +38,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::ast;
 use crate::conformance::{self, StuckChoices};
 use crate::diagnostic::{
-    BuiltIn, Code, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, Expected, MainForm,
-    MismatchFix, MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
+    BuiltIn, Code, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, Expected, Literal,
+    MainForm, MismatchFix, MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
 };
 use crate::front_end::PreludeProgram;
 use crate::payload_limit;
@@ -755,6 +755,18 @@ struct ClosureIndex {
 type LeafKey = (Type, tir::InterfaceId, TypeArgs);
 type LeafAnswers = FxHashMap<LeafKey, Option<Type>>;
 
+/// The E0050 of a `None` or `[]` that a `let` initializes. A later use of the local can give the
+/// type that the help of the E0050 writes.
+struct Uninferred {
+    /// Where the E0050 is in the diagnostics.
+    at: usize,
+    /// The span of the literal, which the E0050 reports.
+    span: Span,
+    literal: Literal,
+    /// What the `let` writes before its type: `mut`, then the name.
+    binding: String,
+}
+
 /// What checking one body needs: a function's, a method's, or a constant's initialiser.
 #[derive(Default)]
 struct Body {
@@ -863,6 +875,12 @@ struct Body {
     /// (`mut`, then the name): E0050 uses it in its example when the initializer is the whole
     /// `None` or `[]`.
     let_init: Option<(Span, Symbol, bool)>,
+    /// The E0050 that the `None` or `[]` just checked reported, when it is the whole initializer
+    /// of a `let`: the `let` takes it, and keeps it in `uninferred` for its local.
+    infer_at: Option<Uninferred>,
+    /// The E0050 of each local whose initializer is such a literal, until a later use gives the
+    /// local a type (see `Checker::inferred_by_use`).
+    uninferred: FxHashMap<tir::LocalId, Uninferred>,
     /// The constant whose value is being checked, where interpolation is not known and a
     /// conversion that can fail is an error.
     in_constant: Option<ConstantSite>,
