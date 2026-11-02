@@ -53,5 +53,14 @@ error[E0154]: `Cross<B>` does not conform to `Eq`
    |
    = help: add a bound: `B: Eq & Ord`
 
-sisu: 5 errors
+error[E0154]: `Stuck<bool>` does not conform to `Eq`
+  --> E0154-inherited-blocked.sisu:93:21
+   |
+87 | extend<A: Ord> Stuck<A>: Eq {
+   |           --- this conformance needs `A: Ord`
+...
+93 | extend Stuck<bool>: Ord {
+   |                     ^^^ `Ord` requires `Eq`
+
+sisu: 6 errors
 sisu: for more on a code, run `sisu explain <code>`: E0154

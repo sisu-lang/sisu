@@ -2215,6 +2215,10 @@ pub(crate) enum NotConformForm {
         /// A conformance the type has already, whose bound fails: the bound as written there,
         /// and where it is.
         needs: Option<(String, Span)>,
+        /// The help for that bound: the bound to add to a type parameter, or the class or enum
+        /// to make conform.
+        add: Option<AddBound>,
+        make: Option<Make>,
     },
     /// The type is converted to `any I`, which asks for the interface. `asks` is where that `any I`
     /// is written, when the program writes it.
@@ -2229,7 +2233,7 @@ pub(crate) enum NotConformForm {
         bound: Option<Span>,
         implied: Option<Implied>,
         label: Option<BoundLabel>,
-        make: Option<String>,
+        make: Option<Make>,
         /// Whether the interface is `AnyObject`, which only classes have.
         class_only: bool,
         add: Option<AddBound>,
@@ -2287,12 +2291,23 @@ impl BoundLabel {
     }
 }
 
-/// The help that makes a type meet `interface`: the bound to add, or the class or enum to give a
+/// A class or an enum that the help says to make conform to an interface, written with its
+/// arguments. It is the type itself, or a part of the type that fails a bound of a conformance
+/// that the program writes.
+#[derive(Clone)]
+pub(crate) struct Make {
+    pub(crate) ty: String,
+    pub(crate) interface: String,
+}
+
+/// The help that makes a type meet an interface: the bound to add, or the class or enum to give a
 /// conformance.
-fn conform_help(add: Option<&AddBound>, make: Option<&str>, interface: &str) -> Option<String> {
+fn conform_help(add: Option<&AddBound>, make: Option<&Make>) -> Option<String> {
     match (add, make) {
         (Some(add), _) => Some(add.help()),
-        (None, Some(make)) => Some(format!("make `{make}` conform to `{interface}`")),
+        (None, Some(Make { ty, interface })) => {
+            Some(format!("make `{ty}` conform to `{interface}`"))
+        }
         (None, None) => None,
     }
 }
@@ -2303,7 +2318,7 @@ fn conform_help(add: Option<&AddBound>, make: Option<&str>, interface: &str) -> 
 pub(crate) struct BlockBound {
     pub(crate) interface: String,
     pub(crate) label: BoundLabel,
-    pub(crate) make: Option<String>,
+    pub(crate) make: Option<Make>,
     pub(crate) add: Option<AddBound>,
     /// Whether the method can take the other arguments of the call. The help says to fix them
     /// when it cannot. In the `self` form, only the count, a label or a type argument decide it:
@@ -2328,12 +2343,9 @@ pub(crate) enum NoOperatorForm {
     /// `==` or `!=` on an `any` type, which has no `Eq`. The help shows `is` when the interface
     /// is class-only (`is`).
     Any { is: bool },
-    /// An operator of the type, with the help to make `make` conform to `interface`; no help when
-    /// the type has a conformance already.
-    Operator {
-        make: Option<String>,
-        interface: String,
-    },
+    /// An operator of the type, with the help to make `make` conform: the type itself, or the
+    /// part inside a type whose conformance has a bound that fails.
+    Operator { make: Option<Make> },
 }
 
 /// Where a missing bound goes.
@@ -2871,6 +2883,8 @@ impl From<DiagnosticKind> for Diagnostic {
                         requires,
                         extend,
                         needs,
+                        add,
+                        make,
                     } => {
                         let note = format!("`{via}` requires `{interface}`");
                         let d = match requires {
@@ -2885,7 +2899,10 @@ impl From<DiagnosticKind> for Diagnostic {
                         };
                         match extend {
                             Some(block) => d.with_help(format!("write `{block}`")),
-                            None => d,
+                            None => match conform_help(add.as_ref(), make.as_ref()) {
+                                Some(help) => d.with_help(help),
+                                None => d,
+                            },
                         }
                     }
                     NotConformForm::Any { asks } => match asks {
@@ -2928,7 +2945,7 @@ impl From<DiagnosticKind> for Diagnostic {
                             }
                             None => d,
                         };
-                        match conform_help(add.as_ref(), make.as_deref(), &interface) {
+                        match conform_help(add.as_ref(), make.as_ref()) {
                             Some(help) => d.with_help(help),
                             None => d,
                         }
@@ -3043,10 +3060,10 @@ impl From<DiagnosticKind> for Diagnostic {
                         format!("this has type `{ty}`"),
                         is.then(|| "use `a is b`".to_string()),
                     ),
-                    NoOperatorForm::Operator { make, interface } => (
+                    NoOperatorForm::Operator { make } => (
                         format!("`{ty}` has no `{op}`{}", since.unwrap_or_default()),
                         format!("this has type `{ty}`"),
-                        make.map(|make| format!("make `{make}` conform to `{interface}`")),
+                        conform_help(None, make.as_ref()),
                     ),
                 };
                 let d = Diagnostic::coded(code, at, message).with_label(label);
@@ -4134,7 +4151,7 @@ impl From<DiagnosticKind> for Diagnostic {
                     MethodReceiver::Argument { .. } => format!("call `{name}` as a method"),
                 };
                 let fix = if bound.takes { "" } else { " and fix its arguments" };
-                match conform_help(bound.add.as_ref(), bound.make.as_deref(), &bound.interface) {
+                match conform_help(bound.add.as_ref(), bound.make.as_ref()) {
                     Some(help) => d.with_help(format!("{help}, then {call}{fix}")),
                     None => d,
                 }

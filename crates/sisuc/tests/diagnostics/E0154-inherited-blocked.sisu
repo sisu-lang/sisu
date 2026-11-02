@@ -80,4 +80,20 @@ extend<B: Eq> Cross<B>: Ord {
     }
 }
 
+class Stuck<A> {
+    a: A
+}
+
+extend<A: Ord> Stuck<A>: Eq {
+    fn eq(self, other: Stuck<A>) -> bool {
+        true
+    }
+}
+
+extend Stuck<bool>: Ord {
+    fn less(self, other: Stuck<bool>) -> bool {
+        false
+    }
+}
+
 fn main() {}
