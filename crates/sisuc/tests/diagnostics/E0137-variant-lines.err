@@ -1,0 +1,20 @@
+error[E0137]: `Opt.Has` takes no type arguments
+ --> E0137-variant-lines.sisu:6:20
+  |
+6 |       let x = Opt.Has<i64, // the one
+  |  ____________________^
+7 | |         i64>(1)
+  | |____________^
+  |
+  = help: write `Opt<i64, i64>.Has`
+
+error[E0137]: `Opt.Has` takes no type arguments
+ --> E0137-variant-lines.sisu:9:13
+  |
+9 |         .Has<i64>(2)
+  |             ^^^^^
+  |
+  = help: write `Opt<i64>.Has`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0137

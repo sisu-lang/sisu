@@ -1,0 +1,27 @@
+class Pair<A, B> {
+    a: A
+    b: B
+}
+extend Pair<i64, // first
+    i64> {
+    fn first(self) -> i64 { return self.a }
+}
+interface Shape {
+    fn area(self) -> f64
+}
+class Crate<T, U> {
+    item: T
+    other: U
+}
+extend<T: Shape> Crate<T, // second
+    i64> {
+    fn one(self) -> f64 {
+        return self.item.area()
+    }
+}
+fn main() {
+    let p = Pair<string, string>(a: "x", b: "y")
+    print(p.a)
+    let c = Crate(item: 1, other: 2)
+    print("{c.item} {c.other}")
+}

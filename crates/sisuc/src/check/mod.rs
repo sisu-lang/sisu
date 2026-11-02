@@ -29,6 +29,7 @@ mod stmt;
 mod string;
 mod unused_names;
 
+use std::borrow::Cow;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -370,6 +371,19 @@ impl LoopFrame {
     }
 }
 
+/// A held report of `Checker::interface_as_type`.
+struct DeferredAsType {
+    interface: tir::InterfaceId,
+    name: String,
+    /// The type as written.
+    written: String,
+    at: Span,
+    /// The number of `?` after the name.
+    layers: usize,
+    /// Whether the name is in an alias body.
+    alias: bool,
+}
+
 /// The program's text and the positions the lexer and parser found in it; never changes.
 #[derive(Clone, Copy)]
 struct Source<'src> {
@@ -391,6 +405,11 @@ impl<'src> Source<'src> {
     /// The text that `span` covers.
     fn text(&self, span: Span) -> &'src str {
         self.holding(span.start()).text(span)
+    }
+
+    /// The type that `span` covers, on one line: see `source::Source::type_text`.
+    fn type_text(&self, span: Span) -> Cow<'src, str> {
+        self.holding(span.start()).type_text(span)
     }
 
     /// The text between the offsets of `range`, which lie in one text.
@@ -420,6 +439,9 @@ thread_local! {
     pub(super) static FIELD_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many expressions `Checker::expr` has checked on this thread.
     pub(super) static EXPR_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many unary `-` and operator expressions `int_literal` has walked on this thread, those
+    /// it answers from `body.int_literals` not counted.
+    pub(super) static INT_LITERAL_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many nested loops the walk that wraps a widened loop's values has entered.
     pub(super) static WRAP_LOOPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many type parameter names have been indexed or looked up on this thread.
@@ -506,7 +528,7 @@ struct Checker<'src> {
     wide_reported: FxHashSet<Span>,
     /// The interfaces written where a type belongs before every interface has its requirements:
     /// the report waits to say whether the interface can be `any`.
-    deferred_as_type: Vec<(tir::InterfaceId, String, String, (Span, usize))>,
+    deferred_as_type: Vec<DeferredAsType>,
     /// Why each interface cannot be `any`, `None` when it can (`why_not_any`).
     any_roots: FxHashMap<tir::InterfaceId, Option<any::AnyReason>>,
     /// The same for each interface with its arguments in the walk of one root (`entry_reason`).
@@ -857,6 +879,9 @@ struct Body {
     /// cleared `fit`. A span is checked in one scope only (there are no closures yet), so the
     /// answer holds for every call that ranks it.
     ranked: FxHashMap<Span, (generic::Ranked, bool)>,
+    /// What `int_literal` answered for each unary `-` and operator, by its span. The answer
+    /// depends only on the node, and no two operator nodes have one span.
+    int_literals: FxHashMap<Span, bool>,
 }
 
 impl Body {

@@ -314,9 +314,8 @@ mod tests {
         // The expected internal errors would fill the output.
         std::panic::set_hook(Box::new(|_| {}));
         // Deep cases overflow the default test stack, as `main` runs `cli` on a larger one.
-        let runner = std::thread::Builder::new()
-            .stack_size(crate::STACK_SIZE)
-            .spawn(move || {
+        let joined = std::panic::catch_unwind(|| {
+            crate::on_compiler_stack(|| {
                 let mut failures = Vec::new();
                 for path in &paths {
                     // A prelude is text, so a case that is not UTF-8 (E0072) is no prelude.
@@ -341,8 +340,7 @@ mod tests {
                 }
                 failures
             })
-            .expect("the thread should start");
-        let joined = runner.join();
+        });
         std::panic::set_hook(hook);
         let failures = joined.expect("the loop should not panic");
         assert!(failures.is_empty(), "{}", failures.join("\n"));

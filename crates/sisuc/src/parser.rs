@@ -1,6 +1,7 @@
 //! The parser: tokens to the syntax tree.
 
 use std::cell::OnceCell;
+use std::cmp::Ordering;
 use std::mem;
 use std::ops::Range;
 
@@ -233,8 +234,9 @@ const MAX_DEPTH: usize = 256;
 
 /// The height of a path through the tree: its levels, and how many of them are links of a chain
 /// or `else if`s. `Ord` puts the deeper path first, so the maximum of two heights is the deeper
-/// path with its own counts, and the report can name what made that path deep.
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+/// path with its own counts, and the report can name what made that path deep. Two heights with the
+/// same counts are equally deep, so the order and the equality ignore `else_if_at`.
+#[derive(Clone, Copy, Default)]
 struct Height {
     /// The levels on the path.
     depth: usize,
@@ -242,9 +244,16 @@ struct Height {
     links: usize,
     /// The levels that an `else if` added.
     else_ifs: usize,
+    /// The `else if`, from `else` to `if`, that added the last of those levels.
+    else_if_at: Option<Span>,
 }
 
 impl Height {
+    /// The counts, which are all that the order and the equality of heights compare.
+    fn counts(self) -> (usize, usize, usize) {
+        (self.depth, self.links, self.else_ifs)
+    }
+
     /// One level more.
     fn deeper(self) -> Self {
         Self {
@@ -261,10 +270,11 @@ impl Height {
         }
     }
 
-    /// One level more, which an `else if` adds.
-    fn else_if(self) -> Self {
+    /// One level more, which the `else if` at `at` adds.
+    fn else_if(self, at: Span) -> Self {
         Self {
             else_ifs: self.else_ifs + 1,
+            else_if_at: Some(at),
             ..self.deeper()
         }
     }
@@ -279,6 +289,26 @@ impl Height {
         } else {
             NestingForm::Tree
         }
+    }
+}
+
+impl PartialEq for Height {
+    fn eq(&self, other: &Self) -> bool {
+        self.counts() == other.counts()
+    }
+}
+
+impl Eq for Height {}
+
+impl PartialOrd for Height {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Height {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.counts().cmp(&other.counts())
     }
 }
 
@@ -602,15 +632,21 @@ impl<'a> Parser<'a> {
         self.at(kind).then(|| self.bump())
     }
 
-    /// Sets `self.depth`, or reports that the tree is too deep at the next token. The report
-    /// names what made the path deep.
+    /// Sets `self.depth`, or reports that the tree is too deep. The report names what made the
+    /// path deep. For an `else if` chain, it points at the last `else if` on the path, not at the
+    /// token in its branch where the depth passed the limit.
     fn reach(&mut self, height: Height) -> Result<(), Diagnostic> {
         self.depth = height;
         if height.depth > MAX_DEPTH {
+            let form = height.form();
+            let at = match height.else_if_at {
+                Some(else_if) if matches!(form, NestingForm::ElseIf) => else_if,
+                _ => self.peek().span,
+            };
             return Err(DiagnosticKind::NestingTooDeep {
-                at: self.peek().span,
+                at,
                 limit: MAX_DEPTH,
-                form: height.form(),
+                form,
             }
             .into());
         }
@@ -852,8 +888,8 @@ impl<'a> Parser<'a> {
             return Err(DiagnosticKind::AnyForm {
                 at: amp.to(other.span),
                 form: AnyFormKind::Several {
-                    first: self.source.slice(name_span.range()).to_string(),
-                    second: self.source.slice(other.bare.range()).to_string(),
+                    first: self.source.type_text(name_span).into_owned(),
+                    second: self.source.type_text(other.bare).into_owned(),
                 },
             }
             .into());
@@ -879,7 +915,7 @@ impl<'a> Parser<'a> {
         Err(DiagnosticKind::AnyForm {
             at: span.to(mark),
             form: AnyFormKind::Optional {
-                written: self.source.slice(span.range()).to_string(),
+                written: self.source.type_text(span).into_owned(),
                 bare: span,
                 layers,
             },
@@ -3991,11 +4027,12 @@ impl<'a> Parser<'a> {
         )?;
         let then_block = self.child(base, &mut reach, Self::block)?;
         let mut end = then_block.span;
-        let else_block = if self.eat(&TokenKind::Else).is_some() {
+        let else_block = if let Some(else_token) = self.eat(&TokenKind::Else) {
             let block = if self.at(&TokenKind::If) {
                 // `else if` and `else if let` become a block holding the inner `if`.
+                let else_if = else_token.span.to(self.peek().span);
                 let inner = self.child(base, &mut reach, |p| {
-                    p.reach(p.depth.else_if())?;
+                    p.reach(p.depth.else_if(else_if))?;
                     p.if_expr()
                 })?;
                 Block {
@@ -6464,17 +6501,12 @@ mod tests {
         };
         let nested = format!("{}i64{}", "[".repeat(9), "]".repeat(9));
         // The parser recurses as deep as the limit allows, which the compiler's own stack holds.
-        let codes = std::thread::Builder::new()
-            .stack_size(crate::STACK_SIZE)
-            .spawn(move || {
-                ["f", "s.f"].map(|name| {
-                    let fits = parsed(&source(name, "i64")).diagnostics.len();
-                    (fits, parse_err(&source(name, &nested)).0)
-                })
+        let codes = crate::on_compiler_stack(|| {
+            ["f", "s.f"].map(|name| {
+                let fits = parsed(&source(name, "i64")).diagnostics.len();
+                (fits, parse_err(&source(name, &nested)).0)
             })
-            .expect("the thread should start")
-            .join()
-            .expect("the parse should not overflow the stack");
+        });
         // One `i64` fits where nine brackets around it do not.
         assert_eq!(codes, [(0, Code::NestingTooDeep); 2]);
     }
@@ -6493,12 +6525,9 @@ mod tests {
         };
         let nested = format!("{}i64{}", "[".repeat(9), "]".repeat(9));
         // The parser recurses as deep as the limit allows, which the compiler's own stack holds.
-        let codes = std::thread::Builder::new()
-            .stack_size(crate::STACK_SIZE)
-            .spawn(move || [source("i64"), source(&nested)].map(|src| parse_err(&src).0))
-            .expect("the thread should start")
-            .join()
-            .expect("the parse should not overflow the stack");
+        let codes = crate::on_compiler_stack(|| {
+            [source("i64"), source(&nested)].map(|src| parse_err(&src).0)
+        });
         // One `i64` fits where nine brackets around it do not.
         assert_eq!(codes, [Code::PatternForm, Code::NestingTooDeep]);
     }
@@ -6530,20 +6559,15 @@ mod tests {
                 .expect("a call without brackets should parse")
         };
         // The parser recurses as deep as the limit allows, which the compiler's own stack holds.
-        let (found, free, method) = std::thread::Builder::new()
-            .stack_size(crate::STACK_SIZE)
-            .spawn(move || {
-                let found = cases.map(|src| {
-                    parsed(&format!("fn main() {{ {src} }}"))
-                        .diagnostics
-                        .first()
-                        .map(Diagnostic::code)
-                });
-                (found, most("f"), most("s.f"))
-            })
-            .expect("the thread should start")
-            .join()
-            .expect("the parse should not overflow the stack");
+        let (found, free, method) = crate::on_compiler_stack(|| {
+            let found = cases.map(|src| {
+                parsed(&format!("fn main() {{ {src} }}"))
+                    .diagnostics
+                    .first()
+                    .map(Diagnostic::code)
+            });
+            (found, most("f"), most("s.f"))
+        });
         let too_deep = Some(Code::NestingTooDeep);
         assert_eq!(found, [None, None, too_deep, too_deep]);
         // The receiver is a level of its own, so the method call's arguments sit one lower.
@@ -6553,24 +6577,60 @@ mod tests {
     /// What `src`, a statement, makes the nesting report name: the form of the height at which
     /// the parser stopped.
     fn nesting_form(src: &str) -> &'static str {
-        let src = src.to_string();
-        std::thread::Builder::new()
-            .stack_size(crate::STACK_SIZE)
-            .spawn(move || {
-                parser_at(&src, 0, |p| {
-                    let error = p.stmt().expect_err("the statement should be too deep");
-                    assert_eq!(error.code(), Code::NestingTooDeep, "{src}");
-                    match p.depth.form() {
-                        NestingForm::Tree => "tree",
-                        NestingForm::Chain => "chain",
-                        NestingForm::ElseIf => "else if",
-                        NestingForm::Alias(_) => unreachable!("only the checker makes an alias"),
-                    }
-                })
+        crate::on_compiler_stack(|| {
+            parser_at(src, 0, |p| {
+                let error = p.stmt().expect_err("the statement should be too deep");
+                assert_eq!(error.code(), Code::NestingTooDeep, "{src}");
+                match p.depth.form() {
+                    NestingForm::Tree => "tree",
+                    NestingForm::Chain => "chain",
+                    NestingForm::ElseIf => "else if",
+                    NestingForm::Alias(_) => unreachable!("only the checker makes an alias"),
+                }
             })
-            .expect("the thread should start")
-            .join()
-            .expect("the parse should not overflow the stack")
+        })
+    }
+
+    /// The span of the `NestingTooDeep` error of the statement `src`, as byte offsets.
+    fn nesting_span(src: &str) -> (usize, usize) {
+        crate::on_compiler_stack(|| {
+            parser_at(src, 0, |p| {
+                let error = p.stmt().expect_err("the statement should be too deep");
+                assert_eq!(error.code(), Code::NestingTooDeep, "{src}");
+                (error.span().start(), error.span().end())
+            })
+        })
+    }
+
+    /// An `else if` chain reports at the `else if` of the last link on the path, whatever token
+    /// in its branch passed the limit.
+    #[test]
+    fn nesting_report_should_point_at_the_last_else_if() {
+        let head = "if a { }";
+        let link = " else if a { }";
+        let src = format!("{head}{}", link.repeat(300));
+        // Two levels sit above the chain, so the `else if` with index `MAX_DEPTH - 2` is the first
+        // whose `if` passes the limit. The caret is on its `else if`, not on the `a` that follows.
+        let at = head.len() + link.len() * (MAX_DEPTH - 2) + 1;
+        assert_eq!(nesting_span(&src), (at, at + "else if".len()));
+    }
+
+    /// A chain of operators reports at the token that passed the limit, even under an `else if`.
+    #[test]
+    fn nesting_report_of_a_chain_should_stay_on_the_token_that_passed_the_limit() {
+        // A chain keeps the report on the token where the limit passed, an operator.
+        let chain = vec!["a"; 300].join(" + ");
+        let (start, end) = nesting_span(&chain);
+        assert_eq!(&chain[start..end], "+");
+        assert_eq!(
+            start,
+            4 * (MAX_DEPTH - 1) + 2,
+            "the `+` that passed the limit"
+        );
+        // An `else if` high on the path does not draw the report when a chain made it deep.
+        let mixed = format!("if a {{ }} else if a {{ {chain} }}");
+        let (start, end) = nesting_span(&mixed);
+        assert_eq!(&mixed[start..end], "+");
     }
 
     /// The links of one chain add across the operators, postfix steps and prefix operators on

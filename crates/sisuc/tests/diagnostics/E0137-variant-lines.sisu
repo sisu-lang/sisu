@@ -1,0 +1,11 @@
+enum Opt<T> {
+    Has(T)
+    Nothing
+}
+fn main() {
+    let x = Opt.Has<i64, // the one
+        i64>(1)
+    let y = Opt
+        .Has<i64>(2)
+    print(1)
+}
