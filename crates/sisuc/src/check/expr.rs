@@ -215,6 +215,11 @@ impl Checker<'_> {
                 keyword,
                 body,
             } => self.loop_expr(e.span, (*keyword, label.as_ref()), body, expected),
+            ExprKind::Return(value) => self.return_expr(e.span, value.as_deref()),
+            ExprKind::Break { label, value } => {
+                self.jump(e.span, "break", label.as_ref(), value.as_deref())
+            }
+            ExprKind::Continue { label } => self.jump(e.span, "continue", label.as_ref(), None),
             ExprKind::Block(block) => {
                 let value = tail(block).map(|v| v.span);
                 let outer = self.pass_quiet(e.span, value, expected);

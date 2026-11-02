@@ -101,13 +101,7 @@ impl Checker<'_> {
                 return Err(Poisoned { ty, mismatch });
             }
         };
-        let ends_in_expr = matches!(
-            block.stmts.last(),
-            Some(ast::Stmt {
-                kind: StmtKind::Expr(_),
-                ..
-            })
-        );
+        let ends_in_expr = tail(block).is_some();
         let value = match stmts.pop() {
             Some(tir::Stmt::Expr(e)) if ends_in_expr => Some(Box::new(e)),
             last => {
@@ -500,11 +494,6 @@ impl Checker<'_> {
                 source,
                 body,
             } => self.for_loop(stmt.span, (*keyword, label.as_ref()), name, source, body),
-            StmtKind::Return(value) => self.return_stmt(stmt.span, value.as_ref()),
-            StmtKind::Break { label, value } => {
-                self.jump(stmt.span, "break", label.as_ref(), value.as_ref())
-            }
-            StmtKind::Continue { label } => self.jump(stmt.span, "continue", label.as_ref(), None),
             StmtKind::Assign { target, value } => self.assign(stmt.span, target, value),
             StmtKind::CompoundAssign {
                 op,
@@ -751,11 +740,7 @@ impl Checker<'_> {
     }
 
     /// `return`, of type `never` even when it fails.
-    fn return_stmt(
-        &mut self,
-        span: Span,
-        value: Option<&ast::Expr>,
-    ) -> Result<tir::Stmt, Poisoned> {
+    pub(super) fn return_expr(&mut self, span: Span, value: Option<&ast::Expr>) -> Checked {
         self.body.exits += 1;
         let never = || Poisoned::typed(Type::NEVER);
         let value = match value {
@@ -781,11 +766,7 @@ impl Checker<'_> {
                 Some(Box::new(value))
             }
         };
-        Ok(tir::Stmt::Expr(tir::Expr::new(
-            ExprKind::Return(value),
-            Type::NEVER,
-            span,
-        )))
+        Ok(tir::Expr::new(ExprKind::Return(value), Type::NEVER, span))
     }
 
     /// `f`, inside the header of the loop whose keyword is `keyword` and loop label `label`.
@@ -962,13 +943,13 @@ impl Checker<'_> {
 
     /// `break` or `continue`, of type `never` even outside a loop, and `break`'s `value`. In a
     /// loop header it is `Error`, so the condition or source around it reports nothing more.
-    fn jump(
+    pub(super) fn jump(
         &mut self,
         span: Span,
         keyword: &'static str,
         label: Option<&ast::Ident>,
         value: Option<&ast::Expr>,
-    ) -> Result<tir::Stmt, Poisoned> {
+    ) -> Checked {
         self.body.exits += 1;
         let (target, depth) = self.target(span, keyword, label)?;
         if let Some(label) = label
@@ -1017,7 +998,7 @@ impl Checker<'_> {
         } else {
             ExprKind::Continue { depth }
         };
-        Ok(tir::Stmt::Expr(tir::Expr::new(kind, Type::NEVER, span)))
+        Ok(tir::Expr::new(kind, Type::NEVER, span))
     }
 
     /// The loop the jump at `span` acts on, the one with its loop `label` or else the innermost:

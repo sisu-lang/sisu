@@ -1,0 +1,7 @@
+// GIVEN a unit function whose body is `return` on one line and `print(1)` on the next, at 6:5
+// WHEN `sisu check` runs on it
+// THEN it reports W0001 at 6:5 and nothing else
+fn main() {
+    return
+    print(1)
+}

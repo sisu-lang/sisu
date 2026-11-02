@@ -1395,7 +1395,10 @@ impl Walk {
                 } = &cond.kind
                 && int(rhs) == Some(0)
                 && let [jump] = &then_block.stmts[..]
-                && let ast::StmtKind::Break { label: None, value } = &jump.kind
+                && let ast::StmtKind::Expr(ast::Expr {
+                    kind: ast::ExprKind::Break { label: None, value },
+                    ..
+                }) = &jump.kind
             {
                 Some((name(lhs)?, value.is_some()))
             } else {
@@ -1442,8 +1445,8 @@ impl Walk {
 
     /// Marks a `break` spelled `break l -1` that reads as the label `l` and the value `-1`, or
     /// spelled `break x -1` that reads as no label and the value `x - 1`.
-    fn break_reading(&mut self, stmt: &ast::Stmt, label: Option<&ast::Ident>, value: &ast::Expr) {
-        let text = &self.source[stmt.span.range()];
+    fn break_reading(&mut self, jump: &ast::Expr, label: Option<&ast::Ident>, value: &ast::Expr) {
+        let text = &self.source[jump.span.range()];
         match (label, &value.kind) {
             (
                 Some(label),
@@ -1564,27 +1567,6 @@ impl Walk {
                 body,
                 ..
             } => self.ast_loop("for", label.as_ref(), |walk| walk.ast_for(source, body)),
-            ast::StmtKind::Return(value) => {
-                self.mark("ast::StmtKind::Return");
-                if let Some(value) = value {
-                    self.ast_expr(value);
-                }
-            }
-            ast::StmtKind::Break { label, value } => {
-                self.mark("ast::StmtKind::Break");
-                self.jump_label("break", label.as_ref());
-                if let Some(value) = value {
-                    if label.is_some() {
-                        self.mark("reach: a labeled `break` gives a value");
-                    }
-                    self.break_reading(stmt, label.as_ref(), value);
-                    self.ast_expr(value);
-                }
-            }
-            ast::StmtKind::Continue { label } => {
-                self.mark("ast::StmtKind::Continue");
-                self.jump_label("continue", label.as_ref());
-            }
             ast::StmtKind::Assign { target, value } => {
                 self.mark("ast::StmtKind::Assign");
                 self.through_optional(target);
@@ -1937,6 +1919,27 @@ impl Walk {
                         .push(format!("a `loop` at byte {}", e.span.start()));
                 }
                 self.ast_loop("loop", label.as_ref(), |walk| walk.ast_block(body));
+            }
+            ast::ExprKind::Return(value) => {
+                self.mark("ast::ExprKind::Return");
+                if let Some(value) = value {
+                    self.ast_expr(value);
+                }
+            }
+            ast::ExprKind::Break { label, value } => {
+                self.mark("ast::ExprKind::Break");
+                self.jump_label("break", label.as_ref());
+                if let Some(value) = value {
+                    if label.is_some() {
+                        self.mark("reach: a labeled `break` gives a value");
+                    }
+                    self.break_reading(e, label.as_ref(), value);
+                    self.ast_expr(value);
+                }
+            }
+            ast::ExprKind::Continue { label } => {
+                self.mark("ast::ExprKind::Continue");
+                self.jump_label("continue", label.as_ref());
             }
             ast::ExprKind::Block(block) => {
                 self.mark("ast::ExprKind::Block");
@@ -2999,10 +3002,7 @@ fn steps(stmt: Option<&ast::Stmt>, counted: Option<&str>) -> bool {
 /// Whether `stmt` never finishes: a jump, or an `if` whose every branch ends in one.
 fn jumps(stmt: &ast::Stmt) -> bool {
     let ends = |block: &ast::Block| block.stmts.last().is_some_and(jumps);
-    if matches!(
-        stmt.kind,
-        ast::StmtKind::Return(_) | ast::StmtKind::Break { .. } | ast::StmtKind::Continue { .. }
-    ) {
+    if stmt.is_jump() {
         return true;
     }
     let ast::StmtKind::Expr(e) = &stmt.kind else {

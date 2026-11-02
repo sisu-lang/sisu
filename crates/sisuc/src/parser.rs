@@ -390,6 +390,9 @@ fn starts_operand(kind: &TokenKind) -> bool {
                 | TokenKind::If
                 | TokenKind::Loop
                 | TokenKind::Match
+                | TokenKind::Return
+                | TokenKind::Break
+                | TokenKind::Continue
                 | TokenKind::Minus
                 | TokenKind::Bang
         ),
@@ -2196,32 +2199,8 @@ impl<'a> Parser<'a> {
                     body: self.child(base, &mut reach, Self::block)?,
                 }
             }
-            TokenKind::Return => {
-                self.bump();
-                if self.at(&TokenKind::Newline) || self.at(&TokenKind::RBrace) {
-                    StmtKind::Return(None)
-                } else {
-                    StmtKind::Return(Some(self.child(base, &mut reach, Self::expr)?))
-                }
-            }
-            TokenKind::Break => {
-                self.bump();
-                let label = self.jump_label(false);
-                if let Some(error) = label.as_ref().and_then(|label| self.label_clash(label)) {
-                    return Err(error);
-                }
-                let value = if self.jump_ends() {
-                    None
-                } else {
-                    Some(self.child(base, &mut reach, Self::expr)?)
-                };
-                StmtKind::Break { label, value }
-            }
-            TokenKind::Continue => {
-                self.bump();
-                StmtKind::Continue {
-                    label: self.jump_label(true),
-                }
+            TokenKind::Return | TokenKind::Break | TokenKind::Continue => {
+                StmtKind::Expr(self.jump(base, &mut reach)?)
             }
             TokenKind::LBrace => return Err(DiagnosticKind::BlockAsStatement { at: start }.into()),
             _ => self.expr_or_assign()?,
@@ -2375,6 +2354,44 @@ impl<'a> Parser<'a> {
         self.source.text(start.to(end)).to_string()
     }
 
+    /// The `return`, `break` or `continue` at the next token, with its loop label and its value.
+    /// The value takes the whole expression to its right, as `child` counts it from `base`.
+    fn jump(&mut self, base: Height, reach: &mut Height) -> Result<Expr, Diagnostic> {
+        let keyword = self.bump();
+        let kind = match keyword.kind {
+            TokenKind::Return => ExprKind::Return(self.jump_value(base, reach)?),
+            TokenKind::Break => {
+                let label = self.jump_label(false);
+                if let Some(error) = label.as_ref().and_then(|label| self.label_clash(label)) {
+                    return Err(error);
+                }
+                ExprKind::Break {
+                    label,
+                    value: self.jump_value(base, reach)?,
+                }
+            }
+            _ => ExprKind::Continue {
+                label: self.jump_label(true),
+            },
+        };
+        Ok(Expr {
+            kind,
+            span: keyword.span.to(self.last_span()),
+        })
+    }
+
+    /// The value of a `return` or a `break`, unless the jump ends here.
+    fn jump_value(
+        &mut self,
+        base: Height,
+        reach: &mut Height,
+    ) -> Result<Option<Box<Expr>>, Diagnostic> {
+        if self.jump_ends() {
+            return Ok(None);
+        }
+        Ok(Some(Box::new(self.child(base, reach, Self::expr)?)))
+    }
+
     /// The loop label after `break` or `continue`: a name, when it is an open loop label or
     /// `any` is set.
     fn jump_label(&mut self, any: bool) -> Option<Ident> {
@@ -2387,8 +2404,8 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Whether the next token ends a `break` or `continue`, which then takes no value: only a
-    /// token that can start an expression continues one.
+    /// Whether the next token ends a `return`, `break` or `continue`, which then takes no value:
+    /// only a token that can start an expression continues one.
     fn jump_ends(&self) -> bool {
         matches!(
             self.peek().kind,
@@ -2399,6 +2416,7 @@ impl<'a> Parser<'a> {
                 | TokenKind::RParen
                 | TokenKind::RBracket
                 | TokenKind::FatArrow
+                | TokenKind::Else
                 | TokenKind::Eof
         )
     }
@@ -2905,12 +2923,15 @@ impl<'a> Parser<'a> {
     fn statement_end(&mut self, stmt: &Stmt) -> Diagnostic {
         let error = self.end_of_line();
         let (StmtKind::Expr(tail)
-        | StmtKind::Return(Some(tail))
         | StmtKind::Let { init: tail, .. }
         | StmtKind::Assign { value: tail, .. }
         | StmtKind::CompoundAssign { value: tail, .. }) = &stmt.kind
         else {
             return error;
+        };
+        let tail = match &tail.kind {
+            ExprKind::Return(Some(value)) => value.as_ref(),
+            _ => tail,
         };
         let switch = match &tail.kind {
             ExprKind::Name(name) if name.as_str() == "switch" => {
@@ -3081,10 +3102,11 @@ impl<'a> Parser<'a> {
             }
         };
         let span = stmt.span;
-        if let Stmt {
-            kind: StmtKind::Expr(e),
-            ..
-        } = stmt
+        if !stmt.is_jump()
+            && let Stmt {
+                kind: StmtKind::Expr(e),
+                ..
+            } = stmt
         {
             return Ok(e);
         }
@@ -3625,6 +3647,13 @@ impl<'a> Parser<'a> {
                 ExprKind::Name(name)
             }
             TokenKind::Todo => return self.todo(),
+            TokenKind::Return | TokenKind::Break | TokenKind::Continue => {
+                let base = self.depth;
+                let mut reach = base;
+                let jump = self.jump(base, &mut reach)?;
+                self.depth = reach;
+                return Ok(jump);
+            }
             TokenKind::LParen => {
                 self.bump();
                 let inner = self.expr()?;
@@ -4492,6 +4521,175 @@ mod tests {
             body("fn main() {\n    outer: for x in xs { }\n    loop { break outer -1 }\n}"),
             "(block (for :outer x xs (block)) (loop (block (break (- outer 1)))))"
         );
+    }
+
+    /// GIVEN `return`, `break` and `continue` in the place of an operand
+    /// WHEN the parser reads them
+    /// THEN each is an expression, with its loop label and value, that `Display` prints as it
+    /// printed the statement
+    #[test]
+    fn jump_should_parse_as_an_operand() {
+        for (src, printed) in [
+            ("o ?? return 1", "(?? o (return 1))"),
+            ("o ?? break", "(?? o (break))"),
+            ("o ?? break outer", "(?? o (break outer))"),
+            ("o ?? continue outer", "(?? o (continue :outer))"),
+            ("f(return)", "(call f (return))"),
+            ("(return)", "(return)"),
+            (
+                "outer: loop { o ?? break outer }",
+                "(loop :outer (block (?? o (break :outer))))",
+            ),
+            (
+                "outer: loop { o ?? break outer 2 }",
+                "(loop :outer (block (?? o (break :outer 2))))",
+            ),
+            (
+                "outer: loop { o ?? continue outer }",
+                "(loop :outer (block (?? o (continue :outer))))",
+            ),
+        ] {
+            assert_eq!(expr(src), printed, "{src}");
+        }
+        let function = first_fn("fn main() { outer: loop { o ?? break outer 2 } }");
+        let StmtKind::Expr(Expr {
+            kind: ExprKind::Loop { body, .. },
+            ..
+        }) = &function.body.stmts[0].kind
+        else {
+            panic!("a labeled loop should parse as a loop");
+        };
+        let StmtKind::Expr(Expr {
+            kind: ExprKind::Coalesce { rhs, .. },
+            ..
+        }) = &body.stmts[0].kind
+        else {
+            panic!("`o ?? break outer 2` should parse as a coalesce");
+        };
+        assert!(
+            matches!(
+                &rhs.kind,
+                ExprKind::Break { label: Some(label), value: Some(value) }
+                    if label.name.as_str() == "outer" && matches!(value.kind, ExprKind::Int { value: 2, .. })
+            ),
+            "{rhs:?}"
+        );
+        assert!(rhs.is_jump());
+    }
+
+    /// GIVEN `a ?? return b ?? c`
+    /// WHEN the parser reads it
+    /// THEN `return` takes `b ?? c`, everything to its right
+    #[test]
+    fn return_should_take_everything_to_its_right() {
+        assert_eq!(expr("a ?? return b ?? c"), "(?? a (return (?? b c)))");
+    }
+
+    /// GIVEN a `return` before each token that ends a jump
+    /// WHEN the parser reads it
+    /// THEN the `return` takes no value
+    #[test]
+    fn jump_with_no_value_should_end_at_jump_ends() {
+        for (src, printed) in [
+            ("fn main() {\n    return\n}", "(block (return))"),
+            ("fn main() { return; 1 }", "(block (return) 1)"),
+            ("fn main() { return }", "(block (return))"),
+            ("fn main() { f(return, 1) }", "(block (call f (return) 1))"),
+            ("fn main() { [return] }", "(block (array (return)))"),
+            ("fn main() { f(return) }", "(block (call f (return)))"),
+            (
+                "fn main() { match x { _ if return => 1 } }",
+                "(block (match x (arm _ (if (return)) 1)))",
+            ),
+        ] {
+            assert_eq!(body(src), printed, "{src}");
+        }
+        // An `else` and the end of the file cannot sit inside a block, so the parser starts at
+        // the `return`.
+        for src in ["return else", "return"] {
+            parser_at(src, 0, |p| {
+                let stmt = p.stmt().expect("the statement should parse");
+                assert!(
+                    matches!(
+                        stmt.kind,
+                        StmtKind::Expr(Expr {
+                            kind: ExprKind::Return(None),
+                            ..
+                        })
+                    ),
+                    "{src}"
+                );
+            });
+        }
+    }
+
+    /// GIVEN a `return` or a `break` statement whose value is the deepest parenthesized value
+    /// that parses (254 pairs after `return`, and 252 after `break` in a `loop`)
+    /// WHEN the parser reads it, and again with one pair more
+    /// THEN the first parses, and the second is E0071 at the `1` inside the parentheses
+    /// AND a `return` operand that deep is E0071, not a crash
+    #[test]
+    fn jump_statement_should_keep_its_depth_budget() {
+        let source = |pairs: usize, head: &str, tail: &str| {
+            format!(
+                "fn main() {{ {head}{}1{}{tail} }}",
+                "(".repeat(pairs),
+                ")".repeat(pairs)
+            )
+        };
+        // The code and the column of the first error.
+        let first = |src: &str| {
+            parsed(src)
+                .diagnostics
+                .first()
+                .map(|d| (d.code(), line_col(src, d.span().start()).1))
+        };
+        // The parser recurses as deep as the limit allows, which the compiler's own stack holds.
+        let found = std::thread::Builder::new()
+            .stack_size(crate::STACK_SIZE)
+            .spawn(move || {
+                let statements = |extra: usize| {
+                    [
+                        first(&source(254 + extra, "return ", "")),
+                        first(&source(252 + extra, "loop { break ", " }")),
+                    ]
+                };
+                let operand = first(&source(254, "f(return ", ")")).map(|(code, _)| code);
+                (statements(0), statements(1), operand)
+            })
+            .expect("the thread should start")
+            .join()
+            .expect("the parse should not overflow the stack");
+        let too_deep = Code::NestingTooDeep;
+        assert_eq!(
+            found,
+            (
+                [None, None],
+                [Some((too_deep, 275)), Some((too_deep, 279))],
+                Some(too_deep)
+            )
+        );
+    }
+
+    /// GIVEN a function with the jump statements `return`, `return x`, `break`, `break l 1` and
+    /// `continue l`
+    /// WHEN the tree is printed
+    /// THEN the text is the text of the tree at the branch base, where they were statements
+    #[test]
+    fn jump_statement_should_print_as_today() {
+        let src = "fn f(x: i64) -> i64 {\n    l: loop {\n        return\n        return x\n        break\n        break l 1\n        continue l\n        break 1\n        continue\n    }\n}";
+        assert_eq!(
+            program(src),
+            "(fn f ((x i64)) i64 (block (loop :l (block (return) (return x) (break) (break :l 1) (continue :l) (break 1) (continue)))))"
+        );
+    }
+
+    /// GIVEN `return x = 5`
+    /// WHEN the parser reads it
+    /// THEN the error is E0011 at the `=`, as it was when `return` was a statement only
+    #[test]
+    fn jump_before_eq_should_keep_its_error() {
+        assert_eq!(expr_err("return x = 5"), (Code::Expected, 1, 22));
     }
 
     #[test]

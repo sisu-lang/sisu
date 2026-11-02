@@ -1,0 +1,13 @@
+// GIVEN a function `f(a: i64?, b: i64?) -> i64` whose body is `let v = a ?? return b ?? 7` and then `v`
+// WHEN `main` prints `f(None, None)` and `f(None, Some(2))` and `f(Some(1), None)`
+// THEN it prints `7`, `2` and `1`
+fn f(a: i64?, b: i64?) -> i64 {
+    let v = a ?? return b ?? 7
+    v
+}
+
+fn main() {
+    print(f(None, None))
+    print(f(None, Some(2)))
+    print(f(Some(1), None))
+}

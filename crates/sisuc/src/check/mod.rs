@@ -2406,13 +2406,13 @@ fn payload(ty: Type) -> Type {
     }
 }
 
-/// The expression a block ends in, if it ends in one: its value.
+/// The expression a block ends in, if it ends in one: its value. A jump is no value.
 fn tail(block: &ast::Block) -> Option<&ast::Expr> {
     match block.stmts.last() {
         Some(ast::Stmt {
             kind: ast::StmtKind::Expr(e),
             ..
-        }) => Some(e),
+        }) if !e.is_jump() => Some(e),
         _ => None,
     }
 }

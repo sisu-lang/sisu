@@ -1,0 +1,35 @@
+// GIVEN a loop in `main` over `[Some(1), None, Some(3)]` whose body uses `o ?? continue`,
+//       `o ?? break`, `o ?? continue outer` in an inner loop, and `sum + (o ?? break sum)` in a
+//       `loop` expression, each after a `print` of the row's name
+// WHEN the program runs
+// THEN it prints `1` then `3` for `continue`, `1` for `break`, `1` then `3` for the label, and
+//      `1` for `break` with a value
+fn main() {
+    let xs = [Some(1), None, Some(3)]
+
+    print("continue")
+    for o in xs {
+        print(o ?? continue)
+    }
+
+    print("break")
+    for o in xs {
+        print(o ?? break)
+    }
+
+    print("label")
+    outer: for o in xs {
+        for k in 0..1 {
+            print(k + (o ?? continue outer))
+        }
+    }
+
+    print("value")
+    let mut i = 0
+    let mut sum = 0
+    let r = loop {
+        sum = sum + (xs[i] ?? break sum)
+        i += 1
+    }
+    print(r)
+}
