@@ -9,7 +9,7 @@ use super::{
     optional_of, payload, type_of, wrap,
 };
 use crate::ast::{self, CompareOp, ExprKind};
-use crate::diagnostic::{Diagnostic, DiagnosticKind, Literal, PeelIs, PeelLayers};
+use crate::diagnostic::{Diagnostic, DiagnosticKind, Expected, Literal, PeelIs, PeelLayers};
 use crate::lang::{self, Dispatch};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
@@ -46,6 +46,7 @@ impl Checker<'_> {
             return Err(Poisoned {
                 ty: None,
                 mismatch: literal,
+                found: None,
             });
         }
         let want = if type_of(&checked).map(payload) == Some(Type::F64) {
@@ -215,20 +216,22 @@ impl Checker<'_> {
         if self.body.joins.contains(&span) {
             return self.integers(operands, None, operator, op);
         }
-        let (diagnostics, locals, pending) = (
+        let (diagnostics, locals, pending, misfits) = (
             self.diagnostics.len(),
             self.body.locals.len(),
             self.pending.len(),
+            self.body.misfits.len(),
         );
         let result = self.integers(operands, expected, operator, op);
         if result.1 != Some(Type::STRING) {
             return result;
         }
-        // The first check is dropped, and its locals and their findings with it, so none is left
-        // that nothing binds, and none is judged twice.
+        // The first check is dropped, and its locals, misfits and findings with it, so none is
+        // left that nothing binds, and none is judged twice.
         self.diagnostics.truncate(diagnostics);
         self.body.locals.truncate(locals);
         self.pending.truncate(pending);
+        self.body.misfits.truncate(misfits);
         self.body.joins.insert(span);
         self.integers(operands, None, operator, op)
     }
@@ -284,6 +287,8 @@ impl Checker<'_> {
         let wants_i64 = expected.map(payload) == Some(Type::I64);
         let ranks: Vec<Rank> = operands.iter().map(|e| self.sibling_rank(e)).collect();
         let mut first = None;
+        // No operand gives the type, so the operator takes `i64` by default, which no one wrote.
+        let defaulted = literal_type(expected) == Type::I64 && !ranks.contains(&Rank::Concrete);
         let mut ty = if literal_type(expected) != Type::I64 {
             Some(literal_type(expected))
         } else if let Some(k) = ranks.iter().position(|&r| r == Rank::Concrete) {
@@ -442,6 +447,25 @@ impl Checker<'_> {
                 ty = Some(Type::F64);
                 want = Some(Type::F64);
                 (value, true)
+            } else if let Some(takes) = takes.filter(|_| {
+                let later = leader.is_some() && operator != Operator::Compare;
+                i == 0
+                    && (defaulted || later && want != Some(Type::STRING))
+                    && self.misfit_type(&value).is_some()
+            }) {
+                // A generic call first, where its concrete twin would lead: it is reported as
+                // that leader is, against the operator's list. A comparison holds the operands
+                // to the leader's type, which the call does not give. With no other leader, it is
+                // left to its E0050; else the leader's type holds it. A `string` leader makes a
+                // `+` a join, and the call is held to `string`, as the twin is.
+                if operator == Operator::Compare {
+                    (value, false)
+                } else {
+                    let start = self.diagnostics.len();
+                    let settled = self.settled_by(e, value, want, Some(takes));
+                    deferred.extend(self.diagnostics.drain(start..));
+                    settled
+                }
             } else {
                 let start = self.diagnostics.len();
                 let settled = self.settled_by(e, value, want, takes.filter(|_| leader == Some(i)));
@@ -530,12 +554,15 @@ impl Checker<'_> {
         takes: Option<&[Type]>,
     ) -> (Checked, bool) {
         // An operand before it that failed has left `want` unset: one error is enough.
+        // A generic call's misfit is held to `takes` by the type it found (see `Misfit`).
         if let Some(takes) = takes
             && want.is_some()
-            && let Some(got) = type_of(&checked).filter(|&got| !takes.contains(&payload(got)))
+            && let Some(got) = (type_of(&checked).or_else(|| self.misfit_type(&checked)))
+                .filter(|&got| !takes.contains(&payload(got)))
         {
             let d = self.takes_mismatch(e.span, takes, got);
             self.diagnostics.push(d);
+            self.settle_misfit(&checked);
             return (Err(Poisoned::error()), true);
         }
         self.settled(e, checked, want)
@@ -544,7 +571,7 @@ impl Checker<'_> {
     /// "expected `takes`, found `got`" at `at`: the types an operator takes, `got` not among them.
     pub(super) fn takes_mismatch(&self, at: Span, takes: &[Type], got: Type) -> Diagnostic {
         DiagnosticKind::Mismatch {
-            want: takes.iter().map(|&ty| self.type_name(ty)).collect(),
+            want: Expected::Types(takes.iter().map(|&ty| self.type_name(ty)).collect()),
             got: self.type_name(got),
             at,
             source: None,
@@ -569,7 +596,12 @@ impl Checker<'_> {
         let (first, second) = if swapped { (rhs, lhs) } else { (lhs, rhs) };
         let checked = self.value(first, None);
         let want = type_of(&checked).map_or_else(|| UNKNOWN, as_optional);
+        // The first side's type is a hint to the second, as a sibling's is (see `Body::hint_at`):
+        // an `if` there reports a branch against it, as one checked first reports against its
+        // first branch.
+        let outer_hint = self.pass_hint(Some(second.span), type_of(&checked));
         let other = self.value(second, Some(want));
+        self.body.hint_at = outer_hint;
         // A side converts through one `?` only: `x == 5` on an `i64??` holds `5` to `i64??`.
         if let (Some(a), Some(b)) = (type_of(&checked), type_of(&other))
             && let Some((side, want, got)) = [(second, a, b), (first, b, a)]
@@ -804,6 +836,24 @@ impl Checker<'_> {
         r: Checked,
         kind: impl FnOnce(Box<tir::Expr>, Box<tir::Expr>) -> tir::ExprKind,
     ) -> Checked {
+        // A generic call that cannot meet its context is compared by the type it found, as a
+        // concrete call is by its type.
+        let shown = |c: &Self, side: &Checked| type_of(side).or_else(|| c.misfit_type(side));
+        if let (Some(lt), Some(rt)) = (shown(self, &l), shown(self, &r))
+            && (type_of(&l).is_none() || type_of(&r).is_none())
+            && !fits(lt, rt)
+            && !fits(rt, lt)
+        {
+            let kind = DiagnosticKind::CannotCompare {
+                left: self.type_name(lt),
+                right: self.type_name(rt),
+                at: span,
+            };
+            self.diagnostics.push(kind.into());
+            self.settle_misfit(&l);
+            self.settle_misfit(&r);
+            return Err(Poisoned::error());
+        }
         let (l, r) = match (type_of(&l), type_of(&r)) {
             (Some(lt), Some(rt)) if lt != rt => {
                 if fits(lt, rt) {
@@ -932,7 +982,9 @@ impl Checker<'_> {
             }
             _ => other,
         };
-        let (other, ty) = match type_of(&other) {
+        // A generic call that cannot meet its context joins by the type it found, as a concrete
+        // call does by its type. The value stays `Error`.
+        let (other, ty) = match type_of(&other).or_else(|| self.misfit_type(&other)) {
             // `a ?? panic("x")`: only the payload reaches the result.
             Some(Type::NEVER) => (other, payload),
             Some(ty) if ty == payload || ty == optional_of(payload) => (other, ty),
@@ -963,6 +1015,7 @@ impl Checker<'_> {
                         (None, None) => self.mismatch(rhs.span, Some(rhs), payload, ty),
                     };
                     self.diagnostics.push(d);
+                    self.settle_misfit(&other);
                     return Err(Poisoned::error());
                 };
                 self.instantiates = true;

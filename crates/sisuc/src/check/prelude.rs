@@ -6,7 +6,7 @@ use super::array::pair;
 use super::expr::{path, typed};
 use super::{Checked, Checker, Poisoned, type_of};
 use crate::ast;
-use crate::diagnostic::{DiagnosticKind, MismatchFix, PrintProblem};
+use crate::diagnostic::{DiagnosticKind, Expected, MismatchFix, PrintProblem};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Stream, Type, TypeKind};
@@ -227,7 +227,7 @@ impl Checker<'_> {
             Type::I64 | Type::U8 | Type::F64 | Type::BOOL | Type::CHAR
         );
         self.report(DiagnosticKind::Mismatch {
-            want: vec![self.type_name(Type::STRING)],
+            want: Expected::Types(vec![self.type_name(Type::STRING)]),
             got: self.type_name(got),
             at: arg.span,
             source: None,

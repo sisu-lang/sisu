@@ -1,10 +1,10 @@
-error[E0032]: expected `[T]`, found `i64`
+error[E0032]: expected an array, found `i64`
  --> E0032-alias-optional-shape.sisu:4:26
   |
 4 |     let x: i64? = M.Some(1)
   |                          ^
 
-error[E0032]: expected `[T]`, found `i64`
+error[E0032]: expected an array, found `i64`
  --> E0032-alias-optional-shape.sisu:5:20
   |
 5 |     let y = M.Some(1)

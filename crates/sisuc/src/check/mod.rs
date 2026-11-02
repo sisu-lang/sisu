@@ -39,8 +39,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::ast;
 use crate::conformance::{self, StuckChoices};
 use crate::diagnostic::{
-    BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, MainForm, MismatchFix,
-    MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
+    BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, Expected, MainForm,
+    MismatchFix, MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
 };
 use crate::front_end::PreludeProgram;
 use crate::payload_limit;
@@ -67,6 +67,9 @@ use unused_names::{Owner, Pending, Use, Used};
 /// checked for their own errors but not against the operator's type. Call and constructor
 /// arguments are each checked against their own parameter, so one bad argument does not
 /// excuse another.
+///
+/// A generic call that cannot meet its context is `Error` too, but it keeps the type it found
+/// in `found`. A block, a branch and a safe call keep that field for the code that uses the value.
 struct Poisoned {
     ty: Option<Type>,
     /// Whether the expected type passed down was rejected (a `None` that is not optional, a
@@ -75,6 +78,19 @@ struct Poisoned {
     /// `Error` operand would excuse it. A number that does not fit (E0040, E0042 or E0104)
     /// counts as a mismatch, as a value of another type does.
     mismatch: bool,
+    /// What a generic call found for its result, which cannot meet the call's context. Only a
+    /// report reads it. Every other check sees `Error`.
+    found: Option<Misfit>,
+}
+
+/// The result type of a generic call that cannot meet its context (see `report_unbound`). The
+/// type names the callee's unbound parameters, so it is never a value's type. The code that uses
+/// the value reports the mismatch with it, as it does for a callee that is not generic. `entry`
+/// is the place of the call's E0050 in `Body::misfits`, which that report cancels.
+#[derive(Clone, Copy)]
+struct Misfit {
+    ty: Type,
+    entry: usize,
 }
 
 impl Poisoned {
@@ -92,6 +108,7 @@ impl Poisoned {
         Self {
             ty,
             mismatch: false,
+            found: None,
         }
     }
 }
@@ -819,6 +836,11 @@ struct Body {
     break_hint: Option<(Span, Span)>,
     /// The waiting generic call that the outer call is checking as an argument.
     context_hint: Option<generic::ContextHint>,
+    /// The E0050 of each generic call whose result cannot meet its context (see `Misfit`). A
+    /// report that uses the result takes its entry. Each entry left is pushed when the body ends.
+    misfits: Vec<Option<Diagnostic>>,
+    /// The safe method call being checked: `receiver?.method(...)` at this span.
+    safe_call: Option<Span>,
     /// Set by a `break` or `continue` outside a loop; `scoped_block` reads it per statement.
     invalid_jump: bool,
     /// Where each loop label is declared that a failed jump or a reused loop label names, which
@@ -1238,10 +1260,37 @@ impl<'src> Checker<'src> {
 
     /// Checks with `body` as the current body, then restores the one before it, and returns
     /// `f`'s result with the finished body (its `locals` become the function's).
+    /// A misfit that no report used gives its E0050 then.
     fn with_body<R>(&mut self, body: Body, f: impl FnOnce(&mut Self) -> R) -> (R, Body) {
         let outer = std::mem::replace(&mut self.body, body);
         let result = f(self);
-        (result, std::mem::replace(&mut self.body, outer))
+        let mut body = std::mem::replace(&mut self.body, outer);
+        self.diagnostics.extend(body.misfits.drain(..).flatten());
+        (result, body)
+    }
+
+    /// The type that `checked`, a failed generic call, found for its result and could not meet
+    /// its context with (see `Misfit`), while no report has used it. A block gives its value's.
+    fn misfit_type<T>(&self, checked: &Result<T, Poisoned>) -> Option<Type> {
+        let misfit = checked.as_ref().err()?.found?;
+        let open = self
+            .body
+            .misfits
+            .get(misfit.entry)
+            .is_some_and(Option::is_some);
+        open.then_some(misfit.ty)
+    }
+
+    /// Marks the misfit of `checked`, if any, as reported: its E0050 is dropped.
+    fn settle_misfit<T>(&mut self, checked: &Result<T, Poisoned>) {
+        if let Err(Poisoned {
+            found: Some(misfit),
+            ..
+        }) = checked
+            && let Some(entry) = self.body.misfits.get_mut(misfit.entry)
+        {
+            *entry = None;
+        }
     }
 }
 
@@ -2070,7 +2119,7 @@ impl Checker<'_> {
         bounds.resize(owner_params, Vec::new());
         bounds.extend(sig.bounds.iter().cloned());
         fresh.set_bounds(0, bounds);
-        let ((params, body), state) = self.with_body(fresh, |c| {
+        let ((params, body, misfit), state) = self.with_body(fresh, |c| {
             // The signature's bounds name interfaces for this function. The bounds of a block's
             // parameters are named once, by the block (`record_block_bounds`).
             for place in owner_params..c.body.bounds.len() {
@@ -2127,14 +2176,20 @@ impl Checker<'_> {
                 wrap_block(&mut body, want);
             }
             c.pop_scope();
-            (params, body)
+            // The value's mismatch is reported once the body is gone, so a misfit is taken now.
+            let misfit = (c.misfit_type(&body))
+                .filter(|&found| ret.is_some_and(|ret| ret != Type::UNIT && ret != found));
+            if misfit.is_some() {
+                c.settle_misfit(&body);
+            }
+            (params, body, misfit)
         });
         let locals = state.locals;
         // The mismatch of the body's value is reported after its checks, as the body is gone. The
         // next body replaces it, so the map holds one function's entries.
         self.body.shown = state.shown;
         let type_params = state.type_params.iter().map(Symbol::to_string).collect();
-        match (ret, block_type(&body)) {
+        match (ret, block_type(&body).or(misfit)) {
             (Some(want), Some(got)) if want != Type::UNIT && got != Type::NEVER && got != want => {
                 let d = if got == Type::UNIT {
                     let end = f.body.span.end();
@@ -2380,7 +2435,7 @@ impl Checker<'_> {
         let conversion = matches!(got.kind(), TypeKind::Optional(p) if p == want)
             && source.is_some_and(|e| self.can_fail(e));
         DiagnosticKind::Mismatch {
-            want: vec![self.want_name(span, want)],
+            want: Expected::Types(vec![self.want_name(span, want)]),
             got: self.type_name(got),
             at: span,
             source: from,

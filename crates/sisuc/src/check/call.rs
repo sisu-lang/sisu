@@ -837,10 +837,7 @@ impl Checker<'_> {
                 ret,
                 bounds: &bounds,
             };
-            match self.generic_call(span, &sig, (written, site.angles), args, site.expected) {
-                Some(call) => call,
-                None => return Err(Poisoned::error()),
-            }
+            self.generic_call(span, &sig, (written, site.angles), args, site.expected)?
         };
         let failed = labeled || checked.iter().any(mismatched);
         match (receiver.into_iter().chain(checked).collect(), ret) {
@@ -984,9 +981,8 @@ impl Checker<'_> {
                 if through.is_some() { &[] } else { site.written },
                 site.angles,
             );
-            let Some((args, list, Some(ty))) =
-                self.generic_call(span, &sig, written, args, site.expected)
-            else {
+            let (args, list, ty) = self.generic_call(span, &sig, written, args, site.expected)?;
+            let Some(ty) = ty else {
                 return Err(Poisoned::error());
             };
             let failed = args.iter().any(mismatched);

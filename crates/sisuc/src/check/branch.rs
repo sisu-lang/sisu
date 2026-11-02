@@ -5,8 +5,8 @@ use super::expr::fits;
 use super::generic::{Ahead, Rank};
 use super::pattern::{LetPattern, arm_key};
 use super::{
-    Checked, CheckedBlock, Checker, Poisoned, UNKNOWN, as_optional, block_type, payload, tail,
-    value_span, wrap_block,
+    Checked, CheckedBlock, Checker, Misfit, Poisoned, UNKNOWN, as_optional, block_type, payload,
+    tail, value_span, wrap_block,
 };
 use crate::ast;
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Unwrap};
@@ -242,9 +242,32 @@ impl Checker<'_> {
             || blocks
                 .iter()
                 .any(|b| matches!(b, Err(Poisoned { mismatch: true, .. })));
+        // A branch whose generic call found a type that cannot meet its context joins by that
+        // type, but the whole stays `Error`. The first such branch carries the joined type to
+        // the code that uses the value. A failed join reported the mistake for all of them.
+        let mut found = None;
+        for block in &blocks {
+            if self.misfit_type(block).is_none() {
+                continue;
+            }
+            match (&found, ty) {
+                (None, Some(ty)) if !failed => {
+                    found = block
+                        .as_ref()
+                        .err()
+                        .and_then(|p| p.found)
+                        .map(|m| Misfit { ty, ..m });
+                }
+                _ => self.settle_misfit(block),
+            }
+        }
         let ty = match ty {
-            Some(ty) if !mismatch => Ok(ty),
-            _ => Err(Poisoned { ty: None, mismatch }),
+            Some(ty) if !mismatch && found.is_none() => Ok(ty),
+            _ => Err(Poisoned {
+                ty: None,
+                mismatch,
+                found,
+            }),
         };
         (blocks, ty)
     }
@@ -262,7 +285,10 @@ impl Checker<'_> {
         (expected, siblings): (Option<Type>, Option<Type>),
         blocks: &[CheckedBlock],
     ) -> (Option<Type>, bool, bool) {
-        let types: Vec<Option<Type>> = blocks.iter().map(block_type).collect();
+        // A branch's misfit joins by the type it found (see `Misfit`), as a concrete one would.
+        let types: Vec<Option<Type>> = (blocks.iter())
+            .map(|b| block_type(b).or_else(|| self.misfit_type(b)))
+            .collect();
         let error = types.contains(&None);
         let members: Vec<(usize, Type)> = (types.iter().enumerate())
             .filter_map(|(i, t)| t.filter(|&t| t != Type::NEVER).map(|t| (i, t)))

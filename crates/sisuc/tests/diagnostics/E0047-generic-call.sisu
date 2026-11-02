@@ -1,0 +1,28 @@
+class Two<A, B> {
+    a: A
+    b: B
+}
+
+class Source {
+    fn make<X>(self) -> Two<X, bool> {
+        panic("no")
+    }
+}
+
+fn make<X>() -> Two<X, bool> {
+    panic("no")
+}
+
+fn made() -> Two<i64, bool> {
+    panic("no")
+}
+
+fn main() {
+    print(1 == make())
+    print(make() != 1)
+    print(Some(1) == make())
+    print(make() == Some(1))
+    print(1 == made())
+    let source: Source? = None
+    print(1 == source?.make())
+}

@@ -6,7 +6,8 @@ use super::generic::Site;
 use super::{Checked, Checker, Poisoned, UNKNOWN, payload, tail, type_of, wrap};
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
-    Definition, Diagnostic, DiagnosticKind, Literal, MismatchSource, RangePlace, suggestion,
+    Definition, Diagnostic, DiagnosticKind, Expected, Literal, MismatchSource, RangePlace,
+    suggestion,
 };
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -77,6 +78,7 @@ impl Checker<'_> {
                 return Err(Poisoned {
                     ty: Some(ty),
                     mismatch: true,
+                    found: None,
                 });
             }
             return Ok(tir::Expr::new(tir::ExprKind::Float(x), ty, at));
@@ -95,6 +97,7 @@ impl Checker<'_> {
             return Err(Poisoned {
                 ty: Some(ty),
                 mismatch: true,
+                found: None,
             });
         }
         Ok(tir::Expr::new(tir::ExprKind::Int(value), ty, at))
@@ -184,7 +187,13 @@ impl Checker<'_> {
                     angles: *angles,
                     expected,
                 };
+                // `report_unbound` reads it: the result of a safe call is optional.
+                let outer = self.body.safe_call;
+                if *safe {
+                    self.body.safe_call = Some(e.span);
+                }
                 let checked = self.method_expr(e.span, *safe, receiver, site, args, *parens);
+                self.body.safe_call = outer;
                 self.misread_unless_checked(e.span, types, &checked);
                 checked
             }
@@ -367,6 +376,16 @@ impl Checker<'_> {
             self.diagnostics.push(d);
             return (Err(Poisoned::error()), true);
         }
+        // A generic call that cannot meet `want` is reported with the type it found, as a
+        // concrete call is with its type.
+        if let Some(want) = want.filter(|&want| want != UNKNOWN)
+            && let Some(found) = self.misfit_type(&checked).filter(|&found| found != want)
+        {
+            let d = self.mismatch_from(e.span, Some(e), want, found, source);
+            self.diagnostics.push(d);
+            self.settle_misfit(&checked);
+            return (Err(Poisoned::error()), true);
+        }
         (checked, false)
     }
 
@@ -425,7 +444,7 @@ impl Checker<'_> {
             Some(Type::NEVER) => return Err(Poisoned::error()),
             Some(ty) => (
                 DiagnosticKind::Mismatch {
-                    want: vec![self.want_name(span, ty)],
+                    want: Expected::Types(vec![self.want_name(span, ty)]),
                     got: "None".to_string(),
                     at: span,
                     source: self.expected_from(span),
@@ -446,7 +465,11 @@ impl Checker<'_> {
             ),
         };
         self.diagnostics.push(kind.into());
-        Err(Poisoned { ty: None, mismatch })
+        Err(Poisoned {
+            ty: None,
+            mismatch,
+            found: None,
+        })
     }
 
     /// What the `let` whose whole initializer is the literal at `span` writes before its type,
@@ -500,8 +523,10 @@ pub(super) fn bare_hole(e: &ast::Expr) -> bool {
     bare_none(e) || matches!(&e.kind, ExprKind::ArrayLit(elements) if elements.is_empty())
 }
 
-/// The argument of `e`, if `e` is a call of `dbg` with one unlabeled argument and no type
-/// argument. No user item can have the name `dbg` (see `generic_callee`), so the name tells.
+/// The argument of `e`, if `e` is a call of `dbg` with one argument, labeled or not, and no
+/// type argument. A label is an error (E0055), and the argument still takes the context, so
+/// the label adds no second error. No user item can have the name `dbg` (see
+/// `generic_callee`), so the name tells.
 pub(super) fn dbg_argument(e: &ast::Expr) -> Option<&ast::Expr> {
     match &e.kind {
         ExprKind::Call {
@@ -510,7 +535,7 @@ pub(super) fn dbg_argument(e: &ast::Expr) -> Option<&ast::Expr> {
             args,
             ..
         } if types.is_empty() && callee.name.as_str() == "dbg" => match &args[..] {
-            [arg] if arg.label.is_none() => Some(&arg.value),
+            [arg] => Some(&arg.value),
             _ => None,
         },
         _ => None,

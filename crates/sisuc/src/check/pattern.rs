@@ -14,7 +14,7 @@ use super::stmt::BlockSoFar;
 use super::{Checked, CheckedBlock, Checker, Declared, Poisoned, type_of};
 use crate::ast;
 use crate::diagnostic::{
-    BadRange, Definition, DiagnosticKind, GuardHelp, MismatchSource, Unwrap, suggestion,
+    BadRange, Definition, DiagnosticKind, Expected, GuardHelp, MismatchSource, Unwrap, suggestion,
 };
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -1258,7 +1258,7 @@ impl Checker<'_> {
                 {
                     let (want, got) = (self.type_name(want), self.type_name(got));
                     self.report(DiagnosticKind::Mismatch {
-                        want: vec![want],
+                        want: Expected::Types(vec![want]),
                         got,
                         at: name.span,
                         source: Some(MismatchSource::Binding {

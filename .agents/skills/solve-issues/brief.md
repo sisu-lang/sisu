@@ -5,8 +5,8 @@ Copy this file to `.scratch/<batch>/<group>-task-<N>-brief.md`. Fill every
 git identity that the user's rules give for this repository. Write
 `<ledger folder>` as an absolute path: `<repo>/.scratch/<batch>`.
 
-For a group on the light flow, delete step 5 of "Your job", and the mutation
-line of step 6.
+For a group on the light flow, delete step 6 of "Your job", and the mutation
+line of step 7.
 
 ```markdown
 # Group <group>, task <N>: <what the task fixes> (<#issues>)
@@ -35,18 +35,22 @@ Neighbours: <the table of neighbouring cases, with today's output and the wanted
 
 ## Tests
 
-<The fixtures and unit tests to add, and the docs to update.>
+<The test list. One row for each case of the "Neighbours" tables, in both orders and at each depth, with its wanted output, and the fixture or unit test that holds it. One unit test that pins each cause. The docs to update.>
+
+The wanted outputs come from this list. Do not change one to fit the code. A task that changes only docs or the text of a diagnostic has no test commit: its fixture diff is the test. The test commit of a performance fix can add the `cfg(test)` counter and its ticks.
 
 ## Your job
 
-1. Implement the fixes and tests above.
-2. Run `(cd <worktree> && nice -n 19 make test)`. It must pass. Clippy and fmt must be clean.
-3. Commit as `<author>`. Use `git -C <worktree> commit -F <file>`, one commit per Bash call. Write the message in STE. Add no `Claude-Session` or session-URL line. Then run `git log -1` to check that it landed.
-4. Run `(cd <worktree> && nice -n 19 make coverage BASE=<BASE> > <ledger folder>/<group>-task-<N>-coverage.txt 2>&1)`. Cover or explain each uncovered changed region.
-5. Run no mutation test: the controller runs one for the whole group, after the reviews.
-6. Stop every background job you started. Then report once:
+1. Write the tests of the "Tests" list first. Run only these tests at the task base (`cargo nextest run -E 'test(<name>)'`). List each test that is red, and why. Commit the tests alone. The title starts with "Add failing tests", and the body gives the red list. `make test` fails at this commit.
+2. Implement the fixes. Make each red test green with the smallest change at the cause. When the fix does not make a test green, that is a finding: report it. Do not change the test or its wanted output.
+3. Run `(cd <worktree> && nice -n 19 make test)`. It must pass. Clippy and fmt must be clean.
+4. Commit the fix after the test commit. Commit as `<author>`. Use `git -C <worktree> commit -F <file>`, one commit per Bash call. Write the message in STE. Add no `Claude-Session` or session-URL line. Then run `git log -1` to check that it landed.
+5. Run `(cd <worktree> && nice -n 19 make coverage BASE=<BASE> > <ledger folder>/<group>-task-<N>-coverage.txt 2>&1)`. Cover or explain each uncovered changed region.
+6. Run no mutation test: the controller runs one for the whole group, after the reviews.
+7. Stop every background job you started. Then report once:
    - the status: DONE, DONE_WITH_CONCERNS or BLOCKED;
    - each commit;
+   - each test: red at the base, green at the head;
    - the coverage result for the changed lines;
    - the neighbour outputs before and after;
    - anything you could not do.
@@ -60,6 +64,6 @@ A fix-round brief has these parts, in this order:
 
 1. The group, the task and its round base. A pointer to the task brief, whose rules apply.
 2. The rulings file and the reports.
-3. Each accepted finding: its severity, the cause you checked, the probe that shows it, and the fix.
+3. Each accepted finding: its severity, the cause you checked, the probe that shows it, the fix, and the test list with the wanted outputs, as in "Tests" above.
 4. "Fix the class": the neighbouring cases to list and probe, the probe folder (`review-sisu` names it), and the `scripts/diag_diff.py` command to run.
-5. The job: a test that fails without each fix; `make test`; one commit; `make coverage BASE=<round base>` into `<ledger folder>/<group>-task-<N>-fix<round>-coverage.txt`. No mutation test. One report.
+5. The job: the tests first, red at the round base, in one commit titled "Add failing tests"; then the fix in a second commit; `make test`; `make coverage BASE=<round base>` into `<ledger folder>/<group>-task-<N>-fix<round>-coverage.txt`. No mutation test. One report, with each test red before and green after.
