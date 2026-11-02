@@ -1,0 +1,79 @@
+interface I1<T> {
+    fn get(self) -> T
+}
+interface I2<T> {
+    fn get(self) -> T
+}
+interface I3<T> {
+    fn get(self) -> T
+}
+interface I4<T> {
+    fn get(self) -> T
+}
+interface I5<T> {
+    fn get(self) -> T
+}
+interface I6<T> {
+    fn get(self) -> T
+}
+interface I7<T> {
+    fn get(self) -> T
+}
+interface I8<T> {
+    fn get(self) -> T
+}
+interface J8 {
+    fn j(self) -> i64
+}
+interface I9<T> {
+    fn get(self) -> T
+}
+interface I10<T> {
+    fn get(self) -> T
+}
+interface I11<T> {
+    fn get(self) -> T
+}
+interface I12<T> {
+    fn get(self) -> T
+}
+enum P<A, B> { X(A, B) }
+class Cls {
+    _v: i64
+    fn dead_method(self, _x: P<any I10<i64>, any I10<bool>>?) {}
+}
+enum En {
+    Leaf
+    fn dead_variant_method(self, _x: P<any I11<i64>, any I11<bool>>?) {}
+}
+class Ext {
+    _v: i64
+}
+type Al4 = (any I4<i64>)?
+type Al5 = (any I5<i64>)?
+type Al7<T> = T?
+fn dead_param(_x: P<any I1<i64>, any I1<bool>>?) {}
+fn dead_let() {
+    let _x: P<any I2<i64>, any I2<bool>>? = None
+}
+fn dead_ret() -> (any I3<i64>)? { None }
+fn dead_alias(_x: Al4) {}
+fn dead_alias_let() {
+    let _x: Al5 = None
+}
+fn none<T>() -> T? { None }
+fn dead_type_arg() {
+    let _x = none<any I6<i64>>()
+}
+fn dead_alias_arg(_x: Al7<any I7<i64>>) {}
+fn dead_nested(_x: (any I8<any J8>)?) {}
+fn dead_array<T>(_x: [any I9<T>]) {}
+fn dead_optional<T>(_x: (any I9<T>)?) {}
+extend Ext {
+    fn dead_extend_method(self, _x: P<any I12<i64>, any I12<bool>>?) {}
+}
+fn main() {
+    let _c = Cls(_v: 1)
+    let _e = En.Leaf
+    let _x = Ext(_v: 1)
+}

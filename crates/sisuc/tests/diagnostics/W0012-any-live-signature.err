@@ -1,0 +1,10 @@
+warning[W0012]: function `stale` is never called
+ --> W0012-any-live-signature.sisu:4:4
+  |
+4 | fn stale() {}
+  |    ^^^^^ never called
+  |
+  = help: delete it, or name it `_stale` if it is kept on purpose
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0012
