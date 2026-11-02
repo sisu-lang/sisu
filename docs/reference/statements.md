@@ -121,7 +121,7 @@ The rules:
 
 ## let ... else
 
-`let pattern = value else { ... }` binds the names of a pattern that can fail to match. When the pattern accepts the value, the names are in scope from the next statement to the end of the block. When it does not, the `else` block runs. That block must not finish: it leaves the function, the turn or the loop, or it ends the program.
+`let pattern = value else { ... }` binds the names of a pattern that can fail to match. When the pattern accepts the value, the names are in scope from the next statement to the end of the block. When it does not, the `else` block runs. That block must not finish: it leaves the function, the pass or the loop, or it ends the program.
 
 ```sisu
 enum Shape {
@@ -159,7 +159,7 @@ fn main() {
 }
 ```
 
-A loop body can use a `let ... else` to skip a turn:
+A loop body can use a `let ... else` to skip a pass:
 
 ```sisu
 fn main() {

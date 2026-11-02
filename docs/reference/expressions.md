@@ -291,7 +291,21 @@ fn main() {
 
 The rules:
 
-- A `return` at the end of a line takes no value. A value on the next line is a new statement.
+- A `return` at the end of a line takes no value.
+- Before a `{`, a `return` or a `break` with no value takes the block as its value. In the header of an `if`, a `while` or a `match`, put the jump in `( )` to keep the block as the body ([E0011](../diagnostics/E0011.md)).
+
+```sisu
+fn f(o: bool?) {
+    if o ?? return {             // error[E0011]
+        print(1)
+    }
+}
+
+fn main() {
+    f(None)
+}
+```
+ A value on the next line is a new statement.
 - A jump where a value must be used is an error ([E0043](../diagnostics/E0043.md)). The places that take a `never` value are the right side of `??`, a branch of an `if` and an arm of a `match`.
 - The rules of each jump do not change ([return](statements.md#return), [break and continue](statements.md#break-and-continue)). In the header of a loop, `break` and `continue` are an error ([E0082](../diagnostics/E0082.md)), also on the right of a `??`.
 
