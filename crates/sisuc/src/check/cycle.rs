@@ -855,6 +855,10 @@ impl Graph {
                     stack.extend(args.get());
                     continue;
                 }
+                TypeKind::Any(_, args) => {
+                    stack.extend(args.get());
+                    continue;
+                }
                 _ => continue,
             };
             let mark = spans.get(&ty).copied().unwrap_or(site);
@@ -975,6 +979,10 @@ fn named(
                     }
                 }
                 stack.push(base);
+                stack.extend(args.get());
+                continue;
+            }
+            TypeKind::Any(_, args) => {
                 stack.extend(args.get());
                 continue;
             }

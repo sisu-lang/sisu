@@ -277,7 +277,7 @@ fn unbound_params(outer: &Bindings, ty: Type, on: &mut FxHashSet<usize>) {
     match ty.kind() {
         TypeKind::Param(_, i) => on.extend(outer.found[i as usize].is_none().then_some(i as usize)),
         TypeKind::Array(inner) | TypeKind::Optional(inner) => unbound_params(outer, inner, on),
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
             for &arg in args.get() {
                 unbound_params(outer, arg, on);
             }
@@ -288,7 +288,14 @@ fn unbound_params(outer: &Bindings, ty: Type, on: &mut FxHashSet<usize>) {
                 unbound_params(outer, arg, on);
             }
         }
-        _ => unreachable!("only a kind with a child can name a parameter"),
+        TypeKind::I64
+        | TypeKind::U8
+        | TypeKind::F64
+        | TypeKind::Bool
+        | TypeKind::Char
+        | TypeKind::String
+        | TypeKind::Unit
+        | TypeKind::Never => unreachable!("only a kind with a child can name a parameter"),
     }
 }
 

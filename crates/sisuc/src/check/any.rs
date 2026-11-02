@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use rustc_hash::FxHashSet;
 
+use super::alias::UseCheck;
 use super::interface::{BOUND_CLOSURE_LIMIT, Bound, Check};
 use super::unused_names::Used;
 use super::{Checked, CheckedBlock, Checker, Poisoned, block_type, wrap};
@@ -38,19 +39,6 @@ pub(super) enum AnyJoin {
     Leaves { ty: Type, member: (usize, Type) },
 }
 
-impl AnyJoin {
-    /// The failure of the member `other` against `ours`, the join so far, as a fold in the
-    /// order of the members reports it: the later member against the earlier one.
-    fn fails(ours: (usize, Type), other: (usize, Type)) -> AnyJoin {
-        let (earlier, later) = if other.0 < ours.0 {
-            (other, ours)
-        } else {
-            (ours, other)
-        };
-        AnyJoin::Fails { earlier, later }
-    }
-}
-
 /// Why an interface cannot be `any`. The interface `owner` is the interface itself or one that it
 /// inherits. `kind` names its requirement or associated type, by place.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,6 +57,8 @@ enum ReasonKind {
     Generic(usize),
     /// The associated type at this place.
     Assoc(usize),
+    /// The root inherits the interface `owner` with these arguments, which name `Self`.
+    InheritsSelf(TypeArgs),
 }
 
 impl Checker<'_> {
@@ -87,8 +77,13 @@ impl Checker<'_> {
         // gives, whether or not a value converts to it.
         self.instantiates = true;
         if let ast::TypeKind::Applied(applied) = &written.kind {
-            let ats = applied.args.iter().map(|arg| arg.span).collect();
-            self.check_arguments(bound, any, ats);
+            // In an alias body, an argument that names a parameter waits for each use of the alias.
+            if self.body.alias.is_some() && any.has_param() {
+                self.make_check(UseCheck::Applied(any), Span::new(0, 0));
+            } else {
+                let ats = applied.args.iter().map(|arg| arg.span).collect();
+                self.check_arguments(bound, any, ats);
+            }
         }
         if !ty.span.in_prelude() {
             self.any_written.entry(any).or_insert(ty.bare);
@@ -168,9 +163,13 @@ impl Checker<'_> {
                     assoc: info.assoc[at].name.name.to_string(),
                 }
             }
+            ReasonKind::InheritsSelf(args) => NotAny::InheritsSelf {
+                inherited: self.bound_text(reason.owner, args),
+            },
         };
-        let owner = (reason.owner != bound.interface)
-            .then(|| self.interfaces[reason.owner.0].name.name.to_string());
+        let owner = (reason.owner != bound.interface
+            && !matches!(reason.kind, ReasonKind::InheritsSelf(_)))
+        .then(|| self.interfaces[reason.owner.0].name.name.to_string());
         self.report(DiagnosticKind::CannotBeAny {
             interface: self.bound_text(bound.interface, bound.args),
             owner,
@@ -212,9 +211,17 @@ impl Checker<'_> {
                 ANY_VISITS.set(ANY_VISITS.get() + 1);
             },
         );
-        let answer = closure
-            .into_iter()
-            .find_map(|(entry, args)| self.entry_reason(entry, args, this));
+        let answer = closure.into_iter().find_map(|(entry, args)| {
+            // An argument that names `Self` names the type behind the `any` in a table, which
+            // has no conformance for it.
+            if args.get().iter().any(|&arg| mentions_self(arg)) {
+                return Some(AnyReason {
+                    owner: entry,
+                    kind: ReasonKind::InheritsSelf(args),
+                });
+            }
+            self.entry_reason(entry, args, this)
+        });
         self.any_roots.insert(interface, answer);
         answer
     }
@@ -427,7 +434,12 @@ impl Checker<'_> {
         for &(other, t) in targets {
             match self.any_join(ty, t) {
                 Some(wider) => ty = wider,
-                None => return AnyJoin::fails((first, ty), (other, t)),
+                None => {
+                    return AnyJoin::Fails {
+                        earlier: (first, ty),
+                        later: (other, t),
+                    };
+                }
             }
         }
         for &(other, t) in members {

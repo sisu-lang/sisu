@@ -92,6 +92,11 @@ fn a_type_that_grows_through_an_any_argument_should_report_the_cycle() {
         "interface I<T> {}\nenum E<T> {\n    A(any I<E<[T]>>)\n    B\n}\nfn main() {\n    let e = E<i64>.B\n    print(1)\n}\n",
         &[(InstantiationCycle, (3, 13))],
     );
+    codes_row(
+        "a compared enum, with no second report",
+        "interface I<T> {}\nenum E<T> {\n    A(any I<E<[T]>>)\n    B\n}\nfn main() {\n    print(E<i64>.B == E<i64>.B)\n}\n",
+        &[(InstantiationCycle, (3, 13))],
+    );
 }
 
 /// A requirement that returns `any Sink<Item>` gets the conformance's own `Item`.

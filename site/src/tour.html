@@ -117,7 +117,7 @@ A tour of the Sisu language as it works today, one small program at a time.
       <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
 {{text programs/run/shapes.out}}</pre></figure>
       <p>An <code>any Shape</code> conforms to <code>Shape</code>, so <code>total</code> takes the <code>[any Shape]</code> as it takes a <code>[Circle]</code>.</p>
-      <div class="callout info"><p>Not every interface can be <code>any</code>. <code>Eq</code> cannot, because <code>eq</code> takes another value of the same type, and two <code>any</code> values may hold different types. An <code>any</code> value has no <code>==</code>. An optional does not convert to a bare <code>any Shape</code>: write the type as <code>(any Shape)?</code>.</p></div>
+      <div class="callout info"><p>Not every interface can be <code>any</code>. <code>Eq</code> cannot, because <code>eq</code> takes another value of the same type, and two <code>any</code> values may hold different types. An <code>any</code> value has no <code>==</code>. An optional does not convert to a bare <code>any Shape</code>: unwrap it first, for example with <code>??</code> or a <code>match</code>. The type of an optional <code>any</code> value is <code>(any Shape)?</code>, with the parentheses.</p></div>
       <!-- source: docs/reference/generics.md (Bounds, Interfaces, Interface values), docs/adr/0023-generics-are-monomorphized-and-checked-at-the-definition.md, docs/diagnostics/E0164.md, docs/diagnostics/E0159.md, site/programs/run/shapes.sisu -->
 
       <h2 id="arrays">Arrays are values</h2>

@@ -651,6 +651,7 @@ impl<'a> Parser<'a> {
         let start = self.peek().span;
         let mut optional = 0;
         let mut grouped = false;
+        let mut inner_bare = None;
         let (mut kind, mut span) = if self.eat(&TokenKind::LBracket).is_some() {
             let element = self.parse_type()?;
             let close = self.expect(&TokenKind::RBracket)?;
@@ -661,7 +662,13 @@ impl<'a> Parser<'a> {
             let close = self.expect(&TokenKind::RParen)?;
             optional = inner.optional;
             grouped = true;
-            (inner.kind, start.to(close.span))
+            if matches!(inner.kind, TypeKind::Name(_) | TypeKind::Applied(_)) {
+                // The checker finds a name at the start of its span: `(Shape)` keeps `Shape`'s.
+                inner_bare = Some(inner.bare);
+                (inner.kind, inner.span)
+            } else {
+                (inner.kind, start.to(close.span))
+            }
         } else if let Some(token) = self.eat(&TokenKind::SelfType) {
             (TypeKind::SelfType, token.span)
         } else if self.at_any() {
@@ -696,7 +703,7 @@ impl<'a> Parser<'a> {
             };
         }
         // Each `?` is one layer and one level of depth; `??` is one token of two.
-        let bare = span;
+        let bare = inner_bare.unwrap_or(span);
         loop {
             let layers = match self.peek().kind {
                 TokenKind::Question => 1,

@@ -2124,6 +2124,8 @@ pub(crate) enum NotAny {
     Generic { method: String },
     /// The interface `owner` has the associated type `assoc`.
     Assoc { owner: String, assoc: String },
+    /// The interface inherits `inherited`, written with its arguments, one of which names `Self`.
+    InheritsSelf { inherited: String },
 }
 
 /// How `any` is written wrongly (`AnyForm`).
@@ -3152,6 +3154,9 @@ impl From<DiagnosticKind> for Diagnostic {
                     }
                     (NotAny::Assoc { assoc, .. }, Some(inherits)) => {
                         format!("{inherits}, which has an associated type, `{assoc}`")
+                    }
+                    (NotAny::InheritsSelf { inherited }, _) => {
+                        format!("it inherits `{inherited}`, whose arguments name `Self`")
                     }
                 };
                 Diagnostic::coded(

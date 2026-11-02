@@ -432,7 +432,7 @@ These came out of the milestone 2 design and are now part of its spec:
 
 ### What panics
 
-After milestone 7, these are all the ways a Sisu program panics, each with
+After milestone 8, these are all the ways a Sisu program panics, each with
 how to avoid it. Each milestone keeps the table current.
 
 | Operation | Panics when | Without the panic |
