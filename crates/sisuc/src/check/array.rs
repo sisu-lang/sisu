@@ -5,7 +5,7 @@ use super::expr::{fits, literal_type, no_member, path, typed};
 use super::generic::{Rank, mark};
 use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, payload, type_of};
 use crate::ast;
-use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Literal, UnwrapHelp};
+use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Expected, Literal, UnwrapHelp};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
 
@@ -66,7 +66,7 @@ impl Checker<'_> {
                 _ if quiet => return Err(Poisoned::error()),
                 Some(ty) => (
                     DiagnosticKind::Mismatch {
-                        want: vec![self.type_name(ty)],
+                        want: Expected::Types(vec![self.type_name(ty)]),
                         got: "[]".to_string(),
                         at: span,
                         source: self.expected_from(span),
@@ -87,7 +87,11 @@ impl Checker<'_> {
                 ),
             };
             self.report(d);
-            return Err(Poisoned { ty: None, mismatch });
+            return Err(Poisoned {
+                ty: None,
+                mismatch,
+                found: None,
+            });
         }
         self.ranked(|c| c.joined(span, elements, quiet))
     }
@@ -417,6 +421,7 @@ impl Checker<'_> {
             _ => Err(Poisoned {
                 ty: (!mismatched).then_some(ty),
                 mismatch: mismatched,
+                found: None,
             }),
         }
     }

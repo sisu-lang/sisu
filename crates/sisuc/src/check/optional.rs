@@ -92,9 +92,9 @@ impl Checker<'_> {
                     bounds: &[],
                 };
                 let written = (site.written, site.angles);
-                let Some((args, list, Some(found))) =
-                    self.generic_call(span, &sig, written, args, site.expected)
-                else {
+                let (args, list, found) =
+                    self.generic_call(span, &sig, written, args, site.expected)?;
+                let Some(found) = found else {
                     return Err(Poisoned::error());
                 };
                 if let Some(t) = open
@@ -142,9 +142,9 @@ impl Checker<'_> {
                     bounds: &[],
                 };
                 let written = (site.written, site.angles);
-                let Some((_, list, Some(found))) =
-                    self.generic_call(span, &sig, written, &[], site.expected)
-                else {
+                let (_, list, found) =
+                    self.generic_call(span, &sig, written, &[], site.expected)?;
+                let Some(found) = found else {
                     return Err(Poisoned::error());
                 };
                 if self.use_checks(&t.checks, list, span) != Some(true) {

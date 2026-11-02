@@ -1,0 +1,18 @@
+class Two<A, B> {
+    a: A
+    b: B
+}
+
+fn made() -> Two<i64, bool> {
+    panic("no")
+}
+
+fn main() {
+    let x: i64 = 1
+    let b = true
+    let u: u8 = 1
+    let s = "a"
+    print(x == if b { 1 } else { made() })
+    print(u == if b { x } else { 1 })
+    print(s == if b { "a" } else { 1 })
+}

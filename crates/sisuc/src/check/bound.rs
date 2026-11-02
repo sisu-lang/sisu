@@ -79,11 +79,8 @@ impl Checker<'_> {
             ret,
             bounds: &bounds,
         };
-        let Some((checked, list, ret)) =
-            self.generic_call(span, &sig, (site.written, site.angles), args, site.expected)
-        else {
-            return Err(Poisoned::error());
-        };
+        let (checked, list, ret) =
+            self.generic_call(span, &sig, (site.written, site.angles), args, site.expected)?;
         let (iargs, types) = list.get().split_at(owner.len());
         let (iargs, types) = (TypeArgs::intern(iargs), TypeArgs::intern(types));
         let failed = labeled || checked.iter().any(mismatched);

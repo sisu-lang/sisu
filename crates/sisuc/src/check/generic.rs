@@ -14,16 +14,16 @@ use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
 use super::stmt::BlockSoFar;
 use super::{
-    Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, UNKNOWN,
+    Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Misfit, Poisoned, UNKNOWN,
     as_optional, built_in_type, optional_of, own_args, payload, type_of,
 };
 use crate::ast::{self, StmtKind};
-use crate::diagnostic::{ArgumentsForm, Diagnostic, MainForm, Unwrap};
+use crate::diagnostic::{ArgumentsForm, Diagnostic, Expected, MainForm, Unwrap};
 use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
-use crate::types::{HOLE_INDEX, REJECTED_INDEX};
+use crate::types::{HOLE_INDEX, Head, REJECTED_INDEX};
 
 /// Whether `ty` is `want`, where a hole of `want` meets any part of `ty`.
 fn meets(ty: Type, want: Type) -> bool {
@@ -89,6 +89,32 @@ fn mark_params(ty: Type, named: &mut [bool]) {
                 mark_params(arg, named);
             }
         }
+        _ => unreachable!("only a kind with a child can name a parameter"),
+    }
+}
+
+/// `mark_params` for types that share children: `seen` holds each type already visited, so a type
+/// is visited once, whatever the number of paths to it. It can be shared by several calls.
+fn mark_distinct(ty: Type, seen: &mut FxHashSet<Type>, named: &mut [bool]) {
+    #[cfg(test)]
+    DISTINCT.set(DISTINCT.get() + 1);
+    if !ty.has_param() || !seen.insert(ty) {
+        return;
+    }
+    match ty.kind() {
+        TypeKind::Param(_, j) => named[j as usize] = true,
+        TypeKind::Array(inner) | TypeKind::Optional(inner) => mark_distinct(inner, seen, named),
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
+            for &arg in args.get() {
+                mark_distinct(arg, seen, named);
+            }
+        }
+        TypeKind::Assoc(base, _, args, _) => {
+            for child in iter::once(base).chain(args.get().iter().copied()) {
+                mark_distinct(child, seen, named);
+            }
+        }
+        // As in `mark_params`: `has_param` is false for every other kind.
         _ => unreachable!("only a kind with a child can name a parameter"),
     }
 }
@@ -710,12 +736,12 @@ fn holds_param(ty: Type, param: Type) -> bool {
 
 /// Whether `ty` names a type parameter that `marked` marks by its place, other than under an
 /// associated type (see `names_outside_assoc`), and under an optional only if `optionals`.
-fn names_marked(ty: Type, marked: &[bool], optionals: bool) -> bool {
+fn names_marked(ty: Type, marked: impl Fn(usize) -> bool + Copy, optionals: bool) -> bool {
     if !ty.has_param() {
         return false;
     }
     match ty.kind() {
-        TypeKind::Param(_, j) => marked[j as usize],
+        TypeKind::Param(_, j) => marked(j as usize),
         TypeKind::Array(inner) => names_marked(inner, marked, optionals),
         TypeKind::Optional(inner) => optionals && names_marked(inner, marked, optionals),
         TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
@@ -732,9 +758,9 @@ fn carried_places(params: impl Iterator<Item = Option<Type>>, marked: &[bool]) -
     let mut places = Places::default();
     for (i, param) in params.take(u64::BITS as usize).enumerate() {
         let Some(param) = param else { continue };
-        if names_marked(param, marked, true) {
+        if names_marked(param, |j| marked[j], true) {
             places.carried |= 1 << i;
-            if names_marked(param, marked, false) {
+            if names_marked(param, |j| marked[j], false) {
                 places.plain |= 1 << i;
             }
         }
@@ -1010,6 +1036,31 @@ impl Bindings {
         self.found[i] = Some(*REJECTED);
     }
 
+    /// Rejects each parameter that one of `types`, a callee's, names and that is unbound, as
+    /// `reject` does for a bound parameter. A bound one stays. It gives whether it rejected one.
+    /// The work is one visit for each distinct type in `types`. A type can share its children,
+    /// so a walk of each path would take exponential time.
+    fn reject_unbound(&mut self, types: impl IntoIterator<Item = Type>) -> bool {
+        let mut types = types.into_iter().peekable();
+        // Most calls have no failed argument: they allocate nothing.
+        if types.peek().is_none() {
+            return false;
+        }
+        let mut named = vec![false; self.found.len()];
+        let mut seen = FxHashSet::default();
+        for ty in types {
+            mark_distinct(ty, &mut seen, &mut named);
+        }
+        let mut any = false;
+        for (found, named) in iter::zip(&mut self.found, named) {
+            if named && found.is_none() {
+                *found = Some(*REJECTED);
+                any = true;
+            }
+        }
+        any
+    }
+
     /// The first parameter that `ty`, a callee's, names and that is unbound or rejected, which
     /// `known` has no type for. `None` when `ty` names none.
     fn unknown_param(&self, ty: Type) -> Option<usize> {
@@ -1167,6 +1218,10 @@ thread_local! {
     /// How many types the walk for the type parameters that types name has visited on this
     /// thread.
     pub(super) static MARKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many types the walk of `mark_distinct` has visited on this thread.
+    pub(super) static DISTINCT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many parameter origins `Origins::get` has read on this thread.
+    pub(super) static ORIGINS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many entries of the substitution lists of early bound checks have been written on this
     /// thread.
     pub(super) static LISTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -1237,6 +1292,8 @@ pub(super) struct ContextHint {
 
 /// A generic call while its arguments bind its callee's parameters.
 struct Inference<'s> {
+    /// The call's span.
+    at: Span,
     bindings: Bindings,
     /// Each argument once checked, in source order.
     slots: Vec<Option<Checked>>,
@@ -1252,13 +1309,53 @@ struct Inference<'s> {
     /// that parameter (see `Bindings::first_unbound_not_rejected`).
     rejected: bool,
     /// Where each parameter was bound: the argument, or the type argument written for it.
-    origin: Vec<Option<Span>>,
+    origin: Origins,
     /// The bounds that the call checks as soon as a parameter is bound; none when the callee has
     /// no bound and no parameter type writes an associated type.
     early: Option<Early<'s>>,
     /// The parameters bound since `sweep_waiting` took the list last, which wake the arguments
     /// that wait for them.
     bound: Vec<usize>,
+}
+
+mod origins {
+    use crate::source::Span;
+
+    /// Where each parameter of a call was bound (see `Inference::origin`). The list is private,
+    /// so each read goes through `get`, which a test counts.
+    pub(super) struct Origins(Vec<Option<Span>>);
+
+    impl Origins {
+        /// No place yet for each of `count` parameters.
+        pub(super) fn new(count: usize) -> Self {
+            Self(vec![None; count])
+        }
+
+        /// Where parameter `i` was bound. Panics when `i` is not a parameter of the call.
+        pub(super) fn get(&self, i: usize) -> Option<Span> {
+            #[cfg(test)]
+            super::ORIGINS.set(super::ORIGINS.get() + 1);
+            self.0[i]
+        }
+
+        /// Records that parameter `i` was bound at `at`.
+        pub(super) fn set(&mut self, i: usize, at: Option<Span>) {
+            self.0[i] = at;
+        }
+
+        /// Records that parameter `i` was bound at `at`, unless it has a place already.
+        pub(super) fn set_first(&mut self, i: usize, at: Span) {
+            self.0[i].get_or_insert(at);
+        }
+    }
+}
+
+use origins::Origins;
+
+/// Whether `pattern` names a parameter that the context of `call` bound (see `report_fresh`): a
+/// hint or a type the user wrote.
+fn bound_by_context(call: &Inference<'_>, pattern: Type) -> bool {
+    names_marked(pattern, |j| call.origin.get(j) == Some(call.at), true)
 }
 
 /// `found`, a parameter's binding, as a bound sees it: `UNKNOWN` while it is unbound or rejected.
@@ -1317,6 +1414,7 @@ pub(super) fn mark((checked, mismatched): (Checked, bool)) -> Checked {
         Err(Poisoned {
             ty: None,
             mismatch: true,
+            found: None,
         })
     } else {
         checked
@@ -1543,15 +1641,16 @@ impl Checker<'_> {
     ///    optional `expected` whole, it meets its payload. When it meets neither with the help
     ///    of pass 1, but does meet one alone, each argument of pass 1 that contradicts it is
     ///    reported at the argument.
-    ///    When `expected` holds a hole (see `call_context`) that the return type cannot meet,
-    ///    and a parameter is left unbound, the call reports a mismatch at itself in place of
-    ///    E0050.
+    ///    When the return type cannot meet `expected` and a parameter is left unbound, the
+    ///    mismatch is the fault, not E0050 (see `report_unbound`).
     /// 3. The arguments of rank `Literal`, as in pass 1.
     /// 4. The arguments of rank `Waits`, against their parameter's type.
     ///
     /// An argument of type `unit` or `never` binds only what none of the others binds. Returns
-    /// the arguments in source order, the type arguments and the call's type. Returns `None`,
+    /// the arguments in source order, the type arguments and the call's type. Returns `Error`,
     /// reported, when a parameter is left unbound or bound to a type that no parameter takes.
+    /// A result that cannot meet a known context is reported by the code that uses the value
+    /// (see `report_unbound`).
     /// A parameter that is left unbound, and whose context holds a rejected part only, is not
     /// reported: the failed bound of the outer call is the fault (see `Bindings::hint`).
     /// Then an argument that needs context and has none is checked against `UNKNOWN`, for its
@@ -1564,7 +1663,7 @@ impl Checker<'_> {
         written: (&[ast::TypeExpr], Span),
         args: &[ast::Arg],
         expected: Option<Type>,
-    ) -> Option<(Vec<Checked>, TypeArgs, Option<Type>)> {
+    ) -> Result<(Vec<Checked>, TypeArgs, Option<Type>), Poisoned> {
         // The context of the quiet value failed, as an `UNKNOWN` one did.
         let expected = expected.or_else(|| self.quiet(span, expected).then_some(UNKNOWN));
         self.ranked(|c| c.infer_call(span, sig, written, args, expected))
@@ -1582,15 +1681,16 @@ impl Checker<'_> {
         (written, angles): (&[ast::TypeExpr], Span),
         args: &[ast::Arg],
         expected: Option<Type>,
-    ) -> Option<(Vec<Checked>, TypeArgs, Option<Type>)> {
+    ) -> Result<(Vec<Checked>, TypeArgs, Option<Type>), Poisoned> {
         let owned = sig.owner.len();
         let mut call = Inference {
+            at: span,
             bindings: Bindings::new(sig.declared.len(), sig.owner),
             slots: args.iter().map(|_| None).collect(),
             last: Vec::new(),
             failed: false,
             rejected: false,
-            origin: vec![None; sig.declared.len()],
+            origin: Origins::new(sig.declared.len()),
             early: Early::of(sig),
             bound: Vec::new(),
         };
@@ -1598,12 +1698,12 @@ impl Checker<'_> {
             let Some(list) = self.type_args(sig.name, &sig.declared[owned..], written, angles)
             else {
                 self.stray(args);
-                return None;
+                return Err(Poisoned::error());
             };
             // `type_args` rejects each type that `report_fresh` would.
             for (i, &ty) in list.get().iter().enumerate() {
                 call.bindings.found[owned + i] = Some(ty);
-                call.origin[owned + i] = written.get(i).map(|ty| ty.span);
+                call.origin.set(owned + i, written.get(i).map(|ty| ty.span));
             }
             let bound: Vec<usize> = (owned..sig.declared.len()).collect();
             self.check_early(&mut call, &bound, span);
@@ -1634,7 +1734,7 @@ impl Checker<'_> {
             let whole = through || ranks.contains(&2) || layers > 0 && !wider_than(want, layers);
             let met = (whole && call.bindings.unify(ret, want))
                 || call.bindings.constrain(ret, payload(want));
-            misfit = self.misfit(span, ret, want, met).then_some(ret);
+            misfit = self.misfit(span, ret, want, met).then_some((ret, want));
             if !met && written.is_empty() && !call.failed {
                 self.blame_arguments(&mut call, sig, args, ret, want, span);
             }
@@ -1672,6 +1772,7 @@ impl Checker<'_> {
         // type names an associated type that has no choice. The conformance reported that, and
         // the call fails after it.
         let unchecked = call.slots.iter().any(Option::is_none);
+        let mut found = None;
         let list = match call.bindings.finish() {
             Ok(list) if !call.failed && !call.rejected && !broken && !unchecked => Some(list),
             Ok(_) => None,
@@ -1685,8 +1786,9 @@ impl Checker<'_> {
                     // A parameter that meets a rejected part only is rejected as well: the
                     // failed bound of the outer call is its only fault.
                     if let Some(i) = call.bindings.first_unbound_not_rejected(first) {
-                        let found = misfit.map(|ret| self.printed(&call.bindings, ret));
-                        self.report_unbound(span, sig, i, found);
+                        let misfit =
+                            misfit.map(|(ret, want)| (self.printed(&call.bindings, ret), want));
+                        found = self.report_unbound(span, sig, i, misfit);
                     }
                 }
                 None
@@ -1700,7 +1802,10 @@ impl Checker<'_> {
                     drop(self.expr(&arg.value, Some(UNKNOWN)));
                 }
             }
-            return None;
+            return Err(Poisoned {
+                found,
+                ..Poisoned::error()
+            });
         };
         self.instantiates = true;
         let checked = call
@@ -1711,7 +1816,7 @@ impl Checker<'_> {
             })
             .collect();
         let ret = sig.ret.and_then(|ret| self.subst(ret, list.get()));
-        Some((checked, list, ret))
+        Ok((checked, list, ret))
     }
 
     /// The rank of each argument of the call: 2 for `Rank::Waits`, 1 for `Rank::Literal`, else 0
@@ -1838,7 +1943,7 @@ impl Checker<'_> {
                 LISTED.set(LISTED.get() + bindings.found.len());
                 bindings.found.iter().map(|&t| listed(t)).collect()
             });
-            if !self.check_bound(origin[i].unwrap_or(at), ty, bound, with) {
+            if !self.check_bound(origin.get(i).unwrap_or(at), ty, bound, with) {
                 *failed = true;
                 rejected.push(i);
             }
@@ -1851,19 +1956,22 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether the call at `span` is a safe call that is checked against a context.
+    /// Whether the call at `span` is a safe call, `receiver?.method(...)`, whose result is
+    /// optional (see `Checker::member`).
     fn is_safe_call(&self, span: Span) -> bool {
         (self.body.context_hint).is_some_and(|hint| hint.at == span && hint.safe)
+            || self.body.safe_call == Some(span)
     }
 
-    /// Whether the call at `span` is a misfit: `want`, its context, holds a hole, and the result
-    /// cannot meet it. `met` says if the return type `ret` met `want`. The result of a safe
+    /// Whether the call at `span` is a misfit: the result cannot meet `want`, its context. `met`
+    /// says if the return type `ret` met `want`. When `want` holds a hole, the result of a safe
     /// call is optional, as is a result whose return type is, so a context that is not optional
-    /// cannot meet it, whatever the return type meets.
+    /// cannot meet it, whatever the return type meets. A misfit that leaves a parameter unbound
+    /// gives its found type to the code that uses the value (see `report_unbound`).
     fn misfit(&self, span: Span, ret: Type, want: Type, met: bool) -> bool {
         let safe = self.is_safe_call(span);
         let optional = |ty: Type| matches!(ty.kind(), TypeKind::Optional(_));
-        want.holds_hole() && (!met || ((safe || optional(ret)) && !optional(want)))
+        !met || (want.holds_hole() && (safe || optional(ret)) && !optional(want))
     }
 
     /// Reports each argument already checked whose type is not what `want`, the call's context,
@@ -1930,6 +2038,7 @@ impl Checker<'_> {
             call.slots[i] = Some(Err(Poisoned {
                 ty: None,
                 mismatch: true,
+                found: None,
             }));
             blamed = true;
         }
@@ -1987,6 +2096,17 @@ impl Checker<'_> {
     ) {
         if !ranks.contains(&2) {
             return;
+        }
+        // Passes 1 to 3 are done. A failed argument binds nothing, so a parameter that only it
+        // could bind stays unbound. A call that waits would add an E0050 to the fault the
+        // argument reported. Such a parameter is rejected, as a failed bound rejects its own.
+        let failed =
+            iter::zip(&call.slots, sig.params).filter_map(|(slot, param)| match (slot, param) {
+                (Some(checked), Some(param)) if type_of(checked).is_none() => Some(*param),
+                _ => None,
+            });
+        if call.bindings.reject_unbound(failed) {
+            call.rejected = true;
         }
         let unchecked = |call: &Inference<'_>, i: usize| ranks[i] == 2 && call.slots[i].is_none();
         call.bound.clear();
@@ -2297,10 +2417,18 @@ impl Checker<'_> {
         pattern: Type,
         context: Option<Type>,
     ) -> Checked {
-        match self.known_in(call, pattern) {
-            Some(want) => mark(self.operand(e, Some(want))),
-            None => self.infer_unbound(call, e, pattern, context),
+        let Some(want) = self.known_in(call, pattern) else {
+            return self.infer_unbound(call, e, pattern, context);
+        };
+        let checked = self.value(e, Some(want));
+        // The call's own context bound this parameter, and the call does not hand a misfit up
+        // (see `Misfit`). That context may be a hint, such as the other side of `==`, or a type
+        // the user wrote, as in `let r: Result<i64, string> = Ok(mk2())`. Either way, a misfit
+        // against it keeps its E0050, and the argument is not reported against it.
+        if self.misfit_type(&checked).is_some() && bound_by_context(call, pattern) {
+            return checked;
         }
+        mark(self.settled(e, checked, Some(want)))
     }
 
     /// `infer_value` for a `pattern` that names an unbound parameter, with no walk of
@@ -2337,8 +2465,21 @@ impl Checker<'_> {
         match type_of(&checked) {
             Some(Type::UNIT | Type::NEVER) | None => checked,
             Some(ty) if !self.bind_param(call, pattern, ty, e.span) => {
-                let want = self.printed(&call.bindings, pattern);
-                let d = self.mismatch(e.span, Some(e), want, ty);
+                let d = if let Some(want) = self.clashing_shape(call, pattern, ty) {
+                    DiagnosticKind::Mismatch {
+                        want,
+                        got: self.type_name(ty),
+                        at: e.span,
+                        source: None,
+                        fix: None,
+                        conversion: false,
+                        layers: false,
+                    }
+                    .into()
+                } else {
+                    let want = self.printed(&call.bindings, pattern);
+                    self.mismatch(e.span, Some(e), want, ty)
+                };
                 self.diagnostics.push(d);
                 mark((checked, true))
             }
@@ -2351,6 +2492,25 @@ impl Checker<'_> {
                 mark(self.against(e, checked, want, None))
             }
         }
+    }
+
+    /// The outer shape of `pattern`, when an argument of type `ty` clashes with it and
+    /// `pattern` still names an unbound or rejected parameter of the callee: an array, or the
+    /// class or enum. The name of the callee's parameter would mislead there, as the arguments
+    /// that come later may bind it. Another clash, or a shape that `ty` has,
+    /// gives `None`, and the report writes the type. One walk of `pattern`, on the error path.
+    fn clashing_shape(&self, call: &Inference<'_>, pattern: Type, ty: Type) -> Option<Expected> {
+        let shape = match (pattern.kind(), ty.kind()) {
+            (TypeKind::Array(_), TypeKind::Array(_)) => return None,
+            (TypeKind::Array(_), _) => Expected::Array,
+            (TypeKind::Class(a, _), TypeKind::Class(b, _)) if a == b => return None,
+            (TypeKind::Enum(a, _), TypeKind::Enum(b, _)) if a == b => return None,
+            (TypeKind::Class(id, _), _) => Expected::Named(self.head(Head::Class(id)).to_string()),
+            (TypeKind::Enum(id, _), _) => Expected::Named(self.head(Head::Enum(id)).to_string()),
+            _ => return None,
+        };
+        // The walk comes last: only a clash of shapes pays for it.
+        call.bindings.partial(pattern).holds_hole().then_some(shape)
     }
 
     /// The elements of `e` and the element type of `pattern`, when `e` is a non-empty array
@@ -2514,7 +2674,7 @@ impl Checker<'_> {
         for &i in &call.bindings.fresh {
             #[cfg(test)]
             VISITS.set(VISITS.get() + 1);
-            call.origin[i].get_or_insert(at);
+            call.origin.set_first(i, at);
             call.bound.push(i);
             let ty = call.bindings.found[i].expect("a fresh parameter should be bound");
             // The context rejected it, and the outer call reported why.
@@ -2536,32 +2696,61 @@ impl Checker<'_> {
         }
     }
 
-    /// Reports the call at `span` that leaves parameter `param` unbound, the first one that is not
-    /// rejected-only (see `Bindings::first_unbound_not_rejected`): E0050, unless its result
-    /// `found` cannot meet the context its caller gave (see `infer_waiting`). Then the mismatch is
-    /// the fault, and it reports the mismatch instead. A call that returns `unit` or `never` never
-    /// gets here: it names no type parameter in its return type, and no type parameter can be
-    /// `unit` (E0138), so it does not wait for a context.
+    /// Reports the call at `span` that leaves a parameter unbound. The parameter is the first
+    /// one that is not rejected-only (see `Bindings::first_unbound_not_rejected`). The report is
+    /// E0050, unless the result of the call cannot meet its context. `misfit` holds that result
+    /// `found` and the context the call did not meet. The mismatch is then the fault.
+    ///
+    /// The outer call gave the context when a `ContextHint` stands at `span` (see
+    /// `infer_waiting`). Then the mismatch is reported here, against the parameter type as that
+    /// call prints it. A context that holds a hole says nothing to the user, so E0050 stays.
+    /// Else the code that uses the value reports the mismatch, as for a callee that is not
+    /// generic. So the call gives its `Misfit`, and keeps its E0050 in `Body::misfits` for when
+    /// no code reports it.
+    ///
+    /// A call that returns `unit` or `never` never gets here. It names no type parameter in its
+    /// return type, and no type parameter can be `unit` (E0138), so it waits for no context.
     fn report_unbound(
         &mut self,
         span: Span,
         sig: &GenericSig<'_>,
         param: usize,
-        found: Option<Type>,
-    ) {
+        misfit: Option<(Type, Type)>,
+    ) -> Option<Misfit> {
         let hint = self.body.context_hint.filter(|hint| hint.at == span);
-        if let Some((found, hint)) = found.zip(hint) {
-            // The result of a safe call is optional (see `Checker::member`).
-            let found = if hint.safe { as_optional(found) } else { found };
+        let Some((found, context)) = misfit else {
+            self.cannot_infer(sig, param);
+            return None;
+        };
+        // The result of a safe call is optional (see `Checker::member`).
+        let found = if self.is_safe_call(span) {
+            as_optional(found)
+        } else {
+            found
+        };
+        if let Some(hint) = hint {
             let d = self.mismatch(span, None, hint.want, found);
             self.diagnostics.push(d);
-        } else {
-            self.cannot_infer(sig, param);
+            return None;
         }
+        if context.holds_hole() {
+            self.cannot_infer(sig, param);
+            return None;
+        }
+        let entry = self.body.misfits.len();
+        let d = Self::cannot_infer_kind(sig, param).into();
+        self.body.misfits.push(Some(d));
+        Some(Misfit { ty: found, entry })
     }
 
     /// Reports the call of `sig` that binds nothing to its parameter at `param`.
     fn cannot_infer(&mut self, sig: &GenericSig<'_>, param: usize) {
+        let kind = Self::cannot_infer_kind(sig, param);
+        self.report(kind);
+    }
+
+    /// The E0050 of `cannot_infer`.
+    fn cannot_infer_kind(sig: &GenericSig<'_>, param: usize) -> DiagnosticKind {
         let name = sig.name;
         // `Some(...)`, or `Option.Some(...)`. A user variant `Some`, which E0026 reports, is
         // neither.
@@ -2574,18 +2763,16 @@ impl Checker<'_> {
                 ),
                 None => (name.name.to_string(), name.span),
             };
-            self.report(DiagnosticKind::CannotInferSome { callee, at });
-            return;
+            return DiagnosticKind::CannotInferSome { callee, at };
         }
         // `Ok(...)` and `Err(...)` write the variant as the callee and the enum not at all.
         // `qualifier` (enums.rs) tests for a bare variant in the same way; change both.
         if let Some(variant) = sig.variant.filter(|v| v.span == name.span) {
-            self.report(DiagnosticKind::CannotInferResult {
+            return DiagnosticKind::CannotInferResult {
                 param: sig.declared[param].to_string(),
                 variant: variant.name.to_string(),
                 at: name.span,
-            });
-            return;
+            };
         }
         let dots = vec!["..."; sig.declared.len() - sig.owner.len()].join(", ");
         let (callee, example, at) = match sig.variant {
@@ -2603,13 +2790,13 @@ impl Checker<'_> {
                 name.span,
             ),
         };
-        self.report(DiagnosticKind::CannotInferParam {
+        DiagnosticKind::CannotInferParam {
             param: sig.declared[param].to_string(),
             callee,
             example,
             at,
             in_result: sig.ret.is_some_and(|ret| names_outside_assoc(ret, param)),
-        });
+        }
     }
 
     /// How much `e` needs the context of its call, and whether it can make an optional by itself
@@ -3304,13 +3491,14 @@ impl Checker<'_> {
     /// generic class, or builds `Some`, `Ok` or `Err`, or calls `dbg`.
     fn generic_callee(&mut self, name: Symbol, args: &[ast::Arg]) -> CallShape {
         // `dbg<T>(x: T) -> T`: its type is its argument's, so it waits when that argument waits;
-        // its parameter names `T`, so it is not `open`.
+        // its parameter names `T`, so it is not `open`. One argument is the shape, with or
+        // without a label: the label is E0055, and the argument still waits.
         // It comes first, as `call` runs the prelude's call before it looks up a user's item: a
         // user's `class dbg` or `fn dbg` is rejected, and never the callee.
         if name.as_str() == "dbg" {
             return CallShape {
                 generic: true,
-                shaped: matches!(args, [arg] if arg.label.is_none()),
+                shaped: args.len() == 1,
                 makes: Makes::Through {
                     bare: 1,
                     inside: 0,

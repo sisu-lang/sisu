@@ -1,0 +1,20 @@
+class Two<A, B> {
+    a: A
+    b: B
+}
+
+fn mk<E>() -> Result<i64, E> {
+    Ok(1)
+}
+
+fn mkp<X>() -> Two<X, bool>? {
+    None
+}
+
+fn g<T>(_c: T?, _d: Result<T, string>) -> i64 {
+    0
+}
+
+fn main() {
+    print(g(mkp(), mk()))
+}
