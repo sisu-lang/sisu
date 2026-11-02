@@ -1294,6 +1294,9 @@ pub(super) struct ContextHint {
 struct Inference<'s> {
     /// The call's span.
     at: Span,
+    /// Whether the call is the hinted value when it starts (see `Body::hint_at`). The arguments
+    /// change the hint, so this is set once.
+    hinted: bool,
     bindings: Bindings,
     /// Each argument once checked, in source order.
     slots: Vec<Option<Checked>>,
@@ -1685,6 +1688,7 @@ impl Checker<'_> {
         let owned = sig.owner.len();
         let mut call = Inference {
             at: span,
+            hinted: self.hinted(span, None).1.is_some(),
             bindings: Bindings::new(sig.declared.len(), sig.owner),
             slots: args.iter().map(|_| None).collect(),
             last: Vec::new(),
@@ -2420,12 +2424,21 @@ impl Checker<'_> {
         let Some(want) = self.known_in(call, pattern) else {
             return self.infer_unbound(call, e, pattern, context);
         };
+        // A hinted call hands its hint on to an argument that its context bound, as a hinted
+        // `Some` does (see `Checker::some`): the inner call is hinted too.
+        let hinted = call.hinted && bound_by_context(call, pattern);
+        let outer_hint = hinted.then(|| self.pass_hint(Some(e.span), Some(want)));
         let checked = self.value(e, Some(want));
-        // The call's own context bound this parameter, and the call does not hand a misfit up
-        // (see `Misfit`). That context may be a hint, such as the other side of `==`, or a type
-        // the user wrote, as in `let r: Result<i64, string> = Ok(mk2())`. Either way, a misfit
-        // against it keeps its E0050, and the argument is not reported against it.
-        if self.misfit_type(&checked).is_some() && bound_by_context(call, pattern) {
+        if let Some(outer_hint) = outer_hint {
+            self.body.hint_at = outer_hint;
+        }
+        // A hint is the type of a sibling (the other side of `==`, the left side of `??`,
+        // another branch), not a type that the user wrote. So a misfit against it keeps its
+        // E0050 at the call, and the call does not hand it up (see `Misfit`): a report against
+        // a sibling would be false. A written context, and a sibling's type that comes as an
+        // expected type (arithmetic, ordering, later array elements), reports E0032 at the
+        // argument.
+        if hinted && self.misfit_type(&checked).is_some() {
             return checked;
         }
         mark(self.settled(e, checked, Some(want)))
