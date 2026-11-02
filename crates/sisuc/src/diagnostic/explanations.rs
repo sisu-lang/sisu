@@ -8,22 +8,9 @@ use crate::front_end::{decode, front_end};
 use crate::lexer::lex;
 use crate::parser::{parse, parse_ok};
 
-/// `f` on a thread with a `STACK_SIZE` stack: a fixture that nests to the limit overflows the
-/// test's own, as `main` runs `cli` on a larger one.
-fn on_deep_stack<R: Send>(f: impl FnOnce() -> R + Send) -> R {
-    std::thread::scope(|scope| {
-        std::thread::Builder::new()
-            .stack_size(crate::STACK_SIZE)
-            .spawn_scoped(scope, f)
-            .expect("the thread should start")
-            .join()
-            .expect("the work on the deep stack should not panic")
-    })
-}
-
-/// The diagnostics of `source`, found on the deep stack.
+/// The diagnostics of `source`, found on the stack of the compiler.
 fn diagnostics(source: &str) -> Vec<Diagnostic> {
-    on_deep_stack(|| front_end(source).1)
+    crate::on_compiler_stack(|| front_end(source).1)
 }
 
 /// `source` with `edits` applied. An edit equal to one already taken is dropped, as the same fix
@@ -310,7 +297,7 @@ fn fixtures() -> Vec<(PathBuf, Code)> {
 
 /// The lexer and parser diagnostics of `source`.
 fn syntax_codes(source: &str) -> Vec<Code> {
-    on_deep_stack(|| {
+    crate::on_compiler_stack(|| {
         let diagnostics = match lex(source) {
             Ok(lexed) => parse(lexed, false).diagnostics,
             Err(d) => vec![d],
