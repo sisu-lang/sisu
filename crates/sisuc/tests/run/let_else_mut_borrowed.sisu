@@ -3,13 +3,16 @@
 //   then a change, then `n`, for `string?` and for `[i64]?`
 // AND a `main` that sets `a` to `Some(..)`, prints `f(a)` and then prints `a ?? <empty>`
 // WHEN the program runs under Valgrind
-// THEN it prints the changed value, then the original, and Valgrind reports no leak and no
-//   error: an assignment does not release the caller's value, and a change does not write into
-//   the caller's array
+// THEN it prints `hi!?` then `hi`, and `[1, 2, 3]` then `[1]`, and Valgrind reports no leak and
+//   no error: an assignment does not release the caller's value, and a change does not write
+//   into the caller's array
 //
 // Each function calls itself once before the let-else, and appends after the call, so the call
-// is not a tail call. `-O2` then keeps the call from `main`, and the caller's value crosses a
-// real call into a borrowed parameter.
+// is not a tail call. The `?` and the `3` come from that call boundary: they are the appends
+// that follow the call. `-O2` then keeps the call from `main`. `main` takes the string and the
+// depth from its one argument, so that `-O2` cannot fold them into `grow`: the caller's value
+// crosses a real call into a borrowed parameter.
+// args: hi
 // o2-calls: main grow 1
 // o2-calls: main pushed 1
 fn grow(o: string?, depth: i64) -> string {
@@ -32,11 +35,12 @@ fn pushed(o: [i64]?, depth: i64) -> [i64] {
     n
 }
 
-fn main() {
-    let a: string? = Some("hi")
-    print(grow(a, 1))   // hi!?
-    print(a ?? "")      // hi
+fn main(args: [string]) {
+    let depth = args.len()
+    let a: string? = Some(args[0])
+    print(grow(a, depth)) // hi!?
+    print(a ?? "")        // hi
     let b: [i64]? = Some([1])
-    print(pushed(b, 1)) // [1, 2, 3]
-    print(b ?? [])      // [1]
+    print(pushed(b, depth)) // [1, 2, 3]
+    print(b ?? [])          // [1]
 }
