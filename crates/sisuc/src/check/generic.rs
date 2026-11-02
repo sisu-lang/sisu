@@ -2432,8 +2432,8 @@ impl Checker<'_> {
         if let Some(outer_hint) = outer_hint {
             self.body.hint_at = outer_hint;
         }
-        // A hint is the type of a sibling, such as the other side of `==`, the left side of
-        // `??`, another branch, or an earlier `break` value. The user did not write it. By rule,
+        // A hint is the type of a sibling. Examples are the other side of `==`, the left side of
+        // `??`, another branch and an earlier `break` value. The user did not write it. By rule,
         // a misfit under a hint keeps its E0050 at the call, and the call does not hand it up
         // (see `Misfit`). A misfit under a written context gives E0032 at the argument. So does
         // a misfit under a sibling's type that comes as an expected type: arithmetic, ordering,
