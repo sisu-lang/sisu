@@ -1,0 +1,12 @@
+// GIVEN a `let v = if a { 1 } else { if b { 2 } }` whose `else { return 0 }` starts the next line
+// WHEN `sisu check` runs on it
+// THEN it reports E0006 at the `else` (6:5) in the words for a `let`: the `if` has its `else`, and the join gives E0173
+fn f(a: bool, b: bool) -> i64 {
+    let v = if a { 1 } else { if b { 2 } }
+    else { return 0 }
+    v
+}
+
+fn main() {
+    print(f(true, true))
+}
