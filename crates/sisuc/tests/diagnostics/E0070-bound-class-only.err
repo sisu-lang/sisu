@@ -1,0 +1,8 @@
+error[E0070]: `same` is a method, not a function
+  --> E0070-bound-class-only.sisu:13:11
+   |
+13 |     print(same(b))
+   |           ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0070
