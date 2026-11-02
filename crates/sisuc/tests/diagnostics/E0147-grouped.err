@@ -1,0 +1,10 @@
+error[E0147]: `Shape` is an interface, not a type
+ --> E0147-grouped.sisu:5:9
+  |
+5 |         Shape
+  |         ^^^^^
+  |
+  = help: use a type parameter: `T: Shape`, or `any Shape` for a value of any conforming type
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0147
