@@ -1,0 +1,5 @@
+type S = Eq
+
+fn main() {
+    print(1)
+}

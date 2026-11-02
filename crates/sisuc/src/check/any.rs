@@ -94,7 +94,8 @@ impl Checker<'_> {
 
     /// Reports that the interface `name`, written as the type `ty` at `at`, is no type. The help
     /// offers `any` when the interface can be `any`, which is known once every interface has its
-    /// requirements: until then the report waits.
+    /// requirements: until then the report waits. In the body of a type
+    /// alias, the help offers `any` only, because an alias takes no bound.
     pub(super) fn interface_as_type(
         &mut self,
         interface: InterfaceId,
@@ -102,8 +103,14 @@ impl Checker<'_> {
         ty: &ast::TypeExpr,
         at: Span,
     ) {
-        let written = self.source.slice(ty.bare.range()).to_string();
-        self.report_as_type(interface, name, written, (at, usize::from(ty.optional)));
+        let written = self.source.type_text(ty.bare).into_owned();
+        let alias = self.body.alias.is_some();
+        self.report_as_type(
+            interface,
+            name,
+            written,
+            (at, usize::from(ty.optional), alias),
+        );
     }
 
     /// `interface_as_type` for the name as written and the `?` after it, which a held report
@@ -113,7 +120,7 @@ impl Checker<'_> {
         interface: InterfaceId,
         name: String,
         written: String,
-        (at, layers): (Span, usize),
+        (at, layers, alias): (Span, usize, bool),
     ) {
         if self.interfaces_resolved {
             let any = self.why_not_any(interface).is_none();
@@ -123,10 +130,11 @@ impl Checker<'_> {
                 at,
                 any,
                 layers,
+                alias,
             });
         } else {
             self.deferred_as_type
-                .push((interface, name, written, (at, layers)));
+                .push((interface, name, written, (at, layers, alias)));
         }
     }
 

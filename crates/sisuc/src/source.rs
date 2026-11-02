@@ -1,5 +1,7 @@
 //! Positions in the source text: byte spans, and lines and columns for people.
 
+use std::borrow::Cow;
+
 /// The longest source in bytes: 1 GiB. A `Span` stores its offsets as `u32`s, and two texts
 /// longer than the source get spans too:
 /// - `front_end::decode`'s shown text, the valid prefix and one U+FFFD: at most
@@ -106,6 +108,53 @@ impl<'a> Source<'a> {
         self.slice(span.range())
     }
 
+    /// The type that `span` covers, as one line for a diagnostic. A span with no line break gives
+    /// its text as written. Else each `//` comment goes, and a run of white space with a line
+    /// break goes too after `<`, `(`, `[` or `.` and before `>`, `)`, `]`, `.`, `?` or `,`, and
+    /// is one space elsewhere. A type holds no string, so a `//` is always a comment.
+    pub(crate) fn type_text(&self, span: Span) -> Cow<'a, str> {
+        let text = self.text(span);
+        if !text.contains('\n') {
+            return Cow::Borrowed(text);
+        }
+        let mut out = String::with_capacity(text.len());
+        let mut at = 0;
+        while at < text.len() {
+            let rest = &text[at..];
+            if !rest.starts_with(char::is_whitespace) && !rest.starts_with("//") {
+                let ch = rest.chars().next().expect("the rest should not be empty");
+                out.push(ch);
+                at += ch.len_utf8();
+                continue;
+            }
+            // A run of white space and comments. A comment ends at its line break.
+            let mut end = at;
+            let mut broken = false;
+            while end < text.len() {
+                let tail = &text[end..];
+                if tail.starts_with("//") {
+                    end += tail.find('\n').unwrap_or(tail.len());
+                    broken = true;
+                } else if let Some(ch) = tail.chars().next().filter(|ch| ch.is_whitespace()) {
+                    broken |= ch == '\n';
+                    end += ch.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            if !broken {
+                out.push_str(&text[at..end]);
+            } else if let Some(next) = text[end..].chars().next()
+                && !out.ends_with(['<', '(', '[', '.'])
+                && !matches!(next, '>' | ')' | ']' | '.' | '?' | ',')
+            {
+                out.push(' ');
+            }
+            at = end;
+        }
+        Cow::Owned(out)
+    }
+
     /// The text between the offsets of `range`. The offsets of another text lie outside this
     /// one: the wrapped subtraction then leaves a range that no text has.
     pub(crate) fn slice(&self, range: std::ops::Range<usize>) -> &'a str {
@@ -176,6 +225,35 @@ pub(crate) fn line_col(source: &str, offset: usize) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn type_text_should_join_the_lines_of_a_type() {
+        let cases = [
+            ("Pair<A, B>", "Pair<A, B>"),
+            ("Pair< A >", "Pair< A >"),
+            ("Box<\n    i64\n>", "Box<i64>"),
+            ("T\n  .Item", "T.Item"),
+            ("T.\n  Item", "T.Item"),
+            ("Pair<A,\n  B>", "Pair<A, B>"),
+            ("Pair<A\n  , B>", "Pair<A, B>"),
+            ("(any\n  Shape)?", "(any Shape)?"),
+            ("any\n  Shape", "any Shape"),
+            ("Shape\n?", "Shape?"),
+            ("T // the base\n  .Item", "T.Item"),
+            ("Pair<A, // first\n  B>", "Pair<A, B>"),
+            ("[\n  i64\n]", "[i64]"),
+        ];
+        for (written, want) in cases {
+            let source = Source::new(written, 0);
+            let got = source.type_text(Span::new(0, written.len()));
+            assert_eq!(got, want, "type {written:?}");
+            assert_eq!(
+                matches!(got, Cow::Borrowed(_)),
+                !written.contains('\n'),
+                "type {written:?} should borrow only with no line break"
+            );
+        }
+    }
 
     #[test]
     fn span_offsets_reach_u32_max() {

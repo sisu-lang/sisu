@@ -1,0 +1,8 @@
+error[E0147]: `Eq` is an interface, not a type
+ --> E0147-alias-not-any.sisu:1:10
+  |
+1 | type S = Eq
+  |          ^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0147

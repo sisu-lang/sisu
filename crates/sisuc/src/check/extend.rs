@@ -300,6 +300,7 @@ impl<'a> Checker<'_> {
                 at: ty.bare,
                 any: false,
                 layers: 0,
+                alias: false,
             });
             return None;
         }

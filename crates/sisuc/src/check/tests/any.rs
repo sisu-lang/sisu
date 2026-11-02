@@ -252,6 +252,24 @@ fn an_interface_should_not_be_a_type() {
     ]);
 }
 
+/// In the body of an alias, E0147 has help only where `any` can name the interface: an alias takes
+/// no bound. The fixtures `E0147-alias`, `E0147-alias-optional` and `E0147-alias-not-any` pin the
+/// texts.
+#[test]
+fn an_interface_in_an_alias_should_have_help_only_where_any_names_it() {
+    for (row, alias, help) in [
+        ("a plain name", "type S = Shape", true),
+        ("a name with `?`", "type S = Shape?", true),
+        ("an interface that cannot be `any`", "type S = Eq", false),
+    ] {
+        let src = format!("{DECLS}{alias}\nfn main() {{}}");
+        let ds = diags(&src);
+        assert_eq!(ds.len(), 1, "row `{row}`: {ds:?}");
+        assert_eq!(ds[0].code(), Code::InterfaceAsType, "row `{row}`");
+        assert_eq!(ds[0].help().is_some(), help, "row `{row}`");
+    }
+}
+
 /// `any` takes the name of an interface, with the arguments of a generic one.
 #[test]
 fn any_should_take_the_name_of_an_interface_and_its_arguments() {

@@ -29,6 +29,7 @@ mod stmt;
 mod string;
 mod unused_names;
 
+use std::borrow::Cow;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -370,6 +371,10 @@ impl LoopFrame {
     }
 }
 
+/// A held report of `Checker::interface_as_type`: the interface, its name, the type as written,
+/// and the place, the number of `?` and whether the name is in an alias body.
+type DeferredAsType = (tir::InterfaceId, String, String, (Span, usize, bool));
+
 /// The program's text and the positions the lexer and parser found in it; never changes.
 #[derive(Clone, Copy)]
 struct Source<'src> {
@@ -391,6 +396,11 @@ impl<'src> Source<'src> {
     /// The text that `span` covers.
     fn text(&self, span: Span) -> &'src str {
         self.holding(span.start()).text(span)
+    }
+
+    /// The type that `span` covers, on one line: see `source::Source::type_text`.
+    fn type_text(&self, span: Span) -> Cow<'src, str> {
+        self.holding(span.start()).type_text(span)
     }
 
     /// The text between the offsets of `range`, which lie in one text.
@@ -506,7 +516,7 @@ struct Checker<'src> {
     wide_reported: FxHashSet<Span>,
     /// The interfaces written where a type belongs before every interface has its requirements:
     /// the report waits to say whether the interface can be `any`.
-    deferred_as_type: Vec<(tir::InterfaceId, String, String, (Span, usize))>,
+    deferred_as_type: Vec<DeferredAsType>,
     /// Why each interface cannot be `any`, `None` when it can (`why_not_any`).
     any_roots: FxHashMap<tir::InterfaceId, Option<any::AnyReason>>,
     /// The same for each interface with its arguments in the walk of one root (`entry_reason`).

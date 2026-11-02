@@ -1142,7 +1142,7 @@ impl Checker<'_> {
         self.body.wide.push(place);
         let bound = self.body.bounds[place][k];
         if self.wide_reported.insert(bound.at) {
-            let text = self.source.text(bound.at);
+            let text = self.source.type_text(bound.at);
             self.report(DiagnosticKind::BoundTooWide {
                 kind: WideKind::Bound,
                 written: format!("{}: {text}", self.body.type_params[place]),
@@ -1158,7 +1158,7 @@ impl Checker<'_> {
     pub(super) fn too_wide_at(&mut self, ty: Type, at: Span) {
         self.report(DiagnosticKind::BoundTooWide {
             kind: WideKind::Conformance,
-            written: format!("{}: {}", self.type_name(ty), self.source.text(at)),
+            written: format!("{}: {}", self.type_name(ty), self.source.type_text(at)),
             limit: BOUND_CLOSURE_LIMIT,
             at,
         });
@@ -1757,8 +1757,8 @@ impl Checker<'_> {
             form: NotConformForm::Bound {
                 bound: (!prelude).then_some(bound.at),
                 implied: implied.map(|base| Implied {
-                    written: self.source.text(bound.at).to_string(),
-                    base: self.source.text(base).to_string(),
+                    written: self.source.type_text(bound.at).into_owned(),
+                    base: self.source.type_text(base).into_owned(),
                 }),
                 label,
                 make,
