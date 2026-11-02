@@ -1420,3 +1420,37 @@ fn counter_var(name: String, ty: Ty, size: u64, loops: usize) -> Var {
         ..Var::new(name, ty, false, size, 0, loops)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Gen, Target};
+
+    /// Two labeled loops are open, so the choice has a pick above 1: a mistake in the index of
+    /// the pick leaves the jump plain, or names the wrong loop.
+    #[test]
+    fn jump_of_should_name_an_open_label_when_asked_to_name_one() {
+        for kind in ["break", "continue"] {
+            let mut named = std::collections::BTreeSet::new();
+            for byte in 0..=255_u8 {
+                let bytes = [byte; 4];
+                let mut g = Gen::new(&bytes);
+                g.jumps.loops = ["outer", "inner"]
+                    .map(|label| Target {
+                        label: Some(label.to_string()),
+                        used: false,
+                        value: None,
+                        size: 0,
+                    })
+                    .into();
+                g.jump_of(kind, true);
+                let text = g.w.out.program;
+                assert!(
+                    text == format!("{kind} outer") || text == format!("{kind} inner"),
+                    "byte {byte}: {text}"
+                );
+                named.insert(text);
+            }
+            assert_eq!(named.len(), 2, "{kind}: each open label should be named");
+        }
+    }
+}

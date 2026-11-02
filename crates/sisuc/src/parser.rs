@@ -5223,7 +5223,7 @@ mod tests {
     }
 
     #[test]
-    fn else_on_new_line_has_no_fix_after_anything_else() {
+    fn else_on_new_line_should_have_no_fix_after_anything_else() {
         for src in [
             // A loop's `}` cannot take an `else`.
             "fn main() {\n    while a {\n    }\n    else {\n    }\n}",
@@ -5235,13 +5235,52 @@ mod tests {
             "fn main() {\n    print(1)\n    else {\n    }\n}",
             // The `else` has no block to open.
             "fn main() {\n    if a {\n    }\n    else b\n}",
-            // Only an `if` statement can take it: not a `let`, nor the `if` inside one.
-            "fn main() {\n    let x = 1\n    else {\n    }\n}",
+            // The `else` belongs to the `if` inside the `let`, which joins as the `if` does.
             "fn main() {\n    let x = if a { 1 }\n    else { 2 }\n}",
+            "fn main() {\n    let x = if a { 1 } else if b { 2 }\n    else { 3 }\n}",
+            // A `let` value that ends in `}` would read the joined `else` as its own (E0173).
+            "fn main() {\n    let x = { 1 }\n    else {\n    }\n}",
+            // A `let ... else` has no `else if`.
+            "fn main() {\n    let x = o\n    else if a {\n    }\n}",
         ] {
             let d = parse_diagnostic(src);
             assert_eq!(d.code(), Code::ElseOnNewLine, "{src}");
             assert_eq!(fix_edits(&d), None, "{src}");
+        }
+    }
+
+    #[test]
+    fn else_on_new_line_after_a_let_should_join_it_to_the_value() {
+        // The gap from the end of the value to the `else` becomes one space.
+        for src in [
+            "fn main() {\n    let x = o\n    else { return }\n}",
+            "fn main() {\n    let mut x = o\n    else { return }\n}",
+            "fn main() {\n    let Some(x) = o\n    else { return }\n}",
+            "fn main() {\n    let E.A = o\n    else { return }\n}",
+        ] {
+            let d = parse_diagnostic(src);
+            assert_eq!(d.code(), Code::ElseOnNewLine, "{src}");
+            let else_at = src.find("else").expect("the source should hold an `else`");
+            assert_eq!(d.span().start(), else_at, "{src}");
+            let gap = src.find("= o").expect("the source should hold the value") + 3;
+            assert_eq!(
+                fix_edits(&d),
+                Some((true, vec![(gap, else_at, " ".to_string())])),
+                "{src}"
+            );
+        }
+    }
+
+    #[test]
+    fn else_on_new_line_after_a_let_should_not_join_over_a_comment() {
+        for src in [
+            "fn main() {\n    let x = o // c\n    else { return }\n}",
+            "fn main() {\n    let x = o\n    // c\n    else { return }\n}",
+            "fn main() {\n    let E.A = o // c\n    else { return }\n}",
+        ] {
+            let d = parse_diagnostic(src);
+            assert_eq!(d.code(), Code::ElseOnNewLine, "{src}");
+            assert!(fix_edits(&d).is_some_and(|(safe, _)| !safe), "{src}");
         }
     }
 
