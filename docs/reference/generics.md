@@ -167,6 +167,7 @@ The rules:
 - A `None` at a `T?` place shows no optional. Take `fn h<T>(a: T, b: T?) -> T`. The line `let v: i64?? = h(1, Some(2))` is valid, but `let w: i64?? = h(1, None)` is an error: expected `i64??`, found `i64`. A call that returns `T?` does the same with more optionals. Take `fn opt2<T>(x: T, _y: T) -> T?`. The line `let w: i64??? = opt2(Some(2), Some(Some(3)))` is an error: expected `i64`, found `i64?`.
 - In each of these cases, write the type argument: `pick<i64??>(Some(2), Some(Some(1)))`, `h<i64?>(1, None)` and `opt2<i64??>(Some(2), Some(Some(3)))` are valid.
 - In an array literal, a generic call that waits for its type takes it from the other elements. In an `if` or a `match`, it takes it from the other branches. With an `x: u8`, `[x, id(None)]` is a `[u8?]`.
+- A call whose result cannot fit the expected type gives the error that a call of a function that is not generic gives. This is true when a type parameter stays open. Take `fn mk2<X>() -> Two<X, bool>`. The line `let y: i64 = mk2()` reports `mk2()`: expected `i64`, found `Two<X, bool>` ([E0032](../diagnostics/E0032.md)). The expression `1 == mk2()` reports cannot compare `i64` with `Two<X, bool>` ([E0047](../diagnostics/E0047.md)).
 - A `None` or a `[]` alone has no type. When nothing else fixes a type parameter, the call is an error ([E0050](../diagnostics/E0050.md)). Annotate the result, or write the type arguments.
 
 ```sisu
