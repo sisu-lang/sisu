@@ -2644,7 +2644,8 @@ impl<'a> Parser<'a> {
     fn else_on_new_line(&self, previous: Option<&Stmt>) -> Diagnostic {
         // A pattern `let` without `else` never comes here: `let_pattern` reports the `else`.
         let value = previous.and_then(|stmt| match &stmt.kind {
-            StmtKind::Let { init, .. } => Some(init),
+            // A `let` with a type takes no `else`: the old E0006 stays, with no join.
+            StmtKind::Let { ty: None, init, .. } => Some(init),
             _ => None,
         });
         // The `else` of a `let` value that ends in an `if` without `else` belongs to that `if`.
@@ -2692,11 +2693,11 @@ impl<'a> Parser<'a> {
     /// ends in `}` would then read the `else` as its own (E0173), so the join is only a hint.
     fn let_else_on_new_line(&self, else_at: usize) -> Diagnostic {
         let at = self.tokens[else_at].span;
-        let end = self.last_code_end();
-        let ends_in_brace = self.tokens[..self.pos]
+        let last = self.tokens[..self.pos]
             .iter()
-            .rfind(|t| t.kind != TokenKind::Newline)
-            .is_some_and(|t| t.kind == TokenKind::RBrace);
+            .rfind(|t| t.kind != TokenKind::Newline);
+        let end = last.map_or(0, |t| t.span.end());
+        let ends_in_brace = last.is_some_and(|t| t.kind == TokenKind::RBrace);
         let join =
             (self.tokens[else_at + 1].kind == TokenKind::LBrace && !ends_in_brace).then(|| Join {
                 gap: Span::new(end, at.start()),
