@@ -1276,8 +1276,9 @@ pub(crate) enum DiagnosticKind {
         /// The associated type, as written, whose choices the cycle passes: the check counts it as
         /// every choice that it cannot show to be impossible.
         choice: Option<String>,
-        /// The type, as written, whose argument grows in the call through `reach`, and the type
-        /// of the operand that holds it when that is another type.
+        /// The type, as written, whose argument grows in the operand of a step that the program
+        /// writes, before the edge out of a hub, and the type of the operand that holds it when
+        /// that is another type.
         grows: Option<(String, Option<String>)>,
     },
     /// The check of `interface` for the type `root`, which stopped after `limit` nested types:

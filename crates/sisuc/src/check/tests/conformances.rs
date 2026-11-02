@@ -3803,8 +3803,9 @@ fn growth_should_read_each_type_of_an_operand_once() {
 }
 
 /// A cycle with `n` lowered `==` calls of written `eq` methods before one call through `Eq`, where
-/// no operand holds a type of the class that declares the method it reaches, reads the operand of
-/// each step once, so the report stays linear in the length of the cycle.
+/// no operand holds a type of the class that declares the method it reaches, costs equal steps
+/// more for each step more: the cost grows by equal steps, so the report stays linear in the
+/// length of the cycle.
 #[test]
 fn growth_should_read_the_operands_of_a_cycle_in_linear_steps() {
     let steps = |n: usize| {

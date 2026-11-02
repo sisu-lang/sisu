@@ -533,12 +533,12 @@ impl Checker<'_> {
     }
 
     /// Records the `Display` of each type whose method `to_string` makes it: the first method of
-    /// that name in the body of a class or an enum, or else in a plain `extend` block. A type
-    /// whose list gives it `Display` (`gives`) and whose body has the method has the conformance
-    /// already: the method meets it. A list that no method meets adds no record, so the method of
-    /// a plain block makes the `Display` then. The method must have `Display`'s signature, as
-    /// `meet_requirements` checks. A second method of the name has its own error, so it adds no
-    /// second conformance.
+    /// that name in the body of a class or an enum, or else in a plain `extend` block of a class or
+    /// an enum. A type whose list gives it `Display` (`gives`) and whose body has the method has
+    /// the conformance already: the method meets it. A list that no method meets adds no record,
+    /// so the method of a plain block makes the `Display` then. The method must have `Display`'s
+    /// signature, as `meet_requirements` checks. A second method of the name has its own error, so
+    /// it adds no second conformance.
     fn name_displays(&mut self, gives: &FxHashSet<Holder>, added: &mut Added) -> Vec<Pending> {
         let name = Symbol::intern("to_string");
         let mut named: Vec<(Holder, Type, Source, tir::FuncId)> = Vec::new();
@@ -560,8 +560,10 @@ impl Checker<'_> {
         }
         for (block, ext) in self.extensions.iter().enumerate() {
             // A built-in type has `Display` from the compiler: its `to_string` is a plain method.
-            let user_type = matches!(ext.holder, Holder::Class(_) | Holder::Enum(_));
-            if let (true, None, Some(&func)) = (user_type, ext.interface, ext.methods.get(&name)) {
+            if !matches!(ext.holder, Holder::Class(_) | Holder::Enum(_)) {
+                continue;
+            }
+            if let (None, Some(&func)) = (ext.interface, ext.methods.get(&name)) {
                 named.push((ext.holder, ext.target, Source::Block(block), func));
             }
         }
