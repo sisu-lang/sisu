@@ -3806,7 +3806,7 @@ fn growth_should_read_each_type_of_an_operand_once() {
 /// no operand holds a type of the class that declares the method it reaches, reads the operand of
 /// each step once, so the report stays linear in the length of the cycle.
 #[test]
-fn growth_should_read_the_operands_of_a_cycle_once() {
+fn growth_should_read_the_operands_of_a_cycle_in_linear_steps() {
     let steps = |n: usize| {
         let mut src = String::from("enum Y<A> {\n    One(A)\n}\nclass W<T> {\n    x: T\n}\n");
         for k in 0..n {
