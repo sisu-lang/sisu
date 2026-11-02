@@ -3397,23 +3397,25 @@ fn scope_release_states_are_sparse() {
 /// the nesting has every loop head around it in its dominance frontier, so storing every
 /// block's frontier grows as `n^2`. The reads grow near linearly with the levels.
 #[test]
-fn nested_loop_conditions_read_linearly() {
-    let source = |n: usize| {
-        let mut cond = "c".to_owned();
-        for _ in 0..n {
-            cond = format!("{{\n        while {cond} {{}}\n        c\n    }}");
-        }
-        format!("fn f(c: bool, s: string) {{\n    while {cond} {{}}\n    print(s)\n}}")
-    };
-    let reads = |n: usize| {
-        let program = build(&checked(&source(n)));
-        let f = &program.functions[0];
-        assert_eq!(f.loops.len(), n + 1);
-        READS.set(0);
-        assert_eq!(certify(f), Ok(()));
-        READS.get()
-    };
-    assert_near_linear(reads(10), reads(20), reads(30));
+fn nested_loop_conditions_should_read_linearly() {
+    crate::on_compiler_stack(|| {
+        let source = |n: usize| {
+            let mut cond = "c".to_owned();
+            for _ in 0..n {
+                cond = format!("{{\n        while {cond} {{}}\n        c\n    }}");
+            }
+            format!("fn f(c: bool, s: string) {{\n    while {cond} {{}}\n    print(s)\n}}")
+        };
+        let reads = |n: usize| {
+            let program = build(&checked(&source(n)));
+            let f = &program.functions[0];
+            assert_eq!(f.loops.len(), n + 1);
+            READS.set(0);
+            assert_eq!(certify(f), Ok(()));
+            READS.get()
+        };
+        assert_near_linear(reads(10), reads(20), reads(30));
+    });
 }
 
 /// A chain of `n` blocks that each read the parameter `s`, then a switch back to every one of
@@ -3595,15 +3597,17 @@ fn many_guards_of_distinct_locals_mark_last_uses() {
 /// A guard walked again inside each guard around it is exponential in the depth, so this test
 /// hangs instead of failing; its keep-alive override is in `.config/nextest.toml`.
 #[test]
-fn nested_guards_mark_last_uses() {
-    const DEPTH: usize = 48;
-    let guard = (0..DEPTH).fold("c".to_owned(), |inner, _| {
-        format!("match c {{\n true if {inner} => true\n _ => false\n }}")
+fn nested_guards_should_mark_last_uses() {
+    crate::on_compiler_stack(|| {
+        const DEPTH: usize = 48;
+        let guard = (0..DEPTH).fold("c".to_owned(), |inner, _| {
+            format!("match c {{\n true if {inner} => true\n _ => false\n }}")
+        });
+        let src = format!(
+            "enum E {{\n    V(string)\n    W\n}}\nfn f(e: E, c: bool) -> string {{\n    match e {{\n        V(s) if {guard} => s\n        _ => \"\"\n    }}\n}}"
+        );
+        assert_eq!(moves_of_s(&src), 1);
     });
-    let src = format!(
-        "enum E {{\n    V(string)\n    W\n}}\nfn f(e: E, c: bool) -> string {{\n    match e {{\n        V(s) if {guard} => s\n        _ => \"\"\n    }}\n}}"
-    );
-    assert_eq!(moves_of_s(&src), 1);
 }
 
 /// `match e` over `variants` variants, each arm `V{i}(s) => s`. Arm `i`'s test hangs off arm
