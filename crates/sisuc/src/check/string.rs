@@ -257,27 +257,6 @@ impl Checker<'_> {
             .is_none_or(|&b| b >= span.end())
     }
 
-    /// The source text of `span` on one line, for a help that repeats it: a span that breaks
-    /// joins its trimmed lines with one space, and none after an opening or before a closing
-    /// bracket. A comment inside the span stays in the text.
-    pub(super) fn flat_text(&self, span: Span) -> String {
-        let text = self.source.text(span);
-        if self.one_line(span) {
-            return text.to_string();
-        }
-        let mut flat = String::new();
-        for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
-            if !flat.is_empty()
-                && !flat.ends_with(['(', '[', '{'])
-                && !line.starts_with([')', ']', '}'])
-            {
-                flat.push(' ');
-            }
-            flat.push_str(line);
-        }
-        flat
-    }
-
     /// A chain over the `string`s `operands`, which codegen compares two at a time. Two make
     /// one `Compare`; more bind each operand once, in nested blocks that stop at the first pair
     /// that fails. `a < b < c` is

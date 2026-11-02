@@ -257,7 +257,7 @@ impl Checker<'_> {
             (TypeKind::Array(_), None) => RangeWrite::Array,
             (TypeKind::Array(_), Some(parent)) => {
                 let op = op.map_or_else(|| "=".to_string(), |op| format!("{op}="));
-                let store = format!(" {op} {}", self.flat_text(value.span));
+                let store = format!(" {op} {}", self.source.line_text(value.span));
                 self.range_element(found, (parent, target), store)
             }
             _ if ty == Type::STRING && found.parent.is_none() => match op {
@@ -265,7 +265,7 @@ impl Checker<'_> {
                     value: self.term(value),
                 },
                 Some(ast::BinaryOp::Add) => RangeWrite::Append {
-                    value: self.flat_text(value.span),
+                    value: self.source.line_text(value.span),
                     grouped: self.term(value),
                 },
                 Some(_) => RangeWrite::Other,
@@ -294,10 +294,12 @@ impl Checker<'_> {
         };
         RangeWrite::Element {
             index: found.range.start.as_deref().map_or_else(
-                || self.flat_text(index.span),
+                || self.source.line_text(index.span),
                 |start| format!("{} + {}", self.term(start), self.term(index)),
             ),
-            tail: self.flat_text(Span::new(parent.span.end(), target.span.end())),
+            tail: self
+                .source
+                .line_text(Span::new(parent.span.end(), target.span.end())),
             store,
         }
     }
@@ -306,8 +308,8 @@ impl Checker<'_> {
     /// whether its base is one, else no write to the base is allowed.
     fn range_target(&self, found: &RangeIndex<'_>, write: RangeWrite, place: bool) -> RangeTarget {
         RangeTarget {
-            base: self.flat_text(found.base.span),
-            start: (found.range.start.as_deref()).map(|start| self.flat_text(start.span)),
+            base: self.source.line_text(found.base.span),
+            start: (found.range.start.as_deref()).map(|start| self.source.line_text(start.span)),
             end: (found.range.end.as_deref()).map(|end| self.end_text(found.range, end)),
             write: if place { write } else { RangeWrite::Temporary },
         }
@@ -323,11 +325,11 @@ impl Checker<'_> {
     ) -> Option<RangePush> {
         let found = range_index(receiver)?;
         let Some(parent) = found.parent else {
-            return Some(RangePush::Slice(self.flat_text(receiver.span)));
+            return Some(RangePush::Slice(self.source.line_text(receiver.span)));
         };
         let place = is_place(found.base) && self.rooted(found.base);
         let arg = match args {
-            [arg] => self.flat_text(arg.value.span),
+            [arg] => self.source.line_text(arg.value.span),
             _ => "...".to_string(),
         };
         let write = self.range_element(&found, (parent, receiver), format!(".push({arg})"));
@@ -337,7 +339,7 @@ impl Checker<'_> {
     /// `e` as the help writes a part that it adds to: in parentheses when it is more than one
     /// term.
     fn term(&self, e: &ast::Expr) -> String {
-        let text = self.flat_text(e.span);
+        let text = self.source.line_text(e.span);
         if single_term(e) {
             text
         } else {
@@ -348,7 +350,7 @@ impl Checker<'_> {
     /// The text of the end that `..end` writes for the same range: `b + 1` for `..=b`, computed
     /// when `b` is an integer literal.
     fn end_text(&self, range: &ast::Range, end: &ast::Expr) -> String {
-        let text = self.flat_text(end.span);
+        let text = self.source.line_text(end.span);
         match end.kind {
             _ if !range.inclusive => text,
             ExprKind::Int { value, .. } if value < i64::MAX => (value + 1).to_string(),

@@ -1,0 +1,76 @@
+error[E0021]: cannot push to a temporary value
+  --> E0021-range-comments.sisu:9:5
+   |
+ 9 | /     xs[1..][0 // first
+10 | |         + 1].push(4)
+   | |____________^ a range index gives a new value
+   |
+   = help: write `xs[1 + (0 + 1)].push(4)`; a range index counts from its start
+
+error[E0021]: cannot assign to this expression
+  --> E0021-range-comments.sisu:11:5
+   |
+11 |     xs[1..][0] = 1 + // value
+   |     ^^^^^^^ a range index gives a new value
+   |
+   = help: write `xs[1 + 0] = 1 + 2`; a range index counts from its start
+
+error[E0021]: cannot assign to this expression
+  --> E0021-range-comments.sisu:13:5
+   |
+13 |     s[0..2] = "x" + // part
+   |     ^^^^^^^ a range index gives a new value
+   |
+   = help: build the new string, such as `s = s[..0] + ("x" + "z") + s[2..]`
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-range-comments.sisu:15:5
+   |
+15 | /     c
+16 | |         .xs[1..][0].push(4)
+   | |___________________^ a range index gives a new value
+   |
+   = help: write `c.xs[1 + 0].push(4)`; a range index counts from its start
+
+error[E0021]: cannot assign to this expression
+  --> E0021-range-comments.sisu:17:5
+   |
+17 |     s[0..2] = "a//b"
+   |     ^^^^^^^ a range index gives a new value
+   |
+   = help: build the new string, such as `s = s[..0] + "a//b" + s[2..]`
+
+error[E0021]: cannot assign to this expression
+  --> E0021-range-comments.sisu:18:5
+   |
+18 |     s[0..2] = "a//b" +
+   |     ^^^^^^^ a range index gives a new value
+   |
+   = help: build the new string, such as `s = s[..0] + ("a//b" + "c//d") + s[2..]`
+
+error[E0021]: cannot assign to this expression
+  --> E0021-range-comments.sisu:20:5
+   |
+20 |     xs[1..][0] = 1 +
+   |     ^^^^^^^ a range index gives a new value
+   |
+   = help: write `xs[1 + 0] = 1 + 2`; a range index counts from its start
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-range-comments.sisu:22:5
+   |
+22 |     xs[1..][0].push(4 // four
+   |     ^^^^^^^^^^ a range index gives a new value
+   |
+   = help: write `xs[1 + 0].push(4)`; a range index counts from its start
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-range-comments.sisu:24:5
+   |
+24 |     xs[1..][0].push(
+   |     ^^^^^^^^^^ a range index gives a new value
+   |
+   = help: write `xs[1 + 0].push(4)`; a range index counts from its start
+
+sisu: 9 errors
+sisu: for more on a code, run `sisu explain <code>`: E0021

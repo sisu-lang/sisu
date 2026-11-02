@@ -413,6 +413,14 @@ impl<'src> Source<'src> {
         self.holding(span.start()).type_text(span)
     }
 
+    /// The text that `span` covers, on one line and with no comment: see
+    /// `source::Source::line_text`.
+    fn line_text(&self, span: Span) -> String {
+        self.holding(span.start())
+            .line_text(span, self.comments)
+            .into_owned()
+    }
+
     /// The text between the offsets of `range`, which lie in one text.
     fn slice(&self, range: Range<usize>) -> &'src str {
         self.holding(range.start).slice(range)

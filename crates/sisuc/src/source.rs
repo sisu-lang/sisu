@@ -108,19 +108,33 @@ impl<'a> Source<'a> {
         self.slice(span.range())
     }
 
-    /// The type that `span` covers, as one line for a diagnostic. A span with no line break gives
-    /// its text as written. Else each `//` comment goes, and a run of white space with a line
-    /// break goes too after `<`, `(`, `[` or `.` and before `<`, `>`, `)`, `]`, `.`, `?` or `,`,
-    /// and is one space elsewhere. A type holds no string, so a `//` is always a comment.
+    /// The type that `span` covers, as one line for a diagnostic: see `line_text`. A type holds
+    /// no string, so every `//` in it is a comment.
     pub(crate) fn type_text(&self, span: Span) -> Cow<'a, str> {
+        self.one_line(span, |_| true)
+    }
+
+    /// The text that `span` covers, as one line for a diagnostic; `comments` are the offsets
+    /// where the comments of the file start, so a `//` inside a string literal stays. A span with
+    /// no line break gives its text as written. Else each comment goes, and a run of white space
+    /// with a line break goes too after `<`, `(`, `[` or `.` and before `<`, `>`, `)`, `]`, `.`,
+    /// `?` or `,`, and is one space elsewhere.
+    pub(crate) fn line_text(&self, span: Span, comments: &[usize]) -> Cow<'a, str> {
+        self.one_line(span, |at| comments.binary_search(&at).is_ok())
+    }
+
+    /// The one-line text of `span`, where `is_comment` says whether a `//` at an offset starts a
+    /// comment.
+    fn one_line(&self, span: Span, is_comment: impl Fn(usize) -> bool) -> Cow<'a, str> {
         let text = self.text(span);
         if !text.contains('\n') {
             return Cow::Borrowed(text);
         }
+        let comment = |at: usize| text[at..].starts_with("//") && is_comment(span.start() + at);
         let mut out = String::with_capacity(text.len());
         let mut at = 0;
         while let Some(ch) = text[at..].chars().next() {
-            if !ch.is_whitespace() && !text[at..].starts_with("//") {
+            if !ch.is_whitespace() && !comment(at) {
                 out.push(ch);
                 at += ch.len_utf8();
                 continue;
@@ -130,7 +144,7 @@ impl<'a> Source<'a> {
             let mut broken = false;
             while end < text.len() {
                 let tail = &text[end..];
-                if tail.starts_with("//") {
+                if comment(end) {
                     end += tail.find('\n').unwrap_or(tail.len());
                     broken = true;
                 } else if let Some(ch) = tail.chars().next().filter(|ch| ch.is_whitespace()) {
@@ -252,6 +266,24 @@ mod tests {
                 !written.contains('\n'),
                 "type {written:?} should borrow only with no line break"
             );
+        }
+    }
+
+    #[test]
+    fn line_text_should_drop_only_the_comments_the_lexer_found() {
+        // The text starts at offset 100, and a comment offset counts from the start of the file.
+        let cases = [
+            ("a // c\n  + b", &[2][..], "a + b"),
+            ("c\n  .xs[0]", &[], "c.xs[0]"),
+            ("f(a // c\n  )", &[4], "f(a)"),
+            ("\"a//b\" +\n  \"c//d\"", &[], "\"a//b\" + \"c//d\""),
+            ("\"a//b\" + // c\n  \"d\"", &[9], "\"a//b\" + \"d\""),
+        ];
+        for (written, comments, want) in cases {
+            let source = Source::new(written, 100);
+            let comments: Vec<usize> = comments.iter().map(|at| at + 100).collect();
+            let got = source.line_text(Span::new(100, 100 + written.len()), &comments);
+            assert_eq!(got, want, "text {written:?}");
         }
     }
 
