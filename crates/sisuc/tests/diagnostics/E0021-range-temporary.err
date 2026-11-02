@@ -4,7 +4,7 @@ error[E0021]: cannot assign to this expression
 5 |     numbers()[0..2] = [7, 8]
   |     ^^^^^^^^^^^^^^^ a range index gives a new value
   |
-  = help: store the value in a `let mut` binding first
+  = help: store `numbers()` in a `let mut` variable first
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0021

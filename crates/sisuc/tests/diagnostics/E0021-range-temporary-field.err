@@ -1,0 +1,26 @@
+error[E0021]: cannot assign to this expression
+  --> E0021-range-temporary-field.sisu:16:5
+   |
+16 |     outer().v[0..1] = [9]
+   |     ^^^^^^^^^^^^^^^ a range index gives a new value
+   |
+   = help: store `outer().v` in a `let mut` variable first
+
+error[E0021]: cannot assign to this expression
+  --> E0021-range-temporary-field.sisu:17:5
+   |
+17 |     outer().inner.w[0..1] = [9]
+   |     ^^^^^^^^^^^^^^^^^^^^^ a range index gives a new value
+   |
+   = help: store `outer().inner.w` in a `let mut` variable first
+
+error[E0021]: cannot assign to this expression
+  --> E0021-range-temporary-field.sisu:18:5
+   |
+18 |     all()[0].v[0..1] = [9]
+   |     ^^^^^^^^^^^^^^^^ a range index gives a new value
+   |
+   = help: store `all()[0].v` in a `let mut` variable first
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0021

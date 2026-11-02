@@ -2244,7 +2244,7 @@ impl RangeTarget {
                 None => format!("write `{base} += {value}`"),
             },
             RangeWrite::Other => return d,
-            RangeWrite::Temporary => "store the value in a `let mut` binding first".to_string(),
+            RangeWrite::Temporary => format!("store `{base}` in a `let mut` variable first"),
         };
         d.with_help(help)
     }

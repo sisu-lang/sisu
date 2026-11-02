@@ -1,6 +1,9 @@
+const S = "abc"
+
 fn text() -> string { "abc" }
 
 fn main() {
     print(1)
     text()[0..1] = "x"
+    S[0..1] = "x"
 }

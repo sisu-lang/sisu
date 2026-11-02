@@ -147,12 +147,24 @@ impl Checker<'_> {
         let d = if error_for_good(range) && !element_of_all {
             Some(self.index_outside(found.base, range))
         } else {
-            let place = is_place(found.base) && self.rooted(found.base);
+            let place = is_place(found.base) && self.stored(found.base);
             base_type.map(|ty| self.range_write(&found, op, (target, value), (ty, place)))
         };
         self.diagnostics.extend(d);
         drop(self.expr(value, Some(UNKNOWN)));
         Some(Err(Poisoned::typed(Type::UNIT)))
+    }
+
+    /// Whether the fields and indexes of `e` lead down to a local or to `self`: not to a call, a
+    /// constant or an unknown name. A write to a part of a call result is lost, as the write to
+    /// the call result is.
+    fn stored(&mut self, e: &ast::Expr) -> bool {
+        match &e.kind {
+            ExprKind::Field { base, .. } | ExprKind::Index { base, .. } => self.stored(base),
+            &ExprKind::Name(name) => self.lookup(name).is_some(),
+            ExprKind::SelfValue => true,
+            _ => false,
+        }
     }
 
     /// E0021 for the range index `found` in `target = value`, by the type `ty` of its base, or
