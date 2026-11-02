@@ -447,13 +447,17 @@ impl Checker<'_> {
                 ty = Some(Type::F64);
                 want = Some(Type::F64);
                 (value, true)
-            } else if let Some(takes) =
-                takes.filter(|_| defaulted && i == 0 && self.misfit_type(&value).is_some())
-            {
-                // A generic call first, that cannot meet the default: it is reported as a
-                // concrete leader is, against the operator's list. A comparison holds the
-                // operands to the leader's type, which the call does not give, so it is left to
-                // its E0050.
+            } else if let Some(takes) = takes.filter(|_| {
+                let later = leader.is_some() && operator != Operator::Compare;
+                i == 0
+                    && (defaulted || later && want != Some(Type::STRING))
+                    && self.misfit_type(&value).is_some()
+            }) {
+                // A generic call first, where its concrete twin would lead: it is reported as
+                // that leader is, against the operator's list. A comparison holds the operands
+                // to the leader's type, which the call does not give. With no other leader, it is
+                // left to its E0050; else the leader's type holds it. A `string` leader makes a
+                // `+` a join, and the call is held to `string`, as the twin is.
                 if operator == Operator::Compare {
                     (value, false)
                 } else {
