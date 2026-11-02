@@ -561,11 +561,8 @@ pub(super) fn widen(e: tir::Expr, want: Type) -> tir::Expr {
 
 /// `e` as the `any` type `target`.
 pub(super) fn to_any(e: tir::Expr, target: Type) -> tir::Expr {
-    tir::Expr {
-        span: e.span,
-        kind: tir::ExprKind::ToAny(Box::new(e)),
-        ty: target,
-    }
+    let span = e.span;
+    tir::Expr::new(tir::ExprKind::ToAny(Box::new(e)), target, span)
 }
 
 /// Whether `ty` names `Self`, the parameter at place 0 of an interface's signature.

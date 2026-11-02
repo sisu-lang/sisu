@@ -50,6 +50,8 @@ use crate::tir::{
 /// `Use` operands and borrow sites are still undecided.
 #[cfg(test)]
 pub(crate) fn lower(program: &tir::Program, modes: &[Vec<bool>]) -> super::Program {
+    #[cfg(debug_assertions)]
+    tir::assert_exit_flags(program);
     let mut written = Written::default();
     super::Program {
         functions: modes

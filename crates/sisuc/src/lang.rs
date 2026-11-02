@@ -176,14 +176,14 @@ fn chain(
 
 /// The comparison `a op b` of two operands in one `Compare`.
 fn compare(op: CompareOp, a: Expr, b: Expr, span: Span) -> Expr {
-    Expr {
-        kind: ExprKind::Compare {
+    Expr::new(
+        ExprKind::Compare {
             operands: vec![a, b],
             ops: vec![op],
         },
-        ty: Type::BOOL,
+        Type::BOOL,
         span,
-    }
+    )
 }
 
 /// The link `a op b` through a written `less`.
@@ -204,57 +204,53 @@ fn less(func: FuncId, types: TypeArgs, op: CompareOp, a: Expr, b: Expr, span: Sp
 
 /// `receiver.method(argument)` for a method of a conformance, of type `bool`.
 fn call(func: FuncId, types: TypeArgs, receiver: Expr, argument: Expr, span: Span) -> Expr {
-    Expr {
-        kind: ExprKind::Call {
+    Expr::new(
+        ExprKind::Call {
             func,
             types,
             args: vec![receiver, argument],
         },
-        ty: Type::BOOL,
+        Type::BOOL,
         span,
-    }
+    )
 }
 
 fn not(operand: Expr, span: Span) -> Expr {
-    Expr {
-        kind: ExprKind::Unary {
+    Expr::new(
+        ExprKind::Unary {
             op: UnaryOp::Not,
             operand: Box::new(operand),
         },
-        ty: Type::BOOL,
+        Type::BOOL,
         span,
-    }
+    )
 }
 
 fn and(lhs: Expr, rhs: Expr, span: Span) -> Expr {
-    Expr {
-        kind: ExprKind::Binary {
+    Expr::new(
+        ExprKind::Binary {
             op: BinaryOp::And,
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
         },
-        ty: Type::BOOL,
+        Type::BOOL,
         span,
-    }
+    )
 }
 
 fn read(local: LocalId, ty: Type, span: Span) -> Expr {
-    Expr {
-        kind: ExprKind::Local(local),
-        ty,
-        span,
-    }
+    Expr::new(ExprKind::Local(local), ty, span)
 }
 
 /// A block of `stmts` and then `value`, of type `bool`.
 fn block(stmts: Vec<Stmt>, value: Expr, span: Span) -> Expr {
-    Expr {
-        kind: ExprKind::Block(Block {
+    Expr::new(
+        ExprKind::Block(Block {
             stmts,
             value: Some(Box::new(value)),
             ty: Type::BOOL,
         }),
-        ty: Type::BOOL,
+        Type::BOOL,
         span,
-    }
+    )
 }

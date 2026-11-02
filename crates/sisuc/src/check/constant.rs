@@ -60,11 +60,7 @@ impl Constant {
             Constant::Char(c) => tir::ExprKind::Char(*c),
             Constant::Str(s) => tir::ExprKind::Str(s.clone()),
         };
-        tir::Expr {
-            kind,
-            ty: self.ty(),
-            span,
-        }
+        tir::Expr::new(kind, self.ty(), span)
     }
 
     /// The value of an `i64` or a `u8`, or the code point of a `char`, which comparisons and

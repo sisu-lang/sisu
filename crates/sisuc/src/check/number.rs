@@ -200,11 +200,7 @@ impl Checker<'_> {
             self.report_unbound_alias(site, &through, Some((member, false)));
             return Some(Err(Poisoned::error()));
         }
-        Some(Ok(tir::Expr {
-            kind: tir::ExprKind::Float(x),
-            ty: Type::F64,
-            span,
-        }))
+        Some(Ok(tir::Expr::new(tir::ExprKind::Float(x), Type::F64, span)))
     }
 
     /// Reports the math idiom written at `written`, with `fix` if it has one.

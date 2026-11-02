@@ -484,6 +484,44 @@ pub(crate) struct Expr {
     pub(crate) kind: ExprKind,
     pub(crate) ty: Type,
     pub(crate) span: Span,
+    /// Whether a `Return`, `Break` or `Continue` sits anywhere inside. `Expr::new` sets it from
+    /// the flags of the direct children, so a walk of the tree does not repeat at each level.
+    /// Code that changes `kind` in place, or a block that an `Expr` holds, so that the result
+    /// can exit when it could not before, or the reverse, sets it again with
+    /// `Expr::refresh_exits`. A swap for `Wrap` or `ToAny` of the same child keeps the flag.
+    exits: bool,
+}
+
+impl Expr {
+    /// The expression of `kind`. Its cost is the number of its direct children.
+    pub(crate) fn new(kind: ExprKind, ty: Type, span: Span) -> Self {
+        let exits = kind.exits();
+        Self {
+            kind,
+            ty,
+            span,
+            exits,
+        }
+    }
+
+    /// Whether a `Return`, `Break` or `Continue` sits anywhere inside, a nested loop included.
+    pub(crate) fn exits(&self) -> bool {
+        #[cfg(test)]
+        EXIT_STEPS.set(EXIT_STEPS.get() + 1);
+        self.exits
+    }
+
+    /// Sets the flag again from the direct children, after code changed them in place.
+    pub(crate) fn refresh_exits(&mut self) {
+        self.exits = self.kind.exits();
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many times `Expr::exits` has been read on this thread. The constructor reads the flag
+    /// of each direct child once, so the count is the work to set the flags.
+    pub(crate) static EXIT_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -501,6 +539,7 @@ impl Clone for Expr {
             kind: self.kind.clone(),
             ty: self.ty,
             span: self.span,
+            exits: self.exits,
         }
     }
 }
@@ -947,10 +986,11 @@ pub(crate) fn layout_enums(enums: &mut [Enum]) {
     }
 }
 
-impl Expr {
-    /// Whether a `Return`, `Break` or `Continue` sits anywhere inside, a nested loop included.
-    pub(crate) fn exits(&self) -> bool {
-        match &self.kind {
+impl ExprKind {
+    /// Whether a `Return`, `Break` or `Continue` sits anywhere inside, from the flags of the
+    /// direct children.
+    fn exits(&self) -> bool {
+        match self {
             ExprKind::Int(_)
             | ExprKind::Float(_)
             | ExprKind::Bool(_)
@@ -1176,6 +1216,29 @@ impl Place {
             Place::Index { base, index } => base.exits() || index.exits(),
             Place::Some(base) => base.exits(),
         }
+    }
+}
+
+/// Panics on an expression whose `exits` flag differs from the flag its direct children give.
+/// Each flag is read once, so the cost is linear. Every flag then agrees with a walk of the whole
+/// expression, because each child is checked too.
+#[cfg(debug_assertions)]
+pub(crate) fn assert_exit_flags(program: &Program) {
+    for function in &program.functions {
+        assert_block_exit_flags(&function.body);
+    }
+}
+
+#[cfg(debug_assertions)]
+fn assert_block_exit_flags(block: &Block) {
+    let mut all = Vec::new();
+    block.exprs(&mut all);
+    for expr in all {
+        assert!(
+            expr.exits == expr.kind.exits(),
+            "the exit flag should match the children of the expression at {:?}",
+            expr.span
+        );
     }
 }
 
@@ -1859,11 +1922,7 @@ mod tests {
     use crate::symbol::Symbol;
 
     fn expr(kind: ExprKind, ty: Type) -> Expr {
-        Expr {
-            kind,
-            ty,
-            span: Span::new(0, 0),
-        }
+        Expr::new(kind, ty, Span::new(0, 0))
     }
 
     /// `print(operand)`.
@@ -3057,6 +3116,34 @@ mod tests {
             name,
             format!("{}...{}", "[".repeat(limit), "]".repeat(limit))
         );
+    }
+
+    /// A block with one expression whose `kind` changed from a leaf to a `return` after
+    /// `Expr::new`, so its flag is stale.
+    #[cfg(debug_assertions)]
+    fn stale_flag_in_a_block() -> Block {
+        let mut stale = int(1);
+        stale.kind = ExprKind::Return(None);
+        block(vec![Stmt::Expr(stale)])
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "the exit flag should match")]
+    fn assert_exit_flags_should_panic_on_a_node_with_a_wrong_flag() {
+        assert_block_exit_flags(&stale_flag_in_a_block());
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn refresh_exits_should_set_the_flag_again_after_a_change_of_kind() {
+        let mut block = stale_flag_in_a_block();
+        let Some(Stmt::Expr(e)) = block.stmts.first_mut() else {
+            panic!("the block should hold the expression");
+        };
+        e.refresh_exits();
+        assert_block_exit_flags(&block);
+        assert!(block.exits());
     }
 
     #[test]

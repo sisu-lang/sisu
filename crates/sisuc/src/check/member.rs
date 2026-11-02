@@ -133,14 +133,14 @@ impl Checker<'_> {
         };
         self.record(Used::Field(class, index), span);
         match (base, ty) {
-            (Ok(base), Some(ty)) => Ok(tir::Expr {
-                kind: tir::ExprKind::Field {
+            (Ok(base), Some(ty)) => Ok(tir::Expr::new(
+                tir::ExprKind::Field {
                     base: Box::new(base),
                     index,
                 },
                 ty,
                 span,
-            }),
+            )),
             (_, ty) => Err(Poisoned::of(ty)),
         }
     }
@@ -709,11 +709,7 @@ pub(super) fn safe_value(
     let (Ok(scrutinee), Ok(member)) = (scrutinee, member) else {
         return Err(Poisoned::typed(ty));
     };
-    let none = (ty != Type::UNIT).then_some(tir::Expr {
-        kind: tir::ExprKind::None,
-        ty,
-        span,
-    });
+    let none = (ty != Type::UNIT).then_some(tir::Expr::new(tir::ExprKind::None, ty, span));
     let value = if member.ty == ty {
         member
     } else {
