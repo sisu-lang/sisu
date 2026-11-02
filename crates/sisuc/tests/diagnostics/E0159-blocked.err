@@ -100,5 +100,41 @@ error[E0159]: `Pair<Chain>` has no `==`
 62 |     print(Pair(a: Chain.Leaf(Node(v: 1))) == Pair(a: Chain.Leaf(Node(v: 1))))
    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this has type `Pair<Chain>`
 
-sisu: 10 errors
+error[E0159]: `P<T>` has no `==`
+   --> E0159-blocked.sisu:100:5
+    |
+ 87 | extend<A: Conv<i64>> P<A>: Eq {
+    |           --------- this conformance needs `A: Conv<i64>`
+...
+100 |     x == x
+    |     ^ this has type `P<T>`
+
+error[E0159]: `P<T>` has no `<`
+   --> E0159-blocked.sisu:104:5
+    |
+ 93 | extend<A: Conv<i64>> P<A>: Ord {
+    |           --------- this conformance needs `A: Conv<i64>`
+...
+104 |     x < x
+    |     ^ this has type `P<T>`
+
+error[E0159]: `P<T>?` has no `==`, since `P<T>` has none
+   --> E0159-blocked.sisu:108:5
+    |
+ 87 | extend<A: Conv<i64>> P<A>: Eq {
+    |           --------- this conformance needs `A: Conv<i64>`
+...
+108 |     x == x
+    |     ^ this has type `P<T>?`
+
+error[E0159]: `P<S.Item>` has no `==`
+   --> E0159-blocked.sisu:112:5
+    |
+ 87 | extend<A: Conv<i64>> P<A>: Eq {
+    |           --------- this conformance needs `A: Conv<i64>`
+...
+112 |     x == x
+    |     ^ this has type `P<S.Item>`
+
+sisu: 14 errors
 sisu: for more on a code, run `sisu explain <code>`: E0159

@@ -70,3 +70,44 @@ fn main() {
     holder()
     cycle()
 }
+
+interface Conv<T> {
+    fn conv(self) -> T
+}
+
+interface Seq {
+    type Item
+    fn first(self) -> Item
+}
+
+class P<A> {
+    a: A
+}
+
+extend<A: Conv<i64>> P<A>: Eq {
+    fn eq(self, other: P<A>) -> bool {
+        true
+    }
+}
+
+extend<A: Conv<i64>> P<A>: Ord {
+    fn less(self, other: P<A>) -> bool {
+        true
+    }
+}
+
+fn unwritable_equal<T>(x: P<T>) -> bool {
+    x == x
+}
+
+fn unwritable_less<T>(x: P<T>) -> bool {
+    x < x
+}
+
+fn unwritable_optional<T>(x: P<T>?) -> bool {
+    x == x
+}
+
+fn unwritable_assoc<S: Seq>(x: P<S.Item>) -> bool {
+    x == x
+}
