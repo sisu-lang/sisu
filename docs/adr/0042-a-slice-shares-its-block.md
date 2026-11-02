@@ -16,7 +16,7 @@ a value, not a type. Seven rules follow.
   A value that covers its whole block has `data` at the first element and the
   same `len` as the block.
 - **The header's `len` counts the elements that are set in the block.**
-  Freeing a block releases each of them, whatever slices still point into it.
+  Freeing a block releases each of them. Slices that still point into it do not change this.
   Dropping a value releases its block and walks no elements, so an element is
   released once.
 - **Writes never reach the parent.** A range index is a new value, not a place
@@ -34,16 +34,20 @@ a value, not a type. Seven rules follow.
   such as `q = q[1..]; q.push(x)` stays linear.
 - **The compiler trims where a slice is placed inside another value.** A *trim*
   is a copy of one small slice into a block of its own. It stops a slice from
-  keeping a large parent block alive. The trim points are a class constructor
-  argument, a store to a class field, an enum payload, a struct field, an
-  element of an array literal, the value of `[v; n]`, `push`, `xs[i] = v`, the
-  conversion to `any I`, the copy-out of a `mut` argument into a class field or
-  an array element, and a closure capture. A trim point looks through an
-  optional. A local, an argument, a return value, `Some(x)` and the range
-  index itself are not trim points.
+  keeping a large parent block alive. The trim points are:
+  - a class constructor argument and a store to a class field;
+  - an enum payload and a struct field;
+  - an element of an array literal, the value of `[v; n]`, `push` and
+    `xs[i] = v`;
+  - the conversion to `any I`;
+  - the copy-out of a `mut` argument into a class field or an array element;
+  - a closure capture.
+
+  A trim point looks through an optional. A local, an argument, a return
+  value, `Some(x)` and the range index itself are not trim points.
 - **The step rule.** At a trim point, a value that covers its whole block is
   stored as it is. So is a value with more than a quarter of the capacity of
-  the block in bytes, and any value in a block of less than 256 bytes.
+  the block in bytes. So is any value in a block of less than 256 bytes.
   Otherwise the value is copied into a block of exactly `len` elements. The
   benchmarks of the work set the final numbers.
 - **A `{` after `..` in the head of a `for`, `if`, `while` or `match` starts
@@ -54,7 +58,7 @@ a value, not a type. Seven rules follow.
 ## Why
 
 - **A copy costs the time that slicing should save.** A recursive function that
-  splits its input copies at every level, so a binary search that takes log n
+  splits its input copies at every level. So a binary search that takes log n
   steps copies n elements. The self-host lexer builds the text of a token one
   `char` at a time for the same reason.
 - **One sequence type.** A program learns one type, and its indexes always
@@ -86,10 +90,10 @@ a value, not a type. Seven rules follow.
   The compiler trims, so a program rarely needs a copy. If real programs hit
   the case that trimming misses, a `clone()` method can come later.
 - **A trim at a range index.** Rejected. A rule "trim at `xs[a..b]` when `xs`
-  is at its last use" copies at every second level of a recursive search when
-  nothing outside holds the array. A rule that depends on where the slice goes
-  makes a `let` change the memory and time of a program, and needs a new mir
-  analysis.
+  is at its last use" copies at every second level of a recursive search. This
+  happens when nothing outside holds the array. A rule that depends on where
+  the slice goes lets a `let` change the memory and time of a program. It also
+  needs a new mir analysis.
 - **A safe range on arrays, as a second method.** `get(i)` and `get(a..b)` on
   one type would be an overload
   ([ADR 0039](0039-sisu-has-no-function-overloading.md)). A name such as

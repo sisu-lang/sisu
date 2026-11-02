@@ -656,7 +656,7 @@ The compiler is fuzzed in two stages:
 
 | # | Milestone | Done when |
 | --- | --- | --- |
-| Slices | Range indexes on arrays and strings: `xs[a..b]` and `s[a..b]` give a `[T]` or a `string` that shares the block of its parent, with `first`, `last` and `get` on arrays, `get` with a range on strings, and a compiler trim of small slices ([ADR 0042](adr/0042-a-slice-shares-its-block.md)). It comes before milestone 9, so that the iterators are built on its layout | A binary search over 1000 elements takes and drops slices with no allocation; `selfhost/lexer.sisu` takes the text of a token as `string(cs[start..pos])` |
+| Slices | Range indexes: `xs[a..b]` and `s[a..b]` give a `[T]` or a `string` that shares the block of its parent ([ADR 0042](adr/0042-a-slice-shares-its-block.md)). Arrays get `first`, `last` and `get`, strings get `get` with a range, and the compiler trims small slices. It comes before milestone 9, so that the iterators use its layout | A binary search over 1000 elements takes and drops slices with no allocation. `selfhost/lexer.sisu` takes the text of a token as `string(cs[start..pos])` |
 | 9 | Closures and lazy iterator methods (`map`, `filter`, `count`, `sum`), plus a `filter_some`-style method on `[T?]` | Closures first: a function that takes an `(i64) -> bool` runs with a closure that captures a local. Then `words.filter(w => w.len() > 3).count()` runs |
 | 10 | Records, named arguments, default parameters, and `p as name` to bind a whole sub-pattern | A `Point` record prints and compares with no hand-written methods |
 | 11 | Modules, `pub` visibility, and a standard library written in Sisu (`Map`), including `os.env(name)`, `os.exit(code)`, and an `io` module with `read_lines()`, read-everything and `read_bytes()` | Modules first: a program of two files, each with a class of the same name, builds and runs. Then a word-frequency tool reads like a Python script |
@@ -870,8 +870,8 @@ settle before work starts.
 | Slices: range indexes, `first`, `last`, `get` | 8 | `mut` parameters (step 1), milestone 9, the self-host lexer's slice gap |
 | Milestone 12: `Result` and `?` | 7, 8 | File I/O, the standard library (11), concurrency |
 | `weak` fields (ADR 0008). The rule covers a `T?` with `T: AnyObject` and an `(any I)?` with a class-only `I`, so the `weak` examples for `any` wait for it | None | Closures that capture their owner |
-| Milestone 9: closures and function types | `weak` fields. Decisions: closure syntax, weak captures, argument labels, `return` inside a closure | Iterator methods (9), concurrency |
-| Milestone 9: lazy iterator methods | 8, closures | The standard library (11) |
+| Milestone 9: closures and function types | `weak` fields, slices. Decisions: closure syntax, weak captures, argument labels, `return` inside a closure | Iterator methods (9), concurrency |
+| Milestone 9: lazy iterator methods | 8, slices, closures | The standard library (11) |
 | Milestone 10: named arguments, default parameters | Decision: argument labels | Records (10) |
 | Milestone 10: records, tuples, newtypes | 4 for `print`. Decisions: values with fields, argument labels | Generated conformances on request, tuple patterns in closure parameters (9) |
 | Milestone 10: generated conformances on request | 7, 8, records. Decision: equality and hashing | `Map` keys of user types (11) |
@@ -1284,10 +1284,10 @@ These do not make code nicer to write, so they wait:
   `[i64; 3]` would clash with today's `[x; n]` making a `[T]`. A built-in
   literal length needs no const generics; generic code over the length does.
   Build it when a benchmark shows the heap `[T]` costs too much.
-- Sub-arrays, `xs[a..b]` (the user's decision, 2026-10-17): there is no
-  `Slice` type. A range index gives a `[T]` that shares the block of its
-  parent, and only a write to either side copies
-  ([ADR 0042](adr/0042-a-slice-shares-its-block.md)).
+- Slices, `xs[a..b]` (the user's decision, 2026-10-17; built before
+  milestone 9, see the milestones table): there is no `Slice` type. A range
+  index gives a `[T]` that shares the block of its parent. A write or a trim
+  copies it ([ADR 0042](adr/0042-a-slice-shares-its-block.md)).
 - A `Value` bound for type parameters, the mirror of `AnyObject`: every type
   that is not a class, nor an optional of one, conforms, and nothing else can.
   Milestone 8 rejects `[x; n]` in a generic body when `x` is a `T` or `T?`,

@@ -129,7 +129,7 @@ _Avoid_: move (see **Move**: the compiler's name for how mir hands it over, not 
 
 **Range**:
 `a..b`, covering `a` up to but not including `b`, or `a..=b`, which includes
-`b`. It appears in a `for` header, as a pattern, as an index, and as the
+`b`. It appears in a `for` head, as a pattern, as an index, and as the
 argument of a string's `get`. It is not a value.
 
 **Slice**:
