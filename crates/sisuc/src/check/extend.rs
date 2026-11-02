@@ -8,7 +8,7 @@ use super::interface::Bound;
 use super::{Checker, Choices, Declared, Definition, DiagnosticKind, Holder, Symbol, UNKNOWN};
 use crate::ast;
 use crate::conformance::{bind, overlap};
-use crate::diagnostic::{BlockNeed, CannotExtendForm, Earlier, Owner as MethodOwner};
+use crate::diagnostic::{BlockBound, BlockNeed, CannotExtendForm, Earlier, Owner as MethodOwner};
 use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
@@ -204,7 +204,7 @@ impl<'a> Checker<'_> {
 
     /// The first bound of the block `extension` that fails for `stands`, as the place of its type
     /// parameter and the bound.
-    fn first_failed_bound(
+    pub(super) fn first_failed_bound(
         &mut self,
         extension: usize,
         stands: tir::TypeArgs,
@@ -243,6 +243,33 @@ impl<'a> Checker<'_> {
             stands: self.type_name(stands.get()[i]),
         };
         self.check_bound_of(span, stands.get()[i], bound, stands.get(), Some(need), None);
+    }
+
+    /// The first bound of the block of the method `func` that fails for `stands`, what the
+    /// block's type parameters stand for, as the report of a call of `method` names it. `None`
+    /// when the method has no block, or its bounds hold.
+    pub(super) fn method_block_bound(
+        &mut self,
+        func: tir::FuncId,
+        stands: tir::TypeArgs,
+        method: &str,
+    ) -> Option<BlockBound> {
+        let extension = self.signatures[func.0].extension?;
+        let (i, bound) = self.first_failed_bound(extension, stands)?;
+        let ty = stands.get()[i];
+        let args = self.subst_args(bound.args, stands.get());
+        let need = BlockNeed {
+            method: method.to_string(),
+            stands: self.type_name(ty),
+        };
+        let advice =
+            self.bound_advice(ty, bound.interface, args, bound.at.in_prelude(), Some(need));
+        Some(BlockBound {
+            interface: self.bound_text(bound.interface, args),
+            label: advice.label,
+            make: advice.make,
+            add: advice.add,
+        })
     }
 
     /// Reports each type parameter of `extend` that its target, `target`, does not name. The fix

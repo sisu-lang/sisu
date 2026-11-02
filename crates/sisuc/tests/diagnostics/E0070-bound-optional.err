@@ -1,0 +1,10 @@
+error[E0070]: `contains` is a method, not a function
+ --> E0070-bound-optional.sisu:7:11
+  |
+7 |     print(contains(nodes, n))
+  |           ^^^^^^^^ `contains` needs `Node: Eq`
+  |
+  = help: make `Node` conform to `Eq`, then call `contains` as a method
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0070

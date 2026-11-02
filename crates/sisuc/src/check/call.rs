@@ -17,8 +17,8 @@ use super::{
 use super::{array, number, string};
 use crate::ast::{self, ExprKind};
 use crate::diagnostic::{
-    Code, Definition, Diagnostic, DiagnosticKind, MethodReceiver, ReceiverArgument, Suggestion,
-    alias, suggestion,
+    BlockBound, Code, Definition, Diagnostic, DiagnosticKind, MethodReceiver, ReceiverArgument,
+    Suggestion, alias, suggestion,
 };
 use crate::lang::{self, Dispatch};
 use crate::source::Span;
@@ -172,12 +172,7 @@ impl Checker<'_> {
                     // `next`, so a comment there makes it unsafe.
                     let (lo, hi) = (first.value.span.start(), first.value.span.end());
                     let deleted = [callee.span.start()..lo, hi..next.map_or(hi, Span::start)];
-                    let takes = match idiom {
-                        Idiom::Built => self.idiom_arguments(name, ty, rest),
-                        Idiom::Method(func, owner) => {
-                            self.method_arguments(func, owner, rest, None)
-                        }
-                    };
+                    let (takes, bound) = self.idiom_call(&idiom, name, ty, rest);
                     let argument = ReceiverArgument {
                         at: first.value.span,
                         next,
@@ -199,6 +194,7 @@ impl Checker<'_> {
                         name: callee.name.to_string(),
                         at: callee.span,
                         receiver,
+                        bound,
                     });
                     return Err(Poisoned::error());
                 }
@@ -214,6 +210,7 @@ impl Checker<'_> {
             .and_then(|ty| self.idiom_of(callee.name, ty));
         if let Some(Idiom::Method(func, owner)) = own {
             let takes = self.method_arguments(func, owner, args, first_checked);
+            let bound = self.method_block_bound(func, owner, name);
             self.report(DiagnosticKind::MethodAsFunction {
                 name: callee.name.to_string(),
                 at: callee.span,
@@ -222,6 +219,7 @@ impl Checker<'_> {
                     // does not take (E0137).
                     safe: takes && unlabeled && site.written.is_empty(),
                 },
+                bound,
             });
             return Err(Poisoned::error());
         }
@@ -334,6 +332,25 @@ impl Checker<'_> {
             .find(|c: char| !(c.is_alphanumeric() || c == '_'))
             .unwrap_or(text.len());
         self.starts_break_value(callee.span) && self.is_open_label(&text[..end])
+    }
+
+    /// Checks the arguments `rest` after the receiver, of type `ty`, of the idiom call of the
+    /// method `name`: whether the method takes them, and the bound of its block that the
+    /// receiver does not meet, if any.
+    fn idiom_call(
+        &mut self,
+        idiom: &Idiom,
+        name: &str,
+        ty: Type,
+        rest: &[ast::Arg],
+    ) -> (bool, Option<BlockBound>) {
+        match idiom {
+            Idiom::Built => (self.idiom_arguments(name, ty, rest), None),
+            Idiom::Method(func, owner) => (
+                self.method_arguments(*func, *owner, rest, None),
+                self.method_block_bound(*func, *owner, name),
+            ),
+        }
     }
 
     /// Checks the arguments after the receiver of an idiom call of the method `name`, each once.

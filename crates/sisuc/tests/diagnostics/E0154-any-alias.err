@@ -6,6 +6,8 @@ error[E0154]: `Key` does not conform to `Eq`
 ...
 9 |     let _b: ByKey<Key>? = None
   |             ^^^^^^^^^^
+  |
+  = help: make `Key` conform to `Eq`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0154
