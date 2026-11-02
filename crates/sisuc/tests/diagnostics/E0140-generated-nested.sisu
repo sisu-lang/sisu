@@ -1,0 +1,19 @@
+// The cycle passes the generated `==` of an enum that holds an enum.
+enum Wrap<T> {
+    Item(T)
+    Nothing
+}
+enum Outer<T> {
+    In(Wrap<T>)
+}
+class W<T> {
+    x: T
+}
+extend<T: Eq> W<T>: Eq {
+    fn eq(self, other: Self) -> bool {
+        Outer.In(Wrap.Item(W(x: [self.x]))) == Outer.In(Wrap.Item(W(x: [other.x])))
+    }
+}
+fn main() {
+    print(W(x: 1) == W(x: 2))
+}

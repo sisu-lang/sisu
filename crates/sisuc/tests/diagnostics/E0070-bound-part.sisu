@@ -1,0 +1,11 @@
+class Node {}
+
+enum Mix<T> {
+    A(T)
+    B(Node)
+}
+
+fn main() {
+    let xs = [Mix.A(1)]
+    print(contains(xs, Mix.A(1)))
+}

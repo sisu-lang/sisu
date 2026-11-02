@@ -1339,6 +1339,34 @@ fn main() {
         assert!(program.is_some());
     }
 
+    /// A built-in type has `Display` from the compiler, so a `to_string` in a prelude block that
+    /// extends it is a plain method, and `print` does not call it.
+    #[test]
+    fn a_to_string_in_a_prelude_block_of_a_built_in_type_should_stay_a_plain_method() {
+        for (row, block, src) in [
+            (
+                "i64",
+                "extend i64 {\n    fn to_string(self) -> string { \"custom\" }\n}\n",
+                "fn main() {\n    print(1)\n}",
+            ),
+            (
+                "an array",
+                "extend<T> [T] {\n    fn to_string(self) -> string { \"custom\" }\n}\n",
+                "fn main() {\n    print([1])\n}",
+            ),
+        ] {
+            let prelude = format!("{PRELUDE_SOURCE}\n{block}");
+            let (program, diagnostics) = front_end_with(&prelude, src);
+            assert!(diagnostics.is_empty(), "{row}: {diagnostics:?}");
+            let program = program.unwrap_or_else(|| panic!("{row}: no program"));
+            let names: Vec<&str> = program.functions.iter().map(|f| f.name.as_str()).collect();
+            assert!(
+                !names.iter().any(|n| n.ends_with("to_string")),
+                "{row}: {names:?}"
+            );
+        }
+    }
+
     /// A broken interface poisons its name for every use, as a broken class does, and so does a
     /// broken function of the name an intact interface has.
     #[test]

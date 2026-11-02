@@ -1,0 +1,5 @@
+fn need<U: Eq>(u: U) {}
+fn f<T>(t: T) {
+    need([t])
+}
+fn main() {}

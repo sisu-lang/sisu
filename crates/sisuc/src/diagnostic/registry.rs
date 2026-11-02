@@ -849,6 +849,9 @@ pub(crate) enum DiagnosticKind {
         name: String,
         at: Span,
         receiver: MethodReceiver,
+        /// A bound of the method's `extend` block that the receiver's type does not meet: the
+        /// method call is an error too, so the report has no fix.
+        bound: Option<BlockBound>,
     },
     /// The token at `at`, where the tree passes `limit` levels, and what made it deep.
     NestingTooDeep {
@@ -1273,8 +1276,9 @@ pub(crate) enum DiagnosticKind {
         /// The associated type, as written, whose choices the cycle passes: the check counts it as
         /// every choice that it cannot show to be impossible.
         choice: Option<String>,
-        /// The type, as written, whose argument grows in the call through `reach`, and the type
-        /// of the operand that holds it when that is another type.
+        /// The type, as written, whose argument grows in the operand of a step that the program
+        /// writes, before the edge out of a hub, and the type of the operand that holds it when
+        /// that is another type.
         grows: Option<(String, Option<String>)>,
     },
     /// The check of `interface` for the type `root`, which stopped after `limit` nested types:
@@ -2194,12 +2198,13 @@ pub(crate) enum NotConformForm {
     /// A bound of a declaration, written at `bound` (nowhere a user can see for the prelude's),
     /// needs it. `implied` holds the text of an associated type and of its base, when `bound` is
     /// that associated type: no one writes the bound there. `add` is the bound that a type
-    /// parameter would need. A bound of the prelude has `label` in its place, and `make` is the
-    /// class or enum with no conformance, which the help shows how to give one.
+    /// parameter would need. A bound of the prelude has `label` in its place, and so has a bound
+    /// of the program that nothing else names (see `BoundLabel`). `make` is the class or enum
+    /// with no conformance, which the help shows how to give one.
     Bound {
         bound: Option<Span>,
         implied: Option<Implied>,
-        label: Option<PreludeBound>,
+        label: Option<BoundLabel>,
         make: Option<String>,
         /// Whether the interface is `AnyObject`, which only classes have.
         class_only: bool,
@@ -2217,9 +2222,10 @@ pub(crate) struct Implied {
     pub(crate) base: String,
 }
 
-/// How the label names a bound of the prelude, on the call.
+/// How the label names a bound that fails: on the call, for a bound of the prelude or of a
+/// block, and on the type that holds the part, for a bound of the program.
 #[derive(Clone)]
-pub(crate) enum PreludeBound {
+pub(crate) enum BoundLabel {
     /// The type itself fails the bound.
     Call { need: Option<BlockNeed> },
     /// A part of the type fails the bound: `part` does not conform to the interface.
@@ -2227,6 +2233,58 @@ pub(crate) enum PreludeBound {
         part: String,
         need: Option<BlockNeed>,
     },
+    /// A bound that the program writes, with no call of a method: the type holds `part`, which
+    /// does not conform to the interface.
+    Holds { part: String },
+}
+
+impl BoundLabel {
+    /// The words of the label for a type `ty` that fails `interface`.
+    fn text(&self, ty: &str, interface: &str) -> String {
+        match self {
+            BoundLabel::Call { need: None } => "required by the bound of this call".to_string(),
+            BoundLabel::Call { need: Some(need) } => {
+                format!("`{}` needs `{}: {interface}`", need.method, need.stands)
+            }
+            BoundLabel::Since { part, need: None } => format!(
+                "required by the bound of this call, since `{part}` does not conform to `{interface}`"
+            ),
+            BoundLabel::Since {
+                part,
+                need: Some(need),
+            } => format!(
+                "`{}` needs `{}: {interface}`, and `{part}` does not conform to `{interface}`",
+                need.method, need.stands
+            ),
+            BoundLabel::Holds { part } => {
+                format!("`{ty}` holds `{part}`, which does not conform to `{interface}`")
+            }
+        }
+    }
+}
+
+/// The help that makes a type meet `interface`: the bound to add, or the class or enum to give a
+/// conformance.
+fn conform_help(add: Option<&AddBound>, make: Option<&str>, interface: &str) -> Option<String> {
+    match (add, make) {
+        (Some(add), _) => Some(add.help()),
+        (None, Some(make)) => Some(format!("make `{make}` conform to `{interface}`")),
+        (None, None) => None,
+    }
+}
+
+/// The bound of a block that fails for the receiver of a method that a call writes as a function,
+/// as `NotConform` names it on a call of the method.
+#[derive(Clone)]
+pub(crate) struct BlockBound {
+    pub(crate) interface: String,
+    pub(crate) label: BoundLabel,
+    pub(crate) make: Option<String>,
+    pub(crate) add: Option<AddBound>,
+    /// Whether the method can take the other arguments of the call. The help says to fix them
+    /// when it cannot. In the `self` form, only the count, a label or a type argument decide it:
+    /// the checker types the first argument before it knows the method.
+    pub(crate) takes: bool,
 }
 
 /// The method of a prelude block that has the bound, and the type that stands for the block's
@@ -2823,23 +2881,7 @@ impl From<DiagnosticKind> for Diagnostic {
                             d
                         };
                         let d = match label {
-                            Some(PreludeBound::Call { need: None }) => {
-                                d.with_label("required by the bound of this call")
-                            }
-                            Some(PreludeBound::Call { need: Some(need) }) => d.with_label(format!(
-                                "`{}` needs `{}: {interface}`",
-                                need.method, need.stands
-                            )),
-                            Some(PreludeBound::Since { part, need: None }) => d.with_label(format!(
-                                "required by the bound of this call, since `{part}` does not conform to `{interface}`"
-                            )),
-                            Some(PreludeBound::Since {
-                                part,
-                                need: Some(need),
-                            }) => d.with_label(format!(
-                                "`{}` needs `{}: {interface}`, and `{part}` does not conform to `{interface}`",
-                                need.method, need.stands
-                            )),
+                            Some(label) => d.with_label(label.text(&ty, &interface)),
                             None => d,
                         };
                         let d = match (bound, implied) {
@@ -2857,12 +2899,9 @@ impl From<DiagnosticKind> for Diagnostic {
                             }
                             None => d,
                         };
-                        match (add, make) {
-                            (Some(add), _) => d.with_help(add.help()),
-                            (None, Some(make)) => {
-                                d.with_help(format!("make `{make}` conform to `{interface}`"))
-                            }
-                            (None, None) => d,
+                        match conform_help(add.as_ref(), make.as_deref(), &interface) {
+                            Some(help) => d.with_help(help),
+                            None => d,
                         }
                     }
                 }
@@ -4053,6 +4092,29 @@ impl From<DiagnosticKind> for Diagnostic {
                 name,
                 at,
                 receiver,
+                bound: Some(bound),
+            } => {
+                let d = Diagnostic::coded(code, at, format!("`{name}` is a method, not a function"));
+                // The label always has a `need`, so `Holds`, which reads the type, does not occur.
+                let d = d.with_label(bound.label.text("", &bound.interface));
+                let call = match receiver {
+                    MethodReceiver::SelfValue { .. } => {
+                        format!("call `{name}` as a method of `self`")
+                    }
+                    MethodReceiver::Optional { .. } => format!("call `{name}` with `?.`"),
+                    MethodReceiver::Argument { .. } => format!("call `{name}` as a method"),
+                };
+                let fix = if bound.takes { "" } else { " and fix its arguments" };
+                match conform_help(bound.add.as_ref(), bound.make.as_deref(), &bound.interface) {
+                    Some(help) => d.with_help(format!("{help}, then {call}{fix}")),
+                    None => d,
+                }
+            }
+            DiagnosticKind::MethodAsFunction {
+                name,
+                at,
+                receiver,
+                bound: None,
             } => {
                 let d = Diagnostic::coded(code, at, format!("`{name}` is a method, not a function"));
                 let (message, safe, edits) = match receiver {

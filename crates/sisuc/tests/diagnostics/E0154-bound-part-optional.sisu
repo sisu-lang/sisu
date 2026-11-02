@@ -1,0 +1,6 @@
+class Node {}
+fn need<U: Eq>(u: U) {}
+fn main() {
+    let x: Node? = None
+    need([x])
+}
