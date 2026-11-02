@@ -536,6 +536,8 @@ impl Terminator {
 // `scripts/scaling.py` reads this function's instruction count.
 #[inline(never)]
 pub(crate) fn build(program: &tir::Program) -> Program {
+    #[cfg(debug_assertions)]
+    tir::assert_exit_flags(program);
     let assumed = params::assumed(program);
     let mut written = Written::default();
     let (mut functions, (consulted, reuses)): (Vec<_>, (Vec<_>, Vec<_>)) = assumed

@@ -1039,6 +1039,8 @@ pub(crate) fn check<'src>(
             any_layouts: Vec::new(),
             any_tables: Vec::new(),
         });
+    #[cfg(debug_assertions)]
+    program.iter().for_each(tir::assert_exit_flags);
     // A use of a broken item poisons without a diagnostic of its own.
     debug_assert!(
         program.is_some() || failed || broken,
@@ -2418,11 +2420,7 @@ fn block_expr(stmts: Vec<tir::Stmt>, value: Option<tir::Expr>, ty: Type, span: S
         value: value.map(Box::new),
         ty,
     };
-    tir::Expr {
-        kind: tir::ExprKind::Block(block),
-        ty,
-        span,
-    }
+    tir::Expr::new(tir::ExprKind::Block(block), ty, span)
 }
 
 /// `ty?`: one more layer, also on an optional.
@@ -2454,11 +2452,8 @@ fn beyond_one_layer(ty: Type, inner: Type) -> bool {
 
 /// `e`, of type `T`, where its optional `ty` is expected.
 fn wrap(e: tir::Expr, ty: Type) -> tir::Expr {
-    tir::Expr {
-        span: e.span,
-        kind: tir::ExprKind::Wrap(Box::new(e)),
-        ty,
-    }
+    let span = e.span;
+    tir::Expr::new(tir::ExprKind::Wrap(Box::new(e)), ty, span)
 }
 
 /// Makes a block of type `T` one of the optional `ty` by wrapping its value.

@@ -109,11 +109,11 @@ impl Checker<'_> {
         };
         let failed = labeled || mismatched(&arg);
         match arg {
-            Ok(inner) if !failed => Ok(tir::Expr {
-                kind: tir::ExprKind::Wrap(Box::new(inner)),
-                ty: found,
+            Ok(inner) if !failed => Ok(tir::Expr::new(
+                tir::ExprKind::Wrap(Box::new(inner)),
+                found,
                 span,
-            }),
+            )),
             _ => Err(Poisoned::of((!failed).then_some(found))),
         }
     }

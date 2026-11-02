@@ -54,11 +54,7 @@ impl Checker<'_> {
                     mismatch: true,
                 });
             }
-            return Ok(tir::Expr {
-                kind: tir::ExprKind::Float(x),
-                ty,
-                span: at,
-            });
+            return Ok(tir::Expr::new(tir::ExprKind::Float(x), ty, at));
         }
         if ty == Type::U8 && !(0..=i64::from(u8::MAX)).contains(&value) {
             // Only `-9223372036854775808` parses to a negative literal.
@@ -76,11 +72,7 @@ impl Checker<'_> {
                 mismatch: true,
             });
         }
-        Ok(tir::Expr {
-            kind: tir::ExprKind::Int(value),
-            ty,
-            span: at,
-        })
+        Ok(tir::Expr::new(tir::ExprKind::Int(value), ty, at))
     }
 
     /// `expr` for each kind of expression.
@@ -89,13 +81,7 @@ impl Checker<'_> {
         reason = "one arm per node kind, so the dispatch reads in one place"
     )]
     fn expr_kind(&mut self, e: &ast::Expr, expected: Option<Type>) -> Checked {
-        let node = |kind, ty| {
-            Ok(tir::Expr {
-                kind,
-                ty,
-                span: e.span,
-            })
-        };
+        let node = |kind, ty| Ok(tir::Expr::new(kind, ty, e.span));
         match &e.kind {
             ExprKind::Int { value, literal } => self.integer(e.span, *value, *literal, expected),
             ExprKind::Float(x) => node(tir::ExprKind::Float(x.0), Type::F64),
@@ -238,11 +224,7 @@ impl Checker<'_> {
                 self.body.hint_at = outer_hint;
                 checked.map(|block| {
                     let ty = block.ty;
-                    tir::Expr {
-                        kind: tir::ExprKind::Block(block),
-                        ty,
-                        span: e.span,
-                    }
+                    tir::Expr::new(tir::ExprKind::Block(block), ty, e.span)
                 })
             }
         }
@@ -255,11 +237,7 @@ impl Checker<'_> {
             Some(b) => {
                 b.read |= !quiet;
                 match b.ty {
-                    Some(ty) => Ok(tir::Expr {
-                        kind: tir::ExprKind::Local(b.local),
-                        ty,
-                        span,
-                    }),
+                    Some(ty) => Ok(tir::Expr::new(tir::ExprKind::Local(b.local), ty, span)),
                     // `Error`: its diagnostic was recorded where it was bound.
                     None => Err(Poisoned::error()),
                 }
@@ -412,11 +390,7 @@ impl Checker<'_> {
         let (kind, mismatch) = match expected {
             _ if self.quiet(span, expected) => return Err(Poisoned::error()),
             Some(ty) if matches!(ty.kind(), TypeKind::Optional(_)) => {
-                return Ok(tir::Expr {
-                    kind: tir::ExprKind::None,
-                    ty,
-                    span,
-                });
+                return Ok(tir::Expr::new(tir::ExprKind::None, ty, span));
             }
             Some(Type::NEVER) => return Err(Poisoned::error()),
             Some(ty) => (
@@ -565,11 +539,7 @@ pub(super) fn option_written(e: &ast::Expr) -> Option<bool> {
 
 /// A read of `local`, of type `ty`.
 pub(super) fn local(local: tir::LocalId, ty: Type, span: Span) -> tir::Expr {
-    tir::Expr {
-        kind: tir::ExprKind::Local(local),
-        ty,
-        span,
-    }
+    tir::Expr::new(tir::ExprKind::Local(local), ty, span)
 }
 
 /// An `IfSome` over `scrutinee` whose blocks hold only `then` and `other`, of `then`'s type.
@@ -587,8 +557,8 @@ pub(super) fn if_some(
         ty,
     };
     let (then_block, else_block) = (block(Some(then)), Some(block(other)));
-    tir::Expr {
-        kind: tir::ExprKind::IfSome {
+    tir::Expr::new(
+        tir::ExprKind::IfSome {
             bind,
             scrutinee: Box::new(scrutinee),
             then_block,
@@ -596,7 +566,7 @@ pub(super) fn if_some(
         },
         ty,
         span,
-    }
+    )
 }
 
 /// Whether a branch of type `ty` fits the expected `want`: as is, or as its payload.
@@ -662,7 +632,7 @@ pub(super) fn typed(
     kind: Option<tir::ExprKind>,
 ) -> Checked {
     match kind {
-        Some(kind) => Ok(tir::Expr { kind, ty, span }),
+        Some(kind) => Ok(tir::Expr::new(kind, ty, span)),
         None => Err(Poisoned::of((!mismatched).then_some(ty))),
     }
 }
