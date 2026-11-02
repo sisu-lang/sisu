@@ -122,10 +122,14 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
     let rotated: Vec<u8> = data.iter().map(|b| b.rotate_left(3)).collect();
     // So do the compound parts of an interpolation: a program with none is the same as it was.
     let mixed: Vec<u8> = data.iter().map(|b| b.rotate_left(5)).collect();
+    // So does the choice of whether the program leaves with `let ... else` and `??`, which one
+    // program in eight does: the others are the same as they were.
+    let leaving: Vec<u8> = data.iter().map(|b| b.rotate_left(7)).collect();
     let mut g = Gen::new(data);
     g.ru = Unstructured::new(&reversed);
     g.au = Unstructured::new(&rotated);
     g.cu = Unstructured::new(&mixed);
+    g.leaves = Unstructured::new(&leaving).choose_index(8).unwrap_or(0) == 4;
     let (cost, known, expected) = g.program();
     // Only the tests read the cost.
     #[cfg(not(test))]
@@ -203,6 +207,8 @@ struct Gen<'a> {
     /// What chooses whether a part of an interpolation is a compound value, apart from `u`,
     /// `ru` and `au`, so that a part that is not one draws what it drew before.
     cu: Unstructured<'a>,
+    /// Whether the program holds `let ... else`, and `return`, `break` and `continue` after `??`.
+    leaves: bool,
     /// Whether an expression of the statement being written so far has an effect or may
     /// panic, so one after it may not move before the statement (decision 2).
     effect: bool,
@@ -237,6 +243,7 @@ impl<'a> Gen<'a> {
             ru: Unstructured::new(&[]),
             au: Unstructured::new(&[]),
             cu: Unstructured::new(&[]),
+            leaves: false,
             effect: false,
             returns: false,
             bound_sites: Vec::new(),

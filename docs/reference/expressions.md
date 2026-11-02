@@ -272,6 +272,39 @@ sisu: panic at example.sisu:3:14: index 3 out of bounds for length 3
 
 Only an array has an index. An index on another value, such as a `string`, is an error ([E0068](../diagnostics/E0068.md)).
 
+## return, break and continue
+
+`return`, `break` and `continue` are expressions of the type `never` ([Types](types.md#never)). They can stand wherever an expression can. Each one takes everything to its right that an expression can take, so `a ?? return b ?? 7` is `a ?? return (b ?? 7)`.
+
+```sisu
+fn pick(a: i64?, b: i64?) -> i64 {
+    let v = a ?? return b ?? 7
+    v
+}
+
+fn main() {
+    print(pick(None, None))      // 7
+    print(pick(None, Some(2)))   // 2
+    print(pick(Some(1), None))   // 1
+}
+```
+
+The rules:
+
+- A `return` at the end of a line takes no value. A value on the next line is a new statement.
+- A jump where a value must be used is an error ([E0043](../diagnostics/E0043.md)). The places that take a `never` value are the right side of `??`, a branch of an `if` and an arm of a `match`.
+- The rules of each jump do not change ([return](statements.md#return), [break and continue](statements.md#break-and-continue)). In the header of a loop, `break` and `continue` are an error ([E0082](../diagnostics/E0082.md)), also on the right of a `??`.
+
+```sisu
+fn show(n: i64) {
+    print(n)
+}
+
+fn main() {
+    show(return)                 // error[E0043]
+}
+```
+
 ## Expressions as statements
 
 An expression can stand as a statement, such as a call of `print`. When its value is not used, and it is not a call that returns no value, the program builds with a warning ([W0004](../diagnostics/W0004.md)).

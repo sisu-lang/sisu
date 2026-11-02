@@ -31,22 +31,6 @@ const SEED_LEN: usize = 4_096;
 /// What no generated program holds, and why.
 const EXCLUDED: &[(&str, &str)] = &[
     (
-        "ast::StmtKind::LetElse",
-        "Task 4 of the let-else plan generates it",
-    ),
-    (
-        "tir::Stmt::LetElse",
-        "Task 4 of the let-else plan generates it",
-    ),
-    (
-        "tir::LetElseTest::Some",
-        "Task 4 of the let-else plan generates it",
-    ),
-    (
-        "tir::LetElseTest::Match",
-        "Task 4 of the let-else plan generates it",
-    ),
-    (
         "ast::BrokenKind::Function",
         "only an item with a syntax error is broken",
     ),
@@ -258,6 +242,21 @@ const REACH: &[&str] = &[
     "reach: `?.push` follows a field",
     "reach: `?.push` follows an index",
     "reach: an assignment goes through `?.`",
+];
+
+/// The forms of `let ... else` and of a jump after `??`, which no variant shows.
+const JUMPS: &[&str] = &[
+    "let-else on Optional",
+    "let-else on Enum",
+    "let-else block return",
+    "let-else block break",
+    "let-else block continue",
+    "let-else block panic",
+    "let-else block if",
+    "?? return",
+    "?? break",
+    "?? continue",
+    "?? labelled jump",
 ];
 
 /// The local that `operand` reads whole: the one place where its type is known here.
@@ -473,7 +472,7 @@ fn universe() -> FxHashSet<String> {
     for (from, to) in CONVERSIONS {
         universe.insert(format!("tir::ExprKind::Convert from {from} to {to}"));
     }
-    for key in REACH {
+    for key in REACH.iter().chain(JUMPS) {
         universe.insert(key.to_string());
     }
     for (feature, _) in TEXT {
@@ -1459,6 +1458,46 @@ impl Walk {
         }
     }
 
+    /// Marks how the `else` block of a `let ... else` leaves: by the jump or the `if` that ends it.
+    fn leaving(&mut self, block: &ast::Block) {
+        let Some(ast::StmtKind::Expr(last)) = block.stmts.last().map(|stmt| &stmt.kind) else {
+            return;
+        };
+        self.mark(match &last.kind {
+            ast::ExprKind::Return(_) => "let-else block return",
+            ast::ExprKind::Break { .. } => "let-else block break",
+            ast::ExprKind::Continue { .. } => "let-else block continue",
+            ast::ExprKind::If { .. } => "let-else block if",
+            ast::ExprKind::Todo { .. } => "let-else block panic",
+            ast::ExprKind::Call { callee, .. } if callee.name.as_str() == "panic" => {
+                "let-else block panic"
+            }
+            _ => return,
+        });
+    }
+
+    /// Marks a jump on the right of `??`, and whether it names a loop label.
+    fn jump_operand(&mut self, rhs: &ast::Expr) {
+        let label = match &rhs.kind {
+            ast::ExprKind::Return(_) => {
+                self.mark("?? return");
+                return;
+            }
+            ast::ExprKind::Break { label, .. } => {
+                self.mark("?? break");
+                label
+            }
+            ast::ExprKind::Continue { label } => {
+                self.mark("?? continue");
+                label
+            }
+            _ => return,
+        };
+        if label.is_some() {
+            self.mark("?? labelled jump");
+        }
+    }
+
     /// Marks a `break` spelled `break l -1` that reads as the label `l` and the value `-1`, or
     /// spelled `break x -1` that reads as no label and the value `x - 1`.
     fn break_reading(&mut self, jump: &ast::Expr, label: Option<&ast::Ident>, value: &ast::Expr) {
@@ -1568,6 +1607,7 @@ impl Walk {
                 self.ast_pattern(pattern);
                 self.ast_expr(value);
                 if let Some(block) = else_block {
+                    self.leaving(block);
                     self.ast_block(block);
                 }
             }
@@ -1843,6 +1883,7 @@ impl Walk {
             }
             ast::ExprKind::Coalesce { lhs, rhs } => {
                 self.mark("ast::ExprKind::Coalesce");
+                self.jump_operand(rhs);
                 self.ast_expr(lhs);
                 self.ast_expr(rhs);
             }
@@ -2310,6 +2351,11 @@ impl Walk {
                     else_block,
                 } => {
                     self.mark("tir::Stmt::LetElse");
+                    match scrutinee.ty.kind() {
+                        TypeKind::Optional(_) => self.mark("let-else on Optional"),
+                        TypeKind::Enum(..) => self.mark("let-else on Enum"),
+                        _ => {}
+                    }
                     self.tir_expr(scrutinee, Parent::Other);
                     match test {
                         tir::LetElseTest::Some { .. } => self.mark("tir::LetElseTest::Some"),
@@ -3272,6 +3318,45 @@ fn every_variant_is_generated() {
         missing.is_empty(),
         "no generated program holds: {missing:#?}"
     );
+}
+
+/// GIVEN a program that holds each form of `let ... else` and of a jump after `??`
+/// WHEN the walk reads it
+/// THEN it marks each of `JUMPS`
+#[test]
+fn the_walk_should_mark_let_else_and_a_jump_after_coalesce() {
+    let source = "enum Shape {
+    Circle(f64)
+    Rect(f64, f64)
+}
+
+fn area(s: Shape) -> f64 {
+    let Circle(r) = s else { return 0.0 }
+    r
+}
+
+fn first(o: i64?) -> i64 {
+    let v = o else { panic(\"none\") }
+    v
+}
+
+fn main() {
+    let o: i64? = Some(1)
+    outer: for i in 0..2 {
+        let w = o else { if i == 0 { continue outer } else { break outer } }
+        let u = o else { break }
+        let z = o else { continue }
+        print(w + u + z + (o ?? continue) + (o ?? break outer))
+    }
+    print(area(Shape.Rect(1.0, 1.0)))
+    print(first(o) + (o ?? return))
+}
+";
+    let mut walk = Walk::default();
+    walk.program(source);
+    for key in JUMPS {
+        assert!(walk.seen.contains(*key), "the walk should mark {key}");
+    }
 }
 
 /// What no generated program writes yet, the walk marks all the same: an `extend` block,

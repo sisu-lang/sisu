@@ -4047,15 +4047,17 @@ impl From<DiagnosticKind> for Diagnostic {
                             "if a `None` result is fine, use `?.`"
                         };
                         d.with_help(
-                            "to use the value only when it is present, unwrap it with `if let`",
+                            "to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`",
                         )
                         .with_fix(unsafe_fix(fix, access, "?."))
                     }
                     None => match unwrap {
-                        UnwrapHelp::It => d.with_help("unwrap it with `if let`"),
-                        UnwrapHelp::Object(object) => {
-                            d.with_help(format!("unwrap `{object}` with `if let`"))
+                        UnwrapHelp::It => {
+                            d.with_help("unwrap it with `if let`, `let ... else` or `?? return`")
                         }
+                        UnwrapHelp::Object(object) => d.with_help(format!(
+                            "unwrap `{object}` with `if let`, `let ... else` or `?? return`"
+                        )),
                         UnwrapHelp::Nothing => d,
                     },
                 }

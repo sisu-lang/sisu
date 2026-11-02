@@ -60,6 +60,8 @@ enum Rule {
     If,
     While,
     WhileLet,
+    /// `let p = e else { ... }`.
+    LetElse,
     Loop,
     For,
     ForArray,
@@ -152,6 +154,10 @@ impl Gen<'_> {
         }
         if self.blocks < MAX_BLOCKS {
             rules.push(Rule::If);
+            // A block that ends in a panic only ends a run, so one needs a jump that leaves.
+            if self.leaves && self.can_jump() {
+                rules.extend([Rule::LetElse; 3]);
+            }
             if self.cost.depth() < MAX_LOOPS {
                 rules.extend([Rule::For, Rule::ForArray]);
                 // A `while` is three statements: its counter, itself and the step; a `loop`, four,
@@ -278,6 +284,7 @@ impl Gen<'_> {
             Rule::If => self.if_stmt(false),
             Rule::While => self.while_stmt(),
             Rule::WhileLet => self.while_let(),
+            Rule::LetElse => self.let_else(),
             Rule::Loop => {
                 self.loop_stmt(None);
             }
@@ -782,7 +789,7 @@ impl Gen<'_> {
             if g.pick(4) == 3 {
                 g.w.text(" && ");
                 g.cost.enter_condition(bound);
-                g.expr(&Ty::Bool, 0);
+                g.in_header(|g| g.expr(&Ty::Bool, 0));
                 g.cost.exit_loop();
             }
             g.w.text(" ");
@@ -890,7 +897,7 @@ impl Gen<'_> {
             g.cost.enter_condition(bound);
             // The value has no expected type, and an `if` takes the type of its first branch.
             g.synth = true;
-            let value = g.expr(&payload, MAX_SIZE);
+            let value = g.in_header(|g| g.expr(&payload, MAX_SIZE));
             g.cost.exit_loop();
             g.w.text(" } else { None }) ");
             let loops = g.cost.depth() + 1;
@@ -1042,11 +1049,13 @@ impl Gen<'_> {
         let label = self.label();
         self.w.text(&format!("for {name} in "));
         // The source has no expected type.
-        let array = if self.pick(2) == 0 || element.shared() {
-            self.array_literal(&element, MAX_SIZE, true)
-        } else {
-            self.fill(&Ty::Array(Box::new(element.clone())), MAX_SIZE, true)
-        };
+        let array = self.in_header(|g| {
+            if g.pick(2) == 0 || element.shared() {
+                g.array_literal(&element, MAX_SIZE, true)
+            } else {
+                g.fill(&Ty::Array(Box::new(element.clone())), MAX_SIZE, true)
+            }
+        });
         self.w.text(" ");
         // Each element holds at most what they all hold.
         let size = array.size - array.len;
@@ -1129,6 +1138,7 @@ impl Gen<'_> {
             self.w.text(" ");
             // The two readings of `break x -1`, without the parentheses `expr` writes: a label
             // and the value `-1`, or, with no label, the value `x - 1`.
+            let jumps = std::mem::take(&mut self.jumps);
             let size = if value.ty == Ty::I64
                 && self.pick(3) == 2
                 && (named || self.has_name(&Ty::I64, 0))
@@ -1143,6 +1153,7 @@ impl Gen<'_> {
                 self.synth = value.synth;
                 self.expr(&value.ty, value.max).size
             };
+            self.jumps = jumps;
             let target = &mut self.jumps.loops[at];
             target.size = target.size.max(size);
             target.value = Some(value);
@@ -1228,28 +1239,128 @@ impl Gen<'_> {
                     self.w.text(&format!("todo({message})"));
                 }
             }
-            "return" => {
-                self.w.text("return");
-                // A known panic site after it would not be reached (decision 3).
-                self.returns |= self.scope.func.is_none();
-                let func = self.scope.func.map(|f| &self.scope.funcs[f]);
-                if let Some(func) = func.filter(|func| func.ret != Ty::Unit) {
-                    let (ty, max) = (func.ret.clone(), func.ret_size);
-                    self.w.text(" ");
-                    self.expr(&ty, max);
-                }
-            }
-            kind => {
-                // The innermost loop, plain, or a loop with a label, named.
-                let labeled: Vec<usize> = (0..self.jumps.loops.len())
-                    .filter(|&at| self.jumps.loops[at].label.is_some())
-                    .collect();
-                match self.pick(labeled.len() + 1) {
-                    0 => self.loop_jump(kind, self.jumps.loops.len() - 1, false),
-                    pick => self.loop_jump(kind, labeled[pick - 1], true),
-                }
-            }
+            kind => self.jump_of(kind, false),
         }
+    }
+
+    /// Whether a `return`, a `break` or a `continue` can go here.
+    pub(crate) fn can_jump(&self) -> bool {
+        self.jumps.ret || !self.jumps.loops.is_empty()
+    }
+
+    /// A `return`, `break` or `continue`, as the right side of `??`: the jumps of `jump`, with no
+    /// panic. Only where `can_jump`.
+    pub(crate) fn jump_operand(&mut self) {
+        let mut kinds = Vec::new();
+        if self.jumps.ret {
+            kinds.push("return");
+        }
+        if !self.jumps.loops.is_empty() {
+            kinds.extend(["break", "continue"]);
+        }
+        let kind = kinds[self.pick(kinds.len())];
+        self.jump_of(kind, true);
+    }
+
+    /// `return [value]`, or `break` or `continue` of the innermost loop or of one with a label.
+    /// With `named`, a loop with a label is named where there is one.
+    fn jump_of(&mut self, kind: &str, named: bool) {
+        if kind == "return" {
+            self.w.text("return");
+            // A known panic site after it would not be reached (decision 3).
+            self.returns |= self.scope.func.is_none();
+            let func = self.scope.func.map(|f| &self.scope.funcs[f]);
+            if let Some(func) = func.filter(|func| func.ret != Ty::Unit) {
+                let (ty, max) = (func.ret.clone(), func.ret_size);
+                self.w.text(" ");
+                self.expr(&ty, max);
+            }
+            return;
+        }
+        // The innermost loop, plain, or a loop with a label, named.
+        let labeled: Vec<usize> = (0..self.jumps.loops.len())
+            .filter(|&at| self.jumps.loops[at].label.is_some())
+            .collect();
+        let pick = if named && !labeled.is_empty() {
+            1 + self.pick(labeled.len())
+        } else {
+            self.pick(labeled.len() + 1)
+        };
+        match pick {
+            0 => self.loop_jump(kind, self.jumps.loops.len() - 1, false),
+            pick => self.loop_jump(kind, labeled[pick - 1], true),
+        }
+    }
+
+    /// Writes a loop's header by `write`, where no jump goes (E0082).
+    fn in_header<T>(&mut self, write: impl FnOnce(&mut Self) -> T) -> T {
+        let jumps = std::mem::take(&mut self.jumps);
+        let result = write(self);
+        self.jumps = jumps;
+        result
+    }
+
+    /// `let p = e else { ... }` of an optional `e`, with `p` a `let_pattern`, or of an enum value
+    /// with `V(p, ...)` of a variant with fields. What `p` binds is in scope after it, with the
+    /// values and sizes that `while let` and `match` give it. The block leaves: it ends in a jump
+    /// or in an `if` whose branches do.
+    fn let_else(&mut self) {
+        let loops = self.cost.depth();
+        let variants: Vec<(usize, usize)> = (self.scope.enums.iter().enumerate())
+            .flat_map(|(id, e)| {
+                (0..e.variants.len())
+                    .filter(|&v| !e.variants[v].fields.is_empty())
+                    .map(move |v| (id, v))
+            })
+            .collect();
+        let mut binds = Vec::new();
+        let value = if !variants.is_empty() && self.pick(2) == 1 {
+            let (id, v) = variants[self.pick(variants.len())];
+            let ty = self.scope.enum_ty(id);
+            let (pattern, _) = self.variant_pattern(&ty, v, Some(&mut binds), 0);
+            self.w.text(&format!("let {pattern} = "));
+            self.expr(&ty, MAX_SIZE)
+        } else {
+            let payload = match self.bare_type() {
+                Ty::Optional(payload) => *payload,
+                ty => ty,
+            };
+            let (pattern, name) = self.let_pattern(&payload, false);
+            self.w.text(&format!("let {pattern} = "));
+            self.synth = true;
+            let value = self.expr(&Ty::Optional(Box::new(payload.clone())), MAX_SIZE);
+            binds.extend(name.map(|name| (name, payload)));
+            value
+        };
+        self.w.text(" else ");
+        self.conditionally(Self::leaving_block);
+        for (name, ty) in binds {
+            let size = ty.within(value.size);
+            self.scope
+                .vars
+                .push(Var::new(name, ty, false, size, 0, loops));
+        }
+    }
+
+    /// `{ statements leave }`: `leave` is a jump, or an `if` whose every branch jumps.
+    fn leaving_block(&mut self) {
+        self.open_block();
+        self.stmts(false);
+        self.w.line();
+        match self.pick(16) {
+            0..=3 if self.blocks < MAX_BLOCKS => {
+                self.cost.statement();
+                self.if_stmt(true);
+            }
+            // Now and then a panic, which `jump` seldom writes where a jump can go.
+            4 => {
+                self.cost.statement();
+                let message = self.message();
+                self.w.text(&format!("panic({message})"));
+            }
+            _ => self.jump(),
+        }
+        self.close_block();
     }
 }
 
