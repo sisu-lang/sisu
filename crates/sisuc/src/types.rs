@@ -2,7 +2,7 @@
 //! text, so that copying, comparing and hashing a type costs what an integer does, and a type
 //! such as `[i64?]` allocates nothing once interned.
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::fmt;
 use std::sync::{LazyLock, Mutex, MutexGuard, OnceLock, PoisonError};
 
@@ -73,6 +73,8 @@ struct Names {
     rejected: bool,
     /// An associated type.
     assoc: bool,
+    /// An `any` type.
+    any: bool,
     /// How many levels of types nest in it: 0 for a type with no part. A list holds the most of
     /// its elements'.
     depth: u32,
@@ -85,6 +87,7 @@ impl Names {
             open: self.open || other.open,
             rejected: self.rejected || other.rejected,
             assoc: self.assoc || other.assoc,
+            any: self.any || other.any,
             depth: self.depth.max(other.depth),
         }
     }
@@ -119,14 +122,18 @@ impl TypeKind {
                 assoc: true,
                 ..base.names().or(args.names()).deeper()
             },
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args)
-                if args == TypeArgs::NONE =>
-            {
+            TypeKind::Any(_, args) => Names {
+                any: true,
+                ..if args == TypeArgs::NONE {
+                    Names::default()
+                } else {
+                    args.names().deeper()
+                }
+            },
+            TypeKind::Class(_, args) | TypeKind::Enum(_, args) if args == TypeArgs::NONE => {
                 Names::default()
             }
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
-                args.names().deeper()
-            }
+            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args.names().deeper(),
             TypeKind::I64
             | TypeKind::U8
             | TypeKind::F64
@@ -584,6 +591,38 @@ impl Type {
         self.names().assoc
     }
 
+    /// Whether the type holds an `any` type, anywhere inside it.
+    pub(crate) fn holds_any(self) -> bool {
+        self.names().any
+    }
+
+    /// The interface of each `any` type inside the type, also inside the arguments of another.
+    /// The walk reads each distinct type once, however many paths lead to it, and enters none
+    /// that holds no `any` type.
+    pub(crate) fn anys(self) -> Vec<InterfaceId> {
+        let (mut found, mut seen, mut stack) = (Vec::new(), FxHashSet::default(), vec![self]);
+        while let Some(ty) = stack.pop() {
+            let (kind, names) = ty.entry();
+            if !names.any || !seen.insert(ty) {
+                continue;
+            }
+            match kind {
+                TypeKind::Array(inner) | TypeKind::Optional(inner) => stack.push(inner),
+                TypeKind::Assoc(base, _, args, _) => {
+                    stack.push(base);
+                    stack.extend(args.get());
+                }
+                TypeKind::Class(_, args) | TypeKind::Enum(_, args) => stack.extend(args.get()),
+                TypeKind::Any(interface, args) => {
+                    found.push(interface);
+                    stack.extend(args.get());
+                }
+                _ => {}
+            }
+        }
+        found
+    }
+
     fn names(self) -> Names {
         self.entry().1
     }
@@ -925,6 +964,53 @@ mod tests {
             READS.set(0);
             assert_eq!((ty.depth(), READS.get()), (depth, 1));
         }
+    }
+
+    /// `t_n` has `n + 1` distinct types but 2^n paths to its `any` leaf. The reads for 20, 40 and
+    /// 60 levels grow in a line, and a type with no `any` type costs one read.
+    #[test]
+    fn anys_should_read_each_shared_type_once() {
+        let any = Type::intern(TypeKind::Any(InterfaceId(3), TypeArgs::NONE));
+        let reads = |depth| {
+            let ty = doubled(any, depth);
+            READS.set(0);
+            assert_eq!(ty.anys(), [InterfaceId(3)], "depth {depth}");
+            READS.get()
+        };
+        crate::mir::tests::assert_near_linear(reads(20), reads(40), reads(60));
+        let plain = doubled(Type::I64, 20);
+        READS.set(0);
+        assert_eq!(plain.anys(), []);
+        assert_eq!(READS.get(), 1);
+    }
+
+    /// An `any` type is found inside an array, an optional, the arguments of a class, an enum and
+    /// another `any` type, and an associated type, and nowhere else.
+    #[test]
+    fn anys_should_find_each_interface_inside_a_type() {
+        let any = |i, args| Type::intern(TypeKind::Any(InterfaceId(i), args));
+        let inner = any(1, TypeArgs::NONE);
+        let outer = any(2, TypeArgs::intern(&[Type::optional(inner)]));
+        let class = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::intern(&[outer])));
+        let assoc = Type::intern(TypeKind::Assoc(
+            Type::intern(TypeKind::Enum(
+                EnumId(0),
+                TypeArgs::intern(&[any(4, TypeArgs::NONE)]),
+            )),
+            InterfaceId(5),
+            TypeArgs::intern(&[any(6, TypeArgs::NONE)]),
+            0,
+        ));
+        let mut found = Type::array(class).anys();
+        found.sort_unstable_by_key(|i| i.0);
+        assert_eq!(found, [InterfaceId(1), InterfaceId(2)]);
+        assert!(Type::array(class).holds_any());
+        let mut found = assoc.anys();
+        found.sort_unstable_by_key(|i| i.0);
+        assert_eq!(found, [InterfaceId(4), InterfaceId(6)]);
+        assert!(assoc.holds_any());
+        let plain = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::intern(&[Type::I64])));
+        assert!(!plain.holds_any() && plain.anys().is_empty());
     }
 
     /// A type with no part is 0 levels deep, and each array, optional, type argument list and

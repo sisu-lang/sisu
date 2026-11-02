@@ -2039,6 +2039,15 @@ impl Checker<'_> {
                     c.record(Used::Interface(bound.interface), bound.at);
                 }
             }
+            // So do the `any` types in its parameter and return types, as written.
+            for (ty, p) in param_types.iter().zip(&f.params) {
+                if let Some(ty) = *ty {
+                    c.record_anys(ty, p.ty.span);
+                }
+            }
+            if let (Some(ty), Some(written)) = (ret, &f.ret) {
+                c.record_anys(ty, written.span);
+            }
             c.body.scopes.push(FxHashMap::default());
             // `self` is a keyword, so it needs no binding: `ExprKind::SelfValue` reads local 0.
             let receiver = owner.map(|ty| {

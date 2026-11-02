@@ -188,6 +188,14 @@ impl Checker<'_> {
         }
     }
 
+    /// Records a use of the interface of each `any` type in `ty`, written at `at`, by the body
+    /// being checked.
+    pub(super) fn record_anys(&mut self, ty: Type, at: Span) {
+        for interface in ty.anys() {
+            self.record(Used::Interface(interface), at);
+        }
+    }
+
     /// Records a use of each interface in the bounds of the `extend` block `block`, by the block:
     /// one use for each bound, however many methods the block has.
     pub(super) fn record_block_bounds(&mut self, block: usize) {
@@ -593,6 +601,7 @@ impl Checker<'_> {
             .collect();
         let conforming = self.conformance_methods();
         let conforming_blocks = self.conformance_blocks();
+        let chosen = self.chosen_types();
         let mut enum_started = vec![false; self.enums.len()];
         // The interfaces live code uses, and those not yet followed to the ones they name.
         let mut interfaces = vec![false; self.interfaces.len()];
@@ -633,9 +642,11 @@ impl Checker<'_> {
                             unreachable!("only a class or an enum is started by a use")
                         }
                     };
-                    let bounds = bounds.iter().flatten().map(|bound| bound.interface.0);
-                    for interface in bounds {
-                        use_interface(&mut interfaces, &mut to_follow, interface);
+                    let bounds = bounds.iter().flatten().map(|bound| bound.interface);
+                    // It names the interfaces of the `any` types it holds too.
+                    let anys = self.held_anys(holder, &chosen).into_iter();
+                    for interface in bounds.chain(anys) {
+                        use_interface(&mut interfaces, &mut to_follow, interface.0);
                     }
                 }
                 match to {
@@ -701,7 +712,56 @@ impl Checker<'_> {
             for bound in inherited.chain(requirements).chain(own).chain(assoc) {
                 use_interface(used, &mut to_follow, bound.interface.0);
             }
+            // The `any` types in the types of its requirements.
+            let written = (info.requirements.iter())
+                .flat_map(|r| r.params.iter().copied().chain([r.ret]).flatten());
+            for interface in written.flat_map(Type::anys) {
+                use_interface(used, &mut to_follow, interface.0);
+            }
         }
+    }
+
+    /// The associated types that the conformances of each class and enum choose, when one holds an
+    /// `any` type.
+    fn chosen_types(&self) -> FxHashMap<Holder, Vec<Type>> {
+        let mut chosen: FxHashMap<Holder, Vec<Type>> = FxHashMap::default();
+        for (_, conformance) in self.conformances.iter() {
+            let holder = holder_of(conformance.target)
+                .expect("the target of a conformance should be a class or an enum");
+            let types = conformance
+                .assoc
+                .iter()
+                .flatten()
+                .filter(|ty| ty.holds_any());
+            chosen.entry(holder).or_default().extend(types);
+        }
+        chosen
+    }
+
+    /// The interface of each `any` type that a class or an enum holds: in the type of a field, in
+    /// the type of a variant's payload, and in an associated type that `chosen` gives for it.
+    fn held_anys(
+        &self,
+        holder: Holder,
+        chosen: &FxHashMap<Holder, Vec<Type>>,
+    ) -> Vec<tir::InterfaceId> {
+        let declared: Vec<Type> = match holder {
+            Holder::Class(c) => (self.classes[c.0].fields.iter())
+                .filter_map(|field| field.ty)
+                .collect(),
+            Holder::Enum(e) => (self.enums[e.0].variants.iter())
+                .flat_map(|variant| variant.fields.iter().flatten().copied())
+                .collect(),
+            Holder::Array | Holder::I64 => {
+                unreachable!("only a class or an enum is started by a use")
+            }
+        };
+        let chosen = chosen.get(&holder).into_iter().flatten().copied();
+        declared
+            .into_iter()
+            .chain(chosen)
+            .flat_map(Type::anys)
+            .collect()
     }
 
     /// The class or enum of each function that is a method, by its `FuncId`.

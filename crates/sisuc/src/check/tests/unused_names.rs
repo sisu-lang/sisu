@@ -974,6 +974,96 @@ fn interface_should_not_warn_when_the_bound_of_a_used_interfaces_associated_type
     );
 }
 
+/// An `any` type that live code names uses its interface: in a signature, in the type of a field
+/// or a payload of a type that is built, in the type that an alias gives, in a requirement of a
+/// used interface, and in an associated type of a conformance.
+#[test]
+fn interface_should_not_warn_when_live_code_names_it_in_an_any_type() {
+    judge_unused();
+    let named = "interface Named {\n    fn name(self) -> string\n}\n";
+    for (row, rest) in [
+        (
+            "parameter",
+            "fn show(x: (any Named)?) -> i64 { if let _ = x { 1 } else { 0 } }\nfn main() { print(show(None)) }",
+        ),
+        (
+            "return type",
+            "fn mk() -> (any Named)? { None }\nfn main() { let _x = mk() }",
+        ),
+        (
+            "method of a class",
+            "class B {\n    fn get(self, x: (any Named)?) -> i64 { if let _ = x { 1 } else { 0 } }\n}\nfn main() { print(B().get(None)) }",
+        ),
+        (
+            "method of an extend block",
+            "class B {}\nextend B {\n    fn get(self, x: (any Named)?) -> i64 { if let _ = x { 1 } else { 0 } }\n}\nfn main() { print(B().get(None)) }",
+        ),
+        (
+            "field of a built class",
+            "class H { n: (any Named)? }\nfn main() { let h = H(n: None)\nprint(h.n == None) }",
+        ),
+        (
+            "payload of a built enum",
+            "enum E { A((any Named)?) }\nfn main() { let _e = E.A(None) }",
+        ),
+        (
+            "alias in a body",
+            "type A = any Named\nfn main() { let _x: A? = None }",
+        ),
+        (
+            "alias in a parameter",
+            "type A = any Named\nfn f(x: A?) -> i64 { if let _ = x { 1 } else { 0 } }\nfn main() { print(f(None)) }",
+        ),
+        (
+            "requirement of a used interface",
+            "interface Box {\n    fn get(self) -> (any Named)?\n}\nclass B: Box {\n    fn get(self) -> (any Named)? { None }\n}\nfn main() { let b = B()\nprint(b.get() == None) }",
+        ),
+        (
+            "associated type of a conformance that a method does not name",
+            "interface Src {\n    type Item\n}\nclass B: Src {\n    type Item = (any Named)?\n}\nfn main() { let _b = B() }",
+        ),
+    ] {
+        let src = format!("{named}{rest}");
+        let ds = found(&src);
+        // `Src` is no use of a conformance, so it is the one warning of the last row.
+        let named_warned = ds.iter().any(|d| d.0 == W0012 && d.1 == (1, 11));
+        assert!(!named_warned, "{row}: {ds:?}");
+    }
+}
+
+/// An alias that gives `any I<T>` uses `I` where a body names the alias, so only `Named`, which
+/// nothing names, is unused.
+#[test]
+fn generic_interface_should_not_warn_when_live_code_names_it_through_an_alias() {
+    judge_unused();
+    assert_eq!(
+        found(
+            "interface Named {\n    fn name(self) -> string\n}\ninterface I<T: Eq> {}\ntype A<T> = any I<T>\nfn main() { let _x: A<i64>? = None }"
+        ),
+        [(W0012, (1, 11), vec![])]
+    );
+}
+
+/// The interface of an `any` type is not used when its type is held by code that is not live: a
+/// class that nothing builds, and a function that nothing calls. The warning cites the function.
+#[test]
+fn interface_should_warn_when_only_dead_code_names_it_in_an_any_type() {
+    judge_unused();
+    let named = "interface Named {\n    fn name(self) -> string\n}\n";
+    assert_eq!(
+        found(&format!(
+            "{named}class H {{ n: (any Named)? }}\nfn main() {{}}"
+        )),
+        [(W0012, (1, 11), vec![]), (W0012, (4, 7), vec![])]
+    );
+    assert_eq!(
+        found(&format!(
+            "{named}fn show(x: (any Named)?) -> i64 {{ if let _ = x {{ 1 }} else {{ 0 }} }}\nfn main() {{}}"
+        )),
+        [(W0012, (1, 11), vec![(4, 12)]), (W0012, (4, 4), vec![])]
+    );
+}
+
 /// An interface of the prelude is out of the user's sight: nothing in it is unused, as nothing
 /// else in the prelude is.
 #[test]
