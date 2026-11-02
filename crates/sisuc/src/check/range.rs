@@ -70,8 +70,9 @@ impl Checker<'_> {
         .into()
     }
 
-    /// E0023 for each range in the arguments of a method, which Tasks 4 and 5 replace: the first
-    /// form, whichever bound is missing and whether or not the method exists. The other arguments
+    /// E0023 for each range in the arguments of a method, which Task 5 replaces for an array's: the
+    /// first form, whichever bound is missing and whether or not the method exists. A string's
+    /// `get` takes its range (`string_get`). The other arguments
     /// report their own mistakes.
     pub(super) fn range_arguments(&mut self, receiver: &ast::Expr, args: &[ast::Arg]) -> Checked {
         // A `push` has checked its receiver as a place, which waits for the `push` that is not
@@ -96,9 +97,9 @@ impl Checker<'_> {
 
     /// The range index `base[range]` at `span`. `base[..]` and `a..=` are errors for good: E0023,
     /// with the root of `base` stamped as a `push` onto the index would stamp it, so no warning
-    /// follows. On an array it is a `Slice` of type `[T]`, each bound an `i64`. A base that is no
-    /// array or string is E0068, and an optional one E0062, with the bounds not checked, for the
-    /// one report. A string keeps the stopgap E0023 until Task 4.
+    /// follows. On an array or a string it is a `Slice` of the same type, each bound an `i64`. A
+    /// base that is neither is E0068, and an optional one E0062, with the bounds not checked, for
+    /// the one report.
     pub(super) fn range_index(
         &mut self,
         span: Span,
@@ -108,7 +109,8 @@ impl Checker<'_> {
         if error_for_good(range) {
             self.stamp_push(base);
             drop(self.value(base, None));
-            self.diagnostics.push(self.index_outside(base, range));
+            self.diagnostics
+                .push(self.index_outside(base, range, false));
             return Err(Poisoned::error());
         }
         let outer = std::mem::replace(&mut self.body.indexed, true);
@@ -121,26 +123,34 @@ impl Checker<'_> {
             self.body.indexed = outer;
             return Err(Poisoned::error());
         };
-        if !matches!(ty.kind(), TypeKind::Array(_)) {
+        if !matches!(ty.kind(), TypeKind::Array(_)) && ty != Type::STRING {
             self.body.indexed = outer;
-            let d = if ty == Type::STRING {
-                // Until Task 4.
-                self.stamp_push(base);
-                self.index_outside(base, range)
-            } else {
-                self.cannot_slice(base, ty)
-            };
+            let d = self.cannot_slice(base, ty);
             self.diagnostics.push(d);
             return Err(Poisoned::error());
         }
-        let (start, end, mismatched) = self.bounds(range);
+        let sliced = self.slice_of(span, (checked, ty), range, false);
         self.body.indexed = outer;
+        sliced
+    }
+
+    /// The `Slice` of `range` over `checked`, a string or an array of type `ty`: with `safe`, a
+    /// string's `get`, whose type is `ty?`. Each bound is an `i64`.
+    fn slice_of(
+        &mut self,
+        span: Span,
+        (checked, ty): (Checked, Type),
+        range: &ast::Range,
+        safe: bool,
+    ) -> Checked {
+        let (start, end, mismatched) = self.bounds(range);
         let (has_start, has_end) = (start.is_some(), end.is_some());
+        let result = if safe { Type::optional(ty) } else { ty };
         let parts = [Some(checked), start, end].into_iter().flatten();
         let Ok(operands) = parts.collect::<Result<Vec<_>, _>>() else {
-            return Err(Poisoned::of((!mismatched).then_some(ty)));
+            return Err(Poisoned::of((!mismatched).then_some(result)));
         };
-        Ok(self.spilled(span, ty, operands, |operands| {
+        Ok(self.spilled(span, result, operands, |operands| {
             let mut operands = operands.into_iter().map(Box::new);
             let mut next = || {
                 operands
@@ -155,10 +165,55 @@ impl Checker<'_> {
                 start,
                 end,
                 inclusive: range.inclusive,
-                safe: false,
+                safe,
                 span: range.span,
             }
         }))
+    }
+
+    /// `receiver.get(args)` on a string, `receiver_expr` its source: the string's substring in a
+    /// range written in the call, an `ast::ExprKind::Range`, as a `Slice` that is `safe` and has
+    /// type `string?`. An argument that is no range is E0032; `..`, `..=` and `a..=` are E0023, as
+    /// they are in an index; a wrong count is E0053.
+    pub(super) fn string_get(
+        &mut self,
+        span: Span,
+        (receiver, receiver_expr): (Checked, &ast::Expr),
+        args: &[ast::Arg],
+    ) -> Checked {
+        let [arg] = args else {
+            let d = DiagnosticKind::ArgumentCount {
+                name: self.method_name(Type::STRING, "get"),
+                want: 1,
+                found: args.len(),
+                at: span,
+            };
+            self.diagnostics.push(d.into());
+            // A range is allowed here: only its bounds report.
+            for arg in args {
+                if let ExprKind::Range(range) = &arg.value.kind {
+                    self.bounds(range);
+                } else {
+                    drop(self.expr(&arg.value, Some(UNKNOWN)));
+                }
+            }
+            return Err(Poisoned::error());
+        };
+        let ExprKind::Range(range) = &arg.value.kind else {
+            // The argument reports its own mistakes, else it is a value that is no range.
+            let checked = self.expr(&arg.value, Some(UNKNOWN));
+            if type_of(&checked).is_some() {
+                self.report(DiagnosticKind::StringGetNeedsRange { at: arg.value.span });
+            }
+            return Err(Poisoned::error());
+        };
+        if error_for_good(range) {
+            self.stamp_push(receiver_expr);
+            self.diagnostics
+                .push(self.index_outside(receiver_expr, range, true));
+            return Err(Poisoned::error());
+        }
+        self.slice_of(span, (receiver, Type::STRING), range, true)
     }
 
     /// E0062 for the optional array or string `base`, else E0068, of the range index of `base`,
@@ -194,9 +249,15 @@ impl Checker<'_> {
         (start, end, mismatched)
     }
 
-    fn index_outside(&self, base: &ast::Expr, range: &ast::Range) -> Diagnostic {
+    /// E0023 for `range`, which is an error for good (`error_for_good`) in the index of `base`, or
+    /// with `get` in the argument of its `get`.
+    fn index_outside(&self, base: &ast::Expr, range: &ast::Range, get: bool) -> Diagnostic {
         let text = |e: &ast::Expr| self.source.text(e.span).to_string();
         let form = match (&range.start, &range.end) {
+            (None, None) if get => RangeForm::NoBoundsGet {
+                base: text(base),
+                inclusive: range.inclusive,
+            },
             (None, None) => RangeForm::NoBounds {
                 base: text(base),
                 inclusive: range.inclusive,
@@ -233,7 +294,7 @@ impl Checker<'_> {
         // `xs[..][i]` is an element of `xs`, which E0021 helps; `xs[..]` is `xs`.
         let element_of_all = found.parent.is_some() && range.start.is_none() && !range.inclusive;
         let d = if error_for_good(range) && !element_of_all {
-            Some(self.index_outside(found.base, range))
+            Some(self.index_outside(found.base, range, false))
         } else {
             let place = is_place(found.base) && self.rooted(found.base);
             base_type.map(|ty| self.range_write(&found, op, (target, value), (ty, place)))
@@ -270,8 +331,13 @@ impl Checker<'_> {
                 },
                 Some(_) => RangeWrite::Other,
             },
-            // A string's element waits for E0068's string form (Task 4).
-            _ if ty == Type::STRING => return self.index_outside(found.base, found.range),
+            // An element of a substring is a single index of a string.
+            _ if ty == Type::STRING => {
+                return DiagnosticKind::StringIndex {
+                    at: found.index.span,
+                }
+                .into();
+            }
             _ => return self.cannot_slice(found.base, ty),
         };
         DiagnosticKind::AssignToExpression {

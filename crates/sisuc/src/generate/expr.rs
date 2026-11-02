@@ -88,6 +88,8 @@ pub(crate) fn arithmetic_value(ty: &Ty, op: usize, l: i64, r: i64) -> Result<i64
 const DBG_EVERY: u64 = 37;
 /// Every this many expressions, one that wants an array is a range of an array.
 const SLICE_EVERY: u64 = 200;
+/// Every this many expressions, one that wants a string is a substring.
+const SUBSTRING_EVERY: u64 = 40;
 
 /// The types a `const` can have.
 const CONSTANT: &[Ty] = Ty::VALUES;
@@ -147,6 +149,9 @@ enum Rule {
     /// `({ let a = i % (xs.len() + 1); xs[a..a + j % (xs.len() - a + 1)] })` of an array local,
     /// or another of the range forms: a range in bounds, whatever the length of `xs`.
     Slice,
+    /// `({ let a = i % (s.len() + 1); s.get(a..b) ?? "" })` of a string local, or
+    /// `({ let t = "abz0"; let a = ...; t[a..b] })` of an ASCII literal: a substring in bounds.
+    StrSlice,
     /// `((e).g)` of a class object.
     Field,
     /// `((o)?.g)` of an optional class object.
@@ -212,6 +217,8 @@ const STRING_CHARS: &[&str] = &[
 ];
 /// The chars of `STRING_CHARS` a panic message may hold.
 const MESSAGE_CHARS: usize = 24;
+/// The first chars of `STRING_CHARS`, which are one byte each and need no escape.
+const ASCII_CHARS: usize = 6;
 /// Char literals and their values, smallest first.
 pub(crate) const CHARS: &[(&str, char)] = &[
     ("'a'", 'a'),
@@ -287,15 +294,15 @@ impl Gen<'_> {
             rules.insert(0, Rule::Fallible);
         }
         let mut rule = rules[self.pick(rules.len())];
-        // Now and then an array is a range of an array. The turn comes by count, as `dbg`'s does,
-        // so that it moves no byte of the data in a program that has none.
-        if matches!(ty, Ty::Array(_))
-            && !self.one_line
-            && self.nesting < MAX_NESTING
-            && self.blocks < MAX_BLOCKS
-            && self.expressions.is_multiple_of(SLICE_EVERY)
-        {
-            rule = Rule::Slice;
+        // Now and then an array is a range of an array, and a string a substring. The turn comes
+        // by count, as `dbg`'s does, so that it moves no byte of the data in a program that has
+        // none.
+        if !self.one_line && self.nesting < MAX_NESTING && self.blocks < MAX_BLOCKS {
+            if matches!(ty, Ty::Array(_)) && self.expressions.is_multiple_of(SLICE_EVERY) {
+                rule = Rule::Slice;
+            } else if *ty == Ty::String && self.expressions.is_multiple_of(SUBSTRING_EVERY) {
+                rule = Rule::StrSlice;
+            }
         }
         let start = self.w.mark();
         if debugged {
@@ -560,6 +567,7 @@ impl Gen<'_> {
             }
             Rule::Index => self.index(ty, max),
             Rule::Slice => self.slice(ty, max),
+            Rule::StrSlice => self.substring(max),
             Rule::Element => self.element(ty, max),
             Rule::Field => self.field(ty, max, false),
             Rule::SafeField => self.field(ty, max, true),
@@ -976,6 +984,18 @@ impl Gen<'_> {
             self.w.text("; ");
             ("b".to_string(), literal)
         };
+        let (bind, range) = self.bounded_range(&name);
+        self.w.text(&format!("{bind}{name}[{range}] }})"));
+        self.blocks -= 1;
+        // It reads a local that a write may change.
+        Info::of(&[base], base.size, false)
+    }
+
+    /// `let a = i % (name.len() + 1); ` and a range over `name` in one of the five forms, with
+    /// `b = a + j % (name.len() - a + 1)` for non-negative literals `i` and `j`: so
+    /// `0 <= a <= b <= name.len()` for any length. `..=b - 1` and `a..=b - 1` are the `..=` forms;
+    /// `a..=a - 1` is an empty range in bounds.
+    fn bounded_range(&mut self, name: &str) -> (String, String) {
         let (i, j) = (self.offset(), self.offset());
         let end = format!("a + {j} % ({name}.len() - a + 1)");
         let range = match self.pick(5) {
@@ -985,12 +1005,55 @@ impl Gen<'_> {
             3 => format!("..{end}"),
             _ => format!("..={end} - 1"),
         };
-        self.w.text(&format!(
-            "let a = {i} % ({name}.len() + 1); {name}[{range}] }})"
-        ));
+        (format!("let a = {i} % ({name}.len() + 1); "), range)
+    }
+
+    /// A substring in bounds, in a block: `s.get(r) ?? ""` of a string local `s`, or of a string
+    /// `t` that the block binds, which gives `""` where a bound cuts a character; or `t[r]` of an
+    /// ASCII literal `t` that the block binds, which no bound can cut. The range is that of
+    /// `bounded_range`.
+    fn substring(&mut self, max: u64) -> Info {
+        let vars: Vec<usize> = (0..self.scope.vars.len())
+            .filter(|&v| self.scope.vars[v].ty == Ty::String && self.scope.vars[v].size <= max)
+            .collect();
+        self.w.text("({ ");
+        self.blocks += 1;
+        let form = if vars.is_empty() {
+            1 + self.pick(2)
+        } else {
+            self.pick(3)
+        };
+        let info = match form {
+            0 => {
+                let pick = self.pick(vars.len());
+                let var = &self.scope.vars[vars[pick]];
+                let (name, size) = (var.name.clone(), var.size);
+                let (bind, range) = self.bounded_range(&name);
+                self.w
+                    .text(&format!("{bind}{name}.get({range}) ?? \"\" }})"));
+                Info::leaf(size)
+            }
+            1 => {
+                self.w.text("let t = ");
+                let base = self.expr(&Ty::String, max);
+                self.w.text("; ");
+                let (bind, range) = self.bounded_range("t");
+                self.w.text(&format!("{bind}t.get({range}) ?? \"\" }})"));
+                base
+            }
+            _ => {
+                let len = self.upto(max.min(8));
+                // The first six of `STRING_CHARS` are one byte each.
+                let text = self.string_text(len, ASCII_CHARS);
+                self.w.text(&format!("let t = \"{text}\"; "));
+                let (bind, range) = self.bounded_range("t");
+                self.w.text(&format!("{bind}t[{range}] }})"));
+                Info::literal(len, None)
+            }
+        };
         self.blocks -= 1;
         // It reads a local that a write may change.
-        Info::of(&[base], base.size, false)
+        Info::of(&[info], info.size, false)
     }
 
     /// A non-negative `i64` literal: small, or the largest.
@@ -2394,6 +2457,76 @@ mod tests {
         let text = &g.w.out.program;
         assert_eq!(text.matches("({ ").count(), 1, "{text}");
         assert_eq!(g.blocks, MAX_BLOCKS - 1);
+    }
+
+    /// GIVEN the generator's substring rule on `string`, with no string local in scope
+    /// WHEN it writes from many bytes of data
+    /// THEN it writes either `get` of a string that the block binds, with a default, or an index of
+    /// an ASCII literal that the block binds, which no bound can cut; and each form of range
+    /// comes up on the literal
+    #[test]
+    fn a_substring_should_index_an_ascii_literal_or_get_with_a_default() {
+        let forms = ["[a..a + ", "[a..=a + ", "[a..]", "[..a + ", "[..=a + "];
+        let mut seen = [false; 5];
+        let (mut literals, mut gets) = (0, 0);
+        for byte in 0..=255_u8 {
+            let bytes: Vec<u8> = (0..32_u8)
+                .map(|i| byte.wrapping_mul(i + 1).wrapping_add(i))
+                .collect();
+            let mut g = Gen::new(&bytes);
+            g.rule(Rule::StrSlice, &Ty::String, MAX_SIZE, false);
+            let text = &g.w.out.program;
+            assert!(
+                text.starts_with("({ let t = ") && text.ends_with(" })"),
+                "{text}"
+            );
+            if let Some((head, _)) = text.split_once("; let a = ")
+                && text.contains("; t[")
+            {
+                let literal = head
+                    .strip_prefix("({ let t = \"")
+                    .and_then(|rest| rest.strip_suffix('"'))
+                    .unwrap_or_else(|| panic!("a literal `t`: {text}"));
+                assert!(
+                    literal.chars().all(|c| "abzQ07".contains(c)),
+                    "an ASCII literal: {text}"
+                );
+                literals += 1;
+                for (form, seen) in forms.iter().zip(&mut seen) {
+                    *seen |= text.contains(form);
+                }
+            } else {
+                assert!(
+                    text.ends_with(" ?? \"\" })") && text.contains("t.get("),
+                    "{text}"
+                );
+                gets += 1;
+            }
+        }
+        assert!(literals > 0 && gets > 0, "{literals} literals, {gets} gets");
+        assert_eq!(seen, [true; 5], "forms {forms:?}");
+    }
+
+    /// GIVEN the generator's substring rule on `string`, with a string local in scope
+    /// WHEN it writes the block
+    /// THEN it reads the local through `get`, with `""` where a bound cuts a character
+    #[test]
+    fn a_substring_of_a_local_should_use_get_with_a_default() {
+        let mut found = false;
+        for byte in 0..=255_u8 {
+            let bytes = [byte; 32];
+            let mut g = Gen::new(&bytes);
+            g.scope
+                .vars
+                .push(Var::new("s".to_string(), Ty::String, false, 4, 0, 0));
+            g.rule(Rule::StrSlice, &Ty::String, MAX_SIZE, false);
+            let text = &g.w.out.program;
+            if text.contains("s.get(") {
+                assert!(text.ends_with(" ?? \"\" })"), "{text}");
+                found = true;
+            }
+        }
+        assert!(found, "no byte chose the local");
     }
 
     #[test]

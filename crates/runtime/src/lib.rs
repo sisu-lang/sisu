@@ -986,6 +986,16 @@ mod tests {
                 (2, 3, 5),
                 "byte 2 is inside a character",
             ),
+            (
+                RANGE_INSIDE_CHARACTER | string,
+                (2, 0, 5),
+                "byte 2 is inside a character",
+            ),
+            (
+                RANGE_INSIDE_CHARACTER | string | inclusive | end,
+                (2, 1, 5),
+                "byte 2 is inside a character",
+            ),
         ];
         for (kind, (start, end, len), want) in table {
             assert_eq!(range_text(kind, start, end, len), want, "kind {kind}");

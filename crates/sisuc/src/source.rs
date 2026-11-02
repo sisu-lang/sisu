@@ -313,9 +313,10 @@ mod tests {
         let source = Source::new(written, 100);
         let (span, newlines) = (Span::new(100, 100 + written.len()), [118, 126]);
         assert_eq!(source.line_text(span, &[], &newlines), written);
-        // A break that ends a statement after the span does not count.
-        let span = Span::new(100, 106);
-        assert_eq!(source.line_text(span, &[], &newlines), "if c {");
+        // A break that ends a statement after the span does not count: this span ends before the
+        // one at 118, and holds an ordinary break, which joins.
+        let span = Span::new(100, 116);
+        assert_eq!(source.line_text(span, &[], &newlines), "if c { let y =");
     }
 
     #[test]

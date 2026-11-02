@@ -86,7 +86,7 @@ codes! {
     MainSignature = "E0029",
     UnknownType = "E0030",
     BodyHasNoValue = "E0031",
-    Mismatch | PatternMismatch = "E0032",
+    Mismatch | PatternMismatch | StringGetNeedsRange = "E0032",
     BindingNotFound = "E0033",
     DefinedTwice | InheritedRequirement = "E0034",
     ForNeedsArray = "E0035",
@@ -121,7 +121,7 @@ codes! {
     ArgumentNeedsLabel = "E0065",
     FieldOutOfOrder = "E0066",
     SameObject = "E0067",
-    CannotIndex = "E0068",
+    CannotIndex | StringIndex = "E0068",
     SumNeedsNumbers = "E0069",
     MethodAsFunction = "E0070",
     NestingTooDeep = "E0071",
@@ -841,6 +841,10 @@ pub(crate) enum DiagnosticKind {
     /// An index into the value at `at`, of type `ty`, which is no array; with `range`, a range
     /// index into one that is neither an array nor a string.
     CannotIndex { ty: String, at: Span, range: bool },
+    /// A single index into the string at `at`: a string takes a range index only.
+    StringIndex { at: Span },
+    /// The argument at `at` of a string's `get`, which is no range written in the call.
+    StringGetNeedsRange { at: Span },
     /// The method `method` at `at`, called on an array of type `ty`. The prelude gives the method
     /// to the array types `targets`, and none of them is `ty`. `function` is whether the call
     /// writes the method as a function, `method(xs)`, and the label then says it is a method: it
@@ -2111,8 +2115,7 @@ pub(crate) enum ForeignRange {
 /// How a range is wrong where the checker finds it.
 pub(crate) enum RangeForm {
     /// A range with both bounds, where only a `for` source, a pattern, an index or a string's
-    /// `get` argument can be one. Also the report of a range index of a string, until the checker
-    /// takes it.
+    /// `get` argument can be one.
     Anywhere,
     /// A range with a missing bound, where only an index or a string's `get` can have one.
     MissingBound {
@@ -2124,6 +2127,8 @@ pub(crate) enum RangeForm {
     NoEnd { range: String, start: String },
     /// `base[..]` or `base[..=]`: the whole of `base`, which is `base`.
     NoBounds { base: String, inclusive: bool },
+    /// `base.get(..)` or `base.get(..=)`, a string's `get` of its whole value.
+    NoBoundsGet { base: String, inclusive: bool },
 }
 
 /// Which bound of a range is missing.
@@ -2187,6 +2192,17 @@ impl RangeForm {
                     format!("`{base}[..]` is `{base}`; write `{base}`")
                 };
                 Diagnostic::coded(code, at, format!("`{base}[{dots}]` has no bounds"))
+                    .with_label("this range has no bounds")
+                    .with_help(help)
+            }
+            Self::NoBoundsGet { base, inclusive } => {
+                let dots = if inclusive { "..=" } else { ".." };
+                let help = if inclusive {
+                    format!("write `Some({base})`")
+                } else {
+                    format!("`{base}.get(..)` is `Some({base})`")
+                };
+                Diagnostic::coded(code, at, format!("`{base}.get({dots})` has no bounds"))
                     .with_label("this range has no bounds")
                     .with_help(help)
             }
@@ -4304,6 +4320,18 @@ impl From<DiagnosticKind> for Diagnostic {
                 } else {
                     "only arrays can be indexed"
                 })
+            }
+            DiagnosticKind::StringIndex { at } => {
+                Diagnostic::coded(code, at, "a string has no single index")
+                    .with_label("this is a string")
+                    .with_help(
+                        "for bytes, write `let bs = s.bytes()` once, then `bs[i]`; for characters, write `let cs = s.chars()` once, then `cs[i]`",
+                    )
+            }
+            DiagnosticKind::StringGetNeedsRange { at } => {
+                Diagnostic::coded(code, at, "a string's `get` takes a range")
+                    .with_label("this is not a range")
+                    .with_help("write a range, such as `s.get(1..3)`")
             }
             DiagnosticKind::SumNeedsNumbers {
                 method,

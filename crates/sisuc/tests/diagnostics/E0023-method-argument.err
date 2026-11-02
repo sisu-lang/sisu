@@ -5,10 +5,10 @@ error[E0023]: a range can only be a `for` source, a pattern, an index or a strin
   |                  ^^^^
 
 error[E0023]: a range can only be a `for` source, a pattern, an index or a string's `get` argument
- --> E0023-method-argument.sisu:5:17
+ --> E0023-method-argument.sisu:5:22
   |
-5 |     print(s.get(..2))
-  |                 ^^^
+5 |     print(s.contains(1..))
+  |                      ^^^
 
 error[E0023]: a range can only be a `for` source, a pattern, an index or a string's `get` argument
  --> E0023-method-argument.sisu:6:18

@@ -1,0 +1,10 @@
+error[E0032]: a string's `get` takes a range
+ --> E0032-string-get.sisu:3:17
+  |
+3 |     print(s.get(1))
+  |                 ^ this is not a range
+  |
+  = help: write a range, such as `s.get(1..3)`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

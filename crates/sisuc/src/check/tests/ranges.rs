@@ -95,12 +95,119 @@ fn range_index_with_no_bounds_should_be_e0023() {
     }
 }
 
-/// Until Task 4, a range index of a string is E0023.
+/// GIVEN a range index of a string, in each form
+/// WHEN the program is checked
+/// THEN it checks clean, and its type is `string`
 #[test]
-fn range_index_of_a_string_should_be_e0023_until_the_checker_takes_it() {
+fn range_index_of_a_string_should_be_a_string() {
+    for (row, index) in [
+        ("both bounds", "s[0..2]"),
+        ("inclusive", "s[0..=1]"),
+        ("no end", "s[1..]"),
+        ("no start", "s[..2]"),
+        ("inclusive no start", "s[..=1]"),
+        ("of a substring", "s[1..][1..]"),
+    ] {
+        let src = main_with(&format!(
+            "let s = \"abc\"\n    let t: string = {index}\n    print(t)"
+        ));
+        clean_row(row, &src);
+    }
+}
+
+/// GIVEN a range index of a string whose bound is not an `i64`
+/// WHEN the program is checked
+/// THEN it reports E0032 at the bound, once
+#[test]
+fn range_index_of_a_string_should_check_its_bounds() {
     codes(
-        &main_with("let s = \"abc\"\n    print(s[0..2])"),
-        &[(Code::RangeOutsideFor, (3, 13))],
+        &main_with("let s = \"abc\"\n    print(s[0..true])"),
+        &[(Code::Mismatch, (3, 16))],
+    );
+}
+
+/// GIVEN `s[i]` on a string, with a plain index and on a substring
+/// WHEN the program is checked
+/// THEN it reports E0068 at the string, once (S10)
+#[test]
+fn single_index_of_a_string_should_be_e0068_at_the_string() {
+    for (row, index, at) in [
+        ("plain", "s[0]", (3, 11)),
+        ("substring", "s[0..2][0]", (3, 11)),
+    ] {
+        let src = main_with(&format!("let s = \"abc\"\n    print({index})"));
+        codes_row(row, &src, &[(Code::CannotIndex, at)]);
+    }
+}
+
+/// GIVEN `s.get(r)` with a range, in each form that is a range, on a string
+/// WHEN the program is checked
+/// THEN it checks clean, and its type is `string?`
+#[test]
+fn string_get_with_a_range_should_be_an_optional_string() {
+    for (row, call) in [
+        ("both bounds", "s.get(1..3)"),
+        ("inclusive", "s.get(1..=2)"),
+        ("no end", "s.get(1..)"),
+        ("no start", "s.get(..2)"),
+        ("inclusive no start", "s.get(..=1)"),
+        ("of a substring", "s[1..].get(0..1)"),
+    ] {
+        let src = main_with(&format!(
+            "let s = \"abc\"\n    let t: string? = {call}\n    print(t ?? \"\")"
+        ));
+        clean_row(row, &src);
+    }
+}
+
+/// GIVEN a string's `get` with an argument that is no range written in the call, and with no
+///       argument or two
+/// WHEN the program is checked
+/// THEN the first is E0032 at the argument (S24), and the others E0053 at the call
+#[test]
+fn string_get_should_take_one_range() {
+    let rows = [
+        ("integer", "s.get(1)", (Code::Mismatch, (4, 17))),
+        ("string", "s.get(\"a\")", (Code::Mismatch, (4, 17))),
+        ("range in a variable", "s.get(n)", (Code::Mismatch, (4, 17))),
+        ("no argument", "s.get()", (Code::ArgumentCount, (4, 11))),
+        (
+            "two arguments",
+            "s.get(0..1, 2)",
+            (Code::ArgumentCount, (4, 11)),
+        ),
+    ];
+    for (row, call, expected) in rows {
+        let src = main_with(&format!(
+            "let s = \"abc\"\n    let n = 1\n    print({call})"
+        ));
+        codes_row(row, &src, &[expected]);
+    }
+}
+
+/// GIVEN a string's `get` with a range that has no bounds, or no end after `..=`
+/// WHEN the program is checked
+/// THEN it reports E0023 at the range, once
+#[test]
+fn string_get_with_a_range_that_is_an_error_for_good_should_be_e0023() {
+    for (row, call) in [
+        ("no bounds", "s.get(..)"),
+        ("inclusive no bounds", "s.get(..=)"),
+        ("inclusive no end", "s.get(1..=)"),
+    ] {
+        let src = main_with(&format!("let s = \"abc\"\n    print({call})"));
+        codes_row(row, &src, &[(Code::RangeOutsideFor, (3, 17))]);
+    }
+}
+
+/// GIVEN a string's `get` with a range whose bound is not an `i64`
+/// WHEN the program is checked
+/// THEN it reports E0032 at the bound, once
+#[test]
+fn string_get_should_check_its_bounds() {
+    codes(
+        &main_with("let s = \"abc\"\n    print(s.get(0..true))"),
+        &[(Code::Mismatch, (3, 20))],
     );
 }
 
@@ -136,12 +243,13 @@ fn assignment_to_a_range_index_should_be_e0021_at_the_range_index() {
     }
 }
 
-/// A string's element is E0068's string form in Task 4, and a base that is no array or string
-/// its range form in Task 3: until then, E0023.
+/// GIVEN an assignment to an element of a range index of a string
+/// WHEN the program is checked
+/// THEN it reports E0068 at the substring, once: a string has no single index
 #[test]
-fn assignment_to_an_element_of_a_string_range_should_be_e0023_until_task_4() {
+fn assignment_to_an_element_of_a_string_range_should_be_e0068() {
     let src = main_with("let mut s = \"abc\"\n    s[0..2][0] = 'x'\n    print(s)");
-    codes(&src, &[(Code::RangeOutsideFor, (3, 7))]);
+    codes(&src, &[(Code::CannotIndex, (3, 5))]);
 }
 
 /// The base of a range target reports its own mistake once, and the bounds are not checked.
@@ -198,7 +306,6 @@ fn method_range_argument_should_be_the_first_e0023_form() {
         ("contains", "xs.contains(..)", ".."),
         ("array get", "xs.get(0..1)", "0..1"),
         ("array get, no bounds", "xs.get(..)", ".."),
-        ("string get", "s.get(..2)", "..2"),
         ("string contains", "s.contains(1..)", "1.."),
         ("inclusive no end", "xs.get(1..=)", "1..="),
         ("second argument", "xs.get(1, ..2)", "..2"),

@@ -11,8 +11,8 @@ use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, IntPredicate};
 
 use super::abi::{
-    RANGE_END_PAST_LENGTH, RANGE_HAS_END, RANGE_INCLUSIVE, RANGE_NEGATIVE_START,
-    RANGE_START_PAST_END, RANGE_STRING, RC_FAULT_RELEASE, RC_FAULT_RETAIN,
+    RANGE_END_PAST_LENGTH, RANGE_HAS_END, RANGE_INCLUSIVE, RANGE_INSIDE_CHARACTER,
+    RANGE_NEGATIVE_START, RANGE_START_PAST_END, RANGE_STRING, RC_FAULT_RELEASE, RC_FAULT_RETAIN,
 };
 use super::layout::HeapBlock;
 use super::rc::{Helper, counted_core, param};
@@ -199,13 +199,20 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.position_at_end(done);
     }
 
-    /// `base[start..end]`, or `..=` with `inclusive`, of the array `base`: the value with the
-    /// same block, `data` moved to the start, and the length of the range. It takes `base`'s
-    /// reference, so the block's count does not change, and it allocates nothing. A missing bound
-    /// is `None`. With `s` the start (0 when missing) and `e` the end (the length when missing),
-    /// the checks run in this order, and the first that fails panics at `span` with
+    /// `base[start..end]`, or `..=` with `inclusive`, of the array or string `base` of type `ty`:
+    /// the value with the same block, `data` moved to the start, and the length of the range. It
+    /// takes `base`'s reference, so the block's count does not change, and it allocates nothing.
+    /// A missing bound is `None`. With `s` the start (0 when missing) and `e` the end (the length
+    /// when missing), the checks run in this order, and the first that fails panics at `span` with
     /// `sisu_panic_range`: `s < 0`; `e > len`, or for `..=` `b >= len`, compared before any
-    /// `+ 1` so that `i64::MAX` does not overflow; `s > e`, where `e` is `b + 1` for `..=`.
+    /// `+ 1` so that `i64::MAX` does not overflow; `s > e`, where `e` is `b + 1` for `..=`; and on
+    /// a string, the byte at `s` and then at `e`, each when below `len`: a continuation byte
+    /// would cut a character. With `safe`, which gives the optional of `ty`, a check that fails
+    /// releases `base` and gives `None`, and the value is `Some`, which holds the value itself.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the checks of a range, in their order, read best in one place"
+    )]
     pub(super) fn slice(
         &self,
         (base, ty): (BasicValueEnum<'ctx>, Type),
@@ -214,11 +221,6 @@ impl<'ctx> Codegen<'ctx, '_> {
         span: Span,
     ) -> BasicValueEnum<'ctx> {
         let string = ty == Type::STRING;
-        assert!(
-            !safe && !string,
-            "a string's slice and a safe slice land in Task 4"
-        );
-        let element = element_of(ty);
         let i64_type = self.context.i64_type();
         let (block, data, len) = (
             self.value_block(base),
@@ -240,8 +242,17 @@ impl<'ctx> Codegen<'ctx, '_> {
         let from = start.unwrap_or_else(|| i64_type.const_zero());
         // What the program wrote as the end, for the text of the panic.
         let written = end.unwrap_or(len);
-        let report = |check: u64| {
-            move |codegen: &Self| {
+        // The stop for a failed check: a `safe` slice goes to `none`, any other panics at `span`.
+        let function = self.current_function();
+        let none = safe.then(|| self.context.append_basic_block(function, "slice.none"));
+        let fail = |fails: IntValue<'ctx>, check: u64, first: IntValue<'ctx>| {
+            if let Some(none) = none {
+                let ok = self.context.append_basic_block(function, "slice.ok");
+                self.branch_on(fails, none, ok);
+                self.builder.position_at_end(ok);
+                return;
+            }
+            self.panic_with(fails, |codegen| {
                 let (at, at_len) = codegen.report_site(span);
                 (
                     codegen.panic_range,
@@ -249,16 +260,16 @@ impl<'ctx> Codegen<'ctx, '_> {
                         at.into(),
                         at_len.into(),
                         kind(check).into(),
-                        from.into(),
+                        first.into(),
                         written.into(),
                         len.into(),
                     ],
                 )
-            }
+            });
         };
         if start.is_some() {
             let negative = self.int_compare(IntPredicate::SLT, from, i64_type.const_zero());
-            self.panic_with(negative, report(RANGE_NEGATIVE_START));
+            fail(negative, RANGE_NEGATIVE_START, from);
         }
         if let Some(end) = end {
             let predicate = if inclusive {
@@ -267,7 +278,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 IntPredicate::SGT
             };
             let past = self.int_compare(predicate, end, len);
-            self.panic_with(past, report(RANGE_END_PAST_LENGTH));
+            fail(past, RANGE_END_PAST_LENGTH, from);
         }
         // `b < len` here for `..=`, so `b + 1` cannot overflow.
         let to = match end {
@@ -279,12 +290,60 @@ impl<'ctx> Codegen<'ctx, '_> {
             None => len,
         };
         let inverted = self.int_compare(IntPredicate::SGT, from, to);
-        self.panic_with(inverted, report(RANGE_START_PAST_END));
-        let len = self
+        fail(inverted, RANGE_START_PAST_END, from);
+        if string {
+            // A missing bound is 0 or `len`, which are on a boundary. A position at `len` is too.
+            for position in [start.map(|_| from), end.map(|_| to)].into_iter().flatten() {
+                let peek = self.context.append_basic_block(function, "boundary.peek");
+                let next = self.context.append_basic_block(function, "boundary.next");
+                let below = self.int_compare(IntPredicate::ULT, position, len);
+                self.branch_on(below, peek, next);
+                self.builder.position_at_end(peek);
+                let byte = self
+                    .load(
+                        self.context.i8_type().into(),
+                        self.string_byte(data, position),
+                    )
+                    .into_int_value();
+                // A continuation byte is `0b10xx_xxxx`.
+                let top = self
+                    .builder
+                    .build_and(byte, self.context.i8_type().const_int(0xC0, false), "top")
+                    .expect(POSITIONED);
+                let cuts = self.int_compare(
+                    IntPredicate::EQ,
+                    top,
+                    self.context.i8_type().const_int(0x80, false),
+                );
+                fail(cuts, RANGE_INSIDE_CHARACTER, position);
+                self.branch_to(next);
+                self.builder.position_at_end(next);
+            }
+        }
+        let slice_len = self
             .builder
             .build_int_nuw_sub(to, from, "slice.len")
             .expect(POSITIONED);
-        self.make_value(block, self.element_ptr(element, data, from), len)
+        let first = if string {
+            self.string_byte(data, from)
+        } else {
+            self.element_ptr(element_of(ty), data, from)
+        };
+        let value = self.make_value(block, first, slice_len);
+        let Some(none) = none else {
+            return value;
+        };
+        // `Some(value)` holds the value itself; `None` is the empty value of the optional.
+        let some = self.current_block();
+        let join = self.context.append_basic_block(function, "slice.join");
+        self.branch_to(join);
+        self.builder.position_at_end(none);
+        self.release(base, ty);
+        let gone = self.current_block();
+        let empty = self.empty(Type::optional(ty));
+        self.branch_to(join);
+        self.builder.position_at_end(join);
+        self.phi(self.value_type(), &[(value, some), (empty, gone)])
     }
 
     /// `slot.push(value)`: appends `value`, which it consumes, to the array of type `ty` that

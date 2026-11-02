@@ -511,7 +511,6 @@ pub(super) const SINK_CAP: u64 = 32;
 pub(super) const RANGE_NEGATIVE_START: u64 = 0;
 pub(super) const RANGE_END_PAST_LENGTH: u64 = 1;
 pub(super) const RANGE_START_PAST_END: u64 = 2;
-#[cfg_attr(not(test), expect(dead_code, reason = "Task 4's string check uses it"))]
 pub(super) const RANGE_INSIDE_CHARACTER: u64 = 3;
 pub(super) const RANGE_INCLUSIVE: u64 = 4;
 pub(super) const RANGE_HAS_END: u64 = 8;

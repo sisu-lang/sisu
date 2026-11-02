@@ -108,6 +108,9 @@ const RECEIVERS: &[(&str, &[&str])] = &[
     ("tir::ExprKind::Bytes", &["String"]),
     ("tir::ExprKind::Words", &["String"]),
     ("tir::ExprKind::FromChars", &["Array"]),
+    // A range index, and a string's `get`, which is a `Slice` that cannot fail.
+    ("tir::ExprKind::Slice", &["String", "Array"]),
+    ("tir::ExprKind::Slice safe", &["String"]),
 ];
 
 /// The scalar conversions, from and to, as `convert` in `check/string.rs` takes them: `i64(e)`
@@ -2656,9 +2659,21 @@ impl Walk {
                 self.tir_expr(index, Parent::Other);
             }
             tir::ExprKind::Slice {
-                base, start, end, ..
+                base,
+                start,
+                end,
+                safe,
+                ..
             } => {
                 self.mark("tir::ExprKind::Slice");
+                self.receiver(
+                    if *safe {
+                        "tir::ExprKind::Slice safe"
+                    } else {
+                        "tir::ExprKind::Slice"
+                    },
+                    base,
+                );
                 self.tir_expr(base, Parent::Other);
                 for bound in start.iter().chain(end) {
                     self.tir_expr(bound, Parent::Other);

@@ -2,7 +2,7 @@
 //! the length and the capacity, then `cap` bytes. A string value is three words, `{ block, data,
 //! len }`: the block, the first byte and the number of bytes (`layout.rs`, `make_value`). A value
 //! that covers its whole block has `data` at the block's first byte and `len` equal to the
-//! header's `len`; every value has that shape for now. A literal's block is a writable global
+//! header's `len`; a substring has not. A literal's block is a writable global
 //! that holds a reference of its own, so it is never freed and never reused in place. This module
 //! is the only one that reads a string header; `layout.rs` owns the layout. This module owns the
 //! string nodes and the bodies of the string helpers, which `define_helpers` reaches through
@@ -85,7 +85,11 @@ impl<'ctx> Codegen<'ctx, '_> {
         unsafe_code,
         reason = "inkwell marks GEP unsafe for a wrong index list; this GEP takes one `i64` index"
     )]
-    fn string_byte(&self, bytes: PointerValue<'ctx>, offset: IntValue<'ctx>) -> PointerValue<'ctx> {
+    pub(super) fn string_byte(
+        &self,
+        bytes: PointerValue<'ctx>,
+        offset: IntValue<'ctx>,
+    ) -> PointerValue<'ctx> {
         // SAFETY: the one `i64` index steps over `i8`s, so the index list is valid for its
         // pointee type. `inbounds` is sound because the block holds `cap` bytes after the
         // header and every caller passes an offset of at most `cap`, one past the end at most.
@@ -102,11 +106,25 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.runtime("sisu_realloc")
     }
 
-    /// `lhs + rhs`, which takes both owned references and returns an owned one. When
-    /// the count of the block of `lhs` is 1, the bytes of `rhs` are appended into it, after it is
-    /// first reallocated to `max(needed, 2 * cap)` when its capacity is below the `needed` length.
-    /// Otherwise a new block with capacity `needed` receives both byte runs, and `lhs` is
-    /// released. Either way `rhs` is released last. The result covers its block.
+    /// `lhs + rhs`, which takes both owned references and returns an owned one. `lhs` has a
+    /// block with a header `len` of set bytes, and `needed` is `lhs.len() + rhs.len()`. There are
+    /// three ways, as for a `push`:
+    /// 1. The count is 1, `lhs` ends at the block's last set byte (`data + len` is where the
+    ///    header's `len` ends), and the header's `len + rhs.len()` is at most the capacity: the
+    ///    bytes of `rhs` go in place.
+    /// 2. The count is 1, `lhs` covers its block, and the block is full: the block is
+    ///    reallocated to `max(needed, 2 * cap)` bytes, and the bytes of `rhs` go in place.
+    /// 3. Otherwise a new block receives both byte runs, and `lhs` is released. Its capacity is
+    ///    `needed` when `lhs` covers its shared block, else `2 * needed`, so that an `lhs` that
+    ///    does not cover its block, such as a substring, takes path 1 on the appends that follow.
+    ///
+    /// Either way `rhs` is released last. No way writes over a byte that another value can see.
+    /// The result starts where `lhs` did in paths 1 and 2, and at the start of the new block in
+    /// path 3.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the three ways of a join read best in one place"
+    )]
     pub(super) fn concat(
         &self,
         lhs_value: BasicValueEnum<'ctx>,
@@ -114,30 +132,67 @@ impl<'ctx> Codegen<'ctx, '_> {
     ) -> BasicValueEnum<'ctx> {
         let i64_type = self.context.i64_type();
         let lhs = self.value_block(lhs_value);
-        let (len, rhs_len) = (self.value_len(lhs_value), self.value_len(rhs));
+        let (data, len, rhs_len) = (
+            self.value_data(lhs_value),
+            self.value_len(lhs_value),
+            self.value_len(rhs),
+        );
         // Both strings exist in memory, which on every host Sisu supports is below 2^57 bytes,
         // so no length, capacity or block size here can overflow.
         let needed = self
             .builder
             .build_int_nuw_add(len, rhs_len, "needed")
             .expect(POSITIONED);
+        let held = self.load_string_field(lhs, LEN);
+        let first = self.string_field(lhs, BYTES);
+        let raised = self
+            .builder
+            .build_int_nuw_add(held, rhs_len, "held")
+            .expect(POSITIONED);
         let function = self.current_function();
         let block = |name| self.context.append_basic_block(function, name);
-        let (owned, grow, copy, join) =
-            (block("owned"), block("grow"), block("copy"), block("join"));
+        let (alone, ends, full, grow, copy, join) = (
+            block("alone"),
+            block("ends"),
+            block("full"),
+            block("grow"),
+            block("copy"),
+            block("join"),
+        );
         let count = self.load_count(lhs, "count");
         let one = self.int_compare(IntPredicate::EQ, count, i64_type.const_int(1, false));
         self.builder
-            .build_conditional_branch(one, owned, copy)
+            .build_conditional_branch(one, alone, copy)
             .expect(POSITIONED);
 
         // Both operands are owned references, so with a count of 1 `lhs` is not `rhs`'s block:
-        // reallocating it leaves `rhs` in place.
-        self.builder.position_at_end(owned);
-        let cap = self.load_string_field(lhs, CAP);
-        let full = self.int_compare(IntPredicate::ULT, cap, needed);
+        // reallocating it leaves `rhs` in place. Path 1 needs `lhs` to end at the last set byte.
+        self.builder.position_at_end(alone);
+        let value_end = self.string_byte(data, len);
+        let block_end = self.string_byte(first, held);
+        let at_end = self
+            .builder
+            .build_int_compare(IntPredicate::EQ, value_end, block_end, "at.end")
+            .expect(POSITIONED);
         self.builder
-            .build_conditional_branch(full, grow, join)
+            .build_conditional_branch(at_end, ends, copy)
+            .expect(POSITIONED);
+
+        self.builder.position_at_end(ends);
+        let cap = self.load_string_field(lhs, CAP);
+        let room = self.int_compare(IntPredicate::ULE, raised, cap);
+        self.builder
+            .build_conditional_branch(room, join, full)
+            .expect(POSITIONED);
+
+        // Path 2 needs `lhs` to cover its block, which it ends already.
+        self.builder.position_at_end(full);
+        let starts = self
+            .builder
+            .build_int_compare(IntPredicate::EQ, data, first, "at.start")
+            .expect(POSITIONED);
+        self.builder
+            .build_conditional_branch(starts, grow, copy)
             .expect(POSITIONED);
 
         self.builder.position_at_end(grow);
@@ -166,31 +221,56 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect("`sisu_realloc` should return a pointer, as the runtime declares it")
             .into_pointer_value();
         self.store(self.string_field(grown, CAP), new_cap.into());
+        let grown_bytes = self.string_field(grown, BYTES);
         self.branch_to(join);
 
         self.builder.position_at_end(copy);
-        let fresh = self.new_string(needed);
-        self.copy_bytes(
-            self.string_field(fresh, BYTES),
-            self.value_data(lhs_value),
-            len,
-        );
+        // A value that covers its block gets room for `rhs` alone, as a copy always did. One that
+        // does not gets room to grow in, so that the appends that follow take path 1.
+        let covers = self
+            .builder
+            .build_and(
+                self.builder
+                    .build_int_compare(IntPredicate::EQ, data, first, "at.start")
+                    .expect(POSITIONED),
+                self.int_compare(IntPredicate::EQ, len, held),
+                "covers",
+            )
+            .expect(POSITIONED);
+        let doubled = self
+            .builder
+            .build_int_nuw_mul(needed, i64_type.const_int(2, false), "doubled")
+            .expect(POSITIONED);
+        let room = self
+            .builder
+            .build_select(covers, needed, doubled, "room")
+            .expect(POSITIONED)
+            .into_int_value();
+        let fresh = self.new_string(room);
+        let fresh_bytes = self.string_field(fresh, BYTES);
+        self.copy_bytes(fresh_bytes, data, len);
         self.release(lhs_value, Type::STRING);
         let copied = self.current_block();
         self.branch_to(join);
 
         self.builder.position_at_end(join);
-        let result = self
-            .builder
-            .build_phi(self.context.ptr_type(AddressSpace::default()), "string")
-            .expect(POSITIONED);
-        result.add_incoming(&[(&lhs, owned), (&grown, grow), (&fresh, copied)]);
-        let result = result.as_basic_value().into_pointer_value();
-        let bytes = self.string_field(result, BYTES);
-        self.copy_bytes(self.string_byte(bytes, len), self.value_data(rhs), rhs_len);
-        self.store(self.string_field(result, LEN), needed.into());
+        let pointer = self.context.ptr_type(AddressSpace::default());
+        let result = self.builder.build_phi(pointer, "string").expect(POSITIONED);
+        result.add_incoming(&[(&lhs, ends), (&grown, grow), (&fresh, copied)]);
+        // Where the bytes of `lhs` start, in the block that holds them now.
+        let start = self.builder.build_phi(pointer, "start").expect(POSITIONED);
+        start.add_incoming(&[(&data, ends), (&grown_bytes, grow), (&fresh_bytes, copied)]);
+        // The set bytes: a copy holds only `lhs`'s and `rhs`'s.
+        let set = self.builder.build_phi(i64_type, "set").expect(POSITIONED);
+        set.add_incoming(&[(&raised, ends), (&raised, grow), (&needed, copied)]);
+        let start = start.as_basic_value().into_pointer_value();
+        self.copy_bytes(self.string_byte(start, len), self.value_data(rhs), rhs_len);
+        self.store(
+            self.string_field(result.as_basic_value().into_pointer_value(), LEN),
+            set.as_basic_value(),
+        );
         self.release(rhs, Type::STRING);
-        self.make_value(result, bytes, needed)
+        self.make_value(result.as_basic_value().into_pointer_value(), start, needed)
     }
 
     /// A new string holding a copy of the `len` bytes at `bytes`, which are valid UTF-8.

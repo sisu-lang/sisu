@@ -579,9 +579,14 @@ impl Checker<'_> {
         let method = site.name;
         // The arguments are not part of the chain that an index ends; `expr` restores the flag.
         let indexed = std::mem::take(&mut self.body.indexed);
-        if args
-            .iter()
-            .any(|a| matches!(a.value.kind, ExprKind::Range(_)))
+        // A string's `get` takes its range itself. Any other method with a range argument is
+        // the stopgap until Task 5.
+        let string_get =
+            !safe && method.name.as_str() == "get" && type_of(&receiver) == Some(Type::STRING);
+        if !string_get
+            && args
+                .iter()
+                .any(|a| matches!(a.value.kind, ExprKind::Range(_)))
         {
             return self.range_arguments(receiver_expr, args);
         }
@@ -617,7 +622,9 @@ impl Checker<'_> {
             Some(ty) if matches!(ty.kind(), TypeKind::Array(_)) => {
                 return self.array_method(span, receiver, ty, method, args);
             }
-            Some(Type::STRING) => return self.string_method(span, receiver, method, args),
+            Some(Type::STRING) => {
+                return self.string_method(span, (receiver, receiver_expr), method, args);
+            }
             Some(ty @ (Type::I64 | Type::F64)) => {
                 return self.number_method(span, receiver, ty, method, args);
             }

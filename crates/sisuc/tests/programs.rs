@@ -318,6 +318,12 @@ allocation_counts! {
     // on the slices of that array allocates nothing: the array is the slices' only holder, and a
     // borrowed slice is never copied.
     (slice_search_owned, "0\n", "0\n", 1000),
+    // `t` is `s[..2]` of a unique `s`, so it does not end at the last byte of its block: the first
+    // append copies it into a block with room for twice the new length, 6 bytes. The next 3
+    // appends are in place. Then the block is reallocated at the lengths 7, 13, 25, 49, 97, 193,
+    // 385 and 769, to the capacities 12, 24, ..., 1536. Valgrind counts each `realloc` as an
+    // allocation: 1 copy and 8 reallocations.
+    (substring_append, "1002\nx\n", "2\nb\n", 9),
 }
 
 /// One test, `allocations_should_match_the_reference`: each pair is a program and the reference

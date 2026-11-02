@@ -19,8 +19,8 @@ use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
 
-/// The methods of a `string`, none of which takes an argument.
-pub(super) const METHODS: &[&str] = &["len", "chars", "bytes", "words"];
+/// The methods of a `string`: `get` takes a range, and the others no argument.
+pub(super) const METHODS: &[&str] = &["len", "chars", "bytes", "words", "get"];
 
 impl Checker<'_> {
     /// `l + r` over two `string`s, which `mismatched` says were reported against.
@@ -308,15 +308,17 @@ impl Checker<'_> {
         block_expr(lets, Some(rest), Type::BOOL, span)
     }
 
-    /// `receiver.method(args)` on a `string`: `len()`, `chars()`, `bytes()` and `words()`.
+    /// `receiver.method(args)` on a `string`, `receiver_expr` its source: `len()`, `chars()`,
+    /// `bytes()`, `words()` and `get(range)`.
     pub(super) fn string_method(
         &mut self,
         span: Span,
-        receiver: Checked,
+        (receiver, receiver_expr): (Checked, &ast::Expr),
         method: &ast::Ident,
         args: &[ast::Arg],
     ) -> Checked {
         let (ty, node): (_, fn(Box<tir::Expr>) -> tir::ExprKind) = match method.name.as_str() {
+            "get" => return self.string_get(span, (receiver, receiver_expr), args),
             "len" => (Type::I64, tir::ExprKind::Len),
             "chars" => (Type::array(Type::CHAR), tir::ExprKind::Chars),
             "bytes" => (Type::array(Type::U8), tir::ExprKind::Bytes),
