@@ -1,0 +1,10 @@
+error[E0109]: `#` does not combine with a width, alignment or precision
+ --> E0109-limit-both.sisu:3:14
+  |
+3 |     print("{f:#2000.40}")
+  |              ^^^^^^^^^
+  |
+  = help: remove the width, alignment and precision, or remove the `#` and limit the width to 1000 and precision to 30
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0109

@@ -130,7 +130,7 @@ pub const STACK_SIZE: usize = 64 << 20;
 
 /// Parses the arguments, does what they ask for, and reports.
 pub fn cli() -> ExitCode {
-    let (format, mode) = match args::parse(std::env::args_os().collect()) {
+    let (format, mode) = match args::parse(&std::env::args_os().collect::<Vec<_>>()) {
         Ok(parsed) => parsed,
         Err(e) => {
             // Not `e.exit()`, which would end the process from the compiler's thread. A usage

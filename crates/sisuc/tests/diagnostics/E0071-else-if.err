@@ -1,0 +1,10 @@
+error[E0071]: this `else if` chain makes the nesting deeper than 256 levels
+   --> E0071-else-if.sisu:256:17
+    |
+256 |     } else if x == 0 {
+    |                 ^^ each `else if` adds one level
+    |
+    = help: write the branches as `match` arms with `if` guards
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0071

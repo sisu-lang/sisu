@@ -8,6 +8,24 @@ use crate::front_end::{decode, front_end};
 use crate::lexer::lex;
 use crate::parser::{parse, parse_ok};
 
+/// `f` on a thread with a `STACK_SIZE` stack: a fixture that nests to the limit overflows the
+/// test's own, as `main` runs `cli` on a larger one.
+fn on_deep_stack<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(crate::STACK_SIZE)
+            .spawn_scoped(scope, f)
+            .expect("the thread should start")
+            .join()
+            .expect("the work on the deep stack should not panic")
+    })
+}
+
+/// The diagnostics of `source`, found on the deep stack.
+fn diagnostics(source: &str) -> Vec<Diagnostic> {
+    on_deep_stack(|| front_end(source).1)
+}
+
 /// `source` with `edits` applied. An edit equal to one already taken is dropped, as the same fix
 /// can come from several diagnostics; the rest must not overlap, and two insertions must not
 /// share an offset, as their order would be arbitrary.
@@ -76,7 +94,7 @@ pub(crate) fn apply_fix(source: &str, d: &Diagnostic) -> String {
 /// that was, or `None` when no diagnostic of `code` has one. The result must still lex and
 /// parse; the checker may still report errors it reveals.
 fn fixed(source: &str, code: Code) -> Option<(String, usize)> {
-    let (_, diagnostics) = front_end(source);
+    let diagnostics = diagnostics(source);
     let safe = |d: &&Diagnostic| d.fixes().iter().any(Fix::safe);
     diagnostics.iter().filter(|d| d.code() == code).find(safe)?;
     let fixes: Vec<&Fix> = diagnostics
@@ -99,7 +117,7 @@ fn docs() -> PathBuf {
 }
 
 fn codes(source: &str) -> Vec<Code> {
-    front_end(source).1.iter().map(Diagnostic::code).collect()
+    diagnostics(source).iter().map(Diagnostic::code).collect()
 }
 
 /// An explanation's title, and its Broken and Fixed programs.
@@ -292,11 +310,13 @@ fn fixtures() -> Vec<(PathBuf, Code)> {
 
 /// The lexer and parser diagnostics of `source`.
 fn syntax_codes(source: &str) -> Vec<Code> {
-    let diagnostics = match lex(source) {
-        Ok(lexed) => parse(lexed, false).diagnostics,
-        Err(d) => vec![d],
-    };
-    diagnostics.iter().map(Diagnostic::code).collect()
+    on_deep_stack(|| {
+        let diagnostics = match lex(source) {
+            Ok(lexed) => parse(lexed, false).diagnostics,
+            Err(d) => vec![d],
+        };
+        diagnostics.iter().map(Diagnostic::code).collect()
+    })
 }
 
 /// `a` with one occurrence of each code of `b` removed.
@@ -313,13 +333,13 @@ fn minus(mut a: Vec<Code>, b: &[Code]) -> Vec<Code> {
 /// error: a diagnostic that disappears with it was a cascade of the same mistake (ADR 0013). The
 /// checker may still report errors the fix reveals.
 #[test]
-fn each_safe_fix_removes_exactly_its_diagnostic() {
+fn each_safe_fix_should_remove_exactly_its_diagnostic() {
     let mut applied = 0;
     for (path, _) in all_fixtures() {
         let Some(source) = fixture_text(&path) else {
             continue;
         };
-        let diagnostics = front_end(&source).1;
+        let diagnostics = diagnostics(&source);
         let before: Vec<Code> = diagnostics.iter().map(Diagnostic::code).collect();
         for d in &diagnostics {
             for fix in d.fixes().iter().filter(|f| f.safe()) {

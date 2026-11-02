@@ -4,7 +4,11 @@ error[E0109]: Sisu's format specs have no `#?`
 3 |     print("{xs:#?}")
   |               ^^^
   |
-  = help: write `#` alone to lay the value out over lines
+help: delete the `?`: `#` alone lays the value out over lines
+  |
+3 -     print("{xs:#?}")
+3 +     print("{xs:#}")
+  |
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0109

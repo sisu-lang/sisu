@@ -1,0 +1,15 @@
+error[E0109]: Sisu's format specs have no `?`
+ --> E0109-debug-width.sisu:3:14
+  |
+3 |     print("{n:>5?}")
+  |              ^^^^
+  |
+  = help: Sisu shows a value with its `Display`
+help: delete the `?`
+  |
+3 -     print("{n:>5?}")
+3 +     print("{n:>5}")
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0109
