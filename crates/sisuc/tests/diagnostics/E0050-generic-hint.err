@@ -1146,5 +1146,111 @@ error[E0032]: expected `string`, found `i64`
 227 |     let w: string = z
     |                     ^
 
-sisu: 154 errors
+error[E0033]: cannot find binding `nope`
+   --> E0050-generic-hint.sisu:233:58
+    |
+233 | fn join_of_failures_then_call(c: bool) { let z = (if c { nope } else { nope }) + id(mk2()) }
+    |                                                          ^^^^
+
+error[E0033]: cannot find binding `nope`
+   --> E0050-generic-hint.sisu:233:72
+    |
+233 | fn join_of_failures_then_call(c: bool) { let z = (if c { nope } else { nope }) + id(mk2()) }
+    |                                                                        ^^^^
+
+error[E0033]: cannot find binding `nope`
+   --> E0050-generic-hint.sisu:235:26
+    |
+235 |     let z = o ?? (if c { nope } else { nope })
+    |                          ^^^^
+
+error[E0033]: cannot find binding `nope`
+   --> E0050-generic-hint.sisu:235:40
+    |
+235 |     let z = o ?? (if c { nope } else { nope })
+    |                                        ^^^^
+
+error[E0033]: cannot find binding `nope`
+   --> E0050-generic-hint.sisu:238:43
+    |
+238 | fn negated_failure_then_call() { let z = -nope + id(mk2()) }
+    |                                           ^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+   --> E0050-generic-hint.sisu:238:53
+    |
+238 | fn negated_failure_then_call() { let z = -nope + id(mk2()) }
+    |                                                     ^^^^^
+
+error[E0050]: cannot infer `X` for `mk2`
+   --> E0050-generic-hint.sisu:242:26
+    |
+242 |     let z = o ?? pair(id(mk2()) + 1, nope)
+    |                          ^^^
+    |
+    = help: annotate the result, or write the type: `mk2<...>(...)`
+
+error[E0033]: cannot find binding `nope`
+   --> E0050-generic-hint.sisu:242:38
+    |
+242 |     let z = o ?? pair(id(mk2()) + 1, nope)
+    |                                      ^^^^
+
+error[E0032]: expected `string`, found `i64`
+   --> E0050-generic-hint.sisu:243:21
+    |
+243 |     let w: string = z
+    |                     ^
+
+error[E0050]: cannot infer `X` for `mk2`
+   --> E0050-generic-hint.sisu:245:48
+    |
+245 | fn pair_with_sum_then_call() { let z = pair(id(mk2()) + 1, nope) + id(mk2()) }
+    |                                                ^^^
+    |
+    = help: annotate the result, or write the type: `mk2<...>(...)`
+
+error[E0033]: cannot find binding `nope`
+   --> E0050-generic-hint.sisu:245:60
+    |
+245 | fn pair_with_sum_then_call() { let z = pair(id(mk2()) + 1, nope) + id(mk2()) }
+    |                                                            ^^^^
+
+error[E0050]: cannot infer `X` for `mk2`
+   --> E0050-generic-hint.sisu:245:71
+    |
+245 | fn pair_with_sum_then_call() { let z = pair(id(mk2()) + 1, nope) + id(mk2()) }
+    |                                                                       ^^^
+    |
+    = help: annotate the result, or write the type: `mk2<...>(...)`
+
+error[E0050]: cannot infer `X` for `mk2`
+   --> E0050-generic-hint.sisu:250:23
+    |
+250 |     let z = x + id(id(mk2()) + 1)
+    |                       ^^^
+    |
+    = help: annotate the result, or write the type: `mk2<...>(...)`
+
+error[E0032]: expected `string`, found `u8`
+   --> E0050-generic-hint.sisu:251:21
+    |
+251 |     let w: string = z
+    |                     ^
+
+error[E0050]: cannot infer `X` for `mk2`
+   --> E0050-generic-hint.sisu:254:20
+    |
+254 |     let z = snd(id(mk2()) + 1, x) + 1
+    |                    ^^^
+    |
+    = help: annotate the result, or write the type: `mk2<...>(...)`
+
+error[E0032]: expected `string`, found `i64`
+   --> E0050-generic-hint.sisu:255:21
+    |
+255 |     let w: string = z
+    |                     ^
+
+sisu: 170 errors
 sisu: for more on a code, run `sisu explain <code>`: E0032, E0033, E0050

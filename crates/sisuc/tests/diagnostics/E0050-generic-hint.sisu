@@ -226,3 +226,31 @@ fn literal_first_call_then_string() {
     let z = 1 + id(mk2())
     let w: string = z
 }
+
+// Only a value that kept its E0050 is kept: a value that failed with its own report is not, and
+// the code that uses it adds nothing for the default `i64`.
+fn snd<T, U>(a: T, b: T) -> U { panic("no") }
+fn join_of_failures_then_call(c: bool) { let z = (if c { nope } else { nope }) + id(mk2()) }
+fn coalesce_join_of_failures_then_string(c: bool, o: i64?) {
+    let z = o ?? (if c { nope } else { nope })
+    let w: string = z
+}
+fn negated_failure_then_call() { let z = -nope + id(mk2()) }
+
+// A call fails on an unbound parameter, and an argument of it kept its E0050.
+fn coalesce_pair_with_sum_then_string(o: i64?) {
+    let z = o ?? pair(id(mk2()) + 1, nope)
+    let w: string = z
+}
+fn pair_with_sum_then_call() { let z = pair(id(mk2()) + 1, nope) + id(mk2()) }
+
+// A type from a sibling is a type, not the hint: the call keeps it. A parameter that the hint
+// binds, and that no argument which kept its E0050 names, is not the fault of that argument.
+fn u8_plus_call_of_sum_then_string(x: u8) {
+    let z = x + id(id(mk2()) + 1)
+    let w: string = z
+}
+fn result_from_hint_then_string(x: u8) {
+    let z = snd(id(mk2()) + 1, x) + 1
+    let w: string = z
+}
