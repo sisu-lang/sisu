@@ -5,11 +5,12 @@ Usage: python3 scripts/merge_pr.py [--cleanup] PR [REPO_ROOT]
 Run it only after the user says to merge. It stops, with no merge, when a check fails or the head
 does not contain main. It waits for running checks, merges at the head it checked, waits for each
 `Closes #N` issue to close, and removes a clean local worktree whose branch is at the merged head.
-With `--cleanup`, it merges nothing: for a pull request that was merged in the GitHub UI, it removes
-the same worktree and branch, under the same rules.
+With `--cleanup`, it merges nothing. It is for a pull request that was merged in the GitHub UI.
+It removes the same worktree and branch, under the same rules.
 It calls `gh api` (REST), so it needs the network: run it with the sandbox off.
 """
 
+import argparse
 import json
 import os
 import re
@@ -135,11 +136,13 @@ def cleanup(number, root):
 
 
 def main(argv):
+    parser = argparse.ArgumentParser(description="Squash-merges a pull request of sisu-lang/sisu.")
+    parser.add_argument("pr")
+    parser.add_argument("root", nargs="?", default=".")
+    parser.add_argument("--cleanup", action="store_true", help="remove the worktree of a merged PR")
+    args = parser.parse_intermixed_args(argv)
     try:
-        if argv[:1] == ["--cleanup"]:
-            cleanup(argv[1], argv[2] if len(argv) > 2 else ".")
-        else:
-            merge(argv[0], argv[1] if len(argv) > 1 else ".")
+        (cleanup if args.cleanup else merge)(args.pr, args.root)
     except Stop as e:
         print(f"merge_pr: FAIL: {e}")
         return 1
