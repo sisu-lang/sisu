@@ -1,6 +1,7 @@
 //! The compiler's modules depend on each other in pipeline order: a top-level module of `src/`
 //! uses only the modules of its own layer and of earlier layers. The test reads the source with
-//! `syn` from `lib.rs` through each `mod` item, and skips the items under `#[cfg(test)]`.
+//! `syn` from `lib.rs` through each `mod` item, and skips the items under `#[cfg(test)]`. It also
+//! checks each field count that `docs/register.md` gives for a struct.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -364,5 +365,64 @@ fn back_edges_should_each_name_a_use_that_remains() {
     assert!(
         stale.is_empty(),
         "each BACK_EDGES entry should still be used; delete these: {stale:?}"
+    );
+}
+
+/// The named fields of the struct at `path`, such as `check::Body`: the modules from `lib.rs`,
+/// then the struct, at the top of its module's file.
+fn field_count(path: &str) -> usize {
+    let (modules, name) = path
+        .rsplit_once("::")
+        .unwrap_or_else(|| panic!("`{path}` should name a module and a struct"));
+    let file = modules
+        .split("::")
+        .fold(lib(), |file, module| module_file(&file, module));
+    source(&file)
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Struct(s) if s.ident == name => Some(s.fields.len()),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("{} should define struct `{name}`", file.display()))
+}
+
+/// GIVEN each row of docs/register.md that says a struct holds "in N fields"
+/// WHEN the struct that its Where cell names is read with `syn`
+/// THEN the struct has N fields, so a new field updates the row in the same change
+#[test]
+fn register_field_counts_should_match_their_structs() {
+    let register = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/register.md");
+    let text = fs::read_to_string(&register).expect("docs/register.md should be readable");
+    let mut rows = 0;
+    let mut wrong = Vec::new();
+    for line in text.lines().filter(|line| line.starts_with('|')) {
+        let Some((_, after)) = line.split_once(" in ") else {
+            continue;
+        };
+        let Some((count, _)) = after.split_once(" fields") else {
+            continue;
+        };
+        let Ok(count) = count.parse::<usize>() else {
+            continue;
+        };
+        let place = line.split('|').nth(2).unwrap_or_default().trim();
+        let path = place.trim_matches('`');
+        rows += 1;
+        let found = field_count(path);
+        if found != count {
+            wrong.push(format!(
+                "`{path}`: the row says {count}, the struct has {found}"
+            ));
+        }
+    }
+    assert!(
+        rows > 0,
+        "docs/register.md should have a row with \"in N fields\""
+    );
+    assert!(
+        wrong.is_empty(),
+        "correct the field count in docs/register.md:\n{}",
+        wrong.join("\n")
     );
 }

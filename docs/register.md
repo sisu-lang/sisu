@@ -26,6 +26,11 @@ are GitHub issues.
   one.
 - **The `structure` area of `audit-sisu`** counts each debt row again, and
   finds a row whose count grew.
+- **A field count** in a row ("in N fields", with the struct as the Where
+  cell, such as `check::Body`) is a test:
+  `register_field_counts_should_match_their_structs` in
+  `crates/sisuc/tests/architecture.rs` fails when the struct has another
+  number of fields.
 
 ## Rulings not built yet
 
