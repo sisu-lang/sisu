@@ -48,8 +48,10 @@ fn main() {
     print(contains_sorted(big, 1998))    // true
     print(contains_sorted(big, 2000))    // false
 
-    // A write to a slice and a push onto one leave the parent as it was.
-    let mut parent = [1, 2, 3, 4]
+    // A write to a slice and a push onto one leave the parent as it was. The write makes `part`
+    // unique, so its push is in place. The push onto `tail` is on a slice that still shares the
+    // parent's block, so it copies.
+    let parent = [1, 2, 3, 4]
     let mut part = parent[..2]
     part[0] = 9
     print(parent)                    // [1, 2, 3, 4]
@@ -57,6 +59,10 @@ fn main() {
     part.push(7)
     print(parent)                    // [1, 2, 3, 4]
     print(part)                      // [9, 2, 7]
+    let mut tail = parent[..2]
+    tail.push(8)
+    print(parent)                    // [1, 2, 3, 4]
+    print(tail)                      // [1, 2, 8]
 
     // `first`, `last` and `get` on a full array, on a slice and on an empty array.
     let e: [i64] = []
@@ -118,7 +124,7 @@ fn main() {
         if rest[0] == 5 { break }
         sum += rest.len()
     }
-    print(sum)                       // 5 + 3 + 2
+    print(sum)                       // 10: 5 + 3 + 2
     print(first_even_after(xs, 0))   // 2
     print(first_even_after(xs, 4))   // -1
 }
