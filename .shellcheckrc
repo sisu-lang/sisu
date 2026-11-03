@@ -1,0 +1,2 @@
+# Follow a `source` that a `# shellcheck source=` line names, also when only one file is checked.
+external-sources=true
