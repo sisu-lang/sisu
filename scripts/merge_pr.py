@@ -1,10 +1,12 @@
 """Squash-merges a pull request of sisu-lang/sisu when it is safe, and removes its local worktree.
 
-Usage: python3 scripts/merge_pr.py PR [REPO_ROOT]
+Usage: python3 scripts/merge_pr.py [--cleanup] PR [REPO_ROOT]
 
 Run it only after the user says to merge. It stops, with no merge, when a check fails or the head
 does not contain main. It waits for running checks, merges at the head it checked, waits for each
 `Closes #N` issue to close, and removes a clean local worktree whose branch is at the merged head.
+With `--cleanup`, it merges nothing: for a pull request that was merged in the GitHub UI, it removes
+the same worktree and branch, under the same rules.
 It calls `gh api` (REST), so it needs the network: run it with the sandbox off.
 """
 
@@ -103,7 +105,14 @@ def merge(number, root):
     if pr["state"] != "open":
         raise Stop(f"#{number} is {pr['state']}")
     sha = pr["head"]["sha"]
-    check_base(pr, sha)
+    try:
+        check_base(pr, sha)
+    except Stop:
+        # Right after a push, GitHub can still answer with the old head. Read the pull request again.
+        time.sleep(POLL)
+        pr = gh(f"{REPO}/pulls/{number}")
+        sha = pr["head"]["sha"]
+        check_base(pr, sha)
     failed = wait_for_checks(sha)
     if failed:
         raise Stop("; ".join(failed))
@@ -118,9 +127,19 @@ def merge(number, root):
     print(remove_worktree(root, pr["head"]["ref"], sha))
 
 
+def cleanup(number, root):
+    pr = gh(f"{REPO}/pulls/{number}")
+    if not pr["merged"]:
+        raise Stop(f"#{number} is not merged")
+    print(remove_worktree(root, pr["head"]["ref"], pr["head"]["sha"]))
+
+
 def main(argv):
     try:
-        merge(argv[0], argv[1] if len(argv) > 1 else ".")
+        if argv[:1] == ["--cleanup"]:
+            cleanup(argv[1], argv[2] if len(argv) > 2 else ".")
+        else:
+            merge(argv[0], argv[1] if len(argv) > 1 else ".")
     except Stop as e:
         print(f"merge_pr: FAIL: {e}")
         return 1
