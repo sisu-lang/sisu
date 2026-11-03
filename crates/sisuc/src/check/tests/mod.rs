@@ -713,6 +713,90 @@ fn block_ending_in_never() {
     }
 }
 
+/// `codes_row` over the codes alone, in the order of the positions: the E0043 among them, when
+/// `under` is given, underlines exactly that text.
+fn codes_under(row: &str, src: &str, under: Option<&str>, expected: &[Code]) {
+    let row = named(row);
+    let mut ds = diags(src);
+    ds.sort_by_key(|d| d.span().start());
+    let found: Vec<_> = ds.iter().map(Diagnostic::code).collect();
+    assert_eq!(found, expected, "{row}");
+    let underlined: Vec<_> = ds
+        .iter()
+        .filter(|d| d.code() == Code::NoValue)
+        .map(|d| &src[d.span().start()..d.span().end()])
+        .collect();
+    assert_eq!(underlined, under.into_iter().collect::<Vec<_>>(), "{row}");
+}
+
+/// A `never` value that failed for another reason is still a `never` used as a value, so it gets
+/// its E0043. A jump read as a value, and a block with an invalid jump, have their own report.
+#[test]
+fn a_never_value_that_failed_should_give_e0043_after_the_other_error() {
+    let wrap = |stmt: &str| {
+        format!(
+            "fn id(x: i64) -> i64 {{ x }}\nfn g() -> i64 {{\n    {stmt}\n    0\n}}\nfn main() {{}}"
+        )
+    };
+    // Each row: the statement, the text that E0043 underlines, and the codes by position.
+    let rows: &[(&str, Option<&str>, &[Code])] = &[
+        (
+            "let x = { return \"a\" }",
+            Some("{ return \"a\" }"),
+            &[Code::NoValue, Code::Mismatch],
+        ),
+        (
+            "let x = if true { return \"a\" } else { return 2 }",
+            Some("if true { return \"a\" } else { return 2 }"),
+            &[Code::NoValue, Code::Mismatch],
+        ),
+        (
+            "let x = if 1 { return 1 } else { return 2 }",
+            Some("if 1 { return 1 } else { return 2 }"),
+            &[Code::NoValue, Code::Mismatch],
+        ),
+        (
+            "let x = { zz; return 1 }",
+            Some("{ zz; return 1 }"),
+            &[Code::NoValue, Code::BindingNotFound],
+        ),
+        // Unchanged: E0043 for a `never` that did not fail.
+        ("let x = return 1", Some("return 1"), &[Code::NoValue]),
+        // Unchanged: a jump read as a value that fails is untyped (`failed_jump`), so E0043 would
+        // only repeat the error.
+        ("let x = return \"a\"", None, &[Code::Mismatch]),
+        ("let x = id(return \"a\")", None, &[Code::Mismatch]),
+        ("let x = [return \"a\"]", None, &[Code::Mismatch]),
+        // Unchanged: a call with a mismatched argument is untyped, so its block is not `never`.
+        ("let x = { panic(5) }", None, &[Code::Mismatch]),
+        // Unchanged: a `break` or `continue` outside a loop is the one report of its block.
+        ("let x = { break }", None, &[Code::JumpOutsideLoop]),
+        ("let x = { continue }", None, &[Code::JumpOutsideLoop]),
+        ("let x = \"a{break}b\"", None, &[Code::JumpOutsideLoop]),
+        // Unchanged: the nested block leaves the flag set, so the outer block gets no E0043.
+        (
+            "let x = { if true { break }; return \"a\" }",
+            None,
+            &[Code::JumpOutsideLoop, Code::Mismatch],
+        ),
+    ];
+    for &(stmt, under, expected) in rows {
+        codes_under(stmt, &wrap(stmt), under, expected);
+    }
+}
+
+/// The program of the issue: a generic call fails inside a block that never finishes.
+#[test]
+fn a_failed_generic_call_in_a_never_block_should_give_e0043_and_e0050() {
+    let src = "class Two<A, B> {\n    a: A\n    b: B\n}\n\nfn mk2<X>() -> Two<X, bool> { panic(\"no\") }\n\nfn main() {\n    let y: i64 = {\n        return\n        mk2()\n    }\n    print(y)\n}\n";
+    codes_under(
+        "mk2",
+        src,
+        Some("{\n        return\n        mk2()\n    }"),
+        &[Code::NoValue, Code::UnreachableCode, Code::CannotInfer],
+    );
+}
+
 #[test]
 fn break_in_header() {
     // Each row: source, the keyword's position and text, the loop keyword's position and text.

@@ -112,6 +112,135 @@ fn interpolating_a_unit_should_report_the_part() {
     );
 }
 
+/// A function `g` over `id`, whose body is the statement `stmt` on line 2 and then `0`.
+fn in_g(stmt: &str) -> String {
+    format!(
+        "fn id(x: string) -> string {{ x }}\nfn g() -> i64 {{\n    {stmt}\n    0\n}}\nfn main() {{}}"
+    )
+}
+
+/// A string literal with a part that never finishes never finishes. E0043 underlines the first
+/// such part, as it does for the operand of any other expression, and not the whole literal.
+#[test]
+fn a_never_part_of_a_literal_as_a_value_should_give_e0043_at_the_part() {
+    // Each row: the statement, the text that E0043 underlines, and the codes by position.
+    let rows: &[(&str, Option<&str>, &[Code])] = &[
+        (
+            "let s = \"a{return 1}b\"",
+            Some("return 1"),
+            &[Code::NoValue],
+        ),
+        (
+            "let s = \"a{1}b{return 1}c\"",
+            Some("return 1"),
+            &[Code::NoValue],
+        ),
+        (
+            "let s = \"a{return 1:>5}b\"",
+            Some("return 1"),
+            &[Code::NoValue],
+        ),
+        (
+            "let s = \"a\" + \"{return 1}\"",
+            Some("return 1"),
+            &[Code::NoValue],
+        ),
+        // A literal inside a part: the inner part, not the inner literal.
+        (
+            "let s = \"a{ \"b{return 1}\" }c\"",
+            Some("return 1"),
+            &[Code::NoValue],
+        ),
+        (
+            "let s = \"a{ \"b{return 1}\":>5}c\"",
+            Some("return 1"),
+            &[Code::NoValue],
+        ),
+        // The first part wins, also when a later inner literal sets the same slot.
+        (
+            "let s = \"a{return 1}b{return 2}\"",
+            Some("return 1"),
+            &[Code::NoValue],
+        ),
+        (
+            "let s = \"x{ \"b{return 1}\" }{ \"c{return 2}\" }\"",
+            Some("return 1"),
+            &[Code::NoValue],
+        ),
+        // A part that is not a literal itself is underlined whole.
+        (
+            "let s = \"a{ { return 1 } }b\"",
+            Some("{ return 1 }"),
+            &[Code::NoValue],
+        ),
+        (
+            "let s = id(id(\"a{return 1}\"))",
+            Some("return 1"),
+            &[Code::NoValue],
+        ),
+        (
+            "let s = (\"a{return 1}b\")",
+            Some("return 1"),
+            &[Code::NoValue],
+        ),
+        (
+            "match \"a{return 1}b\" {\n        _ => print(1)\n    }",
+            Some("return 1"),
+            &[Code::NoValue],
+        ),
+        (
+            "if \"a{return 1}b\" { print(1) }",
+            Some("return 1"),
+            &[Code::NoValue],
+        ),
+        // The part failed too: the mismatch of the inner `return`, then the literal's E0043.
+        (
+            "let s = \"a{ {return \"z\"} }b\"",
+            Some("{return \"z\"}"),
+            &[Code::NoValue, Code::Mismatch],
+        ),
+    ];
+    for &(stmt, under, expected) in rows {
+        codes_under(stmt, &in_g(stmt), under, expected);
+    }
+    codes_under(
+        "return in a string function",
+        "fn g() -> string {\n    return \"a{return \"x\"}b\"\n}\nfn main() {}",
+        Some("return \"x\""),
+        &[Code::NoValue],
+    );
+}
+
+/// A never literal that is the value of a block or an arm, and any other never operand, has the
+/// underline it had: the whole expression that never finishes.
+#[test]
+fn a_never_literal_as_the_value_of_a_block_should_give_e0043_at_the_whole() {
+    // Each row: the statement, the text that E0043 underlines, and the codes by position.
+    let rows: &[(&str, Option<&str>, &[Code])] = &[
+        (
+            "let s = { \"a{return 1}b\" }",
+            Some("{ \"a{return 1}b\" }"),
+            &[Code::NoValue],
+        ),
+        (
+            "let s = match 1 { _ => \"a{return 1}b\" }",
+            Some("match 1 { _ => \"a{return 1}b\" }"),
+            &[Code::NoValue],
+        ),
+        // Unchanged: other operands were underlined already.
+        ("let s = [1, return 1]", Some("return 1"), &[Code::NoValue]),
+        ("let s = 1 + return 1", Some("return 1"), &[Code::NoValue]),
+        (
+            "let s = if true { return 1 } else { return 2 }",
+            Some("if true { return 1 } else { return 2 }"),
+            &[Code::NoValue],
+        ),
+    ];
+    for &(stmt, under, expected) in rows {
+        codes_under(stmt, &in_g(stmt), under, expected);
+    }
+}
+
 /// A spec's alignment defaults by type: numbers right, the rest left. Precision needs an `f64`;
 /// on an `i64` the safe fix converts it.
 #[test]
