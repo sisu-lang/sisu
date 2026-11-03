@@ -4666,8 +4666,8 @@ fn starts_negative(e: &Expr) -> bool {
     }
 }
 
-/// Whether the place `e` starts at a name, so that to write it twice is to read the same thing
-/// twice: `f().x` is a place, and `f` would run twice.
+/// Whether the place `e` starts at a name or `self`, so that to write it twice is to read the same
+/// thing twice: `f().x` is a place, and `f` would run twice.
 fn is_named(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Name(_) | ExprKind::SelfValue => true,

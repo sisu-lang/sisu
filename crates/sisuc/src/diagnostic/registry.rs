@@ -2155,8 +2155,8 @@ pub(crate) enum ForeignRange {
     Ellipsis { start: String, end: Option<String> },
     /// `base[start:end]`, as Python and Go write a slice; the operator is the `:` at `at`. A bound
     /// that is left out is `None`. `whole` is the `[:]` of `base[:]`, which the fix removes.
-    /// `base_place` is true when `base` is a place that starts at a name, which the message may
-    /// write twice.
+    /// `base_place` is true when `base` is a place that starts at a name or `self`, so that to
+    /// count from `base.len()` reads the same place.
     Colon {
         base: String,
         base_place: bool,
