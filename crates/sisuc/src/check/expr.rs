@@ -512,22 +512,22 @@ impl Checker<'_> {
 
     /// The local `local` has the type `payload` in the help of its E0050 (`payload?` for a
     /// `None`, `[payload]` for a `[]`), if it has an E0050 that no use has settled and `payload`
-    /// is a concrete type. The first use that gives a type settles it.
+    /// is a concrete type. The first use that gives a type settles it; a local that a use already
+    /// settled, or that has no E0050, is left as it is.
     pub(super) fn inferred_by_use(&mut self, local: tir::LocalId, payload: Type) {
         if payload.holds_hole() || matches!(payload, Type::NEVER | Type::UNIT) {
             return;
         }
-        let uninferred = self
-            .body
-            .uninferred
-            .remove(&local)
-            .expect("a caller should pass a local that has an uninferred literal");
+        let Some(uninferred) = self.body.uninferred.remove(&local) else {
+            return;
+        };
         let ty = match uninferred.literal {
             Literal::None => Type::optional(payload),
             Literal::EmptyArray => Type::array(payload),
         };
-        // Inside one expression the list can change (`truncate`, `drain`, `insert`): a place that
-        // no longer holds this E0050 is left as it is.
+        // No known path moves the E0050 or drops it before this use, and no test reaches this
+        // check. It stays as a cheap guard: a place that no longer holds this E0050 is left as it
+        // is.
         let reported = self
             .diagnostics
             .get(uninferred.at)

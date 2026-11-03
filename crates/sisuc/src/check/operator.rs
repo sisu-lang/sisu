@@ -229,12 +229,14 @@ impl Checker<'_> {
         // The first check is dropped, and its locals, uninferred literals, misfits and findings
         // with it, so none is left that nothing binds, and none is judged twice.
         self.diagnostics.truncate(diagnostics);
+        if !self.body.uninferred.is_empty() {
+            for local in locals..self.body.locals.len() {
+                #[cfg(test)]
+                super::ROLLBACK_STEPS.set(super::ROLLBACK_STEPS.get() + 1);
+                self.body.uninferred.remove(&tir::LocalId(local));
+            }
+        }
         self.body.locals.truncate(locals);
-        self.body.uninferred.retain(|local, _| {
-            #[cfg(test)]
-            super::ROLLBACK_STEPS.set(super::ROLLBACK_STEPS.get() + 1);
-            local.0 < locals
-        });
         self.pending.truncate(pending);
         self.body.misfits.truncate(misfits);
         self.body.joins.insert(span);
