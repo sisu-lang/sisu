@@ -8613,6 +8613,36 @@ mod tests {
         }
     }
 
+    /// Python counts a negative colon bound from the end, and Sisu has no negative index: the
+    /// report has no fix, because the program the fix made would panic or differ from Python's.
+    /// The wording is pinned in `tests/diagnostics/E0132-colon-negative.sisu`.
+    #[test]
+    fn colon_slice_with_a_negative_bound_should_have_no_fix() {
+        for src in [
+            "xs[:-1]",
+            "xs[-2:]",
+            "xs[-3:-1]",
+            "xs[:-n]",
+            "xs[:-(n + 1)]",
+            "xs[:(-1)]",
+            "xs[1:-1]",
+            "c.xs[:-1]",
+            "xss[0][:-1]",
+            "xs[:-a * b]",
+            "xs[:-1 + n]",
+            "xs[:--1]",
+            "xs[-3:-a * b]",
+            "xs[:-9223372036854775808]",
+            "f()[:-1]",
+            "f().xs[:-1]",
+            "xs[1..][:-1]",
+        ] {
+            let d = parse_diagnostic(&format!("fn main() {{ {src} }}"));
+            assert_eq!(d.code(), Code::ForeignRange, "{src}");
+            assert!(d.fixes().is_empty(), "{src}");
+        }
+    }
+
     /// The number of diagnostics of `program`.
     fn parsed_fixed(program: &str) -> usize {
         parsed(program).diagnostics.len()

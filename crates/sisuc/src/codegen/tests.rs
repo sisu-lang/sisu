@@ -3107,16 +3107,47 @@ fn len_should_read_the_length_word_of_a_string_and_an_array_with_no_load() {
                 .is_some_and(|f| f.get_name().to_string_lossy().starts_with("llvm.sadd"))
         })
         .unwrap_or_else(|| panic!("no checked add in\n{ir}"));
-    for n in 0..2 {
-        let word = operand_of(*sum, n)
-            .as_instruction_value()
-            .filter(|word| word.get_opcode() == InstructionOpcode::ExtractValue)
-            .unwrap_or_else(|| panic!("operand {n} should be a word of a value in\n{ir}"));
-        assert!(
-            word.print_to_string().to_string().ends_with(", 2"),
-            "operand {n} should be the third word in\n{ir}"
-        );
+    // A string and an array pass as three scalars each: `s` as parameters 0 to 2, `a` as 3 to 5.
+    // Each operand is the third word of its own value, so parameter 2 and parameter 5, one each.
+    let param = |n| {
+        function
+            .get_nth_param(n)
+            .expect("`size` should have six parameters")
+    };
+    let sources: Vec<_> = (0..2)
+        .map(|n| {
+            let word = operand_of(*sum, n)
+                .as_instruction_value()
+                .filter(|word| word.get_opcode() == InstructionOpcode::ExtractValue)
+                .unwrap_or_else(|| panic!("operand {n} should be a word of a value in\n{ir}"));
+            assert_eq!(
+                word.get_indices(),
+                [2],
+                "operand {n} should be the third word in\n{ir}"
+            );
+            put_at(operand_of(word, 0), 2)
+        })
+        .collect();
+    assert!(
+        sources == [param(2), param(5)] || sources == [param(5), param(2)],
+        "the operands should come from `s` and from `a`, not twice from one in\n{ir}"
+    );
+}
+
+/// Element `index` of the aggregate `value`, followed back through its `insertvalue` chain to the
+/// value that was put there; `value` itself when the chain does not reach it.
+fn put_at(value: BasicValueEnum<'_>, index: u32) -> BasicValueEnum<'_> {
+    let mut at = value;
+    while let Some(put) = at
+        .as_instruction_value()
+        .filter(|i| i.get_opcode() == InstructionOpcode::InsertValue)
+    {
+        if put.get_indices() == [index] {
+            return operand_of(put, 1);
+        }
+        at = operand_of(put, 0);
     }
+    value
 }
 
 /// `words()` of a string that is not a local releases it, once the words are copied out; of a
