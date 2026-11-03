@@ -132,6 +132,16 @@ class Mutants(unittest.TestCase):
         with open(self.log, encoding='utf-8') as f:
             self.assertEqual(f.read(), 'first run\n')
 
+    def test_make_mutation_test_should_take_the_clone_lock_once_and_run(self):
+        # A recipe that wraps mutants.sh in heavy-run.sh again waits for its own lock forever.
+        shutil.copy(os.path.join(os.path.dirname(SCRIPT), '..', 'Makefile'), self.repo)
+        self.rust_commit()
+        env = dict(ENV, PATH=f'{self.bin}:{ENV["PATH"]}', TMPDIR=self.repo, FAKE_CAUGHT='1')
+        run = subprocess.run(['make', 'mutation-test', 'BASE=HEAD~1', f'LOG={self.log}'],
+                             cwd=self.repo, capture_output=True, text=True, env=env, timeout=30)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertTrue(self.last_line().startswith('mutation-test: PASS'))
+
     def test_a_run_with_no_missed_mutant_should_pass_and_count_a_timeout_as_caught(self):
         self.rust_commit()
         run = self.mutate(caught=3, timeout=1, exit=3)

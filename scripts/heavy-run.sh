@@ -11,6 +11,7 @@
 heavy_lock() {
   local dir lock
   if ! command -v flock >/dev/null; then
+    echo "heavy-run: no flock; running with no lock" >&2
     return 0
   fi
   # The common directory is the same for every worktree of the clone.
