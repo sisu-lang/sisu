@@ -1,5 +1,9 @@
 # Arrays are values, shared until written
 
+Superseded in part by [ADR 0043](0043-mut-parameters-copy-in-and-out.md): a
+`mut` parameter changes the caller's place, so the rule "No way to change the
+caller's array" no longer holds. The decisions below stay as written.
+
 Binding an array, passing it or storing it behaves as a copy: no other holder
 can change your array. The copy is made lazily. An array is a
 reference-counted heap block, and a write to an element first checks the

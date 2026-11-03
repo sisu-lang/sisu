@@ -13,7 +13,7 @@ The design decisions behind Sisu, each written down as a short record with its r
     <p class="lede">Every design choice in Sisu is written down with its reasons, as a short decision record. This page lists them all.</p>
     <p class="meta">{{adr-count}} records · at commit 9c33f888</p>
   </div></section>
-  <!-- source: docs/adr/ (43 files, 0001 to 0044), README.md ("Read why a design choice was made") -->
+  <!-- source: docs/adr/ (44 files, 0001 to 0044), README.md ("Read why a design choice was made") -->
 
   <div class="w doc">
     <nav class="toc" aria-label="On this page"><h2>On this page</h2><ol>
@@ -70,8 +70,9 @@ The design decisions behind Sisu, each written down as a short record with its r
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0011-let-mut-marks-what-can-change.md"><span class="num">0011</span><b><code>let mut</code> marks what can change</b><span>One word, <code>mut</code>, marks every binding, field and method receiver that can change.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0007-arrays-are-values.md"><span class="num">0007</span><b>Arrays are values, shared until written</b><span>Binding, passing or storing an array behaves as a copy, made only when a shared array is written.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0022-classes-compare-by-identity.md"><span class="num">0022</span><b>Classes compare by identity</b><span>A class has no <code>==</code> unless it conforms to <code>Eq</code> by hand; <code>is</code> asks whether two references are the same object.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0043-mut-parameters-copy-in-and-out.md"><span class="num">0043</span><b>A <code>mut</code> parameter changes the caller's place, copied in and out<small>not built yet</small></b><span>A function changes an array, a string or a struct that its caller holds: <code>set(mut b.cells, i)</code> copies the value in and stores the result back.</span></a></li>
       </ul>
-      <!-- source: docs/adr/0002-immutable-by-default.md, docs/adr/0011-let-mut-marks-what-can-change.md, docs/adr/0007-arrays-are-values.md, docs/adr/0022-classes-compare-by-identity.md -->
+      <!-- source: docs/adr/0002-immutable-by-default.md, docs/adr/0011-let-mut-marks-what-can-change.md, docs/adr/0007-arrays-are-values.md, docs/adr/0022-classes-compare-by-identity.md, docs/adr/0043-mut-parameters-copy-in-and-out.md -->
 
       <h2 id="memory">Memory</h2>
       <ul class="rows">
