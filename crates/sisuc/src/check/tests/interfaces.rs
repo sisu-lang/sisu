@@ -3898,10 +3898,13 @@ fn a_requirement_with_an_unknown_type_should_be_listed_for_a_conformance_that_la
 /// A conformance that lacks its choice, or whose choice failed, is reported once. A call or a
 /// constructor that takes the associated type of such a conformance fails after that report: no
 /// mismatch, no crash. The argument that names the associated type comes after, before and apart
-/// from its base.
+/// from its base, and alone or inside a generic class, an enum or an array, which a call in the
+/// argument builds.
 #[test]
 fn a_call_through_a_conformance_without_its_choice_should_fail_after_the_one_report() {
     let holder = "class Holder<S: Source> {\n    item: S.Item\n}\n";
+    // After `fn t`, so that the lines of the reports stay where they are.
+    let nested = "\nclass Boxed<S: Source> {\n    item: Wrap<S.Item>\n}\nenum Got<S: Source> {\n    Got(Wrap<S.Item>)\n    Nothing\n}\nfn wrapped<S: Source>(s: S, x: Wrap<S.Item>) -> i64 { 1 }\nfn wrapped2<S: Source>(x: Wrap<S.Item>, s: S) -> i64 { 1 }\nfn listed<S: Source>(s: S, x: [Wrap<S.Item>]) -> i64 { 1 }\n";
     for (conformance, report) in [
         // No `type Item`: E0152 at the interface of the conformance.
         (
@@ -3918,10 +3921,39 @@ fn a_call_through_a_conformance_without_its_choice_should_fail_after_the_one_rep
             "let a = pass(Bad(n: 1), 5)",
             "let a = pass2(5, Bad(n: 1))",
             "let a: Holder<Bad> = Holder(item: 3)",
+            "let a = wrapped(Bad(n: 1), Wrap(value: 5))",
+            "let a = wrapped2(Wrap(value: 5), Bad(n: 1))",
+            "let a: Boxed<Bad> = Boxed(item: Wrap(value: 3))",
+            "let a: Got<Bad> = Got.Got(Wrap(value: 3))",
+            "let a = listed(Bad(n: 1), [Wrap(value: 5)])",
         ] {
-            let row = format!("{holder}{conformance}fn t() {{\n    {local}\n}}");
+            let row = format!("{holder}{conformance}fn t() {{\n    {local}\n}}{nested}");
             codes(&with_sources(&row), &[report]);
         }
+    }
+}
+
+/// An argument for `Wrap<S.Item>`, where the choice of `S.Item` failed, that has a fault of its
+/// own reports that fault, and the call fails after it: no crash. The fuzzer found the crash.
+#[test]
+fn a_faulty_argument_through_a_failed_choice_should_report_only_its_own_fault() {
+    let program = "class Bad: Source {\n    type Item = Missing\n    n: i64\n    fn next(self) -> Tag? { None }\n}\nclass Boxed<S: Source> {\n    item: Wrap<S.Item>\n}\nfn wrapped<S: Source>(s: S, x: Wrap<S.Item>) -> i64 { 1 }\nfn wrapped2<S: Source>(x: Wrap<S.Item>, s: S) -> i64 { 1 }\nfn t() {\n    ";
+    for local in [
+        "let a = wrapped(Bad(n: 1), Wrap(value: nowhere))",
+        "let a = wrapped2(Wrap(value: nowhere), Bad(n: 1))",
+        "let a: Boxed<Bad> = Boxed(item: Wrap(value: nowhere))",
+    ] {
+        let at = 5 + local
+            .find("nowhere")
+            .expect("the local should name `nowhere`");
+        let row = format!("{program}{local}\n}}");
+        codes(
+            &with_sources(&row),
+            &[
+                (Code::UnknownType, (2, 17)),
+                (Code::BindingNotFound, (12, at)),
+            ],
+        );
     }
 }
 
