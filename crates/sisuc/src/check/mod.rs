@@ -511,8 +511,7 @@ thread_local! {
     /// How many closure entries have been indexed, and how many entries of an interface have been
     /// read for the name of an associated type, on this thread.
     pub(super) static LOOKUP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many locals or entries of uninferred literals the rollback of a string join has visited
-    /// on this thread.
+    /// How many dropped locals the rollback of a string join has visited on this thread.
     pub(super) static ROLLBACK_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -778,6 +777,9 @@ struct Uninferred {
     literal: Literal,
     /// What the `let` writes before its type: `mut`, then the name.
     binding: String,
+    /// The place in the source of the use that set the help, if one did (see
+    /// `Checker::inferred_by_use`).
+    settled: Option<usize>,
 }
 
 /// What checking one body needs: a function's, a method's, or a constant's initialiser.
@@ -888,9 +890,6 @@ struct Body {
     /// (`mut`, then the name): E0050 uses it in its example when the initializer is the whole
     /// `None` or `[]`.
     let_init: Option<(Span, Symbol, bool)>,
-    /// The E0050 that the `None` or `[]` just checked reported, when it is the whole initializer
-    /// of a `let`: the `let` takes it, and keeps it in `uninferred` for its local.
-    infer_at: Option<Uninferred>,
     /// The E0050 of each local whose initializer is such a literal, until a later use gives the
     /// local a type (see `Checker::inferred_by_use`).
     uninferred: FxHashMap<tir::LocalId, Uninferred>,

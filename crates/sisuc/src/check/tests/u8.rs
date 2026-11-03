@@ -461,7 +461,7 @@ fn an_operand_that_holds_a_literal_should_take_the_type_of_the_other_operand() {
 }
 
 /// The rollback of the first check of a string join drops the locals that check declared, and
-/// the uninferred literals of them: its work grows with the locals it drops, not with every
+/// the uninferred literals of them. Its work grows with the locals it drops, not with every
 /// uninferred literal of the function. Each `let tK = []` is a local of the first check with an
 /// uninferred literal, so the rollback removes a real entry. 100 joins is 10x the smallest size
 /// at which a walk of the whole map shows a quadratic count.

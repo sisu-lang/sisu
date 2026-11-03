@@ -300,7 +300,7 @@ impl Checker<'_> {
                 }
                 // `Error`: its diagnostic was recorded where it was bound.
                 let local = b.local;
-                self.inferred_by_expected(local, expected);
+                self.inferred_by_expected(local, expected, span);
                 Err(Poisoned::error())
             }
             None => self.constant_use(name, span).unwrap_or_else(|| {
@@ -490,17 +490,9 @@ impl Checker<'_> {
     }
 
     /// Reports E0050 for the `None` or `[]` at `span`. When it is the whole initializer of a
-    /// `let`, the `let` keeps the report (see `Body::uninferred`).
+    /// `let`, the `let` finds the report (see `Checker::uninferred_of`).
     pub(super) fn report_uninferred(&mut self, literal: Literal, span: Span) {
         let binding = self.let_binding(span);
-        if let Some(binding) = binding.clone() {
-            self.body.infer_at = Some(Uninferred {
-                at: self.diagnostics.len(),
-                span,
-                literal,
-                binding,
-            });
-        }
         self.report(DiagnosticKind::CannotInfer {
             literal,
             binding,
@@ -510,35 +502,46 @@ impl Checker<'_> {
         });
     }
 
-    /// The local `local` has the type `payload` in the help of its E0050 (`payload?` for a
-    /// `None`, `[payload]` for a `[]`), if it has an E0050 that no use has settled and `payload`
-    /// is a concrete type. The first use that gives a type settles it; a local that a use already
-    /// settled, or that has no E0050, is left as it is.
-    pub(super) fn inferred_by_use(&mut self, local: tir::LocalId, payload: Type) {
+    /// The help of the E0050 of `local` writes `payload` (`payload?` for a `None`, `[payload]`
+    /// for a `[]`). It needs an E0050 for the local and a concrete `payload`. `at` is where in
+    /// the source the use takes effect. The use that comes first in the source gives the type,
+    /// because the checker does not always check in source order. A use after the one that set
+    /// the help leaves it. A new check of the same use that gives a type sets the help again.
+    pub(super) fn inferred_by_use(&mut self, local: tir::LocalId, payload: Type, at: usize) {
         if payload.holds_hole() || matches!(payload, Type::NEVER | Type::UNIT) {
             return;
         }
-        let Some(uninferred) = self.body.uninferred.remove(&local) else {
+        let Some(uninferred) = self.body.uninferred.get_mut(&local) else {
             return;
         };
+        if uninferred.settled.is_some_and(|settled| at > settled) {
+            return;
+        }
+        uninferred.settled = Some(at);
         let ty = match uninferred.literal {
             Literal::None => Type::optional(payload),
             Literal::EmptyArray => Type::array(payload),
         };
+        let (index, span, literal, binding) = (
+            uninferred.at,
+            uninferred.span,
+            uninferred.literal,
+            uninferred.binding.clone(),
+        );
         // No known path moves the E0050 or drops it before this use, and no test reaches this
         // check. It stays as a cheap guard: a place that no longer holds this E0050 is left as it
         // is.
         let reported = self
             .diagnostics
-            .get(uninferred.at)
-            .is_some_and(|d| d.code() == Code::CannotInfer && d.span() == uninferred.span);
+            .get(index)
+            .is_some_and(|d| d.code() == Code::CannotInfer && d.span() == span);
         if reported {
             let help = self.type_name(ty);
-            self.diagnostics[uninferred.at] = DiagnosticKind::CannotInfer {
-                literal: uninferred.literal,
-                binding: Some(uninferred.binding),
+            self.diagnostics[index] = DiagnosticKind::CannotInfer {
+                literal,
+                binding: Some(binding),
                 ty: Some(help),
-                at: uninferred.span,
+                at: span,
                 regroup: None,
             }
             .into();
@@ -547,7 +550,12 @@ impl Checker<'_> {
 
     /// A read of `local`, a local with no type, where the type `expected` is wanted: a `None`
     /// takes an optional, and a `[]` an array or an optional array.
-    pub(super) fn inferred_by_expected(&mut self, local: tir::LocalId, expected: Option<Type>) {
+    pub(super) fn inferred_by_expected(
+        &mut self,
+        local: tir::LocalId,
+        expected: Option<Type>,
+        span: Span,
+    ) {
         let Some(uninferred) = self.body.uninferred.get(&local) else {
             return;
         };
@@ -560,12 +568,12 @@ impl Checker<'_> {
             },
             _ => return,
         };
-        self.inferred_by_use(local, payload);
+        self.inferred_by_use(local, payload, span.start());
     }
 
-    /// The write `target = value`, where `target` is the bare name of a local with no type: the
-    /// value gives it a type.
-    pub(super) fn inferred_by_write(&mut self, target: &ast::Expr, value: &Checked) {
+    /// The write `target = value` that ends at `end`, where `target` is the bare name of a local
+    /// with no type: the value gives it a type.
+    pub(super) fn inferred_by_write(&mut self, target: &ast::Expr, value: &Checked, end: usize) {
         let (ExprKind::Name(name), Ok(value)) = (&target.kind, value) else {
             return;
         };
@@ -584,7 +592,7 @@ impl Checker<'_> {
             (Literal::EmptyArray, TypeKind::Array(element)) => element,
             (Literal::EmptyArray, _) => return,
         };
-        self.inferred_by_use(local, payload);
+        self.inferred_by_use(local, payload, end);
     }
 
     /// The receiver of a `push`: the local with no type that the `[]` of its `let` left, if the
@@ -596,6 +604,27 @@ impl Checker<'_> {
         let local = self.lookup(*name)?.local;
         let uninferred = self.body.uninferred.get(&local)?;
         matches!(uninferred.literal, Literal::EmptyArray).then_some(local)
+    }
+
+    /// The E0050 of `init`, the initializer of a `let` just checked, when `init` is a `None` or
+    /// `[]` that the checker reported as the last diagnostic. Call it before `let_init` is cleared.
+    pub(super) fn uninferred_of(&self, init: &ast::Expr) -> Option<Uninferred> {
+        let literal = match &init.kind {
+            ExprKind::NoneLit => Literal::None,
+            ExprKind::ArrayLit(elements) if elements.is_empty() => Literal::EmptyArray,
+            _ => return None,
+        };
+        let last = self.diagnostics.last()?;
+        if last.code() != Code::CannotInfer || last.span() != init.span {
+            return None;
+        }
+        Some(Uninferred {
+            at: self.diagnostics.len() - 1,
+            span: init.span,
+            literal,
+            binding: self.let_binding(init.span)?,
+            settled: None,
+        })
     }
 
     /// What the `let` whose whole initializer is the literal at `span` writes before its type,

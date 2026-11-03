@@ -343,6 +343,7 @@ impl Checker<'_> {
                 let uses = self.aliases.uses;
                 let declared = ty.as_ref().map(|ty| self.resolve(ty));
                 let shown = ty.as_ref().and_then(|ty| self.shown_text(ty, uses));
+                let init_expr = init;
                 self.body.let_init = Some((init.span, name.name, mutable.is_some()));
                 self.body.failed_let = matches!(declared, Some(None)).then_some(init.span);
                 let init = match declared {
@@ -354,9 +355,9 @@ impl Checker<'_> {
                     }
                     None => self.value(init, None),
                 };
+                let uninferred = self.uninferred_of(init_expr);
                 self.body.let_init = None;
                 self.body.failed_let = None;
-                let uninferred = self.body.infer_at.take();
                 // `let _ = e` binds nothing: the value is an expression statement, which
                 // codegen releases at once.
                 if name.name.as_str() == "_" {

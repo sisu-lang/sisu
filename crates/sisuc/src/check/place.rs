@@ -122,7 +122,7 @@ impl Checker<'_> {
             self.show(value.span, want, text);
         }
         let value = self.expect(value, place.ty);
-        self.inferred_by_write(target, &value);
+        self.inferred_by_write(target, &value, span.end());
         self.assigned(span, place, value)
     }
 
@@ -320,7 +320,7 @@ impl Checker<'_> {
                 && let Some(local) = self.pushed_to_uninferred(receiver_expr)
             {
                 if let Ok(pushed) = self.expr(&arg.value, Some(UNKNOWN)) {
-                    self.inferred_by_use(local, pushed.ty);
+                    self.inferred_by_use(local, pushed.ty, arg.value.span.end());
                 }
                 return unit();
             }
