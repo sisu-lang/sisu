@@ -310,3 +310,17 @@ fn negated_sum_then_string() {
     let z = -(id(mk2()) + 1)
     let w: string = z
 }
+
+// A `string` leader under `-`, `*`, `/` or `%` is reported against the operator's list, as any
+// other leader is, and the call beside it keeps its E0050. Only `+` takes a `string`.
+fn call_minus_string(s: string) { let z = id(mk2()) - s }
+fn call_remainder_string(s: string) { let z = id(mk2()) % s }
+fn call_minus_optional_string(o: string?) { let z = id(mk2()) - o }
+
+// A `char` beside a value that kept its E0050 is still rejected, on either side, and a `char`
+// beside a plain call has the one E0094. A comparison with a `char` is no sum.
+fn negated_sum_plus_char(c: char) { let z = -(id(mk2()) + 1) + c }
+fn char_plus_negated_sum(c: char) { let z = c + -(id(mk2()) + 1) }
+fn parenthesised_sum_plus_char(c: char) { let z = (id(mk2()) + 1) + c }
+fn call_plus_char(c: char) { let z = id(mk2()) + c }
+fn negated_sum_less_char(c: char) { let z = -(id(mk2()) + 1) < c }

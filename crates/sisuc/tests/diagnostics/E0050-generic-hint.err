@@ -1624,5 +1624,103 @@ error[E0050]: cannot infer `X` for `mk2`
     |
     = help: annotate the result, or write the type: `mk2<...>(...)`
 
-sisu: 223 errors
-sisu: for more on a code, run `sisu explain <code>`: E0032, E0033, E0050, E0139
+error[E0050]: cannot infer `X` for `mk2`
+   --> E0050-generic-hint.sisu:316:46
+    |
+316 | fn call_minus_string(s: string) { let z = id(mk2()) - s }
+    |                                              ^^^
+    |
+    = help: annotate the result, or write the type: `mk2<...>(...)`
+
+error[E0032]: expected `i64`, `u8` or `f64`, found `string`
+   --> E0050-generic-hint.sisu:316:55
+    |
+316 | fn call_minus_string(s: string) { let z = id(mk2()) - s }
+    |                                                       ^
+
+error[E0050]: cannot infer `X` for `mk2`
+   --> E0050-generic-hint.sisu:317:50
+    |
+317 | fn call_remainder_string(s: string) { let z = id(mk2()) % s }
+    |                                                  ^^^
+    |
+    = help: annotate the result, or write the type: `mk2<...>(...)`
+
+error[E0032]: expected `i64`, `u8` or `f64`, found `string`
+   --> E0050-generic-hint.sisu:317:59
+    |
+317 | fn call_remainder_string(s: string) { let z = id(mk2()) % s }
+    |                                                           ^
+
+error[E0032]: expected `i64`, `u8` or `f64`, found `string?`
+   --> E0050-generic-hint.sisu:318:65
+    |
+318 | fn call_minus_optional_string(o: string?) { let z = id(mk2()) - o }
+    |                                                                 ^
+
+error[E0050]: cannot infer `X` for `mk2`
+   --> E0050-generic-hint.sisu:322:50
+    |
+322 | fn negated_sum_plus_char(c: char) { let z = -(id(mk2()) + 1) + c }
+    |                                                  ^^^
+    |
+    = help: annotate the result, or write the type: `mk2<...>(...)`
+
+error[E0094]: arithmetic does not apply to `char`
+   --> E0050-generic-hint.sisu:322:62
+    |
+322 | fn negated_sum_plus_char(c: char) { let z = -(id(mk2()) + 1) + c }
+    |                                                              ^
+    |
+    = help: convert through `i64`, then give a default: `char(i64(c) + 1) ?? c`
+
+error[E0094]: arithmetic does not apply to `char`
+   --> E0050-generic-hint.sisu:323:47
+    |
+323 | fn char_plus_negated_sum(c: char) { let z = c + -(id(mk2()) + 1) }
+    |                                               ^
+    |
+    = help: convert through `i64`, then give a default: `char(i64(c) + 1) ?? c`
+
+error[E0050]: cannot infer `X` for `mk2`
+   --> E0050-generic-hint.sisu:323:54
+    |
+323 | fn char_plus_negated_sum(c: char) { let z = c + -(id(mk2()) + 1) }
+    |                                                      ^^^
+    |
+    = help: annotate the result, or write the type: `mk2<...>(...)`
+
+error[E0050]: cannot infer `X` for `mk2`
+   --> E0050-generic-hint.sisu:324:55
+    |
+324 | fn parenthesised_sum_plus_char(c: char) { let z = (id(mk2()) + 1) + c }
+    |                                                       ^^^
+    |
+    = help: annotate the result, or write the type: `mk2<...>(...)`
+
+error[E0094]: arithmetic does not apply to `char`
+   --> E0050-generic-hint.sisu:324:67
+    |
+324 | fn parenthesised_sum_plus_char(c: char) { let z = (id(mk2()) + 1) + c }
+    |                                                                   ^
+    |
+    = help: convert through `i64`, then give a default: `char(i64(c) + 1) ?? c`
+
+error[E0094]: arithmetic does not apply to `char`
+   --> E0050-generic-hint.sisu:325:48
+    |
+325 | fn call_plus_char(c: char) { let z = id(mk2()) + c }
+    |                                                ^
+    |
+    = help: convert through `i64`, then give a default: `char(i64(c) + 1) ?? c`
+
+error[E0050]: cannot infer `X` for `mk2`
+   --> E0050-generic-hint.sisu:326:50
+    |
+326 | fn negated_sum_less_char(c: char) { let z = -(id(mk2()) + 1) < c }
+    |                                                  ^^^
+    |
+    = help: annotate the result, or write the type: `mk2<...>(...)`
+
+sisu: 236 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032, E0033, E0050, E0094, E0139
