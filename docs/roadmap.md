@@ -8,7 +8,8 @@ and the lasting ones are recorded as ADRs in [adr](adr).
 ## Milestones 1 to 8
 
 These are adopted. Together they give Sisu a working imperative core, enums
-with `match`, and generics with interfaces.
+with `match`, and generics with interfaces. Slices come after milestone 8 and
+before milestone 9.
 
 | # | Milestone | Done when | Status |
 | --- | --- | --- | --- |
@@ -20,6 +21,7 @@ with `match`, and generics with interfaces.
 | 6 | Floats and conversions: `f64`, conversions that can fail return an optional, an unused-value warning, format specs | A Mandelbrot set prints as text, and a projectile table prints with format specs and a conversion to `i64?`, all clean under Valgrind | Done |
 | 7 | Enums with payloads, `match` with destructuring, alternatives, guards, literal and range patterns and an exhaustiveness check, `if let` and `while let` with enum patterns, and `..=` in `for` | An evaluator over a recursive `enum Expr` of `Num(i64)`, `Add` and `Mul` prints correct results, and a state machine runs with `match`, `if let` and `while let`, all clean under Valgrind; a non-exhaustive `match` is a compile error | Done |
 | 8 | Generics, compiled by monomorphization, and interfaces that bound them; `Option` and `Result` in the prelude, with the bare names `Some`, `None`, `Ok` and `Err`, and `T?` as shorthand for `Option<T>`, nested optionals included; `Display`, `Eq` and `Ord`, so that every type prints; classes that compare by identity; `dbg`; a prelude written in Sisu; array `push`; type aliases; and interface values, `any Shape`. `weak` on `T?` and on `(any I)?` moved to milestone 9 | `print(x)` works for any printable type; a generic `Stack<T>`, `largest<T: Ord>`, a generic interface and an associated type run; a `[any Shape]` that holds a class and an enum prints each area; Sisu's lexer, written in Sisu (`selfhost/lexer.sisu`), prints the tokens that `sisu build --emit tokens` prints for every test program that lexes without errors; every program clean under Valgrind; every diagnostic of the milestone has a fixture | Done |
+| Slices | Range indexes: `xs[a..b]` and `s[a..b]` give a `[T]` or a `string` that shares the block of its parent ([ADR 0042](adr/0042-a-slice-shares-its-block.md)). Arrays get `first`, `last` and `get`, strings get `get` with a range, and the compiler trims small slices. It comes before milestone 9, so that the iterators use its layout | A binary search over 1000 elements takes and drops slices with no allocation. `selfhost/lexer.sisu` takes the text of a token as `string(cs[start..pos])` | Done |
 
 ### What works today
 
@@ -168,14 +170,23 @@ with `match`, and generics with interfaces.
   `n` does not fit, with no panic
 - arrays such as `[i64]` and `[[bool]]`, built with `[1, 2, 3]` or `[0; n]`,
   read and written by index, compared with `==`, and walked with `for x in xs`
-  or `for i in 0..n` (`..=` includes the end); `len`, `sum`, `contains` and `push` are methods on them, and `?.push` adds to an optional array
+  or `for i in 0..n` (`..=` includes the end); `len`, `sum`, `contains`, `push`,
+  `first`, `last` and `get` are methods on them (`first`, `last` and `get(i)`
+  give an optional), and `?.push` adds to an optional array
+- slices: `xs[a..b]`, `xs[a..]`, `xs[..b]` and `xs[a..=b]` give a `[T]` that
+  shares the block of `xs`, and copies no element until one of them is written;
+  a slice that holds a quarter or less of a block of 256 bytes or more is
+  copied into a block of its own when a field, an enum payload or an array
+  stores it ([ADR 0042](adr/0042-a-slice-shares-its-block.md))
 - `char`, one Unicode scalar value such as `'ä'`, compared by code point and
   converted with `i64(c)` and `char(n)`, a `char?` that is `None` for a
   surrogate or a value above `0x10FFFF`, with no panic
 - `string`: UTF-8 literals with escapes, `+` and `+=`, comparison by bytes,
   `len()` in bytes, and interpolation such as `"n = {n}"`; `+=` on a string
   that nothing else holds appends in place, whether it is a local, a `mut`
-  field or an array element
+  field or an array element; `s[a..b]` is a substring that shares the bytes of
+  `s` (the bounds are bytes, and a bound inside a character panics), and
+  `s.get(a..b)` is a `string?` that is `None` where `s[a..b]` would panic
 - text as arrays: `s.chars()` gives a `[char]`, `s.bytes()` a `[u8]`, and
   `string(cs)` builds a `string` from a `[char]`; each call builds a new value
 - `eprint(x)`, which prints like `print` but to standard error; `read_line()`,
@@ -660,7 +671,6 @@ The compiler is fuzzed in two stages:
 
 | # | Milestone | Done when |
 | --- | --- | --- |
-| Slices | Range indexes: `xs[a..b]` and `s[a..b]` give a `[T]` or a `string` that shares the block of its parent ([ADR 0042](adr/0042-a-slice-shares-its-block.md)). Arrays get `first`, `last` and `get`, strings get `get` with a range, and the compiler trims small slices. It comes before milestone 9, so that the iterators use its layout | A binary search over 1000 elements takes and drops slices with no allocation. `selfhost/lexer.sisu` takes the text of a token as `string(cs[start..pos])` |
 | 9 | Closures and lazy iterator methods (`map`, `filter`, `count`, `sum`), plus a `filter_some`-style method on `[T?]` | Closures first: a function that takes an `(i64) -> bool` runs with a closure that captures a local. Then `words.filter(w => w.len() > 3).count()` runs |
 | 10 | Records, named arguments, default parameters, and `p as name` to bind a whole sub-pattern | A `Point` record prints and compares with no hand-written methods |
 | 11 | Modules, `pub` visibility, and a standard library written in Sisu (`Map`), including `os.env(name)`, `os.exit(code)`, and an `io` module with `read_lines()`, read-everything and `read_bytes()` | Modules first: a program of two files, each with a class of the same name, builds and runs. Then a word-frequency tool reads like a Python script |
@@ -868,7 +878,7 @@ settle before work starts.
 | Milestone 6: floats and conversions | None | Float formatting in `"{x}"`; its Mandelbrot proof printed text, so it landed after 4 |
 | Milestone 7: enums and `match` | Done | 8, 12 |
 | Milestone 8: generics and interfaces | Done | 12, iterator methods (9), generated conformances on request (10), the standard library (11) |
-| Slices: range indexes, `first`, `last`, `get` | 8 | `mut` parameters (step 1), milestone 9, the self-host lexer's slice gap |
+| Slices: range indexes, `first`, `last`, `get` | 8 | `mut` parameters (step 1), milestone 9 |
 | Milestone 12: `Result` and `?` | 7, 8 | File I/O, the standard library (11), concurrency |
 | `weak` fields (ADR 0008). The rule covers a `T?` with `T: AnyObject` and an `(any I)?` with a class-only `I`, so the `weak` examples for `any` wait for it | None | Closures that capture their owner |
 | Milestone 9: closures and function types | `weak` fields, slices. Decisions: closure syntax, weak captures, argument labels, `return` inside a closure | Iterator methods (9), concurrency |
