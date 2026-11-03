@@ -1,0 +1,10 @@
+// GIVEN a `main` whose line 7 is `let w: i64 = "x"` and whose line 8 is `let q: string = w`
+// WHEN `sisu check` runs on it
+// THEN it reports E0032 at 7:18, "expected `i64`, found `string`"
+// AND it reports E0032 at 8:21, "expected `string`, found `i64`"
+// AND it reports no other diagnostic
+fn main() {
+    let w: i64 = "x"
+    let q: string = w
+    print(q)
+}
