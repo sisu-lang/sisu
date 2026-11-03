@@ -218,6 +218,8 @@ codes! {
     TooManyInstances = "E0163",
     CannotBeAny = "E0164",
     AnyForm = "E0165",
+    MutMarkerMissing = "E0166",
+    MutMarkerNotMut = "E0167",
     MutNotArgument = "E0168",
     MutArgumentNotPlace = "E0169",
     MutArgumentType = "E0170",
@@ -448,6 +450,26 @@ pub(crate) enum DiagnosticKind {
     },
     /// `any` at `at`, written in a way that it does not take.
     AnyForm { at: Span, form: AnyFormKind },
+    /// The argument at `at` of a call, whose parameter is `mut`, and that has no `mut`. `name` is
+    /// the parameter's, and `position` its place, from 1, when it has no name; `declared` is where
+    /// it is declared.
+    #[expect(dead_code, reason = "the checker reports it in the next commit")]
+    MutMarkerMissing {
+        at: Span,
+        name: Option<String>,
+        position: usize,
+        callee: String,
+        declared: Option<Span>,
+        fix: MissingFix,
+    },
+    /// The `mut` at `at` before an argument whose parameter is not `mut`. `fix_end` is the end of
+    /// the spaces and tabs after the keyword, for the fix that removes them with it.
+    #[expect(dead_code, reason = "the checker reports it in the next commit")]
+    MutMarkerNotMut {
+        at: Span,
+        fix_end: usize,
+        form: NotMutForm,
+    },
     /// A `mut` at `at` before an expression that is no argument. `binding` is whether the
     /// expression is the value of a `let` that has no `mut`. `fix_end` is the end of the spaces
     /// and tabs after the keyword, for the fix that removes them with it.
@@ -2788,6 +2810,38 @@ pub(crate) enum Unbuilt {
     Chain(Vec<(String, String)>),
 }
 
+/// What the report of a missing `mut` offers for the argument.
+#[expect(dead_code, reason = "the checker reports it in the next commit")]
+pub(crate) enum MissingFix {
+    /// The place fits the parameter: the safe fix that adds `mut `.
+    Add,
+    /// A place that `mut` would still make an error (E0170 or E0171): no fix.
+    None,
+    /// A `let` local `name`, passed as `arg`.
+    Let { name: String, arg: String },
+    /// A field `name` that is not `mut`.
+    Field { name: String },
+    /// Anything else: only a local copy can change.
+    Copy,
+}
+
+/// How a `mut` argument at a parameter that is not `mut` names its callee.
+#[expect(dead_code, reason = "the checker reports it in the next commit")]
+pub(crate) enum NotMutForm {
+    /// A callee that the program writes, by the parameter `name` of `callee`.
+    Written {
+        name: String,
+        callee: String,
+        declared: Option<Span>,
+    },
+    /// A built-in, by the `position` of the argument, from 1, and the `callee` as written.
+    Unnamed { position: usize, callee: String },
+    /// The constructor of a class, written `shown`.
+    Class { shown: String },
+    /// A variant, written `shown`.
+    Variant { shown: String },
+}
+
 /// Why an argument cannot be passed `mut`.
 pub(crate) enum NotPlace {
     /// A binding or a field that cannot change.
@@ -3643,6 +3697,100 @@ impl From<DiagnosticKind> for Diagnostic {
                     ))
                 }
             },
+            DiagnosticKind::MutMarkerMissing {
+                at,
+                name,
+                position,
+                callee,
+                declared,
+                fix,
+            } => {
+                let message = match &name {
+                    Some(name) => format!(
+                        "the parameter `{name}` of `{callee}` is `mut`, so its argument needs `mut`"
+                    ),
+                    None => format!("argument {position} of `{callee}` is `mut`, so it needs `mut`"),
+                };
+                let d = Diagnostic::coded(code, at, message).with_label("needs `mut`");
+                let d = match declared {
+                    Some(declared) => d.with_secondary(declared, "declared `mut` here"),
+                    None => d,
+                };
+                match fix {
+                    MissingFix::Add => d.with_fix(insert_mut("add `mut`", at)),
+                    MissingFix::None => d,
+                    MissingFix::Let { name, arg } => d.with_help(format!(
+                        "declare `{name}` with `let mut`, and pass `mut {arg}`"
+                    )),
+                    MissingFix::Field { name } => d.with_help(format!(
+                        "declare the field `{name}` as `mut`, and pass it `mut`"
+                    )),
+                    MissingFix::Copy => match (declared, name) {
+                        (Some(_), Some(name)) => d.with_help(format!(
+                            "to change only a local copy, remove `mut` here and write \
+                             `let mut {name} = {name}` in the body"
+                        )),
+                        _ => d,
+                    },
+                }
+            }
+            DiagnosticKind::MutMarkerNotMut { at, fix_end, form } => {
+                let fix = Fix {
+                    message: "remove `mut`".to_string(),
+                    safe: true,
+                    edits: vec![Edit {
+                        span: Span::new(at.start(), fix_end),
+                        replacement: String::new(),
+                    }],
+                };
+                let d = match form {
+                    NotMutForm::Written {
+                        name,
+                        callee,
+                        declared,
+                    } => {
+                        let d = Diagnostic::coded(
+                            code,
+                            at,
+                            format!("the parameter `{name}` of `{callee}` is not `mut`"),
+                        )
+                        .with_label("not a `mut` parameter");
+                        match declared {
+                            Some(declared) => {
+                                d.with_secondary(declared, "declared without `mut` here")
+                            }
+                            None => d,
+                        }
+                    }
+                    NotMutForm::Unnamed { position, callee } => Diagnostic::coded(
+                        code,
+                        at,
+                        format!("argument {position} of `{callee}` is not `mut`"),
+                    )
+                    .with_label("not a `mut` parameter"),
+                    NotMutForm::Class { shown } => Diagnostic::coded(
+                        code,
+                        at,
+                        format!(
+                            "`{shown}(…)` takes no `mut` argument: it copies each value into its \
+                             field"
+                        ),
+                    )
+                    .with_label("no `mut` here")
+                    .with_help("a `mut` field can change after the object is made"),
+                    NotMutForm::Variant { shown } => Diagnostic::coded(
+                        code,
+                        at,
+                        format!(
+                            "`{shown}(…)` takes no `mut` argument: it copies each value into its \
+                             field"
+                        ),
+                    )
+                    .with_label("no `mut` here")
+                    .with_help("an enum value never changes after it is built"),
+                };
+                d.with_fix(fix)
+            }
             DiagnosticKind::MutNotArgument {
                 at,
                 binding,

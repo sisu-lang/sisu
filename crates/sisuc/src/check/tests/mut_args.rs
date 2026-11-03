@@ -302,6 +302,26 @@ fn mut_argument_with_a_failed_expression_should_not_be_reported_as_no_place() {
         ("range of `self`", "set(mut self[0..1])"),
         ("call of an unknown function", "set(mut nope())"),
         ("index of `self`", "set(mut self[0])"),
+        (
+            "range of a string that failed to bind",
+            "let mut s: string = nope\n    set(mut s[0..1])",
+        ),
+        (
+            "range of a string that failed to concatenate",
+            "let s = \"a\" + 1\n    set(mut s[0..1])",
+        ),
+        (
+            "range of an element of an array that failed to bind",
+            "let s: [string] = nope\n    set(mut s[0][0..1])",
+        ),
+        (
+            "range of a name that failed to bind",
+            "let s = nope\n    set(mut s[0..1])",
+        ),
+        (
+            "call on a name that failed to bind",
+            "let s = nope\n    set(mut s.f())",
+        ),
     ];
     for (row, stmt) in rows {
         let src = format!("{class}fn main() {{\n    {stmt}\n}}");
@@ -462,4 +482,377 @@ fn mut_place_overlap_should_be_linear() {
     assert_near_linear(args(50), args(100), args(150));
     let path = |len: usize| key_steps(&long_path(len));
     assert_near_linear(path(50), path(100), path(150));
+}
+
+/// The `Code::MutMarkerMissing` count of `src`, and the other codes in order.
+fn marker_codes(src: &str, code: Code) -> (usize, Vec<Code>) {
+    let found = found_codes(src);
+    let count = found.iter().filter(|&&c| c == code).count();
+    (count, found.into_iter().filter(|&c| c != code).collect())
+}
+
+/// GIVEN a `mut` parameter for each way a call reaches a written callee: a function, a method, a
+///   generic function, a generic method, a `?.` method, a bound `T: I` method and an `any I`
+///   method
+/// WHEN a call passes a place at the `mut` parameter, with no `mut`
+/// THEN it is exactly one E0166
+#[test]
+fn missing_mut_should_be_reported_on_every_written_call_path() {
+    let nines = "interface Filler {\n    fn fill(self, mut xs: [i64])\n}\n\
+        class Nines: Filler {\n    n: i64\n    fn fill(self, mut xs: [i64]) {\n        xs[0] = 9\n    }\n}\n";
+    let c =
+        "class C {\n    n: i64\n    fn fill(self, mut xs: [i64]) {\n        xs[0] = 9\n    }\n}\n";
+    let rows = [
+        (
+            "function",
+            format!("{SET}fn main() {{\n    let mut xs = [1]\n    set(xs)\n    print(xs)\n}}"),
+        ),
+        (
+            "method",
+            format!(
+                "{c}fn main() {{\n    let c = C(n: 1)\n    let mut xs = [1]\n    c.fill(xs)\n    print(xs)\n}}"
+            ),
+        ),
+        (
+            "generic function",
+            "fn put<T>(mut a: T, b: T) {\n    a = b\n}\n\
+            fn main() {\n    let mut x = 1\n    put(x, 2)\n    print(x)\n}"
+                .to_owned(),
+        ),
+        (
+            "generic method",
+            "class Stack<T> {\n    items: [T]\n    fn put(self, mut a: T, b: T) {\n        a = b\n    }\n}\n\
+            fn main() {\n    let s = Stack(items: [1])\n    let mut x = 1\n    s.put(x, 2)\n    print(x)\n}"
+                .to_owned(),
+        ),
+        (
+            "`?.` method",
+            format!(
+                "{c}fn main() {{\n    let c: C? = C(n: 1)\n    let mut xs = [1]\n    c?.fill(xs)\n    print(xs)\n}}"
+            ),
+        ),
+        (
+            "bound method",
+            format!(
+                "{nines}fn run<T: Filler>(t: T, mut xs: [i64]) {{\n    t.fill(xs)\n}}\n\
+                fn main() {{\n    let mut xs = [1]\n    run(Nines(n: 1), mut xs)\n    print(xs)\n}}"
+            ),
+        ),
+        (
+            "`any I` method",
+            format!(
+                "{nines}fn main() {{\n    let f: any Filler = Nines(n: 1)\n    let mut xs = [1]\n    \
+                f.fill(xs)\n    print(xs)\n}}"
+            ),
+        ),
+    ];
+    for (row, src) in rows {
+        assert_eq!(
+            found_codes(&src),
+            [Code::MutMarkerMissing],
+            "row `{row}`: {src}"
+        );
+    }
+}
+
+/// GIVEN a generic callee whose `mut` parameter is `T`, and `let mut x: i64? = None`
+/// WHEN a call passes `x` with no `mut`, and another argument is an `i64` that `T` must fit
+/// THEN it is E0166 only: the place binds `T = i64?` as `mut x` would, so the `5` is no cascade.
+///   The same for a later `mut` position, a generic method, a method with its own type
+///   parameter, a bound method, a call with explicit type arguments, and a type argument that
+///   differs from the place
+#[test]
+fn unmarked_generic_mut_argument_should_give_the_missing_marker_only() {
+    let putter = "interface Putter {\n    fn put<U>(self, mut a: U, b: U)\n}\n\
+        class P: Putter {\n    n: i64\n    fn put<U>(self, mut a: U, b: U) {\n        a = b\n    }\n}\n";
+    let rows = [
+        (
+            "function",
+            "fn replace_with<T>(mut x: T, v: T) {\n    x = v\n}\n\
+            fn main() {\n    let mut x: i64? = None\n    replace_with(x, 5)\n    print(x ?? 0)\n}"
+                .to_owned(),
+        ),
+        (
+            "mut position after the value",
+            "fn replace_with<T>(v: T, mut x: T) {\n    x = v\n}\n\
+            fn main() {\n    let mut x: i64? = None\n    replace_with(5, x)\n    print(x ?? 0)\n}"
+                .to_owned(),
+        ),
+        (
+            "two values after it",
+            "fn replace_with<T>(mut x: T, v: T, w: T) {\n    x = v\n    x = w\n}\n\
+            fn main() {\n    let mut x: i64? = None\n    replace_with(x, 5, 6)\n    print(x ?? 0)\n}"
+                .to_owned(),
+        ),
+        (
+            "explicit type arguments",
+            "fn replace_with<T>(mut x: T, v: T) {\n    x = v\n}\n\
+            fn main() {\n    let mut x: i64? = None\n    replace_with<i64?>(x, 5)\n    print(x ?? 0)\n}"
+                .to_owned(),
+        ),
+        (
+            "explicit type arguments that differ from the place",
+            "fn replace_with<T>(mut x: T, v: T) {\n    x = v\n}\n\
+            fn main() {\n    let mut x: i64? = None\n    replace_with<i64>(x, 5)\n    print(x ?? 0)\n}"
+                .to_owned(),
+        ),
+        (
+            "generic method",
+            "class Stack<T> {\n    items: [T]\n    fn put(self, mut a: T, b: T) {\n        a = b\n    }\n}\n\
+            fn main() {\n    let s: Stack<i64?> = Stack(items: [])\n    let mut x: i64? = None\n    \
+            s.put(x, 5)\n    print(x ?? 0)\n}"
+                .to_owned(),
+        ),
+        (
+            "method with its own type parameter",
+            "class C {\n    n: i64\n    fn put<U>(self, mut a: U, b: U) {\n        a = b\n    }\n}\n\
+            fn main() {\n    let c = C(n: 1)\n    let mut x: i64? = None\n    c.put(x, 5)\n    print(x ?? 0)\n}"
+                .to_owned(),
+        ),
+        (
+            "bound method",
+            format!(
+                "{putter}fn run<T: Putter>(t: T) {{\n    let mut x: i64? = None\n    t.put(x, 5)\n    \
+                print(x ?? 0)\n}}\nfn main() {{\n    run(P(n: 1))\n}}"
+            ),
+        ),
+    ];
+    for (row, src) in rows {
+        assert_eq!(
+            found_codes(&src),
+            [Code::MutMarkerMissing],
+            "row `{row}`: {src}"
+        );
+    }
+}
+
+/// GIVEN a callee with a `mut` parameter, and a call with an unmarked argument for each kind of
+///   argument that is no place
+/// WHEN it is checked
+/// THEN it is one E0166 for the marker, and any error of the argument itself
+#[test]
+fn unmarked_mut_argument_that_is_no_place_should_still_need_its_marker() {
+    let rows = [
+        ("literal", "set([1])", vec![Code::MutMarkerMissing]),
+        ("call", "set(mk())", vec![Code::MutMarkerMissing]),
+        (
+            "name that is not in scope",
+            "set(nope)",
+            vec![Code::BindingNotFound, Code::MutMarkerMissing],
+        ),
+        (
+            "place that is not in scope",
+            "set(nope[0..1])",
+            vec![Code::BindingNotFound, Code::MutMarkerMissing],
+        ),
+    ];
+    for (row, call, want) in rows {
+        let src = format!("{SET}fn mk() -> [i64] {{\n    [1]\n}}\nfn main() {{\n    {call}\n}}");
+        let mut found = diags(&src);
+        found.sort_by_key(|d| d.span().start());
+        let found: Vec<_> = found.iter().map(Diagnostic::code).collect();
+        assert_eq!(found, want, "row `{row}`: {src}");
+    }
+}
+
+/// GIVEN a `mut` argument for each way a call reaches a callee that has no `mut` parameter
+/// WHEN it is checked
+/// THEN it is exactly one E0167
+#[test]
+#[expect(clippy::too_many_lines, reason = "one table, a row for each call path")]
+fn stray_mut_should_be_reported_on_every_call_path() {
+    let filler = "interface Plain {\n    fn take(self, xs: [i64])\n}\n\
+        class Impl: Plain {\n    n: i64\n    fn take(self, xs: [i64]) {\n        print(xs)\n    }\n}\n";
+    let head = "let xs = [1]\n    let y = 2\n    let c = 'a'\n    let m = \"m\"\n    ";
+    let rows: [(&str, String, &[Code]); 26] = [
+        ("print", format!("{head}print(mut xs)"), &[]),
+        ("eprint", format!("{head}eprint(mut xs)"), &[]),
+        ("dbg", format!("{head}dbg(mut xs)"), &[]),
+        ("panic", format!("{head}panic(mut m)"), &[]),
+        ("todo", format!("{head}todo(mut m)"), &[Code::TodoLeft]),
+        (
+            "conversion",
+            format!("{head}let n = i64(mut c)\n    print(n)"),
+            &[],
+        ),
+        (
+            "alias of a number",
+            format!(
+                "type Count = i64\nfn main() {{\n    {head}let n = Count(mut c)\n    print(n)\n}}"
+            ),
+            &[],
+        ),
+        (
+            "alias of a class",
+            format!(
+                "class Board {{\n    mut cells: [i64]\n}}\ntype Grid = Board\nfn main() {{\n    {head}let b = Grid(cells: mut xs)\n    print(b.cells)\n}}"
+            ),
+            &[],
+        ),
+        (
+            "class",
+            format!(
+                "class Board {{\n    mut cells: [i64]\n}}\nfn main() {{\n    {head}let b = Board(cells: mut xs)\n    print(b.cells)\n}}"
+            ),
+            &[],
+        ),
+        (
+            "generic class",
+            format!(
+                "class Holder<T> {{\n    item: T\n}}\nfn main() {{\n    {head}let h = Holder(item: mut y)\n    print(h.item)\n}}"
+            ),
+            &[],
+        ),
+        (
+            "variant",
+            format!(
+                "enum Shape {{\n    Circle(i64)\n    Dot\n}}\nfn main() {{\n    {head}let s = Shape.Circle(mut y)\n    print(s)\n}}"
+            ),
+            &[],
+        ),
+        (
+            "generic variant",
+            format!(
+                "enum Pair<T> {{\n    Two(T, T)\n    Nil\n}}\nfn main() {{\n    {head}let p = Pair.Two(mut y, 3)\n    print(p)\n}}"
+            ),
+            &[],
+        ),
+        (
+            "Some",
+            format!("{head}let s = Some(mut y)\n    print(s)"),
+            &[],
+        ),
+        (
+            "Ok",
+            format!("{head}let r: Result<i64, string> = Ok(mut y)\n    print(r)"),
+            &[],
+        ),
+        (
+            "Err",
+            format!("{head}let r: Result<i64, string> = Err(mut m)\n    print(r)"),
+            &[],
+        ),
+        (
+            "push",
+            format!("{head}let mut ys = [1]\n    ys.push(mut y)"),
+            &[],
+        ),
+        (
+            "string method",
+            format!("{head}let g = m.get(mut 0..1)\n    print(g)"),
+            &[],
+        ),
+        (
+            "string method with a count error",
+            format!("{head}let n = m.len(mut y)\n    print(n)"),
+            &[Code::ArgumentCount],
+        ),
+        (
+            "array method with a count error",
+            format!("{head}let n = xs.len(mut y)\n    print(n)"),
+            &[Code::ArgumentCount],
+        ),
+        (
+            "prelude number method",
+            format!("{head}let n = y.max(mut y)\n    print(n)"),
+            &[],
+        ),
+        (
+            "number method",
+            format!("{head}let f = 2.0\n    let g = f.pow(mut f)\n    print(g)"),
+            &[],
+        ),
+        (
+            "to_string",
+            format!("{head}let t = y.to_string(mut y)\n    print(t)"),
+            &[Code::ArgumentCount],
+        ),
+        (
+            "bound method",
+            format!(
+                "{filler}fn run<T: Plain>(t: T, xs: [i64]) {{\n    let mut ys = xs\n    t.take(mut ys)\n}}\nfn main() {{\n    run(Impl(n: 1), [1])\n}}"
+            ),
+            &[],
+        ),
+        (
+            "`any I` method",
+            format!(
+                "{filler}fn main() {{\n    let f: any Plain = Impl(n: 1)\n    {head}f.take(mut xs)\n}}"
+            ),
+            &[],
+        ),
+        (
+            "`?.` call",
+            format!(
+                "class C {{\n    n: i64\n    fn show(self, xs: [i64]) {{\n        print(xs)\n    }}\n}}\nfn main() {{\n    let c: C? = C(n: 1)\n    {head}c?.show(mut xs)\n}}"
+            ),
+            &[],
+        ),
+        (
+            "written method",
+            format!(
+                "class C {{\n    n: i64\n    fn show(self, xs: [i64]) {{\n        print(xs)\n    }}\n}}\nfn main() {{\n    let c = C(n: 1)\n    {head}c.show(mut xs)\n}}"
+            ),
+            &[],
+        ),
+    ];
+    for (row, body, extra) in rows {
+        let src = if body.contains("fn main") {
+            body
+        } else {
+            format!("fn main() {{\n    {body}\n}}")
+        };
+        let (count, others) = marker_codes(&src, Code::MutMarkerNotMut);
+        assert_eq!(count, 1, "row `{row}`: {src}");
+        assert_eq!(others, extra, "row `{row}`: {src}");
+    }
+}
+
+/// GIVEN a label on a call of a function, and a `mut` in either place
+/// WHEN it is checked
+/// THEN the label is E0055 only: the argument is not checked for its marker
+#[test]
+fn labeled_mut_argument_of_a_function_should_give_the_label_error_only() {
+    for call in [
+        "set(mut n: xs)",
+        "set(n: mut xs)",
+        "plain(mut n: xs)",
+        "plain(n: mut xs)",
+    ] {
+        let src = format!(
+            "{SET}fn plain(xs: [i64]) {{\n    print(xs)\n}}\nfn main() {{\n    let xs = [1]\n    {call}\n}}"
+        );
+        assert_eq!(found_codes(&src), [Code::LabeledArgument], "`{call}`");
+    }
+}
+
+/// The source of nested calls `depth` deep: each argument is a place whose index is the next
+/// call, and none has its `mut`. `callee` is `f` or `g`.
+fn nested_missing(callee: &str, depth: usize) -> String {
+    let mut arg = "a[0]".to_owned();
+    for _ in 0..depth {
+        arg = format!("a[{callee}({arg})]");
+    }
+    format!(
+        "fn f(mut x: i64) -> i64 {{\n    x = 0\n    0\n}}\n\
+        fn g<T>(mut x: T) -> i64 {{\n    x = x\n    0\n}}\n\
+        fn main() {{\n    let mut a = [0]\n    let n = {callee}({arg})\n    print(n)\n}}"
+    )
+}
+
+/// An argument that is no `mut` argument is checked once to find its fix, so a missing marker
+/// does not double the work at each level of nesting: the expressions checked grow in step with
+/// the source. A fix that checked each argument again would do 2^12 checks at depth 12.
+#[test]
+fn missing_mut_fix_should_be_linear() {
+    for callee in ["f", "g"] {
+        let checks = |depth: usize| {
+            let src = nested_missing(callee, depth);
+            EXPR_CHECKS.set(0);
+            let found = found_codes(&src);
+            assert!(found.contains(&Code::MutMarkerMissing), "{src}");
+            EXPR_CHECKS.get()
+        };
+        assert_near_linear(checks(4), checks(8), checks(12));
+    }
 }

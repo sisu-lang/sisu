@@ -1,0 +1,16 @@
+// GIVEN `set(p)`, where `p` is a plain parameter and the parameter of `set` is `mut`
+// WHEN `sisu check` runs on it
+// THEN it reports E0166 on the argument, with the help to change only a local copy
+// AND there is no fix
+fn set(mut xs: [i64]) {
+    xs[0] = 9
+}
+
+fn run(p: [i64]) {
+    set(p)
+    print(p)
+}
+
+fn main() {
+    run([1, 2])
+}

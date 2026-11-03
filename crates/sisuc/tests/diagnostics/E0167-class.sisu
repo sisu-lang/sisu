@@ -1,0 +1,14 @@
+// GIVEN `Board(cells: mut xs)`
+// WHEN `sisu check` runs on it
+// THEN it reports E0167 on the `mut`, in the constructor form, with the help for a class
+// AND the safe fix removes `mut `
+class Board {
+    mut cells: [i64]
+}
+
+fn main() {
+    let mut xs = [1, 2]
+    let b = Board(cells: mut xs)
+    xs[0] = 3
+    print(b.cells)
+}

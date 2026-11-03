@@ -174,6 +174,8 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0163](E0163.md) | error | generic items with too many instances |
 | [E0164](E0164.md) | error | interface that cannot be used after `any` |
 | [E0165](E0165.md) | error | `any` written in a form that it does not take |
+| [E0166](E0166.md) | error | `mut` parameter without `mut` on its argument |
+| [E0167](E0167.md) | error | `mut` argument for a parameter that is not `mut` |
 | [E0168](E0168.md) | error | `mut` outside an argument |
 | [E0169](E0169.md) | error | `mut` argument that is not a place |
 | [E0170](E0170.md) | error | `mut` argument with the wrong type |

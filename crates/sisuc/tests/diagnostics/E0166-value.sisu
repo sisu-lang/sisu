@@ -1,0 +1,13 @@
+// GIVEN `add_one(1)`, where the parameter of `add_one` is `mut`
+// WHEN `sisu check` runs on it
+// THEN it reports E0166 on the argument, with the secondary label on the parameter
+// AND the help says to remove `mut` from the parameter and to write `let mut n = n` in the body
+// AND there is no fix
+fn add_one(mut n: i64) -> i64 {
+    n += 1
+    n
+}
+
+fn main() {
+    print(add_one(1))
+}
