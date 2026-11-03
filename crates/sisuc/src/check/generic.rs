@@ -1627,8 +1627,9 @@ impl Checker<'_> {
     }
 
     /// `bindings.partial(ty)`, with the associated types of known types replaced. An associated
-    /// type of a known type that has no type is `REJECTED`: its conformance reported why, so a
-    /// call in an argument that meets it reports nothing for it (see `Bindings::bind`).
+    /// type of a known type that has no type is `REJECTED`: its conformance, or the bound of its
+    /// base, reported why, so a call in an argument that meets it reports nothing for it (see
+    /// `Bindings::bind`).
     fn partial(&self, bindings: &Bindings, ty: Type) -> Type {
         let partial = bindings.partial(ty);
         self.normalize_failing(partial, *REJECTED)
@@ -1761,9 +1762,11 @@ impl Checker<'_> {
                 self.infer_arg(&mut call, i, &arg.value, sig.params[i], None);
             }
         }
-        // A parameter that no argument bound takes the `any` context, as pass 2 would bind it.
+        // A parameter that no argument bound takes the `any` context, as pass 2 would bind it,
+        // and meets its bound as a binding from a plain context does.
         if let (Some(ret), Some(want)) = (sig.ret, into_any) {
             let _ = call.bindings.unify(ret, want) || call.bindings.constrain(ret, payload(want));
+            self.report_fresh(&mut call, span);
         }
         self.sweep_waiting(&mut call, sig, args, &ranks, &fit);
         for (i, ty) in std::mem::take(&mut call.last) {
