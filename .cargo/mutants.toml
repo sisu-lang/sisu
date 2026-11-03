@@ -29,10 +29,10 @@ exclude_re = [
     # none.
     "replace > with >= in Checker<'_>::inferred_by_use",
     # `&&` in the `reported` guard of `Checker<'_>::inferred_by_use`: `uninferred.at` always holds
-    # this E0050. Nothing moves or drops a diagnostic between the `let` and its uses: the rollback
-    # truncates only the diagnostics after the join start and drops the locals declared inside it.
-    # The operators' drains and inserts move only diagnostics from inside the current expression:
-    # an outer E0050 is earlier, and an inner `let`'s uses end before the move.
+    # this E0050. Nothing moves or drops this E0050 between the `let` and its uses. The rollback
+    # truncates only the diagnostics after the join start, and drops the locals declared inside it.
+    # The operators' drains and inserts move only diagnostics from inside the current expression.
+    # An outer E0050 is earlier, and an inner `let`'s uses end before the move.
     # So both conjuncts hold on every path, and `||` gives the same result.
     "replace && with \\|\\| in Checker<'_>::inferred_by_use",
     # `elements.is_empty()` guard in `Checker<'_>::uninferred_of`: a non-empty array literal
