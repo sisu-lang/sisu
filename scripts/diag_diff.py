@@ -1,9 +1,10 @@
 """Checks every `.sisu` file under each DIR with two sisu builds and prints each program whose
-diagnostics differ: their codes, positions or count, or a crash. A review uses it to show that a
-change accepts no program it should reject and adds no cascade.
+diagnostics differ (their codes, positions or count), and each program that crashes the head,
+also when the base crashes. A review uses it to show that a change accepts no program it should
+reject, adds no cascade and crashes on no program.
 
 Usage: python3 diag_diff.py BASE_SISU HEAD_SISU DIR...
-Exits 1 when a program differs.
+Exits 1 when a program differs or crashes the head.
 """
 import json
 import subprocess
@@ -30,6 +31,8 @@ def diagnostics(sisu, path):
 
 def kind(base, head):
     """How the head's diagnostics differ from the base's, or None when they are the same."""
+    if any(d[0] == 'crash' for d in head):
+        return 'crash'
     if base == head:
         return None
     rejects = [any(d[1] == 'error' for d in ds) for ds in (base, head)]
