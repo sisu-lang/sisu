@@ -50,7 +50,8 @@ fn coalesce_call_then_string(o: i64?) {
     let w: string = z
 }
 
-// Guards: a type that the user wrote, or a sum that has one, holds the call to it.
+// Guards: a type that the user wrote, or a sum that has one, or an integer literal first, as in
+// the concrete twin, holds the call to it.
 fn written_i64() { let z: i64 = id(mk2()) + id(mk2()) }
 fn literal_first() { let z = 1 + id(mk2()) }
 fn chain_literal_first() { let z = 0 < id(mk2()) < 10 }
@@ -76,3 +77,152 @@ fn branch_then_string(c: bool) {
     let w: string = z
 }
 fn typed_sum_first(x: i64) { let z = (x + 1) + id(mk2()) }
+
+// A value is kept only by its own E0050. An E0050 beside it, in a block statement or an earlier
+// operand, does not make the value fail, and the default `i64` of an operator is no one's type.
+fn pair<T>(a: T, b: T) -> T { a }
+class K {
+    fn g<T>(self, t: T) -> T { t }
+}
+
+// An operand that kept its E0050 is not held to `i64`; the operands after it are not either.
+fn field_of_sum_then_u8(x: u8) { let z = (id(mk2()) + id(mk2())).a + x }
+fn match_on_sum_then_u8(x: u8) { let z = match id(mk2()) + id(mk2()) { _ => nope } + x }
+fn call_compare_array() { let z = id(mk2()) < [] }
+fn call_add_array() { let z = id(mk2()) + [] }
+fn call_add_none() { let z = id(mk2()) + None }
+fn two_calls_add_array() { let z = id(mk2()) + id(mk2()) + [] }
+fn sum_of_calls_then_u8(x: u8) { let z = (id(mk2()) + id(mk2())) + x }
+fn sum_of_calls_then_bool(b: bool) { let z = (id(mk2()) + id(mk2())) + b }
+fn sum_with_literal_then_bool() { let z = (id(mk2()) + 1) + true }
+fn flat_sum_with_literal_then_bool() { let z = id(mk2()) + 1 + true }
+fn block_sum_then_u8(x: u8) { let z = { id(mk2()) + id(mk2()) } + x }
+fn flat_sum_of_calls_then_u8(x: u8) { let z = id(mk2()) + id(mk2()) + x }
+fn grouped_sum_then_u8(x: u8) { let z = (id(mk2()) + 1) + x }
+fn nested_call_sum_then_u8(x: u8) { let z = id(id(mk2()) + 1) + x }
+fn field_of_sum_then_call() { let z = (id(mk2()) + id(mk2())).a + id(mk2()) }
+fn field_of_sum_then_literal_then_call() {
+    let z = (id(mk2()) + id(mk2())).a + 1 + id(mk2())
+}
+fn product_of_calls_then_remainder(x: u8) { let z = (id(mk2()) * id(mk2())) % x }
+fn difference_of_calls_then_less(x: u8) { let z = (id(mk2()) - id(mk2())) < x }
+fn negated_sum_then_u8(x: u8) { let z = -(id(mk2()) + id(mk2())) + x }
+fn three_calls_then_u8(x: u8) { let z = id(mk2()) + id(mk2()) + id(mk2()) + x }
+fn method_call_sum_then_u8(k: K, x: u8) { let z = (k.g(id(mk2())) + 1) + x }
+fn branch_sums_then_u8(c: bool, x: u8) {
+    let z = (if c { id(mk2()) + 1 } else { id(mk2()) + 1 }) + x
+}
+fn block_value_sum_then_u8(x: u8) { let z = { id(mk2()) + 1 } + x }
+fn block_statement_sum_then_u8(x: u8) {
+    let z = { let q = id(mk2()) + 1; id(mk2()) + 1 } + x
+}
+
+// A comparison is a `bool` whatever its operands are, so a use of it reports its own mistake.
+fn call_less_then_string() {
+    let z = id(mk2()) < 3
+    let w: string = z
+}
+fn concrete_call_less_then_string() {
+    let z = mk2() < 3
+    let w: string = z
+}
+fn sum_of_calls_less_then_string() {
+    let z = (id(mk2()) + id(mk2())) < 3
+    let w: string = z
+}
+fn sum_less_then_string() {
+    let z = id(mk2()) + 1 < 3
+    let w: string = z
+}
+fn sums_less_then_string() {
+    let z = (id(mk2()) + id(mk2())) < (id(mk2()) + 1)
+    let w: string = z
+}
+fn sum_less_than_literal_and_call_then_string() {
+    let z = id(mk2()) + 1 < 3 + id(mk2())
+    let w: string = z
+}
+fn block_less_then_string() {
+    let z = { let q = 1 == id(mk2()); 5 } < 3
+    let w: string = z
+}
+fn block_less_then_u8(x: u8) { let z = { let q = 1 == id(mk2()); nope } < x }
+fn block_times_u8(x: u8) { let z = { let q = 1 == id(mk2()); nope } * x }
+fn block_nope_then_u8(x: u8) { let z = { let q = 1 == id(mk2()); nope } + x }
+fn block_nope_then_literal_then_u8(x: u8) { let z = { let q = 1 == id(mk2()); nope } + 1 + x }
+
+// A block statement that keeps an E0050 does not make the value of the block fail.
+fn call_of_block_then_string() {
+    let z = id({
+        let q = 1 == id(mk2())
+        5
+    })
+    let w: string = z
+}
+fn block_plus_literal_then_string() {
+    let z = {
+        let q = 1 == id(mk2())
+        5
+    } + 1
+    let w: string = z
+}
+fn coalesce_block_then_string(o: i64?) {
+    let z = o ?? {
+        let q = 1 == id(mk2())
+        nope
+    }
+    let w: string = z
+}
+fn call_of_block_plus_literal_then_string() {
+    let z = id({
+        let q = 1 == id(mk2())
+        5
+    }) + 1
+    let w: string = z
+}
+fn match_on_sum_plus_literal_then_string() {
+    let z = match id(mk2()) + id(mk2()) { _ => 1 } + 1
+    let w: string = z
+}
+fn match_on_equal_plus_literal_then_string() {
+    let z = match 1 == id(mk2()) { _ => 1 } + 1
+    let w: string = z
+}
+fn call_of_match_then_string() {
+    let z = id(match 1 == id(mk2()) { _ => 1 })
+    let w: string = z
+}
+fn method_of_block_then_string(k: K) {
+    let z = k.g({ let q = 1 == id(mk2()); 5 })
+    let w: string = z
+}
+fn coalesce_block_sum_then_string(o: i64?) {
+    let z = o ?? ({ let q = 1 == id(mk2()); nope } + 1)
+    let w: string = z
+}
+fn branch_with_sum_plus_literal_then_string(c: bool) {
+    let z = (if c { id(mk2()) + 1 } else { 2 }) + 1
+    let w: string = z
+}
+
+// An argument that kept its E0050 fails like any argument: another argument binds the parameter.
+fn pair_with_sum_then_string(x: u8) {
+    let z = pair(id(mk2()) + 1, x)
+    let w: string = z
+}
+fn pair_with_block_then_string(x: u8) {
+    let z = pair({ let q = 1 == id(mk2()); x }, x)
+    let w: string = z
+}
+
+// Guards: the E0050 of a value stays its only report.
+fn compare_call_array_compare() { let z = mk2() < [] < 2 }
+fn compare_call_none() { let z = mk2() < None }
+fn coalesce_concrete_call_then_string(o: i64?) {
+    let z = o ?? mk2()
+    let w: string = z
+}
+fn literal_first_call_then_string() {
+    let z = 1 + id(mk2())
+    let w: string = z
+}
