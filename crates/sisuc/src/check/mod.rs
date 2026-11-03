@@ -1574,13 +1574,37 @@ impl Checker<'_> {
     fn poison_broken(&mut self, broken: &[ast::Broken]) {
         for broken in broken {
             let name = &broken.name.name;
+            // The prelude's code reads a language interface by its name, so no broken item takes
+            // it, as no intact item of the user's does.
+            let language = is_language_interface(name.as_str());
             let kind = match broken.kind {
-                ast::BrokenKind::Function => Definition::Function,
-                ast::BrokenKind::Class => Definition::Class,
-                ast::BrokenKind::Interface => Definition::Interface,
-                ast::BrokenKind::Enum => Definition::Enum,
-                ast::BrokenKind::Constant => Definition::Constant,
-                ast::BrokenKind::Alias => Definition::Alias,
+                ast::BrokenKind::Function => {
+                    self.function_ids.insert(*name, Declared::Broken);
+                    Definition::Function
+                }
+                ast::BrokenKind::Class => {
+                    self.class_ids.insert(*name, Declared::Broken);
+                    Definition::Class
+                }
+                ast::BrokenKind::Interface => {
+                    // A language interface keeps its name.
+                    if !language {
+                        self.interface_ids.insert(*name, Declared::Broken);
+                    }
+                    Definition::Interface
+                }
+                ast::BrokenKind::Enum => {
+                    self.enum_ids.insert(*name, Declared::Broken);
+                    Definition::Enum
+                }
+                ast::BrokenKind::Constant => {
+                    self.constants.insert(*name, Declared::Broken);
+                    Definition::Constant
+                }
+                ast::BrokenKind::Alias => {
+                    self.aliases.names.insert(*name, Declared::Broken);
+                    Definition::Alias
+                }
                 // Its target is intact, and its parse error already fails the program. A method
                 // call on the target that finds no method is poisoned.
                 ast::BrokenKind::Extend => {
@@ -1590,31 +1614,6 @@ impl Checker<'_> {
             };
             if !self.built_in(&broken.name) {
                 self.prelude_taken(kind, &broken.name);
-            }
-            // The prelude's code reads a language interface by its name, so no broken item takes
-            // it, as no intact item of the user's does.
-            let language = is_language_interface(name.as_str());
-            match kind {
-                Definition::Function => {
-                    self.function_ids.insert(*name, Declared::Broken);
-                }
-                Definition::Class => {
-                    self.class_ids.insert(*name, Declared::Broken);
-                }
-                Definition::Interface if !language => {
-                    self.interface_ids.insert(*name, Declared::Broken);
-                }
-                Definition::Enum => {
-                    self.enum_ids.insert(*name, Declared::Broken);
-                }
-                Definition::Constant => {
-                    self.constants.insert(*name, Declared::Broken);
-                }
-                Definition::Alias => {
-                    self.aliases.names.insert(*name, Declared::Broken);
-                }
-                // A language interface keeps its name.
-                _ => {}
             }
             // Functions, classes, enums, interfaces and constants share a namespace, so an intact
             // item of another kind and this name is poisoned too.
