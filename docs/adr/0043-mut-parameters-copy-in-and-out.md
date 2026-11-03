@@ -43,8 +43,11 @@ The call runs in this order:
    value instead. This is a lost write.
 
 The store-back runs on every return path of the function, early returns
-included. A `mut` argument is any place: if `x = v` compiles, `f(mut x)`
-compiles. It must have exactly the type of its parameter, with no conversion.
+included. A `mut` argument is any place except a path through `?.`: if
+`x = v` compiles and `x` has no `?.`, `f(mut x)` compiles. A path through `?.`
+is a place with two types, one to read and one to write, so no parameter type
+fits it. It is the type error `MutArgumentType`. A `mut` argument must have
+exactly the type of its parameter, with no conversion.
 Two `mut` arguments of one call cannot name the same place, nor one place that
 holds the other, when the compiler can see it (`MutPlaceTwice`).
 
@@ -70,18 +73,25 @@ print(b.cells)        // [1, 0]: the write of [9] is lost
   element is copied in: the first write of the function copies once, as
   `x = f(x)` does today. No program is slower than before.
 - **Step 2: the take.** The compiler moves a class field or an array element
-  out of its place for the call, instead of sharing it, when nothing else
-  reaches it during the call. The first write of the function then does not
+  out of its place for the call, instead of sharing it. It does this only when
+  nothing else reaches the place during the call. The first write of the function then does not
   copy. A take changes nothing that a program can observe. A hidden, test-only
   switch builds a program with no take, and the test suite and the fuzzer check
   that both builds print the same. Step 2 also adds the warning `MutLostWrite`,
   for the lost writes that the compiler can see.
 
-The take applies only when all of these hold: the value is an array or a
-string; the place is a field of a class object or an element of an array, with
-no struct field along its path; no code of the call reaches the place; the
-value can hold no resource type; and two `mut` arguments that can overlap pass a
-run-time test that they do not. A map entry and a place of a user `Indexable`
+The take applies only when all of these hold:
+
+- the value is an array or a string;
+- the place is a field of a class object or an element of an array, with no
+  struct field along its path;
+- no code of the call reaches the place;
+- the value can hold no resource type;
+- the call reads no `weak` field or capture whose type the value can hold: a
+  take can release the old value earlier than a copy does;
+- two `mut` arguments that can overlap pass a run-time test that they do not.
+
+ A map entry and a place of a user `Indexable`
 type are copied, never taken: their store-back runs `set`.
 
 ### What reaches a place
@@ -106,8 +116,8 @@ test that has one row for it.
 ## Why
 
 - **One concept, not five.** The review of 2026-10-29 found five separate
-  mechanisms for one missing concept, "a call changes a value that its caller
-  owns": `[mut]` captures, the built-in `exchange`, the collections write rule,
+  mechanisms for one missing concept. The concept is "a call changes a value
+  that its caller owns". The mechanisms are `[mut]` captures, the built-in `exchange`, the collections write rule,
   the last-use handover, and `move x`. Each needed edits to the others. None of
   them made `self.cells = step(self.cells)` fast.
 - **One meaning for every place**, class fields included, with no run-time
@@ -155,13 +165,15 @@ here.
 - ADR 0007 and ADR 0011 are superseded in part. A function now changes the
   caller's place with a `mut` parameter. A method that changes its receiver still
   takes `mut self`.
-- ADR 0029 changes: a borrowed argument whose value comes from a place that a
-  `mut` argument of the same call names, holds or is held by is retained before
-  the copy-in.
-- `exchange` becomes a prelude function, `exchange(mut place, with)`. The
-  reserved method name goes ([ADR 0015](0015-the-prelude-holds-only-what-almost-every-program-uses.md)).
+- ADR 0029 changes. A borrowed argument is retained before the copy-in when
+  its value comes from a place that a `mut` argument names, holds or is held
+  by. The `mut` argument is one of the same call, or of a call nested in a
+  later argument.
+- `exchange` becomes a prelude function, `exchange(mut place, with)`
+  ([ADR 0015](0015-the-prelude-holds-only-what-almost-every-program-uses.md)).
+  The reserved method `x.exchange(with: v)` of the collections design goes.
 - E0019 is retired, as ADR 0024 retired E0014. Its file gains the line
-  `Status: retired`, and `sisu explain` serves it from `RETIRED`. New codes
+  `Status: retired in ADR 0043`, and `sisu explain` serves it from `RETIRED`. New codes
   E0166 to E0171 name the new errors (`MutMarkerMissing`, `MutMarkerNotMut`,
   `MutNotArgument`, `MutArgumentNotPlace`, `MutArgumentType`, `MutPlaceTwice`).
 - A `mut` parameter lives for one call. A closure cannot share it with

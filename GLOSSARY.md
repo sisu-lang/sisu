@@ -15,10 +15,12 @@ be reassigned.
 _Avoid_: mutable binding, `var` (the keyword before milestone 4)
 
 **Place**:
-An expression that names storage and can stand on the left of `=`: a
-variable, a `mut` field, a field of a struct held in a place, or an element
-of an array held in a place, such as `grid[i][j]`. A `mut` argument is any
-place: if `x = v` compiles, `f(mut x)` does. In mir, a place can also name a
+An expression that names storage and can stand on the left of `=`. It is a
+variable, a `mut` field, a field of a struct held in a place, or an element of
+an array held in a place, such as `grid[i][j]`. A `mut` argument is any
+place except a path through `?.`: if `x = v` compiles and `x` has no `?.`,
+`f(mut x)` does. A path through `?.` is a place, but it is not a `mut`
+argument (the error E0170). In mir, a place can also name a
 payload field under a known variant, which only `match` reads.
 _Avoid_: lvalue
 
@@ -667,20 +669,22 @@ returns or hands on to a function that keeps it is owned instead.
 _Avoid_: reference parameter, `&` parameter
 
 **Lost write**:
-A write to the place of a `mut` argument by other code during the call. The
-store-back replaces it, so the program never sees it. This is defined
-behavior, and the compiler warns where it can see one.
+A write to the place of a `mut` argument by other code during the call, which
+does not survive the store-back. The store-back replaces it. A store-back that
+is dropped, because its array element is gone, is also a lost write. This is
+defined behavior. Step 2 of the `mut` parameters work adds a warning where the
+compiler can see one.
 
 **Take**:
 The speed-up for a `mut` argument that is a class field or an array element.
 The compiler moves the value out of the place for the call, instead of sharing
-it, when nothing else reaches the place during the call. The first write of the
-function then does not copy. No program spells a take.
+it. It does this only when nothing else reaches the place during the call. The
+first write of the function then does not copy. No program spells a take.
 _Avoid_: move out (that is `move x`), in-place call
 
 **Reach**:
 Code reaches a place when it can read or write the place by another path than
-the `mut` argument, such as through a shared class object. A take needs that no
+the `mut` argument. An example is a shared class object. A take needs that no
 code of the call reaches the place.
 
 **Symbol**:

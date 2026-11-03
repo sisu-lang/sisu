@@ -3,11 +3,12 @@
 Status: accepted, 2026-10-21 (mir part 4, #112). It replaces ADR 0012, which
 was proposed and never built.
 
-Changed by [ADR 0043](0043-mut-parameters-copy-in-and-out.md): a borrowed
-argument whose value comes from a place that a `mut` argument of the same call,
-or of a call nested in a later argument, names, holds or is held by is retained
-before the copy-in, a local or not. So `f(xs, mut xs)` gives `f` the old `xs`
-in its first parameter, whatever `f` writes to its second.
+Changed by [ADR 0043](0043-mut-parameters-copy-in-and-out.md). The caller
+retains a borrowed argument before the copy-in of a `mut` argument, a local or
+not. This holds when the value of the argument comes from a place that the `mut`
+argument names, holds or is held by. The `mut` argument is one of the same call,
+or of a call nested in a later argument. So `f(xs, mut xs)` gives `f` the old
+`xs` in its first parameter, whatever `f` writes to its second.
 
 A counted parameter is borrowed when the function only reads it: the caller
 holds its reference for the whole call, and neither side counts it. A

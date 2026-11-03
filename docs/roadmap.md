@@ -1364,10 +1364,10 @@ These do not make code nicer to write, so they wait:
   moves only locals, so `self.cells = step(self.cells)` and
   `grid[i] = f(grid[i])` share the array with the call, and the first write
   inside it copies the whole array. Step 2 of the `mut` parameters work does
-  it ([ADR 0043](adr/0043-mut-parameters-copy-in-and-out.md)): a `mut`
-  argument, `step(mut self.cells)`, is copied in and out, and the compiler
-  takes the array out of the place for the call when nothing else reaches it
-  during the call. A `mut self` method called on a field,
+  it ([ADR 0043](adr/0043-mut-parameters-copy-in-and-out.md)). A `mut`
+  argument, `step(mut self.cells)`, is copied in and out. The compiler takes
+  the array out of the place for the call when nothing else reaches it during
+  the call. A `mut self` method called on a field,
   `obj.pos.move_by(1, 2)`, has the same meaning (ADR 0011). Until step 2,
   `exchange(mut self.cells, [])` takes the array out and leaves `[]` (decided
   2026-10-29).
@@ -1779,13 +1779,13 @@ accepted.
     array too, so milestone 8's `Option<T>` changes no layout.
 - **Exclusivity.** Decided 2026-10-30, as copy-in/copy-out
   ([ADR 0043](adr/0043-mut-parameters-copy-in-and-out.md)). A `mut self`
-  method called on a field of an object, `obj.pos.move_by(1, 2)`, and handing
-  an array field to a call (see "Later and stretch goals") are `mut`
-  arguments: the call gets the value of the place and stores its final value
+  method called on a field of an object, `obj.pos.move_by(1, 2)`, is a `mut`
+  argument. So is handing an array field to a call (see "Later and stretch
+  goals"). The call gets the value of the place and stores its final value
   back. There is no exclusivity check and no panic, and a write to the place
   by other code during the call is lost. Moving a value out of a place is the
-  prelude function `exchange(mut x, v)`, as C++'s `std::exchange`, which
-  shows at the call what the place holds meanwhile. `move x` (drop blocks)
+  prelude function `exchange(mut x, v)`, as C++'s `std::exchange`. It shows at
+  the call what the place holds meanwhile. `move x` (drop blocks)
   takes a local only. `self.cells = step(exchange(mut self.cells, []))` needs
   no check, and `step` copies nothing when the field held the only reference.
 - **A conditional call through `?.` in a `mut` argument.** `fill(mut b?.cells)`
