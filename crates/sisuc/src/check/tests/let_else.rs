@@ -257,7 +257,7 @@ type AlwaysRow = (
 /// The rows of `always_matching_names_should_offer_a_plain_let`.
 const SIG: &str = "fn f(w: E, o: Only) {";
 const INT: &str = "fn f(w: E) -> i64 {";
-const ALWAYS_ROWS: [AlwaysRow; 23] = [
+const ALWAYS_ROWS: [AlwaysRow; 24] = [
     (
         SIG,
         "let v = w else { return }",
@@ -369,6 +369,14 @@ const ALWAYS_ROWS: [AlwaysRow; 23] = [
         false,
         Some((false, "let v = w")),
         &[],
+    ),
+    // One statement that is no expression.
+    (
+        SIG,
+        "let v = w else { let x = 1 }",
+        false,
+        Some((false, "let v = w")),
+        &[Code::LetElseCanFinish],
     ),
     (SIG, "let One = o else { return }", true, None, &[]),
     (SIG, "if let v = w { print(1) }", true, None, &[]),
