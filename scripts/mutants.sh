@@ -14,8 +14,8 @@
 # Arguments after -- choose the tests yourself: the script then runs one pass with them.
 # Each mutant still costs one build, so a large diff takes an hour or more.
 # It runs under nice -n 19 with 2 mutants at a time unless -j or CARGO_MUTANTS_JOBS says otherwise.
-# Each mutant runs 8 tests at a time unless NEXTEST_TEST_THREADS says otherwise: two whole suites
-# at one test for each core link hundreds of programs at once and stop the disk.
+# Each mutant runs 8 tests at a time unless NEXTEST_TEST_THREADS says otherwise.
+# Two whole suites at one test for each core link hundreds of programs at once. Then the disk stops.
 # The last line is a summary that starts "mutation-test: PASS" or "mutation-test: FAIL".
 # A summary of a run that measured a commit ends "(HEAD <sha>)"; NOT RUN lines and the
 # lines of a refused argument or of a refused tree do not.
@@ -44,6 +44,11 @@ if ! flock -n "$worktree_lock"; then
   echo "mutation-test: FAIL: another make mutation-test is running in this worktree; wait for it to end"
   exit 1
 fi
+# Then the lock of the whole clone (scripts/heavy-run.sh). A second run in this worktree fails
+# at once above, and does not wait here.
+# shellcheck source=scripts/heavy-run.sh
+source scripts/heavy-run.sh
+heavy_lock make mutation-test
 [[ -z ${LOG:-} ]] || exec >"$LOG" 2>&1
 
 verdict=

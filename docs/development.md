@@ -256,12 +256,15 @@ the run holds the lock. Use it instead of a shell redirect, which would empty a
 running log before the second run could refuse.
 
 `make test`, `make coverage`, `make mutation-test` and `make miri` also hold
-one lock for all the worktrees of the clone (`scripts/heavy-run.sh`, a file in
-the clone's `.git`). Two such runs at the same time link hundreds of programs at
-once and stop the disk for every other process, so a second run prints
-`heavy-run: waiting for this run to end: <command> in <worktree>` and waits for
-the first. A mutation run tests 8 tests at a time in each mutant;
-`NEXTEST_TEST_THREADS` sets another number.
+one lock for all the worktrees of the clone. The lock is a file in the clone's
+`.git` (`scripts/heavy-run.sh`). Two such runs at the same time link hundreds
+of programs at once, and then the disk stops for every other process. So a
+second run prints `heavy-run: waiting for this run to end: <command> in
+<worktree>` and waits for the first. A second `make mutation-test` in the same
+worktree still fails at once. When the lock cannot be taken (no `flock`, no Git
+directory, a read-only `.git`), the run warns and goes on with no lock. Each
+mutant of a mutation run tests 8 tests at a time. `NEXTEST_TEST_THREADS` sets
+another number.
 
 ## Coverage and performance
 

@@ -3,13 +3,23 @@
 import fcntl
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
+import time
 import unittest
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'heavy-run.sh')
 # A pre-commit hook runs these tests with GIT_DIR and its kin set to the outer repository.
 ENV = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
+
+
+def wait_for(condition, what):
+    deadline = time.monotonic() + 20
+    while not condition():
+        if time.monotonic() > deadline:
+            raise AssertionError(f'gave up waiting for {what}')
+        time.sleep(0.02)
 
 
 class HeavyRun(unittest.TestCase):
@@ -18,34 +28,56 @@ class HeavyRun(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.repo)
         subprocess.run(['git', 'init', '-q', self.repo], check=True, env=ENV)
         self.lock = os.path.join(self.repo, '.git', 'sisu-heavy-run.lock')
+        self.err = os.path.join(self.repo, 'err')
 
-    def start(self):
-        return subprocess.Popen(['bash', SCRIPT, 'touch', 'ran'], cwd=self.repo, env=ENV,
-                                stderr=subprocess.PIPE, text=True)
+    def path(self, name):
+        return os.path.join(self.repo, name)
+
+    def start(self, *command):
+        with open(self.err, 'w', encoding='utf-8') as err:
+            run = subprocess.Popen(['bash', SCRIPT, *command], cwd=self.repo, env=ENV, stderr=err,
+                                   start_new_session=True)
+        self.addCleanup(self.stop, run)
+        return run
+
+    @staticmethod
+    def stop(run):
+        if run.poll() is None:
+            os.killpg(run.pid, signal.SIGKILL)
+        run.wait()
+
+    def stderr(self):
+        with open(self.err, encoding='utf-8') as f:
+            return f.read()
 
     def test_a_run_should_wait_for_the_run_that_holds_the_lock_and_name_it(self):
         with open(self.lock, 'w', encoding='utf-8') as held:
             held.write('make test in /elsewhere (pid 1)\n')
             held.flush()
             fcntl.flock(held, fcntl.LOCK_EX)
-            run = self.start()
-            with self.assertRaises(subprocess.TimeoutExpired):
-                run.wait(timeout=0.5)
-            self.assertFalse(os.path.exists(os.path.join(self.repo, 'ran')))
-        _, err = run.communicate(timeout=10)
-        self.assertEqual(run.returncode, 0)
-        self.assertIn('heavy-run: waiting for this run to end: make test in /elsewhere', err)
-        self.assertTrue(os.path.exists(os.path.join(self.repo, 'ran')))
+            run = self.start('touch', 'ran')
+            wait_for(lambda: 'heavy-run: waiting' in self.stderr(), 'the waiting message')
+            self.assertIn('heavy-run: waiting for this run to end: make test in /elsewhere', self.stderr())
+            self.assertIsNone(run.poll())
+            self.assertFalse(os.path.exists(self.path('ran')))
+        self.assertEqual(run.wait(timeout=20), 0)
+        self.assertTrue(os.path.exists(self.path('ran')))
 
     def test_a_run_should_hold_the_lock_until_its_command_ends(self):
-        run = subprocess.Popen(['bash', SCRIPT, 'sleep', '2'], cwd=self.repo, env=ENV)
-        self.addCleanup(run.wait)
-        # The script takes the lock at once; 0.5 s leaves it time to reach the command.
-        subprocess.run(['sleep', '0.5'], check=True)
+        os.mkfifo(self.path('go'))
+        self.start('sh', '-c', 'touch ready; read line < go')
+        wait_for(lambda: os.path.exists(self.path('ready')), 'the command to start')
         with open(self.lock, encoding='utf-8') as other:
-            self.assertIn('sleep 2 in ', other.read())
+            self.assertIn('sh -c touch ready; read line < go in ', other.read())
             with self.assertRaises(BlockingIOError):
                 fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def test_a_run_with_no_git_directory_should_warn_and_run_with_no_lock(self):
+        shutil.rmtree(os.path.join(self.repo, '.git'))
+        run = self.start('touch', 'ran')
+        self.assertEqual(run.wait(timeout=20), 0)
+        self.assertIn("heavy-run: no lock in the clone's .git; running with no lock", self.stderr())
+        self.assertTrue(os.path.exists(self.path('ran')))
 
 
 if __name__ == '__main__':

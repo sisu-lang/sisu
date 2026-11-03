@@ -56,7 +56,7 @@ coverage: ## Coverage of the changes since BASE
 	scripts/heavy-run.sh scripts/coverage.sh "$(BASE)"
 
 mutation-test: ## Mutation-test the changes since BASE (unit tests, then the whole suite for survivors); LOG=<file> writes the output there
-	LOG="$(LOG)" scripts/heavy-run.sh scripts/mutants.sh "$(BASE)"
+	LOG="$(LOG)" scripts/mutants.sh "$(BASE)"
 
 fuzz: ## Fuzz TARGET (front_end by default, or program) for SECS seconds (1800 by default)
 	scripts/fuzz.sh --target "$(or $(TARGET),front_end)" "$(SECS)"

@@ -66,6 +66,7 @@ class Mutants(unittest.TestCase):
         self.scripts = os.path.join(self.repo, 'scripts')
         os.mkdir(self.scripts)
         shutil.copy(SCRIPT, self.scripts)
+        shutil.copy(os.path.join(os.path.dirname(SCRIPT), 'heavy-run.sh'), self.scripts)
         self.bin = os.path.join(self.repo, 'bin')
         os.mkdir(self.bin)
         cargo = os.path.join(self.bin, 'cargo')
@@ -89,13 +90,13 @@ class Mutants(unittest.TestCase):
         with open(os.path.join(self.repo, 'a.rs'), 'w', encoding='utf-8') as f:
             f.write(text)
 
-    def mutate(self, *args, log=True, env=None, **fake):
+    def mutate(self, *args, log=True, env=None, limit=None, **fake):
         env = dict(ENV, PATH=f'{self.bin}:{ENV["PATH"]}', TMPDIR=self.repo, **(env or {}),
                    **{f'FAKE_{k.upper()}': str(v) for k, v in fake.items()})
         if log:
             env['LOG'] = self.log
         return subprocess.run(['bash', 'scripts/mutants.sh', 'HEAD~1', *args], cwd=self.repo,
-                              capture_output=True, text=True, env=env)
+                              capture_output=True, text=True, env=env, timeout=limit)
 
     def seen(self, name):
         return os.path.exists(os.path.join(self.repo, name))
@@ -120,9 +121,12 @@ class Mutants(unittest.TestCase):
         with open(self.log, 'w', encoding='utf-8') as f:
             f.write('first run\n')
         os.mkdir(os.path.join(self.repo, 'target'))
-        with open(os.path.join(self.repo, 'target', 'mutation-test.lock'), 'w') as lock:
+        # A run in another worktree holds the lock of the clone too; this run must not wait for it.
+        with open(os.path.join(self.repo, 'target', 'mutation-test.lock'), 'w') as lock, \
+                open(os.path.join(self.repo, '.git', 'sisu-heavy-run.lock'), 'w') as clone:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            run = self.mutate()
+            fcntl.flock(clone, fcntl.LOCK_EX)
+            run = self.mutate(limit=30)
         self.assertEqual(run.returncode, 1)
         self.assertIn('mutation-test: FAIL: another make mutation-test is running in this worktree', run.stdout)
         with open(self.log, encoding='utf-8') as f:
