@@ -127,6 +127,20 @@ class TestWording(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn('f.rs:4: a unit test reads diagnostic wording', out)
 
+    def test_two_debug_strings_compared_in_the_test_module_should_fail(self):
+        for body in ('    assert_eq!(format!("{a:?}"), format!("{b:?}"), "{p}");\n',
+                     '    assert_ne!(\n        format!("{:#?}", a),\n        format!("{:?}", b)\n    );\n'):
+            with self.subTest(body=body):
+                code, out = run_hook('check-test-wording.sh', HEADERS[0] + body + '}\n')
+                self.assertEqual(code, 1)
+                self.assertIn('f.rs:3: a unit test compares the Debug text of two values', out)
+
+    def test_a_debug_string_compared_with_a_literal_should_pass(self):
+        for text in (HEADERS[0] + '    assert_eq!(format!("{pair:?}"), "[I64, String]");\n}\n',
+                     STEPS + 'assert_eq!(format!("{a:?}"), format!("{b:?}"));\n'):
+            with self.subTest(text=text):
+                self.assertEqual(run_hook('check-test-wording.sh', text), (0, ''))
+
     def test_a_read_in_an_exempt_file_should_pass_and_in_another_crate_fail(self):
         text = HEADERS[0] + '    fn f(d: &Diagnostic) -> String {\n        d.message().to_owned()\n    }\n}\n'
         for exempt in ('crates/sisuc/src/check/tests/parity.rs',
