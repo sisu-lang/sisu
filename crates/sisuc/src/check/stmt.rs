@@ -531,10 +531,8 @@ impl Checker<'_> {
     /// of `if let`. The block is checked in its own scope, before the pattern binds anything, so
     /// it cannot read the names, and it must not finish. The names go in the enclosing scope.
     /// A failed block or value fails the statement, but the names are bound all the same, so
-    /// the lines after it report nothing of them. Without an `else_block`, the pattern and the
-    /// value are checked the same way, and the statement reports E0174. A value that is no enum
-    /// or optional (E0051) and a pattern with an error of its own report that error alone. A
-    /// value with no type keeps its error and adds E0174.
+    /// the lines after it report nothing of them. Without an `else_block`, `let_without_else`
+    /// checks the statement.
     fn let_else(
         &mut self,
         mutable: Option<Span>,
@@ -607,7 +605,7 @@ impl Checker<'_> {
         let ty = type_of(&scrutinee);
         let (bound, _) = self.bind_pattern_as(Some(Unwrap::Let), None, &form, pattern, None);
         if !mismatched {
-            // A value with no type, or a name that unwraps, leaves `always` false.
+            // A value with no type leaves `always` false.
             let always = match ty {
                 None => Some(false),
                 Some(ty) => match &bound {

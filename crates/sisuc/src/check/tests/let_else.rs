@@ -315,10 +315,10 @@ const LET_ROWS: [LetRow; 16] = [
     ),
 ];
 
-/// The parser knows no types, so the checker reports a `let` with a pattern and no `else` by the
-/// type of the value: E0174 when the pattern is right for an enum or an optional (it always
-/// matches, or can fail), else the error of the `else` form. The table pins the codes; the
-/// fixtures `E0174`, `E0174-one-variant` and `E0174-failed-value` pin the two texts of E0174.
+/// The checker reports a `let` with a pattern and no `else` by the type of the value. A pattern
+/// that is right for an enum or an optional gives E0174: it always matches, or it can fail. Any
+/// other pattern gives the error of the `else` form. The table pins the codes. The fixtures
+/// `E0174`, `E0174-one-variant`, `E0174-failed-value` and `E0174-unknown-value` pin the texts.
 #[test]
 fn let_pattern_without_else_should_report_by_the_value_type() {
     for (line, expected, _) in LET_ROWS {

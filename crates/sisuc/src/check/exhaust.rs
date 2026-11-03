@@ -157,8 +157,8 @@ pub(super) fn check(
 }
 
 /// Whether `rows`, the patterns of a `let`, `if let` or `while let`, one unguarded row each,
-/// match every value of `ty`. The answer of `check` with no `missing`, with no witness built: it
-/// costs the work of the solve alone, not the width of the variants a witness names.
+/// match every value of `ty`. It gives the answer of `check` with no `missing`, but builds no
+/// witness. So it costs the work of the solve alone, not the width of the variants.
 pub(super) fn covers(
     enums: &[tir::Enum],
     conformances: &tir::Conformances,
@@ -522,8 +522,8 @@ impl<'a> Solver<'a> {
         }
     }
 
-    /// The matrix of `rows`, one unguarded or guarded row each, at a column `col`, with the
-    /// sentinel row below them: each row's interned pattern, and what the solve says.
+    /// The matrix of `rows` at a column `col`, one unguarded or guarded row each. The sentinel
+    /// row is below them. It gives each row's interned pattern, and what the solve says.
     fn run(&mut self, col: Col, rows: &[Row<'_>]) -> (Vec<PatId>, Rc<Solved>) {
         let pats: Vec<_> = rows
             .iter()
