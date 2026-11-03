@@ -389,7 +389,7 @@ impl Checker<'_> {
             // The bounds first, so that a type in the signature meets them.
             let bounds = self.declare_bounds(scope, Vec::new(), &requirement.type_params);
             // A requirement has no body: its parameters are checked as a function's are.
-            self.body.scopes.push(FxHashMap::default());
+            self.push_scope();
             let mut params = Vec::new();
             // The checks that each parameter's type queues, then the result's.
             let mut queued = Vec::new();

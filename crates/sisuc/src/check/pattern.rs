@@ -468,7 +468,7 @@ impl Checker<'_> {
             self.body.scopes.push(scope);
             return (bound, guard, so_far);
         }
-        self.body.scopes.push(FxHashMap::default());
+        self.push_scope();
         let (bound, guard) = bind(self);
         (bound, guard, BlockSoFar::default())
     }
