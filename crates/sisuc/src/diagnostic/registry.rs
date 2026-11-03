@@ -364,7 +364,8 @@ pub(crate) enum DiagnosticKind {
         grouped: Option<String>,
     },
     /// The `: type` at `at` of a `let ... else`, or of a `let` whose pattern is not a name. The
-    /// value gives the names their types. `with_else` is whether the statement has an `else`.
+    /// value gives the names their types. `with_else` is whether an `else` follows the value: on
+    /// its line, or, after a name, on the next line.
     LetTakesNoType { at: Span, with_else: bool },
     /// A `var` at `at`, on a field or on a binding.
     Var { at: Span, field: bool },
