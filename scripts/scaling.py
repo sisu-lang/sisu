@@ -176,6 +176,14 @@ def method_chain(k):
             f'fn main() {{\n    let c = Chain(n: 1)\n    let d = {chain}\n    print("{{d.n}}")\n}}\n')
 
 
+def comments(k):
+    # Each row is a comment and a `let ... else` whose block is one plain exit: the checker looks
+    # for a comment in the text that the fix of E0131 would remove, once per row. Row 0 is the base.
+    rows = ''.join(f'    // c{tag(i)}\n    let v{tag(i)} = o else {{ return 0 }}\n    print("{{v{tag(i)}}}")\n'
+                   for i in range(k + 1))
+    return f'fn f(o: i64?) -> i64 {{\n{rows}    0\n}}\n\nfn main() {{\n    print("{{f(1)}}")\n}}\n'
+
+
 # The name of a shape, its `n` and the program at a size. The sizes are 0, n, 2n, 4n and 8n.
 SHAPES = {
     'functions': (250, functions),
@@ -195,6 +203,7 @@ SHAPES = {
     'float left': (12, float_left),
     'string left': (12, string_left),
     'string call depth': (12, string_call_depth),
+    'comments': (250, comments),
 }
 
 
