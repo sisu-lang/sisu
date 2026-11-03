@@ -20,16 +20,19 @@ exclude_re = [
     # reads the text of a generated program.
     "replace == with != in Gen<'_>::let_else",
     # `at > settled` in `Checker<'_>::inferred_by_use`: `>=` differs only when one use is checked
-    # twice at the same place and the second check gives a type that the first did not. One use is
-    # checked again only after the string-join rollback in `binary_operands`, which keeps the help
-    # of an outer local. No checked program gives it another type there. Searched: every `.sisu`
-    # in the tests and probes, with a trace at each same-place use, and joins under `f64`, `f64?`,
-    # `u8` and `u8?` that read an outer `None` or `[]` through a name, a block, an `if`, a `??`,
-    # a call, a generic call, a push or a write. All gave the same type twice, or none.
+    # twice at the same place. The second check must also give a type that the first did not.
+    # One use is checked again only after the string-join rollback in `binary_operands`, which
+    # keeps the help of an outer local. No checked program gives it another type there. Searched:
+    # every `.sisu` in the tests and probes, with a trace at each same-place use, and joins under
+    # `f64`, `f64?`, `u8` and `u8?` that read an outer `None` or `[]` through a name, a block, an
+    # `if`, a `??`, a call, a generic call, a push or a write. All gave the same type twice, or
+    # none.
     "replace > with >= in Checker<'_>::inferred_by_use",
     # `&&` in the `reported` guard of `Checker<'_>::inferred_by_use`: `uninferred.at` always holds
     # this E0050. Nothing moves or drops a diagnostic between the `let` and its uses: the rollback
     # truncates only the diagnostics after the join start and drops the locals declared inside it.
+    # The operators' drains and inserts move only diagnostics from inside the current expression:
+    # an outer E0050 is earlier, and an inner `let`'s uses end before the move.
     # So both conjuncts hold on every path, and `||` gives the same result.
     "replace && with \\|\\| in Checker<'_>::inferred_by_use",
     # `elements.is_empty()` guard in `Checker<'_>::uninferred_of`: a non-empty array literal

@@ -606,11 +606,14 @@ impl Checker<'_> {
         matches!(uninferred.literal, Literal::EmptyArray).then_some(local)
     }
 
-    /// The E0050 of `init`, the initializer of a `let` just checked, when `init` is a `None` or
-    /// `[]` that the checker reported as the last diagnostic. Call it before `let_init` is cleared.
+    /// The E0050 of `init`, the initializer of a `let` just checked. `init` is a `None`, an
+    /// `Option.None` or a `[]` that the checker reported as the last diagnostic. Call it before
+    /// `let_init` is cleared.
     pub(super) fn uninferred_of(&self, init: &ast::Expr) -> Option<Uninferred> {
+        // Not `bare_none_written`: `Opt.None` of an alias goes to `generic_call`, which reports
+        // another E0050 that no use type replaces.
         let literal = match &init.kind {
-            ExprKind::NoneLit => Literal::None,
+            _ if bare_none(init) => Literal::None,
             ExprKind::ArrayLit(elements) if elements.is_empty() => Literal::EmptyArray,
             _ => return None,
         };
