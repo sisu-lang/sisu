@@ -34,12 +34,6 @@ impl Checker<'_> {
         args: &[ast::Arg],
         expected: Option<Type>,
     ) -> Option<Checked> {
-        if matches!(
-            callee.name.as_str(),
-            "print" | "eprint" | "dbg" | "panic" | "read_line"
-        ) {
-            self.refuse_mut(args, Callee::Unnamed(&callee.name.as_str()));
-        }
         match callee.name.as_str() {
             "print" => Some(self.print(span, args, Stream::Stdout)),
             "eprint" => Some(self.print(span, args, Stream::Stderr)),
@@ -120,6 +114,7 @@ impl Checker<'_> {
             self.stray(args);
             return Err(Err(Poisoned::error()));
         };
+        self.refuse_mut(args, Callee::Unnamed(&function));
         let checked = self.expr(&arg.value, expected);
         let error = match type_of(&checked) {
             Some(Type::UNIT) => wrong(PrintProblem::NoValue, arg.value.span),
@@ -165,6 +160,7 @@ impl Checker<'_> {
         let [arg] = args else {
             return self.argument_count("panic", 1, span, args);
         };
+        self.refuse_mut(args, Callee::Unnamed(&"panic"));
         let message = self.message(&arg.value);
         panics(span, labeled, message)
     }
@@ -176,11 +172,13 @@ impl Checker<'_> {
         self.body.exits += 1;
         self.body.todo = true;
         self.report(DiagnosticKind::TodoLeft { at: keyword });
-        self.refuse_mut(args, Callee::Unnamed(&"todo"));
         let labeled = self.labels(args);
         let text = |text: &str| {
             tir::Expr::new(tir::ExprKind::Str(text.to_string()), Type::STRING, keyword)
         };
+        if args.len() == 1 {
+            self.refuse_mut(args, Callee::Unnamed(&"todo"));
+        }
         let message = match args {
             [] => Ok(text("not yet implemented")),
             [arg] => self.message(&arg.value).map(|message| {

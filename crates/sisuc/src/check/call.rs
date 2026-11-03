@@ -593,12 +593,12 @@ impl Checker<'_> {
         if gets_range
             && type_of(&receiver).is_some_and(|ty| matches!(ty.kind(), TypeKind::Array(_)))
         {
-            self.refuse_method(receiver_expr, method, args);
             return self.array_get_range(args);
         }
+        let receiver_ty = type_of(&receiver);
         let receiver = match self.generated_operator(span, receiver, site, args) {
             Ok(checked) => {
-                self.refuse_method(receiver_expr, method, args);
+                self.refuse_method(receiver_expr, (receiver_ty, method), args, Some(1));
                 return checked;
             }
             Err(receiver) => receiver,
@@ -615,7 +615,7 @@ impl Checker<'_> {
                     }
                 }
                 _ => {
-                    self.refuse_method(receiver_expr, method, args);
+                    self.refuse_method(receiver_expr, (receiver_ty, method), args, Some(1));
                     return self.push(span, safe, (receiver, place), receiver_expr, args);
                 }
             }
@@ -624,7 +624,6 @@ impl Checker<'_> {
             // A built-in type, an array and an optional have a `Display` that the compiler writes,
             // and no method of their own named `to_string`.
             Some(ty) if method.name.as_str() == "to_string" && generated_display_only(ty) => {
-                self.refuse_method(receiver_expr, method, args);
                 return self.generated_display(span, receiver, site, args, false);
             }
             // A method of the prelude's `extend` of an array type or `i64` answers before the
@@ -633,15 +632,15 @@ impl Checker<'_> {
                 return self.invoke(span, func, Some(receiver), site, args);
             }
             Some(ty) if matches!(ty.kind(), TypeKind::Array(_)) => {
-                self.refuse_method(receiver_expr, method, args);
+                self.refuse_builtin(receiver_expr, ty, method, args);
                 return self.array_method(span, receiver, ty, method, args);
             }
             Some(Type::STRING) => {
-                self.refuse_method(receiver_expr, method, args);
+                self.refuse_builtin(receiver_expr, Type::STRING, method, args);
                 return self.string_method(span, safe, (receiver, receiver_expr), method, args);
             }
             Some(ty @ (Type::I64 | Type::F64)) => {
-                self.refuse_method(receiver_expr, method, args);
+                self.refuse_builtin(receiver_expr, ty, method, args);
                 return self.number_method(span, receiver, ty, method, args);
             }
             Some(ty)
@@ -664,7 +663,6 @@ impl Checker<'_> {
         ) {
             Some(Found::Func(func)) => self.invoke(span, func, Some(receiver), site, args),
             Some(Found::GeneratedDisplay { listed }) => {
-                self.refuse_method(receiver_expr, method, args);
                 self.generated_display(span, receiver, site, args, listed)
             }
             // An optional array's `get` is E0062 first, then E0032 for the range, as through `?.`.
@@ -683,13 +681,46 @@ impl Checker<'_> {
         }
     }
 
-    /// E0167 for each `mut` argument of the call `receiver.method(args)`, a built-in method.
-    fn refuse_method(&mut self, receiver: &ast::Expr, method: &ast::Ident, args: &[ast::Arg]) {
-        if args.iter().any(|arg| arg.mut_keyword.is_some()) {
-            let receiver = self.source.text(receiver.span);
-            let name = format_args!("{receiver}.{}", method.name);
-            self.refuse_mut(args, Callee::Unnamed(&name));
+    /// E0167 for each `mut` argument of the call `receiver.method(args)` of a method of the
+    /// built-in type `ty`. A method that the type lacks has no parameter to refuse.
+    fn refuse_builtin(
+        &mut self,
+        receiver: &ast::Expr,
+        ty: Type,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+    ) {
+        let name = method.name.as_str();
+        let arity = match ty.kind() {
+            TypeKind::Array(_) => array::METHODS.iter().find(|(m, _)| *m == name),
+            TypeKind::String => string::METHODS.iter().find(|(m, _)| *m == name),
+            _ => None,
+        };
+        let arity = arity
+            .map(|&(_, arity)| arity)
+            .or_else(|| number::method(ty, name).map(|(_, arity)| arity));
+        self.refuse_method(receiver, (Some(ty), method), args, arity);
+    }
+
+    /// E0167 for each `mut` argument of the call `receiver.method(args)` of a built-in method that
+    /// takes `arity` arguments, when it has that many. `ty` is the type of the receiver, which
+    /// names the method when the receiver is on many lines.
+    fn refuse_method(
+        &mut self,
+        receiver: &ast::Expr,
+        (ty, method): (Option<Type>, &ast::Ident),
+        args: &[ast::Arg],
+        arity: Option<usize>,
+    ) {
+        if arity != Some(args.len()) || args.iter().all(|arg| arg.mut_keyword.is_none()) {
+            return;
         }
+        let text = self.source.text(receiver.span);
+        let name = match ty {
+            Some(ty) if !self.one_line(receiver.span) => self.method_name(ty, method.name.as_str()),
+            _ => format!("{text}.{}", method.name),
+        };
+        self.refuse_mut(args, Callee::Unnamed(&name));
     }
 
     /// `receiver.to_string()` on a value whose `Display` the compiler writes: the text that
@@ -1016,6 +1047,7 @@ impl Checker<'_> {
             Callee::Construct {
                 shown: &site.name.name,
                 class: true,
+                labeled: true,
             },
         );
         let quiet = self.body.failed_let == Some(span);

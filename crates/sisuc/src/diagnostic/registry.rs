@@ -450,13 +450,11 @@ pub(crate) enum DiagnosticKind {
     },
     /// `any` at `at`, written in a way that it does not take.
     AnyForm { at: Span, form: AnyFormKind },
-    /// The argument at `at` of a call, whose parameter is `mut`, and that has no `mut`. `name` is
-    /// the parameter's, and `position` its place, from 1, when it has no name; `declared` is where
-    /// it is declared.
+    /// The argument at `at` of a call, whose parameter `name` is `mut`, and that has no `mut`.
+    /// `declared` is where the parameter is declared.
     MutMarkerMissing {
         at: Span,
-        name: Option<String>,
-        position: usize,
+        name: String,
         callee: String,
         declared: Option<Span>,
         fix: MissingFix,
@@ -2812,8 +2810,9 @@ pub(crate) enum Unbuilt {
 pub(crate) enum MissingFix {
     /// The place fits the parameter: the safe fix that adds `mut `.
     Add,
-    /// A place that `mut` would still make an error (E0170 or E0171): no fix.
-    None,
+    /// A place that `mut` would still make an error (E0170 or E0171), or that is not known: no
+    /// fix and no help.
+    NoFix,
     /// A `let` local `name`, passed as `arg`.
     Let { name: String, arg: String },
     /// A field `name` that is not `mut`.
@@ -3696,17 +3695,13 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::MutMarkerMissing {
                 at,
                 name,
-                position,
                 callee,
                 declared,
                 fix,
             } => {
-                let message = match &name {
-                    Some(name) => format!(
-                        "the parameter `{name}` of `{callee}` is `mut`, so its argument needs `mut`"
-                    ),
-                    None => format!("argument {position} of `{callee}` is `mut`, so it needs `mut`"),
-                };
+                let message = format!(
+                    "the parameter `{name}` of `{callee}` is `mut`, so its argument needs `mut`"
+                );
                 let d = Diagnostic::coded(code, at, message).with_label("needs `mut`");
                 let d = match declared {
                     Some(declared) => d.with_secondary(declared, "declared `mut` here"),
@@ -3714,20 +3709,17 @@ impl From<DiagnosticKind> for Diagnostic {
                 };
                 match fix {
                     MissingFix::Add => d.with_fix(insert_mut("add `mut`", at)),
-                    MissingFix::None => d,
                     MissingFix::Let { name, arg } => d.with_help(format!(
                         "declare `{name}` with `let mut`, and pass `mut {arg}`"
                     )),
                     MissingFix::Field { name } => d.with_help(format!(
                         "declare the field `{name}` as `mut`, and pass it `mut`"
                     )),
-                    MissingFix::Copy => match (declared, name) {
-                        (Some(_), Some(name)) => d.with_help(format!(
-                            "to change only a local copy, remove `mut` here and write \
-                             `let mut {name} = {name}` in the body"
-                        )),
-                        _ => d,
-                    },
+                    MissingFix::Copy if declared.is_some() => d.with_help(format!(
+                        "to change only a local copy, remove `mut` here and write \
+                         `let mut {name} = {name}` in the body"
+                    )),
+                    MissingFix::NoFix | MissingFix::Copy => d,
                 }
             }
             DiagnosticKind::MutMarkerNotMut { at, fix_end, form } => {

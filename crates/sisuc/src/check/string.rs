@@ -384,7 +384,6 @@ impl Checker<'_> {
         to: Type,
         args: &[ast::Arg],
     ) -> Checked {
-        self.refuse_mut(args, Callee::Unnamed(&self.source.text(name)));
         let labeled = self.labels(args);
         let [arg] = args else {
             self.report(DiagnosticKind::ArgumentCount {
@@ -396,6 +395,7 @@ impl Checker<'_> {
             self.stray(args);
             return Err(Poisoned::error());
         };
+        self.refuse_mut(args, Callee::Unnamed(&self.source.text(name)));
         let chars = [Type::array(Type::CHAR)];
         let from: &[Type] = match to {
             Type::I64 => &[Type::U8, Type::CHAR, Type::F64],

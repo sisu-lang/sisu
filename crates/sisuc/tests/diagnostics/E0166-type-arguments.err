@@ -1,0 +1,17 @@
+error[E0137]: `rw` takes 1 type argument, but 2 were given
+  --> E0166-type-arguments.sisu:11:7
+   |
+11 |     rw<i64, i64>(x, 5)
+   |       ^^^^^^^^^^
+
+error[E0166]: the parameter `x` of `rw` is `mut`, so its argument needs `mut`
+  --> E0166-type-arguments.sisu:11:18
+   |
+ 5 | fn rw<T>(mut x: T, v: T) {
+   |              - declared `mut` here
+...
+11 |     rw<i64, i64>(x, 5)
+   |                  ^ needs `mut`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0137, E0166

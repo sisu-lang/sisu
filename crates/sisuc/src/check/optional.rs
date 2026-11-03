@@ -36,6 +36,7 @@ impl Checker<'_> {
             Callee::Construct {
                 shown: &path,
                 class: false,
+                labeled: false,
             },
         );
         let Some(labeled) = self.positional_shape(span, &path, 1, args) else {

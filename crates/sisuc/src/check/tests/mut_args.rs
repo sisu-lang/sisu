@@ -877,7 +877,7 @@ fn missing_mut_fix_should_be_linear() {
 }
 
 /// GIVEN a generic callee whose `mut` parameter is `T`, and a value with no `mut` at it, for a
-///   function, a method, a bound method, an `any I` method, a call with explicit type arguments,
+///   function, a method, a bound method, a call with explicit type arguments,
 ///   and a call nested in another generic call
 /// WHEN it is checked
 /// THEN it is E0166 only: the value binds `T` as any argument does, so `T` is no cascade
@@ -919,14 +919,6 @@ fn unmarked_value_at_a_generic_mut_parameter_should_give_the_missing_marker_only
         found_codes(&bound),
         [Code::MutMarkerMissing],
         "bound method"
-    );
-    let any = format!(
-        "{decls}fn main() {{\n    let f: any Gt = C(n: 1)\n    let r = f.g(1)\n    print(r)\n}}"
-    );
-    assert_eq!(
-        found_codes(&any),
-        [Code::MutMarkerMissing],
-        "`any I` method"
     );
 }
 

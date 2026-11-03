@@ -1,0 +1,19 @@
+error[E0105]: `answer` is a function, not a value
+  --> E0166-function.sisu:14:10
+   |
+14 |     bump(answer)
+   |          ^^^^^^
+   |
+   = help: call it: `answer()`
+
+error[E0166]: the parameter `x` of `bump` is `mut`, so its argument needs `mut`
+  --> E0166-function.sisu:14:10
+   |
+ 5 | fn bump(mut x: i64) {
+   |             - declared `mut` here
+...
+14 |     bump(answer)
+   |          ^^^^^^ needs `mut`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0105, E0166

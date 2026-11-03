@@ -17,6 +17,7 @@ use crate::diagnostic::{
 };
 use crate::parser::{is_place, is_range_target};
 use crate::source::Span;
+use crate::symbol::Symbol;
 use crate::tir::{self, ExprKind, LocalId, Type, TypeArgs, TypeKind};
 
 #[cfg(test)]
@@ -54,6 +55,19 @@ pub(super) fn site_of(
         if has_mut { muts.to_vec() } else { Vec::new() },
         names.to_vec(),
     )
+}
+
+/// Whether `e` is a literal that takes its type from its context: `[]`, `None`, an array of them,
+/// or `Some` of one.
+fn context_literal(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::NoneLit => true,
+        ast::ExprKind::ArrayLit(elements) => elements.iter().all(context_literal),
+        ast::ExprKind::Call { callee, args, .. } => {
+            callee.name == Symbol::SOME && args.iter().all(|a| context_literal(&a.value))
+        }
+        _ => false,
+    }
 }
 
 /// What a call path knows of its callee, for the reports about its `mut` arguments.
@@ -95,17 +109,22 @@ pub(super) struct MutParts {
     unmarked: Vec<(usize, MarkCheck)>,
 }
 
+/// What `marks` keeps of a place that an argument names.
+pub(super) struct Kept {
+    key: MutPlaceKey,
+    /// The type that the place stores, when it is known.
+    ty: Option<Type>,
+    /// Whether the place goes through `?.`.
+    chain: bool,
+}
+
 /// What the one check of an argument at a `mut` parameter, with no `mut` on it, found.
 pub(super) enum MarkCheck {
-    /// A place that can change, of type `ty` (`None` when unknown). `chain` when it goes through
-    /// `?.`.
-    Place {
-        ty: Option<Type>,
-        chain: bool,
-        key: MutPlaceKey,
-    },
-    /// Why a place that the argument names cannot be passed `mut`, and its key when it has a path.
-    NotPlace(NotPlace, Option<MutPlaceKey>),
+    /// A place that can change.
+    Place(Kept),
+    /// Why a place that the argument names cannot be passed `mut`, and what is kept of it when it
+    /// has a path.
+    NotPlace(NotPlace, Option<Kept>),
     /// A place with an error in it, which reported itself.
     Failed,
 }
@@ -117,10 +136,12 @@ pub(super) enum Callee<'a> {
     Written(&'a MutSite<'a>),
     /// A built-in, by the name that the call writes: `print`, `xs.push`.
     Unnamed(&'a dyn fmt::Display),
-    /// A constructor, written `shown`: a class's, or a variant's when `class` is false.
+    /// A constructor, written `shown`: a class's, or a variant's when `class` is false. Its
+    /// arguments carry a label when `labeled`.
     Construct {
         shown: &'a dyn fmt::Display,
         class: bool,
+        labeled: bool,
     },
 }
 
@@ -311,7 +332,7 @@ impl Checker<'_> {
     pub(super) fn mut_place(
         &mut self,
         arg: &ast::Expr,
-    ) -> Result<CheckedPlace, (NotPlace, Option<MutPlaceKey>)> {
+    ) -> Result<CheckedPlace, (NotPlace, Option<Kept>)> {
         if is_range_target(arg) {
             // As a `push` onto a range does: the bound alone is reported, with no warning that
             // the root is never reassigned.
@@ -339,6 +360,15 @@ impl Checker<'_> {
             );
             return Err((NotPlace::SelfValue { class }, None));
         }
+        if let ast::ExprKind::Name(name) = arg.kind
+            && self.lookup(name).is_none()
+            && !self.constants.contains_key(&name)
+            && self.is_function(name)
+        {
+            // A function is a value, not a place: E0105 says so, as for any value.
+            self.checked_alone(arg);
+            return Ok(CheckedPlace::failed());
+        }
         if !is_place(arg) {
             // An expression with an error has its error, and no place to report.
             return match self.checked_alone(arg) {
@@ -348,8 +378,12 @@ impl Checker<'_> {
         }
         let mut place = self.place(arg.span, arg, Change::MutArg);
         if let Some(cause) = place.refused.take() {
-            let key = place.path.as_ref().map(|path| self.mut_key(path));
-            return Err((NotPlace::Immutable(cause), key));
+            let kept = place.path.as_ref().map(|path| Kept {
+                key: self.mut_key(path),
+                ty: place.ty,
+                chain: place.guard.is_some(),
+            });
+            return Err((NotPlace::Immutable(cause), kept));
         }
         if place.guard.is_some() {
             place.chain = Some(Chain {
@@ -360,16 +394,21 @@ impl Checker<'_> {
     }
 
     /// The type of the expression `arg`, checked on its own for its own mistakes, and whether
-    /// it failed: it reported an error, or its type is unknown while an error was reported
-    /// before it, as for the use of a local that failed. An unknown type comes from an error,
-    /// except for a literal that needs its context, such as `[]`, which is no failure.
+    /// it failed.
+    ///
+    /// It failed when it reported an error. It failed too when its type is unknown, an error was
+    /// reported before it, and it is no context literal: its type comes from a local that failed.
+    /// A context literal (`[]`, `None`, and arrays of them) has no type and no error, so it never
+    /// failed. With no earlier error, an unknown type is no failure either, so E0169 is reported.
+    // shortcut: a temporary of another form that takes its type from its context, such as
+    // `Some(None)` or an `if` of `[]`, counts as failed beside an earlier error and hides its
+    // E0169; upgrade if such a form must report E0169 there.
     fn checked_alone(&mut self, arg: &ast::Expr) -> (Option<Type>, bool) {
         let errors = self.diagnostics.errors;
         let ty = type_of(&self.expr(arg, Some(UNKNOWN)));
-        (
-            ty,
-            self.diagnostics.errors > errors || ty.is_none() && errors > 0,
-        )
+        let failed =
+            self.diagnostics.errors > errors || ty.is_none() && errors > 0 && !context_literal(arg);
+        (ty, failed)
     }
 
     /// The text before the first `?.` of the place `e`, when it is on one line.
@@ -597,12 +636,15 @@ impl Checker<'_> {
         Ok(self.mut_slot(arg, place, parts))
     }
 
-    /// The argument `arg`, at the place `at` among the arguments, when the callee's parameter
-    /// there is `mut` and the argument has no `mut`, and names a place: its one check, kept in
-    /// `parts` for `marks`. With `bind`, a generic call and the parameter's type, the place binds
-    /// the parameters that the type names, as `mut` would, so that no other argument fails
-    /// against a type that the place has not bound. A type that does not fit is for E0166 to say.
-    /// The argument fails, and `None` is a value that the call checks as it checks any other.
+    /// The argument `arg`, at the `mut` parameter `at`, when it has no `mut` and names a place.
+    /// Its one check, with no report, goes to `parts` for `marks`.
+    ///
+    /// With `bind`, a generic call and the parameter's type, the place binds the type parameters
+    /// that the type names, as `mut` would. No other argument then fails against a type that the
+    /// place has not bound. A type that does not fit is for E0166 to say.
+    ///
+    /// The result is the failed argument, or `None` for a value, which the call checks as it
+    /// checks any other.
     pub(super) fn unmarked_place(
         &mut self,
         arg: &ast::Arg,
@@ -615,22 +657,22 @@ impl Checker<'_> {
         }
         let check = match self.mut_place(&arg.value) {
             Ok(place) => match place.path.as_ref().map(|path| self.mut_key(path)) {
-                Some(key) => MarkCheck::Place {
+                Some(key) => MarkCheck::Place(Kept {
+                    key,
                     ty: place.ty,
                     chain: place.chain.is_some(),
-                    key,
-                },
+                }),
                 None => MarkCheck::Failed,
             },
-            Err((cause, key)) => MarkCheck::NotPlace(cause, key),
+            Err((cause, kept)) => MarkCheck::NotPlace(cause, kept),
         };
         if let (
             Some((call, Some(pattern))),
-            MarkCheck::Place {
+            MarkCheck::Place(Kept {
                 ty: Some(have),
                 chain: false,
                 ..
-            },
+            }),
         ) = (bind, &check)
         {
             let _ = self.bind_param(call, pattern, *have, arg.value.span);
@@ -662,7 +704,7 @@ impl Checker<'_> {
     pub(super) fn refuse_mut(&mut self, args: &[ast::Arg], callee: Callee<'_>) {
         for (i, arg) in args.iter().enumerate() {
             let Some(at) = arg.mut_keyword else { continue };
-            if arg.label.is_some() && !matches!(callee, Callee::Construct { .. }) {
+            if arg.label.is_some() && !matches!(callee, Callee::Construct { labeled: true, .. }) {
                 continue;
             }
             let form = match &callee {
@@ -682,12 +724,15 @@ impl Checker<'_> {
                     position: i + 1,
                     callee: name.to_string(),
                 },
-                Callee::Construct { shown, class: true } => NotMutForm::Class {
+                Callee::Construct {
+                    shown, class: true, ..
+                } => NotMutForm::Class {
                     shown: shown.to_string(),
                 },
                 Callee::Construct {
                     shown,
                     class: false,
+                    ..
                 } => NotMutForm::Variant {
                     shown: shown.to_string(),
                 },
@@ -728,7 +773,8 @@ impl Checker<'_> {
         let at: Vec<Option<usize>> = checks
             .iter()
             .map(|(_, check)| match check {
-                MarkCheck::Place { key, .. } | MarkCheck::NotPlace(_, Some(key)) => {
+                MarkCheck::Place(Kept { key, .. })
+                | MarkCheck::NotPlace(_, Some(Kept { key, .. })) => {
                     keys.push(key);
                     Some(keys.len() - 1)
                 }
@@ -759,17 +805,40 @@ impl Checker<'_> {
                 .and_then(|(_, key)| *key)
                 .is_some_and(|key| related[key]);
             let want = wants.get(i).copied().flatten();
-            let fix = match found.map(|((_, check), _)| check) {
-                Some(MarkCheck::Failed) => MissingFix::None,
-                Some(MarkCheck::Place { ty, chain, .. }) => {
-                    if !related && !chain && ty.is_some() && ty == want {
-                        MissingFix::Add
-                    } else {
-                        MissingFix::None
-                    }
-                }
-                Some(MarkCheck::NotPlace(NotPlace::Immutable(cause), _)) => match cause {
-                    Immutable::Let { .. } | Immutable::Field { .. } if related => MissingFix::None,
+            let check = found.map(|((_, check), _)| check);
+            let fix = self.missing_fix(arg, check, (related, want));
+            let param = site.names.get(i);
+            self.report(DiagnosticKind::MutMarkerMissing {
+                at: arg.value.span,
+                name: param.map(|name| name.name.to_string()).unwrap_or_default(),
+                callee: site.callee.to_string(),
+                declared: param
+                    .map(|name| name.span)
+                    .filter(|span| !span.in_prelude()),
+                fix,
+            });
+        }
+    }
+
+    /// What the report of the missing `mut` of `arg` offers. `check` is the check of the argument,
+    /// `related` whether another `mut` place of the call meets it, and `want` the parameter's
+    /// type. A fix or a help is offered only when following it gives a valid call.
+    fn missing_fix(
+        &self,
+        arg: &ast::Arg,
+        check: Option<MarkCheck>,
+        (related, want): (bool, Option<Type>),
+    ) -> MissingFix {
+        let fits = |kept: &Kept| !related && !kept.chain && kept.ty.is_some() && kept.ty == want;
+        match check {
+            // A place of a call that failed before it checked its arguments: nothing is known.
+            None if is_place(&arg.value) => MissingFix::NoFix,
+            Some(MarkCheck::Place(kept)) if fits(&kept) => MissingFix::Add,
+            Some(MarkCheck::Failed | MarkCheck::Place(_)) => MissingFix::NoFix,
+            Some(MarkCheck::NotPlace(NotPlace::Immutable(cause), kept)) => {
+                let fits = kept.as_ref().is_some_and(fits);
+                match cause {
+                    Immutable::Let { .. } | Immutable::Field { .. } if !fits => MissingFix::NoFix,
                     Immutable::Let { .. } => {
                         let name = self.refused_name(&arg.value);
                         let shown = arg.value.span;
@@ -784,20 +853,9 @@ impl Checker<'_> {
                         name: self.refused_name(&arg.value),
                     },
                     _ => MissingFix::Copy,
-                },
-                None | Some(MarkCheck::NotPlace(..)) => MissingFix::Copy,
-            };
-            let param = site.names.get(i);
-            self.report(DiagnosticKind::MutMarkerMissing {
-                at: arg.value.span,
-                name: param.map(|name| name.name.to_string()),
-                position: i + 1,
-                callee: site.callee.to_string(),
-                declared: param
-                    .map(|name| name.span)
-                    .filter(|span| !span.in_prelude()),
-                fix,
-            });
+                }
+            }
+            None | Some(MarkCheck::NotPlace(..)) => MissingFix::Copy,
         }
     }
 

@@ -22,6 +22,7 @@ use super::{
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ArgumentsForm, Diagnostic, Expected, MainForm, Unwrap};
 use crate::lexer::{TokenKind, lex};
+use crate::parser::is_place;
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
@@ -2327,9 +2328,9 @@ impl Checker<'_> {
             .enumerate()
             .map(|(i, (arg, fit))| {
                 // An argument at a `mut` parameter is never checked ahead. A place is
-                // checked already, and a value waits.
-                if sig.mut_site.is_some_and(|site| site.muts[i]) {
-                    return (if call.slots[i].is_some() { 3 } else { 2 }, false);
+                // checked already, and ranked 3. A value is ranked as any other.
+                if sig.mut_site.is_some_and(|site| site.muts[i]) && call.slots[i].is_some() {
+                    return (3, false);
                 }
                 let writes_assoc =
                     sig.params[i].is_some_and(|param| waits_for_assoc(&call.bindings, param));
@@ -3512,7 +3513,7 @@ impl Checker<'_> {
         } else {
             let carried = |&(i, _): &(usize, _)| has_place(places.carried, i);
             combine(args.iter().enumerate().filter(carried).map(|(i, arg)| {
-                let ranked = if has_place(muts, i) {
+                let ranked = if has_place(muts, i) && is_place(&arg.value) {
                     Ranked::CONCRETE
                 } else {
                     self.rank_value(&arg.value, fit)

@@ -273,7 +273,7 @@ impl Checker<'_> {
         };
         self.record(Used::Variant(id, variant), span);
         if let Some((args, _)) = call {
-            self.refuse_variant_mut(id, member, site, args);
+            self.refuse_variant_mut((id, variant), member, site, args);
         }
         let info = &self.enums[id.0];
         // Built only for a diagnostic.
@@ -347,21 +347,26 @@ impl Checker<'_> {
     /// E0167 for each `mut` argument of `Enum.member(args)`, a variant of the enum `id`.
     fn refuse_variant_mut(
         &mut self,
-        id: EnumId,
+        (id, variant): (EnumId, usize),
         member: &ast::Ident,
         site: Site<'_>,
         args: &[ast::Arg],
     ) {
         if args.iter().any(|arg| arg.mut_keyword.is_some()) {
-            let name = qualifier(site, member, self.enums[id.0].name.name);
-            let shown = format!("{name}.{}", member.name);
-            self.refuse_mut(
-                args,
-                Callee::Construct {
-                    shown: &shown,
-                    class: false,
-                },
+            let info = &self.enums[id.0];
+            let shown = format!(
+                "{}.{}",
+                qualifier(site, member, info.name.name),
+                member.name
             );
+            let labels = &info.variants[variant].labels;
+            let labeled = !labels.is_empty() && labels.iter().all(Option::is_some);
+            let callee = Callee::Construct {
+                shown: &shown,
+                class: false,
+                labeled,
+            };
+            self.refuse_mut(args, callee);
         }
     }
 

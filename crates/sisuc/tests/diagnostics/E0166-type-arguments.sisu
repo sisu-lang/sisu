@@ -9,5 +9,6 @@ fn rw<T>(mut x: T, v: T) {
 fn main() {
     let mut x = 1
     rw<i64, i64>(x, 5)
+    x = 2
     print(x)
 }
