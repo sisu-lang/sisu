@@ -14,7 +14,8 @@ use super::stmt::BlockSoFar;
 use super::{Checked, CheckedBlock, Checker, Declared, Poisoned, type_of};
 use crate::ast;
 use crate::diagnostic::{
-    BadRange, Definition, DiagnosticKind, Expected, GuardHelp, MismatchSource, Unwrap, suggestion,
+    BadRange, Definition, DiagnosticKind, Expected, GuardHelp, MismatchSource, Plain, Unwrap,
+    suggestion,
 };
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -109,6 +110,24 @@ pub(super) fn arm_key(arm: &ast::Arm) -> Span {
     match &arm.body.kind {
         ast::ExprKind::Block(block) => block.span,
         _ => arm.body.span,
+    }
+}
+
+/// Whether `literal` is a value that `==` compares with a value of type `kind`: a literal of that
+/// type, and for a `u8` one that is 0 through 255 with no `-`, as `-0` is no `u8` literal.
+fn literal_fits(literal: &ast::Literal, kind: TypeKind) -> bool {
+    match (literal, kind) {
+        (ast::Literal::Int { .. }, TypeKind::I64)
+        | (ast::Literal::Bool(_), TypeKind::Bool)
+        | (ast::Literal::Str(_), TypeKind::String)
+        | (ast::Literal::Char(_), TypeKind::Char) => true,
+        (
+            ast::Literal::Int {
+                value, negative, ..
+            },
+            TypeKind::U8,
+        ) => negative.is_none() && u8::try_from(*value).is_ok(),
+        _ => false,
     }
 }
 
@@ -397,8 +416,6 @@ impl Checker<'_> {
             | ast::PatternKind::Range { .. }
             | ast::PatternKind::Or(_) => None,
         };
-        // A name has no value to compare with `==`.
-        let plain = name.is_some();
         match (ty.map(|ty| (ty, ty.kind())), name) {
             (Some((_, TypeKind::Optional(payload))), Some(name)) => {
                 let bound = Some(payload);
@@ -408,15 +425,10 @@ impl Checker<'_> {
                 (checked, LetValue::Match { ty }, false)
             }
             (Some((ty, kind)), _) => {
-                let compare = !plain
-                    && matches!(
-                        kind,
-                        TypeKind::I64
-                            | TypeKind::U8
-                            | TypeKind::Bool
-                            | TypeKind::String
-                            | TypeKind::Char
-                    );
+                let compare = matches!(
+                    &pattern.kind,
+                    ast::PatternKind::Literal(literal) if literal_fits(literal, kind)
+                );
                 let found = self.type_name(ty);
                 self.report(DiagnosticKind::UnwrapNeedsOptional {
                     keyword,
@@ -473,15 +485,17 @@ impl Checker<'_> {
         pattern: &ast::Pattern,
         arm: Option<&ast::Arm>,
     ) -> (LetPattern, Option<Checked>) {
-        self.bind_pattern_as(keyword, None, value, pattern, arm)
+        self.bind_pattern_as(keyword, None, None, value, pattern, arm)
     }
 
     /// `bind_pattern`, where `mutable`, the `mut` of a `let ... else`, makes the one name a
-    /// `let mut` variable.
+    /// `let mut` variable. `else_removal` is what E0131 removes from a `let ... else`: the span
+    /// of its `else` block and whether the removal is safe.
     pub(super) fn bind_pattern_as(
         &mut self,
         keyword: Option<Unwrap>,
         mutable: Option<Span>,
+        else_removal: Option<(Span, bool)>,
         value: &LetValue,
         pattern: &ast::Pattern,
         arm: Option<&ast::Arm>,
@@ -501,9 +515,20 @@ impl Checker<'_> {
                     && !matches!(keyword, Unwrap::Let)
                     && self.always_matches(ty, pattern)
                 {
+                    // A name or `_` takes nothing apart, so a plain `let` does the same. A bare
+                    // variant is a name in the `ast` and a variant here.
+                    let plain = match (&pattern.kind, else_removal) {
+                        (
+                            tir::PatternKind::Bind(_) | tir::PatternKind::Wild,
+                            Some((span, safe)),
+                        ) => Plain::RemoveElse { span, safe },
+                        (tir::PatternKind::Bind(_) | tir::PatternKind::Wild, None) => Plain::Let,
+                        _ => Plain::No,
+                    };
                     self.report(DiagnosticKind::AlwaysMatches {
                         keyword,
                         at: pattern.span,
+                        plain,
                     });
                 }
                 LetPattern::Match { pattern }

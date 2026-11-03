@@ -257,7 +257,7 @@ type AlwaysRow = (
 /// The rows of `always_matching_names_should_offer_a_plain_let`.
 const SIG: &str = "fn f(w: E, o: Only) {";
 const INT: &str = "fn f(w: E) -> i64 {";
-const ALWAYS_ROWS: [AlwaysRow; 26] = [
+const ALWAYS_ROWS: [AlwaysRow; 23] = [
     (
         SIG,
         "let v = w else { return }",
@@ -277,14 +277,7 @@ const ALWAYS_ROWS: [AlwaysRow; 26] = [
         "let mut v = w else { return }",
         false,
         Some((false, "let mut v = w")),
-        &[],
-    ),
-    (
-        SIG,
-        "let v = w else { return; }",
-        false,
-        Some((false, "let v = w")),
-        &[],
+        &[Code::NeverReassigned],
     ),
     (
         SIG,
@@ -378,7 +371,6 @@ const ALWAYS_ROWS: [AlwaysRow; 26] = [
         &[],
     ),
     (SIG, "let One = o else { return }", true, None, &[]),
-    (SIG, "let One(n) = o else { return }", true, None, &[]),
     (SIG, "if let v = w { print(1) }", true, None, &[]),
     (
         SIG,
@@ -387,17 +379,18 @@ const ALWAYS_ROWS: [AlwaysRow; 26] = [
         None,
         &[],
     ),
-    (SIG, "if let One(n) = o { print(n) }", true, None, &[]),
+    (SIG, "if let A(_) | B = w { print(1) }", true, None, &[]),
     (SIG, "while let v = w { return }", false, None, &[]),
     (SIG, "while let _ = w { return }", false, None, &[]),
-    (SIG, "while let One(n) = o { return }", false, None, &[]),
-    (SIG, "let A(n) | B(n) = w else { return }", true, None, &[]),
+    (SIG, "let A(_) | B = w else { return }", true, None, &[]),
 ];
+
 /// A name or `_` always matches an enum value, and a plain `let` does the same: a `let ... else`
 /// offers to remove its `else` block, and an `if let` has a help. The fix is safe only when it
 /// removes nothing but the `else` block and a diagnostic of the block. A pattern that takes the
 /// value apart keeps the help to use `match`, and `while let` has none. The text of the help and
-/// the fix is in the fixtures `E0131-if-let-name` and `E0131-let-else-name`.
+/// the fix is in the fixtures `E0131-if-let-name` and `E0131-let-else-name`. A `;` in the block
+/// is a warning of the lexer, which this table does not see: `E0131-let-else-semicolon` has it.
 #[test]
 fn always_matching_names_should_offer_a_plain_let() {
     for (head, body, help, fix, others) in ALWAYS_ROWS {

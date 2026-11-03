@@ -750,7 +750,8 @@ pub(crate) enum DiagnosticKind {
         keyword: Unwrap,
         found: String,
         at: Span,
-        /// Whether `found` is a type `==` compares: `i64`, `u8`, `bool`, `string` or `char`.
+        /// Whether the pattern is a literal of the type that `found` names, so that `==` compares
+        /// the value with it.
         compare: bool,
     },
     /// A call at `at` of `name`, which names no function.
@@ -1170,8 +1171,13 @@ pub(crate) enum DiagnosticKind {
         remove: Span,
         space: bool,
     },
-    /// The pattern at `at` of `keyword`, which every value of its enum matches.
-    AlwaysMatches { keyword: Unwrap, at: Span },
+    /// The pattern at `at` of `keyword`, which every value of its enum matches. `plain` says what
+    /// a plain `let` does for it.
+    AlwaysMatches {
+        keyword: Unwrap,
+        at: Span,
+        plain: Plain,
+    },
     /// A range written another language's way, with its operator at `at`.
     ForeignRange { form: ForeignRange, at: Span },
     /// A line of an arm list, from `at`, its first token, that starts with `|`, `=>` or a
@@ -1653,6 +1659,18 @@ impl Unwrap {
             Unwrap::Let => "let",
         }
     }
+}
+
+/// What a plain `let` does for an always-matching pattern (E0131).
+#[derive(Clone, Copy)]
+pub(crate) enum Plain {
+    /// The pattern takes the value apart: only a `match` does that.
+    No,
+    /// A name or `_` of an `if let`: a plain `let` is the fix, with no edit.
+    Let,
+    /// A name or `_` of a `let ... else`: the fix removes `span`, the text from the end of the
+    /// value through the `}` of the `else` block. `safe` when it removes no other diagnostic.
+    RemoveElse { span: Span, safe: bool },
 }
 
 /// `names` in backticks, with `last` before the last one: "`a`", "`a` or `b`", "`a`, `b` or `c`".
@@ -5150,13 +5168,26 @@ impl From<DiagnosticKind> for Diagnostic {
                     if space { " " } else { "" },
                 ))
             }
-            DiagnosticKind::AlwaysMatches { keyword, at } => match keyword {
-                Unwrap::IfLet | Unwrap::LetElse => Diagnostic::coded(
-                    code,
-                    at,
-                    format!("`{}` always matches here", keyword.word()),
-                )
-                .with_help("use `match`"),
+            DiagnosticKind::AlwaysMatches { keyword, at, plain } => match keyword {
+                Unwrap::IfLet | Unwrap::LetElse => {
+                    let d = Diagnostic::coded(
+                        code,
+                        at,
+                        format!("`{}` always matches here", keyword.word()),
+                    );
+                    match plain {
+                        Plain::No => d.with_help("use `match`"),
+                        Plain::Let => d.with_help("use a plain `let`"),
+                        Plain::RemoveElse { span, safe } => {
+                            let message = "remove the `else` block";
+                            d.with_fix(if safe {
+                                safe_fix(message, span, "")
+                            } else {
+                                unsafe_fix(message, span, "")
+                            })
+                        }
+                    }
+                }
                 Unwrap::WhileLet => Diagnostic::coded(
                     code,
                     at,
