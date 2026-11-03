@@ -3,7 +3,7 @@ fn iterations() -> i64 { 1000 }
 // GIVEN `xs` of five elements and a loop that takes `xs[1..4]` `iterations()` times and adds
 // each slice's first element and its length
 // WHEN the program prints the sum
-// THEN a range index allocates nothing: the slice shares the block of `xs` (S2)
+// THEN a range index allocates nothing: the slice shares the block of `xs`
 fn main() {
     let xs = [1, 2, 3, 4, 5]
     let mut sum = 0

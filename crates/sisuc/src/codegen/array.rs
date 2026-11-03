@@ -14,7 +14,7 @@ use super::abi::{
     RANGE_END_PAST_LENGTH, RANGE_HAS_END, RANGE_INCLUSIVE, RANGE_INSIDE_CHARACTER,
     RANGE_NEGATIVE_START, RANGE_START_PAST_END, RANGE_STRING, RC_FAULT_RELEASE, RC_FAULT_RETAIN,
 };
-use super::layout::{BYTES, CAP, HeapBlock, LEN};
+use super::layout::{BYTES, HeapBlock};
 use super::rc::{Helper, counted_core, param};
 use super::{Codegen, POSITIONED};
 use crate::source::Span;
@@ -413,7 +413,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.position_at_end(whole);
         let held = match ty.kind() {
             TypeKind::Array(_) => self.header_len(block),
-            _ => self.load_string_field(block, LEN),
+            _ => self.string_len(block),
         };
         let covers = self.int_compare(IntPredicate::EQ, len, held);
         self.branch_on(covers, join, sized);
@@ -421,7 +421,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.position_at_end(sized);
         let cap = match ty.kind() {
             TypeKind::Array(_) => self.array_cap(block),
-            _ => self.load_string_field(block, CAP),
+            _ => self.string_cap(block),
         };
         // `cap * size < 256` is `cap < ceil(256 / size)`, with no multiplication to overflow.
         let few = i64_type.const_int(SMALL_BLOCK.div_ceil(size), false);

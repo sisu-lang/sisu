@@ -20,7 +20,7 @@ fn push_to_a_head() {
 
 // GIVEN `let xs = [1, 2, 3]` and `let mut t = xs[..2]`
 // WHEN the program runs `t[0] = 9`, then prints `xs` and `t`
-// THEN it prints `[1, 2, 3]` and then `[9, 2]` (S4)
+// THEN it prints `[1, 2, 3]` and then `[9, 2]`
 fn write_to_a_slice() {
     let xs = [1, 2, 3]
     let mut t = xs[..2]
@@ -31,7 +31,7 @@ fn write_to_a_slice() {
 
 // GIVEN `let mut xs = [1, 2, 3]` and `let mut t = xs[..2]`
 // WHEN the program runs `t.push(7)`, then prints `xs` and `t`
-// THEN it prints `[1, 2, 3]` and then `[1, 2, 7]` (S5)
+// THEN it prints `[1, 2, 3]` and then `[1, 2, 7]`
 fn push_to_a_slice() {
     let mut xs = [1, 2, 3]
     let mut t = xs[..2]

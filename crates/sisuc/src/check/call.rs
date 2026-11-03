@@ -583,7 +583,7 @@ impl Checker<'_> {
         let indexed = std::mem::take(&mut self.body.indexed);
         // A range argument is E0023 once the call is found, as it is anywhere else. A string's
         // `get` takes its range (`string_method`), and so does the `get` of a `string?`, which is
-        // E0062 first. An array's `get` takes an `i64`, so a range is E0032 (S26), found before
+        // E0062 first. An array's `get` takes an `i64`, so a range is E0032, found before
         // the lookup. The `get` of an optional array reports E0062 in the lookup, then E0032.
         let gets_range = method.name.as_str() == "get"
             && args

@@ -5,7 +5,7 @@
 // THEN each store trims: the 2 words are copied with a count of their own and the old block is
 // released once, and the 4 bytes of the literal are copied out of its global block
 // AND the program prints the same at every level, with no leak and no count error under Valgrind
-// and `--rc-checks` (Review Focus 5)
+// and `--rc-checks`
 class Holder {
     mut words: [string]
     mut text: string

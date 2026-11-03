@@ -10,7 +10,7 @@ fn contains_sorted(xs: [i64], x: i64) -> bool {
 // GIVEN the binary search on slices and `xs`, the array of 0 to 999
 // WHEN the program searches each key in `-1..iterations()`
 // THEN it prints how many it finds, and it allocates what `slice_search_ref`, the search with
-// `lo` and `hi`, allocates: a short-lived slice is never copied (S15)
+// `lo` and `hi`, allocates: a short-lived slice is never copied
 fn main() {
     let mut xs = [0; 1000]
     for i in 0..1000 {

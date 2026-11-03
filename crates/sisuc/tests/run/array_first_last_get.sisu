@@ -3,7 +3,7 @@
 // empty array, at 1 and 2 of the slice, and at 1 and 2 of the words, and `first` of the empty slice
 // `xs[3..]`
 // THEN an index in bounds gives its element, and any other gives `None` instead of a panic
-// AND a `string` element that `get` reads is still there afterwards (S7, Goal 1.4)
+// AND a `string` element that `get` reads is still there afterwards
 fn main() {
     let xs = [1, 2, 3]
     let e: [i64] = []

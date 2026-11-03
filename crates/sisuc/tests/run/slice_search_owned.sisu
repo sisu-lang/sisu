@@ -14,7 +14,7 @@ fn make() -> [i64] { [0; 1000] }
 // returns a new array that nothing else holds
 // WHEN the program calls it `iterations()` times
 // THEN it prints how many calls find the key, 0, and it allocates the block of each `make()` and
-// nothing more: the slices of an array nobody else holds are never copied (S17)
+// nothing more: the slices of an array nobody else holds are never copied
 fn main() {
     let mut found = 0
     for _ in 0..iterations() {

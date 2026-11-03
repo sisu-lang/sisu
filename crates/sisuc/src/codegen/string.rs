@@ -4,7 +4,8 @@
 //! that covers its whole block has `data` at the block's first byte and `len` equal to the
 //! header's `len`; a substring has not. A literal's block is a writable global
 //! that holds a reference of its own, so it is never freed and never reused in place. This module
-//! is the only one that reads a string header; `layout.rs` owns the layout. This module owns the
+//! is the only one that reads a string header, and other modules read the length and the capacity
+//! through `string_len` and `string_cap`; `layout.rs` owns the layout. This module owns the
 //! string nodes and the bodies of the string helpers, which `define_helpers` reaches through
 //! `define_string_helper`.
 
@@ -24,11 +25,7 @@ use crate::tir::{Align, Format, Pad, Stream, Type};
 
 impl<'ctx> Codegen<'ctx, '_> {
     /// The `i64` header field `index` of `string`.
-    pub(super) fn load_string_field(
-        &self,
-        string: PointerValue<'ctx>,
-        index: u32,
-    ) -> IntValue<'ctx> {
+    fn load_string_field(&self, string: PointerValue<'ctx>, index: u32) -> IntValue<'ctx> {
         self.builder
             .build_load(
                 self.context.i64_type(),
@@ -37,6 +34,18 @@ impl<'ctx> Codegen<'ctx, '_> {
             )
             .expect(POSITIONED)
             .into_int_value()
+    }
+
+    /// The length in the header of the block `string`: the bytes in use, which a substring of it
+    /// may not all cover.
+    pub(super) fn string_len(&self, string: PointerValue<'ctx>) -> IntValue<'ctx> {
+        self.load_string_field(string, LEN)
+    }
+
+    /// The capacity of the block `string`: the number of bytes it has room for, at least its
+    /// length.
+    pub(super) fn string_cap(&self, string: PointerValue<'ctx>) -> IntValue<'ctx> {
+        self.load_string_field(string, CAP)
     }
 
     /// `Str`: `string_const` for this literal node, retained.

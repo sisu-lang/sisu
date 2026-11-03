@@ -1,0 +1,17 @@
+fn iterations() -> i64 { 1000 }
+
+class Holder {
+    mut text: string
+}
+
+// GIVEN a string of 400 bytes and a substring of its first 100 bytes, exactly a quarter
+// WHEN the program stores it into a field of a class object in each of `iterations()` rounds
+// THEN the store copies the substring, because a quarter is not more than a quarter
+fn main() {
+    let h = Holder(text: "")
+    for _ in 0..iterations() {
+        let all = string(['a'; 400])
+        h.text = all[..100]
+    }
+    print(h.text.len())              // 100 (0 with no iterations)
+}

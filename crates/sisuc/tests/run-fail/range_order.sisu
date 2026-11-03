@@ -17,7 +17,7 @@ fn hi() -> i64 {
 // -1 and 2
 // WHEN the program runs `print(base()[lo()..hi()])`
 // THEN it prints "base", "start" and "end" on three lines, and exits with code 101 and the text
-// `range start -1 is negative` (S31)
+// `range start -1 is negative`
 fn main() {
     print(base()[lo()..hi()])
 }

@@ -27,7 +27,7 @@ fn keeps() {
 
 // GIVEN `fn head(xs: [i64]) -> [i64] { xs[..2] }` and `let mut xs = [1, 2, 3]`
 // WHEN the program runs `for i in 0..2 { let u = head(xs); xs[0] = 9 + i; print(u) }`
-// THEN it prints `[1, 2]` and then `[9, 2]` (S28)
+// THEN it prints `[1, 2]` and then `[9, 2]`
 fn main() {
     let mut xs = [1, 2, 3]
     for i in 0..2 {

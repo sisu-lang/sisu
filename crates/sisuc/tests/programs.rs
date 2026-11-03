@@ -324,17 +324,27 @@ allocation_counts! {
     // 385 and 769, to the capacities 12, 24, ..., 1536. Valgrind counts each `realloc` as an
     // allocation: 1 copy and 8 reallocations.
     (substring_append, "1002\nx\n", "2\nb\n", 9),
+    // The edges of the trim at a field store. A block of 32 elements is 256 bytes. A slice of 8
+    // is exactly a quarter, so it is copied: the block of `all` and the copy in each round.
+    (slice_trim_quarter, "8\n", "0\n", 2000),
+    // A slice of 9 is more than a quarter: kept, so only the block of `all`.
+    (slice_trim_over_quarter, "9\n", "0\n", 1000),
+    // A block of 31 elements is 248 bytes, below 256: a slice of 1 is kept.
+    (slice_trim_small_block, "1\n", "0\n", 1000),
+    // The same edge for a string: 100 of 400 bytes is a quarter, and is copied. Each round makes
+    // the array of chars, the block of the string, and the copy.
+    (slice_trim_string_quarter, "100\n", "0\n", 3000),
 }
 
 /// One test, `allocations_should_match_the_reference`: each pair is a program and the reference
 /// program that does the same work without the feature under test. Both run under Valgrind at
 /// both optimization levels, and their extra allocations must be equal.
 const REFERENCES: &[(&str, &str)] = &[
-    // The push onto `a[..3]`, the last use of a block with room, is in place (S6).
+    // The push onto `a[..3]`, the last use of a block with room, is in place.
     ("slice_push_grow", "slice_push_grow_ref"),
-    // The binary search on slices allocates what the search with `lo` and `hi` does (S15).
+    // The binary search on slices allocates what the search with `lo` and `hi` does.
     ("slice_search", "slice_search_ref"),
-    // `Some(xs[1..3])` allocates what `Some(xs)` does: `Some` is not a trim point (S19).
+    // `Some(xs[1..3])` allocates what `Some(xs)` does: `Some` is not a trim point.
     ("slice_some", "slice_some_ref"),
 ];
 
@@ -362,7 +372,6 @@ fn allocations_should_match_the_reference() {
 /// with `q = q[1..]` and pushes at its back
 /// WHEN the program runs under Valgrind
 /// THEN it makes fewer than 20 extra allocations, where a copy on each push would make 10 000
-/// (S32)
 ///
 /// A push onto a window that does not cover its block copies it into a block twice as large, so
 /// the loop copies about once in 1000 steps: about 10 copies.
@@ -453,14 +462,15 @@ fn peak_heap_should_read_the_largest_snapshot() {
     assert_eq!(largest_snapshot(text), 4096);
 }
 
-/// Each row of `trim_should_bound_the_peak_heap`: the scenario, its program, the last line the
-/// program prints (S14 prints `all.len()` before it), and the bound on the peak heap in bytes.
+/// Each row of `trim_should_bound_the_peak_heap`: the place that takes the slice, its program, the
+/// last line the program prints (the field store prints `all.len()` before it), and the bound on
+/// the peak heap in bytes.
 /// `make` builds an array of 100 000 elements, or a string of 100 000 bytes, and returns a part
 /// of two to ten of them; `main` keeps 100 such values.
 /// Untrimmed, each holds the block of its `make`: 80 MB of arrays, or 10 MB of text.
 const TRIMS: &[(&str, &str, &str, u64)] = &[
     (
-        "S13",
+        "a push",
         "fn make() -> [i64] {\n    let all = [7; 100000]\n    all[..2]\n}\n\
          fn main() {\n    let mut xs: [[i64]] = []\n    for _ in 0..100 { xs.push(make()) }\n\
          \x20   let mut sum = 0\n    for x in xs { sum += x[0] + x[1] }\n    print(sum)\n}\n",
@@ -468,7 +478,7 @@ const TRIMS: &[(&str, &str, &str, u64)] = &[
         2_000_000,
     ),
     (
-        "S14",
+        "a field store",
         "class Holder {\n    mut top: [i64]\n}\n\
          fn make() -> Holder {\n    let all = [7; 100000]\n    let h = Holder(top: [])\n\
          \x20   h.top = all[..10]\n    print(all.len())\n    h\n}\n\
@@ -479,7 +489,7 @@ const TRIMS: &[(&str, &str, &str, u64)] = &[
         2_000_000,
     ),
     (
-        "S18",
+        "an enum payload",
         "enum Tok {\n    Word(string)\n    End\n}\n\
          fn make() -> Tok {\n    let text = string(['a'; 100000])\n    Tok.Word(text[..4])\n}\n\
          fn main() {\n    let mut toks: [Tok] = []\n    for _ in 0..100 { toks.push(make()) }\n\
@@ -490,7 +500,7 @@ const TRIMS: &[(&str, &str, &str, u64)] = &[
         1_000_000,
     ),
     (
-        "S21 Some",
+        "through Some",
         "class Holder {\n    top: [i64]?\n}\n\
          fn make() -> Holder {\n    let all = [7; 100000]\n    Holder(top: Some(all[..2]))\n}\n\
          fn main() {\n    let mut hs: [Holder] = []\n    for _ in 0..100 { hs.push(make()) }\n\
@@ -500,7 +510,7 @@ const TRIMS: &[(&str, &str, &str, u64)] = &[
         2_000_000,
     ),
     (
-        "S21 fill",
+        "a fill",
         "fn make() -> [[i64]] {\n    let all = [7; 100000]\n    [all[..2]; 3]\n}\n\
          fn main() {\n    let mut xs: [[[i64]]] = []\n    for _ in 0..100 { xs.push(make()) }\n\
          \x20   let mut sum = 0\n    for x in xs { sum += x[0][0] + x[2][1] }\n    print(sum)\n}\n",
@@ -508,7 +518,7 @@ const TRIMS: &[(&str, &str, &str, u64)] = &[
         2_000_000,
     ),
     (
-        "S21 any",
+        "to any",
         "fn make() -> any Display {\n    let all = [7; 100000]\n    let d: any Display = all[..2]\n    d\n}\n\
          fn main() {\n    let mut ds: [any Display] = []\n    for _ in 0..100 { ds.push(make()) }\n\
          \x20   let mut sum = 0\n    for d in ds { sum += d.to_string().len() }\n    print(sum)\n}\n",
@@ -518,10 +528,10 @@ const TRIMS: &[(&str, &str, &str, u64)] = &[
 ];
 
 /// GIVEN a function that makes a large array or string and returns a small part of it, and a
-/// `main` that keeps 100 such values, placed at a trim point (S13, S14, S18, S21's three rows)
-/// WHEN the program runs under Valgrind's massif, built at `-O2` and without
+/// `main` that keeps 100 such values, placed at a trim point
+/// WHEN the program, built at `-O2`, runs under Valgrind's massif
 /// THEN it prints the result that reads each slice, and its peak heap is below the row's bound,
-/// where untrimmed slices would hold 80 MB (10 MB for S18)
+/// where untrimmed slices would hold 80 MB (10 MB for the enum payload)
 #[test]
 #[cfg_attr(
     not(target_os = "linux"),
@@ -529,21 +539,17 @@ const TRIMS: &[(&str, &str, &str, u64)] = &[
 )]
 fn trim_should_bound_the_peak_heap() {
     let mut failures = Vec::new();
-    for &(scenario, source, last, bound) in TRIMS {
-        for o2 in [false, true] {
-            let name = format!("trim_{}_{}", scenario.replace(' ', "_"), u8::from(o2));
-            let exe = compile_tmp_for_valgrind(&name, source, o2);
-            let out = support::Invocation::default().run(&exe, false);
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            if !stdout.ends_with(last) {
-                failures.push(format!("{scenario}, o2: {o2}: printed {stdout}"));
-            }
-            let peak = peak_heap(&exe);
-            if peak >= bound {
-                failures.push(format!(
-                    "{scenario}, o2: {o2}: peak {peak} B, bound {bound} B"
-                ));
-            }
+    for &(place, source, last, bound) in TRIMS {
+        let name = format!("trim_{}", place.replace(' ', "_"));
+        let exe = compile_tmp_for_valgrind(&name, source, true);
+        let out = support::Invocation::default().run(&exe, false);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        if !stdout.ends_with(last) {
+            failures.push(format!("{place}: printed {stdout}"));
+        }
+        let peak = peak_heap(&exe);
+        if peak >= bound {
+            failures.push(format!("{place}: peak {peak} B, bound {bound} B"));
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));

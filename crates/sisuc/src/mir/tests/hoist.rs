@@ -697,7 +697,7 @@ fn labeled_break_keeps_outer_exit_out_of_inner_loop() {
 /// GIVEN a loop that writes `a` after it takes `let u = a[..2]`, which shares `a`'s block
 /// WHEN the hoist reads the loop
 /// THEN `a` is not hoisted, where the same loop with `let u = a[0]` hoists it: the copy of the
-/// block for the write must come after the slice, in each pass (S20)
+/// block for the write must come after the slice, in each pass
 #[test]
 fn slice_of_a_live_local_should_bar_the_hoist() {
     let program = |read: &str| {

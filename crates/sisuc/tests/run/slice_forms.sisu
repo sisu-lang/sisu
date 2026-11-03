@@ -1,7 +1,7 @@
 // GIVEN `let xs = [1, 2, 3, 4, 5]`
 // WHEN the program prints each form of range index, with literal and computed bounds, and a
 // slice of a slice
-// THEN each prints the elements it covers (S1)
+// THEN each prints the elements it covers
 fn bounds() -> i64 { 3 }
 
 fn main() {
@@ -18,7 +18,7 @@ fn main() {
     print(xs[1..4].len())            // 3
     print(xs)                        // [1, 2, 3, 4, 5]
 
-    // The base and the start are read before a later part assigns them (S31).
+    // The base and the start are read before a later part assigns them.
     let mut ys = [1, 2, 3, 4]
     let mut start = 0
     print(ys[{ ys = [8, 9, 10]; 0 }..2])    // [1, 2]: the old `ys`

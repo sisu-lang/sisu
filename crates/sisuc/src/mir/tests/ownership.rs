@@ -95,6 +95,20 @@ fn variant_args_should_read_left_to_right_and_only_the_last_should_move() {
     );
 }
 
+/// A variant's arguments are trimmed in the order of the call, and the variant takes them in that
+/// order: the first trim takes `a`, the second `b`, and the variant takes the first result first.
+#[test]
+fn variant_args_should_be_trimmed_and_taken_in_order() {
+    let printed =
+        built("enum E { V(string, string) }\nfn f(a: string, b: string) -> E { E.V(a, b) }");
+    assert!(
+        printed.contains(
+            "_2 = trim move a#0\n    _3 = trim move b#1\n    _4 = variant E.V(move _2, move _3)"
+        ),
+        "{printed}"
+    );
+}
+
 /// `Interpolate` evaluates its parts left to right: only the last one's read may move.
 #[test]
 fn interpolate_parts_left_to_right() {

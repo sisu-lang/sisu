@@ -7,7 +7,7 @@ fn middle(xs: [i64]) -> [i64]? { Some(xs[1..3]) }
 // WHEN `main` calls it `iterations()` times, adds the last element of each result, and prints
 // the sum
 // THEN `Some` is not a trim point: it allocates what `slice_some_ref`, which returns `Some(xs)`,
-// allocates (S19)
+// allocates
 fn main() {
     let mut xs = [0; 1000]
     for i in 0..1000 {

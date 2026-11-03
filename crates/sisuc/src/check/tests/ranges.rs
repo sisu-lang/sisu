@@ -128,7 +128,7 @@ fn range_index_of_a_string_should_check_its_bounds() {
 
 /// GIVEN `s[i]` on a string, with a plain index and on a substring
 /// WHEN the program is checked
-/// THEN it reports E0068 at the string, once (S10)
+/// THEN it reports E0068 at the string, once
 #[test]
 fn single_index_of_a_string_should_be_e0068_at_the_string() {
     for (row, index, at) in [
@@ -251,7 +251,7 @@ fn string_get_with_a_label_should_be_e0055_at_the_label() {
 /// GIVEN a string's `get` with an argument that is no range written in the call, and with no
 ///       argument or two
 /// WHEN the program is checked
-/// THEN the first is E0032 at the argument (S24), and the others E0053 at the call
+/// THEN the first is E0032 at the argument, and the others E0053 at the call
 #[test]
 fn string_get_should_take_one_range() {
     let rows = [
@@ -390,7 +390,7 @@ fn assignment_to_a_range_index_should_check_the_value() {
 
 /// GIVEN a range given to an array's `get`, whichever bound is missing
 /// WHEN the program is checked
-/// THEN it reports E0032 at the range, once, and not E0023 (S26)
+/// THEN it reports E0032 at the range, once, and not E0023
 #[test]
 fn array_get_with_a_range_should_be_e0032_at_the_range() {
     // The prelude's `get` must not answer first.
@@ -419,7 +419,7 @@ fn array_get_with_a_range_should_be_e0032_at_the_range() {
 
 /// GIVEN a range given to the `get` of an optional array, however the optional array is named
 /// WHEN the program is checked
-/// THEN `.` reports E0062 once, and the range is E0032 as it is through `?.`, never E0023 (S26)
+/// THEN `.` reports E0062 once, and the range is E0032 as it is through `?.`, never E0023
 #[test]
 fn optional_array_get_with_a_range_should_be_e0062_then_e0032() {
     with_prelude();
