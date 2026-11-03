@@ -1,0 +1,32 @@
+interface Conv<T> {
+    fn conv(self) -> T
+}
+
+class Node {
+    v: i64
+}
+
+class Pair<A> {
+    a: A
+}
+
+extend<A: Ord> Pair<A>: Eq {
+    fn eq(self, other: Pair<A>) -> bool {
+        self.a == other.a
+    }
+}
+
+class Wrap<A> {
+    a: A
+}
+
+extend<A: Conv<i64>> Wrap<A>: Eq {
+    fn eq(self, other: Wrap<A>) -> bool {
+        true
+    }
+}
+
+fn main() {
+    print([Pair(a: Node(v: 1))].contains(Pair(a: Node(v: 1))))
+    print([Wrap(a: Node(v: 1))].contains(Wrap(a: Node(v: 1))))
+}

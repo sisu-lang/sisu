@@ -98,6 +98,13 @@ The end-to-end cases are files. The `cases` test binary runs one test per
 | `run-fail/` | panic with exit code 101, the same in a plain and an `-O2` build | `<name>.out`: stdout; `<name>.err`: stderr |
 | `diagnostics/` | report diagnostics under `sisu check` (`sisu build --emit mir` for a code that only `mono` reports, such as E0163, because `check` does not run `mono`), exiting 1 if one is an error and 0 if all are warnings; a case named `<CODE>.sisu` or `<CODE>-<case>.sisu` reports that code | `<name>.err`: the diagnostics; `<name>.json`: the same under `--format json` |
 
+The in-process tests in `crates/sisuc/src/diagnostic/explanations.rs` also read these fixtures.
+They also run each program again with multi-byte comments put in (except the slow E0162 and E0163 programs),
+They also run each program again with multi-byte comments put in,
+and check that no span splits a character.
+A new diagnostic with a fix needs a program in `diagnostics/` that shows the fix.
+Use the shape that is most likely to go wrong, such as a typed `let` or a `(` before the token.
+
 To add a case, write the `.sisu` file and an empty expected file beside it,
 then fill the expected file with `make bless`. Read what it wrote before
 you commit it:
@@ -192,7 +199,7 @@ passes. Pass 1 tests each mutant with the unit tests only (`cargo nextest run
 --lib`: about 6 s, against 47 s for the whole suite). Of the 657 mutants of
 a 4,000-line diff, pass 1 did not catch 80 (54 missed, 26 timeouts); pass 2
 tested those 80 with the whole suite in more than one hour. When pass 1 misses a
-mutant, pass 2 tests the mutants that pass 1 did not catch (`--iterate`) with
+mutant or times out, pass 2 tests the mutants that pass 1 did not catch (`--iterate`) with
 the whole suite, so a mutant that only an end-to-end test kills counts as
 caught. The summary adds the counts of both passes. Arguments after `--` choose
 the tests yourself; the script then runs one pass with them. Each mutant still
@@ -218,12 +225,18 @@ log of a commit only.
 
 The script runs `cargo mutants` under `nice -n 19`, 2 mutants at a time.
 `-j` or `CARGO_MUTANTS_JOBS` sets another number. `.cargo/mutants.toml` sets
-`timeout_multiplier = 2.0`: a timeout counts as caught, so a longer wait only
-costs time.
+`timeout_multiplier = 2.0` for pass 1, whose unit tests are fast. Pass 2 passes
+`--timeout 600`. `MUTANTS_PASS2_TIMEOUT` sets another number of seconds. A
+`--timeout`, `-t` or `--timeout-multiplier` of yours replaces it.
+
+The reason: cargo-mutants sets its wait from a baseline run. With 2 mutants at
+a time, the whole suite took 99 s to 131 s for a mutant. The wait was about
+2 x a 41 s baseline. So mutants that every test passes showed as timeouts and
+counted as caught. After 600 s, a timeout in pass 2 is a hang.
 
 The last line is the summary: `mutation-test: PASS` or `mutation-test: FAIL`,
 then `N caught, N unviable, N missed, N timeouts`, then `(HEAD <sha>)`. PASS needs no missed mutant; a mutant that hangs the tests until
-cargo-mutants' timeout counts as caught. A mutant proven equivalent goes into
+the timeout counts as caught. A mutant proven equivalent goes into
 `exclude_re` in `.cargo/mutants.toml`, with the proof in a comment, so later
 runs skip it. A diff that changes no `.rs` file passes at once, with nothing
 run. A run that writes no new `mutants.out` (for example, `--in-diff` finds no
