@@ -1,0 +1,8 @@
+error[E0011]: `break` takes the `{ ... }` after it as its value
+ --> E0011-jump-takes-block-in-loop-header.sisu:6:17
+  |
+6 |         if o ?? break {
+  |                 ^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011

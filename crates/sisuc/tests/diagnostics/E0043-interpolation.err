@@ -1,0 +1,8 @@
+error[E0043]: expression has no value
+ --> E0043-interpolation.sisu:2:16
+  |
+2 |     let s = "a{return 1}b"
+  |                ^^^^^^^^ never finishes
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0043

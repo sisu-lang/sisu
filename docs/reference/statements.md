@@ -146,6 +146,7 @@ The rules:
 - A pattern that accepts every value is an error ([E0131](../diagnostics/E0131.md)). Use `match`, or a plain `let` for a name or `_`.
 - A `let` whose pattern is not a single name or `_` needs an `else` block ([E0174](../diagnostics/E0174.md)). When the pattern always matches, the error has the help "use `match`".
 - `let mut name = value else { ... }` makes a binding that can change. `mut` is allowed only before a single name. Before any other pattern, it is an error ([E0011](../diagnostics/E0011.md)).
+- A `let ... else` takes no type annotation: the value's type gives the names their types ([E0011](../diagnostics/E0011.md)).
 - The names of the pattern are not in scope in the `else` block ([E0033](../diagnostics/E0033.md)). A name that the pattern binds and that nothing reads builds with a warning ([W0014](../diagnostics/W0014.md)).
 - The block must not finish. It ends, for example, in `return`, `break`, `continue`, a call of `panic`, `todo`, or an `if` or a `match` whose branches do not finish. Any expression that does not finish is enough ([Reachability](#reachability)). A block that can reach its end is an error ([E0172](../diagnostics/E0172.md)).
 - A `break` or a `continue` in the `else` block acts on the loops around the statement, with their loop labels ([break and continue](#break-and-continue), [Loop labels](#loop-labels)).

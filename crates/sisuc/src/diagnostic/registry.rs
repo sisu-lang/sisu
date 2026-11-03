@@ -68,7 +68,7 @@ codes! {
     DigitSeparator = "E0008",
     IntegerTooLarge = "E0009",
     UnexpectedCharacter | LogicalOperatorWritten = "E0010",
-    Expected | JumpTakesBlock = "E0011",
+    Expected | JumpTakesBlock | LetTakesNoType = "E0011",
     Var = "E0013",
     FieldComma = "E0015",
     FieldLet = "E0016",
@@ -357,12 +357,16 @@ pub(crate) enum DiagnosticKind {
     /// The `return` or `break` `keyword` at `at`, at the end of the header of an `if`, a `while`,
     /// a `for` or a `match`, which took the `{ ... }` of the body as its value. `grouped` is the
     /// header through the jump, for the help that puts it in `( )`; it is `None` for a `break`
-    /// in the header of a loop, where that help would be E0082.
+    /// that the `( )` would leave in a loop header (E0082) or outside every loop (E0038).
     JumpTakesBlock {
         keyword: &'static str,
         at: Span,
         grouped: Option<String>,
     },
+    /// The `: type` at `at` of a `let ... else`, or of a `let` whose pattern is not a name. The
+    /// value gives the names their types. `with_else` is whether an `else` follows the value: on
+    /// its line, or, after a name, on the next line.
+    LetTakesNoType { at: Span, with_else: bool },
     /// A `var` at `at`, on a field or on a binding.
     Var { at: Span, field: bool },
     /// A `,` at `at` after a `member`. `replacement` is what takes the comma: nothing when it ends
@@ -2708,6 +2712,17 @@ impl From<DiagnosticKind> for Diagnostic {
                     )),
                     None => d,
                 }
+            }
+            DiagnosticKind::LetTakesNoType { at, with_else } => {
+                let what = if with_else {
+                    "`let ... else`"
+                } else {
+                    "`let` pattern"
+                };
+                // The parser stops at the type, so it has not read the rest of the statement: the
+                // fixed source can have an error of its own, and the fix is not safe.
+                Diagnostic::coded(code, at, format!("a {what} takes no type"))
+                    .with_fix(unsafe_fix("remove the type", at, ""))
             }
             DiagnosticKind::Var { at, field } => {
                 let d = Diagnostic::coded(code, at, "there is no `var` in Sisu");

@@ -2884,7 +2884,7 @@ impl Checker<'_> {
     pub(super) fn ranked<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
         let mark = self.body.ahead.len();
         let result = f(self);
-        for (key, _) in self.body.ahead.drain(mark..) {
+        for (key, ..) in self.body.ahead.drain(mark..) {
             self.body.ahead_at.remove(&key);
         }
         result
@@ -3161,9 +3161,10 @@ impl Checker<'_> {
     ) -> Ranked {
         // An argument is not part of the chain that an index ends.
         let indexed = std::mem::take(&mut self.body.indexed);
-        let (checked, form, mismatched) = self.let_value(Unwrap::IfLet, pattern, value);
+        let ((checked, form, mismatched), jumped) =
+            self.jumps(|c| c.let_value(Unwrap::IfLet, pattern, value));
         self.body.indexed = indexed;
-        let index = self.keep((value.span, false), None);
+        let index = self.keep((value.span, false), None, jumped);
         let then = self.block_rank(then_block, fit, |c| {
             Some(c.bind_pattern(Some(Unwrap::IfLet), &form, pattern, None))
         });
@@ -3209,14 +3210,17 @@ impl Checker<'_> {
         self.body.scopes.push(FxHashMap::default());
         // Neither a pattern's guard nor a statement is part of the chain that an index ends.
         let indexed = std::mem::take(&mut self.body.indexed);
-        let bound = bind(self);
         let mut so_far = BlockSoFar::default();
-        if let Some(block) = block {
-            self.block_statements(block, None, &mut so_far, block.stmts.len() - 1);
-        }
+        let (bound, jumped) = self.jumps(|c| {
+            let bound = bind(c);
+            if let Some(block) = block {
+                c.block_statements(block, None, &mut so_far, block.stmts.len() - 1);
+            }
+            bound
+        });
         self.body.indexed = indexed;
         // Its place, held before the value's ranking keeps work of its own.
-        let index = self.keep((key, true), None);
+        let index = self.keep((key, true), None, jumped);
         let rank = self.rank_value(tail, fit);
         let scope = self
             .body
@@ -3231,19 +3235,24 @@ impl Checker<'_> {
     }
 
     /// Takes the work kept for `span` (see `Ahead`), a block's if `block`, else a receiver's,
-    /// with its place in `body.ahead`.
+    /// with its place in `body.ahead`. If the work made an invalid jump, the flag is set again.
     pub(super) fn kept(&mut self, span: Span, block: bool) -> Option<(usize, Ahead)> {
         let index = *self.body.ahead_at.get(&(span, block))?;
         #[cfg(test)]
         INSPECTED.set(INSPECTED.get() + 1);
-        self.body.ahead[index].1.take().map(|kept| (index, kept))
+        let (_, work, jumped) = &mut self.body.ahead[index];
+        let work = work.take()?;
+        // The work did its jump when ranking ran it, and the check that uses it must see that.
+        // `|=`, not `=`: the flag of the window may be set already.
+        self.body.invalid_jump |= *jumped;
+        Some((index, work))
     }
 
     /// Keeps `work` in `body.ahead` for `key`, a span and whether it is a block's, and returns
-    /// its place there.
-    fn keep(&mut self, key: (Span, bool), work: Option<Ahead>) -> usize {
+    /// its place there. `jumped`: whether the work made a jump outside a loop (see `jumps`).
+    fn keep(&mut self, key: (Span, bool), work: Option<Ahead>, jumped: bool) -> usize {
         let index = self.body.ahead.len();
-        self.body.ahead.push((key, work));
+        self.body.ahead.push((key, work, jumped));
         self.body.ahead_at.insert(key, index);
         index
     }
@@ -3501,10 +3510,10 @@ impl Checker<'_> {
         }
         // An argument is not part of the chain that an index ends.
         let indexed = std::mem::take(&mut self.body.indexed);
-        let checked = self.value(e, None);
+        let (checked, jumped) = self.jumps(|c| c.value(e, None));
         self.body.indexed = indexed;
         let ty = type_of(&checked);
-        self.keep((e.span, false), Some(Ahead::Receiver(checked)));
+        self.keep((e.span, false), Some(Ahead::Receiver(checked)), jumped);
         ty
     }
 

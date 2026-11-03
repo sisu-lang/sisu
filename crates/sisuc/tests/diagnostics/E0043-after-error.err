@@ -1,0 +1,14 @@
+error[E0043]: expression has no value
+ --> E0043-after-error.sisu:2:13
+  |
+2 |     let x = { return "a" }
+  |             ^^^^^^^^^^^^^^ never finishes
+
+error[E0032]: expected `i64`, found `string`
+ --> E0043-after-error.sisu:2:22
+  |
+2 |     let x = { return "a" }
+  |                      ^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032, E0043

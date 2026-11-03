@@ -324,15 +324,31 @@ impl Checker<'_> {
         }
     }
 
+    /// Runs `f`, and tells whether it made a `break` or `continue` outside a loop, which has its
+    /// own report. Nested blocks leave the flag set, so an enclosing check sees it too.
+    pub(super) fn jumps<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> (R, bool) {
+        let outer_jump = std::mem::take(&mut self.body.invalid_jump);
+        let result = f(self);
+        let invalid_jump = self.body.invalid_jump;
+        self.body.invalid_jump |= outer_jump;
+        (result, invalid_jump)
+    }
+
     /// An expression whose value is used: not `unit` or `never`.
     pub(super) fn value(&mut self, e: &ast::Expr, expected: Option<Type>) -> Checked {
-        let checked = self.expr(e, expected);
+        let (checked, invalid_jump) = self.jumps(|c| c.expr(e, expected));
         match type_of(&checked) {
-            // A `never` that failed, such as a block with a `break` outside a loop, has its
-            // report already, and no second one.
-            Some(Type::NEVER) if checked.is_err() => Err(Poisoned::error()),
+            // A `never` value with a `break` or `continue` outside a loop in it has that report,
+            // and no second one. A `never` that failed for another reason is still a `never`.
+            Some(Type::NEVER) if checked.is_err() && invalid_jump => Err(Poisoned::error()),
             Some(ty @ (Type::UNIT | Type::NEVER)) => {
-                self.no_value(e.span, ty);
+                // A literal that is `never` because of a part is underlined at that part.
+                let at = self
+                    .body
+                    .never_part
+                    .filter(|&(literal, _)| ty == Type::NEVER && literal == e.span)
+                    .map_or(e.span, |(_, at)| at);
+                self.no_value(at, ty);
                 Err(Poisoned::error())
             }
             _ => checked,
