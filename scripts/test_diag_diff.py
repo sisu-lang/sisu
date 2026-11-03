@@ -70,6 +70,30 @@ class DiagDiff(unittest.TestCase):
         self.assertTrue(lines[0].startswith('crash: '), lines)
         self.assertEqual(lines[-1], 'diag_diff: 1 programs, 1 crash')
 
+    def test_full_should_report_a_program_whose_help_alone_differs(self):
+        """
+        GIVEN a program whose diagnostic has the same code and position in both builds
+        AND a help that differs
+        WHEN diag_diff runs without and with `full`
+        THEN only the run with `full` reports it, and shows the help of each build
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            open(os.path.join(tmp, 'help.sisu'), 'w').close()
+            base = fake_sisu(tmp, 'base', {'help': E0032.replace('}]}', '}],"help":"use `match`"}')})
+            head = fake_sisu(tmp, 'head', {'help': E0032.replace('}]}', '}],"help":"use a plain `let`"}')})
+            runs = []
+            for full in (False, True):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    runs.append((dd.main(base, head, tmp, full=full), out.getvalue().splitlines()))
+        self.assertEqual(runs[0], (0, ['diag_diff: 1 programs, no differences']))
+        status, lines = runs[1]
+        self.assertEqual(status, 1)
+        self.assertTrue(lines[0].startswith('changed: '), lines)
+        self.assertIn('"help": "use `match`"', lines[1])
+        self.assertIn('"help": "use a plain `let`"', lines[2])
+        self.assertEqual(lines[-1], 'diag_diff: 1 programs, 1 changed')
+
 
 if __name__ == '__main__':
     unittest.main()

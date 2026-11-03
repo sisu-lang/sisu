@@ -3,7 +3,10 @@ diagnostics differ (their codes, positions or count), and each program that cras
 also when the base crashes. A review uses it to show that a change accepts no program it should
 reject, adds no cascade and crashes on no program.
 
-Usage: python3 diag_diff.py BASE_SISU HEAD_SISU DIR...
+With `--full`, a diagnostic also differs when its message, labels, help or fixes (their message,
+edits and safe flag) differ. Use it for a change to the text of a diagnostic.
+
+Usage: python3 diag_diff.py [--full] BASE_SISU HEAD_SISU DIR...
 Exits 1 when a program differs or crashes the head.
 """
 import json
@@ -13,19 +16,27 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
-def diagnostics(sisu, path):
-    """Each diagnostic sisu reports on `path`: (code, severity, line, column, secondaries)."""
+# The fields of a diagnostic that `--full` compares, besides its code and positions.
+TEXT = ('message', 'help', 'fixes')
+
+
+def diagnostics(sisu, path, full=False):
+    """Each diagnostic sisu reports on `path`: (code, severity, line, column, secondaries, text).
+
+    `text` is '' unless `full`; then it is the JSON of the diagnostic's text and fixes."""
     run = subprocess.run([sisu, 'check', '--format', 'json', str(path)],
                          capture_output=True, text=True)
     if run.returncode not in (0, 1):
-        return [('crash', 'error', run.returncode, 0, ())]
+        return [('crash', 'error', run.returncode, 0, (), '')]
     found = []
     for line in run.stderr.splitlines():
         d = json.loads(line)
         if d['kind'] == 'diagnostic':
             p = d['primary']
             secondary = tuple((s['line'], s['column']) for s in d['secondary'])
-            found.append((d['code'], d['severity'], p['line'], p['column'], secondary))
+            text = json.dumps({**{k: d.get(k) for k in TEXT}, 'label': p.get('label'),
+                               'secondary': d['secondary']}, sort_keys=True) if full else ''
+            found.append((d['code'], d['severity'], p['line'], p['column'], secondary, text))
     return found
 
 
@@ -41,15 +52,15 @@ def kind(base, head):
 
 
 def show(ds):
-    return ', '.join(f'{c} {line}:{col}' + ''.join(f' +{a}:{b}' for a, b in s)
-                     for c, _, line, col, s in ds) or 'none'
+    return ', '.join(f'{c} {line}:{col}' + ''.join(f' +{a}:{b}' for a, b in s) + (f' {t}' if t else '')
+                     for c, _, line, col, s, t in ds) or 'none'
 
 
-def main(base_sisu, head_sisu, *roots):
+def main(base_sisu, head_sisu, *roots, full=False):
     paths = sorted({p for root in roots for p in Path(root).rglob('*.sisu')})
     with ThreadPoolExecutor() as pool:
-        bases = pool.map(lambda p: diagnostics(base_sisu, p), paths)
-        heads = pool.map(lambda p: diagnostics(head_sisu, p), paths)
+        bases = pool.map(lambda p: diagnostics(base_sisu, p, full), paths)
+        heads = pool.map(lambda p: diagnostics(head_sisu, p, full), paths)
         rows = list(zip(paths, bases, heads))
     counts = {}
     for path, base, head in rows:
@@ -62,6 +73,7 @@ def main(base_sisu, head_sisu, *roots):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) < 4:
+    args = [a for a in sys.argv[1:] if a != '--full']
+    if len(args) < 3:
         sys.exit(__doc__)
-    sys.exit(main(*sys.argv[1:]))
+    sys.exit(main(*args, full=len(args) < len(sys.argv) - 1))
