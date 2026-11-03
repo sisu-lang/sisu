@@ -29,7 +29,9 @@ The batch runs for hours, and the context gets compacted. Keep its state in
 `.scratch/<batch>/progress.md` ([ledger.md](ledger.md) gives the form). Put
 the briefs, the logs and the root-cause notes in the same folder. Update the
 ledger after each event: a stop answered, a dispatch, a report, a ruling, a
-commit. When the user asks you to resume, read the ledger first. Go on from
+commit. Add an event or an "After the merge" line with
+`python3 .agents/skills/solve-issues/scripts/ledger.py <progress.md> event|after-merge "<text>"`.
+When the user asks you to resume, read the ledger first. Go on from
 its last event.
 
 ## Steps
@@ -138,7 +140,7 @@ Do this once for each group. On resume, use the worktree in the ledger.
 3. Run `review-sisu` on the whole branch, with `--mutation-log` set to that log and the final reviewers of the group's flow.
 4. Write the pull request body with `mattpocock-skills:pr`, with one `Closes #<N>` line for each issue.
 5. The user pushes. Then create the pull request with `gh api repos/sisu-lang/sisu/pulls`, with the sandbox off.
-6. Never merge on your own. When the user says to merge, run `python3 scripts/merge_pr.py <N>` in the main checkout, with the sandbox off and `run_in_background`. It waits for the checks, stops when one fails or the head does not contain `main`, and merges. Then it waits for each `Closes` issue to close, and removes the group's worktree and branch when they are clean and at the merged head. Write each line it prints in the ledger.
+6. Never merge on your own. When the user says to merge, run `python3 scripts/merge_pr.py <N>` in the main checkout, with the sandbox off and `run_in_background`. It waits for the checks, stops when one fails or the head does not contain `main`, and merges. Then it waits for each `Closes` issue to close, and removes the group's worktree and branch when they are clean and at the merged head. Write each line it prints in the ledger. When the user merged in the GitHub UI, run `python3 scripts/merge_pr.py --cleanup <N>` the same way.
 7. Write the ledger's "After the merge" lines. Write one line with a runnable repro for each deferred finding. Do the same for each line of each `diagnostic-issues.md` in the group's review runs.
 8. Go to step 3 for the next group that does not wait for a merge. When all groups wait, tell the user and stop.
 9. When the batch ends, delete the batch build: `rm -rf ${TMPDIR:-/tmp}/sisu-issues-<batch>`.

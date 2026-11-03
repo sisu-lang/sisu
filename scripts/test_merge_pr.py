@@ -55,7 +55,7 @@ class MergePr(unittest.TestCase):
         self.env = dict(ENV, PATH=f'{bin_dir}:{ENV["PATH"]}', GH_LOG=str(self.log),
                         GH_TABLE=str(self.dir / 'table.json'), MERGE_PR_POLL='0')
 
-    def run_script(self, **changes):
+    def run_script(self, *args, **changes):
         r = 'repos/sisu-lang/sisu'
         done = {'name': 'Test', 'status': 'completed', 'conclusion': 'success'}
         table = {
@@ -69,7 +69,8 @@ class MergePr(unittest.TestCase):
         }
         table.update({f'{r}/{k}': v for k, v in changes.items()})
         (self.dir / 'table.json').write_text(json.dumps(table))
-        return subprocess.run([sys.executable, str(SCRIPT), '7', str(self.repo)], capture_output=True,
+        args = args or ('7',)
+        return subprocess.run([sys.executable, str(SCRIPT), *args, str(self.repo)], capture_output=True,
                               text=True, env=self.env)
 
     def checks(self, *runs, total=None):
@@ -151,6 +152,61 @@ class MergePr(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn('does not contain main', result.stdout)
         self.assertEqual(self.merges(), [])
+
+    def test_cleanup_of_an_open_pull_request_should_stop_and_keep_the_worktree(self):
+        result = self.run_script('--cleanup', '7', **{'pulls/7': {'state': 'open', 'merged': False,
+                                                                  'head': {'sha': self.sha, 'ref': 'fix/x'}}})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('#7 is not merged', result.stdout)
+        self.assertTrue(self.tree.exists())
+
+    def test_cleanup_of_a_merged_pull_request_should_remove_its_worktree_and_branch(self):
+        merged = {'state': 'closed', 'merged': True, 'head': {'sha': self.sha, 'ref': 'fix/x'}}
+        result = self.run_script('--cleanup', '7', **{'pulls/7': merged})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('removed', result.stdout)
+        self.assertFalse(self.tree.exists())
+        branches = subprocess.run(['git', '-C', str(self.repo), 'branch', '--list', 'fix/x'],
+                                  capture_output=True, text=True, check=True, env=ENV).stdout
+        self.assertEqual(branches, '')
+        self.assertEqual(self.merges(), [])
+
+    def test_a_pull_request_read_with_an_old_head_should_be_read_again_before_the_base_check(self):
+        pr = {'state': 'open', 'title': 'Fix x', 'body': '', 'base': {'ref': 'main'}}
+        old = dict(pr, head={'sha': 'old', 'ref': 'fix/x'})
+        new = dict(pr, head={'sha': self.sha, 'ref': 'fix/x'})
+        result = self.run_script(**{'pulls/7': [old, new], 'compare/main...old': {'behind_by': 1}})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        [merge] = self.merges()
+        self.assertIn(f'sha={self.sha}', merge)
+
+    def test_cleanup_after_the_number_should_stop_on_an_open_pull_request_and_not_merge(self):
+        result = self.run_script('7', '--cleanup', **{'pulls/7': {
+            'state': 'open', 'merged': False, 'title': 'Fix x', 'body': '', 'base': {'ref': 'main'},
+            'head': {'sha': self.sha, 'ref': 'fix/x'}}})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('#7 is not merged', result.stdout)
+        self.assertEqual(self.merges(), [])
+        self.assertTrue(self.tree.exists())
+
+    def test_cleanup_with_no_number_should_fail_and_not_merge(self):
+        # run_script adds the repo path, which argparse would take as the number.
+        result = subprocess.run([sys.executable, str(SCRIPT), '--cleanup'], capture_output=True,
+                                text=True, env=self.env)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('required: pr', result.stderr)
+        self.assertFalse(self.log.exists())
+        self.assertTrue(self.tree.exists())
+
+    def test_cleanup_of_a_closed_pull_request_that_was_not_merged_should_keep_the_worktree(self):
+        closed = {'state': 'closed', 'merged': False, 'head': {'sha': self.sha, 'ref': 'fix/x'}}
+        result = self.run_script('--cleanup', '7', **{'pulls/7': closed})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('#7 is not merged', result.stdout)
+        self.assertTrue(self.tree.exists())
+        branches = subprocess.run(['git', '-C', str(self.repo), 'branch', '--list', 'fix/x'],
+                                  capture_output=True, text=True, check=True, env=ENV).stdout
+        self.assertIn('fix/x', branches)
 
 
 if __name__ == '__main__':
