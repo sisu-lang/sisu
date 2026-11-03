@@ -1021,6 +1021,57 @@ fn default_witness_head_should_build_in_linear_time() {
     assert_near_linear(steps(100), steps(200), steps(300));
 }
 
+/// GIVEN `enum E { A(i64); B(i64, ... n times); C(i64) }` and n statements, each with a pattern
+/// that names `A` (and `C` in one row) and so leaves `B`, the first variant it does not name,
+/// for the default
+/// WHEN `sisu check` runs on it
+/// THEN the solver takes a number of steps that grows in line with n, for each form of
+/// statement that asks if its pattern always matches
+///
+/// The question needs no witness. A witness built for it (`B(_, ... n times)`) costs n steps for
+/// each of the n statements.
+#[test]
+fn always_matches_should_check_in_linear_steps() {
+    type Statement = fn(usize) -> String;
+    let rows: [(&str, Statement); 6] = [
+        ("let", |i| format!("    let A(n{i}) = v\n")),
+        ("let else", |i| {
+            format!("    let A(n{i}) = v else {{ return 0 }}\n")
+        }),
+        ("if let", |i| {
+            format!("    if let A(n{i}) = v {{ s = s + n{i} }}\n")
+        }),
+        ("while let", |i| {
+            format!("    while let A(n{i}) = v {{\n        s = s + n{i}\n        break\n    }}\n")
+        }),
+        // The `Some` child builds `B(_, ...)` and the parent drops it: only a flag that stops
+        // the head at each level of `finish` makes this row linear.
+        ("let else on an optional", |i| {
+            format!("    let Some(A(n{i})) = o else {{ return 0 }}\n")
+        }),
+        ("let else with an or-pattern", |i| {
+            format!("    let A(n{i}) | C(n{i}) = v else {{ return 0 }}\n")
+        }),
+    ];
+    crate::on_compiler_stack(|| {
+        for (row, statement) in rows {
+            let steps = |n: usize| {
+                let wide = vec!["i64"; n].join(", ");
+                let statements: String = (0..n).map(statement).collect();
+                let src = format!(
+                    "enum E {{\n    A(i64)\n    B({wide})\n    C(i64)\n}}\nfn f(v: E, o: E?) -> i64 {{\n    let mut s = 0\n{statements}    s\n}}\nfn main() {{}}"
+                );
+                // The plain `let` reports E0174 for each statement, so the program need not
+                // check clean.
+                exhaust::STEPS.set(0);
+                drop(checked(&src));
+                exhaust::STEPS.get()
+            };
+            assert_near_linear_for(&format!("{row}: "), steps(40), steps(80), steps(120));
+        }
+    });
+}
+
 /// `enum Wide { V(Bit, ...) }` with `fields` fields, and a `match` on `w` whose `arms` start on
 /// line 8, then `_ => 0`.
 fn wide(fields: usize, arms: &[String]) -> String {
