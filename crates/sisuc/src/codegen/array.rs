@@ -372,43 +372,27 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// The trim of the array or string `value` of type `ty`, which has a block. The value is kept
-    /// as it is when
-    /// 1. it covers its block: its `data` is the block's first element, which needs no load, and
-    ///    its `len` is the header's; or
-    /// 2. its bytes are more than a quarter of the block's capacity in bytes, or that capacity is
-    ///    below 256 bytes. The element size cancels in the first test: `len * 4 > cap`.
-    ///
-    /// Otherwise `@sisu_rc.trim.[T]` copies it into a block of exactly `len` elements, retaining
-    /// each counted one, and releases the old block.
+    /// as it is, with no call, when it covers its block: its `data` is the block's first element,
+    /// which needs no load, and its `len` is the header's. Otherwise `@sisu_rc.trim.[T]` decides
+    /// (see `define_array_trim`) and returns the value or its copy.
     fn trim_words(&self, ty: Type, value: BasicValueEnum<'ctx>) -> BasicValueEnum<'ctx> {
-        // A block below this many bytes is kept: it holds too little to be worth a copy.
-        const SMALL_BLOCK: u64 = 256;
-        let i64_type = self.context.i64_type();
         let (block, data, len) = (
             self.value_block(value),
             self.value_data(value),
             self.value_len(value),
         );
-        let (first, size) = match ty.kind() {
-            TypeKind::Array(element) => (
-                self.array_data(element, block),
-                self.array_layout(element).size,
-            ),
-            _ => (self.string_field(block, BYTES), 1),
+        let first = match ty.kind() {
+            TypeKind::Array(element) => self.array_data(element, block),
+            _ => self.string_field(block, BYTES),
         };
         let function = self.current_function();
         let named = |name| self.context.append_basic_block(function, name);
-        let (whole, sized, copy, join) = (
-            named("trim.whole"),
-            named("trim.sized"),
-            named("trim.copy"),
-            named("trim.join"),
-        );
+        let (whole, call, join) = (named("trim.whole"), named("trim.call"), named("trim.join"));
         let starts = self
             .builder
             .build_int_compare(IntPredicate::EQ, data, first, "at.start")
             .expect(POSITIONED);
-        self.branch_on(starts, whole, sized);
+        self.branch_on(starts, whole, call);
 
         self.builder.position_at_end(whole);
         let held = match ty.kind() {
@@ -416,13 +400,40 @@ impl<'ctx> Codegen<'ctx, '_> {
             _ => self.string_len(block),
         };
         let covers = self.int_compare(IntPredicate::EQ, len, held);
-        self.branch_on(covers, join, sized);
+        self.branch_on(covers, join, call);
 
-        self.builder.position_at_end(sized);
-        let cap = match ty.kind() {
-            TypeKind::Array(_) => self.array_cap(block),
-            _ => self.string_cap(block),
-        };
+        self.builder.position_at_end(call);
+        let trimmed = self
+            .builder
+            .build_call(
+                self.helper(Helper::Trim, ty),
+                &self.split(ty, value),
+                "trimmed",
+            )
+            .expect(POSITIONED)
+            .try_as_basic_value()
+            .basic()
+            .expect("`@sisu_rc.trim.[T]` should return the value, as `helper` declares it");
+        self.assume_len(ty, trimmed);
+        self.branch_to(join);
+
+        self.builder.position_at_end(join);
+        self.phi(self.value_type(), &[(value, whole), (trimmed, call)])
+    }
+
+    /// The `keep` test of `@sisu_rc.trim.[T]` and `@sisu_rc.trim.string` for a value of `len`
+    /// elements of `size` bytes in a block of capacity `cap`. The value is kept when its bytes
+    /// are more than a quarter of the block's capacity in bytes, or that capacity is below 256
+    /// bytes. The element size cancels in the first test: `len * 4 > cap`.
+    pub(super) fn trim_keeps(
+        &self,
+        len: IntValue<'ctx>,
+        cap: IntValue<'ctx>,
+        size: u64,
+    ) -> IntValue<'ctx> {
+        // A block below this many bytes is kept: it holds too little to be worth a copy.
+        const SMALL_BLOCK: u64 = 256;
+        let i64_type = self.context.i64_type();
         // `cap * size < 256` is `cap < ceil(256 / size)`, with no multiplication to overflow.
         let few = i64_type.const_int(SMALL_BLOCK.div_ceil(size), false);
         let small = self.int_compare(IntPredicate::ULT, cap, few);
@@ -431,40 +442,36 @@ impl<'ctx> Codegen<'ctx, '_> {
             .build_right_shift(cap, i64_type.const_int(2, false), false, "quarter")
             .expect(POSITIONED);
         let big = self.int_compare(IntPredicate::UGT, len, quarter);
-        let keep = self.builder.build_or(small, big, "keep").expect(POSITIONED);
-        self.branch_on(keep, join, copy);
-
-        self.builder.position_at_end(copy);
-        let slot = self.entry_alloca(self.value_type().into(), "trim.slot");
-        self.store(slot, value);
-        self.call(self.helper(Helper::Trim, ty), &[slot.into()]);
-        let trimmed = self.load_words(slot, None);
-        let copied = self.current_block();
-        self.branch_to(join);
-
-        self.builder.position_at_end(join);
-        self.phi(
-            self.value_type(),
-            &[(value, whole), (value, sized), (trimmed, copied)],
-        )
+        self.builder.build_or(small, big, "keep").expect(POSITIONED)
     }
 
-    /// `@sisu_rc.trim.[T](slot)`: leaves in `slot` the array whose block holds exactly the
-    /// value's elements, copied with `llvm.memcpy` and each counted one retained. The old block
-    /// loses the slot's reference, and is freed with its elements when that was its last.
+    /// `@sisu_rc.trim.[T](value)`: returns the value as it is when `trim_keeps` says so.
+    /// Otherwise it returns the array whose block holds exactly the value's elements, copied with
+    /// `llvm.memcpy` and each counted one retained. The call consumes the value: the old block
+    /// loses its reference, and is freed with its elements when that was its last.
     fn define_array_trim(&self, element: Type, function: FunctionValue<'ctx>) {
-        self.builder
-            .position_at_end(self.context.append_basic_block(function, "entry"));
-        let slot = param(function);
+        let entry = self.context.append_basic_block(function, "entry");
+        self.builder.position_at_end(entry);
         let ty = Type::array(element);
-        let old = self.load_place(ty, slot, "old", None);
+        let old = self.joined_params(function, 0, &[ty])[0];
         let (data, len) = (self.value_data(old), self.value_len(old));
+        let cap = self.array_cap(self.value_block(old));
+        let keep = self.trim_keeps(len, cap, self.array_layout(element).size);
+        let (done, copying) = (
+            self.context.append_basic_block(function, "keep"),
+            self.context.append_basic_block(function, "copy"),
+        );
+        self.branch_on(keep, done, copying);
+        self.builder.position_at_end(done);
+        self.builder.build_return(Some(&old)).expect(POSITIONED);
+
+        self.builder.position_at_end(copying);
         let copy = self.alloc_array(element, len, None);
         let copy_data = self.array_data(element, copy);
         self.copy_elements(element, data, copy_data, len);
-        self.store(slot, self.make_value(copy, copy_data, len));
+        let trimmed = self.make_value(copy, copy_data, len);
         self.release(old, ty);
-        self.builder.build_return(None).expect(POSITIONED);
+        self.builder.build_return(Some(&trimmed)).expect(POSITIONED);
     }
 
     /// `slot.push(value)`: appends `value`, which it consumes, to the array of type `ty` that

@@ -1216,6 +1216,68 @@ fn array_drop_should_free_the_size_of_its_capacity() {
     );
 }
 
+/// GIVEN a constructor and two field stores of an `[i64]`, and a constructor and one field store
+/// of a `string`
+/// WHEN the module is compiled
+/// THEN every trim point calls the trim function of its type (3 calls, and 2), the module
+/// defines each function once, and at `-O2` the module still defines each once, as `noinline`,
+/// and holds the size tests of the trim only in them
+#[test]
+fn trim_should_call_one_function_per_type() {
+    const FUNCTIONS: [(&str, usize); 2] =
+        [("@\"sisu_rc.trim.[i64]\"", 3), ("@sisu_rc.trim.string", 2)];
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "class Holder {\n    mut xs: [i64]\n    mut s: string\n}\n\nfn first(h: Holder, xs: [i64]) {\n    h.xs = xs[..1]\n}\n\nfn second(h: Holder, xs: [i64]) {\n    h.xs = xs[..2]\n}\n\nfn text(h: Holder, s: string) {\n    h.s = s[..1]\n}\n\nfn main(args: [string]) {\n    let n = args.len()\n    let h = Holder(xs: [0; n + 1], s: \"abc\")\n    let xs = [7; n + 400]\n    first(h, xs)\n    second(h, xs)\n    text(h, \"{n} and more\")\n    print(h.xs.len() + h.s.len())\n}",
+    );
+    let ir = module.print_to_string().to_string();
+    for (symbol, calls) in FUNCTIONS {
+        assert_eq!(
+            ir.lines()
+                .filter(|l| l.contains(" = call ") && l.contains(&format!("{symbol}(")))
+                .count(),
+            calls,
+            "calls of {symbol} in\n{ir}"
+        );
+    }
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    let mut outside = ir.clone();
+    for (symbol, _) in FUNCTIONS {
+        let mut headers = ir
+            .lines()
+            .filter(|l| l.starts_with("define ") && l.contains(&format!("{symbol}(")));
+        let header = headers
+            .next()
+            .unwrap_or_else(|| panic!("{symbol} is not defined in\n{ir}"));
+        assert!(
+            headers.next().is_none(),
+            "{symbol} is defined twice in\n{ir}"
+        );
+        let body = function_body(&ir, header);
+        assert!(
+            body.contains("lshr i64"),
+            "the size test in {symbol}:\n{body}"
+        );
+        outside = outside.replace(body, "");
+        let (_, group) = header
+            .trim_end_matches(" {")
+            .rsplit_once(" #")
+            .unwrap_or_else(|| panic!("{symbol} has no attribute group in\n{ir}"));
+        let attributes = ir
+            .lines()
+            .find(|l| l.starts_with(&format!("attributes #{group} =")))
+            .unwrap_or_else(|| panic!("no attributes #{group} in\n{ir}"));
+        assert!(attributes.contains("noinline"), "{symbol}: {attributes}");
+    }
+    assert!(
+        !outside.contains("lshr i64"),
+        "a size test outside the functions in\n{outside}"
+    );
+}
+
 /// A new block has room for exactly its length: `[v; n]` stores `n` into both the length and
 /// the capacity, whatever `n` is.
 #[test]

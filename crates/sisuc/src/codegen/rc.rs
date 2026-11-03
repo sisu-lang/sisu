@@ -6,6 +6,7 @@
 //! `retain`, `release` and `eq` helpers take by address. An enum whose component has boxes also
 //! has `walk`, `drain` and `eq_component` helpers (see `codegen/enums.rs`).
 
+use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::basic_block::BasicBlock;
 use inkwell::module::Linkage;
 use inkwell::types::{ArrayType, BasicMetadataTypeEnum};
@@ -31,8 +32,8 @@ pub(super) enum Helper {
     Drop,
     Eq,
     Unique,
-    /// `@sisu_rc.trim.[T](slot)` and `@sisu_rc.trim.string(slot)`: replaces the value in `slot`
-    /// with a copy in a block of exactly its length, and releases the old block (see `trim`).
+    /// `@sisu_rc.trim.[T](value)` and `@sisu_rc.trim.string(value)`: return the value, or a copy
+    /// in a block of exactly its length and a release of the old block (see `trim`).
     Trim,
     /// `@sisu_rc.walk.<F>(value, heads)`: releases a value's counted parts, listing its boxes.
     Walk,
@@ -199,7 +200,10 @@ impl<'ctx> Codegen<'ctx, '_> {
                 ),
             ),
             Helper::Unique => ("unique", takes_object),
-            Helper::Trim => ("trim", takes_object),
+            Helper::Trim => (
+                "trim",
+                self.value_type().fn_type(&self.param_types(ty), false),
+            ),
             Helper::Walk => (
                 "walk",
                 self.context
@@ -256,11 +260,11 @@ impl<'ctx> Codegen<'ctx, '_> {
         match kind {
             Helper::Eq => self.mark_len_params(function, 0, &[ty, ty]),
             Helper::Show(_) => self.mark_len_params(function, 1, &[ty]),
+            Helper::Trim => self.mark_trim(function, ty),
             Helper::Retain
             | Helper::Release
             | Helper::Drop
             | Helper::Unique
-            | Helper::Trim
             | Helper::Walk
             | Helper::Drain
             | Helper::EqComponent
@@ -272,6 +276,19 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.helpers.borrow_mut().insert(key, function);
         self.pending.borrow_mut().push(key);
         function
+    }
+
+    /// Gives `@sisu_rc.trim.[T]` and `@sisu_rc.trim.string`, which take a value of the type `ty`,
+    /// the facts of a value's length, and `noinline`. The trim point tests the common case itself,
+    /// so the optimizer keeps this call out of line there: the size tests and the copy would be
+    /// repeated at each point.
+    fn mark_trim(&self, function: FunctionValue<'ctx>, ty: Type) {
+        self.mark_len_params(function, 0, &[ty]);
+        function.add_attribute(
+            AttributeLoc::Function,
+            self.context
+                .create_enum_attribute(Attribute::get_named_enum_kind_id("noinline"), 0),
+        );
     }
 
     /// The parameter types of a helper for one value of the counted type `ty`: an enum is passed

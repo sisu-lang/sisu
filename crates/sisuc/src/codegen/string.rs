@@ -648,18 +648,28 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.build_return(None).expect(POSITIONED);
     }
 
-    /// `@sisu_rc.trim.string(slot)`: leaves in `slot` a string in a new block of exactly its
-    /// length, with the bytes copied. The old block loses the slot's reference, and is freed when
-    /// that was its last.
+    /// `@sisu_rc.trim.string(value)`: returns the string as it is when `trim_keeps` says so.
+    /// Otherwise it returns a string in a new block of exactly its length, with the bytes copied.
+    /// The call consumes the value: the old block loses its reference, and is freed when that was
+    /// its last.
     fn define_string_trim(&self, function: FunctionValue<'ctx>) {
         self.builder
             .position_at_end(self.context.append_basic_block(function, "entry"));
-        let slot = param(function);
-        let old = self.load_place(Type::STRING, slot, "old", None);
+        let old = self.joined_params(function, 0, &[Type::STRING])[0];
+        let cap = self.string_cap(self.value_block(old));
+        let keep = self.trim_keeps(self.value_len(old), cap, 1);
+        let (done, copying) = (
+            self.context.append_basic_block(function, "keep"),
+            self.context.append_basic_block(function, "copy"),
+        );
+        self.branch_on(keep, done, copying);
+        self.builder.position_at_end(done);
+        self.builder.build_return(Some(&old)).expect(POSITIONED);
+
+        self.builder.position_at_end(copying);
         let copy = self.string_from_bytes(self.value_data(old), self.value_len(old));
-        self.store(slot, copy);
         self.release(old, Type::STRING);
-        self.builder.build_return(None).expect(POSITIONED);
+        self.builder.build_return(Some(&copy)).expect(POSITIONED);
     }
 
     /// `@sisu_rc.eq.string(a, b)`: see `eq_entry` for the same block and `null`; otherwise
