@@ -1,0 +1,10 @@
+error[E0068]: a string has no single index
+ --> E0068-string.sisu:3:11
+  |
+3 |     print(s[0])
+  |           ^ this is a string
+  |
+  = help: for bytes, write `let bs = s.bytes()` once, then `bs[i]`; for characters, write `let cs = s.chars()` once, then `cs[i]`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0068

@@ -1,0 +1,1 @@
+sisu: panic at range_end_checked_first.sisu:6:14: range end 6 is past length 5

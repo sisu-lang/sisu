@@ -4,10 +4,14 @@
 
 use inkwell::AddressSpace;
 use inkwell::attributes::{Attribute, AttributeLoc};
-use inkwell::context::ContextRef;
+use inkwell::context::{AsContextRef, ContextRef};
 use inkwell::module::Module;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
-use inkwell::values::FunctionValue;
+use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue};
+
+use super::Codegen;
+use super::layout::three_words;
+use crate::tir::Type;
 
 /// How a value crosses into the runtime. `Bool` and `U8` are passed `zeroext`, as the C
 /// ABI wants for integers narrower than 32 bits: the callee may read all 32 bits of the
@@ -45,6 +49,10 @@ pub(super) struct Attrs {
     pub(super) noreturn: bool,
     pub(super) memory: Option<u64>,
     pub(super) allocator: Allocator,
+    /// The `i64` that it returns is a length, a count or an offset into a string, so never
+    /// negative: `declare` gives the return value the range `[0, 2^63)`, as `mark_len` does a
+    /// length that is loaded.
+    pub(super) returns_len: bool,
 }
 
 /// A function's part in LLVM's allocator model, which lets `-O2` delete an allocation that
@@ -72,6 +80,7 @@ const NONE: Attrs = Attrs {
     noreturn: false,
     memory: None,
     allocator: Allocator::None,
+    returns_len: false,
 };
 /// The runtime is built with `panic = "abort"`, so it never unwinds.
 const NOUNWIND: Attrs = Attrs {
@@ -92,6 +101,14 @@ const FREE: Attrs = Attrs {
     allocator: Allocator::Free,
     ..NOUNWIND
 };
+
+/// `attrs`, for a function that returns a length or a count.
+const fn returns_len(attrs: Attrs) -> Attrs {
+    Attrs {
+        returns_len: true,
+        ..attrs
+    }
+}
 
 /// `NOUNWIND`, with the `memory` attribute value `memory`.
 const fn nounwind_memory(memory: u64) -> Attrs {
@@ -130,7 +147,7 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
         name: "sisu_args_len",
         params: &[Abi::I32],
         ret: Some(Abi::I64),
-        attrs: nounwind_memory(NO_MEMORY),
+        attrs: returns_len(nounwind_memory(NO_MEMORY)),
     },
     // deferred.rs
     RuntimeFn {
@@ -150,13 +167,13 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
         name: "sisu_write_f64",
         params: &[Abi::F64, Abi::Ptr],
         ret: Some(Abi::I64),
-        attrs: NONE,
+        attrs: returns_len(NONE),
     },
     RuntimeFn {
         name: "sisu_write_f64_fixed",
         params: &[Abi::F64, Abi::U8, Abi::Ptr],
         ret: Some(Abi::I64),
-        attrs: NONE,
+        attrs: returns_len(NONE),
     },
     // lib.rs
     RuntimeFn {
@@ -204,6 +221,12 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn {
         name: "sisu_panic_bounds",
         params: &[Abi::Ptr, Abi::I64, Abi::I64, Abi::I64],
+        ret: None,
+        attrs: NORETURN,
+    },
+    RuntimeFn {
+        name: "sisu_panic_range",
+        params: &[Abi::Ptr, Abi::I64, Abi::I64, Abi::I64, Abi::I64, Abi::I64],
         ret: None,
         attrs: NORETURN,
     },
@@ -385,7 +408,7 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
         name: "sisu_pad",
         params: &[Abi::Ptr, Abi::I64, Abi::I64, Abi::U8],
         ret: Some(Abi::I64),
-        attrs: NONE,
+        attrs: returns_len(NONE),
     },
     RuntimeFn {
         name: "sisu_print_char",
@@ -410,7 +433,7 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
         name: "sisu_utf8_count",
         params: &[Abi::Ptr, Abi::I64],
         ret: Some(Abi::I64),
-        attrs: NONE,
+        attrs: returns_len(NONE),
     },
     RuntimeFn {
         name: "sisu_utf8_decode",
@@ -428,38 +451,38 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
         name: "sisu_utf8_len",
         params: &[Abi::Ptr, Abi::I64],
         ret: Some(Abi::I64),
-        attrs: NONE,
+        attrs: returns_len(NONE),
     },
     // Reads the bytes, and writes the word's start.
     RuntimeFn {
         name: "sisu_word_next",
         params: &[Abi::Ptr, Abi::I64, Abi::I64, Abi::Ptr],
         ret: Some(Abi::I64),
-        attrs: nounwind_memory(ARGS),
+        attrs: returns_len(nounwind_memory(ARGS)),
     },
     RuntimeFn {
         name: "sisu_words_count",
         params: &[Abi::Ptr, Abi::I64],
         ret: Some(Abi::I64),
-        attrs: nounwind_memory(READS_ARGS),
+        attrs: returns_len(nounwind_memory(READS_ARGS)),
     },
     RuntimeFn {
         name: "sisu_write_bool",
         params: &[Abi::Bool, Abi::Ptr],
         ret: Some(Abi::I64),
-        attrs: NONE,
+        attrs: returns_len(NONE),
     },
     RuntimeFn {
         name: "sisu_write_char",
         params: &[Abi::I32, Abi::Ptr],
         ret: Some(Abi::I64),
-        attrs: NONE,
+        attrs: returns_len(NONE),
     },
     RuntimeFn {
         name: "sisu_write_int",
         params: &[Abi::I64, Abi::Ptr],
         ret: Some(Abi::I64),
-        attrs: NONE,
+        attrs: returns_len(NONE),
     },
 ];
 
@@ -481,6 +504,149 @@ pub(super) const PAD_CENTER: u64 = 2;
 pub(super) const SINK_SIZE: u64 = 48;
 pub(super) const SINK_LEN: u64 = 24;
 pub(super) const SINK_CAP: u64 = 32;
+
+/// The `kind` of `sisu_panic_range`, a bit set: bits 0 and 1 are the check that failed, `RANGE_*`
+/// below are the rest. The runtime defines them in `crates/runtime/src/lib.rs`, and a test here
+/// compares them.
+pub(super) const RANGE_NEGATIVE_START: u64 = 0;
+pub(super) const RANGE_END_PAST_LENGTH: u64 = 1;
+pub(super) const RANGE_START_PAST_END: u64 = 2;
+pub(super) const RANGE_INSIDE_CHARACTER: u64 = 3;
+pub(super) const RANGE_INCLUSIVE: u64 = 4;
+pub(super) const RANGE_HAS_END: u64 = 8;
+pub(super) const RANGE_STRING: u64 = 16;
+
+/// How a Sisu value crosses a function boundary (ADR 0029). Every function type that takes a
+/// Sisu value, every call that passes one and every function entry that receives one goes
+/// through these three, so a change to the layout of a value is a change here. An array or a
+/// string, or the optional of one, crosses as three scalar parameters: its block, its data and
+/// its length. LLVM puts `range` only on an integer, so it is never one struct parameter.
+impl<'ctx> Codegen<'ctx, '_> {
+    /// The LLVM types of the parameters that one value of type `ty` takes, in order.
+    pub(super) fn param_types(&self, ty: Type) -> Vec<BasicMetadataTypeEnum<'ctx>> {
+        if three_words(ty) {
+            return (self.value_type().get_field_types().into_iter())
+                .map(Into::into)
+                .collect();
+        }
+        let part = self
+            .llvm_type(ty)
+            .expect("the checker should reject a `unit` or `never` parameter, so each parameter has a value type");
+        vec![part.into()]
+    }
+
+    /// The arguments that pass `value`, of type `ty`, at a call: one for each of `param_types`.
+    pub(super) fn split(
+        &self,
+        ty: Type,
+        value: BasicValueEnum<'ctx>,
+    ) -> Vec<BasicMetadataValueEnum<'ctx>> {
+        debug_assert_eq!(
+            self.llvm_type(ty),
+            Some(value.get_type()),
+            "a value should have the LLVM type of its Sisu type"
+        );
+        if three_words(ty) {
+            return vec![
+                self.value_block(value).into(),
+                self.value_data(value).into(),
+                self.value_len(value).into(),
+            ];
+        }
+        vec![value.into()]
+    }
+
+    /// The value of type `ty` that the parameters `parts` of a function hold at its entry: the
+    /// inverse of `split`, with one part for each of `param_types`.
+    pub(super) fn join(&self, ty: Type, parts: &[BasicValueEnum<'ctx>]) -> BasicValueEnum<'ctx> {
+        debug_assert_eq!(
+            parts.len(),
+            self.param_types(ty).len(),
+            "a value should be joined from one part for each of its parameter types"
+        );
+        debug_assert!(
+            self.builder
+                .get_insert_block()
+                .is_some_and(|block| block.get_terminator().is_none()),
+            "`join` may emit instructions, so the builder should be in an open block"
+        );
+        if three_words(ty) {
+            return self.make_value(
+                parts[0].into_pointer_value(),
+                parts[1].into_pointer_value(),
+                parts[2].into_int_value(),
+            );
+        }
+        parts[0]
+    }
+
+    /// The values of the parameters of `function` from the `first`, one for each of `tys`:
+    /// `join` of the parts of each.
+    pub(super) fn joined_params(
+        &self,
+        function: FunctionValue<'ctx>,
+        first: u32,
+        tys: &[Type],
+    ) -> Vec<BasicValueEnum<'ctx>> {
+        let mut parts = function.get_param_iter().skip(first as usize);
+        tys.iter()
+            .map(|&ty| {
+                let own: Vec<_> = parts.by_ref().take(self.param_types(ty).len()).collect();
+                self.join(ty, &own)
+            })
+            .collect()
+    }
+
+    /// Gives the length parameter of each array or string value in `tys` the facts that a length
+    /// has: `noundef`, and `range(i64 0, 2^63)`, as `mark_len` gives a length that is loaded. The
+    /// parameters of `tys` start at parameter `first` of `function`, as `joined_params` reads them.
+    pub(super) fn mark_len_params(&self, function: FunctionValue<'ctx>, first: u32, tys: &[Type]) {
+        let mut at = first;
+        for &ty in tys {
+            let count = u32::try_from(self.param_types(ty).len())
+                .expect("a value should take few parameters");
+            if three_words(ty) {
+                let len = AttributeLoc::Param(at + count - 1);
+                function.add_attribute(
+                    len,
+                    self.context
+                        .create_enum_attribute(Attribute::get_named_enum_kind_id("noundef"), 0),
+                );
+                function.add_attribute(len, non_negative(&self.context));
+            }
+            at += count;
+        }
+    }
+}
+
+/// The attribute `range(i64 0, 2^63)`: a value that is not negative. Inkwell at `c9d9734` has
+/// no constructor for a constant-range attribute, so this calls the `llvm-sys` that inkwell
+/// re-exports. Do not format the attribute with `{:?}`: inkwell's `Debug` of an `Attribute`
+/// panics for one that is not a string, enum or type attribute (`attributes.rs`).
+#[expect(
+    unsafe_code,
+    reason = "inkwell has no constructor for a constant-range attribute, so this calls its llvm-sys"
+)]
+fn non_negative<'ctx>(context: &impl AsContextRef<'ctx>) -> Attribute {
+    const BITS: u32 = 64;
+    let lower = [0_u64];
+    // The upper bound is exclusive, and `1 << 63` is 2^63; LLVM prints it as
+    // `i64 -9223372036854775808`.
+    let upper = [1_u64 << 63];
+    // SAFETY: `context` is a live context, and `lower` and `upper` each hold the one word that
+    // `BITS` bits need, as `LLVMCreateConstantRangeAttribute` reads.
+    let raw = unsafe {
+        inkwell::llvm_sys::core::LLVMCreateConstantRangeAttribute(
+            context.as_ctx_ref(),
+            Attribute::get_named_enum_kind_id("range"),
+            BITS,
+            lower.as_ptr(),
+            upper.as_ptr(),
+        )
+    };
+    // SAFETY: `raw` is the valid, non-null attribute that LLVM just made in `context`.
+    unsafe { Attribute::new(raw) }
+}
 
 /// The row of `RUNTIME` named `name`.
 pub(super) fn row(name: &str) -> &'static RuntimeFn {
@@ -515,6 +681,9 @@ pub(super) fn declare<'ctx>(module: &Module<'ctx>, row: &RuntimeFn) -> FunctionV
     }
     if let Some(memory) = row.attrs.memory {
         function.add_attribute(AttributeLoc::Function, attribute("memory", memory));
+    }
+    if row.attrs.returns_len {
+        function.add_attribute(AttributeLoc::Return, non_negative(&context));
     }
     if row.attrs.noreturn {
         function.add_attribute(AttributeLoc::Function, attribute("noreturn", 0));
@@ -687,6 +856,36 @@ mod tests {
             panic.contains("noreturn"),
             "missing \"noreturn\" in\n{panic}"
         );
+    }
+
+    /// The kinds of `sisu_panic_range` in `RANGE_*` are the runtime's.
+    #[test]
+    fn range_kinds_should_match_the_runtime() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../runtime/src/lib.rs");
+        let source = std::fs::read_to_string(dir).expect("the runtime's lib.rs should read");
+        let file = syn::parse_file(&source).expect("lib.rs should parse");
+        let constant = |name: &str| -> u64 {
+            file.items
+                .iter()
+                .find_map(|item| match item {
+                    syn::Item::Const(item) if item.ident == name => match &*item.expr {
+                        syn::Expr::Lit(syn::ExprLit {
+                            lit: syn::Lit::Int(number),
+                            ..
+                        }) => Some(number.base10_parse().expect("a kind should parse")),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("lib.rs should define {name} as a number"))
+        };
+        assert_eq!(constant("RANGE_NEGATIVE_START"), RANGE_NEGATIVE_START);
+        assert_eq!(constant("RANGE_END_PAST_LENGTH"), RANGE_END_PAST_LENGTH);
+        assert_eq!(constant("RANGE_START_PAST_END"), RANGE_START_PAST_END);
+        assert_eq!(constant("RANGE_INSIDE_CHARACTER"), RANGE_INSIDE_CHARACTER);
+        assert_eq!(constant("RANGE_INCLUSIVE"), RANGE_INCLUSIVE);
+        assert_eq!(constant("RANGE_HAS_END"), RANGE_HAS_END);
+        assert_eq!(constant("RANGE_STRING"), RANGE_STRING);
     }
 
     /// The numbers of the sink in `SINK_SIZE`, `SINK_LEN` and `SINK_CAP` are the runtime's.

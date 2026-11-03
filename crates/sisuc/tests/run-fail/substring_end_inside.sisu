@@ -1,0 +1,7 @@
+// GIVEN `let s = "häst"` and `print(s[1..2])`
+// WHEN the program runs
+// THEN it exits with code 101 and the panic is `byte 2 is inside a character` (an end inside a character)
+fn main() {
+    let s = "häst"
+    print(s[1..2])
+}

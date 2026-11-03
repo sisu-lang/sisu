@@ -1,0 +1,24 @@
+error[E0023]: a range can only be a `for` source, a pattern, an index or a string's `get` argument
+ --> E0023-method-argument.sisu:3:23
+  |
+3 |     print(xs.contains(0..1))
+  |                       ^^^^
+
+error[E0023]: a range with a missing bound can only be an index or a string's `get` argument
+ --> E0023-method-argument.sisu:4:23
+  |
+4 |     print(xs.contains(1..))
+  |                       ^^^ this range has no end
+  |
+  = help: write the range where it is used: in an index or in a string's `get`
+
+error[E0023]: a range with a missing bound can only be an index or a string's `get` argument
+ --> E0023-method-argument.sisu:5:23
+  |
+5 |     print(xs.contains(..))
+  |                       ^^ this range has no bounds
+  |
+  = help: `..` alone is the whole value; write the value itself
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0023

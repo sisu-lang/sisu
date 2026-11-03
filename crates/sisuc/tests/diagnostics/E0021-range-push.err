@@ -1,0 +1,10 @@
+error[E0021]: cannot push to a temporary value
+ --> E0021-range-push.sisu:4:5
+  |
+4 |     xs[1..].push(4)
+  |     ^^^^^^^ a range index gives a new value
+  |
+  = help: keep the slice in a variable first: `let mut t = xs[1..]`, then `t.push(...)`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0021

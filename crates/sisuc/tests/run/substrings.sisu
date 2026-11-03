@@ -1,0 +1,90 @@
+// GIVEN `let s = "häst"`, a literal, and strings built at run time
+// WHEN the program takes substrings with a range index and a string's `get`, appends to a
+// substring, and lets a `get` fail at the last use of a string
+// THEN each substring covers the bytes of its range, `get` gives `None` where the index would
+// stop the program, an append does not change the parent, and no block leaks
+fn show(t: string?) {
+    if let Some(text) = t {
+        print("some[{text}]")
+    } else {
+        print("none")
+    }
+}
+
+// A bound that writes a word when it runs, to show whether it ran.
+fn noisy(n: i64) -> i64 {
+    print("bound")
+    n
+}
+
+// `n` is not known at compile time: the string is a block built at run time, which the failed
+// `get` below holds at its last use.
+fn built(n: i64) -> string {
+    "häst{n}"
+}
+
+fn failed(n: i64) -> string {
+    let s = built(n)
+    s.get(1..2) ?? "none"
+}
+
+fn main() {
+    let s = "häst"
+    print(s[0..1])                   // h: an ASCII byte
+    print(s[1..3])                   // ä: two bytes make one character
+    print(s[3..])                    // st: to the end
+    print(s[1..3].len())             // 2: the length counts bytes
+    print(s.get(1..2) ?? "none")     // none: `get` refuses a cut character
+    print(s[1..][2..])               // st: a substring of a substring
+    print(s[..3])                    // hä: no start
+    print(s[..=0])                   // h: `..=` includes the byte
+    print("häst"[3..5])              // st: a substring of a literal
+    print(s[1..1].len())             // 0: an empty range inside the string
+    print(s[5..].len())              // 0: an empty range at the end
+
+    // `get` gives `Some` for a range that stays on the characters, and `Some("")` for an empty one.
+    show(s.get(1..3))                // some[ä]
+    show(s.get(3..3))                // some[]: an empty range is not `None`
+    show(s.get(3..))                 // some[st]
+    show(s.get(..1))                 // some[h]
+    show(s.get(2..))                 // none: the start is inside a character
+    show(s.get(0..9))                // none: the end is past the length
+    show(s.get(-1..2))               // none: a negative start
+    show(s.get(4..3))                // none: the start is after the end
+    show(s.get(1..=1))               // none: `..=` checks the byte after its end
+
+    // `?.get` takes the range of the string that is there. A receiver that is `None` gives
+    // `None`, and its bounds do not run.
+    let some: string? = s
+    let nothing: string? = None
+    show(some?.get(1..3))            // some[ä]
+    show(some?.get(2..))             // none: the start is inside a character
+    show(some?.get(0..4)?.get(3..))  // some[s]
+    show(nothing?.get(noisy(1)..3))  // none, and no "bound" above it
+    show(some?.get(noisy(1)..3))     // bound, then some[ä]
+
+    // `+=` onto a substring copies the substring, and the parent keeps its text.
+    let mut t = s[..3]
+    t += "!"
+    print(t)                         // hä!
+    print(s)                         // häst: the parent is unchanged
+    let mut u = built(7)[..3]
+    u += "x"
+    print(u)                         // häx
+    let mut v = s[3..]
+    v += "e"
+    print(v)                         // ste
+    print(s[1..] + "!")              // äst!: `+` onto a substring
+    print(s)                         // häst
+
+    // A failed `get` at the last use of a string built at run time releases it.
+    print(failed(3))                 // none
+    print(failed(4))                 // none
+
+    // The help of E0021 for a write to a substring builds the string again, and keeps the write.
+    let mut w = "hello"
+    w = w[..3] + "x" + w[3..]        // the help of `w[3..3] = "x"`
+    print(w)                         // helxlo
+    w = w[..1] + "y" + w[w.len() - 1..]
+    print(w)                         // hyo
+}

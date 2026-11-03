@@ -7,8 +7,9 @@
 //! operand, such as `concat`. One graph covers the whole program. Its nodes are each function's
 //! locals, and an edge `u → v` means that if `u` is consumed, so is `v`:
 //!
-//! - **alias:** `d = use l`, where `d` is a temporary that this statement alone assigns and that
-//!   only its own block mentions, gives `d → l`. Lowering reads a value a statement only reads
+//! - **alias:** `d = use l`, or `d = slice(use l, ..)`, which shares `l`'s block, where `d` is a
+//!   temporary that this statement alone assigns and that only its own block mentions, gives
+//!   `d → l`. Lowering reads a value a statement only reads
 //!   into such a temporary: `print(s)` is `_1 = use s; print(_1); release _1`. A named `d`, one
 //!   assigned on several paths to a join, or one used or released in another block, such as a
 //!   spilled operand of a call, consumes `l` instead: pairs (part 3) cannot drop a copy whose
@@ -373,7 +374,7 @@ impl Walk<'_> {
                 });
                 if let Statement::Assign {
                     dest: Some(dest),
-                    value: Rvalue::Use(op),
+                    value: Rvalue::Use(op) | Rvalue::Slice { base: op, .. },
                 } = stmt
                 {
                     reads[dest.0] = named(op);
@@ -394,7 +395,7 @@ impl Walk<'_> {
             for (at, stmt) in block.stmts.iter().enumerate() {
                 if let Statement::Assign {
                     dest: Some(dest),
-                    value: Rvalue::Use(_),
+                    value: Rvalue::Use(_) | Rvalue::Slice { .. },
                 } = stmt
                     && let Some(local) = alias(*dest)
                 {

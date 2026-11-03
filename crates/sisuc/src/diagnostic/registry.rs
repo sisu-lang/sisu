@@ -86,7 +86,7 @@ codes! {
     MainSignature = "E0029",
     UnknownType = "E0030",
     BodyHasNoValue = "E0031",
-    Mismatch | PatternMismatch = "E0032",
+    Mismatch | PatternMismatch | StringGetNeedsRange | ArrayGetTakesIndex = "E0032",
     BindingNotFound = "E0033",
     DefinedTwice | InheritedRequirement = "E0034",
     ForNeedsArray = "E0035",
@@ -121,7 +121,7 @@ codes! {
     ArgumentNeedsLabel = "E0065",
     FieldOutOfOrder = "E0066",
     SameObject = "E0067",
-    CannotIndex = "E0068",
+    CannotIndex | StringIndex = "E0068",
     SumNeedsNumbers = "E0069",
     MethodAsFunction = "E0070",
     NestingTooDeep = "E0071",
@@ -571,12 +571,17 @@ pub(crate) enum DiagnosticKind {
     MutParameter { name: String, at: Span },
     /// A `self` at `at` that is not a method's first parameter.
     SelfNotFirst { at: Span },
-    /// An assignment at `at` to something that is not a place.
-    AssignToExpression { at: Span },
-    /// A `push` at `at` onto something that is not a place.
-    PushToTemporary { at: Span },
-    /// A range at `at` outside a `for`.
-    RangeOutsideFor { at: Span },
+    /// An assignment at `at` to something that is not a place. `range` is the range index that
+    /// the target holds, at `at`: the checker, which knows the type of its base, reports it.
+    AssignToExpression {
+        at: Span,
+        range: Option<RangeTarget>,
+    },
+    /// A `push` at `at` onto something that is not a place; `range` says which range index it
+    /// holds, if any.
+    PushToTemporary { at: Span, range: Option<RangePush> },
+    /// A range at `at` where it is not allowed, in the way that `form` says.
+    RangeOutsideFor { at: Span, form: RangeForm },
     /// A second `==`, `!=` or `is` at `at` in one chain.
     EqualityChain { at: Span },
     /// A comparison at `at` that turns a chain around.
@@ -869,8 +874,15 @@ pub(crate) enum DiagnosticKind {
         param: bool,
         any: bool,
     },
-    /// An index into the value at `at`, of type `ty`, which is no array.
-    CannotIndex { ty: String, at: Span },
+    /// An index into the value at `at`, of type `ty`, which is no array; with `range`, a range
+    /// index into one that is neither an array nor a string.
+    CannotIndex { ty: String, at: Span, range: bool },
+    /// A single index into the string at `at`: a string takes a range index only.
+    StringIndex { at: Span },
+    /// The argument at `at` of a string's `get`, which is no range written in the call.
+    StringGetNeedsRange { at: Span },
+    /// The range at `at`, given to an array's `get`, which takes an `i64`.
+    ArrayGetTakesIndex { at: Span },
     /// The method `method` at `at`, called on an array of type `ty`. The prelude gives the method
     /// to the array types `targets`, and none of them is `ty`. `function` is whether the call
     /// writes the method as a function, `method(xs)`, and the label then says it is a method: it
@@ -2159,6 +2171,225 @@ pub(crate) enum ForeignRange {
     },
     /// `start...end`.
     Ellipsis { start: String, end: Option<String> },
+    /// `base[start:end]`, as Python and Go write a slice; the operator is the `:` at `at`. A bound
+    /// that is left out is `None`. `whole` is the `[:]` of `base[:]`, which the fix removes.
+    /// `base_place` is true when `base` is a place that starts at a name or `self`, so that to
+    /// count from `base.len()` reads the same place.
+    Colon {
+        base: String,
+        base_place: bool,
+        start: Option<ColonBound>,
+        end: Option<ColonBound>,
+        whole: Option<Span>,
+    },
+}
+
+/// A bound of `base[start:end]`. Python counts a negative one from the end of `base`; Sisu has no
+/// negative index.
+pub(crate) enum ColonBound {
+    /// The text of a bound that is not negative.
+    Plain(String),
+    /// A bound that starts with a minus, as `-1`, `-a * b` or `--1`.
+    Negative,
+}
+
+/// How a range is wrong where the checker finds it.
+pub(crate) enum RangeForm {
+    /// A range with both bounds, where only a `for` source, a pattern, an index or a string's
+    /// `get` argument can be one.
+    Anywhere,
+    /// A range with a missing bound, where only an index or a string's `get` can have one.
+    MissingBound {
+        missing: MissingBound,
+        place: RangePlace,
+    },
+    /// `start..=` with no end in an index or a string's `get`, which is no range there: `range` is
+    /// its source text.
+    NoEnd { range: String, start: String },
+    /// `base[..]` or `base[..=]`: the whole of `base`, which is `base`.
+    NoBounds { base: String, inclusive: bool },
+    /// `base.get(..)` or `base.get(..=)`, a string's `get` of its whole value; with `safe`,
+    /// `base?.get(..)`, which is `base`.
+    NoBoundsGet {
+        base: String,
+        inclusive: bool,
+        safe: bool,
+    },
+}
+
+/// Which bound of a range is missing.
+pub(crate) enum MissingBound {
+    Start,
+    End,
+    /// `..`: both.
+    Both,
+    /// `..=`: both.
+    BothInclusive,
+}
+
+/// Where a range with a missing bound stands, which gives the help.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RangePlace {
+    ForSource,
+    Elsewhere,
+}
+
+impl RangeForm {
+    fn diagnostic(self, code: Code, at: Span) -> Diagnostic {
+        const MISSING: &str =
+            "a range with a missing bound can only be an index or a string's `get` argument";
+        match self {
+            Self::Anywhere => Diagnostic::coded(
+                code,
+                at,
+                "a range can only be a `for` source, a pattern, an index or a string's `get` argument",
+            ),
+            Self::MissingBound { missing, place } => {
+                let label = match missing {
+                    MissingBound::Start => "this range has no start",
+                    MissingBound::End => "this range has no end",
+                    MissingBound::Both | MissingBound::BothInclusive => "this range has no bounds",
+                };
+                let help = match (missing, place) {
+                    (MissingBound::Both, _) => {
+                        "`..` alone is the whole value; write the value itself"
+                    }
+                    (_, RangePlace::ForSource) => {
+                        "write both bounds, such as `0..n`, or use `loop` with a counter"
+                    }
+                    (_, RangePlace::Elsewhere) => {
+                        "write the range where it is used: in an index or in a string's `get`"
+                    }
+                };
+                Diagnostic::coded(code, at, MISSING)
+                    .with_label(label)
+                    .with_help(help)
+            }
+            Self::NoEnd { range, start } => {
+                Diagnostic::coded(code, at, format!("`{range}` has no end"))
+                    .with_label("this range has no end")
+                    .with_help(format!("write `{start}..`"))
+            }
+            Self::NoBounds { base, inclusive } => {
+                let dots = if inclusive { "..=" } else { ".." };
+                let help = if inclusive {
+                    format!("write `{base}`")
+                } else {
+                    format!("`{base}[..]` is `{base}`; write `{base}`")
+                };
+                Diagnostic::coded(code, at, format!("`{base}[{dots}]` has no bounds"))
+                    .with_label("this range has no bounds")
+                    .with_help(help)
+            }
+            Self::NoBoundsGet {
+                base,
+                inclusive,
+                safe,
+            } => {
+                let dots = if inclusive { "..=" } else { ".." };
+                let (call, value) = if safe {
+                    (format!("{base}?.get"), base)
+                } else {
+                    (format!("{base}.get"), format!("Some({base})"))
+                };
+                let help = if inclusive {
+                    format!("write `{value}`")
+                } else {
+                    format!("`{call}(..)` is `{value}`")
+                };
+                Diagnostic::coded(code, at, format!("`{call}({dots})` has no bounds"))
+                    .with_label("this range has no bounds")
+                    .with_help(help)
+            }
+        }
+    }
+}
+
+/// A range index in the target of an assignment, as written: the source text of its parts, which
+/// the help repeats so that a reader can copy it.
+pub(crate) struct RangeTarget {
+    /// The base of the range index.
+    pub(crate) base: String,
+    /// The start, `None` when missing.
+    pub(crate) start: Option<String>,
+    /// The end that `..end` writes: for `..=b`, the next value, `b + 1`. `None` when missing.
+    pub(crate) end: Option<String>,
+    pub(crate) write: RangeWrite,
+}
+
+/// What the assignment does with the range index.
+pub(crate) enum RangeWrite {
+    /// `xs[a..b] op v` on an array.
+    Array,
+    /// `xs[a..b][i]tail op v` on an array, or `xs[a..b][i]tail.push(v)`: `index` is the index
+    /// into `xs` that `i` stands for, `a + i`, or `i` when there is no `a`, and `tail` the indexes
+    /// after it, if any. `store` is what follows: ` = v`, ` += v`, or `.push(v)`.
+    Element {
+        index: String,
+        tail: String,
+        store: String,
+    },
+    /// `s[a..b] = t` on a string: `value` is `t`, in parentheses if it is more than one term.
+    Replace { value: String },
+    /// `s[a..b] += t` on a string: `value` is `t`, and `grouped` is `t` in parentheses if it is
+    /// more than one term.
+    Append { value: String, grouped: String },
+    /// Any other compound assignment to a range of a string.
+    Other,
+    /// Any of these on a base that is no place, such as a call: no write to it is allowed.
+    Temporary,
+}
+
+/// The range index in the receiver of a `push` that is no place.
+pub(crate) enum RangePush {
+    /// The receiver is the range index: the source text of it.
+    Slice(String),
+    /// The receiver is an element of the range index.
+    Element(RangeTarget),
+}
+
+impl RangeTarget {
+    fn diagnostic(self, code: Code, at: Span) -> Diagnostic {
+        let d = Diagnostic::coded(code, at, "cannot assign to this expression")
+            .with_label("a range index gives a new value");
+        match self.help() {
+            Some(help) => d.with_help(help),
+            None => d,
+        }
+    }
+
+    /// The help, or `None` where no help fits yet.
+    fn help(self) -> Option<String> {
+        let Self {
+            base,
+            start,
+            end,
+            write,
+        } = self;
+        Some(match write {
+            RangeWrite::Array => format!("assign to each element, `{base}[i] = ...`, in a loop"),
+            RangeWrite::Element { index, tail, store } => {
+                format!("write `{base}[{index}]{tail}{store}`; a range index counts from its start")
+            }
+            RangeWrite::Replace { value } => {
+                let before = start.map(|start| format!("{base}[..{start}] + "));
+                let after = end.map(|end| format!(" + {base}[{end}..]"));
+                format!(
+                    "build the new string, such as `{base} = {}{value}{}`",
+                    before.unwrap_or_default(),
+                    after.unwrap_or_default()
+                )
+            }
+            RangeWrite::Append { value, grouped } => match end {
+                Some(end) => format!(
+                    "build the new string, such as `{base} = {base}[..{end}] + {grouped} + {base}[{end}..]`"
+                ),
+                None => format!("write `{base} += {value}`"),
+            },
+            RangeWrite::Other => return None,
+            RangeWrite::Temporary => format!("store `{base}` in a `let mut` variable first"),
+        })
+    }
 }
 
 /// The guard the help of `BoundTwice` or `ConstantInPattern` suggests.
@@ -3209,7 +3440,8 @@ impl From<DiagnosticKind> for Diagnostic {
                 };
                 d.with_help(format!(
                     "a payload must be less than {PAYLOAD_LIMIT_GIB} GiB. Hold a part in a class or an array. \
-                     Such a field adds only the size of a pointer to the payload."
+                     A class field adds the size of a pointer to the payload, and an array field adds \
+                     the size of three pointers."
                 ))
             }
             DiagnosticKind::NotAnInterface { written, at, kind } => {
@@ -3468,19 +3700,32 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::SelfNotFirst { at } => {
                 Diagnostic::coded(code, at, "`self` is only the first parameter of a method")
             }
-            DiagnosticKind::AssignToExpression { at } => {
-                Diagnostic::coded(code, at, "cannot assign to this expression")
-            }
-            DiagnosticKind::PushToTemporary { at } => {
+            DiagnosticKind::AssignToExpression { at, range } => match range {
+                Some(range) => range.diagnostic(code, at),
+                None => Diagnostic::coded(code, at, "cannot assign to this expression"),
+            },
+            DiagnosticKind::PushToTemporary { at, range: None } => {
                 Diagnostic::coded(code, at, "cannot push to a temporary value")
                     .with_label("this value is not stored in a variable")
                     .with_help("store it in a `let mut` variable first")
             }
-            DiagnosticKind::RangeOutsideFor { at } => Diagnostic::coded(
-                code,
+            DiagnosticKind::PushToTemporary {
                 at,
-                "ranges are only allowed in `for` and in patterns",
-            ),
+                range: Some(range),
+            } => {
+                let d = Diagnostic::coded(code, at, "cannot push to a temporary value")
+                    .with_label("a range index gives a new value");
+                match range {
+                    RangePush::Slice(range) => d.with_help(format!(
+                        "keep the slice in a variable first: `let mut t = {range}`, then `t.push(...)`"
+                    )),
+                    RangePush::Element(target) => match target.help() {
+                        Some(help) => d.with_help(help),
+                        None => d,
+                    },
+                }
+            }
+            DiagnosticKind::RangeOutsideFor { at, form } => form.diagnostic(code, at),
             DiagnosticKind::EqualityChain { at } => {
                 Diagnostic::coded(code, at, "`==`, `!=` and `is` do not chain")
                     .with_help("join the comparisons with `&&`")
@@ -4273,9 +4518,31 @@ impl From<DiagnosticKind> for Diagnostic {
             } else {
                 format!("`{class}` may be a class, and every element would be the same object")
             }),
-            DiagnosticKind::CannotIndex { ty, at } => {
-                Diagnostic::coded(code, at, format!("cannot index `{ty}`"))
-                    .with_help("only arrays can be indexed")
+            DiagnosticKind::CannotIndex { ty, at, range } => {
+                Diagnostic::coded(code, at, format!("cannot index `{ty}`")).with_help(if range {
+                    "only arrays and strings take a range index"
+                } else {
+                    "only arrays can be indexed"
+                })
+            }
+            DiagnosticKind::StringIndex { at } => {
+                Diagnostic::coded(code, at, "a string has no single index")
+                    .with_label("this is a string")
+                    .with_help(
+                        "for bytes, write `let bs = s.bytes()` once, then `bs[i]`; for characters, write `let cs = s.chars()` once, then `cs[i]`",
+                    )
+            }
+            DiagnosticKind::StringGetNeedsRange { at } => {
+                Diagnostic::coded(code, at, "a string's `get` takes a range")
+                    .with_label("this is not a range")
+                    .with_help("write a range, such as `s.get(1..3)`")
+            }
+            DiagnosticKind::ArrayGetTakesIndex { at } => {
+                Diagnostic::coded(code, at, "an array's `get` takes an `i64`, not a range")
+                    .with_label("this is a range")
+                    .with_help(
+                        "use `xs[a..b]`, which stops the program when the range is out of bounds",
+                    )
             }
             DiagnosticKind::SumNeedsNumbers {
                 method,
@@ -5204,6 +5471,43 @@ impl From<DiagnosticKind> for Diagnostic {
                         None => d,
                     }
                 }
+                ForeignRange::Colon {
+                    base,
+                    base_place,
+                    start,
+                    end,
+                    whole,
+                } => {
+                    let negative = [&start, &end]
+                        .into_iter()
+                        .flatten()
+                        .any(|b| matches!(b, ColonBound::Negative));
+                    if negative {
+                        // No fix and no rewrite: the parser cannot see the type of `base`, which
+                        // counts bytes for a string, and a bound can change `base`.
+                        let head = "Sisu has no negative index";
+                        let message = if base_place {
+                            format!("{head}: count from `{base}.len()`")
+                        } else {
+                            head.to_string()
+                        };
+                        Diagnostic::coded(code, at, message)
+                    } else {
+                        let text = |b: Option<ColonBound>| match b {
+                            Some(ColonBound::Plain(text)) => text,
+                            _ => String::new(),
+                        };
+                        let written = match (start, end) {
+                            (None, None) => base,
+                            (start, end) => format!("{base}[{}..{}]", text(start), text(end)),
+                        };
+                        let d = Diagnostic::coded(code, at, format!("write `{written}`"));
+                        match whole {
+                            Some(whole) => d.with_fix(safe_fix("remove the `[:]`", whole, "")),
+                            None => d.with_fix(safe_fix("write `..`", at, "..")),
+                        }
+                    }
+                }
                 ForeignRange::Ellipsis { start, end } => {
                     let end = end.as_deref().unwrap_or("end");
                     Diagnostic::coded(
@@ -5698,7 +6002,6 @@ fn is_format(c: char) -> bool {
         | '\u{E0001}' | '\u{E0020}'..='\u{E007F}')
 }
 
-/// The unsafe fix `message` that replaces `span` with `replacement`.
 /// The safe fix `message` that replaces `span` with `replacement`.
 fn safe_fix(message: &str, span: Span, replacement: &str) -> Fix {
     Fix {

@@ -66,3 +66,29 @@ extend<T: Eq> [T] {
         false
     }
 }
+
+// The first element, the last element, and the element at `i`, or `None` where an index would
+// panic. An array's `get` takes an index only; the checker reports a range given to it. No body
+// calls another method of the prelude, which would make every program instantiate.
+extend<T> [T] {
+    fn first(self) -> T? {
+        if self.len() == 0 {
+            return None
+        }
+        self[0]
+    }
+
+    fn last(self) -> T? {
+        if self.len() == 0 {
+            return None
+        }
+        self[self.len() - 1]
+    }
+
+    fn get(self, i: i64) -> T? {
+        if i < 0 || i >= self.len() {
+            return None
+        }
+        self[i]
+    }
+}

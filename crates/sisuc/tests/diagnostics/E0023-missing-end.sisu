@@ -1,0 +1,4 @@
+fn main() {
+    print(1)
+    let r = 5..
+}

@@ -108,19 +108,50 @@ impl<'a> Source<'a> {
         self.slice(span.range())
     }
 
-    /// The type that `span` covers, as one line for a diagnostic. A span with no line break gives
-    /// its text as written. Else each `//` comment goes, and a run of white space with a line
-    /// break goes too after `<`, `(`, `[` or `.` and before `<`, `>`, `)`, `]`, `.`, `?` or `,`,
-    /// and is one space elsewhere. A type holds no string, so a `//` is always a comment.
+    /// The type that `span` covers, as one line for a diagnostic. A type holds no string, so
+    /// every `//` in it is a comment. A run of white space with a line break goes after `<`, `(`,
+    /// `[` or `.` and before `<`, `>`, `)`, `]`, `.`, `?` or `,`, and is one space elsewhere.
     pub(crate) fn type_text(&self, span: Span) -> Cow<'a, str> {
+        self.one_line(span, |_| true, true)
+    }
+
+    /// The expression that `span` covers, as one line for a diagnostic; `comments` are the
+    /// offsets where the comments of the file start, so a `//` inside a string literal stays, and
+    /// `newlines` are the offsets of the line breaks that end a statement. A span with no line
+    /// break, or with a break that ends a statement, gives its text as written: one line would
+    /// run two statements together. Else each comment goes, and a run of white space with a line
+    /// break goes too after `(`, `[` or `.` and before `)`, `]`, `.`, `?` or `,`, and is one
+    /// space elsewhere: `<` and `>` are operators here.
+    pub(crate) fn line_text(
+        &self,
+        span: Span,
+        comments: &[usize],
+        newlines: &[usize],
+    ) -> Cow<'a, str> {
+        let at = newlines.partition_point(|&n| n < span.start());
+        if newlines.get(at).is_some_and(|&n| n < span.end()) {
+            return Cow::Borrowed(self.text(span));
+        }
+        self.one_line(span, |at| comments.binary_search(&at).is_ok(), false)
+    }
+
+    /// The one-line text of `span`, where `is_comment` says whether a `//` at an offset starts a
+    /// comment, and `angles` whether `<` and `>` join like brackets.
+    fn one_line(
+        &self,
+        span: Span,
+        is_comment: impl Fn(usize) -> bool,
+        angles: bool,
+    ) -> Cow<'a, str> {
         let text = self.text(span);
         if !text.contains('\n') {
             return Cow::Borrowed(text);
         }
+        let comment = |at: usize| text[at..].starts_with("//") && is_comment(span.start() + at);
         let mut out = String::with_capacity(text.len());
         let mut at = 0;
         while let Some(ch) = text[at..].chars().next() {
-            if !ch.is_whitespace() && !text[at..].starts_with("//") {
+            if !ch.is_whitespace() && !comment(at) {
                 out.push(ch);
                 at += ch.len_utf8();
                 continue;
@@ -130,7 +161,7 @@ impl<'a> Source<'a> {
             let mut broken = false;
             while end < text.len() {
                 let tail = &text[end..];
-                if tail.starts_with("//") {
+                if comment(end) {
                     end += tail.find('\n').unwrap_or(tail.len());
                     broken = true;
                 } else if let Some(ch) = tail.chars().next().filter(|ch| ch.is_whitespace()) {
@@ -143,8 +174,9 @@ impl<'a> Source<'a> {
             if !broken {
                 out.push_str(&text[at..end]);
             } else if let Some(next) = text[end..].chars().next()
-                && !out.ends_with(['<', '(', '[', '.'])
-                && !matches!(next, '<' | '>' | ')' | ']' | '.' | '?' | ',')
+                && !out.ends_with(|ch| matches!(ch, '(' | '[' | '.') || angles && ch == '<')
+                && !(matches!(next, ')' | ']' | '.' | '?' | ',')
+                    || angles && matches!(next, '<' | '>'))
             {
                 out.push(' ');
             }
@@ -252,6 +284,57 @@ mod tests {
                 !written.contains('\n'),
                 "type {written:?} should borrow only with no line break"
             );
+        }
+    }
+
+    #[test]
+    fn line_text_should_drop_only_the_comments_the_lexer_found() {
+        // The text starts at offset 100, and an offset in a list counts from the start of the file.
+        let cases = [
+            ("a // c\n  + b", &[2][..], &[][..], "a + b"),
+            ("c\n  .xs[0]", &[], &[], "c.xs[0]"),
+            ("f(a // c\n  )", &[4], &[], "f(a)"),
+            ("\"a//b\" +\n  \"c//d\"", &[], &[], "\"a//b\" + \"c//d\""),
+            ("\"a//b\" + // c\n  \"d\"", &[9], &[], "\"a//b\" + \"d\""),
+        ];
+        for (written, comments, newlines, want) in cases {
+            let source = Source::new(written, 100);
+            let shift = |list: &[usize]| list.iter().map(|at| at + 100).collect::<Vec<_>>();
+            let span = Span::new(100, 100 + written.len());
+            let got = source.line_text(span, &shift(comments), &shift(newlines));
+            assert_eq!(got, want, "text {written:?}");
+        }
+    }
+
+    #[test]
+    fn line_text_should_keep_a_line_break_that_ends_a_statement() {
+        // The break after `1` and the one after `2` end a statement; the span ends at the `}`.
+        let written = "if c {\n  let y = 1\n  y * 2\n} else { 3 }";
+        let source = Source::new(written, 100);
+        let (span, newlines) = (Span::new(100, 100 + written.len()), [118, 126]);
+        assert_eq!(source.line_text(span, &[], &newlines), written);
+        // A break that ends a statement after the span does not count: this span ends before the
+        // one at 118, and holds an ordinary break, which joins.
+        let span = Span::new(100, 116);
+        assert_eq!(source.line_text(span, &[], &newlines), "if c { let y =");
+    }
+
+    #[test]
+    fn line_text_should_not_join_an_operator_that_ends_or_starts_a_line() {
+        let cases = [
+            ("a <\n  b", "a < b"),
+            ("a\n  < b", "a < b"),
+            ("a >\n  b", "a > b"),
+            ("a\n  > b", "a > b"),
+            ("a <=\n  b", "a <= b"),
+            ("a\n  >= b", "a >= b"),
+            ("a +\n  b", "a + b"),
+            ("f(\n  a,\n  b\n)", "f(a, b)"),
+        ];
+        for (written, want) in cases {
+            let source = Source::new(written, 0);
+            let got = source.line_text(Span::new(0, written.len()), &[], &[]);
+            assert_eq!(got, want, "text {written:?}");
         }
     }
 

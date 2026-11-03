@@ -1,0 +1,14 @@
+error[E0132]: write `xs[..3]`
+ --> E0132-colon-no-start.sisu:3:14
+  |
+3 |     print(xs[:3])
+  |              ^
+  |
+help: write `..`
+  |
+3 -     print(xs[:3])
+3 +     print(xs[..3])
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0132

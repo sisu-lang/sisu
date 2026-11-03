@@ -138,6 +138,12 @@ fn an_optional_of_an_optional_should_be_peeled_first() {
     let src = with_body("let r = aa?.b");
     let d = diagnostic(&src, Code::MayBeNone, (2, 13, "aa"), &[]);
     assert_eq!(fixes(&src, &d), []);
+    // A member that does not exist is reported with the optional, and one that does is not.
+    codes(
+        &with_body("let r = aa?.nope"),
+        &[(Code::MayBeNone, (2, 13)), (Code::NoMember, (2, 17))],
+    );
+    codes(&with_body("let r = aa?.b"), &[(Code::MayBeNone, (2, 13))]);
     let src = with_body("let r = p is q");
     let d = diagnostic(&src, Code::IsNeedsObjects, (2, 13, "p"), &[]);
     assert_eq!(fixes(&src, &d), []);

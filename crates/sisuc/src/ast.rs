@@ -18,6 +18,8 @@ pub(crate) struct Program {
     pub(crate) quotes: Vec<usize>,
     /// Where each line break is, so that a fix does not wrap one in a string literal.
     pub(crate) breaks: Vec<usize>,
+    /// Where each line break that ends a statement is, so that a help keeps a block as written.
+    pub(crate) newlines: Vec<usize>,
 }
 
 /// A function, class, enum, constant, alias, interface or `extend` block that holds a syntax
@@ -387,16 +389,22 @@ pub(crate) enum StmtKind {
     Expr(Expr),
 }
 
-/// What a `for` walks; a range belongs to the `for` and is not an expression.
+/// What a `for` walks: an array, or a range, which the checker takes only with both bounds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ForSource {
     Array(Expr),
-    /// `start..end`, or `start..=end` when `inclusive`.
-    Range {
-        start: Expr,
-        end: Expr,
-        inclusive: bool,
-    },
+    Range(Range),
+}
+
+/// `start..end`, `start..=end` when `inclusive`, and the forms with a bound left out: `start..`,
+/// `..end`, `..=end` and `..`. `span` covers the whole range. Only the checker rejects a missing
+/// bound, where the range is not an index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Range {
+    pub(crate) start: Option<Box<Expr>>,
+    pub(crate) end: Option<Box<Expr>>,
+    pub(crate) inclusive: bool,
+    pub(crate) span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -504,11 +512,14 @@ pub(crate) enum ExprKind {
         value: Box<Expr>,
         len: Box<Expr>,
     },
-    /// `base[index]`.
+    /// `base[index]`; `index` is a `Range` for a range index.
     Index {
         base: Box<Expr>,
         index: Box<Expr>,
     },
+    /// `a..b` and its forms. The checker accepts it as a `for` source, an index or a string's
+    /// `get` argument.
+    Range(Range),
     /// `lhs is rhs`.
     Is {
         lhs: Box<Expr>,
@@ -1176,14 +1187,7 @@ impl fmt::Display for Stmt {
                 write!(f, "(for{} {} ", Label(label), name.name)?;
                 match source {
                     ForSource::Array(e) => write!(f, "{e} {body})"),
-                    ForSource::Range {
-                        start,
-                        end,
-                        inclusive,
-                    } => {
-                        let op = if *inclusive { "..=" } else { ".." };
-                        write!(f, "({op} {start} {end}) {body})")
-                    }
+                    ForSource::Range(range) => write!(f, "{range} {body})"),
                 }
             }
             StmtKind::Assign { target, value } => write!(f, "(= {target} {value})"),
@@ -1193,6 +1197,22 @@ impl fmt::Display for Stmt {
                 write!(f, "({op}= {target} {value})")
             }
             StmtKind::Expr(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+/// A range as the tree prints it: `(.. 0 3)`, and `_` for a bound left out.
+impl fmt::Display for Range {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let op = if self.inclusive { "..=" } else { ".." };
+        write!(f, "({op} ")?;
+        match &self.start {
+            Some(start) => write!(f, "{start} ")?,
+            None => f.write_str("_ ")?,
+        }
+        match &self.end {
+            Some(end) => write!(f, "{end})"),
+            None => f.write_str("_)"),
         }
     }
 }
@@ -1290,6 +1310,7 @@ impl fmt::Display for Expr {
             }
             ExprKind::ArrayFill { value, len } => write!(f, "(array-fill {value} {len})"),
             ExprKind::Index { base, index } => write!(f, "(index {base} {index})"),
+            ExprKind::Range(range) => range.fmt(f),
             ExprKind::If {
                 cond,
                 then_block,
@@ -1528,6 +1549,7 @@ mod tests {
             comments: Vec::new(),
             quotes: Vec::new(),
             breaks: Vec::new(),
+            newlines: Vec::new(),
         };
         assert_eq!(
             program.to_string(),

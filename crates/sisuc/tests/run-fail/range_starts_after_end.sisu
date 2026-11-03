@@ -1,0 +1,7 @@
+// GIVEN `let xs = [1, 2, 3, 4, 5]` and `print(xs[3..1])`
+// WHEN the program runs
+// THEN it exits with code 101 and the panic is `range starts at 3 but ends at 1` (the start is after the end)
+fn main() {
+    let xs = [1, 2, 3, 4, 5]
+    print(xs[3..1])
+}

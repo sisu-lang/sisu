@@ -33,7 +33,7 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0019](E0019.md) | error | `mut` parameter |
 | [E0020](E0020.md) | error | `self` that is not the first parameter |
 | [E0021](E0021.md) | error | assignment to something that is not a place |
-| [E0023](E0023.md) | error | range outside `for` and patterns |
+| [E0023](E0023.md) | error | range outside a `for`, a pattern, an index or a string's `get` |
 | [E0024](E0024.md) | error | chained `==`, `!=` or `is` |
 | [E0025](E0025.md) | error | comparison chain that turns around |
 | [E0026](E0026.md) | error | name taken by a built-in |
@@ -77,7 +77,7 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0065](E0065.md) | error | constructor argument without a label |
 | [E0066](E0066.md) | error | constructor that names its fields out of order |
 | [E0067](E0067.md) | error | array filled with one object |
-| [E0068](E0068.md) | error | index of something that is not an array |
+| [E0068](E0068.md) | error | index of a value that is not an array, or a single index of a string |
 | [E0069](E0069.md) | error | `sum` of an array that is not `[i64]` or `[f64]` |
 | [E0070](E0070.md) | error | method called as a function |
 | [E0071](E0071.md) | error | nesting too deep |

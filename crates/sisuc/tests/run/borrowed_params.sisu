@@ -1,7 +1,12 @@
 // Each callee below recurses and works after its recursive call, so that it is not a tail call.
-// `keeps` and `gives` pass the depth `i % 2 + 1` from a loop of three iterations, which `-O2`
-// keeps as one call in each. `main` passes the argument count, known only at run time. The
-// markers check that these calls survive `-O2`, so each value crosses a real call.
+// `-O2` knows that a length is not negative, and sees the length of a literal. So the test of a
+// length that gates the work is `< 2`, and each call gets a text or an array of run-time length
+// that it cannot decide is short: the argument of each call has two bytes or elements.
+// `keeps` and `gives` pass the depth `i % 2 + 1` from a loop that runs three times. It ends when
+// `i` reaches the length of `saved`, which a call gives, or of `xs`, so `-O2` cannot count its
+// iterations and unroll it: it keeps one call in each. `main` passes the argument count, known
+// only at run time. The markers check that these calls survive `-O2`, so each value crosses a real
+// call.
 // args: a
 // o2-calls: keeps keep 1
 // o2-calls: gives give 1
@@ -47,7 +52,7 @@ fn name_of(w: W, depth: i64) -> string {
 
 // Prints `s` once, at the deepest level.
 fn len(s: string, depth: i64) -> i64 {
-    if depth > 0 && len(s, depth - 1) < 0 {
+    if depth > 0 && len(s, depth - 1) < 2 {
         return -1
     }
     if depth == 0 {
@@ -59,14 +64,14 @@ fn len(s: string, depth: i64) -> i64 {
 fn size(xs: [i64]) -> i64 { xs.len() }
 
 fn look(xs: [i64], depth: i64) -> i64 {
-    if depth > 0 && look(xs, depth - 1) < 0 {
+    if depth > 0 && look(xs, depth - 1) < 2 {
         return -1
     }
     size(xs)
 }
 
 fn slen(s: string, depth: i64) -> i64 {
-    if depth > 0 && slen(s, depth - 1) < 0 {
+    if depth > 0 && slen(s, depth - 1) < 2 {
         return -1
     }
     s.len()
@@ -92,7 +97,7 @@ fn keeps() {
     let mut xs = [0, 0, 0]
     let mut saved = [0, 0, 0]
     let mut i = 0
-    while i < 3 {
+    while i < saved.len() && i < xs.len() {
         xs[i] = 1
         print(saved[i])
         saved = keep(xs, i % 2 + 1)
@@ -105,7 +110,7 @@ fn gives() {
     let mut xs = [0, 0, 0]
     let mut saved = [0, 0, 0]
     let mut i = 0
-    while i < 3 {
+    while i < saved.len() && i < xs.len() {
         xs[i] = 1
         print(saved[i])
         saved = give(xs, i % 2 + 1)
@@ -123,6 +128,6 @@ fn main(args: [string]) {
     let n = 3
     print(a("p{n}", d).s)            // p3
     print(len("v{k}", d))            // v4, then 2
-    print(look([1, k], d))           // 2
+    print(look([k; d + 1], d))       // 2
     print(slen("w{k}{k}", d))        // 3
 }

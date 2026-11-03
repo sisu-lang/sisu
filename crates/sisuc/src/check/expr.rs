@@ -8,7 +8,8 @@ use super::{
 };
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
-    Code, Definition, Diagnostic, DiagnosticKind, Expected, Literal, MismatchSource, suggestion,
+    Code, Definition, Diagnostic, DiagnosticKind, Expected, Literal, MismatchSource, RangePlace,
+    suggestion,
 };
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -133,6 +134,11 @@ impl Checker<'_> {
             ExprKind::ArrayLit(elements) => self.array_lit(e.span, elements, expected),
             ExprKind::ArrayFill { value, len } => self.array_fill(e.span, value, len, expected),
             ExprKind::Index { base, index } => self.index(e.span, base, index),
+            ExprKind::Range(range) => {
+                let d = Self::range_outside(range, RangePlace::Elsewhere);
+                self.diagnostics.push(d);
+                Err(Poisoned::error())
+            }
             ExprKind::NoneLit => self.none(e.span, expected),
             ExprKind::Name(name) => self.name(e.span, *name, expected),
             ExprKind::Call {

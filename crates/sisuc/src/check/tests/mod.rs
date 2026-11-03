@@ -27,6 +27,7 @@ mod parity;
 mod patterns;
 mod places;
 mod prelude;
+mod ranges;
 mod recursion;
 mod shadowing;
 mod strings;

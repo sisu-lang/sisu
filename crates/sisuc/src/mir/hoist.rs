@@ -289,6 +289,7 @@ impl Walk {
             | Rvalue::Unwrap(operand)
             | Rvalue::Wrap(operand)
             | Rvalue::ToAny(operand)
+            | Rvalue::Trim(operand)
             | Rvalue::Chars(operand)
             | Rvalue::Bytes(operand)
             | Rvalue::Words(operand)
@@ -310,6 +311,14 @@ impl Walk {
             | Rvalue::Math { operands, .. } => {
                 for operand in operands {
                     self.operand(operand);
+                }
+            }
+            Rvalue::Slice {
+                base, start, end, ..
+            } => {
+                self.operand(base);
+                for bound in start.iter().chain(end) {
+                    self.operand(bound);
                 }
             }
             Rvalue::ArrayFill {

@@ -17,7 +17,7 @@ small_sections=20
 
 cargo build --release --locked -p sisuc -p sisu-runtime-mimalloc
 rm -rf "$out"
-mkdir -p "$out"/{fib,sieve,binary_trees,quicksort,nbody,mandelbrot,fannkuch_redux,large,large_20,build_hello,build_binary_trees,build_large,build_large_20,strings,enum_match,shared_arrays,compare,tree_rewrite,interp,interfaces,any_shapes,show,selfhost_lexer,build_selfhost_lexer}
+mkdir -p "$out"/{fib,sieve,binary_trees,quicksort,nbody,mandelbrot,fannkuch_redux,large,large_20,build_hello,build_binary_trees,build_large,build_large_20,strings,enum_match,shared_arrays,slice_keep,slice_loop,compare,tree_rewrite,interp,interfaces,any_shapes,show,selfhost_lexer,build_selfhost_lexer}
 
 fail() {
     echo "codspeed-prep: $*" >&2
@@ -71,7 +71,7 @@ reduce nbody 's/let steps = 5_000_000/let steps = 100_000/'
 reduce mandelbrot 's/let n = 4000/let n = 400/'
 reduce fannkuch_redux 's/fannkuch(10)/fannkuch(9)/'
 # bench/features/ programs are sized for simulation and Sisu-only: no reduction.
-for b in strings enum_match shared_arrays compare tree_rewrite interp interfaces any_shapes show; do
+for b in strings enum_match shared_arrays slice_keep slice_loop compare tree_rewrite interp interfaces any_shapes show; do
     build "$b" "bench/features/$b/main.sisu" "$out/$b/main"
 done
 # The lexer in Sisu, which the benchmark runs on a fixed input.
@@ -341,6 +341,8 @@ expected() {
         strings) printf '%s\n' 186741 9800 10000 12073291 ;;
         enum_match) printf '%s\n' 457364 816672 ;;
         shared_arrays) printf '%s\n' 20000 519500 199990000 6000 5999 ;;
+        slice_keep) echo 3998000 ;;
+        slice_loop) echo 5098000000 ;;
         compare) printf '%s\n' 1494 640 2880 ;;
         tree_rewrite) printf '%s\n' 732347 163697 ;;
         interp) printf '%s\n' 549000 126 ;;

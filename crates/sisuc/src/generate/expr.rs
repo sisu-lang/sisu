@@ -86,6 +86,13 @@ pub(crate) fn arithmetic_value(ty: &Ty, op: usize, l: i64, r: i64) -> Result<i64
 
 /// Every this many expressions, the value of one goes through `dbg`.
 const DBG_EVERY: u64 = 37;
+/// Every this many expressions, one that wants an array is a range of an array.
+const SLICE_EVERY: u64 = 200;
+/// Every this many expressions, one that an array local's element can be is that element through
+/// `first`, `last` or `get`, under a default.
+const SAFE_ELEMENT_EVERY: u64 = 11;
+/// Every this many expressions, one that wants a string is a substring.
+const SUBSTRING_EVERY: u64 = 40;
 
 /// The types a `const` can have.
 const CONSTANT: &[Ty] = Ty::VALUES;
@@ -102,6 +109,9 @@ enum Rule {
     Name,
     /// `(v[i])` of an array local, in bounds.
     Element,
+    /// `(v.first() ?? d)`, `(v.last() ?? d)` or `(v.get(i) ?? d)` of an array local, with `i` in
+    /// bounds or not.
+    SafeElement,
     Negate,
     Not,
     Arithmetic,
@@ -142,6 +152,12 @@ enum Rule {
     /// `string(e)` of a `[char]`.
     FromChars,
     Index,
+    /// `({ let a = i % (xs.len() + 1); xs[a..a + j % (xs.len() - a + 1)] })` of an array local,
+    /// or another of the range forms: a range in bounds, whatever the length of `xs`.
+    Slice,
+    /// `({ let a = i % (s.len() + 1); s.get(a..b) ?? "" })` of a string local, or
+    /// `({ let t = "abz0"; let a = ...; t[a..b] })` of an ASCII literal: a substring in bounds.
+    StrSlice,
     /// `((e).g)` of a class object.
     Field,
     /// `((o)?.g)` of an optional class object.
@@ -207,6 +223,8 @@ const STRING_CHARS: &[&str] = &[
 ];
 /// The chars of `STRING_CHARS` a panic message may hold.
 const MESSAGE_CHARS: usize = 24;
+/// The first chars of `STRING_CHARS`, which are one byte each and need no escape.
+const ASCII_CHARS: usize = 6;
 /// Char literals and their values, smallest first.
 pub(crate) const CHARS: &[(&str, char)] = &[
     ("'a'", 'a'),
@@ -281,7 +299,26 @@ impl Gen<'_> {
             rules.retain(|rule| !matches!(rule, Rule::Fallible));
             rules.insert(0, Rule::Fallible);
         }
-        let rule = rules[self.pick(rules.len())];
+        let mut rule = rules[self.pick(rules.len())];
+        // Now and then an array is a range of an array, and a string a substring. The turn comes
+        // by count, as `dbg`'s does, so that it moves no byte of the data in a program that has
+        // none.
+        if !self.one_line && self.nesting < MAX_NESTING && self.blocks < MAX_BLOCKS {
+            if matches!(ty, Ty::Array(_)) && self.expressions.is_multiple_of(SLICE_EVERY) {
+                rule = Rule::Slice;
+            } else if *ty == Ty::String && self.expressions.is_multiple_of(SUBSTRING_EVERY) {
+                rule = Rule::StrSlice;
+            }
+        }
+        // On a turn of its own by count, an element comes through `first`, `last` or `get`, if no
+        // slice or substring takes the turn.
+        if !matches!(rule, Rule::Slice | Rule::StrSlice)
+            && self.nesting < MAX_NESTING
+            && self.expressions.is_multiple_of(SAFE_ELEMENT_EVERY)
+            && self.scope.vars.iter().any(|var| holds(var, ty, max))
+        {
+            rule = Rule::SafeElement;
+        }
         let start = self.w.mark();
         if debugged {
             self.w.text("dbg(");
@@ -544,7 +581,10 @@ impl Gen<'_> {
                 Info::of(&[chars], chars.size, true)
             }
             Rule::Index => self.index(ty, max),
+            Rule::Slice => self.slice(ty, max),
+            Rule::StrSlice => self.substring(max),
             Rule::Element => self.element(ty, max),
+            Rule::SafeElement => self.safe_element(ty, max),
             Rule::Field => self.field(ty, max, false),
             Rule::SafeField => self.field(ty, max, true),
             Rule::SafeMethod => self.safe_method(ty, max),
@@ -937,6 +977,138 @@ impl Gen<'_> {
         let at = self.upto(len - 1);
         self.w.text(&format!("({name}[{at}])"));
         Info::of(&[], elem, false)
+    }
+
+    /// `(v.first() ?? d)`, `(v.last() ?? d)` or `(v.get(i) ?? d)` of an array local `v` whose
+    /// elements are `ty`s of at most `max`, with `i` from `-1` through `len + 1`: `get`
+    /// gives `None` where an index would panic, and `d` is the value then.
+    fn safe_element(&mut self, ty: &Ty, max: u64) -> Info {
+        let vars: Vec<usize> = (0..self.scope.vars.len())
+            .filter(|&v| holds(&self.scope.vars[v], ty, max))
+            .collect();
+        let pick = self.pick(vars.len());
+        let var = &self.scope.vars[vars[pick]];
+        let (name, len, elem) = (var.name.clone(), var.len, var.elem);
+        let call = match self.pick(3) {
+            0 => "first()".to_string(),
+            1 => "last()".to_string(),
+            _ => format!("get({})", self.upto(len + 2).cast_signed() - 1),
+        };
+        self.w.text(&format!("({name}.{call} ?? "));
+        let default = self.conditionally(|g| g.expr(ty, max));
+        self.w.text(")");
+        Info::of(&[default], default.size.max(elem), false)
+    }
+
+    /// `xs[a..b]` of an array local `xs` of type `ty`, or of a block's own local `b` that an array
+    /// literal gives when `ty` has no local or by chance, in one of the five forms of range, with
+    /// `a = i % (xs.len() + 1)` and `b = a + j % (xs.len() - a + 1)` for non-negative literals
+    /// `i` and `j`: so `0 <= a <= b <= xs.len()` for any length. `..=b - 1` and `a..=b - 1` are
+    /// the `..=` forms; `a..=a - 1` is an empty range in bounds. A block binds `a`.
+    fn slice(&mut self, ty: &Ty, max: u64) -> Info {
+        let Ty::Array(element) = ty else {
+            unreachable!("only an array is sliced")
+        };
+        let vars: Vec<usize> = (0..self.scope.vars.len())
+            .filter(|&v| self.scope.vars[v].ty == *ty && self.scope.vars[v].size <= max)
+            .collect();
+        self.w.text("({ ");
+        self.blocks += 1;
+        // `None` for a literal that the block binds, whose parts are the literal's.
+        let local = if !vars.is_empty() && self.pick(2) == 0 {
+            let pick = self.pick(vars.len());
+            let var = &self.scope.vars[vars[pick]];
+            Some((var.name.clone(), var.size))
+        } else {
+            None
+        };
+        let (name, base) = if let Some((name, size)) = local {
+            (name, Info::leaf(size))
+        } else {
+            // The type is written, as an empty literal has none of its own.
+            self.w.text(&format!("let b: {ty} = "));
+            let literal = self.array_literal(element, max, false);
+            self.w.text("; ");
+            ("b".to_string(), literal)
+        };
+        let (bind, range) = self.bounded_range(&name);
+        self.w.text(&format!("{bind}{name}[{range}] }})"));
+        self.blocks -= 1;
+        // It reads a local that a write may change.
+        Info::of(&[base], base.size, false)
+    }
+
+    /// `let a = i % (name.len() + 1); ` and a range over `name` in one of the five forms, with
+    /// `b = a + j % (name.len() - a + 1)` for non-negative literals `i` and `j`: so
+    /// `0 <= a <= b <= name.len()` for any length. `..=b - 1` and `a..=b - 1` are the `..=` forms;
+    /// `a..=a - 1` is an empty range in bounds.
+    fn bounded_range(&mut self, name: &str) -> (String, String) {
+        let (i, j) = (self.offset(), self.offset());
+        let end = format!("a + {j} % ({name}.len() - a + 1)");
+        let range = match self.pick(5) {
+            0 => format!("a..{end}"),
+            1 => format!("a..={end} - 1"),
+            2 => "a..".to_string(),
+            3 => format!("..{end}"),
+            _ => format!("..={end} - 1"),
+        };
+        (format!("let a = {i} % ({name}.len() + 1); "), range)
+    }
+
+    /// A substring in bounds, in a block: `s.get(r) ?? ""` of a string local `s`, or of a string
+    /// `t` that the block binds, which gives `""` where a bound cuts a character; or `t[r]` of an
+    /// ASCII literal `t` that the block binds, which no bound can cut. The range is that of
+    /// `bounded_range`.
+    fn substring(&mut self, max: u64) -> Info {
+        let vars: Vec<usize> = (0..self.scope.vars.len())
+            .filter(|&v| self.scope.vars[v].ty == Ty::String && self.scope.vars[v].size <= max)
+            .collect();
+        self.w.text("({ ");
+        self.blocks += 1;
+        let form = if vars.is_empty() {
+            1 + self.pick(2)
+        } else {
+            self.pick(3)
+        };
+        let info = match form {
+            0 => {
+                let pick = self.pick(vars.len());
+                let var = &self.scope.vars[vars[pick]];
+                let (name, size) = (var.name.clone(), var.size);
+                let (bind, range) = self.bounded_range(&name);
+                self.w
+                    .text(&format!("{bind}{name}.get({range}) ?? \"\" }})"));
+                Info::leaf(size)
+            }
+            1 => {
+                self.w.text("let t = ");
+                let base = self.expr(&Ty::String, max);
+                self.w.text("; ");
+                let (bind, range) = self.bounded_range("t");
+                self.w.text(&format!("{bind}t.get({range}) ?? \"\" }})"));
+                base
+            }
+            _ => {
+                let len = self.upto(max.min(8));
+                // The first six of `STRING_CHARS` are one byte each.
+                let text = self.string_text(len, ASCII_CHARS);
+                self.w.text(&format!("let t = \"{text}\"; "));
+                let (bind, range) = self.bounded_range("t");
+                self.w.text(&format!("{bind}t[{range}] }})"));
+                Info::literal(len, None)
+            }
+        };
+        self.blocks -= 1;
+        // It reads a local that a write may change.
+        Info::of(&[info], info.size, false)
+    }
+
+    /// A non-negative `i64` literal: small, or the largest.
+    fn offset(&mut self) -> String {
+        match self.pick(8) {
+            0 => i64::MAX.to_string(),
+            _ => self.upto(99).to_string(),
+        }
     }
 
     /// `([a, b, ...][i])` of a literal, with `i` in bounds.
@@ -2213,9 +2385,14 @@ fn safe_member(ty: &Ty) -> &Ty {
     }
 }
 
+/// Whether `var` is an array whose elements are `ty`s of at most `max`.
+fn holds(var: &Var, ty: &Ty, max: u64) -> bool {
+    matches!(&var.ty, Ty::Array(element) if **element == *ty) && var.elem <= max
+}
+
 /// Whether an index into `var` reads a `ty` of at most `max` in bounds.
 fn indexable(var: &Var, ty: &Ty, max: u64) -> bool {
-    matches!(&var.ty, Ty::Array(element) if **element == *ty) && var.len > 0 && var.elem <= max
+    holds(var, ty, max) && var.len > 0
 }
 
 /// `n` with a `_` between each group of three digits.
@@ -2235,7 +2412,10 @@ fn separated(n: i64) -> String {
 mod tests {
     use arbitrary::Unstructured;
 
-    use super::{Gen, MAX_SIZE, Rule, Ty, Var, arithmetic_value};
+    use super::{
+        Gen, MAX_BLOCKS, MAX_NESTING, MAX_SIZE, Rule, SAFE_ELEMENT_EVERY, SLICE_EVERY, Ty, Var,
+        arithmetic_value,
+    };
     use crate::generate::writer::Rewrite;
 
     #[test]
@@ -2336,6 +2516,235 @@ mod tests {
         for n in [29794, 96755] {
             crate::generate::generate(&crate::generate::coverage::seed(n));
         }
+    }
+
+    /// GIVEN the generator's range rule on an array type
+    /// WHEN it writes a range from many bytes of data
+    /// THEN each of the five forms of range comes up, and each has `a` as its start or in its end
+    #[test]
+    fn a_slice_should_be_written_in_each_form_of_range() {
+        let ty = Ty::Array(Box::new(Ty::I64));
+        let forms = ["[a..a + ", "[a..=a + ", "[a..]", "[..a + ", "[..=a + "];
+        let mut seen = [false; 5];
+        for byte in 0..=255_u8 {
+            let bytes: Vec<u8> = (0..32_u8)
+                .map(|i| byte.wrapping_mul(i + 1).wrapping_add(i))
+                .collect();
+            let mut g = Gen::new(&bytes);
+            g.rule(Rule::Slice, &ty, MAX_SIZE, false);
+            let text = &g.w.out.program;
+            assert!(text.starts_with("({ ") && text.ends_with(" })"), "{text}");
+            for (form, seen) in forms.iter().zip(&mut seen) {
+                *seen |= text.contains(form);
+            }
+        }
+        assert_eq!(seen, [true; 5], "forms {forms:?}");
+    }
+
+    /// GIVEN an array expression at the deepest nesting, on the turn of the range rule
+    /// WHEN the generator writes it
+    /// THEN it writes no range, which opens a block and holds an expression of its own
+    #[test]
+    fn a_slice_should_not_be_written_at_the_deepest_nesting() {
+        let ty = Ty::Array(Box::new(Ty::I64));
+        for nesting in [0, MAX_NESTING] {
+            let mut g = Gen::new(&[0; 32]);
+            g.nesting = nesting;
+            g.expressions = SLICE_EVERY - 1;
+            g.expr(&ty, MAX_SIZE);
+            let text = &g.w.out.program;
+            assert_eq!(
+                text.starts_with("({ "),
+                nesting < MAX_NESTING,
+                "{nesting}: {text}"
+            );
+        }
+    }
+
+    /// GIVEN the range rule on an array of arrays, one block short of the limit
+    /// WHEN it writes the block, whose literal holds arrays on the turn of the range rule
+    /// THEN the block counts as one, so no range comes inside it, and it is closed afterwards
+    #[test]
+    fn a_slice_should_count_its_block() {
+        let ty = Ty::Array(Box::new(Ty::Array(Box::new(Ty::I64))));
+        let mut g = Gen::new(&[1; 64]);
+        g.blocks = MAX_BLOCKS - 1;
+        g.expressions = SLICE_EVERY - 1;
+        g.rule(Rule::Slice, &ty, MAX_SIZE, false);
+        let text = &g.w.out.program;
+        assert_eq!(text.matches("({ ").count(), 1, "{text}");
+        assert_eq!(g.blocks, MAX_BLOCKS - 1);
+    }
+
+    /// GIVEN an `[i64]` local `xs` of 3 elements in scope
+    /// WHEN the generator writes an `i64` on the turn of the safe-element rule
+    /// THEN it reads `xs` through `first`, `last` or `get` under a default
+    /// AND over many bytes of data each of the three comes up, and `get` takes an index from `-1`
+    /// through `len + 1`
+    #[test]
+    fn a_safe_element_should_use_first_last_or_get_with_a_default() {
+        let ty = Ty::Array(Box::new(Ty::I64));
+        let (mut first, mut last, mut gets) = (false, false, [false; 6]);
+        for byte in 0..=255_u8 {
+            let bytes: Vec<u8> = (0..32_u8)
+                .map(|i| byte.wrapping_mul(i + 1).wrapping_add(i))
+                .collect();
+            let mut g = Gen::new(&bytes);
+            g.scope
+                .vars
+                .push(Var::new("xs".to_string(), ty.clone(), false, 4, 0, 0));
+            g.scope.vars[0].len = 3;
+            g.scope.vars[0].elem = 1;
+            g.expressions = SAFE_ELEMENT_EVERY - 1;
+            g.expr(&Ty::I64, MAX_SIZE);
+            let text = &g.w.out.program;
+            assert!(text.starts_with("(xs.") && text.contains(" ?? "), "{text}");
+            first |= text.starts_with("(xs.first() ?? ");
+            last |= text.starts_with("(xs.last() ?? ");
+            for (at, seen) in (-1..=4).zip(&mut gets) {
+                *seen |= text.starts_with(&format!("(xs.get({at}) ?? "));
+            }
+        }
+        assert!(first && last, "first {first}, last {last}");
+        assert_eq!(gets, [true; 6], "an index from -1 through len + 1");
+    }
+
+    /// GIVEN an `[i64]` local `xs` in scope on the turn of the safe-element rule
+    /// WHEN the generator writes an `i64` at the deepest nesting, and below it
+    /// THEN it reads `xs` through `first`, `last` or `get` below the deepest nesting only
+    #[test]
+    fn a_safe_element_should_not_be_written_at_the_deepest_nesting() {
+        let ty = Ty::Array(Box::new(Ty::I64));
+        for nesting in [0, MAX_NESTING] {
+            let mut g = Gen::new(&[0; 32]);
+            g.scope
+                .vars
+                .push(Var::new("xs".to_string(), ty.clone(), false, 4, 0, 0));
+            g.nesting = nesting;
+            g.expressions = SAFE_ELEMENT_EVERY - 1;
+            g.expr(&Ty::I64, MAX_SIZE);
+            let text = &g.w.out.program;
+            assert_eq!(
+                text.starts_with("(xs.") && text.contains(" ?? "),
+                nesting < MAX_NESTING,
+                "{nesting}: {text}"
+            );
+        }
+    }
+
+    /// GIVEN an `[i64]` local `xs` of size 4 in scope
+    /// WHEN the range rule writes a range over many bytes of data, with room for 4, and with room
+    /// for 3
+    /// THEN some range is of `xs` with room for 4, where it fits exactly, and none with room for 3
+    #[test]
+    fn a_slice_should_take_a_local_only_when_it_fits() {
+        let ty = Ty::Array(Box::new(Ty::I64));
+        for (max, expected) in [(4, true), (3, false)] {
+            let mut of_xs = false;
+            for byte in 0..=255_u8 {
+                let bytes: Vec<u8> = (0..32_u8)
+                    .map(|i| byte.wrapping_mul(i + 1).wrapping_add(i))
+                    .collect();
+                let mut g = Gen::new(&bytes);
+                g.scope
+                    .vars
+                    .push(Var::new("xs".to_string(), ty.clone(), false, 4, 0, 0));
+                g.rule(Rule::Slice, &ty, max, false);
+                of_xs |= g.w.out.program.contains("xs[");
+            }
+            assert_eq!(of_xs, expected, "room for {max}");
+        }
+    }
+
+    /// GIVEN the generator's offset rule
+    /// WHEN it writes from many bytes of data
+    /// THEN it writes the largest `i64` now and then, and otherwise a number below 100
+    #[test]
+    fn an_offset_should_sometimes_be_the_largest_i64_and_otherwise_small() {
+        let (mut largest, mut small) = (false, false);
+        for byte in 0..=255_u8 {
+            let bytes: Vec<u8> = (0..32_u8)
+                .map(|i| byte.wrapping_mul(i + 1).wrapping_add(i))
+                .collect();
+            let text = Gen::new(&bytes).offset();
+            if text == i64::MAX.to_string() {
+                largest = true;
+            } else {
+                assert!(text.parse::<u64>().is_ok_and(|n| n < 100), "{text}");
+                small = true;
+            }
+        }
+        assert!(largest && small, "largest {largest}, small {small}");
+    }
+
+    /// GIVEN the generator's substring rule on `string`, with no string local in scope
+    /// WHEN it writes from many bytes of data
+    /// THEN it writes either `get` of a string that the block binds, with a default, or an index of
+    /// an ASCII literal that the block binds, which no bound can cut; and each form of range
+    /// comes up on the literal
+    #[test]
+    fn a_substring_should_index_an_ascii_literal_or_get_with_a_default() {
+        let forms = ["[a..a + ", "[a..=a + ", "[a..]", "[..a + ", "[..=a + "];
+        let mut seen = [false; 5];
+        let (mut literals, mut gets) = (0, 0);
+        for byte in 0..=255_u8 {
+            let bytes: Vec<u8> = (0..32_u8)
+                .map(|i| byte.wrapping_mul(i + 1).wrapping_add(i))
+                .collect();
+            let mut g = Gen::new(&bytes);
+            g.rule(Rule::StrSlice, &Ty::String, MAX_SIZE, false);
+            let text = &g.w.out.program;
+            assert!(
+                text.starts_with("({ let t = ") && text.ends_with(" })"),
+                "{text}"
+            );
+            if let Some((head, _)) = text.split_once("; let a = ")
+                && text.contains("; t[")
+            {
+                let literal = head
+                    .strip_prefix("({ let t = \"")
+                    .and_then(|rest| rest.strip_suffix('"'))
+                    .unwrap_or_else(|| panic!("a literal `t`: {text}"));
+                assert!(
+                    literal.is_ascii() && !literal.contains('\\'),
+                    "an ASCII literal with no escape: {text}"
+                );
+                literals += 1;
+                for (form, seen) in forms.iter().zip(&mut seen) {
+                    *seen |= text.contains(form);
+                }
+            } else {
+                assert!(
+                    text.ends_with(" ?? \"\" })") && text.contains("t.get("),
+                    "{text}"
+                );
+                gets += 1;
+            }
+        }
+        assert!(literals > 0 && gets > 0, "{literals} literals, {gets} gets");
+        assert_eq!(seen, [true; 5], "forms {forms:?}");
+    }
+
+    /// GIVEN the generator's substring rule on `string`, with a string local in scope
+    /// WHEN it writes the block
+    /// THEN it reads the local through `get`, with `""` where a bound cuts a character
+    #[test]
+    fn a_substring_of_a_local_should_use_get_with_a_default() {
+        let mut found = false;
+        for byte in 0..=255_u8 {
+            let bytes = [byte; 32];
+            let mut g = Gen::new(&bytes);
+            g.scope
+                .vars
+                .push(Var::new("s".to_string(), Ty::String, false, 4, 0, 0));
+            g.rule(Rule::StrSlice, &Ty::String, MAX_SIZE, false);
+            let text = &g.w.out.program;
+            if text.contains("s.get(") {
+                assert!(text.ends_with(" ?? \"\" })"), "{text}");
+                found = true;
+            }
+        }
+        assert!(found, "no byte chose the local");
     }
 
     #[test]

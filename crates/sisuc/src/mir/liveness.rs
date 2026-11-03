@@ -225,6 +225,7 @@ fn rvalue(value: &Rvalue, read: &mut impl FnMut(LocalId)) {
         | Rvalue::Unwrap(op)
         | Rvalue::Wrap(op)
         | Rvalue::ToAny(op)
+        | Rvalue::Trim(op)
         | Rvalue::Chars(op)
         | Rvalue::Bytes(op)
         | Rvalue::Words(op)
@@ -252,6 +253,14 @@ fn rvalue(value: &Rvalue, read: &mut impl FnMut(LocalId)) {
         | Rvalue::Math { operands: args, .. } => {
             for op in args {
                 operand(op, read);
+            }
+        }
+        Rvalue::Slice {
+            base, start, end, ..
+        } => {
+            operand(base, read);
+            for bound in start.iter().chain(end) {
+                operand(bound, read);
             }
         }
         Rvalue::ArrayFill {

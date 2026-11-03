@@ -1,0 +1,24 @@
+fn iterations() -> i64 { 1000 }
+
+fn contains_sorted(xs: [i64], x: i64) -> bool {
+    if xs.len() == 0 { return false }
+    let mid = xs.len() / 2
+    if xs[mid] == x { return true }
+    if x < xs[mid] { contains_sorted(xs[..mid], x) } else { contains_sorted(xs[mid + 1..], x) }
+}
+
+// Sorted, and one block: `[0; 1000]` is the one allocation of each call.
+fn make() -> [i64] { [0; 1000] }
+
+// GIVEN the binary search on slices, called as `contains_sorted(make(), -1)`, where `make`
+// returns a new array that nothing else holds
+// WHEN the program calls it `iterations()` times
+// THEN it prints how many calls find the key, 0, and it allocates the block of each `make()` and
+// nothing more: the slices of an array nobody else holds are never copied
+fn main() {
+    let mut found = 0
+    for _ in 0..iterations() {
+        if contains_sorted(make(), -1) { found += 1 }
+    }
+    print(found)                     // 0
+}

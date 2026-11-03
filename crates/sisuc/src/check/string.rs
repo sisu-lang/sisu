@@ -19,8 +19,15 @@ use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
 
-/// The methods of a `string`, none of which takes an argument.
-pub(super) const METHODS: &[&str] = &["len", "chars", "bytes", "words"];
+/// The methods of a `string` and the count of their arguments: `get` takes a range, and the
+/// others none.
+pub(super) const METHODS: &[(&str, usize)] = &[
+    ("len", 0),
+    ("chars", 0),
+    ("bytes", 0),
+    ("words", 0),
+    ("get", 1),
+];
 
 impl Checker<'_> {
     /// `l + r` over two `string`s, which `mismatched` says were reported against.
@@ -321,15 +328,18 @@ impl Checker<'_> {
         block_expr(lets, Some(rest), Type::BOOL, span)
     }
 
-    /// `receiver.method(args)` on a `string`: `len()`, `chars()`, `bytes()` and `words()`.
+    /// `receiver.method(args)` on a `string`, `receiver_expr` its source: `len()`, `chars()`,
+    /// `bytes()`, `words()` and `get(range)`.
     pub(super) fn string_method(
         &mut self,
         span: Span,
-        receiver: Checked,
+        safe: bool,
+        (receiver, receiver_expr): (Checked, &ast::Expr),
         method: &ast::Ident,
         args: &[ast::Arg],
     ) -> Checked {
         let (ty, node): (_, fn(Box<tir::Expr>) -> tir::ExprKind) = match method.name.as_str() {
+            "get" => return self.string_get((span, safe), (receiver, receiver_expr), args),
             "len" => (Type::I64, tir::ExprKind::Len),
             "chars" => (Type::array(Type::CHAR), tir::ExprKind::Chars),
             "bytes" => (Type::array(Type::U8), tir::ExprKind::Bytes),
@@ -339,7 +349,12 @@ impl Checker<'_> {
                     return self.call_of_rejected_method(method, args);
                 }
                 let owner = self.type_name(Type::STRING);
-                let d = no_member(Definition::Method, owner, method, METHODS.iter().copied());
+                let d = no_member(
+                    Definition::Method,
+                    owner,
+                    method,
+                    METHODS.iter().map(|&(m, _)| m),
+                );
                 return self.rejected(d, args);
             }
         };
@@ -529,7 +544,7 @@ fn literal(spelling: &str) -> String {
 /// Whether `e` is one term as written: a name, a literal, a call, a field or index read, or an
 /// expression in parentheses. Anything else needs its parentheses once it sits beside other code.
 /// A parenthesized node is the only one whose span reaches past its parts.
-fn single_term(e: &ast::Expr) -> bool {
+pub(super) fn single_term(e: &ast::Expr) -> bool {
     match &e.kind {
         ExprKind::Int { .. }
         | ExprKind::Float(_)
@@ -559,6 +574,7 @@ fn single_term(e: &ast::Expr) -> bool {
         | ExprKind::Break { .. }
         | ExprKind::Continue { .. } => false,
         ExprKind::Unary { operand, .. } => e.span.end() != operand.span.end(),
+        ExprKind::Range(range) => e.span != range.span,
         ExprKind::Block(block) => e.span != block.span,
         ExprKind::Loop { body, .. } => e.span.end() != body.span.end(),
         // The keyword starts it, unless parentheses do.

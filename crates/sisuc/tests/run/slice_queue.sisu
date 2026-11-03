@@ -1,0 +1,15 @@
+fn iterations() -> i64 { 1000 }
+
+// GIVEN `let mut q = [0; 1000]` and a loop of `iterations() * 10` steps that runs `q = q[1..]`
+// and then `q.push(i)`
+// WHEN the program prints `q.len()` and `q[999]`
+// THEN it prints 1000 and 9999, and the loop copies about once in 1000 steps, not on each push
+fn main() {
+    let mut q = [0; 1000]
+    for i in 0..iterations() * 10 {
+        q = q[1..]
+        q.push(i)
+    }
+    print(q.len())                   // 1000
+    print(q[999])                    // 9999 (0 with no iterations)
+}

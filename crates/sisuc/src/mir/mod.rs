@@ -268,10 +268,29 @@ pub(crate) enum Rvalue {
         len: Operand,
         span: Span,
     },
+    /// `base[start..end]`, or `..=` with `inclusive`: the part of the array or string `base`
+    /// that the range covers, as a new value that shares `base`'s block. It takes `base`'s
+    /// reference, so a `base` at its last use gives the slice its count and a copy of `base`
+    /// gives it one. A missing bound is `None`. A range that fails a check panics at `span`,
+    /// the whole range; with `safe` it releases `base` and gives `None`.
+    Slice {
+        base: Operand,
+        start: Option<Operand>,
+        end: Option<Operand>,
+        inclusive: bool,
+        safe: bool,
+        span: Span,
+    },
     Wrap(Operand),
     /// The object or `any` value of the operand, as the destination's `any` type: it takes the
     /// operand's reference, and the destination holds the data pointer and its table.
     ToAny(Operand),
+    /// The array or string of the operand, or one inside `?` at any depth, where it is placed
+    /// inside another value: it takes the operand's reference and gives the value itself when
+    /// that covers its block, when its bytes are more than a quarter of the block's capacity in
+    /// bytes, or when that capacity is below 256 bytes; else a copy in a block of its own (see
+    /// ADR 0042). Its type is the operand's.
+    Trim(Operand),
     /// A call through the table of the receiver, the first of `args`, an `any` value, of the
     /// requirement `method` of `interface`, with `iargs` as its type arguments (the receiver's
     /// type first). Its convention is fixed, not inferred: the receiver is read in place, and the
@@ -384,6 +403,7 @@ impl Rvalue {
             | Rvalue::Variant { .. }
             | Rvalue::ArrayLit(_)
             | Rvalue::ArrayFill { .. }
+            | Rvalue::Slice { .. }
             | Rvalue::Wrap(_)
             | Rvalue::Concat { .. }
             | Rvalue::ReadLine
@@ -399,7 +419,8 @@ impl Rvalue {
             | Rvalue::Binary { .. }
             | Rvalue::Compare { .. }
             | Rvalue::Is { .. }
-            | Rvalue::ToAny(_) => false,
+            | Rvalue::ToAny(_)
+            | Rvalue::Trim(_) => false,
         }
     }
 }

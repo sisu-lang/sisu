@@ -24,6 +24,7 @@ mod optional;
 mod pattern;
 mod place;
 mod prelude;
+mod range;
 mod recursion;
 mod stmt;
 mod string;
@@ -431,14 +432,16 @@ struct Source<'src> {
     user: source::Source<'src>,
     /// The text the prelude's spans index.
     prelude: source::Source<'src>,
-    /// Where each comment starts. This list, `quotes` and `breaks` hold the user's file only,
-    /// so for a span of the prelude they find no comment, no literal and one line. Only
-    /// diagnostics read them.
+    /// Where each comment starts. This list, `quotes`, `breaks` and `newlines` hold the user's
+    /// file only, so for a span of the prelude they find no comment, no literal and one line.
+    /// Only diagnostics read them.
     comments: &'src [usize],
     /// Where each string literal starts, in order.
     quotes: &'src [usize],
     /// Where each line break is, in order.
     breaks: &'src [usize],
+    /// Where each line break that ends a statement is, in order.
+    newlines: &'src [usize],
 }
 
 impl<'src> Source<'src> {
@@ -450,6 +453,14 @@ impl<'src> Source<'src> {
     /// The type that `span` covers, on one line: see `source::Source::type_text`.
     fn type_text(&self, span: Span) -> Cow<'src, str> {
         self.holding(span.start()).type_text(span)
+    }
+
+    /// The text that `span` covers, on one line and with no comment: see
+    /// `source::Source::line_text`.
+    fn line_text(&self, span: Span) -> String {
+        self.holding(span.start())
+            .line_text(span, self.comments, self.newlines)
+            .into_owned()
     }
 
     /// The text between the offsets of `range`, which lie in one text.
@@ -1243,6 +1254,7 @@ impl<'src> Checker<'src> {
                 comments: &program.comments,
                 quotes: &program.quotes,
                 breaks: &program.breaks,
+                newlines: &program.newlines,
             },
             function_ids: FxHashMap::default(),
             signatures: Vec::new(),

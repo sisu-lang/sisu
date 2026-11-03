@@ -1,0 +1,5 @@
+fn main() {
+    let mut xs = [1, 2, 3]
+    print(xs)
+    xs[..][0] = 9
+}

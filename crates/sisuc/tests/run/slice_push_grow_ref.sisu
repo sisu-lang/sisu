@@ -1,0 +1,17 @@
+fn iterations() -> i64 { 1000 }
+
+// `slice_push_grow` without `t.push(7)`: the reference for its allocation count.
+fn round(i: i64) -> i64 {
+    let mut a = [i, 2]
+    a.push(3)
+    let t = a[..3]
+    t[2] + t.len()
+}
+
+fn main() {
+    let mut sum = 0
+    for i in 0..iterations() {
+        sum += round(i)
+    }
+    print(sum)                       // 6000 (0 with no iterations)
+}

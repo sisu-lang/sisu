@@ -1,0 +1,16 @@
+fn iterations() -> i64 { 1000 }
+
+fn whole(xs: [i64]) -> [i64]? { Some(xs) }
+
+// `slice_some` with `Some(xs)`: the reference for its allocation count.
+fn main() {
+    let mut xs = [0; 1000]
+    for i in 0..1000 {
+        xs[i] = i
+    }
+    let mut sum = 0
+    for _ in 0..iterations() {
+        if let Some(t) = whole(xs) { sum += t[t.len() - 1] }
+    }
+    print(sum)                       // 999000 (0 with no iterations)
+}

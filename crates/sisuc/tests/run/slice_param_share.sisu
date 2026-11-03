@@ -1,0 +1,39 @@
+// `-O2` keeps the call of `tail` in `keeps`: a call of a function that recurses once and works
+// after its recursive call is not a tail call, and the loop's count is not known.
+// o2-calls: keeps tail 1
+fn head(xs: [i64]) -> [i64] { xs[..2] }
+
+// `tail` returns a slice of its parameter after its recursive call, so it owns the parameter.
+fn tail(xs: [i64], depth: i64) -> [i64] {
+    if depth > 0 && tail(xs, depth - 1).len() < 2 {
+        return [0]
+    }
+    xs[1..]
+}
+
+// `xs` stays the caller's, and a slice that `saved` holds shares its block: writing `xs` copies.
+fn keeps() {
+    let mut xs = [0, 0, 0]
+    let mut saved = [0, 0, 0]
+    let mut i = 0
+    while i < saved.len() && i < xs.len() {
+        xs[i] = 1
+        print(saved[i])
+        saved = tail(xs, i % 2 + 1)
+        i += 1
+    }
+    print(saved[0])
+}
+
+// GIVEN `fn head(xs: [i64]) -> [i64] { xs[..2] }` and `let mut xs = [1, 2, 3]`
+// WHEN the program runs `for i in 0..2 { let u = head(xs); xs[0] = 9 + i; print(u) }`
+// THEN it prints `[1, 2]` and then `[9, 2]`
+fn main() {
+    let mut xs = [1, 2, 3]
+    for i in 0..2 {
+        let u = head(xs)
+        xs[0] = 9 + i
+        print(u)
+    }
+    keeps()                          // 0, 0, then 1
+}

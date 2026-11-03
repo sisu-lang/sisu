@@ -1,0 +1,4 @@
+fn main() {
+    let o: string? = "abc"
+    print(o.get(1..3))
+}

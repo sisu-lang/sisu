@@ -1,0 +1,12 @@
+// GIVEN a `for` whose range ends in `return`, which is followed by the `{` of the body
+// WHEN `sisu check` runs on it
+// THEN it reports E0011 at the `return` with the help `(0..return)`
+fn f() {
+    for i in 0..return {
+        print(i)
+    }
+}
+
+fn main() {
+    f()
+}

@@ -1,0 +1,18 @@
+fn iterations() -> i64 { 1000 }
+
+class Holder {
+    mut top: [i64]
+}
+
+// GIVEN a block of 31 elements, 248 bytes, below 256, and a slice of its first element
+// WHEN the program stores it into a field of a class object in each of `iterations()` rounds
+// THEN the store keeps the slice in the block of `all`, because the block is small: each round
+// allocates 1 block
+fn main() {
+    let h = Holder(top: [])
+    for i in 0..iterations() {
+        let all = [i; 31]
+        h.top = all[..1]
+    }
+    print(h.top.len())               // 1 (0 with no iterations)
+}

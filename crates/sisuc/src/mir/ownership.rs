@@ -126,6 +126,7 @@ impl Placer<'_> {
             | Rvalue::Unwrap(op)
             | Rvalue::Wrap(op)
             | Rvalue::ToAny(op)
+            | Rvalue::Trim(op)
             | Rvalue::Chars(op)
             | Rvalue::Bytes(op)
             | Rvalue::Words(op)
@@ -147,6 +148,14 @@ impl Placer<'_> {
             | Rvalue::Math { operands: args, .. } => {
                 for op in args {
                     self.operand(op);
+                }
+            }
+            Rvalue::Slice {
+                base, start, end, ..
+            } => {
+                self.operand(base);
+                for bound in start.iter_mut().chain(end) {
+                    self.operand(bound);
                 }
             }
             Rvalue::ArrayFill {

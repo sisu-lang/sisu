@@ -4,7 +4,7 @@ A tour of the Sisu language as it works today, one small program at a time.
   <section class="ph"><div class="w">
     <h1>A tour of Sisu</h1>
     <p class="lede">The language as it works today, one small program at a time, in about ten minutes of reading.</p>
-    <p class="meta">The working programs on this page compile with sisu today. Every output and error shown is what sisu really prints. Checked against the repository at commit 9beddce4.</p>
+    <p class="meta">The working programs on this page compile with sisu today. Every output and error shown is what sisu really prints. Checked against the repository at commit 9c33f888.</p>
   </div></section>
 
   <div class="w doc">
@@ -130,7 +130,8 @@ A tour of the Sisu language as it works today, one small program at a time.
 {{text programs/run/arrays.out}}</pre></figure>
       <p>A function that changes an array returns the new one. Shared data that changes in place belongs in a class.</p>
       <p>An array grows with <code>push</code>. After <code>let mut xs = [1, 2]</code>, <code>xs.push(3)</code> makes <code>xs</code> hold three elements. Another holder of the old array keeps its two.</p>
-      <!-- source: docs/adr/0007-arrays-are-values.md, docs/roadmap.md ("What works today": copy-on-write arrays), crates/sisuc/tests/run/copies.sisu, docs/reference/arrays.md (Methods) -->
+      <p>A range index takes part of an array: <code>xs[1..3]</code> is the elements at 1 and 2, <code>xs[2..]</code> runs to the end, and <code>xs[1..=3]</code> includes the element at 3. The result is an ordinary array that shares the elements of <code>xs</code>, so the index copies nothing. A write to either array copies first, as for any shared array. A range that is out of bounds stops the program. <code>xs.get(i)</code>, <code>xs.first()</code> and <code>xs.last()</code> give an optional instead.</p>
+      <!-- source: docs/adr/0007-arrays-are-values.md, docs/adr/0042-a-slice-shares-its-block.md, docs/roadmap.md ("What works today": copy-on-write arrays, slices), crates/sisuc/tests/run/copies.sisu, docs/reference/arrays.md (Methods, Range indexes) -->
 
       <h2 id="overflow">Integers panic on overflow</h2>
       <p>Integer arithmetic that overflows stops the program with a panic that names the line. A wrong answer is never silent. Division by zero panics the same way, and every panic exits with status 101.</p>
@@ -144,13 +145,13 @@ $ ./factorial
       <!-- source: docs/adr/0003-arithmetic-panics.md, docs/roadmap.md ("What panics", exit code 101), crates/runtime/src/lib.rs (sisu_panic doc comment) -->
 
       <h2 id="strings">Strings</h2>
-      <p>A <code>string</code> is always valid UTF-8, and it is a value like an array. <code>len()</code> counts bytes, and there is no <code>s[i]</code>. To work on text, take it apart with <code>chars()</code>, <code>bytes()</code> or <code>words()</code>, and build it back with <code>string(cs)</code>.</p>
+      <p>A <code>string</code> is always valid UTF-8, and it is a value like an array. <code>len()</code> counts bytes, and there is no <code>s[i]</code>. <code>s[a..b]</code> is the part of the string between two byte positions, and it shares the bytes of <code>s</code>; <code>s.get(a..b)</code> gives <code>None</code> where that would stop the program. To work on text, take it apart with <code>chars()</code>, <code>bytes()</code> or <code>words()</code>, and build it back with <code>string(cs)</code>.</p>
       <figure class="code"><figcaption class="cap">text.sisu</figcaption><pre data-lang="sisu">
 {{text programs/run/text.sisu}}</pre></figure>
       <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
 {{text programs/run/text.out}}</pre></figure>
       <p>A <code>char</code> is one Unicode scalar value. The string has 10 of them in 14 bytes, because each <code>ä</code> and <code>ö</code> takes two bytes.</p>
-      <!-- source: docs/adr/0014-strings-are-utf-8-values.md, docs/roadmap.md ("What works today": char, string, text as arrays, words), crates/sisuc/tests/run/text.sisu, crates/sisuc/tests/run/words.sisu -->
+      <!-- source: docs/adr/0014-strings-are-utf-8-values.md, docs/adr/0042-a-slice-shares-its-block.md, docs/reference/strings.md (Substrings), docs/roadmap.md ("What works today": char, string, text as arrays, words), crates/sisuc/tests/run/text.sisu, crates/sisuc/tests/run/words.sisu -->
 
       <h2 id="not-yet">What is not here yet</h2>
       <p>Sisu is early, and much of an everyday language is still missing. Some of what is planned:</p>

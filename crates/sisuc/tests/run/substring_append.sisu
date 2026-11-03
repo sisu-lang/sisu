@@ -1,0 +1,20 @@
+fn iterations() -> i64 { 1000 }
+
+// GIVEN a unique string `s` of 3 bytes in a block of capacity 4, and `let mut t = s[..2]` as the
+// last use of `s`
+// WHEN the program runs `t += "x"` in each of `iterations()` rounds
+// THEN the first append copies `t` into a block of room for twice its new length, 6 bytes,
+// because `t` does not end at its block's last byte; the later appends are in place until the
+// block is full, and then it is reallocated to 12, 24, ..., 1536: 9 extra allocations
+fn main() {
+    let mut s = "a"
+    s += "b"
+    s += "c"
+    let mut t = s[..2]
+    for _ in 0..iterations() {
+        t += "x"
+    }
+    print(t.len())                   // 1002 (2 with no iterations)
+    let cs = t.chars()
+    print(cs[cs.len() - 1])          // x (b with no iterations): the last char, read through `chars()`
+}

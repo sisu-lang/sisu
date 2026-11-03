@@ -1,0 +1,5 @@
+fn main() {
+    let mut xs = [1, 2, 3]
+    xs[0..true].push(4)
+    print(xs)
+}

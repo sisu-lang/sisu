@@ -192,7 +192,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         rhs: BasicValueEnum<'ctx>,
     ) -> IntValue<'ctx> {
         if ty == Type::STRING {
-            let order = self.str_compare(lhs.into_pointer_value(), rhs.into_pointer_value());
+            let order = self.str_compare(lhs, rhs);
             let zero = self.context.i64_type().const_zero();
             return self.compare_pair(op, true, order.into(), zero.into());
         }

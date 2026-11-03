@@ -1,0 +1,8 @@
+error[E0032]: expected `i64`, found `bool`
+ --> E0032-range-bound.sisu:3:17
+  |
+3 |     print(xs[0..true])
+  |                 ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

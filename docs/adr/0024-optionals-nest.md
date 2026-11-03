@@ -26,7 +26,8 @@ was `None`" (`Some(None)`) stay apart.
   payload-free variant and one variant with a single field, stores its empty
   variant in a bit pattern its payload can never hold. A program cannot see
   it, and a niche never reaches the runtime: printing decodes it first.
-  - A reference (a class, a string or an array) uses null.
+  - A class uses a null pointer. A string or an array uses a null
+    `block`, the first of its three words.
   - `char?` uses `0x110000`, so it takes 4 bytes, not 8.
   - `bool?` uses `2`.
   - An enum uses a spare tag value.

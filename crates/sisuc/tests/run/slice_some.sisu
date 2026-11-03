@@ -1,0 +1,21 @@
+fn iterations() -> i64 { 1000 }
+
+fn middle(xs: [i64]) -> [i64]? { Some(xs[1..3]) }
+
+// GIVEN a function that returns `Some(xs[1..3])`, where `xs` is the array of 0 to 999 that `main`
+// holds
+// WHEN `main` calls it `iterations()` times, adds the last element of each result, and prints
+// the sum
+// THEN `Some` is not a trim point: it allocates what `slice_some_ref`, which returns `Some(xs)`,
+// allocates
+fn main() {
+    let mut xs = [0; 1000]
+    for i in 0..1000 {
+        xs[i] = i
+    }
+    let mut sum = 0
+    for _ in 0..iterations() {
+        if let Some(t) = middle(xs) { sum += t[t.len() - 1] }
+    }
+    print(sum)                       // 2000 (0 with no iterations)
+}

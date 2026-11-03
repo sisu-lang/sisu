@@ -1,0 +1,7 @@
+// GIVEN `let e: [i64] = []` and `print(e[..=0])`
+// WHEN the program runs
+// THEN it exits with code 101 and the panic is `range end 0 is past the end of an empty array`
+fn main() {
+    let e: [i64] = []
+    print(e[..=0])
+}
