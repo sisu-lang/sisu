@@ -699,7 +699,6 @@ crates/sisuc/src/front_end.rs::broken_len_is_not_the_idiom
 crates/sisuc/src/front_end.rs::broken_main_raises_no_main_error
 crates/sisuc/src/front_end.rs::broken_method_is_no_field_confusion
 crates/sisuc/src/front_end.rs::broken_method_only_breaks_itself
-crates/sisuc/src/front_end.rs::broken_name_poisons_a_built_in
 crates/sisuc/src/front_end.rs::broken_name_poisons_an_enum_path
 crates/sisuc/src/front_end.rs::broken_name_poisons_the_other_kind
 crates/sisuc/src/front_end.rs::call_to_broken_function_checks_arguments

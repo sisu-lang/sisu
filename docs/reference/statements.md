@@ -214,6 +214,8 @@ An assignment `place = value` stores a value in a place. These are the places:
 - a `mut` field of an object ([Classes](classes.md#fields))
 - an element of an array in one of these places, such as `xs[i]` or `grid[i][j]` ([Arrays](arrays.md#indexes))
 
+The object of a field can come from any expression, a call too, because a class is shared. So `p().hits = 5` writes to the object that `p` returns, and `p().v[0] = 9` is valid when `v` is a `mut` array field. An element of an array that a call returns is not a place, because an array is a value: `q()[0] = 2` is an error ([E0021](../diagnostics/E0021.md)).
+
 ```sisu
 class Counter {
     mut hits: i64
