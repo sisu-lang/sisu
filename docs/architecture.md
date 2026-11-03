@@ -82,8 +82,8 @@ optional `if` guard, `=>` and a body; a pattern is one or more alternatives
 joined by `|`. `if let` and `while let` take a pattern too, and so does
 `let pattern = value else { block }` ([ADR 0044](adr/0044-let-else-and-jumps-are-expressions.md)).
 The parser reads the value first, so a value that ends in `}` before `else` is
-E0173 with a fix that puts the value in `( )`, and a pattern with no `else` is
-E0174. `return`, `break` and `continue` are expressions, not statements. Each
+E0173 with a fix that puts the value in `( )`. The parser keeps a pattern with no
+`else`; the checker reports it, as E0174 or by the value's type. `return`, `break` and `continue` are expressions, not statements. Each
 one takes everything to its right that an expression can take, so
 `a ?? return b ?? c` is `a ?? return (b ?? c)`. A jump at the end of the header
 of an `if`, `while`, `for` or `match` that would take the body's `{` as its

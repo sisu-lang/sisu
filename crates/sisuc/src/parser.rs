@@ -3500,9 +3500,9 @@ impl<'a> Parser<'a> {
     }
 
     /// `pattern = value`, then `else` and a block: the rest of a `let` whose pattern is not a
-    /// plain name. Without the `else`, the pattern can fail, which the parser reports and goes on
-    /// from, so that the statement keeps its names. A qualified variant with no payload keeps the
-    /// error of a `let` that reads a name.
+    /// plain name. Without the `else`, the statement keeps `else_block: None`: the checker reports
+    /// it by the value's type, which the parser does not know. A qualified variant with no payload
+    /// keeps the error of a `let` that reads a name.
     fn let_pattern(
         &mut self,
         base: Height,
@@ -3551,13 +3551,6 @@ impl<'a> Parser<'a> {
         if qualified {
             return Err(self.dot_error(first));
         }
-        self.specs.push(
-            DiagnosticKind::RefutablePattern {
-                at: pattern.span,
-                shown: self.source.text(pattern.span).to_string(),
-            }
-            .into(),
-        );
         Ok(StmtKind::LetElse {
             mutable,
             pattern,
@@ -9030,11 +9023,11 @@ mod tests {
             parse_err("fn main() {\n    let 99999999999999999999 = 1\n}\n"),
             (Code::IntegerTooLarge, 2, 9)
         );
-        // The parser no longer reports a pattern with no `else`, so the lexer's error stands
-        // alone.
+        // The parser no longer reports a pattern with no `else`, so the lexer's error, at the
+        // second `_`, stands alone.
         assert_eq!(
             parse_err("fn main() {\n    let 1__2 = 1\n}\n"),
-            (Code::DigitSeparator, 2, 9)
+            (Code::DigitSeparator, 2, 10)
         );
         // A pattern with no `else` is the checker's, which does not run on a broken item: the
         // parse error after it shows alone.

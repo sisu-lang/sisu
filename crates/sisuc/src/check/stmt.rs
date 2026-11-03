@@ -6,7 +6,7 @@ use super::any::{AnyJoin, is_target, widen};
 use super::array::optional_array;
 use super::expr::{fits, local};
 use super::generic::Ahead;
-use super::pattern::{LetPattern, LetValue};
+use super::pattern::LetPattern;
 use super::prelude::PRELUDE;
 use super::unused_names::{Owner, Pending};
 use super::{
@@ -526,8 +526,9 @@ impl Checker<'_> {
     /// of `if let`. The block is checked in its own scope, before the pattern binds anything, so
     /// it cannot read the names, and it must not finish. The names go in the enclosing scope.
     /// A failed block or value fails the statement, but the names are bound all the same, so
-    /// the lines after it report nothing of them. Without an `else_block`, the parser reported
-    /// the pattern (`RefutablePattern`).
+    /// the lines after it report nothing of them. Without an `else_block`, the pattern and the
+    /// value are checked the same way, and the statement reports E0174, unless the value or the
+    /// pattern has an error of its own.
     fn let_else(
         &mut self,
         mutable: Option<Span>,
@@ -536,14 +537,10 @@ impl Checker<'_> {
         else_block: Option<&ast::Block>,
     ) -> Result<tir::Stmt, Poisoned> {
         let unit = || Poisoned::typed(Type::UNIT);
-        let word = Unwrap::LetElse;
         let Some(else_block) = else_block else {
-            // Checked for its own errors. The type is unknown to the pattern, which only declares
-            // its names.
-            drop(self.value(value, None));
-            self.bind_pattern(Some(word), &LetValue::Match { ty: None }, pattern, None);
-            return Err(unit());
+            return self.let_without_else(pattern, value);
         };
+        let word = Unwrap::LetElse;
         let (scrutinee, form, _) = self.let_value(word, pattern, value);
         let block = self.block(else_block, None);
         if let Ok(block) = &block
@@ -588,6 +585,42 @@ impl Checker<'_> {
             test,
             else_block,
         })
+    }
+
+    /// `let pattern = value` with a pattern that is not a name and no `else`: always an error.
+    /// The value and the pattern are checked as in `let_else`. Then E0174 says that the pattern
+    /// always matches (the help is `match`) or can fail (the help is an `else`). A value that is
+    /// no enum or optional (E0051), a value with no type, and a pattern with an error of its own
+    /// report that, and no E0174 for the pattern. The names stay bound.
+    fn let_without_else(
+        &mut self,
+        pattern: &ast::Pattern,
+        value: &ast::Expr,
+    ) -> Result<tir::Stmt, Poisoned> {
+        let (scrutinee, form, mismatched) = self.let_value(Unwrap::Let, pattern, value);
+        let ty = type_of(&scrutinee);
+        let (bound, _) = self.bind_pattern_as(Some(Unwrap::Let), None, &form, pattern, None);
+        if !mismatched {
+            // A value with no type, or a name that unwraps, leaves `always` false.
+            let always = match (&bound, ty) {
+                (LetPattern::Match { pattern: None }, Some(_)) => None,
+                (
+                    LetPattern::Match {
+                        pattern: Some((checked, _)),
+                    },
+                    Some(ty),
+                ) => Some(self.always_matches(ty, checked)),
+                _ => Some(false),
+            };
+            if let Some(always) = always {
+                self.report(DiagnosticKind::RefutablePattern {
+                    at: pattern.span,
+                    shown: self.source.text(pattern.span).to_string(),
+                    always,
+                });
+            }
+        }
+        Err(Poisoned::typed(Type::UNIT))
     }
 
     /// `for`, lowered to a `Loop` as in the spec's table: over an array `s` through `s[i]`
