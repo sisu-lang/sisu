@@ -88,6 +88,8 @@ Scenario Outline: S5. Only a statement that always leaves makes the next line un
 
 - **An `expect` message states the invariant.** Write what should hold and why, with "should", naming the thing involved: `the checker should reject \`break\` outside a loop`. The panic then reads as a broken assumption. "builder is positioned" describes success, and the error that follows it reads as noise. A prek hook checks that non-test messages say "should"; the reviewer checks that they name the invariant and why it holds.
 
+- **The checker does not assert on a guess.** Some checker code chooses by a heuristic, such as the member of a join that takes the blame. When that choice is wrong, the code after it reports and gives the poison type. It has no `assert!`, `panic!`, `expect` or `unreachable!` that only a right choice makes true, and it returns no failure before it reports a diagnostic. A wrong guess then gives a worse label, not a crash. `tests/neighbours.rs` runs `sisu check` on the neighbouring forms of the checker's special cases, and fails on a crash.
+
 - **A CI loop over found input has a total time bound.** A script or workflow step that loops over input whose count it does not control, such as artifacts, corpus files or test cases, caps the loop's total time. The cap fits the job's `timeout-minutes` with every later step, such as a failure upload, still ahead. A job killed at its limit skips those steps and loses their output.
 
 - **Sizes come from `TargetData`.** Sizes and alignments in generated code are measured with LLVM's `TargetData`, never written as numbers. The array header, like the string header, is three `i64`s: `count`, `len` and `cap`, measured the same way.

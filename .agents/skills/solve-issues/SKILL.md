@@ -92,7 +92,7 @@ group:
 
 1. Reproduce it with the `origin/main` build.
 2. Find the cause in the code: the function, the line, and why it gives this output.
-3. List the neighbouring cases: the same rule in each position the language allows it. Probe each case. Keep the probes in the ledger folder.
+3. List the neighbouring cases: the same rule in each position the language allows it. Take the values and the positions from `crates/sisuc/tests/neighbours.txt`, and add there each new one that you find. Probe each case. Keep the probes in the ledger folder.
 4. A new bug can have the same cause. Then it joins the group, and the pull request names it.
 5. A new bug can have a different cause. Then file a new issue (`docs/agents/issue-tracker.md`). Keep it out of the group.
 6. Fix the cause in the shared code, so that all the cases are right. Rank the options as ADR 0006 does: correctness, simplicity, readability, performance.
