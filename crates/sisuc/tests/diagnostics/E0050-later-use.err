@@ -150,5 +150,29 @@ error[E0050]: cannot infer the type of `[]`
     |
     = help: write the type: `let mut replaced: [char] = []`
 
-sisu: 19 errors
+error[E0050]: cannot infer the type of `[]`
+   --> E0050-later-use.sisu:122:23
+    |
+122 |     let mut settled = []
+    |                       ^^
+    |
+    = help: write the type: `let mut settled: [char] = []`
+
+error[E0050]: cannot infer the type of `[]`
+   --> E0050-later-use.sisu:131:24
+    |
+131 |     let mut branched = []
+    |                        ^^
+    |
+    = help: write the type: `let mut branched: [f64] = []`
+
+error[E0050]: cannot infer the type of `[]`
+   --> E0050-later-use.sisu:142:23
+    |
+142 |     let mut matched = []
+    |                       ^^
+    |
+    = help: write the type: `let mut matched: [char] = []`
+
+sisu: 22 errors
 sisu: for more on a code, run `sisu explain <code>`: E0050

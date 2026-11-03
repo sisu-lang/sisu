@@ -1,5 +1,7 @@
 //! `u8`: literals typed by context, conversions, and no mixing with `i64`.
 
+use std::fmt::Write as _;
+
 use super::*;
 
 #[test]
@@ -456,4 +458,32 @@ fn an_operand_that_holds_a_literal_should_take_the_type_of_the_other_operand() {
         );
         clean_row(statement, &src);
     }
+}
+
+/// The rollback of the first check of a string join drops the locals that check declared, and
+/// the uninferred literals of them: its work grows with the locals it drops, not with every
+/// uninferred literal of the function. Each `let tK = []` is a local of the first check with an
+/// uninferred literal, so the rollback removes a real entry. 100 joins is 10x the smallest size
+/// at which a walk of the whole map shows a quadratic count.
+#[test]
+fn a_string_join_rollback_should_visit_only_the_locals_it_drops() {
+    let steps = |n: usize| {
+        let mut src = String::from("fn main() {\n");
+        for k in 0..n {
+            writeln!(src, "    let mut x{k} = []").expect("writing to a string should not fail");
+        }
+        for k in 0..n {
+            writeln!(
+                src,
+                "    let s{k}: u8 = {{ let t{k} = []\n \"a\" }} + \"b\""
+            )
+            .expect("writing to a string should not fail");
+        }
+        src.push_str("}\n");
+        ROLLBACK_STEPS.set(0);
+        let ds = diags(&src);
+        assert!(!ds.is_empty());
+        ROLLBACK_STEPS.get()
+    };
+    assert_near_linear(steps(100), steps(200), steps(300));
 }

@@ -506,6 +506,9 @@ thread_local! {
     /// How many closure entries have been indexed, and how many entries of an interface have been
     /// read for the name of an associated type, on this thread.
     pub(super) static LOOKUP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many locals or entries of uninferred literals the rollback of a string join has visited
+    /// on this thread.
+    pub(super) static ROLLBACK_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 struct Checker<'src> {

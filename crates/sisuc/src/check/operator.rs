@@ -230,7 +230,11 @@ impl Checker<'_> {
         // with it, so none is left that nothing binds, and none is judged twice.
         self.diagnostics.truncate(diagnostics);
         self.body.locals.truncate(locals);
-        self.body.uninferred.retain(|local, _| local.0 < locals);
+        self.body.uninferred.retain(|local, _| {
+            #[cfg(test)]
+            super::ROLLBACK_STEPS.set(super::ROLLBACK_STEPS.get() + 1);
+            local.0 < locals
+        });
         self.pending.truncate(pending);
         self.body.misfits.truncate(misfits);
         self.body.joins.insert(span);

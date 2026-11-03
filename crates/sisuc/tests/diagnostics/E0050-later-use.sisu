@@ -118,4 +118,36 @@ fn array_assigned() {
     print(replaced.len())
 }
 
+fn pushed_after_assign_in_argument() {
+    let mut settled = []
+    settled.push({
+        settled = ['a']
+        "s"
+    })
+    print(settled.len())
+}
+
+fn pushed_after_assign_in_branch() {
+    let mut branched = []
+    branched.push(if true {
+        branched = [1.5]
+        'a'
+    } else {
+        'b'
+    })
+    print(branched.len())
+}
+
+fn pushed_after_assign_in_match() {
+    let mut matched = []
+    matched.push(match 1 {
+        1 => {
+            matched = ['a']
+            "s"
+        }
+        _ => "t"
+    })
+    print(matched.len())
+}
+
 fn main() {}
