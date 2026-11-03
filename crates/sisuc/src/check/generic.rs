@@ -1626,10 +1626,13 @@ impl Checker<'_> {
         }
     }
 
-    /// `bindings.partial(ty)`, with the associated types of known types replaced.
+    /// `bindings.partial(ty)`, with the associated types of known types replaced. An associated
+    /// type of a known type that has no type is `REJECTED`: its conformance reported why, so a
+    /// call in an argument that meets it reports nothing for it (see `Bindings::bind`).
     fn partial(&self, bindings: &Bindings, ty: Type) -> Type {
         let partial = bindings.partial(ty);
-        self.normalize(partial).unwrap_or(partial)
+        self.normalize_failing(partial, *REJECTED)
+            .unwrap_or(partial)
     }
 
     /// `bindings.printed(ty)`, with the associated types of known types replaced.
@@ -2425,12 +2428,6 @@ impl Checker<'_> {
         context: Option<Type>,
     ) -> Checked {
         let Some(want) = self.known_in(call, pattern) else {
-            // The context would hold the associated type that has no choice, and a call in `e`
-            // would bind it, so `e` reports only its own faults.
-            if lacks_choice(call, pattern) {
-                drop(self.value(e, Some(UNKNOWN)));
-                return Err(Poisoned::error());
-            }
             return self.infer_unbound(call, e, pattern, context);
         };
         let checked = self.value(e, Some(want));
