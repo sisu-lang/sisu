@@ -5200,8 +5200,8 @@ mod tests {
     /// followed by the `{` of its body
     /// WHEN the parser reads it
     /// THEN the error is E0011 at the jump, not after the body
-    /// AND the error has the help that puts the jump in `( )`, except for a `break` in the header
-    /// of a loop, where that is E0082
+    /// AND the error has the help that puts the jump in `( )`, except for a `break` that the `( )`
+    /// would leave in a loop header (E0082) or outside every loop (E0038)
     /// AND a `continue`, which takes no value, and the same header with the jump in `( )` parse
     #[test]
     fn jump_that_takes_a_header_block_should_be_reported_at_the_jump() {
@@ -5209,7 +5209,7 @@ mod tests {
         let rows = [
             ("if o ?? return", 13, true),
             ("if let Some(x) = o ?? return", 27, true),
-            ("if c { f() } else if o ?? break", 31, true),
+            ("if c { f() } else if o ?? break", 31, false),
             ("while o ?? return", 16, true),
             ("while o ?? break", 16, false),
             ("while let Some(x) = o ?? break", 30, false),
@@ -5219,7 +5219,7 @@ mod tests {
             ("for x in 0..n ?? break", 22, false),
             ("outer: while o ?? break outer", 23, false),
             ("match o ?? return", 16, true),
-            ("match o ?? break", 16, true),
+            ("match o ?? break", 16, false),
         ];
         for (header, column, help) in rows {
             let src = format!("fn main() {{\n    {header} {body}\n}}");
@@ -7394,13 +7394,59 @@ mod tests {
         }
     }
 
-    /// A type is a non-goal: the `else` after it is a stray token, as before let-else.
+    /// GIVEN a `let` with a type, and an `else` after its value, in a name, `mut`, `_`,
+    /// pattern or qualified form, on the same line or on the next
+    /// WHEN the parser reads it
+    /// THEN the error is E0011 at the `: type`, with one safe fix that removes it
+    /// AND the fixed source reads as the `let ... else` it names, with the errors in `after`
+    /// AND a `let` with a type and no `else`, and a `const`, report nothing
     #[test]
-    fn let_else_with_a_type_should_be_an_error() {
-        assert_eq!(
-            expr_err("let n: i64 = o else { return }"),
-            (Code::Expected, 1, 28)
-        );
+    fn let_else_with_a_type_should_be_reported_at_the_type() {
+        let rows = [
+            ("let w: i64 = o else { return }", ": i64", vec![]),
+            ("let mut w: i64 = o else { return }", ": i64", vec![]),
+            ("let _: i64 = o else { return }", ": i64", vec![]),
+            ("let Some(w): i64? = o else { return }", ": i64?", vec![]),
+            ("let Shape.Sq: Shape = e else { return }", ": Shape", vec![]),
+            ("let w: i64 = o\n    else { return }", ": i64", vec![]),
+            (
+                "let Some(w): i64? = o\n    else { return }",
+                ": i64?",
+                vec![],
+            ),
+            // A pattern with no `else` reports the type first, then that it can fail.
+            (
+                "let Some(w): i64? = o",
+                ": i64?",
+                vec![Code::RefutablePattern],
+            ),
+            // The type comes first: the `mut` is reported once the type is gone.
+            (
+                "let mut _: i64 = o else { return }",
+                ": i64",
+                vec![Code::MutOnUnderscore],
+            ),
+        ];
+        for (line, ty, after) in rows {
+            let src = format!("fn main() {{\n    {line}\n}}");
+            let d = parse_diagnostic(&src);
+            let at = d.span();
+            assert_eq!(&src[at.start()..at.end()], ty, "{src}");
+            assert_eq!(d.fixes().len(), 1, "{src}");
+            let fixed = fixed(&src);
+            let found: Vec<_> = parsed(&fixed)
+                .diagnostics
+                .iter()
+                .map(Diagnostic::code)
+                .collect();
+            assert_eq!(found, after, "{fixed}");
+        }
+        for src in [
+            "fn main() {\n    let w: i64 = o\n}",
+            "const C: i64 = 1\nfn main() {}",
+        ] {
+            assert!(parsed(src).diagnostics.is_empty(), "{src}");
+        }
     }
 
     /// A pattern that is not a name needs an `else`: the parser reports it and keeps the
@@ -7437,6 +7483,33 @@ mod tests {
         assert_eq!(
             expr_err("let mut _ = o else { return }"),
             (Code::MutOnUnderscore, 1, 21)
+        );
+    }
+
+    /// GIVEN a `let` whose pattern is written with braces, as `Rect { w, h }`, with labels, with
+    /// a qualified name, or with a lower-case name, beside the `if let` of the same pattern
+    /// WHEN the parser reads each
+    /// THEN the `let` gives the same diagnostic as the `if let`: code, span, text and fix
+    /// AND `let mut` before such a pattern is E0011 at the `mut`
+    #[test]
+    fn braced_let_pattern_should_be_reported_as_the_if_let_pattern() {
+        for pattern in [
+            "Rect { w, h }",
+            "Rect { w: a, h: b }",
+            "Shape.Re { w, h }",
+            "Shape.None { }",
+            "x { }",
+        ] {
+            // `    let ` and ` if let ` are the same width, so the spans agree too.
+            let with_let = format!("fn main() {{\n    let {pattern} = s else {{ return }}\n}}");
+            let with_if_let = format!("fn main() {{\n if let {pattern} = s {{ }}\n}}");
+            let (a, b) = (parse_diagnostic(&with_let), parse_diagnostic(&with_if_let));
+            assert_eq!(a.code(), Code::PatternForm, "{with_let}");
+            assert_eq!(format!("{a:?}"), format!("{b:?}"), "{pattern}");
+        }
+        assert_eq!(
+            expr_err("let mut Rect { w, h } = s else { return }"),
+            (Code::Expected, 1, 17)
         );
     }
 
