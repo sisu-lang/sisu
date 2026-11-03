@@ -7495,65 +7495,75 @@ mod tests {
     /// pattern or qualified form, on the same line or on the next
     /// WHEN the parser reads it
     /// THEN the error is E0011 at the `: type`, with one fix that removes it
-    /// AND the fix is safe when the `else` is on the line of the value, and unsafe otherwise
+    /// AND the fix is unsafe: the parser stops at the type, so it has not read the rest of the
+    /// statement, and the fixed source can have an error of its own
     /// AND the fixed source has the errors in `after`
     /// AND a `let` with a type and no `else`, and a `const`, report nothing
     #[test]
     fn let_else_with_a_type_should_be_reported_at_the_type() {
-        // The columns: the `let`, the text of the type with its colon, whether the fix is safe,
-        // and the codes that the fixed source reports.
+        // The columns: the `let`, the text of the type with its colon, and the codes that the
+        // fixed source reports.
         let rows = [
-            ("let w: i64 = o else { return }", ": i64", true, vec![]),
-            ("let mut w: i64 = o else { return }", ": i64", true, vec![]),
-            ("let _: i64 = o else { return }", ": i64", true, vec![]),
-            (
-                "let Some(w): i64? = o else { return }",
-                ": i64?",
-                true,
-                vec![],
-            ),
-            (
-                "let Shape.Sq: Shape = e else { return }",
-                ": Shape",
-                true,
-                vec![],
-            ),
+            ("let w: i64 = o else { return }", ": i64", vec![]),
+            ("let mut w: i64 = o else { return }", ": i64", vec![]),
+            ("let _: i64 = o else { return }", ": i64", vec![]),
+            ("let Some(w): i64? = o else { return }", ": i64?", vec![]),
+            ("let Shape.Sq: Shape = e else { return }", ": Shape", vec![]),
             // The fixed source has the `else` on its own line, which is E0006.
             (
                 "let w: i64 = o\n    else { return }",
                 ": i64",
-                false,
                 vec![Code::ElseOnNewLine],
             ),
             (
                 "let Some(w): i64? = o\n    else { return }",
                 ": i64?",
-                false,
                 vec![Code::ElseOnNewLine],
             ),
             // A pattern with no `else` reports the type first, then that it can fail.
             (
                 "let Some(w): i64? = o",
                 ": i64?",
-                false,
                 vec![Code::RefutablePattern],
             ),
             // The type comes first: the `mut` is reported once the type is gone.
             (
                 "let mut _: i64 = o else { return }",
                 ": i64",
-                true,
                 vec![Code::MutOnUnderscore],
             ),
+            // The rest of the statement has an error that the parser has not read yet.
+            (
+                "let x: i64 = { 1 } else { return }",
+                ": i64",
+                vec![Code::LetElseValueEndsInBrace],
+            ),
+            (
+                "let x: i64 = if c { 1 } else { 2 } else { return }",
+                ": i64",
+                vec![Code::LetElseValueEndsInBrace],
+            ),
+            (
+                "let Some(w): i64 = { 1 } else { return }",
+                ": i64",
+                vec![Code::LetElseValueEndsInBrace],
+            ),
+            ("let x: i64 = o else", ": i64", vec![Code::Expected]),
+            ("let x: i64 = o else return", ": i64", vec![Code::Expected]),
+            (
+                "let x: i64 = o else { return } x",
+                ": i64",
+                vec![Code::Expected],
+            ),
         ];
-        for (line, ty, safe, after) in rows {
+        for (line, ty, after) in rows {
             let src = format!("fn main() {{\n    {line}\n}}");
             let d = parse_diagnostic(&src);
             let at = d.span();
             assert_eq!(&src[at.start()..at.end()], ty, "{src}");
             assert_eq!(d.fixes().len(), 1, "{src}");
-            let (found_safe, _) = fix_edits(&d).expect("the error has a fix");
-            assert_eq!(found_safe, safe, "{src}");
+            let (safe, _) = fix_edits(&d).expect("the error has a fix");
+            assert!(!safe, "{src}");
             let fixed = apply_fix(&src, &d);
             let found: Vec<_> = parsed(&fixed)
                 .diagnostics
@@ -7567,6 +7577,44 @@ mod tests {
             "const C: i64 = 1\nfn main() {}",
         ] {
             assert!(parsed(src).diagnostics.is_empty(), "{src}");
+        }
+    }
+
+    /// GIVEN a qualified `let`, as `let a.b`, with a type and no `else` on its line or the next
+    /// WHEN the parser reads it
+    /// THEN the first mistake is the `.`: E0011 "expected `=`, found `.`", as for a `let` with a
+    /// name and no type
+    /// AND with an `else` on the line, the error is the type; with one on the next line, it is
+    /// the type too, and its fix leads to E0006
+    #[test]
+    fn qualified_let_with_a_type_and_no_else_should_report_the_dot() {
+        for (line, col) in [
+            ("let a.b: i64 = 5", 10),
+            ("let a.b: = 5", 10),
+            ("let a.b: i64", 10),
+            ("let Shape.Sq: Shape = e", 14),
+            ("let mut a.b: i64 = 5", 14),
+        ] {
+            let src = format!("fn main() {{\n    {line}\n}}");
+            assert_eq!(parse_err(&src), (Code::Expected, 2, col), "{src}");
+        }
+        for (line, after) in [
+            ("let Shape.Sq: Shape = e else { return }", vec![]),
+            (
+                "let Shape.Sq: Shape = e\n    else { return }",
+                vec![Code::ElseOnNewLine],
+            ),
+        ] {
+            let src = format!("fn main() {{\n    {line}\n}}");
+            let d = parse_diagnostic(&src);
+            assert_eq!(&src[d.span().start()..d.span().end()], ": Shape", "{src}");
+            let fixed = apply_fix(&src, &d);
+            let found: Vec<_> = parsed(&fixed)
+                .diagnostics
+                .iter()
+                .map(Diagnostic::code)
+                .collect();
+            assert_eq!(found, after, "{fixed}");
         }
     }
 
