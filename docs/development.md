@@ -255,6 +255,14 @@ and stops. `LOG=<file>` writes the whole output to that file, opened only once
 the run holds the lock. Use it instead of a shell redirect, which would empty a
 running log before the second run could refuse.
 
+`make test`, `make coverage`, `make mutation-test` and `make miri` also hold
+one lock for all the worktrees of the clone (`scripts/heavy-run.sh`, a file in
+the clone's `.git`). Two such runs at the same time link hundreds of programs at
+once and stop the disk for every other process, so a second run prints
+`heavy-run: waiting for this run to end: <command> in <worktree>` and waits for
+the first. A mutation run tests 8 tests at a time in each mutant;
+`NEXTEST_TEST_THREADS` sets another number.
+
 ## Coverage and performance
 
 `make coverage [BASE=<base>]` runs the tests under `cargo-llvm-cov` and prints

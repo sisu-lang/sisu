@@ -12,9 +12,11 @@ import unittest
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mutants.sh')
 # A pre-commit hook runs these tests with GIT_DIR and its kin set to the outer repository.
-# A caller's LOG, CARGO_MUTANTS_JOBS and MUTANTS_PASS2_TIMEOUT would change what the script does.
+# A caller's LOG, CARGO_MUTANTS_JOBS, NEXTEST_TEST_THREADS and MUTANTS_PASS2_TIMEOUT would change
+# what the script does.
 ENV = {k: v for k, v in os.environ.items()
-       if not k.startswith('GIT_') and k not in ('LOG', 'CARGO_MUTANTS_JOBS', 'MUTANTS_PASS2_TIMEOUT')}
+       if not k.startswith('GIT_') and k not in ('LOG', 'CARGO_MUTANTS_JOBS', 'NEXTEST_TEST_THREADS',
+                                                    'MUTANTS_PASS2_TIMEOUT')}
 # The fake cargo mutants records its jobs, niceness and arguments (to `args`, or to `args2`
 # for a run with --iterate), and whether an old mutants.out was there. Unless FAKE_WRITE is 0,
 # it then writes a new mutants.out with the result files that the test names in FAKE_CAUGHT,
@@ -28,7 +30,7 @@ if [[ " $* " == *" --list "* ]]; then
   for ((i = 0; i < ${FAKE_LIST:-0}; i++)); do echo "mutant $i"; done
   exit "${FAKE_EXIT:-0}"
 fi
-echo "$CARGO_MUTANTS_JOBS $(nice)" >seen
+echo "$CARGO_MUTANTS_JOBS $(nice) $NEXTEST_TEST_THREADS" >seen
 prefix=FAKE
 if [[ " $* " == *" --iterate "* ]]; then
   echo "$*" >args2
@@ -172,11 +174,11 @@ class Mutants(unittest.TestCase):
         self.assertEqual(self.last_line(), 'mutation-test: FAIL: uncommitted Rust changes; commit them, then run again')
         self.assertFalse(self.seen('seen'))
 
-    def test_cargo_should_run_niced_with_two_jobs_by_default(self):
+    def test_cargo_should_run_niced_with_two_jobs_of_eight_test_threads_by_default(self):
         self.rust_commit()
         self.mutate(log=False, caught=1)
         with open(os.path.join(self.repo, 'seen'), encoding='utf-8') as f:
-            self.assertEqual(f.read().strip(), '2 19')
+            self.assertEqual(f.read().strip(), '2 19 8')
 
     def test_a_run_without_new_output_should_pass_and_leave_the_old_mutants_out_alone(self):
         self.rust_commit()
