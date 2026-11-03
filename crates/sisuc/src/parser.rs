@@ -9024,7 +9024,7 @@ mod tests {
             (Code::IntegerTooLarge, 2, 9)
         );
         // The parser no longer reports a pattern with no `else`, so the lexer's error, at the
-        // second `_`, stands alone.
+        // first `_`, stands alone.
         assert_eq!(
             parse_err("fn main() {\n    let 1__2 = 1\n}\n"),
             (Code::DigitSeparator, 2, 10)

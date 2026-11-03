@@ -98,46 +98,9 @@ pub(super) fn check(
     ty: Type,
     rows: &[Row<'_>],
 ) -> Report {
-    let mut solver = Solver {
-        enums,
-        conformances,
-        pats: vec![Pat::Wild],
-        ors: vec![false],
-        pat_ids: FxHashMap::default(),
-        nodes: vec![
-            Node {
-                pat: WILD,
-                col: Col::Other,
-                tail: EMPTY,
-                wild: true,
-                ors: false,
-            },
-            Node {
-                pat: WILD,
-                col: Col::Other,
-                tail: GUARDED,
-                wild: false,
-                ors: false,
-            },
-        ],
-        node_ids: FxHashMap::default(),
-        memo: FxHashMap::default(),
-        defaults: FxHashMap::default(),
-        reached: FxHashSet::default(),
-        taken: Vec::new(),
-    };
+    let mut solver = Solver::new(enums, conformances, true);
     let col = column(ty);
-    let pats: Vec<_> = rows
-        .iter()
-        .map(|row| solver.intern(row.pattern, col))
-        .collect();
-    let mut stacks: Vec<_> = rows
-        .iter()
-        .zip(&pats)
-        .map(|(row, &pat)| solver.push(pat, col, bottom(row.guarded)))
-        .collect();
-    stacks.push(solver.push(WILD, col, EMPTY));
-    let result = solver.solve(stacks.into());
+    let (pats, result) = solver.run(col, rows);
     let takers = solver.takers(result.taken, rows.len() + 1);
     let mut unreachable = Vec::new();
     for (k, (row, reach)) in rows.iter().zip(&result.reach).enumerate() {
@@ -191,6 +154,20 @@ pub(super) fn check(
         missing,
         unreachable,
     }
+}
+
+/// Whether `rows`, the patterns of a `let`, `if let` or `while let`, one unguarded row each,
+/// match every value of `ty`. The answer of `check` with no `missing`, with no witness built: it
+/// costs the work of the solve alone, not the width of the variants a witness names.
+pub(super) fn covers(
+    enums: &[tir::Enum],
+    conformances: &tir::Conformances,
+    ty: Type,
+    rows: &[Row<'_>],
+) -> bool {
+    // A solver of its own: its memo holds matrices solved with no witness.
+    let mut solver = Solver::new(enums, conformances, false);
+    solver.run(column(ty), rows).1.witness.is_none()
 }
 
 /// An interned pattern, its bindings forgotten: an index into `Solver::pats`.
@@ -445,11 +422,35 @@ impl Frame {
         }
         self.next += 1;
     }
+
+    /// The gap: the lowest interval that reaches the sentinel, joined with each next one
+    /// adjacent to it, and their `guarded`s together.
+    fn gap(&mut self) -> (Option<(i64, i64)>, bool) {
+        let mut gaps = std::mem::take(&mut self.gaps);
+        gaps.sort_unstable_by_key(|&(lo, ..)| lo);
+        match gaps.split_first() {
+            Some((&(lo, mut hi, mut guarded), rest)) => {
+                for &(next, end, next_guarded) in rest {
+                    if hi.checked_add(1) != Some(next) {
+                        break;
+                    }
+                    hi = end;
+                    guarded |= next_guarded;
+                }
+                (self.split.then_some((lo, hi)), guarded)
+            }
+            None => (None, self.best.is_some_and(|(.., guarded)| guarded)),
+        }
+    }
 }
 
 struct Solver<'a> {
     enums: &'a [tir::Enum],
     conformances: &'a tir::Conformances,
+    /// Whether `finish` builds the witness: its head and its stack. Off, the best child's witness
+    /// goes up as it is, and only whether a matrix has one is true. Fixed for the whole solve,
+    /// since the memo holds matrices solved the one way.
+    witness: bool,
     pats: Vec<Pat>,
     /// Whether each pattern holds an `|`.
     ors: Vec<bool>,
@@ -486,6 +487,56 @@ fn join(
         children.len() - 1
     });
     children[b].members.push(e);
+}
+
+impl<'a> Solver<'a> {
+    fn new(enums: &'a [tir::Enum], conformances: &'a tir::Conformances, witness: bool) -> Self {
+        Solver {
+            enums,
+            conformances,
+            witness,
+            pats: vec![Pat::Wild],
+            ors: vec![false],
+            pat_ids: FxHashMap::default(),
+            nodes: vec![
+                Node {
+                    pat: WILD,
+                    col: Col::Other,
+                    tail: EMPTY,
+                    wild: true,
+                    ors: false,
+                },
+                Node {
+                    pat: WILD,
+                    col: Col::Other,
+                    tail: GUARDED,
+                    wild: false,
+                    ors: false,
+                },
+            ],
+            node_ids: FxHashMap::default(),
+            memo: FxHashMap::default(),
+            defaults: FxHashMap::default(),
+            reached: FxHashSet::default(),
+            taken: Vec::new(),
+        }
+    }
+
+    /// The matrix of `rows`, one unguarded or guarded row each, at a column `col`, with the
+    /// sentinel row below them: each row's interned pattern, and what the solve says.
+    fn run(&mut self, col: Col, rows: &[Row<'_>]) -> (Vec<PatId>, Rc<Solved>) {
+        let pats: Vec<_> = rows
+            .iter()
+            .map(|row| self.intern(row.pattern, col))
+            .collect();
+        let mut stacks: Vec<_> = rows
+            .iter()
+            .zip(&pats)
+            .map(|(row, &pat)| self.push(pat, col, bottom(row.guarded)))
+            .collect();
+        stacks.push(self.push(WILD, col, EMPTY));
+        (pats, self.solve(stacks.into()))
+    }
 }
 
 impl Solver<'_> {
@@ -1034,8 +1085,11 @@ impl Solver<'_> {
 
     /// What `frame`, all of whose children are solved, says; also kept for its rows. Each
     /// alternative its expanded rows reached is recorded.
-    fn finish(&mut self, frame: Frame) -> Rc<Solved> {
+    fn finish(&mut self, mut frame: Frame) -> Rc<Solved> {
         let witness = frame.best.map(|(order, child, witness, _)| {
+            if !self.witness {
+                return witness;
+            }
             let head = match frame.col {
                 // A bucket's witness starts with the variant's fields: they become its payload.
                 Col::Enum(enum_id, _) if frame.children[child].bucket => {
@@ -1090,23 +1144,7 @@ impl Solver<'_> {
             };
             self.push(head, frame.col, witness)
         });
-        // The gap: the lowest interval that reaches the sentinel, joined with each next one
-        // adjacent to it, their `guarded`s together.
-        let mut gaps = frame.gaps;
-        gaps.sort_unstable_by_key(|&(lo, ..)| lo);
-        let (gap, guarded) = match gaps.split_first() {
-            Some((&(lo, mut hi, mut guarded), rest)) => {
-                for &(next, end, next_guarded) in rest {
-                    if hi.checked_add(1) != Some(next) {
-                        break;
-                    }
-                    hi = end;
-                    guarded |= next_guarded;
-                }
-                (frame.split.then_some((lo, hi)), guarded)
-            }
-            None => (None, frame.best.is_some_and(|(.., guarded)| guarded)),
-        };
+        let (gap, guarded) = frame.gap();
         let mut reach: Vec<Takers> = frame.rows.iter().map(|_| Takers::default()).collect();
         let mut here = Vec::new();
         for (row, found) in frame.expanded.iter().zip(frame.reach) {

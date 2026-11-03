@@ -210,34 +210,76 @@ fn let_program(line: &str) -> String {
     )
 }
 
-/// A line and the diagnostics it gives, each as a code and a `(line, column)`.
-type LetRow = (&'static str, &'static [(Code, (usize, usize))]);
+/// Diagnostics, each as a code and a `(line, column)`.
+type Found = &'static [(Code, (usize, usize))];
 
-/// The wanted diagnostics of `let_pattern_without_else_should_report_by_the_value_type`. The
-/// column of E0051 is the value's. The `else` form of a line gives the same codes, with E0131 in
-/// place of E0174 "always matches", and none for a pattern that can fail.
+/// A line, the diagnostics it gives, and those of its `else` form.
+type LetRow = (&'static str, Found, Found);
+
+/// The wanted diagnostics of `let_pattern_without_else_should_report_by_the_value_type` and of
+/// `let_pattern_without_else_should_agree_with_its_else_form`. The column of E0051 is the value's.
+/// The `else` form of a line is the line with `else { return }` after its first line. Where the
+/// pattern always matches, the plain form gives E0174 and the `else` form E0131. Where the
+/// pattern can fail, the `else` form gives nothing. A failed value keeps its error in both.
 const LET_ROWS: [LetRow; 16] = [
-    // One variant: the pattern always matches. The `else` form is E0131.
-    ("let One(n) = w", &[(Code::RefutablePattern, (17, 9))]),
+    // One variant: the pattern always matches.
+    (
+        "let One(n) = w",
+        &[(Code::RefutablePattern, (17, 9))],
+        &[(Code::AlwaysMatches, (17, 9))],
+    ),
     // All variants of the enum.
-    ("let A(n) | B(n) = v", &[(Code::RefutablePattern, (17, 9))]),
+    (
+        "let A(n) | B(n) = v",
+        &[(Code::RefutablePattern, (17, 9))],
+        &[(Code::AlwaysMatches, (17, 9))],
+    ),
     // A class has no variant to match: E0051 at the value.
-    ("let P(a, b) = p", &[(Code::UnwrapNeedsOptional, (17, 19))]),
-    ("let Q(a) = p", &[(Code::UnwrapNeedsOptional, (17, 16))]),
-    ("let f(x) = 5", &[(Code::UnwrapNeedsOptional, (17, 16))]),
-    ("let 1 = 5", &[(Code::UnwrapNeedsOptional, (17, 13))]),
+    (
+        "let P(a, b) = p",
+        &[(Code::UnwrapNeedsOptional, (17, 19))],
+        &[(Code::UnwrapNeedsOptional, (17, 19))],
+    ),
+    (
+        "let Q(a) = p",
+        &[(Code::UnwrapNeedsOptional, (17, 16))],
+        &[(Code::UnwrapNeedsOptional, (17, 16))],
+    ),
+    (
+        "let f(x) = 5",
+        &[(Code::UnwrapNeedsOptional, (17, 16))],
+        &[(Code::UnwrapNeedsOptional, (17, 16))],
+    ),
+    (
+        "let 1 = 5",
+        &[(Code::UnwrapNeedsOptional, (17, 13))],
+        &[(Code::UnwrapNeedsOptional, (17, 13))],
+    ),
     (
         "let \"a\" = \"b\"",
         &[(Code::UnwrapNeedsOptional, (17, 15))],
+        &[(Code::UnwrapNeedsOptional, (17, 15))],
     ),
-    ("let x..y = 5", &[(Code::UnwrapNeedsOptional, (17, 16))]),
+    (
+        "let x..y = 5",
+        &[(Code::UnwrapNeedsOptional, (17, 16))],
+        &[(Code::UnwrapNeedsOptional, (17, 16))],
+    ),
     // A name that is no variant of the enum.
-    ("let f(x) = v", &[(Code::UnknownVariant, (17, 9))]),
-    ("let A(n, m) = v", &[(Code::SubpatternCount, (17, 9))]),
+    (
+        "let f(x) = v",
+        &[(Code::UnknownVariant, (17, 9))],
+        &[(Code::UnknownVariant, (17, 9))],
+    ),
+    (
+        "let A(n, m) = v",
+        &[(Code::SubpatternCount, (17, 9))],
+        &[(Code::SubpatternCount, (17, 9))],
+    ),
     // The pattern can fail: the error stays, with the help of `if let` and `match`.
-    ("let Some(n) = o", &[(Code::RefutablePattern, (17, 9))]),
-    ("let A(n) = v", &[(Code::RefutablePattern, (17, 9))]),
-    ("let None = o", &[(Code::RefutablePattern, (17, 9))]),
+    ("let Some(n) = o", &[(Code::RefutablePattern, (17, 9))], &[]),
+    ("let A(n) = v", &[(Code::RefutablePattern, (17, 9))], &[]),
+    ("let None = o", &[(Code::RefutablePattern, (17, 9))], &[]),
     // The value fails: its error stays, and so does the pattern's.
     (
         "let One(n) = zz",
@@ -245,12 +287,17 @@ const LET_ROWS: [LetRow; 16] = [
             (Code::RefutablePattern, (17, 9)),
             (Code::BindingNotFound, (17, 18)),
         ],
+        &[(Code::BindingNotFound, (17, 18))],
     ),
     // The value has a type, though it fails: the pattern is judged.
     (
         "let One(n) = Only.One(zz)",
         &[
             (Code::RefutablePattern, (17, 9)),
+            (Code::BindingNotFound, (17, 27)),
+        ],
+        &[
+            (Code::AlwaysMatches, (17, 9)),
             (Code::BindingNotFound, (17, 27)),
         ],
     ),
@@ -261,66 +308,42 @@ const LET_ROWS: [LetRow; 16] = [
             (Code::RefutablePattern, (17, 9)),
             (Code::AssignToImmutable, (18, 5)),
         ],
+        &[
+            (Code::AlwaysMatches, (17, 9)),
+            (Code::AssignToImmutable, (18, 5)),
+        ],
     ),
 ];
 
 /// The parser knows no types, so the checker reports a `let` with a pattern and no `else` by the
 /// type of the value: E0174 when the pattern is right for an enum or an optional (it always
-/// matches, or can fail), else the error of the `else` form.
+/// matches, or can fail), else the error of the `else` form. The table pins the codes; the
+/// fixtures `E0174`, `E0174-one-variant` and `E0174-failed-value` pin the two texts of E0174.
 #[test]
 fn let_pattern_without_else_should_report_by_the_value_type() {
-    for (line, expected) in LET_ROWS {
+    for (line, expected, _) in LET_ROWS {
         codes_row(line, &let_program(line), expected);
     }
 }
 
-/// GIVEN a `let` with a pattern and no `else` whose `else` form gives an error
-/// WHEN `sisu check` runs on both
-/// THEN the lines give the same error, and E0174 stands for E0131
+/// GIVEN a `let` with a pattern and no `else`
+/// WHEN `sisu check` runs on it with an `else { return }` after its first line
+/// THEN it gives the diagnostics of the table's `else` column: E0131 in place of E0174 "always
+/// matches", none for a pattern that can fail, and the error of a failed value alone
 #[test]
 fn let_pattern_without_else_should_agree_with_its_else_form() {
-    // The else form of a row, which `LET_ROWS` has no column for.
     let with_else = |line: &str| match line.split_once('\n') {
         Some((first, rest)) => format!("{first} else {{ return }}\n{rest}"),
         None => format!("{line} else {{ return }}"),
     };
-    for (line, expected) in LET_ROWS {
-        // The else form of a row whose pattern can fail gives no error, and a failed value
-        // gives its own error alone.
-        if matches!(
-            line,
-            "let Some(n) = o" | "let A(n) = v" | "let None = o" | "let One(n) = zz"
-        ) || line.contains('\n')
-        {
-            continue;
-        }
-        let swapped: Vec<_> = expected
-            .iter()
-            .map(|&(code, at)| match code {
-                Code::RefutablePattern => (Code::AlwaysMatches, at),
-                code => (code, at),
-            })
-            .collect();
-        codes_row(line, &let_program(&with_else(line)), &swapped);
+    for (line, _, expected) in LET_ROWS {
+        codes_row(line, &let_program(&with_else(line)), expected);
     }
 }
 
-/// GIVEN a `let` with a pattern and no `else` and a failed value `zz`
-/// AND a pattern that can fail
+/// GIVEN a `fn f` whose body is `let = 1` and a `main` with `let One(n) = Only.One(1)` on line 3
 /// WHEN `sisu check` runs on it
-/// THEN the `else` form gives E0033 alone, and the plain form adds E0174 before it
-#[test]
-fn let_pattern_without_else_should_keep_the_error_of_a_failed_value() {
-    codes_row(
-        "let One(n) = zz else { return }",
-        &let_program("let One(n) = zz else { return }"),
-        &[(Code::BindingNotFound, (17, 18))],
-    );
-}
-
-/// GIVEN a `fn f` whose body is `let = 1` and a `main` with `let One(n) = w` on line 3
-/// WHEN `sisu check` runs on it
-/// THEN it reports E0011 at 1:12 and E0174 at 3:9
+/// THEN it reports E0011 at 1:14 and E0174 at 3:9
 /// AND the checker still runs on the item that has no parse error
 #[test]
 fn let_pattern_without_else_should_show_with_a_parse_error_in_another_item() {

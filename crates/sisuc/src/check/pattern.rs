@@ -523,9 +523,7 @@ impl Checker<'_> {
             pattern,
             guarded: false,
         }];
-        exhaust::check(&self.lowered_enums, &self.conformances, ty, &rows)
-            .missing
-            .is_none()
+        exhaust::covers(&self.lowered_enums, &self.conformances, ty, &rows)
     }
 
     /// `pattern` at a position of type `ty` (`None` is `Error`), its names declared in the

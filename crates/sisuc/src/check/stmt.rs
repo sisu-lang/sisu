@@ -527,8 +527,9 @@ impl Checker<'_> {
     /// it cannot read the names, and it must not finish. The names go in the enclosing scope.
     /// A failed block or value fails the statement, but the names are bound all the same, so
     /// the lines after it report nothing of them. Without an `else_block`, the pattern and the
-    /// value are checked the same way, and the statement reports E0174, unless the value or the
-    /// pattern has an error of its own.
+    /// value are checked the same way, and the statement reports E0174. A value that is no enum
+    /// or optional (E0051) and a pattern with an error of its own report that error alone. A
+    /// value with no type keeps its error and adds E0174.
     fn let_else(
         &mut self,
         mutable: Option<Span>,
@@ -590,8 +591,8 @@ impl Checker<'_> {
     /// `let pattern = value` with a pattern that is not a name and no `else`: always an error.
     /// The value and the pattern are checked as in `let_else`. Then E0174 says that the pattern
     /// always matches (the help is `match`) or can fail (the help is an `else`). A value that is
-    /// no enum or optional (E0051), a value with no type, and a pattern with an error of its own
-    /// report that, and no E0174 for the pattern. The names stay bound.
+    /// no enum or optional (E0051) and a pattern with an error of its own report that error
+    /// alone. A value with no type keeps its error and adds E0174. The names stay bound.
     fn let_without_else(
         &mut self,
         pattern: &ast::Pattern,
@@ -602,15 +603,15 @@ impl Checker<'_> {
         let (bound, _) = self.bind_pattern_as(Some(Unwrap::Let), None, &form, pattern, None);
         if !mismatched {
             // A value with no type, or a name that unwraps, leaves `always` false.
-            let always = match (&bound, ty) {
-                (LetPattern::Match { pattern: None }, Some(_)) => None,
-                (
+            let always = match ty {
+                None => Some(false),
+                Some(ty) => match &bound {
+                    LetPattern::Match { pattern: None } => None,
                     LetPattern::Match {
                         pattern: Some((checked, _)),
-                    },
-                    Some(ty),
-                ) => Some(self.always_matches(ty, checked)),
-                _ => Some(false),
+                    } => Some(self.always_matches(ty, checked)),
+                    LetPattern::Some { .. } => Some(false),
+                },
             };
             if let Some(always) = always {
                 self.report(DiagnosticKind::RefutablePattern {
