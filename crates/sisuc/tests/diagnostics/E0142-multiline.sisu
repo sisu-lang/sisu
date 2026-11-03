@@ -1,0 +1,17 @@
+fn call() {
+    outer: loop {
+        break outer(
+            1)
+    }
+}
+
+fn index() {
+    outer: loop {
+        break outer[
+            1, // one
+            2]
+    }
+}
+
+fn main() {
+}

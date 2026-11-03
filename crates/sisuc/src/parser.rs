@@ -8880,8 +8880,10 @@ mod tests {
         );
     }
 
-    /// `xs[1:3]` in Python and Go: each form is one E0132 at the `:`, with a safe fix, and the
-    /// range it names for the checker. A step is E0011.
+    /// `xs[1:3]` in Python and Go: each form is one E0132 at the `:`, with a fix, and the range it
+    /// names for the checker. Only `xs[:]` has a safe fix: the parser cannot see the type of the
+    /// base, so `..` may count bytes, and may stop the program, where Python clamps. A step is
+    /// E0011.
     #[test]
     fn colon_slice_should_recover_as_the_range_it_names() {
         let rows = [
@@ -8911,10 +8913,10 @@ mod tests {
             assert_eq!(d.code(), Code::ForeignRange, "{src}");
             assert_eq!(line_col(&program, d.span().start()), at, "{src}");
             let (safe, _) = fix_edits(d).expect("the colon form has a fix");
-            assert!(safe, "{src}");
+            assert_eq!(safe, src == "xs[:]", "{src}");
             let fixed = format!("fn main() {{ {fixed} }}");
             assert_eq!(apply_fix(&program, d), fixed);
-            // Every advertised fix is safe, so its result parses with no diagnostic.
+            // Each fix gives a range that parses with no diagnostic.
             assert_eq!(parsed_fixed(&fixed), 0, "{src}");
             let Some(Item::Function(f)) = parsed.program.items.first() else {
                 panic!("{src}: expected a function");
@@ -8970,6 +8972,68 @@ mod tests {
             assert_eq!(d.code(), Code::ForeignRange, "{src}");
             assert!(d.fixes().is_empty(), "{src}");
         }
+    }
+
+    /// Python counts a negative colon bound from the end, and Sisu has no negative index: the
+    /// report points at the first negative bound, with its whole span, not at the `:`. The
+    /// table gives each row's column and length on line 1, after `fn main() { ` (12 characters).
+    #[test]
+    fn colon_slice_with_a_negative_bound_should_point_at_the_bound() {
+        let rows = [
+            ("xs[:-1]", 17, 2),
+            ("xs[-2:]", 16, 2),
+            ("xs[-3:-1]", 16, 2),
+            ("xs[-2:-1]", 16, 2),
+            ("s[:-1]", 15, 2),
+            ("xs[:-n]", 17, 2),
+            ("xs[:-(n + 1)]", 17, 8),
+            ("xs[:(-1)]", 17, 4),
+            ("xs[1:-1]", 18, 2),
+            ("xs[0:--1]", 18, 3),
+            ("c.xs[:-1]", 19, 2),
+            ("xss[0][:-1]", 21, 2),
+            ("xs[:-a * b]", 17, 6),
+            ("xs[:-1 + n]", 17, 6),
+            ("xs[:-1 < n]", 17, 6),
+            ("xs[:--1]", 17, 3),
+            ("xs[-3:-a * b]", 16, 2),
+            ("xs[:-9223372036854775808]", 17, 20),
+            ("xs[{ xs = [7]; 0 }:-1]", 32, 2),
+            ("self.xs[:-1]", 21, 2),
+            ("f()[:-1]", 18, 2),
+            ("f().xs[:-1]", 21, 2),
+            ("xs[1..][:-1]", 21, 2),
+            // A bound on two lines: the span covers both.
+            ("xs[1:-f(\n 1)]", 18, 7),
+        ];
+        for (src, col, len) in rows {
+            let program = format!("fn main() {{ {src} }}");
+            let d = parse_diagnostic(&program);
+            assert_eq!(d.code(), Code::ForeignRange, "{src}");
+            let (start, end) = (d.span().start(), d.span().end());
+            assert_eq!(line_col(&program, start), (1, col), "{src}");
+            assert_eq!(end - start, len, "{src}");
+        }
+    }
+
+    /// The text of an E0123 message goes on one line, but the replacement of its fix is the source
+    /// as written: a comment inside a sub-pattern, and its line break, stay. The wording of the
+    /// messages is pinned in `tests/diagnostics/E0123-multiline.sisu`.
+    #[test]
+    fn braces_pattern_fix_should_keep_its_replacement_as_written() {
+        let program = "fn main() {\n    match r {\n        R { w: Some( // keep me\n            a), h } => print(h)\n        _ => print(0)\n    }\n}";
+        let d = parse_diagnostic(program);
+        assert_eq!(d.code(), Code::PatternForm);
+        let (safe, edits) = fix_edits(&d).expect("the braces form has a fix");
+        assert!(!safe);
+        let [(start, end, replacement)] = edits.as_slice() else {
+            panic!("expected one edit, got {edits:?}");
+        };
+        assert_eq!(replacement, "(Some( // keep me\n            a), h)");
+        assert_eq!(
+            &program[*start..*end],
+            " { w: Some( // keep me\n            a), h }"
+        );
     }
 
     /// The number of diagnostics of `program`.
