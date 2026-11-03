@@ -201,3 +201,134 @@ fn let_else_on_a_plain_value_should_offer_a_comparison_only_for_a_literal_patter
         assert_eq!(d.help().is_some(), help, "{line}");
     }
 }
+
+/// A program whose `main` ends with `line` at line 17: the enum `E` has `A` and `B`, `Only` has
+/// one variant, `P` is a class, and `o` is an optional.
+fn let_program(line: &str) -> String {
+    format!(
+        "enum E {{\n    A(i64)\n    B(i64)\n}}\nenum Only {{\n    One(i64)\n}}\nclass P {{\n    x: i64\n    y: i64\n}}\nfn main() {{\n    let v = E.A(1)\n    let w = Only.One(1)\n    let p = P(x: 1, y: 2)\n    let o: i64? = 1\n    {line}\n}}"
+    )
+}
+
+/// A line and the diagnostics it gives, each as a code and a `(line, column)`.
+type LetRow = (&'static str, &'static [(Code, (usize, usize))]);
+
+/// The wanted diagnostics of `let_pattern_without_else_should_report_by_the_value_type`. The
+/// column of E0051 is the value's. The `else` form of a line gives the same codes, with E0131 in
+/// place of E0174 "always matches", and none for a pattern that can fail.
+const LET_ROWS: [LetRow; 16] = [
+    // One variant: the pattern always matches. The `else` form is E0131.
+    ("let One(n) = w", &[(Code::RefutablePattern, (17, 9))]),
+    // All variants of the enum.
+    ("let A(n) | B(n) = v", &[(Code::RefutablePattern, (17, 9))]),
+    // A class has no variant to match: E0051 at the value.
+    ("let P(a, b) = p", &[(Code::UnwrapNeedsOptional, (17, 19))]),
+    ("let Q(a) = p", &[(Code::UnwrapNeedsOptional, (17, 16))]),
+    ("let f(x) = 5", &[(Code::UnwrapNeedsOptional, (17, 16))]),
+    ("let 1 = 5", &[(Code::UnwrapNeedsOptional, (17, 13))]),
+    (
+        "let \"a\" = \"b\"",
+        &[(Code::UnwrapNeedsOptional, (17, 15))],
+    ),
+    ("let x..y = 5", &[(Code::UnwrapNeedsOptional, (17, 16))]),
+    // A name that is no variant of the enum.
+    ("let f(x) = v", &[(Code::UnknownVariant, (17, 9))]),
+    ("let A(n, m) = v", &[(Code::SubpatternCount, (17, 9))]),
+    // The pattern can fail: the error stays, with the help of `if let` and `match`.
+    ("let Some(n) = o", &[(Code::RefutablePattern, (17, 9))]),
+    ("let A(n) = v", &[(Code::RefutablePattern, (17, 9))]),
+    ("let None = o", &[(Code::RefutablePattern, (17, 9))]),
+    // The value fails: its error stays, and so does the pattern's.
+    (
+        "let One(n) = zz",
+        &[
+            (Code::RefutablePattern, (17, 9)),
+            (Code::BindingNotFound, (17, 18)),
+        ],
+    ),
+    // The value has a type, though it fails: the pattern is judged.
+    (
+        "let One(n) = Only.One(zz)",
+        &[
+            (Code::RefutablePattern, (17, 9)),
+            (Code::BindingNotFound, (17, 27)),
+        ],
+    ),
+    // A failed statement still binds its name, so a later write reports the name only.
+    (
+        "let One(n) = w\n    n = 2",
+        &[
+            (Code::RefutablePattern, (17, 9)),
+            (Code::AssignToImmutable, (18, 5)),
+        ],
+    ),
+];
+
+/// The parser knows no types, so the checker reports a `let` with a pattern and no `else` by the
+/// type of the value: E0174 when the pattern is right for an enum or an optional (it always
+/// matches, or can fail), else the error of the `else` form.
+#[test]
+fn let_pattern_without_else_should_report_by_the_value_type() {
+    for (line, expected) in LET_ROWS {
+        codes_row(line, &let_program(line), expected);
+    }
+}
+
+/// GIVEN a `let` with a pattern and no `else` whose `else` form gives an error
+/// WHEN `sisu check` runs on both
+/// THEN the lines give the same error, and E0174 stands for E0131
+#[test]
+fn let_pattern_without_else_should_agree_with_its_else_form() {
+    // The else form of a row, which `LET_ROWS` has no column for.
+    let with_else = |line: &str| match line.split_once('\n') {
+        Some((first, rest)) => format!("{first} else {{ return }}\n{rest}"),
+        None => format!("{line} else {{ return }}"),
+    };
+    for (line, expected) in LET_ROWS {
+        // The else form of a row whose pattern can fail gives no error, and a failed value
+        // gives its own error alone.
+        if matches!(
+            line,
+            "let Some(n) = o" | "let A(n) = v" | "let None = o" | "let One(n) = zz"
+        ) || line.contains('\n')
+        {
+            continue;
+        }
+        let swapped: Vec<_> = expected
+            .iter()
+            .map(|&(code, at)| match code {
+                Code::RefutablePattern => (Code::AlwaysMatches, at),
+                code => (code, at),
+            })
+            .collect();
+        codes_row(line, &let_program(&with_else(line)), &swapped);
+    }
+}
+
+/// GIVEN a `let` with a pattern and no `else` and a failed value `zz`
+/// AND a pattern that can fail
+/// WHEN `sisu check` runs on it
+/// THEN the `else` form gives E0033 alone, and the plain form adds E0174 before it
+#[test]
+fn let_pattern_without_else_should_keep_the_error_of_a_failed_value() {
+    codes_row(
+        "let One(n) = zz else { return }",
+        &let_program("let One(n) = zz else { return }"),
+        &[(Code::BindingNotFound, (17, 18))],
+    );
+}
+
+/// GIVEN a `fn f` whose body is `let = 1` and a `main` with `let One(n) = w` on line 3
+/// WHEN `sisu check` runs on it
+/// THEN it reports E0011 at 1:12 and E0174 at 3:9
+/// AND the checker still runs on the item that has no parse error
+#[test]
+fn let_pattern_without_else_should_show_with_a_parse_error_in_another_item() {
+    let src = "fn f() { let = 1 }\nfn main() {\n    let One(n) = Only.One(1)\n}\nenum Only {\n    One(i64)\n}";
+    let ds = crate::front_end::front_end(src).1;
+    let found: Vec<_> = ds.iter().map(|d| (d.code(), at(src, d.span()))).collect();
+    assert_eq!(
+        found,
+        [(Code::Expected, (1, 14)), (Code::RefutablePattern, (3, 9))]
+    );
+}

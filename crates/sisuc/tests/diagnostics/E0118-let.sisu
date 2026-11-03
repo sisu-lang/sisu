@@ -1,0 +1,14 @@
+// GIVEN `enum E { A(i64); B }` and a `main` whose line 12 is `let f(x) = v`, with `f` at 12:9
+// WHEN `sisu check` runs on it
+// THEN it reports E0118 at 12:9 with the similar-name fix `A`
+// AND it reports no other diagnostic
+enum E {
+    A(i64)
+    B
+}
+
+fn main() {
+    let v = E.B
+    let f(x) = v
+    print(x)
+}

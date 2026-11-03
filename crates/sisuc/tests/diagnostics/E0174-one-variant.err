@@ -1,10 +1,10 @@
-error[E0174]: this pattern can fail to match
-  --> E0174-one-variant.sisu:10:9
+error[E0174]: a `let` without `else` takes only a name or `_`
+  --> E0174-one-variant.sisu:11:9
    |
-10 |     let One(n) = v
-   |         ^^^^^^ `One(n)` may not match
+11 |     let One(n) = v
+   |         ^^^^^^ `One(n)` always matches
    |
-   = help: add an `else` block that does not finish, or use `if let` or `match`
+   = help: use `match`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0174

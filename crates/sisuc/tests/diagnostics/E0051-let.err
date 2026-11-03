@@ -1,0 +1,8 @@
+error[E0051]: a `let` pattern needs an enum or an optional; this is `P`
+  --> E0051-let.sisu:12:19
+   |
+12 |     let P(a, b) = p
+   |                   ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0051

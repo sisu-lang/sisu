@@ -5451,8 +5451,15 @@ mod tests {
         for src in ["class", "is", "let self = 1", ".", "?", "?.", "??"] {
             assert_eq!(expr_err(src).0, Code::Expected, "{src}");
         }
-        // `None` starts a pattern in a `let`, which can fail to match.
-        assert_eq!(expr_err("let None = 1").0, Code::RefutablePattern);
+    }
+
+    /// `None` starts a pattern in a `let`. The parser reports nothing for a pattern with no
+    /// `else`: the checker decides by the value's type.
+    #[test]
+    fn let_none_pattern_without_else_should_parse_clean() {
+        let parsed = parsed("fn main() {\n    let None = 1\n}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert!(parsed.checkable);
     }
 
     #[test]
@@ -7403,19 +7410,28 @@ mod tests {
         );
     }
 
-    /// A pattern that is not a name needs an `else`: the parser reports it and keeps the
-    /// statement, so the item still checks.
+    /// A pattern that is not a name and has no `else` is no parse error: the parser keeps it as
+    /// a `let ... else` with no block, and the checker reports it by the value's type.
     #[test]
-    fn let_pattern_without_else_should_be_reported_and_kept() {
+    fn let_pattern_without_else_should_be_kept_with_no_report() {
         let src = "fn main() {\n    let Some(v) = o\n    print(v)\n}";
         let parsed = parsed(src);
-        let [d] = parsed.diagnostics.as_slice() else {
-            panic!("expected one diagnostic, got {:?}", parsed.diagnostics);
-        };
-        assert_eq!(d.code(), Code::RefutablePattern);
-        assert_eq!(line_col(src, d.span().start()), (2, 9));
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
         assert!(parsed.checkable);
         assert_eq!(parsed.program.broken, []);
+        let [Item::Function(main)] = parsed.program.items.as_slice() else {
+            panic!("expected `main` alone, found {:?}", parsed.program.items);
+        };
+        assert!(
+            matches!(
+                main.body.stmts.first().map(|s| &s.kind),
+                Some(StmtKind::LetElse {
+                    else_block: None,
+                    ..
+                })
+            ),
+            "the first statement should be a `let ... else` with no block"
+        );
     }
 
     /// `let mut` before a pattern that is not a name is E0011 at the `mut`; a qualified variant
@@ -9014,10 +9030,17 @@ mod tests {
             parse_err("fn main() {\n    let 99999999999999999999 = 1\n}\n"),
             (Code::IntegerTooLarge, 2, 9)
         );
-        // A literal pattern that can fail comes before the lexer's error in its own text.
+        // The parser no longer reports a pattern with no `else`, so the lexer's error stands
+        // alone.
         assert_eq!(
             parse_err("fn main() {\n    let 1__2 = 1\n}\n"),
-            (Code::RefutablePattern, 2, 9)
+            (Code::DigitSeparator, 2, 9)
+        );
+        // A pattern with no `else` is the checker's, which does not run on a broken item: the
+        // parse error after it shows alone.
+        assert_eq!(
+            parse_err("fn main() {\n    let One(n) = w\n    let = 1\n}\n"),
+            (Code::Expected, 3, 9)
         );
     }
 
