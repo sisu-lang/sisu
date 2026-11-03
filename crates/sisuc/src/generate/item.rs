@@ -1260,10 +1260,12 @@ impl Gen<'_> {
     /// each place a conversion is made, call through an array element, an optional, a parameter
     /// and a call result, and print and compare the values. An enum, a number, a `string` and a
     /// `char` convert too, each into a box, to `any Seen` and to `any Display`. The interfaces
-    /// have no `Self` and no generic method, so they can be `any`. None of it takes a byte.
+    /// have no `Self` and no generic method, so they can be `any`. `any_never<S: Seen>() -> S`
+    /// takes `S` only from its context, `any Seen` and `(any Seen)?`, in a branch that does not
+    /// run: the call meets the bound with the payload of the optional. None of it takes a byte.
     fn any_values(&mut self, calls: &mut Calls) {
         self.w.text(
-            "interface Seen {\n    fn seen(self) -> i64\n}\ninterface Heard: AnyObject {\n    fn echo(self, n: i64) -> i64\n}\nclass Eye: Seen {\n    v: i64\n    fn seen(self) -> i64 { self.v }\n}\nclass Ear: Heard {\n    fn echo(self, n: i64) -> i64 { n }\n}\nenum Beam: Seen {\n    Wide(i64)\n    fn seen(self) -> i64 {\n        match self {\n            Beam.Wide(n) => n\n        }\n    }\n}\nfn any_see(x: any Seen) -> i64 { x.seen() }\nfn any_make() -> any Seen { Eye(v: 5) }\nfn any_hear(x: any Heard, y: any Heard) -> i64 {\n    if x is y { x.echo(1) } else { x.echo(2) }\n}",
+            "interface Seen {\n    fn seen(self) -> i64\n}\ninterface Heard: AnyObject {\n    fn echo(self, n: i64) -> i64\n}\nclass Eye: Seen {\n    v: i64\n    fn seen(self) -> i64 { self.v }\n}\nclass Ear: Heard {\n    fn echo(self, n: i64) -> i64 { n }\n}\nenum Beam: Seen {\n    Wide(i64)\n    fn seen(self) -> i64 {\n        match self {\n            Beam.Wide(n) => n\n        }\n    }\n}\nfn any_see(x: any Seen) -> i64 { x.seen() }\nfn any_make() -> any Seen { Eye(v: 5) }\nfn any_never<S: Seen>() -> S { panic(\"any_never runs only in a branch that is not taken\") }\nfn any_hear(x: any Heard, y: any Heard) -> i64 {\n    if x is y { x.echo(1) } else { x.echo(2) }\n}",
         );
         self.w.line();
         for line in [
@@ -1271,6 +1273,7 @@ impl Gen<'_> {
             "let _ = eyes[0].seen() + any_see(eyes[1]) + any_see(Eye(v: 3))",
             "let eye: (any Seen)? = Eye(v: 4)",
             "let _ = (eye ?? any_make()).seen()",
+            "if eyes.len() > 2 {\n        let _lost: (any Seen)? = any_never()\n        let _gone: any Seen = any_never()\n    }",
             "let ear: any Heard = Ear()",
             "let _ = any_hear(ear, Ear()) + any_hear(ear, ear) + ear.echo(0)",
             "print(eyes[0])",
