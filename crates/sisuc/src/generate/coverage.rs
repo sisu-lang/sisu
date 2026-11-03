@@ -68,6 +68,10 @@ const EXCLUDED: &[(&str, &str)] = &[
         "only a format spec with an error sets it",
     ),
     (
+        "ast::Param.mutable = true",
+        "Task 9 of the `mut` parameters plan generates it",
+    ),
+    (
         "types::Step::Type",
         "a private worklist item of `types::write_steps`, which is no type",
     ),
@@ -1081,6 +1085,7 @@ impl Walk {
             }
             self.bounds(&requirement.type_params);
             for param in &requirement.params {
+                self.mark(&format!("ast::Param.mutable = {}", param.mutable));
                 self.type_expr(&param.ty);
             }
             if let Some(ret) = &requirement.ret {
@@ -1162,6 +1167,7 @@ impl Walk {
         }
         self.params.clear();
         for param in &f.params {
+            self.mark(&format!("ast::Param.mutable = {}", param.mutable));
             self.type_expr(&param.ty);
             self.params.push(param.name.name.as_str().to_string());
         }

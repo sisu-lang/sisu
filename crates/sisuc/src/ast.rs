@@ -238,6 +238,8 @@ pub(crate) struct Ident {
 pub(crate) struct Param {
     pub(crate) name: Ident,
     pub(crate) ty: TypeExpr,
+    /// Whether the parameter is `mut`: the caller's place is copied in and stored back.
+    pub(crate) mutable: bool,
 }
 
 /// A type as written, and how many `?` follow it: each is one optional layer.
@@ -707,6 +709,8 @@ impl fmt::Display for Part {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Arg {
     pub(crate) label: Option<Ident>,
+    /// The `mut` before the value, or before the label (`mut cells: xs`).
+    pub(crate) mut_keyword: Option<Span>,
     pub(crate) value: Expr,
 }
 
@@ -1101,9 +1105,14 @@ impl fmt::Display for Pattern {
 
 impl fmt::Display for Arg {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = if self.mut_keyword.is_some() {
+            format!("(mut {})", self.value)
+        } else {
+            self.value.to_string()
+        };
         match &self.label {
-            Some(label) => write!(f, "(: {} {})", label.name, self.value),
-            None => write!(f, "{}", self.value),
+            Some(label) => write!(f, "(: {} {value})", label.name),
+            None => f.write_str(&value),
         }
     }
 }
@@ -1405,6 +1414,14 @@ mod tests {
         Block { stmts, span: sp() }
     }
 
+    fn param(name: &str, ty_name: &str) -> Param {
+        Param {
+            name: ident(name),
+            ty: ty(ty_name),
+            mutable: false,
+        }
+    }
+
     fn func(name: &str, params: Vec<Param>, ret: Option<TypeExpr>, body: Block) -> Function {
         Function {
             name: ident(name),
@@ -1420,7 +1437,7 @@ mod tests {
     }
 
     #[test]
-    fn display_formats() {
+    fn display_should_print_a_function_with_a_let_and_a_call() {
         let main = func(
             "main",
             vec![],
@@ -1438,6 +1455,7 @@ mod tests {
                     angles: sp(),
                     args: vec![Arg {
                         label: None,
+                        mut_keyword: None,
                         value: name("x"),
                     }],
                 }))),
@@ -1465,10 +1483,7 @@ mod tests {
         });
         let is_prime = func(
             "is_prime",
-            vec![Param {
-                name: ident("n"),
-                ty: ty("i64"),
-            }],
+            vec![param("n", "i64")],
             Some(ty("bool")),
             block(vec![
                 stmt(StmtKind::Let {

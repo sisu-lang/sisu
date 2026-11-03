@@ -2114,7 +2114,11 @@ impl<'a> Parser<'a> {
                 self.expect(&TokenKind::Colon)?;
                 let ty = self.parse_type()?;
                 self.depth = Height::default();
-                params.push(Param { name, ty });
+                params.push(Param {
+                    name,
+                    ty,
+                    mutable: false,
+                });
                 if self.eat(&TokenKind::Comma).is_none() {
                     break;
                 }
@@ -3521,6 +3525,9 @@ impl<'a> Parser<'a> {
         if let Some(error) = self.label_not_on_loop() {
             return Err(error);
         }
+        if self.at(&TokenKind::Mut) {
+            return Err(self.mut_not_argument(true));
+        }
         let init = self.child(base, &mut reach, Self::expr)?;
         self.depth = reach;
         // A typed `let` takes no `else`, which can start the next line.
@@ -3632,6 +3639,9 @@ impl<'a> Parser<'a> {
         self.expect(&TokenKind::Eq)?;
         if let Some(error) = self.label_not_on_loop() {
             return Err(error);
+        }
+        if self.at(&TokenKind::Mut) {
+            return Err(self.mut_not_argument(true));
         }
         let value = match self.child(base, &mut reach, Self::expr) {
             Ok(value) => value,
@@ -4087,6 +4097,7 @@ impl<'a> Parser<'a> {
         let op = match self.peek().kind {
             TokenKind::Minus => UnaryOp::Neg,
             TokenKind::Bang => UnaryOp::Not,
+            TokenKind::Mut => return Err(self.mut_not_argument(false)),
             _ => return self.postfix(),
         };
         // Each prefix operator is a link of a chain.
@@ -4533,8 +4544,10 @@ impl<'a> Parser<'a> {
         Ok((args, close.span))
     }
 
-    /// A label is an `Ident` followed by `:`, so it takes two tokens of lookahead.
+    /// A label is an `Ident` followed by `:`, so it takes two tokens of lookahead. A `mut` goes
+    /// before the label or before the value.
     fn arg(&mut self) -> Result<Arg, Diagnostic> {
+        let mut mut_keyword = self.eat(&TokenKind::Mut).map(|t| t.span);
         let labeled = matches!(self.peek().kind, TokenKind::Ident(_))
             && self
                 .tokens
@@ -4546,14 +4559,35 @@ impl<'a> Parser<'a> {
             if let Some(error) = self.label_not_on_loop() {
                 return Err(error);
             }
+            mut_keyword = mut_keyword.or_else(|| self.eat(&TokenKind::Mut).map(|t| t.span));
             Some(label)
         } else {
             None
         };
         Ok(Arg {
             label,
+            mut_keyword,
             value: self.expr()?,
         })
+    }
+
+    /// E0168 for the `mut` at the next token, which no argument owns. `binding` is whether it
+    /// stands right after the `=` of a `let`. The fix removes the keyword and the spaces after it,
+    /// not a line break.
+    fn mut_not_argument(&self, binding: bool) -> Diagnostic {
+        let at = self.peek().span;
+        // `mut` is never `Eof`, so the token after it exists.
+        let next = &self.tokens[self.pos + 1];
+        let fix_end = match next.kind {
+            TokenKind::Newline | TokenKind::Eof => at.end(),
+            _ => next.span.start(),
+        };
+        DiagnosticKind::MutNotArgument {
+            at,
+            binding,
+            fix_end,
+        }
+        .into()
     }
 
     fn if_expr(&mut self) -> Result<Expr, Diagnostic> {
@@ -9437,7 +9471,7 @@ mod tests {
     }
 
     #[test]
-    fn mut_before_a_reserved_word_is_still_reported() {
+    fn mut_before_a_reserved_word_should_be_expected() {
         assert_eq!(parse_err("fn f(mut type: i64) {}"), (Code::Expected, 1, 6));
     }
 
@@ -9672,8 +9706,97 @@ mod tests {
     }
 
     #[test]
-    fn mut_before_neither_self_nor_a_name() {
+    fn mut_before_neither_self_nor_a_name_should_be_expected() {
         assert_eq!(parse_err("fn f(mut 1) {}"), (Code::Expected, 1, 6));
+    }
+
+    /// The label, the `mut` keyword and the value of the only argument of the call in `main`.
+    fn only_arg(src: &str) -> (Option<String>, Option<Span>, String) {
+        let function = first_fn(src);
+        let StmtKind::Expr(Expr {
+            kind: ExprKind::Call { args, .. },
+            ..
+        }) = &function.body.stmts[0].kind
+        else {
+            panic!("{src}: the first statement should be a call");
+        };
+        let [arg] = args.as_slice() else {
+            panic!("{src}: the call should have one argument");
+        };
+        (
+            arg.label.as_ref().map(|l| l.name.as_str().to_string()),
+            arg.mut_keyword,
+            arg.value.to_string(),
+        )
+    }
+
+    /// GIVEN a call with `mut` before the value, after the label and before the label
+    /// WHEN the parser reads it
+    /// THEN `mut_keyword` is the span of the keyword, with the label and the value as written
+    #[test]
+    fn mut_argument_should_parse_in_each_form() {
+        for (call, label, value) in [
+            ("f(mut b.cells)", None, "(. b cells)"),
+            ("f(cells: mut xs)", Some("cells"), "xs"),
+            ("f(mut cells: xs)", Some("cells"), "xs"),
+        ] {
+            let src = format!("fn main() {{ {call} }}");
+            let keyword = src.find("mut").expect("the call has a `mut`");
+            let (got_label, got_keyword, got_value) = only_arg(&src);
+            assert_eq!(got_label.as_deref(), label, "{call}");
+            assert_eq!(got_keyword, Some(Span::new(keyword, keyword + 3)), "{call}");
+            assert_eq!(got_value, value, "{call}");
+        }
+        assert_eq!(only_arg("fn main() { f(xs) }").1, None);
+    }
+
+    /// GIVEN a call with a `mut` argument, with and without a label
+    /// WHEN the program prints
+    /// THEN the argument shows its `mut`
+    #[test]
+    fn mut_argument_should_print_with_its_mut() {
+        assert_eq!(
+            body("fn main() { f(mut xs, a: mut ys) }"),
+            "(block (call f (mut xs) (: a (mut ys))))"
+        );
+    }
+
+    /// GIVEN `mut` in front of a `let` initializer, and in front of a `return` operand
+    /// WHEN the parser reads it
+    /// THEN it reports E0168 at the keyword, once, with the binding help for the `let` only
+    /// AND the safe fix removes `mut ` and the spaces after it
+    #[test]
+    fn mut_outside_an_argument_should_be_reported() {
+        for (src, fixed, binding) in [
+            (
+                "fn main() {\n    let y = mut   x\n}",
+                "fn main() {\n    let y = x\n}",
+                true,
+            ),
+            (
+                "fn main() {\n    let Some(y) = mut x else { return }\n}",
+                "fn main() {\n    let Some(y) = x else { return }\n}",
+                true,
+            ),
+            (
+                "fn main() {\n    return mut x\n}",
+                "fn main() {\n    return x\n}",
+                false,
+            ),
+            (
+                "fn main() {\n    let y = -mut(x)\n}",
+                "fn main() {\n    let y = -(x)\n}",
+                false,
+            ),
+        ] {
+            let d = parse_diagnostic(src);
+            assert_eq!(d.code(), Code::MutNotArgument, "{src}");
+            let keyword = src.find("mut").expect("the program has a `mut`");
+            assert_eq!(d.span(), Span::new(keyword, keyword + 3), "{src}");
+            assert_eq!(d.help().is_some(), binding, "{src}");
+            assert_eq!(apply_fix(src, &d), fixed, "{src}");
+            assert!(fix_edits(&d).is_some_and(|(safe, _)| safe), "{src}");
+        }
     }
 
     #[test]

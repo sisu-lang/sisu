@@ -219,6 +219,7 @@ codes! {
     TooManyInstances = "E0163",
     CannotBeAny = "E0164",
     AnyForm = "E0165",
+    MutNotArgument = "E0168",
     LetElseCanFinish = "E0172",
     LetElseValueEndsInBrace = "E0173",
     RefutablePattern = "E0174",
@@ -441,6 +442,14 @@ pub(crate) enum DiagnosticKind {
     },
     /// `any` at `at`, written in a way that it does not take.
     AnyForm { at: Span, form: AnyFormKind },
+    /// A `mut` at `at` before an expression that is no argument. `binding` is whether the
+    /// expression is the value of a `let`. `fix_end` is where the operand starts, for the fix
+    /// that removes the keyword and the spaces after it.
+    MutNotArgument {
+        at: Span,
+        binding: bool,
+        fix_end: usize,
+    },
     /// The `else` block of a `let ... else`, whose `}` is at `at`, which can reach its end.
     LetElseCanFinish { at: Span },
     /// The value at `at` of a `let ... else`, which ends in `}`.
@@ -3554,6 +3563,29 @@ impl From<DiagnosticKind> for Diagnostic {
                     ))
                 }
             },
+            DiagnosticKind::MutNotArgument {
+                at,
+                binding,
+                fix_end,
+            } => {
+                let d = Diagnostic::coded(code, at, "`mut` marks an argument for a `mut` parameter")
+                    .with_label("not an argument");
+                let d = if binding {
+                    d.with_help(
+                        "a value is copied when it is bound; to change it, bind it with `let mut`",
+                    )
+                } else {
+                    d
+                };
+                d.with_fix(Fix {
+                    message: "remove `mut`".to_string(),
+                    safe: true,
+                    edits: vec![Edit {
+                        span: Span::new(at.start(), fix_end),
+                        replacement: String::new(),
+                    }],
+                })
+            }
             DiagnosticKind::LetElseCanFinish { at } => Diagnostic::coded(
                 code,
                 at,
