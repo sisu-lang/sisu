@@ -13,7 +13,8 @@
 # a hit matters.
 # The path forms, such as `Diagnostic::message`, count too.
 # So does an assert_eq! or assert_ne! of two `format!("{x:?}")` strings: the
-# Debug text of a diagnostic holds its wording.
+# Debug text of a diagnostic holds its wording. The argument of `format!` may
+# hold calls, with parentheses nested to any depth.
 # shortcut: the Debug pair is flagged for any type, not only a diagnostic;
 # compare such values directly, or exempt the file when a hit is right.
 # shortcut: between `#[cfg(test)]` and `mod`, the pattern takes blank lines,
@@ -47,7 +48,8 @@ perl -0777 -ne '
     print "$ARGV:$line: a unit test reads diagnostic wording; assert the code, and pin the text in a tests/diagnostics fixture\n";
     $bad = 1;
   }
-  my $debug = qr/format!\(\s*"\{[\w.]*:\#?\?\}"\s*(?:,\s*[^(),]+)?\)/;
+  my $parens = qr/(\((?:[^()]++|(?-1))*+\))/;
+  my $debug = qr/format!\(\s*"\{[\w.]*:\#?\?\}"\s*(?:,\s*(?:[^(),]++|$parens)+)?\)/;
   pos = $start;
   while (/\bassert_(?:eq|ne)!\(\s*$debug\s*,\s*$debug/g) {
     my $line = 1 + (substr($_, 0, $-[0]) =~ tr/\n//);

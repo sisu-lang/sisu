@@ -129,7 +129,10 @@ class TestWording(unittest.TestCase):
 
     def test_two_debug_strings_compared_in_the_test_module_should_fail(self):
         for body in ('    assert_eq!(format!("{a:?}"), format!("{b:?}"), "{p}");\n',
-                     '    assert_ne!(\n        format!("{:#?}", a),\n        format!("{:?}", b)\n    );\n'):
+                     '    assert_ne!(\n        format!("{:#?}", a),\n        format!("{:?}", b)\n    );\n',
+                     '    assert_eq!(format!("{:?}", a.first()), format!("{:?}", b.first()));\n',
+                     '    assert_eq!(format!("{:?}", f(g(a), 1)), format!("{:?}", b.get(0, 1)));\n',
+                     '    assert_eq!(format!("{:?}", a.iter().map(|d| d.at).collect::<Vec<_>>()), format!("{:?}", b));\n'):
             with self.subTest(body=body):
                 code, out = run_hook('check-test-wording.sh', HEADERS[0] + body + '}\n')
                 self.assertEqual(code, 1)
