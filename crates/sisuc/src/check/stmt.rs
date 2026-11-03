@@ -134,6 +134,7 @@ impl Checker<'_> {
         end: usize,
     ) {
         let done = so_far.done;
+        so_far.stmts.reserve(end - done);
         for (i, stmt) in (done..).zip(&block.stmts[done..end]) {
             if so_far.ty == Some(Type::NEVER) && !so_far.warned {
                 self.report(DiagnosticKind::UnreachableCode { at: stmt.span });
