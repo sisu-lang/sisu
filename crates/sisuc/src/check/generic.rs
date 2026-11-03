@@ -28,6 +28,12 @@ use crate::types::{HOLE_INDEX, Head, REJECTED_INDEX};
 
 /// Whether `ty` is `want`, where a hole of `want` meets any part of `ty`.
 fn meets(ty: Type, want: Type) -> bool {
+    meets_in(ty, want, &mut Memo::default())
+}
+
+/// The walk of `meets`; `seen` holds the answer for each pair that it has finished, so each
+/// distinct pair is visited once.
+fn meets_in(ty: Type, want: Type, seen: &mut Memo<(Type, Type), bool>) -> bool {
     type_step();
     if ty == want || is_hole(want) {
         return true;
@@ -35,17 +41,20 @@ fn meets(ty: Type, want: Type) -> bool {
     if !want.holds_hole() {
         return false;
     }
-    match (ty.kind(), want.kind()) {
+    if let Some(met) = seen.get(&(ty, want)) {
+        return met;
+    }
+    let met = match (ty.kind(), want.kind()) {
         (TypeKind::Array(a), TypeKind::Array(b))
-        | (TypeKind::Optional(a), TypeKind::Optional(b)) => meets(a, b),
+        | (TypeKind::Optional(a), TypeKind::Optional(b)) => meets_in(a, b, seen),
         (TypeKind::Class(a, p), TypeKind::Class(b, v)) if a == b => {
-            iter::zip(p.get(), v.get()).all(|(&p, &v)| meets(p, v))
+            iter::zip(p.get(), v.get()).all(|(&p, &v)| meets_in(p, v, seen))
         }
         (TypeKind::Enum(a, p), TypeKind::Enum(b, v)) if a == b => {
-            iter::zip(p.get(), v.get()).all(|(&p, &v)| meets(p, v))
+            iter::zip(p.get(), v.get()).all(|(&p, &v)| meets_in(p, v, seen))
         }
         (TypeKind::Any(a, p), TypeKind::Any(b, v)) if a == b => {
-            iter::zip(p.get(), v.get()).all(|(&p, &v)| meets(p, v))
+            iter::zip(p.get(), v.get()).all(|(&p, &v)| meets_in(p, v, seen))
         }
         (
             _,
@@ -65,7 +74,9 @@ fn meets(ty: Type, want: Type) -> bool {
             | TypeKind::Assoc(..)
             | TypeKind::Any(..),
         ) => false,
-    }
+    };
+    seen.put((ty, want), met);
+    met
 }
 
 /// How many visits a walk makes before its `Memo` keeps answers. The types of a normal call are
@@ -80,14 +91,15 @@ const MEMO_AFTER: usize = 64;
 /// of `()`.
 struct Memo<K, V> {
     visits: usize,
-    answers: FxHashMap<K, V>,
+    /// Made at the first answer, so a walk that keeps none allocates and hashes nothing.
+    answers: Option<FxHashMap<K, V>>,
 }
 
 impl<K, V> Default for Memo<K, V> {
     fn default() -> Self {
         Memo {
             visits: 0,
-            answers: FxHashMap::default(),
+            answers: None,
         }
     }
 }
@@ -96,26 +108,28 @@ impl<K: Eq + Hash, V: Copy> Memo<K, V> {
     /// The answer that the walk put for `key`, if any. It counts one visit.
     fn get(&mut self, key: &K) -> Option<V> {
         self.visits += 1;
-        self.answers.get(key).copied()
+        self.answers.as_ref()?.get(key).copied()
     }
 
     /// Keeps `answer` for `key`, once the walk has made `MEMO_AFTER` visits.
     fn put(&mut self, key: K, answer: V) {
         if self.visits > MEMO_AFTER {
-            self.answers.insert(key, answer);
+            self.answers.get_or_insert_default().insert(key, answer);
         }
     }
 
     /// Forgets each answer, for a new walk.
     fn clear(&mut self) {
         self.visits = 0;
-        self.answers.clear();
+        if let Some(answers) = &mut self.answers {
+            answers.clear();
+        }
     }
 }
 
 /// Marks in `named` each type parameter that `ty` names, by its place; `named` has a place for
 /// each type parameter in scope. `seen` holds each type already visited, so each distinct type of
-/// `ty` is visited once.
+/// `ty` is visited once, whatever the number of paths to it. It can be shared by several types.
 fn mark_params(ty: Type, named: &mut [bool], seen: &mut Memo<Type, ()>) {
     #[cfg(test)]
     MARKED.set(MARKED.get() + 1);
@@ -144,35 +158,17 @@ fn mark_params(ty: Type, named: &mut [bool], seen: &mut Memo<Type, ()>) {
                 mark_params(arg, named, seen);
             }
         }
-        _ => unreachable!("only a kind with a child can name a parameter"),
+        TypeKind::I64
+        | TypeKind::U8
+        | TypeKind::F64
+        | TypeKind::Bool
+        | TypeKind::Char
+        | TypeKind::String
+        | TypeKind::Unit
+        | TypeKind::Never
+        | TypeKind::Param(..) => unreachable!("only a kind with a child can name a parameter"),
     }
     seen.put(ty, ());
-}
-
-/// `mark_params` for types that share children: `seen` holds each type already visited, so a type
-/// is visited once, whatever the number of paths to it. It can be shared by several calls.
-fn mark_distinct(ty: Type, seen: &mut FxHashSet<Type>, named: &mut [bool]) {
-    #[cfg(test)]
-    DISTINCT.set(DISTINCT.get() + 1);
-    if !ty.has_param() || !seen.insert(ty) {
-        return;
-    }
-    match ty.kind() {
-        TypeKind::Param(_, j) => named[j as usize] = true,
-        TypeKind::Array(inner) | TypeKind::Optional(inner) => mark_distinct(inner, seen, named),
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
-            for &arg in args.get() {
-                mark_distinct(arg, seen, named);
-            }
-        }
-        TypeKind::Assoc(base, _, args, _) => {
-            for child in iter::once(base).chain(args.get().iter().copied()) {
-                mark_distinct(child, seen, named);
-            }
-        }
-        // As in `mark_params`: `has_param` is false for every other kind.
-        _ => unreachable!("only a kind with a child can name a parameter"),
-    }
 }
 
 /// Whether `ty` names the type parameter at place `param` other than under an associated type:
@@ -435,7 +431,15 @@ fn unbound_params(outer: &Bindings, ty: Type, on: &mut FxHashSet<usize>, seen: &
                 unbound_params(outer, arg, on, seen);
             }
         }
-        _ => unreachable!("only a kind with a child can name a parameter"),
+        TypeKind::I64
+        | TypeKind::U8
+        | TypeKind::F64
+        | TypeKind::Bool
+        | TypeKind::Char
+        | TypeKind::String
+        | TypeKind::Unit
+        | TypeKind::Never
+        | TypeKind::Param(..) => unreachable!("only a kind with a child can name a parameter"),
     }
     seen.unbound.put(ty, ());
 }
@@ -459,7 +463,16 @@ fn names_unbound(unbound: &[bool], built: Type, seen: &mut Memo<Type, bool>) -> 
             (args.get().iter()).any(|&arg| names_unbound(unbound, arg, seen))
         }
         // An associated type binds nothing (see `Bindings::bind`).
-        _ => false,
+        TypeKind::Assoc(..)
+        | TypeKind::I64
+        | TypeKind::U8
+        | TypeKind::F64
+        | TypeKind::Bool
+        | TypeKind::Char
+        | TypeKind::String
+        | TypeKind::Unit
+        | TypeKind::Never
+        | TypeKind::Param(..) => false,
     };
     seen.put(built, names);
     names
@@ -855,6 +868,10 @@ fn wider_than(mut ty: Type, layers: usize) -> bool {
 /// each type that does not, so each distinct type is visited once.
 fn holds_param(ty: Type, param: Type, seen: &mut Memo<Type, ()>) -> bool {
     type_step();
+    // A type without a parameter cannot hold `param`.
+    if !ty.has_param() {
+        return false;
+    }
     if seen.get(&ty).is_some() {
         return false;
     }
@@ -984,11 +1001,11 @@ fn is_hole(ty: Type) -> bool {
     ty == *HOLE || ty == *REJECTED
 }
 
-/// Whether `ty` is a class, an enum or an `any` type, which can hold the same type in more than
-/// one of its arguments: a walk over it can use a `Memo`.
-fn has_type_args(ty: Type) -> bool {
+/// Whether `kind` is of a class, an enum or an `any` type, which can hold the same type in more
+/// than one of its arguments: a walk over it can use a `Memo`.
+fn has_type_args(kind: TypeKind) -> bool {
     matches!(
-        ty.kind(),
+        kind,
         TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Any(..)
     )
 }
@@ -1022,6 +1039,18 @@ pub(super) struct Bindings {
     /// What the walk in progress, of `bind` or of `hint`, has met: for a pair of a pattern and a
     /// value, its answer. A walk begins with `clear`.
     walked: Memo<(Type, Type), bool>,
+    /// The parameters that the backward walk of `hint` has settled. It stays empty until the
+    /// forward walk meets a part that holds `REJECTED` and no `HOLE`. Each `hint` clears it.
+    settled: Vec<bool>,
+}
+
+/// The order of a walk of `Bindings::hint`.
+#[derive(Clone, Copy)]
+enum Hinting {
+    /// The arguments of a type in order.
+    Forward,
+    /// The arguments of a type in the opposite order.
+    Backward,
 }
 
 impl Bindings {
@@ -1034,6 +1063,7 @@ impl Bindings {
             kept: 0,
             hints: Vec::new(),
             walked: Memo::default(),
+            settled: Vec::new(),
         }
     }
 
@@ -1083,11 +1113,12 @@ impl Bindings {
         if !pattern.has_param() && !value.holds_hole() {
             return pattern == value;
         }
-        let memo = has_type_args(pattern);
+        let kind = pattern.kind();
+        let memo = has_type_args(kind);
         if memo && let Some(met) = self.walked.get(&(pattern, value)) {
             return met;
         }
-        let met = self.bind_kinds(pattern, value);
+        let met = self.bind_kinds(kind, value);
         if memo {
             self.walked.put((pattern, value), met);
         }
@@ -1095,8 +1126,8 @@ impl Bindings {
     }
 
     /// `bind`, by the kinds of `pattern` and `value`.
-    fn bind_kinds(&mut self, pattern: Type, value: Type) -> bool {
-        match (pattern.kind(), value.kind()) {
+    fn bind_kinds(&mut self, pattern: TypeKind, value: Type) -> bool {
+        match (pattern, value.kind()) {
             _ if value == *HOLE => true,
             (TypeKind::Param(_, i), _) => {
                 if value.holds_hole() && value != *REJECTED {
@@ -1114,7 +1145,7 @@ impl Bindings {
             // The pattern is not a parameter: each parameter in it is rejected, as it is where
             // the pattern is a parameter.
             _ if value == *REJECTED => {
-                match pattern.kind() {
+                match pattern {
                     TypeKind::Array(p) | TypeKind::Optional(p) => {
                         self.bind(p, value);
                     }
@@ -1168,57 +1199,48 @@ impl Bindings {
     }
 
     /// Records, for each parameter that `pattern` names, the part of `value`, a context that
-    /// holds a hole, which lies at its place in `pattern`. The first part found stays, but a part
-    /// that holds `REJECTED` and no `HOLE` replaces it. A whole hole is no part to record. Binds
-    /// nothing. `partial` gives the part in place of an unbound parameter's hole, so an argument
-    /// that waits for the parameter gets more context. A part that holds `REJECTED` and no `HOLE`
-    /// tells the call that the context would have bound the parameter if the outer bound had held,
-    /// so the call does not report the parameter (see `first_unbound_not_rejected`). An argument
-    /// can still bind it.
+    /// holds a hole, which lies at its place in `pattern`. The part that stays is the last one
+    /// that holds `REJECTED` and no `HOLE`, else the first part found. A whole hole is no part to
+    /// record. Binds nothing. `partial` gives the part in place of an unbound parameter's hole, so
+    /// an argument that waits for the parameter gets more context. A part that holds `REJECTED`
+    /// and no `HOLE` tells the call that the context would have bound the parameter if the outer
+    /// bound had held, so the call does not report the parameter (see
+    /// `first_unbound_not_rejected`). An argument can still bind it.
     ///
-    /// A pattern with type arguments is visited once for each value. So a part that holds
-    /// `REJECTED` and no `HOLE` replaces a hint once: a later visit of the same pair does not put
-    /// it back after a different such part has replaced it.
+    /// A pattern with type arguments is visited once for each value. So there are two walks, and
+    /// each one keeps its first answer, which the memo cannot change. The forward walk records the
+    /// first part. When it meets a part that holds `REJECTED` and no `HOLE`, a backward walk
+    /// follows. It visits the arguments in the opposite order, so the first such part that it
+    /// meets for a parameter is the last one in the forward order. That part replaces the hint,
+    /// and the parameter is settled for the call. Most calls meet no such part: they walk once.
     fn hint(&mut self, pattern: Type, value: Type) {
+        self.settled.clear();
         self.walked.clear();
-        self.hint_in(pattern, value);
+        self.hint_in(pattern, value, Hinting::Forward);
+        if !self.settled.is_empty() {
+            self.walked.clear();
+            self.hint_in(pattern, value, Hinting::Backward);
+        }
     }
 
-    /// The walk of `hint`.
-    fn hint_in(&mut self, pattern: Type, value: Type) {
+    /// The walk of `hint`, in the order `how` says.
+    fn hint_in(&mut self, pattern: Type, value: Type, how: Hinting) {
         type_step();
         if !pattern.has_param() || !value.holds_hole() || is_hole(value) {
             return;
         }
-        let memo = has_type_args(pattern);
+        let kind = pattern.kind();
+        let memo = has_type_args(kind);
         if memo && self.walked.get(&(pattern, value)).is_some() {
             return;
         }
-        match (pattern.kind(), value.kind()) {
-            (TypeKind::Param(_, i), _) => {
-                self.hints.resize(self.found.len(), None);
-                let hint = &mut self.hints[i as usize];
-                if hint.is_none() || value.holds_rejected_hole_only() {
-                    *hint = Some(value);
-                }
-            }
+        match (kind, value.kind()) {
+            (TypeKind::Param(_, i), _) => self.hint_part(i as usize, value, how),
             (TypeKind::Array(p), TypeKind::Array(v))
-            | (TypeKind::Optional(p), TypeKind::Optional(v)) => self.hint_in(p, v),
-            (TypeKind::Class(a, p), TypeKind::Class(b, v)) if a == b => {
-                for (&p, &v) in iter::zip(p.get(), v.get()) {
-                    self.hint_in(p, v);
-                }
-            }
-            (TypeKind::Enum(a, p), TypeKind::Enum(b, v)) if a == b => {
-                for (&p, &v) in iter::zip(p.get(), v.get()) {
-                    self.hint_in(p, v);
-                }
-            }
-            (TypeKind::Any(a, p), TypeKind::Any(b, v)) if a == b => {
-                for (&p, &v) in iter::zip(p.get(), v.get()) {
-                    self.hint_in(p, v);
-                }
-            }
+            | (TypeKind::Optional(p), TypeKind::Optional(v)) => self.hint_in(p, v, how),
+            (TypeKind::Class(a, p), TypeKind::Class(b, v)) if a == b => self.hint_all(p, v, how),
+            (TypeKind::Enum(a, p), TypeKind::Enum(b, v)) if a == b => self.hint_all(p, v, how),
+            (TypeKind::Any(a, p), TypeKind::Any(b, v)) if a == b => self.hint_all(p, v, how),
             (
                 TypeKind::I64
                 | TypeKind::U8
@@ -1239,6 +1261,45 @@ impl Bindings {
         }
         if memo {
             self.walked.put((pattern, value), true);
+        }
+    }
+
+    /// `hint_in` for each pair of type arguments, in the order `how` says.
+    fn hint_all(&mut self, patterns: TypeArgs, values: TypeArgs, how: Hinting) {
+        let pairs = iter::zip(patterns.get(), values.get());
+        match how {
+            Hinting::Forward => {
+                for (&p, &v) in pairs {
+                    self.hint_in(p, v, how);
+                }
+            }
+            Hinting::Backward => {
+                for (&p, &v) in pairs.rev() {
+                    self.hint_in(p, v, how);
+                }
+            }
+        }
+    }
+
+    /// Puts `part`, the part of the context at the place of parameter `i`, in its hint, as the
+    /// walk `how` of `hint` does.
+    fn hint_part(&mut self, i: usize, part: Type, how: Hinting) {
+        let rejected = part.holds_rejected_hole_only();
+        // The flags are the sign that a part of this kind has been met, so they are sized at the
+        // first one only.
+        if rejected && self.settled.is_empty() {
+            self.settled.resize(self.found.len(), false);
+        }
+        self.hints.resize(self.found.len(), None);
+        match how {
+            Hinting::Forward => {
+                self.hints[i].get_or_insert(part);
+            }
+            Hinting::Backward if rejected && !self.settled[i] => {
+                self.hints[i] = Some(part);
+                self.settled[i] = true;
+            }
+            Hinting::Backward => {}
         }
     }
 
@@ -1265,11 +1326,7 @@ impl Bindings {
         if types.peek().is_none() {
             return false;
         }
-        let mut named = vec![false; self.found.len()];
-        let mut seen = FxHashSet::default();
-        for ty in types {
-            mark_distinct(ty, &mut seen, &mut named);
-        }
+        let named = named_params(types.map(Some), self.found.len());
         let mut any = false;
         for (found, named) in iter::zip(&mut self.found, named) {
             if named && found.is_none() {
@@ -1367,25 +1424,27 @@ impl Bindings {
         if !ty.has_param() {
             return Some(ty);
         }
-        if matches!(ty.kind(), TypeKind::Param(..)) {
-            return self.resolve_kind(ty, unbound, seen);
+        let kind = ty.kind();
+        if matches!(kind, TypeKind::Param(..)) {
+            return self.resolve_kind(ty, kind, unbound, seen);
         }
         if let Some(resolved) = seen.get(&ty) {
             return resolved;
         }
-        let resolved = self.resolve_kind(ty, unbound, seen);
+        let resolved = self.resolve_kind(ty, kind, unbound, seen);
         seen.put(ty, resolved);
         resolved
     }
 
-    /// `resolve`, by the kind of `ty`, which has a parameter.
+    /// `resolve`, by `kind`, the kind of `ty`, which has a parameter.
     fn resolve_kind(
         &self,
         ty: Type,
+        kind: TypeKind,
         unbound: Unbound,
         seen: &mut Memo<Type, Option<Type>>,
     ) -> Option<Type> {
-        Some(match ty.kind() {
+        Some(match kind {
             TypeKind::Param(_, i) => match (self.found[i as usize], unbound) {
                 (Some(bound), _) if bound != *REJECTED => bound,
                 (Some(rejected), Unbound::Hole) => rejected,
@@ -1487,8 +1546,6 @@ thread_local! {
     /// How many types the walk for the type parameters that types name has visited on this
     /// thread.
     pub(super) static MARKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many types the walk of `mark_distinct` has visited on this thread.
-    pub(super) static DISTINCT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many parameter origins `Origins::get` has read on this thread.
     pub(super) static ORIGINS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many entries of the substitution lists of early bound checks have been written on this

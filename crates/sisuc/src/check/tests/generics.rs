@@ -6019,15 +6019,17 @@ fn rejecting_the_parameters_of_failed_arguments_should_visit_each_type_once() {
              fn h<T>(_a: A{n}<T>, _b: T?) -> i64 {{ 1 }}\nfn none<X>() -> X? {{ None }}\n\
              fn main() {{\n    print(h(nope, none()))\n}}"
         );
-        generic::DISTINCT.set(0);
+        generic::MARKED.set(0);
         let (_, ds) = checked(&src);
         assert_eq!(
             ds.iter().map(Diagnostic::code).collect::<Vec<_>>(),
             [Code::BindingNotFound]
         );
-        generic::DISTINCT.get()
+        generic::MARKED.get()
     };
-    assert_near_linear(visits(10), visits(20), visits(30));
+    // The walk keeps answers only after `MEMO_AFTER` visits, so the depths are small: the paths
+    // of a deeper chain would not show a walk of each path in the time of a test.
+    assert_near_linear(visits(4), visits(8), visits(12));
 }
 
 /// The call is hinted, so each trailing argument reads the origins of its parameter to find out
