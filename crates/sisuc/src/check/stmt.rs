@@ -553,6 +553,7 @@ impl Checker<'_> {
             });
         }
         let removal = Span::new(value.span.end(), else_block.span.end());
+        // A `;` anywhere in the removed text, also one in a `';'` literal, makes the fix unsafe.
         let safe = mutable.is_none()
             && is_plain_exit(else_block)
             && self.diagnostics.len() == before

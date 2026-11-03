@@ -202,7 +202,7 @@ impl Checker<'_> {
             unreachable!("`+` should have two operands");
         };
         let between = lhs.span.end()..rhs.span.start();
-        let commented = self.source.comments.iter().any(|c| between.contains(c));
+        let commented = self.comment_in(&[between]);
         let lines = operands.iter().any(|e| !self.one_line(e.span));
         // A literal in parentheses starts at its `(`, and is wrapped whole like any other value.
         let operand = |e: &ast::Expr| Operand {
@@ -401,11 +401,8 @@ impl Checker<'_> {
                 } else {
                     head
                 };
-                let commented = self
-                    .source
-                    .comments
-                    .iter()
-                    .any(|c| deleted.contains(c) || (!grouped && tail.contains(c)));
+                let commented =
+                    self.comment_in(&[deleted]) || (!grouped && self.comment_in(&[tail]));
                 DiagnosticKind::AlreadyConverted {
                     value: path(&arg.value).or_else(|| self.literal_name(&arg.value)),
                     ty: self.type_name(to),
@@ -481,11 +478,7 @@ impl Checker<'_> {
             got,
             Type::I64 | Type::U8 | Type::F64 | Type::BOOL | Type::CHAR
         );
-        let commented = self
-            .source
-            .comments
-            .iter()
-            .any(|c| deleted.iter().any(|d| d.contains(c)));
+        let commented = self.comment_in(deleted);
         if !printed || commented || !self.one_line(arg.span) {
             return self.mismatch(arg.span, Some(arg), want, got);
         }

@@ -654,16 +654,19 @@ impl Checker<'_> {
             .then(|| format!("{}{name}", if mutable { "mut " } else { "" }))
     }
 
-    /// Whether a comment starts in one of the byte ranges `deleted`.
+    /// Whether a comment starts in one of the byte ranges `deleted`. The comment starts are in
+    /// source order, so the first one at or after a range's start is the only one to test.
     pub(super) fn comment_in(&self, deleted: &[Range<usize>]) -> bool {
-        self.source
-            .comments
-            .iter()
-            .inspect(|_| {
-                #[cfg(test)]
-                super::COMMENT_READS.set(super::COMMENT_READS.get() + 1);
-            })
-            .any(|c| deleted.iter().any(|d| d.contains(c)))
+        let comments = self.source.comments;
+        let read = |c: &usize| {
+            #[cfg(test)]
+            super::COMMENT_READS.set(super::COMMENT_READS.get() + 1);
+            *c
+        };
+        deleted.iter().any(|d| {
+            let first = comments.partition_point(|c| read(c) < d.start);
+            comments.get(first).is_some_and(|c| read(c) < d.end)
+        })
     }
 }
 

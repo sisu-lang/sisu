@@ -1210,6 +1210,12 @@ impl<'src> Checker<'src> {
         source: &'src str,
         prelude_text: &'src str,
     ) -> Checker<'src> {
+        // `comment_in` searches this list by position, so it must stay in source order. The check
+        // is here, once, because it reads the whole list.
+        debug_assert!(
+            program.comments.is_sorted(),
+            "the comment starts are not in order"
+        );
         Checker {
             source: Source {
                 user: source::Source::new(source, 0),
