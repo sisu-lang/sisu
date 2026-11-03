@@ -2027,6 +2027,79 @@ impl Gen<'_> {
         (arms, covered == count)
     }
 
+    /// `V` or `E.V` of the variant `v` of the enum `ty`.
+    fn variant_head(&mut self, ty: &Ty, v: usize) -> String {
+        let Ty::Enum { id, .. } = *ty else {
+            unreachable!("only an enum has variants")
+        };
+        let name = self.scope.enums[id].variants[v].name.clone();
+        if self.pick(2) == 0 {
+            name
+        } else {
+            // An alias of the enum is the enum, as a qualifier says.
+            let enum_name = self.constructor(ty, ty.bare());
+            format!("{enum_name}.{name}")
+        }
+    }
+
+    /// Now and then `V1(..) | V2(..)` of two variants of one enum that both hold a `T`: both parts
+    /// bind one new name to it, which is returned with its type and the enum's. Each other field
+    /// of the first part may be refutable, and of the second part is `_`, which matches all of
+    /// its variant. When the enum has two variants only and the first part matches all of its
+    /// variant too, the alternative would always match (E0131), so the first part stands alone.
+    pub(crate) fn alternative(&mut self) -> Option<(Ty, String, (String, Ty))> {
+        if self.pick(2) == 0 {
+            return None;
+        }
+        let mut pairs = Vec::new();
+        for (id, e) in self.scope.enums.iter().enumerate() {
+            for (v1, a) in e.variants.iter().enumerate() {
+                for (v2, b) in e.variants.iter().enumerate() {
+                    for (at, ty) in a.fields.iter().enumerate() {
+                        if v1 != v2 && b.fields.contains(ty) {
+                            pairs.push((id, v1, v2, at, ty.clone()));
+                        }
+                    }
+                }
+            }
+        }
+        if pairs.is_empty() {
+            return None;
+        }
+        let (id, v1, v2, at, bound) = pairs.swap_remove(self.pick(pairs.len()));
+        let ty = self.scope.enum_ty(id);
+        let name = self.scope.fresh("v");
+        let variants = &self.scope.enums[id].variants;
+        let (first, second) = (variants[v1].fields.clone(), variants[v2].fields.clone());
+        let count = variants.len();
+        let mut total = true;
+        let mut parts = Vec::new();
+        for (i, field) in first.iter().enumerate() {
+            if i == at {
+                parts.push(name.clone());
+                continue;
+            }
+            let refutable = if self.pick(2) == 0 {
+                None
+            } else {
+                self.refutable(field, 1)
+            };
+            total &= refutable.is_none();
+            parts.push(refutable.unwrap_or_else(|| "_".to_string()));
+        }
+        let head = self.variant_head(&ty, v1);
+        let mut pattern = format!("{head}({})", parts.join(", "));
+        if count > 2 || !total {
+            let slot = second.iter().position(|field| *field == bound);
+            let parts: Vec<&str> = (0..second.len())
+                .map(|i| if Some(i) == slot { name.as_str() } else { "_" })
+                .collect();
+            let head = self.variant_head(&ty, v2);
+            pattern = format!("{pattern} | {head}({})", parts.join(", "));
+        }
+        Some((ty, pattern, (name, bound)))
+    }
+
     /// `V`, `E.V`, `V(p, ...)` or `E.V(p, ...)` of the variant `v` of the enum `ty`, binding
     /// names into `binds` if any; and whether it matches every value of the variant.
     pub(crate) fn variant_pattern(
@@ -2039,17 +2112,8 @@ impl Gen<'_> {
         let Ty::Enum { id, .. } = *ty else {
             unreachable!("only an enum has variants")
         };
-        let (name, fields) = {
-            let variant = &self.scope.enums[id].variants[v];
-            (variant.name.clone(), variant.fields.clone())
-        };
-        let mut text = if self.pick(2) == 0 {
-            name
-        } else {
-            // An alias of the enum is the enum, as a qualifier says.
-            let enum_name = self.constructor(ty, ty.bare());
-            format!("{enum_name}.{name}")
-        };
+        let fields = self.scope.enums[id].variants[v].fields.clone();
+        let mut text = self.variant_head(ty, v);
         if fields.is_empty() {
             return (text, true);
         }
