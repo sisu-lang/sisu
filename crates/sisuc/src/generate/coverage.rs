@@ -178,6 +178,7 @@ const REACH: &[&str] = &[
     "reach: a generic variant is built with inferred type arguments",
     "reach: a generic type is a type argument",
     "reach: an optional is a type argument",
+    "reach: a call with no arguments takes an `any` type argument from its context",
     "reach: a type has one `?` layer",
     "reach: a type has two or more `?` layers",
     "reach: `??` on an optional of an optional",
@@ -2561,6 +2562,16 @@ impl Walk {
                     .any(|t| matches!(t.kind(), TypeKind::Optional(_)))
                 {
                     self.mark("reach: an optional is a type argument");
+                }
+                if args.is_empty()
+                    && types
+                        .get()
+                        .iter()
+                        .any(|t| matches!(t.kind(), TypeKind::Any(..)))
+                {
+                    self.mark(
+                        "reach: a call with no arguments takes an `any` type argument from its context",
+                    );
                 }
                 self.tir_exprs(args);
             }
