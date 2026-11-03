@@ -8,6 +8,7 @@ use super::expr::{fits, no_member, option_written, path, postfix};
 use super::generic::{GenericSig, Site, mark, mismatched};
 use super::interface::LangPath;
 use super::member::Found;
+use super::mut_args::{MutSite, marked};
 use super::prelude::PRELUDE;
 use super::unused_names::Used;
 use super::{
@@ -811,6 +812,12 @@ impl Checker<'_> {
         let labeled = self.labels(args);
         let sig = &self.signatures[func.0];
         let (name, params, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
+        let (muts, names) = (sig.muts.clone(), sig.param_names.clone());
+        let mut_site = MutSite {
+            callee: &name,
+            muts: &muts,
+            names: &names,
+        };
         let shown = sig.param_shown.clone();
         let declared = sig.type_params.clone();
         let bounds = sig.bounds.clone();
@@ -838,7 +845,11 @@ impl Checker<'_> {
                 .iter()
                 .zip(&params)
                 .zip(&shown)
-                .map(|((arg, &param), text)| {
+                .enumerate()
+                .map(|(i, ((arg, &param), text))| {
+                    if muts[i] && marked(arg) {
+                        return self.mut_arg(arg, i, param, &mut_site);
+                    }
                     if let (Some(want), Some(text)) = (param, text) {
                         self.show(arg.value.span, want, text);
                     }
@@ -861,14 +872,24 @@ impl Checker<'_> {
                 params: &params,
                 ret,
                 bounds: &bounds,
+                mut_site: Some(&mut_site),
             };
             self.generic_call(span, &sig, (written, site.angles), args, site.expected)?
         };
+        let parts = self.take_mut_parts(args, &muts);
         let failed = labeled || checked.iter().any(mismatched);
         match (receiver.into_iter().chain(checked).collect(), ret) {
-            (Ok(args), Some(ret)) if !failed => Ok(self.spilled(span, ret, args, |args| {
-                tir::ExprKind::Call { func, types, args }
-            })),
+            (Ok(args), Some(ret)) if !failed && parts.is_empty() => {
+                Ok(self.spilled(span, ret, args, |args| tir::ExprKind::Call {
+                    func,
+                    types,
+                    args,
+                }))
+            }
+            (Ok(args), Some(ret)) if !failed => {
+                let call = tir::Expr::new(tir::ExprKind::Call { func, types, args }, ret, span);
+                Ok(self.mut_call(call, parts))
+            }
             (_, ret) => Err(Poisoned::of(ret.filter(|_| !failed))),
         }
     }
@@ -1000,6 +1021,7 @@ impl Checker<'_> {
                 ret: Some(ret),
                 // An annotation that failed its bound reported it: the value is quiet.
                 bounds: if quiet { &[] } else { &bounds },
+                mut_site: None,
             };
             // An alias's type arguments, when the call wrote them, are applied already.
             let written = (

@@ -22,6 +22,7 @@ mod generics;
 pub(crate) mod interfaces;
 mod let_else;
 mod loop_condition;
+mod mut_args;
 mod optionals;
 mod parity;
 mod patterns;

@@ -1,0 +1,13 @@
+// GIVEN `f(mut xs, mut xs[0])`, where `xs` is a `let mut` array of arrays
+// WHEN `sisu check` runs on it
+// THEN it reports E0171 on the second argument, with the message that `xs[0]` is inside `xs`
+fn f(mut all: [[i64]], mut first: [i64]) {
+    first[0] = 1
+    all[0] = first
+}
+
+fn main() {
+    let mut xs = [[1], [2]]
+    f(mut xs, mut xs[0])
+    print(xs)
+}

@@ -1247,6 +1247,16 @@ impl Mono {
                 }
             }
             K::Loop(block) | K::Block(block) => self.block(block, args),
+            K::MutCall { call, muts, back } => {
+                for m in muts {
+                    for (_, object) in &mut m.keep {
+                        self.expr(object, args);
+                    }
+                    self.expr(&mut m.read, args);
+                }
+                self.expr(call, args);
+                self.block(back, args);
+            }
         }
     }
 
@@ -1418,6 +1428,7 @@ fn assert_concrete(program: &Program) {
                 ),
                 ExprKind::Match { arms, .. } => blocks.extend(arms.iter().map(|arm| &arm.body)),
                 ExprKind::Loop(block) | ExprKind::Block(block) => blocks.push(block),
+                ExprKind::MutCall { back, .. } => blocks.push(back),
                 _ => {}
             }
         }

@@ -132,6 +132,10 @@ pub(super) struct RequirementInfo {
     pub(super) bounds: Vec<Vec<Bound>>,
     /// Without `self`; `None` is `Error`.
     pub(super) params: Vec<Option<Type>>,
+    /// Whether each of `params` is `mut`.
+    pub(super) muts: Vec<bool>,
+    /// The name of each of `params`.
+    pub(super) param_names: Vec<ast::Ident>,
     /// Where the type of each of `params` is written.
     pub(super) params_at: Vec<Span>,
     /// `None` is `Error`; no return type is `unit`.
@@ -331,6 +335,10 @@ impl Checker<'_> {
     }
 
     /// Resolves the bounds, inheritance and requirements of `interface`, whose id is `id`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the requirements share the interface's scope, and a split passes each part of it"
+    )]
     fn interface_signature(&mut self, interface: &ast::Interface, id: InterfaceId) {
         let params = self.interfaces[id.0].type_params.clone();
         self.body.set_type_params(&params);
@@ -425,6 +433,8 @@ impl Checker<'_> {
                         .collect(),
                     bounds,
                     params,
+                    muts: requirement.params.iter().map(|p| p.mutable).collect(),
+                    param_names: requirement.params.iter().map(|p| p.name.clone()).collect(),
                     params_at: requirement.params.iter().map(|p| p.ty.span).collect(),
                     ret,
                     ret_at: requirement.ret.as_ref().map(|ret| ret.span),

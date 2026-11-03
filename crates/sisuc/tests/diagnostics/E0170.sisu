@@ -1,0 +1,13 @@
+// GIVEN `clear(mut n)`, where `n` is an `i64` and the parameter is an `i64?`
+// WHEN `sisu check` runs on it
+// THEN it reports E0170 on the argument, with the note that the callee can store `None`
+// AND the secondary label is on the parameter
+fn clear(mut n: i64?) {
+    n = None
+}
+
+fn main() {
+    let mut n = 1
+    clear(mut n)
+    print(n)
+}

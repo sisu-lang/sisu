@@ -1,0 +1,17 @@
+// GIVEN a call `grow(mut s.size)`, where the field `size` is not `mut`
+// WHEN `sisu check` runs on it
+// THEN it reports E0169 on the argument, with the help to declare the field `size` as `mut`
+// AND the secondary label is on the field
+class Sized {
+    size: i64
+}
+
+fn grow(mut n: i64) {
+    n += 1
+}
+
+fn main() {
+    let s = Sized(size: 1)
+    grow(mut s.size)
+    print(s.size)
+}

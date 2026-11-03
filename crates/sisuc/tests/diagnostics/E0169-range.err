@@ -1,0 +1,8 @@
+error[E0169]: a `mut` argument must be a place: a variable, a `mut` field, or an element of one of these
+  --> E0169-range.sisu:10:13
+   |
+10 |     set(mut xs[1..3])
+   |             ^^^^^^^^ a range index gives a new array, not a place
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0169

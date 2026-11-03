@@ -78,6 +78,10 @@ pub(super) fn function(
         f.params.len(),
         "a function should have one flag per parameter"
     );
+    assert!(
+        !f.params.iter().any(|p| f.locals[p.0].mutable),
+        "a `mut` parameter lands in Task 5"
+    );
     Lowering::function(program, f, borrowed, written)
 }
 
@@ -1028,6 +1032,7 @@ impl<'a> Lowering<'a> {
                 return None;
             }
             ExprKind::Block(block) => return self.block(block, dest),
+            ExprKind::MutCall { .. } => panic!("a call with a `mut` argument lands in Task 5"),
         };
         Some(self.assign(e.ty, dest, value))
     }
@@ -1512,7 +1517,8 @@ fn leaves_locals(expr: &Expr) -> bool {
         | ExprKind::Break { .. }
         | ExprKind::Continue { .. }
         | ExprKind::Return(_)
-        | ExprKind::Block(_) => false,
+        | ExprKind::Block(_)
+        | ExprKind::MutCall { .. } => false,
     }
 }
 
@@ -1614,6 +1620,10 @@ thread_local! {
 }
 
 /// `mentions` of `e`'s own node and its children.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one arm per node kind, with no `_` arm, so a new node fails the build here"
+)]
 fn expr_mentions(e: &Expr, found: &mut Mentions) {
     match &e.kind {
         ExprKind::Int(_)
@@ -1710,6 +1720,18 @@ fn expr_mentions(e: &Expr, found: &mut Mentions) {
             }
         }
         ExprKind::Loop(block) | ExprKind::Block(block) => block_mentions(block, found),
+        ExprKind::MutCall { call, muts, back } => {
+            for m in muts {
+                for (local, object) in &m.keep {
+                    found.found.push(local.0);
+                    mentions(object, found);
+                }
+                found.found.push(m.temp.0);
+                mentions(&m.read, found);
+            }
+            mentions(call, found);
+            block_mentions(back, found);
+        }
     }
 }
 

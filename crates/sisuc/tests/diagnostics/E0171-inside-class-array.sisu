@@ -1,0 +1,18 @@
+// GIVEN `f(mut ps, mut ps[0])`, where `ps` is a `let mut` array of a class `Point`
+// WHEN `sisu check` runs on it
+// THEN it reports E0171 on the second argument, with the message that `ps[0]` is inside `ps`
+// AND the element lives in the array, so the class reference does not cut the path
+class Point {
+    mut x: i64
+}
+
+fn f(mut all: [Point], mut first: Point) {
+    first.x = 1
+    all[0] = first
+}
+
+fn main() {
+    let mut ps = [Point(x: 1)]
+    f(mut ps, mut ps[0])
+    print(ps[0].x)
+}

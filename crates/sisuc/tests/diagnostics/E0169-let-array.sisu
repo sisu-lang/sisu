@@ -1,0 +1,12 @@
+// GIVEN a call `bump(mut xs[0])`, where `xs` is a `let` local of arrays
+// WHEN `sisu check` runs on it
+// THEN it reports E0169 on the argument, with the help to declare `xs` with `let mut`
+fn bump(mut row: [i64]) {
+    row[0] += 1
+}
+
+fn main() {
+    let xs = [[1], [2]]
+    bump(mut xs[0])
+    print(xs)
+}

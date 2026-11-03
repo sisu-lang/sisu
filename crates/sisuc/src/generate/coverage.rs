@@ -72,6 +72,10 @@ const EXCLUDED: &[(&str, &str)] = &[
         "Task 9 of the `mut` parameters plan generates it",
     ),
     (
+        "tir::ExprKind::MutCall",
+        "Task 9 of the `mut` parameters plan generates it",
+    ),
+    (
         "types::Step::Type",
         "a private worklist item of `types::write_steps`, which is no type",
     ),
@@ -3036,6 +3040,17 @@ impl Walk {
             tir::ExprKind::Block(block) => {
                 self.mark("tir::ExprKind::Block");
                 self.tir_block(block);
+            }
+            tir::ExprKind::MutCall { call, muts, back } => {
+                self.mark("tir::ExprKind::MutCall");
+                for m in muts {
+                    for (_, object) in &m.keep {
+                        self.tir_expr(object, Parent::Other);
+                    }
+                    self.tir_expr(&m.read, Parent::Other);
+                }
+                self.tir_expr(call, Parent::Other);
+                self.tir_block(back);
             }
         }
     }
@@ -7133,6 +7148,16 @@ impl<'f> Lets<'f> {
                 }
             }
             tir::ExprKind::Block(block) => self.block(block),
+            tir::ExprKind::MutCall { call, muts, back } => {
+                for m in muts {
+                    for (_, object) in &m.keep {
+                        self.expr(object);
+                    }
+                    self.expr(&m.read);
+                }
+                self.expr(call);
+                self.block(back);
+            }
         }
         if !self.pure(e, true) {
             self.effect = true;
@@ -7165,7 +7190,8 @@ impl<'f> Lets<'f> {
             | tir::ExprKind::Loop(_)
             | tir::ExprKind::Break { .. }
             | tir::ExprKind::Continue { .. }
-            | tir::ExprKind::Return(_) => false,
+            | tir::ExprKind::Return(_)
+            | tir::ExprKind::MutCall { .. } => false,
             // An `i64` negation or arithmetic whose value is not known may overflow.
             tir::ExprKind::Unary { op, operand } => {
                 (!int || *op == tir::UnaryOp::Not || self.value(e).is_some())

@@ -1,0 +1,19 @@
+// GIVEN a method of an enum that passes `self` as a `mut` argument
+// WHEN `sisu check` runs on it
+// THEN it reports E0169 on `self`, with the help to copy it into a `let mut` local
+enum Dir {
+    Up
+    Down
+
+    fn run(self) {
+        flip(mut self)
+    }
+}
+
+fn flip(mut d: Dir) {
+    d = Dir.Down
+}
+
+fn main() {
+    Dir.Up.run()
+}

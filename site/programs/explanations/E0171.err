@@ -1,0 +1,10 @@
+error[E0171]: `x` is passed `mut` twice: each `mut` argument needs its own place
+ --> E0171.sisu:9:21
+  |
+9 |     swap(mut x, mut x)
+  |              -      ^ passed again here
+  |              |
+  |              first passed here
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0171

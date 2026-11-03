@@ -1347,7 +1347,6 @@ crates/sisuc/src/parser.rs::mixed_is_and_equality_do_not_chain
 crates/sisuc/src/parser.rs::multiline_call_args
 crates/sisuc/src/parser.rs::mut_is_a_keyword
 crates/sisuc/src/parser.rs::mut_on_underscore_fix_leaves_a_let_that_parses
-crates/sisuc/src/parser.rs::mut_parameter
 crates/sisuc/src/parser.rs::mut_self_fix
 crates/sisuc/src/parser.rs::mut_self_in_an_enum_is_an_unsafe_fix
 crates/sisuc/src/parser.rs::mut_self_outside_the_receiver_position

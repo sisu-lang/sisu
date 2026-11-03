@@ -1,0 +1,16 @@
+// GIVEN `fill(mut b?.cells, 3)`, where `b` is a `Board?` and `fill` takes a `mut` `[i64]`
+// WHEN `sisu check` runs on it
+// THEN it reports E0170 on the argument, with the label for the write type and the unwrap help
+class Board {
+    mut cells: [i64]
+}
+
+fn fill(mut xs: [i64], n: i64) {
+    xs[0] = n
+}
+
+fn main() {
+    let b: Board? = Board(cells: [1])
+    fill(mut b?.cells, 3)
+    print(b == None)
+}

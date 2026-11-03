@@ -1,0 +1,15 @@
+// GIVEN `swap(mut xs[i], mut xs[i])`, where `i` is a `let` local
+// WHEN `sisu check` runs on it
+// THEN it reports E0171 on the second argument, with the message "`xs[i]` is passed `mut` twice"
+fn swap(mut a: i64, mut b: i64) {
+    let t = a
+    a = b
+    b = t
+}
+
+fn main() {
+    let mut xs = [1, 2]
+    let i = 0
+    swap(mut xs[i], mut xs[i])
+    print(xs)
+}

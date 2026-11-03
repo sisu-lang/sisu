@@ -90,6 +90,7 @@ impl Checker<'_> {
                     params: &[Some(payload)],
                     ret: Some(ret),
                     bounds: &[],
+                    mut_site: None,
                 };
                 let written = (site.written, site.angles);
                 let (args, list, found) =
@@ -140,6 +141,7 @@ impl Checker<'_> {
                     params: &[],
                     ret: Some(t.ty),
                     bounds: &[],
+                    mut_site: None,
                 };
                 let written = (site.written, site.angles);
                 let (_, list, found) =

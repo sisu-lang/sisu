@@ -1,0 +1,8 @@
+error[E0169]: a `mut` argument must be a place: a variable, a `mut` field, or an element of one of these
+ --> E0169.sisu:9:13
+  |
+9 |     set(mut [1, 2])
+  |             ^^^^^^ not a place
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0169

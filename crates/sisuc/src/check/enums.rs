@@ -406,6 +406,7 @@ impl Checker<'_> {
             params: &fields,
             ret: Some(ret),
             bounds: &bounds,
+            mut_site: None,
         };
         // An alias's type arguments, when the call wrote them, are applied already.
         let written = (

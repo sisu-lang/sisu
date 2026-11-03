@@ -1596,6 +1596,23 @@ impl Checker<'_> {
         self.insert_local(name, ty, kind, keyword)
     }
 
+    /// A `mut` parameter, which is a variable in the body: declared as a parameter, so that a
+    /// repeated name is reported, then made a `Var` with no keyword, so that W0002's `let mut`
+    /// form never names it.
+    pub(super) fn declare_mut_param(
+        &mut self,
+        name: &ast::Ident,
+        ty: Option<Type>,
+    ) -> tir::LocalId {
+        let local = self.declare(name, ty, BindingKind::Param, None);
+        self.body.locals[local.0].mutable = true;
+        if let Some(b) = self.lookup(name.name) {
+            b.kind = BindingKind::Var;
+            b.mut_param = true;
+        }
+        local
+    }
+
     /// `declare` without its checks of the name.
     pub(super) fn insert_local(
         &mut self,
@@ -1628,6 +1645,7 @@ impl Checker<'_> {
             written: 0,
             loop_named: false,
             read: false,
+            mut_param: false,
             also: Vec::new(),
             shown: None,
         };
@@ -1677,6 +1695,7 @@ impl Checker<'_> {
         let keyword = b.keyword.filter(|_| !b.reassigned && !b.loop_named);
         if let Some(Owner::Func(func)) = self.body.owner
             && !b.read
+            && !b.mut_param
             && !name.as_str().starts_with('_')
         {
             let param = b.kind == BindingKind::Param;

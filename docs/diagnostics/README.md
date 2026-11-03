@@ -30,7 +30,6 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0016](E0016.md) | error | `let` in front of a field |
 | [E0017](E0017.md) | error | method without `self` |
 | [E0018](E0018.md) | error | `mut self` on a method |
-| [E0019](E0019.md) | error | `mut` parameter |
 | [E0020](E0020.md) | error | `self` that is not the first parameter |
 | [E0021](E0021.md) | error | assignment to something that is not a place |
 | [E0023](E0023.md) | error | range outside a `for`, a pattern, an index or a string's `get` |
@@ -176,6 +175,9 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0164](E0164.md) | error | interface that cannot be used after `any` |
 | [E0165](E0165.md) | error | `any` written in a form that it does not take |
 | [E0168](E0168.md) | error | `mut` outside an argument |
+| [E0169](E0169.md) | error | `mut` argument that is not a place |
+| [E0170](E0170.md) | error | `mut` argument with the wrong type |
+| [E0171](E0171.md) | error | one place passed `mut` twice |
 | [E0172](E0172.md) | error | `else` block of a `let ... else` that can finish |
 | [E0173](E0173.md) | error | value of a `let ... else` that ends in `}` |
 | [E0174](E0174.md) | error | `let` pattern with no `else` |
@@ -209,7 +211,7 @@ both, and apply every safe fix to the Broken program.
 A new code takes the next free number in its series, in the order codes land
 on `main`. A code is never reused or renumbered.
 
-E0012, E0014, E0022 and E0060 are the retired codes. When the compiler stops reporting a code,
+E0012, E0014, E0019, E0022 and E0060 are the retired codes. When the compiler stops reporting a code,
 its variant leaves `DiagnosticKind` and its row leaves the table above. Its
 file stays here and gains a `Status: retired` line after its title, naming
 the ADR that retired it, and `sisu explain` serves it from `RETIRED`, the

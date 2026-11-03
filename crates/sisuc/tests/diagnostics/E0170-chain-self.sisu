@@ -1,0 +1,25 @@
+// GIVEN `relink(mut self.b?.next)` in a method of a class `List`
+// WHEN `sisu check` runs on it
+// THEN it reports E0170 on the argument, with the label that `self.b` can be `None`
+// AND the help names `self.b`
+class Node {
+    mut next: Node?
+}
+
+class List {
+    mut b: Node?
+
+    fn run(self) {
+        relink(mut self.b?.next)
+    }
+}
+
+fn relink(mut n: Node?) {
+    n = None
+}
+
+fn main() {
+    let l = List(b: Node(next: None))
+    l.run()
+    print(l.b == None)
+}

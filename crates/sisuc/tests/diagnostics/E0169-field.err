@@ -1,0 +1,13 @@
+error[E0169]: a `mut` argument must be a place: a variable, a `mut` field, or an element of one of these
+  --> E0169-field.sisu:15:14
+   |
+ 6 |     size: i64
+   |     ---- declared without `mut` here
+...
+15 |     grow(mut s.size)
+   |              ^^^^^^ not a place
+   |
+   = help: declare the field `size` as `mut`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0169

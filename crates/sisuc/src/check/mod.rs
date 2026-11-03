@@ -18,6 +18,7 @@ mod extend;
 mod generic;
 mod interface;
 mod member;
+mod mut_args;
 mod number;
 mod operator;
 mod optional;
@@ -165,6 +166,10 @@ struct Signature {
     bounds: Vec<Vec<Bound>>,
     /// Without a method's `self`.
     params: Vec<Option<Type>>,
+    /// Whether each of `params` is `mut`.
+    muts: Vec<bool>,
+    /// The name of each of `params`.
+    param_names: Vec<ast::Ident>,
     ret: Option<Type>,
     /// The interface of each `any` type that the parameter and return types write, with the
     /// span as written: the function records them as uses.
@@ -287,6 +292,8 @@ struct Binding {
     loop_named: bool,
     /// Whether an expression reads the binding's value.
     read: bool,
+    /// Whether the binding is a `mut` parameter, whose store-back reads it.
+    mut_param: bool,
     /// Where each later alternative of an or-pattern binds the name again.
     also: Vec<Span>,
     /// The type of the annotation as written, when it names an alias.
@@ -954,6 +961,8 @@ struct Body {
     /// The receiver of a `push` that `push_receiver` checked as a place, at its span, until the
     /// method call takes it.
     pushed: Option<(Span, place::CheckedPlace)>,
+    /// Each `mut` argument that checked, by the span of its place, until its call takes it.
+    mut_parts: FxHashMap<Span, (mut_args::MutPart, mut_args::MutPlaceKey)>,
     /// Whether the body has a `todo`, which keeps its parameters from W0014.
     todo: bool,
     /// Work ranking arguments did ahead of its turn, innermost last, by the span it was done
@@ -1854,6 +1863,8 @@ impl Checker<'_> {
             own: f.type_params.len(),
             bounds,
             params,
+            muts: f.params.iter().map(|p| p.mutable).collect(),
+            param_names: f.params.iter().map(|p| p.name.clone()).collect(),
             ret,
             anys,
             param_shown,
@@ -2211,12 +2222,13 @@ impl Checker<'_> {
             });
             let params = receiver
                 .into_iter()
-                .chain(
-                    f.params
-                        .iter()
-                        .zip(param_types)
-                        .map(|(p, ty)| c.declare(&p.name, ty, BindingKind::Param, None)),
-                )
+                .chain(f.params.iter().zip(param_types).map(|(p, ty)| {
+                    if p.mutable {
+                        c.declare_mut_param(&p.name, ty)
+                    } else {
+                        c.declare(&p.name, ty, BindingKind::Param, None)
+                    }
+                }))
                 .collect();
             // A `unit` function discards its body's value, so it expects none.
             let expected = match ret {

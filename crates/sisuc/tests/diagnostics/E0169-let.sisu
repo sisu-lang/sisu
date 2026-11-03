@@ -1,0 +1,13 @@
+// GIVEN a call `set(mut xs)`, where `xs` is a `let` local
+// WHEN `sisu check` runs on it
+// THEN it reports E0169 on the argument, with the help to declare `xs` with `let mut`
+// AND the secondary label is on the `let`
+fn set(mut xs: [i64]) {
+    xs[0] = 9
+}
+
+fn main() {
+    let xs = [1, 2]
+    set(mut xs)
+    print(xs)
+}

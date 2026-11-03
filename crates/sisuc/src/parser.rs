@@ -2056,6 +2056,7 @@ impl<'a> Parser<'a> {
             loop {
                 let first = self_param.is_none() && params.is_empty();
                 let receiver = if first { kind } else { Receiver::Free };
+                let mut mutable = false;
                 if self.at(&TokenKind::Mut) {
                     // `mut` is never `Eof`, so the token after it exists.
                     match (&self.tokens[self.pos + 1].kind, receiver) {
@@ -2080,12 +2081,9 @@ impl<'a> Parser<'a> {
                         (TokenKind::SelfKw, Receiver::Free) => {
                             self.bump();
                         }
-                        (TokenKind::Ident(name), _) => {
-                            return Err(DiagnosticKind::MutParameter {
-                                name: name.to_string(),
-                                at: self.peek().span,
-                            }
-                            .into());
+                        (TokenKind::Ident(_), _) => {
+                            self.bump();
+                            mutable = true;
                         }
                         _ => {}
                     }
@@ -2114,11 +2112,7 @@ impl<'a> Parser<'a> {
                 self.expect(&TokenKind::Colon)?;
                 let ty = self.parse_type()?;
                 self.depth = Height::default();
-                params.push(Param {
-                    name,
-                    ty,
-                    mutable: false,
-                });
+                params.push(Param { name, ty, mutable });
                 if self.eat(&TokenKind::Comma).is_none() {
                     break;
                 }
@@ -9696,15 +9690,14 @@ mod tests {
         );
     }
 
+    /// GIVEN `fn f(mut xs: [i64], n: i64) {}`
+    /// WHEN it is parsed
+    /// THEN the first parameter is `mut`, the second is not, and nothing is reported
     #[test]
-    fn mut_parameter() {
-        let src = "fn f(a: i64, mut n: i64) {}";
-        let d = parse_diagnostic(src);
-        assert_eq!(d.code(), Code::MutParameter);
-        assert_eq!(line_col(src, d.span().start()), (1, 14));
-        // Removing the `mut` would make the body assign to a parameter.
-        assert!(d.help().is_some());
-        assert_eq!(fix_edits(&d), None);
+    fn mut_parameter_should_parse() {
+        let f = first_fn("fn f(mut xs: [i64], n: i64) {}");
+        let mutable: Vec<_> = f.params.iter().map(|p| p.mutable).collect();
+        assert_eq!(mutable, [true, false]);
     }
 
     #[test]
