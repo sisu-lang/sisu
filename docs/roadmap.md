@@ -832,9 +832,6 @@ stretch goal into steps.
     of the lexer.
   - Milestone 10: default parameters. When the parameters of a constructor
     can have defaults, `fresh()` lists only the fields that differ.
-  - After milestone 8 and before milestone 9 part 1: slices (see "Substring
-    views" in "Open decisions"). A slice of a `[char]` or a `string` lets the
-    lexer take the text of a token without a push of each `char`.
   - Milestone 11, part 2 (collections): the `@discardable` attribute, on the
     attributes foundation, which lands after milestone 8 (see "Attribute
     syntax" in "Open decisions"). It lets `text.next()` stand alone, without
