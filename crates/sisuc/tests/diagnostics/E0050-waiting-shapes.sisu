@@ -1,0 +1,70 @@
+// An open call is an argument that leaves a parameter to its context. It waits for the parameters
+// of the outer call that its context lacks (`waits_for`). A call that waits is checked when
+// those parameters are bound. A call that does not wait is checked in argument order. Each row
+// has a shape that decides if a call waits. The diagnostic of the row shows the answer.
+class Two<A, B> {
+    a: A
+    b: B
+}
+
+interface I<Y> {}
+
+interface J<Y> {}
+
+fn mk<E>() -> Result<i64, E> { Ok(1) }
+
+fn mks<E>() -> Result<string, E> { Ok("s") }
+
+fn mkb<E>() -> Result<bool, E> { Ok(true) }
+
+// The type of `mkq` names `X` at the place of `T` and at the place of an `i64`. The `i64` binds
+// `X`, so `mkq` does not wait for `T`. It waits for `U` only. `mks()` binds `U` and wakes `mkq`
+// before `mkb()` binds `T`. Then the mismatch is at `mkb()`. A call that waits for `T` too is
+// checked after `mkb()`, and the mismatch is at `mkq()`. This row is for a `names_unbound` that
+// is always true, and for the `&&` of the context test in `needed_walk` when it is `||`.
+fn mkq<X, Y>() -> Two<X, Two<X, Y>> { panic("no") }
+
+fn f_names<T, U>(_a: Two<T, Two<i64, U>>, _b: Result<U, string>, _c: Result<T, string>) -> i64 { 0 }
+
+fn row_names() {
+    print(f_names(mkq(), mks(), mkb()))
+}
+
+// `any J<X>` against `any J<T>`: the call waits for `T`, and `mk()` binds it. Nothing binds `U`,
+// so E0050 is at `f_any`. A walk that does not pair the arguments of two `any` types makes
+// `mkj()` wait for nothing. It is then checked first, and E0050 is at `mkj()`. This row is for
+// the `any` arm of `needed_walk` with a guard that is always false, or `!=` for `==`.
+fn mkj<X>() -> any J<X> { panic("no") }
+
+fn mkx<X>() -> X?? { panic("no") }
+
+fn f_any<T, U>(_a: any J<T>, _b: U, _c: Result<T, string>) -> i64 { 0 }
+
+fn row_any() {
+    print(f_any(mkj(), mkx(), mk()))
+}
+
+// A call that returns an optional meets a parameter that is not optional through its payload.
+// The call waits for `T`, and `mk()` binds it, so the mismatch has the type `[i64]`. When the
+// optional arm of `needed_walk` is never taken, or taken for a double optional, `mko()` is
+// checked first, and the mismatch has the type `[T]`.
+fn mko<X>() -> X? { None }
+
+fn f_payload<T>(_a: [T], _b: Result<T, string>) -> i64 { 0 }
+
+fn row_payload() {
+    print(f_payload(mko(), mk()))
+}
+
+// `Two<X, X>` has `X` twice. The context has `any I<i64>` at the first place and `any J<T>` at
+// the second. No `X` fits both places, so `blame_arguments` blames no argument. The mismatch is
+// at the call. When `meets_in` takes `any I` for `any J`, the mismatch is at `v`.
+fn pn<X>(_x: X) -> Two<X, X> { panic("no") }
+
+fn f_blame<T>(_a: Two<any I<i64>, any J<T>>, _b: Result<T, string>) -> i64 { 0 }
+
+fn row_blame(v: any J<i64>) {
+    print(f_blame(pn(v), mk()))
+}
+
+fn main() {}

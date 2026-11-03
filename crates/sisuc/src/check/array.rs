@@ -83,6 +83,7 @@ impl Checker<'_> {
                 ty: None,
                 mismatch: true,
                 found: None,
+                kept: false,
             });
         }
         self.ranked(|c| c.joined(span, elements, quiet))
@@ -414,6 +415,7 @@ impl Checker<'_> {
                 ty: (!mismatched).then_some(ty),
                 mismatch: mismatched,
                 found: None,
+                kept: false,
             }),
         }
     }
