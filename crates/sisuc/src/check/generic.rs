@@ -1358,6 +1358,13 @@ fn bound_by_context(call: &Inference<'_>, pattern: Type) -> bool {
     names_marked(pattern, |j| call.origin.get(j) == Some(call.at), true)
 }
 
+/// Whether `pattern`, which `known_in` gives no type for, names no unbound parameter: an
+/// associated type in it has no choice, which its conformance reported. The call fails after
+/// that report. A second walk of `pattern`, only where a call writes an associated type.
+fn lacks_choice(call: &Inference<'_>, pattern: Type) -> bool {
+    matches!(call.early, Some(Early { assoc: true, .. })) && call.bindings.known(pattern).is_some()
+}
+
 /// `found`, a parameter's binding, as a bound sees it: `UNKNOWN` while it is unbound or rejected.
 fn listed(found: Option<Type>) -> Type {
     found.filter(|&t| t != *REJECTED).unwrap_or(UNKNOWN)
@@ -2418,6 +2425,12 @@ impl Checker<'_> {
         context: Option<Type>,
     ) -> Checked {
         let Some(want) = self.known_in(call, pattern) else {
+            // The context would hold the associated type that has no choice, and a call in `e`
+            // would bind it, so `e` reports only its own faults.
+            if lacks_choice(call, pattern) {
+                drop(self.value(e, Some(UNKNOWN)));
+                return Err(Poisoned::error());
+            }
             return self.infer_unbound(call, e, pattern, context);
         };
         let checked = self.value(e, Some(want));
@@ -2485,6 +2498,10 @@ impl Checker<'_> {
             }
             Some(_) => {
                 let want = self.known_in(call, pattern);
+                // `e` bound the base of the associated type that has no choice.
+                if want.is_none() && lacks_choice(call, pattern) {
+                    return Err(Poisoned::error());
+                }
                 debug_assert!(
                     want.is_some() || call.failed || call.rejected,
                     "a unified pattern should be known, unless a bound check failed"

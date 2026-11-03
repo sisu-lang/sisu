@@ -3895,6 +3895,9 @@ fn a_requirement_with_an_unknown_type_should_be_listed_for_a_conformance_that_la
     );
 }
 
+/// A class of two parameters, and a call whose argument binds `S` with one of them.
+const TWO: &str = "class Two<A, B> {\n    a: A\n    b: B\n}\nfn paired<S: Source>(x: Two<S, Wrap<S.Item>>) -> i64 { 1 }\n";
+
 /// A conformance that lacks its choice, or whose choice failed, is reported once. A call or a
 /// constructor that takes the associated type of such a conformance fails after that report: no
 /// mismatch, no crash. The argument that names the associated type comes after, before and apart
@@ -3926,8 +3929,10 @@ fn a_call_through_a_conformance_without_its_choice_should_fail_after_the_one_rep
             "let a: Boxed<Bad> = Boxed(item: Wrap(value: 3))",
             "let a: Got<Bad> = Got.Got(Wrap(value: 3))",
             "let a = listed(Bad(n: 1), [Wrap(value: 5)])",
+            // The argument binds `S` itself.
+            "let a = paired(Two(a: Bad(n: 1), b: Wrap(value: 5)))",
         ] {
-            let row = format!("{holder}{conformance}fn t() {{\n    {local}\n}}{nested}");
+            let row = format!("{holder}{conformance}fn t() {{\n    {local}\n}}{nested}{TWO}");
             codes(&with_sources(&row), &[report]);
         }
     }
@@ -3942,11 +3947,13 @@ fn a_faulty_argument_through_a_failed_choice_should_report_only_its_own_fault() 
         "let a = wrapped(Bad(n: 1), Wrap(value: nowhere))",
         "let a = wrapped2(Wrap(value: nowhere), Bad(n: 1))",
         "let a: Boxed<Bad> = Boxed(item: Wrap(value: nowhere))",
+        "let a = paired(Two(a: Bad(n: 1), b: Wrap(value: nowhere)))",
     ] {
         let at = 5 + local
             .find("nowhere")
             .expect("the local should name `nowhere`");
-        let row = format!("{program}{local}\n}}");
+        // After `fn t`, so that the line of `nowhere` stays where it is.
+        let row = format!("{program}{local}\n}}\n{TWO}");
         codes(
             &with_sources(&row),
             &[
