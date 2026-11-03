@@ -180,6 +180,31 @@ class MergePr(unittest.TestCase):
         [merge] = self.merges()
         self.assertIn(f'sha={self.sha}', merge)
 
+    def test_cleanup_after_the_number_should_stop_on_an_open_pull_request_and_not_merge(self):
+        result = self.run_script('7', '--cleanup', **{'pulls/7': {
+            'state': 'open', 'merged': False, 'title': 'Fix x', 'body': '', 'base': {'ref': 'main'},
+            'head': {'sha': self.sha, 'ref': 'fix/x'}}})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('#7 is not merged', result.stdout)
+        self.assertEqual(self.merges(), [])
+        self.assertTrue(self.tree.exists())
+
+    def test_cleanup_with_no_number_should_fail_and_not_merge(self):
+        result = self.run_script('--cleanup')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.merges(), [])
+        self.assertTrue(self.tree.exists())
+
+    def test_cleanup_of_a_closed_pull_request_that_was_not_merged_should_keep_the_worktree(self):
+        closed = {'state': 'closed', 'merged': False, 'head': {'sha': self.sha, 'ref': 'fix/x'}}
+        result = self.run_script('--cleanup', '7', **{'pulls/7': closed})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('#7 is not merged', result.stdout)
+        self.assertTrue(self.tree.exists())
+        branches = subprocess.run(['git', '-C', str(self.repo), 'branch', '--list', 'fix/x'],
+                                  capture_output=True, text=True, check=True, env=ENV).stdout
+        self.assertIn('fix/x', branches)
+
 
 if __name__ == '__main__':
     unittest.main()
