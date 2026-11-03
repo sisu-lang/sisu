@@ -41,7 +41,7 @@ a value, not a type. Seven rules follow.
     `xs[i] = v`;
   - the conversion to `any I`;
   - the copy-out of a `mut` argument into a class field or an array element,
-    when `mut` arguments land (milestone 9);
+    when `mut` arguments land;
   - a closure capture, when closures land (milestone 9).
 
   A trim point looks through an optional. A local, an argument, a return

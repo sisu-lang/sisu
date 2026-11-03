@@ -59,7 +59,7 @@ fn main() {
 
 The program calculates the operands of a binary operator from left to right, then applies the operator. `&&`, `||` and `??` can skip their right operand, as their sections tell.
 
-A `..` or `..=` range is not an operator. It binds looser than every operator, so `a + 1..b * 2` is `(a + 1)..(b * 2)`. It is part of a [`for` loop](statements.md#for), a [pattern](enums.md#literals-and-ranges) a [range index](arrays.md#range-indexes) such as `xs[1..3]`, or the argument of a [string's `get`](strings.md#substrings), and is an error in other places ([E0023](../diagnostics/E0023.md)). A range with a missing bound, such as `..5` or `2..`, is valid in a range index and in a string's `get` only; it is an error in a `for` loop. The section [Loops over iterables](statements.md#loops-over-iterables) is in development, and it makes a range a value.
+A `..` or `..=` range is not an operator. It binds looser than every operator, so `a + 1..b * 2` is `(a + 1)..(b * 2)`. It is part of a [`for` loop](statements.md#for), a [pattern](enums.md#literals-and-ranges), a [range index](arrays.md#range-indexes) such as `xs[1..3]`, or the argument of a [string's `get`](strings.md#substrings), and is an error in other places ([E0023](../diagnostics/E0023.md)). A range with a missing bound, such as `..5` or `2..`, is valid in a range index and in a string's `get` only; it is an error in a `for` loop. The section [Loops over iterables](statements.md#loops-over-iterables) is in development, and it makes a range a value.
 
 ## Arithmetic
 

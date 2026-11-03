@@ -270,7 +270,7 @@ fn main() {
 sisu: panic at example.sisu:3:14: index 3 out of bounds for length 3
 ```
 
-Only an array has an index. A `string` takes only a range index ([Substrings](strings.md#substrings)). A single index on a string, or any index on another value, is an error ([E0068](../diagnostics/E0068.md)).
+Only an array takes a single index. A `string` takes only a range index ([Substrings](strings.md#substrings)). A single index on a string, or any index on another value, is an error ([E0068](../diagnostics/E0068.md)).
 
 `xs[a..b]` is a range index. It gives the part of the array `xs` from `a` up to, and not including, `b`, and it stops the program with a panic when the range is outside the array ([Range indexes](arrays.md#range-indexes)).
 

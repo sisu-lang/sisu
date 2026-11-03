@@ -2171,9 +2171,7 @@ pub(crate) enum ForeignRange {
 pub(crate) enum ColonBound {
     /// The text of a bound that is not negative.
     Plain(String),
-    /// The text of `n` in the bound `-n`, which is just a unary minus.
-    Minus(String),
-    /// A bound that starts with a minus and is more than that, as `-a * b`, `-1 + n` or `--1`.
+    /// A bound that starts with a minus, as `-1`, `-a * b` or `--1`.
     Negative,
 }
 
@@ -5452,11 +5450,16 @@ impl From<DiagnosticKind> for Diagnostic {
                     let negative = [&start, &end]
                         .into_iter()
                         .flatten()
-                        .any(|b| !matches!(b, ColonBound::Plain(_)));
+                        .any(|b| matches!(b, ColonBound::Negative));
                     if negative {
-                        // No fix: it is not what Python does for a bound past the start or `-0`.
-                        let message =
-                            negative_bound(&base, base_place, start.as_ref(), end.as_ref());
+                        // No fix and no rewrite: the parser cannot see the type of `base`, which
+                        // counts bytes for a string, and a bound can change `base`.
+                        let head = "Sisu has no negative index";
+                        let message = if base_place {
+                            format!("{head}: count from `{base}.len()`")
+                        } else {
+                            head.to_string()
+                        };
                         Diagnostic::coded(code, at, message)
                     } else {
                         let text = |b: Option<ColonBound>| match b {
@@ -5968,30 +5971,7 @@ fn is_format(c: char) -> bool {
         | '\u{E0001}' | '\u{E0020}'..='\u{E007F}')
 }
 
-/// The unsafe fix `message` that replaces `span` with `replacement`.
 /// The safe fix `message` that replaces `span` with `replacement`.
-/// The message for `base[start:end]` with a negative bound: the rewrite, `xs[..xs.len() - 1]`,
-/// when `base` is a place and each negative bound is just a unary minus; else where to count from.
-fn negative_bound(
-    base: &str,
-    place: bool,
-    start: Option<&ColonBound>,
-    end: Option<&ColonBound>,
-) -> String {
-    let head = "Sisu has no negative index";
-    let bound = |b: Option<&ColonBound>| match b {
-        None => Some(String::new()),
-        Some(ColonBound::Plain(text)) => Some(text.clone()),
-        Some(ColonBound::Minus(n)) => Some(format!("{base}.len() - {n}")),
-        Some(ColonBound::Negative) => None,
-    };
-    match (place, bound(start), bound(end)) {
-        (true, Some(start), Some(end)) => format!("{head}: write `{base}[{start}..{end}]`"),
-        (true, ..) => format!("{head}: count from `{base}.len()`"),
-        (false, ..) => head.to_string(),
-    }
-}
-
 fn safe_fix(message: &str, span: Span, replacement: &str) -> Fix {
     Fix {
         safe: true,

@@ -4007,18 +4007,12 @@ impl<'a> Parser<'a> {
         Ok((Some(index), close))
     }
 
-    /// The bound `e` of `base[start:end]`, with the operand of a bare unary minus apart: Python
-    /// counts such a bound from the end.
+    /// The bound `e` of `base[start:end]`: Python counts a negative one from the end.
     fn colon_bound(&self, e: &Expr) -> ColonBound {
-        match &e.kind {
-            ExprKind::Unary {
-                op: UnaryOp::Neg,
-                operand,
-            } if !starts_negative(operand) => {
-                ColonBound::Minus(self.source.text(operand.span).to_string())
-            }
-            _ if starts_negative(e) => ColonBound::Negative,
-            _ => ColonBound::Plain(self.source.text(e.span).to_string()),
+        if starts_negative(e) {
+            ColonBound::Negative
+        } else {
+            ColonBound::Plain(self.source.text(e.span).to_string())
         }
     }
 
@@ -4676,7 +4670,7 @@ fn starts_negative(e: &Expr) -> bool {
 /// twice: `f().x` is a place, and `f` would run twice.
 fn is_named(e: &Expr) -> bool {
     match &e.kind {
-        ExprKind::Name(_) => true,
+        ExprKind::Name(_) | ExprKind::SelfValue => true,
         ExprKind::Field { base, .. } | ExprKind::Index { base, .. } => is_named(base),
         _ => false,
     }
