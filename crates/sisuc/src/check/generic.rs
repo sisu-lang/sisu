@@ -28,6 +28,7 @@ use crate::types::{HOLE_INDEX, Head, REJECTED_INDEX};
 
 /// Whether `ty` is `want`, where a hole of `want` meets any part of `ty`.
 fn meets(ty: Type, want: Type) -> bool {
+    type_step();
     if ty == want || is_hole(want) {
         return true;
     }
@@ -1507,8 +1508,8 @@ thread_local! {
     pub(super) static WAIT_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many times a walk over a type has visited a type on this thread, a visit that a memo
     /// answers too: `Bindings::bind`, `hint`, `resolve` and `unknown_param`, `holds_param`,
-    /// `mark_params`, `mark_by_assoc`, `names_marked`, `names_outside_assoc`, and the walks of
-    /// `needed_params`.
+    /// `mark_params`, `mark_by_assoc`, `names_marked`, `names_outside_assoc`, `meets`, and the
+    /// walks of `needed_params`.
     pub(super) static TYPE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 

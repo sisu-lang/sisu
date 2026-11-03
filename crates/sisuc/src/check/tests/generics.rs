@@ -6655,6 +6655,11 @@ fn shared_chain(shape: &str, n: usize) -> String {
         "ctxmis" => {
             "fn mk() -> $A<bool> { panic(\"no\") }\nfn take<T, U>(_a: $A<U>, _b: T) -> T { panic(\"no\") }\nfn main() {\n    let _v: i64 = take(mk(), \"s\")\n}"
         }
+        // `meets`: a misfit that `blame_arguments` explains. It asks if the result of the call
+        // meets the parameter type, which holds a hole.
+        "meets" => {
+            "fn f<U>(_x: U) -> Two<$A<i64>, U> { panic(\"no\") }\nfn none<T>() -> T? { None }\nfn g<T>(_a: Two<$A<T>, i64>, _b: T?) -> i64 { 0 }\nfn main() {\n    print(g(f(true), none()))\n}"
+        }
         _ => unreachable!("no shape `{shape}`"),
     };
     src + &tail.replace("$A", &format!("A{n}"))
@@ -6682,6 +6687,7 @@ fn type_walks_should_visit_each_distinct_type_once() {
         "ctxmis",
         "bareparam",
         "boundbuilt",
+        "meets",
     ] {
         let steps = |n: usize| {
             generic::TYPE_STEPS.set(0);

@@ -1,0 +1,164 @@
+error[E0154]: `i64` does not conform to `Isol`
+  --> E0154-repeated-hint.sisu:43:29
+   |
+40 | fn g_sol<T: Isol>(_a: Two<A6<T?>, Three<Two<T?, T?>, Two<[T], [T]>, Two<T?, T?>>>, _b: T) {}
+   |             ---- required by this bound
+...
+43 |     g_sol(poly_sol(none()), 1)
+   |                             ^
+
+error[E0154]: `i64` does not conform to `Ir2`
+  --> E0154-repeated-hint.sisu:52:24
+   |
+49 | fn g_r2<T: Ir2>(_a: Two<A7<T?>, Three<Two<[T], [T]>, Two<T?, T?>, Two<T?, T?>>>, _b: T) {}
+   |            --- required by this bound
+...
+52 |     g_r2(poly(none()), 1)
+   |                        ^
+
+error[E0050]: cannot infer `T` for `none`
+  --> E0154-repeated-hint.sisu:61:16
+   |
+61 |     g_r2b(poly(none()), 1)
+   |                ^^^^
+   |
+   = help: annotate the result, or write the type: `none<...>(...)`
+
+error[E0154]: `i64` does not conform to `Ir2b`
+  --> E0154-repeated-hint.sisu:61:25
+   |
+58 | fn g_r2b<T: Ir2b>(_a: Two<A7<[T]>, Three<Two<T?, T?>, Two<[T], [T]>, Two<[T], [T]>>>, _b: T) {}
+   |             ---- required by this bound
+...
+61 |     g_r2b(poly(none()), 1)
+   |                         ^
+
+error[E0050]: cannot infer `T` for `none`
+  --> E0154-repeated-hint.sisu:70:16
+   |
+70 |     g_r3(poly2(none()), 1)
+   |                ^^^^
+   |
+   = help: annotate the result, or write the type: `none<...>(...)`
+
+error[E0154]: `i64` does not conform to `Ir3`
+  --> E0154-repeated-hint.sisu:70:25
+   |
+67 | fn g_r3<T: Ir3>(_a: Two<A7<[T]>, Two<A7<T?>, A7<[T]>>>, _b: T) {}
+   |            --- required by this bound
+...
+70 |     g_r3(poly2(none()), 1)
+   |                         ^
+
+error[E0154]: `i64` does not conform to `Ir3b`
+  --> E0154-repeated-hint.sisu:79:26
+   |
+76 | fn g_r3b<T: Ir3b>(_a: Two<A7<T?>, Two<A7<[T]>, A7<T?>>>, _b: T) {}
+   |             ---- required by this bound
+...
+79 |     g_r3b(poly2(none()), 1)
+   |                          ^
+
+error[E0154]: `i64` does not conform to `Ir4`
+  --> E0154-repeated-hint.sisu:88:24
+   |
+85 | fn g_r4<T: Ir4, U>(_a: Two<A7<U?>, Three<Two<T?, T?>, Two<[T], [T]>, Two<T?, T?>>>, _b: T) {}
+   |            --- required by this bound
+...
+88 |     g_r4(poly(none()), 1)
+   |                        ^
+
+error[E0050]: cannot infer `T` for `none`
+  --> E0154-repeated-hint.sisu:97:16
+   |
+97 |     g_r4b(poly(none()), 1)
+   |                ^^^^
+   |
+   = help: annotate the result, or write the type: `none<...>(...)`
+
+error[E0154]: `i64` does not conform to `Ir4b`
+  --> E0154-repeated-hint.sisu:97:25
+   |
+94 | fn g_r4b<T: Ir4b, U>(_a: Two<A7<U?>, Three<Two<[T], [T]>, Two<T?, T?>, Two<[T], [T]>>>, _b: T) {}
+   |             ---- required by this bound
+...
+97 |     g_r4b(poly(none()), 1)
+   |                         ^
+
+error[E0050]: cannot infer `T` for `none`
+   --> E0154-repeated-hint.sisu:106:24
+    |
+106 |     g_r6(poly3(none(), none()), 1, true)
+    |                        ^^^^
+    |
+    = help: annotate the result, or write the type: `none<...>(...)`
+
+error[E0154]: `i64` does not conform to `Ir6`
+   --> E0154-repeated-hint.sisu:106:33
+    |
+103 | fn g_r6<T: Ir6, S: Ir6>(_a: Two<A7<Two<T?, [S]>>, Three<Two<T?, [S]>, Two<[T], S?>, Two<T?, [S]>>>, _b: T, _c: S) {}
+    |            --- required by this bound
+...
+106 |     g_r6(poly3(none(), none()), 1, true)
+    |                                 ^
+
+error[E0154]: `bool` does not conform to `Ir6`
+   --> E0154-repeated-hint.sisu:106:36
+    |
+103 | fn g_r6<T: Ir6, S: Ir6>(_a: Two<A7<Two<T?, [S]>>, Three<Two<T?, [S]>, Two<[T], S?>, Two<T?, [S]>>>, _b: T, _c: S) {}
+    |                    --- required by this bound
+...
+106 |     g_r6(poly3(none(), none()), 1, true)
+    |                                    ^^^^
+
+error[E0050]: cannot infer `T` for `none`
+   --> E0154-repeated-hint.sisu:115:15
+    |
+115 |     g_r5(poly(none()), 1)
+    |               ^^^^
+    |
+    = help: annotate the result, or write the type: `none<...>(...)`
+
+error[E0154]: `i64` does not conform to `Ir5`
+   --> E0154-repeated-hint.sisu:115:24
+    |
+112 | fn g_r5<T: Ir5, U>(_a: Two<A7<T?>, Three<Two<U?, U?>, Two<[T], [T]>, Two<U?, U?>>>, _b: T) {}
+    |            --- required by this bound
+...
+115 |     g_r5(poly(none()), 1)
+    |                        ^
+
+error[E0154]: `i64` does not conform to `Ir7`
+   --> E0154-repeated-hint.sisu:124:24
+    |
+121 | fn g_r7<T: Ir7>(_a: Two<A7<T?>, Three<Two<[T], [T]>, Two<Two<T, T>?, Two<T, T>?>, Two<T?, T?>>>, _b: T) {}
+    |            --- required by this bound
+...
+124 |     g_r7(poly(none()), 1)
+    |                        ^
+
+error[E0032]: expected `i64`, found `bool`
+   --> E0154-repeated-hint.sisu:133:17
+    |
+133 |     g_t5(poly_y(true, none()), 1)
+    |                 ^^^^
+
+error[E0050]: cannot infer `T` for `none`
+   --> E0154-repeated-hint.sisu:133:23
+    |
+133 |     g_t5(poly_y(true, none()), 1)
+    |                       ^^^^
+    |
+    = help: annotate the result, or write the type: `none<...>(...)`
+
+error[E0154]: `i64` does not conform to `It5`
+   --> E0154-repeated-hint.sisu:133:32
+    |
+130 | fn g_t5<T: It5>(_a: Two<A7<Two<T, T>?>, Three<Two<Two<T, T>?, i64>, Two<T?, i64>, Two<Two<T, T>?, i64>>>?, _b: T) {}
+    |            --- required by this bound
+...
+133 |     g_t5(poly_y(true, none()), 1)
+    |                                ^
+
+sisu: 19 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032, E0050, E0154

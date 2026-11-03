@@ -1,0 +1,136 @@
+// The hint of a parameter is the last part of the context that holds `REJECTED` and no `HOLE`,
+// else the first part. A walk that visits a repeated pair once must keep that answer. Each row
+// calls `g(poly(none()), 1)`: `1` rejects `T`, and the parts of the context are in `g`'s
+// parameter. The memo of a walk keeps answers only after `MEMO_AFTER` (64) visits, and `A6` with
+// its root is exactly 64, so the rows use `A7` (the first row is the report of #408 on `A6`).
+class Two<A, B> {
+    a: A
+    b: B
+}
+
+class Three<A, B, C> {
+    a: A
+    b: B
+    c: C
+}
+
+type A1<T> = Two<T, T>
+type A2<T> = Two<A1<T>, A1<T>>
+type A3<T> = Two<A2<T>, A2<T>>
+type A4<T> = Two<A3<T>, A3<T>>
+type A5<T> = Two<A4<T>, A4<T>>
+type A6<T> = Two<A5<T>, A5<T>>
+type A7<T> = Two<A6<T>, A6<T>>
+
+fn none<T>() -> T? { None }
+
+fn poly<X>(_x: X) -> Two<A7<X>, Three<Two<X, X>, Two<X, X>, Two<X, X>>> { panic("no") }
+
+fn poly2<X>(_x: X) -> Two<A7<X>, Two<A7<X>, A7<X>>> { panic("no") }
+
+fn poly3<X, Y>(_x: X, _y: Y) -> Two<A7<Two<X, Y>>, Three<Two<X, Y>, Two<X, Y>, Two<X, Y>>> { panic("no") }
+
+fn poly_y<X, Y>(_y: Y, _x: X) -> Two<A7<X>, Three<Two<X, Y>, Two<X, Y>, Two<X, Y>>> { panic("no") }
+
+// The report of #408: the last part, `T?` in the tail of `Three`, is rejected-only, and the memo skips a repeat of the first.
+interface Isol {}
+
+fn poly_sol<X>(_x: X) -> Two<A6<X>, Three<Two<X, X>, Two<X, X>, Two<X, X>>> { panic("no") }
+
+fn g_sol<T: Isol>(_a: Two<A6<T?>, Three<Two<T?, T?>, Two<[T], [T]>, Two<T?, T?>>>, _b: T) {}
+
+fn row_sol() {
+    g_sol(poly_sol(none()), 1)
+}
+
+// Two different rejected-only parts for `T`: `[T]` comes before `T?` in the tail.
+interface Ir2 {}
+
+fn g_r2<T: Ir2>(_a: Two<A7<T?>, Three<Two<[T], [T]>, Two<T?, T?>, Two<T?, T?>>>, _b: T) {}
+
+fn row_r2() {
+    g_r2(poly(none()), 1)
+}
+
+// The same two parts in the other order.
+interface Ir2b {}
+
+fn g_r2b<T: Ir2b>(_a: Two<A7<[T]>, Three<Two<T?, T?>, Two<[T], [T]>, Two<[T], [T]>>>, _b: T) {}
+
+fn row_r2b() {
+    g_r2b(poly(none()), 1)
+}
+
+// A rejected-only part only in the `A7` subtree.
+interface Ir3 {}
+
+fn g_r3<T: Ir3>(_a: Two<A7<[T]>, Two<A7<T?>, A7<[T]>>>, _b: T) {}
+
+fn row_r3() {
+    g_r3(poly2(none()), 1)
+}
+
+// The same with the parts of `A7` the other way round.
+interface Ir3b {}
+
+fn g_r3b<T: Ir3b>(_a: Two<A7<T?>, Two<A7<[T]>, A7<T?>>>, _b: T) {}
+
+fn row_r3b() {
+    g_r3b(poly2(none()), 1)
+}
+
+// A rejected-only part only in the `Three` tail, and `U` in `A7`.
+interface Ir4 {}
+
+fn g_r4<T: Ir4, U>(_a: Two<A7<U?>, Three<Two<T?, T?>, Two<[T], [T]>, Two<T?, T?>>>, _b: T) {}
+
+fn row_r4() {
+    g_r4(poly(none()), 1)
+}
+
+// The same with the tail parts in the other order.
+interface Ir4b {}
+
+fn g_r4b<T: Ir4b, U>(_a: Two<A7<U?>, Three<Two<[T], [T]>, Two<T?, T?>, Two<[T], [T]>>>, _b: T) {}
+
+fn row_r4b() {
+    g_r4b(poly(none()), 1)
+}
+
+// Two parameters that each get rejected-only parts.
+interface Ir6 {}
+
+fn g_r6<T: Ir6, S: Ir6>(_a: Two<A7<Two<T?, [S]>>, Three<Two<T?, [S]>, Two<[T], S?>, Two<T?, [S]>>>, _b: T, _c: S) {}
+
+fn row_r6() {
+    g_r6(poly3(none(), none()), 1, true)
+}
+
+// Guard, green at the round base: the parts of `U` are not rejected-only.
+interface Ir5 {}
+
+fn g_r5<T: Ir5, U>(_a: Two<A7<T?>, Three<Two<U?, U?>, Two<[T], [T]>, Two<U?, U?>>>, _b: T) {}
+
+fn row_r5() {
+    g_r5(poly(none()), 1)
+}
+
+// Guard, green at the round base: a part that holds a hole as well is no rejected-only part.
+interface Ir7 {}
+
+fn g_r7<T: Ir7>(_a: Two<A7<T?>, Three<Two<[T], [T]>, Two<Two<T, T>?, Two<T, T>?>, Two<T?, T?>>>, _b: T) {}
+
+fn row_r7() {
+    g_r7(poly(none()), 1)
+}
+
+// Guard for the hint of `blame_arguments`: a misfit, then the hint of the result.
+interface It5 {}
+
+fn g_t5<T: It5>(_a: Two<A7<Two<T, T>?>, Three<Two<Two<T, T>?, i64>, Two<T?, i64>, Two<Two<T, T>?, i64>>>?, _b: T) {}
+
+fn row_t5() {
+    g_t5(poly_y(true, none()), 1)
+}
+
+fn main() {}
