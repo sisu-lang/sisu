@@ -174,6 +174,9 @@ vague or generic error, or with none.
   at that commit. Each one must fail, and for the cause that the commit
   names. A test that passes there, or fails for another reason, does not
   prove its name.
+- For each new `expect`, `unreachable!` or index in `sisu`, write a
+  program that tries to break its invariant, for example a nested use
+  that changes the state first. A program that makes `sisu` panic blocks.
 - For each new regression test, revert the fix, or apply the mutation
   that the test names, in your copy, and run the test. A test that still
   passes does not prove its name.
