@@ -1,0 +1,14 @@
+error[E0011]: a `let` pattern takes no type
+ --> E0011-let-pattern-type.sisu:6:16
+  |
+6 |     let Some(w): i64? = o
+  |                ^^^^^^
+  |
+help: remove the type
+  |
+6 -     let Some(w): i64? = o
+6 +     let Some(w) = o
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011

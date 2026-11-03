@@ -1,7 +1,7 @@
 error[E0006]: `else` must be on the same line as the closing `}`
- --> E0006-typed-let-new-line.sisu:6:5
+ --> E0006-typed-let-if-new-line.sisu:6:5
   |
-6 |     else { return 0 }
+6 |     else { 2 }
   |     ^^^^
 
 sisu: 1 error

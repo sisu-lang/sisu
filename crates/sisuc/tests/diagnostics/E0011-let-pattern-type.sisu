@@ -1,0 +1,8 @@
+// GIVEN a `let` with a pattern and a type, and no `else`
+// WHEN `sisu check` runs on it
+// THEN it reports E0011 at the `: i64?` (6:16), with a fix that removes the type
+fn main() {
+    let o: i64? = None
+    let Some(w): i64? = o
+    print(w)
+}
