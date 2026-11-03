@@ -254,3 +254,59 @@ fn result_from_hint_then_string(x: u8) {
     let z = snd(id(mk2()) + 1, x) + 1
     let w: string = z
 }
+
+// A leader that the operator does not take is reported against the operator's list, and the call
+// beside it keeps its E0050: the operator's `i64` is a hint to the call, not a type that was written.
+enum E {
+    A
+    B
+}
+fn call_minus_bool(b: bool) { let z = id(mk2()) - b }
+fn call_times_class(k: K) { let z = id(mk2()) * k }
+fn call_plus_array(xs: [i64]) { let z = id(mk2()) + xs }
+fn call_plus_array_literal() { let z = id(mk2()) + [1] }
+fn call_plus_some() { let z = id(mk2()) + Some(1) }
+fn call_plus_bool_then_string(b: bool) {
+    let z = id(mk2()) + b
+    let w: string = z
+}
+fn call_minus_bool_minus_literal(b: bool) { let z = id(mk2()) - b - 1 }
+fn call_minus_bool_minus_call(b: bool) { let z = id(mk2()) - b - id(mk2()) }
+fn call_plus_optional_i64(o: i64?) { let z = id(mk2()) + o }
+fn call_plus_optional_u8(o: u8?) { let z = id(mk2()) + o }
+fn call_times_optional_f64(o: f64?) { let z = id(mk2()) * o }
+fn call_plus_param<T>(t: T) { let z = id(mk2()) + t }
+fn call_minus_enum(e: E) { let z = id(mk2()) - e }
+fn call_less_optional_i64(o: i64?) { let z = id(mk2()) < o }
+fn call_plus_bool_plus_i64(b: bool, n: i64) { let z = id(mk2()) + b + n }
+fn call_remainder_bool(b: bool) { let z = id(mk2()) % b }
+fn call_plus_bool_less_literal(b: bool) { let z = id(mk2()) + b < 3 }
+fn call_plus_optional_u8_then_string(o: u8?) {
+    let z = id(mk2()) + o
+    let w: string = z
+}
+fn pair_of_calls_minus_bool(b: bool) { let z = pair(id(mk2()), id(mk2())) - b }
+
+// Guards: a leader that is a written type, a literal first, or the concrete twin.
+fn bool_minus_call(b: bool) { let z = b - id(mk2()) }
+fn call_plus_u8(x: u8) { let z = id(mk2()) + x }
+fn call_plus_optional_string(o: string?) { let z = id(mk2()) + o }
+fn literal_plus_call_minus_bool(b: bool) { let z = 1 + id(mk2()) - b }
+fn concrete_plus_optional_u8(o: u8?) { let z = mk2() + o }
+fn concrete_plus_optional_i64(o: i64?) { let z = mk2() + o }
+
+// `-` of a value that kept its E0050 keeps it, as an operator does: the code that uses it adds no
+// report for the default `i64`.
+fn block_negated_sum_then_u8(x: u8) { let z = { -(id(mk2()) + 1) } + x }
+fn branch_negated_sums_then_u8(c: bool, x: u8) {
+    let z = (if c { -(id(mk2()) + 1) } else { -(id(mk2()) + 1) }) + x
+}
+fn call_of_negated_sum_then_u8(x: u8) { let z = id(-(id(mk2()) + 1)) + x }
+fn negated_sum_then_u8_binding() {
+    let z = -(id(mk2()) + 1)
+    let w: u8 = z
+}
+fn negated_sum_then_string() {
+    let z = -(id(mk2()) + 1)
+    let w: string = z
+}
