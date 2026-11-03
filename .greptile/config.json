@@ -1,0 +1,10 @@
+{
+  "strictness": 2,
+  "commentTypes": ["logic"],
+  "effort": "base",
+  "autoReview": [],
+  "shouldUpdateDescription": false,
+  "summarySection": { "included": false },
+  "sequenceDiagramSection": { "included": false },
+  "instructions": "Review for new correctness defects only: unsafe Rust, C ABI layouts, ownership, reference counts, generated code, and compiler/runtime interactions. Give the input, path and effect of each finding. CI runs fmt, clippy, typos, shellcheck and cargo-deny: do not repeat them. Do not give style or prose advice. Write in ASD-STE100 English."
+}
