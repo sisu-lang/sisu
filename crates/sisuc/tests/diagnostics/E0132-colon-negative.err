@@ -1,110 +1,110 @@
 error[E0132]: Sisu has no negative index: count from `self.xs.len()`
- --> E0132-colon-negative.sisu:5:23
+ --> E0132-colon-negative.sisu:5:24
   |
 5 |         print(self.xs[:-1])
-  |                       ^
+  |                        ^^
 
 error[E0132]: Sisu has no negative index: count from `xs.len()`
-  --> E0132-colon-negative.sisu:22:14
+  --> E0132-colon-negative.sisu:22:15
    |
 22 |     print(xs[:-1])
-   |              ^
+   |               ^^
 
 error[E0132]: Sisu has no negative index: count from `xs.len()`
-  --> E0132-colon-negative.sisu:23:16
+  --> E0132-colon-negative.sisu:23:14
    |
 23 |     print(xs[-2:])
-   |                ^
+   |              ^^
 
 error[E0132]: Sisu has no negative index: count from `xs.len()`
-  --> E0132-colon-negative.sisu:24:16
+  --> E0132-colon-negative.sisu:24:14
    |
 24 |     print(xs[-3:-1])
-   |                ^
+   |              ^^
 
 error[E0132]: Sisu has no negative index: count from `s.len()`
-  --> E0132-colon-negative.sisu:25:13
+  --> E0132-colon-negative.sisu:25:14
    |
 25 |     print(s[:-1])
-   |             ^
+   |              ^^
 
 error[E0132]: Sisu has no negative index: count from `p.len()`
-  --> E0132-colon-negative.sisu:26:13
+  --> E0132-colon-negative.sisu:26:14
    |
 26 |     print(p[:-1])
-   |             ^
+   |              ^^
 
 error[E0132]: Sisu has no negative index: count from `xs.len()`
-  --> E0132-colon-negative.sisu:27:14
+  --> E0132-colon-negative.sisu:27:15
    |
 27 |     print(xs[:-n])
-   |              ^
+   |               ^^
 
 error[E0132]: Sisu has no negative index: count from `xs.len()`
-  --> E0132-colon-negative.sisu:28:14
+  --> E0132-colon-negative.sisu:28:15
    |
 28 |     print(xs[:-(n + 1)])
-   |              ^
+   |               ^^^^^^^^
 
 error[E0132]: Sisu has no negative index: count from `xs.len()`
-  --> E0132-colon-negative.sisu:29:14
+  --> E0132-colon-negative.sisu:29:15
    |
 29 |     print(xs[:(-1)])
-   |              ^
+   |               ^^^^
 
 error[E0132]: Sisu has no negative index: count from `xs.len()`
-  --> E0132-colon-negative.sisu:30:15
+  --> E0132-colon-negative.sisu:30:16
    |
 30 |     print(xs[1:-1])
-   |               ^
+   |                ^^
 
 error[E0132]: Sisu has no negative index: count from `c.xs.len()`
-  --> E0132-colon-negative.sisu:31:16
+  --> E0132-colon-negative.sisu:31:17
    |
 31 |     print(c.xs[:-1])
-   |                ^
+   |                 ^^
 
 error[E0132]: Sisu has no negative index: count from `xss[0].len()`
-  --> E0132-colon-negative.sisu:32:18
+  --> E0132-colon-negative.sisu:32:19
    |
 32 |     print(xss[0][:-1])
-   |                  ^
+   |                   ^^
 
 error[E0132]: Sisu has no negative index: count from `xs.len()`
-  --> E0132-colon-negative.sisu:33:14
+  --> E0132-colon-negative.sisu:33:15
    |
 33 |     print(xs[:-a * b])
-   |              ^
+   |               ^^^^^^
 
 error[E0132]: Sisu has no negative index: count from `xs.len()`
-  --> E0132-colon-negative.sisu:34:14
+  --> E0132-colon-negative.sisu:34:15
    |
 34 |     print(xs[:-1 + n])
-   |              ^
+   |               ^^^^^^
 
 error[E0132]: Sisu has no negative index: count from `xs.len()`
-  --> E0132-colon-negative.sisu:35:14
+  --> E0132-colon-negative.sisu:35:15
    |
 35 |     print(xs[:--1])
-   |              ^
+   |               ^^^
 
 error[E0132]: Sisu has no negative index: count from `xs.len()`
-  --> E0132-colon-negative.sisu:36:14
+  --> E0132-colon-negative.sisu:36:15
    |
 36 |     print(xs[:-9223372036854775808])
-   |              ^
+   |               ^^^^^^^^^^^^^^^^^^^^
 
 error[E0132]: Sisu has no negative index
-  --> E0132-colon-negative.sisu:37:18
+  --> E0132-colon-negative.sisu:37:19
    |
 37 |     print(f().xs[:-1])
-   |                  ^
+   |                   ^^
 
 error[E0132]: Sisu has no negative index
-  --> E0132-colon-negative.sisu:38:19
+  --> E0132-colon-negative.sisu:38:20
    |
 38 |     print(xs[1..][:-1])
-   |                   ^
+   |                    ^^
 
 error[E0001]: cannot assign to `xs`
   --> E0132-colon-negative.sisu:39:16
@@ -121,22 +121,22 @@ help: declare it with `let mut`
    |         +++
 
 error[E0132]: Sisu has no negative index: count from `xs.len()`
-  --> E0132-colon-negative.sisu:39:29
+  --> E0132-colon-negative.sisu:39:30
    |
 39 |     print(xs[{ xs = [7]; 0 }:-1])
-   |                             ^
+   |                              ^^
 
 error[E0132]: Sisu has no negative index: count from `xs.len()`
-  --> E0132-colon-negative.sisu:40:14
+  --> E0132-colon-negative.sisu:40:15
    |
 40 |     print(xs[:-1][:-1])
-   |              ^
+   |               ^^
 
 error[E0132]: Sisu has no negative index
-  --> E0132-colon-negative.sisu:40:19
+  --> E0132-colon-negative.sisu:40:20
    |
 40 |     print(xs[:-1][:-1])
-   |                   ^
+   |                    ^^
 
 sisu: 22 errors
 sisu: for more on a code, run `sisu explain <code>`: E0001, E0132

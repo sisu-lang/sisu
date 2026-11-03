@@ -5504,7 +5504,10 @@ impl From<DiagnosticKind> for Diagnostic {
                         let d = Diagnostic::coded(code, at, format!("write `{written}`"));
                         match whole {
                             Some(whole) => d.with_fix(safe_fix("remove the `[:]`", whole, "")),
-                            None => d.with_fix(safe_fix("write `..`", at, "..")),
+                            // The parser cannot see the type of `base`: on a string, `..` counts
+                            // bytes and can stop the program, and on an array it stops a bound
+                            // past the end, where Python clamps it.
+                            None => d.with_fix(unsafe_fix("write `..`", at, "..")),
                         }
                     }
                 }
