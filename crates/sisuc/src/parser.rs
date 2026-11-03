@@ -7529,12 +7529,9 @@ mod tests {
                 ": i64?",
                 vec![Code::ElseOnNewLine],
             ),
-            // A pattern with no `else` reports the type first, then that it can fail.
-            (
-                "let Some(w): i64? = o",
-                ": i64?",
-                vec![Code::RefutablePattern],
-            ),
+            // A pattern with no `else` reports the type first. Then the checker, not the parser,
+            // reports the pattern (E0174).
+            ("let Some(w): i64? = o", ": i64?", vec![]),
             // The type comes first: the `mut` is reported once the type is gone.
             (
                 "let mut _: i64 = o else { return }",
