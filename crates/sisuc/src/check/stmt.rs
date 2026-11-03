@@ -11,7 +11,7 @@ use super::prelude::PRELUDE;
 use super::unused_names::{Owner, Pending};
 use super::{
     Binding, BindingKind, Checked, CheckedBlock, Checker, Declared, LoopContext, LoopFrame,
-    LoopKind, Misfit, Poisoned, UNKNOWN, block_expr, built_in_type, starts_in, tail, type_of,
+    LoopKind, Poisoned, UNKNOWN, block_expr, built_in_type, starts_in, tail, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{
@@ -30,10 +30,10 @@ pub(super) struct BlockSoFar {
     failed: bool,
     /// Whether "unreachable code" is reported, or moot.
     warned: bool,
-    /// Whether the value rejected the type expected of it.
-    mismatch: bool,
-    /// What the value found and could not meet its context with (see `Misfit`).
-    found: Option<Misfit>,
+    /// The value, if it failed: whether it rejected the type expected of it, what it found and
+    /// could not meet its context with (see `Misfit`), and whether a generic call in it kept
+    /// its E0050. A statement before the value leaves none of this.
+    value: Option<Poisoned>,
     /// How many of the block's statements are checked.
     done: usize,
 }
@@ -45,8 +45,7 @@ impl Default for BlockSoFar {
             ty: Some(Type::UNIT),
             failed: false,
             warned: false,
-            mismatch: false,
-            found: None,
+            value: None,
             done: 0,
         }
     }
@@ -92,8 +91,7 @@ impl Checker<'_> {
             mut stmts,
             ty,
             failed,
-            mismatch,
-            found,
+            value,
             ..
         } = so_far;
         self.pop_scope();
@@ -102,11 +100,13 @@ impl Checker<'_> {
             // A tail that rejected `expected` fails the block, unless a `never` came first: then
             // no code uses the tail's value, so its misfit is not handed up.
             ty => {
-                let mismatch = mismatch && ty.is_none();
+                let value = value.unwrap_or_else(Poisoned::error);
+                let none = ty.is_none();
                 return Err(Poisoned {
                     ty,
-                    mismatch,
-                    found: found.filter(|_| ty.is_none()),
+                    mismatch: value.mismatch && none,
+                    found: value.found.filter(|_| none),
+                    kept: value.kept && none,
                 });
             }
         };
@@ -160,12 +160,12 @@ impl Checker<'_> {
                 }
                 Err(poisoned) => {
                     so_far.failed = true;
-                    so_far.mismatch = last && poisoned.mismatch;
-                    so_far.found = poisoned.found.filter(|_| last);
+                    let ty = poisoned.ty;
+                    so_far.value = last.then_some(poisoned);
                     // An invalid jump made the block `never` only by error; what follows is no
                     // new news. Any other failed `never` statement still leaves the block.
-                    so_far.warned |= invalid_jump && poisoned.ty == Some(Type::NEVER);
-                    poisoned.ty
+                    so_far.warned |= invalid_jump && ty == Some(Type::NEVER);
+                    ty
                 }
             };
             if so_far.ty != Some(Type::NEVER) {

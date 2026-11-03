@@ -16,7 +16,7 @@ use super::prelude::PRELUDE;
 use super::stmt::BlockSoFar;
 use super::{
     Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Misfit, Poisoned, UNKNOWN,
-    as_optional, built_in_type, optional_of, own_args, payload, type_of,
+    as_optional, built_in_type, is_kept, optional_of, own_args, payload, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ArgumentsForm, Diagnostic, Expected, MainForm, Unwrap};
@@ -1762,6 +1762,7 @@ pub(super) fn mark((checked, mismatched): (Checked, bool)) -> Checked {
             ty: None,
             mismatch: true,
             found: None,
+            kept: false,
         })
     } else {
         checked
@@ -2034,7 +2035,6 @@ impl Checker<'_> {
         expected: Option<Type>,
     ) -> Result<(Vec<Checked>, TypeArgs, Option<Type>), Poisoned> {
         let owned = sig.owner.len();
-        let open = self.body.misfits.len();
         let mut call = Inference {
             at: span,
             hinted: self.hinted(span, None).1.is_some(),
@@ -2160,13 +2160,16 @@ impl Checker<'_> {
             }
             return Err(Poisoned {
                 found,
+                kept: call.slots.iter().flatten().any(is_kept),
                 ..Poisoned::error()
             });
         };
-        // An argument that keeps its E0050 under a hint fails the call, as any failed argument
-        // does: the type the hint bound is the hint's, not a type that anyone wrote.
-        if self.kept_misfit(open) {
-            return Err(Poisoned::error());
+        // An argument that keeps its E0050 under a hint fails like any failed argument: the
+        // other arguments and the written type arguments still bind the parameters. The call
+        // fails only when the hint alone binds a parameter that the argument names: that type
+        // is the hint's, not a type that anyone wrote.
+        if self.hint_alone_binds_kept(&call, sig) {
+            return Err(Poisoned::kept_error());
         }
         self.instantiates = true;
         let checked = call
@@ -2178,6 +2181,33 @@ impl Checker<'_> {
             .collect();
         let ret = sig.ret.and_then(|ret| self.subst(ret, list.get()));
         Ok((checked, list, ret))
+    }
+
+    /// Whether the call, which is the hinted value, has a parameter that an argument names and
+    /// that the hint alone binds, while that argument has no type because it kept its E0050. An
+    /// argument has kept it when it is `Err` with `Poisoned::kept`, or is a generic call whose
+    /// E0050 is still open (see `Misfit`). No other argument that has a type names the
+    /// parameter, and no type argument that the call writes binds it. A type that a sibling
+    /// gives as an expected type is a type, so it is not the hint. The work is linear in the
+    /// arguments.
+    fn hint_alone_binds_kept(&self, call: &Inference<'_>, sig: &GenericSig<'_>) -> bool {
+        let kept = |slot: &Option<Checked>| {
+            slot.as_ref()
+                .is_some_and(|c| is_kept(c) || self.misfit_type(c).is_some())
+        };
+        if !call.hinted || !call.slots.iter().any(kept) {
+            return false;
+        }
+        let count = sig.declared.len();
+        let named = |wanted: &dyn Fn(&Option<Checked>) -> bool| {
+            let params = iter::zip(&call.slots, sig.params).filter(|(slot, _)| wanted(slot));
+            named_params(params.map(|(_, &param)| param), count)
+        };
+        let (on_kept, on_typed) = (
+            named(&kept),
+            named(&|slot| slot.as_ref().is_some_and(|c| type_of(c).is_some())),
+        );
+        (0..count).any(|j| on_kept[j] && !on_typed[j] && call.origin.get(j) == Some(call.at))
     }
 
     /// The rank of each argument of the call: 2 for `Rank::Waits`, 1 for `Rank::Literal`, else 0
@@ -2400,6 +2430,7 @@ impl Checker<'_> {
                 ty: None,
                 mismatch: true,
                 found: None,
+                kept: false,
             }));
             blamed = true;
         }

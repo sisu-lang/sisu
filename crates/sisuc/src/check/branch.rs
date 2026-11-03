@@ -5,8 +5,8 @@ use super::expr::fits;
 use super::generic::{Ahead, Rank};
 use super::pattern::{LetPattern, arm_key};
 use super::{
-    Checked, CheckedBlock, Checker, Misfit, Poisoned, UNKNOWN, as_optional, block_type, payload,
-    tail, value_span, wrap_block,
+    Checked, CheckedBlock, Checker, Misfit, Poisoned, UNKNOWN, as_optional, block_type, is_kept,
+    payload, tail, value_span, wrap_block,
 };
 use crate::ast;
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Unwrap};
@@ -267,6 +267,9 @@ impl Checker<'_> {
                 ty: None,
                 mismatch,
                 found,
+                // A join that has no type is kept when a branch is: that call's E0050 is the one
+                // report.
+                kept: ty.is_none() && blocks.iter().any(is_kept),
             }),
         };
         (blocks, ty)

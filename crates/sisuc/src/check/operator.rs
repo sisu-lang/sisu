@@ -6,7 +6,7 @@ use super::generic::{Rank, mismatched};
 use super::interface::Operation;
 use super::{
     Checked, Checker, Lowered, Poisoned, UNKNOWN, as_optional, beyond_one_layer, block_expr,
-    optional_of, payload, type_of, wrap,
+    is_kept, optional_of, payload, type_of, wrap,
 };
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Expected, Literal, PeelIs, PeelLayers};
@@ -47,6 +47,7 @@ impl Checker<'_> {
                 ty: None,
                 mismatch: literal,
                 found: None,
+                kept: false,
             });
         }
         let want = if type_of(&checked).map(payload) == Some(Type::F64) {
@@ -178,12 +179,16 @@ impl Checker<'_> {
             self.report(DiagnosticKind::ArithmeticOnChar { at: op_span });
             return Err(Poisoned::error());
         }
+        let kept = checked.iter().any(is_kept);
         let [l, r]: [Checked; 2] = checked
             .try_into()
             .unwrap_or_else(|_| panic!("`integers` should return one result per operand"));
         if ty == Some(Type::STRING) {
             self.label_join_literals(start, [lhs, rhs]);
             return self.concat(span, l, r, mismatched);
+        }
+        if kept {
+            return Err(Poisoned::kept_error());
         }
         let kind = l.ok().zip(r.ok()).map(|(l, r)| tir::ExprKind::Binary {
             op: tir_op,
@@ -292,12 +297,9 @@ impl Checker<'_> {
         let compound = operator == (Operator::Plus { compound: true });
         // An `i64` that the context wants holds an `f64` operand to it, in either order.
         let wants_i64 = expected.map(payload) == Some(Type::I64);
-        // Ranking checks an operand ahead, so the misfits of the operands start here.
-        let open = self.body.misfits.len();
         let ranks: Vec<Rank> = operands.iter().map(|e| self.sibling_rank(e)).collect();
         let mut first = None;
-        // Whether the operand checked first has no type because its E0050 is kept (see
-        // `Checker::kept_misfit`).
+        // Whether the operand checked first kept its E0050 (see `Poisoned::kept`).
         let mut kept_first = false;
         // No operand gives the type, so the operator takes `i64` by default, which no one wrote.
         let defaulted = literal_type(expected) == Type::I64 && !ranks.contains(&Rank::Concrete);
@@ -312,12 +314,9 @@ impl Checker<'_> {
                 Type::F64 if wants_i64 => Type::I64,
                 _ => literal_type(Some(ty)),
             });
-            // An operand that kept its E0050 gives no type, so the operator's `i64` is the
-            // default again, and the operands after it are hinted with it.
-            kept_first = ty.is_none()
-                && !wants_i64
-                && self.kept_misfit(open)
-                && self.misfit_type(&checked).is_none();
+            // An operand that kept its E0050 gives the operator no type, so its `i64` is the
+            // default again, and the operands that wait for context are hinted with it.
+            kept_first = is_kept(&checked);
             let ty = ty.or_else(|| kept_first.then_some(Type::I64));
             first = Some((k, checked));
             ty
@@ -358,10 +357,13 @@ impl Checker<'_> {
             .then(|| operator.takes());
         let by_char = arithmetic && first.as_ref().and_then(|f| type_of(&f.1)) == Some(Type::CHAR);
         let (mut checked, mut mismatched) = (Vec::with_capacity(operands.len()), false);
+        // Whether an operand kept its E0050. The operands after it that wait for context are
+        // still held to the default `i64` as a hint; the others are checked as after any failed
+        // operand.
+        let mut kept_seen = false;
         // The operator's default `i64` is no one's written type, so it is a hint to the operands,
         // as the first side of `==` is for the second.
-        let hinted =
-            takes.is_some() && !by_char && ((defaulted && ranks[0] != Rank::Literal) || kept_first);
+        let hinted = takes.is_some() && ((defaulted && ranks[0] != Rank::Literal) || kept_first);
         // The diagnostics of the operator's type: mismatches, and a literal's, which that type
         // types. They wait until a `char` operand is ruled out.
         let mut deferred = Vec::new();
@@ -378,6 +380,16 @@ impl Checker<'_> {
         for (i, e) in operands.iter().enumerate() {
             if held && leader == Some(i) {
                 want = ty;
+            }
+            // A call waits for a type, and the default `i64` is its hint. An array literal or a
+            // `None` waits too, but no `i64` is one: it is checked as after any failed operand.
+            if kept_seen
+                && hinted
+                && ranks[i] == Rank::Waits
+                && !matches!(e.kind, ExprKind::ArrayLit(_))
+                && !self.bare_none_written(e)
+            {
+                want = Some(Type::I64);
             }
             let start = self.diagnostics.len();
             let value = match first.take_if(|(k, _)| *k == i) {
@@ -501,18 +513,18 @@ impl Checker<'_> {
                 deferred.extend(self.diagnostics.drain(start..));
                 settled
             };
-            if type_of(&operand).is_none()
-                && !(self.kept_misfit(open) && self.misfit_type(&operand).is_none())
-            {
+            if type_of(&operand).is_none() || is_kept(&operand) {
                 want = None;
             }
+            kept_seen |= is_kept(&operand);
             mismatched |= m;
             failed |= got.is_none() && ranks[i] == Rank::Concrete;
             checked.push(operand);
             before = got;
         }
         // A kept E0050 is the fault of its operand: the operator is `Error`, as a failed rule is.
-        mismatched |= self.kept_misfit(open);
+        // A comparison is a `bool` whatever its operands are.
+        mismatched |= arithmetic && kept_seen;
         // The missing `<` is the mistake only when no operand is of another type. A bound helps
         // only when the operands are one type, which they are then.
         if let Some((report, at, param, i)) = pending
@@ -922,10 +934,9 @@ impl Checker<'_> {
     }
 
     /// The right side of `??`, checked against `expected`: a value, or one that never finishes,
-    /// but not `unit`. A call that kept its E0050 (see `Checker::kept_misfit`) is the fault, so
-    /// the right side still has the type of the left side's value.
+    /// but not `unit`. A value that kept its E0050 (see `Poisoned::kept`) is the fault, so the
+    /// right side still has the type of the left side's value.
     fn fallback(&mut self, rhs: &ast::Expr, expected: Type) -> Checked {
-        let open = self.body.misfits.len();
         let checked = self.expr(rhs, Some(expected));
         if type_of(&checked) == Some(Type::UNIT) {
             self.report(DiagnosticKind::NoValue {
@@ -934,11 +945,7 @@ impl Checker<'_> {
             });
             return Err(Poisoned::error());
         }
-        if type_of(&checked).is_none()
-            && expected != UNKNOWN
-            && self.misfit_type(&checked).is_none()
-            && self.kept_misfit(open)
-        {
+        if is_kept(&checked) && type_of(&checked).is_none() {
             return Err(Poisoned::typed(payload(expected)));
         }
         checked
