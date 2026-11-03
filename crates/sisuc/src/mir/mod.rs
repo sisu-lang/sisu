@@ -289,7 +289,7 @@ pub(crate) enum Rvalue {
     /// inside another value: it takes the operand's reference and gives the value itself when
     /// that covers its block, when its bytes are more than a quarter of the block's capacity in
     /// bytes, or when that capacity is below 256 bytes; else a copy in a block of its own (see
-    /// "Trimming"). Its type is the operand's.
+    /// ADR 0042). Its type is the operand's.
     Trim(Operand),
     /// A call through the table of the receiver, the first of `args`, an `any` value, of the
     /// requirement `method` of `interface`, with `iargs` as its type arguments (the receiver's

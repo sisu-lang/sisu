@@ -1224,7 +1224,7 @@ fn a_slice_should_print_each_form_of_range() {
     );
 }
 
-/// One source for each trim point of "Trimming": a function `f` that places the slice `xs[..1]`
+/// One source for each trim point of ADR 0042: a function `f` that places the slice `xs[..1]`
 /// (or a string's) inside another value, and the mir it must hold: the slice, then the `trim`
 /// that consumes it, then the place that takes the trimmed value.
 const TRIM_POINTS: &[(&str, &str, &[&str])] = &[
@@ -1294,7 +1294,7 @@ const TRIM_POINTS: &[(&str, &str, &[&str])] = &[
     ),
 ];
 
-/// GIVEN a slice placed at each trim point of "Trimming", one source for each
+/// GIVEN a slice placed at each trim point of ADR 0042, one source for each
 /// WHEN the function is lowered
 /// THEN the mir holds `trim` of the slice in front of the place that takes it, a value inside
 /// `?` is trimmed as the optional it is, and the place takes the result of the trim, never the

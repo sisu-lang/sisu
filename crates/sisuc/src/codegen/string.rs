@@ -4,8 +4,8 @@
 //! that covers its whole block has `data` at the block's first byte and `len` equal to the
 //! header's `len`; a substring has not. A literal's block is a writable global
 //! that holds a reference of its own, so it is never freed and never reused in place. This module
-//! is the only one that reads a string header, and other modules read the length and the capacity
-//! through `string_len` and `string_cap`; `layout.rs` owns the layout. This module owns the
+//! is the only one that reads a string header; other modules get the length and the capacity
+//! from `string_len` and `string_cap`; `layout.rs` owns the layout. This module owns the
 //! string nodes and the bodies of the string helpers, which `define_helpers` reaches through
 //! `define_string_helper`.
 

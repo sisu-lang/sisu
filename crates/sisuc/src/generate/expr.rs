@@ -2573,7 +2573,7 @@ mod tests {
     /// for 3
     /// THEN some range is of `xs` with room for 4, where it fits exactly, and none with room for 3
     #[test]
-    fn a_slice_should_take_a_local_that_fits_and_only_one() {
+    fn a_slice_should_take_a_local_only_when_it_fits() {
         let ty = Ty::Array(Box::new(Ty::I64));
         for (max, expected) in [(4, true), (3, false)] {
             let mut of_xs = false;
