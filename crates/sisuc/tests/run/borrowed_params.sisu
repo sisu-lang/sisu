@@ -2,9 +2,11 @@
 // `-O2` knows that a length is not negative, and sees the length of a literal. So the test of a
 // length that gates the work is `< 2`, and each call gets a text or an array of run-time length
 // that it cannot decide is short: the argument of each call has two bytes or elements.
-// `keeps` and `gives` pass the depth `i % 2 + 1` from a loop that runs three times. It ends when
-// `i` reaches the length of `saved`, which a call gives, or of `xs`, so `-O2` cannot count its
-// iterations and unroll it: it keeps one call in each. `main` passes the argument count, known
+// `keeps` and `gives` pass the depth `i % 2 + 1` from a loop that runs three times. It ends only
+// when `i` reaches the length of `saved`, which a call gives, so `-O2` cannot count its iterations
+// and unroll it: it keeps one call in each. The loop does not test `i` against the length of `xs`,
+// because `-O2` sees that length, and the ARM64 unroller then unrolls the loop to that bound. So
+// the write to `xs` uses `i % xs.len()`. `main` passes the argument count, known
 // only at run time. The markers check that these calls survive `-O2`, so each value crosses a real
 // call.
 // args: a
@@ -97,8 +99,8 @@ fn keeps() {
     let mut xs = [0, 0, 0]
     let mut saved = [0, 0, 0]
     let mut i = 0
-    while i < saved.len() && i < xs.len() {
-        xs[i] = 1
+    while i < saved.len() {
+        xs[i % xs.len()] = 1
         print(saved[i])
         saved = keep(xs, i % 2 + 1)
         i += 1
@@ -110,8 +112,8 @@ fn gives() {
     let mut xs = [0, 0, 0]
     let mut saved = [0, 0, 0]
     let mut i = 0
-    while i < saved.len() && i < xs.len() {
-        xs[i] = 1
+    while i < saved.len() {
+        xs[i % xs.len()] = 1
         print(saved[i])
         saved = give(xs, i % 2 + 1)
         i += 1
