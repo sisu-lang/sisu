@@ -2796,8 +2796,15 @@ pub(crate) enum NotPlace {
     SelfValue { class: bool },
     /// A value that is no place: a call, a literal.
     Temporary,
-    /// A range index, which gives a new `string` where `string` is set, else a new array.
-    Range { string: bool },
+    /// A range index of the kind of value `SliceOf` says.
+    Range(SliceOf),
+}
+
+/// What a range index gives: a new `string` or a new array.
+#[derive(Clone, Copy)]
+pub(crate) enum SliceOf {
+    String,
+    Array,
 }
 
 /// The `?.` form of `MutArgumentType`: the place reads as an optional and is written as what
@@ -6280,10 +6287,13 @@ fn immutable_cause(d: Diagnostic, name: &str, element: bool, cause: &Immutable) 
     }
 }
 
-/// The indefinite article before the type `ty`: "an" before a vowel letter, except `u`, which
-/// the types `u8` and the like say as "you".
+/// The indefinite article before the type `ty`: "an" before a vowel letter, except the types
+/// `u8` and the like, which say "you".
 fn indefinite(ty: &str) -> &'static str {
-    if ty.starts_with(['a', 'e', 'i', 'o']) {
+    let unsigned = ty
+        .strip_prefix('u')
+        .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));
+    if !unsigned && ty.starts_with(['a', 'e', 'i', 'o', 'u', 'A', 'E', 'I', 'O', 'U']) {
         "an"
     } else {
         "a"
@@ -6295,15 +6305,18 @@ fn indefinite(ty: &str) -> &'static str {
 fn mut_not_place(d: Diagnostic, name: &str, cause: &NotPlace) -> Diagnostic {
     let copy = "copy it into a `let mut` local";
     let label = match *cause {
-        NotPlace::Range { string } => format!(
+        NotPlace::Range(slice) => format!(
             "a range index gives a new {}, not a place",
-            if string { "string" } else { "array" }
+            match slice {
+                SliceOf::String => "string",
+                SliceOf::Array => "array",
+            }
         ),
         _ => "not a place".to_string(),
     };
     let d = d.with_label(label);
     match *cause {
-        NotPlace::Range { .. } | NotPlace::Temporary => d,
+        NotPlace::Range(_) | NotPlace::Temporary => d,
         NotPlace::SelfValue { class: true } => {
             d.with_help("an object is shared: `self` can already write every `mut` field")
         }

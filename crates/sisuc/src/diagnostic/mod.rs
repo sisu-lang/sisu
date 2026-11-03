@@ -16,7 +16,7 @@ pub(crate) use registry::{
     MethodReceiver, MismatchFix, MismatchSource, MissingBound, NanFix, NestingForm, NoOperatorForm,
     NotAny, NotConformForm, NotInterface, NotPlace, Operand, Owner, Panic, Peel, PeelIs,
     PeelLayers, Plain, PowerFix, PrecisionHelp, PrintProblem, RETIRED, RangeForm, RangePlace,
-    RangePush, RangeTarget, RangeWrite, ReceiverArgument, SpecForm, SpecLimit, Spelled,
+    RangePush, RangeTarget, RangeWrite, ReceiverArgument, SliceOf, SpecForm, SpecLimit, Spelled,
     TypedLiteral, Unbuilt, Ungenerated, UnknownForm, Unwrap, UnwrapHelp, UsedBy, VariantLabels,
     WideKind, invisible,
 };

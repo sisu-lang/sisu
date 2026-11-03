@@ -10,7 +10,7 @@ use super::generic::mark;
 use super::place::{Chain, Change, CheckedPlace, Path, Root, build};
 use super::{Checked, Checker, Poisoned, UNKNOWN, block_expr, type_of};
 use crate::ast;
-use crate::diagnostic::{ChainForm, ChainLabel, DiagnosticKind, NotPlace};
+use crate::diagnostic::{ChainForm, ChainLabel, DiagnosticKind, NotPlace, SliceOf};
 use crate::parser::{is_place, is_range_target};
 use crate::source::Span;
 use crate::tir::{self, ExprKind, LocalId, Type, TypeKind};
@@ -253,13 +253,21 @@ impl Checker<'_> {
             // As a `push` onto a range does: the bound alone is reported, with no warning that
             // the root is never reassigned.
             self.stamp_push(arg);
-            let string = type_of(&self.expr(arg, Some(UNKNOWN))) == Some(Type::STRING);
-            return Err(NotPlace::Range { string });
+            let (ty, failed) = self.checked_alone(arg);
+            if failed {
+                return Ok(CheckedPlace::failed());
+            }
+            let slice = if ty == Some(Type::STRING) {
+                SliceOf::String
+            } else {
+                SliceOf::Array
+            };
+            return Err(NotPlace::Range(slice));
         }
         if matches!(arg.kind, ast::ExprKind::SelfValue) {
             // Outside a method there is no `self` to pass: E0041 says so.
             if self.body.self_type.is_none() {
-                drop(self.expr(arg, Some(UNKNOWN)));
+                self.checked_alone(arg);
                 return Ok(CheckedPlace::failed());
             }
             let class = matches!(
@@ -269,8 +277,11 @@ impl Checker<'_> {
             return Err(NotPlace::SelfValue { class });
         }
         if !is_place(arg) {
-            drop(self.expr(arg, Some(UNKNOWN)));
-            return Err(NotPlace::Temporary);
+            // An expression with an error has its error, and no place to report.
+            return match self.checked_alone(arg) {
+                (_, true) => Ok(CheckedPlace::failed()),
+                (_, false) => Err(NotPlace::Temporary),
+            };
         }
         let mut place = self.place(arg.span, arg, Change::MutArg);
         if let Some(cause) = place.refused.take() {
@@ -282,6 +293,14 @@ impl Checker<'_> {
             });
         }
         Ok(place)
+    }
+
+    /// The type of the expression `arg`, checked on its own for its own mistakes, and whether
+    /// it reported an error.
+    fn checked_alone(&mut self, arg: &ast::Expr) -> (Option<Type>, bool) {
+        let errors = self.diagnostics.errors;
+        let ty = type_of(&self.expr(arg, Some(UNKNOWN)));
+        (ty, self.diagnostics.errors > errors)
     }
 
     /// The text before the first `?.` of the place `e`, when it is on one line.
@@ -366,14 +385,14 @@ impl Checker<'_> {
             .get(at)
             .map(|n| n.span)
             .filter(|span| !span.in_prelude());
+        // A type that still names a parameter says nothing for a `?.` place, which no parameter
+        // type fits: the place's own write type stands for the parameter's.
+        let want = if shape.chain.is_some() && (want.has_param() || want.holds_hole()) {
+            shape.write
+        } else {
+            want
+        };
         let chain = shape.chain.as_ref().map(|chain| {
-            // A type that still names a parameter says nothing: the place's own write type
-            // stands for the parameter's.
-            let want = if want.has_param() || want.holds_hole() {
-                shape.write
-            } else {
-                want
-            };
             let label = if want == shape.write && want == shape.read {
                 ChainLabel::NoPlace {
                     head: chain.name.clone(),
@@ -404,11 +423,6 @@ impl Checker<'_> {
             ChainForm { shown, label, help }
         });
         let found = shape.read;
-        let want = if chain.is_some() && (want.has_param() || want.holds_hole()) {
-            shape.write
-        } else {
-            want
-        };
         let promotes = chain.is_none()
             && !matches!(found.kind(), TypeKind::Optional(_))
             && matches!(want.kind(), TypeKind::Optional(_))
