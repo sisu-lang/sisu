@@ -9761,10 +9761,11 @@ mod tests {
         );
     }
 
-    /// GIVEN `mut` in front of a `let` initializer, and in front of a `return` operand
+    /// GIVEN `mut` in front of a `let` initializer, and in front of other operands, with spaces,
+    /// tabs, a comment, a line break and the end of the file after it
     /// WHEN the parser reads it
-    /// THEN it reports E0168 at the keyword, once, with the binding help for the `let` only
-    /// AND the safe fix removes `mut ` and the spaces after it
+    /// THEN it reports E0168 at the keyword, once, with the binding help for a `let` with no `mut`
+    /// AND the safe fix removes `mut` and the spaces and tabs after it, not a comment or a break
     #[test]
     fn mut_outside_an_argument_should_be_reported() {
         for (src, fixed, binding) in [
@@ -9774,10 +9775,33 @@ mod tests {
                 true,
             ),
             (
+                "fn main() {\n    let y = mut\t\tx\n}",
+                "fn main() {\n    let y = x\n}",
+                true,
+            ),
+            (
+                "fn main() {\n    let y: i64 = mut x\n}",
+                "fn main() {\n    let y: i64 = x\n}",
+                true,
+            ),
+            (
                 "fn main() {\n    let Some(y) = mut x else { return }\n}",
                 "fn main() {\n    let Some(y) = x else { return }\n}",
                 true,
             ),
+            // `let mut` already binds a variable, and a block `const` has no `let`.
+            (
+                "fn main() {\n    let mut y = mut x\n}",
+                "fn main() {\n    let mut y = x\n}",
+                false,
+            ),
+            (
+                "fn main() {\n    const X = mut 1\n}",
+                "fn main() {\n    const X = 1\n}",
+                false,
+            ),
+            ("const X = mut 1\n", "const X = 1\n", false),
+            ("const X = mut", "const X = ", false),
             (
                 "fn main() {\n    return mut x\n}",
                 "fn main() {\n    return x\n}",
@@ -9788,14 +9812,50 @@ mod tests {
                 "fn main() {\n    let y = -(x)\n}",
                 false,
             ),
+            // A comment and a line break stay: the fix removes `mut ` alone.
+            (
+                "fn main() {\n    let y = mut // keep\n    x\n}",
+                "fn main() {\n    let y = // keep\n    x\n}",
+                true,
+            ),
+            (
+                "fn main() {\n    return mut\n}",
+                "fn main() {\n    return \n}",
+                false,
+            ),
+            (
+                "fn main() {\r\n    let y = mut \r\n x\r\n}",
+                "fn main() {\r\n    let y = \r\n x\r\n}",
+                true,
+            ),
         ] {
             let d = parse_diagnostic(src);
             assert_eq!(d.code(), Code::MutNotArgument, "{src}");
-            let keyword = src.find("mut").expect("the program has a `mut`");
+            // The last `mut`, which is the one that no argument owns.
+            let keyword = src.rfind("mut").expect("the program has a `mut`");
             assert_eq!(d.span(), Span::new(keyword, keyword + 3), "{src}");
             assert_eq!(d.help().is_some(), binding, "{src}");
             assert_eq!(apply_fix(src, &d), fixed, "{src}");
             assert!(fix_edits(&d).is_some_and(|(safe, _)| safe), "{src}");
+        }
+    }
+
+    /// GIVEN a `mut` that starts a statement, in a function and in a block
+    /// WHEN the parser reads it
+    /// THEN it reports E0011 at the keyword, with no fix: it may be a declaration with no `let`
+    #[test]
+    fn mut_at_a_statement_start_should_be_expected_with_no_fix() {
+        for src in [
+            "fn main() {\n    mut x = 1\n}",
+            "fn main() {\n    mut x\n}",
+            "fn main() {\n    mut x.f = 1\n}",
+            "fn main() {\n    if true {\n        mut x = 1\n    }\n}",
+        ] {
+            let d = parse_diagnostic(src);
+            let keyword = src.find("mut").expect("the program has a `mut`");
+            assert_eq!(d.code(), Code::Expected, "{src}");
+            assert_eq!(d.span(), Span::new(keyword, keyword + 3), "{src}");
+            assert_eq!(fix_edits(&d), None, "{src}");
         }
     }
 

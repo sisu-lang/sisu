@@ -1,0 +1,10 @@
+// GIVEN a `main` whose line 7 is `let y = mut // keep`, with `mut` at 7:13, and `x` on line 8
+// WHEN `sisu check` runs on it
+// THEN it reports E0168 at 7:13
+// AND the fix removes `mut ` alone: the comment and the line break stay
+fn main() {
+    let x = 1
+    let y = mut // keep
+        x
+    print(y)
+}

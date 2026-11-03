@@ -1,0 +1,10 @@
+// GIVEN a `main` whose line 7 is `let mut y = mut x`, with the second `mut` at 7:17
+// WHEN `sisu check` runs on it
+// THEN it reports E0168 at 7:17, with no help, because the `let` is already `mut`
+// AND the fix removes the second `mut`, and the fixed program checks clean
+fn main() {
+    let x = 1
+    let mut y = mut x
+    y += 1
+    print(y)
+}

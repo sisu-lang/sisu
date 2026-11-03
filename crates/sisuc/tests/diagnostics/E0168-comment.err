@@ -1,0 +1,15 @@
+error[E0168]: `mut` marks an argument for a `mut` parameter
+ --> E0168-comment.sisu:7:13
+  |
+7 |     let y = mut // keep
+  |             ^^^ not an argument
+  |
+  = help: a value is copied when it is bound; to change it, bind it with `let mut`
+help: remove `mut`
+  |
+7 -     let y = mut // keep
+7 +     let y = // keep
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0168

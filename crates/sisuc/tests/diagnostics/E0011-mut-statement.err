@@ -1,0 +1,8 @@
+error[E0011]: expected an expression, found `mut`
+ --> E0011-mut-statement.sisu:7:9
+  |
+7 |         mut x = 1
+  |         ^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011
