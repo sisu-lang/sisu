@@ -1,0 +1,72 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit gives the first review of a PR. CI and prek stay the only merge gate.
+# Reference: https://docs.coderabbit.ai/reference/configuration
+language: en-US
+tone_instructions: "Write in ASD-STE100 Simplified Technical English: short sentences, active voice, one instruction per sentence. No praise, no filler."
+reviews:
+  profile: chill
+  # The summary goes into the bot comment, so the PR body stays as the author wrote it.
+  high_level_summary_in_walkthrough: true
+  sequence_diagrams: false
+  suggested_labels: false
+  suggested_reviewers: false
+  in_progress_fortune: false
+  auto_review:
+    drafts: false
+    # Also review stacked PRs into stage branches.
+    base_branches: [".*"]
+  path_filters:
+    # Stop the default skip of *.out: run-fail .out files are expected output.
+    - "**/*.out"
+  path_instructions:
+    - path: "crates/runtime/**"
+      instructions: "C-ABI runtime. Every unsafe block needs a // SAFETY: comment that proves each precondition. Flag behaviour that Miri would reject."
+    - path: "crates/sisuc/tests/**"
+      instructions: |
+        Read the implementation before the changed .err and .json files.
+        Compare each expected result with its .sisu input: codes, spans, fixes and exact bytes.
+        Do not accept changed expected output only because it matches the implementation.
+  finishing_touches:
+    docstrings:
+      enabled: false
+    # Tests are written first and named <subject>_should_<result> (CODING_STANDARDS.md).
+    unit_tests:
+      enabled: false
+  pre_merge_checks:
+    # Quoted: YAML 1.1 reads a bare off as false.
+    docstrings:
+      mode: "off"
+    description:
+      mode: "off"
+    title:
+      mode: warning
+      requirements: "An imperative sentence in ASD-STE100 English. No Conventional Commits prefix."
+  tools:
+    # CI and prek run clippy, shellcheck and actionlint already.
+    clippy:
+      enabled: false
+    shellcheck:
+      enabled: false
+    actionlint:
+      enabled: false
+    github-checks:
+      enabled: false
+    markdownlint:
+      enabled: false
+    languagetool:
+      enabled: false
+chat:
+  # Reply only when mentioned, not to the comments of other bots.
+  auto_reply: false
+  art: false
+knowledge_base:
+  code_guidelines:
+    # AGENTS.md and CLAUDE.md are read by default.
+    filePatterns:
+      - "**/CODING_STANDARDS.md"
+      - "GLOSSARY.md"
+      # A plain entry applies only to its own directory, so docs/register.md needs applyTo.
+      - files: "docs/register.md"
+        applyTo: "**"
+  learnings:
+    scope: local
