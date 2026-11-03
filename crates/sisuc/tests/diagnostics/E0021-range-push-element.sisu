@@ -1,0 +1,34 @@
+class C {
+    mut xs: [[i64]]
+}
+
+fn rows() -> [[i64]] { [[1], [2]] }
+
+fn make() -> C { C(xs: [[1], [2]]) }
+
+fn main() {
+    let mut xs = [[1], [2], [3]]
+    let mut deep = [[[1]], [[2]]]
+    let i = 0
+    let c = C(xs: [[1], [2]])
+    xs[0].push(4)
+    xs[1..][0].push(4)
+    xs[1..][i].push(4 + i)
+    deep[1..][0][0].push(4)
+    xs[..2][0].push(4)
+    xs[1..=2][0].push(4)
+    c.xs[1..][0].push(4)
+    make().xs[1..][0].push(4)
+    rows()[1..][0].push(4)
+    xs[1..][
+        0
+    ].push(4)
+    rows(
+    )[1..][0].push(4)
+    xs[
+        1..
+    ].push(4)
+    print(xs)
+    print(deep)
+    print(c.xs)
+}

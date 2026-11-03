@@ -8,7 +8,7 @@ use rustc_hash::FxHashMap;
 use super::unused_names::{Owner, Used};
 use super::{Body, Checked, Checker, Declared, Poisoned, type_of};
 use crate::ast::{self, ExprKind};
-use crate::diagnostic::{Diagnostic, DiagnosticKind, Panic, TypedLiteral};
+use crate::diagnostic::{Diagnostic, DiagnosticKind, Panic, RangePlace, TypedLiteral};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, BinaryOp, CompareOp, Type, UnaryOp};
@@ -308,6 +308,11 @@ impl Checker<'_> {
                     declared,
                     itself: *name == user.name,
                 });
+                false
+            }
+            ExprKind::Range(range) => {
+                let d = Self::range_outside(range, RangePlace::Elsewhere);
+                self.diagnostics.push(d);
                 false
             }
             _ => {

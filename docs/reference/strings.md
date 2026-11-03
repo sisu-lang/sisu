@@ -32,7 +32,7 @@ The rules:
 - `+` joins two strings ([Arithmetic](operators.md#arithmetic)). `+=` joins a string to a place that can change ([Compound assignment](statements.md#compound-assignment)). Another type beside a string is an error. Use interpolation.
 - `==`, `!=`, `<` and the other comparison operators compare byte by byte, which is the order of the code points ([Comparison](operators.md#comparison)).
 - Sisu does not normalize text. `"é"` as one character and `"e"` with a combining accent are not equal.
-- A string has no index ([E0068](../diagnostics/E0068.md)), no range index ([E0023](../diagnostics/E0023.md)) and no fields. Use `chars()` or `bytes()` to get an array.
+- A string has no single index ([E0068](../diagnostics/E0068.md)) and no fields. It has a range index ([Substrings](#substrings)). Use `chars()` or `bytes()` to get an array.
 - A string can hold the null character `\0`. It counts as one byte.
 
 ```sisu
@@ -53,9 +53,53 @@ fn main() {
 }
 ```
 
+## Substrings
+
+`s[a..b]` is the part of `s` from the byte `a` up to, and not including, the byte `b`. The bounds are `i64`s, and they count bytes, not characters. `s[a..=b]` includes the byte `b`. A range without `a` starts at 0, and a range without `b` runs to the end: `s[a..]`, `s[..b]` and `s[..=b]`. The result is a `string`. `s[..]` is not a range index; write `s` ([E0023](../diagnostics/E0023.md)).
+
+```sisu
+fn main() {
+    let s = "häst"
+    print(s[0..1])                           // h
+    print(s[1..3])                           // ä
+    print(s[3..])                            // st
+    print(s[1..3].len())                     // 2
+    print(s[1..][2..])                       // st
+}
+```
+
+A substring copies no byte. It shares the bytes of `s`. It holds the text of `s` until it is dropped, as an array range holds its array ([Arrays](arrays.md#range-indexes)). A substring is not a place, so `s[1..3] = t` is an error ([E0021](../diagnostics/E0021.md)). Build the new string, such as `s = s[..1] + t + s[3..]`. `+=` onto a substring gives a new string and does not change the string it came from.
+
+The range follows the rules of an array range, and one more: a bound that is inside a character stops the program. The panic names the byte. The checks run in this order: a negative start, an end past the length, a start past the end, the start inside a character, and the end inside a character.
+
+```sisu panics
+fn main() {
+    let s = "häst"
+    print(s[1..2])
+}
+```
+
+```stderr
+sisu: panic at example.sisu:3:13: byte 2 is inside a character
+```
+
+`s.get(r)` is the same substring as `s[r]`, written with a range in the call, and it gives a `string?`. It gives `None` where `s[r]` would stop the program. An empty range that is in bounds gives `Some("")`, not `None`.
+
+```sisu
+fn main() {
+    let s = "häst"
+    print(s.get(1..3) ?? "none")             // ä
+    print(s.get(1..2) ?? "none")             // none
+    print((s.get(3..3) ?? "none").len())     // 0
+    print(s.get(0..9) ?? "none")             // none
+}
+```
+
+The argument of `get` is a range written in the call. Any other argument is an error ([E0032](../diagnostics/E0032.md)). `s.get(..)` is `Some(s)`, so it is an error ([E0023](../diagnostics/E0023.md)).
+
 ## Methods
 
-A string has these methods. None of them takes an argument.
+A string has these methods. `get` takes a range. The others take no argument.
 
 | Method | Result | Meaning |
 | --- | --- | --- |
@@ -63,6 +107,7 @@ A string has these methods. None of them takes an argument.
 | `s.chars()` | `[char]` | The characters of `s`, in order |
 | `s.bytes()` | `[u8]` | The UTF-8 bytes of `s`, in order |
 | `s.words()` | `[string]` | The words of `s`, in order |
+| `s.get(r)` | `string?` | The substring of `s` in the range `r`, or `None` where `s[r]` would stop the program |
 
 `string(cs)` is the reverse of `chars()`. It builds a string from a `[char]` ([Types](types.md#conversions)).
 

@@ -1,0 +1,6 @@
+fn main() {
+    let s = "abc"
+    let a = 0
+    let b = 2
+    print(s.get<a, b>())
+}

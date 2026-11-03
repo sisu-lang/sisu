@@ -115,10 +115,10 @@ fn layout_of(ty: Type, known: &Known) -> Option<Layout> {
         TypeKind::U8 | TypeKind::Bool => Some(Layout::new(1, 1)),
         TypeKind::Char => Some(Layout::new(4, 4)),
         TypeKind::Unit | TypeKind::Never => Some(Layout::EMPTY),
-        // An object, an array or a string is a pointer to its block.
-        TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) => {
-            Some(Layout::new(WORD, WORD))
-        }
+        // An object is a pointer to its block.
+        TypeKind::Class(..) => Some(Layout::new(WORD, WORD)),
+        // An array or a string is three words: its block, its data and its length.
+        TypeKind::String | TypeKind::Array(_) => Some(Layout::new(3 * WORD, WORD)),
         // An enum with arguments is a generic one that `mono` has not instantiated.
         TypeKind::Enum(_, args) if args != TypeArgs::NONE => None,
         TypeKind::Enum(id, _) => Some(known[id.0].flatten()?.value),
@@ -457,11 +457,12 @@ mod tests {
     }
 
     #[test]
-    fn measure_should_count_an_array_a_string_and_a_class_as_a_pointer() {
+    fn measure_should_count_an_array_and_a_string_as_three_words_and_a_class_as_one() {
         let class = Type::intern(TypeKind::Class(crate::tir::ClassId(0), TypeArgs::NONE));
         let array = Type::array(enum_type(0));
         let measured = measure(&[holding("A", 0, vec![array, Type::STRING, class])]);
-        assert_eq!(measured[0].map(|m| m.payload), Some(24));
+        // 24 + 24 + 8.
+        assert_eq!(measured[0].map(|m| m.payload), Some(56));
     }
 
     #[test]

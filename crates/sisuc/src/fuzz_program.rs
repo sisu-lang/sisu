@@ -1423,11 +1423,11 @@ mod tests {
         dispatch_should_print_its_expected_lines(DISPATCHES[7]);
     }
 
-    /// Seed 584's `main` returns before it calls `shapes`, which the program holds, so the run
+    /// Seed 1188's `main` returns before it calls `shapes`, which the program holds, so the run
     /// prints no marked line, and the property holds.
     #[test]
     fn a_main_that_returns_before_shapes_should_print_no_marked_line() {
-        let g = generate(&seed(584));
+        let g = generate(&seed(1188));
         let main = item(&g.program, "fn main()").expect("the program should have a `main`");
         assert!(
             main.contains("return\n") && main.ends_with("    shapes()\n}"),

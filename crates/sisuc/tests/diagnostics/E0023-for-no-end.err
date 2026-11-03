@@ -1,0 +1,10 @@
+error[E0023]: a range with a missing bound can only be an index or a string's `get` argument
+ --> E0023-for-no-end.sisu:3:14
+  |
+3 |     for i in 0.. { print(i) }
+  |              ^^^ this range has no end
+  |
+  = help: write both bounds, such as `0..n`, or use `loop` with a counter
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0023

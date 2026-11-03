@@ -346,6 +346,82 @@ pub unsafe extern "C" fn sisu_panic_bounds(
     ))
 }
 
+// The `kind` of `sisu_panic_range` is a bit set. Bits 0 and 1 are the check that failed. Codegen
+// has a copy of each number (`codegen/abi.rs`), and a test compares them.
+/// The check that failed: a negative start.
+const RANGE_NEGATIVE_START: i64 = 0;
+/// The check that failed: an end past the length.
+const RANGE_END_PAST_LENGTH: i64 = 1;
+/// The check that failed: a start past the end.
+const RANGE_START_PAST_END: i64 = 2;
+/// The check that failed: a byte of a string inside a character.
+const RANGE_INSIDE_CHARACTER: i64 = 3;
+/// The mask of the check.
+const RANGE_CHECK: i64 = 3;
+/// The range is `..=`.
+const RANGE_INCLUSIVE: i64 = 4;
+/// The range has an end.
+const RANGE_HAS_END: i64 = 8;
+/// The value is a string, not an array.
+const RANGE_STRING: i64 = 16;
+
+/// The text of a range panic after `sisu: panic at <at>: `. `start` and `end` are the bounds as
+/// the program wrote them, with a missing start as 0; for the check `RANGE_INSIDE_CHARACTER`,
+/// `start` is the byte position. `len` is the length of the value.
+fn range_text(kind: i64, start: i64, end: i64, len: i64) -> String {
+    let inclusive = kind & RANGE_INCLUSIVE != 0;
+    match kind & RANGE_CHECK {
+        RANGE_NEGATIVE_START => format!("range start {start} is negative"),
+        RANGE_END_PAST_LENGTH if !inclusive => format!("range end {end} is past length {len}"),
+        RANGE_END_PAST_LENGTH if len > 0 => {
+            format!("range end {end} is past the last index {}", len - 1)
+        }
+        RANGE_END_PAST_LENGTH => {
+            let value = if kind & RANGE_STRING != 0 {
+                "string"
+            } else {
+                "array"
+            };
+            format!("range end {end} is past the end of an empty {value}")
+        }
+        RANGE_START_PAST_END if kind & RANGE_HAS_END != 0 => {
+            format!("range starts at {start} but ends at {end}")
+        }
+        RANGE_START_PAST_END => format!("range start {start} is past length {len}"),
+        RANGE_INSIDE_CHARACTER => format!("byte {start} is inside a character"),
+        _ => unreachable!("the check of a range panic should be 0 to 3"),
+    }
+}
+
+/// Prints `sisu: panic at <at>: <text>` to standard error and exits with code 101. Generated
+/// code calls this for a range index that fails a check; `at` is the source location of the
+/// range, `kind` says which check failed and what the range looks like, and `start`, `end` and
+/// `len` give the numbers for the text ([`range_text`]).
+///
+/// # Safety
+///
+/// `at` and `at_len` meet the same contract as `msg` and `len` for [`sisu_panic`].
+#[expect(
+    unsafe_code,
+    reason = "generated code calls this function by its unmangled symbol name and passes a raw pointer"
+)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sisu_panic_range(
+    at: *const u8,
+    at_len: usize,
+    kind: i64,
+    start: i64,
+    end: i64,
+    len: i64,
+) -> ! {
+    // SAFETY: the caller upholds the `# Safety` contract above, which is `raw_text`'s.
+    let at = unsafe { raw_text(at, at_len) };
+    exit_with_panic(format_args!(
+        "sisu: panic at {at}: {}",
+        range_text(kind, start, end, len)
+    ))
+}
+
 // `signal(2)`, declared here to avoid a dependency. `handler` is a function address or
 // `SIG_IGN`; the previous handler is not needed.
 #[expect(
@@ -528,9 +604,11 @@ pub extern "C" fn sisu_rc_fault(kind: u32) -> ! {
 #[cfg(test)]
 mod tests {
     use super::{
-        BUFFER_CAPACITY, RESERVED, SIGPIPE, Sink, Stdout, raw_text, signal, sisu_alloc,
-        sisu_eprint_bool, sisu_eprint_f64, sisu_eprint_int, sisu_flush_stdout, sisu_free,
-        sisu_panic_bounds, sisu_print_bool, sisu_print_f64, sisu_print_int, sisu_rc_check_exit,
+        BUFFER_CAPACITY, RANGE_END_PAST_LENGTH, RANGE_HAS_END, RANGE_INCLUSIVE,
+        RANGE_INSIDE_CHARACTER, RANGE_NEGATIVE_START, RANGE_START_PAST_END, RANGE_STRING, RESERVED,
+        SIGPIPE, Sink, Stdout, range_text, raw_text, signal, sisu_alloc, sisu_eprint_bool,
+        sisu_eprint_f64, sisu_eprint_int, sisu_flush_stdout, sisu_free, sisu_panic_bounds,
+        sisu_panic_range, sisu_print_bool, sisu_print_f64, sisu_print_int, sisu_rc_check_exit,
         sisu_rc_fault, sisu_realloc, with_stdout,
     };
     use crate::text::{sisu_eprint_char, sisu_eprint_str};
@@ -540,6 +618,7 @@ mod tests {
 
     const ABORT_CASE_VAR: &str = "SISU_RUNTIME_ABORT_CASE";
     const PANIC_BOUNDS_VAR: &str = "SISU_RUNTIME_PANIC_BOUNDS";
+    const PANIC_RANGE_VAR: &str = "SISU_RUNTIME_PANIC_RANGE";
     const EPRINT_VAR: &str = "SISU_RUNTIME_EPRINT";
     const RC_CASE_VAR: &str = "SISU_RUNTIME_RC_CASE";
     const SIGABRT: i32 = 6;
@@ -661,6 +740,19 @@ mod tests {
         unsafe { sisu_panic_bounds(msg.as_ptr(), msg.len(), 7, 5) };
     }
 
+    /// Child entry point for `panic_range_should_exit_101_when_stderr_fails`; a no-op unless the
+    /// parent set the env var.
+    #[expect(unsafe_code, reason = "the test calls an unsafe extern function")]
+    #[test]
+    fn panic_range_should_exit_in_its_child() {
+        if std::env::var(PANIC_RANGE_VAR).is_err() {
+            return;
+        }
+        let at = "f.sisu:3:7";
+        // SAFETY: `at` is non-null, readable for `at.len()` bytes, and not written to.
+        unsafe { sisu_panic_range(at.as_ptr(), at.len(), RANGE_END_PAST_LENGTH, 0, 9, 5) };
+    }
+
     /// Child entry point for `eprint_writes_each_type_and_a_newline`; a no-op unless the parent
     /// set the env var, so the parent can read the child's standard error.
     #[expect(unsafe_code, reason = "the test calls an unsafe extern function")]
@@ -767,6 +859,147 @@ mod tests {
             !stdout.contains("test result:"),
             "libtest finished the child test, so the runtime did not exit: {stdout}"
         );
+    }
+
+    /// GIVEN a range panic whose standard error cannot be written
+    /// WHEN the runtime reports it
+    /// THEN the process still exits with code 101
+    #[test]
+    #[cfg_attr(miri, ignore = "spawns a child process, which Miri cannot")]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "writes to /dev/full, which only Linux has"
+    )]
+    fn panic_range_should_exit_101_when_stderr_fails() {
+        let exe = std::env::current_exe().expect("test binary path");
+        let full = std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/full")
+            .expect("/dev/full should exist on Linux");
+        let out = Command::new(exe)
+            .args([
+                "--exact",
+                "tests::panic_range_should_exit_in_its_child",
+                "--nocapture",
+            ])
+            .env(PANIC_RANGE_VAR, "1")
+            .stderr(full)
+            .output()
+            .expect("spawn child test");
+        assert_eq!(
+            out.status.code(),
+            Some(101),
+            "child exited with {:?}",
+            out.status
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            !stdout.contains("test result:"),
+            "libtest finished the child test, so the runtime did not exit: {stdout}"
+        );
+    }
+
+    /// GIVEN each check of a range, with and without `..=`, with and without an end
+    /// WHEN `range_text` gives its text, on an empty and a full value
+    /// THEN each text is the spec's, with the bounds as the program wrote them
+    #[test]
+    fn range_text_should_give_each_kind_its_text() {
+        let (inclusive, end, string) = (RANGE_INCLUSIVE, RANGE_HAS_END, RANGE_STRING);
+        let table = [
+            (
+                RANGE_NEGATIVE_START | end,
+                (-1, 2, 5),
+                "range start -1 is negative",
+            ),
+            (
+                RANGE_NEGATIVE_START,
+                (-1, 0, 0),
+                "range start -1 is negative",
+            ),
+            (
+                RANGE_NEGATIVE_START | inclusive | end,
+                (-1, 2, 5),
+                "range start -1 is negative",
+            ),
+            (
+                RANGE_END_PAST_LENGTH | end,
+                (2, 9, 5),
+                "range end 9 is past length 5",
+            ),
+            (
+                RANGE_END_PAST_LENGTH | end,
+                (0, 1, 0),
+                "range end 1 is past length 0",
+            ),
+            (
+                RANGE_END_PAST_LENGTH,
+                (0, 5, 5),
+                "range end 5 is past length 5",
+            ),
+            (
+                RANGE_END_PAST_LENGTH | inclusive | end,
+                (0, 5, 5),
+                "range end 5 is past the last index 4",
+            ),
+            (
+                RANGE_END_PAST_LENGTH | inclusive | end,
+                (0, i64::MAX, 5),
+                "range end 9223372036854775807 is past the last index 4",
+            ),
+            (
+                RANGE_END_PAST_LENGTH | inclusive | end,
+                (0, 0, 0),
+                "range end 0 is past the end of an empty array",
+            ),
+            (
+                RANGE_END_PAST_LENGTH | inclusive | end | string,
+                (0, 0, 0),
+                "range end 0 is past the end of an empty string",
+            ),
+            (
+                RANGE_END_PAST_LENGTH | inclusive | end | string,
+                (0, 7, 5),
+                "range end 7 is past the last index 4",
+            ),
+            (
+                RANGE_START_PAST_END | end,
+                (3, 1, 5),
+                "range starts at 3 but ends at 1",
+            ),
+            (
+                RANGE_START_PAST_END | inclusive | end,
+                (3, 1, 5),
+                "range starts at 3 but ends at 1",
+            ),
+            (
+                RANGE_START_PAST_END,
+                (6, 5, 5),
+                "range start 6 is past length 5",
+            ),
+            (
+                RANGE_START_PAST_END,
+                (1, 0, 0),
+                "range start 1 is past length 0",
+            ),
+            (
+                RANGE_INSIDE_CHARACTER | string | end,
+                (2, 3, 5),
+                "byte 2 is inside a character",
+            ),
+            (
+                RANGE_INSIDE_CHARACTER | string,
+                (2, 0, 5),
+                "byte 2 is inside a character",
+            ),
+            (
+                RANGE_INSIDE_CHARACTER | string | inclusive | end,
+                (2, 1, 5),
+                "byte 2 is inside a character",
+            ),
+        ];
+        for (kind, (start, end, len), want) in table {
+            assert_eq!(range_text(kind, start, end, len), want, "kind {kind}");
+        }
     }
 
     fn assert_child_aborts(case: &str) {

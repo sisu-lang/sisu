@@ -477,6 +477,9 @@ impl Checker<'_> {
 
     /// `base[index]`: `base` is an array, not an optional one, and `index` an `i64`.
     pub(super) fn index(&mut self, span: Span, base: &ast::Expr, index: &ast::Expr) -> Checked {
+        if let ast::ExprKind::Range(range) = &index.kind {
+            return self.range_index(span, base, range);
+        }
         let outer = std::mem::replace(&mut self.body.indexed, true);
         let checked = self.value(base, None);
         let element = self.element(base, type_of(&checked));
@@ -496,7 +499,7 @@ impl Checker<'_> {
     }
 
     /// The element type of `base`, which is indexed and has type `ty` (`None` is `Error`). An
-    /// optional array, or a value that is no array, is reported and gives `Error`.
+    /// optional array, a string, or a value that is no array, is reported and gives `Error`.
     pub(super) fn element(&mut self, base: &ast::Expr, ty: Option<Type>) -> Option<Type> {
         let ty = ty?;
         let d = match ty.kind() {
@@ -504,9 +507,11 @@ impl Checker<'_> {
             TypeKind::Optional(payload) if matches!(payload.kind(), TypeKind::Array(_)) => {
                 optional_array(base, UnwrapHelp::It)
             }
+            _ if ty == Type::STRING => DiagnosticKind::StringIndex { at: base.span }.into(),
             _ => DiagnosticKind::CannotIndex {
                 ty: self.type_name(ty),
                 at: base.span,
+                range: false,
             }
             .into(),
         };

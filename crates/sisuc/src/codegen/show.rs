@@ -77,9 +77,9 @@ impl<'ctx> Codegen<'ctx, '_> {
             Stream::Stderr => {
                 let sink = self.buffer_sink();
                 self.show_value(sink, ty, value, false, Mode::Print);
-                let block = self.finish_buffer_sink(sink);
-                self.print_string(Stream::Stderr, block);
-                self.release(block.into(), Type::STRING);
+                let text = self.finish_buffer_sink(sink);
+                self.print_string(Stream::Stderr, text);
+                self.release(text, Type::STRING);
             }
         }
     }
@@ -94,7 +94,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         &self,
         parts: &[(BasicValueEnum<'ctx>, Type)],
         formats: &[Format],
-    ) -> PointerValue<'ctx> {
+    ) -> BasicValueEnum<'ctx> {
         let sink = self.buffer_sink();
         // The formats are in part order, so one pass over them meets each in turn.
         let mut formats = formats.iter().peekable();
@@ -161,9 +161,9 @@ impl<'ctx> Codegen<'ctx, '_> {
         } else {
             self.show_value(sink, ty, value, false, Mode::Dbg);
         }
-        let block = self.finish_buffer_sink(sink);
-        self.print_string(Stream::Stderr, block);
-        self.release(block.into(), Type::STRING);
+        let text = self.finish_buffer_sink(sink);
+        self.print_string(Stream::Stderr, text);
+        self.release(text, Type::STRING);
     }
 
     /// Whether a value of `ty` holds a class with no written `to_string`: `ty` is one, or an
@@ -216,8 +216,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// Ends the buffer sink `sink`: its block is a string once its header holds the count, the
-    /// length and the capacity that the sink ended with.
-    pub(super) fn finish_buffer_sink(&self, sink: PointerValue<'ctx>) -> PointerValue<'ctx> {
+    /// length and the capacity that the sink ended with. The string value covers the block.
+    pub(super) fn finish_buffer_sink(&self, sink: PointerValue<'ctx>) -> BasicValueEnum<'ctx> {
         let block = self
             .show_call("sisu_show_finish", &[sink.into()])
             .try_as_basic_value()
@@ -226,15 +226,14 @@ impl<'ctx> Codegen<'ctx, '_> {
             .into_pointer_value();
         self.init_count(block);
         let sink_type = self.sink_type();
-        self.store(
-            self.string_field(block, LEN),
-            self.sink_word(sink_type, sink, SINK_LEN).into(),
-        );
+        let len = self.sink_word(sink_type, sink, SINK_LEN);
+        self.mark_len(len);
+        self.store(self.string_field(block, LEN), len.into());
         self.store(
             self.string_field(block, CAP),
             self.sink_word(sink_type, sink, SINK_CAP).into(),
         );
-        block
+        self.make_value(block, self.string_field(block, BYTES), len)
     }
 
     /// The word of the sink `sink`, of type `sink_type`, at byte `offset`.
@@ -367,7 +366,6 @@ impl<'ctx> Codegen<'ctx, '_> {
                 self.show_call("sisu_show_char", &[sink.into(), value.into(), flag.into()]);
             }
             TypeKind::String => {
-                let string = value.into_pointer_value();
                 let call = if quoted {
                     "sisu_show_quoted"
                 } else {
@@ -377,20 +375,24 @@ impl<'ctx> Codegen<'ctx, '_> {
                     call,
                     &[
                         sink.into(),
-                        self.string_field(string, BYTES).into(),
-                        self.string_len(string).into(),
+                        self.value_data(value).into(),
+                        self.value_len(value).into(),
                     ],
                 );
             }
             TypeKind::Optional(_) => self.show_optional(sink, ty, value, (quoted, mode)),
+            // An enum goes by the address of a scratch slot.
             TypeKind::Enum(..) => {
-                self.call(
-                    self.helper(Helper::Show(mode), ty),
-                    &[sink.into(), self.enum_slot(value).into()],
-                );
+                let args = [
+                    vec![sink.into()],
+                    self.helper_args(ty, self.enum_slot(value).into()),
+                ]
+                .concat();
+                self.call(self.helper(Helper::Show(mode), ty), &args);
             }
             TypeKind::Array(_) | TypeKind::Class(..) => {
-                self.call(self.helper(Helper::Show(mode), ty), &args(value));
+                let args = [vec![sink.into()], self.helper_args(ty, value)].concat();
+                self.call(self.helper(Helper::Show(mode), ty), &args);
             }
             TypeKind::Any(..) => self.show_any(sink, ty, value, quoted, mode),
             _ => {
@@ -435,33 +437,35 @@ impl<'ctx> Codegen<'ctx, '_> {
         let entry = self.context.append_basic_block(function, "entry");
         self.builder.position_at_end(entry);
         let sink = param(function);
-        let value = function
-            .get_nth_param(1)
-            .expect("a `show` helper should be declared with two parameters")
-            .into_pointer_value();
+        let value = self.helper_params(function, 1, ty);
         match ty.kind() {
             TypeKind::Array(element) => self.show_array(sink, element, value, mode),
             TypeKind::Class(id, _) => match self.written_display(ty) {
-                Some(method) => self.show_written(sink, method, ty, value.into()),
-                None if mode == Mode::Dbg => self.show_fields(sink, (id, ty), value),
+                Some(method) => self.show_written(sink, method, ty, value),
+                None if mode == Mode::Dbg => {
+                    self.show_fields(sink, (id, ty), value.into_pointer_value());
+                }
                 None => self.show_text("sisu_show_str", sink, &self.program.type_name(ty)),
             },
-            TypeKind::Enum(id, _) => match self.written_display(ty) {
-                Some(method) => {
-                    self.show_written(sink, method, ty, self.load_value(ty, value));
-                }
-                None => match &self.components[id.0] {
-                    Some(Component { members, index }) => {
-                        let first = Type::intern(TypeKind::Enum(members[0], TypeArgs::NONE));
-                        let kind = self.kind(*index);
-                        self.call(
-                            self.helper(Helper::ShowComponent(mode), first),
-                            &[sink.into(), kind.into(), value.into()],
-                        );
+            TypeKind::Enum(id, _) => {
+                let slot = value.into_pointer_value();
+                match self.written_display(ty) {
+                    Some(method) => {
+                        self.show_written(sink, method, ty, self.load_value(ty, slot));
                     }
-                    None => self.show_variants(sink, id, value, mode),
-                },
-            },
+                    None => match &self.components[id.0] {
+                        Some(Component { members, index }) => {
+                            let first = Type::intern(TypeKind::Enum(members[0], TypeArgs::NONE));
+                            let kind = self.kind(*index);
+                            self.call(
+                                self.helper(Helper::ShowComponent(mode), first),
+                                &[sink.into(), kind.into(), slot.into()],
+                            );
+                        }
+                        None => self.show_variants(sink, id, slot, mode),
+                    },
+                }
+            }
             _ => unreachable!("only an array, a class or an enum should have a `show` helper"),
         }
         self.builder.build_return(None).expect(POSITIONED);
@@ -523,31 +527,30 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.retain(receiver, ty);
         }
         let text = self
-            .call_written(method, &[receiver.into()])
-            .expect("a written `to_string` should return a `string`")
-            .into_pointer_value();
+            .call_written(method, &self.split(ty, receiver))
+            .expect("a written `to_string` should return a `string`");
         self.show_call(
             "sisu_show_str",
             &[
                 sink.into(),
-                self.string_field(text, BYTES).into(),
-                self.string_len(text).into(),
+                self.value_data(text).into(),
+                self.value_len(text).into(),
             ],
         );
-        self.release(text.into(), Type::STRING);
+        self.release(text, Type::STRING);
     }
 
-    /// Writes the array at `array`: `[`, each element quoted if it is a `string` or a `char`,
+    /// Writes the array value `array`: `[`, each element quoted if it is a `string` or a `char`,
     /// with `sep` between them, and `]`.
     fn show_array(
         &self,
         sink: PointerValue<'ctx>,
         element: Type,
-        array: PointerValue<'ctx>,
+        array: BasicValueEnum<'ctx>,
         mode: Mode,
     ) {
         self.show_text("sisu_show_open", sink, "[");
-        let len = self.array_len(array);
+        let (data, len) = (self.value_data(array), self.value_len(array));
         let function = self.current_function();
         self.count_loop(len, |index| {
             let (sep, item) = (
@@ -567,7 +570,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.show_value(
                 sink,
                 element,
-                self.load_element(element, array, index),
+                self.load_element(element, data, index),
                 true,
                 mode,
             );

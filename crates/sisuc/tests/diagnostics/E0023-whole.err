@@ -1,0 +1,10 @@
+error[E0023]: `xs[..]` has no bounds
+ --> E0023-whole.sisu:3:14
+  |
+3 |     print(xs[..])
+  |              ^^ this range has no bounds
+  |
+  = help: `xs[..]` is `xs`; write `xs`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0023

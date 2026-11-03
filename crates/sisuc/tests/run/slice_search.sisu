@@ -1,0 +1,24 @@
+fn iterations() -> i64 { 1000 }
+
+fn contains_sorted(xs: [i64], x: i64) -> bool {
+    if xs.len() == 0 { return false }
+    let mid = xs.len() / 2
+    if xs[mid] == x { return true }
+    if x < xs[mid] { contains_sorted(xs[..mid], x) } else { contains_sorted(xs[mid + 1..], x) }
+}
+
+// GIVEN the binary search on slices and `xs`, the array of 0 to 999
+// WHEN the program searches each key in `-1..iterations()`
+// THEN it prints how many it finds, and it allocates what `slice_search_ref`, the search with
+// `lo` and `hi`, allocates: a short-lived slice is never copied
+fn main() {
+    let mut xs = [0; 1000]
+    for i in 0..1000 {
+        xs[i] = i
+    }
+    let mut found = 0
+    for key in -1..iterations() {
+        if contains_sorted(xs, key) { found += 1 }
+    }
+    print(found)                     // 1000 (0 with no iterations)
+}

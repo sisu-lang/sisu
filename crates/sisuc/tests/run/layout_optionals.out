@@ -1,0 +1,36 @@
+true None None ?
+false <ab> <ab> ab
+false <> <> 
+true None None ?
+false <s3> <s3> s3
+false <s4> <s4> s4
+true None None ?
+true None None 1
+false 0 0 0
+false 3 3 3
+true None None 1
+false 2 2 2
+None
+Some(None)
+Some(Some(s5))
+None
+Some(None)
+Anon
+Name(xy)
+Nobody
+Items([])
+Items([4, 5])
+true
+false
+true
+true None None ?
+true None None 1
+false <s8> <s8> s8
+false 2 2 2
+false 3 3 3
+true None None ?
+false <s8> <s8> s8
+false <s0> <s0> s0;false <s1> <s1> s1;true None None ?;false <s2> <s2> s2;
+true None None 1
+false 2 2 2
+false 1 1 1

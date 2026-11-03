@@ -269,7 +269,10 @@ mod tests {
                 "i64.clamp",
                 "[i64].sum",
                 "[f64].sum",
-                "[T].contains"
+                "[T].contains",
+                "[T].first",
+                "[T].last",
+                "[T].get"
             ]
         );
         assert_eq!(names(front_end(src).0), ["main", "id<i64>"]);

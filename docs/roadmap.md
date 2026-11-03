@@ -8,7 +8,8 @@ and the lasting ones are recorded as ADRs in [adr](adr).
 ## Milestones 1 to 8
 
 These are adopted. Together they give Sisu a working imperative core, enums
-with `match`, and generics with interfaces.
+with `match`, and generics with interfaces. Slices come after milestone 8 and
+before milestone 9.
 
 | # | Milestone | Done when | Status |
 | --- | --- | --- | --- |
@@ -20,6 +21,7 @@ with `match`, and generics with interfaces.
 | 6 | Floats and conversions: `f64`, conversions that can fail return an optional, an unused-value warning, format specs | A Mandelbrot set prints as text, and a projectile table prints with format specs and a conversion to `i64?`, all clean under Valgrind | Done |
 | 7 | Enums with payloads, `match` with destructuring, alternatives, guards, literal and range patterns and an exhaustiveness check, `if let` and `while let` with enum patterns, and `..=` in `for` | An evaluator over a recursive `enum Expr` of `Num(i64)`, `Add` and `Mul` prints correct results, and a state machine runs with `match`, `if let` and `while let`, all clean under Valgrind; a non-exhaustive `match` is a compile error | Done |
 | 8 | Generics, compiled by monomorphization, and interfaces that bound them; `Option` and `Result` in the prelude, with the bare names `Some`, `None`, `Ok` and `Err`, and `T?` as shorthand for `Option<T>`, nested optionals included; `Display`, `Eq` and `Ord`, so that every type prints; classes that compare by identity; `dbg`; a prelude written in Sisu; array `push`; type aliases; and interface values, `any Shape`. `weak` on `T?` and on `(any I)?` moved to milestone 9 | `print(x)` works for any printable type; a generic `Stack<T>`, `largest<T: Ord>`, a generic interface and an associated type run; a `[any Shape]` that holds a class and an enum prints each area; Sisu's lexer, written in Sisu (`selfhost/lexer.sisu`), prints the tokens that `sisu build --emit tokens` prints for every test program that lexes without errors; every program clean under Valgrind; every diagnostic of the milestone has a fixture | Done |
+| Slices | Range indexes: `xs[a..b]` and `s[a..b]` give a `[T]` or a `string` that shares the block of its parent ([ADR 0042](adr/0042-a-slice-shares-its-block.md)). Arrays get `first`, `last` and `get`, strings get `get` with a range, and the compiler trims small slices. It comes before milestone 9, so that the iterators use its layout | A binary search over 1000 elements takes and drops slices with no allocation. `selfhost/lexer.sisu` takes the text of a token as `string(cs[start..pos])` | Done |
 
 ### What works today
 
@@ -168,14 +170,23 @@ with `match`, and generics with interfaces.
   `n` does not fit, with no panic
 - arrays such as `[i64]` and `[[bool]]`, built with `[1, 2, 3]` or `[0; n]`,
   read and written by index, compared with `==`, and walked with `for x in xs`
-  or `for i in 0..n` (`..=` includes the end); `len`, `sum`, `contains` and `push` are methods on them, and `?.push` adds to an optional array
+  or `for i in 0..n` (`..=` includes the end); `len`, `sum`, `contains`, `push`,
+  `first`, `last` and `get` are methods on them (`first`, `last` and `get(i)`
+  give an optional), and `?.push` adds to an optional array
+- slices: `xs[a..b]`, `xs[a..]`, `xs[..b]` and `xs[a..=b]` give a `[T]` that
+  shares the block of `xs`, and copies no element until one of them is written;
+  a slice that holds a quarter or less of a block of 256 bytes or more is
+  copied into a block of its own when a field, an enum payload or an array
+  stores it ([ADR 0042](adr/0042-a-slice-shares-its-block.md))
 - `char`, one Unicode scalar value such as `'ä'`, compared by code point and
   converted with `i64(c)` and `char(n)`, a `char?` that is `None` for a
   surrogate or a value above `0x10FFFF`, with no panic
 - `string`: UTF-8 literals with escapes, `+` and `+=`, comparison by bytes,
   `len()` in bytes, and interpolation such as `"n = {n}"`; `+=` on a string
   that nothing else holds appends in place, whether it is a local, a `mut`
-  field or an array element
+  field or an array element; `s[a..b]` is a substring that shares the bytes of
+  `s` (the bounds are bytes, and a bound inside a character panics), and
+  `s.get(a..b)` is a `string?` that is `None` where `s[a..b]` would panic
 - text as arrays: `s.chars()` gives a `[char]`, `s.bytes()` a `[u8]`, and
   `string(cs)` builds a `string` from a `[char]`; each call builds a new value
 - `eprint(x)`, which prints like `print` but to standard error; `read_line()`,
@@ -446,7 +457,7 @@ how to avoid it. Each milestone keeps the table current.
 | --- | --- | --- |
 | `+ - *`, unary `-` on `i64` or `u8` | the result overflows | check the range first; checked arithmetic is a gap |
 | `/` and `%` on `i64` or `u8` | the divisor is zero, or `i64` minimum divided by `-1` | check the divisor first |
-| `xs[i]`, `xs[i] = v` | `i` is outside the array | check `0 <= i < xs.len()`; an optional `get(i)` is a gap |
+| `xs[i]`, `xs[i] = v` | `i` is outside the array | check `0 <= i < xs.len()`, or call `xs.get(i)`, which gives `None` |
 | `[v; n]` | `n` is negative, or the array would be too large to allocate (`[0; 9223372036854775807]`) | check `n` first, and keep it to a size the program can use |
 | `xs.sum()` on `[i64]` | the sum overflows | gap |
 | `panic(msg)`, `todo` | always | they are the deliberate panics |
@@ -831,9 +842,6 @@ stretch goal into steps.
     of the lexer.
   - Milestone 10: default parameters. When the parameters of a constructor
     can have defaults, `fresh()` lists only the fields that differ.
-  - After milestone 8 and before milestone 9 part 1: slices (see "Substring
-    views" in "Open decisions"). A slice of a `[char]` or a `string` lets the
-    lexer take the text of a token without a push of each `char`.
   - Milestone 11, part 2 (collections): the `@discardable` attribute, on the
     attributes foundation, which lands after milestone 8 (see "Attribute
     syntax" in "Open decisions"). It lets `text.next()` stand alone, without
@@ -870,10 +878,11 @@ settle before work starts.
 | Milestone 6: floats and conversions | None | Float formatting in `"{x}"`; its Mandelbrot proof printed text, so it landed after 4 |
 | Milestone 7: enums and `match` | Done | 8, 12 |
 | Milestone 8: generics and interfaces | Done | 12, iterator methods (9), generated conformances on request (10), the standard library (11) |
+| Slices: range indexes, `first`, `last`, `get` | 8 | `mut` parameters (step 1), milestone 9 |
 | Milestone 12: `Result` and `?` | 7, 8 | File I/O, the standard library (11), concurrency |
 | `weak` fields (ADR 0008). The rule covers a `T?` with `T: AnyObject` and an `(any I)?` with a class-only `I`, so the `weak` examples for `any` wait for it | None | Closures that capture their owner |
-| Milestone 9: closures and function types | `weak` fields. Decisions: closure syntax, weak captures, argument labels, `return` inside a closure | Iterator methods (9), concurrency |
-| Milestone 9: lazy iterator methods | 8, closures | The standard library (11) |
+| Milestone 9: closures and function types | `weak` fields, slices. Decisions: closure syntax, weak captures, argument labels, `return` inside a closure | Iterator methods (9), concurrency |
+| Milestone 9: lazy iterator methods | 8, slices, closures | The standard library (11) |
 | Milestone 10: named arguments, default parameters | Decision: argument labels | Records (10) |
 | Milestone 10: records, tuples, newtypes | 4 for `print`. Decisions: values with fields, argument labels | Generated conformances on request, tuple patterns in closure parameters (9) |
 | Milestone 10: generated conformances on request | 7, 8, records. Decision: equality and hashing | `Map` keys of user types (11) |
@@ -1280,11 +1289,16 @@ These do not make code nicer to write, so they wait:
 - Parser error recovery, so a syntax error does not hide the next one.
 - A fixed-size inline array: its length is part of its type, and it is stored
   inline (on the stack, or inside the object that holds it) with no header, no
-  count and no heap block. Its type is written `FixedArray<T, N>` (2026-10-17,
-  `docs/register.md`), after Swift's `InlineArray<3, i64>`; Rust's `[i64; 3]`
-  would clash with today's `[x; n]` making a `[T]`. A built-in literal length
-  needs no const generics; generic code over the length does. Build it when a
-  benchmark shows the heap `[T]` costs too much.
+  count and no heap block. Its type is written `FixedArray<T, N>` (the user's
+  decision, 2026-10-17), after Swift's `InlineArray<3, i64>`, so the growable
+  `[T]` stays the one type called an array. Its literal syntax is open: Rust's
+  `[i64; 3]` would clash with today's `[x; n]` making a `[T]`. A built-in
+  literal length needs no const generics; generic code over the length does.
+  Build it when a benchmark shows the heap `[T]` costs too much.
+- Slices, `xs[a..b]` (the user's decision, 2026-10-17; built before
+  milestone 9, see the milestones table): there is no `Slice` type. A range
+  index gives a `[T]` that shares the block of its parent. A write or a trim
+  copies it ([ADR 0042](adr/0042-a-slice-shares-its-block.md)).
 - A `Value` bound for type parameters, the mirror of `AnyObject`: every type
   that is not a class, nor an optional of one, conforms, and nothing else can.
   Milestone 8 rejects `[x; n]` in a generic body when `x` is a `T` or `T?`,
@@ -1712,11 +1726,10 @@ accepted.
 - **What a string is.** Resolved by
   [ADR 0014](adr/0014-strings-are-utf-8-values.md): UTF-8, always valid, a
   value shared until written, `len()` in bytes and no `s[i]`.
-- **Substring views.** Decided by the slices design (2026-10-26), with no
-  separate `Substring` type: `s[a..b]` gives a `string` that shares the
+- **Substring views.** Resolved by [ADR 0042](adr/0042-a-slice-shares-its-block.md),
+  with no separate `Substring` type: `s[a..b]` gives a `string` that shares the
   parent's bytes. The compiler copies a small part that can outlive its
-  parent. Positions are bytes. ADR 0014 still calls this open until that
-  design's plan updates it. Decided 2026-10-29: the methods that cut a
+  parent. Positions are bytes. Decided 2026-10-29: the methods that cut a
   string (`find`, `split`, `split_once`, `trim`, `starts_with`,
   `strip_prefix`, `char_positions`) come early, so a program seldom
   computes a position. A position found in `chars()` counts characters,

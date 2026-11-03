@@ -168,15 +168,8 @@ class Text {
     }
 
     // The chars from `from` up to, but not including, `to`, as a string.
-    // gap: a `[char]` has no slice, so the text of a token is pushed char by char.
     fn slice(self, from: i64, to: i64) -> string {
-        let mut part: [char] = []
-        let mut i = from
-        while i < to {
-            part.push(self.cs[i])
-            i += 1
-        }
-        string(part)
+        string(self.cs[from..to])
     }
 }
 

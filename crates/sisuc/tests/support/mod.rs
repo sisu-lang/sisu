@@ -221,7 +221,9 @@ fn output_with_stdin(command: &mut Command, stdin: &[u8]) -> Output {
 /// Checks a `tests/run` case: the plain and `-O2` builds differ, exit 0, agree on stdout and on
 /// stderr, and print the same under Valgrind on Linux, which finds no leak or memory error, and in
 /// a `--rc-checks` build, which finds no count fault or live object at exit, and, on Linux, in an
-/// `-O2` build on mimalloc (see `MIMALLOC_O2`); then that stdout is `<name>.out`.
+/// `-O2` build on mimalloc (see `MIMALLOC_O2`); then that stdout is `<name>.out`. On Linux, a
+/// `--rc-checks` build on the System allocator (`VALGRIND_RC`) also runs under Valgrind, so a count
+/// check that the plain builds lack cannot hide a leak or a memory error.
 /// On Linux the plain and `-O2` builds use the System allocator, for Valgrind, so the `-O2` build
 /// on mimalloc is the only Linux build of `-O2` code on the allocator that users get.
 /// Stderr is empty, unless `<name>.err` exists: then the stderr of the plain, `-O2`, `--rc-checks`
@@ -235,6 +237,10 @@ fn output_with_stdin(command: &mut Command, stdin: &[u8]) -> Output {
 pub(crate) fn run(path: &Path, bless: bool) {
     let out_dir = case_dir(path);
     let [o0, o2, rc] = build_into(path, &out_dir, [VALGRIND_O0, VALGRIND_O2, RC_CHECKS]);
+    let rc_valgrind = cfg!(target_os = "linux").then(|| {
+        let [exe] = build_into(path, &out_dir, [VALGRIND_RC]);
+        exe
+    });
     // On macOS, `o2` is on mimalloc already, so there is no further build.
     let mimalloc = cfg!(target_os = "linux").then(|| {
         let [exe] = build_into(path, &out_dir, [MIMALLOC_O2]);
@@ -275,7 +281,7 @@ pub(crate) fn run(path: &Path, bless: bool) {
     let stderr = agreed(path, "stderr", &out0.stderr, &out2.stderr);
     // macOS has no Valgrind, and the native runs above already checked these builds.
     if cfg!(target_os = "linux") {
-        for exe in [o0, o2] {
+        for exe in [o0, o2].into_iter().chain(rc_valgrind) {
             let checked = invocation.run(&exe, true);
             let valgrind_stderr = String::from_utf8_lossy(&checked.stderr);
             assert_eq!(
@@ -546,6 +552,17 @@ const RC_CHECKS: Build = ("rc", &["--rc-checks"]);
 /// build: without it, no Linux case runs `-O2` code on mimalloc, the allocator that users get.
 /// On macOS `VALGRIND_O2` is this build already.
 pub(crate) const MIMALLOC_O2: Build = ("O2-mimalloc", &["-O2"]);
+/// `--rc-checks` on the System allocator, for `run` on Linux, where Valgrind checks it as it
+/// checks `VALGRIND_O0`. Its stderr is Valgrind's own log, and is not compared. On macOS Valgrind
+/// does not run, and `RC_CHECKS` is this build already.
+const VALGRIND_RC: Build = (
+    "rc-valgrind",
+    if cfg!(target_os = "linux") {
+        &["--rc-checks", "--allocator", "system"]
+    } else {
+        &["--rc-checks"]
+    },
+);
 /// `O0` and `O2` for `run`, whose plain builds also run under Valgrind.
 const VALGRIND_O0: Build = ("O0", VALGRIND_FLAGS);
 // Repeats `VALGRIND_FLAGS`' values after `-O2`, and must stay in step with them: a const cannot

@@ -1,0 +1,10 @@
+error[E0023]: `s.get(..)` has no bounds
+ --> E0023-string-get-whole.sisu:3:17
+  |
+3 |     print(s.get(..))
+  |                 ^^ this range has no bounds
+  |
+  = help: `s.get(..)` is `Some(s)`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0023

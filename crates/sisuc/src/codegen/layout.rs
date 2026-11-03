@@ -1,15 +1,18 @@
 //! How a Sisu value sits in memory: the LLVM type of each Sisu type, the layouts of classes,
 //! array blocks and string blocks, the count word (`load_count`, `store_count`, `init_count`),
 //! the optional accessors (`empty`, `has_value`, `optional`, `optional_value`) and the niches
-//! they read (`niche`), the size of every heap block (`heap_size`), and the TBAA tags that
-//! describe them.
+//! they read (`niche`), the three words of an array or string value (`value_block`, `value_data`,
+//! `value_len`, `make_value`, `load_words`), the size of every heap block (`heap_size`), and the
+//! TBAA tags that describe them.
 
 use std::cmp::Reverse;
 use std::num::NonZeroU32;
 
 use inkwell::context::Context;
 use inkwell::types::{BasicTypeEnum, StructType};
-use inkwell::values::{BasicValue, BasicValueEnum, IntValue, MetadataValue, PointerValue};
+use inkwell::values::{
+    BasicValue, BasicValueEnum, InstructionValue, IntValue, MetadataValue, PointerValue,
+};
 use inkwell::{AddressSpace, IntPredicate};
 
 use super::enums::tag_bits;
@@ -115,6 +118,9 @@ pub(super) struct Niche {
 pub(super) enum Storage {
     /// The pointer to a block, `null` when empty. It has no other spare value.
     Pointer,
+    /// The three words of an array or string value: the `block` is `null` when empty, and the
+    /// other words are then zero. It has no other spare value.
+    Value,
     /// An integer of this many bits: an `i32` for a `char`, an `i8` for a `bool`.
     Int(u32),
     /// The layout of the enum, with the empty value in its tag.
@@ -124,13 +130,25 @@ pub(super) enum Storage {
     Pair,
 }
 
+/// Whether a value of `ty` is the three words of an array or a string: `{ block, data, len }`.
+/// So is the optional of one, which keeps its `None` in a `null` block. The optional of such an
+/// optional is a `{ flag, value }` pair.
+pub(super) fn three_words(ty: Type) -> bool {
+    let words = |ty: Type| matches!(ty.kind(), TypeKind::String | TypeKind::Array(_));
+    if let TypeKind::Optional(payload) = ty.kind() {
+        words(payload)
+    } else {
+        words(ty)
+    }
+}
+
 /// The niche of an optional of a value whose own niche is `niche`: the next spare value, when it
 /// fits the storage. A pointer has no spare value past `null`.
 pub(super) fn next_niche(program: &Program, niche: Niche) -> Option<Niche> {
     let Niche { storage, empty } = niche;
     let empty = empty + 1;
     let fits = match storage {
-        Storage::Pointer | Storage::Pair => false,
+        Storage::Pointer | Storage::Value | Storage::Pair => false,
         Storage::Int(bits) => empty < 1 << bits,
         Storage::Tag(id) => empty < 1 << tag_bits(program.enums[id.0].variants.len()),
     };
@@ -147,10 +165,10 @@ impl<'ctx> Codegen<'ctx, '_> {
             TypeKind::Bool => Some(self.context.bool_type().into()),
             TypeKind::Char => Some(self.context.i32_type().into()),
             TypeKind::Unit | TypeKind::Never => None,
-            // An object, an array or a string is a pointer to its block.
-            TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) => {
-                Some(self.context.ptr_type(AddressSpace::default()).into())
-            }
+            // An object is a pointer to its block.
+            TypeKind::Class(..) => Some(self.context.ptr_type(AddressSpace::default()).into()),
+            // An array or a string is three words: its block, its data and its length.
+            TypeKind::String | TypeKind::Array(_) => Some(self.value_type().into()),
             TypeKind::Enum(id, _) => Some(self.enum_layout(id).ty),
             // The pointer to the data, then the pointer to the table.
             TypeKind::Any(..) => Some(self.any_type().into()),
@@ -170,12 +188,14 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// The niche of an optional of `payload`, if its storage has a spare value. It is `null`
-    /// for a string, a class or an array, 0x110000 for a `char` and 2 for a `bool` in an `i8`.
+    /// for a class, and a `null` block for a string or an array, 0x110000 for a `char` and 2 for a
+    /// `bool` in an `i8`.
     /// For an enum, it is the enum's own niche (`EnumLayout::niche`). An optional with a niche
     /// gives the next value of its niche (`next_niche`).
     pub(super) fn niche(&self, payload: Type) -> Option<Niche> {
         let (storage, empty) = match payload.kind() {
-            TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) => (Storage::Pointer, 0),
+            TypeKind::Class(..) => (Storage::Pointer, 0),
+            TypeKind::String | TypeKind::Array(_) => (Storage::Value, 0),
             TypeKind::Any(..) => (Storage::Pair, 0),
             TypeKind::Char => (Storage::Int(32), 0x11_0000),
             TypeKind::Bool => (Storage::Int(8), 2),
@@ -195,6 +215,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     pub(super) fn niche_type(&self, storage: Storage) -> BasicTypeEnum<'ctx> {
         match storage {
             Storage::Pointer => self.context.ptr_type(AddressSpace::default()).into(),
+            Storage::Value => self.value_type().into(),
             Storage::Int(bits) => NonZeroU32::new(bits)
                 .and_then(|bits| self.context.custom_width_int_type(bits).ok())
                 .expect("a niche should be an `i8` or an `i32`, which LLVM has")
@@ -233,7 +254,9 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// storage after it.
     pub(super) fn empty_value(&self, Niche { storage, empty }: Niche) -> BasicValueEnum<'ctx> {
         match storage {
-            Storage::Pointer | Storage::Pair => self.niche_type(storage).const_zero(),
+            Storage::Pointer | Storage::Value | Storage::Pair => {
+                self.niche_type(storage).const_zero()
+            }
             Storage::Int(_) => self
                 .niche_type(storage)
                 .into_int_type()
@@ -287,6 +310,14 @@ impl<'ctx> Codegen<'ctx, '_> {
             let empty = tag.get_type().const_int(niche.empty, false);
             return self.int_compare(IntPredicate::NE, tag, empty);
         }
+        // The `block` is the first word of an array or string value, and it alone says whether
+        // the value is there.
+        if let Storage::Value = niche.storage {
+            return self
+                .builder
+                .build_is_not_null(self.load_pointer(place), name)
+                .expect(POSITIONED);
+        }
         let value = self
             .builder
             .build_load(self.niche_type(niche.storage), place, "niche")
@@ -306,6 +337,12 @@ impl<'ctx> Codegen<'ctx, '_> {
                 return self
                     .builder
                     .build_is_not_null(value.into_pointer_value(), name)
+                    .expect(POSITIONED);
+            }
+            Storage::Value => {
+                return self
+                    .builder
+                    .build_is_not_null(self.value_block(value), name)
                     .expect(POSITIONED);
             }
             Storage::Pair => {
@@ -697,5 +734,165 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder
             .build_struct_gep(self.string_layout().header, string, index, "field")
             .expect("the string header should have the length, capacity and bytes at 1, 2 and 3")
+    }
+
+    /// The type of an array or a string value: the pointer to its block, the pointer to its first
+    /// element or byte, and its length. A value that covers its whole block has `data` at the
+    /// first element and `len` equal to the header's `len`.
+    pub(super) fn value_type(&self) -> StructType<'ctx> {
+        let ptr = self.context.ptr_type(AddressSpace::default()).into();
+        self.context
+            .struct_type(&[ptr, ptr, self.context.i64_type().into()], false)
+    }
+
+    /// The part `index` of the array or string value `value`.
+    fn value_part(
+        &self,
+        value: BasicValueEnum<'ctx>,
+        index: u32,
+        name: &str,
+    ) -> BasicValueEnum<'ctx> {
+        self.builder
+            .build_extract_value(value.into_struct_value(), index, name)
+            .expect("an array or string value should have three words")
+    }
+
+    /// The block of the array or string value `value`.
+    pub(super) fn value_block(&self, value: BasicValueEnum<'ctx>) -> PointerValue<'ctx> {
+        self.value_part(value, 0, "block").into_pointer_value()
+    }
+
+    /// The first element or byte of the array or string value `value`.
+    pub(super) fn value_data(&self, value: BasicValueEnum<'ctx>) -> PointerValue<'ctx> {
+        self.value_part(value, 1, "data").into_pointer_value()
+    }
+
+    /// The length of the array or string value `value`.
+    pub(super) fn value_len(&self, value: BasicValueEnum<'ctx>) -> IntValue<'ctx> {
+        self.value_part(value, 2, "len").into_int_value()
+    }
+
+    /// The array or string value with the words `block`, `data` and `len`.
+    pub(super) fn make_value(
+        &self,
+        block: PointerValue<'ctx>,
+        data: PointerValue<'ctx>,
+        len: IntValue<'ctx>,
+    ) -> BasicValueEnum<'ctx> {
+        let words: [BasicValueEnum<'ctx>; 3] = [block.into(), data.into(), len.into()];
+        let mut value = self.value_type().get_undef().as_basic_value_enum();
+        for (index, word) in (0..).zip(words) {
+            value = self
+                .builder
+                .build_insert_value(value.into_struct_value(), word, index, "value")
+                .expect("an array or string value should have three words")
+                .as_basic_value_enum();
+        }
+        value
+    }
+
+    /// The object that `value`, of the counted type `ty`, is: the pointer itself for a class, and
+    /// the block of an array or a string. `null` for the `None` of an optional.
+    pub(super) fn counted_pointer(
+        &self,
+        ty: Type,
+        value: BasicValueEnum<'ctx>,
+    ) -> PointerValue<'ctx> {
+        if three_words(ty) {
+            self.value_block(value)
+        } else {
+            value.into_pointer_value()
+        }
+    }
+
+    /// The address of word `index` of the array or string value at `place`.
+    pub(super) fn words_ptr(&self, place: PointerValue<'ctx>, index: u32) -> PointerValue<'ctx> {
+        self.builder
+            .build_struct_gep(self.value_type(), place, index, "word")
+            .expect("an array or string value should have three words")
+    }
+
+    /// Marks `len`, a load of a length, `!range [0, 2^63)` and `!noundef`: a length is never
+    /// negative (see `header_len`).
+    pub(super) fn mark_len(&self, len: IntValue<'ctx>) {
+        let i64_type = self.context.i64_type();
+        let load: InstructionValue<'ctx> = len
+            .as_instruction_value()
+            .expect("a load should be an instruction");
+        // The upper bound is exclusive and wraps, so `1 << 63` is 2^63.
+        let range = self.context.metadata_node(&[
+            i64_type.const_zero().into(),
+            i64_type.const_int(1 << 63, false).into(),
+        ]);
+        load.set_metadata(range, self.context.get_kind_id("range"))
+            .expect("a range should be a metadata node");
+        load.set_metadata(
+            self.context.metadata_node(&[]),
+            self.context.get_kind_id("noundef"),
+        )
+        .expect("an empty node should be a metadata node");
+    }
+
+    /// Word `index` of the array or string value at `place`, named `name` and loaded with the
+    /// TBAA tag `tag` when given. The length word, 2, is marked as `mark_len` does: a length that
+    /// is loaded from anywhere carries the facts of a length.
+    pub(super) fn load_word(
+        &self,
+        place: PointerValue<'ctx>,
+        index: u32,
+        name: &str,
+        tag: Option<MetadataValue<'ctx>>,
+    ) -> BasicValueEnum<'ctx> {
+        let ty: BasicTypeEnum<'ctx> = if index == 2 {
+            self.context.i64_type().into()
+        } else {
+            self.context.ptr_type(AddressSpace::default()).into()
+        };
+        let at = self.words_ptr(place, index);
+        let word = match tag {
+            Some(tag) => self.load_tagged(ty, at, name, tag),
+            None => self.builder.build_load(ty, at, name).expect(POSITIONED),
+        };
+        if index == 2 {
+            self.mark_len(word.into_int_value());
+        }
+        word
+    }
+
+    /// The array or string value at `place`, as three loads, so that its length carries `!range`
+    /// and `!noundef`. Each load has the TBAA tag `tag`, when `place` has one.
+    pub(super) fn load_words(
+        &self,
+        place: PointerValue<'ctx>,
+        tag: Option<MetadataValue<'ctx>>,
+    ) -> BasicValueEnum<'ctx> {
+        let block = self.load_word(place, 0, "block", tag).into_pointer_value();
+        let data = self.load_word(place, 1, "data", tag).into_pointer_value();
+        let len = self.load_word(place, 2, "len", tag).into_int_value();
+        self.make_value(block, data, len)
+    }
+
+    /// The value of type `ty` at `place`, with the TBAA tag `tag` when given. An array or a string
+    /// is loaded by `load_words`.
+    pub(super) fn load_place(
+        &self,
+        ty: Type,
+        place: PointerValue<'ctx>,
+        name: &str,
+        tag: Option<MetadataValue<'ctx>>,
+    ) -> BasicValueEnum<'ctx> {
+        if three_words(ty) {
+            return self.load_words(place, tag);
+        }
+        let llvm_ty = self
+            .llvm_type(ty)
+            .expect("the checker should give every field a value type, never `unit` or `never`");
+        match tag {
+            Some(tag) => self.load_tagged(llvm_ty, place, name, tag),
+            None => self
+                .builder
+                .build_load(llvm_ty, place, name)
+                .expect(POSITIONED),
+        }
     }
 }

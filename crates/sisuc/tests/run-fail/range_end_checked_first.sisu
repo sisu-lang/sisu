@@ -1,0 +1,7 @@
+// GIVEN `let xs = [1, 2, 3, 4, 5]` and `print(xs[7..6])`
+// WHEN the program runs
+// THEN it exits with code 101 and the panic is `range end 6 is past length 5` (check 2 runs before check 3)
+fn main() {
+    let xs = [1, 2, 3, 4, 5]
+    print(xs[7..6])
+}

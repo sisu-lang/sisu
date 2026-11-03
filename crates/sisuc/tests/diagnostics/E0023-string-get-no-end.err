@@ -1,0 +1,10 @@
+error[E0023]: `1..=` has no end
+ --> E0023-string-get-no-end.sisu:3:17
+  |
+3 |     print(s.get(1..=))
+  |                 ^^^^ this range has no end
+  |
+  = help: write `1..`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0023

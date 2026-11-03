@@ -1,0 +1,8 @@
+error[E0032]: expected `i64`, found `bool`
+ --> E0032-range-push.sisu:3:11
+  |
+3 |     xs[0..true].push(4)
+  |           ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

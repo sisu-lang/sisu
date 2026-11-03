@@ -1,0 +1,8 @@
+error[E0023]: a range can only be a `for` source, a pattern, an index or a string's `get` argument
+ --> E0023-const.sisu:1:11
+  |
+1 | const r = 1..5
+  |           ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0023

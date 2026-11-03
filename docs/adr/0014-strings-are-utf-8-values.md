@@ -60,7 +60,7 @@ asks.
   must change literal handling before concurrency lands, because two threads
   would race on that count. For example, give literals an immortal count that
   retain and release skip, or copy the literal once per task.
-- Substring views, which would share a parent's bytes, and small-string
-  storage inside the variable's slot are open decisions in the roadmap. Neither
-  changes what a program can observe, apart from the return type of a
-  `split` that gives views.
+- A substring shares the bytes of its parent. [ADR 0042](0042-a-slice-shares-its-block.md)
+  records this: `s[a..b]` gives a `string` that shares its parent's block.
+  Small-string storage inside the variable's slot is still an open decision in
+  the roadmap. It does not change what a program can observe.

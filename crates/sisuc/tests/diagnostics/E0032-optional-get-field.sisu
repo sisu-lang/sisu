@@ -1,0 +1,7 @@
+class C {
+    o: [i64]?
+}
+fn main() {
+    let c = C(o: Some([1, 2]))
+    print(c.o.get(1..) ?? 0)
+}

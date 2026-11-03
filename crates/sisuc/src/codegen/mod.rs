@@ -24,6 +24,7 @@ use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
+use inkwell::intrinsics::Intrinsic;
 use inkwell::memory_buffer::MemoryBuffer;
 use inkwell::module::{Linkage, Module};
 use inkwell::passes::PassBuilderOptions;
@@ -102,10 +103,12 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             .map(|stream| declare_printers(&module, stream.symbol_prefix()));
         let str_compare = abi::declare(&module, abi::row("sisu_str_compare"));
         // `sisu_panic(msg, len)` prints the message and exits; `sisu_panic_bounds(msg, len,
-        // index, length)` prints a bounds panic and exits; `sisu_panic_message(at, at_len, msg,
-        // msg_len)` prints a `panic` call's panic and exits.
+        // index, length)` prints a bounds panic and exits; `sisu_panic_range(at, at_len, kind,
+        // start, end, length)` prints a range panic and exits; `sisu_panic_message(at, at_len,
+        // msg, msg_len)` prints a `panic` call's panic and exits.
         let panic = abi::declare(&module, abi::row("sisu_panic"));
         let panic_bounds = abi::declare(&module, abi::row("sisu_panic_bounds"));
+        let panic_range = abi::declare(&module, abi::row("sisu_panic_range"));
         let panic_message = abi::declare(&module, abi::row("sisu_panic_message"));
         // Declared only with the checks, so that a plain build's module stays as it was.
         let rc_fault = rc_checks.then(|| abi::declare(&module, abi::row("sisu_rc_fault")));
@@ -119,6 +122,7 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             str_compare,
             panic,
             panic_bounds,
+            panic_range,
             panic_message,
             alloc,
             free,
@@ -253,6 +257,7 @@ struct Codegen<'ctx, 'src> {
     str_compare: FunctionValue<'ctx>,
     panic: FunctionValue<'ctx>,
     panic_bounds: FunctionValue<'ctx>,
+    panic_range: FunctionValue<'ctx>,
     panic_message: FunctionValue<'ctx>,
     alloc: FunctionValue<'ctx>,
     free: FunctionValue<'ctx>,
@@ -433,11 +438,30 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.functions[func.0].count_params() as usize,
             "a call should pass every parameter; a prelude function takes its caller's location too"
         );
-        self.builder
+        let result = self
+            .builder
             .build_call(self.functions[func.0], args, "call")
             .expect(POSITIONED)
             .try_as_basic_value()
-            .basic()
+            .basic()?;
+        self.assume_len(self.mir.functions[func.0].ret, result);
+        Some(result)
+    }
+
+    /// States to LLVM that the length of `value`, a value returned by a call, is not negative:
+    /// a callee's `range` attribute holds for a parameter and not for a returned struct, so the
+    /// caller asserts it. Does nothing unless `ty` is an array, a string, or the optional of one.
+    fn assume_len(&self, ty: Type, value: BasicValueEnum<'ctx>) {
+        if !layout::three_words(ty) {
+            return;
+        }
+        let len = self.value_len(value);
+        let not_negative =
+            self.int_compare(IntPredicate::SGE, len, self.context.i64_type().const_zero());
+        let assume = Intrinsic::find("llvm.assume")
+            .and_then(|assume| assume.get_declaration(&self.module, &[]))
+            .expect("LLVM should provide `llvm.assume`, which takes no type parameters");
+        self.call(assume, &[not_negative.into()]);
     }
 
     /// `call_value` for a helper of `to_string` or `eq`, which calls a written method with its
@@ -495,11 +519,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         let mut params: Vec<BasicMetadataTypeEnum<'_>> = f.locals[..f.params]
             .iter()
-            .map(|p| {
-                self.llvm_type(p.ty)
-                    .expect("the checker should reject a `unit` or `never` parameter, so each parameter has a value type")
-                    .into()
-            })
+            .flat_map(|p| self.param_types(p.ty))
             .collect();
         // A prelude function takes its caller's location: a pointer and a length.
         if f.prelude {
@@ -517,6 +537,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             fn_type,
             Some(Linkage::Internal),
         );
+        let tys: Vec<Type> = f.locals[..f.params].iter().map(|p| p.ty).collect();
+        self.mark_len_params(function, 0, &tys);
         self.functions.push(function);
     }
 
@@ -568,20 +590,21 @@ impl<'ctx> Codegen<'ctx, '_> {
                 Some((self.entry_alloca(ty, name), ty))
             })
             .collect();
-        for (local, param) in (0..f.params).map(LocalId).zip(function.get_param_iter()) {
+        let tys: Vec<Type> = f.locals[..f.params].iter().map(|p| p.ty).collect();
+        for (local, param) in (0..f.params)
+            .map(LocalId)
+            .zip(self.joined_params(function, 0, &tys))
+        {
             self.store(self.slot(local).0, param);
         }
         self.caller.set(f.prelude.then(|| {
-            let hidden = |at| {
-                function.get_nth_param(
-                    u32::try_from(at).expect("a function should have fewer than 2^32 parameters"),
-                )
-            };
+            // The location follows the Sisu parameters, so it is the last two.
+            let hidden = |from_end| function.get_nth_param(function.count_params() - from_end);
             (
-                hidden(f.params)
+                hidden(2)
                     .expect("a prelude function should have its location pointer")
                     .into_pointer_value(),
-                hidden(f.params + 1)
+                hidden(1)
                     .expect("a prelude function should have its location length")
                     .into_int_value(),
             )
@@ -660,10 +683,10 @@ impl<'ctx> Codegen<'ctx, '_> {
                 else {
                     unreachable!("lowering should check only an element place")
                 };
-                let (address, _, _) = self.address(place.local, array, false);
-                let array = self.load_pointer(address);
+                let (address, _, tag) = self.address(place.local, array, false);
+                let len = self.load_len(address, tag);
                 let (index, _) = self.operand(index);
-                self.check_bounds(array, index.into_int_value(), *span);
+                self.check_bounds(len, index.into_int_value(), *span);
             }
             Statement::TakeApart {
                 scrutinee,
@@ -717,7 +740,9 @@ impl<'ctx> Codegen<'ctx, '_> {
                     .build_return(value.as_ref().map(|v| -> &dyn BasicValue<'_> { v }))
                     .expect(POSITIONED);
             }
-            Terminator::Panic { message, span } => self.panic_value(self.pointer(message), *span),
+            Terminator::Panic { message, span } => {
+                self.panic_value(self.operand(message).0, *span);
+            }
             Terminator::Unreachable => self.trap(),
         }
     }
@@ -740,7 +765,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 self.retain(value, ty);
                 value
             }
-            Rvalue::CopyStr(text) => self.string_lit(text).into(),
+            Rvalue::CopyStr(text) => self.string_lit(text),
             Rvalue::Borrow(place) => self.read(place, true).0,
             Rvalue::Unwrap(op) => {
                 let (value, ty) = self.operand(op);
@@ -749,8 +774,12 @@ impl<'ctx> Codegen<'ctx, '_> {
             Rvalue::Call {
                 func, args, span, ..
             } => {
-                let mut args: Vec<BasicMetadataValueEnum<'_>> =
-                    args.iter().map(|arg| self.operand(arg).0.into()).collect();
+                let mut args: Vec<BasicMetadataValueEnum<'_>> = (args.iter())
+                    .flat_map(|arg| {
+                        let (value, ty) = self.operand(arg);
+                        self.split(ty, value)
+                    })
+                    .collect();
                 if self.mir.functions[func.0].prelude {
                     // The caller's own location when the caller is the prelude's too, and the
                     // call's when it is the user's.
@@ -767,17 +796,35 @@ impl<'ctx> Codegen<'ctx, '_> {
                 args,
                 reuse,
             } => self.variant(*id, *variant, &self.values(args), reuse),
-            Rvalue::ArrayLit(elements) => self.array_lit(ty(), &self.values(elements)).into(),
+            Rvalue::ArrayLit(elements) => self.array_lit(ty(), &self.values(elements)),
             Rvalue::ArrayFill { value, len, span } => {
                 let (filler, _) = self.operand(value);
                 let (count, _) = self.operand(len);
                 self.array_fill(filler, count.into_int_value(), ty(), *span)
-                    .into()
+            }
+            Rvalue::Slice {
+                base,
+                start,
+                end,
+                inclusive,
+                safe,
+                span,
+            } => {
+                let (value, base_ty) = self.operand(base);
+                let bound = |op: &Option<Operand>| {
+                    op.as_ref().map(|op| self.operand(op).0.into_int_value())
+                };
+                let (start, end) = (bound(start), bound(end));
+                self.slice((value, base_ty), (start, end), (*inclusive, *safe), *span)
             }
             Rvalue::Wrap(op) => self.wrap(ty(), self.operand(op).0),
             Rvalue::ToAny(op) => {
                 let (value, source) = self.operand(op);
                 self.to_any(source, value, ty())
+            }
+            Rvalue::Trim(op) => {
+                let (value, ty) = self.operand(op);
+                self.trim(ty, value)
             }
             Rvalue::DynCall {
                 interface,
@@ -786,13 +833,13 @@ impl<'ctx> Codegen<'ctx, '_> {
                 args,
             } => {
                 let (receiver, any) = self.operand(&args[0]);
-                let owned = self.values(&args[1..]);
+                let owned: Vec<_> = args[1..].iter().map(|arg| self.operand(arg)).collect();
                 let rest = TypeArgs::intern(&iargs.get()[1..]);
                 return self.dyn_call(any, (*interface, rest, *method), receiver, &owned, dest_ty);
             }
             Rvalue::Concat { lhs, rhs } => {
-                let lhs = self.pointer(lhs);
-                self.concat(lhs, self.pointer(rhs)).into()
+                let lhs = self.operand(lhs).0;
+                self.concat(lhs, self.operand(rhs).0)
             }
             Rvalue::Interpolate { parts, formats, .. } => {
                 let parts: Vec<_> = parts.iter().map(|part| self.operand(part)).collect();
@@ -806,18 +853,15 @@ impl<'ctx> Codegen<'ctx, '_> {
                 for (value, ty) in parts {
                     self.release(value, ty);
                 }
-                text.into()
+                text
             }
-            Rvalue::ReadLine => self.read_line().into(),
-            Rvalue::Chars(op) => self.chars(self.pointer(op)).into(),
-            Rvalue::Bytes(op) => self.bytes(self.pointer(op)).into(),
-            Rvalue::Words(op) => self.words(self.pointer(op)).into(),
-            Rvalue::FromChars(op) => self.string_from_chars(self.pointer(op)).into(),
-            Rvalue::Len(op) => {
-                let (base, ty) = self.operand(op);
-                self.len(base.into_pointer_value(), ty).into()
-            }
-            Rvalue::LenWords(op) => self.len_words(self.pointer(op)).into(),
+            Rvalue::ReadLine => self.read_line(),
+            Rvalue::Chars(op) => self.chars(self.operand(op).0),
+            Rvalue::Bytes(op) => self.bytes(self.operand(op).0),
+            Rvalue::Words(op) => self.words(self.operand(op).0),
+            Rvalue::FromChars(op) => self.string_from_chars(self.operand(op).0),
+            Rvalue::Len(op) => self.value_len(self.operand(op).0).into(),
+            Rvalue::LenWords(op) => self.len_words(self.operand(op).0).into(),
             Rvalue::Convert(op) => self.convert(ty(), self.operand(op).0),
             Rvalue::Math { op, operands } => {
                 let values: Vec<_> = operands.iter().map(|o| self.operand(o).0).collect();
@@ -892,11 +936,6 @@ impl<'ctx> Codegen<'ctx, '_> {
         operands.iter().map(|op| self.operand(op).0).collect()
     }
 
-    /// An operand the checker gives a pointer: a string, an array or an object.
-    fn pointer(&self, op: &Operand) -> PointerValue<'ctx> {
-        self.operand(op).0.into_pointer_value()
-    }
-
     /// The object that an operand of `is` holds: an object, or the data of an `any` value, which
     /// is `null` for a `None`.
     fn object(&self, op: &Operand) -> PointerValue<'ctx> {
@@ -949,7 +988,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 Type::CHAR,
             ),
             Const::None { ty, .. } => (self.empty(*ty), *ty),
-            Const::Str(text) => (self.string_global(text).into(), Type::STRING),
+            Const::Str(text) => (self.string_const(text), Type::STRING),
         }
     }
 
@@ -987,11 +1026,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             }
             Some((Projection::Field { .. } | Projection::Index { .. }, _)) => {
                 let (address, ty, tag) = self.address(local, projections, checked);
-                let llvm_ty = self.llvm_type(ty).expect(
-                    "the checker should give every field and element a value type, never `unit` or `never`",
-                );
                 let tag = tag.expect("a field or an element should have a TBAA tag");
-                (self.load_tagged(llvm_ty, address, "load", tag), ty)
+                (self.load_place(ty, address, "load", Some(tag)), ty)
             }
         }
     }
@@ -1050,14 +1086,15 @@ impl<'ctx> Codegen<'ctx, '_> {
                     )
                 }
                 Projection::Index { index, span } => {
-                    let array = self.load_pointer(address);
+                    // `tag` is the tag of the array's own place, the step before this one.
+                    let data = self.load_data(address, tag);
                     let index = self.operand(index).0.into_int_value();
                     if checked {
-                        self.check_bounds(array, index, *span);
+                        self.check_bounds(self.load_len(address, tag), index, *span);
                     }
                     let element = element_of(ty);
                     (
-                        self.element_ptr(element, array, index),
+                        self.element_ptr(element, data, index),
                         element,
                         Some(self.element_tag),
                     )
@@ -1072,7 +1109,26 @@ impl<'ctx> Codegen<'ctx, '_> {
         (address, ty, tag, boxed)
     }
 
-    /// The pointer at `address`: an object, an array or a string.
+    /// The first element of the array at `address`, tagged `tag` when its place has one.
+    fn load_data(
+        &self,
+        address: PointerValue<'ctx>,
+        tag: Option<MetadataValue<'ctx>>,
+    ) -> PointerValue<'ctx> {
+        self.load_word(address, 1, "data", tag).into_pointer_value()
+    }
+
+    /// The length of the array at `address`, tagged `tag` when its place has one, and marked as
+    /// `mark_len` does.
+    fn load_len(
+        &self,
+        address: PointerValue<'ctx>,
+        tag: Option<MetadataValue<'ctx>>,
+    ) -> IntValue<'ctx> {
+        self.load_word(address, 2, "len", tag).into_int_value()
+    }
+
+    /// The pointer at `address`: an object, or the block of an array or a string.
     fn load_pointer(&self, address: PointerValue<'ctx>) -> PointerValue<'ctx> {
         self.builder
             .build_load(
@@ -1111,10 +1167,8 @@ impl<'ctx> Codegen<'ctx, '_> {
         let passed = if sisu_main.count_params() == 0 {
             Vec::new()
         } else {
-            vec![
-                self.args(count.into_int_value(), strings.into_pointer_value())
-                    .into(),
-            ]
+            let args = self.args(count.into_int_value(), strings.into_pointer_value());
+            self.split(Type::intern(TypeKind::Array(Type::STRING)), args)
         };
         self.builder
             .build_call(sisu_main, &passed, "")
@@ -1198,7 +1252,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             return;
         }
         if ty == Type::STRING {
-            self.print_string(stream, value.into_pointer_value());
+            self.print_string(stream, value);
             return;
         }
         let printers = self.printers[stream.index()];

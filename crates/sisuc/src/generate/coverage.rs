@@ -109,6 +109,9 @@ const RECEIVERS: &[(&str, &[&str])] = &[
     ("tir::ExprKind::Bytes", &["String"]),
     ("tir::ExprKind::Words", &["String"]),
     ("tir::ExprKind::FromChars", &["Array"]),
+    // A range index, and a string's `get`, which is a `Slice` that cannot fail.
+    ("tir::ExprKind::Slice", &["String", "Array"]),
+    ("tir::ExprKind::Slice safe", &["String"]),
 ];
 
 /// The scalar conversions, from and to, as `convert` in `check/string.rs` takes them: `i64(e)`
@@ -121,6 +124,38 @@ const CONVERSIONS: &[(&str, &str)] = &[
     ("I64", "Char"),
     ("I64", "F64"),
 ];
+
+/// How many lengths of an array the walk tries a generated range on.
+const SAMPLE_LENS: usize = 12;
+
+/// The value of the `i64` expression `e` when the array it reads has `len` elements: an integer
+/// literal, a local that `offsets` holds, `xs.len()`, and `+`, `-` and `%` of these. `None` for
+/// any other expression, and for a division by zero.
+fn bound_value(e: &ast::Expr, len: usize, offsets: &FxHashMap<String, Vec<i128>>) -> Option<i128> {
+    match &e.kind {
+        ast::ExprKind::Int { value, .. } => Some(i128::from(*value)),
+        ast::ExprKind::Name(name) => offsets.get(name.as_str())?.get(len).copied(),
+        ast::ExprKind::MethodCall {
+            method,
+            args,
+            safe: false,
+            ..
+        } if method.name.as_str() == "len" && args.is_empty() => i128::try_from(len).ok(),
+        ast::ExprKind::Binary { op, lhs, rhs, .. } => {
+            let (lhs, rhs) = (
+                bound_value(lhs, len, offsets)?,
+                bound_value(rhs, len, offsets)?,
+            );
+            match op {
+                ast::BinaryOp::Add => Some(lhs + rhs),
+                ast::BinaryOp::Sub => Some(lhs - rhs),
+                ast::BinaryOp::Rem => lhs.checked_rem(rhs),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
 
 /// The key of a class that is compared with `is`, or against `None`: it has no `==`.
 const IDENTITY: &str = "reach: a class is compared with `is` or against `None`";
@@ -241,6 +276,9 @@ const REACH: &[&str] = &[
     "reach: `dbg` writes a value that runs no written method",
     "reach: `dbg` shows the fields of a class with no written `Display`",
     "reach: a `push` appends to an array",
+    "reach: a range index of an array lowers to a slice",
+    "reach: an array or a string placed in another value lowers to a trim",
+    "reach: a range is in bounds",
     "reach: `?.push` follows a field",
     "reach: `?.push` follows an index",
     "reach: an assignment goes through `?.`",
@@ -568,6 +606,9 @@ struct Walk {
     source: String,
     /// The length of each array local whose `let` writes it as a literal or a fill.
     lens: FxHashMap<String, i128>,
+    /// The value of each `let` whose init is a sum, difference or remainder of integer literals,
+    /// other such locals and `xs.len()`, for an array of 0, 1, ... `SAMPLE_LENS - 1` elements.
+    offsets: FxHashMap<String, Vec<i128>>,
     /// The locals a `let` without `mut` declares.
     immutable: FxHashSet<String>,
     /// Where an index sits alone in an `if` branch after the first, as the one meant to panic.
@@ -689,6 +730,7 @@ impl Walk {
         let (ast, tir) = checked(source);
         source.clone_into(&mut self.source);
         self.lens.clear();
+        self.offsets.clear();
         self.immutable.clear();
         self.later.clear();
         self.some_values.clear();
@@ -744,6 +786,16 @@ impl Walk {
                         continue;
                     };
                     let (operands, calls, printed) = match value {
+                        crate::mir::Rvalue::Slice { .. } => {
+                            self.mark("reach: a range index of an array lowers to a slice");
+                            continue;
+                        }
+                        crate::mir::Rvalue::Trim(_) => {
+                            self.mark(
+                                "reach: an array or a string placed in another value lowers to a trim",
+                            );
+                            continue;
+                        }
                         crate::mir::Rvalue::Equal { lhs, calls, .. } => {
                             (std::slice::from_ref(lhs), *calls, false)
                         }
@@ -1553,15 +1605,15 @@ impl Walk {
                 }
                 self.ast_expr(array);
             }
-            ast::ForSource::Range {
-                start,
-                end,
-                inclusive,
-            } => {
+            ast::ForSource::Range(range) => {
                 self.mark("ast::ForSource::Range");
-                let runs = int(start)
-                    .zip(int(end))
-                    .map(|(start, end)| end - start + i128::from(*inclusive));
+                self.ast_range(range);
+                let runs = match (&range.start, &range.end) {
+                    (Some(start), Some(end)) => int(start)
+                        .zip(int(end))
+                        .map(|(start, end)| end - start + i128::from(range.inclusive)),
+                    _ => None,
+                };
                 match runs {
                     Some(runs) if runs <= i128::from(MAX_BOUND) => {
                         if runs > 0 {
@@ -1570,14 +1622,42 @@ impl Walk {
                     }
                     _ => self
                         .unbounded
-                        .push(format!("a `for` at byte {}", start.span.start())),
+                        .push(format!("a `for` at byte {}", range.span.start())),
                 }
-                self.mark(&format!("ast::ForSource::Range.inclusive = {inclusive}"));
-                self.ast_expr(start);
-                self.ast_expr(end);
             }
         }
         self.ast_block(body);
+    }
+
+    /// Whether `range` is, for an array of each of `SAMPLE_LENS` lengths, `0 <= a <= b <= len`,
+    /// where `a` is its start (0 when missing) and `b` its end, one more for `..=` (the length
+    /// when missing).
+    fn range_in_bounds(&self, range: &ast::Range) -> bool {
+        (0..SAMPLE_LENS).all(|len| {
+            let value = |bound: &Option<Box<ast::Expr>>| {
+                bound
+                    .as_ref()
+                    .map(|bound| bound_value(bound, len, &self.offsets))
+            };
+            let Some(start) = value(&range.start).unwrap_or(Some(0)) else {
+                return false;
+            };
+            let length = i128::try_from(len).expect("a sample length should fit");
+            let end = match value(&range.end) {
+                None => length,
+                Some(Some(end)) => end + i128::from(range.inclusive),
+                Some(None) => return false,
+            };
+            0 <= start && start <= end && end <= length
+        })
+    }
+
+    /// The bounds of a range, and whether it is inclusive.
+    fn ast_range(&mut self, range: &ast::Range) {
+        self.mark(&format!("ast::Range.inclusive = {}", range.inclusive));
+        for bound in [&range.start, &range.end].into_iter().flatten() {
+            self.ast_expr(bound);
+        }
     }
 
     fn ast_let(&mut self, mutable: bool, name: &str, ty: Option<&ast::TypeExpr>, init: &ast::Expr) {
@@ -1589,6 +1669,12 @@ impl Walk {
         }
         if let Some(len) = array_len(init) {
             self.lens.insert(name.to_string(), len);
+        }
+        let values: Option<Vec<i128>> = (0..SAMPLE_LENS)
+            .map(|len| bound_value(init, len, &self.offsets))
+            .collect();
+        if let Some(values) = values {
+            self.offsets.insert(name.to_string(), values);
         }
         if let Some(ty) = ty {
             self.type_expr(ty);
@@ -1908,6 +1994,22 @@ impl Walk {
                 self.ast_expr(value);
                 self.ast_expr(len);
             }
+            ast::ExprKind::Index { base, index }
+                if matches!(index.kind, ast::ExprKind::Range(_)) =>
+            {
+                self.mark("ast::ExprKind::Index");
+                let ast::ExprKind::Range(range) = &index.kind else {
+                    unreachable!("the guard should have matched a range")
+                };
+                if self.range_in_bounds(range) {
+                    self.mark("reach: a range is in bounds");
+                } else {
+                    self.out_of_bounds
+                        .push(format!("a range at byte {}", range.span.start()));
+                }
+                self.ast_expr(base);
+                self.ast_expr(index);
+            }
             ast::ExprKind::Index { base, index } => {
                 self.mark("ast::ExprKind::Index");
                 let len =
@@ -1938,6 +2040,10 @@ impl Walk {
                 }
                 self.ast_expr(base);
                 self.ast_expr(index);
+            }
+            ast::ExprKind::Range(range) => {
+                self.mark("ast::ExprKind::Range");
+                self.ast_range(range);
             }
             ast::ExprKind::Is { lhs, rhs } => {
                 self.mark("ast::ExprKind::Is");
@@ -2682,6 +2788,27 @@ impl Walk {
                 self.tir_expr(base, Parent::Other);
                 self.tir_expr(index, Parent::Other);
             }
+            tir::ExprKind::Slice {
+                base,
+                start,
+                end,
+                safe,
+                ..
+            } => {
+                self.mark("tir::ExprKind::Slice");
+                self.receiver(
+                    if *safe {
+                        "tir::ExprKind::Slice safe"
+                    } else {
+                        "tir::ExprKind::Slice"
+                    },
+                    base,
+                );
+                self.tir_expr(base, Parent::Other);
+                for bound in start.iter().chain(end) {
+                    self.tir_expr(bound, Parent::Other);
+                }
+            }
             tir::ExprKind::Len(base) => self.receiver_call("tir::ExprKind::Len", base),
             tir::ExprKind::Chars(base) => self.receiver_call("tir::ExprKind::Chars", base),
             tir::ExprKind::Bytes(base) => self.receiver_call("tir::ExprKind::Bytes", base),
@@ -3204,7 +3331,8 @@ fn inexact(e: &tir::Expr) -> bool {
 /// What the programs of every seed hold.
 fn walk() -> Walk {
     let mut walk = Walk::default();
-    for data in seeds() {
+    // Twice the `SEEDS`: a bare `Ok(..)` is rare, and the seeds of the other tests shift it.
+    for data in (0..2 * SEEDS).map(seed) {
         walk.program(&generate(&data).plain);
     }
     walk
@@ -4553,6 +4681,33 @@ fn every_loop_is_bounded() {
 fn every_index_is_in_bounds_or_meant_to_panic() {
     let out_of_bounds = walk().out_of_bounds;
     assert!(out_of_bounds.is_empty(), "{out_of_bounds:?}");
+}
+
+/// GIVEN `a` as the remainder of a literal by the length of `xs` and one
+/// WHEN the walker reads a range index of `xs`
+/// THEN it accepts a range that stays in `0..=len` for any length, and flags any other
+#[test]
+fn the_walker_should_flag_a_range_that_can_leave_its_array() {
+    let rows = [
+        ("a..", true),
+        ("a..xs.len()", true),
+        ("..xs.len()", true),
+        ("a..=a - 1", true),
+        ("..=xs.len() - 1", true),
+        ("a..a + 9", false),
+        ("..=xs.len()", false),
+        ("a - 1..", false),
+        ("1..0", false),
+        ("xs.len() + 1..", false),
+    ];
+    for (range, in_bounds) in rows {
+        let program = format!(
+            "fn main() {{\n    let xs = [1, 2, 3]\n    let a = 5 % (xs.len() + 1)\n    print(xs[{range}])\n}}\n"
+        );
+        let mut walk = Walk::default();
+        walk.program(&program);
+        assert_eq!(walk.out_of_bounds.is_empty(), in_bounds, "range `{range}`");
+    }
 }
 
 /// What the walker marks for `source`, which must check.
@@ -6904,6 +7059,14 @@ impl<'f> Lets<'f> {
                 self.expr(a);
                 self.expr(b);
             }
+            tir::ExprKind::Slice {
+                base, start, end, ..
+            } => {
+                self.expr(base);
+                for bound in start.iter().chain(end) {
+                    self.expr(bound);
+                }
+            }
             tir::ExprKind::Binary { op, lhs, rhs } => {
                 self.expr(lhs);
                 if matches!(op, tir::BinaryOp::And | tir::BinaryOp::Or) {
@@ -6992,6 +7155,7 @@ impl<'f> Lets<'f> {
             | tir::ExprKind::Panic(_)
             | tir::ExprKind::ReadLine
             | tir::ExprKind::Index { .. }
+            | tir::ExprKind::Slice { .. }
             | tir::ExprKind::Loop(_)
             | tir::ExprKind::Break { .. }
             | tir::ExprKind::Continue { .. }

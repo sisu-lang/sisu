@@ -3379,6 +3379,7 @@ impl Checker<'_> {
             | K::Coalesce { .. }
             | K::ArrayFill { .. }
             | K::Index { .. }
+            | K::Range(_)
             | K::Is { .. }
             | K::If {
                 else_block: None, ..

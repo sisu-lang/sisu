@@ -735,6 +735,18 @@ pub(crate) enum ExprKind {
         base: Box<Expr>,
         index: Box<Expr>,
     },
+    /// `base[start..end]`, or `..=` with `inclusive`: the part of the array `base` that the
+    /// range covers, without a copy. A missing bound is `None`. `safe` is for a string's `get`,
+    /// whose type is `string?`: a bad range gives `None` where the index stops the program.
+    /// `span` is the whole range, where a panic reports.
+    Slice {
+        base: Box<Expr>,
+        start: Option<Box<Expr>>,
+        end: Option<Box<Expr>>,
+        inclusive: bool,
+        safe: bool,
+        span: Span,
+    },
     /// `base.len()`.
     Len(Box<Expr>),
     /// `base.chars()`: the code points of the string `base`, as a new `[char]`.
@@ -894,6 +906,15 @@ impl Type {
             self = payload;
         }
         self
+    }
+
+    /// Whether a value of this type is an array or a string, or one inside `?` at any depth:
+    /// the values that a trim point checks (`Rvalue::Trim`).
+    pub(crate) fn is_trimmable(self) -> bool {
+        matches!(
+            self.without_optionals().kind(),
+            TypeKind::Array(_) | TypeKind::String
+        )
     }
 
     /// The enum a payload field of this type holds inline unless boxed: `F`'s for `F` or `F?`.
@@ -1084,6 +1105,9 @@ impl ExprKind {
                         .iter()
                         .any(|arm| arm.guard.as_ref().is_some_and(Expr::exits) || arm.body.exits())
             }
+            ExprKind::Slice {
+                base, start, end, ..
+            } => base.exits() || start.iter().chain(end).any(|bound| bound.exits()),
             ExprKind::Loop(block) | ExprKind::Block(block) => block.exits(),
         }
     }
@@ -1172,6 +1196,14 @@ impl Expr {
                         f(guard);
                     }
                     arm.body.each_expr_mut(f);
+                }
+            }
+            ExprKind::Slice {
+                base, start, end, ..
+            } => {
+                f(base);
+                for bound in start.iter_mut().chain(end) {
+                    f(bound);
                 }
             }
             ExprKind::Loop(block) | ExprKind::Block(block) => block.each_expr_mut(f),
@@ -1351,6 +1383,14 @@ impl Expr {
                 for arm in arms {
                     arm.guard.iter().for_each(|g| g.exprs(out));
                     arm.body.exprs(out);
+                }
+            }
+            K::Slice {
+                base, start, end, ..
+            } => {
+                base.exprs(out);
+                for bound in start.iter().chain(end) {
+                    bound.exprs(out);
                 }
             }
             K::Loop(block) | K::Block(block) => block.exprs(out),
@@ -1584,6 +1624,24 @@ impl Printer<'_> {
             ExprKind::ArrayLit(elements) => self.list(f, format_args!("array"), elements),
             ExprKind::ArrayFill { value, len } => self.binary(f, "array-fill", value, len),
             ExprKind::Index { base, index } => self.binary(f, "index", base, index),
+            ExprKind::Slice {
+                base,
+                start,
+                end,
+                inclusive,
+                ..
+            } => {
+                f.write_str(if *inclusive { "(slice..= " } else { "(slice " })?;
+                self.expr(f, base)?;
+                for bound in [start, end] {
+                    f.write_str(" ")?;
+                    match bound {
+                        Some(bound) => self.expr(f, bound)?,
+                        None => f.write_str("_")?,
+                    }
+                }
+                f.write_str(")")
+            }
             ExprKind::Len(base) => self.unary(f, "len", base),
             ExprKind::Chars(base) => self.unary(f, "chars", base),
             ExprKind::Bytes(base) => self.unary(f, "bytes", base),
@@ -3433,6 +3491,29 @@ mod tests {
                 1,
             ),
             (ExprKind::Return(Some(n(1))), 1),
+            (
+                ExprKind::Slice {
+                    base: n(1),
+                    start: Some(n(2)),
+                    end: Some(n(3)),
+                    inclusive: false,
+                    safe: false,
+                    span: Span::new(0, 0),
+                },
+                3,
+            ),
+            // A missing bound leaves one child less.
+            (
+                ExprKind::Slice {
+                    base: n(1),
+                    start: None,
+                    end: Some(n(2)),
+                    inclusive: true,
+                    safe: false,
+                    span: Span::new(0, 0),
+                },
+                2,
+            ),
             (
                 ExprKind::Binary {
                     op: BinaryOp::Add,

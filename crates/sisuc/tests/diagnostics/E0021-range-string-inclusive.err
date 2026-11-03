@@ -1,0 +1,10 @@
+error[E0021]: cannot assign to this expression
+ --> E0021-range-string-inclusive.sisu:4:5
+  |
+4 |     s[0..=1] += "x"
+  |     ^^^^^^^^ a range index gives a new value
+  |
+  = help: build the new string, such as `s = s[..2] + "x" + s[2..]`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0021

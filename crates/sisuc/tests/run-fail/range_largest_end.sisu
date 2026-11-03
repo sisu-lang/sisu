@@ -1,0 +1,7 @@
+// GIVEN `let xs = [1, 2, 3, 4, 5]` and `print(xs[..=9223372036854775807])`
+// WHEN the program runs
+// THEN it exits with code 101 and the panic is `range end 9223372036854775807 is past the last index 4` (no overflow at the largest end)
+fn main() {
+    let xs = [1, 2, 3, 4, 5]
+    print(xs[..=9223372036854775807])
+}

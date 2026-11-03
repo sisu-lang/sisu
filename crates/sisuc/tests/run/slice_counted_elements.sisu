@@ -1,0 +1,31 @@
+fn names(n: i64) -> [string] {
+    let mut all = ["s0" + n.to_string()]
+    for i in 1..n {
+        all.push("s" + i.to_string() + n.to_string())
+    }
+    all
+}
+
+// A `[string]` whose elements are built at run time, so each is a counted block of its own.
+// GIVEN slices of such an array
+// WHEN a slice is dropped before its parent, after it, and as the last holder of the block
+// THEN each element is released once, by the block's drop over the header's length
+fn drop_part_first(all: [string]) {
+    let part = all[1..3]
+    print(part)                      // [s15, s25]
+}
+
+fn main() {
+    let all = names(5)
+    drop_part_first(all)
+    print(all)                       // [s05, s15, s25, s35, s45]
+
+    let mut parent = names(4)
+    let part = parent[1..3]
+    parent = []
+    print(part)                      // [s14, s24]
+    print(parent.len())              // 0
+
+    let last = names(3)[1..2]
+    print(last)                      // [s13]
+}

@@ -86,6 +86,38 @@ fn main() {
 }
 ```
 
+## Range indexes
+
+`xs[a..b]` is the part of `xs` from the index `a` up to, and not including, the index `b`. The bounds are `i64`s ([E0032](../diagnostics/E0032.md)). `xs[a..=b]` includes the index `b`. A range without `a` starts at 0, and a range without `b` runs to the end: `xs[a..]`, `xs[..b]` and `xs[..=b]`. The result is an array of the same type. `xs[..]` is not a range index; write `xs` ([E0023](../diagnostics/E0023.md)).
+
+```sisu
+fn main() {
+    let xs = [1, 2, 3, 4, 5]
+    print(xs[1..3])                  // [2, 3]
+    print(xs[1..=3])                 // [2, 3, 4]
+    print(xs[2..])                   // [3, 4, 5]
+    print(xs[..2])                   // [1, 2]
+    print(xs[2..2])                  // []
+}
+```
+
+A range index copies no element. The new array shares its elements with `xs`, and a write or a `push` to either array does not change the other. Changing a part of an array in place, such as `xs[1..3] = ys`, is an error, because a range index gives a new array ([E0021](../diagnostics/E0021.md)). A range index is not a place. A `push` to one is an error too; keep the part in a `let mut` variable and push to that.
+
+The range must satisfy `0 <= start <= end <= length`, where `a..=b` ends at `b + 1`. A range that does not stops the program with a panic, as a bad index does. The panic names the first check that fails, in this order: a negative start, an end past the length, and a start past the end.
+
+```sisu panics
+fn main() {
+    let xs = [1, 2, 3, 4, 5]
+    print(xs[2..9])
+}
+```
+
+```stderr
+sisu: panic at example.sisu:3:14: range end 9 is past length 5
+```
+
+The base is evaluated first, then the start, then the end, and then the checks run. A range index on a value that is not an array or a string, such as an `i64`, is an error ([E0068](../diagnostics/E0068.md)). An optional array has no range index either ([E0062](../diagnostics/E0062.md)).
+
 The rules:
 
 - A binding without `mut` cannot change its array, also not an element of an inner array ([E0001](../diagnostics/E0001.md)).
@@ -128,6 +160,9 @@ An array has these methods:
 | `xs.len()` | `i64` | The number of elements |
 | `xs.sum()` | The element type | The sum of the elements of an `[i64]` or an `[f64]` |
 | `xs.contains(x)` | `bool` | `true` when an element is equal to `x`, as `==` tells |
+| `xs.first()` | The element type, optional | The first element, or `None` when `xs` is empty |
+| `xs.last()` | The element type, optional | The last element, or `None` when `xs` is empty |
+| `xs.get(i)` | The element type, optional | The element at `i`, or `None` when `i` is outside the array |
 | `xs.push(x)` | none | Adds `x` after the last element, and writes `xs` |
 
 ```sisu
@@ -140,6 +175,8 @@ fn main() {
     print(weights.sum())         // 0.75
     print(xs.contains(4))        // true
     print(maybe.contains(None))  // true
+    print(xs.first() ?? 0)       // 3
+    print(xs.get(3) ?? -1)       // -1
 }
 ```
 
@@ -147,11 +184,13 @@ The rules:
 
 - `len` is a method, so write `xs.len()`. `xs.len` is an error ([E0057](../diagnostics/E0057.md)), and so is `len(xs)` ([E0070](../diagnostics/E0070.md)).
 - `sum` takes only an `[i64]` or an `[f64]` ([E0069](../diagnostics/E0069.md)). It adds the elements in order, and the sum of an empty array is zero.
-- The prelude writes `sum` in Sisu, in an `extend [i64]` block and an `extend [f64]` block, and `contains` in an `extend<T: Eq> [T]` block. The compiler writes `len`. A program cannot write an `extend` block for an array: only the prelude can.
+- The prelude writes `sum` in Sisu, in an `extend [i64]` block and an `extend [f64]` block. It writes `contains` in an `extend<T: Eq> [T]` block, and `first`, `last` and `get` in an `extend<T> [T]` block. The compiler writes `len`. A program cannot write an `extend` block for an array: only the prelude can.
 - On an `[i64]`, a sum outside the range of `i64` stops the program with a panic ([Overflow](operators.md#overflow)). The panic names the line of the `.sum()` call, not a line of the prelude.
 - The argument of `contains` has the element type ([E0032](../diagnostics/E0032.md)). So `None` is valid only when the elements are optional.
 - `contains` needs `==` on the element type, so an array of objects has it only when the class conforms to `Eq`, and an array of a type parameter `T` only with the bound `T: Eq` ([E0154](../diagnostics/E0154.md)). The error stands at the call, and no line of the prelude shows in it.
 - `contains` uses `==`, so `contains(f64.nan)` is always `false` ([Types](types.md#floating-point-numbers)).
+- `first`, `last` and `get` give `None` where `xs[i]` would stop the program. For `get(i)`, that is a negative `i` and an `i` from `xs.len()` on. For `first` and `last`, it is an empty array. They are the safe form of an index. On a slice they read the slice ([Range index](#range-indexes)).
+- `get` takes an `i64`, not a range. `xs.get(1..3)` is an error ([E0032](../diagnostics/E0032.md)): write `xs[1..3]`, which stops the program when the range is out of bounds.
 - `push` writes the array, as `xs[i] = x` does, so it needs a place that can change: a `let mut` variable, a `mut` field, or an element of one. A `let` variable, a parameter and a field without `mut` are errors ([E0001](../diagnostics/E0001.md)). A value that is not stored, such as `f().push(1)`, is an error too ([E0021](../diagnostics/E0021.md)).
 - `push` has no value. The argument has the element type, so `push(1)` on an `[i64?]` adds `Some(1)` ([E0032](../diagnostics/E0032.md)), and `push` takes exactly one argument ([E0053](../diagnostics/E0053.md)).
 - A `push` onto an array that another variable holds does not change that variable. Arrays are values ([Arrays are values](#arrays-are-values)).
@@ -258,4 +297,4 @@ fn main() {
 }
 ```
 
-Sisu does not copy the elements when the program binds, passes or stores an array. The holders share the elements until a write to one of them. That write copies the elements first, and a loop that writes the array can copy them before it starts. A program cannot see when the copy occurs.
+Sisu does not copy the elements when the program binds or passes an array. A small slice, such as `xs[1..3]` of a long array, can go into a class field, an enum payload, an array or an `any I`. That store copies the slice. So the slice does not keep the long array alive ([ADR 0042](../adr/0042-a-slice-shares-its-block.md)). Other stores do not copy the elements. The holders share the elements until a write to one of them. That write copies the elements first, and a loop that writes the array can copy them before it starts. A program cannot see when the copy occurs.

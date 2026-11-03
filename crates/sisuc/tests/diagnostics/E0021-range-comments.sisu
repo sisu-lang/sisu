@@ -1,0 +1,40 @@
+class C {
+    mut xs: [[i64]]
+}
+
+fn main() {
+    let mut xs = [[1], [2], [3]]
+    let mut s = "abcdef"
+    let mut bs = [[true], [false]]
+    let c = C(xs: [[1], [2]])
+    xs[1..][0 // first
+        + 1].push(4)
+    xs[1..][0] = 1 + // value
+        2
+    s[0..2] = "x" + // part
+        "z"
+    c
+        .xs[1..][0].push(4)
+    s[0..2] = "a//b"
+    s[0..2] = "a//b" +
+        "c//d"
+    xs[1..][0] = 1 +
+        2 // end
+    xs[1..][0].push(4 // four
+    )
+    xs[1..][0].push(
+        4 // four
+    )
+    xs[1..][0] = if c.xs.len() > 1 {
+        let y = 1
+        y * 2
+    } else {
+        3
+    }
+    bs[1..][0] = 1 <
+        2
+    print(xs)
+    print(bs)
+    print(s)
+    print(c.xs)
+}

@@ -1,0 +1,22 @@
+fn iterations() -> i64 { 1000 }
+
+// GIVEN an array `a` grown by `push` to 3 elements in a block of capacity 4, and
+// `let mut t = a[..3]` as the last use of `a`
+// WHEN the program runs `t.push(7)` in each of `iterations()` rounds
+// THEN the push is in place: it takes the room that the block has, and allocates nothing more
+// than `slice_push_grow_ref`, the same program without the push
+fn round(i: i64) -> i64 {
+    let mut a = [i, 2]
+    a.push(3)
+    let mut t = a[..3]
+    t.push(7)
+    t[3] + t.len()
+}
+
+fn main() {
+    let mut sum = 0
+    for i in 0..iterations() {
+        sum += round(i)
+    }
+    print(sum)                       // 11000 (0 with no iterations)
+}

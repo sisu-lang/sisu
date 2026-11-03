@@ -1,0 +1,23 @@
+fn base() -> [i64] {
+    print("base")
+    [1, 2, 3]
+}
+
+fn lo() -> i64 {
+    print("start")
+    -1
+}
+
+fn hi() -> i64 {
+    print("end")
+    2
+}
+
+// GIVEN `base()`, `lo()` and `hi()`, which print "base", "start" and "end" and return `[1, 2, 3]`,
+// -1 and 2
+// WHEN the program runs `print(base()[lo()..hi()])`
+// THEN it prints "base", "start" and "end" on three lines, and exits with code 101 and the text
+// `range start -1 is negative`
+fn main() {
+    print(base()[lo()..hi()])
+}

@@ -1,0 +1,7 @@
+// GIVEN `let xs = [1, 2, 3, 4, 5]` and `print(xs[2..9])`
+// WHEN the program runs
+// THEN it exits with code 101 and the panic is `range end 9 is past length 5` (the end is past the length)
+fn main() {
+    let xs = [1, 2, 3, 4, 5]
+    print(xs[2..9])
+}

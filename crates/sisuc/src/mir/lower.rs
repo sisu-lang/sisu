@@ -5,7 +5,7 @@
 //! emitting into that block, and a block is created only when an edge reaches it, so every
 //! block is reachable from the entry. The order, which the ownership pass reads off the blocks:
 //! - `Call`, `New`, `Variant`, `ArrayLit` and `Math` evaluate their arguments left to right, and
-//!   `Interpolate` its parts; `Index` evaluates base then index;
+//!   `Interpolate` its parts; `Index` evaluates base then index; `Slice` its base, start and end;
 //!   `ArrayFill` value then length; `Equal`, `Is`, `Concat`, arithmetic and a string comparison
 //!   lhs then rhs.
 //! - `If` and `IfSome` evaluate the condition or scrutinee, then one branch. `Match` evaluates
@@ -32,6 +32,7 @@
 
 mod pattern;
 
+use std::iter::once;
 use std::ptr;
 
 use rustc_hash::FxHashMap;
@@ -583,6 +584,18 @@ impl<'a> Lowering<'a> {
         Some(self.owned(value))
     }
 
+    /// `e` as an operand that is placed inside another value, at a trim point: when its type is
+    /// an array or a string, or one inside `?`, it goes through a `trim` first. The `trim` reads
+    /// the value where it stands, so a later operand cannot change what it reads.
+    fn placed(&mut self, e: &Expr) -> Option<Operand> {
+        let op = self.operand(e)?;
+        if !e.ty.is_trimmable() {
+            return Some(op);
+        }
+        let trimmed = self.assign(e.ty, None, Rvalue::Trim(op));
+        Some(self.owned(trimmed.expect("a trimmed value should have a value")))
+    }
+
     /// `e` as an operand when it is a constant or a read of a source local.
     fn leaf(&self, e: &Expr) -> Option<Operand> {
         constant(e, |ty| self.counted(ty))
@@ -613,6 +626,17 @@ impl<'a> Lowering<'a> {
         let mut ops = Vec::with_capacity(es.len());
         for (i, e) in es.iter().enumerate() {
             let op = self.operand(e)?;
+            ops.push(self.pinned(op, &es[i + 1..]));
+        }
+        Some(ops)
+    }
+
+    /// `operands` for the values placed by a statement that is a trim point: each goes through
+    /// `placed`.
+    fn placed_operands(&mut self, es: &[&Expr]) -> Option<Vec<Operand>> {
+        let mut ops = Vec::with_capacity(es.len());
+        for (i, e) in es.iter().enumerate() {
+            let op = self.placed(e)?;
             ops.push(self.pinned(op, &es[i + 1..]));
         }
         Some(ops)
@@ -715,7 +739,7 @@ impl<'a> Lowering<'a> {
             ExprKind::InterfaceCall { .. } => {
                 panic!("mono should replace every interface call")
             }
-            ExprKind::ToAny(operand) => Rvalue::ToAny(self.operand(operand)?),
+            ExprKind::ToAny(operand) => Rvalue::ToAny(self.placed(operand)?),
             ExprKind::DynCall {
                 interface,
                 iargs,
@@ -746,10 +770,10 @@ impl<'a> Lowering<'a> {
             }
             ExprKind::New { class, args } => Rvalue::New {
                 class: *class,
-                args: self.operands(&args.iter().collect::<Vec<_>>())?,
+                args: self.placed_operands(&args.iter().collect::<Vec<_>>())?,
             },
             ExprKind::Variant { id, variant, args } => {
-                let args = self.operands(&args.iter().collect::<Vec<_>>())?;
+                let args = self.placed_operands(&args.iter().collect::<Vec<_>>())?;
                 self.count_built(*id, *variant);
                 Rvalue::Variant {
                     id: *id,
@@ -813,14 +837,42 @@ impl<'a> Lowering<'a> {
             }
             ExprKind::ReadLine => Rvalue::ReadLine,
             ExprKind::ArrayLit(elements) => {
-                Rvalue::ArrayLit(self.operands(&elements.iter().collect::<Vec<_>>())?)
+                Rvalue::ArrayLit(self.placed_operands(&elements.iter().collect::<Vec<_>>())?)
             }
             ExprKind::ArrayFill { value, len } => {
-                let [value_op, len_op] = self.pair(value, len)?;
+                let ops = self.placed_operands(&[value, len])?;
+                let [value_op, len_op] = <[Operand; 2]>::try_from(ops)
+                    .expect("`placed_operands` should give one operand for each expression");
                 Rvalue::ArrayFill {
                     value: value_op,
                     len: len_op,
                     span: len.span,
+                }
+            }
+            ExprKind::Slice {
+                base,
+                start,
+                end,
+                inclusive,
+                safe,
+                span,
+            } => {
+                // The base, then the bounds, each pinned against the ones after it: a bound
+                // that assigns the base's local does not change the value that is sliced.
+                let parts: Vec<&Expr> = once(&**base)
+                    .chain(start.iter().chain(end).map(|bound| &**bound))
+                    .collect();
+                let mut ops = self.operands(&parts)?.into_iter();
+                let base = ops.next().expect("a slice should have a base");
+                let start = start.as_ref().and_then(|_| ops.next());
+                let end = end.as_ref().and_then(|_| ops.next());
+                Rvalue::Slice {
+                    base,
+                    start,
+                    end,
+                    inclusive: *inclusive,
+                    safe: *safe,
+                    span: *span,
                 }
             }
             ExprKind::Index { base, index } => {
@@ -1215,7 +1267,7 @@ impl<'a> Lowering<'a> {
     fn field_store(&mut self, base: &Expr, index: usize, value: &Expr) -> Option<()> {
         let (mut place, temp) = self.base(base, leaves_locals(value))?;
         place.projections.push(self.field(base.ty, index));
-        let value_op = self.operand(value)?;
+        let value_op = self.placed(value)?;
         self.store(place, value_op, value.ty);
         self.release(temp);
         Some(())
@@ -1312,7 +1364,7 @@ impl<'a> Lowering<'a> {
     /// check and `make_unique`, then the store, then the release of the base.
     fn element_write(&mut self, place: &Place, value: &Expr) -> Option<()> {
         let (root, indexes, temp) = self.written_root(place, value)?;
-        let value_op = self.operand(value)?;
+        let value_op = self.placed(value)?;
         let place = self.walk(root, &indexes);
         self.store(place, value_op, value.ty);
         self.release(temp);
@@ -1334,7 +1386,7 @@ impl<'a> Lowering<'a> {
         };
         let (root, indexes, temp) = self.written_root(place, value)?;
         if !some {
-            let value = self.operand(value)?;
+            let value = self.placed(value)?;
             let place = self.walk(root, &indexes);
             self.push(Statement::Push { place, value, at });
             self.release(temp);
@@ -1349,7 +1401,7 @@ impl<'a> Lowering<'a> {
             lowering.goto(join);
         });
         // The checker rejects a value that never finishes (E0043), so the join stays reachable.
-        let value = self.operand(value)?;
+        let value = self.placed(value)?;
         self.if_present(&optional, |lowering| {
             lowering.discard_operand(&value);
             lowering.release(temp);
@@ -1443,6 +1495,7 @@ fn leaves_locals(expr: &Expr) -> bool {
         | ExprKind::ArrayLit(_)
         | ExprKind::ArrayFill { .. }
         | ExprKind::Index { .. }
+        | ExprKind::Slice { .. }
         | ExprKind::Chars(_)
         | ExprKind::Bytes(_)
         | ExprKind::Words(_)
@@ -1646,6 +1699,14 @@ fn expr_mentions(e: &Expr, found: &mut Mentions) {
                     mentions(guard, found);
                 }
                 block_mentions(&arm.body, found);
+            }
+        }
+        ExprKind::Slice {
+            base, start, end, ..
+        } => {
+            mentions(base, found);
+            for bound in start.iter().chain(end) {
+                mentions(bound, found);
             }
         }
         ExprKind::Loop(block) | ExprKind::Block(block) => block_mentions(block, found),

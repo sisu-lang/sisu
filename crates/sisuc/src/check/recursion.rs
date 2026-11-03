@@ -129,6 +129,13 @@ impl Walk {
                 base: lhs,
                 index: rhs,
             } => self.all([&**lhs, &**rhs], open, calls),
+            ExprKind::Slice {
+                base, start, end, ..
+            } => self.all(
+                std::iter::once(&**base).chain(start.iter().chain(end).map(|bound| &**bound)),
+                open,
+                calls,
+            ),
             // Each link after the first may stop the chain, so the third and later operands may
             // not run.
             ExprKind::Compare { operands, .. } => {

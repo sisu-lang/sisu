@@ -1,0 +1,39 @@
+fn grown() -> [i64] {
+    let mut g = [1]
+    g.push(2)
+    g.push(3)
+    g
+}
+
+// GIVEN empty ranges and pushes at the edge of a block
+// WHEN the program runs each
+// THEN none panics, none writes past the capacity, and a parent that is still held is unchanged
+fn main() {
+    let e: [i64] = []
+    print(e[0..0])                   // []
+    print(e[..0])                    // []
+    print(e[0..])                    // []
+
+    // a push onto a slice at the end of a full block that another value holds
+    let mut xs = [1, 2, 3]
+    let mut t = xs[3..3]
+    t.push(1)
+    print(t)                         // [1]
+    print(xs)                        // [1, 2, 3]
+
+    // a push onto the tail of a unique full block: no room, so the value is copied
+    let a = [1, 2, 3]
+    let mut u = a[1..]
+    u.push(4)
+    print(u)                         // [2, 3, 4]
+
+    // a push onto the end of a unique block with spare capacity: in place, within `cap`
+    let mut v = grown()[3..]
+    v.push(9)
+    print(v)                         // [9]
+
+    // a push onto an empty slice in the middle of a unique block
+    let mut w = grown()[1..1]
+    w.push(7)
+    print(w)                         // [7]
+}

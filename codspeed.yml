@@ -30,6 +30,12 @@ benchmarks:
   - name: shared_arrays
     id: shared_arrays
     exec: target/codspeed/shared_arrays/main
+  - name: slice_keep
+    id: slice_keep
+    exec: target/codspeed/slice_keep/main
+  - name: slice_loop
+    id: slice_loop
+    exec: target/codspeed/slice_loop/main
   - name: compare
     id: compare
     exec: target/codspeed/compare/main

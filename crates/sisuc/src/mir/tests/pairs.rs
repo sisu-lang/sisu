@@ -506,3 +506,16 @@ fn copy_should_stay_across_a_show_of_an_any_value() {
         assert_eq!(f.matches(" [calls]").count(), 1, "{shown}: {f}");
     }
 }
+
+/// GIVEN a copy of `xs` that a slice consumes, and a release of the slice
+/// WHEN pair removal reads the block
+/// THEN the copy stays: the slice takes its reference, so the copy is moved, not only read
+#[test]
+fn a_copy_moved_into_a_slice_should_be_kept() {
+    let printed = built(
+        "fn f(xs: [i64]) -> i64 {\n    let t = xs[1..]\n    t.len() + xs.len()\n}\nfn main() {\n    print(f([1, 2, 3]))\n}",
+    );
+    let f = function(&printed, "f");
+    assert!(f.contains("= copy xs#0"), "{f}");
+    assert!(!f.contains("= borrow xs#0"), "{f}");
+}

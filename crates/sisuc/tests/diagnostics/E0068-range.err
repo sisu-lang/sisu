@@ -1,0 +1,10 @@
+error[E0068]: cannot index `i64`
+ --> E0068-range.sisu:3:11
+  |
+3 |     print(n[0..1])
+  |           ^
+  |
+  = help: only arrays and strings take a range index
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0068

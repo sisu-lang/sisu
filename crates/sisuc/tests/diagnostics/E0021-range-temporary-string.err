@@ -1,0 +1,18 @@
+error[E0021]: cannot assign to this expression
+ --> E0021-range-temporary-string.sisu:7:5
+  |
+7 |     text()[0..1] = "x"
+  |     ^^^^^^^^^^^^ a range index gives a new value
+  |
+  = help: store `text()` in a `let mut` variable first
+
+error[E0021]: cannot assign to this expression
+ --> E0021-range-temporary-string.sisu:8:5
+  |
+8 |     S[0..1] = "x"
+  |     ^^^^^^^ a range index gives a new value
+  |
+  = help: store `S` in a `let mut` variable first
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0021

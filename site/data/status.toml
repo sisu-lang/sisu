@@ -1,6 +1,6 @@
 # The status board and tables, one [[area]] per area in page order. See site/build.py (status_board, status_tables).
 
-# source: docs/roadmap.md ("What works today", the sections on decided and proposed work and "Modules", "What can start now" (test blocks), "Gaps before production" (number types), "Concurrency"); docs/adr/0003, 0007, 0008, 0010, 0011, 0012, 0014, 0017, 0019-0021, 0023, 0024, 0029, 0035
+# source: docs/roadmap.md ("What works today", the sections on decided and proposed work and "Modules", "What can start now" (test blocks), "Gaps before production" (number types), "Concurrency"); docs/adr/0003, 0007, 0008, 0010, 0011, 0012, 0014, 0017, 0019-0021, 0023, 0024, 0029, 0035, 0042
 [[area]]
 id = "language"
 name = "Language"
@@ -51,6 +51,11 @@ notes = [["ADR 0014", "docs/adr/0014-strings-are-utf-8-values.md"], ["Roadmap: f
 text = "Arrays that behave like values"
 state = "works"
 notes = [["ADR 0007", "docs/adr/0007-arrays-are-values.md"], ["ADR 0021", "docs/adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md"]]
+
+[[area.feature]]
+text = "Slices: <code>xs[a..b]</code> and <code>s[a..b]</code> share the block of their parent"
+state = "works"
+notes = [["ADR 0042", "docs/adr/0042-a-slice-shares-its-block.md"], ["Roadmap: what works today", "docs/roadmap.md#what-works-today"]]
 
 [[area.feature]]
 text = "Compile-time constants"
@@ -127,7 +132,7 @@ text = "Concurrency"
 state = "planned"
 notes = [["ADR 0010", "docs/adr/0010-tasks-share-no-objects.md"], ["Roadmap: concurrency", "docs/roadmap.md"]]
 
-# source: docs/roadmap.md ("What works today", the sections on decided and proposed work (Map, os.env, os.exit, io), "Open decisions" (substring views)); docs/adr/0009, 0014-0017
+# source: docs/roadmap.md ("What works today", the sections on decided and proposed work (Map, os.env, os.exit, io), "Open decisions" (substring views)); docs/adr/0009, 0014-0017, 0042
 [[area]]
 id = "stdlib"
 name = "Standard library"
@@ -155,7 +160,7 @@ state = "works"
 notes = [["ADR 0017", "docs/adr/0017-floats-follow-ieee-754.md"], ["Roadmap: floats", "docs/roadmap.md"]]
 
 [[area.feature]]
-text = "<code>len</code>, <code>sum</code>, <code>contains</code> and <code>push</code> on arrays"
+text = "<code>len</code>, <code>sum</code>, <code>contains</code>, <code>push</code>, <code>first</code>, <code>last</code> and <code>get</code> on arrays"
 state = "works"
 notes = [["Roadmap: what works today", "docs/roadmap.md#what-works-today"]]
 

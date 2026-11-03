@@ -1,0 +1,18 @@
+// Takes a slice of a large array and drops it, a million times. A slice that is kept in a local
+// or passed to a function is no trim point, so no trim check runs: the loop costs what the same
+// loop without trimming costs.
+fn ends(xs: [i64]) -> i64 {
+    xs[0] + xs[xs.len() - 1]
+}
+
+fn main() {
+    let mut xs = [0; 10_000]
+    for i in 0..10_000 { xs[i] = i }
+    let mut total = 0
+    for r in 0..1_000_000 {
+        let a = r % 5_000
+        let t = xs[a..a + 100]
+        total += ends(t)
+    }
+    print(total)
+}

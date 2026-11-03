@@ -319,6 +319,7 @@ impl Clobbers {
                         Rvalue::Call { .. }
                         | Rvalue::DynCall { .. }
                         | Rvalue::ToAny(_)
+                        | Rvalue::Trim(_)
                         | Rvalue::Use(_)
                         | Rvalue::Copy(_)
                         | Rvalue::CopyStr(_)
@@ -327,6 +328,7 @@ impl Clobbers {
                         | Rvalue::Variant { .. }
                         | Rvalue::ArrayLit(_)
                         | Rvalue::ArrayFill { .. }
+                        | Rvalue::Slice { .. }
                         | Rvalue::Wrap(_)
                         | Rvalue::Concat { .. }
                         | Rvalue::Interpolate { .. }
@@ -756,7 +758,11 @@ fn rvalue<'a>(
 ) {
     match value {
         // `l = use op` makes `l` own what `op` hands on.
-        Rvalue::Use(op) | Rvalue::Unwrap(op) | Rvalue::Wrap(op) | Rvalue::ToAny(op) => {
+        Rvalue::Use(op)
+        | Rvalue::Unwrap(op)
+        | Rvalue::Wrap(op)
+        | Rvalue::ToAny(op)
+        | Rvalue::Trim(op) => {
             consumed(op, lowered, f);
         }
         Rvalue::Chars(op)
@@ -820,6 +826,15 @@ fn rvalue<'a>(
         Rvalue::ArrayFill { value, len, .. } => {
             consumed(value, lowered, f);
             operand(len, lowered, f);
+        }
+        // The slice takes the base's reference; the bounds are numbers.
+        Rvalue::Slice {
+            base, start, end, ..
+        } => {
+            consumed(base, lowered, f);
+            for bound in start.iter().chain(end) {
+                operand(bound, lowered, f);
+            }
         }
         Rvalue::Concat { lhs, rhs } => {
             consumed(lhs, lowered, f);

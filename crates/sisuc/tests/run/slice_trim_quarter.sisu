@@ -1,0 +1,18 @@
+fn iterations() -> i64 { 1000 }
+
+class Holder {
+    mut top: [i64]
+}
+
+// GIVEN a block of 32 elements, 256 bytes, and a slice of its first 8, exactly a quarter
+// WHEN the program stores it into a field of a class object in each of `iterations()` rounds
+// THEN the store copies the slice, because a quarter is not more than a quarter: each round
+// allocates 2 blocks, `all` and the copy
+fn main() {
+    let h = Holder(top: [])
+    for i in 0..iterations() {
+        let all = [i; 32]
+        h.top = all[..8]
+    }
+    print(h.top.len())               // 8 (0 with no iterations)
+}
