@@ -36,12 +36,13 @@ a value, not a type. Seven rules follow.
   is a copy of one small slice into a block of its own. It stops a slice from
   keeping a large parent block alive. The trim points are:
   - a class constructor argument and a store to a class field;
-  - an enum payload and a struct field;
+  - an enum payload, and a struct field when structs land (milestone 9);
   - an element of an array literal, the value of `[v; n]`, `push` and
     `xs[i] = v`;
   - the conversion to `any I`;
-  - the copy-out of a `mut` argument into a class field or an array element;
-  - a closure capture.
+  - the copy-out of a `mut` argument into a class field or an array element,
+    when `mut` arguments land (milestone 9);
+  - a closure capture, when closures land (milestone 9).
 
   A trim point looks through an optional. A local, an argument, a return
   value, `Some(x)` and the range index itself are not trim points.

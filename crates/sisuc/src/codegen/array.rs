@@ -2,9 +2,9 @@
 //! the length and the capacity, then the elements. An array value is three words, `{ block,
 //! data, len }`: the block, the first element and the number of elements (`layout.rs`,
 //! `make_value`). A value that covers its whole block has `data` at the block's first element
-//! and `len` equal to the header's `len`; every value has that shape for now. `layout.rs` owns
-//! the layout; this module owns the array nodes and the bodies of the array helpers, which
-//! `define_helpers` reaches through `define_array_helper`.
+//! and `len` equal to the header's `len`. `layout.rs` owns the layout; this module owns the array
+//! nodes and the bodies of the array helpers, which `define_helpers` reaches through
+//! `define_array_helper`.
 
 use inkwell::intrinsics::Intrinsic;
 use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
@@ -381,6 +381,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.value_data(value),
             self.value_len(value),
         );
+        // The string arm gives the same offset and length today, because every element alignment
+        // is at most 8; a type with a larger alignment needs a trim test.
         let first = match ty.kind() {
             TypeKind::Array(element) => self.array_data(element, block),
             _ => self.string_field(block, BYTES),

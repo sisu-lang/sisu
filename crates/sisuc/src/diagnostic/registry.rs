@@ -2140,12 +2140,26 @@ pub(crate) enum ForeignRange {
     Ellipsis { start: String, end: Option<String> },
     /// `base[start:end]`, as Python and Go write a slice; the operator is the `:` at `at`. A bound
     /// that is left out is `None`. `whole` is the `[:]` of `base[:]`, which the fix removes.
+    /// `base_place` is true when `base` is a place that starts at a name, which the message may
+    /// write twice.
     Colon {
         base: String,
-        start: Option<String>,
-        end: Option<String>,
+        base_place: bool,
+        start: Option<ColonBound>,
+        end: Option<ColonBound>,
         whole: Option<Span>,
     },
+}
+
+/// A bound of `base[start:end]`. Python counts a negative one from the end of `base`; Sisu has no
+/// negative index.
+pub(crate) enum ColonBound {
+    /// The text of a bound that is not negative.
+    Plain(String),
+    /// The text of `n` in the bound `-n`, which is just a unary minus.
+    Minus(String),
+    /// A bound that starts with a minus and is more than that, as `-a * b`, `-1 + n` or `--1`.
+    Negative,
 }
 
 /// How a range is wrong where the checker finds it.
@@ -5379,22 +5393,34 @@ impl From<DiagnosticKind> for Diagnostic {
                 }
                 ForeignRange::Colon {
                     base,
+                    base_place,
                     start,
                     end,
                     whole,
                 } => {
-                    let written = match (start, end) {
-                        (None, None) => base,
-                        (start, end) => format!(
-                            "{base}[{}..{}]",
-                            start.as_deref().unwrap_or(""),
-                            end.as_deref().unwrap_or("")
-                        ),
-                    };
-                    let d = Diagnostic::coded(code, at, format!("write `{written}`"));
-                    match whole {
-                        Some(whole) => d.with_fix(safe_fix("remove the `[:]`", whole, "")),
-                        None => d.with_fix(safe_fix("write `..`", at, "..")),
+                    let negative = [&start, &end]
+                        .into_iter()
+                        .flatten()
+                        .any(|b| !matches!(b, ColonBound::Plain(_)));
+                    if negative {
+                        // No fix: it is not what Python does for a bound past the start or `-0`.
+                        let message =
+                            negative_bound(&base, base_place, start.as_ref(), end.as_ref());
+                        Diagnostic::coded(code, at, message)
+                    } else {
+                        let text = |b: Option<ColonBound>| match b {
+                            Some(ColonBound::Plain(text)) => text,
+                            _ => String::new(),
+                        };
+                        let written = match (start, end) {
+                            (None, None) => base,
+                            (start, end) => format!("{base}[{}..{}]", text(start), text(end)),
+                        };
+                        let d = Diagnostic::coded(code, at, format!("write `{written}`"));
+                        match whole {
+                            Some(whole) => d.with_fix(safe_fix("remove the `[:]`", whole, "")),
+                            None => d.with_fix(safe_fix("write `..`", at, "..")),
+                        }
                     }
                 }
                 ForeignRange::Ellipsis { start, end } => {
@@ -5893,6 +5919,28 @@ fn is_format(c: char) -> bool {
 
 /// The unsafe fix `message` that replaces `span` with `replacement`.
 /// The safe fix `message` that replaces `span` with `replacement`.
+/// The message for `base[start:end]` with a negative bound: the rewrite, `xs[..xs.len() - 1]`,
+/// when `base` is a place and each negative bound is just a unary minus; else where to count from.
+fn negative_bound(
+    base: &str,
+    place: bool,
+    start: Option<&ColonBound>,
+    end: Option<&ColonBound>,
+) -> String {
+    let head = "Sisu has no negative index";
+    let bound = |b: Option<&ColonBound>| match b {
+        None => Some(String::new()),
+        Some(ColonBound::Plain(text)) => Some(text.clone()),
+        Some(ColonBound::Minus(n)) => Some(format!("{base}.len() - {n}")),
+        Some(ColonBound::Negative) => None,
+    };
+    match (place, bound(start), bound(end)) {
+        (true, Some(start), Some(end)) => format!("{head}: write `{base}[{start}..{end}]`"),
+        (true, ..) => format!("{head}: count from `{base}.len()`"),
+        (false, ..) => head.to_string(),
+    }
+}
+
 fn safe_fix(message: &str, span: Span, replacement: &str) -> Fix {
     Fix {
         safe: true,

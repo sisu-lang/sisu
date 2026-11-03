@@ -297,4 +297,4 @@ fn main() {
 }
 ```
 
-Sisu does not copy the elements when the program binds, passes or stores an array. The holders share the elements until a write to one of them. That write copies the elements first, and a loop that writes the array can copy them before it starts. A program cannot see when the copy occurs.
+Sisu does not copy the elements when the program binds or passes an array. A program that stores a small slice, such as `xs[1..3]` of a long array, in a class field, an enum payload, an array or an `any I` gets a copy of the slice, so that it does not keep the long array alive ([ADR 0042](../adr/0042-a-slice-shares-its-block.md)). Other stores do not copy the elements. The holders share the elements until a write to one of them. That write copies the elements first, and a loop that writes the array can copy them before it starts. A program cannot see when the copy occurs.

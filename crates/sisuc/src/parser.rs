@@ -13,9 +13,9 @@ use crate::ast::{
     TypeKind, TypeParam, UnaryOp, Variant,
 };
 use crate::diagnostic::{
-    self, AnyFormKind, BuiltIn, ClashForm, Diagnostic, DiagnosticKind, ElseOf, ForeignPattern,
-    ForeignRange, InterfaceBodyForm, Join, LetField, MatchIdiomForm, NestingForm, Owner, PowerFix,
-    SpecForm, SpecLimit,
+    self, AnyFormKind, BuiltIn, ClashForm, ColonBound, Diagnostic, DiagnosticKind, ElseOf,
+    ForeignPattern, ForeignRange, InterfaceBodyForm, Join, LetField, MatchIdiomForm, NestingForm,
+    Owner, PowerFix, SpecForm, SpecLimit,
 };
 use crate::lexer::{Lexed, MIN_MAGNITUDE, Token, TokenKind, literal_too_large};
 use crate::source::{Source, Span};
@@ -3854,7 +3854,7 @@ impl<'a> Parser<'a> {
     /// written with `:`, as Python and Go write it, is reported and read as the range it names;
     /// `[:]` gives `None`, which is the whole `base`. A step is the error of the `]` that is
     /// missing.
-    fn index(&mut self, base: Span, open: Span) -> Result<(Option<Expr>, Span), Diagnostic> {
+    fn index(&mut self, base: &Expr, open: Span) -> Result<(Option<Expr>, Span), Diagnostic> {
         let start = if self.at(&TokenKind::Colon) {
             None
         } else {
@@ -3878,12 +3878,12 @@ impl<'a> Parser<'a> {
             None
         };
         let close = self.expect(&TokenKind::RBracket)?.span;
-        let text =
-            |bound: &Option<Expr>| bound.as_ref().map(|e| self.source.text(e.span).to_string());
+        let bound = |bound: &Option<Expr>| bound.as_ref().map(|e| self.colon_bound(e));
         let form = ForeignRange::Colon {
-            base: self.source.text(base).to_string(),
-            start: text(&start),
-            end: text(&end),
+            base: self.source.text(base.span).to_string(),
+            base_place: is_place(base) && is_named(base),
+            start: bound(&start),
+            end: bound(&end),
             whole: (start.is_none() && end.is_none()).then(|| open.to(close)),
         };
         self.recovered
@@ -3904,6 +3904,21 @@ impl<'a> Parser<'a> {
             kind: ExprKind::Range(range),
         };
         Ok((Some(index), close))
+    }
+
+    /// The bound `e` of `base[start:end]`, with the operand of a bare unary minus apart: Python
+    /// counts such a bound from the end.
+    fn colon_bound(&self, e: &Expr) -> ColonBound {
+        match &e.kind {
+            ExprKind::Unary {
+                op: UnaryOp::Neg,
+                operand,
+            } if !starts_negative(operand) => {
+                ColonBound::Minus(self.source.text(operand.span).to_string())
+            }
+            _ if starts_negative(e) => ColonBound::Negative,
+            _ => ColonBound::Plain(self.source.text(e.span).to_string()),
+        }
     }
 
     /// The error for the `**` that is next, after `lhs`: the right side parses as `*`'s would,
@@ -4023,7 +4038,7 @@ impl<'a> Parser<'a> {
                 self.reach(wrapped)?;
                 let open = self.bump().span;
                 self.depth = base.link();
-                let (index, close) = self.headed(false, |p| p.index(expr.span, open))?;
+                let (index, close) = self.headed(false, |p| p.index(&expr, open))?;
                 self.depth = self.depth.max(wrapped);
                 // `xs[:]` is `xs`.
                 if let Some(index) = index {
@@ -4537,6 +4552,32 @@ pub(crate) fn is_place(e: &Expr) -> bool {
         ExprKind::Index { base, index } => {
             !matches!(index.kind, ExprKind::Range(_)) && is_place(base)
         }
+        _ => false,
+    }
+}
+
+/// Whether the leftmost operand of `e` is a unary minus or a negative literal: `-1`, `-a * b`,
+/// `-1 + n` and `--1` are, `n - 1` is not.
+fn starts_negative(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Unary {
+            op: UnaryOp::Neg, ..
+        } => true,
+        ExprKind::Int { value, .. } => *value < 0,
+        ExprKind::Binary { lhs, .. }
+        | ExprKind::Coalesce { lhs, .. }
+        | ExprKind::Is { lhs, .. } => starts_negative(lhs),
+        ExprKind::Compare { operands, .. } => operands.first().is_some_and(starts_negative),
+        _ => false,
+    }
+}
+
+/// Whether the place `e` starts at a name, so that to write it twice is to read the same thing
+/// twice: `f().x` is a place, and `f` would run twice.
+fn is_named(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Name(_) => true,
+        ExprKind::Field { base, .. } | ExprKind::Index { base, .. } => is_named(base),
         _ => false,
     }
 }
