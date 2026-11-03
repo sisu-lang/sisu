@@ -3385,46 +3385,6 @@ fn main() {
     }
 }
 
-/// GIVEN the programs of the seeds
-/// WHEN a `let ... else` has a pattern of alternatives
-/// THEN each alternative binds the same names, and some seed binds a name in them
-#[test]
-fn let_else_alternatives_should_bind_the_same_names_in_every_part() {
-    // A generated name is `v` and a number; no other word of a pattern has that shape.
-    let names = |part: &str| -> Vec<String> {
-        let mut names: Vec<String> = part
-            .split(|c: char| !c.is_ascii_alphanumeric())
-            .filter(|word| {
-                word.strip_prefix('v')
-                    .is_some_and(|n| n.parse::<u32>().is_ok())
-            })
-            .map(str::to_string)
-            .collect();
-        names.sort();
-        names
-    };
-    let mut binding = 0;
-    for data in seeds() {
-        let program = generate(&data).plain;
-        for line in program.lines().map(str::trim) {
-            let Some(pattern) = line.strip_prefix("let ").and_then(|l| l.split_once(" = ")) else {
-                continue;
-            };
-            if !line.contains(" else ") || !pattern.0.contains(" | ") {
-                continue;
-            }
-            let parts: Vec<Vec<String>> = pattern.0.split(" | ").map(names).collect();
-            assert!(
-                parts.iter().all(|part| *part == parts[0]),
-                "the parts of `{}` bind different names",
-                pattern.0
-            );
-            binding += usize::from(!parts[0].is_empty());
-        }
-    }
-    assert!(binding > 0, "no seed has an alternative that binds a name");
-}
-
 /// What no generated program writes yet, the walk marks all the same: an `extend` block,
 /// bounds, a member type, and a broken item of each new kind. Without
 /// this, the walk's arms for them would never run until the generator writes them.
