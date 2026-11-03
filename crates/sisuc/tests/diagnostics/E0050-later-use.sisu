@@ -1,0 +1,153 @@
+class Holder {
+    mut items: [char]
+}
+
+fn take(p: [char]) -> i64 { p.len() }
+
+fn take_optional(p: [char]?) -> i64 { 0 }
+
+fn pushed_and_assigned() {
+    let mut pushed = []
+    pushed.push('a')
+    pushed.push("b")
+    let mut best = None
+    best = Some("a")
+    print(pushed.len())
+}
+
+fn argument() {
+    let passed = []
+    print(take(passed))
+}
+
+fn returned() -> string? {
+    let found = None
+    return found
+}
+
+fn tail() -> [u8] {
+    let rest = []
+    rest
+}
+
+fn annotated() {
+    let early = []
+    let later: [char] = early
+    print(later.len())
+}
+
+fn in_branch() {
+    let mut floats = []
+    if true {
+        floats.push(1.5)
+    }
+    print(floats.len())
+}
+
+fn reassigned() {
+    let mut kept = None
+    kept = None
+    kept = 'c'
+}
+
+fn shadowed() {
+    let mut outer = []
+    if true {
+        let outer = ["a"]
+        print(outer.len())
+    }
+    outer.push('c')
+    print(outer.len())
+}
+
+fn generic_push<T>(x: T) -> i64 {
+    let mut typed = []
+    typed.push(x)
+    typed.len()
+}
+
+fn interface_payload() {
+    let d: any Display = 1
+    let mut wrapped = None
+    wrapped = Some(d)
+    let mut plain = None
+    plain = d
+}
+
+fn interface_return() -> (any Display)? {
+    let held = None
+    return held
+}
+
+fn pushed_none() {
+    let mut options = []
+    options.push(None)
+    options.push(Some(1))
+    print(options.len())
+}
+
+fn pushed_empty() {
+    let mut nested = []
+    nested.push([])
+    nested.push(['a'])
+    print(nested.len())
+}
+
+fn constructor() {
+    let supplied = []
+    let holder = Holder(items: supplied)
+    print(holder.items.len())
+}
+
+fn field_write() {
+    let incoming = []
+    let holder = Holder(items: ['a'])
+    holder.items = incoming
+    print(holder.items.len())
+}
+
+fn optional_parameter() {
+    let maybe = []
+    print(take_optional(maybe))
+    print(take_optional([]))
+}
+
+fn array_assigned() {
+    let mut replaced = []
+    replaced = ['a']
+    print(replaced.len())
+}
+
+fn pushed_after_assign_in_argument() {
+    let mut settled = []
+    settled.push({
+        settled = ['a']
+        "s"
+    })
+    print(settled.len())
+}
+
+fn pushed_after_assign_in_branch() {
+    let mut branched = []
+    branched.push(if true {
+        branched = [1.5]
+        'a'
+    } else {
+        'b'
+    })
+    print(branched.len())
+}
+
+fn pushed_after_assign_in_match() {
+    let mut matched = []
+    matched.push(match 1 {
+        1 => {
+            matched = ['a']
+            "s"
+        }
+        _ => "t"
+    })
+    print(matched.len())
+}
+
+fn main() {}

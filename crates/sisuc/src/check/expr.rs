@@ -3,10 +3,10 @@
 use std::ops::Range;
 
 use super::generic::Site;
-use super::{Checked, Checker, Poisoned, UNKNOWN, payload, tail, type_of, wrap};
+use super::{Checked, Checker, Poisoned, UNKNOWN, Uninferred, payload, tail, type_of, wrap};
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
-    Definition, Diagnostic, DiagnosticKind, Expected, Literal, MismatchSource, suggestion,
+    Code, Definition, Diagnostic, DiagnosticKind, Expected, Literal, MismatchSource, suggestion,
 };
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -130,7 +130,7 @@ impl Checker<'_> {
             ExprKind::ArrayFill { value, len } => self.array_fill(e.span, value, len, expected),
             ExprKind::Index { base, index } => self.index(e.span, base, index),
             ExprKind::NoneLit => self.none(e.span, expected),
-            ExprKind::Name(name) => self.name(e.span, *name),
+            ExprKind::Name(name) => self.name(e.span, *name, expected),
             ExprKind::Call {
                 callee,
                 types,
@@ -157,7 +157,7 @@ impl Checker<'_> {
                 angles,
             } => match self.named_args(name, types, *angles, false) {
                 Some(value) => Err(value),
-                None => self.name(name.span, name.name),
+                None => self.name(name.span, name.name, None),
             },
             ExprKind::Todo { keyword, args } => self.todo(e.span, *keyword, args),
             ExprKind::SelfValue => {
@@ -288,17 +288,20 @@ impl Checker<'_> {
         }
     }
 
-    /// A read of `name`: a local, a constant, or an unknown name, which is reported.
-    fn name(&mut self, span: Span, name: Symbol) -> Checked {
+    /// A read of `name`: a local, a constant, or an unknown name, which is reported. The `expected`
+    /// type of a local with no type may give the type that the help of its E0050 writes.
+    fn name(&mut self, span: Span, name: Symbol, expected: Option<Type>) -> Checked {
         let quiet = self.body.quiet == Some(span);
         match self.lookup(name) {
             Some(b) => {
                 b.read |= !quiet;
-                match b.ty {
-                    Some(ty) => Ok(tir::Expr::new(tir::ExprKind::Local(b.local), ty, span)),
-                    // `Error`: its diagnostic was recorded where it was bound.
-                    None => Err(Poisoned::error()),
+                if let Some(ty) = b.ty {
+                    return Ok(tir::Expr::new(tir::ExprKind::Local(b.local), ty, span));
                 }
+                // `Error`: its diagnostic was recorded where it was bound.
+                let local = b.local;
+                self.inferred_by_expected(local, expected, span);
+                Err(Poisoned::error())
             }
             None => self.constant_use(name, span).unwrap_or_else(|| {
                 let d = if name == Symbol::SOME || self.result_variant(name).is_some() {
@@ -474,39 +477,172 @@ impl Checker<'_> {
 
     /// A `None`, of the optional type `expected`.
     pub(super) fn none(&mut self, span: Span, expected: Option<Type>) -> Checked {
-        let (kind, mismatch) = match expected {
+        let kind = match expected {
             _ if self.quiet(span, expected) => return Err(Poisoned::error()),
             Some(ty) if matches!(ty.kind(), TypeKind::Optional(_)) => {
                 return Ok(tir::Expr::new(tir::ExprKind::None, ty, span));
             }
             Some(Type::NEVER) => return Err(Poisoned::error()),
-            Some(ty) => (
-                DiagnosticKind::Mismatch {
-                    want: Expected::Types(vec![self.want_name(span, ty)]),
-                    got: "None".to_string(),
-                    at: span,
-                    source: self.expected_from(span),
-                    fix: None,
-                    conversion: false,
-                    layers: false,
-                },
-                true,
-            ),
-            None => (
-                DiagnosticKind::CannotInfer {
-                    literal: Literal::None,
-                    binding: self.let_binding(span),
-                    at: span,
-                    regroup: None,
-                },
-                false,
-            ),
+            Some(ty) => DiagnosticKind::Mismatch {
+                want: Expected::Types(vec![self.want_name(span, ty)]),
+                got: "None".to_string(),
+                at: span,
+                source: self.expected_from(span),
+                fix: None,
+                conversion: false,
+                layers: false,
+            },
+            None => {
+                self.report_uninferred(Literal::None, span);
+                return Err(Poisoned::error());
+            }
         };
         self.diagnostics.push(kind.into());
         Err(Poisoned {
             ty: None,
-            mismatch,
+            mismatch: true,
             found: None,
+        })
+    }
+
+    /// Reports E0050 for the `None` or `[]` at `span`. When it is the whole initializer of a
+    /// `let`, the `let` finds the report (see `Checker::uninferred_of`).
+    pub(super) fn report_uninferred(&mut self, literal: Literal, span: Span) {
+        let binding = self.let_binding(span);
+        self.report(DiagnosticKind::CannotInfer {
+            literal,
+            binding,
+            ty: None,
+            at: span,
+            regroup: None,
+        });
+    }
+
+    /// The help of the E0050 of `local` writes `payload` (`payload?` for a `None`, `[payload]`
+    /// for a `[]`). It needs an E0050 for the local and a concrete `payload`. `at` is where in
+    /// the source the use takes effect. The use that comes first in the source gives the type,
+    /// because the checker does not always check in source order. A use after the one that set
+    /// the help leaves it. A new check of the same use that gives a type sets the help again.
+    pub(super) fn inferred_by_use(&mut self, local: tir::LocalId, payload: Type, at: usize) {
+        if payload.holds_hole() || matches!(payload, Type::NEVER | Type::UNIT) {
+            return;
+        }
+        let Some(uninferred) = self.body.uninferred.get_mut(&local) else {
+            return;
+        };
+        if uninferred.settled.is_some_and(|settled| at > settled) {
+            return;
+        }
+        uninferred.settled = Some(at);
+        let ty = match uninferred.literal {
+            Literal::None => Type::optional(payload),
+            Literal::EmptyArray => Type::array(payload),
+        };
+        let (index, span, literal, binding) = (
+            uninferred.at,
+            uninferred.span,
+            uninferred.literal,
+            uninferred.binding.clone(),
+        );
+        // No known path moves the E0050 or drops it before this use, and no test reaches this
+        // check. It stays as a cheap guard: a place that no longer holds this E0050 is left as it
+        // is.
+        let reported = self
+            .diagnostics
+            .get(index)
+            .is_some_and(|d| d.code() == Code::CannotInfer && d.span() == span);
+        if reported {
+            let help = self.type_name(ty);
+            self.diagnostics[index] = DiagnosticKind::CannotInfer {
+                literal,
+                binding: Some(binding),
+                ty: Some(help),
+                at: span,
+                regroup: None,
+            }
+            .into();
+        }
+    }
+
+    /// A read of `local`, a local with no type, where the type `expected` is wanted: a `None`
+    /// takes an optional, and a `[]` an array or an optional array.
+    pub(super) fn inferred_by_expected(
+        &mut self,
+        local: tir::LocalId,
+        expected: Option<Type>,
+        span: Span,
+    ) {
+        let Some(uninferred) = self.body.uninferred.get(&local) else {
+            return;
+        };
+        let payload = match (uninferred.literal, expected.map(Type::kind)) {
+            (Literal::None, Some(TypeKind::Optional(payload))) => payload,
+            (Literal::EmptyArray, Some(TypeKind::Array(element))) => element,
+            (Literal::EmptyArray, Some(TypeKind::Optional(inner))) => match inner.kind() {
+                TypeKind::Array(element) => element,
+                _ => return,
+            },
+            _ => return,
+        };
+        self.inferred_by_use(local, payload, span.start());
+    }
+
+    /// The write `target = value` that ends at `end`, where `target` is the bare name of a local
+    /// with no type: the value gives it a type.
+    pub(super) fn inferred_by_write(&mut self, target: &ast::Expr, value: &Checked, end: usize) {
+        let (ExprKind::Name(name), Ok(value)) = (&target.kind, value) else {
+            return;
+        };
+        if self.body.uninferred.is_empty() {
+            return;
+        }
+        let Some(local) = self.lookup(*name).map(|b| b.local) else {
+            return;
+        };
+        let Some(uninferred) = self.body.uninferred.get(&local) else {
+            return;
+        };
+        let payload = match (uninferred.literal, value.ty.kind()) {
+            (Literal::None, TypeKind::Optional(payload)) => payload,
+            (Literal::None, _) => value.ty,
+            (Literal::EmptyArray, TypeKind::Array(element)) => element,
+            (Literal::EmptyArray, _) => return,
+        };
+        self.inferred_by_use(local, payload, end);
+    }
+
+    /// The receiver of a `push`: the local with no type that the `[]` of its `let` left, if the
+    /// receiver is its bare name.
+    pub(super) fn pushed_to_uninferred(&mut self, receiver: &ast::Expr) -> Option<tir::LocalId> {
+        let ExprKind::Name(name) = &receiver.kind else {
+            return None;
+        };
+        let local = self.lookup(*name)?.local;
+        let uninferred = self.body.uninferred.get(&local)?;
+        matches!(uninferred.literal, Literal::EmptyArray).then_some(local)
+    }
+
+    /// The E0050 of `init`, the initializer of a `let` just checked. `init` is a `None`, an
+    /// `Option.None` or a `[]` that the checker reported as the last diagnostic. Call it before
+    /// `let_init` is cleared.
+    pub(super) fn uninferred_of(&self, init: &ast::Expr) -> Option<Uninferred> {
+        // Not `bare_none_written`: `Opt.None` of an alias goes to `generic_call`, which reports
+        // another E0050 that no use type replaces.
+        let literal = match &init.kind {
+            _ if bare_none(init) => Literal::None,
+            ExprKind::ArrayLit(elements) if elements.is_empty() => Literal::EmptyArray,
+            _ => return None,
+        };
+        let last = self.diagnostics.last()?;
+        if last.code() != Code::CannotInfer || last.span() != init.span {
+            return None;
+        }
+        Some(Uninferred {
+            at: self.diagnostics.len() - 1,
+            span: init.span,
+            literal,
+            binding: self.let_binding(init.span)?,
+            settled: None,
         })
     }
 
