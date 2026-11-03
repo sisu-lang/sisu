@@ -436,6 +436,7 @@ impl Checker<'_> {
     /// `push` writes. An unwrap gives a copy of the array, which the `push` does not change. Only
     /// the object of a `?.` helps, when its field stores the array: unwrapping the object makes
     /// the field a place. Else no unwrap does.
+    /// `Checker::optional_array_target` states the same rule for an element place: change both.
     fn pushed_array_unwrap(&self, receiver: &ast::Expr, value: &Checked) -> UnwrapHelp {
         let (
             ast::ExprKind::Field {

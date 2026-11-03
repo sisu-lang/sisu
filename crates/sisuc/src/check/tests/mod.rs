@@ -3108,7 +3108,7 @@ fn may_be_none_before_a_push_on_a_field_of_an_optional_array_should_offer_the_fi
 /// Each row is a program, the place of the error, and whether the help is given; the fixtures
 /// `E0062-push*` pin the text.
 #[test]
-fn push_onto_an_optional_array_should_offer_no_unwrap_help() {
+fn push_onto_an_optional_array_should_offer_unwrap_help_only_for_a_stored_array() {
     let rows = [
         (
             "local",
@@ -3157,6 +3157,12 @@ fn push_onto_an_optional_array_should_offer_no_unwrap_help() {
             "class Bag {\n    mut items: [i64]\n}\nfn add(bag: Bag?) {\n    bag?.items.push(4)\n}\nfn main() {}",
             (5, 5, "bag?.items"),
             true,
+        ),
+        (
+            "array stored by an object that spans two lines",
+            "class Bag {\n    mut items: [i64]\n}\nfn g(a: i64, b: i64) -> Bag? {\n    None\n}\nfn main() {\n    g(1,\n      2)?.items.push(4)\n}",
+            (8, 5, "g(1,\n      2)?.items"),
+            false,
         ),
         (
             "optional array stored by the object of a `?.`",
