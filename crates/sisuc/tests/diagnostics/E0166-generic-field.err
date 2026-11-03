@@ -1,0 +1,13 @@
+error[E0166]: the parameter `x` of `gset` is `mut`, so its argument needs `mut`
+  --> E0166-generic-field.sisu:14:10
+   |
+ 8 | fn gset<T>(mut x: T) {
+   |                - declared `mut` here
+...
+14 |     gset(c.cells)
+   |          ^^^^^^^ needs `mut`
+   |
+   = help: declare the field `cells` as `mut`, and pass it `mut`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0166

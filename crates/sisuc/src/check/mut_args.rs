@@ -76,7 +76,8 @@ pub(super) struct MutSite<'a> {
     pub(super) callee: &'a str,
     /// Whether each parameter is `mut`.
     pub(super) muts: &'a [bool],
-    /// The name of each parameter.
+    /// The name of each parameter. A site that has a `mut` parameter, or a call with a `mut`
+    /// argument, always has them all (`site_of`), so a `mut` position has its name.
     pub(super) names: &'a [ast::Ident],
 }
 
@@ -360,12 +361,17 @@ impl Checker<'_> {
             );
             return Err((NotPlace::SelfValue { class }, None));
         }
-        if let ast::ExprKind::Name(name) = arg.kind
+        let mut root = arg;
+        while let ast::ExprKind::Index { base, .. } | ast::ExprKind::Field { base, .. } = &root.kind
+        {
+            root = base;
+        }
+        if let ast::ExprKind::Name(name) = root.kind
             && self.lookup(name).is_none()
             && !self.constants.contains_key(&name)
             && self.is_function(name)
         {
-            // A function is a value, not a place: E0105 says so, as for any value.
+            // A function, or a place with a function at its root, is a value: E0105 says so.
             self.checked_alone(arg);
             return Ok(CheckedPlace::failed());
         }
@@ -398,11 +404,12 @@ impl Checker<'_> {
     ///
     /// It failed when it reported an error. It failed too when its type is unknown, an error was
     /// reported before it, and it is no context literal: its type comes from a local that failed.
-    /// A context literal (`[]`, `None`, and arrays of them) has no type and no error, so it never
-    /// failed. With no earlier error, an unknown type is no failure either, so E0169 is reported.
+    /// A context literal (`[]`, `None`, `Some` and arrays of them) has no type and no error, so it
+    /// never failed. With no earlier error, an unknown type is no failure either, so E0169 is
+    /// reported.
     // shortcut: a temporary of another form that takes its type from its context, such as
-    // `Some(None)` or an `if` of `[]`, counts as failed beside an earlier error and hides its
-    // E0169; upgrade if such a form must report E0169 there.
+    // `if c { [] } else { [] }` or `{ [] }`, counts as failed beside an earlier error and hides
+    // its E0169; upgrade if such a form must report E0169 there.
     fn checked_alone(&mut self, arg: &ast::Expr) -> (Option<Type>, bool) {
         let errors = self.diagnostics.errors;
         let ty = type_of(&self.expr(arg, Some(UNKNOWN)));
@@ -666,14 +673,21 @@ impl Checker<'_> {
             },
             Err((cause, kept)) => MarkCheck::NotPlace(cause, kept),
         };
+        // A `let` local or a field that cannot change binds as a place does: with `mut`, it would.
+        let kept = match &check {
+            MarkCheck::Place(kept) | MarkCheck::NotPlace(NotPlace::Immutable(_), Some(kept)) => {
+                Some(kept)
+            }
+            _ => None,
+        };
         if let (
             Some((call, Some(pattern))),
-            MarkCheck::Place(Kept {
+            Some(Kept {
                 ty: Some(have),
                 chain: false,
                 ..
             }),
-        ) = (bind, &check)
+        ) = (bind, kept)
         {
             let _ = self.bind_param(call, pattern, *have, arg.value.span);
         }
@@ -807,14 +821,15 @@ impl Checker<'_> {
             let want = wants.get(i).copied().flatten();
             let check = found.map(|((_, check), _)| check);
             let fix = self.missing_fix(arg, check, (related, want));
-            let param = site.names.get(i);
+            let param = site
+                .names
+                .get(i)
+                .expect("a site that has a `mut` parameter should name every parameter");
             self.report(DiagnosticKind::MutMarkerMissing {
                 at: arg.value.span,
-                name: param.map(|name| name.name.to_string()).unwrap_or_default(),
+                name: param.name.to_string(),
                 callee: site.callee.to_string(),
-                declared: param
-                    .map(|name| name.span)
-                    .filter(|span| !span.in_prelude()),
+                declared: Some(param.span).filter(|span| !span.in_prelude()),
                 fix,
             });
         }

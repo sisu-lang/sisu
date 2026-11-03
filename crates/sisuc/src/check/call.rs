@@ -593,6 +593,7 @@ impl Checker<'_> {
         if gets_range
             && type_of(&receiver).is_some_and(|ty| matches!(ty.kind(), TypeKind::Array(_)))
         {
+            self.refuse_method(receiver_expr, (type_of(&receiver), method), args, Some(1));
             return self.array_get_range(args);
         }
         let receiver_ty = type_of(&receiver);
