@@ -7667,7 +7667,8 @@ mod tests {
     /// GIVEN a `let` whose pattern is written with braces, as `Rect { w, h }`, with labels, with
     /// a qualified name, or with a lower-case name, beside the `if let` of the same pattern
     /// WHEN the parser reads each
-    /// THEN the `let` gives the same diagnostic as the `if let`: code, span, text and fix
+    /// THEN the `let` gives the same diagnostic as the `if let`: code, span and fix edits (the
+    /// fixture E0123-braces-let pins the text)
     /// AND `let mut` before such a pattern is E0011 at the `mut`
     #[test]
     fn braced_let_pattern_should_be_reported_as_the_if_let_pattern() {
@@ -7683,7 +7684,22 @@ mod tests {
             let with_if_let = format!("fn main() {{\n if let {pattern} = s {{ }}\n}}");
             let (a, b) = (parse_diagnostic(&with_let), parse_diagnostic(&with_if_let));
             assert_eq!(a.code(), Code::PatternForm, "{with_let}");
-            assert_eq!(format!("{a:?}"), format!("{b:?}"), "{pattern}");
+            let shape = |d: &Diagnostic| {
+                let fixes: Vec<_> = d
+                    .fixes()
+                    .iter()
+                    .map(|f| {
+                        let edits: Vec<_> = f
+                            .edits()
+                            .iter()
+                            .map(|e| (e.span(), e.replacement().to_owned()))
+                            .collect();
+                        (f.safe(), edits)
+                    })
+                    .collect();
+                (d.code(), d.span(), fixes)
+            };
+            assert_eq!(shape(&a), shape(&b), "{pattern}");
         }
         assert_eq!(
             expr_err("let mut Rect { w, h } = s else { return }"),
