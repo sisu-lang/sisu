@@ -2,6 +2,7 @@
 
 use rustc_hash::FxHashMap;
 
+use super::array::innermost;
 use super::expr::{if_some, local, no_member, path};
 use super::extend::{holder_of, method_holder};
 use super::generic::{Site, named_params};
@@ -221,7 +222,7 @@ impl Checker<'_> {
                     Access::Assign => true,
                     Access::Push => self.field_is_array(payload, name.name),
                 };
-                may_be_none(receiver, name, !self.body.indexed, write)
+                may_be_none(receiver, name, !self.body.indexed, write, UnwrapHelp::It)
             }
             _ => no_member(Definition::Field, self.type_name(ty), name, []),
         };
@@ -306,20 +307,20 @@ impl Checker<'_> {
         }
     }
 
-    /// The method named by `site` of `receiver`, a value of type `ty`, in the call that starts at
-    /// `span`. The type's own method wins; else the method of the one conformance block that has
-    /// one, or the one that the call's context picks (`pick_conforming`). `None` when there is
-    /// none, reported unless `ty` is `Error`. `indexed` when an index follows the call in its
-    /// chain, where a `?.` after the receiver leads to an index on an optional.
+    /// The method named by `site` of `receiver`, whose checked value is `value`, in the call that
+    /// starts at `span`. The type's own method wins; else the method of the one conformance block
+    /// that has one, or the one that the call's context picks (`pick_conforming`). `None` when
+    /// there is none, reported unless the type is `Error`. `indexed` when an index follows the
+    /// call in its chain, where a `?.` after the receiver leads to an index on an optional.
     pub(super) fn find_method(
         &mut self,
-        ty: Option<Type>,
+        value: &Checked,
         receiver: &ast::Expr,
         site: Site<'_>,
         indexed: bool,
         (span, nullary): (Span, bool),
     ) -> Option<Found> {
-        let ty = ty?;
+        let ty = type_of(value)?;
         let name = site.name;
         let mut masked = None;
         match self.own_method(ty, name.name) {
@@ -416,14 +417,56 @@ impl Checker<'_> {
             }
             // A `push` onto an optional array writes: the `?.` fix makes it do nothing.
             TypeKind::Optional(payload) => {
-                let write =
-                    name.name.as_str() == "push" && matches!(payload.kind(), TypeKind::Array(_));
-                may_be_none(receiver, name, !indexed, write)
+                let write = name.name.as_str() == "push"
+                    && matches!(innermost(payload).kind(), TypeKind::Array(_));
+                let unwrap = if write {
+                    self.pushed_array_unwrap(receiver, value)
+                } else {
+                    UnwrapHelp::It
+                };
+                may_be_none(receiver, name, !indexed, write, unwrap)
             }
             _ => no_member(Definition::Method, self.type_name(ty), name, []),
         };
         self.diagnostics.push(d);
         None
+    }
+
+    /// The unwrap help for the optional array `receiver`, whose checked value is `value`, that a
+    /// `push` writes. An unwrap gives a copy of the array, which the `push` does not change. Only
+    /// the object of a `?.` helps, when its field stores the array: unwrapping the object makes
+    /// the field a place. Else no unwrap does.
+    fn pushed_array_unwrap(&self, receiver: &ast::Expr, value: &Checked) -> UnwrapHelp {
+        let (
+            ast::ExprKind::Field {
+                base: object,
+                name,
+                safe: true,
+                ..
+            },
+            Ok(tir::Expr {
+                kind: tir::ExprKind::IfSome { scrutinee, .. },
+                ..
+            }),
+        ) = (&receiver.kind, value)
+        else {
+            return UnwrapHelp::Nothing;
+        };
+        let TypeKind::Optional(owner) = scrutinee.ty.kind() else {
+            return UnwrapHelp::Nothing;
+        };
+        let TypeKind::Class(class, _) = owner.kind() else {
+            return UnwrapHelp::Nothing;
+        };
+        let stores_array = self.classes[class.0]
+            .field(name.name)
+            .and_then(|index| self.field_type(owner, index))
+            .is_some_and(|held| matches!(held.kind(), TypeKind::Array(_)));
+        if stores_array && self.one_line(object.span) {
+            UnwrapHelp::Object(self.source.text(object.span).to_string())
+        } else {
+            UnwrapHelp::Nothing
+        }
     }
 
     /// Whether `ty` is a class with a field `to_string`, which a call of that name does not
@@ -680,15 +723,21 @@ fn candidate_results(rets: &[Option<Type>]) -> impl Iterator<Item = (usize, Opti
 
 /// "`node` may be `None`", at the optional `receiver` of a `.` before `name`. With `fix`, a
 /// `?.` may take the `.`'s place. `write` when `name` is the field that an assignment or a `push`
-/// changes, or the `push` itself.
-fn may_be_none(receiver: &ast::Expr, name: &ast::Ident, fix: bool, write: bool) -> Diagnostic {
+/// changes, or the `push` itself. `unwrap` says which unwrap help fits.
+fn may_be_none(
+    receiver: &ast::Expr,
+    name: &ast::Ident,
+    fix: bool,
+    write: bool,
+    unwrap: UnwrapHelp,
+) -> Diagnostic {
     DiagnosticKind::MayBeNone {
         value: path(receiver),
         at: receiver.span,
         access: fix.then(|| Span::new(receiver.span.end(), name.span.start())),
         write,
         peel: None,
-        unwrap: UnwrapHelp::It,
+        unwrap,
     }
     .into()
 }

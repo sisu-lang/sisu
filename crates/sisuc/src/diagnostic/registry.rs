@@ -817,7 +817,7 @@ pub(crate) enum DiagnosticKind {
         write: bool,
         /// For a `?.` on an optional of an optional: the optional it leaves, which has no members.
         peel: Option<Peel>,
-        /// What the help says to unwrap, when `access` is `None`.
+        /// What the help says to unwrap.
         unwrap: UnwrapHelp,
     },
     /// The `kind` member `name`, at `at`, which `owner` does not have.
@@ -2034,12 +2034,12 @@ pub(crate) struct Peel {
     pub(crate) member: String,
 }
 
-/// What the help of a `MayBeNone` without a `?.` fix tells the user to unwrap with `if let`.
+/// What the help of a `MayBeNone` tells the user to unwrap with `if let`.
 #[derive(Clone)]
 pub(crate) enum UnwrapHelp {
     /// The optional itself.
     It,
-    /// The object, as written, of the `?.` that makes an element place optional.
+    /// The object, as written, of the `?.` that makes an element place or a pushed array optional.
     Object(String),
     /// Nothing: no `if let` of the optional gives a place that can be written.
     Nothing,
@@ -4102,10 +4102,16 @@ impl From<DiagnosticKind> for Diagnostic {
                         } else {
                             "if a `None` result is fine, use `?.`"
                         };
-                        d.with_help(
-                            "to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`",
-                        )
-                        .with_fix(unsafe_fix(fix, access, "?."))
+                        let d = match unwrap {
+                            UnwrapHelp::It => d.with_help(
+                                "to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`",
+                            ),
+                            UnwrapHelp::Object(object) => d.with_help(format!(
+                                "to use the value only when it is present, unwrap `{object}` with `if let`, `let ... else` or `?? return`"
+                            )),
+                            UnwrapHelp::Nothing => d,
+                        };
+                        d.with_fix(unsafe_fix(fix, access, "?."))
                     }
                     None => match unwrap {
                         UnwrapHelp::It => {
