@@ -1,0 +1,34 @@
+error[E0070]: `has` is a method, not a function
+  --> E0070-bound-blocked.sisu:27:9
+   |
+27 |         has(y)
+   |         ^^^ `has` needs `Pair<T>: Eq`
+   |
+   = help: add a bound: `T: Eq`, then call `has` as a method of `self`
+
+error[E0070]: `contains` is a method, not a function
+  --> E0070-bound-blocked.sisu:33:11
+   |
+33 |     print(contains(ps, Pair(a: Node(v: 1))))
+   |           ^^^^^^^^ `contains` needs `Pair<Node>: Eq`
+   |
+   = help: make `Node` conform to `Eq`, then call `contains` as a method
+
+error[E0070]: `contains` is a method, not a function
+  --> E0070-bound-blocked.sisu:35:11
+   |
+35 |     print(contains(qs, Pair(a: Node(v: 1))))
+   |           ^^^^^^^^ `contains` needs `Pair<Node>: Eq`
+   |
+   = help: make `Node` conform to `Eq`, then call `contains` with `?.`
+
+error[E0070]: `contains` is a method, not a function
+  --> E0070-bound-blocked.sisu:36:11
+   |
+36 |     print(contains(ps, Pair(a: Node(v: 1)), 3))
+   |           ^^^^^^^^ `contains` needs `Pair<Node>: Eq`
+   |
+   = help: make `Node` conform to `Eq`, then call `contains` as a method and fix its arguments
+
+sisu: 4 errors
+sisu: for more on a code, run `sisu explain <code>`: E0070

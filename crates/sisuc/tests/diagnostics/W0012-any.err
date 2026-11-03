@@ -5,7 +5,7 @@ warning[W0012]: interface `Named` is never used
   |           ^^^^^ never used
 ...
 4 | fn show(x: (any Named)?) -> i64 { if let _ = x { 1 } else { 0 } }
-  |            ------------ used here, in `show`, which is never called
+  |                 ----- used here, in `show`, which is never called
   |
   = help: delete it, or name it `_Named` if it is kept on purpose
 

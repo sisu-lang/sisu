@@ -1,0 +1,126 @@
+class Node {
+    v: i64
+}
+
+class Pair<A> {
+    a: A
+}
+
+extend<A: Eq> Pair<A>: Eq {
+    fn eq(self, other: Pair<A>) -> bool {
+        self.a == other.a
+    }
+}
+
+class Box<B> {
+    b: B
+}
+
+extend<B: Eq> Box<B>: Eq {
+    fn eq(self, other: Box<B>) -> bool {
+        self.b == other.b
+    }
+}
+
+enum Wrap<A> {
+    One(A)
+}
+
+extend<A: Eq> Wrap<A>: Eq {
+    fn eq(self, other: Wrap<A>) -> bool {
+        true
+    }
+}
+
+class Two<A, B> {
+    a: A
+    b: B
+}
+
+extend<A: Eq, B: Eq> Two<A, B>: Eq {
+    fn eq(self, other: Two<A, B>) -> bool {
+        self.a == other.a && self.b == other.b
+    }
+}
+
+class Mix<A, B> {
+    a: A
+    b: B
+}
+
+extend<A: Eq, B: Ord> Mix<A, B>: Eq {
+    fn eq(self, other: Mix<A, B>) -> bool {
+        true
+    }
+}
+
+fn need_eq<T: Eq>(_x: T) {}
+
+fn from_contains() {
+    let ps = [Pair(a: Node(v: 1))]
+    print(ps.contains(Pair(a: Node(v: 1))))
+}
+
+fn from_bound() {
+    need_eq(Pair(a: Node(v: 1)))
+}
+
+fn nested_array() {
+    let ps = [[Pair(a: Node(v: 1))]]
+    print(ps.contains([Pair(a: Node(v: 1))]))
+}
+
+fn array_inside() {
+    let ps = [Pair(a: [Node(v: 1)])]
+    print(ps.contains(Pair(a: [Node(v: 1)])))
+}
+
+fn two_blocks() {
+    let ps = [Box(b: Pair(a: Node(v: 1)))]
+    print(ps.contains(Box(b: Pair(a: Node(v: 1)))))
+}
+
+fn enum_block() {
+    let ps = [Wrap.One(Node(v: 1))]
+    print(ps.contains(Wrap.One(Node(v: 1))))
+}
+
+fn second_parameter() {
+    let ps = [Two(a: 1, b: Node(v: 1))]
+    print(ps.contains(Two(a: 1, b: Node(v: 1))))
+}
+
+fn optional_element() {
+    let ps: [Pair<Node>?] = [None]
+    print(ps.contains(None))
+}
+
+fn between_blocks() {
+    let o: Box<Pair<Node>>? = None
+    let xs = [Pair(a: [o])]
+    print(xs.contains(Pair(a: [o])))
+}
+
+fn two_fail_contains<T>(x: Mix<T, bool>) -> bool {
+    [x].contains(x)
+}
+
+fn two_fail_bound<T>(x: Mix<T, bool>) {
+    need_eq(x)
+}
+
+fn one_fails_bound<T>(x: Mix<T, i64>) {
+    need_eq(x)
+}
+
+fn main() {
+    from_contains()
+    from_bound()
+    nested_array()
+    array_inside()
+    two_blocks()
+    enum_block()
+    second_parameter()
+    optional_element()
+    between_blocks()
+}

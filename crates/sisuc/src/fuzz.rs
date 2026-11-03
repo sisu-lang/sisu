@@ -93,7 +93,7 @@ thread_local! {
 
 /// Asserts that every span of `diagnostics` (primary, secondary and each fix's edits) is a range
 /// of `source` whose ends sit on char boundaries, and that no two edits of one fix overlap.
-fn assert_spans(source: &str, diagnostics: &[Diagnostic]) {
+pub(crate) fn assert_spans(source: &str, diagnostics: &[Diagnostic]) {
     let len = source.len();
     for d in diagnostics {
         let code = d.code().as_str();
