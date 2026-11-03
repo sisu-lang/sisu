@@ -993,11 +993,18 @@ impl Checker<'_> {
         (via, requires): (InterfaceId, Span),
     ) {
         let (ty, inherited) = (self.type_name(target), self.bound_text(interface, args));
-        let (mut extend, mut needs) = (None, None);
+        let (mut extend, mut needs, mut add, mut make) = (None, None, None, None);
         match find(&self.conformances, interface, target, args) {
             // Following the advice would give `ConformsTwice`, so the report points at the bound
-            // that the other conformance needs instead.
-            Some((k, bound)) => needs = Some(self.failed_bound(interface, k, bound)),
+            // that the other conformance needs instead, and the help is for the part that fails
+            // it.
+            Some((k, bound)) => {
+                needs = Some(self.failed_bound(interface, k, bound));
+                let blocked = self.blocked_part(target, interface, args);
+                add = blocked.and_then(|(part, interface, _)| self.add_bound(part, interface));
+                make = blocked
+                    .and_then(|(part, interface, args)| self.make_for(part, interface, args));
+            }
             None => extend = block.map(|b| self.extend_help(b, &ty, &inherited)),
         }
         self.report(DiagnosticKind::NotConform {
@@ -1010,8 +1017,31 @@ impl Checker<'_> {
                 requires: (!requires.in_prelude()).then_some(requires),
                 extend,
                 needs,
+                add,
+                make,
             },
         });
+    }
+
+    /// The first bound of the conformance `index` of `interface` that fails for `bound`, what
+    /// stands for its parameters: the place of its parameter, the bound as that conformance
+    /// writes it, and its arguments with the types that stand for the parameters.
+    pub(super) fn first_failing_bound(
+        &mut self,
+        interface: InterfaceId,
+        index: usize,
+        bound: tir::TypeArgs,
+    ) -> (usize, Bound, tir::TypeArgs) {
+        let (_, bounds) = (self.conformance_bounds.get(&(interface, index)))
+            .expect("a conformance that a type does not meet should have bounds")
+            .clone();
+        (bounds.iter().enumerate())
+            .flat_map(|(i, bounds)| bounds.iter().map(move |&b| (i, b)))
+            .find_map(|(i, b)| {
+                let args = self.subst_args(b.args, bound.get());
+                (!self.conforms(bound.get()[i], b.interface, args)).then_some((i, b, args))
+            })
+            .expect("a conformance that a type does not meet should have a bound that fails")
     }
 
     /// The first bound of the conformance `index` of `interface` that fails for `bound`, what
@@ -1022,19 +1052,10 @@ impl Checker<'_> {
         index: usize,
         bound: tir::TypeArgs,
     ) -> (String, Span) {
-        let (params, bounds) = (self.conformance_bounds.get(&(interface, index)))
-            .expect("a conformance that a type does not meet should have bounds")
-            .clone();
-        let failing = (bounds.iter().enumerate())
-            .flat_map(|(i, bounds)| bounds.iter().map(move |b| (i, b)))
-            .find(|&(i, b)| {
-                let args = self.subst_args(b.args, bound.get());
-                !self.conforms(bound.get()[i], b.interface, args)
-            })
-            .expect("a conformance that a type does not meet should have a bound that fails");
-        let (i, b) = failing;
+        let (i, b, _) = self.first_failing_bound(interface, index, bound);
+        let param = self.conformance_bounds[&(interface, index)].0[i];
         (
-            format!("{}: {}", params[i], self.bound_text(b.interface, b.args)),
+            format!("{param}: {}", self.bound_text(b.interface, b.args)),
             b.at,
         )
     }

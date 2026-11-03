@@ -1,0 +1,38 @@
+class Node {
+    v: i64
+}
+
+class Pair<A> {
+    a: A
+}
+
+extend<A: Eq> Pair<A>: Eq {
+    fn eq(self, other: Pair<A>) -> bool {
+        self.a == other.a
+    }
+}
+
+class Cell<T> {
+    x: T
+}
+
+extend<T: Eq> Cell<T> {
+    fn has(self, y: T) -> bool {
+        self.x == y
+    }
+}
+
+extend<T> Cell<Pair<T>> {
+    fn probe(self, y: Pair<T>) -> bool {
+        has(y)
+    }
+}
+
+fn main() {
+    let ps = [Pair(a: Node(v: 1))]
+    print(contains(ps, Pair(a: Node(v: 1))))
+    let qs: [Pair<Node>]? = None
+    print(contains(qs, Pair(a: Node(v: 1))))
+    print(contains(ps, Pair(a: Node(v: 1)), 3))
+    print(Cell(x: Pair(a: 1)).probe(Pair(a: 1)))
+}
