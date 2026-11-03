@@ -29,7 +29,9 @@ The batch runs for hours, and the context gets compacted. Keep its state in
 `.scratch/<batch>/progress.md` ([ledger.md](ledger.md) gives the form). Put
 the briefs, the logs and the root-cause notes in the same folder. Update the
 ledger after each event: a stop answered, a dispatch, a report, a ruling, a
-commit. When the user asks you to resume, read the ledger first. Go on from
+commit. Add an event or an "After the merge" line with
+`python3 .agents/skills/solve-issues/scripts/ledger.py <progress.md> event|after-merge "<text>"`.
+When the user asks you to resume, read the ledger first. Go on from
 its last event.
 
 ## Steps
