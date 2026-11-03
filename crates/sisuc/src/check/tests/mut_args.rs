@@ -174,6 +174,138 @@ fn mut_argument_should_not_promote() {
     codes(src, &[(Code::MutArgumentType, (6, 15))]);
 }
 
+/// The codes of the diagnostics of `src`, in order.
+fn found_codes(src: &str) -> Vec<Code> {
+    diags(src).iter().map(Diagnostic::code).collect()
+}
+
+/// GIVEN a generic callee whose `mut` parameter is `T?`, `[T?]` or an associated type, a method
+///   of a generic class, a bound method, an `any I` method and a call with explicit type
+///   arguments
+/// WHEN a call passes a place that the parameter would promote to an optional, or a place of
+///   another type
+/// THEN it is E0170 and nothing else: after inference the type of the place is the parameter's
+#[test]
+fn generic_mut_argument_should_not_promote() {
+    let assoc = "interface I {\n    type Item\n    fn get(self) -> Self.Item\n}\n\
+        class C: I {\n    n: i64\n    type Item = i64\n    fn get(self) -> i64 {\n        self.n\n    }\n}\n\
+        fn set<T: I>(c: T, mut x: T.Item) {\n    x = c.get()\n}\n";
+    let put = "interface P {\n    fn put(self, mut x: i64?)\n}\n\
+        class D: P {\n    n: i64\n    fn put(self, mut x: i64?) {\n        x = None\n    }\n}\n";
+    let rows = [
+        (
+            "T?",
+            "fn clr<T>(mut x: T?) {\n    x = None\n}\n\
+            fn main() {\n    let mut n = 1\n    clr(mut n)\n    print(n)\n}"
+                .to_owned(),
+        ),
+        (
+            "T? with explicit type arguments",
+            "fn clr<T>(mut x: T?) {\n    x = None\n}\n\
+            fn main() {\n    let mut n = 1\n    clr<i64>(mut n)\n    print(n)\n}"
+                .to_owned(),
+        ),
+        (
+            "[T?]",
+            "fn clr<T>(mut x: [T?]) {\n    x = [None]\n}\n\
+            fn main() {\n    let mut n = [1]\n    clr(mut n)\n    print(n)\n}"
+                .to_owned(),
+        ),
+        (
+            "[T]?",
+            "fn clr<T>(mut x: [T]?) {\n    x = None\n}\n\
+            fn main() {\n    let mut n = [1]\n    clr(mut n)\n    print(n)\n}"
+                .to_owned(),
+        ),
+        (
+            "T??",
+            "fn clr<T>(mut x: T??) {\n    x = None\n}\n\
+            fn main() {\n    let mut n: i64? = 1\n    clr(mut n)\n    print(n ?? 0)\n}"
+                .to_owned(),
+        ),
+        (
+            "method of a generic class",
+            "class S<T> {\n    n: i64\n    fn put(self, mut x: T?) {\n        x = None\n    }\n}\n\
+            fn main() {\n    let s = S<i64>(n: 1)\n    let mut a = 1\n    s.put(mut a)\n    print(a)\n}"
+                .to_owned(),
+        ),
+        (
+            "bound method",
+            format!(
+                "{put}fn run<T: P>(t: T) {{\n    let mut a = 1\n    t.put(mut a)\n    print(a)\n}}\n\
+                fn main() {{\n    run(D(n: 1))\n}}"
+            ),
+        ),
+        (
+            "any I method",
+            format!(
+                "{put}fn main() {{\n    let f: any P = D(n: 1)\n    let mut a = 1\n    \
+                f.put(mut a)\n    print(a)\n}}"
+            ),
+        ),
+        (
+            "associated type",
+            format!(
+                "{assoc}fn main() {{\n    let mut x = \"wrong\"\n    set(C(n: 2), mut x)\n    print(x)\n}}"
+            ),
+        ),
+        (
+            "associated type with explicit type arguments",
+            format!(
+                "{assoc}fn main() {{\n    let mut x = \"wrong\"\n    set<C>(C(n: 2), mut x)\n    print(x)\n}}"
+            ),
+        ),
+    ];
+    for (row, src) in rows {
+        assert_eq!(found_codes(&src), [Code::MutArgumentType], "row `{row}`");
+    }
+    // The right type is no error, also through an associated type.
+    let src = format!(
+        "{assoc}fn main() {{\n    let mut x = 1\n    set(C(n: 2), mut x)\n    print(x)\n}}"
+    );
+    codes(&src, &[]);
+}
+
+/// GIVEN a `mut` argument `mut self` outside a method
+/// WHEN it is checked
+/// THEN it is E0041 only: there is no `self` to pass, so no E0169
+#[test]
+fn mut_self_outside_a_method_should_be_reported_once() {
+    let rows = [
+        (
+            "function",
+            "fn set(mut x: i64) {\n    x = 1\n}\nfn main() {\n    set(mut self)\n}",
+        ),
+        (
+            "constant",
+            "fn set(mut x: i64) -> i64 {\n    x = 1\n    x\n}\nconst K = set(mut self)\nfn main() {}",
+        ),
+    ];
+    for (row, src) in rows {
+        let found = found_codes(src);
+        assert!(
+            !found.contains(&Code::MutArgumentNotPlace),
+            "row `{row}`: {found:?}"
+        );
+        assert!(
+            found.contains(&Code::SelfOutsideMethod),
+            "row `{row}`: {found:?}"
+        );
+    }
+}
+
+/// GIVEN `fn g(mut xs: [i64])` and `fn h(xs: [i64])`
+/// WHEN the `tir` is printed
+/// THEN the `mut` parameter shows its `mut`, as a `let mut` local does, and the other does not
+#[test]
+fn mut_parameter_should_print_with_its_mut() {
+    let printed = lowered(
+        "fn g(mut xs: [i64]) {\n    xs[0] = 1\n}\nfn h(xs: [i64]) {\n    print(xs)\n}\nfn main() {}",
+    );
+    assert!(printed.contains("(fn g ((mut xs#0 [i64]))"), "{printed}");
+    assert!(printed.contains("(fn h ((xs#0 [i64]))"), "{printed}");
+}
+
 /// GIVEN `fn f(mut xs: [i64])` whose body assigns `xs` whole and writes an element
 /// WHEN it is checked
 /// THEN it checks clean, and the same body with a plain `xs` is E0001 twice

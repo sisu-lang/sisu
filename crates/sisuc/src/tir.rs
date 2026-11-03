@@ -3670,6 +3670,18 @@ mod tests {
             ),
             (ExprKind::Loop(body), 9),
             (ExprKind::Block(valued(1)), 1),
+            (
+                ExprKind::MutCall {
+                    call: n(3),
+                    muts: vec![MutArg {
+                        keep: vec![(LocalId(0), int(1))],
+                        temp: LocalId(1),
+                        read: int(2),
+                    }],
+                    back: valued(4),
+                },
+                4,
+            ),
         ];
         for (kind, children) in cases {
             let mut e = expr(kind, Type::I64);

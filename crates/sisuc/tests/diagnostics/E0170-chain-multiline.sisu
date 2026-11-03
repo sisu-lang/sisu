@@ -1,0 +1,19 @@
+// GIVEN `fill(mut mk(\n)?.cells)`, whose head before the `?.` spans two lines
+// WHEN `sisu check` runs on it
+// THEN it reports E0170 on the argument, with the message and no help on one line each
+class Board {
+    mut cells: [i64]
+}
+
+fn mk() -> Board? {
+    Board(cells: [1])
+}
+
+fn fill(mut xs: [i64], n: i64) {
+    xs[0] = n
+}
+
+fn main() {
+    fill(mut mk(
+    )?.cells, 3)
+}
