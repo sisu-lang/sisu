@@ -1545,6 +1545,190 @@ fn header_jump_leaves_target_untyped() {
     );
 }
 
+/// Each row of `break_help_should_be_given_only_when_its_loop_body_holds_the_jump`: its name,
+/// its program with the jump at `@`, the jump, and whether the E0011 has the `( )` help.
+const BREAK_HELP_ROWS: [(&str, &str, &str, bool); 21] = [
+    // The `break` is in a loop header, or reaches its loop through one.
+    (
+        "if in the block of a while header",
+        "fn f(o: bool?) {\n    while {\n        if @ { print(1) }\n        true\n    } {\n        print(2)\n    }\n}",
+        "o ?? break",
+        false,
+    ),
+    (
+        "if let in the block of a while header",
+        "fn f(o: bool?) {\n    while {\n        if let y = @ { print(y) }\n        true\n    } {\n        print(2)\n    }\n}",
+        "o ?? break",
+        false,
+    ),
+    (
+        "else if in the block of a while header",
+        "fn f(o: bool?, c: bool) {\n    while {\n        if c { print(0) } else if @ { print(1) }\n        true\n    } {\n        print(2)\n    }\n}",
+        "o ?? break",
+        false,
+    ),
+    (
+        "match in the block of a while header",
+        "fn f(o: i64?) {\n    while {\n        match @ {\n            _ => print(1)\n        }\n        true\n    } {\n        print(2)\n    }\n}",
+        "o ?? break",
+        false,
+    ),
+    (
+        "while header itself",
+        "fn f(o: bool?) {\n    while @ {\n        print(2)\n    }\n}",
+        "o ?? break",
+        false,
+    ),
+    (
+        "if in a for source",
+        "fn f(o: bool?) {\n    for i in [{ if @ { print(1) }; 1 }] {\n        print(i)\n    }\n}",
+        "o ?? break",
+        false,
+    ),
+    (
+        "if let in a while let value",
+        "fn f(o: i64?) {\n    while let x = { if let y = @ { print(y) }; o } {\n        print(x)\n    }\n}",
+        "o ?? break",
+        false,
+    ),
+    (
+        "if with no loop",
+        "fn f(o: bool?) {\n    if @ { print(1) }\n}",
+        "o ?? break",
+        false,
+    ),
+    (
+        "match with no loop",
+        "fn f(o: i64?) {\n    match @ {\n        _ => print(1)\n    }\n}",
+        "o ?? break",
+        false,
+    ),
+    (
+        "loop that closed before the jump",
+        "fn f(o: bool?) {\n    while { loop { break }; if @ { print(1) }; true } {\n        print(2)\n    }\n}",
+        "o ?? break",
+        false,
+    ),
+    (
+        "label of an outer loop, across a while header",
+        "fn f(o: bool?) {\n    a: loop {\n        while {\n            if @ { print(1) }\n            true\n        } {\n            print(2)\n        }\n    }\n}",
+        "o ?? break a",
+        false,
+    ),
+    (
+        "label of the while whose header holds it",
+        "fn f(o: bool?) {\n    a: while { if @ { print(1) }; true } {\n        print(2)\n    }\n}",
+        "o ?? break a",
+        false,
+    ),
+    (
+        "label across a while header, below an inner loop",
+        "fn f(o: bool?) {\n    a: loop {\n        while { loop { if @ { print(1) } }; true } {\n            print(2)\n        }\n    }\n}",
+        "o ?? break a",
+        false,
+    ),
+    // The `break` is in the body of its loop.
+    (
+        "if in a loop inside a while header",
+        "fn f(o: bool?) {\n    while {\n        loop { if @ { print(1) } }\n        true\n    } {\n        print(2)\n    }\n}",
+        "o ?? break",
+        true,
+    ),
+    (
+        "if in a while body",
+        "fn f(o: bool?) {\n    while true {\n        if @ { print(1) }\n    }\n}",
+        "o ?? break",
+        true,
+    ),
+    (
+        "if let in a loop body",
+        "fn f(o: bool?) {\n    loop {\n        if let y = @ { print(y) }\n    }\n}",
+        "o ?? break",
+        true,
+    ),
+    (
+        "else if in a for body",
+        "fn f(o: bool?, c: bool) {\n    for i in [1] {\n        if c { print(i) } else if @ { print(1) }\n    }\n}",
+        "o ?? break",
+        true,
+    ),
+    (
+        "match in a loop body",
+        "fn f(o: i64?) {\n    loop {\n        match @ {\n            _ => print(1)\n        }\n    }\n}",
+        "o ?? break",
+        true,
+    ),
+    (
+        "label of an outer loop, with no header between",
+        "fn f(o: bool?) {\n    a: loop {\n        b: while true {\n            c: loop {\n                if @ { print(1) }\n            }\n        }\n    }\n}",
+        "o ?? break a",
+        true,
+    ),
+    (
+        "return in a while header",
+        "fn f(o: bool?) {\n    while {\n        if @ { print(1) }\n        true\n    } {\n        print(2)\n    }\n}",
+        "o ?? return",
+        true,
+    ),
+    (
+        "return with no loop",
+        "fn f(o: bool?) {\n    if @ { print(1) }\n}",
+        "o ?? return",
+        true,
+    ),
+];
+
+/// GIVEN a `break` or `return` with no value at the end of an `if`, `if let`, `else if` or `match`
+/// header, in each place a loop can be around it, so that the jump takes the body's `{`
+/// WHEN the front end reads the program
+/// THEN the E0011 has the `( )` help exactly when the `( )` form leaves the `break` in the body of
+/// its loop, or the jump is a `return`
+/// AND the `( )` form of each helped row checks with no E0082 and no E0038
+/// AND the `( )` form of each row with no help gives E0082 or E0038
+#[test]
+fn break_help_should_be_given_only_when_its_loop_body_holds_the_jump() {
+    const MAIN: &str = "\nfn main() {}";
+    for (row, template, jump, help) in BREAK_HELP_ROWS {
+        let broken = template.replace('@', jump) + MAIN;
+        let (_, ds) = crate::front_end::front_end(&broken);
+        let first = ds.first().expect("a jump that takes the block is an error");
+        assert_eq!(first.code(), Code::Expected, "row `{row}`: {broken}");
+        assert_eq!(first.help().is_some(), help, "row `{row}`: {broken}");
+
+        let grouped = template.replace('@', &format!("({jump})")) + MAIN;
+        let (_, ds) = crate::front_end::front_end(&grouped);
+        let codes: Vec<_> = ds.iter().map(Diagnostic::code).collect();
+        assert!(!codes.contains(&Code::Expected), "row `{row}`: {grouped}");
+        let leaves =
+            codes.contains(&Code::JumpInLoopHeader) || codes.contains(&Code::JumpOutsideLoop);
+        assert_eq!(leaves, !help, "row `{row}`: {grouped}: {codes:?}");
+    }
+    // The body parses as a block, so `header_body`, not `jump_value`, reports the `match`.
+    for (src, help) in [
+        (
+            "fn f(o: i64?) {\n    loop {\n        match o ?? break { print(1) }\n    }\n}",
+            true,
+        ),
+        (
+            "fn f(o: i64?) {\n    while {\n        match o ?? break { print(1) }\n        true\n    } { }\n}",
+            false,
+        ),
+    ] {
+        let src = &format!("{src}{MAIN}");
+        let (_, ds) = crate::front_end::front_end(src);
+        let first = ds.first().expect("a jump that takes the block is an error");
+        assert_eq!(first.code(), Code::Expected, "{src}");
+        assert_eq!(first.help().is_some(), help, "{src}");
+    }
+    // A loop that fails to parse leaves no loop open after it: the `break` in the next item has
+    // no loop, so it has no help.
+    let src = "const C: i64 = loop { let = 1 }\nfn h(o: bool?) {\n    if o ?? break { print(1) }\n}\nfn main() { }";
+    let (_, ds) = crate::front_end::front_end(src);
+    let at_break: Vec<_> = ds.iter().filter(|d| at(src, d.span()).0 == 3).collect();
+    assert_eq!(at_break.len(), 1, "{ds:?}");
+    assert!(at_break[0].help().is_none(), "{src}");
+}
+
 #[test]
 fn shadowing_makes_two_locals() {
     assert_eq!(
@@ -3326,6 +3510,96 @@ fn may_be_none_before_a_push_on_a_field_of_an_optional_array_should_offer_the_fi
         fixes(src, &d),
         [(false, vec![(2, 7, ".", "?.".to_owned())])]
     );
+}
+
+/// An unwrapped array is a copy. The unwrap help is given only where the unwrap changes the array
+/// that the `push` changes: when the object of a `?.` stores it. The `?.` fix is always offered.
+/// Each row is a program, the place of the error, and whether the help is given; the fixtures
+/// `E0062-push*` pin the text.
+#[test]
+fn push_onto_an_optional_array_should_offer_unwrap_help_only_for_a_stored_array() {
+    let rows = [
+        (
+            "local",
+            "fn main() {\n    let mut xs: [i64]? = [1]\n    xs.push(2)\n}",
+            (3, 5, "xs"),
+            false,
+        ),
+        (
+            "parameter",
+            "fn f(xs: [i64]?) {\n    xs.push(2)\n}\nfn main() {}",
+            (2, 5, "xs"),
+            false,
+        ),
+        (
+            "immutable local",
+            "fn main() {\n    let xs: [i64]? = [1]\n    xs.push(2)\n}",
+            (3, 5, "xs"),
+            false,
+        ),
+        (
+            "field of optional array type",
+            "class H {\n    mut xs: [i64]?\n}\nfn main() {\n    let h = H(xs: [1])\n    h.xs.push(2)\n}",
+            (6, 5, "h.xs"),
+            false,
+        ),
+        (
+            "element",
+            "fn main() {\n    let mut ys: [[i64]?] = [[1]]\n    ys[0].push(2)\n}",
+            (3, 5, "ys[0]"),
+            false,
+        ),
+        (
+            "call",
+            "fn g() -> [i64]? {\n    [1]\n}\nfn main() {\n    g().push(2)\n}",
+            (5, 5, "g()"),
+            false,
+        ),
+        (
+            "two layers",
+            "fn main() {\n    let mut xs: [i64]?? = Some(Some([1]))\n    xs.push(2)\n}",
+            (3, 5, "xs"),
+            false,
+        ),
+        (
+            "array stored by the object of a `?.`",
+            "class Bag {\n    mut items: [i64]\n}\nfn add(bag: Bag?) {\n    bag?.items.push(4)\n}\nfn main() {}",
+            (5, 5, "bag?.items"),
+            true,
+        ),
+        (
+            "array stored by an object that spans two lines",
+            "class Bag {\n    mut items: [i64]\n}\nfn g(a: i64, b: i64) -> Bag? {\n    None\n}\nfn main() {\n    g(1,\n      2)?.items.push(4)\n}",
+            (8, 5, "g(1,\n      2)?.items"),
+            false,
+        ),
+        (
+            "optional array stored by the object of a `?.`",
+            "class H {\n    mut xs: [i64]?\n}\nfn add(h: H?) {\n    h?.xs.push(4)\n}\nfn main() {}",
+            (5, 5, "h?.xs"),
+            false,
+        ),
+        (
+            "array stored by an optional object",
+            "class H {\n    mut xs: [i64]\n}\nfn main() {\n    let h: H? = H(xs: [1])\n    h.xs.push(2)\n}",
+            (6, 5, "h"),
+            true,
+        ),
+    ];
+    for (row, src, pos, help) in rows {
+        let d = diagnostic_row(row, src, Code::MayBeNone, pos, &[]);
+        assert_eq!(d.help().is_some(), help, "{row}");
+        let fixes: Vec<_> = d.fixes().iter().map(Fix::safe).collect();
+        assert_eq!(fixes, [false], "{row}: one unsafe fix");
+    }
+}
+
+/// A read keeps its unwrap help: a copy is right for a read.
+#[test]
+fn read_of_an_optional_array_should_offer_the_unwrap_help() {
+    let src = "fn main() {\n    let xs: [i64]? = [1]\n    print(xs.len())\n}";
+    let d = diagnostic(src, Code::MayBeNone, (3, 11, "xs"), &[]);
+    assert!(d.help().is_some());
 }
 
 /// An index after the step makes the `?.` fix lead to an index on an optional. So there is no

@@ -625,8 +625,13 @@ impl Checker<'_> {
             }
             _ => {}
         }
-        let ty = type_of(&receiver);
-        match self.find_method(ty, receiver_expr, site, indexed, (span, args.is_empty())) {
+        match self.find_method(
+            &receiver,
+            receiver_expr,
+            site,
+            indexed,
+            (span, args.is_empty()),
+        ) {
             Some(Found::Func(func)) => self.invoke(span, func, Some(receiver), site, args),
             Some(Found::GeneratedDisplay { listed }) => {
                 self.generated_display(span, receiver, site, args, listed)

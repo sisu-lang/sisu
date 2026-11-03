@@ -726,6 +726,7 @@ impl Checker<'_> {
     /// An `if let` of the array binds a copy, which is no place. The help names the object of the
     /// `?.` only when that object is what makes the array optional: the `?.` field stores an
     /// array, and the object is a class, so its field is a place. Else no unwrap gives a place.
+    /// `Checker::pushed_array_unwrap` states the same rule for a `push`: change both.
     fn optional_array_target(&mut self, base: &ast::Expr, inner: &CheckedPlace) {
         let unwrap = match (&base.kind, &inner.guard, inner.ty.map(Type::kind)) {
             (

@@ -1,0 +1,14 @@
+// GIVEN a `let ... else` whose pattern is written with braces
+// WHEN `sisu check` runs on it
+// THEN it reports E0123 at the braces (10:14), as the same pattern in an `if let` does
+enum Shape {
+    Rect(w: i64, h: i64)
+    Dot
+}
+
+fn area(s: Shape) -> i64 {
+    let Rect { w, h } = s else { return 0 }
+    w * h
+}
+
+fn main() {}

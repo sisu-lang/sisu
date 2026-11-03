@@ -1,0 +1,8 @@
+class H {
+    mut xs: [i64]?
+}
+
+fn main() {
+    let h = H(xs: [1])
+    h.xs.push(2)
+}
