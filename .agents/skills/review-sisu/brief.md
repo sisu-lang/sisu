@@ -185,7 +185,9 @@ vague or generic error, or with none.
   `python3 scripts/diag_diff.py BASE_SISU HEAD_SISU DIR...`. Add the `probes` directory next to
   this brief, when it exists: it holds the probes of the earlier rounds. It prints
   each program the head newly accepts, newly rejects or reports
-  differently, with the codes and positions of both.
+  differently, with the codes and positions of both. When the diff changes the
+  message, a label, the help or a fix of a diagnostic, add `--full`: it also
+  compares and prints that text.
 - When the diff re-blesses expected files by a fixed rewording, run
   `python3 scripts/golden_diff.py <base>..<head> OLD NEW [OLD NEW]...`
   and sample a few files rather than read them all. It fails on any

@@ -1,9 +1,13 @@
 """Unit tests for diag_diff.py: python3 -m unittest discover -s scripts -p 'test_*.py'."""
 import contextlib
 import io
+import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 import diag_diff as dd
 
@@ -69,6 +73,61 @@ class DiagDiff(unittest.TestCase):
         lines = out.getvalue().splitlines()
         self.assertTrue(lines[0].startswith('crash: '), lines)
         self.assertEqual(lines[-1], 'diag_diff: 1 programs, 1 crash')
+
+    def test_full_should_report_a_program_whose_help_alone_differs(self):
+        """
+        GIVEN a program whose diagnostic has the same code and position in both builds
+        AND a help that differs
+        WHEN diag_diff runs without and with `full`
+        THEN only the run with `full` reports it, and shows the help of each build
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            open(os.path.join(tmp, 'help.sisu'), 'w').close()
+            base = fake_sisu(tmp, 'base', {'help': E0032.replace('}]}', '}],"help":"use `match`"}')})
+            head = fake_sisu(tmp, 'head', {'help': E0032.replace('}]}', '}],"help":"use a plain `let`"}')})
+            runs = []
+            for full in (False, True):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    runs.append((dd.main(base, head, tmp, full=full), out.getvalue().splitlines()))
+        self.assertEqual(runs[0], (0, ['diag_diff: 1 programs, no differences']))
+        status, lines = runs[1]
+        self.assertEqual(status, 1)
+        self.assertTrue(lines[0].startswith('changed: '), lines)
+        self.assertIn('"help": "use `match`"', lines[1])
+        self.assertIn('"help": "use a plain `let`"', lines[2])
+        self.assertEqual(lines[-1], 'diag_diff: 1 programs, 1 changed')
+    def test_full_should_report_each_text_field_that_alone_differs(self):
+        """
+        GIVEN programs whose diagnostic differs in one field each: the message, the label, a
+        secondary label, the message of a fix, an edit of a fix and the safe flag of a fix
+        WHEN diag_diff runs from the command line without and with `--full`
+        THEN only the run with `--full` reports each of them
+        """
+        def diagnostic(message='m', label='l', other='o', fix='f', replacement='', safe=True):
+            return json.dumps({
+                'kind': 'diagnostic', 'code': 'E0131', 'severity': 'error', 'message': message,
+                'primary': {'line': 1, 'column': 1, 'label': label},
+                'secondary': [{'line': 2, 'column': 1, 'label': other}],
+                'fixes': [{'message': fix, 'safe': safe,
+                           'edits': [{'start': 0, 'end': 1, 'replacement': replacement}]}]})
+        changed = {'message': {'message': 'n'}, 'label': {'label': 'k'},
+                   'secondary': {'other': 'p'}, 'fix': {'fix': 'g'},
+                   'edit': {'replacement': 'x'}, 'safe': {'safe': False}}
+        script = os.path.join(os.path.dirname(os.path.abspath(dd.__file__)), 'diag_diff.py')
+        with tempfile.TemporaryDirectory() as tmp:
+            for stem in changed:
+                open(os.path.join(tmp, f'{stem}.sisu'), 'w').close()
+            base = fake_sisu(tmp, 'base', {stem: diagnostic() for stem in changed})
+            head = fake_sisu(tmp, 'head', {stem: diagnostic(**f) for stem, f in changed.items()})
+            runs = [subprocess.run([sys.executable, script, *flag, base, head, tmp],
+                                   capture_output=True, text=True) for flag in ([], ['--full'])]
+        self.assertEqual((runs[0].returncode, runs[0].stdout),
+                         (0, 'diag_diff: 6 programs, no differences\n'))
+        self.assertEqual(runs[1].returncode, 1)
+        reported = {Path(line.split(': ', 1)[1]).stem
+                    for line in runs[1].stdout.splitlines() if line.startswith('changed: ')}
+        self.assertEqual(reported, set(changed))
 
 
 if __name__ == '__main__':

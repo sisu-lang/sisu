@@ -302,11 +302,30 @@ pub(super) fn ret() -> Terminator {
 }
 
 /// Asserts that `one`, `two` and `three`, the reads for inputs of size `n`, `2n` and `3n`,
-/// grow no faster than `n log n`: the second step adds at most a tenth more than the first.
-/// The wavelet matrix and its queries add one bit level per doubling of the depths they hold,
-/// a few percent from `2n` to `3n`; quadratic work makes the second step two thirds larger.
+/// grow no faster than `n` times a slowly growing factor: the second step adds at most a tenth
+/// more than the first. The wavelet matrix and its queries add one bit level per doubling of the
+/// depths they hold, a few percent from `2n` to `3n`; quadratic work makes the second step two
+/// thirds larger. A binary search fails it for about half of all `n`: it reads about
+/// `n * ceil(log2 n)`, and that steps up when a power of two falls between `2n` and `3n`. Use
+/// `assert_subquadratic` for a search.
 pub(crate) fn assert_near_linear(one: usize, two: usize, three: usize) {
     assert_near_linear_for("", one, two, three);
+}
+
+/// Asserts that `one` and `two`, the reads for inputs of size `n` and `2n`, grow slower than
+/// `n^2`: `two` is at most three times `one`. Linear work gives 2 and quadratic work 4. A
+/// binary search of `n * (c + k)` reads, with `c = ceil(log2 n)`, gives `2(c + k + 1)/(c + k)`:
+/// below 3 when `c + k` is above 2, so `n` must be above 4 when `k` is 0. A count of 0 fails, so
+/// a walk that ticks no counter cannot pass.
+pub(crate) fn assert_subquadratic(one: usize, two: usize) {
+    assert!(
+        one > 0 && two > 0,
+        "a count is 0: {one} reads for n, {two} for 2n"
+    );
+    assert!(
+        two <= 3 * one,
+        "{one} reads for n, {two} for 2n: more than three times"
+    );
 }
 
 /// `assert_near_linear` for a table row: a failure message starts with `row`.
