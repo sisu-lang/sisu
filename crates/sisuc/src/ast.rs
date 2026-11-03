@@ -1105,15 +1105,18 @@ impl fmt::Display for Pattern {
 
 impl fmt::Display for Arg {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = if self.mut_keyword.is_some() {
-            format!("(mut {})", self.value)
-        } else {
-            self.value.to_string()
-        };
-        match &self.label {
-            Some(label) => write!(f, "(: {} {value})", label.name),
-            None => f.write_str(&value),
+        if let Some(label) = &self.label {
+            write!(f, "(: {} ", label.name)?;
         }
+        if self.mut_keyword.is_some() {
+            write!(f, "(mut {})", self.value)?;
+        } else {
+            write!(f, "{}", self.value)?;
+        }
+        if self.label.is_some() {
+            f.write_str(")")?;
+        }
+        Ok(())
     }
 }
 

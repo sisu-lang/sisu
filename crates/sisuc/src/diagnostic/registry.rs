@@ -443,8 +443,8 @@ pub(crate) enum DiagnosticKind {
     /// `any` at `at`, written in a way that it does not take.
     AnyForm { at: Span, form: AnyFormKind },
     /// A `mut` at `at` before an expression that is no argument. `binding` is whether the
-    /// expression is the value of a `let`. `fix_end` is where the operand starts, for the fix
-    /// that removes the keyword and the spaces after it.
+    /// expression is the value of a `let` that has no `mut`. `fix_end` is the end of the spaces
+    /// and tabs after the keyword, for the fix that removes them with it.
     MutNotArgument {
         at: Span,
         binding: bool,

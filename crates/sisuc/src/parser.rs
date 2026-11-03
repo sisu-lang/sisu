@@ -2400,6 +2400,9 @@ impl<'a> Parser<'a> {
                 StmtKind::Expr(self.jump(base, &mut reach)?)
             }
             TokenKind::LBrace => return Err(DiagnosticKind::BlockAsStatement { at: start }.into()),
+            // A `mut` that starts a statement is most likely a declaration with no `let`, which
+            // no safe fix can tell from an assignment.
+            TokenKind::Mut => return Err(self.expected("an expression")),
             _ => self.expr_or_assign()?,
         };
         // `let_stmt` and `expr_or_assign` leave their own height in `self.depth`.
@@ -3526,7 +3529,8 @@ impl<'a> Parser<'a> {
             return Err(error);
         }
         if self.at(&TokenKind::Mut) {
-            return Err(self.mut_not_argument(true));
+            // A `let mut` already binds a variable, and a block `const` has no `let`.
+            return Err(self.mut_not_argument(pattern_forms && keyword.is_none()));
         }
         let init = self.child(base, &mut reach, Self::expr)?;
         self.depth = reach;
@@ -4572,16 +4576,14 @@ impl<'a> Parser<'a> {
     }
 
     /// E0168 for the `mut` at the next token, which no argument owns. `binding` is whether it
-    /// stands right after the `=` of a `let`. The fix removes the keyword and the spaces after it,
-    /// not a line break.
+    /// stands right after the `=` of a `let` that has no `mut`. The fix removes the keyword and
+    /// the spaces and tabs after it, and no comment or line break.
     fn mut_not_argument(&self, binding: bool) -> Diagnostic {
         let at = self.peek().span;
         // `mut` is never `Eof`, so the token after it exists.
         let next = &self.tokens[self.pos + 1];
-        let fix_end = match next.kind {
-            TokenKind::Newline | TokenKind::Eof => at.end(),
-            _ => next.span.start(),
-        };
+        let gap = self.source.slice(at.end()..next.span.start());
+        let fix_end = at.end() + gap.len() - gap.trim_start_matches([' ', '\t']).len();
         DiagnosticKind::MutNotArgument {
             at,
             binding,
