@@ -4,7 +4,7 @@
 # ///
 """Builds the site into site/_site and checks it.
 
-Usage: uv run --locked --script site/build.py [--out DIR] [--forbid-tk] [--test] [--categories]
+Usage: uv run --locked --script site/build.py [--out DIR] [--forbid-tk] [--test] [--categories] [--decisions]
 
 Each site/src/<page>.html gives <page>.html: line 1 is its title, line 2 its meta description,
 the rest its body, filled in between _head.html and _foot.html. Each docs/diagnostics/<code>.md
@@ -719,6 +719,14 @@ def expand(text: str, context: dict[str, str]) -> str:
     return DIRECTIVE.sub(one, text)
 
 
+def split_source(text: str) -> tuple[str, str, str]:
+    """The title, the description and the body of a src page, without the editors' comment lines."""
+    if text.count('\n') < 2:
+        raise BuildError('needs a title line, a description line and the body')
+    name, description, rest = text.split('\n', 2)
+    return name, description, '\n'.join(line for line in rest.split('\n') if not COMMENT_LINE.fullmatch(line))
+
+
 def assemble(body: str, *, title: str, description: str, page: str, depth: int, context: dict[str, str]) -> str:
     """Head, body and foot, with `page`'s nav link marked current."""
     # 404.html is served at any depth, so its links start at the site root.
@@ -747,10 +755,7 @@ def build(out: Path) -> None:
     for src in sorted((SITE / 'src').glob('*.html')):
         text = src.read_text(encoding='utf-8')
         try:
-            if text.count('\n') < 2:
-                raise BuildError('needs a title line, a description line and the body')
-            name, description, rest = text.split('\n', 2)
-            body = '\n'.join(line for line in rest.split('\n') if not COMMENT_LINE.fullmatch(line))
+            name, description, body = split_source(text)
             page = assemble(body, title=name, description=description, page=src.name, depth=0, context={})
         except BuildError as e:
             raise BuildError(f'{src.relative_to(ROOT)}: {e}') from e
@@ -933,6 +938,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument('--forbid-tk', action='store_true', help='also fail on any [TK marker')
     parser.add_argument('--test', action='store_true', help='run build_test.py instead')
     parser.add_argument('--categories', action='store_true', help='only check data/categories.toml against docs/diagnostics')
+    parser.add_argument('--decisions', action='store_true', help='only check src/decisions.html against docs/adr')
     args = parser.parse_args(argv)
     if args.test:
         sys.path.insert(0, str(SITE))
@@ -942,6 +948,8 @@ def main(argv: list[str]) -> int:
     try:
         if args.categories:
             found = [f'data/categories.toml: {p}' for p in category_problems()]
+        elif args.decisions:
+            found = [f'decisions.html: {p}' for p in adr_problems(split_source(read('src/decisions.html'))[2])]
         else:
             build(args.out)
             found = check_site(args.out, forbid_tk=args.forbid_tk)

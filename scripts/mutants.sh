@@ -8,8 +8,8 @@
 # An argument that tests no mutant (--list, --list-files, --check and the like) ends with
 # "mutation-test: NOT RUN", never PASS.
 # Two passes keep it short. Pass 1 tests each mutant with the unit tests only (`--lib`,
-# about 6 s against 47 s for the whole suite). Pass 2 runs only when pass 1 missed a mutant:
-# it tests the mutants that pass 1 did not catch (--iterate) with the whole suite, so a
+# about 6 s against 47 s for the whole suite). Pass 2 runs only when pass 1 missed a mutant
+# or timed out. It tests the mutants that pass 1 did not catch (--iterate) with the whole suite, so a
 # mutant that only an end-to-end test kills is caught, not missed. The summary adds the counts.
 # Arguments after -- choose the tests yourself: the script then runs one pass with them.
 # Each mutant still costs one build, so a large diff takes an hour or more.
@@ -19,6 +19,13 @@
 # lines of a refused argument or of a refused tree do not.
 # It refuses uncommitted Rust changes, because a review takes the log of a commit only.
 # PASS needs no missed mutant; a timeout counts as caught.
+# Pass 2 waits 600 s for each mutant. MUTANTS_PASS2_TIMEOUT sets another number.
+# A --timeout, -t or --timeout-multiplier of the caller replaces it.
+# Without it, cargo mutants takes the wait from its baseline run, about 2 x 41 s in one run.
+# With 2 mutants at a time, the whole suite is slower than that.
+# A mutant that every test passes would then time out and count as caught.
+# After 600 s, a timeout of pass 2 is a hang. Pass 1 keeps the wait from the baseline.
+# Its tests are fast.
 # A run that tests no mutant, for example when the diff holds none, passes with "no mutant tested".
 # A diff that changes no .rs file passes without running cargo mutants.
 # More than 300 mutants (MUTANTS_MAX sets another limit) fails at once, before a pass starts.
@@ -57,6 +64,7 @@ base=${1:-$(git merge-base origin/main HEAD)}
 not_run=
 test_args=
 iterate=
+caller_timeout=
 for arg in "$@"; do
   case $arg in
     --)
@@ -64,6 +72,7 @@ for arg in "$@"; do
       break
       ;;
     --iterate) iterate=yes ;;
+    -t* | --timeout | --timeout=* | --timeout-multiplier | --timeout-multiplier=*) caller_timeout=yes ;;
     -o* | --output | --output=* | -d* | --dir | --dir=* | --manifest-path | --manifest-path=*)
       verdict="mutation-test: FAIL: $arg moves mutants.out or the tree; the summary needs the default"
       echo "$verdict"
@@ -143,11 +152,15 @@ fi
 caught=0
 unviable=0
 # Pass 2: exit 2 is a missed mutant and 3 a timeout; any other failure stops the run here.
-if [[ -z $test_args && -n $tested ]] && ((status == 2 || status == 3)) && (($(count missed) > 0)); then
+if [[ -z $test_args && -n $tested ]] && ((status == 2 || status == 3)) && (($(count missed) + $(count timeout) > 0)); then
   caught=$(count caught)
   unviable=$(count unviable)
-  echo "mutation-test: pass 1 (unit tests) missed $(count missed); pass 2 tests them with the whole suite"
-  if [[ -n $iterate ]]; then pass "$@"; else pass --iterate "$@"; fi
+  echo "mutation-test: pass 1 (unit tests) missed $(count missed) and timed out on $(count timeout); pass 2 tests them with the whole suite"
+  # An explicit --timeout beats the baseline wait; cargo mutants reads a new baseline in each run.
+  pass2_args=()
+  [[ -n $caller_timeout ]] || pass2_args=(--timeout "${MUTANTS_PASS2_TIMEOUT:-600}")
+  [[ -n $iterate ]] || pass2_args+=(--iterate)
+  pass "${pass2_args[@]}" "$@"
 fi
 missed=0
 if [[ -n $tested ]]; then
