@@ -122,6 +122,7 @@ impl Checker<'_> {
             self.show(value.span, want, text);
         }
         let value = self.expect(value, place.ty);
+        self.inferred_by_write(target, &value, span.end());
         self.assigned(span, place, value)
     }
 
@@ -313,6 +314,16 @@ impl Checker<'_> {
         }
         // A receiver that failed has reported itself.
         if receiver.is_err() {
+            // A local with no type is not pushed to, but the element gives its type. The element
+            // is checked once, as `stray` checks it.
+            if let [arg] = args
+                && let Some(local) = self.pushed_to_uninferred(receiver_expr)
+            {
+                if let Ok(pushed) = self.expr(&arg.value, Some(UNKNOWN)) {
+                    self.inferred_by_use(local, pushed.ty, arg.value.span.end());
+                }
+                return unit();
+            }
             return not_pushed(self, None);
         }
         if !is_place(receiver_expr) {

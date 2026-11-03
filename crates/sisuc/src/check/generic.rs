@@ -1358,6 +1358,13 @@ fn bound_by_context(call: &Inference<'_>, pattern: Type) -> bool {
     names_marked(pattern, |j| call.origin.get(j) == Some(call.at), true)
 }
 
+/// Whether `pattern`, which `known_in` gives no type for, names no unbound parameter: an
+/// associated type in it has no choice, which its conformance reported. The call fails after
+/// that report. A second walk of `pattern`, only where a call writes an associated type.
+fn lacks_choice(call: &Inference<'_>, pattern: Type) -> bool {
+    matches!(call.early, Some(Early { assoc: true, .. })) && call.bindings.known(pattern).is_some()
+}
+
 /// `found`, a parameter's binding, as a bound sees it: `UNKNOWN` while it is unbound or rejected.
 fn listed(found: Option<Type>) -> Type {
     found.filter(|&t| t != *REJECTED).unwrap_or(UNKNOWN)
@@ -1619,10 +1626,14 @@ impl Checker<'_> {
         }
     }
 
-    /// `bindings.partial(ty)`, with the associated types of known types replaced.
+    /// `bindings.partial(ty)`, with the associated types of known types replaced. An associated
+    /// type of a known type that has no type is `REJECTED`: its conformance, or the bound of its
+    /// base, reported why, so a call in an argument that meets it reports nothing for it (see
+    /// `Bindings::bind`).
     fn partial(&self, bindings: &Bindings, ty: Type) -> Type {
         let partial = bindings.partial(ty);
-        self.normalize(partial).unwrap_or(partial)
+        self.normalize_failing(partial, *REJECTED)
+            .unwrap_or(partial)
     }
 
     /// `bindings.printed(ty)`, with the associated types of known types replaced.
@@ -1721,6 +1732,7 @@ impl Checker<'_> {
             self.infer_arg(&mut call, i, &arg.value, sig.params[i], None);
         }
         let mut misfit = None;
+        let whole = |want| through || ranks.contains(&2) || layers > 0 && !wider_than(want, layers);
         if let (Some(ret), Some(want)) = (sig.ret, plain.filter(|&ty| ty != UNKNOWN)) {
             // The return type meets `want` whole if it can and an argument waits for it, or
             // makes the optional itself and has the type of the return type (`through`), or the
@@ -1731,8 +1743,7 @@ impl Checker<'_> {
             // cannot meet either is reported where the value is used, unless the context fits
             // alone: then the arguments that contradict it are reported, each at its own place.
             // Type arguments that the call writes are its own.
-            let whole = through || ranks.contains(&2) || layers > 0 && !wider_than(want, layers);
-            let met = (whole && call.bindings.unify(ret, want))
+            let met = (whole(want) && call.bindings.unify(ret, want))
                 || call.bindings.constrain(ret, payload(want));
             misfit = self.misfit(span, ret, want, met).then_some((ret, want));
             if !met && written.is_empty() && !call.failed {
@@ -1751,9 +1762,12 @@ impl Checker<'_> {
                 self.infer_arg(&mut call, i, &arg.value, sig.params[i], None);
             }
         }
-        // A parameter that no argument bound takes the `any` context, as pass 2 would bind it.
+        // A parameter that no argument bound takes the `any` context, as pass 2 would bind it,
+        // whole or its payload, and meets its bound, as a binding from a plain context does.
         if let (Some(ret), Some(want)) = (sig.ret, into_any) {
-            let _ = call.bindings.unify(ret, want) || call.bindings.constrain(ret, payload(want));
+            let _ = (whole(want) && call.bindings.unify(ret, want))
+                || call.bindings.constrain(ret, payload(want));
+            self.report_fresh(&mut call, span);
         }
         self.sweep_waiting(&mut call, sig, args, &ranks, &fit);
         for (i, ty) in std::mem::take(&mut call.last) {
@@ -2485,6 +2499,10 @@ impl Checker<'_> {
             }
             Some(_) => {
                 let want = self.known_in(call, pattern);
+                // `e` bound the base of the associated type that has no choice.
+                if want.is_none() && lacks_choice(call, pattern) {
+                    return Err(Poisoned::error());
+                }
                 debug_assert!(
                     want.is_some() || call.failed || call.rejected,
                     "a unified pattern should be known, unless a bound check failed"
