@@ -3,7 +3,9 @@
 use std::ops::Range;
 
 use super::generic::Site;
-use super::{Checked, Checker, Poisoned, UNKNOWN, Uninferred, payload, tail, type_of, wrap};
+use super::{
+    Checked, Checker, Poisoned, UNKNOWN, Uninferred, is_kept, payload, tail, type_of, wrap,
+};
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
     Code, Definition, Diagnostic, DiagnosticKind, Expected, Literal, MismatchSource, suggestion,
@@ -88,6 +90,7 @@ impl Checker<'_> {
                     ty: Some(ty),
                     mismatch: true,
                     found: None,
+                    kept: false,
                 });
             }
             return Ok(tir::Expr::new(tir::ExprKind::Float(x), ty, at));
@@ -107,6 +110,7 @@ impl Checker<'_> {
                 ty: Some(ty),
                 mismatch: true,
                 found: None,
+                kept: false,
             });
         }
         Ok(tir::Expr::new(tir::ExprKind::Int(value), ty, at))
@@ -208,6 +212,10 @@ impl Checker<'_> {
                     UnaryOp::Neg => self.negated(e.span, operand, expected)?,
                     UnaryOp::Not => (Type::BOOL, self.operand(operand, Some(Type::BOOL))),
                 };
+                // `-` of a value that kept its E0050 keeps it, as an operator does.
+                if *op == UnaryOp::Neg && is_kept(&operand) {
+                    return Err(Poisoned::kept_error());
+                }
                 typed(
                     e.span,
                     want,
@@ -502,6 +510,7 @@ impl Checker<'_> {
             ty: None,
             mismatch: true,
             found: None,
+            kept: false,
         })
     }
 

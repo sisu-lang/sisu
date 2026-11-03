@@ -1,0 +1,164 @@
+error[E0032]: expected `string`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:36:9
+   |
+36 |     Err(mk2())
+   |         ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:40:8
+   |
+40 |     id(mk2())
+   |        ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:44:15
+   |
+44 |     return id(mk2())
+   |               ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:48:45
+   |
+48 |     let a1: Result<i64, string> = Result.Ok(mk2())
+   |                                             ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:49:33
+   |
+49 |     let a2: Cell<i64> = Cell(v: mk2())
+   |                                 ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:50:30
+   |
+50 |     let a3: Gen<i64> = Gen.C(mk2())
+   |                              ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:51:15
+   |
+51 |     accept(Ok(mk2()))
+   |               ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:52:28
+   |
+52 |     let a4: i64? = Some(id(mk2()))
+   |                            ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:53:25
+   |
+53 |     let a5: [i64] = [id(mk2())]
+   |                         ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:54:25
+   |
+54 |     let a6: i64 = id(id(mk2()))
+   |                         ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:55:22
+   |
+55 |     let a7: i64 = id(mk2())
+   |                      ^^^^^
+
+error[E0032]: expected `i64?`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:56:23
+   |
+56 |     let a8: i64? = id(mk2())
+   |                       ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:57:18
+   |
+57 |     print(1 + id(mk2()))
+   |                  ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:58:18
+   |
+58 |     print(1 * id(mk2()))
+   |                  ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:59:18
+   |
+59 |     print(1 < id(mk2()))
+   |                  ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:60:28
+   |
+60 |     let a9: [i64] = [1, id(mk2())]
+   |                            ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:61:34
+   |
+61 |     let b1: [i64?] = [1, Some(id(mk2()))]
+   |                                  ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:62:14
+   |
+62 |     takes(id(mk2()))
+   |              ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:64:13
+   |
+64 |     b2 = id(mk2())
+   |             ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:66:15
+   |
+66 |     b3.n = id(mk2())
+   |               ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:67:26
+   |
+67 |     let b4 = Fixed(v: id(mk2()))
+   |                          ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:68:25
+   |
+68 |     let b5 = Plain.C(id(mk2()))
+   |                         ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:69:28
+   |
+69 |     let b6: i64 = id(id(id(mk2())))
+   |                            ^^^^^
+
+error[E0032]: expected `i64??`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:70:24
+   |
+70 |     let b7: i64?? = id(mk2())
+   |                        ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:71:37
+   |
+71 |     let b8: Two<i64, i64> = pair(1, mk2())
+   |                                     ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:73:40
+   |
+73 |     let b9: i64 = if c { 1 } else { id(mk2()) }
+   |                                        ^^^^^
+
+error[E0032]: expected `i64`, found `Two<X, bool>`
+  --> E0032-generic-context.sisu:74:26
+   |
+74 |     print(1 == takes2(id(mk2())))
+   |                          ^^^^^
+
+sisu: 27 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032
