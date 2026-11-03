@@ -1,0 +1,109 @@
+fn take(p: [any Display]) -> i64 { p.len() }
+fn pair<A, B>(a: A, b: B) -> A { a }
+fn pick(p: i64?) -> i64 { p ?? 0 }
+fn show(p: [any Display]) -> string { "s" }
+
+fn operand_first() {
+    let mut xs = []
+    let n = take(xs) + { xs.push('a'); 1 }
+    print(n)
+}
+
+fn array_elements() {
+    let mut xs = []
+    let n = [take(xs), { xs.push(1.5); 1 }]
+    print(n.len())
+}
+
+fn generic_arguments() {
+    let mut xs = []
+    let n = pair(take(xs), { xs.push(1.5); 1 })
+    print(n)
+}
+
+fn equality_operands() {
+    let mut xs = []
+    let n = take(xs) == { xs.push(1.5); 1 }
+    print(n)
+}
+
+fn order_operands() {
+    let mut xs = []
+    let n = take(xs) < { xs.push(1.5); 1 }
+    print(n)
+}
+
+fn product_operands() {
+    let mut xs = []
+    let n = take(xs) * { xs.push(1.5); 1 }
+    print(n)
+}
+
+fn sum_of_three() {
+    let mut xs = []
+    let n = 2 + take(xs) + { xs.push(1.5); 1 }
+    print(n)
+}
+
+fn read_in_block() {
+    let mut xs = []
+    let n = 1 + { take(xs) } + { xs.push(1.5); 1 }
+    print(n)
+}
+
+fn string_join() {
+    let mut xs = []
+    let s = show(xs) + { xs.push(1.5); "b" }
+    print(s)
+}
+
+fn optional_operands() {
+    let mut x = None
+    let n = pick(x) + { x = Some(1.5); 1 }
+    print(n)
+}
+
+fn if_arms() {
+    let c = true
+    let mut xs = []
+    let n = if c { take(xs) } else { xs.push(1.5); 1 }
+    print(n)
+}
+
+fn match_arms() {
+    let c = true
+    let mut xs = []
+    let n = match c { true => take(xs); false => { xs.push(1.5); 1 } }
+    print(n)
+}
+
+fn nested_join() {
+    let mut xs = []
+    let s = "a" + (show(xs) + { xs.push(1.5); "b" })
+    print(s)
+}
+
+fn push_argument_read() {
+    let mut xs = []
+    xs.push(take(xs))
+}
+
+fn write_value_read() {
+    let mut xs = []
+    xs = if take(xs) > 0 { [1.5] } else { [2.5] }
+}
+
+fn push_first_in_source() {
+    let mut xs = []
+    let n = { xs.push(1.5); 1 } + take(xs)
+    print(n)
+}
+
+fn read_then_push() {
+    let mut xs = []
+    let n = take(xs) + 1
+    xs.push(1.5)
+    print(n)
+}
+
+fn main() {}
