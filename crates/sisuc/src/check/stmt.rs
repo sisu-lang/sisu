@@ -6,12 +6,12 @@ use super::any::{AnyJoin, is_target, widen};
 use super::array::optional_array;
 use super::expr::{fits, local};
 use super::generic::Ahead;
-use super::pattern::{LetPattern, LetValue};
+use super::pattern::LetPattern;
 use super::prelude::PRELUDE;
 use super::unused_names::{Owner, Pending};
 use super::{
     Binding, BindingKind, Checked, CheckedBlock, Checker, Declared, LoopContext, LoopFrame,
-    LoopKind, Misfit, Poisoned, UNKNOWN, block_expr, built_in_type, starts_in, tail, type_of,
+    LoopKind, Poisoned, UNKNOWN, block_expr, built_in_type, starts_in, tail, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{
@@ -30,10 +30,10 @@ pub(super) struct BlockSoFar {
     failed: bool,
     /// Whether "unreachable code" is reported, or moot.
     warned: bool,
-    /// Whether the value rejected the type expected of it.
-    mismatch: bool,
-    /// What the value found and could not meet its context with (see `Misfit`).
-    found: Option<Misfit>,
+    /// The value, if it failed. It records whether the value rejected the type expected of it.
+    /// It records what the value found and could not meet its context with (see `Misfit`).
+    /// It records whether a generic call in it kept its E0050. A statement before it leaves none.
+    value: Option<Poisoned>,
     /// How many of the block's statements are checked.
     done: usize,
 }
@@ -45,8 +45,7 @@ impl Default for BlockSoFar {
             ty: Some(Type::UNIT),
             failed: false,
             warned: false,
-            mismatch: false,
-            found: None,
+            value: None,
             done: 0,
         }
     }
@@ -92,8 +91,7 @@ impl Checker<'_> {
             mut stmts,
             ty,
             failed,
-            mismatch,
-            found,
+            value,
             ..
         } = so_far;
         self.pop_scope();
@@ -102,11 +100,13 @@ impl Checker<'_> {
             // A tail that rejected `expected` fails the block, unless a `never` came first: then
             // no code uses the tail's value, so its misfit is not handed up.
             ty => {
-                let mismatch = mismatch && ty.is_none();
+                let value = value.unwrap_or_else(Poisoned::error);
+                let none = ty.is_none();
                 return Err(Poisoned {
                     ty,
-                    mismatch,
-                    found: found.filter(|_| ty.is_none()),
+                    mismatch: value.mismatch && none,
+                    found: value.found.filter(|_| none),
+                    kept: value.kept && none,
                 });
             }
         };
@@ -137,11 +137,7 @@ impl Checker<'_> {
                 so_far.warned = true;
             }
             let last = i + 1 == block.stmts.len();
-            let outer_jump = std::mem::take(&mut self.body.invalid_jump);
-            let checked = self.stmt(stmt, expected.filter(|_| last));
-            let invalid_jump = self.body.invalid_jump;
-            // Nested blocks leave their flag set, so an enclosing statement sees it too.
-            self.body.invalid_jump |= outer_jump;
+            let (checked, invalid_jump) = self.jumps(|c| c.stmt(stmt, expected.filter(|_| last)));
             let stmt_ty = match checked {
                 Ok(lowered) => {
                     if !last
@@ -160,12 +156,12 @@ impl Checker<'_> {
                 }
                 Err(poisoned) => {
                     so_far.failed = true;
-                    so_far.mismatch = last && poisoned.mismatch;
-                    so_far.found = poisoned.found.filter(|_| last);
+                    let ty = poisoned.ty;
+                    so_far.value = last.then_some(poisoned);
                     // An invalid jump made the block `never` only by error; what follows is no
                     // new news. Any other failed `never` statement still leaves the block.
-                    so_far.warned |= invalid_jump && poisoned.ty == Some(Type::NEVER);
-                    poisoned.ty
+                    so_far.warned |= invalid_jump && ty == Some(Type::NEVER);
+                    ty
                 }
             };
             if so_far.ty != Some(Type::NEVER) {
@@ -343,6 +339,7 @@ impl Checker<'_> {
                 let uses = self.aliases.uses;
                 let declared = ty.as_ref().map(|ty| self.resolve(ty));
                 let shown = ty.as_ref().and_then(|ty| self.shown_text(ty, uses));
+                let init_expr = init;
                 self.body.let_init = Some((init.span, name.name, mutable.is_some()));
                 self.body.failed_let = matches!(declared, Some(None)).then_some(init.span);
                 let init = match declared {
@@ -354,6 +351,7 @@ impl Checker<'_> {
                     }
                     None => self.value(init, None),
                 };
+                let uninferred = self.uninferred_of(init_expr);
                 self.body.let_init = None;
                 self.body.failed_let = None;
                 // `let _ = e` binds nothing: the value is an expression statement, which
@@ -380,6 +378,9 @@ impl Checker<'_> {
                     .and_then(|s| s.get_mut(&name.name))
                 {
                     binding.shown = shown;
+                }
+                if let (None, Some(uninferred)) = (ty, uninferred) {
+                    self.body.uninferred.insert(local, uninferred);
                 }
                 Ok(tir::Stmt::Let {
                     local,
@@ -526,8 +527,8 @@ impl Checker<'_> {
     /// of `if let`. The block is checked in its own scope, before the pattern binds anything, so
     /// it cannot read the names, and it must not finish. The names go in the enclosing scope.
     /// A failed block or value fails the statement, but the names are bound all the same, so
-    /// the lines after it report nothing of them. Without an `else_block`, the parser reported
-    /// the pattern (`RefutablePattern`).
+    /// the lines after it report nothing of them. Without an `else_block`, `let_without_else`
+    /// checks the statement.
     fn let_else(
         &mut self,
         mutable: Option<Span>,
@@ -536,14 +537,10 @@ impl Checker<'_> {
         else_block: Option<&ast::Block>,
     ) -> Result<tir::Stmt, Poisoned> {
         let unit = || Poisoned::typed(Type::UNIT);
-        let word = Unwrap::LetElse;
         let Some(else_block) = else_block else {
-            // Checked for its own errors. The type is unknown to the pattern, which only declares
-            // its names.
-            drop(self.value(value, None));
-            self.bind_pattern(Some(word), &LetValue::Match { ty: None }, pattern, None);
-            return Err(unit());
+            return self.let_without_else(pattern, value);
         };
+        let word = Unwrap::LetElse;
         let (scrutinee, form, _) = self.let_value(word, pattern, value);
         let block = self.block(else_block, None);
         if let Ok(block) = &block
@@ -588,6 +585,42 @@ impl Checker<'_> {
             test,
             else_block,
         })
+    }
+
+    /// `let pattern = value` with a pattern that is not a name and no `else`: always an error.
+    /// The value and the pattern are checked as in `let_else`. Then E0174 says that the pattern
+    /// always matches (the help is `match`) or can fail (the help is an `else`). A value that is
+    /// no enum or optional (E0051) and a pattern with an error of its own report that error
+    /// alone. A value with no type keeps its error and adds E0174. The names stay bound.
+    fn let_without_else(
+        &mut self,
+        pattern: &ast::Pattern,
+        value: &ast::Expr,
+    ) -> Result<tir::Stmt, Poisoned> {
+        let (scrutinee, form, mismatched) = self.let_value(Unwrap::Let, pattern, value);
+        let ty = type_of(&scrutinee);
+        let (bound, _) = self.bind_pattern_as(Some(Unwrap::Let), None, &form, pattern, None);
+        if !mismatched {
+            // A value with no type leaves `always` false.
+            let always = match ty {
+                None => Some(false),
+                Some(ty) => match &bound {
+                    LetPattern::Match { pattern: None } => None,
+                    LetPattern::Match {
+                        pattern: Some((checked, _)),
+                    } => Some(self.always_matches(ty, checked)),
+                    LetPattern::Some { .. } => Some(false),
+                },
+            };
+            if let Some(always) = always {
+                self.report(DiagnosticKind::RefutablePattern {
+                    at: pattern.span,
+                    shown: self.source.text(pattern.span).to_string(),
+                    always,
+                });
+            }
+        }
+        Err(Poisoned::typed(Type::UNIT))
     }
 
     /// `for`, lowered to a `Loop` as in the spec's table: over an array `s` through `s[i]`

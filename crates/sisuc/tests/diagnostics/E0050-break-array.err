@@ -4,7 +4,7 @@ error[E0050]: cannot infer the type of `[]`
 4 |         if c { break [] }
   |                      ^^
   |
-  = help: write the type: `let xs: [i64] = []`
+  = help: write the type: `let xs: [...] = []`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0050

@@ -19,4 +19,52 @@ exclude_re = [
     # swaps which draw takes the enum form. Both forms still come at the same rate, and no test
     # reads the text of a generated program.
     "replace == with != in Gen<'_>::let_else",
+    # `self.visits > MEMO_AFTER` in `WalkMemo::put`: the memo keeps answers from one visit
+    # earlier. Each kept answer is the walk's own answer for its key, so no output changes. The
+    # counter tests allow one more or one fewer visit.
+    "replace > with >= in WalkMemo<K, V>::put",
+    # `has_type_args` in `bind` and `hint_in`: the walks then use the memo for each kind, not only
+    # for a class, an enum or an `any`. A memo answer is right for every type, so no output
+    # changes. Only a lookup costs more.
+    "replace has_type_args -> bool with true",
+    # `rejected && self.settled.is_empty()` in `Bindings::hint_part`: `settled` is then sized at the
+    # first part, also when that part is not rejected-only. The backward walk then runs. Its arm
+    # writes only a rejected-only part, so no hint changes. The pattern holds the column, because
+    # the `&&` of that arm at column 43 gives a wrong hint, and a test catches it.
+    ":21: replace && with \\|\\| in Bindings::hint_part",
+    # Five mutants of `needed_walk` and `needed_all` change no output. `waits_for` calls
+    # `needed_params` only after `built` meets the context, by `unify` or by `constrain` with its
+    # payload. The context has the shape of `param`, except at the places of a `Param` or an
+    # `Assoc`, which `needed_walk` handles before it descends. So no pair of two declarations, and
+    # no doubly optional `built` against another kind, reaches these arms. No pair of `needed_all`
+    # gives a mixed result. A trace of these arms over the test corpus and about 6000 generated
+    # programs confirmed it. The mutants are: the guard of the optional arm, always true; the guards
+    # `a == c` of the class, enum and `any` arms, always true; and `&&` to `||` in `needed_all`.
+    "replace match guard !matches!\\(b\\.kind.* with true in needed_walk",
+    "replace match guard a == c with true in needed_walk",
+    "replace && with \\|\\| in needed_all",
+    # `at > settled` in `Checker<'_>::inferred_by_use`: `>=` differs only when one use is checked
+    # twice at the same place. The second check must also give a type that the first did not.
+    # One use is checked again only after the string-join rollback in `binary_operands`, which
+    # keeps the help of an outer local. No checked program gives it another type there. Searched:
+    # every `.sisu` in the tests and probes, with a trace at each same-place use, and joins under
+    # `f64`, `f64?`, `u8` and `u8?` that read an outer `None` or `[]` through a name, a block, an
+    # `if`, a `??`, a call, a generic call, a push or a write. All gave the same type twice, or
+    # none.
+    "replace > with >= in Checker<'_>::inferred_by_use",
+    # `&&` in the `reported` guard of `Checker<'_>::inferred_by_use`: `uninferred.at` always holds
+    # this E0050. Nothing moves or drops this E0050 between the `let` and its uses. The rollback
+    # truncates only the diagnostics after the join start, and drops the locals declared inside it.
+    # The operators' drains and inserts move only diagnostics from inside the current expression.
+    # An outer E0050 is earlier, and an inner `let`'s uses end before the move.
+    # So both conjuncts hold on every path, and `||` gives the same result.
+    "replace && with \\|\\| in Checker<'_>::inferred_by_use",
+    # `elements.is_empty()` guard in `Checker<'_>::uninferred_of`: a non-empty array literal
+    # reports E0050 at an element, never at the whole literal (`let xs = [[]]`, `[None, None]`).
+    # The span check after the guard returns `None` for it, as `true` would.
+    "replace match guard elements.is_empty\\(\\) with true in Checker<'_>::uninferred_of",
+    # `||` in `Checker<'_>::uninferred_of`: a `None` or `[]` with no written type pushes its E0050
+    # at `init.span` as its last act, and the literal has no part that could push after it. So
+    # the last diagnostic has both the code and the span, and neither half is ever false alone.
+    "replace \\|\\| with && in Checker<'_>::uninferred_of",
 ]

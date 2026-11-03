@@ -1,0 +1,28 @@
+error[E0032]: expected `Result<i64, string>`, found `Result<bool, string>`
+  --> E0050-waiting-shapes.sisu:30:33
+   |
+30 |     print(f_names(mkq(), mks(), mkb()))
+   |                                 ^^^^^
+
+error[E0050]: cannot infer `U` for `f_any`
+  --> E0050-waiting-shapes.sisu:44:11
+   |
+44 |     print(f_any(mkj(), mkx(), mk()))
+   |           ^^^^^
+   |
+   = help: write the type: `f_any<..., ...>(...)`
+
+error[E0032]: expected `[i64]`, found `[i64]?`
+  --> E0050-waiting-shapes.sisu:56:21
+   |
+56 |     print(f_payload(mko(), mk()))
+   |                     ^^^^^
+
+error[E0032]: expected `Two<any I<i64>, any J<T>>`, found `Two<any J<i64>, any J<i64>>`
+  --> E0050-waiting-shapes.sisu:67:19
+   |
+67 |     print(f_blame(pn(v), mk()))
+   |                   ^^^^^
+
+sisu: 4 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032, E0050

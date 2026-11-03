@@ -39,8 +39,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::ast;
 use crate::conformance::{self, StuckChoices};
 use crate::diagnostic::{
-    BuiltIn, Code, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, Expected, MainForm,
-    MismatchFix, MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
+    BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, Expected, Literal,
+    MainForm, MismatchFix, MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
 };
 use crate::front_end::PreludeProgram;
 use crate::payload_limit;
@@ -70,6 +70,8 @@ use unused_names::{Owner, Pending, Use, Used};
 ///
 /// A generic call that cannot meet its context is `Error` too, but it keeps the type it found
 /// in `found`. A block, a branch and a safe call keep that field for the code that uses the value.
+/// A value in which a generic call kept its E0050 has `kept` set. A block, a branch, unary `-`,
+/// a number operator, and a call that fails on an unbound parameter, keep that field too.
 struct Poisoned {
     ty: Option<Type>,
     /// Whether the expected type passed down was rejected (a `None` that is not optional, a
@@ -81,6 +83,10 @@ struct Poisoned {
     /// What a generic call found for its result, which cannot meet the call's context. Only a
     /// report reads it. Every other check sees `Error`.
     found: Option<Misfit>,
+    /// A generic call in the value kept its E0050, which is its only report. The value has no
+    /// type, so it holds the code that uses it to nothing. That code adds no report for the
+    /// default type of an operator.
+    kept: bool,
 }
 
 /// The result type of a generic call that cannot meet its context (see `report_unbound`). The
@@ -109,8 +115,22 @@ impl Poisoned {
             ty,
             mismatch: false,
             found: None,
+            kept: false,
         }
     }
+
+    /// `Error` for a value in which a generic call kept its E0050 (see `Poisoned::kept`).
+    fn kept_error() -> Self {
+        Self {
+            kept: true,
+            ..Self::error()
+        }
+    }
+}
+
+/// Whether a generic call in `checked` kept its E0050 (see `Poisoned::kept`).
+fn is_kept<T>(checked: &Result<T, Poisoned>) -> bool {
+    matches!(checked, Err(Poisoned { kept: true, .. }))
 }
 
 type Checked = Result<tir::Expr, Poisoned>;
@@ -522,6 +542,8 @@ thread_local! {
     /// How many closure entries have been indexed, and how many entries of an interface have been
     /// read for the name of an associated type, on this thread.
     pub(super) static LOOKUP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many dropped locals the rollback of a string join has visited on this thread.
+    pub(super) static ROLLBACK_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 struct Checker<'src> {
@@ -776,6 +798,21 @@ struct ClosureIndex {
 type LeafKey = (Type, tir::InterfaceId, TypeArgs);
 type LeafAnswers = FxHashMap<LeafKey, Option<Type>>;
 
+/// The E0050 of a `None` or `[]` that a `let` initializes. A later use of the local can give the
+/// type that the help of the E0050 writes.
+struct Uninferred {
+    /// Where the E0050 is in the diagnostics.
+    at: usize,
+    /// The span of the literal, which the E0050 reports.
+    span: Span,
+    literal: Literal,
+    /// What the `let` writes before its type: `mut`, then the name.
+    binding: String,
+    /// The place in the source of the use that set the help, if one did (see
+    /// `Checker::inferred_by_use`).
+    settled: Option<usize>,
+}
+
 /// What checking one body needs: a function's, a method's, or a constant's initialiser.
 #[derive(Default)]
 struct Body {
@@ -853,6 +890,9 @@ struct Body {
     safe_call: Option<Span>,
     /// Set by a `break` or `continue` outside a loop; `scoped_block` reads it per statement.
     invalid_jump: bool,
+    /// The last string literal that is `never` because a part is: its span, and the span of the
+    /// first such part, which E0043 underlines (see `Checker::interpolate`).
+    never_part: Option<(Span, Span)>,
     /// Where each loop label is declared that a failed jump or a reused loop label names, which
     /// is not reported unused: its own error is.
     failed_labels: FxHashSet<Span>,
@@ -884,6 +924,9 @@ struct Body {
     /// (`mut`, then the name): E0050 uses it in its example when the initializer is the whole
     /// `None` or `[]`.
     let_init: Option<(Span, Symbol, bool)>,
+    /// The E0050 of each local whose initializer is such a literal, until a later use gives the
+    /// local a type (see `Checker::inferred_by_use`).
+    uninferred: FxHashMap<tir::LocalId, Uninferred>,
     /// The constant whose value is being checked, where interpolation is not known and a
     /// conversion that can fail is an error.
     in_constant: Option<ConstantSite>,
@@ -911,8 +954,9 @@ struct Body {
     /// Whether the body has a `todo`, which keeps its parameters from W0014.
     todo: bool,
     /// Work ranking arguments did ahead of its turn, innermost last, by the span it was done
-    /// for and whether that is a block's; `None` once used.
-    ahead: Vec<((Span, bool), Option<generic::Ahead>)>,
+    /// for and whether that is a block's; `None` once used. Then whether the work made a `break`
+    /// or `continue` outside a loop: using the work sets `invalid_jump` again.
+    ahead: Vec<((Span, bool), Option<generic::Ahead>, bool)>,
     /// Where in `ahead` the last work kept for each span and kind is.
     ahead_at: FxHashMap<(Span, bool), usize>,
     /// What `takes_context` answered for each array literal and `Some(...)`, with the context,
@@ -1111,16 +1155,10 @@ pub(crate) fn check<'src>(
     program.iter().for_each(tir::assert_exit_flags);
     // A use of a broken item poisons without a diagnostic of its own.
     debug_assert!(
-        program.is_some() || failed || broken || refutable(parsed),
+        program.is_some() || failed || broken,
         "a missing program implies an error diagnostic or a broken item or method"
     );
     (program, diagnostics)
-}
-
-/// Whether the parser reported a `let` with a pattern and no `else`. The checker fails that
-/// statement and adds no diagnostic, so the function has no `tir`.
-fn refutable(parsed: &[Diagnostic]) -> bool {
-    parsed.iter().any(|d| d.code() == Code::RefutablePattern)
 }
 
 /// `check` over a program with no prelude but the language interfaces, for the tests of what

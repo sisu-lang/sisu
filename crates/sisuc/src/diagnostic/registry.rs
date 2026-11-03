@@ -68,7 +68,7 @@ codes! {
     DigitSeparator = "E0008",
     IntegerTooLarge = "E0009",
     UnexpectedCharacter | LogicalOperatorWritten = "E0010",
-    Expected | JumpTakesBlock = "E0011",
+    Expected | JumpTakesBlock | LetTakesNoType = "E0011",
     Var = "E0013",
     FieldComma = "E0015",
     FieldLet = "E0016",
@@ -357,12 +357,16 @@ pub(crate) enum DiagnosticKind {
     /// The `return` or `break` `keyword` at `at`, at the end of the header of an `if`, a `while`,
     /// a `for` or a `match`, which took the `{ ... }` of the body as its value. `grouped` is the
     /// header through the jump, for the help that puts it in `( )`; it is `None` for a `break`
-    /// in the header of a loop, where that help would be E0082.
+    /// that the `( )` would leave in a loop header (E0082) or outside every loop (E0038).
     JumpTakesBlock {
         keyword: &'static str,
         at: Span,
         grouped: Option<String>,
     },
+    /// The `: type` at `at` of a `let ... else`, or of a `let` whose pattern is not a name. The
+    /// value gives the names their types. `with_else` is whether an `else` follows the value: on
+    /// its line, or, after a name, on the next line.
+    LetTakesNoType { at: Span, with_else: bool },
     /// A `var` at `at`, on a field or on a binding.
     Var { at: Span, field: bool },
     /// A `,` at `at` after a `member`. `replacement` is what takes the comma: nothing when it ends
@@ -441,8 +445,13 @@ pub(crate) enum DiagnosticKind {
     LetElseCanFinish { at: Span },
     /// The value at `at` of a `let ... else`, which ends in `}`.
     LetElseValueEndsInBrace { at: Span },
-    /// The pattern at `at`, written `shown`, of a `let` that has no `else` and can fail to match.
-    RefutablePattern { at: Span, shown: String },
+    /// The pattern at `at`, written `shown`, of a `let` that has no `else`. It can fail to match,
+    /// or, with `always`, it matches every value of an enum or an optional.
+    RefutablePattern {
+        at: Span,
+        shown: String,
+        always: bool,
+    },
     /// The interface `interface`, as written after `any` at `at`, which cannot be `any`. `owner`
     /// is the interface that has the `reason`: `interface` itself, or one it inherits.
     CannotBeAny {
@@ -711,6 +720,9 @@ pub(crate) enum DiagnosticKind {
         literal: Literal,
         /// What the `let` that the literal initializes writes before its type, for the example.
         binding: Option<String>,
+        /// The whole type for the example (`[char]` or `string?`), when a later use of the
+        /// local gives one. Without it, the example writes `...` for the type.
+        ty: Option<String>,
         at: Span,
         /// For the `None` that starts the right side of a `??`, the offset where the left side
         /// of that `??` starts: `??` groups to the right, and parentheses from there to `at`
@@ -822,7 +834,7 @@ pub(crate) enum DiagnosticKind {
         write: bool,
         /// For a `?.` on an optional of an optional: the optional it leaves, which has no members.
         peel: Option<Peel>,
-        /// What the help says to unwrap, when `access` is `None`.
+        /// What the help says to unwrap.
         unwrap: UnwrapHelp,
     },
     /// The `kind` member `name`, at `at`, which `owner` does not have.
@@ -1640,6 +1652,8 @@ pub(crate) enum Unwrap {
     IfLet,
     WhileLet,
     LetElse,
+    /// A `let` with a pattern and no `else`.
+    Let,
 }
 
 impl Unwrap {
@@ -1648,6 +1662,7 @@ impl Unwrap {
             Unwrap::IfLet => "if let",
             Unwrap::WhileLet => "while let",
             Unwrap::LetElse => "let ... else",
+            Unwrap::Let => "let",
         }
     }
 }
@@ -2046,12 +2061,12 @@ pub(crate) struct Peel {
     pub(crate) member: String,
 }
 
-/// What the help of a `MayBeNone` without a `?.` fix tells the user to unwrap with `if let`.
+/// What the help of a `MayBeNone` tells the user to unwrap with `if let`.
 #[derive(Clone)]
 pub(crate) enum UnwrapHelp {
     /// The optional itself.
     It,
-    /// The object, as written, of the `?.` that makes an element place optional.
+    /// The object, as written, of the `?.` that makes an element place or a pushed array optional.
     Object(String),
     /// Nothing: no `if let` of the optional gives a place that can be written.
     Nothing,
@@ -2931,6 +2946,17 @@ impl From<DiagnosticKind> for Diagnostic {
                     None => d,
                 }
             }
+            DiagnosticKind::LetTakesNoType { at, with_else } => {
+                let what = if with_else {
+                    "`let ... else`"
+                } else {
+                    "`let` pattern"
+                };
+                // The parser stops at the type, so it has not read the rest of the statement: the
+                // fixed source can have an error of its own, and the fix is not safe.
+                Diagnostic::coded(code, at, format!("a {what} takes no type"))
+                    .with_fix(unsafe_fix("remove the type", at, ""))
+            }
             DiagnosticKind::Var { at, field } => {
                 let d = Diagnostic::coded(code, at, "there is no `var` in Sisu");
                 if field {
@@ -3539,13 +3565,20 @@ impl From<DiagnosticKind> for Diagnostic {
                     },
                 ],
             }),
-            DiagnosticKind::RefutablePattern { at, shown } => {
-                Diagnostic::coded(code, at, "this pattern can fail to match")
-                    .with_label(format!("`{shown}` may not match"))
-                    .with_help(
-                        "add an `else` block that does not finish, or use `if let` or `match`",
-                    )
-            }
+            DiagnosticKind::RefutablePattern {
+                at,
+                shown,
+                always: true,
+            } => Diagnostic::coded(code, at, "a `let` without `else` takes only a name or `_`")
+                .with_label(format!("`{shown}` always matches"))
+                .with_help("use `match`"),
+            DiagnosticKind::RefutablePattern {
+                at,
+                shown,
+                always: false,
+            } => Diagnostic::coded(code, at, "this pattern can fail to match")
+                .with_label(format!("`{shown}` may not match"))
+                .with_help("add an `else` block that does not finish, or use `if let` or `match`"),
             DiagnosticKind::CannotBeAny {
                 interface,
                 owner,
@@ -4106,17 +4139,26 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::CannotInfer {
                 literal,
                 binding,
+                ty,
                 at,
                 regroup,
             } => {
                 let (literal, example) = match (literal, binding) {
                     (Literal::None, name) => (
                         "None",
-                        format!("let {}: i64? = None", name.as_deref().unwrap_or("x")),
+                        format!(
+                            "let {}: {} = None",
+                            name.as_deref().unwrap_or("x"),
+                            ty.as_deref().unwrap_or("...?")
+                        ),
                     ),
                     (Literal::EmptyArray, name) => (
                         "[]",
-                        format!("let {}: [i64] = []", name.as_deref().unwrap_or("xs")),
+                        format!(
+                            "let {}: {} = []",
+                            name.as_deref().unwrap_or("xs"),
+                            ty.as_deref().unwrap_or("[...]")
+                        ),
                     ),
                 };
                 let d = Diagnostic::coded(code, at, format!("cannot infer the type of `{literal}`"));
@@ -4170,13 +4212,15 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 compare,
             } => {
+                // A plain `let x = 5` is right, so the message names the pattern.
+                let subject = match keyword {
+                    Unwrap::Let => "a `let` pattern".to_string(),
+                    _ => format!("`{}`", keyword.word()),
+                };
                 let d = Diagnostic::coded(
                     code,
                     at,
-                    format!(
-                        "`{}` needs an enum or an optional; this is `{found}`",
-                        keyword.word()
-                    ),
+                    format!("{subject} needs an enum or an optional; this is `{found}`"),
                 );
                 if compare {
                     d.with_help("compare with `==`")
@@ -4349,10 +4393,16 @@ impl From<DiagnosticKind> for Diagnostic {
                         } else {
                             "if a `None` result is fine, use `?.`"
                         };
-                        d.with_help(
-                            "to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`",
-                        )
-                        .with_fix(unsafe_fix(fix, access, "?."))
+                        let d = match unwrap {
+                            UnwrapHelp::It => d.with_help(
+                                "to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`",
+                            ),
+                            UnwrapHelp::Object(object) => d.with_help(format!(
+                                "to use the value only when it is present, unwrap `{object}` with `if let`, `let ... else` or `?? return`"
+                            )),
+                            UnwrapHelp::Nothing => d,
+                        };
+                        d.with_fix(unsafe_fix(fix, access, "?."))
                     }
                     None => match unwrap {
                         UnwrapHelp::It => {
@@ -5381,6 +5431,7 @@ impl From<DiagnosticKind> for Diagnostic {
                     at,
                     "`while let` always matches here, so the pattern never ends the loop",
                 ),
+                Unwrap::Let => unreachable!("a `let` with no `else` reports E0174, not E0131"),
             },
             DiagnosticKind::ForeignRange { form, at } => match form {
                 ForeignRange::Exclusive { start, end, remove } => {

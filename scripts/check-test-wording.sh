@@ -12,6 +12,11 @@
 # production code too, so its wording reads pass; move it into the module if
 # a hit matters.
 # The path forms, such as `Diagnostic::message`, count too.
+# So does an assert_eq! or assert_ne! of two `format!("{x:?}")` strings: the
+# Debug text of a diagnostic holds its wording. The argument of `format!` may
+# hold calls, with parentheses nested to any depth.
+# shortcut: the Debug pair is flagged for any type, not only a diagnostic;
+# compare such values directly, or exempt the file when a hit is right.
 # shortcut: between `#[cfg(test)]` and `mod`, the pattern takes blank lines,
 # `//` comments and attributes with one level of inner brackets, not a
 # `/* */` comment; add the form when a file uses it.
@@ -36,10 +41,19 @@ done
 [[ ${#files[@]} -eq 0 ]] && exit 0
 
 perl -0777 -ne '
-  pos = $ARGV =~ m{/tests/|/tests\.rs$} ? 0 : /^#\[cfg\(test\)\]\n(?:#\[(?:[^][]|\[[^]]*\])*\]\n|\/\/[^\n]*\n|\n)*(?:pub(?:\([^)\n]*\))? )?mod \w+ \{/m ? $-[0] : length;
+  $start = $ARGV =~ m{/tests/|/tests\.rs$} ? 0 : /^#\[cfg\(test\)\]\n(?:#\[(?:[^][]|\[[^]]*\])*\]\n|\/\/[^\n]*\n|\n)*(?:pub(?:\([^)\n]*\))? )?mod \w+ \{/m ? $-[0] : length;
+  pos = $start;
   while (/\.(?:message|label)\(\)|\bDiagnostic::(?:message|label)\b|(?:\.help\(\)|\bDiagnostic::help\b(?:\([^()]*\))?+)(?!\.is_(?:some|none)\(\)|,\s*None\b)/g) {
     my $line = 1 + (substr($_, 0, $-[0]) =~ tr/\n//);
     print "$ARGV:$line: a unit test reads diagnostic wording; assert the code, and pin the text in a tests/diagnostics fixture\n";
+    $bad = 1;
+  }
+  my $parens = qr/(\((?:[^()]++|(?-1))*+\))/;
+  my $debug = qr/format!\(\s*"\{[\w.]*:\#?\?\}"\s*(?:,\s*(?:[^(),]++|$parens)+)?\)/;
+  pos = $start;
+  while (/\bassert_(?:eq|ne)!\(\s*$debug\s*,\s*$debug/g) {
+    my $line = 1 + (substr($_, 0, $-[0]) =~ tr/\n//);
+    print "$ARGV:$line: a unit test compares the Debug text of two values, which holds a diagnostic\x27s wording; compare the codes, spans and fix edits\n";
     $bad = 1;
   }
   END { exit($bad ? 1 : 0) }

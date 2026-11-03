@@ -58,6 +58,7 @@ impl Checker<'_> {
         let mut ty = Type::STRING;
         let mut checked = Vec::with_capacity(parts.len());
         let mut formats = Vec::new();
+        let mut never_at = None;
         for (
             i,
             ast::Part {
@@ -72,6 +73,15 @@ impl Checker<'_> {
             match type_of(&value).map(Type::kind) {
                 Some(TypeKind::Unit) => {}
                 Some(TypeKind::Never) => {
+                    if ty != Type::NEVER {
+                        // A part that is a never literal gives the part inside it.
+                        never_at = Some(
+                            self.body
+                                .never_part
+                                .filter(|&(literal, _)| literal == part.span)
+                                .map_or(part.span, |(_, at)| at),
+                        );
+                    }
                     ty = Type::NEVER;
                     checked.push(value);
                     continue;
@@ -100,6 +110,9 @@ impl Checker<'_> {
                 at: part.span,
             });
             checked.push(Err(Poisoned::error()));
+        }
+        if let Some(at) = never_at {
+            self.body.never_part = Some((span, at));
         }
         match checked.into_iter().collect::<Result<Vec<_>, _>>() {
             Ok(parts) => Ok(

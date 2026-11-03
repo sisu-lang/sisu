@@ -201,3 +201,157 @@ fn let_else_on_a_plain_value_should_offer_a_comparison_only_for_a_literal_patter
         assert_eq!(d.help().is_some(), help, "{line}");
     }
 }
+
+/// A program whose `main` ends with `line` at line 17: the enum `E` has `A` and `B`, `Only` has
+/// one variant, `P` is a class, and `o` is an optional.
+fn let_program(line: &str) -> String {
+    format!(
+        "enum E {{\n    A(i64)\n    B(i64)\n}}\nenum Only {{\n    One(i64)\n}}\nclass P {{\n    x: i64\n    y: i64\n}}\nfn main() {{\n    let v = E.A(1)\n    let w = Only.One(1)\n    let p = P(x: 1, y: 2)\n    let o: i64? = 1\n    {line}\n}}"
+    )
+}
+
+/// Diagnostics, each as a code and a `(line, column)`.
+type Found = &'static [(Code, (usize, usize))];
+
+/// A line, the diagnostics it gives, and those of its `else` form.
+type LetRow = (&'static str, Found, Found);
+
+/// The wanted diagnostics of `let_pattern_without_else_should_report_by_the_value_type` and of
+/// `let_pattern_without_else_should_agree_with_its_else_form`. The column of E0051 is the value's.
+/// The `else` form of a line is the line with `else { return }` after its first line. Where the
+/// pattern always matches, the plain form gives E0174 and the `else` form E0131. Where the
+/// pattern can fail, the `else` form gives nothing. A failed value keeps its error in both.
+const LET_ROWS: [LetRow; 16] = [
+    // One variant: the pattern always matches.
+    (
+        "let One(n) = w",
+        &[(Code::RefutablePattern, (17, 9))],
+        &[(Code::AlwaysMatches, (17, 9))],
+    ),
+    // All variants of the enum.
+    (
+        "let A(n) | B(n) = v",
+        &[(Code::RefutablePattern, (17, 9))],
+        &[(Code::AlwaysMatches, (17, 9))],
+    ),
+    // A class has no variant to match: E0051 at the value.
+    (
+        "let P(a, b) = p",
+        &[(Code::UnwrapNeedsOptional, (17, 19))],
+        &[(Code::UnwrapNeedsOptional, (17, 19))],
+    ),
+    (
+        "let Q(a) = p",
+        &[(Code::UnwrapNeedsOptional, (17, 16))],
+        &[(Code::UnwrapNeedsOptional, (17, 16))],
+    ),
+    (
+        "let f(x) = 5",
+        &[(Code::UnwrapNeedsOptional, (17, 16))],
+        &[(Code::UnwrapNeedsOptional, (17, 16))],
+    ),
+    (
+        "let 1 = 5",
+        &[(Code::UnwrapNeedsOptional, (17, 13))],
+        &[(Code::UnwrapNeedsOptional, (17, 13))],
+    ),
+    (
+        "let \"a\" = \"b\"",
+        &[(Code::UnwrapNeedsOptional, (17, 15))],
+        &[(Code::UnwrapNeedsOptional, (17, 15))],
+    ),
+    (
+        "let x..y = 5",
+        &[(Code::UnwrapNeedsOptional, (17, 16))],
+        &[(Code::UnwrapNeedsOptional, (17, 16))],
+    ),
+    // A name that is no variant of the enum.
+    (
+        "let f(x) = v",
+        &[(Code::UnknownVariant, (17, 9))],
+        &[(Code::UnknownVariant, (17, 9))],
+    ),
+    (
+        "let A(n, m) = v",
+        &[(Code::SubpatternCount, (17, 9))],
+        &[(Code::SubpatternCount, (17, 9))],
+    ),
+    // The pattern can fail: the error stays, with the help of `if let` and `match`.
+    ("let Some(n) = o", &[(Code::RefutablePattern, (17, 9))], &[]),
+    ("let A(n) = v", &[(Code::RefutablePattern, (17, 9))], &[]),
+    ("let None = o", &[(Code::RefutablePattern, (17, 9))], &[]),
+    // The value fails: its error stays, and so does the pattern's.
+    (
+        "let One(n) = zz",
+        &[
+            (Code::RefutablePattern, (17, 9)),
+            (Code::BindingNotFound, (17, 18)),
+        ],
+        &[(Code::BindingNotFound, (17, 18))],
+    ),
+    // The value has a type, though it fails: the pattern is judged.
+    (
+        "let One(n) = Only.One(zz)",
+        &[
+            (Code::RefutablePattern, (17, 9)),
+            (Code::BindingNotFound, (17, 27)),
+        ],
+        &[
+            (Code::AlwaysMatches, (17, 9)),
+            (Code::BindingNotFound, (17, 27)),
+        ],
+    ),
+    // A failed statement still binds its name, so a later write reports the name only.
+    (
+        "let One(n) = w\n    n = 2",
+        &[
+            (Code::RefutablePattern, (17, 9)),
+            (Code::AssignToImmutable, (18, 5)),
+        ],
+        &[
+            (Code::AlwaysMatches, (17, 9)),
+            (Code::AssignToImmutable, (18, 5)),
+        ],
+    ),
+];
+
+/// The checker reports a `let` with a pattern and no `else` by the type of the value. A pattern
+/// that is right for an enum or an optional gives E0174: it always matches, or it can fail. Any
+/// other pattern gives the error of the `else` form. The table pins the codes. The fixtures
+/// `E0174`, `E0174-one-variant`, `E0174-failed-value` and `E0174-unknown-value` pin the texts.
+#[test]
+fn let_pattern_without_else_should_report_by_the_value_type() {
+    for (line, expected, _) in LET_ROWS {
+        codes_row(line, &let_program(line), expected);
+    }
+}
+
+/// GIVEN a `let` with a pattern and no `else`
+/// WHEN `sisu check` runs on it with an `else { return }` after its first line
+/// THEN it gives the diagnostics of the table's `else` column: E0131 in place of E0174 "always
+/// matches", none for a pattern that can fail, and the error of a failed value alone
+#[test]
+fn let_pattern_without_else_should_agree_with_its_else_form() {
+    let with_else = |line: &str| match line.split_once('\n') {
+        Some((first, rest)) => format!("{first} else {{ return }}\n{rest}"),
+        None => format!("{line} else {{ return }}"),
+    };
+    for (line, _, expected) in LET_ROWS {
+        codes_row(line, &let_program(&with_else(line)), expected);
+    }
+}
+
+/// GIVEN a `fn f` whose body is `let = 1` and a `main` with `let One(n) = Only.One(1)` on line 3
+/// WHEN `sisu check` runs on it
+/// THEN it reports E0011 at 1:14 and E0174 at 3:9
+/// AND the checker still runs on the item that has no parse error
+#[test]
+fn let_pattern_without_else_should_show_with_a_parse_error_in_another_item() {
+    let src = "fn f() { let = 1 }\nfn main() {\n    let One(n) = Only.One(1)\n}\nenum Only {\n    One(i64)\n}";
+    let ds = crate::front_end::front_end(src).1;
+    let found: Vec<_> = ds.iter().map(|d| (d.code(), at(src, d.span()))).collect();
+    assert_eq!(
+        found,
+        [(Code::Expected, (1, 14)), (Code::RefutablePattern, (3, 9))]
+    );
+}

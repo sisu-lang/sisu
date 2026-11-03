@@ -1,0 +1,16 @@
+error[E0174]: this pattern can fail to match
+  --> E0174-unknown-value.sisu:11:9
+   |
+11 |     let One(n) = zz
+   |         ^^^^^^ `One(n)` may not match
+   |
+   = help: add an `else` block that does not finish, or use `if let` or `match`
+
+error[E0033]: cannot find binding `zz`
+  --> E0174-unknown-value.sisu:11:18
+   |
+11 |     let One(n) = zz
+   |                  ^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0033, E0174

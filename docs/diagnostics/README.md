@@ -61,7 +61,7 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0048](E0048.md) | error | `??` on a value that is not optional |
 | [E0049](E0049.md) | error | `?.` on a value that is not optional |
 | [E0050](E0050.md) | error | a type that cannot be inferred |
-| [E0051](E0051.md) | error | `if let` or `while let` on a value that is not an enum or optional |
+| [E0051](E0051.md) | error | `let`, `if let` or `while let` on a value that is not an enum or optional |
 | [E0052](E0052.md) | error | call of a function that does not exist |
 | [E0053](E0053.md) | error | call with the wrong number of arguments |
 | [E0054](E0054.md) | error | conversion to the type the value already has |
@@ -177,7 +177,7 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0165](E0165.md) | error | `any` written in a form that it does not take |
 | [E0172](E0172.md) | error | `else` block of a `let ... else` that can finish |
 | [E0173](E0173.md) | error | value of a `let ... else` that ends in `}` |
-| [E0174](E0174.md) | error | pattern that can fail, with no `else` |
+| [E0174](E0174.md) | error | `let` pattern with no `else` |
 | [W0001](W0001.md) | warning | unreachable code |
 | [W0002](W0002.md) | warning | variable that is never reassigned |
 | [W0003](W0003.md) | warning | `todo` left in the program |

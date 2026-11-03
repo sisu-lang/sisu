@@ -1,0 +1,18 @@
+error[E0174]: this pattern can fail to match
+ --> E0001-let.sisu:7:9
+  |
+7 |     let Some(n) = o
+  |         ^^^^^^^ `Some(n)` may not match
+  |
+  = help: add an `else` block that does not finish, or use `if let` or `match`
+
+error[E0001]: cannot assign to `n`
+ --> E0001-let.sisu:8:5
+  |
+7 |     let Some(n) = o
+  |              - bound by `let` here
+8 |     n = 2
+  |     ^^^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0001, E0174

@@ -339,8 +339,8 @@ pub(crate) enum StmtKind {
         init: Expr,
     },
     /// `let pattern = value else { else_block }`, or `let mut name = value else { ... }`.
-    /// `else_block` is `None` only after the parser reported `RefutablePattern`: the `let` has
-    /// no `else`.
+    /// `else_block` is `None` when the `let` has no `else`: the checker reports it
+    /// (`RefutablePattern`, or the error of the pattern or the value).
     LetElse {
         /// The `mut` keyword of a `let mut`.
         mutable: Option<Span>,

@@ -6019,33 +6019,47 @@ fn rejecting_the_parameters_of_failed_arguments_should_visit_each_type_once() {
              fn h<T>(_a: A{n}<T>, _b: T?) -> i64 {{ 1 }}\nfn none<X>() -> X? {{ None }}\n\
              fn main() {{\n    print(h(nope, none()))\n}}"
         );
-        generic::DISTINCT.set(0);
+        generic::MARKED.set(0);
         let (_, ds) = checked(&src);
         assert_eq!(
             ds.iter().map(Diagnostic::code).collect::<Vec<_>>(),
             [Code::BindingNotFound]
         );
-        generic::DISTINCT.get()
+        generic::MARKED.get()
     };
-    assert_near_linear(visits(10), visits(20), visits(30));
+    // The first line catches a walk of each path before a deep chain can take long: the paths
+    // double at each level. The walk keeps answers only after `MEMO_AFTER` visits, so for depths
+    // up to about 60 the count is flat, and a walk that adds n² visits would pass that line. The
+    // second line is in the linear region of the memo (about 2n + 9 visits); a deeper chain
+    // reaches `NestingTooDeep`, at a depth below 300. `assert_near_linear` allows the second step
+    // to add a tenth more than the first; the steps here are equal, and a quadratic walk makes
+    // the second step add about 1.4 times the first.
+    assert_near_linear(visits(4), visits(8), visits(12));
+    assert_near_linear(visits(100), visits(150), visits(200));
 }
 
-/// Each trailing argument misfits and names one of n parameters. Reading every origin for each
-/// would cost n².
+/// The call is hinted, so each trailing argument reads the origins of its parameter to find out
+/// whether the context bound it. The lead arguments bound them all. Each trailing argument misfits
+/// and names one of n parameters. Reading every origin for each would cost n².
 #[test]
 fn misfitting_arguments_should_read_the_origins_of_their_own_parameters_only() {
     let reads = |n: usize| {
-        let params: Vec<_> = (0..n).map(|k| format!("T{k}")).collect();
+        let params: Vec<_> = (0..n)
+            .map(|k| format!("T{k}"))
+            .chain(["R".to_owned()])
+            .collect();
         let lead: Vec<_> = (0..n).map(|k| format!("_a{k}: T{k}")).collect();
         let trail: Vec<_> = (0..n).map(|k| format!("_b{k}: T{k}")).collect();
         let args: Vec<_> = (0..n)
             .map(|_| "one()")
             .chain((0..n).map(|_| "{ mk() }"))
             .collect();
+        // The call returns the type parameter `R`, so it waits for its context, and the other
+        // side of `==` hints it: only a hinted call reads the origins (see `Inference::hinted`).
         let src = format!(
             "class Two<A, B> {{\n    a: A\n    b: B\n}}\nfn one() -> i64 {{ 1 }}\n\
              fn mk<X>() -> Two<X, bool> {{ panic(\"no\") }}\n\
-             fn h<{}>({}, {}) -> i64 {{ 0 }}\nfn main() {{\n    print(h({}))\n}}",
+             fn h<{}>({}, {}) -> R {{ panic(\"no\") }}\nfn main() {{\n    print(1 == h({}))\n}}",
             params.join(", "),
             lead.join(", "),
             trail.join(", "),
@@ -6219,33 +6233,29 @@ fn a_generic_call_that_cannot_meet_its_context_should_report_as_a_concrete_call_
 }
 
 /// An outer generic call binds its parameter to what an argument gives. It does not pass on a
-/// type that the argument found and could not meet its context with. So the argument's misfit
-/// reaches no code that reports it: it gives E0050 for `X` at the inner call, as the call did
-/// before it reported misfits. Or it gives the concrete twin's text.
+/// type that the argument found and could not meet its context with. A sibling, such as the other
+/// side of `==`, gives a hint. Under a hint, the misfit keeps one E0050 at the inner call. When
+/// the user wrote the context (a `let` type), the argument gets one E0032 at the inner call.
 #[test]
 fn a_misfit_under_an_outer_generic_call_should_give_a_true_diagnostic() {
     with_prelude();
-    let rows: &[ParityRow<'static>] = &[
-        ("", "print(1 == id(mk2()))"),
-        ("", "print(id(mk2()) == 1)"),
-        ("", "let y: i64? = id(mk2())"),
-        ("", "print(1 == id(id(mk2())))"),
-        ("", "let y: i64 = id(mk2())"),
+    // (the statement, the code that the one diagnostic has)
+    let rows: &[(&str, Code)] = &[
+        ("print(1 == id(mk2()))", Code::CannotInfer),
+        ("print(id(mk2()) == 1)", Code::CannotInfer),
+        ("print(1 == id(id(mk2())))", Code::CannotInfer),
+        ("let y: i64? = id(mk2())", Code::Mismatch),
+        ("let y: i64 = id(mk2())", Code::Mismatch),
     ];
-    for &row in rows {
-        let src = parity_program(row, false);
+    for &(body, want) in rows {
+        let src = parity_program(("", body), false);
         let (failed, generic) = parity_found(&src);
         let call = src.rfind("mk2()").expect("the row should call `mk2`");
         let line = src[..call].lines().count();
         let col = call - src[..call].rfind('\n').expect("`main` should come first");
         let places: Vec<_> = generic.iter().map(|(code, at, _)| (*code, *at)).collect();
-        let concrete = parity_found(&parity_program(row, true)).1;
-        assert!(failed, "row `{}`", row.1);
-        assert!(
-            places == [(Code::CannotInfer, (line, col))] || generic == concrete,
-            "row `{}`: {generic:?}",
-            row.1
-        );
+        assert!(failed, "row `{body}`");
+        assert_eq!(places, [(want, (line, col))], "row `{body}`: {generic:?}");
     }
 }
 
@@ -6339,11 +6349,12 @@ fn a_clash_with_an_unbound_shape_should_report_the_argument() {
 }
 
 /// A misfit that reaches no code that reports it is not lost. The outer generic call drops the
-/// type that its argument found, so the inner call's E0050 is pushed when the body ends.
+/// type that its argument found, so the inner call's E0050 is pushed when the body ends. The
+/// context is a hint, as it is not a type that the user wrote.
 #[test]
 fn a_misfit_that_no_code_reports_should_give_e0050_at_the_call() {
     with_prelude();
-    let src = parity_program(("", "let y: i64? = id(mk2())"), false);
+    let src = parity_program(("", "print(1 == id(mk2()))"), false);
     let (_, found) = parity_found(&src);
     let codes: Vec<_> = found.iter().map(|(code, ..)| *code).collect();
     assert_eq!(codes, [Code::CannotInfer], "{found:?}");
@@ -6393,11 +6404,10 @@ fn a_never_statement_before_a_misfit_tail_should_give_e0050_at_the_call() {
 }
 
 /// The rows of the test above where a `never` block is the value of a `let`. The twin does not
-/// fail, so its block is a `never` that is used as a value: E0043. The generic block failed
-/// (its call gave E0050), and a `never` that failed gives no second report, so the generic
-/// program has the diagnostics of the twin but that one.
+/// fail, so its block is a `never` that is used as a value: E0043. The generic block also reports
+/// E0050. It is still a `never` value, so it keeps the diagnostics of the twin.
 #[test]
-fn a_failed_never_block_as_a_value_should_give_e0050_and_no_e0043() {
+fn a_failed_never_block_as_a_value_should_give_e0050_and_e0043() {
     with_prelude();
     let rows: &[ParityRow<'static>] = &[
         ("", "let y: i64 = {\n    return\n    mk2()\n}\nprint(y)"),
@@ -6412,10 +6422,9 @@ fn a_failed_never_block_as_a_value_should_give_e0050_and_no_e0043() {
     ];
     for &row in rows {
         let (failed, mut generic) = parity_found(&parity_program(row, false));
-        let (_, mut concrete) = parity_found(&parity_program(row, true));
+        let (_, concrete) = parity_found(&parity_program(row, true));
         let before = generic.len();
         generic.retain(|(code, ..)| *code != Code::CannotInfer);
-        concrete.retain(|(code, ..)| *code != Code::NoValue);
         assert!(failed, "row `{}`", row.1);
         assert_eq!(before - generic.len(), 1, "row `{}`: one E0050", row.1);
         assert_eq!(generic, concrete, "row `{}`", row.1);
@@ -6567,4 +6576,130 @@ fn a_never_argument_before_a_waiting_call_should_keep_its_type_argument_error() 
     let found: Vec<_> = ds.iter().map(|d| (d.code(), at(src, d.span()))).collect();
     assert!(program.is_none());
     assert_eq!(found, [(Code::TypeArgument, (4, 13))]);
+}
+
+/// A program whose type alias `A<n>` is a chain of depth `n`: each alias names the one before it
+/// twice, so the interned type shares each subtree and has 2^n paths. `shape` says which
+/// walks of the checker meet the chain; each shape is a call, or a pair of calls, that one of
+/// the walks of `TYPE_STEPS` visits.
+fn shared_chain(shape: &str, n: usize) -> String {
+    let mut src = String::from("class Two<A, B> {\n    a: A\n    b: B\n}\n");
+    if shape.starts_with("assoc") {
+        src +=
+            "interface I {\n    type Item\n}\nclass K {}\nextend K: I {\n    type Item = i64\n}\n";
+    }
+    src += "type A1<T> = Two<T, T>\n";
+    for k in 2..=n {
+        let below = format!("A{}<T>", k - 1);
+        src += &[
+            "type A",
+            &k.to_string(),
+            "<T> = Two<",
+            &below,
+            ", ",
+            &below,
+            ">\n",
+        ]
+        .concat();
+    }
+    let tail = match shape {
+        // `bind` and `resolve`: the chain is the declared result, and the context is concrete.
+        "chain" => {
+            "fn poly<T>() -> $A<T> { panic(\"no\") }\nfn main() {\n    let _v: $A<i64> = poly()\n}"
+        }
+        // A misfit: `bind` fails at the last argument, after the chain.
+        "misfit" => {
+            "fn pm<X>() -> Two<$A<X>, bool> { panic(\"no\") }\nfn main() {\n    let _v: Two<$A<i64>, i64> = pm()\n}"
+        }
+        // `resolve` for the context of a call that waits for `T`.
+        "h" => {
+            "fn none<T>() -> T? { None }\nfn h<T>(_a: $A<T>, _b: T?) -> i64 { 0 }\nfn mk() -> $A<i64> { panic(\"no\") }\nfn main() {\n    print(h(mk(), none()))\n}"
+        }
+        "nmk" => {
+            "fn mkx<X>() -> Two<Two<$A<i64>, bool>, X> { panic(\"no\") }\nfn wrap<V, W>(_w: W, _v: Two<Two<$A<W>, i64>, V>) -> V { panic(\"no\") }\nfn main() {\n    let y: string = wrap(1, mkx())\n}"
+        }
+        // `holds_param`: a parameter type that is a chain, for a callee that returns `T`.
+        "holds" => {
+            "fn mk() -> $A<i64> { panic(\"no\") }\nfn f<T>(_a: $A<i64>, _b: T) -> T { panic(\"no\") }\nfn main() {\n    let _v: i64 = f(mk(), 1)\n}"
+        }
+        "holdsu" => {
+            "fn mk() -> $A<i64> { panic(\"no\") }\nfn f<T, U>(_a: $A<U>, _b: T) -> T { panic(\"no\") }\nfn main() {\n    let _v: i64 = f(mk(), 1)\n}"
+        }
+        // `names_marked` through `carried_places`: the call is an argument of another call.
+        "carriedarg" => {
+            "fn mk() -> $A<i64> { panic(\"no\") }\nfn f<T, U>(_a: $A<U>, _b: T) -> T { panic(\"no\") }\nfn id<V>(v: V) -> V { v }\nfn main() {\n    let _v: i64 = id(f(mk(), 1))\n}"
+        }
+        // `mark_params` and `mark_by_assoc`: the inner call has the chain as its context.
+        "idctx" => {
+            "fn poly<T>() -> $A<T> { panic(\"no\") }\nfn id<V>(v: V) -> V { v }\nfn main() {\n    let _v: $A<i64> = id(poly())\n}"
+        }
+        // The chain is over an associated type.
+        "assoc" => {
+            "fn none<T>() -> T? { None }\nfn mk() -> $A<i64> { panic(\"no\") }\nfn f<T: I>(_a: $A<T.Item>, _b: T?) -> i64 { 0 }\nfn main() {\n    print(f(mk(), none<K>()))\n}"
+        }
+        // The argument waits for `T.Item`.
+        "assocw" => {
+            "fn none<T>() -> T? { None }\nfn poly<X>() -> $A<X> { panic(\"no\") }\nfn f<T: I>(_a: $A<T.Item>, _b: T?) -> i64 { 0 }\nfn main() {\n    print(f(poly(), none<K>()))\n}"
+        }
+        // `hint`: a context with a hole in the chain, for a waiting call.
+        "hint" => {
+            "fn poly<X, Y>(_y: Y) -> Two<$A<X>, Y> { panic(\"no\") }\nfn g<T, U>(_a: Two<$A<T>, U>, _b: T?) -> i64 { 0 }\nfn none<T>() -> T? { None }\nfn main() {\n    print(g(poly(1), none()))\n}"
+        }
+        "hole" => {
+            "fn poly<X>() -> $A<X> { panic(\"no\") }\nfn g<T>(_a: $A<T>) -> i64 { 0 }\nfn main() {\n    print(g(poly()))\n}"
+        }
+        // The callee's result is a bare parameter, and the argument's parameter type is the chain.
+        "bareparam" => {
+            "fn mkp<X>() -> X { panic(\"no\") }\nfn none<T>() -> T? { None }\nfn g<T>(_a: $A<T>, _b: T?) -> i64 { 0 }\nfn main() {\n    print(g(mkp(), none()))\n}"
+        }
+        // The callee's result holds the chain over a parameter that the context binds, so the
+        // chain names no unbound parameter, and the argument's parameter type names `T` there.
+        "boundbuilt" => {
+            "fn poly<X, Y>() -> Two<Two<$A<X>, X>, Y> { panic(\"no\") }\nfn none<T>() -> T? { None }\nfn g<T, U>(_a: Two<Two<T, i64>, U>, _b: T?, _c: U?) -> i64 { 0 }\nfn main() {\n    print(g(poly(), none(), none()))\n}"
+        }
+        // A misfit whose pattern names a parameter that the context bound.
+        "ctxmis" => {
+            "fn mk() -> $A<bool> { panic(\"no\") }\nfn take<T, U>(_a: $A<U>, _b: T) -> T { panic(\"no\") }\nfn main() {\n    let _v: i64 = take(mk(), \"s\")\n}"
+        }
+        // `meets`: a misfit that `blame_arguments` explains. It asks if the result of the call
+        // meets the parameter type, which holds a hole.
+        "meets" => {
+            "fn f<U>(_x: U) -> Two<$A<i64>, U> { panic(\"no\") }\nfn none<T>() -> T? { None }\nfn g<T>(_a: Two<$A<T>, i64>, _b: T?) -> i64 { 0 }\nfn main() {\n    print(g(f(true), none()))\n}"
+        }
+        _ => unreachable!("no shape `{shape}`"),
+    };
+    src + &tail.replace("$A", &format!("A{n}"))
+}
+
+/// A walk over a type that shares children visits each distinct type once, not each path to it.
+/// Each shape puts an alias chain, which has 2^n paths, in a place that one of the walks of
+/// `TYPE_STEPS` meets. At depths 4, 8 and 12 the paths grow 16 times from one step to the next.
+/// A walk of each path fails the check. A walk of each distinct type passes.
+#[test]
+fn type_walks_should_visit_each_distinct_type_once() {
+    for shape in [
+        "chain",
+        "misfit",
+        "h",
+        "nmk",
+        "holds",
+        "holdsu",
+        "carriedarg",
+        "idctx",
+        "assoc",
+        "assocw",
+        "hint",
+        "hole",
+        "ctxmis",
+        "bareparam",
+        "boundbuilt",
+        "meets",
+    ] {
+        let steps = |n: usize| {
+            generic::TYPE_STEPS.set(0);
+            diags(&shared_chain(shape, n));
+            generic::TYPE_STEPS.get()
+        };
+        assert_near_linear_for(&format!("{shape}: "), steps(4), steps(8), steps(12));
+    }
 }
