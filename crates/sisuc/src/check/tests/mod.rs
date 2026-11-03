@@ -792,8 +792,8 @@ fn a_never_value_that_failed_should_give_e0043_after_the_other_error() {
     }
 }
 
-/// A block that ranking checks ahead of its turn keeps the invalid jump it made: the jump has its
-/// own report (E0038), and the block is no second E0043. The function `g` has `stmt` and then `0`.
+/// A block that ranking checks ahead of its turn keeps the invalid jump it made. The jump has its
+/// own report (E0038), and the block gives no E0043. The function `g` has `stmt` and then `0`.
 #[test]
 fn an_invalid_jump_in_a_ranked_block_should_give_e0038_and_no_e0043() {
     const J: Code = Code::JumpOutsideLoop;
@@ -856,8 +856,8 @@ fn an_invalid_jump_in_a_ranked_block_should_give_e0038_and_no_e0043() {
             None,
             &[J, M, U, M, U],
         ),
-        // A kept flag is added to the flag of its window and never replaces it: a branch that
-        // jumps wrongly, then one that does not, and the other way.
+        // The check adds a kept flag to the flag of its window, and never replaces it. Rows: a
+        // branch that jumps wrongly, then one that does not, and the other way.
         (
             "let x = [1, if c { break; 1 } else { return \"a\"; 1 }]",
             None,
