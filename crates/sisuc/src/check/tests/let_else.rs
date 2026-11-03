@@ -470,12 +470,9 @@ fn comment_rows(n: usize) -> String {
 /// THEN `comment_in` reads at least one comment, and the reads for 200 rows are at most three
 /// times those for 100
 ///
-/// A scan of the comment list for each statement reads n^2 comments: 4 times as many for 2n rows,
-/// and a scan that ticks nothing reads 0. `assert_near_linear` does not fit a binary search: it
-/// reads about n * (ceil(log2 n) + 2) comments, so the step from 2n to 3n jumps when a power of
-/// two falls between them, and `assert_near_linear` (at most 1.1 times) fails for about half of
-/// all n. With c = ceil(log2 n), the ratio of a search for 2n rows to n rows is 2(c + 3)/(c + 2),
-/// about 2.2 at n = 100.
+/// A scan of the comment list for each statement reads n^2 comments, 4 times as many for 2n
+/// rows. `comment_in` is a binary search, so the check is `assert_subquadratic`, not
+/// `assert_near_linear`.
 #[test]
 fn let_else_comment_checks_should_read_near_linearly() {
     let reads = |n: usize| {
@@ -483,9 +480,7 @@ fn let_else_comment_checks_should_read_near_linearly() {
         assert!(checked(&comment_rows(n)).0.is_some());
         COMMENT_READS.get()
     };
-    let (one, two) = (reads(100), reads(200));
-    assert!(one > 0, "the first count is 0");
-    assert!(two <= 3 * one, "{one} reads for 100 rows, {two} for 200");
+    crate::mir::tests::assert_subquadratic(reads(100), reads(200));
 }
 
 /// `let mut` keeps its name judged: a name that nothing changes gets W0002, which the fix of
