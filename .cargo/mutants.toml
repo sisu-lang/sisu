@@ -29,4 +29,15 @@ exclude_re = [
     # writes only a rejected-only part, so no hint changes. The pattern holds the column, because
     # the `&&` of that arm at column 43 gives a wrong hint, and a test catches it.
     ":21: replace && with \\|\\| in Bindings::hint_part",
+    # Five mutants of `needed_walk` and `needed_all` change no output. `waits_for` calls
+    # `needed_params` only after `built` meets the context, by `unify` or by `constrain` with its
+    # payload. The context has the shape of `param`, except at the places of a `Param` or an
+    # `Assoc`, which `needed_walk` handles before it descends. So no pair of two declarations, and
+    # no doubly optional `built` against another kind, reaches these arms. No pair of `needed_all`
+    # gives a mixed result. A trace of these arms over the test corpus and about 6000 generated
+    # programs confirmed it. The mutants are: the guard of the optional arm, always true; the guards
+    # `a == c` of the class, enum and `any` arms, always true; and `&&` to `||` in `needed_all`.
+    "replace match guard !matches!\\(b\\.kind.* with true in needed_walk",
+    "replace match guard a == c with true in needed_walk",
+    "replace && with \\|\\| in needed_all",
 ]
