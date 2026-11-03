@@ -345,12 +345,12 @@ impl Checker<'_> {
         let (mut want, leader) = (ty, first.as_ref().map(|(k, _)| *k));
         // A leader of a type that the operator does not take, as found. The `i64` (or `u8` or
         // `f64`) that `ty` gets from it is no one's written type. The operands that wait for
-        // context get it as a hint. A `string`, a `string?`, a `char` and a leader that is its
-        // own `ty` are left out.
+        // context get it as a hint. A `char`, a leader that is its own `ty`, and a `string` or a
+        // `string?` under `+`, which takes a `string`, are left out.
         let misfit_leader = leader_ty.is_some_and(|l| {
             ty != Some(l)
                 && l != Type::CHAR
-                && payload(l) != Type::STRING
+                && ty != Some(Type::STRING)
                 && !operator.takes().contains(&l)
         });
         // A `string?` leader after other operands: they are checked with no expected type, so the
@@ -528,7 +528,7 @@ impl Checker<'_> {
             }
             kept_seen |= is_kept(&operand);
             mismatched |= m;
-            failed |= got.is_none() && ranks[i] == Rank::Concrete;
+            failed |= got.is_none() && !is_kept(&operand) && ranks[i] == Rank::Concrete;
             checked.push(operand);
             before = got;
         }
