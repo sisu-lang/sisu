@@ -363,9 +363,9 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         grouped: Option<String>,
     },
-    /// The `: type` at `at` of a `let` whose pattern is a name, `_` or a pattern. The value gives
-    /// the names their types. `after` says where the `else` of the `let ... else` is.
-    LetTakesNoType { at: Span, after: TypeThen },
+    /// The `: type` at `at` of a `let ... else`, or of a `let` whose pattern is not a name. The
+    /// value gives the names their types. `with_else` is whether the statement has an `else`.
+    LetTakesNoType { at: Span, with_else: bool },
     /// A `var` at `at`, on a field or on a binding.
     Var { at: Span, field: bool },
     /// A `,` at `at` after a `member`. `replacement` is what takes the comma: nothing when it ends
@@ -2065,18 +2065,6 @@ pub(crate) enum ElseOf {
     Let,
 }
 
-/// Where the `else` is, after the type of a `let` (E0011): the fix that removes the type is safe
-/// only when the `else` is on the line of the value.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TypeThen {
-    /// On the line of the value.
-    SameLine,
-    /// On a later line, which is E0006.
-    NextLine,
-    /// Nowhere in the statement: the pattern needs one (E0174).
-    NoElse,
-}
-
 /// What a comma follows, in a list that puts each on its own line.
 #[derive(Clone, Copy)]
 pub(crate) enum Member {
@@ -2713,19 +2701,16 @@ impl From<DiagnosticKind> for Diagnostic {
                     None => d,
                 }
             }
-            DiagnosticKind::LetTakesNoType { at, after } => {
-                let what = if after == TypeThen::NoElse {
-                    "`let` pattern"
-                } else {
+            DiagnosticKind::LetTakesNoType { at, with_else } => {
+                let what = if with_else {
                     "`let ... else`"
-                };
-                let d = Diagnostic::coded(code, at, format!("a {what} takes no type"));
-                // The `let` then still has the error of its `else`, so the fix is not safe.
-                d.with_fix(if after == TypeThen::SameLine {
-                    safe_fix("remove the type", at, "")
                 } else {
-                    unsafe_fix("remove the type", at, "")
-                })
+                    "`let` pattern"
+                };
+                // The parser stops at the type, so it has not read the rest of the statement: the
+                // fixed source can have an error of its own, and the fix is not safe.
+                Diagnostic::coded(code, at, format!("a {what} takes no type"))
+                    .with_fix(unsafe_fix("remove the type", at, ""))
             }
             DiagnosticKind::Var { at, field } => {
                 let d = Diagnostic::coded(code, at, "there is no `var` in Sisu");

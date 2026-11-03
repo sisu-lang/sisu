@@ -15,7 +15,7 @@ use crate::ast::{
 use crate::diagnostic::{
     self, AnyFormKind, BuiltIn, ClashForm, Diagnostic, DiagnosticKind, ElseOf, ForeignPattern,
     ForeignRange, InterfaceBodyForm, Join, LetField, MatchIdiomForm, NestingForm, Owner, PowerFix,
-    SpecForm, SpecLimit, TypeThen,
+    SpecForm, SpecLimit,
 };
 use crate::lexer::{Lexed, MIN_MAGNITUDE, Token, TokenKind, literal_too_large};
 use crate::source::{Source, Span};
@@ -3511,12 +3511,11 @@ impl<'a> Parser<'a> {
             && pattern_forms
             && self.else_after(&init).is_some()
         {
-            let after = if self.at(&TokenKind::Else) {
-                TypeThen::SameLine
-            } else {
-                TypeThen::NextLine
-            };
-            return Err(DiagnosticKind::LetTakesNoType { at, after }.into());
+            return Err(DiagnosticKind::LetTakesNoType {
+                at,
+                with_else: true,
+            }
+            .into());
         }
         let else_follows = pattern_forms && ty.is_none() && self.at(&TokenKind::Else);
         // Reported last, and only where the statement ends, so that the fix leaves a `let` that
@@ -3590,24 +3589,6 @@ impl<'a> Parser<'a> {
     ) -> Result<StmtKind, Diagnostic> {
         let first = self.pos;
         let pattern = self.child(base, &mut reach, Self::pattern)?;
-        if let Some(colon) = self.eat(&TokenKind::Colon) {
-            let ty = self.child(base, &mut reach, Self::parse_type)?;
-            // `else_in_statement` stops at a line break, so it finds only an `else` on this line.
-            let after = if self.else_in_statement(first) {
-                TypeThen::SameLine
-            } else {
-                TypeThen::NoElse
-            };
-            return Err(DiagnosticKind::LetTakesNoType {
-                at: colon.span.to(ty.span),
-                after,
-            }
-            .into());
-        }
-        self.expect(&TokenKind::Eq)?;
-        if let Some(error) = self.label_not_on_loop() {
-            return Err(error);
-        }
         let qualified = matches!(
             &pattern.kind,
             PatternKind::Variant {
@@ -3616,11 +3597,30 @@ impl<'a> Parser<'a> {
                 ..
             }
         );
+        if let Some(colon) = self.eat(&TokenKind::Colon) {
+            // With no `else` on this line or the next, it is no `let ... else`, so the `.` is the
+            // first mistake, before the type.
+            if qualified && !self.else_in_statement(first, true) {
+                return Err(self.dot_error(first));
+            }
+            let ty = self.child(base, &mut reach, Self::parse_type)?;
+            // An `else` on the next line is E0006, which the fixed source reports.
+            let with_else = self.else_in_statement(first, false);
+            return Err(DiagnosticKind::LetTakesNoType {
+                at: colon.span.to(ty.span),
+                with_else,
+            }
+            .into());
+        }
+        self.expect(&TokenKind::Eq)?;
+        if let Some(error) = self.label_not_on_loop() {
+            return Err(error);
+        }
         let value = match self.child(base, &mut reach, Self::expr) {
             Ok(value) => value,
             // With no `else` in the statement, it is no `let ... else`, so the `.` is the first
             // mistake. With one, the pattern is right and the value's error is the mistake.
-            Err(_) if qualified && !self.else_in_statement(first) => {
+            Err(_) if qualified && !self.else_in_statement(first, false) => {
                 return Err(self.dot_error(first));
             }
             Err(error) => return Err(error),
@@ -3663,18 +3663,27 @@ impl<'a> Parser<'a> {
     }
 
     /// Whether an `else` of the statement that starts at token `first` is not the `else` of an
-    /// `if` in it: one at the statement's own level, before its line break. A line break inside
-    /// `{ }` does not end the statement. It runs on an error path only.
-    fn else_in_statement(&self, first: usize) -> bool {
+    /// `if` in it: one at the statement's own level, before its line break, or with `next_line`
+    /// after it. A line break inside `{ }` does not end the statement. It runs on an error path
+    /// only.
+    fn else_in_statement(&self, first: usize, next_line: bool) -> bool {
         let (mut depth, mut elses, mut ifs) = (0_usize, 0_usize, 0_usize);
-        for token in &self.tokens[first..] {
+        for (at, token) in self.tokens[first..].iter().enumerate() {
             // A closing bracket at the statement's own level ends the statement.
             let Some(next) = nested(&token.kind, depth) else {
                 break;
             };
             depth = next;
             match token.kind {
-                TokenKind::Newline | TokenKind::Eof if depth == 0 => break,
+                TokenKind::Newline if depth == 0 => {
+                    let after = self.tokens[first + at..]
+                        .iter()
+                        .find(|t| t.kind != TokenKind::Newline);
+                    elses +=
+                        usize::from(next_line && after.is_some_and(|t| t.kind == TokenKind::Else));
+                    break;
+                }
+                TokenKind::Eof if depth == 0 => break,
                 TokenKind::Else if depth == 0 => elses += 1,
                 TokenKind::If if depth == 0 => ifs += 1,
                 _ => {}
