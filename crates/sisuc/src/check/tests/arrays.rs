@@ -569,8 +569,9 @@ fn unknown_name_poisons() {
     }
 }
 
-/// A `let` without a type binds its name without one when its value fails, so a use of the name
-/// gives no error. A `let` with a type is in `check::tests`, in the test of its failed value.
+/// A `let` without a type binds no type when its value fails with no known type, so a use of the
+/// name gives no error. A `let` with a type is in `check::tests`, in the test
+/// `failed_value_of_an_annotated_let_should_keep_the_declared_type`.
 #[test]
 fn a_failed_value_of_an_unannotated_let_should_give_no_second_error() {
     for (src, code, pos) in [

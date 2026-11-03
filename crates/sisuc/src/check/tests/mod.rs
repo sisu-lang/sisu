@@ -91,7 +91,7 @@ fn contains(src: &str, parts: &[&str]) {
 
 /// The diagnostics are exactly these, in order: `(code, (line, col))`; no `tir` if one is an
 /// error.
-fn codes(src: &str, expected: &[(Code, (usize, usize))]) {
+fn codes(src: &str, expected: &[Wanted]) {
     codes_row("", src, expected);
 }
 
@@ -105,7 +105,7 @@ fn named(row: &str) -> String {
 }
 
 /// `codes` for one row of a table: a failure names `row`.
-fn codes_row(row: &str, src: &str, expected: &[(Code, (usize, usize))]) {
+fn codes_row(row: &str, src: &str, expected: &[Wanted]) {
     let row = named(row);
     let (program, ds) = checked(src);
     let found: Vec<_> = ds.iter().map(|d| (d.code(), at(src, d.span()))).collect();
@@ -797,8 +797,9 @@ fn a_never_value_that_failed_should_give_e0043_after_the_other_error() {
 }
 
 /// An annotated `let` binds its name with the declared type when its value fails, as a `const`
-/// does, so each use of the name is still checked. An annotation that does not resolve, and a
-/// `let` with no annotation, leave the name without a type.
+/// does, so each use of the name is still checked. An annotation that does not resolve leaves
+/// the name without a type. So does a `let` with no annotation, when the failed value has no
+/// known type.
 #[test]
 #[expect(clippy::too_many_lines, reason = "a table of programs, one row each")]
 fn failed_value_of_an_annotated_let_should_keep_the_declared_type() {
