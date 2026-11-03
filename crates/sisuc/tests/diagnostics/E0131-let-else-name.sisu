@@ -1,0 +1,16 @@
+// GIVEN a function `f` whose line 10 is `let v = w else { return }` on an enum value, with the pattern at 10:9
+// WHEN `sisu check` runs on it
+// THEN it reports E0131 at 10:9 with the safe fix "remove the `else` block" and no help
+enum E {
+    A(n: i64)
+    B
+}
+
+fn f(w: E) {
+    let v = w else { return }
+    print(v)
+}
+
+fn main() {
+    f(E.B)
+}

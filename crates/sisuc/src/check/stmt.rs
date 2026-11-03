@@ -542,6 +542,7 @@ impl Checker<'_> {
         };
         let word = Unwrap::LetElse;
         let (scrutinee, form, _) = self.let_value(word, pattern, value);
+        let before = self.diagnostics.len();
         let block = self.block(else_block, None);
         if let Ok(block) = &block
             && block.ty != Type::NEVER
@@ -551,7 +552,21 @@ impl Checker<'_> {
                 at: Span::new(close - 1, close),
             });
         }
-        let (bound, _) = self.bind_pattern_as(Some(word), mutable, &form, pattern, None);
+        let removal = Span::new(value.span.end(), else_block.span.end());
+        // A `;` anywhere in the removed text, also one in a `';'` literal, makes the fix unsafe.
+        let safe = mutable.is_none()
+            && is_plain_exit(else_block)
+            && self.diagnostics.len() == before
+            && !self.comment_in(&[removal.range()])
+            && !self.source.text(removal).contains(';');
+        let (bound, _) = self.bind_pattern_as(
+            Some(word),
+            mutable,
+            Some((removal, safe)),
+            &form,
+            pattern,
+            None,
+        );
         if let (
             Some(keyword),
             LetPattern::Match {
@@ -599,7 +614,7 @@ impl Checker<'_> {
     ) -> Result<tir::Stmt, Poisoned> {
         let (scrutinee, form, mismatched) = self.let_value(Unwrap::Let, pattern, value);
         let ty = type_of(&scrutinee);
-        let (bound, _) = self.bind_pattern_as(Some(Unwrap::Let), None, &form, pattern, None);
+        let (bound, _) = self.bind_pattern_as(Some(Unwrap::Let), None, None, &form, pattern, None);
         if !mismatched {
             // A value with no type leaves `always` false.
             let always = match ty {
@@ -1815,6 +1830,29 @@ struct ForHeader {
     limit: tir::LocalId,
     go: Option<tir::LocalId>,
     item: tir::Expr,
+}
+
+/// Whether `block` holds one statement that leaves and reports nothing else when it goes: a
+/// `return` with no value or with a number, `bool` or `char` literal, or a `continue` with no
+/// label. A `break` is not one: it gives its `loop` a type, and the errors of that type come
+/// after the block.
+fn is_plain_exit(block: &ast::Block) -> bool {
+    let [stmt] = block.stmts.as_slice() else {
+        return false;
+    };
+    let StmtKind::Expr(e) = &stmt.kind else {
+        return false;
+    };
+    match &e.kind {
+        ast::ExprKind::Return { value, .. } => value.as_ref().is_none_or(|v| {
+            matches!(
+                v.kind,
+                ast::ExprKind::Int { .. } | ast::ExprKind::Bool(_) | ast::ExprKind::Char(_)
+            )
+        }),
+        ast::ExprKind::Continue { label } => label.is_none(),
+        _ => false,
+    }
 }
 
 /// A new expression for the fixed place `e` (see `fixed_place`).

@@ -117,3 +117,6 @@ let _a: [(any Pet)?] = [$]
 let _v: any Pet = $
 # A loop over a join.
 for _x in if c { [Some(p)] } else { [$] } {}
+let _l = $ else { return }
+let 1 = $ else { return }
+if let _l = $ {}

@@ -1,0 +1,26 @@
+error[E0131]: `let ... else` always matches here
+  --> E0131-let-else-semicolon.sisu:10:9
+   |
+10 |     let v = w else { return; }
+   |         ^
+   |
+help: remove the `else` block
+   |
+10 -     let v = w else { return; }
+10 +     let v = w
+   |
+
+warning[W0007]: unnecessary `;`
+  --> E0131-let-else-semicolon.sisu:10:28
+   |
+10 |     let v = w else { return; }
+   |                            ^
+   |
+help: remove the `;`
+   |
+10 -     let v = w else { return; }
+10 +     let v = w else { return }
+   |
+
+sisu: 1 error, 1 warning
+sisu: for more on a code, run `sisu explain <code>`: E0131, W0007

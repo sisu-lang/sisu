@@ -627,7 +627,7 @@ fn main() {
 The rules:
 
 - The value is an enum or an optional ([E0051](../diagnostics/E0051.md)).
-- For an enum, the pattern is any pattern. When the pattern accepts every value of the enum, the test means nothing and the use is an error ([E0131](../diagnostics/E0131.md)). Use a `match`.
+- For an enum, the pattern is any pattern. When the pattern accepts every value of the enum, the test means nothing and the use is an error ([E0131](../diagnostics/E0131.md)). Use a `match`. For an `if let` whose pattern is a name or `_`, use a plain `let`.
 - For an optional `T?`, the pattern follows the rules of [Patterns on an optional](#patterns-on-an-optional). At the top, a name is bound to the value inside the optional, and the block does not run for `None` ([Types](types.md#optionals)).
 - The names of the pattern are in scope in the first block only, and not in the `else` block.
 - An `if let` with an `else` is an expression, as an `if` is. Without an `else`, it has no value ([E0043](../diagnostics/E0043.md)).
