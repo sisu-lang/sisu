@@ -800,6 +800,13 @@ fn main() {
                 "{}",
                 Code::BraceOnNewLine,
             ),
+            (
+                "nl comment interface",
+                "interface ",
+                " // note\n{}\n",
+                "{}",
+                Code::BraceOnNewLine,
+            ),
             ("nl class", "class ", "\n{}\n", "{}", Code::BraceOnNewLine),
             (
                 "nl enum",
