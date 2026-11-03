@@ -15,7 +15,7 @@ use crate::ast::{
 use crate::diagnostic::{
     self, AnyFormKind, BuiltIn, ClashForm, Diagnostic, DiagnosticKind, ElseOf, ForeignPattern,
     ForeignRange, InterfaceBodyForm, Join, LetField, MatchIdiomForm, NestingForm, Owner, PowerFix,
-    SpecForm, SpecLimit,
+    SpecForm, SpecLimit, TypeThen,
 };
 use crate::lexer::{Lexed, MIN_MAGNITUDE, Token, TokenKind, literal_too_large};
 use crate::source::{Source, Span};
@@ -69,6 +69,7 @@ pub(crate) fn parse(lexed: Lexed<'_>, prelude: bool) -> Parsed {
         specs: Vec::new(),
         warnings,
         labels: Vec::new(),
+        loops: Vec::new(),
         prelude,
     }
     .program()
@@ -622,6 +623,9 @@ struct Parser<'a> {
     /// The loop labels open around the next token, innermost last: from each one's `name:` to the
     /// end of its loop's body.
     labels: Vec<Ident>,
+    /// The loops open around the next token, innermost last, each with the part that holds it.
+    /// The `( )` help of `jump_takes_block` keeps a `break` only in the body of its loop.
+    loops: Vec<LoopPart>,
     /// Whether this is the prelude, which may declare a variant `None`.
     prelude: bool,
     /// `tokens`, or once a type-argument list takes the `>` of a `>=` (a split), the tokens before
@@ -635,6 +639,15 @@ struct Parser<'a> {
     /// While a `match` reads its scrutinee: the index of its first token. A jump at the end of
     /// the scrutinee that takes the body's `{` as its value reports that (`jump_value`).
     scrutinee: Option<usize>,
+}
+
+/// An open loop, and whether the parser is in its header or in its body.
+struct LoopPart {
+    /// The loop's label, when it has one.
+    label: Option<Symbol>,
+    /// Whether the next token is in the loop's header (`while`, `while let` and `for`; a `loop`
+    /// has none). A `break` there is E0082.
+    header: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -1895,6 +1908,7 @@ impl<'a> Parser<'a> {
             specs: Vec::new(),
             warnings: Vec::new(),
             labels: Vec::new(),
+            loops: Vec::new(),
             prelude: self.prelude,
             window: self.tokens,
             halves: self.halves,
@@ -2274,10 +2288,12 @@ impl<'a> Parser<'a> {
     }
 
     fn stmt(&mut self) -> Result<Stmt, Diagnostic> {
-        let open = self.labels.len();
+        let open = (self.labels.len(), self.loops.len());
         let stmt = self.stmt_opening_labels();
-        // A loop label closes with its loop's body, also when the loop fails to parse.
-        self.labels.truncate(open);
+        // A loop label and a loop part close with the loop's body, also when the loop fails to
+        // parse.
+        self.labels.truncate(open.0);
+        self.loops.truncate(open.1);
         stmt
     }
 
@@ -2299,8 +2315,10 @@ impl<'a> Parser<'a> {
             TokenKind::Const => return Err(self.local_const()),
             TokenKind::While => {
                 let keyword = self.bump().span;
+                self.open_loop(label.as_ref(), true);
                 if let Some((pattern, value)) = self.child(base, &mut reach, Self::let_binding)? {
-                    self.header_body(&value, true)?;
+                    self.header_body(&value)?;
+                    self.enter_loop_body();
                     StmtKind::WhileLet {
                         label,
                         keyword,
@@ -2310,7 +2328,8 @@ impl<'a> Parser<'a> {
                     }
                 } else {
                     let cond = self.child(base, &mut reach, Self::expr)?;
-                    self.header_body(&cond, true)?;
+                    self.header_body(&cond)?;
+                    self.enter_loop_body();
                     StmtKind::While {
                         label,
                         keyword,
@@ -2321,6 +2340,7 @@ impl<'a> Parser<'a> {
             }
             TokenKind::For => {
                 let keyword = self.bump().span;
+                self.open_loop(label.as_ref(), true);
                 let name = self.binding()?;
                 self.expect(&TokenKind::In)?;
                 // A range is only valid here, so the header reads its two sides itself, counted
@@ -2343,12 +2363,10 @@ impl<'a> Parser<'a> {
                         inclusive: matches!(op, RangeOp::Inclusive),
                     },
                 };
-                self.header_body(
-                    match &source {
-                        ForSource::Array(e) | ForSource::Range { end: e, .. } => e,
-                    },
-                    true,
-                )?;
+                self.header_body(match &source {
+                    ForSource::Array(e) | ForSource::Range { end: e, .. } => e,
+                })?;
+                self.enter_loop_body();
                 StmtKind::For {
                     label,
                     keyword,
@@ -2520,17 +2538,18 @@ impl<'a> Parser<'a> {
         let kind = match keyword.kind {
             TokenKind::Return => ExprKind::Return {
                 keyword: keyword.span,
-                value: self.jump_value(base, reach, keyword_pos)?,
+                value: self.jump_value(base, reach, keyword_pos, None)?,
             },
             TokenKind::Break => {
                 let label = self.jump_label(false);
                 if let Some(error) = label.as_ref().and_then(|label| self.label_clash(label)) {
                     return Err(error);
                 }
+                let named = label.as_ref().map(|label| label.name);
                 ExprKind::Break {
                     label,
                     keyword: keyword.span,
-                    value: self.jump_value(base, reach, keyword_pos)?,
+                    value: self.jump_value(base, reach, keyword_pos, named)?,
                 }
             }
             _ => ExprKind::Continue {
@@ -2543,15 +2562,17 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// The value of a `return` or a `break` (its keyword is the token at `keyword_pos`), unless
-    /// the jump ends here. In the scrutinee of a `match`, a `{` after the jump is the body that
-    /// the jump took, and when that body fails to parse as a block, as the arms do, the error is
-    /// the jump's (`header_body` reports the same mistake when the block parses).
+    /// The value of a `return` or a `break` (its keyword is the token at `keyword_pos`, and
+    /// `label` is the `break`'s loop label), unless the jump ends here. In the scrutinee of a
+    /// `match`, a `{` after the jump is the body that the jump took, and when that body fails to
+    /// parse as a block, as the arms do, the error is the jump's (`header_body` reports the same
+    /// mistake when the block parses).
     fn jump_value(
         &mut self,
         base: Height,
         reach: &mut Height,
         keyword_pos: usize,
+        label: Option<Symbol>,
     ) -> Result<Option<Box<Expr>>, Diagnostic> {
         if self.jump_ends() {
             return Ok(None);
@@ -2569,7 +2590,7 @@ impl<'a> Parser<'a> {
                         "break"
                     };
                     let header = self.tokens[first].span.start();
-                    Err(self.jump_takes_block(name, keyword.span, header, end, false))
+                    Err(self.jump_takes_block(name, keyword.span, header, end, label))
                 }
                 _ => Err(error),
             },
@@ -2590,17 +2611,18 @@ impl<'a> Parser<'a> {
 
     /// The error of the `return` or `break` `name` at `keyword`, whose value is the `{ ... }`
     /// that should be the body of the header that starts at byte `header`. The header through
-    /// the jump, which ends at byte `end`, goes in `( )` to keep the block as the body. In the
-    /// header of a loop (`loop_header`) that is no help for a `break`: it is E0082 there.
+    /// the jump, which ends at byte `end`, goes in `( )` to keep the block as the body. That is
+    /// help only when the `break` (with loop label `label`) then stays in the body of its loop:
+    /// in a loop header it is E0082, and with no loop it is E0038.
     fn jump_takes_block(
         &self,
         name: &'static str,
         keyword: Span,
         header: usize,
         end: usize,
-        loop_header: bool,
+        label: Option<Symbol>,
     ) -> Diagnostic {
-        let grouped = (name == "return" || !loop_header)
+        let grouped = (name == "return" || self.break_stays_in_body(label))
             .then(|| self.source.text(Span::new(header, end)).to_string());
         DiagnosticKind::JumpTakesBlock {
             keyword: name,
@@ -2610,10 +2632,32 @@ impl<'a> Parser<'a> {
         .into()
     }
 
+    /// Whether a `break` with loop label `label` (the innermost loop, when it has none) leaves
+    /// from the body of its loop, with no loop header on its way out. It walks the open loops of
+    /// the jump, so its cost is bounded by the nesting limit.
+    fn break_stays_in_body(&self, label: Option<Symbol>) -> bool {
+        let Some(label) = label else {
+            return self.loops.last().is_some_and(|part| !part.header);
+        };
+        for part in self.loops.iter().rev() {
+            if part.label == Some(label) {
+                return !part.header;
+            }
+            if part.header {
+                return false;
+            }
+        }
+        debug_assert!(
+            false,
+            "`jump_label` should find only the label of an open loop"
+        );
+        false
+    }
+
     /// The error of a header (`header`, the condition, value or source of an `if`, `while`, `for`
     /// or `match`) whose body block is missing because a jump at its end took that block as its
     /// value: `if o ?? return {`. Nothing when a `{` follows, or the header ends in no such jump.
-    fn header_body(&self, header: &Expr, loop_header: bool) -> Result<(), Diagnostic> {
+    fn header_body(&self, header: &Expr) -> Result<(), Diagnostic> {
         if self.at(&TokenKind::LBrace) {
             return Ok(());
         }
@@ -2627,7 +2671,23 @@ impl<'a> Parser<'a> {
             _ => unreachable!("`block_taking_jump` should find a jump"),
         };
         let end = label.map_or_else(|| keyword.end(), |label| label.span.end());
-        Err(self.jump_takes_block(name, keyword, header.span.start(), end, loop_header))
+        let label = label.map(|label| label.name);
+        Err(self.jump_takes_block(name, keyword, header.span.start(), end, label))
+    }
+
+    /// Opens a loop (with loop label `label`) in its header or, for a `loop`, in its body.
+    fn open_loop(&mut self, label: Option<&Ident>, header: bool) {
+        self.loops.push(LoopPart {
+            label: label.map(|label| label.name),
+            header,
+        });
+    }
+
+    /// Moves the innermost loop, whose header has just been read, to its body.
+    fn enter_loop_body(&mut self) {
+        if let Some(part) = self.loops.last_mut() {
+            part.header = false;
+        }
     }
 
     /// The loop label after `break` or `continue`: a name, when it is an open loop label or
@@ -2668,7 +2728,8 @@ impl<'a> Parser<'a> {
     fn else_on_new_line(&self, previous: Option<&Stmt>) -> Diagnostic {
         // A pattern `let` without `else` never comes here: `let_pattern` reports the `else`.
         let value = previous.and_then(|stmt| match &stmt.kind {
-            // A `let` with a type takes no `else`: the old E0006 stays, with no join.
+            // A `let` with a type takes no `else`: `let_stmt` reports it, unless its value ends in
+            // an `if` without `else`, which keeps the old E0006, with no join.
             StmtKind::Let { ty: None, init, .. } => Some(init),
             _ => None,
         });
@@ -3277,7 +3338,7 @@ impl<'a> Parser<'a> {
         let scrutinee = self.child(base, &mut reach, Self::expr);
         self.scrutinee = outer;
         let scrutinee = scrutinee?;
-        self.header_body(&scrutinee, false)?;
+        self.header_body(&scrutinee)?;
         self.expect(&TokenKind::LBrace)?;
         self.skip_newlines();
         let mut arms = Vec::new();
@@ -3430,9 +3491,13 @@ impl<'a> Parser<'a> {
             _ => {}
         }
         let name = self.binding()?;
-        let ty = match self.eat(&TokenKind::Colon) {
-            Some(_) => Some(self.child(base, &mut reach, Self::parse_type)?),
-            None => None,
+        let (ty, annotation) = match self.eat(&TokenKind::Colon) {
+            Some(colon) => {
+                let ty = self.child(base, &mut reach, Self::parse_type)?;
+                let annotation = colon.span.to(ty.span);
+                (Some(ty), Some(annotation))
+            }
+            None => (None, None),
         };
         self.expect(&TokenKind::Eq)?;
         if let Some(error) = self.label_not_on_loop() {
@@ -3440,6 +3505,18 @@ impl<'a> Parser<'a> {
         }
         let init = self.child(base, &mut reach, Self::expr)?;
         self.depth = reach;
+        // A typed `let` takes no `else`, which can start the next line.
+        if let Some(at) = annotation
+            && pattern_forms
+            && self.else_after(&init).is_some()
+        {
+            let after = if self.at(&TokenKind::Else) {
+                TypeThen::SameLine
+            } else {
+                TypeThen::NextLine
+            };
+            return Err(DiagnosticKind::LetTakesNoType { at, after }.into());
+        }
         let else_follows = pattern_forms && ty.is_none() && self.at(&TokenKind::Else);
         // Reported last, and only where the statement ends, so that the fix leaves a `let` that
         // parses: past a stray token, the block reports that token's own error.
@@ -3487,10 +3564,11 @@ impl<'a> Parser<'a> {
             | T::True
             | T::False => LetHead::Pattern,
             T::Ident(_) => match kind(1) {
-                Some(T::LParen | T::Pipe | T::DotDot | T::DotDotEq) => LetHead::Pattern,
+                // A `{` after the name is Rust's `Rect { w, h }`, which `single` reports.
+                Some(T::LParen | T::LBrace | T::Pipe | T::DotDot | T::DotDotEq) => LetHead::Pattern,
                 Some(T::Dot) if matches!(kind(2), Some(T::Ident(_) | T::NoneKw)) => match kind(3) {
-                    Some(T::LParen | T::Pipe) => LetHead::Pattern,
-                    Some(T::Eq) => LetHead::Qualified,
+                    Some(T::LParen | T::LBrace | T::Pipe) => LetHead::Pattern,
+                    Some(T::Eq | T::Colon) => LetHead::Qualified,
                     _ => LetHead::Name,
                 },
                 _ => LetHead::Name,
@@ -3511,6 +3589,20 @@ impl<'a> Parser<'a> {
     ) -> Result<StmtKind, Diagnostic> {
         let first = self.pos;
         let pattern = self.child(base, &mut reach, Self::pattern)?;
+        if let Some(colon) = self.eat(&TokenKind::Colon) {
+            let ty = self.child(base, &mut reach, Self::parse_type)?;
+            // `else_in_statement` stops at a line break, so it finds only an `else` on this line.
+            let after = if self.else_in_statement(first) {
+                TypeThen::SameLine
+            } else {
+                TypeThen::NoElse
+            };
+            return Err(DiagnosticKind::LetTakesNoType {
+                at: colon.span.to(ty.span),
+                after,
+            }
+            .into());
+        }
         self.expect(&TokenKind::Eq)?;
         if let Some(error) = self.label_not_on_loop() {
             return Err(error);
@@ -3538,14 +3630,7 @@ impl<'a> Parser<'a> {
         }
         // The pattern and its value, then an `else` on the next line: the `let ... else` that
         // E0006 reports, which comes before the error of a pattern that can fail.
-        let next = self.tokens[self.pos..]
-            .iter()
-            .position(|t| t.kind != TokenKind::Newline)
-            .map(|n| self.pos + n);
-        if let Some(at) = next
-            && self.tokens[at].kind == TokenKind::Else
-            && !ends_in_open_if(&value)
-        {
+        if let Some(at) = self.else_after(&value) {
             return Err(self.let_else_on_new_line(at));
         }
         if qualified {
@@ -3564,6 +3649,16 @@ impl<'a> Parser<'a> {
             value,
             else_block: None,
         })
+    }
+
+    /// The token index of an `else` after `value`, the value of a `let`, on its line or on a later
+    /// one. A value that ends in an `if` without `else` keeps it: the `else` is that `if`'s.
+    fn else_after(&self, value: &Expr) -> Option<usize> {
+        let at = self.pos
+            + self.tokens[self.pos..]
+                .iter()
+                .position(|t| t.kind != TokenKind::Newline)?;
+        (self.tokens[at].kind == TokenKind::Else && !ends_in_open_if(value)).then_some(at)
     }
 
     /// Whether an `else` of the statement that starts at token `first` is not the `else` of an
@@ -4322,12 +4417,9 @@ impl<'a> Parser<'a> {
             Some((pattern, value)) => Head::Let(pattern, value),
             None => Head::Cond(self.child(base, &mut reach, Self::expr)?),
         };
-        self.header_body(
-            match &head {
-                Head::Cond(e) | Head::Let(_, e) => e,
-            },
-            false,
-        )?;
+        self.header_body(match &head {
+            Head::Cond(e) | Head::Let(_, e) => e,
+        })?;
         let then_block = self.child(base, &mut reach, Self::block)?;
         let mut end = then_block.span;
         let else_block = if let Some(else_token) = self.eat(&TokenKind::Else) {
@@ -4378,8 +4470,10 @@ impl<'a> Parser<'a> {
         let keyword = self.expect(&TokenKind::Loop)?.span;
         let base = self.depth;
         let mut reach = base;
+        self.open_loop(label.as_ref(), false);
         let body = self.child(base, &mut reach, Self::block);
-        // The loop label closes with the body, also when the body fails to parse.
+        // The loop part and the loop label close with the body, also when it fails to parse.
+        self.loops.pop();
         if label.is_some() {
             self.labels.pop();
         }
@@ -5369,9 +5463,10 @@ mod tests {
             "fn main() {\n    let x = if a { 1 } else if b { 2 }\n    else { 3 }\n}",
             // A `let` value that ends in `}` would read the joined `else` as its own (E0173).
             "fn main() {\n    let x = { 1 }\n    else {\n    }\n}",
-            // A typed `let` takes no `else`: the old wording stays, with no join.
-            "fn main() {\n    let x: i64? = o\n    else { return }\n}",
-            "fn main() {\n    let mut x: i64? = o\n    else { return }\n}",
+            // A typed `let` whose value ends in an `if` without `else`: the `else` is the `if`'s.
+            // (A typed `let` with another value reports its type: E0011.)
+            "fn main() {\n    let x: i64 = if a { 1 }\n    else { 2 }\n}",
+            "fn main() {\n    let mut x: i64 = if a { 1 }\n    else { 2 }\n}",
             // A `let ... else` has no `else if`.
             "fn main() {\n    let x = o\n    else if a {\n    }\n}",
         ] {
@@ -6839,6 +6934,7 @@ mod tests {
             specs: Vec::new(),
             warnings: Vec::new(),
             labels: Vec::new(),
+            loops: Vec::new(),
             prelude: false,
             window: &lexed.tokens,
             halves: &OnceCell::new(),
@@ -7397,43 +7493,67 @@ mod tests {
     /// GIVEN a `let` with a type, and an `else` after its value, in a name, `mut`, `_`,
     /// pattern or qualified form, on the same line or on the next
     /// WHEN the parser reads it
-    /// THEN the error is E0011 at the `: type`, with one safe fix that removes it
-    /// AND the fixed source reads as the `let ... else` it names, with the errors in `after`
+    /// THEN the error is E0011 at the `: type`, with one fix that removes it
+    /// AND the fix is safe when the `else` is on the line of the value, and unsafe otherwise
+    /// AND the fixed source has the errors in `after`
     /// AND a `let` with a type and no `else`, and a `const`, report nothing
     #[test]
     fn let_else_with_a_type_should_be_reported_at_the_type() {
+        // The columns: the `let`, the text of the type with its colon, whether the fix is safe,
+        // and the codes that the fixed source reports.
         let rows = [
-            ("let w: i64 = o else { return }", ": i64", vec![]),
-            ("let mut w: i64 = o else { return }", ": i64", vec![]),
-            ("let _: i64 = o else { return }", ": i64", vec![]),
-            ("let Some(w): i64? = o else { return }", ": i64?", vec![]),
-            ("let Shape.Sq: Shape = e else { return }", ": Shape", vec![]),
-            ("let w: i64 = o\n    else { return }", ": i64", vec![]),
+            ("let w: i64 = o else { return }", ": i64", true, vec![]),
+            ("let mut w: i64 = o else { return }", ": i64", true, vec![]),
+            ("let _: i64 = o else { return }", ": i64", true, vec![]),
+            (
+                "let Some(w): i64? = o else { return }",
+                ": i64?",
+                true,
+                vec![],
+            ),
+            (
+                "let Shape.Sq: Shape = e else { return }",
+                ": Shape",
+                true,
+                vec![],
+            ),
+            // The fixed source has the `else` on its own line, which is E0006.
+            (
+                "let w: i64 = o\n    else { return }",
+                ": i64",
+                false,
+                vec![Code::ElseOnNewLine],
+            ),
             (
                 "let Some(w): i64? = o\n    else { return }",
                 ": i64?",
-                vec![],
+                false,
+                vec![Code::ElseOnNewLine],
             ),
             // A pattern with no `else` reports the type first, then that it can fail.
             (
                 "let Some(w): i64? = o",
                 ": i64?",
+                false,
                 vec![Code::RefutablePattern],
             ),
             // The type comes first: the `mut` is reported once the type is gone.
             (
                 "let mut _: i64 = o else { return }",
                 ": i64",
+                true,
                 vec![Code::MutOnUnderscore],
             ),
         ];
-        for (line, ty, after) in rows {
+        for (line, ty, safe, after) in rows {
             let src = format!("fn main() {{\n    {line}\n}}");
             let d = parse_diagnostic(&src);
             let at = d.span();
             assert_eq!(&src[at.start()..at.end()], ty, "{src}");
             assert_eq!(d.fixes().len(), 1, "{src}");
-            let fixed = fixed(&src);
+            let (found_safe, _) = fix_edits(&d).expect("the error has a fix");
+            assert_eq!(found_safe, safe, "{src}");
+            let fixed = apply_fix(&src, &d);
             let found: Vec<_> = parsed(&fixed)
                 .diagnostics
                 .iter()

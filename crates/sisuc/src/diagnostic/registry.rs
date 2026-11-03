@@ -68,7 +68,7 @@ codes! {
     DigitSeparator = "E0008",
     IntegerTooLarge = "E0009",
     UnexpectedCharacter | LogicalOperatorWritten = "E0010",
-    Expected | JumpTakesBlock = "E0011",
+    Expected | JumpTakesBlock | LetTakesNoType = "E0011",
     Var = "E0013",
     FieldComma = "E0015",
     FieldLet = "E0016",
@@ -357,12 +357,15 @@ pub(crate) enum DiagnosticKind {
     /// The `return` or `break` `keyword` at `at`, at the end of the header of an `if`, a `while`,
     /// a `for` or a `match`, which took the `{ ... }` of the body as its value. `grouped` is the
     /// header through the jump, for the help that puts it in `( )`; it is `None` for a `break`
-    /// in the header of a loop, where that help would be E0082.
+    /// that the `( )` would leave in a loop header (E0082) or outside every loop (E0038).
     JumpTakesBlock {
         keyword: &'static str,
         at: Span,
         grouped: Option<String>,
     },
+    /// The `: type` at `at` of a `let` whose pattern is a name, `_` or a pattern. The value gives
+    /// the names their types. `after` says where the `else` of the `let ... else` is.
+    LetTakesNoType { at: Span, after: TypeThen },
     /// A `var` at `at`, on a field or on a binding.
     Var { at: Span, field: bool },
     /// A `,` at `at` after a `member`. `replacement` is what takes the comma: nothing when it ends
@@ -2062,6 +2065,18 @@ pub(crate) enum ElseOf {
     Let,
 }
 
+/// Where the `else` is, after the type of a `let` (E0011): the fix that removes the type is safe
+/// only when the `else` is on the line of the value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TypeThen {
+    /// On the line of the value.
+    SameLine,
+    /// On a later line, which is E0006.
+    NextLine,
+    /// Nowhere in the statement: the pattern needs one (E0174).
+    NoElse,
+}
+
 /// What a comma follows, in a list that puts each on its own line.
 #[derive(Clone, Copy)]
 pub(crate) enum Member {
@@ -2697,6 +2712,20 @@ impl From<DiagnosticKind> for Diagnostic {
                     )),
                     None => d,
                 }
+            }
+            DiagnosticKind::LetTakesNoType { at, after } => {
+                let what = if after == TypeThen::NoElse {
+                    "`let` pattern"
+                } else {
+                    "`let ... else`"
+                };
+                let d = Diagnostic::coded(code, at, format!("a {what} takes no type"));
+                // The `let` then still has the error of its `else`, so the fix is not safe.
+                d.with_fix(if after == TypeThen::SameLine {
+                    safe_fix("remove the type", at, "")
+                } else {
+                    unsafe_fix("remove the type", at, "")
+                })
             }
             DiagnosticKind::Var { at, field } => {
                 let d = Diagnostic::coded(code, at, "there is no `var` in Sisu");

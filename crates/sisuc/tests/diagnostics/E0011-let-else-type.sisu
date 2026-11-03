@@ -1,0 +1,10 @@
+// GIVEN a `let ... else` that gives its name a type
+// WHEN `sisu check` runs on it
+// THEN it reports E0011 at the `: i64` (6:10), with a safe fix that removes the type
+fn main() {
+    let o: i64? = None
+    let w: i64 = o else {
+        return
+    }
+    print(w)
+}
