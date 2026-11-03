@@ -2,7 +2,7 @@
 //! `cases.rs`), such as a small stack, an allocation count or a generated source, and the bless
 //! rules of the `cases` harness.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::process::ExitStatusExt;
@@ -400,6 +400,153 @@ fn any_shapes_should_keep_its_boxes_at_o2() {
         heap_allocs(&compile_tmp_for_valgrind("any_shapes_bench", &source, true));
     assert_eq!(stdout, "99985\n749977\n");
     assert!(allocs >= 150_000, "{allocs} allocations");
+}
+
+/// The largest `mem_heap_B` of the snapshots in `massif_out`, the text that `valgrind
+/// --tool=massif` writes; panics when it has no snapshot.
+fn largest_snapshot(massif_out: &str) -> u64 {
+    massif_out
+        .lines()
+        .filter_map(|line| line.strip_prefix("mem_heap_B="))
+        .map(|bytes| {
+            bytes
+                .parse()
+                .unwrap_or_else(|_| panic!("a number after `mem_heap_B=`, not `{bytes}`"))
+        })
+        .max()
+        .unwrap_or_else(|| panic!("no snapshot in:\n{massif_out}"))
+}
+
+/// Runs `exe`, a `compile_tmp_for_valgrind` build, under `valgrind --tool=massif` and returns the
+/// peak of the heap, the largest `mem_heap_B` of its snapshots.
+fn peak_heap(exe: &Path) -> u64 {
+    let out_file = exe.with_extension("massif");
+    let mut out_option = OsString::from("--massif-out-file=");
+    out_option.push(&out_file);
+    let out = Command::new("valgrind")
+        .arg("--tool=massif")
+        .arg(out_option)
+        .arg(exe)
+        .output()
+        .expect("valgrind starts");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}: {}",
+        exe.display(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    largest_snapshot(&fs::read_to_string(&out_file).expect("massif writes its file"))
+}
+
+/// GIVEN massif output with three snapshots of 1 000, 4 096 and 2 048 bytes of heap
+/// WHEN `largest_snapshot` reads it
+/// THEN it returns 4096, the largest, and not the last
+#[test]
+fn peak_heap_should_read_the_largest_snapshot() {
+    let text = "desc: --tool=massif\ncmd: ./a\n#-----------\nsnapshot=0\n#-----------\ntime=0\n\
+                mem_heap_B=1000\nmem_heap_extra_B=16\nmem_stacks_B=0\nheap_tree=empty\n\
+                #-----------\nsnapshot=1\n#-----------\ntime=5\nmem_heap_B=4096\n\
+                mem_heap_extra_B=16\nmem_stacks_B=0\nheap_tree=empty\n#-----------\n\
+                snapshot=2\n#-----------\ntime=9\nmem_heap_B=2048\nmem_heap_extra_B=16\n\
+                mem_stacks_B=0\nheap_tree=empty\n";
+    assert_eq!(largest_snapshot(text), 4096);
+}
+
+/// Each row of `trim_should_bound_the_peak_heap`: the scenario, its program, the last line the
+/// program prints (S14 prints `all.len()` before it), and the bound on the peak heap in bytes.
+/// `make` builds an array of 100 000 elements, or a string of 100 000 bytes, and returns a part
+/// of two to ten of them; `main` keeps 100 such values.
+/// Untrimmed, each holds the block of its `make`: 80 MB of arrays, or 10 MB of text.
+const TRIMS: &[(&str, &str, &str, u64)] = &[
+    (
+        "S13",
+        "fn make() -> [i64] {\n    let all = [7; 100000]\n    all[..2]\n}\n\
+         fn main() {\n    let mut xs: [[i64]] = []\n    for _ in 0..100 { xs.push(make()) }\n\
+         \x20   let mut sum = 0\n    for x in xs { sum += x[0] + x[1] }\n    print(sum)\n}\n",
+        "1400\n",
+        2_000_000,
+    ),
+    (
+        "S14",
+        "class Holder {\n    mut top: [i64]\n}\n\
+         fn make() -> Holder {\n    let all = [7; 100000]\n    let h = Holder(top: [])\n\
+         \x20   h.top = all[..10]\n    print(all.len())\n    h\n}\n\
+         fn main() {\n    let mut hs: [Holder] = []\n    for _ in 0..100 { hs.push(make()) }\n\
+         \x20   let mut sum = 0\n    for h in hs {\n        for v in h.top { sum += v }\n    }\n\
+         \x20   print(sum)\n}\n",
+        "7000\n",
+        2_000_000,
+    ),
+    (
+        "S18",
+        "enum Tok {\n    Word(string)\n    End\n}\n\
+         fn make() -> Tok {\n    let text = string(['a'; 100000])\n    Tok.Word(text[..4])\n}\n\
+         fn main() {\n    let mut toks: [Tok] = []\n    for _ in 0..100 { toks.push(make()) }\n\
+         \x20   let mut sum = 0\n    for t in toks {\n        match t {\n\
+         \x20           Word(s) => sum += s.len()\n            End => {}\n        }\n    }\n\
+         \x20   print(sum)\n}\n",
+        "400\n",
+        1_000_000,
+    ),
+    (
+        "S21 Some",
+        "class Holder {\n    top: [i64]?\n}\n\
+         fn make() -> Holder {\n    let all = [7; 100000]\n    Holder(top: Some(all[..2]))\n}\n\
+         fn main() {\n    let mut hs: [Holder] = []\n    for _ in 0..100 { hs.push(make()) }\n\
+         \x20   let mut sum = 0\n    for h in hs {\n        if let Some(t) = h.top { sum += t[0] + t[1] }\n    }\n\
+         \x20   print(sum)\n}\n",
+        "1400\n",
+        2_000_000,
+    ),
+    (
+        "S21 fill",
+        "fn make() -> [[i64]] {\n    let all = [7; 100000]\n    [all[..2]; 3]\n}\n\
+         fn main() {\n    let mut xs: [[[i64]]] = []\n    for _ in 0..100 { xs.push(make()) }\n\
+         \x20   let mut sum = 0\n    for x in xs { sum += x[0][0] + x[2][1] }\n    print(sum)\n}\n",
+        "1400\n",
+        2_000_000,
+    ),
+    (
+        "S21 any",
+        "fn make() -> any Display {\n    let all = [7; 100000]\n    let d: any Display = all[..2]\n    d\n}\n\
+         fn main() {\n    let mut ds: [any Display] = []\n    for _ in 0..100 { ds.push(make()) }\n\
+         \x20   let mut sum = 0\n    for d in ds { sum += d.to_string().len() }\n    print(sum)\n}\n",
+        "600\n",
+        2_000_000,
+    ),
+];
+
+/// GIVEN a function that makes a large array or string and returns a small part of it, and a
+/// `main` that keeps 100 such values, placed at a trim point (S13, S14, S18, S21's three rows)
+/// WHEN the program runs under Valgrind's massif, built at `-O2` and without
+/// THEN it prints the result that reads each slice, and its peak heap is below the row's bound,
+/// where untrimmed slices would hold 80 MB (10 MB for S18)
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "reads Massif's output, and Valgrind runs only on Linux"
+)]
+fn trim_should_bound_the_peak_heap() {
+    let mut failures = Vec::new();
+    for &(scenario, source, last, bound) in TRIMS {
+        for o2 in [false, true] {
+            let name = format!("trim_{}_{}", scenario.replace(' ', "_"), u8::from(o2));
+            let exe = compile_tmp_for_valgrind(&name, source, o2);
+            let out = support::Invocation::default().run(&exe, false);
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            if !stdout.ends_with(last) {
+                failures.push(format!("{scenario}, o2: {o2}: printed {stdout}"));
+            }
+            let peak = peak_heap(&exe);
+            if peak >= bound {
+                failures.push(format!(
+                    "{scenario}, o2: {o2}: peak {peak} B, bound {bound} B"
+                ));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 /// Compiles `tests/programs/<name>.sisu` without `-O2` and runs it under a 256 KiB stack.

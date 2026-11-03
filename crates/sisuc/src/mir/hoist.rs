@@ -289,6 +289,7 @@ impl Walk {
             | Rvalue::Unwrap(operand)
             | Rvalue::Wrap(operand)
             | Rvalue::ToAny(operand)
+            | Rvalue::Trim(operand)
             | Rvalue::Chars(operand)
             | Rvalue::Bytes(operand)
             | Rvalue::Words(operand)

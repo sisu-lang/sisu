@@ -78,14 +78,20 @@ fn contains_should_borrow_its_base_and_its_value() {
     assert!(!function(&printed, "f").contains("copy"), "{printed}");
 }
 
-/// A variant's arguments are evaluated left to right: only the last one's read may move.
+/// A variant's arguments are evaluated left to right: only the last one's read may move. Each
+/// is trimmed where it is placed, so the move is the last trim's.
 #[test]
-fn variant_args_left_to_right() {
+fn variant_args_should_read_left_to_right_and_only_the_last_should_move() {
     let printed = built("enum E { V(string, string) }\nfn f(s: string) -> E { E.V(s, s) }");
     has(
         &printed,
         "f",
-        &["_ = copy s#0", "variant E.V(move _, move s#0)"],
+        &[
+            "_ = copy s#0",
+            "_ = trim move _",
+            "_ = trim move s#0",
+            "variant E.V(move _, move _)",
+        ],
     );
 }
 
@@ -587,7 +593,7 @@ fn projection_write_is_a_use() {
 /// A counted field store at its base's last use moves the base once, before the `take` of the
 /// old value: the `take` and the store read the one moved root.
 #[test]
-fn field_store_take_and_store_share_one_root() {
+fn a_field_store_should_take_and_store_through_one_root() {
     let printed = built(
         "class O {\n    mut s: string\n}\nfn f() {\n    let o = O(s: \"a\")\n    let name = \"b\"\n    o.s = name\n}",
     );
@@ -595,9 +601,10 @@ fn field_store_take_and_store_share_one_root() {
         &printed,
         "f",
         &[
+            "_ = trim move name#1",
             "_ = move o#0",
             "_ = take _.0",
-            "_.0 = move name#1",
+            "_.0 = move _",
             "release _",
         ],
     );

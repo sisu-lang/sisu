@@ -1156,7 +1156,6 @@ crates/sisuc/src/mir/tests/ownership.rs::comparison_chain_reads
 crates/sisuc/src/mir/tests/ownership.rs::concat_lhs_then_rhs
 crates/sisuc/src/mir/tests/ownership.rs::element_write_roots
 crates/sisuc/src/mir/tests/ownership.rs::enum_countedness
-crates/sisuc/src/mir/tests/ownership.rs::field_store_take_and_store_share_one_root
 crates/sisuc/src/mir/tests/ownership.rs::guard_borrow_site_on_a_returning_path
 crates/sisuc/src/mir/tests/ownership.rs::guard_reads
 crates/sisuc/src/mir/tests/ownership.rs::guard_return_of_binding_copies
@@ -1180,7 +1179,6 @@ crates/sisuc/src/mir/tests/ownership.rs::read_in_loop_body
 crates/sisuc/src/mir/tests/ownership.rs::scalars_never_move
 crates/sisuc/src/mir/tests/ownership.rs::short_circuits
 crates/sisuc/src/mir/tests/ownership.rs::two_reads_in_one_call
-crates/sisuc/src/mir/tests/ownership.rs::variant_args_left_to_right
 crates/sisuc/src/mir/tests/pairs.rs::chain_with_f64_stores_is_borrowed
 crates/sisuc/src/mir/tests/pairs.rs::copy_across_a_call_that_replaces_a_mut_field_is_kept
 crates/sisuc/src/mir/tests/pairs.rs::copy_moved_into_a_call_is_kept

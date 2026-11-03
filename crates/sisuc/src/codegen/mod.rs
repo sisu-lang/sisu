@@ -822,6 +822,10 @@ impl<'ctx> Codegen<'ctx, '_> {
                 let (value, source) = self.operand(op);
                 self.to_any(source, value, ty())
             }
+            Rvalue::Trim(op) => {
+                let (value, ty) = self.operand(op);
+                self.trim(ty, value)
+            }
             Rvalue::DynCall {
                 interface,
                 iargs,

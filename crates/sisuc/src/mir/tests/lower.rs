@@ -1223,3 +1223,108 @@ fn a_slice_should_print_each_form_of_range() {
         ],
     );
 }
+
+/// One source for each trim point of "Trimming": a function `f` that places the slice `xs[..1]`
+/// (or a string's) inside another value, and the mir it must hold: the slice, then the `trim`
+/// that consumes it, then the place that takes the trimmed value.
+const TRIM_POINTS: &[(&str, &str, &[&str])] = &[
+    (
+        "a class constructor argument",
+        "class Holder {\n    mut xs: [i64]\n}\nfn f(xs: [i64]) -> Holder { Holder(xs: xs[..1]) }",
+        &["slice use xs#0[..1]", "trim move _", "new Holder(move _)"],
+    ),
+    (
+        "a class field store",
+        "class Holder {\n    mut xs: [i64]\n}\nfn f(h: Holder, xs: [i64]) { h.xs = xs[..1] }",
+        &["slice use xs#1[..1]", "trim move _", "= move _"],
+    ),
+    (
+        "an enum payload",
+        "enum Tok {\n    Word(string)\n    End\n}\nfn f(s: string) -> Tok { Tok.Word(s[..1]) }",
+        &[
+            "slice use s#0[..1]",
+            "trim move _",
+            "variant Tok.Word(move _)",
+        ],
+    ),
+    (
+        "an array literal element",
+        "fn f(xs: [i64]) -> [[i64]] { [xs[..1]] }",
+        &["slice use xs#0[..1]", "trim move _", "array[move _]"],
+    ),
+    (
+        "the value of `[v; n]`",
+        "fn f(xs: [i64]) -> [[i64]] { [xs[..1]; 3] }",
+        &["slice use xs#0[..1]", "trim move _", "array[move _; 3]"],
+    ),
+    (
+        "a `push`",
+        "fn f(xs: [i64], ys: [[i64]]) -> [[i64]] {\n    let mut zs = ys\n    zs.push(xs[..1])\n    zs\n}",
+        &["slice use xs#0[..1]", "trim move _", "push zs#2, move _"],
+    ),
+    (
+        "an element write",
+        "fn f(xs: [i64], ys: [[i64]]) -> [[i64]] {\n    let mut zs = ys\n    zs[0] = xs[..1]\n    zs\n}",
+        &["slice use xs#0[..1]", "trim move _", "= move _"],
+    ),
+    (
+        "a conversion to `any`",
+        "fn f(xs: [i64]) -> i64 {\n    let d: any Display = xs[..1]\n    d.to_string().len()\n}",
+        &["slice use xs#0[..1]", "trim move _", "to_any move _"],
+    ),
+    (
+        "an optional constructor argument",
+        "class Holder {\n    top: [i64]?\n}\nfn f(xs: [i64]) -> Holder { Holder(top: Some(xs[..1])) }",
+        &[
+            "slice use xs#0[..1]",
+            "wrap move _",
+            "trim move _",
+            "new Holder(move _)",
+        ],
+    ),
+    (
+        "an optional inside an optional",
+        "class Holder {\n    top: [i64]??\n}\nfn f(xs: [i64]) -> Holder { Holder(top: Some(Some(xs[..1]))) }",
+        &[
+            "wrap move _",
+            "wrap move _",
+            "trim move _",
+            "new Holder(move _)",
+        ],
+    ),
+];
+
+/// GIVEN a slice placed at each trim point of "Trimming", one source for each
+/// WHEN the function is lowered
+/// THEN the mir holds `trim` of the slice in front of the place that takes it, and a value inside
+/// `?` is trimmed as the optional it is (S21)
+#[test]
+fn trim_should_precede_each_trim_point() {
+    for &(point, source, parts) in TRIM_POINTS {
+        let printed = lowered(source);
+        let f = function(&printed, "f");
+        let mut from = 0;
+        for part in parts {
+            let at = f[from..]
+                .find(part)
+                .unwrap_or_else(|| panic!("{point}: `{part}` after byte {from} of\n{f}"));
+            from += at + part.len();
+        }
+    }
+}
+
+/// GIVEN a slice that is a local, an argument, a return value, the range index itself, a
+/// `Some` that is returned, or an element of a type that is no array or string
+/// WHEN the functions are lowered
+/// THEN no `trim` appears: none of these is a trim point (S15, S17, S19)
+#[test]
+fn trim_should_not_precede_a_local_an_argument_a_return_or_some() {
+    let printed = lowered(
+        "fn g(xs: [i64]) -> i64 { xs.len() }\n\
+         fn head(xs: [i64]) -> [i64] { xs[..1] }\n\
+         fn some(xs: [i64]) -> [i64]? { Some(xs[1..]) }\n\
+         fn f(xs: [i64]) -> i64 {\n    let t = xs[..1]\n    let u = t\n    g(u) + g(xs[1..])\n}\n\
+         fn pushes(ys: [i64]) -> [i64] {\n    let mut zs = ys\n    zs.push(ys[0])\n    zs\n}",
+    );
+    assert!(!printed.contains("trim"), "{printed}");
+}

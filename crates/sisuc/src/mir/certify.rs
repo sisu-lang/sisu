@@ -319,6 +319,7 @@ impl Clobbers {
                         Rvalue::Call { .. }
                         | Rvalue::DynCall { .. }
                         | Rvalue::ToAny(_)
+                        | Rvalue::Trim(_)
                         | Rvalue::Use(_)
                         | Rvalue::Copy(_)
                         | Rvalue::CopyStr(_)
@@ -757,7 +758,11 @@ fn rvalue<'a>(
 ) {
     match value {
         // `l = use op` makes `l` own what `op` hands on.
-        Rvalue::Use(op) | Rvalue::Unwrap(op) | Rvalue::Wrap(op) | Rvalue::ToAny(op) => {
+        Rvalue::Use(op)
+        | Rvalue::Unwrap(op)
+        | Rvalue::Wrap(op)
+        | Rvalue::ToAny(op)
+        | Rvalue::Trim(op) => {
             consumed(op, lowered, f);
         }
         Rvalue::Chars(op)

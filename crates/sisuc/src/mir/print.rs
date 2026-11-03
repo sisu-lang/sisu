@@ -190,6 +190,7 @@ impl Printer<'_> {
             }
             Rvalue::Wrap(operand) => format!("wrap {}", self.operand(operand)),
             Rvalue::ToAny(operand) => format!("to_any {}", self.operand(operand)),
+            Rvalue::Trim(operand) => format!("trim {}", self.operand(operand)),
             Rvalue::DynCall {
                 interface,
                 method,

@@ -126,6 +126,7 @@ impl Placer<'_> {
             | Rvalue::Unwrap(op)
             | Rvalue::Wrap(op)
             | Rvalue::ToAny(op)
+            | Rvalue::Trim(op)
             | Rvalue::Chars(op)
             | Rvalue::Bytes(op)
             | Rvalue::Words(op)

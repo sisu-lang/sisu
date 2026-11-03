@@ -285,6 +285,11 @@ pub(crate) enum Rvalue {
     /// The object or `any` value of the operand, as the destination's `any` type: it takes the
     /// operand's reference, and the destination holds the data pointer and its table.
     ToAny(Operand),
+    /// The array or string of the operand, or one inside `?` at any depth, where it is placed
+    /// inside another value: it takes the operand's reference and gives the value itself when
+    /// that covers its block or is a quarter of it or more, else a copy in a block of its own
+    /// (see "Trimming"). Its type is the operand's.
+    Trim(Operand),
     /// A call through the table of the receiver, the first of `args`, an `any` value, of the
     /// requirement `method` of `interface`, with `iargs` as its type arguments (the receiver's
     /// type first). Its convention is fixed, not inferred: the receiver is read in place, and the
@@ -413,7 +418,8 @@ impl Rvalue {
             | Rvalue::Binary { .. }
             | Rvalue::Compare { .. }
             | Rvalue::Is { .. }
-            | Rvalue::ToAny(_) => false,
+            | Rvalue::ToAny(_)
+            | Rvalue::Trim(_) => false,
         }
     }
 }

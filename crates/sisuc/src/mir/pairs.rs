@@ -274,6 +274,7 @@ fn kind<'a>(function: &Function, stmt: &'a Statement) -> Kind<'a> {
                 Rvalue::Call { .. }
                 | Rvalue::DynCall { .. }
                 | Rvalue::ToAny(_)
+                | Rvalue::Trim(_)
                 | Rvalue::Use(_)
                 | Rvalue::Copy(_)
                 | Rvalue::CopyStr(_)
@@ -338,6 +339,7 @@ fn borrowed(stmt: Statement) -> Statement {
                 | Rvalue::Call { .. }
                 | Rvalue::DynCall { .. }
                 | Rvalue::ToAny(_)
+                | Rvalue::Trim(_)
                 | Rvalue::New { .. }
                 | Rvalue::Variant { .. }
                 | Rvalue::ArrayLit(_)

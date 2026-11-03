@@ -1,0 +1,37 @@
+// GIVEN a class `Holder` with `mut words: [string]` and `mut text: string`, 100 strings `all`
+// built at run time, and a literal of 1000 bytes
+// WHEN a program stores `all[..2]` and then the substring `lit[..4]` into the fields, drops
+// `all`, and prints the fields, a count and each text again after the other store
+// THEN each store trims: the 2 words are copied with a count of their own and the old block is
+// released once, and the 4 bytes of the literal are copied out of its global block
+// AND the program prints the same at every level, with no leak and no count error under Valgrind
+// and `--rc-checks` (Review Focus 5)
+class Holder {
+    mut words: [string]
+    mut text: string
+}
+
+fn fill() -> Holder {
+    let mut all: [string] = []
+    for i in 0..100 { all.push("w{i}") }
+    let lit = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij"
+    let h = Holder(words: [], text: "")
+    h.words = all[..2]
+    h.text = lit[..4]
+    // `all` is still alive here, and the trimmed words are not its block.
+    print(all.len())                  // 100
+    print(lit[1..3])                  // bc
+    h
+}
+
+fn main() {
+    let h = fill()
+    print(h.words)                    // ["w0", "w1"]
+    print(h.text)                     // abcd
+    print(h.words.len() + h.text.len())  // 6
+    // The kept words are the owners of their strings now: they stay readable and equal.
+    let w = h.words[1]
+    print(w == "w1")                  // true
+    h.words = h.words[1..]
+    print(h.words)                    // ["w1"]
+}

@@ -174,7 +174,7 @@ $ make compile-speed ARGS='--check-only'
       </ul>
       <p>It runs in CodSpeed's simulation mode, which counts instructions rather than timing the run. It measures three things:</p>
       <ul>
-        <li>Seven of the programs above, all but <code>hello</code>, at reduced inputs, and nine programs that only CodSpeed runs, in <code>bench/features/</code>: <code>strings</code>, <code>enum_match</code>, <code>shared_arrays</code>, <code>compare</code>, <code>tree_rewrite</code>, <code>interp</code>, <code>interfaces</code>, <code>any_shapes</code> and <code>show</code>.</li>
+        <li>Seven of the programs above, all but <code>hello</code>, at reduced inputs, and eleven programs that only CodSpeed runs, in <code>bench/features/</code>: <code>strings</code>, <code>enum_match</code>, <code>shared_arrays</code>, <code>slice_keep</code>, <code>slice_loop</code>, <code>compare</code>, <code>tree_rewrite</code>, <code>interp</code>, <code>interfaces</code>, <code>any_shapes</code> and <code>show</code>.</li>
         <li>The lexer written in Sisu, <code>selfhost/lexer.sisu</code>: <code>selfhost_lexer</code> runs its <code>-O2</code> build once on a fixed input of Sisu source, and <code>build_selfhost_lexer</code> is an <code>-O2</code> build of it.</li>
         <li>The compiler itself: an <code>-O2</code> build of <code>bench/hello</code>, a <code>sisu check</code> and an <code>-O2</code> build of <code>bench/binary_trees</code>, a <code>sisu check</code> of a generated 200-section input that uses most of the language, and an <code>-O2</code> build of a 20-section one. Pushes to <code>main</code> also build the 200-section input, from <code>codspeed-main.yml</code>.</li>
       </ul>

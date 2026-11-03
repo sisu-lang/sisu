@@ -14,7 +14,7 @@ use super::abi::{
     RANGE_END_PAST_LENGTH, RANGE_HAS_END, RANGE_INCLUSIVE, RANGE_INSIDE_CHARACTER,
     RANGE_NEGATIVE_START, RANGE_START_PAST_END, RANGE_STRING, RC_FAULT_RELEASE, RC_FAULT_RETAIN,
 };
-use super::layout::HeapBlock;
+use super::layout::{BYTES, CAP, HeapBlock, LEN};
 use super::rc::{Helper, counted_core, param};
 use super::{Codegen, POSITIONED};
 use crate::source::Span;
@@ -344,6 +344,127 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.branch_to(join);
         self.builder.position_at_end(join);
         self.phi(self.value_type(), &[(value, some), (empty, gone)])
+    }
+
+    /// `Rvalue::Trim`: `value`, of the array or string type `ty` or one inside `?` at any depth,
+    /// as it is stored inside another value. A `None` needs no check, and a layer of `?` is
+    /// looked through, so the check runs on the array or string inside (see `trim_words`).
+    pub(super) fn trim(&self, ty: Type, value: BasicValueEnum<'ctx>) -> BasicValueEnum<'ctx> {
+        let TypeKind::Optional(payload) = ty.kind() else {
+            return self.trim_words(ty, value);
+        };
+        let function = self.current_function();
+        let (some, join) = (
+            self.context.append_basic_block(function, "trim.some"),
+            self.context.append_basic_block(function, "trim.join"),
+        );
+        let before = self.current_block();
+        let present = self.has_value(ty, value, "present");
+        self.branch_on(present, some, join);
+        self.builder.position_at_end(some);
+        let inner = self.optional_value(ty, value, "inner");
+        let inner = self.trim(payload, inner);
+        let wrapped = self.optional(ty, self.context.bool_type().const_all_ones(), inner);
+        let placed = self.current_block();
+        self.branch_to(join);
+        self.builder.position_at_end(join);
+        self.phi(value.get_type(), &[(value, before), (wrapped, placed)])
+    }
+
+    /// The trim of the array or string `value` of type `ty`, which has a block. The value is kept
+    /// as it is when
+    /// 1. it covers its block: its `data` is the block's first element, which needs no load, and
+    ///    its `len` is the header's; or
+    /// 2. its bytes are more than a quarter of the block's capacity in bytes, or that capacity is
+    ///    below 256 bytes. The element size cancels in the first test: `len * 4 > cap`.
+    ///
+    /// Otherwise `@sisu_rc.trim.[T]` copies it into a block of exactly `len` elements, retaining
+    /// each counted one, and releases the old block.
+    fn trim_words(&self, ty: Type, value: BasicValueEnum<'ctx>) -> BasicValueEnum<'ctx> {
+        // A block below this many bytes is kept: it holds too little to be worth a copy.
+        const SMALL_BLOCK: u64 = 256;
+        let i64_type = self.context.i64_type();
+        let (block, data, len) = (
+            self.value_block(value),
+            self.value_data(value),
+            self.value_len(value),
+        );
+        let (first, size) = match ty.kind() {
+            TypeKind::Array(element) => (
+                self.array_data(element, block),
+                self.array_layout(element).size,
+            ),
+            _ => (self.string_field(block, BYTES), 1),
+        };
+        let function = self.current_function();
+        let named = |name| self.context.append_basic_block(function, name);
+        let (whole, sized, copy, join) = (
+            named("trim.whole"),
+            named("trim.sized"),
+            named("trim.copy"),
+            named("trim.join"),
+        );
+        let starts = self
+            .builder
+            .build_int_compare(IntPredicate::EQ, data, first, "at.start")
+            .expect(POSITIONED);
+        self.branch_on(starts, whole, sized);
+
+        self.builder.position_at_end(whole);
+        let held = match ty.kind() {
+            TypeKind::Array(_) => self.header_len(block),
+            _ => self.load_string_field(block, LEN),
+        };
+        let covers = self.int_compare(IntPredicate::EQ, len, held);
+        self.branch_on(covers, join, sized);
+
+        self.builder.position_at_end(sized);
+        let cap = match ty.kind() {
+            TypeKind::Array(_) => self.array_cap(block),
+            _ => self.load_string_field(block, CAP),
+        };
+        // `cap * size < 256` is `cap < ceil(256 / size)`, with no multiplication to overflow.
+        let few = i64_type.const_int(SMALL_BLOCK.div_ceil(size), false);
+        let small = self.int_compare(IntPredicate::ULT, cap, few);
+        let quarter = self
+            .builder
+            .build_right_shift(cap, i64_type.const_int(2, false), false, "quarter")
+            .expect(POSITIONED);
+        let big = self.int_compare(IntPredicate::UGT, len, quarter);
+        let keep = self.builder.build_or(small, big, "keep").expect(POSITIONED);
+        self.branch_on(keep, join, copy);
+
+        self.builder.position_at_end(copy);
+        let slot = self.entry_alloca(self.value_type().into(), "trim.slot");
+        self.store(slot, value);
+        self.call(self.helper(Helper::Trim, ty), &[slot.into()]);
+        let trimmed = self.load_words(slot, None);
+        let copied = self.current_block();
+        self.branch_to(join);
+
+        self.builder.position_at_end(join);
+        self.phi(
+            self.value_type(),
+            &[(value, whole), (value, sized), (trimmed, copied)],
+        )
+    }
+
+    /// `@sisu_rc.trim.[T](slot)`: leaves in `slot` the array whose block holds exactly the
+    /// value's elements, copied with `llvm.memcpy` and each counted one retained. The old block
+    /// loses the slot's reference, and is freed with its elements when that was its last.
+    fn define_array_trim(&self, element: Type, function: FunctionValue<'ctx>) {
+        self.builder
+            .position_at_end(self.context.append_basic_block(function, "entry"));
+        let slot = param(function);
+        let ty = Type::array(element);
+        let old = self.load_place(ty, slot, "old", None);
+        let (data, len) = (self.value_data(old), self.value_len(old));
+        let copy = self.alloc_array(element, len, None);
+        let copy_data = self.array_data(element, copy);
+        self.copy_elements(element, data, copy_data, len);
+        self.store(slot, self.make_value(copy, copy_data, len));
+        self.release(old, ty);
+        self.builder.build_return(None).expect(POSITIONED);
     }
 
     /// `slot.push(value)`: appends `value`, which it consumes, to the array of type `ty` that
@@ -687,6 +808,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             Helper::Drop => self.define_array_drop(element, function),
             Helper::Eq => self.define_array_eq(element, function),
             Helper::Unique => self.define_array_unique(element, function),
+            Helper::Trim => self.define_array_trim(element, function),
             Helper::Retain
             | Helper::Release
             | Helper::Walk

@@ -24,7 +24,11 @@ use crate::tir::{Align, Format, Pad, Stream, Type};
 
 impl<'ctx> Codegen<'ctx, '_> {
     /// The `i64` header field `index` of `string`.
-    fn load_string_field(&self, string: PointerValue<'ctx>, index: u32) -> IntValue<'ctx> {
+    pub(super) fn load_string_field(
+        &self,
+        string: PointerValue<'ctx>,
+        index: u32,
+    ) -> IntValue<'ctx> {
         self.builder
             .build_load(
                 self.context.i64_type(),
@@ -607,6 +611,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         match kind {
             Helper::Drop => self.define_string_drop(function),
             Helper::Eq => self.define_string_eq(function),
+            Helper::Trim => self.define_string_trim(function),
             Helper::Retain
             | Helper::Release
             | Helper::Unique
@@ -631,6 +636,20 @@ impl<'ctx> Codegen<'ctx, '_> {
         let cap = self.load_string_field(string, CAP);
         let (size, align) = self.heap_size(&HeapBlock::String { cap });
         self.call(self.free, &[string.into(), size.into(), align.into()]);
+        self.builder.build_return(None).expect(POSITIONED);
+    }
+
+    /// `@sisu_rc.trim.string(slot)`: leaves in `slot` a string in a new block of exactly its
+    /// length, with the bytes copied. The old block loses the slot's reference, and is freed when
+    /// that was its last.
+    fn define_string_trim(&self, function: FunctionValue<'ctx>) {
+        self.builder
+            .position_at_end(self.context.append_basic_block(function, "entry"));
+        let slot = param(function);
+        let old = self.load_place(Type::STRING, slot, "old", None);
+        let copy = self.string_from_bytes(self.value_data(old), self.value_len(old));
+        self.store(slot, copy);
+        self.release(old, Type::STRING);
         self.builder.build_return(None).expect(POSITIONED);
     }
 

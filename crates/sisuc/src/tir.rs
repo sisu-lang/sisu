@@ -908,6 +908,15 @@ impl Type {
         self
     }
 
+    /// Whether a value of this type is an array or a string, or one inside `?` at any depth:
+    /// the values that a trim point checks (`Rvalue::Trim`).
+    pub(crate) fn is_trimmable(self) -> bool {
+        matches!(
+            self.without_optionals().kind(),
+            TypeKind::Array(_) | TypeKind::String
+        )
+    }
+
     /// The enum a payload field of this type holds inline unless boxed: `F`'s for `F` or `F?`.
     /// These are the edges of the holds-inline graph.
     pub(crate) fn inline_enum(self) -> Option<EnumId> {

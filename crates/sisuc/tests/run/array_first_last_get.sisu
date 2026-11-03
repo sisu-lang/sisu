@@ -1,6 +1,7 @@
 // GIVEN `xs = [1, 2, 3]`, the slice `xs[1..]`, an empty `[i64]`, and a `[string]`
-// WHEN the program prints `first` and `last` of each, and `get` at 2, 3 and -1 of `xs`, at 0 of
-// the empty array, at 1 and 2 of the slice, and at 1 and 2 of the words
+// WHEN the program prints `first` and `last` of each, and `get` at 2, 3 and -1 of `xs`, at 0 of the
+// empty array, at 1 and 2 of the slice, and at 1 and 2 of the words, and `first` of the empty slice
+// `xs[3..]`
 // THEN an index in bounds gives its element, and any other gives `None` instead of a panic
 // AND a `string` element that `get` reads is still there afterwards (S7, Goal 1.4)
 fn main() {

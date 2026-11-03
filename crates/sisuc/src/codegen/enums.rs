@@ -843,8 +843,10 @@ impl<'ctx> Codegen<'ctx, '_> {
             Helper::Unbox => self.define_unbox(id, function),
             Helper::Free => self.define_free(id, function),
             Helper::Reuse => self.define_reuse(id, function),
-            Helper::Drop | Helper::Unique => {
-                unreachable!("an enum should never be queued for a `drop` or `unique` helper")
+            Helper::Drop | Helper::Unique | Helper::Trim => {
+                unreachable!(
+                    "an enum should never be queued for a `drop`, `unique` or `trim` helper"
+                )
             }
             Helper::Show(_) | Helper::ShowComponent(_) => {
                 unreachable!("`define_helpers` should define every `show` helper itself")

@@ -276,6 +276,7 @@ const REACH: &[&str] = &[
     "reach: `dbg` shows the fields of a class with no written `Display`",
     "reach: a `push` appends to an array",
     "reach: a range index of an array lowers to a slice",
+    "reach: an array or a string placed in another value lowers to a trim",
     "reach: a range is in bounds",
     "reach: `?.push` follows a field",
     "reach: `?.push` follows an index",
@@ -784,6 +785,12 @@ impl Walk {
                     let (operands, calls, printed) = match value {
                         crate::mir::Rvalue::Slice { .. } => {
                             self.mark("reach: a range index of an array lowers to a slice");
+                            continue;
+                        }
+                        crate::mir::Rvalue::Trim(_) => {
+                            self.mark(
+                                "reach: an array or a string placed in another value lowers to a trim",
+                            );
                             continue;
                         }
                         crate::mir::Rvalue::Equal { lhs, calls, .. } => {

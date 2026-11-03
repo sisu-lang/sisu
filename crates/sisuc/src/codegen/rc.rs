@@ -31,6 +31,9 @@ pub(super) enum Helper {
     Drop,
     Eq,
     Unique,
+    /// `@sisu_rc.trim.[T](slot)` and `@sisu_rc.trim.string(slot)`: replaces the value in `slot`
+    /// with a copy in a block of exactly its length, and releases the old block (see `trim`).
+    Trim,
     /// `@sisu_rc.walk.<F>(value, heads)`: releases a value's counted parts, listing its boxes.
     Walk,
     /// `@sisu_rc.drain.<F0>(heads)`: frees the boxes of an enum component, or the objects of
@@ -196,6 +199,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 ),
             ),
             Helper::Unique => ("unique", takes_object),
+            Helper::Trim => ("trim", takes_object),
             Helper::Walk => (
                 "walk",
                 self.context
@@ -256,6 +260,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             | Helper::Release
             | Helper::Drop
             | Helper::Unique
+            | Helper::Trim
             | Helper::Walk
             | Helper::Drain
             | Helper::EqComponent
@@ -354,8 +359,10 @@ impl<'ctx> Codegen<'ctx, '_> {
                         "only a class with a written `Eq` should be queued for a class `eq` helper"
                     )
                 }
-                (Helper::Unique, _) => {
-                    unreachable!("only an array type should be queued for a `unique` helper")
+                (Helper::Unique | Helper::Trim, _) => {
+                    unreachable!(
+                        "only an array or string type should be queued for a `unique` or `trim` helper"
+                    )
                 }
                 (Helper::Walk | Helper::EqComponent | Helper::ShowComponent(_), _) => {
                     unreachable!("only an enum type should be queued for a component helper")

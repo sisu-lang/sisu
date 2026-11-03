@@ -225,6 +225,7 @@ fn rvalue(value: &Rvalue, read: &mut impl FnMut(LocalId)) {
         | Rvalue::Unwrap(op)
         | Rvalue::Wrap(op)
         | Rvalue::ToAny(op)
+        | Rvalue::Trim(op)
         | Rvalue::Chars(op)
         | Rvalue::Bytes(op)
         | Rvalue::Words(op)
