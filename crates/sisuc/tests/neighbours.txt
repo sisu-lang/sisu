@@ -93,6 +93,11 @@ p
 op
 Rock()
 []
+[[]]
+[None]
+# A function name with no call, bare and indexed: no value, no place.
+nothing
+nothing[0]
 
 [contexts]
 # Array literals beside a hint from another branch, with the value alone, first and last.
@@ -123,3 +128,4 @@ let 1 = $ else { return }
 if let _l = $ {}
 # A `mut` argument: a place, or a value that is none, for a generic `mut` parameter.
 take(mut $)
+take($)

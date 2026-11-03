@@ -1,0 +1,17 @@
+// GIVEN `b.put(ys)`, where `ys` is a `let` local and `put` has a `mut` parameter `T` of its own
+// WHEN `sisu check` runs on it
+// THEN it reports E0166 on the argument, with the help to declare `ys` with `let mut`
+class B {
+    n: i64
+
+    fn put<T>(self, mut x: T) {
+        x = x
+    }
+}
+
+fn main() {
+    let b = B(n: 1)
+    let ys = [1]
+    b.put(ys)
+    print(ys)
+}

@@ -698,7 +698,7 @@ fn stray_mut_should_be_reported_on_every_call_path() {
     let filler = "interface Plain {\n    fn take(self, xs: [i64])\n}\n\
         class Impl: Plain {\n    n: i64\n    fn take(self, xs: [i64]) {\n        print(xs)\n    }\n}\n";
     let head = "let xs = [1]\n    let y = 2\n    let ch = 'a'\n    let m = \"m\"\n    ";
-    let rows: [(&str, String, &[Code]); 23] = [
+    let rows: [(&str, String, &[Code]); 24] = [
         ("print", format!("{head}print(mut xs)"), &[]),
         ("eprint", format!("{head}eprint(mut xs)"), &[]),
         ("dbg", format!("{head}dbg(mut xs)"), &[]),
@@ -775,6 +775,11 @@ fn stray_mut_should_be_reported_on_every_call_path() {
             "string method",
             format!("{head}let g = m.get(mut 0..1)\n    print(g ?? \"\")"),
             &[],
+        ),
+        (
+            "array get with a range",
+            format!("{head}let g = xs.get(mut 0..1)"),
+            &[Code::Mismatch],
         ),
         (
             "prelude number method",
@@ -922,26 +927,6 @@ fn unmarked_value_at_a_generic_mut_parameter_should_give_the_missing_marker_only
     );
 }
 
-/// GIVEN a place that a generic call fails before it checks its arguments, with a wrong
-///   type-argument list
-/// WHEN the place has no `mut`
-/// THEN E0166 follows the type-argument error, and the fixture `E0166-type-arguments` pins that it
-///   has no help
-#[test]
-fn unmarked_place_of_a_failed_generic_call_should_still_need_its_marker() {
-    for call in ["rw<i64, i64>(x, 5)", "rw<Nope>(x, 5)"] {
-        let src = format!(
-            "fn rw<T>(mut x: T, v: T) {{\n    x = v\n}}\nfn main() {{\n    let mut x = 1\n    {call}\n    print(x)\n}}"
-        );
-        let found = found_codes(&src);
-        assert_eq!(
-            found.last(),
-            Some(&Code::MutMarkerMissing),
-            "`{call}`: {found:?}"
-        );
-    }
-}
-
 /// GIVEN a `mut` argument that is a temporary whose type comes from its context: `[]`, `None`,
 ///   and arrays of them
 /// WHEN the program has an unrelated error before the call, after it, or in another function
@@ -984,6 +969,26 @@ fn function_as_a_mut_argument_should_be_reported_as_a_value() {
         found_codes(&unmarked),
         [Code::TypeAsValue, Code::MutMarkerMissing]
     );
+    // A place whose root is a function is a value too.
+    for place in ["answer[0]", "answer.n"] {
+        let marked = format!("{decls}fn main() {{\n    bump(mut {place})\n}}");
+        let found = found_codes(&marked);
+        assert!(
+            !found.contains(&Code::AssignToFunction),
+            "`mut {place}`: {found:?}"
+        );
+        assert!(
+            found.contains(&Code::TypeAsValue),
+            "`mut {place}`: {found:?}"
+        );
+        let unmarked = format!("{decls}fn main() {{\n    bump({place})\n}}");
+        let found = found_codes(&unmarked);
+        assert!(
+            !found.contains(&Code::AssignToFunction),
+            "`{place}`: {found:?}"
+        );
+        assert!(found.contains(&Code::TypeAsValue), "`{place}`: {found:?}");
+    }
 }
 
 /// GIVEN a constructor that takes no labels, and a label on its `mut` argument
