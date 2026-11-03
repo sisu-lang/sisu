@@ -713,19 +713,289 @@ fn main() {
     }
 
     #[test]
-    fn broken_name_poisons_a_built_in() {
+    fn broken_name_should_poison_a_built_in() {
+        // A broken item also gets the name's error, as an intact item does.
         let src = "fn print() {\n    let = 1\n}\nfn main() {\n    print(1, 2)\n}\n";
-        assert_eq!(codes(src), [(Code::Expected, (2, 9))]);
+        assert_eq!(
+            codes(src),
+            [(Code::DefinedTwice, (1, 4)), (Code::Expected, (2, 9))]
+        );
         let src = "class i64 {\n    x y\n}\nfn main() {\n    let n: i64 = true\n}\n";
-        assert_eq!(codes(src), [(Code::Expected, (2, 7))]);
+        assert_eq!(
+            codes(src),
+            [(Code::BuiltInName, (1, 7)), (Code::Expected, (2, 7))]
+        );
         // A broken constant poisons a call of its name too, whose arguments are still checked.
         let src = "const print = 1 2\nfn main() {\n    print(1, 2)\n    print(nope)\n}\n";
         assert_eq!(
             codes(src),
-            [(Code::Expected, (1, 17)), (Code::BindingNotFound, (4, 11))]
+            [
+                (Code::DefinedTwice, (1, 7)),
+                (Code::Expected, (1, 17)),
+                (Code::BindingNotFound, (4, 11))
+            ]
         );
         let src = "const i64 = 1 2\nfn main() {\n    let n = i64(true, 1)\n}\n";
-        assert_eq!(codes(src), [(Code::Expected, (1, 15))]);
+        assert_eq!(
+            codes(src),
+            [(Code::BuiltInName, (1, 7)), (Code::Expected, (1, 15))]
+        );
+    }
+
+    /// A diagnostic's code and `(line, col)`.
+    type Found = (Code, (usize, usize));
+
+    /// The code and `(line, col)` of every diagnostic that the checker's front end reports for
+    /// `src`, in order. It runs the lexer, the parser and the checker, as `sisu check` does.
+    fn checked_codes(src: &str) -> Vec<Found> {
+        checked(src)
+            .1
+            .iter()
+            .map(|d| (d.code(), line_col(src, d.span().start())))
+            .collect()
+    }
+
+    /// The names that an intact item may not take, with the code that it gets: E0026 for a
+    /// built-in type, a language interface or a reserved name, E0034 for a prelude function. A
+    /// user's name gets none.
+    const TAKEN_NAMES: &[(&str, Option<Code>)] = &[
+        ("Eq", Some(Code::BuiltInName)),
+        ("Ord", Some(Code::BuiltInName)),
+        ("Display", Some(Code::BuiltInName)),
+        ("AnyObject", Some(Code::BuiltInName)),
+        ("Option", Some(Code::BuiltInName)),
+        ("Result", Some(Code::BuiltInName)),
+        ("Some", Some(Code::BuiltInName)),
+        ("Ok", Some(Code::BuiltInName)),
+        ("Err", Some(Code::BuiltInName)),
+        ("i64", Some(Code::BuiltInName)),
+        ("u8", Some(Code::BuiltInName)),
+        ("f64", Some(Code::BuiltInName)),
+        ("char", Some(Code::BuiltInName)),
+        ("string", Some(Code::BuiltInName)),
+        ("bool", Some(Code::BuiltInName)),
+        ("print", Some(Code::DefinedTwice)),
+        ("eprint", Some(Code::DefinedTwice)),
+        ("panic", Some(Code::DefinedTwice)),
+        ("dbg", Some(Code::DefinedTwice)),
+        ("read_line", Some(Code::DefinedTwice)),
+        ("Node", None),
+    ];
+
+    const MAIN: &str = "fn main() {\n    print(1)\n}\n";
+
+    /// Each broken item gets the name error of an intact item of its kind, at its name, before
+    /// its own error. The wanted list holds the name's code, if any, and then the break's.
+    #[test]
+    #[expect(clippy::too_many_lines, reason = "one table of rows")]
+    fn broken_items_should_get_the_name_errors_of_intact_items() {
+        // `(row, text before the name, text after it, the token of the break in that text, the
+        // break's code)`. `nl` has `{` on the next line, `lex` a `$` in the item, `parse` a
+        // parse error in it.
+        let forms: &[(&str, &str, &str, &str, Code)] = &[
+            (
+                "nl interface",
+                "interface ",
+                "\n{}\n",
+                "{}",
+                Code::BraceOnNewLine,
+            ),
+            ("nl class", "class ", "\n{}\n", "{}", Code::BraceOnNewLine),
+            (
+                "nl enum",
+                "enum ",
+                "\n{\n    A\n}\n",
+                "{",
+                Code::BraceOnNewLine,
+            ),
+            ("nl fn", "fn ", "()\n{}\n", "{}", Code::BraceOnNewLine),
+            (
+                "lex interface",
+                "interface ",
+                " {\n    $\n}\n",
+                "$",
+                Code::UnexpectedCharacter,
+            ),
+            (
+                "lex class",
+                "class ",
+                " {\n    $\n}\n",
+                "$",
+                Code::UnexpectedCharacter,
+            ),
+            (
+                "lex enum",
+                "enum ",
+                " {\n    A $\n}\n",
+                "$",
+                Code::UnexpectedCharacter,
+            ),
+            (
+                "lex fn",
+                "fn ",
+                "() {\n    $\n}\n",
+                "$",
+                Code::UnexpectedCharacter,
+            ),
+            (
+                "lex const",
+                "const ",
+                " = 1 $\n",
+                "$",
+                Code::UnexpectedCharacter,
+            ),
+            (
+                "lex type",
+                "type ",
+                " = i64 $\n",
+                "$",
+                Code::UnexpectedCharacter,
+            ),
+            (
+                "parse interface",
+                "interface ",
+                " {\n    x y\n}\n",
+                "y",
+                Code::Expected,
+            ),
+            (
+                "parse class",
+                "class ",
+                " {\n    x y\n}\n",
+                "y",
+                Code::Expected,
+            ),
+            (
+                "parse enum",
+                "enum ",
+                " {\n    A B\n}\n",
+                "B",
+                Code::Expected,
+            ),
+            (
+                "parse fn",
+                "fn ",
+                "() {\n    let = 1\n}\n",
+                "= 1",
+                Code::Expected,
+            ),
+            ("parse const", "const ", " = 1 2\n", "2", Code::Expected),
+            ("parse type", "type ", " = i64 2\n", "2", Code::Expected),
+        ];
+        let mut failures = Vec::new();
+        for &(row, head, tail, token, code) in forms {
+            for &(name, name_code) in TAKEN_NAMES {
+                let src = format!("{head}{name}{tail}{MAIN}");
+                let at = |offset| line_col(&src, offset);
+                let mut want = Vec::new();
+                if let Some(name_code) = name_code {
+                    want.push((name_code, at(head.len())));
+                }
+                want.push((
+                    code,
+                    at(head.len() + name.len() + tail.find(token).unwrap()),
+                ));
+                let got = checked_codes(&src);
+                if got != want {
+                    failures.push(format!("{row} {name}: got {got:?}, want {want:?}"));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+        // An `extend` has no name of its own: its target is checked, and no name error is added.
+        for &(name, _) in TAKEN_NAMES {
+            let src = format!("extend {name}\n{{}}\n{MAIN}");
+            assert_eq!(
+                checked_codes(&src),
+                [(Code::BraceOnNewLine, (2, 1))],
+                "extend {name}"
+            );
+        }
+    }
+
+    /// A bracket error stops the checker, so a broken item gets no name error.
+    #[test]
+    fn broken_items_with_a_bracket_error_should_get_no_name_error() {
+        for (head, tail) in [
+            ("interface ", " {\n    )\n}\n"),
+            ("class ", " {\n    )\n}\n"),
+            ("fn ", "() {\n    )\n}\n"),
+        ] {
+            let src = format!("{head}Eq{tail}{MAIN}");
+            assert_eq!(
+                checked_codes(&src),
+                [(Code::UnexpectedClosingBracket, (2, 5))],
+                "{head}"
+            );
+        }
+    }
+
+    /// Items of one name, a generic class and the uses of a broken name. The prelude keeps the
+    /// name of its interface, and the uses of a broken name stay poisoned.
+    #[test]
+    fn broken_items_should_get_the_name_errors_beside_items_of_the_same_name() {
+        use Code::{BraceOnNewLine as Brace, BuiltInName as Built, FunctionNotFound as NoFn};
+        let rows: &[(&str, &str, &[Found])] = &[
+            (
+                "broken then intact",
+                "interface Eq\n{}\ninterface Eq {}\n",
+                &[(Built, (1, 11)), (Brace, (2, 1)), (Built, (3, 11))],
+            ),
+            (
+                "intact then broken",
+                "interface Eq {}\ninterface Eq\n{}\n",
+                &[(Built, (1, 11)), (Built, (2, 11)), (Brace, (3, 1))],
+            ),
+            (
+                "two broken",
+                "interface Eq\n{}\ninterface Eq\n{}\n",
+                &[
+                    (Built, (1, 11)),
+                    (Brace, (2, 1)),
+                    (Built, (3, 11)),
+                    (Brace, (4, 1)),
+                ],
+            ),
+            (
+                "broken then intact, a user's name",
+                "interface Node\n{}\ninterface Node {}\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "generic class",
+                "class Eq<T>\n{}\n",
+                &[(Built, (1, 7)), (Brace, (2, 1))],
+            ),
+            // The call of a broken `fn Eq` adds no E0105: the item is poisoned in every namespace.
+            (
+                "call of a broken function",
+                "fn Eq()\n{}\nfn main() {\n    Eq()\n}\n",
+                &[(Built, (1, 4)), (Brace, (2, 1))],
+            ),
+            (
+                "broken class Option",
+                "class Option\n{}\nfn main() {\n    let x = Some(1)\n    let y: i64? = None\n    print(1)\n}\n",
+                &[(Built, (1, 7)), (Brace, (2, 1))],
+            ),
+            (
+                "broken class Result",
+                "class Result\n{}\nfn f() -> Result<i64, string> {\n    Ok(1)\n}\nfn main() {\n    print(1)\n}\n",
+                &[(Built, (1, 7)), (Brace, (2, 1)), (NoFn, (4, 5))],
+            ),
+            (
+                "broken fn Some",
+                "fn Some()\n{}\nfn main() {\n    let x = Some(1)\n    print(1)\n}\n",
+                &[(Built, (1, 4)), (Brace, (2, 1))],
+            ),
+        ];
+        for &(row, src, want) in rows {
+            let src = if src.contains("fn main") {
+                src.to_string()
+            } else {
+                format!("{src}{MAIN}")
+            };
+            assert_eq!(checked_codes(&src), want, "{row}");
+        }
     }
 
     /// A constant runs to the end of its line, so text skipped after its value is its own: the

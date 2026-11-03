@@ -1,0 +1,19 @@
+error[E0034]: `print` is a built-in function
+ --> E0034-broken-function.sisu:1:4
+  |
+1 | fn print()
+  |    ^^^^^
+
+error[E0004]: `{` must be on the same line as `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
+ --> E0034-broken-function.sisu:2:1
+  |
+2 | {}
+  | ^
+  |
+help: move `{` to the end of the line above
+  |
+1 | fn print() {}
+  |           +
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0004, E0034
