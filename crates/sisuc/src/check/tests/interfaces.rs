@@ -3895,13 +3895,20 @@ fn a_requirement_with_an_unknown_type_should_be_listed_for_a_conformance_that_la
     );
 }
 
+/// A class of two parameters, calls whose argument binds `S` with one of them, and calls whose
+/// argument binds a second parameter, `T`, with the other.
+const TWO: &str = "class Two<A, B> {\n    a: A\n    b: B\n}\nfn paired<S: Source>(x: Two<S, Wrap<S.Item>>) -> i64 { 1 }\nfn pairs<S: Source>(x: [Two<S, Wrap<S.Item>>]) -> i64 { 1 }\nfn mixed<S: Source, T>(s: S, x: Two<T, Wrap<S.Item>>) -> T { x.a }\nfn mixed_opt<S: Source, T>(s: S, x: Two<T, Wrap<S.Item>?>) -> T { x.a }\n";
+
 /// A conformance that lacks its choice, or whose choice failed, is reported once. A call or a
 /// constructor that takes the associated type of such a conformance fails after that report: no
-/// mismatch, no crash. The argument that names the associated type comes after, before and apart
-/// from its base.
+/// mismatch, no crash. The argument that names the associated type comes after its base, before
+/// it, or holds it. It is alone or inside a generic class, an enum, an optional or an array, which
+/// a call in the argument builds.
 #[test]
 fn a_call_through_a_conformance_without_its_choice_should_fail_after_the_one_report() {
     let holder = "class Holder<S: Source> {\n    item: S.Item\n}\n";
+    // After `fn t`, so that the lines of the reports stay where they are.
+    let nested = "\nclass Boxed<S: Source> {\n    item: Wrap<S.Item>\n}\nenum Got<S: Source> {\n    Got(Wrap<S.Item>)\n    Nothing\n}\nfn wrapped<S: Source>(s: S, x: Wrap<S.Item>) -> i64 { 1 }\nfn wrapped2<S: Source>(x: Wrap<S.Item>, s: S) -> i64 { 1 }\nfn listed<S: Source>(s: S, x: [Wrap<S.Item>]) -> i64 { 1 }\n";
     for (conformance, report) in [
         // No `type Item`: E0152 at the interface of the conformance.
         (
@@ -3918,10 +3925,108 @@ fn a_call_through_a_conformance_without_its_choice_should_fail_after_the_one_rep
             "let a = pass(Bad(n: 1), 5)",
             "let a = pass2(5, Bad(n: 1))",
             "let a: Holder<Bad> = Holder(item: 3)",
+            "let a = wrapped(Bad(n: 1), Wrap(value: 5))",
+            "let a = wrapped2(Wrap(value: 5), Bad(n: 1))",
+            "let a: Boxed<Bad> = Boxed(item: Wrap(value: 3))",
+            "let a: Got<Bad> = Got.Got(Wrap(value: 3))",
+            "let a = listed(Bad(n: 1), [Wrap(value: 5)])",
+            // The argument binds `S` itself.
+            "let a = paired(Two(a: Bad(n: 1), b: Wrap(value: 5)))",
+            // The second element takes the context that the first one bound.
+            "let a = pairs([Two(a: Bad(n: 1), b: Wrap(value: 1)), Two(a: Bad(n: 2), b: Wrap(value: 2))])",
+            // The context still names the unbound `T`.
+            "let a = mixed(Bad(n: 1), Two(a: 5, b: Wrap(value: 6)))",
+            "let a = mixed_opt(Bad(n: 1), Two(a: 5, b: Wrap(value: 6)))",
         ] {
-            let row = format!("{holder}{conformance}fn t() {{\n    {local}\n}}");
-            codes(&with_sources(&row), &[report]);
+            let row = format!("{holder}{conformance}fn t() {{\n    {local}\n}}{nested}{TWO}");
+            codes_row(
+                &format!("{report:?} {local}"),
+                &with_sources(&row),
+                &[report],
+            );
         }
+    }
+}
+
+/// An argument for `Wrap<S.Item>`, where the choice of `S.Item` failed, that has a fault of its
+/// own reports that fault, and the call fails after it: no crash. The fuzzer found the crash.
+#[test]
+fn a_faulty_argument_through_a_failed_choice_should_report_only_its_own_fault() {
+    let program = "class Bad: Source {\n    type Item = Missing\n    n: i64\n    fn next(self) -> Tag? { None }\n}\nclass Boxed<S: Source> {\n    item: Wrap<S.Item>\n}\nfn wrapped<S: Source>(s: S, x: Wrap<S.Item>) -> i64 { 1 }\nfn wrapped2<S: Source>(x: Wrap<S.Item>, s: S) -> i64 { 1 }\nfn t() {\n    ";
+    for local in [
+        "let a = wrapped(Bad(n: 1), Wrap(value: nowhere))",
+        "let a = wrapped2(Wrap(value: nowhere), Bad(n: 1))",
+        "let a: Boxed<Bad> = Boxed(item: Wrap(value: nowhere))",
+        "let a = pairs([Two(a: Bad(n: 1), b: Wrap(value: 1)), Two(a: Bad(n: 2), b: Wrap(value: nowhere))])",
+        "let a = mixed(Bad(n: 1), Two(a: 5, b: Wrap(value: nowhere)))",
+    ] {
+        let at = 5 + local
+            .find("nowhere")
+            .expect("the local should name `nowhere`");
+        // After `fn t`, so that the line of `nowhere` stays where it is.
+        let row = format!("{program}{local}\n}}\n{TWO}");
+        codes_row(
+            local,
+            &with_sources(&row),
+            &[
+                (Code::UnknownType, (2, 17)),
+                (Code::BindingNotFound, (12, at)),
+            ],
+        );
+    }
+}
+
+/// A parameter that only an `any` context binds still meets its bound: the call reports that the
+/// `any` type does not conform, once, at the call. An argument that names the associated type of
+/// the parameter then reports nothing more.
+#[test]
+fn an_any_context_should_check_the_bound_of_the_parameter_it_binds() {
+    let program = "interface Source {\n    type Item\n    fn next(self) -> Item?\n}\ninterface Show {\n    fn show(self) -> string\n}\nclass Wrap<T> {\n    value: T\n}\nfn mk<S: Source>(x: Wrap<S.Item>) -> S { panic(\"x\") }\nfn mk_opt<S: Source>(x: Wrap<S.Item>) -> S? { panic(\"x\") }\nfn mk_plain<S: Source>(x: Wrap<i64>) -> S { panic(\"x\") }\nfn take(s: any Show) {}\nfn main() {\n    ";
+    for local in [
+        "let a: any Show = mk(Wrap(value: 5))",
+        "let a: any Show = mk(Wrap(value: Wrap(value: 5)))",
+        "let a: (any Show)? = mk_opt(Wrap(value: 5))",
+        "take(mk(Wrap(value: 5)))",
+        // No argument names `S`.
+        "let a: any Show = mk_plain(Wrap(value: 5))",
+    ] {
+        let at = 5 + local.find("mk").expect("the local should call `mk`");
+        codes_row(
+            local,
+            &format!("{program}{local}\n}}\n"),
+            &[(Code::NotConform, (16, at))],
+        );
+    }
+}
+
+/// A choice that does not meet the bound of its associated type is reported once, at the choice.
+/// A call whose argument names an associated type of that choice fails after the one report,
+/// whether the argument or another one binds the base.
+#[test]
+fn a_call_through_a_choice_that_fails_its_bound_should_fail_after_the_one_report() {
+    let program = "interface Source {\n    type Item\n}\ninterface Outer {\n    type Inner: Source\n}\nclass Wrap<T> {\n    value: T\n}\nclass Two<A, B> {\n    a: A\n    b: B\n}\nclass H: Outer {\n    type Inner = i64\n    n: i64\n}\nfn deep<O: Outer>(x: Two<O, Wrap<O.Inner.Item>>) -> i64 { 1 }\nfn deep2<O: Outer>(o: O, x: Wrap<O.Inner.Item>) -> i64 { 1 }\nfn main() {\n    ";
+    for local in [
+        "let a = deep(Two(a: H(n: 1), b: Wrap(value: 5)))",
+        "let a = deep2(H(n: 1), Wrap(value: 5))",
+    ] {
+        codes_row(
+            local,
+            &format!("{program}{local}\n}}\n"),
+            &[(Code::NotConform, (15, 18))],
+        );
+    }
+}
+
+/// An optional `any` context that no argument binds gives the parameter its payload, as an
+/// optional context of a plain type does: the call meets the bound, and the value is wrapped.
+#[test]
+fn an_optional_any_context_should_bind_the_parameter_to_its_payload() {
+    let program = "interface Show {\n    fn show(self) -> string\n}\nclass Wrap<T> {\n    value: T\n}\nfn mk<S: Show>() -> S { panic(\"x\") }\nfn mk_wrap<S: Show>(x: Wrap<i64>) -> S { panic(\"x\") }\nfn main() {\n    ";
+    for local in [
+        "let _b: (any Show)? = mk()",
+        "let _b: (any Show)? = mk_wrap(Wrap(value: 5))",
+    ] {
+        codes_row(local, &format!("{program}{local}\n}}\n"), &[]);
     }
 }
 
@@ -3946,6 +4051,14 @@ fn an_associated_type_that_needs_itself_should_be_reported_once() {
     // `Leaf.A` ends the chain.
     codes(&program("Leaf", uses), &[]);
     codes(&program("Leaf", "    bare(W(value: Leaf()))\n"), &[]);
+    // A later element of an array takes the context that the first one bound, which names the
+    // associated type: it fails after the one report.
+    let pairs = "class Two<A, B> {\n    a: A\n    b: B\n}\nfn pairs<S: I>(x: [Two<S, W<S.A>>]) -> i64 { 1 }\n";
+    let uses = "    let w: W<Leaf> = W(value: Leaf())\n    keep(pairs([Two(a: w, b: W(value: 5)), Two(a: w, b: W(value: 6))]))\n";
+    codes(
+        &format!("{}{pairs}", program("W<Leaf>", uses)),
+        &[(Code::UnknownType, (13, 14))],
+    );
     // The bound that the type meets inherits the interface that declares the associated type,
     // and no signature writes it: `mono` would meet the loop in the body of `get`.
     let inherited = "interface Base {\n    type B: Holder\n}\ninterface Holder: Base {}\nclass Leaf {\n    n: i64\n}\nextend Leaf: Base {\n    type B = W<Leaf>\n}\nextend Leaf: Holder {}\nclass W<T> {\n    value: T\n}\nextend<T: Holder> W<T>: Base {\n    type B = T.B.B\n}\nextend<T: Holder> W<T>: Holder {}\nfn get<S: Holder>(_s: S) {\n    let _x: [S.B] = []\n}\nfn main() {\n    get(W(value: Leaf(n: 1)))\n}";
