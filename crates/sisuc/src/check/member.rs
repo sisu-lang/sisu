@@ -452,17 +452,15 @@ impl Checker<'_> {
         else {
             return UnwrapHelp::Nothing;
         };
-        let TypeKind::Optional(owner) = scrutinee.ty.kind() else {
-            return UnwrapHelp::Nothing;
-        };
-        let TypeKind::Class(class, _) = owner.kind() else {
-            return UnwrapHelp::Nothing;
-        };
-        let stores_array = self.classes[class.0]
-            .field(name.name)
-            .and_then(|index| self.field_type(owner, index))
-            .is_some_and(|held| matches!(held.kind(), TypeKind::Array(_)));
-        if stores_array && self.one_line(object.span) {
+        // The scrutinee is an optional of a class: only a class has a field.
+        if let TypeKind::Optional(owner) = scrutinee.ty.kind()
+            && let TypeKind::Class(class, _) = owner.kind()
+            && self.classes[class.0]
+                .field(name.name)
+                .and_then(|index| self.field_type(owner, index))
+                .is_some_and(|held| matches!(held.kind(), TypeKind::Array(_)))
+            && self.one_line(object.span)
+        {
             UnwrapHelp::Object(self.source.text(object.span).to_string())
         } else {
             UnwrapHelp::Nothing
