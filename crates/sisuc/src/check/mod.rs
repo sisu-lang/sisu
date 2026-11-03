@@ -903,8 +903,9 @@ struct Body {
     /// Whether the body has a `todo`, which keeps its parameters from W0014.
     todo: bool,
     /// Work ranking arguments did ahead of its turn, innermost last, by the span it was done
-    /// for and whether that is a block's; `None` once used.
-    ahead: Vec<((Span, bool), Option<generic::Ahead>)>,
+    /// for and whether that is a block's; `None` once used. Then whether the work made a `break`
+    /// or `continue` outside a loop: using the work sets `invalid_jump` again.
+    ahead: Vec<((Span, bool), Option<generic::Ahead>, bool)>,
     /// Where in `ahead` the last work kept for each span and kind is.
     ahead_at: FxHashMap<(Span, bool), usize>,
     /// What `takes_context` answered for each array literal and `Some(...)`, with the context,

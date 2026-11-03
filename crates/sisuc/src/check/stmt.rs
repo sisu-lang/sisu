@@ -137,11 +137,7 @@ impl Checker<'_> {
                 so_far.warned = true;
             }
             let last = i + 1 == block.stmts.len();
-            let outer_jump = std::mem::take(&mut self.body.invalid_jump);
-            let checked = self.stmt(stmt, expected.filter(|_| last));
-            let invalid_jump = self.body.invalid_jump;
-            // Nested blocks leave their flag set, so an enclosing statement sees it too.
-            self.body.invalid_jump |= outer_jump;
+            let (checked, invalid_jump) = self.jumps(|c| c.stmt(stmt, expected.filter(|_| last)));
             let stmt_ty = match checked {
                 Ok(lowered) => {
                     if !last

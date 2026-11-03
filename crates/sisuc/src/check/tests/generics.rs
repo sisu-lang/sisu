@@ -6393,9 +6393,8 @@ fn a_never_statement_before_a_misfit_tail_should_give_e0050_at_the_call() {
 }
 
 /// The rows of the test above where a `never` block is the value of a `let`. The twin does not
-/// fail, so its block is a `never` that is used as a value: E0043. The generic block failed
-/// (its call gave E0050), and it is still a `never` used as a value, so the generic program has
-/// the diagnostics of the twin and the E0050.
+/// fail, so its block is a `never` that is used as a value: E0043. The generic block also reports
+/// E0050. It is still a `never` value, so it keeps the diagnostics of the twin.
 #[test]
 fn a_failed_never_block_as_a_value_should_give_e0050_and_e0043() {
     with_prelude();

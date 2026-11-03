@@ -321,12 +321,19 @@ impl Checker<'_> {
         }
     }
 
-    /// An expression whose value is used: not `unit` or `never`.
-    pub(super) fn value(&mut self, e: &ast::Expr, expected: Option<Type>) -> Checked {
+    /// Runs `f`, and tells whether it made a `break` or `continue` outside a loop, which has its
+    /// own report. Nested blocks leave the flag set, so an enclosing check sees it too.
+    pub(super) fn jumps<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> (R, bool) {
         let outer_jump = std::mem::take(&mut self.body.invalid_jump);
-        let checked = self.expr(e, expected);
+        let result = f(self);
         let invalid_jump = self.body.invalid_jump;
         self.body.invalid_jump |= outer_jump;
+        (result, invalid_jump)
+    }
+
+    /// An expression whose value is used: not `unit` or `never`.
+    pub(super) fn value(&mut self, e: &ast::Expr, expected: Option<Type>) -> Checked {
+        let (checked, invalid_jump) = self.jumps(|c| c.expr(e, expected));
         match type_of(&checked) {
             // A `never` made by a `break` or `continue` outside a loop has its report already,
             // and no second one. A `never` that failed for another reason is still a `never`.

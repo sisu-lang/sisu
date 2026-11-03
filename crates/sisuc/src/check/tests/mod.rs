@@ -779,6 +779,13 @@ fn a_never_value_that_failed_should_give_e0043_after_the_other_error() {
             None,
             &[Code::JumpOutsideLoop, Code::Mismatch],
         ),
+        // An invalid jump earlier in the statement must not hide the E0043 of a later `never`
+        // value that failed: `value` takes the flag of the statement for its own check.
+        (
+            "let x = [{ break }, { return \"a\" }]",
+            Some("{ return \"a\" }"),
+            &[Code::JumpOutsideLoop, Code::NoValue, Code::Mismatch],
+        ),
     ];
     for &(stmt, under, expected) in rows {
         codes_under(stmt, &wrap(stmt), under, expected);
@@ -2511,6 +2518,26 @@ fn nested_invalid_jump_leaves_no_unreachable() {
                 (Code::JumpOutsideLoop, (2, 15)),
                 (Code::JumpOutsideLoop, (2, 25 + jump.len())),
             ],
+        );
+    }
+}
+
+/// An invalid jump in an operand or an argument is the flag of the statement, also after the
+/// value of that operand is checked: `return` and `if` make the code after them unreachable
+/// otherwise.
+#[test]
+fn an_invalid_jump_in_an_operand_should_leave_no_unreachable_after_the_statement() {
+    for stmt in [
+        "return n({ break }) + n(1)",
+        "if n({ break }) + n(1) == 1 { return 1 } else { return 2 }",
+    ] {
+        codes_under(
+            stmt,
+            &format!(
+                "fn n(a: i64) -> i64 {{ a }}\nfn g() -> i64 {{\n    {stmt}\n    0\n}}\nfn main() {{}}"
+            ),
+            None,
+            &[Code::JumpOutsideLoop],
         );
     }
 }

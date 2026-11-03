@@ -167,6 +167,13 @@ fn a_never_part_of_a_literal_as_a_value_should_give_e0043_at_the_part() {
             Some("return 1"),
             &[Code::NoValue],
         ),
+        // A literal of an earlier statement does not move the underline of a part that is not a
+        // literal.
+        (
+            "print(\"p{return 1}\")\n    let s = \"a{ { return 2 } }b\"",
+            Some("{ return 2 }"),
+            &[Code::PrintNever, Code::NoValue],
+        ),
         // A part that is not a literal itself is underlined whole.
         (
             "let s = \"a{ { return 1 } }b\"",
