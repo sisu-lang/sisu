@@ -1,6 +1,9 @@
 # cargo-mutants (https://mutants.rs). Run it as `AGENTS.md` shows.
 test_tool = "nextest"
-# A timeout counts as caught, so the default 5x wait (114 s for each timeout, measured) only costs time.
+# Pass 1 of `scripts/mutants.sh` waits 2x its baseline.
+# Pass 2 sets `--timeout 600`, which beats this.
+# The whole suite, 2 mutants at a time, can be slower than 2x its baseline.
+# A timeout counts as caught, so a short wait would hide a missed mutant.
 timeout_multiplier = 2.0
 # Skip ignored files when copying the tree, above all the 12G `.llvm/`.
 # The copy then lacks `.llvm/`, so the command sets an absolute
