@@ -1,0 +1,138 @@
+error[E0050]: cannot infer the type of `[]`
+ --> E0050-use-order.sisu:7:18
+  |
+7 |     let mut xs = []
+  |                  ^^
+  |
+  = help: write the type: `let mut xs: [any Display] = []`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-use-order.sisu:13:18
+   |
+13 |     let mut xs = []
+   |                  ^^
+   |
+   = help: write the type: `let mut xs: [any Display] = []`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-use-order.sisu:19:18
+   |
+19 |     let mut xs = []
+   |                  ^^
+   |
+   = help: write the type: `let mut xs: [any Display] = []`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-use-order.sisu:25:18
+   |
+25 |     let mut xs = []
+   |                  ^^
+   |
+   = help: write the type: `let mut xs: [any Display] = []`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-use-order.sisu:31:18
+   |
+31 |     let mut xs = []
+   |                  ^^
+   |
+   = help: write the type: `let mut xs: [any Display] = []`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-use-order.sisu:37:18
+   |
+37 |     let mut xs = []
+   |                  ^^
+   |
+   = help: write the type: `let mut xs: [any Display] = []`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-use-order.sisu:43:18
+   |
+43 |     let mut xs = []
+   |                  ^^
+   |
+   = help: write the type: `let mut xs: [any Display] = []`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-use-order.sisu:49:18
+   |
+49 |     let mut xs = []
+   |                  ^^
+   |
+   = help: write the type: `let mut xs: [any Display] = []`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-use-order.sisu:55:18
+   |
+55 |     let mut xs = []
+   |                  ^^
+   |
+   = help: write the type: `let mut xs: [any Display] = []`
+
+error[E0050]: cannot infer the type of `None`
+  --> E0050-use-order.sisu:61:17
+   |
+61 |     let mut x = None
+   |                 ^^^^
+   |
+   = help: write the type: `let mut x: i64? = None`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-use-order.sisu:68:18
+   |
+68 |     let mut xs = []
+   |                  ^^
+   |
+   = help: write the type: `let mut xs: [any Display] = []`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-use-order.sisu:75:18
+   |
+75 |     let mut xs = []
+   |                  ^^
+   |
+   = help: write the type: `let mut xs: [any Display] = []`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-use-order.sisu:81:18
+   |
+81 |     let mut xs = []
+   |                  ^^
+   |
+   = help: write the type: `let mut xs: [any Display] = []`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-use-order.sisu:87:18
+   |
+87 |     let mut xs = []
+   |                  ^^
+   |
+   = help: write the type: `let mut xs: [any Display] = []`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-use-order.sisu:92:18
+   |
+92 |     let mut xs = []
+   |                  ^^
+   |
+   = help: write the type: `let mut xs: [any Display] = []`
+
+error[E0050]: cannot infer the type of `[]`
+  --> E0050-use-order.sisu:97:18
+   |
+97 |     let mut xs = []
+   |                  ^^
+   |
+   = help: write the type: `let mut xs: [f64] = []`
+
+error[E0050]: cannot infer the type of `[]`
+   --> E0050-use-order.sisu:103:18
+    |
+103 |     let mut xs = []
+    |                  ^^
+    |
+    = help: write the type: `let mut xs: [any Display] = []`
+
+sisu: 17 errors
+sisu: for more on a code, run `sisu explain <code>`: E0050
