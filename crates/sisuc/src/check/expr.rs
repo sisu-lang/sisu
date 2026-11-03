@@ -659,6 +659,10 @@ impl Checker<'_> {
         self.source
             .comments
             .iter()
+            .inspect(|_| {
+                #[cfg(test)]
+                super::COMMENT_READS.set(super::COMMENT_READS.get() + 1);
+            })
             .any(|c| deleted.iter().any(|d| d.contains(c)))
     }
 }

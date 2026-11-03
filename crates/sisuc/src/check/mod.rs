@@ -457,6 +457,9 @@ impl<'src> Source<'src> {
 thread_local! {
     /// How many class fields the class-cycle search has read on this thread.
     pub(super) static FIELD_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many comment starts `comment_in` has read on this thread, in its search and in the
+    /// check after it.
+    pub(super) static COMMENT_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many expressions `Checker::expr` has checked on this thread.
     pub(super) static EXPR_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many unary `-` and operator expressions `int_literal` has walked on this thread, those

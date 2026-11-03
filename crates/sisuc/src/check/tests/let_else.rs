@@ -257,7 +257,9 @@ type AlwaysRow = (
 /// The rows of `always_matching_names_should_offer_a_plain_let`.
 const SIG: &str = "fn f(w: E, o: Only) {";
 const INT: &str = "fn f(w: E) -> i64 {";
-const ALWAYS_ROWS: [AlwaysRow; 24] = [
+const BOOL: &str = "fn f(w: E) -> bool {";
+const CHAR: &str = "fn f(w: E) -> char {";
+const ALWAYS_ROWS: [AlwaysRow; 27] = [
     (
         SIG,
         "let v = w else { return }",
@@ -333,6 +335,27 @@ const ALWAYS_ROWS: [AlwaysRow; 24] = [
         "outer: loop {\n        loop { let v = w else { break outer } }\n    }",
         false,
         Some((false, "outer: loop {\n        loop { let v = w }\n    }")),
+        &[],
+    ),
+    (
+        SIG,
+        "outer: loop {\n        loop { let v = w else { continue outer } }\n    }",
+        false,
+        Some((false, "outer: loop {\n        loop { let v = w }\n    }")),
+        &[],
+    ),
+    (
+        BOOL,
+        "let v = w else { return true }\n    true",
+        false,
+        Some((true, "let v = w\n    true")),
+        &[],
+    ),
+    (
+        CHAR,
+        "let v = w else { return 'c' }\n    'c'",
+        false,
+        Some((true, "let v = w\n    'c'")),
         &[],
     ),
     (
@@ -429,6 +452,40 @@ fn always_matching_names_should_offer_a_plain_let() {
             assert_eq!(codes, others, "fixed: {row}");
         }
     }
+}
+
+/// The program of `let_else_comment_checks_should_read_near_linearly`: `n` rows of a comment, a
+/// `let ... else` whose block is one plain exit, and a read of the name.
+fn comment_rows(n: usize) -> String {
+    let rows = (0..n)
+        .map(|i| format!("    // c{i}\n    let v{i} = o else {{ return 0 }}\n    print(v{i})\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    format!("fn f(o: i64?) -> i64 {{\n{rows}    0\n}}\nfn main() {{}}")
+}
+
+/// GIVEN a function of `n` rows, each a comment, a `let ... else` with one plain exit and a read
+/// of the name, for `n` = 100 and 200
+/// WHEN `sisu check` runs on each
+/// THEN `comment_in` reads at least one comment, and the reads for 200 rows are at most three
+/// times those for 100
+///
+/// A scan of the comment list for each statement reads n^2 comments: 4 times as many for 2n rows,
+/// and a scan that ticks nothing reads 0. `assert_near_linear` does not fit a binary search: it
+/// reads about n * (ceil(log2 n) + 2) comments, so the step from 2n to 3n jumps when a power of
+/// two falls between them, and `assert_near_linear` (at most 1.1 times) fails for about half of
+/// all n. With c = ceil(log2 n), the ratio of a search for 2n rows to n rows is 2(c + 3)/(c + 2),
+/// about 2.2 at n = 100.
+#[test]
+fn let_else_comment_checks_should_read_near_linearly() {
+    let reads = |n: usize| {
+        COMMENT_READS.set(0);
+        assert!(checked(&comment_rows(n)).0.is_some());
+        COMMENT_READS.get()
+    };
+    let (one, two) = (reads(100), reads(200));
+    assert!(one > 0, "the first count is 0");
+    assert!(two <= 3 * one, "{one} reads for 100 rows, {two} for 200");
 }
 
 /// `let mut` keeps its name judged: a name that nothing changes gets W0002, which the fix of
