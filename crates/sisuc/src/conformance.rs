@@ -940,6 +940,17 @@ pub(crate) fn normalize_noting(
     ty: Type,
     stuck: &mut Vec<Stuck>,
 ) -> Option<Type> {
+    normalize_failing(conformances, ty, None, stuck)
+}
+
+/// `normalize_noting`, with `failed` in place of each associated type that has no type and holds
+/// no hole. An associated type that holds a hole stays unknown: a later binding can change it.
+pub(crate) fn normalize_failing(
+    conformances: &Conformances,
+    ty: Type,
+    failed: Option<Type>,
+    stuck: &mut Vec<Stuck>,
+) -> Option<Type> {
     if !ty.has_assoc() {
         return Some(ty);
     }
@@ -948,6 +959,7 @@ pub(crate) fn normalize_noting(
         memo: FxHashMap::default(),
         active: FxHashMap::default(),
         start: None,
+        failed,
         stuck,
     }
     .walk(ty)
@@ -962,6 +974,8 @@ struct Normalizer<'a> {
     active: FxHashMap<Type, (InterfaceId, usize, usize)>,
     /// The first of the associated types in `active`: the one that the chain in progress began at.
     start: Option<Type>,
+    /// The type in place of an associated type that has no type and holds no hole, if any.
+    failed: Option<Type>,
     stuck: &'a mut Vec<Stuck>,
 }
 
@@ -982,22 +996,37 @@ impl Normalizer<'_> {
             TypeKind::Enum(id, args) => Type::intern(TypeKind::Enum(id, self.all(args)?)),
             TypeKind::Any(id, args) => Type::intern(TypeKind::Any(id, self.all(args)?)),
             TypeKind::Assoc(base, interface, args, k) => {
-                let base = self.walk(base)?;
-                let args = self.all(args)?;
-                match base.kind() {
-                    TypeKind::Class(..) | TypeKind::Enum(..) => {
-                        self.choice(Type::intern(TypeKind::Assoc(base, interface, args, k)))?
-                    }
-                    TypeKind::Param(..) | TypeKind::Assoc(..) => {
-                        Type::intern(TypeKind::Assoc(base, interface, args, k))
-                    }
-                    _ => return None,
+                match (self.assoc(base, interface, args, k), self.failed) {
+                    (Some(done), _) => done,
+                    (None, Some(failed)) if !ty.holds_hole() => failed,
+                    (None, _) => return None,
                 }
             }
             _ => unreachable!("only a kind with a child can hold an associated type"),
         };
         self.memo.insert(ty, done);
         Some(done)
+    }
+
+    /// The associated type `k` of `base` for `interface` with `args`, normalized.
+    fn assoc(
+        &mut self,
+        base: Type,
+        interface: InterfaceId,
+        args: TypeArgs,
+        k: u32,
+    ) -> Option<Type> {
+        let base = self.walk(base)?;
+        let args = self.all(args)?;
+        match base.kind() {
+            TypeKind::Class(..) | TypeKind::Enum(..) => {
+                self.choice(Type::intern(TypeKind::Assoc(base, interface, args, k)))
+            }
+            TypeKind::Param(..) | TypeKind::Assoc(..) => {
+                Some(Type::intern(TypeKind::Assoc(base, interface, args, k)))
+            }
+            _ => None,
+        }
     }
 
     fn all(&mut self, args: TypeArgs) -> Option<TypeArgs> {
