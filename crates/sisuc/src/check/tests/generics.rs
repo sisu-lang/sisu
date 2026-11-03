@@ -6675,8 +6675,8 @@ fn shared_chain(shape: &str, n: usize) -> String {
 
 /// A walk over a type that shares children visits each distinct type once, not each path to it.
 /// Each shape puts an alias chain, which has 2^n paths, in a place that one of the walks of
-/// `TYPE_STEPS` meets. At depths 4, 8 and 12 the paths grow 16 times from one step to the next,
-/// so a walk of each path fails the check, and a walk of each distinct type passes.
+/// `TYPE_STEPS` meets. At depths 4, 8 and 12 the paths grow 16 times from one step to the next.
+/// A walk of each path fails the check. A walk of each distinct type passes.
 #[test]
 fn type_walks_should_visit_each_distinct_type_once() {
     for shape in [

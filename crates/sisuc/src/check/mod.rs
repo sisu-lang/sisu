@@ -1286,6 +1286,12 @@ impl<'src> Checker<'src> {
         open.then_some(misfit.ty)
     }
 
+    /// Whether a generic call checked since `since`, the length of `Body::misfits` then, left
+    /// its E0050 unused: no report took it, so it is the fault, whatever type the call found.
+    fn kept_misfit(&self, since: usize) -> bool {
+        (self.body.misfits.get(since..)).is_some_and(|m| m.iter().any(Option::is_some))
+    }
+
     /// Marks the misfit of `checked`, if any, as reported: its E0050 is dropped.
     fn settle_misfit<T>(&mut self, checked: &Result<T, Poisoned>) {
         if let Err(Poisoned {

@@ -28,12 +28,12 @@ use crate::types::{HOLE_INDEX, Head, REJECTED_INDEX};
 
 /// Whether `ty` is `want`, where a hole of `want` meets any part of `ty`.
 fn meets(ty: Type, want: Type) -> bool {
-    meets_in(ty, want, &mut Memo::default())
+    meets_in(ty, want, &mut WalkMemo::default())
 }
 
 /// The walk of `meets`; `seen` holds the answer for each pair that it has finished, so each
 /// distinct pair is visited once.
-fn meets_in(ty: Type, want: Type, seen: &mut Memo<(Type, Type), bool>) -> bool {
+fn meets_in(ty: Type, want: Type, seen: &mut WalkMemo<(Type, Type), bool>) -> bool {
     type_step();
     if ty == want || is_hole(want) {
         return true;
@@ -79,32 +79,32 @@ fn meets_in(ty: Type, want: Type, seen: &mut Memo<(Type, Type), bool>) -> bool {
     met
 }
 
-/// How many visits a walk makes before its `Memo` keeps answers. The types of a normal call are
-/// small, so such a walk makes no entry and does no hashing.
+/// How many visits a walk makes before its `WalkMemo` keeps answers. The types of a normal call
+/// are small, so such a walk makes no entry and does no hashing.
 const MEMO_AFTER: usize = 64;
 
 /// The answers of one walk over types, by the type (or pair of types) it has met. A type can
 /// share its children, so it has more paths than distinct types: an alias that names the one
-/// before it twice has 2^n paths for n types. A walk that asks its `Memo` before it visits a type,
-/// and that puts its answer after, visits each distinct type once. A walk whose answer to a
-/// question is the same on each visit within one top-level call can use one. A set is a `Memo`
+/// before it twice has 2^n paths for n types. A walk that asks its `WalkMemo` before it visits a
+/// type, and that puts its answer after, visits each distinct type once. A walk whose answer to a
+/// question is the same on each visit within one top-level call can use one. A set is a `WalkMemo`
 /// of `()`.
-struct Memo<K, V> {
+struct WalkMemo<K, V> {
     visits: usize,
     /// Made at the first answer, so a walk that keeps none allocates and hashes nothing.
     answers: Option<FxHashMap<K, V>>,
 }
 
-impl<K, V> Default for Memo<K, V> {
+impl<K, V> Default for WalkMemo<K, V> {
     fn default() -> Self {
-        Memo {
+        WalkMemo {
             visits: 0,
             answers: None,
         }
     }
 }
 
-impl<K: Eq + Hash, V: Copy> Memo<K, V> {
+impl<K: Eq + Hash, V: Copy> WalkMemo<K, V> {
     /// The answer that the walk put for `key`, if any. It counts one visit.
     fn get(&mut self, key: &K) -> Option<V> {
         self.visits += 1;
@@ -130,7 +130,7 @@ impl<K: Eq + Hash, V: Copy> Memo<K, V> {
 /// Marks in `named` each type parameter that `ty` names, by its place; `named` has a place for
 /// each type parameter in scope. `seen` holds each type already visited, so each distinct type of
 /// `ty` is visited once, whatever the number of paths to it. It can be shared by several types.
-fn mark_params(ty: Type, named: &mut [bool], seen: &mut Memo<Type, ()>) {
+fn mark_params(ty: Type, named: &mut [bool], seen: &mut WalkMemo<Type, ()>) {
     #[cfg(test)]
     MARKED.set(MARKED.get() + 1);
     type_step();
@@ -174,12 +174,12 @@ fn mark_params(ty: Type, named: &mut [bool], seen: &mut Memo<Type, ()>) {
 /// Whether `ty` names the type parameter at place `param` other than under an associated type:
 /// only such a name lets the type that a result is annotated with bind the parameter.
 fn names_outside_assoc(ty: Type, param: usize) -> bool {
-    names_outside_in(ty, param, &mut Memo::default())
+    names_outside_in(ty, param, &mut WalkMemo::default())
 }
 
 /// The walk of `names_outside_assoc`; `seen` holds each type that does not, so each distinct type
 /// is visited once.
-fn names_outside_in(ty: Type, param: usize, seen: &mut Memo<Type, ()>) -> bool {
+fn names_outside_in(ty: Type, param: usize, seen: &mut WalkMemo<Type, ()>) -> bool {
     type_step();
     if !ty.has_param() {
         return false;
@@ -214,7 +214,7 @@ fn mark_by_assoc(
     under: bool,
     inside: &mut [bool],
     outside: &mut [bool],
-    seen: &mut Memo<(Type, bool), ()>,
+    seen: &mut WalkMemo<(Type, bool), ()>,
 ) {
     type_step();
     if !ty.has_param() {
@@ -264,7 +264,7 @@ fn waits_for_assoc(bindings: &Bindings, param: Type) -> bool {
         false,
         &mut inside,
         &mut outside,
-        &mut Memo::default(),
+        &mut WalkMemo::default(),
     );
     (0..count).any(|j| inside[j] && !outside[j] && bindings.found[j].is_none())
 }
@@ -273,7 +273,7 @@ fn waits_for_assoc(bindings: &Bindings, param: Type) -> bool {
 /// nothing.
 pub(super) fn named_params(types: impl Iterator<Item = Option<Type>>, len: usize) -> Vec<bool> {
     let mut named = vec![false; len];
-    let mut seen = Memo::default();
+    let mut seen = WalkMemo::default();
     for ty in types.flatten() {
         mark_params(ty, &mut named, &mut seen);
     }
@@ -390,16 +390,16 @@ fn type_step() {
     TYPE_STEPS.set(TYPE_STEPS.get() + 1);
 }
 
-/// What one `needed_params` has met, so that it visits each distinct type once (see `Memo`).
+/// What one `needed_params` has met, so that it visits each distinct type once (see `WalkMemo`).
 /// `outer`, `unbound` and `on` stay the same during one walk, so a second visit adds nothing.
 #[derive(Default)]
 struct Needed {
     /// For a pair of `built` and `param` that `needed_walk` has finished: whether they meet.
-    pairs: Memo<(Type, Type), bool>,
+    pairs: WalkMemo<(Type, Type), bool>,
     /// The types that `unbound_params` has finished.
-    unbound: Memo<Type, ()>,
+    unbound: WalkMemo<Type, ()>,
     /// For a type of the callee that `names_unbound` has finished: its answer.
-    names: Memo<Type, bool>,
+    names: WalkMemo<Type, bool>,
 }
 
 /// Adds to `on` each parameter of `outer` that `ty` names and that is unbound.
@@ -445,7 +445,7 @@ fn unbound_params(outer: &Bindings, ty: Type, on: &mut FxHashSet<usize>, seen: &
 }
 
 /// Whether `built`, a callee's type, names a parameter of the callee that is `unbound`.
-fn names_unbound(unbound: &[bool], built: Type, seen: &mut Memo<Type, bool>) -> bool {
+fn names_unbound(unbound: &[bool], built: Type, seen: &mut WalkMemo<Type, bool>) -> bool {
     wait_step();
     type_step();
     if !built.has_param() {
@@ -760,7 +760,7 @@ impl Makes {
             _ => return Makes::No,
         };
         let (mut bare, mut inside, mut lifted) = (0, 0, 0);
-        let mut seen = Memo::default();
+        let mut seen = WalkMemo::default();
         for (i, param) in params.take(u64::BITS as usize).enumerate() {
             match param {
                 Some(param) if param == payload => bare |= 1 << i,
@@ -866,7 +866,7 @@ fn wider_than(mut ty: Type, layers: usize) -> bool {
 /// Whether `ty` holds `param`, a type parameter, other than as itself: under arrays or the type
 /// arguments of a class or an enum, not under an optional nor an associated type. `seen` holds
 /// each type that does not, so each distinct type is visited once.
-fn holds_param(ty: Type, param: Type, seen: &mut Memo<Type, ()>) -> bool {
+fn holds_param(ty: Type, param: Type, seen: &mut WalkMemo<Type, ()>) -> bool {
     type_step();
     // A type without a parameter cannot hold `param`.
     if !ty.has_param() {
@@ -901,7 +901,7 @@ fn holds_param(ty: Type, param: Type, seen: &mut Memo<Type, ()>) -> bool {
 /// Whether `ty` names a type parameter that `marked` marks by its place, other than under an
 /// associated type (see `names_outside_assoc`), and under an optional only if `optionals`.
 fn names_marked(ty: Type, marked: impl Fn(usize) -> bool + Copy, optionals: bool) -> bool {
-    names_marked_in(ty, marked, optionals, &mut Memo::default())
+    names_marked_in(ty, marked, optionals, &mut WalkMemo::default())
 }
 
 /// The walk of `names_marked`; `seen` holds each type that names none, so each distinct type is
@@ -910,7 +910,7 @@ fn names_marked_in(
     ty: Type,
     marked: impl Fn(usize) -> bool + Copy,
     optionals: bool,
-    seen: &mut Memo<Type, ()>,
+    seen: &mut WalkMemo<Type, ()>,
 ) -> bool {
     type_step();
     if !ty.has_param() {
@@ -968,7 +968,13 @@ fn carried(
         return Places::default();
     };
     let (mut inside, mut outside) = (vec![false; count], vec![false; count]);
-    mark_by_assoc(ret, false, &mut inside, &mut outside, &mut Memo::default());
+    mark_by_assoc(
+        ret,
+        false,
+        &mut inside,
+        &mut outside,
+        &mut WalkMemo::default(),
+    );
     outside[..owner].fill(false);
     carried_places(params, &outside)
 }
@@ -1002,7 +1008,7 @@ fn is_hole(ty: Type) -> bool {
 }
 
 /// Whether `kind` is of a class, an enum or an `any` type, which can hold the same type in more
-/// than one of its arguments: a walk over it can use a `Memo`.
+/// than one of its arguments: a walk over it can use a `WalkMemo`.
 fn has_type_args(kind: TypeKind) -> bool {
     matches!(
         kind,
@@ -1038,7 +1044,7 @@ pub(super) struct Bindings {
     hints: Vec<Option<Type>>,
     /// What the walk in progress, of `bind` or of `hint`, has met: for a pair of a pattern and a
     /// value, its answer. A walk begins with `clear`.
-    walked: Memo<(Type, Type), bool>,
+    walked: WalkMemo<(Type, Type), bool>,
     /// The parameters that the backward walk of `hint` has settled. It stays empty until the
     /// forward walk meets a part that holds `REJECTED` and no `HOLE`. Each `hint` clears it.
     settled: Vec<bool>,
@@ -1062,7 +1068,7 @@ impl Bindings {
             fresh: Vec::new(),
             kept: 0,
             hints: Vec::new(),
-            walked: Memo::default(),
+            walked: WalkMemo::default(),
             settled: Vec::new(),
         }
     }
@@ -1340,12 +1346,12 @@ impl Bindings {
     /// The first parameter that `ty`, a callee's, names and that is unbound or rejected, which
     /// `known` has no type for. `None` when `ty` names none.
     fn unknown_param(&self, ty: Type) -> Option<usize> {
-        self.unknown_in(ty, &mut Memo::default())
+        self.unknown_in(ty, &mut WalkMemo::default())
     }
 
     /// The walk of `unknown_param`; `seen` holds each type that names none, so each distinct type
     /// is visited once.
-    fn unknown_in(&self, ty: Type, seen: &mut Memo<Type, ()>) -> Option<usize> {
+    fn unknown_in(&self, ty: Type, seen: &mut WalkMemo<Type, ()>) -> Option<usize> {
         type_step();
         if !ty.has_param() {
             return None;
@@ -1386,7 +1392,7 @@ impl Bindings {
     /// `ty`, a callee's, with its parameters' bindings in their place; `None` while it names
     /// one that is unbound or rejected.
     pub(super) fn known(&self, ty: Type) -> Option<Type> {
-        self.resolve(ty, Unbound::Fail, &mut Memo::default())
+        self.resolve(ty, Unbound::Fail, &mut WalkMemo::default())
     }
 
     /// As `known`, with a hole for each parameter that is not known, so it always gives a type:
@@ -1394,14 +1400,14 @@ impl Bindings {
     /// its hint, else `HOLE`; a rejected one gives `REJECTED`. `bind` and `reject` put only
     /// `REJECTED` in `found`.
     fn partial(&self, ty: Type) -> Type {
-        self.resolve(ty, Unbound::Hole, &mut Memo::default())
+        self.resolve(ty, Unbound::Hole, &mut WalkMemo::default())
             .expect("a hole should stand for each unbound parameter")
     }
 
     /// As `known`, with each unbound or rejected parameter by the callee's name, so it always
     /// gives a type. For a diagnostic: a repeated name shows that two places must be one type.
     fn printed(&self, ty: Type) -> Type {
-        self.resolve(ty, Unbound::Keep, &mut Memo::default())
+        self.resolve(ty, Unbound::Keep, &mut WalkMemo::default())
             .expect("a parameter should stand for itself while it is unbound")
     }
 
@@ -1414,7 +1420,7 @@ impl Bindings {
         &self,
         ty: Type,
         unbound: Unbound,
-        seen: &mut Memo<Type, Option<Type>>,
+        seen: &mut WalkMemo<Type, Option<Type>>,
     ) -> Option<Type> {
         type_step();
         #[cfg(test)]
@@ -1442,7 +1448,7 @@ impl Bindings {
         ty: Type,
         kind: TypeKind,
         unbound: Unbound,
-        seen: &mut Memo<Type, Option<Type>>,
+        seen: &mut WalkMemo<Type, Option<Type>>,
     ) -> Option<Type> {
         Some(match kind {
             TypeKind::Param(_, i) => match (self.found[i as usize], unbound) {
@@ -1486,7 +1492,7 @@ impl Bindings {
         &self,
         args: TypeArgs,
         unbound: Unbound,
-        seen: &mut Memo<Type, Option<Type>>,
+        seen: &mut WalkMemo<Type, Option<Type>>,
     ) -> Option<TypeArgs> {
         let list: Option<Vec<Type>> = args
             .get()
@@ -2017,6 +2023,7 @@ impl Checker<'_> {
         expected: Option<Type>,
     ) -> Result<(Vec<Checked>, TypeArgs, Option<Type>), Poisoned> {
         let owned = sig.owner.len();
+        let open = self.body.misfits.len();
         let mut call = Inference {
             at: span,
             hinted: self.hinted(span, None).1.is_some(),
@@ -2142,6 +2149,11 @@ impl Checker<'_> {
                 ..Poisoned::error()
             });
         };
+        // An argument that keeps its E0050 under a hint fails the call, as any failed argument
+        // does: the type the hint bound is the hint's, not a type that anyone wrote.
+        if self.kept_misfit(open) {
+            return Err(Poisoned::error());
+        }
         self.instantiates = true;
         let checked = call
             .slots

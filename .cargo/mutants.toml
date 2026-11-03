@@ -19,10 +19,10 @@ exclude_re = [
     # swaps which draw takes the enum form. Both forms still come at the same rate, and no test
     # reads the text of a generated program.
     "replace == with != in Gen<'_>::let_else",
-    # `self.visits > MEMO_AFTER` in `Memo::put`: the memo keeps answers from one visit earlier. Each
-    # kept answer is the walk's own answer for its key, so no output changes. The counter tests
-    # allow one more or one fewer visit.
-    "replace > with >= in Memo<K, V>::put",
+    # `self.visits > MEMO_AFTER` in `WalkMemo::put`: the memo keeps answers from one visit
+    # earlier. Each kept answer is the walk's own answer for its key, so no output changes. The
+    # counter tests allow one more or one fewer visit.
+    "replace > with >= in WalkMemo<K, V>::put",
     # `has_type_args` in `bind` and `hint_in`: the walks then use the memo for each kind, not only
     # for a class, an enum or an `any`. A memo answer is right for every type, so no output
     # changes. Only a lookup costs more.
