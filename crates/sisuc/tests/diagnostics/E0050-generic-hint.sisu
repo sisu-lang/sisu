@@ -311,8 +311,8 @@ fn negated_sum_then_string() {
     let w: string = z
 }
 
-// A `string` leader under `-`, `*`, `/` or `%` is reported against the operator's list, as any
-// other leader is, and the call beside it keeps its E0050. Only `+` takes a `string`.
+// A `string` leader under `-` or `%` gets the operator's list error, and the call keeps its E0050.
+// A `string?` leader gets the list error alone, as in its twin `mk2() - o`.
 fn call_minus_string(s: string) { let z = id(mk2()) - s }
 fn call_remainder_string(s: string) { let z = id(mk2()) % s }
 fn call_minus_optional_string(o: string?) { let z = id(mk2()) - o }
