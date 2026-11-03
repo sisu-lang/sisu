@@ -1,0 +1,18 @@
+// GIVEN `set(b.cells)`, where the field `cells` is a `[string]` that is not `mut`
+//   and the parameter of `set` is a `mut` `[i64]`
+// WHEN `sisu check` runs on it
+// THEN it reports E0166 on the argument and nothing else
+// AND there is no help: declaring the field `mut` and passing it `mut` would be E0170
+class Board {
+    cells: [string]
+}
+
+fn set(mut xs: [i64]) {
+    xs[0] = 9
+}
+
+fn main() {
+    let b = Board(cells: ["a"])
+    set(b.cells)
+    print(b.cells)
+}

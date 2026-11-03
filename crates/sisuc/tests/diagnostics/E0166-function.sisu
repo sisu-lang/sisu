@@ -1,0 +1,15 @@
+// GIVEN `bump(answer)`, where `answer` is a function and the parameter of `bump` is `mut`
+// WHEN `sisu check` runs on it
+// THEN it reports E0105 on `answer`, as for any value, with the help to call it
+// AND it reports E0166 on `answer` with no help: the marker is needed whatever the argument is
+fn bump(mut x: i64) {
+    x = 1
+}
+
+fn answer() -> i64 {
+    42
+}
+
+fn main() {
+    bump(answer)
+}

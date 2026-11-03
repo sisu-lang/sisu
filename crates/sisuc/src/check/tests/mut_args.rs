@@ -698,7 +698,7 @@ fn stray_mut_should_be_reported_on_every_call_path() {
     let filler = "interface Plain {\n    fn take(self, xs: [i64])\n}\n\
         class Impl: Plain {\n    n: i64\n    fn take(self, xs: [i64]) {\n        print(xs)\n    }\n}\n";
     let head = "let xs = [1]\n    let y = 2\n    let ch = 'a'\n    let m = \"m\"\n    ";
-    let rows: [(&str, String, &[Code]); 26] = [
+    let rows: [(&str, String, &[Code]); 23] = [
         ("print", format!("{head}print(mut xs)"), &[]),
         ("eprint", format!("{head}eprint(mut xs)"), &[]),
         ("dbg", format!("{head}dbg(mut xs)"), &[]),
@@ -777,16 +777,6 @@ fn stray_mut_should_be_reported_on_every_call_path() {
             &[],
         ),
         (
-            "string method with a count error",
-            format!("{head}let n = m.len(mut y)\n    print(n)"),
-            &[Code::ArgumentCount],
-        ),
-        (
-            "array method with a count error",
-            format!("{head}let n = xs.len(mut y)\n    print(n)"),
-            &[Code::ArgumentCount],
-        ),
-        (
             "prelude number method",
             format!("{head}let n = y.max(mut y)\n    print(n)"),
             &[],
@@ -795,11 +785,6 @@ fn stray_mut_should_be_reported_on_every_call_path() {
             "number method",
             format!("{head}let f = 2.0\n    let g = f.pow(mut f)\n    print(g)"),
             &[],
-        ),
-        (
-            "to_string",
-            format!("{head}let t = y.to_string(mut y)\n    print(t)"),
-            &[Code::ArgumentCount],
         ),
         (
             "bound method",
@@ -888,5 +873,184 @@ fn missing_mut_fix_should_be_linear() {
             EXPR_CHECKS.get()
         };
         assert_near_linear(checks(4), checks(8), checks(12));
+    }
+}
+
+/// GIVEN a generic callee whose `mut` parameter is `T`, and a value with no `mut` at it, for a
+///   function, a method, a bound method, an `any I` method, a call with explicit type arguments,
+///   and a call nested in another generic call
+/// WHEN it is checked
+/// THEN it is E0166 only: the value binds `T` as any argument does, so `T` is no cascade
+#[test]
+fn unmarked_value_at_a_generic_mut_parameter_should_give_the_missing_marker_only() {
+    let decls = "fn id<T>(x: T) -> T {\n    x\n}\nfn g<T>(mut x: T) -> T {\n    x\n}\n\
+        fn h<T>(a: T, b: T) -> T {\n    a\n}\n\
+        interface Gt {\n    fn g<T>(self, mut x: T) -> T\n}\n\
+        class C: Gt {\n    n: i64\n    fn g<T>(self, mut x: T) -> T {\n        x\n    }\n}\n";
+    let rows = [
+        ("function", "let r = g(1)\n    print(r)"),
+        (
+            "nested in a call that fixes T",
+            "let b: u8 = 1\n    print(h(g(2), b))",
+        ),
+        (
+            "nested in an identity call",
+            "let r = id(g(1))\n    print(r)",
+        ),
+        ("explicit type arguments", "let r = g<i64>(1)\n    print(r)"),
+        (
+            "method",
+            "let c = C(n: 1)\n    let r = c.g(1)\n    print(r)",
+        ),
+        (
+            "place nested in a call that fixes T",
+            "let mut c = 2\n    let b: u8 = 1\n    print(h(g(c), b))",
+        ),
+    ];
+    for (row, body) in rows {
+        let src = format!("{decls}fn main() {{\n    {body}\n}}");
+        let found = found_codes(&src);
+        assert_eq!(found, [Code::MutMarkerMissing], "row `{row}`: {src}");
+    }
+    let bound = format!(
+        "{decls}fn run<T: Gt>(t: T) {{\n    let r = t.g(1)\n    print(r)\n}}\nfn main() {{\n    run(C(n: 1))\n}}"
+    );
+    assert_eq!(
+        found_codes(&bound),
+        [Code::MutMarkerMissing],
+        "bound method"
+    );
+    let any = format!(
+        "{decls}fn main() {{\n    let f: any Gt = C(n: 1)\n    let r = f.g(1)\n    print(r)\n}}"
+    );
+    assert_eq!(
+        found_codes(&any),
+        [Code::MutMarkerMissing],
+        "`any I` method"
+    );
+}
+
+/// GIVEN a place that a generic call fails before it checks its arguments, with a wrong
+///   type-argument list
+/// WHEN the place has no `mut`
+/// THEN E0166 follows the type-argument error, and the fixture `E0166-type-arguments` pins that it
+///   has no help
+#[test]
+fn unmarked_place_of_a_failed_generic_call_should_still_need_its_marker() {
+    for call in ["rw<i64, i64>(x, 5)", "rw<Nope>(x, 5)"] {
+        let src = format!(
+            "fn rw<T>(mut x: T, v: T) {{\n    x = v\n}}\nfn main() {{\n    let mut x = 1\n    {call}\n    print(x)\n}}"
+        );
+        let found = found_codes(&src);
+        assert_eq!(
+            found.last(),
+            Some(&Code::MutMarkerMissing),
+            "`{call}`: {found:?}"
+        );
+    }
+}
+
+/// GIVEN a `mut` argument that is a temporary whose type comes from its context: `[]`, `None`,
+///   and arrays of them
+/// WHEN the program has an unrelated error before the call, after it, or in another function
+/// THEN the argument is still E0169: the unrelated error does not hide it
+#[test]
+fn context_literal_temporary_should_be_reported_as_no_place_beside_an_unrelated_error() {
+    for value in ["[]", "None", "[[]]", "[None]", "[[], []]", "Some(None)"] {
+        for (row, before, after, other) in [
+            ("before", "print(nope)\n    ", "", ""),
+            ("after", "", "\n    print(nope)", ""),
+            (
+                "in another function",
+                "",
+                "",
+                "fn other() {\n    let z = nope\n}\n",
+            ),
+            ("alone", "", "", ""),
+        ] {
+            let src = format!("{SET}{other}fn main() {{\n    {before}set(mut {value}){after}\n}}");
+            let found = found_codes(&src);
+            assert!(
+                found.contains(&Code::MutArgumentNotPlace),
+                "`{value}` {row}: {found:?}"
+            );
+        }
+    }
+}
+
+/// GIVEN a function name as an argument at a `mut` parameter, with and without `mut`
+/// WHEN it is checked
+/// THEN it is E0105 as for any value, and no assignment error; with no `mut` E0166 follows, as the
+///   marker is needed whatever the argument is
+#[test]
+fn function_as_a_mut_argument_should_be_reported_as_a_value() {
+    let decls = "fn bump(mut x: i64) {\n    x = 1\n}\nfn answer() -> i64 {\n    42\n}\n";
+    let marked = format!("{decls}fn main() {{\n    bump(mut answer)\n}}");
+    assert_eq!(found_codes(&marked), [Code::TypeAsValue]);
+    let unmarked = format!("{decls}fn main() {{\n    bump(answer)\n}}");
+    assert_eq!(
+        found_codes(&unmarked),
+        [Code::TypeAsValue, Code::MutMarkerMissing]
+    );
+}
+
+/// GIVEN a constructor that takes no labels, and a label on its `mut` argument
+/// WHEN it is checked
+/// THEN the label is E0055 only: the argument is not checked for its marker
+#[test]
+fn labeled_mut_argument_of_a_constructor_without_labels_should_give_the_label_error_only() {
+    let decls =
+        "enum Shape {\n    Circle(i64)\n    Dot\n}\nenum Pair<T> {\n    Two(T, T)\n    Nil\n}\n";
+    for call in [
+        "Some(mut x: a)",
+        "Some(x: mut a)",
+        "Shape.Circle(mut r: a)",
+        "Shape.Circle(r: mut a)",
+        "Pair.Two(mut p: a, 3)",
+    ] {
+        let src =
+            format!("{decls}fn main() {{\n    let a = 1\n    let v = {call}\n    print(v)\n}}");
+        let found = found_codes(&src);
+        assert!(
+            !found.contains(&Code::MutMarkerNotMut),
+            "`{call}`: {found:?}"
+        );
+        assert!(
+            found.contains(&Code::LabeledArgument),
+            "`{call}`: {found:?}"
+        );
+    }
+}
+
+/// GIVEN a call of a built-in with the wrong number of arguments, or of a method that does not
+///   exist, and a `mut` argument
+/// WHEN it is checked
+/// THEN there is no E0167: no parameter exists for the argument, as for a written callee
+#[test]
+fn stray_mut_should_not_be_reported_beside_a_count_error() {
+    with_prelude();
+    let head =
+        "let xs = [1]\n    let y = 2\n    let ch = 'a'\n    let m = \"m\"\n    let f = 2.0\n    ";
+    for call in [
+        "read_line(mut y)",
+        "print(mut y, mut y)",
+        "panic(mut m, mut m)",
+        "i64(mut ch, mut ch)",
+        "xs.push(mut y, mut y)",
+        "xs.len(mut y)",
+        "m.len(mut y)",
+        "m.get(mut 0..1, mut 0..1)",
+        "f.pow(mut f, mut f)",
+        "y.to_string(mut y)",
+        "xs.nosuch(mut y)",
+        "m.nosuch(mut y)",
+    ] {
+        let src = format!("fn main() {{\n    {head}{call}\n}}");
+        let found = found_codes(&src);
+        assert!(!found.is_empty(), "`{call}`: no error");
+        assert!(
+            !found.contains(&Code::MutMarkerNotMut),
+            "`{call}`: {found:?}"
+        );
     }
 }
