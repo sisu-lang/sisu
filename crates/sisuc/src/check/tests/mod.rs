@@ -713,6 +713,211 @@ fn block_ending_in_never() {
     }
 }
 
+/// `codes_row` over the codes alone, in the order of the positions: the E0043 among them, when
+/// `under` is given, underlines exactly that text.
+fn codes_under(row: &str, src: &str, under: Option<&str>, expected: &[Code]) {
+    let row = named(row);
+    let mut ds = diags(src);
+    ds.sort_by_key(|d| d.span().start());
+    let found: Vec<_> = ds.iter().map(Diagnostic::code).collect();
+    assert_eq!(found, expected, "{row}");
+    let underlined: Vec<_> = ds
+        .iter()
+        .filter(|d| d.code() == Code::NoValue)
+        .map(|d| &src[d.span().start()..d.span().end()])
+        .collect();
+    assert_eq!(underlined, under.into_iter().collect::<Vec<_>>(), "{row}");
+}
+
+/// A `never` value that failed for another reason is still a `never` used as a value, so it gets
+/// its E0043. A jump read as a value, and a block with an invalid jump, have their own report.
+#[test]
+fn a_never_value_that_failed_should_give_e0043_after_the_other_error() {
+    let wrap = |stmt: &str| {
+        format!(
+            "fn id(x: i64) -> i64 {{ x }}\nfn g() -> i64 {{\n    {stmt}\n    0\n}}\nfn main() {{}}"
+        )
+    };
+    // Each row: the statement, the text that E0043 underlines, and the codes by position.
+    let rows: &[(&str, Option<&str>, &[Code])] = &[
+        (
+            "let x = { return \"a\" }",
+            Some("{ return \"a\" }"),
+            &[Code::NoValue, Code::Mismatch],
+        ),
+        (
+            "let x = if true { return \"a\" } else { return 2 }",
+            Some("if true { return \"a\" } else { return 2 }"),
+            &[Code::NoValue, Code::Mismatch],
+        ),
+        (
+            "let x = if 1 { return 1 } else { return 2 }",
+            Some("if 1 { return 1 } else { return 2 }"),
+            &[Code::NoValue, Code::Mismatch],
+        ),
+        (
+            "let x = { zz; return 1 }",
+            Some("{ zz; return 1 }"),
+            &[Code::NoValue, Code::BindingNotFound],
+        ),
+        // Unchanged: E0043 for a `never` that did not fail.
+        ("let x = return 1", Some("return 1"), &[Code::NoValue]),
+        // Unchanged: a jump read as a value that fails is untyped (`failed_jump`), so E0043 would
+        // only repeat the error.
+        ("let x = return \"a\"", None, &[Code::Mismatch]),
+        ("let x = id(return \"a\")", None, &[Code::Mismatch]),
+        ("let x = [return \"a\"]", None, &[Code::Mismatch]),
+        // Unchanged: a call with a mismatched argument is untyped, so its block is not `never`.
+        ("let x = { panic(5) }", None, &[Code::Mismatch]),
+        // Unchanged: a `break` or `continue` outside a loop is the one report of its block.
+        ("let x = { break }", None, &[Code::JumpOutsideLoop]),
+        ("let x = { continue }", None, &[Code::JumpOutsideLoop]),
+        ("let x = \"a{break}b\"", None, &[Code::JumpOutsideLoop]),
+        // Unchanged: the nested block leaves the flag set, so the outer block gets no E0043.
+        (
+            "let x = { if true { break }; return \"a\" }",
+            None,
+            &[Code::JumpOutsideLoop, Code::Mismatch],
+        ),
+        // An invalid jump earlier in the statement must not hide the E0043 of a later `never`
+        // value that failed: `value` takes the flag of the statement for its own check.
+        (
+            "let x = [{ break }, { return \"a\" }]",
+            Some("{ return \"a\" }"),
+            &[Code::JumpOutsideLoop, Code::NoValue, Code::Mismatch],
+        ),
+    ];
+    for &(stmt, under, expected) in rows {
+        codes_under(stmt, &wrap(stmt), under, expected);
+    }
+}
+
+/// A block that ranking checks ahead of its turn keeps the invalid jump it made. The jump has its
+/// own report (E0038), and the block gives no E0043. The function `g` has `stmt` and then `0`.
+#[test]
+fn an_invalid_jump_in_a_ranked_block_should_give_e0038_and_no_e0043() {
+    const J: Code = Code::JumpOutsideLoop;
+    const M: Code = Code::Mismatch;
+    const U: Code = Code::UnreachableCode;
+    const V: Code = Code::NoValue;
+    let wrap = |stmt: &str| {
+        format!(
+            "fn n(a: i64) -> i64 {{ a }}\nfn id<T>(a: T) -> T {{ a }}\nfn g(c: bool) -> i64 {{\n    {stmt}\n    0\n}}\nfn main() {{}}"
+        )
+    };
+    // Each row: the statement, the text that E0043 underlines, and the codes by position.
+    let rows: &[(&str, Option<&str>, &[Code])] = &[
+        // An array element and an operand are ranked.
+        ("let xs = [1, { break; 1 }]", None, &[J]),
+        ("let xs = [1, { continue; 1 }]", None, &[J]),
+        ("let xs = [{ break; 1 }, { break; 2 }]", None, &[J, J]),
+        ("let xs = [{ break; 1 }, 1]", None, &[J]),
+        ("let xs = [1, ({ break; 1 })]", None, &[J]),
+        ("let x = 1 + { break; 1 }", None, &[J]),
+        ("let xs = [1, { 1 + { break; 2 } }]", None, &[J]),
+        (
+            "let xs = [1, { let t = 0; if c { break; 1 } else { break; 2 } }]",
+            None,
+            &[J, J],
+        ),
+        (
+            "let xs = [1, if c { break; 1 } else { break; 2 }]",
+            None,
+            &[J, J],
+        ),
+        (
+            "let xs = [1, match c { true => { break; 1 }\n        _ => { break; 2 } }]",
+            None,
+            &[J, J],
+        ),
+        (
+            "let xs = [1, match c { true if { break; true } => { break; 1 }\n        _ => { break; 2 } }]",
+            None,
+            &[J, J, J],
+        ),
+        ("let s = \"a{ [1, { break; 1 }] }b\"", None, &[J]),
+        ("return [1, { break; 1 }][0]", None, &[J]),
+        ("let xs = [1, { break outer; 1 }]", None, &[J]),
+        ("let xs = [1, { continue outer; 1 }]", None, &[J]),
+        // The kinds of work that ranking keeps besides a block: a guard, an `if let` value and a
+        // `match` value. Each gives what its twin that ranking does not reach gives.
+        (
+            "let x = [1, match c {\n        true if { break; true } => { return \"a\"; 1 }\n        _ => { return \"b\"; 2 }\n    }]",
+            None,
+            &[J, M, U, M, U],
+        ),
+        (
+            "let o: i64? = None\n    let x = [1, if let Some(v) = { break; o } { return \"a\"; 1 } else { return \"b\"; 2 }]",
+            None,
+            &[J, M, U, M, U],
+        ),
+        (
+            "let x = [1, match { break; c } {\n        true => { return \"a\"; 1 }\n        _ => { return \"b\"; 2 }\n    }]",
+            None,
+            &[J, M, U, M, U],
+        ),
+        // The check adds a kept flag to the flag of its window, and never replaces it. Rows: a
+        // branch that jumps wrongly, then one that does not, and the other way.
+        (
+            "let x = [1, if c { break; 1 } else { return \"a\"; 1 }]",
+            None,
+            &[J, M, U],
+        ),
+        (
+            "let x = [1, if c { return \"a\"; 1 } else { break; 1 }]",
+            None,
+            &[M, U, J],
+        ),
+        // A `never` value that failed for another reason keeps its E0043.
+        (
+            "let xs = [1, { break; 1 }, { return \"a\" }]",
+            Some("{ return \"a\" }"),
+            &[J, V, M],
+        ),
+        (
+            "let xs = [{ return \"a\"; 1 }, { break; 1 }]",
+            Some("{ return \"a\"; 1 }"),
+            &[V, M, U, J],
+        ),
+        // Unchanged: values that ranking does not check ahead, and a call of a generic function.
+        ("let x = n({ break; 1 })", None, &[J]),
+        ("let x = id({ break; 1 })", None, &[Code::TypeArgument, J]),
+        ("let x = if c { break; 1 } else { 2 }", None, &[J]),
+        (
+            "let x = match c { true => { break; 1 }\n        _ => 2 }",
+            None,
+            &[J],
+        ),
+        (
+            "let o: i64? = None\n    let x = if let Some(v) = o { break; 1 } else { 2 }",
+            None,
+            &[J],
+        ),
+        ("let s = \"a{ { break; 1 } }b\"", None, &[J]),
+        // Unchanged: a jump in a loop is valid, and its block is a `never` value.
+        (
+            "outer: loop { let xs = [1, { break outer; 1 }] }",
+            Some("{ break outer; 1 }"),
+            &[V, U],
+        ),
+    ];
+    for &(stmt, under, expected) in rows {
+        codes_under(stmt, &wrap(stmt), under, expected);
+    }
+}
+
+/// The program of the issue: a generic call fails inside a block that never finishes.
+#[test]
+fn a_failed_generic_call_in_a_never_block_should_give_e0043_and_e0050() {
+    let src = "class Two<A, B> {\n    a: A\n    b: B\n}\n\nfn mk2<X>() -> Two<X, bool> { panic(\"no\") }\n\nfn main() {\n    let y: i64 = {\n        return\n        mk2()\n    }\n    print(y)\n}\n";
+    codes_under(
+        "mk2",
+        src,
+        Some("{\n        return\n        mk2()\n    }"),
+        &[Code::NoValue, Code::UnreachableCode, Code::CannotInfer],
+    );
+}
+
 #[test]
 fn break_in_header() {
     // Each row: source, the keyword's position and text, the loop keyword's position and text.
@@ -2497,6 +2702,26 @@ fn nested_invalid_jump_leaves_no_unreachable() {
                 (Code::JumpOutsideLoop, (2, 15)),
                 (Code::JumpOutsideLoop, (2, 25 + jump.len())),
             ],
+        );
+    }
+}
+
+/// An invalid jump in an operand or an argument is the flag of the statement, also after the
+/// value of that operand is checked: `return` and `if` make the code after them unreachable
+/// otherwise.
+#[test]
+fn an_invalid_jump_in_an_operand_should_leave_no_unreachable_after_the_statement() {
+    for stmt in [
+        "return n({ break }) + n(1)",
+        "if n({ break }) + n(1) == 1 { return 1 } else { return 2 }",
+    ] {
+        codes_under(
+            stmt,
+            &format!(
+                "fn n(a: i64) -> i64 {{ a }}\nfn g() -> i64 {{\n    {stmt}\n    0\n}}\nfn main() {{}}"
+            ),
+            None,
+            &[Code::JumpOutsideLoop],
         );
     }
 }
