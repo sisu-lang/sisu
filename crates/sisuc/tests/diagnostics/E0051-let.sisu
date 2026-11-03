@@ -1,0 +1,14 @@
+// GIVEN `class P { x: i64; y: i64 }` and a `main` whose line 12 is `let P(a, b) = p`, with the value `p` at 12:19
+// WHEN `sisu check` runs on it
+// THEN it reports E0051 at 12:19 and the message names a `let` pattern and the type `P`
+// AND it reports no other diagnostic
+class P {
+    x: i64
+    y: i64
+}
+
+fn main() {
+    let p = P(x: 1, y: 2)
+    let P(a, b) = p
+    print(a)
+}

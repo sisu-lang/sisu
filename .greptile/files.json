@@ -1,0 +1,8 @@
+{
+  "files": [
+    { "path": "CODING_STANDARDS.md", "description": "Review, test, diagnostic and performance rules." },
+    { "path": "AGENTS.md", "description": "Repo layout, toolchain and lint policy." },
+    { "path": "docs/register.md", "description": "Rulings not built yet and known debt: do not report these as defects." },
+    { "path": "GLOSSARY.md", "description": "Sisu terms." }
+  ]
+}

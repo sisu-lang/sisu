@@ -292,7 +292,7 @@ fn main() {
 The rules:
 
 - A `return` at the end of a line takes no value. A value on the next line is a new statement.
-- Before a `{`, a `return` or a `break` with no value takes the block as its value. In the header of an `if`, a `while`, a `for` or a `match`, put the jump in `( )` to keep the block as the body ([E0011](../diagnostics/E0011.md)).
+- Before a `{`, a `return` or a `break` with no value takes the block as its value. In the header of an `if`, a `while`, a `for` or a `match`, put the jump in `( )` to keep the block as the body, unless that leaves a `break` in a loop header or outside every loop ([E0011](../diagnostics/E0011.md)).
 
 ```sisu
 fn f(o: bool?) {

@@ -12,9 +12,11 @@ import unittest
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mutants.sh')
 # A pre-commit hook runs these tests with GIT_DIR and its kin set to the outer repository.
-# A caller's LOG, CARGO_MUTANTS_JOBS and MUTANTS_PASS2_TIMEOUT would change what the script does.
+# A caller's LOG, CARGO_MUTANTS_JOBS, NEXTEST_TEST_THREADS and MUTANTS_PASS2_TIMEOUT would change
+# what the script does.
 ENV = {k: v for k, v in os.environ.items()
-       if not k.startswith('GIT_') and k not in ('LOG', 'CARGO_MUTANTS_JOBS', 'MUTANTS_PASS2_TIMEOUT')}
+       if not k.startswith('GIT_') and k not in ('LOG', 'CARGO_MUTANTS_JOBS', 'NEXTEST_TEST_THREADS',
+                                                    'MUTANTS_PASS2_TIMEOUT')}
 # The fake cargo mutants records its jobs, niceness and arguments (to `args`, or to `args2`
 # for a run with --iterate), and whether an old mutants.out was there. Unless FAKE_WRITE is 0,
 # it then writes a new mutants.out with the result files that the test names in FAKE_CAUGHT,
@@ -28,7 +30,7 @@ if [[ " $* " == *" --list "* ]]; then
   for ((i = 0; i < ${FAKE_LIST:-0}; i++)); do echo "mutant $i"; done
   exit "${FAKE_EXIT:-0}"
 fi
-echo "$CARGO_MUTANTS_JOBS $(nice)" >seen
+echo "$CARGO_MUTANTS_JOBS $(nice) $NEXTEST_TEST_THREADS" >seen
 prefix=FAKE
 if [[ " $* " == *" --iterate "* ]]; then
   echo "$*" >args2
@@ -64,6 +66,7 @@ class Mutants(unittest.TestCase):
         self.scripts = os.path.join(self.repo, 'scripts')
         os.mkdir(self.scripts)
         shutil.copy(SCRIPT, self.scripts)
+        shutil.copy(os.path.join(os.path.dirname(SCRIPT), 'heavy-run.sh'), self.scripts)
         self.bin = os.path.join(self.repo, 'bin')
         os.mkdir(self.bin)
         cargo = os.path.join(self.bin, 'cargo')
@@ -87,13 +90,13 @@ class Mutants(unittest.TestCase):
         with open(os.path.join(self.repo, 'a.rs'), 'w', encoding='utf-8') as f:
             f.write(text)
 
-    def mutate(self, *args, log=True, env=None, **fake):
+    def mutate(self, *args, log=True, env=None, limit=None, **fake):
         env = dict(ENV, PATH=f'{self.bin}:{ENV["PATH"]}', TMPDIR=self.repo, **(env or {}),
                    **{f'FAKE_{k.upper()}': str(v) for k, v in fake.items()})
         if log:
             env['LOG'] = self.log
         return subprocess.run(['bash', 'scripts/mutants.sh', 'HEAD~1', *args], cwd=self.repo,
-                              capture_output=True, text=True, env=env)
+                              capture_output=True, text=True, env=env, timeout=limit)
 
     def seen(self, name):
         return os.path.exists(os.path.join(self.repo, name))
@@ -118,13 +121,26 @@ class Mutants(unittest.TestCase):
         with open(self.log, 'w', encoding='utf-8') as f:
             f.write('first run\n')
         os.mkdir(os.path.join(self.repo, 'target'))
-        with open(os.path.join(self.repo, 'target', 'mutation-test.lock'), 'w') as lock:
+        # A run in another worktree holds the lock of the clone too; this run must not wait for it.
+        with open(os.path.join(self.repo, 'target', 'mutation-test.lock'), 'w') as lock, \
+                open(os.path.join(self.repo, '.git', 'sisu-heavy-run.lock'), 'w') as clone:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            run = self.mutate()
+            fcntl.flock(clone, fcntl.LOCK_EX)
+            run = self.mutate(limit=30)
         self.assertEqual(run.returncode, 1)
         self.assertIn('mutation-test: FAIL: another make mutation-test is running in this worktree', run.stdout)
         with open(self.log, encoding='utf-8') as f:
             self.assertEqual(f.read(), 'first run\n')
+
+    def test_make_mutation_test_should_take_the_clone_lock_once_and_run(self):
+        # A recipe that wraps mutants.sh in heavy-run.sh again waits for its own lock forever.
+        shutil.copy(os.path.join(os.path.dirname(SCRIPT), '..', 'Makefile'), self.repo)
+        self.rust_commit()
+        env = dict(ENV, PATH=f'{self.bin}:{ENV["PATH"]}', TMPDIR=self.repo, FAKE_CAUGHT='1')
+        run = subprocess.run(['make', 'mutation-test', 'BASE=HEAD~1', f'LOG={self.log}'],
+                             cwd=self.repo, capture_output=True, text=True, env=env, timeout=30)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertTrue(self.last_line().startswith('mutation-test: PASS'))
 
     def test_a_run_with_no_missed_mutant_should_pass_and_count_a_timeout_as_caught(self):
         self.rust_commit()
@@ -172,11 +188,11 @@ class Mutants(unittest.TestCase):
         self.assertEqual(self.last_line(), 'mutation-test: FAIL: uncommitted Rust changes; commit them, then run again')
         self.assertFalse(self.seen('seen'))
 
-    def test_cargo_should_run_niced_with_two_jobs_by_default(self):
+    def test_cargo_should_run_niced_with_two_jobs_of_eight_test_threads_by_default(self):
         self.rust_commit()
         self.mutate(log=False, caught=1)
         with open(os.path.join(self.repo, 'seen'), encoding='utf-8') as f:
-            self.assertEqual(f.read().strip(), '2 19')
+            self.assertEqual(f.read().strip(), '2 19 8')
 
     def test_a_run_without_new_output_should_pass_and_leave_the_old_mutants_out_alone(self):
         self.rust_commit()

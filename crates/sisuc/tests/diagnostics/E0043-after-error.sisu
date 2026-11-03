@@ -1,0 +1,8 @@
+fn pick() -> i64 {
+    let x = { return "a" }
+    0
+}
+
+fn main() {
+    print(pick())
+}

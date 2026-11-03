@@ -26,6 +26,11 @@ are GitHub issues.
   one.
 - **The `structure` area of `audit-sisu`** counts each debt row again, and
   finds a row whose count grew.
+- **A field count** in a row ("in N fields", with the struct as the Where
+  cell, such as `check::Body`) is a test:
+  `register_field_counts_should_match_their_structs` in
+  `crates/sisuc/tests/architecture.rs` fails when the struct has another
+  number of fields.
 
 ## Rulings not built yet
 
@@ -43,7 +48,7 @@ are GitHub issues.
 | Problem | Where | Pay before |
 | --- | --- | --- |
 | The five milestone 9 plans were written before the mir. They put closure and weak-field counts in codegen, and do not name ADR 0029. | `docs/superpowers/plans/2026-10-16-milestone-9-part-*.md` (the owner's working plans, not committed) | Milestone 9 part 1 |
-| `Body` holds, in 53 fields, four kinds of state that the checker keeps for different lengths of time: the generic scope, the body (such as `uninferred`, until the uses settle the help), one-shot hints (such as `break_hint`, `context_hint` and `hint_at`) and span caches. A closure needs a new body inside the outer generic scope. | `check::Body` | Closure checking |
+| `Body` holds, in 54 fields, four kinds of state that the checker keeps for different lengths of time: the generic scope, the body (such as `uninferred`, until the uses settle the help), one-shot hints (such as `break_hint`, `context_hint` and `hint_at`) and span caches. A closure needs a new body inside the outer generic scope. | `check::Body` | Closure checking |
 | The clobber rule is in three copies. | `mir::params::clobbers`; `mir::pairs::kind`; `mir::certify::Clobbers::new` | Milestone 9 indirect calls |
 | Codegen helpers apply the ADR 0029 calling convention by hand, a second time after the mir. | `codegen::show::show_written`; `codegen::rc::call_written_eq` | Milestone 9 thunks |
 | The walk over the parts that a helper visits is written twice. Mono checks the conformances that apply; `calls_written` takes a wider set on purpose. | `Mono::walk`; `conformance::calls_written` | Milestone 9 part 2 |

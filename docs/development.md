@@ -255,6 +255,17 @@ and stops. `LOG=<file>` writes the whole output to that file, opened only once
 the run holds the lock. Use it instead of a shell redirect, which would empty a
 running log before the second run could refuse.
 
+`make test`, `make coverage`, `make mutation-test` and `make miri` also hold
+one lock for all the worktrees of the clone. The lock is a file in the clone's
+`.git` (`scripts/heavy-run.sh`). Two such runs at the same time link hundreds
+of programs at once, and then the disk stops for every other process. So a
+second run prints `heavy-run: waiting for this run to end: <command> in
+<worktree>` and waits for the first. A second `make mutation-test` in the same
+worktree still fails at once. When the lock cannot be taken (no `flock`, no Git
+directory, a read-only `.git`), the run warns and goes on with no lock. Each
+mutant of a mutation run tests 8 tests at a time. `NEXTEST_TEST_THREADS` sets
+another number.
+
 ## Coverage and performance
 
 `make coverage [BASE=<base>]` runs the tests under `cargo-llvm-cov` and prints
@@ -930,6 +941,7 @@ must accept any syntax those programs use.
 | `bench` | The benchmark programs, under `features/` the Sisu-only ones for CodSpeed, and under `compile/` the compile-speed units and the saved counts that the tests of `scripts/scaling.py` read. |
 | `selfhost` | The lexer in Sisu, `lexer.sisu`, which the tests check against `sisu build --emit tokens` (see [The growing proof program](#the-growing-proof-program)). |
 | `codspeed.yml`, `codspeed-main.yml` | The CodSpeed benchmark lists: `codspeed.yml` on every run, `codspeed-main.yml` on pushes to `main` only. |
+| `.coderabbit.yaml`, `.greptile/` | The settings of the CodeRabbit and Greptile pull request reviews. Their findings are advice; CI is the merge gate. A `@coderabbitai review` or `@greptileai` comment starts a review again. |
 | `fuzz` | The fuzz targets, `front_end` and `program`, in their own Cargo workspace, run by `scripts/fuzz.sh`. |
 | `Makefile` | The entry point for the commands; `make help` lists its targets. |
 | `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `codspeed-prep.sh`, `fuzz.sh`, `fuzz_program_plan.py`, which plans each run of the program fuzz workflow, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, `golden_diff.py`, which checks that a re-bless only reworded expected files, `scaling.py`, which finds the shapes of program for which a compiler stage is superlinear, `merge_pr.py`, which squash-merges a pull request once its checks pass (`--cleanup` removes the worktree of one merged in the UI), and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |

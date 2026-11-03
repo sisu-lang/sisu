@@ -38,7 +38,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::ast;
 use crate::conformance::{self, StuckChoices};
 use crate::diagnostic::{
-    BuiltIn, Code, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, Expected, Literal,
+    BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, Expected, Literal,
     MainForm, MismatchFix, MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
 };
 use crate::front_end::PreludeProgram;
@@ -879,6 +879,9 @@ struct Body {
     safe_call: Option<Span>,
     /// Set by a `break` or `continue` outside a loop; `scoped_block` reads it per statement.
     invalid_jump: bool,
+    /// The last string literal that is `never` because a part is: its span, and the span of the
+    /// first such part, which E0043 underlines (see `Checker::interpolate`).
+    never_part: Option<(Span, Span)>,
     /// Where each loop label is declared that a failed jump or a reused loop label names, which
     /// is not reported unused: its own error is.
     failed_labels: FxHashSet<Span>,
@@ -940,8 +943,9 @@ struct Body {
     /// Whether the body has a `todo`, which keeps its parameters from W0014.
     todo: bool,
     /// Work ranking arguments did ahead of its turn, innermost last, by the span it was done
-    /// for and whether that is a block's; `None` once used.
-    ahead: Vec<((Span, bool), Option<generic::Ahead>)>,
+    /// for and whether that is a block's; `None` once used. Then whether the work made a `break`
+    /// or `continue` outside a loop: using the work sets `invalid_jump` again.
+    ahead: Vec<((Span, bool), Option<generic::Ahead>, bool)>,
     /// Where in `ahead` the last work kept for each span and kind is.
     ahead_at: FxHashMap<(Span, bool), usize>,
     /// What `takes_context` answered for each array literal and `Some(...)`, with the context,
@@ -1140,16 +1144,10 @@ pub(crate) fn check<'src>(
     program.iter().for_each(tir::assert_exit_flags);
     // A use of a broken item poisons without a diagnostic of its own.
     debug_assert!(
-        program.is_some() || failed || broken || refutable(parsed),
+        program.is_some() || failed || broken,
         "a missing program implies an error diagnostic or a broken item or method"
     );
     (program, diagnostics)
-}
-
-/// Whether the parser reported a `let` with a pattern and no `else`. The checker fails that
-/// statement and adds no diagnostic, so the function has no `tir`.
-fn refutable(parsed: &[Diagnostic]) -> bool {
-    parsed.iter().any(|d| d.code() == Code::RefutablePattern)
 }
 
 /// `check` over a program with no prelude but the language interfaces, for the tests of what

@@ -63,7 +63,7 @@ its last event.
 1. Put issues in one group when their fixes change the same functions. One group is one branch and one pull request.
 2. Order the groups. Two groups that change the same code run one after the other. A group that changes code an open branch changes waits for that branch to merge.
 3. For each group, propose a review flow, with the reason:
-   - **Full:** the roles above, and one mutation test for the group, which you run after the last task review (step 7.1), and one for each large fix round of the final review (`review-sisu`, step 5).
+   - **Full:** the roles above, and one mutation test for the group, which you run after the last task review (step 7.2), and one for each large fix round of the final review (`review-sisu`, step 5).
    - **Light:** `opus-medium` for each task and for the final review. `make test` and `make coverage` only; no mutation test.
 4. For each language decision, write the options and their costs. Post them on the issue, as in step 3.8.
 
@@ -92,7 +92,7 @@ group:
 
 1. Reproduce it with the `origin/main` build.
 2. Find the cause in the code: the function, the line, and why it gives this output.
-3. List the neighbouring cases: the same rule in each position the language allows it. Probe each case. Keep the probes in the ledger folder.
+3. List the neighbouring cases: the same rule in each position the language allows it. Take the values and the positions from `crates/sisuc/tests/neighbours.txt`, and add there each new one that you find. Probe each case. Keep the probes in the ledger folder.
 4. A new bug can have the same cause. Then it joins the group, and the pull request names it.
 5. A new bug can have a different cause. Then file a new issue (`docs/agents/issue-tracker.md`). Keep it out of the group.
 6. Fix the cause in the shared code, so that all the cases are right. Rank the options as ADR 0006 does: correctness, simplicity, readability, performance.
@@ -135,15 +135,16 @@ Do this once for each group. On resume, use the worktree in the ledger.
 
 ### 7. Finish the group
 
-1. On the full flow, run one mutation test on the group's head with Bash `run_in_background: true`: `(cd <worktree> && env CARGO_MUTANTS_JOBS=2 nice -n 19 make mutation-test LOG=<ledger folder>/<group>-mutation.log)`. Leave out `BASE`: its default, where HEAD left `origin/main`, stays right after the group merges `main`; the group's first base then also takes in main's merged commits. Check that its last line names the head. When it stops at once with more than 300 mutants, ask the user: test all of them with `MUTANTS_MAX=<n>`, or test a part with `--file`. Put each surviving mutant into one fix round, with a test that kills it or a reason it is equivalent. An executor never runs a mutation test: it would block the task for an hour.
-2. Run the `update-docs` skill.
-3. Run `review-sisu` on the whole branch, with `--mutation-log` set to that log and the final reviewers of the group's flow.
-4. Write the pull request body with `mattpocock-skills:pr`, with one `Closes #<N>` line for each issue.
-5. The user pushes. Then create the pull request with `gh api repos/sisu-lang/sisu/pulls`, with the sandbox off.
-6. Never merge on your own. When the user says to merge, run `python3 scripts/merge_pr.py <N>` in the main checkout, with the sandbox off and `run_in_background`. It waits for the checks, stops when one fails or the head does not contain `main`, and merges. Then it waits for each `Closes` issue to close, and removes the group's worktree and branch when they are clean and at the merged head. Write each line it prints in the ledger. When the user merged in the GitHub UI, run `python3 scripts/merge_pr.py --cleanup <N>` the same way.
-7. Write the ledger's "After the merge" lines. Write one line with a runnable repro for each deferred finding. Do the same for each line of each `diagnostic-issues.md` in the group's review runs.
-8. Go to step 3 for the next group that does not wait for a merge. When all groups wait, tell the user and stop.
-9. When the batch ends, delete the batch build: `rm -rf ${TMPDIR:-/tmp}/sisu-issues-<batch>`.
+1. Bring the group up to date before its checks, so that the mutation test, the fuzz run and the final review measure what will merge. Run `git fetch origin`. When `git merge-base --is-ancestor origin/main HEAD` fails in the worktree, merge `origin/main` and resolve each conflict against the group's code. Then run `make test`. A fixture from `main` can embed a doc that the group changed: bless it again, and check that only its embedded text changes.
+2. On the full flow, run one mutation test on the group's head with Bash `run_in_background: true`: `(cd <worktree> && make test && env CARGO_MUTANTS_JOBS=2 nice -n 19 make mutation-test LOG=<ledger folder>/<group>-mutation.log)`. Leave out `BASE`: its default, where HEAD left `origin/main`, stays right after the group merges `main`; the group's first base then also takes in main's merged commits. The `&&` keeps a red head from starting a run of an hour. Check that its last line names the head. When it stops at once with more than 300 mutants, ask the user: test all of them with `MUTANTS_MAX=<n>`, or test a part with `--file`. Put each surviving mutant into one fix round, with a test that kills it or a reason it is equivalent. An executor never runs a mutation test: it would block the task for an hour.
+3. Run the `update-docs` skill.
+4. Run `review-sisu` on the whole branch, with `--mutation-log` set to that log and the final reviewers of the group's flow.
+5. Write the pull request body with `mattpocock-skills:pr`, with one `Closes #<N>` line for each issue.
+6. The user pushes. Then create the pull request with `gh api repos/sisu-lang/sisu/pulls`, with the sandbox off.
+7. Never merge on your own. When the user says to merge, run `python3 scripts/merge_pr.py <N>` in the main checkout, with the sandbox off and `run_in_background`. It waits for the checks, stops when one fails or the head does not contain `main`, and merges. Then it waits for each `Closes` issue to close, and removes the group's worktree and branch when they are clean and at the merged head. Write each line it prints in the ledger. When the user merged in the GitHub UI, run `python3 scripts/merge_pr.py --cleanup <N>` the same way.
+8. Write the ledger's "After the merge" lines. Write one line with a runnable repro for each deferred finding. Do the same for each line of each `diagnostic-issues.md` in the group's review runs.
+9. Go to step 3 for the next group that does not wait for a merge. When all groups wait, tell the user and stop.
+10. When the batch ends, delete the batch build: `rm -rf ${TMPDIR:-/tmp}/sisu-issues-<batch>`.
 
 ## Common mistakes
 

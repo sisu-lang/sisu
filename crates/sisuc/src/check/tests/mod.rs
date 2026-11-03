@@ -713,6 +713,211 @@ fn block_ending_in_never() {
     }
 }
 
+/// `codes_row` over the codes alone, in the order of the positions: the E0043 among them, when
+/// `under` is given, underlines exactly that text.
+fn codes_under(row: &str, src: &str, under: Option<&str>, expected: &[Code]) {
+    let row = named(row);
+    let mut ds = diags(src);
+    ds.sort_by_key(|d| d.span().start());
+    let found: Vec<_> = ds.iter().map(Diagnostic::code).collect();
+    assert_eq!(found, expected, "{row}");
+    let underlined: Vec<_> = ds
+        .iter()
+        .filter(|d| d.code() == Code::NoValue)
+        .map(|d| &src[d.span().start()..d.span().end()])
+        .collect();
+    assert_eq!(underlined, under.into_iter().collect::<Vec<_>>(), "{row}");
+}
+
+/// A `never` value that failed for another reason is still a `never` used as a value, so it gets
+/// its E0043. A jump read as a value, and a block with an invalid jump, have their own report.
+#[test]
+fn a_never_value_that_failed_should_give_e0043_after_the_other_error() {
+    let wrap = |stmt: &str| {
+        format!(
+            "fn id(x: i64) -> i64 {{ x }}\nfn g() -> i64 {{\n    {stmt}\n    0\n}}\nfn main() {{}}"
+        )
+    };
+    // Each row: the statement, the text that E0043 underlines, and the codes by position.
+    let rows: &[(&str, Option<&str>, &[Code])] = &[
+        (
+            "let x = { return \"a\" }",
+            Some("{ return \"a\" }"),
+            &[Code::NoValue, Code::Mismatch],
+        ),
+        (
+            "let x = if true { return \"a\" } else { return 2 }",
+            Some("if true { return \"a\" } else { return 2 }"),
+            &[Code::NoValue, Code::Mismatch],
+        ),
+        (
+            "let x = if 1 { return 1 } else { return 2 }",
+            Some("if 1 { return 1 } else { return 2 }"),
+            &[Code::NoValue, Code::Mismatch],
+        ),
+        (
+            "let x = { zz; return 1 }",
+            Some("{ zz; return 1 }"),
+            &[Code::NoValue, Code::BindingNotFound],
+        ),
+        // Unchanged: E0043 for a `never` that did not fail.
+        ("let x = return 1", Some("return 1"), &[Code::NoValue]),
+        // Unchanged: a jump read as a value that fails is untyped (`failed_jump`), so E0043 would
+        // only repeat the error.
+        ("let x = return \"a\"", None, &[Code::Mismatch]),
+        ("let x = id(return \"a\")", None, &[Code::Mismatch]),
+        ("let x = [return \"a\"]", None, &[Code::Mismatch]),
+        // Unchanged: a call with a mismatched argument is untyped, so its block is not `never`.
+        ("let x = { panic(5) }", None, &[Code::Mismatch]),
+        // Unchanged: a `break` or `continue` outside a loop is the one report of its block.
+        ("let x = { break }", None, &[Code::JumpOutsideLoop]),
+        ("let x = { continue }", None, &[Code::JumpOutsideLoop]),
+        ("let x = \"a{break}b\"", None, &[Code::JumpOutsideLoop]),
+        // Unchanged: the nested block leaves the flag set, so the outer block gets no E0043.
+        (
+            "let x = { if true { break }; return \"a\" }",
+            None,
+            &[Code::JumpOutsideLoop, Code::Mismatch],
+        ),
+        // An invalid jump earlier in the statement must not hide the E0043 of a later `never`
+        // value that failed: `value` takes the flag of the statement for its own check.
+        (
+            "let x = [{ break }, { return \"a\" }]",
+            Some("{ return \"a\" }"),
+            &[Code::JumpOutsideLoop, Code::NoValue, Code::Mismatch],
+        ),
+    ];
+    for &(stmt, under, expected) in rows {
+        codes_under(stmt, &wrap(stmt), under, expected);
+    }
+}
+
+/// A block that ranking checks ahead of its turn keeps the invalid jump it made. The jump has its
+/// own report (E0038), and the block gives no E0043. The function `g` has `stmt` and then `0`.
+#[test]
+fn an_invalid_jump_in_a_ranked_block_should_give_e0038_and_no_e0043() {
+    const J: Code = Code::JumpOutsideLoop;
+    const M: Code = Code::Mismatch;
+    const U: Code = Code::UnreachableCode;
+    const V: Code = Code::NoValue;
+    let wrap = |stmt: &str| {
+        format!(
+            "fn n(a: i64) -> i64 {{ a }}\nfn id<T>(a: T) -> T {{ a }}\nfn g(c: bool) -> i64 {{\n    {stmt}\n    0\n}}\nfn main() {{}}"
+        )
+    };
+    // Each row: the statement, the text that E0043 underlines, and the codes by position.
+    let rows: &[(&str, Option<&str>, &[Code])] = &[
+        // An array element and an operand are ranked.
+        ("let xs = [1, { break; 1 }]", None, &[J]),
+        ("let xs = [1, { continue; 1 }]", None, &[J]),
+        ("let xs = [{ break; 1 }, { break; 2 }]", None, &[J, J]),
+        ("let xs = [{ break; 1 }, 1]", None, &[J]),
+        ("let xs = [1, ({ break; 1 })]", None, &[J]),
+        ("let x = 1 + { break; 1 }", None, &[J]),
+        ("let xs = [1, { 1 + { break; 2 } }]", None, &[J]),
+        (
+            "let xs = [1, { let t = 0; if c { break; 1 } else { break; 2 } }]",
+            None,
+            &[J, J],
+        ),
+        (
+            "let xs = [1, if c { break; 1 } else { break; 2 }]",
+            None,
+            &[J, J],
+        ),
+        (
+            "let xs = [1, match c { true => { break; 1 }\n        _ => { break; 2 } }]",
+            None,
+            &[J, J],
+        ),
+        (
+            "let xs = [1, match c { true if { break; true } => { break; 1 }\n        _ => { break; 2 } }]",
+            None,
+            &[J, J, J],
+        ),
+        ("let s = \"a{ [1, { break; 1 }] }b\"", None, &[J]),
+        ("return [1, { break; 1 }][0]", None, &[J]),
+        ("let xs = [1, { break outer; 1 }]", None, &[J]),
+        ("let xs = [1, { continue outer; 1 }]", None, &[J]),
+        // The kinds of work that ranking keeps besides a block: a guard, an `if let` value and a
+        // `match` value. Each gives what its twin that ranking does not reach gives.
+        (
+            "let x = [1, match c {\n        true if { break; true } => { return \"a\"; 1 }\n        _ => { return \"b\"; 2 }\n    }]",
+            None,
+            &[J, M, U, M, U],
+        ),
+        (
+            "let o: i64? = None\n    let x = [1, if let Some(v) = { break; o } { return \"a\"; 1 } else { return \"b\"; 2 }]",
+            None,
+            &[J, M, U, M, U],
+        ),
+        (
+            "let x = [1, match { break; c } {\n        true => { return \"a\"; 1 }\n        _ => { return \"b\"; 2 }\n    }]",
+            None,
+            &[J, M, U, M, U],
+        ),
+        // The check adds a kept flag to the flag of its window, and never replaces it. Rows: a
+        // branch that jumps wrongly, then one that does not, and the other way.
+        (
+            "let x = [1, if c { break; 1 } else { return \"a\"; 1 }]",
+            None,
+            &[J, M, U],
+        ),
+        (
+            "let x = [1, if c { return \"a\"; 1 } else { break; 1 }]",
+            None,
+            &[M, U, J],
+        ),
+        // A `never` value that failed for another reason keeps its E0043.
+        (
+            "let xs = [1, { break; 1 }, { return \"a\" }]",
+            Some("{ return \"a\" }"),
+            &[J, V, M],
+        ),
+        (
+            "let xs = [{ return \"a\"; 1 }, { break; 1 }]",
+            Some("{ return \"a\"; 1 }"),
+            &[V, M, U, J],
+        ),
+        // Unchanged: values that ranking does not check ahead, and a call of a generic function.
+        ("let x = n({ break; 1 })", None, &[J]),
+        ("let x = id({ break; 1 })", None, &[Code::TypeArgument, J]),
+        ("let x = if c { break; 1 } else { 2 }", None, &[J]),
+        (
+            "let x = match c { true => { break; 1 }\n        _ => 2 }",
+            None,
+            &[J],
+        ),
+        (
+            "let o: i64? = None\n    let x = if let Some(v) = o { break; 1 } else { 2 }",
+            None,
+            &[J],
+        ),
+        ("let s = \"a{ { break; 1 } }b\"", None, &[J]),
+        // Unchanged: a jump in a loop is valid, and its block is a `never` value.
+        (
+            "outer: loop { let xs = [1, { break outer; 1 }] }",
+            Some("{ break outer; 1 }"),
+            &[V, U],
+        ),
+    ];
+    for &(stmt, under, expected) in rows {
+        codes_under(stmt, &wrap(stmt), under, expected);
+    }
+}
+
+/// The program of the issue: a generic call fails inside a block that never finishes.
+#[test]
+fn a_failed_generic_call_in_a_never_block_should_give_e0043_and_e0050() {
+    let src = "class Two<A, B> {\n    a: A\n    b: B\n}\n\nfn mk2<X>() -> Two<X, bool> { panic(\"no\") }\n\nfn main() {\n    let y: i64 = {\n        return\n        mk2()\n    }\n    print(y)\n}\n";
+    codes_under(
+        "mk2",
+        src,
+        Some("{\n        return\n        mk2()\n    }"),
+        &[Code::NoValue, Code::UnreachableCode, Code::CannotInfer],
+    );
+}
+
 #[test]
 fn break_in_header() {
     // Each row: source, the keyword's position and text, the loop keyword's position and text.
@@ -1338,6 +1543,190 @@ fn header_jump_leaves_target_untyped() {
         "fn main() {\n    loop {\n        while { break; true } { }\n    }\n    print(1)\n}",
         &[(Code::JumpInLoopHeader, (3, 17))],
     );
+}
+
+/// Each row of `break_help_should_be_given_only_when_its_loop_body_holds_the_jump`: its name,
+/// its program with the jump at `@`, the jump, and whether the E0011 has the `( )` help.
+const BREAK_HELP_ROWS: [(&str, &str, &str, bool); 21] = [
+    // The `break` is in a loop header, or reaches its loop through one.
+    (
+        "if in the block of a while header",
+        "fn f(o: bool?) {\n    while {\n        if @ { print(1) }\n        true\n    } {\n        print(2)\n    }\n}",
+        "o ?? break",
+        false,
+    ),
+    (
+        "if let in the block of a while header",
+        "fn f(o: bool?) {\n    while {\n        if let y = @ { print(y) }\n        true\n    } {\n        print(2)\n    }\n}",
+        "o ?? break",
+        false,
+    ),
+    (
+        "else if in the block of a while header",
+        "fn f(o: bool?, c: bool) {\n    while {\n        if c { print(0) } else if @ { print(1) }\n        true\n    } {\n        print(2)\n    }\n}",
+        "o ?? break",
+        false,
+    ),
+    (
+        "match in the block of a while header",
+        "fn f(o: i64?) {\n    while {\n        match @ {\n            _ => print(1)\n        }\n        true\n    } {\n        print(2)\n    }\n}",
+        "o ?? break",
+        false,
+    ),
+    (
+        "while header itself",
+        "fn f(o: bool?) {\n    while @ {\n        print(2)\n    }\n}",
+        "o ?? break",
+        false,
+    ),
+    (
+        "if in a for source",
+        "fn f(o: bool?) {\n    for i in [{ if @ { print(1) }; 1 }] {\n        print(i)\n    }\n}",
+        "o ?? break",
+        false,
+    ),
+    (
+        "if let in a while let value",
+        "fn f(o: i64?) {\n    while let x = { if let y = @ { print(y) }; o } {\n        print(x)\n    }\n}",
+        "o ?? break",
+        false,
+    ),
+    (
+        "if with no loop",
+        "fn f(o: bool?) {\n    if @ { print(1) }\n}",
+        "o ?? break",
+        false,
+    ),
+    (
+        "match with no loop",
+        "fn f(o: i64?) {\n    match @ {\n        _ => print(1)\n    }\n}",
+        "o ?? break",
+        false,
+    ),
+    (
+        "loop that closed before the jump",
+        "fn f(o: bool?) {\n    while { loop { break }; if @ { print(1) }; true } {\n        print(2)\n    }\n}",
+        "o ?? break",
+        false,
+    ),
+    (
+        "label of an outer loop, across a while header",
+        "fn f(o: bool?) {\n    a: loop {\n        while {\n            if @ { print(1) }\n            true\n        } {\n            print(2)\n        }\n    }\n}",
+        "o ?? break a",
+        false,
+    ),
+    (
+        "label of the while whose header holds it",
+        "fn f(o: bool?) {\n    a: while { if @ { print(1) }; true } {\n        print(2)\n    }\n}",
+        "o ?? break a",
+        false,
+    ),
+    (
+        "label across a while header, below an inner loop",
+        "fn f(o: bool?) {\n    a: loop {\n        while { loop { if @ { print(1) } }; true } {\n            print(2)\n        }\n    }\n}",
+        "o ?? break a",
+        false,
+    ),
+    // The `break` is in the body of its loop.
+    (
+        "if in a loop inside a while header",
+        "fn f(o: bool?) {\n    while {\n        loop { if @ { print(1) } }\n        true\n    } {\n        print(2)\n    }\n}",
+        "o ?? break",
+        true,
+    ),
+    (
+        "if in a while body",
+        "fn f(o: bool?) {\n    while true {\n        if @ { print(1) }\n    }\n}",
+        "o ?? break",
+        true,
+    ),
+    (
+        "if let in a loop body",
+        "fn f(o: bool?) {\n    loop {\n        if let y = @ { print(y) }\n    }\n}",
+        "o ?? break",
+        true,
+    ),
+    (
+        "else if in a for body",
+        "fn f(o: bool?, c: bool) {\n    for i in [1] {\n        if c { print(i) } else if @ { print(1) }\n    }\n}",
+        "o ?? break",
+        true,
+    ),
+    (
+        "match in a loop body",
+        "fn f(o: i64?) {\n    loop {\n        match @ {\n            _ => print(1)\n        }\n    }\n}",
+        "o ?? break",
+        true,
+    ),
+    (
+        "label of an outer loop, with no header between",
+        "fn f(o: bool?) {\n    a: loop {\n        b: while true {\n            c: loop {\n                if @ { print(1) }\n            }\n        }\n    }\n}",
+        "o ?? break a",
+        true,
+    ),
+    (
+        "return in a while header",
+        "fn f(o: bool?) {\n    while {\n        if @ { print(1) }\n        true\n    } {\n        print(2)\n    }\n}",
+        "o ?? return",
+        true,
+    ),
+    (
+        "return with no loop",
+        "fn f(o: bool?) {\n    if @ { print(1) }\n}",
+        "o ?? return",
+        true,
+    ),
+];
+
+/// GIVEN a `break` or `return` with no value at the end of an `if`, `if let`, `else if` or `match`
+/// header, in each place a loop can be around it, so that the jump takes the body's `{`
+/// WHEN the front end reads the program
+/// THEN the E0011 has the `( )` help exactly when the `( )` form leaves the `break` in the body of
+/// its loop, or the jump is a `return`
+/// AND the `( )` form of each helped row checks with no E0082 and no E0038
+/// AND the `( )` form of each row with no help gives E0082 or E0038
+#[test]
+fn break_help_should_be_given_only_when_its_loop_body_holds_the_jump() {
+    const MAIN: &str = "\nfn main() {}";
+    for (row, template, jump, help) in BREAK_HELP_ROWS {
+        let broken = template.replace('@', jump) + MAIN;
+        let (_, ds) = crate::front_end::front_end(&broken);
+        let first = ds.first().expect("a jump that takes the block is an error");
+        assert_eq!(first.code(), Code::Expected, "row `{row}`: {broken}");
+        assert_eq!(first.help().is_some(), help, "row `{row}`: {broken}");
+
+        let grouped = template.replace('@', &format!("({jump})")) + MAIN;
+        let (_, ds) = crate::front_end::front_end(&grouped);
+        let codes: Vec<_> = ds.iter().map(Diagnostic::code).collect();
+        assert!(!codes.contains(&Code::Expected), "row `{row}`: {grouped}");
+        let leaves =
+            codes.contains(&Code::JumpInLoopHeader) || codes.contains(&Code::JumpOutsideLoop);
+        assert_eq!(leaves, !help, "row `{row}`: {grouped}: {codes:?}");
+    }
+    // The body parses as a block, so `header_body`, not `jump_value`, reports the `match`.
+    for (src, help) in [
+        (
+            "fn f(o: i64?) {\n    loop {\n        match o ?? break { print(1) }\n    }\n}",
+            true,
+        ),
+        (
+            "fn f(o: i64?) {\n    while {\n        match o ?? break { print(1) }\n        true\n    } { }\n}",
+            false,
+        ),
+    ] {
+        let src = &format!("{src}{MAIN}");
+        let (_, ds) = crate::front_end::front_end(src);
+        let first = ds.first().expect("a jump that takes the block is an error");
+        assert_eq!(first.code(), Code::Expected, "{src}");
+        assert_eq!(first.help().is_some(), help, "{src}");
+    }
+    // A loop that fails to parse leaves no loop open after it: the `break` in the next item has
+    // no loop, so it has no help.
+    let src = "const C: i64 = loop { let = 1 }\nfn h(o: bool?) {\n    if o ?? break { print(1) }\n}\nfn main() { }";
+    let (_, ds) = crate::front_end::front_end(src);
+    let at_break: Vec<_> = ds.iter().filter(|d| at(src, d.span()).0 == 3).collect();
+    assert_eq!(at_break.len(), 1, "{ds:?}");
+    assert!(at_break[0].help().is_none(), "{src}");
 }
 
 #[test]
@@ -2313,6 +2702,26 @@ fn nested_invalid_jump_leaves_no_unreachable() {
                 (Code::JumpOutsideLoop, (2, 15)),
                 (Code::JumpOutsideLoop, (2, 25 + jump.len())),
             ],
+        );
+    }
+}
+
+/// An invalid jump in an operand or an argument is the flag of the statement, also after the
+/// value of that operand is checked: `return` and `if` make the code after them unreachable
+/// otherwise.
+#[test]
+fn an_invalid_jump_in_an_operand_should_leave_no_unreachable_after_the_statement() {
+    for stmt in [
+        "return n({ break }) + n(1)",
+        "if n({ break }) + n(1) == 1 { return 1 } else { return 2 }",
+    ] {
+        codes_under(
+            stmt,
+            &format!(
+                "fn n(a: i64) -> i64 {{ a }}\nfn g() -> i64 {{\n    {stmt}\n    0\n}}\nfn main() {{}}"
+            ),
+            None,
+            &[Code::JumpOutsideLoop],
         );
     }
 }

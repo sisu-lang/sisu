@@ -210,8 +210,10 @@ work under review.
 - For each accepted finding, say fixed, partly fixed or not fixed. Run
   its repro on the target.
 - For each fix, try the neighbouring cases: the same rule in each
-  position the language allows it, and each path the fix changed. A
-  regression that a fix adds blocks.
+  position the language allows it, and each path the fix changed.
+  `crates/sisuc/tests/neighbours.txt` lists the known values and
+  positions; report each one that it does not name. A regression that a
+  fix adds blocks.
 - Compare with the base of the whole work, not with the base of this
   round. A defect that the work added blocks, also when an earlier fix
   round added it.
