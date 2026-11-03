@@ -69,16 +69,17 @@ print(b.cells)        // [1, 0]: the write of [9] is lost
 
 - **Step 1: the meaning.** The syntax, the checker, every call path, the
   diagnostics and the lowering give copy-in/copy-out everywhere. A `let mut`
-  local is moved in, with no copy, by the last-use rule of ADR 0007. A field or an
-  element is copied in: the first write of the function copies once, as
+  local is moved in, with no copy, by the last-use rule of ADR 0007. A field
+  or an element is copied in: the first write of the function copies once, as
   `x = f(x)` does today. No program is slower than before.
-- **Step 2: the take.** The compiler moves a class field or an array element
-  out of its place for the call, instead of sharing it. It does this only when
-  nothing else reaches the place during the call. The first write of the function then does not
-  copy. A take changes nothing that a program can observe. A hidden, test-only
-  switch builds a program with no take, and the test suite and the fuzzer check
-  that both builds print the same. Step 2 also adds the warning `MutLostWrite`,
-  for the lost writes that the compiler can see.
+- **Step 2: the take.** The compiler moves a class field or an array element out
+  of its place for the call, instead of sharing it. It does this only when
+  nothing else reaches the place during the call. The first write of the
+  function then does not copy. A take changes nothing that a program can
+  observe. A hidden, test-only switch builds a program with no take, and the
+  test suite and the fuzzer check that both builds print the same. Step 2 also
+  adds the warning `MutLostWrite`, for the lost writes that the compiler can
+  see.
 
 The take applies only when all of these hold:
 
@@ -91,8 +92,8 @@ The take applies only when all of these hold:
   take can release the old value earlier than a copy does;
 - two `mut` arguments that can overlap pass a run-time test that they do not.
 
- A map entry and a place of a user `Indexable`
-type are copied, never taken: their store-back runs `set`.
+A map entry and a place of a user `Indexable` type are copied, never taken:
+their store-back runs `set`.
 
 ### What reaches a place
 
@@ -117,9 +118,10 @@ test that has one row for it.
 
 - **One concept, not five.** The review of 2026-10-29 found five separate
   mechanisms for one missing concept. The concept is "a call changes a value
-  that its caller owns". The mechanisms are `[mut]` captures, the built-in `exchange`, the collections write rule,
-  the last-use handover, and `move x`. Each needed edits to the others. None of
-  them made `self.cells = step(self.cells)` fast.
+  that its caller owns". The mechanisms are `[mut]` captures, the built-in
+  `exchange`, the collections write rule, the last-use handover, and `move x`.
+  Each needed edits to the others. None of them made
+  `self.cells = step(self.cells)` fast.
 - **One meaning for every place**, class fields included, with no run-time
   check and no panic.
 - **The call site shows the change.** A reader sees which arguments change, and
@@ -163,8 +165,8 @@ here.
 ## Consequences
 
 - ADR 0007 and ADR 0011 are superseded in part. A function now changes the
-  caller's place with a `mut` parameter. A method that changes its receiver still
-  takes `mut self`.
+  caller's place with a `mut` parameter. A method that changes its receiver
+  still takes `mut self`.
 - ADR 0029 changes. A borrowed argument is retained before the copy-in when
   its value comes from a place that a `mut` argument names, holds or is held
   by. The `mut` argument is one of the same call, or of a call nested in a
@@ -173,9 +175,10 @@ here.
   ([ADR 0015](0015-the-prelude-holds-only-what-almost-every-program-uses.md)).
   The reserved method `x.exchange(with: v)` of the collections design goes.
 - E0019 is retired, as ADR 0024 retired E0014. Its file gains the line
-  `Status: retired in ADR 0043`, and `sisu explain` serves it from `RETIRED`. New codes
-  E0166 to E0171 name the new errors (`MutMarkerMissing`, `MutMarkerNotMut`,
-  `MutNotArgument`, `MutArgumentNotPlace`, `MutArgumentType`, `MutPlaceTwice`).
+  `Status: retired in ADR 0043`, and `sisu explain` serves it from `RETIRED`.
+  New codes E0166 to E0171 name the new errors (`MutMarkerMissing`,
+  `MutMarkerNotMut`, `MutNotArgument`, `MutArgumentNotPlace`,
+  `MutArgumentType`, `MutPlaceTwice`).
 - A `mut` parameter lives for one call. A closure cannot share it with
   `[mut name]` (milestone 9), and a function cannot return it as a place.
 - A `mut` parameter cannot have a default value, and an `extern fn` cannot have
