@@ -8944,14 +8944,16 @@ mod tests {
     }
 
     /// Python counts a negative colon bound from the end, and Sisu has no negative index: the
-    /// report has no fix, because the program the fix made would panic or differ from Python's.
-    /// The wording is pinned in `tests/diagnostics/E0132-colon-negative.sisu`.
+    /// report has no fix, and no rewrite, because the parser cannot see the type of the base (a
+    /// string counts bytes) or know that a bound does not change the base. The wording is pinned
+    /// in `tests/diagnostics/E0132-colon-negative.sisu`.
     #[test]
     fn colon_slice_with_a_negative_bound_should_have_no_fix() {
         for src in [
             "xs[:-1]",
             "xs[-2:]",
             "xs[-3:-1]",
+            "s[:-1]",
             "xs[:-n]",
             "xs[:-(n + 1)]",
             "xs[:(-1)]",
@@ -8964,6 +8966,8 @@ mod tests {
             "xs[:--1]",
             "xs[-3:-a * b]",
             "xs[:-9223372036854775808]",
+            "xs[{ xs = [7]; 0 }:-1]",
+            "self.xs[:-1]",
             "f()[:-1]",
             "f().xs[:-1]",
             "xs[1..][:-1]",
