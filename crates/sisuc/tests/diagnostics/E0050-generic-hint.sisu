@@ -15,3 +15,64 @@ fn main() {
     let c = true
     print(if c { 1 } else { id(id(mk2())) })
 }
+
+// A default `i64` that an operator takes is no one's written type: a call beside it keeps its
+// E0050, and the sum is `Error`.
+fn add_calls() { let z = id(mk2()) + id(mk2()) }
+fn subtract_calls() { let z = id(mk2()) - id(mk2()) }
+fn compare_calls() { let z = id(mk2()) < id(mk2()) }
+fn add_literal() { let z = id(mk2()) + 1 }
+fn compare_literal() { let z = id(mk2()) < 1 }
+fn print_sum() { print(id(mk2()) + id(mk2())) }
+fn string_sum() { let z: string = id(mk2()) + id(mk2()) }
+fn bool_compare() { let z: bool = id(mk2()) < id(mk2()) }
+fn multiply_calls() { let z = id(mk2()) * id(mk2()) }
+fn add_three_calls() { let z = id(mk2()) + id(mk2()) + id(mk2()) }
+fn remainder_call() { let z = id(mk2()) % 2 }
+fn negate_sum() { let z = -(id(mk2()) + 1) }
+fn chain_call_first() { let z = id(mk2()) < 1 < 2 }
+fn coalesce_sum() { let z = (id(mk2()) + 1) ?? 0 }
+fn divide_call() { let z = id(mk2()) / 2 }
+fn nested_call() { let z = id(id(mk2())) + 1 }
+fn call_beside_call() { let z = id(mk2()) + id(1) }
+fn left_sum_of_calls() { let z = (id(mk2()) + id(mk2())) + id(mk2()) }
+fn right_sum_of_calls() { let z = id(mk2()) + (id(mk2()) + id(mk2())) }
+fn sum_then_string() {
+    let z = id(mk2()) + id(mk2())
+    let w: string = z
+}
+fn sum_with_literal_then_string() {
+    let z = id(mk2()) + 1
+    let w: string = z
+}
+fn coalesce_call_then_string(o: i64?) {
+    let z = o ?? id(mk2())
+    let w: string = z
+}
+
+// Guards: a type that the user wrote, or a sum that has one, holds the call to it.
+fn written_i64() { let z: i64 = id(mk2()) + id(mk2()) }
+fn literal_first() { let z = 1 + id(mk2()) }
+fn chain_literal_first() { let z = 0 < id(mk2()) < 10 }
+fn written_u8() { let z: u8 = id(mk2()) + id(mk2()) }
+fn add_assign_i64() {
+    let mut n = 0
+    n += id(mk2())
+}
+fn add_assign_u8() {
+    let mut n: u8 = 0
+    n += id(mk2())
+}
+fn string_literal_after() { let z = id(mk2()) + "a" }
+fn f64_literal_after() { let z = id(mk2()) * 2.5 }
+fn call_after_i64_call() { let z = id(1) + id(mk2()) }
+fn call_after_f64_literal() { let z = 1.5 + id(mk2()) }
+fn equal_then_string() {
+    let z = 1 == id(mk2())
+    let w: string = z
+}
+fn branch_then_string(c: bool) {
+    let z = if c { 1 } else { id(mk2()) }
+    let w: string = z
+}
+fn typed_sum_first(x: i64) { let z = (x + 1) + id(mk2()) }
