@@ -38,8 +38,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::ast;
 use crate::conformance::{self, StuckChoices};
 use crate::diagnostic::{
-    BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, Expected, MainForm,
-    MismatchFix, MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
+    BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, Expected, Literal,
+    MainForm, MismatchFix, MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
 };
 use crate::front_end::PreludeProgram;
 use crate::payload_limit;
@@ -511,6 +511,8 @@ thread_local! {
     /// How many closure entries have been indexed, and how many entries of an interface have been
     /// read for the name of an associated type, on this thread.
     pub(super) static LOOKUP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many dropped locals the rollback of a string join has visited on this thread.
+    pub(super) static ROLLBACK_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 struct Checker<'src> {
@@ -765,6 +767,21 @@ struct ClosureIndex {
 type LeafKey = (Type, tir::InterfaceId, TypeArgs);
 type LeafAnswers = FxHashMap<LeafKey, Option<Type>>;
 
+/// The E0050 of a `None` or `[]` that a `let` initializes. A later use of the local can give the
+/// type that the help of the E0050 writes.
+struct Uninferred {
+    /// Where the E0050 is in the diagnostics.
+    at: usize,
+    /// The span of the literal, which the E0050 reports.
+    span: Span,
+    literal: Literal,
+    /// What the `let` writes before its type: `mut`, then the name.
+    binding: String,
+    /// The place in the source of the use that set the help, if one did (see
+    /// `Checker::inferred_by_use`).
+    settled: Option<usize>,
+}
+
 /// What checking one body needs: a function's, a method's, or a constant's initialiser.
 #[derive(Default)]
 struct Body {
@@ -873,6 +890,9 @@ struct Body {
     /// (`mut`, then the name): E0050 uses it in its example when the initializer is the whole
     /// `None` or `[]`.
     let_init: Option<(Span, Symbol, bool)>,
+    /// The E0050 of each local whose initializer is such a literal, until a later use gives the
+    /// local a type (see `Checker::inferred_by_use`).
+    uninferred: FxHashMap<tir::LocalId, Uninferred>,
     /// The constant whose value is being checked, where interpolation is not known and a
     /// conversion that can fail is an error.
     in_constant: Option<ConstantSite>,

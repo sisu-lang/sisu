@@ -323,19 +323,11 @@ impl Gen<'_> {
             let element = (**element).clone();
             return self.array_let(name, ty, &element);
         }
-        let (base, room) = match (&ty, mutable) {
-            (Ty::String, true) => (SIZES[self.pick(SIZES.len())], SIZES[self.pick(SIZES.len())]),
-            (_, true) if ty.sized() => (self.size_for(&ty, &SIZES), 0),
-            (_, false) if ty.sized() => (MAX_SIZE, 0),
-            _ => (0, 0),
-        };
-        let grow = self.optional_growth(&ty, mutable, base);
+        let (base, room, grow) = self.local_sizes(&ty, mutable);
         self.typed = written;
         let init = self.expr(&ty, base);
         let base = if mutable { base } else { init.size };
-        let mut var = Var::new(name, ty, mutable, base, room, self.cost.depth());
-        var.size += grow;
-        var.grow = grow;
+        let mut var = Self::sized_var(name, ty, mutable, (base, room, grow), self.cost.depth());
         var.len = init.len;
         if let Ty::Array(_) = var.ty {
             // An element holds at most what the array does but for its slots.
@@ -343,6 +335,31 @@ impl Gen<'_> {
         }
         debug_assert!(var.size <= MAX_SIZE, "a value may reach {}", var.size);
         self.scope.vars.push(var);
+    }
+
+    /// The base, room and growth of a local of type `ty` before its first value (`sized_var`).
+    fn local_sizes(&mut self, ty: &Ty, mutable: bool) -> (u64, u64, u64) {
+        let (base, room) = match (ty, mutable) {
+            (Ty::String, true) => (SIZES[self.pick(SIZES.len())], SIZES[self.pick(SIZES.len())]),
+            (_, true) if ty.sized() => (self.size_for(ty, &SIZES), 0),
+            (_, false) if ty.sized() => (MAX_SIZE, 0),
+            _ => (0, 0),
+        };
+        (base, room, self.optional_growth(ty, mutable, base))
+    }
+
+    /// The local `name` of `ty` with the `(base, room, grow)` that `local_sizes` gave.
+    fn sized_var(
+        name: String,
+        ty: Ty,
+        mutable: bool,
+        (base, room, grow): (u64, u64, u64),
+        depth: usize,
+    ) -> Var {
+        let mut var = Var::new(name, ty, mutable, base, room, depth);
+        var.size += grow;
+        var.grow = grow;
+        var
     }
 
     /// The literal or fill of a mutable array of `len` elements, each at most `base` but for
@@ -1304,10 +1321,11 @@ impl Gen<'_> {
         result
     }
 
-    /// `let p = e else { ... }` of an optional `e`, with `p` a `let_pattern`, or of an enum value
-    /// with `V(p, ...)` of a variant with fields. What `p` binds is in scope after it, with the
-    /// values and sizes that `while let` and `match` give it. The block leaves: it ends in a jump
-    /// or in an `if` whose branches do.
+    /// `let p = e else { ... }` of an optional `e`, with `p` a `let_pattern` or `mut` and a name,
+    /// or of an enum value with `V(p, ...)` of a variant with fields, or `V(p, ...) | W(p, ...)`
+    /// that binds one name in both parts. What `p` binds is in scope after it, with the values
+    /// and sizes that `while let` and `match` give it, or those of a `let mut`. The block leaves:
+    /// it ends in a jump or in an `if` whose branches do.
     fn let_else(&mut self) {
         let loops = self.cost.depth();
         let variants: Vec<(usize, usize)> = (self.scope.enums.iter().enumerate())
@@ -1318,23 +1336,41 @@ impl Gen<'_> {
             })
             .collect();
         let mut binds = Vec::new();
+        let mut local = None;
         let value = if !variants.is_empty() && self.pick(2) == 1 {
-            let (id, v) = variants[self.pick(variants.len())];
-            let ty = self.scope.enum_ty(id);
-            let (pattern, _) = self.variant_pattern(&ty, v, Some(&mut binds), 0);
-            self.w.text(&format!("let {pattern} = "));
-            self.expr(&ty, MAX_SIZE)
+            if let Some((ty, pattern, bind)) = self.alternative() {
+                self.w.text(&format!("let {pattern} = "));
+                binds.push(bind);
+                self.expr(&ty, MAX_SIZE)
+            } else {
+                let (id, v) = variants[self.pick(variants.len())];
+                let ty = self.scope.enum_ty(id);
+                let (pattern, _) = self.variant_pattern(&ty, v, Some(&mut binds), 0);
+                self.w.text(&format!("let {pattern} = "));
+                self.expr(&ty, MAX_SIZE)
+            }
         } else {
             let payload = match self.bare_type() {
                 Ty::Optional(payload) => *payload,
                 ty => ty,
             };
-            let (pattern, name) = self.let_pattern(&payload, false);
-            self.w.text(&format!("let {pattern} = "));
-            self.synth = true;
-            let value = self.expr(&Ty::Optional(Box::new(payload.clone())), MAX_SIZE);
-            binds.extend(name.map(|name| (name, payload)));
-            value
+            // Only a bare name takes `mut`, and a mutable array needs `array_let`.
+            if !matches!(payload, Ty::Array(_)) && self.pick(2) == 1 {
+                let name = self.scope.fresh("v");
+                self.w.text(&format!("let mut {name} = "));
+                let sizes = self.local_sizes(&payload, true);
+                self.synth = true;
+                let value = self.expr(&Ty::Optional(Box::new(payload.clone())), sizes.0);
+                local = Some(Self::sized_var(name, payload, true, sizes, loops));
+                value
+            } else {
+                let (pattern, name) = self.let_pattern(&payload, false);
+                self.w.text(&format!("let {pattern} = "));
+                self.synth = true;
+                let value = self.expr(&Ty::Optional(Box::new(payload.clone())), MAX_SIZE);
+                binds.extend(name.map(|name| (name, payload)));
+                value
+            }
         };
         self.w.text(" else ");
         self.conditionally(Self::leaving_block);
@@ -1344,6 +1380,7 @@ impl Gen<'_> {
                 .vars
                 .push(Var::new(name, ty, false, size, 0, loops));
         }
+        self.scope.vars.extend(local);
     }
 
     /// `{ statements leave }`: `leave` is a jump, or an `if` whose every branch jumps.

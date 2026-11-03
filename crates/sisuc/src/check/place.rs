@@ -122,6 +122,7 @@ impl Checker<'_> {
             self.show(value.span, want, text);
         }
         let value = self.expect(value, place.ty);
+        self.inferred_by_write(target, &value, span.end());
         self.assigned(span, place, value)
     }
 
@@ -313,6 +314,16 @@ impl Checker<'_> {
         }
         // A receiver that failed has reported itself.
         if receiver.is_err() {
+            // A local with no type is not pushed to, but the element gives its type. The element
+            // is checked once, as `stray` checks it.
+            if let [arg] = args
+                && let Some(local) = self.pushed_to_uninferred(receiver_expr)
+            {
+                if let Ok(pushed) = self.expr(&arg.value, Some(UNKNOWN)) {
+                    self.inferred_by_use(local, pushed.ty, arg.value.span.end());
+                }
+                return unit();
+            }
             return not_pushed(self, None);
         }
         if !is_place(receiver_expr) {
@@ -715,6 +726,7 @@ impl Checker<'_> {
     /// An `if let` of the array binds a copy, which is no place. The help names the object of the
     /// `?.` only when that object is what makes the array optional: the `?.` field stores an
     /// array, and the object is a class, so its field is a place. Else no unwrap gives a place.
+    /// `Checker::pushed_array_unwrap` states the same rule for a `push`: change both.
     fn optional_array_target(&mut self, base: &ast::Expr, inner: &CheckedPlace) {
         let unwrap = match (&base.kind, &inner.guard, inner.ty.map(Type::kind)) {
             (
