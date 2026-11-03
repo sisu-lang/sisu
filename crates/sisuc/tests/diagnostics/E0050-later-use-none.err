@@ -206,5 +206,53 @@ error[E0050]: cannot infer the type of `[]`
     |
     = help: write the type: `let inner: [...] = []`
 
-sisu: 27 errors
+error[E0050]: cannot infer the type of `None`
+   --> E0050-later-use-none.sisu:127:13
+    |
+127 |     let x = Option.None
+    |             ^^^^^^^^^^^
+    |
+    = help: write the type: `let x: string? = None`
+
+error[E0050]: cannot infer the type of `None`
+   --> E0050-later-use-none.sisu:132:17
+    |
+132 |     let mut y = Option.None
+    |                 ^^^^^^^^^^^
+    |
+    = help: write the type: `let mut y: f64? = None`
+
+error[E0050]: cannot infer the type of `None`
+   --> E0050-later-use-none.sisu:137:13
+    |
+137 |     let x = (Option.None)
+    |             ^^^^^^^^^^^^^
+    |
+    = help: write the type: `let x: string? = None`
+
+error[E0050]: cannot infer the type of `None`
+   --> E0050-later-use-none.sisu:142:17
+    |
+142 |     let mut y = (Option.None)
+    |                 ^^^^^^^^^^^^^
+    |
+    = help: write the type: `let mut y: f64? = None`
+
+error[E0050]: cannot infer `T` for `Opt.None`
+   --> E0050-later-use-none.sisu:147:13
+    |
+147 |     let x = Opt.None
+    |             ^^^^^^^^
+    |
+    = help: annotate the result, or write the type: `Opt<...>.None`
+
+error[E0050]: cannot infer `T` for `Opt.None`
+   --> E0050-later-use-none.sisu:152:17
+    |
+152 |     let mut y = Opt.None
+    |                 ^^^^^^^^
+    |
+    = help: annotate the result, or write the type: `Opt<...>.None`
+
+sisu: 33 errors
 sisu: for more on a code, run `sisu explain <code>`: E0032, E0033, E0043, E0050

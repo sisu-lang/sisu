@@ -119,4 +119,38 @@ fn rolled_back() {
     }
 }
 
+type Opt<T> = T?
+
+fn show(p: string?) -> string { p ?? "" }
+
+fn named_read() {
+    let x = Option.None
+    print(show(x))
+}
+
+fn named_write() {
+    let mut y = Option.None
+    y = Some(1.5)
+}
+
+fn named_paren_read() {
+    let x = (Option.None)
+    print(show(x))
+}
+
+fn named_paren_write() {
+    let mut y = (Option.None)
+    y = Some(1.5)
+}
+
+fn alias_read() {
+    let x = Opt.None
+    print(show(x))
+}
+
+fn alias_write() {
+    let mut y = Opt.None
+    y = Some(1.5)
+}
+
 fn main() {}
