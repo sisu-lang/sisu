@@ -32,7 +32,7 @@ build: ## Build sisu and the two runtime archives
 	cargo build --workspace
 
 test: ## Run every test with nextest, whose setup script builds the runtime
-	cargo nextest run --workspace --locked
+	scripts/heavy-run.sh cargo nextest run --workspace --locked
 	list=$$(mktemp) && cargo nextest list --workspace --locked --message-format json > $$list && python3 scripts/nextest_filters.py .config/nextest.toml $$list; status=$$?; rm -f $$list; exit $$status
 
 test-health: ## Show the counts, times and slowest tests of the last make test
@@ -48,12 +48,12 @@ deny: ## Audit the dependencies: advisories, licenses, sources
 	cargo deny check
 
 miri: ## Run the runtime's unit tests under Miri (nightly), which stops at undefined behaviour
-	cargo +nightly miri test -p sisu-runtime
+	scripts/heavy-run.sh cargo +nightly miri test -p sisu-runtime
 
 check: lint test deny ## Lint, test and deny; CI also runs make miri
 
 coverage: ## Coverage of the changes since BASE
-	scripts/coverage.sh "$(BASE)"
+	scripts/heavy-run.sh scripts/coverage.sh "$(BASE)"
 
 mutation-test: ## Mutation-test the changes since BASE (unit tests, then the whole suite for survivors); LOG=<file> writes the output there
 	LOG="$(LOG)" scripts/mutants.sh "$(BASE)"
