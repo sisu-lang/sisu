@@ -1732,6 +1732,7 @@ impl Checker<'_> {
             self.infer_arg(&mut call, i, &arg.value, sig.params[i], None);
         }
         let mut misfit = None;
+        let whole = |want| through || ranks.contains(&2) || layers > 0 && !wider_than(want, layers);
         if let (Some(ret), Some(want)) = (sig.ret, plain.filter(|&ty| ty != UNKNOWN)) {
             // The return type meets `want` whole if it can and an argument waits for it, or
             // makes the optional itself and has the type of the return type (`through`), or the
@@ -1742,8 +1743,7 @@ impl Checker<'_> {
             // cannot meet either is reported where the value is used, unless the context fits
             // alone: then the arguments that contradict it are reported, each at its own place.
             // Type arguments that the call writes are its own.
-            let whole = through || ranks.contains(&2) || layers > 0 && !wider_than(want, layers);
-            let met = (whole && call.bindings.unify(ret, want))
+            let met = (whole(want) && call.bindings.unify(ret, want))
                 || call.bindings.constrain(ret, payload(want));
             misfit = self.misfit(span, ret, want, met).then_some((ret, want));
             if !met && written.is_empty() && !call.failed {
@@ -1763,9 +1763,10 @@ impl Checker<'_> {
             }
         }
         // A parameter that no argument bound takes the `any` context, as pass 2 would bind it,
-        // and meets its bound as a binding from a plain context does.
+        // whole or its payload, and meets its bound, as a binding from a plain context does.
         if let (Some(ret), Some(want)) = (sig.ret, into_any) {
-            let _ = call.bindings.unify(ret, want) || call.bindings.constrain(ret, payload(want));
+            let _ = (whole(want) && call.bindings.unify(ret, want))
+                || call.bindings.constrain(ret, payload(want));
             self.report_fresh(&mut call, span);
         }
         self.sweep_waiting(&mut call, sig, args, &ranks, &fit);
