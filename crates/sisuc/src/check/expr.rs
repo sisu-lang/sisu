@@ -338,7 +338,7 @@ impl Checker<'_> {
     pub(super) fn value(&mut self, e: &ast::Expr, expected: Option<Type>) -> Checked {
         let (checked, invalid_jump) = self.jumps(|c| c.expr(e, expected));
         match type_of(&checked) {
-            // A `never` made by a `break` or `continue` outside a loop has its report already,
+            // A `never` value with a `break` or `continue` outside a loop in it has that report,
             // and no second one. A `never` that failed for another reason is still a `never`.
             Some(Type::NEVER) if checked.is_err() && invalid_jump => Err(Poisoned::error()),
             Some(ty @ (Type::UNIT | Type::NEVER)) => {
