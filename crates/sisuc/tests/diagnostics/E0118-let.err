@@ -1,0 +1,14 @@
+error[E0118]: `E` has no variant `f`
+  --> E0118-let.sisu:12:9
+   |
+12 |     let f(x) = v
+   |         ^
+   |
+help: a variant with a similar name exists: `A`
+   |
+12 -     let f(x) = v
+12 +     let A(x) = v
+   |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0118

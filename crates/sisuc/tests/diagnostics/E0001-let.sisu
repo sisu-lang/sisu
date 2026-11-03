@@ -1,0 +1,9 @@
+// GIVEN a `main` whose line 7 is `let Some(n) = o` and whose line 8 is `n = 2`
+// WHEN `sisu check` runs on it
+// THEN it reports E0174 at 7:9
+// AND it reports E0001 at 8:5, with the label "bound by `let` here" at 7:14
+fn main() {
+    let o: i64? = Some(1)
+    let Some(n) = o
+    n = 2
+}

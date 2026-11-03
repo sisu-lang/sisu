@@ -496,23 +496,15 @@ impl Checker<'_> {
             },
             &LetValue::Match { ty } => {
                 let pattern = self.pattern_in_scope(pattern, ty, word, arm, mutable);
-                // `_`, or a name that is no variant inside, unwraps an optional: never here.
+                // A `let` with no `else` reports its own error, which needs the same test.
                 if let (Some(keyword), Some(ty), Some((pattern, _))) = (keyword, ty, &pattern)
-                    && let TypeKind::Enum(..) | TypeKind::Optional(_) = ty.kind()
+                    && !matches!(keyword, Unwrap::Let)
+                    && self.always_matches(ty, pattern)
                 {
-                    let rows = [Row {
-                        pattern,
-                        guarded: false,
-                    }];
-                    if exhaust::check(&self.lowered_enums, &self.conformances, ty, &rows)
-                        .missing
-                        .is_none()
-                    {
-                        self.report(DiagnosticKind::AlwaysMatches {
-                            keyword,
-                            at: pattern.span,
-                        });
-                    }
+                    self.report(DiagnosticKind::AlwaysMatches {
+                        keyword,
+                        at: pattern.span,
+                    });
                 }
                 LetPattern::Match { pattern }
             }
@@ -521,6 +513,17 @@ impl Checker<'_> {
             .and_then(|arm| arm.guard.as_ref())
             .map(|guard| self.expect(guard, Some(Type::BOOL)));
         (bound, guard)
+    }
+
+    /// Whether `pattern`, checked at a position of the enum or optional type `ty`, matches every
+    /// value of it. `_`, or a name that is no variant inside, unwraps an optional instead, never
+    /// here.
+    pub(super) fn always_matches(&self, ty: Type, pattern: &tir::Pattern) -> bool {
+        let rows = [Row {
+            pattern,
+            guarded: false,
+        }];
+        exhaust::covers(&self.lowered_enums, &self.conformances, ty, &rows)
     }
 
     /// `pattern` at a position of type `ty` (`None` is `Error`), its names declared in the

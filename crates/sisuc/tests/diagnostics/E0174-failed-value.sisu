@@ -1,0 +1,13 @@
+// GIVEN `enum Only { One(i64) }` and a `main` whose line 11 is `let One(n) = Only.One(zz)`, with no name `zz`
+// WHEN `sisu check` runs on it
+// THEN it reports E0174 at 11:9 with the label "`One(n)` always matches" and the help "use `match`"
+// AND it reports E0033 at 11:27
+// AND it reports no other diagnostic
+enum Only {
+    One(i64)
+}
+
+fn main() {
+    let One(n) = Only.One(zz)
+    print(n)
+}

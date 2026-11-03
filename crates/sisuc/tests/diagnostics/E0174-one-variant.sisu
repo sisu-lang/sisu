@@ -1,6 +1,7 @@
-// GIVEN `enum Only { One(i64) }` and a `main` whose line 10 is `let One(n) = v` and whose line 11 is `print(n)`
+// GIVEN `enum Only { One(i64) }` and a `main` whose line 11 is `let One(n) = v` and whose line 12 is `print(n)`
 // WHEN `sisu check` runs on it
-// THEN it reports E0174 at 10:9 and no other diagnostic
+// THEN it reports E0174 at 11:9 with the label "`One(n)` always matches" and the help "use `match`"
+// AND it reports no other diagnostic
 enum Only {
     One(i64)
 }

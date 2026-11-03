@@ -38,7 +38,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::ast;
 use crate::conformance::{self, StuckChoices};
 use crate::diagnostic::{
-    BuiltIn, Code, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, Expected, Literal,
+    BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, Expected, Literal,
     MainForm, MismatchFix, MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
 };
 use crate::front_end::PreludeProgram;
@@ -1124,16 +1124,10 @@ pub(crate) fn check<'src>(
     program.iter().for_each(tir::assert_exit_flags);
     // A use of a broken item poisons without a diagnostic of its own.
     debug_assert!(
-        program.is_some() || failed || broken || refutable(parsed),
+        program.is_some() || failed || broken,
         "a missing program implies an error diagnostic or a broken item or method"
     );
     (program, diagnostics)
-}
-
-/// Whether the parser reported a `let` with a pattern and no `else`. The checker fails that
-/// statement and adds no diagnostic, so the function has no `tir`.
-fn refutable(parsed: &[Diagnostic]) -> bool {
-    parsed.iter().any(|d| d.code() == Code::RefutablePattern)
 }
 
 /// `check` over a program with no prelude but the language interfaces, for the tests of what
