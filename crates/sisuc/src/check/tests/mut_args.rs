@@ -266,23 +266,49 @@ fn generic_mut_argument_should_not_promote() {
     codes(&src, &[]);
 }
 
-/// GIVEN a `mut` argument `mut self` outside a method
+/// GIVEN a `mut` argument `mut self`, `mut self[0]` or `mut self[0..1]` outside a method
 /// WHEN it is checked
 /// THEN it is E0041 only: there is no `self` to pass, so no E0169
 #[test]
 fn mut_self_outside_a_method_should_be_reported_once() {
-    let rows = [(
-        "function",
-        "fn set(mut x: i64) {\n    x = 1\n}\nfn main() {\n    set(mut self)\n}",
-    )];
-    for (row, src) in rows {
-        let found = found_codes(src);
+    for place in ["self", "self[0]", "self[0..1]"] {
+        let src =
+            format!("fn set(mut x: i64) {{\n    x = 1\n}}\nfn main() {{\n    set(mut {place})\n}}");
+        assert_eq!(
+            found_codes(&src),
+            [Code::SelfOutsideMethod],
+            "place `{place}`"
+        );
+    }
+}
+
+/// GIVEN a `mut` argument that is a value, or a range index, and whose expression has an error
+/// WHEN it is checked
+/// THEN the error stands alone: the argument is not also reported as no place, and its label
+///   does not guess the kind of its range
+#[test]
+fn mut_argument_with_a_failed_expression_should_not_be_reported_as_no_place() {
+    let class = "class B {\n    mut s: string\n}\nfn set(mut x: string) {\n    x = \"a\"\n}\n";
+    let rows = [
+        (
+            "range with a bad bound",
+            "let mut s = \"abc\"\n    set(mut s[0..true])",
+        ),
+        (
+            "range through `?.`",
+            "let b: B? = B(s: \"a\")\n    set(mut b?.s[0..1])",
+        ),
+        ("range of an unknown name", "set(mut nope[0..1])"),
+        ("range of `self`", "set(mut self[0..1])"),
+        ("call of an unknown function", "set(mut nope())"),
+        ("index of `self`", "set(mut self[0])"),
+    ];
+    for (row, stmt) in rows {
+        let src = format!("{class}fn main() {{\n    {stmt}\n}}");
+        let found = found_codes(&src);
+        assert!(!found.is_empty(), "row `{row}`: no error");
         assert!(
             !found.contains(&Code::MutArgumentNotPlace),
-            "row `{row}`: {found:?}"
-        );
-        assert!(
-            found.contains(&Code::SelfOutsideMethod),
             "row `{row}`: {found:?}"
         );
     }

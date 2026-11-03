@@ -40,6 +40,7 @@ fn n3<T>() -> T??? { None }
 fn mk<T>() -> T { loop {} }
 fn some<T>(v: T) -> T? { Some(v) }
 fn id<T>(v: T) -> T { v }
+fn take<T>(mut x: T?) { x = None }
 fn generic<U: Named, V>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?) {
     {stmt}
 }
@@ -120,3 +121,5 @@ for _x in if c { [Some(p)] } else { [$] } {}
 let _l = $ else { return }
 let 1 = $ else { return }
 if let _l = $ {}
+# A `mut` argument: a place, or a value that is none, for a generic `mut` parameter.
+take(mut $)
