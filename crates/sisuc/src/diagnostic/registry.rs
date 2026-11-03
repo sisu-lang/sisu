@@ -5505,8 +5505,8 @@ impl From<DiagnosticKind> for Diagnostic {
                         match whole {
                             Some(whole) => d.with_fix(safe_fix("remove the `[:]`", whole, "")),
                             // The parser cannot see the type of `base`: on a string, `..` counts
-                            // bytes and can stop the program, and on an array it stops a bound
-                            // past the end, where Python clamps it.
+                            // bytes where Python counts characters; a bound past the end stops
+                            // the program where Python stops at the end.
                             None => d.with_fix(unsafe_fix("write `..`", at, "..")),
                         }
                     }

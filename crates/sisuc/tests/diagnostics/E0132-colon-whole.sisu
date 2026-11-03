@@ -1,4 +1,12 @@
-fn main() {
+fn on_an_array() {
     let xs = [1, 2, 3]
     print(xs[:])
+}
+
+fn on_a_string() {
+    let s = "päivä"
+    print(s[:])
+}
+
+fn main() {
 }

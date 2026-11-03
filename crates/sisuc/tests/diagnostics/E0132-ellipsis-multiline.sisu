@@ -16,6 +16,8 @@ fn end_ellipsis() {
     }
 }
 
+// `in_an_index` and `with_a_comment` are here because their `..<` forms have no fix;
+// `E0132-range-multiline` holds only the `..<` forms that have one.
 fn in_an_index() {
     let xs = [1, 2, 3]
     print(xs[f(

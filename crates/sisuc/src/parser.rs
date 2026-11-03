@@ -1343,7 +1343,7 @@ impl<'a> Parser<'a> {
                 newlines: self
                     .tokens
                     .iter()
-                    .filter(|t| t.kind == TokenKind::Newline && t.span.range().is_empty())
+                    .filter(|t| t.is_line_break())
                     .map(|t| t.span.start())
                     .collect(),
             },
@@ -2539,7 +2539,7 @@ impl<'a> Parser<'a> {
         let newlines: Vec<usize> = self.tokens[first..]
             .iter()
             .take_while(|token| token.span.start() < span.end())
-            .filter(|token| token.kind == TokenKind::Newline && token.span.range().is_empty())
+            .filter(|token| token.is_line_break())
             .map(|token| token.span.start())
             .collect();
         self.source.line_text(span, self.comments, &newlines)
