@@ -4000,13 +4000,34 @@ fn an_any_context_should_check_the_bound_of_the_parameter_it_binds() {
 }
 
 /// A choice that does not meet the bound of its associated type is reported once, at the choice.
-/// A call whose argument names an associated type of that choice fails after the one report.
+/// A call whose argument names an associated type of that choice fails after the one report,
+/// whether the argument or another one binds the base.
 #[test]
 fn a_call_through_a_choice_that_fails_its_bound_should_fail_after_the_one_report() {
-    codes(
-        "interface Source {\n    type Item\n}\ninterface Outer {\n    type Inner: Source\n}\nclass Wrap<T> {\n    value: T\n}\nclass Two<A, B> {\n    a: A\n    b: B\n}\nclass H: Outer {\n    type Inner = i64\n    n: i64\n}\nfn deep<O: Outer>(x: Two<O, Wrap<O.Inner.Item>>) -> i64 { 1 }\nfn main() {\n    let a = deep(Two(a: H(n: 1), b: Wrap(value: 5)))\n}\n",
-        &[(Code::NotConform, (15, 18))],
-    );
+    let program = "interface Source {\n    type Item\n}\ninterface Outer {\n    type Inner: Source\n}\nclass Wrap<T> {\n    value: T\n}\nclass Two<A, B> {\n    a: A\n    b: B\n}\nclass H: Outer {\n    type Inner = i64\n    n: i64\n}\nfn deep<O: Outer>(x: Two<O, Wrap<O.Inner.Item>>) -> i64 { 1 }\nfn deep2<O: Outer>(o: O, x: Wrap<O.Inner.Item>) -> i64 { 1 }\nfn main() {\n    ";
+    for local in [
+        "let a = deep(Two(a: H(n: 1), b: Wrap(value: 5)))",
+        "let a = deep2(H(n: 1), Wrap(value: 5))",
+    ] {
+        codes_row(
+            local,
+            &format!("{program}{local}\n}}\n"),
+            &[(Code::NotConform, (15, 18))],
+        );
+    }
+}
+
+/// An optional `any` context that no argument binds gives the parameter its payload, as an
+/// optional context of a plain type does: the call meets the bound, and the value is wrapped.
+#[test]
+fn an_optional_any_context_should_bind_the_parameter_to_its_payload() {
+    let program = "interface Show {\n    fn show(self) -> string\n}\nclass Wrap<T> {\n    value: T\n}\nfn mk<S: Show>() -> S { panic(\"x\") }\nfn mk_wrap<S: Show>(x: Wrap<i64>) -> S { panic(\"x\") }\nfn main() {\n    ";
+    for local in [
+        "let _b: (any Show)? = mk()",
+        "let _b: (any Show)? = mk_wrap(Wrap(value: 5))",
+    ] {
+        codes_row(local, &format!("{program}{local}\n}}\n"), &[]);
+    }
 }
 
 /// An associated type whose choice leads back to the associated type itself has no type. It is
