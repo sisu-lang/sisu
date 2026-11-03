@@ -1021,15 +1021,8 @@ fn default_witness_head_should_build_in_linear_time() {
     assert_near_linear(steps(100), steps(200), steps(300));
 }
 
-/// GIVEN `enum E { A(i64); B(i64, ... n times); C(i64) }` and n statements, each with a pattern
-/// that names `A` (and `C` in one row) and so leaves `B`, the first variant it does not name,
-/// for the default
-/// WHEN `sisu check` runs on it
-/// THEN the solver takes a number of steps that grows in line with n, for each form of
-/// statement that asks if its pattern always matches
-///
-/// The question needs no witness. A witness built for it (`B(_, ... n times)`) costs n steps for
-/// each of the n statements.
+/// `B(i64, ... n times)` is the first variant that no row names, so it becomes the default. A
+/// witness built for each statement costs n steps.
 #[test]
 fn always_matches_should_check_in_linear_steps() {
     type Statement = fn(usize) -> String;
