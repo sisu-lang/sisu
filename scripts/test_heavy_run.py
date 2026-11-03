@@ -33,10 +33,10 @@ class HeavyRun(unittest.TestCase):
     def path(self, name):
         return os.path.join(self.repo, name)
 
-    def start(self, *command):
+    def start(self, *command, cwd=None):
         with open(self.err, 'w', encoding='utf-8') as err:
-            run = subprocess.Popen(['bash', SCRIPT, *command], cwd=self.repo, env=ENV, stderr=err,
-                                   start_new_session=True)
+            run = subprocess.Popen(['bash', SCRIPT, *command], cwd=cwd or self.repo, env=ENV,
+                                   stderr=err, start_new_session=True)
         self.addCleanup(self.stop, run)
         return run
 
@@ -62,6 +62,21 @@ class HeavyRun(unittest.TestCase):
             self.assertFalse(os.path.exists(self.path('ran')))
         self.assertEqual(run.wait(timeout=20), 0)
         self.assertTrue(os.path.exists(self.path('ran')))
+
+    def test_a_run_in_a_linked_worktree_should_wait_for_the_lock_of_the_main_worktree(self):
+        git = ['git', '-C', self.repo, '-c', 'user.name=t', '-c', 'user.email=t@t']
+        subprocess.run(git + ['commit', '-q', '--allow-empty', '-m', 'base'], check=True, env=ENV)
+        linked = self.path('linked')
+        subprocess.run(git + ['worktree', 'add', '-q', '--detach', linked], check=True, env=ENV)
+        with open(self.lock, 'w', encoding='utf-8') as held:
+            held.write('make test in the main worktree (pid 1)\n')
+            held.flush()
+            fcntl.flock(held, fcntl.LOCK_EX)
+            run = self.start('touch', 'ran', cwd=linked)
+            wait_for(lambda: 'heavy-run: waiting' in self.stderr(), 'the waiting message')
+            self.assertFalse(os.path.exists(os.path.join(linked, 'ran')))
+        self.assertEqual(run.wait(timeout=20), 0)
+        self.assertTrue(os.path.exists(os.path.join(linked, 'ran')))
 
     def test_a_run_should_hold_the_lock_until_its_command_ends(self):
         os.mkfifo(self.path('go'))
