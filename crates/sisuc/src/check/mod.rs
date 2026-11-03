@@ -842,6 +842,9 @@ struct Body {
     safe_call: Option<Span>,
     /// Set by a `break` or `continue` outside a loop; `scoped_block` reads it per statement.
     invalid_jump: bool,
+    /// The last string literal that is `never` because a part is: its span, and the span of the
+    /// first such part, which E0043 underlines (see `Checker::interpolate`).
+    never_part: Option<(Span, Span)>,
     /// Where each loop label is declared that a failed jump or a reused loop label names, which
     /// is not reported unused: its own error is.
     failed_labels: FxHashSet<Span>,
