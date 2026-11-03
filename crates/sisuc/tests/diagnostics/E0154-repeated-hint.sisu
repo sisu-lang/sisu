@@ -107,6 +107,8 @@ fn row_r6() {
 }
 
 // Guard, green at the round base: the parts of `U` are not rejected-only.
+// Its first part (`T?`) differs from its last rejected-only part (`[T]`), so it is the only row
+// that fails when the backward walk or its `settled` check is removed.
 interface Ir5 {}
 
 fn g_r5<T: Ir5, U>(_a: Two<A7<T?>, Three<Two<U?, U?>, Two<[T], [T]>, Two<U?, U?>>>, _b: T) {}

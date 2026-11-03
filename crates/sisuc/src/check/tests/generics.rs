@@ -6027,9 +6027,15 @@ fn rejecting_the_parameters_of_failed_arguments_should_visit_each_type_once() {
         );
         generic::MARKED.get()
     };
-    // The walk keeps answers only after `MEMO_AFTER` visits, so the depths are small: the paths
-    // of a deeper chain would not show a walk of each path in the time of a test.
+    // The first line catches a walk of each path before a deep chain can take long: the paths
+    // double at each level. The walk keeps answers only after `MEMO_AFTER` visits, so for depths
+    // up to about 60 the count is flat, and a walk that adds n² visits would pass that line. The
+    // second line is in the linear region of the memo (about 2n + 9 visits); a deeper chain
+    // reaches `NestingTooDeep`, at a depth below 300. `assert_near_linear` allows the second step
+    // to add a tenth more than the first; the steps here are equal, and a quadratic walk makes
+    // the second step add about 1.4 times the first.
     assert_near_linear(visits(4), visits(8), visits(12));
+    assert_near_linear(visits(100), visits(150), visits(200));
 }
 
 /// The call is hinted, so each trailing argument reads the origins of its parameter to find out

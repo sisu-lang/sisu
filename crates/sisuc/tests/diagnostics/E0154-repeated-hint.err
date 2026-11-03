@@ -112,52 +112,52 @@ error[E0154]: `bool` does not conform to `Ir6`
     |                                    ^^^^
 
 error[E0050]: cannot infer `T` for `none`
-   --> E0154-repeated-hint.sisu:115:15
+   --> E0154-repeated-hint.sisu:117:15
     |
-115 |     g_r5(poly(none()), 1)
+117 |     g_r5(poly(none()), 1)
     |               ^^^^
     |
     = help: annotate the result, or write the type: `none<...>(...)`
 
 error[E0154]: `i64` does not conform to `Ir5`
-   --> E0154-repeated-hint.sisu:115:24
+   --> E0154-repeated-hint.sisu:117:24
     |
-112 | fn g_r5<T: Ir5, U>(_a: Two<A7<T?>, Three<Two<U?, U?>, Two<[T], [T]>, Two<U?, U?>>>, _b: T) {}
+114 | fn g_r5<T: Ir5, U>(_a: Two<A7<T?>, Three<Two<U?, U?>, Two<[T], [T]>, Two<U?, U?>>>, _b: T) {}
     |            --- required by this bound
 ...
-115 |     g_r5(poly(none()), 1)
+117 |     g_r5(poly(none()), 1)
     |                        ^
 
 error[E0154]: `i64` does not conform to `Ir7`
-   --> E0154-repeated-hint.sisu:124:24
+   --> E0154-repeated-hint.sisu:126:24
     |
-121 | fn g_r7<T: Ir7>(_a: Two<A7<T?>, Three<Two<[T], [T]>, Two<Two<T, T>?, Two<T, T>?>, Two<T?, T?>>>, _b: T) {}
+123 | fn g_r7<T: Ir7>(_a: Two<A7<T?>, Three<Two<[T], [T]>, Two<Two<T, T>?, Two<T, T>?>, Two<T?, T?>>>, _b: T) {}
     |            --- required by this bound
 ...
-124 |     g_r7(poly(none()), 1)
+126 |     g_r7(poly(none()), 1)
     |                        ^
 
 error[E0032]: expected `i64`, found `bool`
-   --> E0154-repeated-hint.sisu:133:17
+   --> E0154-repeated-hint.sisu:135:17
     |
-133 |     g_t5(poly_y(true, none()), 1)
+135 |     g_t5(poly_y(true, none()), 1)
     |                 ^^^^
 
 error[E0050]: cannot infer `T` for `none`
-   --> E0154-repeated-hint.sisu:133:23
+   --> E0154-repeated-hint.sisu:135:23
     |
-133 |     g_t5(poly_y(true, none()), 1)
+135 |     g_t5(poly_y(true, none()), 1)
     |                       ^^^^
     |
     = help: annotate the result, or write the type: `none<...>(...)`
 
 error[E0154]: `i64` does not conform to `It5`
-   --> E0154-repeated-hint.sisu:133:32
+   --> E0154-repeated-hint.sisu:135:32
     |
-130 | fn g_t5<T: It5>(_a: Two<A7<Two<T, T>?>, Three<Two<Two<T, T>?, i64>, Two<T?, i64>, Two<Two<T, T>?, i64>>>?, _b: T) {}
+132 | fn g_t5<T: It5>(_a: Two<A7<Two<T, T>?>, Three<Two<Two<T, T>?, i64>, Two<T?, i64>, Two<Two<T, T>?, i64>>>?, _b: T) {}
     |            --- required by this bound
 ...
-133 |     g_t5(poly_y(true, none()), 1)
+135 |     g_t5(poly_y(true, none()), 1)
     |                                ^
 
 sisu: 19 errors
