@@ -1,0 +1,20 @@
+error[E0131]: `let ... else` always matches here
+  --> E0131-let-else-name-error.sisu:10:9
+   |
+10 |     let v = w else { missing(); return }
+   |         ^
+   |
+help: remove the `else` block
+   |
+10 -     let v = w else { missing(); return }
+10 +     let v = w
+   |
+
+error[E0052]: cannot find function `missing`
+  --> E0131-let-else-name-error.sisu:10:22
+   |
+10 |     let v = w else { missing(); return }
+   |                      ^^^^^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0052, E0131

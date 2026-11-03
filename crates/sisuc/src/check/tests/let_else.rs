@@ -185,21 +185,266 @@ fn let_else_should_warn_when_nothing_reads_the_name() {
     assert_eq!(codes, [Code::UnusedVariable]);
 }
 
-/// A name has nothing to compare, so E0051 offers `==` only for a pattern that is a value.
+/// Each row is a value, a line that tests it with a pattern, and whether E0051 on that line gives
+/// a help. Only a literal of the type of the value is a value to compare with `==`: not a name, a
+/// call, a range, an `|`, a variant, a literal of another type or a literal that does not fit
+/// (`300` and `-1` on a `u8`).
 #[test]
-fn let_else_on_a_plain_value_should_offer_a_comparison_only_for_a_literal_pattern() {
-    let src = |line: &str| format!("fn main() {{\n    let z = 5\n    {line}\n}}");
-    for (line, help) in [
-        ("let w = z else { return }", false),
-        ("let mut n = z else { return }", false),
-        ("if let x = z {}", false),
-        ("let 3 = z else { return }", true),
-    ] {
-        let ds = diags(&src(line));
+fn plain_value_patterns_should_offer_a_comparison_only_for_a_literal_of_its_type() {
+    const ROWS: [(&str, &str, bool); 36] = [
+        ("let v = 5", "let 1 = v else { return }", true),
+        ("let v = 5", "let -1 = v else { return }", true),
+        ("let v = 5", "let 1..3 = v else { return }", false),
+        ("let v = 5", "let 1 | 2 = v else { return }", false),
+        ("let v = 5", "let g(x) = v else { return }", false),
+        ("let v = 5", "let None = v else { return }", false),
+        ("let v = 5", "let Some(x) = v else { return }", false),
+        ("let v = 5", "let \"a\" = v else { return }", false),
+        ("let v = 5", "let true = v else { return }", false),
+        ("let v = 5", "let x = v else { return }", false),
+        ("let v = 5", "let _ = v else { return }", false),
+        ("let v = 5", "let x..y = v else { return }", false),
+        ("let v = 5", "if let 1 = v {}", true),
+        ("let v = 5", "if let 1..3 = v {}", false),
+        ("let v = 5", "if let g(x) = v {}", false),
+        ("let v = 5", "while let 1 = v {}", true),
+        ("let v = 5", "while let 1..3 = v {}", false),
+        ("let v = 5", "let 1 = v", true),
+        ("let v = 5", "let g(x) = v", false),
+        ("let v: u8 = 5", "let 3 = v else { return }", true),
+        ("let v: u8 = 5", "let 0 = v else { return }", true),
+        ("let v: u8 = 5", "let 255 = v else { return }", true),
+        ("let v: u8 = 5", "let 256 = v else { return }", false),
+        ("let v: u8 = 5", "let 300 = v else { return }", false),
+        ("let v: u8 = 5", "let -1 = v else { return }", false),
+        ("let v: u8 = 5", "let -0 = v else { return }", false),
+        ("let v: u8 = 5", "let 'a' = v else { return }", false),
+        ("let v: N = 5", "let 1 = v else { return }", true),
+        ("let v = true", "let false = v else { return }", true),
+        ("let v = true", "let 1 = v else { return }", false),
+        ("let v = \"s\"", "let \"t\" = v else { return }", true),
+        ("let v = \"s\"", "let 't' = v else { return }", false),
+        ("let v = 'c'", "let 'd' = v else { return }", true),
+        ("let v = 'c'", "let 'a'..'z' = v else { return }", false),
+        ("let v = C(n: 1)", "let 1 = v else { return }", false),
+        ("let v = [1]", "let 1 = v else { return }", false),
+    ];
+    for (value, line, help) in ROWS {
+        let src = format!(
+            "class C {{\n    n: i64\n}}\ntype N = i64\nfn main() {{\n    {value}\n    {line}\n}}"
+        );
+        let ds = diags(&src);
         let d = (ds.iter().find(|d| d.code() == Code::UnwrapNeedsOptional))
-            .unwrap_or_else(|| panic!("{line}: {ds:?}"));
-        assert_eq!(d.help().is_some(), help, "{line}");
+            .unwrap_or_else(|| panic!("row `{value}`, `{line}`: {ds:?}"));
+        assert_eq!(d.help().is_some(), help, "row `{value}`, `{line}`");
     }
+}
+
+/// The enums of `always_matching_names_should_offer_a_plain_let`: `E` has two variants and
+/// `Only` has one, so a name or `_` on either always matches.
+const ALWAYS: &str = "enum E {\n    A(n: i64)\n    B\n}\nenum Only {\n    One\n}\n";
+
+/// A function header, its body, whether E0131 gives a help, the fix of E0131 as whether it is safe
+/// and the body after the edit, and the codes of the other diagnostics of the program.
+type AlwaysRow = (
+    &'static str,
+    &'static str,
+    bool,
+    Option<(bool, &'static str)>,
+    &'static [Code],
+);
+
+/// The rows of `always_matching_names_should_offer_a_plain_let`.
+const SIG: &str = "fn f(w: E, o: Only) {";
+const INT: &str = "fn f(w: E) -> i64 {";
+const ALWAYS_ROWS: [AlwaysRow; 26] = [
+    (
+        SIG,
+        "let v = w else { return }",
+        false,
+        Some((true, "let v = w")),
+        &[],
+    ),
+    (
+        SIG,
+        "let _ = w else { return }",
+        false,
+        Some((true, "let _ = w")),
+        &[],
+    ),
+    (
+        SIG,
+        "let mut v = w else { return }",
+        false,
+        Some((false, "let mut v = w")),
+        &[],
+    ),
+    (
+        SIG,
+        "let v = w else { return; }",
+        false,
+        Some((false, "let v = w")),
+        &[],
+    ),
+    (
+        SIG,
+        "let v = (w) else { return }",
+        false,
+        Some((true, "let v = (w)")),
+        &[],
+    ),
+    (
+        SIG,
+        "let v = o else { return }",
+        false,
+        Some((true, "let v = o")),
+        &[],
+    ),
+    (
+        SIG,
+        "let v = w else {\n        return\n    }",
+        false,
+        Some((true, "let v = w")),
+        &[],
+    ),
+    (
+        INT,
+        "let v = w else { return 0 }\n    1",
+        false,
+        Some((true, "let v = w\n    1")),
+        &[],
+    ),
+    (
+        SIG,
+        "loop { let v = w else { break } }",
+        false,
+        Some((false, "loop { let v = w }")),
+        &[],
+    ),
+    (
+        INT,
+        "loop { let v = w else { break } }",
+        false,
+        Some((false, "loop { let v = w }")),
+        &[Code::BodyHasNoValue],
+    ),
+    (
+        SIG,
+        "loop { let v = w else { continue } }",
+        false,
+        Some((true, "loop { let v = w }")),
+        &[],
+    ),
+    (
+        SIG,
+        "outer: loop {\n        loop { let v = w else { break outer } }\n    }",
+        false,
+        Some((false, "outer: loop {\n        loop { let v = w }\n    }")),
+        &[],
+    ),
+    (
+        SIG,
+        "let v = w else { panic(\"no\") }",
+        false,
+        Some((false, "let v = w")),
+        &[],
+    ),
+    (
+        SIG,
+        "let v = w else { missing(); return }",
+        false,
+        Some((false, "let v = w")),
+        &[Code::FunctionNotFound],
+    ),
+    (
+        INT,
+        "let v = w else { return }\n    1",
+        false,
+        Some((false, "let v = w\n    1")),
+        &[Code::ReturnNeedsValue],
+    ),
+    (
+        SIG,
+        "let v = w else { }",
+        false,
+        Some((false, "let v = w")),
+        &[Code::LetElseCanFinish],
+    ),
+    (
+        SIG,
+        "let v = w else {\n        // why\n        return\n    }",
+        false,
+        Some((false, "let v = w")),
+        &[],
+    ),
+    (SIG, "let One = o else { return }", true, None, &[]),
+    (SIG, "let One(n) = o else { return }", true, None, &[]),
+    (SIG, "if let v = w { print(1) }", true, None, &[]),
+    (
+        SIG,
+        "if let _ = w { print(1) } else { print(2) }",
+        true,
+        None,
+        &[],
+    ),
+    (SIG, "if let One(n) = o { print(n) }", true, None, &[]),
+    (SIG, "while let v = w { return }", false, None, &[]),
+    (SIG, "while let _ = w { return }", false, None, &[]),
+    (SIG, "while let One(n) = o { return }", false, None, &[]),
+    (SIG, "let A(n) | B(n) = w else { return }", true, None, &[]),
+];
+/// A name or `_` always matches an enum value, and a plain `let` does the same: a `let ... else`
+/// offers to remove its `else` block, and an `if let` has a help. The fix is safe only when it
+/// removes nothing but the `else` block and a diagnostic of the block. A pattern that takes the
+/// value apart keeps the help to use `match`, and `while let` has none. The text of the help and
+/// the fix is in the fixtures `E0131-if-let-name` and `E0131-let-else-name`.
+#[test]
+fn always_matching_names_should_offer_a_plain_let() {
+    for (head, body, help, fix, others) in ALWAYS_ROWS {
+        let src = format!("{ALWAYS}{head}\n    {body}\n}}\nfn main() {{}}");
+        let ds = diags(&src);
+        let row = format!("row `{body}` in `{head}`: {ds:?}");
+        let (always, rest): (Vec<_>, Vec<_>) =
+            ds.iter().partition(|d| d.code() == Code::AlwaysMatches);
+        let [d] = always.as_slice() else {
+            panic!("{row}");
+        };
+        assert_eq!(d.help().is_some(), help, "{row}");
+        let rest: Vec<_> = rest.iter().map(|d| d.code()).collect();
+        assert_eq!(rest, others, "{row}");
+        let Some((safe, after)) = fix else {
+            assert!(d.fixes().is_empty(), "{row}");
+            continue;
+        };
+        let [offered] = d.fixes() else {
+            panic!("{row}");
+        };
+        assert_eq!(offered.safe(), safe, "{row}");
+        let want = src.replacen(body, after, 1);
+        let fixed = offered.apply(&src);
+        assert_eq!(fixed, want, "{row}");
+        if safe {
+            let codes: Vec<_> = diags(&fixed).iter().map(Diagnostic::code).collect();
+            assert_eq!(codes, others, "fixed: {row}");
+        }
+    }
+}
+
+/// `let mut` keeps its name judged: a name that nothing changes gets W0002, which the fix of
+/// E0131 would remove (the plain `let` would get W0014 in its place), so the fix is unsafe.
+#[test]
+fn let_mut_else_on_an_always_matching_name_should_keep_its_unused_warning() {
+    judge_unused();
+    let src = format!(
+        "{ALWAYS}fn f(w: E) {{\n    let mut v = w else {{ return }}\n    match v {{\n        A(n) => print(n)\n        B => print(0)\n    }}\n}}\nfn main() {{\n    f(E.B)\n}}"
+    );
+    let ds = diags(&src);
+    let codes: Vec<_> = ds.iter().map(Diagnostic::code).collect();
+    assert_eq!(codes, [Code::AlwaysMatches, Code::NeverReassigned]);
+    let [fix] = ds[0].fixes() else {
+        panic!("{ds:?}");
+    };
+    assert!(!fix.safe(), "{ds:?}");
 }
 
 /// A program whose `main` ends with `line` at line 17: the enum `E` has `A` and `B`, `Only` has

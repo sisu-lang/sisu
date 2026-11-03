@@ -1,0 +1,8 @@
+error[E0051]: `let ... else` needs an enum or an optional; this is `i64`
+ --> E0051-range-pattern.sisu:5:16
+  |
+5 |     let x..y = 5 else { return }
+  |                ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0051

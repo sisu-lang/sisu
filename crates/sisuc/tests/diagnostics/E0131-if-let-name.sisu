@@ -1,0 +1,15 @@
+// GIVEN a function `f` whose line 10 is `if let v = w { print(v) }` on an enum value, with the pattern at 10:12
+// WHEN `sisu check` runs on it
+// THEN it reports E0131 at 10:12 with the help "use a plain `let`" and no fix
+enum E {
+    A(n: i64)
+    B
+}
+
+fn f(w: E) {
+    if let v = w { print(v) }
+}
+
+fn main() {
+    f(E.B)
+}
