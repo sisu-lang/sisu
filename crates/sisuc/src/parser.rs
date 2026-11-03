@@ -2685,9 +2685,10 @@ impl<'a> Parser<'a> {
 
     /// Moves the innermost loop, whose header has just been read, to its body.
     fn enter_loop_body(&mut self) {
-        if let Some(part) = self.loops.last_mut() {
-            part.header = false;
-        }
+        self.loops
+            .last_mut()
+            .expect("the loop's own part should still be open after its header")
+            .header = false;
     }
 
     /// The loop label after `break` or `continue`: a name, when it is an open loop label or
@@ -3654,11 +3655,11 @@ impl<'a> Parser<'a> {
     /// The token index of an `else` after `value`, the value of a `let`, on its line or on a later
     /// one. A value that ends in an `if` without `else` keeps it: the `else` is that `if`'s.
     fn else_after(&self, value: &Expr) -> Option<usize> {
-        let at = self.pos
-            + self.tokens[self.pos..]
-                .iter()
-                .position(|t| t.kind != TokenKind::Newline)?;
-        (self.tokens[at].kind == TokenKind::Else && !ends_in_open_if(value)).then_some(at)
+        self.tokens[self.pos..]
+            .iter()
+            .position(|t| t.kind != TokenKind::Newline)
+            .map(|n| self.pos + n)
+            .filter(|&at| self.tokens[at].kind == TokenKind::Else && !ends_in_open_if(value))
     }
 
     /// Whether an `else` of the statement that starts at token `first` is not the `else` of an
@@ -7631,6 +7632,16 @@ mod tests {
             expr_err("let mut Rect { w, h } = s else { return }"),
             (Code::Expected, 1, 17)
         );
+    }
+
+    /// GIVEN a `let` pattern with a `:` and no type after it
+    /// WHEN the parser reads it
+    /// THEN the error is the plain one of the missing type, not the one of a typed `let`
+    #[test]
+    fn let_pattern_with_a_colon_and_no_type_should_report_the_missing_type() {
+        let src = "fn main() {\n    let Some(w): = o else { return }\n}";
+        assert_eq!(parse_err(src), (Code::Expected, 2, 18));
+        assert_eq!(parse_diagnostic(src).fixes(), []);
     }
 
     #[test]
