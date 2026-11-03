@@ -248,6 +248,16 @@ fn string_get_with_a_label_should_be_e0055_at_the_label() {
     }
 }
 
+/// GIVEN a string's `get` with a label, as a statement whose value nothing reads
+/// WHEN the program is checked
+/// THEN it reports E0055 at the label only: the poisoned call has a type, but no unused-value
+/// warning follows
+#[test]
+fn string_get_with_a_label_should_not_warn_of_an_unused_value() {
+    let src = main_with("let s = \"abc\"\n    s.get(nope: 0..1)");
+    codes(&src, &[(Code::LabeledArgument, (3, 11))]);
+}
+
 /// GIVEN a string's `get` with an argument that is no range written in the call, and with no
 ///       argument or two
 /// WHEN the program is checked
@@ -337,11 +347,15 @@ fn assignment_to_a_range_index_should_be_e0021_at_the_range_index() {
 
 /// GIVEN an assignment to an element of a range index of a string
 /// WHEN the program is checked
-/// THEN it reports E0068 at the substring, once: a string has no single index
+/// THEN it reports E0068 at the substring, once, and the span is the whole substring `s[0..2]`,
+/// not the string `s` alone
 #[test]
 fn assignment_to_an_element_of_a_string_range_should_be_e0068() {
     let src = main_with("let mut s = \"abc\"\n    s[0..2][0] = 'x'\n    print(s)");
     codes(&src, &[(Code::CannotIndex, (3, 5))]);
+    let (_, ds) = checked(&src);
+    let span = ds[0].span();
+    assert_eq!(&src[span.start()..span.end()], "s[0..2]");
 }
 
 /// The base of a range target reports its own mistake once, and the bounds are not checked.

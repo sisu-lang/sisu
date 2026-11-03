@@ -2545,6 +2545,74 @@ mod tests {
         assert_eq!(gets, [true; 6], "an index from -1 through len + 1");
     }
 
+    /// GIVEN an `[i64]` local `xs` in scope on the turn of the safe-element rule
+    /// WHEN the generator writes an `i64` at the deepest nesting, and below it
+    /// THEN it reads `xs` through `first`, `last` or `get` below the deepest nesting only
+    #[test]
+    fn a_safe_element_should_not_be_written_at_the_deepest_nesting() {
+        let ty = Ty::Array(Box::new(Ty::I64));
+        for nesting in [0, MAX_NESTING] {
+            let mut g = Gen::new(&[0; 32]);
+            g.scope
+                .vars
+                .push(Var::new("xs".to_string(), ty.clone(), false, 4, 0, 0));
+            g.nesting = nesting;
+            g.expressions = SAFE_ELEMENT_EVERY - 1;
+            g.expr(&Ty::I64, MAX_SIZE);
+            let text = &g.w.out.program;
+            assert_eq!(
+                text.starts_with("(xs.") && text.contains(" ?? "),
+                nesting < MAX_NESTING,
+                "{nesting}: {text}"
+            );
+        }
+    }
+
+    /// GIVEN an `[i64]` local `xs` of size 4 in scope
+    /// WHEN the range rule writes a range over many bytes of data, with room for 4, and with room
+    /// for 3
+    /// THEN some range is of `xs` with room for 4, where it fits exactly, and none with room for 3
+    #[test]
+    fn a_slice_should_take_a_local_that_fits_and_only_one() {
+        let ty = Ty::Array(Box::new(Ty::I64));
+        for (max, expected) in [(4, true), (3, false)] {
+            let mut of_xs = false;
+            for byte in 0..=255_u8 {
+                let bytes: Vec<u8> = (0..32_u8)
+                    .map(|i| byte.wrapping_mul(i + 1).wrapping_add(i))
+                    .collect();
+                let mut g = Gen::new(&bytes);
+                g.scope
+                    .vars
+                    .push(Var::new("xs".to_string(), ty.clone(), false, 4, 0, 0));
+                g.rule(Rule::Slice, &ty, max, false);
+                of_xs |= g.w.out.program.contains("xs[");
+            }
+            assert_eq!(of_xs, expected, "room for {max}");
+        }
+    }
+
+    /// GIVEN the generator's offset rule
+    /// WHEN it writes from many bytes of data
+    /// THEN it writes the largest `i64` now and then, and otherwise a number below 100
+    #[test]
+    fn an_offset_should_sometimes_be_the_largest_i64_and_otherwise_small() {
+        let (mut largest, mut small) = (false, false);
+        for byte in 0..=255_u8 {
+            let bytes: Vec<u8> = (0..32_u8)
+                .map(|i| byte.wrapping_mul(i + 1).wrapping_add(i))
+                .collect();
+            let text = Gen::new(&bytes).offset();
+            if text == i64::MAX.to_string() {
+                largest = true;
+            } else {
+                assert!(text.parse::<u64>().is_ok_and(|n| n < 100), "{text}");
+                small = true;
+            }
+        }
+        assert!(largest && small, "largest {largest}, small {small}");
+    }
+
     /// GIVEN the generator's substring rule on `string`, with no string local in scope
     /// WHEN it writes from many bytes of data
     /// THEN it writes either `get` of a string that the block binds, with a default, or an index of
