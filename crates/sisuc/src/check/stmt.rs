@@ -554,8 +554,8 @@ impl Checker<'_> {
         }
         let removal = Span::new(value.span.end(), else_block.span.end());
         let safe = mutable.is_none()
-            && self.diagnostics.len() == before
             && is_plain_exit(else_block)
+            && self.diagnostics.len() == before
             && !self.comment_in(&[removal.range()])
             && !self.source.text(removal).contains(';');
         let (bound, _) = self.bind_pattern_as(
