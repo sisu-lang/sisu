@@ -12,9 +12,9 @@ import unittest
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mutants.sh')
 # A pre-commit hook runs these tests with GIT_DIR and its kin set to the outer repository.
-# A caller's LOG and CARGO_MUTANTS_JOBS would change what the script does.
+# A caller's LOG, CARGO_MUTANTS_JOBS and MUTANTS_PASS2_TIMEOUT would change what the script does.
 ENV = {k: v for k, v in os.environ.items()
-       if not k.startswith('GIT_') and k not in ('LOG', 'CARGO_MUTANTS_JOBS')}
+       if not k.startswith('GIT_') and k not in ('LOG', 'CARGO_MUTANTS_JOBS', 'MUTANTS_PASS2_TIMEOUT')}
 # The fake cargo mutants records its jobs, niceness and arguments (to `args`, or to `args2`
 # for a run with --iterate), and whether an old mutants.out was there. Unless FAKE_WRITE is 0,
 # it then writes a new mutants.out with the result files that the test names in FAKE_CAUGHT,
@@ -133,6 +133,24 @@ class Mutants(unittest.TestCase):
         self.assertEqual(self.last_line(),
                          f'mutation-test: PASS: 3 caught, 0 unviable, 0 missed, 1 timeouts (HEAD {self.head()})')
 
+    def test_a_timeout_of_the_first_pass_should_be_tested_again_in_the_second_pass(self):
+        self.rust_commit()
+        run = self.mutate(caught=3, timeout=1, exit=3, pass2_caught=1, pass2_timeout=0, pass2_exit=0)
+        self.assertEqual(run.returncode, 0)
+        with open(os.path.join(self.repo, 'args2'), encoding='utf-8') as f:
+            args2 = f.read().split()
+        self.assertEqual(args2[args2.index('--timeout') + 1], '600')
+        self.assertEqual(self.last_line(),
+                         f'mutation-test: PASS: 4 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.head()})')
+
+    def test_a_timeout_of_the_second_pass_should_still_count_as_caught(self):
+        self.rust_commit()
+        run = self.mutate(caught=3, timeout=2, exit=3, pass2_caught=1, pass2_timeout=1, pass2_exit=3)
+        self.assertEqual(run.returncode, 0)
+        self.assertTrue(self.seen('args2'))
+        self.assertEqual(self.last_line(),
+                         f'mutation-test: PASS: 4 caught, 0 unviable, 0 missed, 1 timeouts (HEAD {self.head()})')
+
     def test_a_missed_mutant_should_fail_even_with_a_timeout(self):
         self.rust_commit()
         run = self.mutate(caught=1, missed=2, timeout=1, exit=3)
@@ -249,6 +267,29 @@ class Mutants(unittest.TestCase):
         self.mutate('--iterate', missed=1, exit=2, pass2_caught=1, pass2_missed=0, pass2_exit=0)
         with open(os.path.join(self.repo, 'args2'), encoding='utf-8') as f:
             self.assertEqual(f.read().split().count('--iterate'), 1)
+
+    def pass2_args(self, *args, env=None):
+        self.rust_commit()
+        self.mutate(*args, env=env, missed=1, exit=2, pass2_caught=1, pass2_missed=0, pass2_exit=0)
+        with open(os.path.join(self.repo, 'args2'), encoding='utf-8') as f:
+            return f.read().split()
+
+    def test_the_second_pass_should_wait_600_seconds_for_each_mutant(self):
+        args2 = self.pass2_args()
+        self.assertEqual(args2[args2.index('--timeout') + 1], '600')
+        with open(os.path.join(self.repo, 'args'), encoding='utf-8') as f:
+            self.assertNotIn('--timeout', f.read())
+
+    def test_mutants_pass2_timeout_should_change_the_wait_of_the_second_pass(self):
+        args2 = self.pass2_args(env={'MUTANTS_PASS2_TIMEOUT': '90'})
+        self.assertEqual(args2[args2.index('--timeout') + 1], '90')
+
+    def test_a_timeout_given_by_the_caller_should_replace_the_wait_of_the_second_pass(self):
+        for given in (['--timeout', '30'], ['--timeout=30'], ['-t', '30'], ['--timeout-multiplier', '3']):
+            with self.subTest(given=given):
+                args2 = self.pass2_args(*given)
+                self.assertEqual(sum(a.startswith(('--timeout', '-t')) for a in args2), 1)
+                self.assertNotIn('600', args2)
 
     def test_cargo_should_get_output_dot_to_beat_the_environment_and_a_config_file(self):
         self.rust_commit()

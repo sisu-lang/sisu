@@ -1,5 +1,7 @@
 """Tests for build.py. Run them with `uv run --locked --script site/build.py --test`."""
+import contextlib
 import html
+import io
 import re
 import tempfile
 import unittest
@@ -537,6 +539,22 @@ class Build(unittest.TestCase):
                     self.assertEqual(found, [])
                 else:
                     self.assert_fails('decisions.html', found)
+
+    def test_decisions_should_check_adr_rows_without_building(self):
+        adrs = {'docs/adr/0001-first.md': '# First\n', 'docs/adr/0002-second.md': '# Second\n'}
+        listed = adr_row('0001', 'first', 'First') + adr_row('0002', 'second', 'Second')
+        cases = [('complete', listed, True), ('new ADR has no row', adr_row('0001', 'first', 'First'), False),
+                 ('row only in a comment', adr_row('0001', 'first', 'First') + '\n<!-- ' + adr_row('0002', 'second', 'Second') + ' -->\n', False)]
+        for name, rows, ok in cases:
+            with self.subTest(name):
+                fake_site(self, {'decisions.html': f'Title\nMeta\n<ul>{rows}</ul>\n'}, adrs)
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    status = build.main(['--decisions'])
+                self.assertEqual(status, 0 if ok else 1, out.getvalue())
+                if not ok:
+                    self.assertIn('decisions.html: lists docs/adr/0002-second.md 0 times, not once', out.getvalue())
+                self.assertFalse((build.SITE / '_site').exists())
 
     def test_adr_needs_a_heading(self):
         fake_site(self, {}, {'docs/adr/0001-first.md': 'No heading.\n'})

@@ -1,0 +1,17 @@
+enum Dir {
+    North
+}
+
+class Pair<A> {
+    a: A
+}
+
+extend<A: AnyObject> Pair<A>: Eq {
+    fn eq(self, other: Pair<A>) -> bool {
+        self.a is other.a
+    }
+}
+
+fn main() {
+    print([Pair(a: Dir.North)].contains(Pair(a: Dir.North)))
+}
