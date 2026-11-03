@@ -3976,6 +3976,39 @@ fn a_faulty_argument_through_a_failed_choice_should_report_only_its_own_fault() 
     }
 }
 
+/// A parameter that only an `any` context binds still meets its bound: the call reports that the
+/// `any` type does not conform, once, at the call. An argument that names the associated type of
+/// the parameter then reports nothing more.
+#[test]
+fn an_any_context_should_check_the_bound_of_the_parameter_it_binds() {
+    let program = "interface Source {\n    type Item\n    fn next(self) -> Item?\n}\ninterface Show {\n    fn show(self) -> string\n}\nclass Wrap<T> {\n    value: T\n}\nfn mk<S: Source>(x: Wrap<S.Item>) -> S { panic(\"x\") }\nfn mk_opt<S: Source>(x: Wrap<S.Item>) -> S? { panic(\"x\") }\nfn mk_plain<S: Source>(x: Wrap<i64>) -> S { panic(\"x\") }\nfn take(s: any Show) {}\nfn main() {\n    ";
+    for local in [
+        "let a: any Show = mk(Wrap(value: 5))",
+        "let a: any Show = mk(Wrap(value: Wrap(value: 5)))",
+        "let a: (any Show)? = mk_opt(Wrap(value: 5))",
+        "take(mk(Wrap(value: 5)))",
+        // No argument names `S`.
+        "let a: any Show = mk_plain(Wrap(value: 5))",
+    ] {
+        let at = 5 + local.find("mk").expect("the local should call `mk`");
+        codes_row(
+            local,
+            &format!("{program}{local}\n}}\n"),
+            &[(Code::NotConform, (16, at))],
+        );
+    }
+}
+
+/// A choice that does not meet the bound of its associated type is reported once, at the choice.
+/// A call whose argument names an associated type of that choice fails after the one report.
+#[test]
+fn a_call_through_a_choice_that_fails_its_bound_should_fail_after_the_one_report() {
+    codes(
+        "interface Source {\n    type Item\n}\ninterface Outer {\n    type Inner: Source\n}\nclass Wrap<T> {\n    value: T\n}\nclass Two<A, B> {\n    a: A\n    b: B\n}\nclass H: Outer {\n    type Inner = i64\n    n: i64\n}\nfn deep<O: Outer>(x: Two<O, Wrap<O.Inner.Item>>) -> i64 { 1 }\nfn main() {\n    let a = deep(Two(a: H(n: 1), b: Wrap(value: 5)))\n}\n",
+        &[(Code::NotConform, (15, 18))],
+    );
+}
+
 /// An associated type whose choice leads back to the associated type itself has no type. It is
 /// reported once, at the choice that closes the loop, however many calls use it, and the calls
 /// that use it fail without a second report. The same choices with a chain that ends are clean.
