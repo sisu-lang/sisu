@@ -2164,9 +2164,9 @@ impl Checker<'_> {
                 ..Poisoned::error()
             });
         };
-        // An argument that keeps its E0050 under a hint fails like any failed argument: the
+        // An argument that keeps its E0050 under a hint fails like any failed argument. The
         // other arguments and the written type arguments still bind the parameters. The call
-        // fails only when the hint alone binds a parameter that the argument names: that type
+        // fails only when the hint alone binds a parameter that the argument names. That type
         // is the hint's, not a type that anyone wrote.
         if self.hint_alone_binds_kept(&call, sig) {
             return Err(Poisoned::kept_error());
@@ -2184,12 +2184,11 @@ impl Checker<'_> {
     }
 
     /// Whether the call, which is the hinted value, has a parameter that an argument names and
-    /// that the hint alone binds, while that argument has no type because it kept its E0050. An
-    /// argument has kept it when it is `Err` with `Poisoned::kept`, or is a generic call whose
-    /// E0050 is still open (see `Misfit`). No other argument that has a type names the
-    /// parameter, and no type argument that the call writes binds it. A type that a sibling
-    /// gives as an expected type is a type, so it is not the hint. The work is linear in the
-    /// arguments.
+    /// that the hint alone binds. That argument has no type because it kept its E0050. It has
+    /// kept it when it is `Err` with `Poisoned::kept`, or is a generic call whose E0050 is still
+    /// open (see `Misfit`). No other argument that has a type names the parameter, and no type
+    /// argument that the call writes binds it. A type that a sibling gives as an expected type
+    /// is a type, so it is not the hint. The work is linear in the arguments.
     fn hint_alone_binds_kept(&self, call: &Inference<'_>, sig: &GenericSig<'_>) -> bool {
         let kept = |slot: &Option<Checked>| {
             slot.as_ref()

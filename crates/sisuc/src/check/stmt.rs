@@ -30,9 +30,9 @@ pub(super) struct BlockSoFar {
     failed: bool,
     /// Whether "unreachable code" is reported, or moot.
     warned: bool,
-    /// The value, if it failed: whether it rejected the type expected of it, what it found and
-    /// could not meet its context with (see `Misfit`), and whether a generic call in it kept
-    /// its E0050. A statement before the value leaves none of this.
+    /// The value, if it failed. It records whether the value rejected the type expected of it.
+    /// It records what the value found and could not meet its context with (see `Misfit`).
+    /// It records whether a generic call in it kept its E0050. A statement before it leaves none.
     value: Option<Poisoned>,
     /// How many of the block's statements are checked.
     done: usize,

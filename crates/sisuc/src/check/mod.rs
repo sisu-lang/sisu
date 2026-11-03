@@ -69,8 +69,8 @@ use unused_names::{Owner, Pending, Use, Used};
 ///
 /// A generic call that cannot meet its context is `Error` too, but it keeps the type it found
 /// in `found`. A block, a branch and a safe call keep that field for the code that uses the value.
-/// A value in which a generic call kept its E0050 has `kept` set. A block, a branch, unary `-` and
-/// a number operator keep that field for the code that uses the value.
+/// A value in which a generic call kept its E0050 has `kept` set. A block, a branch, unary `-`,
+/// a number operator, and a call that fails on an unbound parameter, keep that field too.
 struct Poisoned {
     ty: Option<Type>,
     /// Whether the expected type passed down was rejected (a `None` that is not optional, a
@@ -82,9 +82,9 @@ struct Poisoned {
     /// What a generic call found for its result, which cannot meet the call's context. Only a
     /// report reads it. Every other check sees `Error`.
     found: Option<Misfit>,
-    /// A generic call in the value kept its E0050, which is its only report, so the value has no
-    /// type of its own to hold the code that uses it to: that code adds no report for the
-    /// default type of an operator. Unary `-` keeps its type.
+    /// A generic call in the value kept its E0050, which is its only report. The value has no
+    /// type, so it holds the code that uses it to nothing. That code adds no report for the
+    /// default type of an operator.
     kept: bool,
 }
 

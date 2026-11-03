@@ -212,9 +212,11 @@ impl Checker<'_> {
                     UnaryOp::Neg => self.negated(e.span, operand, expected)?,
                     UnaryOp::Not => (Type::BOOL, self.operand(operand, Some(Type::BOOL))),
                 };
-                // `-` of a value that kept its E0050 keeps it, with its own type.
-                let kept = *op == UnaryOp::Neg && is_kept(&operand);
-                let result = typed(
+                // `-` of a value that kept its E0050 keeps it, as an operator does.
+                if *op == UnaryOp::Neg && is_kept(&operand) {
+                    return Err(Poisoned::kept_error());
+                }
+                typed(
                     e.span,
                     want,
                     mismatched,
@@ -226,8 +228,7 @@ impl Checker<'_> {
                             operand: Box::new(operand),
                         },
                     }),
-                );
-                result.map_err(|poisoned| Poisoned { kept, ..poisoned })
+                )
             }
             ExprKind::Binary {
                 op,

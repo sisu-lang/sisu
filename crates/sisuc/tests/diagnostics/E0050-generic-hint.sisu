@@ -50,8 +50,8 @@ fn coalesce_call_then_string(o: i64?) {
     let w: string = z
 }
 
-// Guards: a type that the user wrote, or a sum that has one, or an integer literal first, as in
-// the concrete twin, holds the call to it.
+// Guards: a type that the user wrote holds the call to it. So does a sum that has one, or an
+// integer literal first, as in the concrete twin.
 fn written_i64() { let z: i64 = id(mk2()) + id(mk2()) }
 fn literal_first() { let z = 1 + id(mk2()) }
 fn chain_literal_first() { let z = 0 < id(mk2()) < 10 }
@@ -79,7 +79,7 @@ fn branch_then_string(c: bool) {
 fn typed_sum_first(x: i64) { let z = (x + 1) + id(mk2()) }
 
 // A value is kept only by its own E0050. An E0050 beside it, in a block statement or an earlier
-// operand, does not make the value fail, and the default `i64` of an operator is no one's type.
+// operand, does not make the value fail. The default `i64` of an operator is no one's type.
 fn pair<T>(a: T, b: T) -> T { a }
 class K {
     fn g<T>(self, t: T) -> T { t }
@@ -215,7 +215,7 @@ fn pair_with_block_then_string(x: u8) {
     let w: string = z
 }
 
-// Guards: the E0050 of a value stays its only report.
+// Guards: the concrete twin gives these outputs too.
 fn compare_call_array_compare() { let z = mk2() < [] < 2 }
 fn compare_call_none() { let z = mk2() < None }
 fn coalesce_concrete_call_then_string(o: i64?) {
@@ -227,8 +227,8 @@ fn literal_first_call_then_string() {
     let w: string = z
 }
 
-// Only a value that kept its E0050 is kept: a value that failed with its own report is not, and
-// the code that uses it adds nothing for the default `i64`.
+// Only a value that kept its E0050 is kept. A value that failed with its own report is not kept,
+// and the operator treats it as any failed operand.
 fn snd<T, U>(a: T, b: T) -> U { panic("no") }
 fn join_of_failures_then_call(c: bool) { let z = (if c { nope } else { nope }) + id(mk2()) }
 fn coalesce_join_of_failures_then_string(c: bool, o: i64?) {
@@ -255,8 +255,8 @@ fn result_from_hint_then_string(x: u8) {
     let w: string = z
 }
 
-// A leader that the operator does not take is reported against the operator's list, and the call
-// beside it keeps its E0050: the operator's `i64` is a hint to the call, not a type that was written.
+// A leader that the operator does not take is reported against the operator's list. The call
+// beside it keeps its E0050, because the operator's `i64` is a hint to it, not a written type.
 enum E {
     A
     B
@@ -295,8 +295,8 @@ fn literal_plus_call_minus_bool(b: bool) { let z = 1 + id(mk2()) - b }
 fn concrete_plus_optional_u8(o: u8?) { let z = mk2() + o }
 fn concrete_plus_optional_i64(o: i64?) { let z = mk2() + o }
 
-// `-` of a value that kept its E0050 keeps it, as an operator does: the code that uses it adds no
-// report for the default `i64`.
+// `-` of a value that kept its E0050 keeps it, as an operator does. The code that uses it adds
+// no report for the default `i64`.
 fn block_negated_sum_then_u8(x: u8) { let z = { -(id(mk2()) + 1) } + x }
 fn branch_negated_sums_then_u8(c: bool, x: u8) {
     let z = (if c { -(id(mk2()) + 1) } else { -(id(mk2()) + 1) }) + x
