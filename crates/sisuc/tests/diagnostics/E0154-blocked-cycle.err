@@ -1,0 +1,11 @@
+error[E0154]: `Chain` does not conform to `Eq`
+  --> E0154-blocked-cycle.sisu:22:11
+   |
+ 9 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
+...
+22 |     print(xs.contains(Chain.Leaf(Node(v: 1))))
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `contains` needs `Chain: Eq`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154

@@ -12,7 +12,7 @@ pub(crate) use registry::{
     BoundSite, BuiltIn, CannotExtendForm, ClashForm, ClashKind, Code, ConformanceForm, Conversion,
     Definition, DiagnosticKind, Earlier, ElseOf, Expected, ForeignPattern, ForeignRange, GuardHelp,
     Hop, Immutable, Implied, InterfaceBodyForm, Join, LetField, Literal, LiteralKind, MainForm,
-    MatchIdiomForm, MathFix, Member, MethodReceiver, MismatchFix, MismatchSource, NanFix,
+    Make, MatchIdiomForm, MathFix, Member, MethodReceiver, MismatchFix, MismatchSource, NanFix,
     NestingForm, NoOperatorForm, NotAny, NotConformForm, NotInterface, Operand, Owner, Panic, Peel,
     PeelIs, PeelLayers, PowerFix, PrecisionHelp, PrintProblem, RETIRED, ReceiverArgument, SpecForm,
     SpecLimit, Spelled, TypedLiteral, Unbuilt, Ungenerated, UnknownForm, Unwrap, UnwrapHelp,

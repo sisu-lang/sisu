@@ -12,7 +12,7 @@ use super::{
 use crate::ast;
 use crate::conformance::{CHOICE_DEPTH_LIMIT, Entered, Generated, ensure_stack, find, generated};
 use crate::diagnostic::{
-    AddBound, BlockNeed, BoundLabel, BoundSite, Definition as Kind, DiagnosticKind, Implied,
+    AddBound, BlockNeed, BoundLabel, BoundSite, Definition as Kind, DiagnosticKind, Implied, Make,
     NoOperatorForm, NotConformForm, NotInterface, UnknownForm, WideKind,
 };
 use crate::graph::{components, cycle_through};
@@ -31,7 +31,7 @@ pub(super) struct BoundAdvice {
     pub(super) leaf: Type,
     pub(super) label: Option<BoundLabel>,
     /// The class or enum that the help shows how to give a conformance.
-    pub(super) make: Option<String>,
+    pub(super) make: Option<Make>,
     pub(super) add: Option<AddBound>,
 }
 
@@ -1490,6 +1490,64 @@ impl Checker<'_> {
         found.unwrap_or(ty)
     }
 
+    /// The part to change so that `leaf`, the part that `failing_leaf` gives, meets `interface`
+    /// with `args`, and the interface it must meet. A class or an enum that writes a conformance
+    /// whose bound fails is not the part to change: the part is inside it, behind that bound.
+    /// The walk goes into a conformance only when each bound that fails leads to the same part,
+    /// because one change to that part is then the whole fix. It goes on into that part while the
+    /// part has a written conformance whose bound fails. `None` when `leaf` has no such
+    /// conformance, when the bounds that fail of a conformance on the walk lead to different
+    /// parts, or when the walk comes back to a part it has seen: `failing_leaf` goes into the
+    /// payloads of an enum, which are not arguments of its type, so a part can reach itself.
+    ///
+    /// The walk takes one step for each written conformance it goes into, each with the cached
+    /// answers of `conforms` and `failing_leaf` for each bound of that conformance. It runs on the
+    /// path of an error only.
+    pub(super) fn blocked_part(
+        &mut self,
+        leaf: Type,
+        interface: InterfaceId,
+        args: TypeArgs,
+    ) -> Option<(Type, InterfaceId, TypeArgs)> {
+        let mut seen = FxHashSet::default();
+        let mut part = (leaf, interface, args);
+        let mut blocked = false;
+        while let Some((k, stands)) = find(&self.conformances, part.1, part.0, part.2)
+            .filter(|&(k, stands)| !self.record_holds(part.1, k, stands))
+        {
+            if !seen.insert(part) {
+                return None;
+            }
+            #[cfg(test)]
+            super::BLOCKED_STEPS.set(super::BLOCKED_STEPS.get() + 1);
+            let (_, bounds) = (self.conformance_bounds.get(&(part.1, k)))
+                .expect("a conformance that a type does not meet should have bounds")
+                .clone();
+            let mut next = None;
+            for (i, bound) in
+                (bounds.iter().enumerate()).flat_map(|(i, b)| b.iter().map(move |&b| (i, b)))
+            {
+                let args = self.subst_args(bound.args, stands.get());
+                if self.conforms(stands.get()[i], bound.interface, args) {
+                    continue;
+                }
+                let step = (
+                    self.failing_leaf(stands.get()[i], bound.interface, args),
+                    bound.interface,
+                    args,
+                );
+                if next.is_some_and(|next| next != step) {
+                    return None;
+                }
+                next = Some(step);
+            }
+            part = next
+                .expect("a conformance that a type does not meet should have a bound that fails");
+            blocked = true;
+        }
+        blocked.then_some(part)
+    }
+
     /// Closes the strongly connected component that is on `walk.stack` from `from`: each of its
     /// types takes `answer` as its final answer. Each of them reaches the type that closes the
     /// component, and so reaches all that the walk of that type reached. A type that already has
@@ -1502,10 +1560,11 @@ impl Checker<'_> {
     }
 
     /// The report that `ty`, the type of the operand at `at`, has no `op`, which `interface` (`Eq`
-    /// or `Ord`) gives. It is E0139 when the part that fails (`failing_leaf`) is a type
-    /// parameter, with the help to bound it. Else it is `NoOperator`, which names the part, and
-    /// helps only when the part has no conformance at all, a class or an enum that does not write
-    /// one. A part with a conformance whose bound fails says which bound.
+    /// or `Ord`) gives. It is E0139, with the help to bound it, when the part to change is a type
+    /// parameter: either the part that fails (`failing_leaf`), or the part behind a written
+    /// conformance whose bound `add_bound` can write. Else it is `NoOperator`, which names the
+    /// part, and helps only when the part has no conformance at all, a class or an enum that does
+    /// not write one. A part with a conformance whose bound fails says which bound.
     pub(super) fn missing_operator(
         &mut self,
         at: Span,
@@ -1514,12 +1573,18 @@ impl Checker<'_> {
         interface: InterfaceId,
     ) -> DiagnosticKind {
         let leaf = self.failing_leaf(ty, interface, TypeArgs::NONE);
-        if is_parameter(leaf) {
+        // A part behind the bound of a written conformance is the part to change.
+        let blocked = self.blocked_part(leaf, interface, TypeArgs::NONE);
+        let (fix, wants, wants_args) = blocked.unwrap_or((leaf, interface, TypeArgs::NONE));
+        let add = self.add_bound(fix, wants);
+        // A blocked parameter with no help to write keeps the `needs` label of E0159, which is
+        // the only text that names the bound.
+        if is_parameter(fix) && (blocked.is_none() || add.is_some()) {
             return DiagnosticKind::ParamLacks {
                 ty: self.type_name(ty),
                 op: op.to_string(),
                 at,
-                add: self.add_bound(leaf, interface),
+                add,
             };
         }
         let record = find(&self.conformances, interface, leaf, TypeArgs::NONE);
@@ -1527,9 +1592,7 @@ impl Checker<'_> {
             .filter(|&(k, stands)| !self.record_holds(interface, k, stands))
             .map(|(k, stands)| self.failed_bound(interface, k, stands));
         // A class or an enum with no conformance can get one.
-        let make = (record.is_none()
-            && matches!(leaf.kind(), TypeKind::Class(..) | TypeKind::Enum(..)))
-        .then(|| self.type_name(leaf));
+        let make = self.make_for(fix, wants, wants_args);
         let object = matches!(ty.kind(), TypeKind::Optional(inner) if inner == leaf) || ty == leaf;
         let any_object = self.lang.any_object;
         let form = match make {
@@ -1538,17 +1601,15 @@ impl Checker<'_> {
                     is: self.conforms(ty, any_object, TypeArgs::NONE),
                 }
             }
-            Some(make)
+            Some(Make { ty: make, .. })
                 if object
+                    && blocked.is_none()
                     && matches!(leaf.kind(), TypeKind::Class(..))
                     && interface == self.lang.eq =>
             {
                 NoOperatorForm::Identity { make }
             }
-            make => NoOperatorForm::Operator {
-                make,
-                interface: self.interfaces[interface.0].name.name.to_string(),
-            },
+            make => NoOperatorForm::Operator { make },
         };
         DiagnosticKind::NoOperator {
             ty: self.type_name(ty),
@@ -1763,6 +1824,24 @@ impl Checker<'_> {
         false
     }
 
+    /// The help to make `part` conform to `interface` with `args`: a class or an enum with no
+    /// conformance to it. Only a class conforms to `AnyObject`, so no help can make a class or an
+    /// enum conform to it.
+    pub(super) fn make_for(
+        &self,
+        part: Type,
+        interface: InterfaceId,
+        args: TypeArgs,
+    ) -> Option<Make> {
+        (matches!(part.kind(), TypeKind::Class(..) | TypeKind::Enum(..))
+            && interface != self.lang.any_object
+            && find(&self.conformances, interface, part, args).is_none())
+        .then(|| Make {
+            ty: self.type_name(part),
+            interface: self.bound_text(interface, args),
+        })
+    }
+
     /// What the report of a bound that `ty` fails says besides the failure: the part of `ty` that
     /// fails, and the help to make it meet `interface`. `prelude` is whether the prelude writes
     /// the bound: no label points into the prelude, so the call names the bound. A bound that the
@@ -1778,13 +1857,16 @@ impl Checker<'_> {
     ) -> BoundAdvice {
         // The bound goes to the type parameter inside `ty` that makes it fail: `T` for `[T?]`.
         let leaf = self.failing_leaf(ty, interface, args);
-        let add = self.add_bound(leaf, interface);
-        // A class or an enum with no conformance gets the help to write one.
+        // A class or an enum that writes a conformance whose bound fails is not the part to
+        // change: the help is for the part behind that bound.
+        let (fix, wants, wants_args) =
+            (self.blocked_part(leaf, interface, args)).unwrap_or((leaf, interface, args));
+        let add = self.add_bound(fix, wants);
+        // `none` is for the label: `make_for` decides the help to write a conformance.
         let none = matches!(leaf.kind(), TypeKind::Class(..) | TypeKind::Enum(..))
             && find(&self.conformances, interface, leaf, args).is_none();
-        // Only a class conforms to `AnyObject`: no help can make a class or an enum conform.
         let class_only = interface == self.lang.any_object;
-        let make = (none && !class_only).then(|| self.type_name(leaf));
+        let make = self.make_for(fix, wants, wants_args);
         let part_fails = leaf != ty
             && (none || matches!(leaf.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)));
         let part = part_fails.then(|| self.type_name(leaf));
