@@ -619,7 +619,7 @@ class ScalingTest(unittest.TestCase):
             'float left': (lambda t: depth(line(t, 'let x'), '(', ')'), 0),
             'string left': (lambda t: depth(line(t, 'let x'), '(', ')'), 0),
             'string call depth': (lambda t: depth(line(t, 'let x'), '(', ')'), 0),
-            'comments': (lambda t: t.count('// c'), 1),
+            'comments': (lambda t: sum(row.lstrip().startswith('//') for row in t.splitlines()), 1),
         }
         self.assertEqual(list(parts), list(sc.SHAPES))
         for name, (_, make) in sc.SHAPES.items():
