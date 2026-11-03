@@ -178,6 +178,7 @@ const REACH: &[&str] = &[
     "reach: a generic variant is built with inferred type arguments",
     "reach: a generic type is a type argument",
     "reach: an optional is a type argument",
+    "reach: a call with no arguments takes an `any` type argument from its context",
     "reach: a type has one `?` layer",
     "reach: a type has two or more `?` layers",
     "reach: `??` on an optional of an optional",
@@ -254,6 +255,8 @@ const JUMPS: &[&str] = &[
     "let-else block continue",
     "let-else block panic",
     "let-else block if",
+    "let-else mut",
+    "let-else alternatives bind",
     "?? return",
     "?? break",
     "?? continue",
@@ -1602,12 +1605,15 @@ impl Walk {
                 mutable,
             } => self.ast_let(mutable.is_some(), name.name.as_str(), ty.as_ref(), init),
             ast::StmtKind::LetElse {
+                mutable,
                 pattern,
                 value,
                 else_block,
-                ..
             } => {
                 self.mark("ast::StmtKind::LetElse");
+                if mutable.is_some() {
+                    self.mark("let-else mut");
+                }
                 self.ast_pattern(pattern);
                 self.ast_expr(value);
                 if let Some(block) = else_block {
@@ -2365,8 +2371,15 @@ impl Walk {
                     self.tir_expr(scrutinee, Parent::Other);
                     match test {
                         tir::LetElseTest::Some { .. } => self.mark("tir::LetElseTest::Some"),
-                        tir::LetElseTest::Match { pattern, .. } => {
+                        tir::LetElseTest::Match {
+                            pattern, bindings, ..
+                        } => {
                             self.mark("tir::LetElseTest::Match");
+                            if matches!(pattern.kind, tir::PatternKind::Or(_))
+                                && !bindings.is_empty()
+                            {
+                                self.mark("let-else alternatives bind");
+                            }
                             self.tir_pattern(pattern);
                         }
                     }
@@ -2561,6 +2574,16 @@ impl Walk {
                     .any(|t| matches!(t.kind(), TypeKind::Optional(_)))
                 {
                     self.mark("reach: an optional is a type argument");
+                }
+                if args.is_empty()
+                    && types
+                        .get()
+                        .iter()
+                        .any(|t| matches!(t.kind(), TypeKind::Any(..)))
+                {
+                    self.mark(
+                        "reach: a call with no arguments takes an `any` type argument from its context",
+                    );
                 }
                 self.tir_exprs(args);
             }
@@ -3334,10 +3357,16 @@ fn the_walk_should_mark_let_else_and_a_jump_after_coalesce() {
     let source = "enum Shape {
     Circle(f64)
     Rect(f64, f64)
+    Dot
 }
 
 fn area(s: Shape) -> f64 {
     let Circle(r) = s else { return 0.0 }
+    r
+}
+
+fn side(s: Shape) -> f64 {
+    let Circle(r) | Shape.Rect(r, _) = s else { return 0.0 }
     r
 }
 
@@ -3348,14 +3377,16 @@ fn first(o: i64?) -> i64 {
 
 fn main() {
     let o: i64? = Some(1)
+    let mut m = o else { return }
+    m += 1
     outer: for i in 0..2 {
         let w = o else { if i == 0 { continue outer } else { break outer } }
         let u = o else { break }
         let z = o else { continue }
         print(w + u + z + (o ?? continue) + (o ?? break outer))
     }
-    print(area(Shape.Rect(1.0, 1.0)))
-    print(first(o) + (o ?? return))
+    print(area(Shape.Rect(1.0, 1.0)) + side(Shape.Dot))
+    print(first(o) + (o ?? return) + m)
 }
 ";
     let mut walk = Walk::default();

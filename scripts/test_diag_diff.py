@@ -39,11 +39,11 @@ class DiagDiff(unittest.TestCase):
         self.assertEqual(status, 1)
         lines = out.getvalue().splitlines()
         self.assertEqual([line.split(':')[0] for line in lines if not line.startswith(' ')][:-1],
-                         ['newly accepted', 'changed', 'changed', 'newly rejected'])
+                         ['newly accepted', 'crash', 'changed', 'newly rejected'])
         self.assertIn('  head: crash 101:0', lines)
         self.assertIn('  head: E0032 2:5 +2:10', lines)
-        self.assertEqual(lines[-1], 'diag_diff: 5 programs, 2 changed, 1 newly accepted, '
-                                    '1 newly rejected')
+        self.assertEqual(lines[-1], 'diag_diff: 5 programs, 1 changed, 1 crash, '
+                                    '1 newly accepted, 1 newly rejected')
 
     def test_reports_the_programs_of_every_directory_once(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -57,6 +57,18 @@ class DiagDiff(unittest.TestCase):
                                  os.path.join(tmp, 'b', 'c'))
         self.assertEqual(status, 0)
         self.assertEqual(out.getvalue(), 'diag_diff: 3 programs, no differences\n')
+
+    def test_reports_a_program_that_crashes_both_builds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            open(os.path.join(tmp, 'crash.sisu'), 'w').close()
+            sisu = fake_sisu(tmp, 'sisu', {})
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                status = dd.main(sisu, sisu, tmp)
+        self.assertEqual(status, 1)
+        lines = out.getvalue().splitlines()
+        self.assertTrue(lines[0].startswith('crash: '), lines)
+        self.assertEqual(lines[-1], 'diag_diff: 1 programs, 1 crash')
 
 
 if __name__ == '__main__':

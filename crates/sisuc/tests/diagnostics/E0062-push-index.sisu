@@ -1,0 +1,5 @@
+fn main() {
+    let mut ys: [[i64]?] = [[1]]
+    ys[0].push(2)
+    print(ys.len())
+}

@@ -706,6 +706,9 @@ pub(crate) enum DiagnosticKind {
         literal: Literal,
         /// What the `let` that the literal initializes writes before its type, for the example.
         binding: Option<String>,
+        /// The whole type for the example (`[char]` or `string?`), when a later use of the
+        /// local gives one. Without it, the example writes `...` for the type.
+        ty: Option<String>,
         at: Span,
         /// For the `None` that starts the right side of a `??`, the offset where the left side
         /// of that `??` starts: `??` groups to the right, and parentheses from there to `at`
@@ -817,7 +820,7 @@ pub(crate) enum DiagnosticKind {
         write: bool,
         /// For a `?.` on an optional of an optional: the optional it leaves, which has no members.
         peel: Option<Peel>,
-        /// What the help says to unwrap, when `access` is `None`.
+        /// What the help says to unwrap.
         unwrap: UnwrapHelp,
     },
     /// The `kind` member `name`, at `at`, which `owner` does not have.
@@ -2034,12 +2037,12 @@ pub(crate) struct Peel {
     pub(crate) member: String,
 }
 
-/// What the help of a `MayBeNone` without a `?.` fix tells the user to unwrap with `if let`.
+/// What the help of a `MayBeNone` tells the user to unwrap with `if let`.
 #[derive(Clone)]
 pub(crate) enum UnwrapHelp {
     /// The optional itself.
     It,
-    /// The object, as written, of the `?.` that makes an element place optional.
+    /// The object, as written, of the `?.` that makes an element place or a pushed array optional.
     Object(String),
     /// Nothing: no `if let` of the optional gives a place that can be written.
     Nothing,
@@ -3859,17 +3862,26 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::CannotInfer {
                 literal,
                 binding,
+                ty,
                 at,
                 regroup,
             } => {
                 let (literal, example) = match (literal, binding) {
                     (Literal::None, name) => (
                         "None",
-                        format!("let {}: i64? = None", name.as_deref().unwrap_or("x")),
+                        format!(
+                            "let {}: {} = None",
+                            name.as_deref().unwrap_or("x"),
+                            ty.as_deref().unwrap_or("...?")
+                        ),
                     ),
                     (Literal::EmptyArray, name) => (
                         "[]",
-                        format!("let {}: [i64] = []", name.as_deref().unwrap_or("xs")),
+                        format!(
+                            "let {}: {} = []",
+                            name.as_deref().unwrap_or("xs"),
+                            ty.as_deref().unwrap_or("[...]")
+                        ),
                     ),
                 };
                 let d = Diagnostic::coded(code, at, format!("cannot infer the type of `{literal}`"));
@@ -4102,10 +4114,16 @@ impl From<DiagnosticKind> for Diagnostic {
                         } else {
                             "if a `None` result is fine, use `?.`"
                         };
-                        d.with_help(
-                            "to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`",
-                        )
-                        .with_fix(unsafe_fix(fix, access, "?."))
+                        let d = match unwrap {
+                            UnwrapHelp::It => d.with_help(
+                                "to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`",
+                            ),
+                            UnwrapHelp::Object(object) => d.with_help(format!(
+                                "to use the value only when it is present, unwrap `{object}` with `if let`, `let ... else` or `?? return`"
+                            )),
+                            UnwrapHelp::Nothing => d,
+                        };
+                        d.with_fix(unsafe_fix(fix, access, "?."))
                     }
                     None => match unwrap {
                         UnwrapHelp::It => {

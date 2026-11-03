@@ -62,34 +62,26 @@ impl Checker<'_> {
         }
         let quiet = expected == Some(UNKNOWN) || self.quiet(span, expected);
         if elements.is_empty() {
-            let (d, mismatch) = match expected {
+            let d = match expected {
                 _ if quiet => return Err(Poisoned::error()),
-                Some(ty) => (
-                    DiagnosticKind::Mismatch {
-                        want: Expected::Types(vec![self.type_name(ty)]),
-                        got: "[]".to_string(),
-                        at: span,
-                        source: self.expected_from(span),
-                        fix: None,
-                        conversion: false,
-                        layers: false,
-                    },
-                    true,
-                ),
-                None => (
-                    DiagnosticKind::CannotInfer {
-                        literal: Literal::EmptyArray,
-                        binding: self.let_binding(span),
-                        at: span,
-                        regroup: None,
-                    },
-                    false,
-                ),
+                Some(ty) => DiagnosticKind::Mismatch {
+                    want: Expected::Types(vec![self.type_name(ty)]),
+                    got: "[]".to_string(),
+                    at: span,
+                    source: self.expected_from(span),
+                    fix: None,
+                    conversion: false,
+                    layers: false,
+                },
+                None => {
+                    self.report_uninferred(Literal::EmptyArray, span);
+                    return Err(Poisoned::error());
+                }
             };
             self.report(d);
             return Err(Poisoned {
                 ty: None,
-                mismatch,
+                mismatch: true,
                 found: None,
             });
         }
