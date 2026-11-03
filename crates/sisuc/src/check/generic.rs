@@ -11,7 +11,7 @@ use super::alias::{Through, Via};
 use super::any;
 use super::expr::{bare_hole, dbg_argument, option_written};
 use super::interface::{Bound, Required};
-use super::mut_args::{MutSite, marked};
+use super::mut_args::{MutParts, MutSite, PlaceShape, marked};
 use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
 use super::stmt::BlockSoFar;
@@ -1672,6 +1672,9 @@ pub(super) struct Inference<'s> {
     /// The parameters bound since `sweep_waiting` took the list last, which wake the arguments
     /// that wait for them.
     bound: Vec<usize>,
+    /// The place of each `mut` argument that checked, by its place among the arguments, until
+    /// `mut_final` compares it with the parameter's final type.
+    pub(super) mut_shapes: Vec<(usize, PlaceShape)>,
 }
 
 mod origins {
@@ -2032,9 +2035,22 @@ impl Checker<'_> {
         args: &[ast::Arg],
         expected: Option<Type>,
     ) -> Result<(Vec<Checked>, TypeArgs, Option<Type>), Poisoned> {
+        self.generic_call_mut(span, sig, written, args, expected, &mut Vec::new())
+    }
+
+    /// `generic_call`, which gives the parts of the `mut` arguments to `parts`.
+    pub(super) fn generic_call_mut(
+        &mut self,
+        span: Span,
+        sig: &GenericSig<'_>,
+        written: (&[ast::TypeExpr], Span),
+        args: &[ast::Arg],
+        expected: Option<Type>,
+        parts: &mut MutParts,
+    ) -> Result<(Vec<Checked>, TypeArgs, Option<Type>), Poisoned> {
         // The context of the quiet value failed, as an `UNKNOWN` one did.
         let expected = expected.or_else(|| self.quiet(span, expected).then_some(UNKNOWN));
-        self.ranked(|c| c.infer_call(span, sig, written, args, expected))
+        self.ranked(|c| c.infer_call(span, sig, written, args, expected, parts))
     }
 
     /// `generic_call`, before what ranking kept is dropped.
@@ -2049,6 +2065,7 @@ impl Checker<'_> {
         (written, angles): (&[ast::TypeExpr], Span),
         args: &[ast::Arg],
         expected: Option<Type>,
+        parts: &mut MutParts,
     ) -> Result<(Vec<Checked>, TypeArgs, Option<Type>), Poisoned> {
         let owned = sig.owner.len();
         let mut call = Inference {
@@ -2062,6 +2079,7 @@ impl Checker<'_> {
             origin: Origins::new(sig.declared.len()),
             early: Early::of(sig),
             bound: Vec::new(),
+            mut_shapes: Vec::new(),
         };
         if !written.is_empty() {
             let Some(list) = self.type_args(sig.name, &sig.declared[owned..], written, angles)
@@ -2082,7 +2100,7 @@ impl Checker<'_> {
         if let Some(site) = sig.mut_site {
             for (i, arg) in args.iter().enumerate() {
                 if site.muts[i] && marked(arg) {
-                    let slot = self.infer_mut_arg(&mut call, arg, i, sig.params[i], site);
+                    let slot = self.infer_mut_arg(&mut call, arg, i, (sig.params[i], site), parts);
                     call.slots[i] = Some(slot);
                 }
             }
@@ -2176,6 +2194,7 @@ impl Checker<'_> {
                 None
             }
         };
+        self.mut_final(&mut call, sig, args, list);
         let Some(list) = list else {
             // What waited for context and has none is checked against a failed one, so it
             // reports only its own mistakes, and uses what ranking kept for it.
@@ -2207,6 +2226,39 @@ impl Checker<'_> {
             .collect();
         let ret = sig.ret.and_then(|ret| self.subst(ret, list.get()));
         Ok((checked, list, ret))
+    }
+
+    /// Compares each `mut` argument's place with its parameter's type once inference is done,
+    /// associated types resolved: the types must be the same, as no conversion applies to a
+    /// `mut` argument, and the unification of the argument took a payload for an optional. A
+    /// place that goes through `?.` is reported here too: its label is picked from the final
+    /// type. `list` is the type arguments, when the call inferred them all.
+    fn mut_final(
+        &mut self,
+        call: &mut Inference<'_>,
+        sig: &GenericSig<'_>,
+        args: &[ast::Arg],
+        list: Option<TypeArgs>,
+    ) {
+        let Some(site) = sig.mut_site else { return };
+        for (i, shape) in std::mem::take(&mut call.mut_shapes) {
+            let pattern = sig.params[i].expect("a `mut` argument should have a parameter type");
+            let want = match list {
+                Some(list) => self
+                    .subst(pattern, list.get())
+                    .and_then(|ty| self.normalize(ty)),
+                None => Some(self.printed(&call.bindings, pattern)),
+            };
+            let Some(want) = want else { continue };
+            let chain = shape.has_chain();
+            if !chain && (list.is_none() || shape.writes(want)) {
+                continue;
+            }
+            self.report_mut_type(&args[i].value, &shape, (site, i), (want, pattern));
+            if !chain {
+                call.slots[i] = Some(mark((Err(Poisoned::error()), true)));
+            }
+        }
     }
 
     /// Whether the call, which is the hinted value, has a parameter that an argument names and

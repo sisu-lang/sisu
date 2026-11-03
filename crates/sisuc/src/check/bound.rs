@@ -53,7 +53,12 @@ impl Checker<'_> {
         let info = &self.interfaces[interface.0];
         let requirement = &info.requirements[method];
         let (params, ret) = (requirement.params.clone(), requirement.ret);
-        let (muts, names) = (requirement.muts.clone(), requirement.param_names.clone());
+        // Only a requirement with a `mut` parameter pays for a site.
+        let (muts, names) = if requirement.muts.contains(&true) {
+            (requirement.muts.clone(), requirement.param_names.clone())
+        } else {
+            (Vec::new(), Vec::new())
+        };
         let name = format!("{}.{}", info.name.name, requirement.name.name);
         let mut declared = info.type_params.clone();
         declared.extend_from_slice(&requirement.own);
@@ -85,13 +90,15 @@ impl Checker<'_> {
             params: &params,
             ret,
             bounds: &bounds,
-            mut_site: Some(&mut_site),
+            mut_site: (!muts.is_empty()).then_some(&mut_site),
         };
+        let mut parts = Vec::new();
+        let written = (site.written, site.angles);
         let (checked, list, ret) =
-            self.generic_call(span, &sig, (site.written, site.angles), args, site.expected)?;
+            self.generic_call_mut(span, &sig, written, args, site.expected, &mut parts)?;
         let (iargs, types) = list.get().split_at(owner.len());
         let (iargs, types) = (TypeArgs::intern(iargs), TypeArgs::intern(types));
-        let parts = self.take_mut_parts(args, &muts);
+        let parts = self.mut_overlaps(parts);
         let failed = labeled || checked.iter().any(mismatched);
         let method =
             u32::try_from(method).expect("an interface should have fewer than 2^32 requirements");

@@ -43,14 +43,15 @@ impl Change {
     fn immutable(self, name: String, at: Span, cause: Immutable) -> DiagnosticKind {
         match self {
             Change::Push => DiagnosticKind::PushToImmutable { name, at, cause },
-            Change::Assign | Change::Element | Change::MutArg => {
-                DiagnosticKind::AssignToImmutable {
-                    name,
-                    at,
-                    element: self == Change::Element,
-                    cause,
-                }
+            Change::MutArg => {
+                unreachable!("a `mut` argument gives its cause back, and reports none")
             }
+            Change::Assign | Change::Element => DiagnosticKind::AssignToImmutable {
+                name,
+                at,
+                element: self == Change::Element,
+                cause,
+            },
         }
     }
 }
@@ -96,12 +97,12 @@ pub(super) struct CheckedPlace {
 
 /// The `?.` along the path of a `mut` argument.
 pub(super) struct Chain {
-    /// The text before the first `?.`.
-    pub(super) name: String,
+    /// The text before the first `?.`, when it is on one line.
+    pub(super) name: Option<String>,
 }
 
 impl CheckedPlace {
-    fn failed() -> Self {
+    pub(super) fn failed() -> Self {
         Self {
             path: None,
             ty: None,

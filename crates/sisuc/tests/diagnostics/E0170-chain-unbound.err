@@ -1,0 +1,13 @@
+error[E0170]: `b?.cells` can be missing, so it cannot be a `mut` argument
+  --> E0170-chain-unbound.sisu:14:11
+   |
+ 8 | fn g<T>(mut x: T) {
+   |             - declared `T` here
+...
+14 |     g(mut b?.cells)
+   |           ^^^^^^^^ this reads as `[i64]?`, but `g` reads and writes back `[i64]`
+   |
+   = help: unwrap `b` with `if let`, and pass the field of the unwrapped object
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0170

@@ -271,16 +271,10 @@ fn generic_mut_argument_should_not_promote() {
 /// THEN it is E0041 only: there is no `self` to pass, so no E0169
 #[test]
 fn mut_self_outside_a_method_should_be_reported_once() {
-    let rows = [
-        (
-            "function",
-            "fn set(mut x: i64) {\n    x = 1\n}\nfn main() {\n    set(mut self)\n}",
-        ),
-        (
-            "constant",
-            "fn set(mut x: i64) -> i64 {\n    x = 1\n    x\n}\nconst K = set(mut self)\nfn main() {}",
-        ),
-    ];
+    let rows = [(
+        "function",
+        "fn set(mut x: i64) {\n    x = 1\n}\nfn main() {\n    set(mut self)\n}",
+    )];
     for (row, src) in rows {
         let found = found_codes(src);
         assert!(

@@ -2090,7 +2090,11 @@ impl fmt::Display for Program {
                 if j > 0 {
                     f.write_str(" ")?;
                 }
-                f.write_str("(")?;
+                f.write_str(if function.locals[param.0].mutable {
+                    "(mut "
+                } else {
+                    "("
+                })?;
                 printer.local(f, *param)?;
                 write!(f, " {})", self.type_name(function.locals[param.0].ty))?;
             }

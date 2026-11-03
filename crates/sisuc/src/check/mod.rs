@@ -961,8 +961,6 @@ struct Body {
     /// The receiver of a `push` that `push_receiver` checked as a place, at its span, until the
     /// method call takes it.
     pushed: Option<(Span, place::CheckedPlace)>,
-    /// Each `mut` argument that checked, by the span of its place, until its call takes it.
-    mut_parts: FxHashMap<Span, (mut_args::MutPart, mut_args::MutPlaceKey)>,
     /// Whether the body has a `todo`, which keeps its parameters from W0014.
     todo: bool,
     /// Work ranking arguments did ahead of its turn, innermost last, by the span it was done

@@ -8,7 +8,7 @@ use rustc_hash::{FxBuildHasher, FxHashMap};
 use super::expr::local;
 use super::generic::mark;
 use super::place::{Chain, Change, CheckedPlace, Path, Root, build};
-use super::{Checked, Checker, Poisoned, UNKNOWN, block_expr};
+use super::{Checked, Checker, Poisoned, UNKNOWN, block_expr, type_of};
 use crate::ast;
 use crate::diagnostic::{ChainForm, ChainLabel, DiagnosticKind, NotPlace};
 use crate::parser::{is_place, is_range_target};
@@ -53,6 +53,18 @@ pub(super) struct MutPart {
     /// The place as written.
     span: Span,
 }
+
+/// The types of the place of a `mut` argument, for E0170.
+pub(super) struct PlaceShape {
+    /// The type that the place stores.
+    write: Type,
+    /// The type that the place reads as: a `?.` of its root field makes it an optional.
+    read: Type,
+    chain: Option<Chain>,
+}
+
+/// The parts of the `mut` arguments of a call that checked, each with its key, in argument order.
+pub(super) type MutParts = Vec<(MutPart, MutPlaceKey)>;
 
 /// The root of a `mut` place. `Temp` is a root that is no binding: a call's result.
 #[derive(Clone, Copy, Debug)]
@@ -207,6 +219,29 @@ pub(super) fn twice(keys: &[MutPlaceKey]) -> Vec<(usize, usize, Overlap)> {
     found
 }
 
+impl PlaceShape {
+    /// Whether the place stores `ty`.
+    pub(super) fn writes(&self, ty: Type) -> bool {
+        self.write == ty
+    }
+
+    /// Whether the place goes through `?.`.
+    pub(super) fn has_chain(&self) -> bool {
+        self.chain.is_some()
+    }
+}
+
+impl CheckedPlace {
+    /// The types of the place, which stores `write`.
+    fn shape(&mut self, write: Type) -> PlaceShape {
+        PlaceShape {
+            write,
+            read: self.value_ty().unwrap_or(write),
+            chain: self.chain.take(),
+        }
+    }
+}
+
 impl Checker<'_> {
     /// The place that the `mut` argument `arg` names: a `let mut` local or `mut` parameter, a
     /// `mut` field of a class object, or an element of one. Why it is none otherwise, with no
@@ -218,10 +253,15 @@ impl Checker<'_> {
             // As a `push` onto a range does: the bound alone is reported, with no warning that
             // the root is never reassigned.
             self.stamp_push(arg);
-            drop(self.expr(arg, Some(UNKNOWN)));
-            return Err(NotPlace::Range);
+            let string = type_of(&self.expr(arg, Some(UNKNOWN))) == Some(Type::STRING);
+            return Err(NotPlace::Range { string });
         }
         if matches!(arg.kind, ast::ExprKind::SelfValue) {
+            // Outside a method there is no `self` to pass: E0041 says so.
+            if self.body.self_type.is_none() {
+                drop(self.expr(arg, Some(UNKNOWN)));
+                return Ok(CheckedPlace::failed());
+            }
             let class = matches!(
                 self.body.self_type.map(Type::kind),
                 Some(TypeKind::Class(..))
@@ -244,8 +284,8 @@ impl Checker<'_> {
         Ok(place)
     }
 
-    /// The text before the first `?.` of the place `e`.
-    fn chain_head(&self, mut e: &ast::Expr) -> String {
+    /// The text before the first `?.` of the place `e`, when it is on one line.
+    fn chain_head(&self, mut e: &ast::Expr) -> Option<String> {
         let mut head = e;
         loop {
             match &e.kind {
@@ -256,7 +296,11 @@ impl Checker<'_> {
                     e = base;
                 }
                 ast::ExprKind::Index { base, .. } => e = base,
-                _ => return self.source.text(head.span).to_string(),
+                _ => {
+                    return self
+                        .one_line(head.span)
+                        .then(|| self.source.text(head.span).to_string());
+                }
             }
         }
     }
@@ -306,50 +350,65 @@ impl Checker<'_> {
         }
     }
 
-    /// Reports E0170 for the `mut` argument `arg` at `at`, whose place has `found` as its type
-    /// as a value and the parameter has `want`.
-    fn report_mut_type(
+    /// Reports E0170 for the `mut` argument `arg` at place `at`, whose place has the types of
+    /// `shape` and whose parameter has the type `want` once inference is done. `declared_as` is
+    /// the parameter's type as it is declared.
+    pub(super) fn report_mut_type(
         &mut self,
         arg: &ast::Expr,
-        place: &CheckedPlace,
+        shape: &PlaceShape,
         (site, at): (&MutSite<'_>, usize),
         (want, declared_as): (Type, Type),
     ) {
-        let found = place.value_ty().or(place.ty).unwrap_or(want);
         let name = site.names.get(at).map(|n| n.name.to_string());
         let declared = site
             .names
             .get(at)
             .map(|n| n.span)
             .filter(|span| !span.in_prelude());
-        let chain = place.chain.as_ref().map(|chain| {
-            let label = match (place.ty, Some(found)) {
-                (write, read) if write == Some(want) && read == write => ChainLabel::NoPlace {
+        let chain = shape.chain.as_ref().map(|chain| {
+            // A type that still names a parameter says nothing: the place's own write type
+            // stands for the parameter's.
+            let want = if want.has_param() || want.holds_hole() {
+                shape.write
+            } else {
+                want
+            };
+            let label = if want == shape.write && want == shape.read {
+                ChainLabel::NoPlace {
                     head: chain.name.clone(),
-                },
-                (write, _) if write == Some(want) => ChainLabel::WriteType,
-                (_, read) if read == Some(want) => ChainLabel::WritesNone {
+                }
+            } else if want == shape.write {
+                ChainLabel::WriteType
+            } else if want == shape.read {
+                ChainLabel::WritesNone {
                     field: match &arg.kind {
                         ast::ExprKind::Field { name, .. } => name.name.to_string(),
                         _ => String::new(),
                     },
-                },
-                _ => ChainLabel::Other,
+                }
+            } else {
+                ChainLabel::Other
             };
-            let help = (Self::chain_steps(arg) == 1
-                && matches!(label, ChainLabel::WriteType | ChainLabel::NoPlace { .. }))
-            .then(|| {
-                format!(
-                    "unwrap `{}` with `if let`, and pass the field of the unwrapped object",
-                    chain.name
-                )
+            let shown = self
+                .one_line(arg.span)
+                .then(|| self.source.text(arg.span).to_string());
+            let help = chain.name.as_ref().filter(|_| {
+                shown.is_some()
+                    && Self::chain_steps(arg) == 1
+                    && matches!(label, ChainLabel::WriteType | ChainLabel::NoPlace { .. })
             });
-            ChainForm {
-                shown: self.source.text(arg.span).to_string(),
-                label,
-                help,
-            }
+            let help = help.map(|head| {
+                format!("unwrap `{head}` with `if let`, and pass the field of the unwrapped object")
+            });
+            ChainForm { shown, label, help }
         });
+        let found = shape.read;
+        let want = if chain.is_some() && (want.has_param() || want.holds_hole()) {
+            shape.write
+        } else {
+            want
+        };
         let promotes = chain.is_none()
             && !matches!(found.kind(), TypeKind::Optional(_))
             && matches!(want.kind(), TypeKind::Optional(_))
@@ -371,21 +430,31 @@ impl Checker<'_> {
     }
 
     /// The temp that stands for the `mut` argument `arg` in its call, and the part that the call
-    /// takes with it. The temp is the argument's value in the call.
-    fn mut_slot(&mut self, arg: &ast::Arg, place: CheckedPlace, ty: Type) -> tir::Expr {
+    /// takes with it, which goes to `parts`. The temp is the argument's value in the call.
+    pub(super) fn mut_slot(
+        &mut self,
+        arg: &ast::Arg,
+        place: CheckedPlace,
+        parts: &mut MutParts,
+    ) -> tir::Expr {
+        let ty = place
+            .ty
+            .expect("a place that a `mut` argument takes should have a type");
         let path = place
             .path
             .expect("a place that a `mut` argument takes should have a path");
         let key = self.mut_key(&path);
         let temp = self.fresh(ty);
         let span = arg.value.span;
-        let part = MutPart {
-            path,
-            temp,
-            ty,
-            span,
-        };
-        self.body.mut_parts.insert(span, (part, key));
+        parts.push((
+            MutPart {
+                path,
+                temp,
+                ty,
+                span,
+            },
+            key,
+        ));
         local(temp, ty, span)
     }
 
@@ -396,63 +465,59 @@ impl Checker<'_> {
         arg: &ast::Arg,
         at: usize,
         want: Option<Type>,
-        site: &MutSite<'_>,
+        (site, parts): (&MutSite<'_>, &mut MutParts),
     ) -> Checked {
-        let Some(place) = self.mut_place_reported(&arg.value) else {
+        let Some(mut place) = self.mut_place_reported(&arg.value) else {
             return Err(Poisoned::error());
         };
         let (Some(want), Some(have)) = (want, place.ty) else {
             return Err(Poisoned::error());
         };
         if place.chain.is_some() || want != have {
-            self.report_mut_type(&arg.value, &place, (site, at), (want, want));
+            let shape = place.shape(have);
+            self.report_mut_type(&arg.value, &shape, (site, at), (want, want));
             return mark((Err(Poisoned::error()), true));
         }
-        Ok(self.mut_slot(arg, place, have))
+        Ok(self.mut_slot(arg, place, parts))
     }
 
     /// `mut_arg` for a generic call: the place's type binds the parameters that the parameter's
-    /// type `pattern` names, before any other argument does.
+    /// type `pattern` names, before any other argument does. Whether the place has exactly the
+    /// parameter's type once inference is done is `Checker::mut_final`'s to say, as the
+    /// unification accepts a payload where the parameter is an optional, and leaves an
+    /// associated type to its conformance.
     pub(super) fn infer_mut_arg(
         &mut self,
         call: &mut super::generic::Inference<'_>,
         arg: &ast::Arg,
         at: usize,
-        pattern: Option<Type>,
-        site: &MutSite<'_>,
+        (pattern, site): (Option<Type>, &MutSite<'_>),
+        parts: &mut MutParts,
     ) -> Checked {
-        let Some(place) = self.mut_place_reported(&arg.value) else {
+        let Some(mut place) = self.mut_place_reported(&arg.value) else {
             return Err(Poisoned::error());
         };
         let (Some(pattern), Some(have)) = (pattern, place.ty) else {
             return Err(Poisoned::error());
         };
-        if place.chain.is_some() {
-            let want = self.printed(&call.bindings, pattern);
-            self.report_mut_type(&arg.value, &place, (site, at), (want, pattern));
+        let shape = place.shape(have);
+        if shape.chain.is_some() {
+            call.mut_shapes.push((at, shape));
             return mark((Err(Poisoned::error()), true));
         }
         if !self.bind_param(call, pattern, have, arg.value.span) {
             let want = self.printed(&call.bindings, pattern);
-            self.report_mut_type(&arg.value, &place, (site, at), (want, pattern));
+            self.report_mut_type(&arg.value, &shape, (site, at), (want, pattern));
             return mark((Err(Poisoned::error()), true));
         }
-        Ok(self.mut_slot(arg, place, have))
+        call.mut_shapes.push((at, shape));
+        Ok(self.mut_slot(arg, place, parts))
     }
 
-    /// The parts of the `mut` arguments in `args`, in argument order, which `muts` says are at
-    /// `mut` places. Reports each argument whose place is the place of an earlier one, or holds
-    /// it, or is held by it (E0171).
-    pub(super) fn take_mut_parts(&mut self, args: &[ast::Arg], muts: &[bool]) -> Vec<MutPart> {
-        if !muts.contains(&true) {
-            return Vec::new();
-        }
-        let (parts, keys): (Vec<MutPart>, Vec<MutPlaceKey>) = args
-            .iter()
-            .zip(muts)
-            .filter(|&(arg, &mutable)| mutable && marked(arg))
-            .filter_map(|(arg, _)| self.body.mut_parts.remove(&arg.value.span))
-            .unzip();
+    /// Reports each `mut` argument of a call whose place is the place of an earlier one, or
+    /// holds it, or is held by it (E0171). Gives the parts, in argument order.
+    pub(super) fn mut_overlaps(&mut self, taken: MutParts) -> Vec<MutPart> {
+        let (parts, keys): (Vec<MutPart>, Vec<MutPlaceKey>) = taken.into_iter().unzip();
         for (first, second, how) in twice(&keys) {
             let (a, b) = (&parts[first], &parts[second]);
             let (shown, inside) = match how {

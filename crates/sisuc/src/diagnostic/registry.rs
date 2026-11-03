@@ -2796,15 +2796,15 @@ pub(crate) enum NotPlace {
     SelfValue { class: bool },
     /// A value that is no place: a call, a literal.
     Temporary,
-    /// A range index.
-    Range,
+    /// A range index, which gives a new `string` where `string` is set, else a new array.
+    Range { string: bool },
 }
 
 /// The `?.` form of `MutArgumentType`: the place reads as an optional and is written as what
 /// the field stores.
 pub(crate) struct ChainForm {
-    /// The place as written.
-    pub(crate) shown: String,
+    /// The place as written, when it is on one line.
+    pub(crate) shown: Option<String>,
     pub(crate) label: ChainLabel,
     /// A sentence for the help, when unwrapping the object gives a place that fits.
     pub(crate) help: Option<String>,
@@ -2817,7 +2817,7 @@ pub(crate) enum ChainLabel {
     /// The parameter has the type that the place reads as, and the field `field` cannot hold it.
     WritesNone { field: String },
     /// The place reads as what it is written as: no place exists when `head` is `None`.
-    NoPlace { head: String },
+    NoPlace { head: Option<String> },
     /// Any other type.
     Other,
 }
@@ -3695,12 +3695,25 @@ impl From<DiagnosticKind> for Diagnostic {
                             "`{callee}` can write `None` back, and the field `{field}` cannot \
                              hold `None`"
                         ),
-                        ChainLabel::NoPlace { head } => format!(
-                            "`{head}` can be `None`, and then there is no place to store back to"
-                        ),
+                        ChainLabel::NoPlace { head } => {
+                            let head = head.map_or_else(
+                                || "the object".to_string(),
+                                |head| format!("`{head}`"),
+                            );
+                            format!(
+                                "{head} can be `None`, and then there is no place to store back to"
+                            )
+                        }
                     };
-                    let message =
-                        format!("`{shown}` can be missing, so it cannot be a `mut` argument");
+                    let message = match shown {
+                        Some(shown) => {
+                            format!("`{shown}` can be missing, so it cannot be a `mut` argument")
+                        }
+                        None => {
+                            "a path through `?.` can be missing, so it cannot be a `mut` argument"
+                                .to_string()
+                        }
+                    };
                     (Diagnostic::coded(code, at, message).with_label(label), help)
                 } else {
                     let message = match name {
@@ -6267,9 +6280,10 @@ fn immutable_cause(d: Diagnostic, name: &str, element: bool, cause: &Immutable) 
     }
 }
 
-/// The indefinite article before the type `ty`: "an" before a vowel letter.
+/// The indefinite article before the type `ty`: "an" before a vowel letter, except `u`, which
+/// the types `u8` and the like say as "you".
 fn indefinite(ty: &str) -> &'static str {
-    if ty.starts_with(['a', 'e', 'i', 'o', 'u']) {
+    if ty.starts_with(['a', 'e', 'i', 'o']) {
         "an"
     } else {
         "a"
@@ -6280,25 +6294,24 @@ fn indefinite(ty: &str) -> &'static str {
 /// of its `cause`.
 fn mut_not_place(d: Diagnostic, name: &str, cause: &NotPlace) -> Diagnostic {
     let copy = "copy it into a `let mut` local";
-    let d = match *cause {
-        NotPlace::Range => return d.with_label("a range index gives a new array, not a place"),
-        NotPlace::Temporary => return d.with_label("not a place"),
-        NotPlace::SelfValue { class: true } => {
-            return d
-                .with_label("not a place")
-                .with_help("an object is shared: `self` can already write every `mut` field");
-        }
-        NotPlace::SelfValue { class: false } => return d.with_label("not a place").with_help(copy),
-        _ => d.with_label("not a place"),
+    let label = match *cause {
+        NotPlace::Range { string } => format!(
+            "a range index gives a new {}, not a place",
+            if string { "string" } else { "array" }
+        ),
+        _ => "not a place".to_string(),
     };
-    let NotPlace::Immutable(cause) = cause else {
-        unreachable!("the other forms return above")
-    };
+    let d = d.with_label(label);
     match *cause {
-        Immutable::Let {
+        NotPlace::Range { .. } | NotPlace::Temporary => d,
+        NotPlace::SelfValue { class: true } => {
+            d.with_help("an object is shared: `self` can already write every `mut` field")
+        }
+        NotPlace::SelfValue { class: false } => d.with_help(copy),
+        NotPlace::Immutable(Immutable::Let {
             declared,
             redeclared,
-        } => d
+        }) => d
             .with_secondary(
                 declared,
                 if redeclared {
@@ -6308,16 +6321,16 @@ fn mut_not_place(d: Diagnostic, name: &str, cause: &NotPlace) -> Diagnostic {
                 },
             )
             .with_help(format!("declare `{name}` with `let mut`")),
-        Immutable::Param { declared } => d
+        NotPlace::Immutable(Immutable::Param { declared }) => d
             .with_secondary(declared, "declared as a parameter here")
             .with_help(copy),
-        Immutable::Unwrapped { keyword, declared } => d
+        NotPlace::Immutable(Immutable::Unwrapped { keyword, declared }) => d
             .with_secondary(declared, format!("bound by `{keyword}` here"))
             .with_help(copy),
-        Immutable::Field { declared } => d
+        NotPlace::Immutable(Immutable::Field { declared }) => d
             .with_secondary(declared, "declared without `mut` here")
             .with_help(format!("declare the field `{name}` as `mut`")),
-        Immutable::Constant { declared } => {
+        NotPlace::Immutable(Immutable::Constant { declared }) => {
             d.with_secondary(declared, "declared with `const` here")
         }
     }

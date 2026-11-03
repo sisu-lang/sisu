@@ -812,12 +812,18 @@ impl Checker<'_> {
         let labeled = self.labels(args);
         let sig = &self.signatures[func.0];
         let (name, params, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
-        let (muts, names) = (sig.muts.clone(), sig.param_names.clone());
+        // Only a callee with a `mut` parameter pays for a site.
+        let (muts, names) = if sig.muts.contains(&true) {
+            (sig.muts.clone(), sig.param_names.clone())
+        } else {
+            (Vec::new(), Vec::new())
+        };
         let mut_site = MutSite {
             callee: &name,
             muts: &muts,
             names: &names,
         };
+        let mut parts = Vec::new();
         let shown = sig.param_shown.clone();
         let declared = sig.type_params.clone();
         let bounds = sig.bounds.clone();
@@ -847,8 +853,8 @@ impl Checker<'_> {
                 .zip(&shown)
                 .enumerate()
                 .map(|(i, ((arg, &param), text))| {
-                    if muts[i] && marked(arg) {
-                        return self.mut_arg(arg, i, param, &mut_site);
+                    if muts.get(i) == Some(&true) && marked(arg) {
+                        return self.mut_arg(arg, i, param, (&mut_site, &mut parts));
                     }
                     if let (Some(want), Some(text)) = (param, text) {
                         self.show(arg.value.span, want, text);
@@ -872,11 +878,12 @@ impl Checker<'_> {
                 params: &params,
                 ret,
                 bounds: &bounds,
-                mut_site: Some(&mut_site),
+                mut_site: (!muts.is_empty()).then_some(&mut_site),
             };
-            self.generic_call(span, &sig, (written, site.angles), args, site.expected)?
+            let written = (written, site.angles);
+            self.generic_call_mut(span, &sig, written, args, site.expected, &mut parts)?
         };
-        let parts = self.take_mut_parts(args, &muts);
+        let parts = self.mut_overlaps(parts);
         let failed = labeled || checked.iter().any(mismatched);
         match (receiver.into_iter().chain(checked).collect(), ret) {
             (Ok(args), Some(ret)) if !failed && parts.is_empty() => {
