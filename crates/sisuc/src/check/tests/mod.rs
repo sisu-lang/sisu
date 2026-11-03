@@ -797,7 +797,7 @@ fn a_never_value_that_failed_should_give_e0043_after_the_other_error() {
 }
 
 /// An annotated `let` binds its name with the declared type when its value fails, as a `const`
-/// does, so each use of the name is still checked. An annotation that does not resolve leaves
+/// does. So each use of the name is still checked. An annotation that does not resolve leaves
 /// the name without a type. So does a `let` with no annotation, when the failed value has no
 /// known type.
 #[test]
@@ -939,7 +939,7 @@ fn failed_value_of_an_annotated_let_should_keep_the_declared_type() {
             &[(Code::NoValue, (2, 18))],
         ),
         (
-            "unit_arg",
+            "correct_use",
             "fn main() {\n    let w: i64 = \"x\"\n    let w2 = w + 1\n    print(w2)\n}",
             &[(Code::Mismatch, (2, 18))],
         ),

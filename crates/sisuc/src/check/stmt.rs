@@ -360,10 +360,10 @@ impl Checker<'_> {
                     return init.map(tir::Stmt::Expr).map_err(|_| unit());
                 }
                 // A declared type that does not resolve (`Error`) binds no type. A declared
-                // type binds its type also when the value failed, as for a `const`, so each
+                // type binds its type also when the value failed, as for a `const`. So each
                 // use of the name is still checked. Otherwise the name gets the type of the
-                // initializer, which a failed value keeps when its type is still known (an
-                // `if` with one failed branch).
+                // initializer. A failed value keeps that type when it is still known (an `if`
+                // with one failed branch).
                 let ty = match (declared, &init) {
                     (Some(None), _) => None,
                     (Some(Some(declared)), Err(_)) => Some(declared),
