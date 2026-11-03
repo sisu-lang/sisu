@@ -190,9 +190,12 @@ class MergePr(unittest.TestCase):
         self.assertTrue(self.tree.exists())
 
     def test_cleanup_with_no_number_should_fail_and_not_merge(self):
-        result = self.run_script('--cleanup')
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(self.merges(), [])
+        # run_script adds the repo path, which argparse would take as the number.
+        result = subprocess.run([sys.executable, str(SCRIPT), '--cleanup'], capture_output=True,
+                                text=True, env=self.env)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('required: pr', result.stderr)
+        self.assertFalse(self.log.exists())
         self.assertTrue(self.tree.exists())
 
     def test_cleanup_of_a_closed_pull_request_that_was_not_merged_should_keep_the_worktree(self):
