@@ -9,7 +9,7 @@ use rustc_hash::FxHashMap;
 use super::interface::Bound;
 use super::{Checker, Definition, DiagnosticKind, Holder, Symbol, built_in_type};
 use crate::ast;
-use crate::conformance::{Cause, Stuck, normalize_noting};
+use crate::conformance::{Cause, Stuck, normalize_failing};
 use crate::diagnostic::{CannotExtendForm, UnknownForm, WideKind};
 use crate::source::Span;
 use crate::tir::{FuncId, InterfaceId, Type, TypeArgs, TypeKind};
@@ -75,13 +75,22 @@ impl Checker<'_> {
         if !ty.has_assoc() {
             return Some(ty);
         }
-        self.normalized(ty)
+        self.normalized(ty, None)
+    }
+
+    /// `normalize`, with `failed` in place of each associated type that has no type and holds no
+    /// hole (see `conformance::normalize_failing`).
+    pub(super) fn normalize_failing(&self, ty: Type, failed: Type) -> Option<Type> {
+        if !ty.has_assoc() {
+            return Some(ty);
+        }
+        self.normalized(ty, Some(failed))
     }
 
     /// `normalize` of a type that holds an associated type.
-    fn normalized(&self, ty: Type) -> Option<Type> {
+    fn normalized(&self, ty: Type, failed: Option<Type>) -> Option<Type> {
         let mut stuck = Vec::new();
-        let normal = normalize_noting(&self.conformances, ty, &mut stuck);
+        let normal = normalize_failing(&self.conformances, ty, failed, &mut stuck);
         if !stuck.is_empty() {
             let mut known = self.loops.borrow_mut();
             for Stuck {
@@ -104,7 +113,7 @@ impl Checker<'_> {
     pub(super) fn subst(&self, ty: Type, args: &[Type]) -> Option<Type> {
         let (substituted, assoc) = ty.subst_noting_assoc(args);
         if assoc {
-            self.normalized(substituted)
+            self.normalized(substituted, None)
         } else {
             Some(substituted)
         }
