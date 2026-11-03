@@ -282,6 +282,23 @@ fn mut_self_outside_a_method_should_be_reported_once() {
     }
 }
 
+/// GIVEN a `mut` argument that is a literal that needs its context, or any other temporary
+/// WHEN it is checked in a program with no other error
+/// THEN it is E0169: an unknown type with no error before it is no failure
+#[test]
+fn mut_argument_that_needs_its_context_should_be_reported_as_no_place() {
+    for value in ["[]", "None", "[[]]", "mk()", "1"] {
+        let src = format!(
+            "{SET}fn mk() -> [i64] {{\n    [1]\n}}\nfn main() {{\n    set(mut {value})\n}}"
+        );
+        let found = found_codes(&src);
+        assert!(
+            found.contains(&Code::MutArgumentNotPlace),
+            "`{value}`: {found:?}"
+        );
+    }
+}
+
 /// GIVEN a `mut` argument that is a value, or a range index, and whose expression has an error
 /// WHEN it is checked
 /// THEN the error stands alone: the argument is not also reported as no place, and its label
@@ -565,6 +582,8 @@ fn missing_mut_should_be_reported_on_every_written_call_path() {
 fn unmarked_generic_mut_argument_should_give_the_missing_marker_only() {
     let putter = "interface Putter {\n    fn put<U>(self, mut a: U, b: U)\n}\n\
         class P: Putter {\n    n: i64\n    fn put<U>(self, mut a: U, b: U) {\n        a = b\n    }\n}\n";
+    let holder = "interface Hold<T> {\n    fn put(self, mut a: T, b: T)\n}\n\
+        class H: Hold<i64?> {\n    n: i64\n    fn put(self, mut a: i64?, b: i64?) {\n        a = b\n    }\n}\n";
     let rows = [
         (
             "function",
@@ -608,6 +627,20 @@ fn unmarked_generic_mut_argument_should_give_the_missing_marker_only() {
             "class C {\n    n: i64\n    fn put<U>(self, mut a: U, b: U) {\n        a = b\n    }\n}\n\
             fn main() {\n    let c = C(n: 1)\n    let mut x: i64? = None\n    c.put(x, 5)\n    print(x ?? 0)\n}"
                 .to_owned(),
+        ),
+        (
+            "bound method of a generic interface",
+            format!(
+                "{holder}fn run<C: Hold<i64?>>(c: C) {{\n    let mut x: i64? = None\n    c.put(x, 5)\n    \
+                print(x ?? 0)\n}}\nfn main() {{\n    run(H(n: 1))\n}}"
+            ),
+        ),
+        (
+            "`any I` method of a generic interface",
+            format!(
+                "{holder}fn main() {{\n    let f: any Hold<i64?> = H(n: 1)\n    let mut x: i64? = None\n    \
+                f.put(x, 5)\n    print(x ?? 0)\n}}"
+            ),
         ),
         (
             "bound method",
@@ -661,9 +694,10 @@ fn unmarked_mut_argument_that_is_no_place_should_still_need_its_marker() {
 #[test]
 #[expect(clippy::too_many_lines, reason = "one table, a row for each call path")]
 fn stray_mut_should_be_reported_on_every_call_path() {
+    with_prelude();
     let filler = "interface Plain {\n    fn take(self, xs: [i64])\n}\n\
         class Impl: Plain {\n    n: i64\n    fn take(self, xs: [i64]) {\n        print(xs)\n    }\n}\n";
-    let head = "let xs = [1]\n    let y = 2\n    let c = 'a'\n    let m = \"m\"\n    ";
+    let head = "let xs = [1]\n    let y = 2\n    let ch = 'a'\n    let m = \"m\"\n    ";
     let rows: [(&str, String, &[Code]); 26] = [
         ("print", format!("{head}print(mut xs)"), &[]),
         ("eprint", format!("{head}eprint(mut xs)"), &[]),
@@ -672,13 +706,13 @@ fn stray_mut_should_be_reported_on_every_call_path() {
         ("todo", format!("{head}todo(mut m)"), &[Code::TodoLeft]),
         (
             "conversion",
-            format!("{head}let n = i64(mut c)\n    print(n)"),
+            format!("{head}let n = i64(mut ch)\n    print(n)"),
             &[],
         ),
         (
             "alias of a number",
             format!(
-                "type Count = i64\nfn main() {{\n    {head}let n = Count(mut c)\n    print(n)\n}}"
+                "type Count = i64\nfn main() {{\n    {head}let n = Count(mut ch)\n    print(n)\n}}"
             ),
             &[],
         ),
@@ -719,7 +753,7 @@ fn stray_mut_should_be_reported_on_every_call_path() {
         ),
         (
             "Some",
-            format!("{head}let s = Some(mut y)\n    print(s)"),
+            format!("{head}let s = Some(mut y)\n    print(s ?? 0)"),
             &[],
         ),
         (
@@ -739,7 +773,7 @@ fn stray_mut_should_be_reported_on_every_call_path() {
         ),
         (
             "string method",
-            format!("{head}let g = m.get(mut 0..1)\n    print(g)"),
+            format!("{head}let g = m.get(mut 0..1)\n    print(g ?? \"\")"),
             &[],
         ),
         (
@@ -770,7 +804,7 @@ fn stray_mut_should_be_reported_on_every_call_path() {
         (
             "bound method",
             format!(
-                "{filler}fn run<T: Plain>(t: T, xs: [i64]) {{\n    let mut ys = xs\n    t.take(mut ys)\n}}\nfn main() {{\n    run(Impl(n: 1), [1])\n}}"
+                "{filler}fn run<T: Plain>(t: T, xs: [i64]) {{\n    let ys = xs\n    t.take(mut ys)\n}}\nfn main() {{\n    run(Impl(n: 1), [1])\n}}"
             ),
             &[],
         ),
@@ -803,7 +837,7 @@ fn stray_mut_should_be_reported_on_every_call_path() {
             format!("fn main() {{\n    {body}\n}}")
         };
         let (count, others) = marker_codes(&src, Code::MutMarkerNotMut);
-        assert_eq!(count, 1, "row `{row}`: {src}");
+        assert_eq!(count, 1, "row `{row}`: {src}: {others:?}");
         assert_eq!(others, extra, "row `{row}`: {src}");
     }
 }

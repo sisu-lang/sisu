@@ -3,7 +3,7 @@
 
 use super::generic::{GenericSig, Site, mismatched, named_params};
 use super::interface::Required;
-use super::mut_args::MutSite;
+use super::mut_args::{MutParts, MutSite, site_of};
 use super::{Checked, Checker, Poisoned};
 use crate::ast;
 use crate::diagnostic::{Definition, DiagnosticKind};
@@ -53,12 +53,9 @@ impl Checker<'_> {
         let info = &self.interfaces[interface.0];
         let requirement = &info.requirements[method];
         let (params, ret) = (requirement.params.clone(), requirement.ret);
-        // Only a requirement with a `mut` parameter pays for a site.
-        let (muts, names) = if requirement.muts.contains(&true) {
-            (requirement.muts.clone(), requirement.param_names.clone())
-        } else {
-            (Vec::new(), Vec::new())
-        };
+        // Only a requirement with a `mut` parameter, or a call with a `mut` argument, pays for a
+        // site.
+        let (muts, names) = site_of(&requirement.muts, &requirement.param_names, args);
         let name = format!("{}.{}", info.name.name, requirement.name.name);
         let mut declared = info.type_params.clone();
         declared.extend_from_slice(&requirement.own);
@@ -92,10 +89,12 @@ impl Checker<'_> {
             bounds: &bounds,
             mut_site: (!muts.is_empty()).then_some(&mut_site),
         };
-        let mut parts = Vec::new();
+        let mut parts = MutParts::default();
         let written = (site.written, site.angles);
-        let (checked, list, ret) =
-            self.generic_call_mut(span, &sig, written, args, site.expected, &mut parts)?;
+        let result = self.generic_call_mut(span, &sig, written, args, site.expected, &mut parts);
+        let list = result.as_ref().ok().map(|(_, list, _)| *list);
+        self.marks(args, &mut parts, &mut_site, (&params, list));
+        let (checked, list, ret) = result?;
         let (iargs, types) = list.get().split_at(owner.len());
         let (iargs, types) = (TypeArgs::intern(iargs), TypeArgs::intern(types));
         let parts = self.mut_overlaps(parts);

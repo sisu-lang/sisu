@@ -4,6 +4,7 @@
 
 use super::array::pair;
 use super::expr::{path, typed};
+use super::mut_args::Callee;
 use super::{Checked, Checker, Poisoned, type_of};
 use crate::ast;
 use crate::diagnostic::{DiagnosticKind, Expected, MismatchFix, PrintProblem};
@@ -33,6 +34,12 @@ impl Checker<'_> {
         args: &[ast::Arg],
         expected: Option<Type>,
     ) -> Option<Checked> {
+        if matches!(
+            callee.name.as_str(),
+            "print" | "eprint" | "dbg" | "panic" | "read_line"
+        ) {
+            self.refuse_mut(args, Callee::Unnamed(&callee.name.as_str()));
+        }
         match callee.name.as_str() {
             "print" => Some(self.print(span, args, Stream::Stdout)),
             "eprint" => Some(self.print(span, args, Stream::Stderr)),
@@ -169,6 +176,7 @@ impl Checker<'_> {
         self.body.exits += 1;
         self.body.todo = true;
         self.report(DiagnosticKind::TodoLeft { at: keyword });
+        self.refuse_mut(args, Callee::Unnamed(&"todo"));
         let labeled = self.labels(args);
         let text = |text: &str| {
             tir::Expr::new(tir::ExprKind::Str(text.to_string()), Type::STRING, keyword)

@@ -7,10 +7,6 @@ mod registry;
 mod render;
 mod suggest;
 
-#[expect(
-    unused_imports,
-    reason = "the checker names `MissingFix` and `NotMutForm` in the next commit"
-)]
 pub(crate) use registry::{
     AddBound, Annotate, AnyFormKind, ArgumentsForm, BadRange, BlockBound, BlockNeed, BoundLabel,
     BoundSite, BuiltIn, CannotExtendForm, ChainForm, ChainLabel, ClashForm, ClashKind, Code,

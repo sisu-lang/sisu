@@ -1,0 +1,15 @@
+error[E0167]: `Board(…)` takes no `mut` argument: it copies each value into its field
+  --> E0167-class.sisu:11:26
+   |
+11 |     let b = Board(cells: mut xs)
+   |                          ^^^ no `mut` here
+   |
+   = help: a `mut` field can change after the object is made
+help: remove `mut`
+   |
+11 -     let b = Board(cells: mut xs)
+11 +     let b = Board(cells: xs)
+   |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0167

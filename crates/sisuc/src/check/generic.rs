@@ -2035,7 +2035,7 @@ impl Checker<'_> {
         args: &[ast::Arg],
         expected: Option<Type>,
     ) -> Result<(Vec<Checked>, TypeArgs, Option<Type>), Poisoned> {
-        self.generic_call_mut(span, sig, written, args, expected, &mut Vec::new())
+        self.generic_call_mut(span, sig, written, args, expected, &mut MutParts::default())
     }
 
     /// `generic_call`, which gives the parts of the `mut` arguments to `parts`.
@@ -2099,10 +2099,17 @@ impl Checker<'_> {
         // parameter names first, so that the other arguments convert to them.
         if let Some(site) = sig.mut_site {
             for (i, arg) in args.iter().enumerate() {
-                if site.muts[i] && marked(arg) {
-                    let slot = self.infer_mut_arg(&mut call, arg, i, (sig.params[i], site), parts);
-                    call.slots[i] = Some(slot);
+                if !site.muts[i] {
+                    continue;
                 }
+                let slot = if marked(arg) {
+                    Some(self.infer_mut_arg(&mut call, arg, i, (sig.params[i], site), parts))
+                } else {
+                    // No `mut`: E0166 is the report, and the place still binds, so that the
+                    // other arguments are no cascade.
+                    self.unmarked_place(arg, i, parts, Some((&mut call, sig.params[i])))
+                };
+                call.slots[i] = slot;
             }
         }
         // Whether every call in an argument fits its declaration.
@@ -2319,10 +2326,10 @@ impl Checker<'_> {
         let (ranks, holds) = iter::zip(args, fit)
             .enumerate()
             .map(|(i, (arg, fit))| {
-                // An argument at a `mut` parameter is never checked ahead. A marked one is
-                // checked already, and an unmarked one waits.
+                // An argument at a `mut` parameter is never checked ahead. A place is
+                // checked already, and a value waits.
                 if sig.mut_site.is_some_and(|site| site.muts[i]) {
-                    return (if marked(arg) { 3 } else { 2 }, false);
+                    return (if call.slots[i].is_some() { 3 } else { 2 }, false);
                 }
                 let writes_assoc =
                     sig.params[i].is_some_and(|param| waits_for_assoc(&call.bindings, param));
@@ -3505,7 +3512,7 @@ impl Checker<'_> {
         } else {
             let carried = |&(i, _): &(usize, _)| has_place(places.carried, i);
             combine(args.iter().enumerate().filter(carried).map(|(i, arg)| {
-                let ranked = if has_place(muts, i) && marked(arg) {
+                let ranked = if has_place(muts, i) {
                     Ranked::CONCRETE
                 } else {
                     self.rank_value(&arg.value, fit)

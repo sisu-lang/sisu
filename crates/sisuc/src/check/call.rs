@@ -8,7 +8,7 @@ use super::expr::{fits, no_member, option_written, path, postfix};
 use super::generic::{GenericSig, Site, mark, mismatched};
 use super::interface::LangPath;
 use super::member::Found;
-use super::mut_args::{MutSite, marked};
+use super::mut_args::{Callee, MutParts, MutSite, site_of};
 use super::prelude::PRELUDE;
 use super::unused_names::Used;
 use super::{
@@ -593,10 +593,14 @@ impl Checker<'_> {
         if gets_range
             && type_of(&receiver).is_some_and(|ty| matches!(ty.kind(), TypeKind::Array(_)))
         {
+            self.refuse_method(receiver_expr, method, args);
             return self.array_get_range(args);
         }
         let receiver = match self.generated_operator(span, receiver, site, args) {
-            Ok(checked) => return checked,
+            Ok(checked) => {
+                self.refuse_method(receiver_expr, method, args);
+                return checked;
+            }
             Err(receiver) => receiver,
         };
         // A `push` onto an array writes its place, so it is not a method of the prelude's.
@@ -610,13 +614,17 @@ impl Checker<'_> {
                         self.read_pushed(read, receiver_expr);
                     }
                 }
-                _ => return self.push(span, safe, (receiver, place), receiver_expr, args),
+                _ => {
+                    self.refuse_method(receiver_expr, method, args);
+                    return self.push(span, safe, (receiver, place), receiver_expr, args);
+                }
             }
         }
         match type_of(&receiver) {
             // A built-in type, an array and an optional have a `Display` that the compiler writes,
             // and no method of their own named `to_string`.
             Some(ty) if method.name.as_str() == "to_string" && generated_display_only(ty) => {
+                self.refuse_method(receiver_expr, method, args);
                 return self.generated_display(span, receiver, site, args, false);
             }
             // A method of the prelude's `extend` of an array type or `i64` answers before the
@@ -625,12 +633,15 @@ impl Checker<'_> {
                 return self.invoke(span, func, Some(receiver), site, args);
             }
             Some(ty) if matches!(ty.kind(), TypeKind::Array(_)) => {
+                self.refuse_method(receiver_expr, method, args);
                 return self.array_method(span, receiver, ty, method, args);
             }
             Some(Type::STRING) => {
+                self.refuse_method(receiver_expr, method, args);
                 return self.string_method(span, safe, (receiver, receiver_expr), method, args);
             }
             Some(ty @ (Type::I64 | Type::F64)) => {
+                self.refuse_method(receiver_expr, method, args);
                 return self.number_method(span, receiver, ty, method, args);
             }
             Some(ty)
@@ -653,6 +664,7 @@ impl Checker<'_> {
         ) {
             Some(Found::Func(func)) => self.invoke(span, func, Some(receiver), site, args),
             Some(Found::GeneratedDisplay { listed }) => {
+                self.refuse_method(receiver_expr, method, args);
                 self.generated_display(span, receiver, site, args, listed)
             }
             // An optional array's `get` is E0062 first, then E0032 for the range, as through `?.`.
@@ -668,6 +680,15 @@ impl Checker<'_> {
                 self.stray_call(ty, method.name, args);
                 Err(Poisoned::error())
             }
+        }
+    }
+
+    /// E0167 for each `mut` argument of the call `receiver.method(args)`, a built-in method.
+    fn refuse_method(&mut self, receiver: &ast::Expr, method: &ast::Ident, args: &[ast::Arg]) {
+        if args.iter().any(|arg| arg.mut_keyword.is_some()) {
+            let receiver = self.source.text(receiver.span);
+            let name = format_args!("{receiver}.{}", method.name);
+            self.refuse_mut(args, Callee::Unnamed(&name));
         }
     }
 
@@ -812,18 +833,13 @@ impl Checker<'_> {
         let labeled = self.labels(args);
         let sig = &self.signatures[func.0];
         let (name, params, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
-        // Only a callee with a `mut` parameter pays for a site.
-        let (muts, names) = if sig.muts.contains(&true) {
-            (sig.muts.clone(), sig.param_names.clone())
-        } else {
-            (Vec::new(), Vec::new())
-        };
+        let (muts, names) = site_of(&sig.muts, &sig.param_names, args);
         let mut_site = MutSite {
             callee: &name,
             muts: &muts,
             names: &names,
         };
-        let mut parts = Vec::new();
+        let mut parts = MutParts::default();
         let shown = sig.param_shown.clone();
         let declared = sig.type_params.clone();
         let bounds = sig.bounds.clone();
@@ -846,15 +862,18 @@ impl Checker<'_> {
             };
             return self.wrong_count(span, name, params.len(), args);
         }
-        let (checked, types, ret) = if declared.is_empty() {
+        let checked = if declared.is_empty() {
             let checked = args
                 .iter()
                 .zip(&params)
                 .zip(&shown)
                 .enumerate()
                 .map(|(i, ((arg, &param), text))| {
-                    if muts.get(i) == Some(&true) && marked(arg) {
-                        return self.mut_arg(arg, i, param, (&mut_site, &mut parts));
+                    if muts.get(i) == Some(&true)
+                        && let Some(checked) =
+                            self.mut_argument(arg, i, param, (&mut_site, &mut parts))
+                    {
+                        return checked;
                     }
                     if let (Some(want), Some(text)) = (param, text) {
                         self.show(arg.value.span, want, text);
@@ -862,7 +881,7 @@ impl Checker<'_> {
                     mark(self.operand(&arg.value, param))
                 })
                 .collect();
-            (checked, TypeArgs::NONE, ret)
+            Ok((checked, TypeArgs::NONE, ret))
         } else {
             // A list on a method that takes none of its own is reported already.
             let written = if declared.len() > owner.len() {
@@ -881,8 +900,11 @@ impl Checker<'_> {
                 mut_site: (!muts.is_empty()).then_some(&mut_site),
             };
             let written = (written, site.angles);
-            self.generic_call_mut(span, &sig, written, args, site.expected, &mut parts)?
+            self.generic_call_mut(span, &sig, written, args, site.expected, &mut parts)
         };
+        let list = checked.as_ref().ok().map(|(_, types, _)| *types);
+        self.marks(args, &mut parts, &mut_site, (&params, list));
+        let (checked, types, ret) = checked?;
         let parts = self.mut_overlaps(parts);
         let failed = labeled || checked.iter().any(mismatched);
         match (receiver.into_iter().chain(checked).collect(), ret) {
@@ -989,6 +1011,13 @@ impl Checker<'_> {
         through: Option<&Through>,
     ) -> Checked {
         self.record(Used::Class(class), span);
+        self.refuse_mut(
+            args,
+            Callee::Construct {
+                shown: &site.name.name,
+                class: true,
+            },
+        );
         let quiet = self.body.failed_let == Some(span);
         let info = &self.classes[class.0];
         let name = info.name.name.as_str();

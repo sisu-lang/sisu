@@ -453,7 +453,6 @@ pub(crate) enum DiagnosticKind {
     /// The argument at `at` of a call, whose parameter is `mut`, and that has no `mut`. `name` is
     /// the parameter's, and `position` its place, from 1, when it has no name; `declared` is where
     /// it is declared.
-    #[expect(dead_code, reason = "the checker reports it in the next commit")]
     MutMarkerMissing {
         at: Span,
         name: Option<String>,
@@ -464,7 +463,6 @@ pub(crate) enum DiagnosticKind {
     },
     /// The `mut` at `at` before an argument whose parameter is not `mut`. `fix_end` is the end of
     /// the spaces and tabs after the keyword, for the fix that removes them with it.
-    #[expect(dead_code, reason = "the checker reports it in the next commit")]
     MutMarkerNotMut {
         at: Span,
         fix_end: usize,
@@ -2811,7 +2809,6 @@ pub(crate) enum Unbuilt {
 }
 
 /// What the report of a missing `mut` offers for the argument.
-#[expect(dead_code, reason = "the checker reports it in the next commit")]
 pub(crate) enum MissingFix {
     /// The place fits the parameter: the safe fix that adds `mut `.
     Add,
@@ -2826,7 +2823,6 @@ pub(crate) enum MissingFix {
 }
 
 /// How a `mut` argument at a parameter that is not `mut` names its callee.
-#[expect(dead_code, reason = "the checker reports it in the next commit")]
 pub(crate) enum NotMutForm {
     /// A callee that the program writes, by the parameter `name` of `callee`.
     Written {

@@ -8,6 +8,7 @@ use std::fmt::Write;
 
 use super::array::pair;
 use super::expr::{local, no_member, path, postfix, typed};
+use super::mut_args::Callee;
 use super::{Checked, Checker, Poisoned, block_expr, type_of};
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::conformance::makes_group;
@@ -383,6 +384,7 @@ impl Checker<'_> {
         to: Type,
         args: &[ast::Arg],
     ) -> Checked {
+        self.refuse_mut(args, Callee::Unnamed(&self.source.text(name)));
         let labeled = self.labels(args);
         let [arg] = args else {
             self.report(DiagnosticKind::ArgumentCount {

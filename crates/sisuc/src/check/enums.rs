@@ -8,6 +8,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::alias::Through;
 use super::generic::{GenericSig, Site, mismatched};
 use super::interface::Slot;
+use super::mut_args::Callee;
 use super::unused_names::Used;
 use super::{Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, own_args};
 use crate::ast;
@@ -271,6 +272,9 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         };
         self.record(Used::Variant(id, variant), span);
+        if let Some((args, _)) = call {
+            self.refuse_variant_mut(id, member, site, args);
+        }
         let info = &self.enums[id.0];
         // Built only for a diagnostic.
         let path = format_args!(
@@ -338,6 +342,27 @@ impl Checker<'_> {
             variant,
             args,
         }))
+    }
+
+    /// E0167 for each `mut` argument of `Enum.member(args)`, a variant of the enum `id`.
+    fn refuse_variant_mut(
+        &mut self,
+        id: EnumId,
+        member: &ast::Ident,
+        site: Site<'_>,
+        args: &[ast::Arg],
+    ) {
+        if args.iter().any(|arg| arg.mut_keyword.is_some()) {
+            let name = qualifier(site, member, self.enums[id.0].name.name);
+            let shown = format!("{name}.{}", member.name);
+            self.refuse_mut(
+                args,
+                Callee::Construct {
+                    shown: &shown,
+                    class: false,
+                },
+            );
+        }
     }
 
     /// `Enum.member` or `Enum.member(args)`, the variant `variant` of the generic enum `id`

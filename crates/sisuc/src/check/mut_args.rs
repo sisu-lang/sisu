@@ -1,6 +1,8 @@
 //! `mut` arguments: the place, its type, the overlap of two places, and the call's desugaring
 //! (ADR 0043).
 
+use std::borrow::Borrow;
+use std::fmt;
 use std::hash::{Hash, Hasher};
 
 use rustc_hash::{FxBuildHasher, FxHashMap};
@@ -10,10 +12,12 @@ use super::generic::mark;
 use super::place::{Chain, Change, CheckedPlace, Path, Root, build};
 use super::{Checked, Checker, Poisoned, UNKNOWN, block_expr, type_of};
 use crate::ast;
-use crate::diagnostic::{ChainForm, ChainLabel, DiagnosticKind, NotPlace, SliceOf};
+use crate::diagnostic::{
+    ChainForm, ChainLabel, DiagnosticKind, Immutable, MissingFix, NotMutForm, NotPlace, SliceOf,
+};
 use crate::parser::{is_place, is_range_target};
 use crate::source::Span;
-use crate::tir::{self, ExprKind, LocalId, Type, TypeKind};
+use crate::tir::{self, ExprKind, LocalId, Type, TypeArgs, TypeKind};
 
 #[cfg(test)]
 thread_local! {
@@ -32,6 +36,24 @@ fn tick() {
 /// is E0055 already, and is checked as a value.
 pub(super) fn marked(arg: &ast::Arg) -> bool {
     arg.mut_keyword.is_some() && arg.label.is_none()
+}
+
+/// The `mut` flags and the parameter names that a call of `args` keeps of its callee's, for its
+/// `MutSite`. Only a callee with a `mut` parameter, or a call with a `mut` argument, pays for
+/// a site: the others get nothing.
+pub(super) fn site_of(
+    muts: &[bool],
+    names: &[ast::Ident],
+    args: &[ast::Arg],
+) -> (Vec<bool>, Vec<ast::Ident>) {
+    let has_mut = muts.contains(&true);
+    if !has_mut && !args.iter().any(|arg| arg.mut_keyword.is_some()) {
+        return (Vec::new(), Vec::new());
+    }
+    (
+        if has_mut { muts.to_vec() } else { Vec::new() },
+        names.to_vec(),
+    )
 }
 
 /// What a call path knows of its callee, for the reports about its `mut` arguments.
@@ -63,8 +85,44 @@ pub(super) struct PlaceShape {
     chain: Option<Chain>,
 }
 
-/// The parts of the `mut` arguments of a call that checked, each with its key, in argument order.
-pub(super) type MutParts = Vec<(MutPart, MutPlaceKey)>;
+/// The `mut` arguments of a call that checked.
+#[derive(Default)]
+pub(super) struct MutParts {
+    /// The parts of the arguments that have `mut`, each with its key, in argument order.
+    marked: Vec<(MutPart, MutPlaceKey)>,
+    /// What the check of each argument at a `mut` parameter that has no `mut` found, by its place
+    /// among the arguments, in argument order. A value that is no place is not here.
+    unmarked: Vec<(usize, MarkCheck)>,
+}
+
+/// What the one check of an argument at a `mut` parameter, with no `mut` on it, found.
+pub(super) enum MarkCheck {
+    /// A place that can change, of type `ty` (`None` when unknown). `chain` when it goes through
+    /// `?.`.
+    Place {
+        ty: Option<Type>,
+        chain: bool,
+        key: MutPlaceKey,
+    },
+    /// Why a place that the argument names cannot be passed `mut`, and its key when it has a path.
+    NotPlace(NotPlace, Option<MutPlaceKey>),
+    /// A place with an error in it, which reported itself.
+    Failed,
+}
+
+/// A callee as the reports about the `mut` markers of its arguments name it.
+#[derive(Clone, Copy)]
+pub(super) enum Callee<'a> {
+    /// A function or method of the program or the prelude: the parameter names it has.
+    Written(&'a MutSite<'a>),
+    /// A built-in, by the name that the call writes: `print`, `xs.push`.
+    Unnamed(&'a dyn fmt::Display),
+    /// A constructor, written `shown`: a class's, or a variant's when `class` is false.
+    Construct {
+        shown: &'a dyn fmt::Display,
+        class: bool,
+    },
+}
 
 /// The root of a `mut` place. `Temp` is a root that is no binding: a call's result.
 #[derive(Clone, Copy, Debug)]
@@ -163,9 +221,9 @@ pub(super) enum Overlap {
 ///
 /// The work is linear in the length of the paths: each prefix gets an id from a map that is keyed
 /// by the id of its parent and its step, so a path of length L costs L lookups.
-pub(super) fn twice(keys: &[MutPlaceKey]) -> Vec<(usize, usize, Overlap)> {
+pub(super) fn twice<K: Borrow<MutPlaceKey>>(keys: &[K]) -> Vec<(usize, usize, Overlap)> {
     // Sized up front, so that growing a map never hashes its keys again.
-    let total: usize = keys.iter().map(|k| k.steps.len()).sum();
+    let total: usize = keys.iter().map(|k| k.borrow().steps.len()).sum();
     let mut roots: FxHashMap<RootKey, usize> =
         FxHashMap::with_capacity_and_hasher(keys.len(), FxBuildHasher);
     let mut steps: FxHashMap<(usize, Step), usize> =
@@ -180,6 +238,7 @@ pub(super) fn twice(keys: &[MutPlaceKey]) -> Vec<(usize, usize, Overlap)> {
     };
     let mut found = Vec::new();
     for (later, key) in keys.iter().enumerate() {
+        let key = key.borrow();
         let mut id = match key.root {
             RootKey::Temp => fresh(),
             root @ RootKey::Local(_) => *roots.entry(root).or_insert_with(&mut fresh),
@@ -247,8 +306,12 @@ impl Checker<'_> {
     /// `mut` field of a class object, or an element of one. Why it is none otherwise, with no
     /// report: the caller reports E0169. The range index of a slice comes first. The place
     /// stamps its root binding as written, so a local that is passed `mut` counts as assigned.
-    /// A `?.` along the path is a place (ADR 0037), and `chain` records it.
-    pub(super) fn mut_place(&mut self, arg: &ast::Expr) -> Result<CheckedPlace, NotPlace> {
+    /// A `?.` along the path is a place (ADR 0037), and `chain` records it. A place that cannot
+    /// change gives its key too, when it has a path.
+    pub(super) fn mut_place(
+        &mut self,
+        arg: &ast::Expr,
+    ) -> Result<CheckedPlace, (NotPlace, Option<MutPlaceKey>)> {
         if is_range_target(arg) {
             // As a `push` onto a range does: the bound alone is reported, with no warning that
             // the root is never reassigned.
@@ -262,7 +325,7 @@ impl Checker<'_> {
             } else {
                 SliceOf::Array
             };
-            return Err(NotPlace::Range(slice));
+            return Err((NotPlace::Range(slice), None));
         }
         if matches!(arg.kind, ast::ExprKind::SelfValue) {
             // Outside a method there is no `self` to pass: E0041 says so.
@@ -274,18 +337,19 @@ impl Checker<'_> {
                 self.body.self_type.map(Type::kind),
                 Some(TypeKind::Class(..))
             );
-            return Err(NotPlace::SelfValue { class });
+            return Err((NotPlace::SelfValue { class }, None));
         }
         if !is_place(arg) {
             // An expression with an error has its error, and no place to report.
             return match self.checked_alone(arg) {
                 (_, true) => Ok(CheckedPlace::failed()),
-                (_, false) => Err(NotPlace::Temporary),
+                (_, false) => Err((NotPlace::Temporary, None)),
             };
         }
         let mut place = self.place(arg.span, arg, Change::MutArg);
         if let Some(cause) = place.refused.take() {
-            return Err(NotPlace::Immutable(cause));
+            let key = place.path.as_ref().map(|path| self.mut_key(path));
+            return Err((NotPlace::Immutable(cause), key));
         }
         if place.guard.is_some() {
             place.chain = Some(Chain {
@@ -296,11 +360,16 @@ impl Checker<'_> {
     }
 
     /// The type of the expression `arg`, checked on its own for its own mistakes, and whether
-    /// it reported an error.
+    /// it failed: it reported an error, or its type is unknown while an error was reported
+    /// before it, as for the use of a local that failed. An unknown type comes from an error,
+    /// except for a literal that needs its context, such as `[]`, which is no failure.
     fn checked_alone(&mut self, arg: &ast::Expr) -> (Option<Type>, bool) {
         let errors = self.diagnostics.errors;
         let ty = type_of(&self.expr(arg, Some(UNKNOWN)));
-        (ty, self.diagnostics.errors > errors)
+        (
+            ty,
+            self.diagnostics.errors > errors || ty.is_none() && errors > 0,
+        )
     }
 
     /// The text before the first `?.` of the place `e`, when it is on one line.
@@ -357,7 +426,7 @@ impl Checker<'_> {
         match self.mut_place(arg) {
             // A part of it failed, and reported itself.
             Ok(place) => place.path.is_some().then_some(place),
-            Err(cause) => {
+            Err((cause, _)) => {
                 let name = self.refused_name(arg);
                 self.report(DiagnosticKind::MutArgumentNotPlace {
                     at: arg.span,
@@ -460,7 +529,7 @@ impl Checker<'_> {
         let key = self.mut_key(&path);
         let temp = self.fresh(ty);
         let span = arg.value.span;
-        parts.push((
+        parts.marked.push((
             MutPart {
                 path,
                 temp,
@@ -528,10 +597,234 @@ impl Checker<'_> {
         Ok(self.mut_slot(arg, place, parts))
     }
 
+    /// The argument `arg`, at the place `at` among the arguments, when the callee's parameter
+    /// there is `mut` and the argument has no `mut`, and names a place: its one check, kept in
+    /// `parts` for `marks`. With `bind`, a generic call and the parameter's type, the place binds
+    /// the parameters that the type names, as `mut` would, so that no other argument fails
+    /// against a type that the place has not bound. A type that does not fit is for E0166 to say.
+    /// The argument fails, and `None` is a value that the call checks as it checks any other.
+    pub(super) fn unmarked_place(
+        &mut self,
+        arg: &ast::Arg,
+        at: usize,
+        parts: &mut MutParts,
+        bind: Option<(&mut super::generic::Inference<'_>, Option<Type>)>,
+    ) -> Option<Checked> {
+        if arg.label.is_some() || !is_place(&arg.value) {
+            return None;
+        }
+        let check = match self.mut_place(&arg.value) {
+            Ok(place) => match place.path.as_ref().map(|path| self.mut_key(path)) {
+                Some(key) => MarkCheck::Place {
+                    ty: place.ty,
+                    chain: place.chain.is_some(),
+                    key,
+                },
+                None => MarkCheck::Failed,
+            },
+            Err((cause, key)) => MarkCheck::NotPlace(cause, key),
+        };
+        if let (
+            Some((call, Some(pattern))),
+            MarkCheck::Place {
+                ty: Some(have),
+                chain: false,
+                ..
+            },
+        ) = (bind, &check)
+        {
+            let _ = self.bind_param(call, pattern, *have, arg.value.span);
+        }
+        parts.unmarked.push((at, check));
+        Some(mark((Err(Poisoned::error()), true)))
+    }
+
+    /// The argument `arg` at the `mut` parameter `at` of a call that `site` describes, whose type
+    /// is `want`: checked as a place, with `mut` (`mut_arg`) or without it (`unmarked_place`).
+    /// `None` is a value with no `mut`, which the call checks as it checks any other.
+    pub(super) fn mut_argument(
+        &mut self,
+        arg: &ast::Arg,
+        at: usize,
+        want: Option<Type>,
+        (site, parts): (&MutSite<'_>, &mut MutParts),
+    ) -> Option<Checked> {
+        if marked(arg) {
+            Some(self.mut_arg(arg, at, want, (site, parts)))
+        } else {
+            self.unmarked_place(arg, at, parts, None)
+        }
+    }
+
+    /// Reports each argument of `args` that has `mut`, and whose parameter is not `mut` or does
+    /// not exist (E0167): `callee` says how the call names it. A label on a function's argument
+    /// is E0055 already, and is not checked for its marker.
+    pub(super) fn refuse_mut(&mut self, args: &[ast::Arg], callee: Callee<'_>) {
+        for (i, arg) in args.iter().enumerate() {
+            let Some(at) = arg.mut_keyword else { continue };
+            if arg.label.is_some() && !matches!(callee, Callee::Construct { .. }) {
+                continue;
+            }
+            let form = match &callee {
+                Callee::Written(site) if site.muts.get(i) == Some(&true) => continue,
+                Callee::Written(site) => match site.names.get(i) {
+                    Some(name) => NotMutForm::Written {
+                        name: name.name.to_string(),
+                        callee: site.callee.to_string(),
+                        declared: Some(name.span).filter(|span| !span.in_prelude()),
+                    },
+                    None => NotMutForm::Unnamed {
+                        position: i + 1,
+                        callee: site.callee.to_string(),
+                    },
+                },
+                Callee::Unnamed(name) => NotMutForm::Unnamed {
+                    position: i + 1,
+                    callee: name.to_string(),
+                },
+                Callee::Construct { shown, class: true } => NotMutForm::Class {
+                    shown: shown.to_string(),
+                },
+                Callee::Construct {
+                    shown,
+                    class: false,
+                } => NotMutForm::Variant {
+                    shown: shown.to_string(),
+                },
+            };
+            // The fix removes `mut` and the spaces and tabs after it, up to the next token.
+            let next = (arg.label.as_ref())
+                .map(|label| label.span.start())
+                .filter(|&start| start >= at.end())
+                .unwrap_or_else(|| arg.value.span.start());
+            let gap = self.source.text(Span::new(at.end(), next));
+            let fix_end = at.end() + gap.len() - gap.trim_start_matches([' ', '\t']).len();
+            self.report(DiagnosticKind::MutMarkerNotMut { at, fix_end, form });
+        }
+    }
+
+    /// Reports each argument of `args` that has `mut` where `site` has no `mut` parameter
+    /// (E0167), and each that has none where it has one (E0166). `parts` holds the check of each
+    /// argument of the second kind that names a place, and `params` are the types of the
+    /// parameters, which `list` makes the types they have once the call is checked (`None` when
+    /// it failed). It checks nothing itself.
+    pub(super) fn marks(
+        &mut self,
+        args: &[ast::Arg],
+        parts: &mut MutParts,
+        site: &MutSite<'_>,
+        (params, list): (&[Option<Type>], Option<TypeArgs>),
+    ) {
+        self.refuse_mut(args, Callee::Written(site));
+        if !site.muts.contains(&true) {
+            return;
+        }
+        let wants = self.final_params(params, list, parts);
+        let checks = std::mem::take(&mut parts.unmarked);
+        // A place that `mut` would pass twice with another gets no fix: both fixes together are
+        // E0171. `twice` names the later key of a pair and the first one that it meets; the
+        // reverse order names the other keys.
+        let mut keys: Vec<&MutPlaceKey> = parts.marked.iter().map(|(_, key)| key).collect();
+        let at: Vec<Option<usize>> = checks
+            .iter()
+            .map(|(_, check)| match check {
+                MarkCheck::Place { key, .. } | MarkCheck::NotPlace(_, Some(key)) => {
+                    keys.push(key);
+                    Some(keys.len() - 1)
+                }
+                _ => None,
+            })
+            .collect();
+        let mut related = vec![false; keys.len()];
+        if keys.len() > 1 && !checks.is_empty() {
+            for (first, later, _) in twice(&keys) {
+                related[first] = true;
+                related[later] = true;
+            }
+            keys.reverse();
+            let end = keys.len() - 1;
+            for (first, later, _) in twice(&keys) {
+                related[end - first] = true;
+                related[end - later] = true;
+            }
+        }
+        let mut checks = checks.into_iter().zip(at).peekable();
+        for (i, arg) in args.iter().enumerate() {
+            if !site.muts[i] || arg.mut_keyword.is_some() || arg.label.is_some() {
+                continue;
+            }
+            let found = checks.next_if(|((place, _), _)| *place == i);
+            let related = found
+                .as_ref()
+                .and_then(|(_, key)| *key)
+                .is_some_and(|key| related[key]);
+            let want = wants.get(i).copied().flatten();
+            let fix = match found.map(|((_, check), _)| check) {
+                Some(MarkCheck::Failed) => MissingFix::None,
+                Some(MarkCheck::Place { ty, chain, .. }) => {
+                    if !related && !chain && ty.is_some() && ty == want {
+                        MissingFix::Add
+                    } else {
+                        MissingFix::None
+                    }
+                }
+                Some(MarkCheck::NotPlace(NotPlace::Immutable(cause), _)) => match cause {
+                    Immutable::Let { .. } | Immutable::Field { .. } if related => MissingFix::None,
+                    Immutable::Let { .. } => {
+                        let name = self.refused_name(&arg.value);
+                        let shown = arg.value.span;
+                        let arg = if self.one_line(shown) {
+                            self.source.text(shown).to_string()
+                        } else {
+                            name.clone()
+                        };
+                        MissingFix::Let { name, arg }
+                    }
+                    Immutable::Field { .. } => MissingFix::Field {
+                        name: self.refused_name(&arg.value),
+                    },
+                    _ => MissingFix::Copy,
+                },
+                None | Some(MarkCheck::NotPlace(..)) => MissingFix::Copy,
+            };
+            let param = site.names.get(i);
+            self.report(DiagnosticKind::MutMarkerMissing {
+                at: arg.value.span,
+                name: param.map(|name| name.name.to_string()),
+                position: i + 1,
+                callee: site.callee.to_string(),
+                declared: param
+                    .map(|name| name.span)
+                    .filter(|span| !span.in_prelude()),
+                fix,
+            });
+        }
+    }
+
+    /// The type of each of `params` once the call that gave `list` is checked: only when an
+    /// argument at a `mut` parameter has no `mut`, which `marks` compares with its place.
+    pub(super) fn final_params(
+        &self,
+        params: &[Option<Type>],
+        list: Option<TypeArgs>,
+        parts: &MutParts,
+    ) -> Vec<Option<Type>> {
+        let Some(list) = list.filter(|_| !parts.unmarked.is_empty()) else {
+            return Vec::new();
+        };
+        params
+            .iter()
+            .map(|param| {
+                let ty = self.subst((*param)?, list.get())?;
+                self.normalize(ty)
+            })
+            .collect()
+    }
+
     /// Reports each `mut` argument of a call whose place is the place of an earlier one, or
     /// holds it, or is held by it (E0171). Gives the parts, in argument order.
     pub(super) fn mut_overlaps(&mut self, taken: MutParts) -> Vec<MutPart> {
-        let (parts, keys): (Vec<MutPart>, Vec<MutPlaceKey>) = taken.into_iter().unzip();
+        let (parts, keys): (Vec<MutPart>, Vec<MutPlaceKey>) = taken.marked.into_iter().unzip();
         for (first, second, how) in twice(&keys) {
             let (a, b) = (&parts[first], &parts[second]);
             let (shown, inside) = match how {
