@@ -1,0 +1,13 @@
+error[E0062]: this value may be `None`
+ --> E0062-push-index.sisu:3:5
+  |
+3 |     ys[0].push(2)
+  |     ^^^^^
+  |
+help: to do nothing when it is `None`, use `?.`
+  |
+3 |     ys[0]?.push(2)
+  |          +
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0062

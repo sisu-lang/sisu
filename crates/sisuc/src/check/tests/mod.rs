@@ -3103,6 +3103,90 @@ fn may_be_none_before_a_push_on_a_field_of_an_optional_array_should_offer_the_fi
     );
 }
 
+/// An unwrapped array is a copy. The unwrap help is given only where the unwrap changes the array
+/// that the `push` changes: when the object of a `?.` stores it. The `?.` fix is always offered.
+/// Each row is a program, the place of the error, and whether the help is given; the fixtures
+/// `E0062-push*` pin the text.
+#[test]
+fn push_onto_an_optional_array_should_offer_no_unwrap_help() {
+    let rows = [
+        (
+            "local",
+            "fn main() {\n    let mut xs: [i64]? = [1]\n    xs.push(2)\n}",
+            (3, 5, "xs"),
+            false,
+        ),
+        (
+            "parameter",
+            "fn f(xs: [i64]?) {\n    xs.push(2)\n}\nfn main() {}",
+            (2, 5, "xs"),
+            false,
+        ),
+        (
+            "immutable local",
+            "fn main() {\n    let xs: [i64]? = [1]\n    xs.push(2)\n}",
+            (3, 5, "xs"),
+            false,
+        ),
+        (
+            "field of optional array type",
+            "class H {\n    mut xs: [i64]?\n}\nfn main() {\n    let h = H(xs: [1])\n    h.xs.push(2)\n}",
+            (6, 5, "h.xs"),
+            false,
+        ),
+        (
+            "element",
+            "fn main() {\n    let mut ys: [[i64]?] = [[1]]\n    ys[0].push(2)\n}",
+            (3, 5, "ys[0]"),
+            false,
+        ),
+        (
+            "call",
+            "fn g() -> [i64]? {\n    [1]\n}\nfn main() {\n    g().push(2)\n}",
+            (5, 5, "g()"),
+            false,
+        ),
+        (
+            "two layers",
+            "fn main() {\n    let mut xs: [i64]?? = Some(Some([1]))\n    xs.push(2)\n}",
+            (3, 5, "xs"),
+            false,
+        ),
+        (
+            "array stored by the object of a `?.`",
+            "class Bag {\n    mut items: [i64]\n}\nfn add(bag: Bag?) {\n    bag?.items.push(4)\n}\nfn main() {}",
+            (5, 5, "bag?.items"),
+            true,
+        ),
+        (
+            "optional array stored by the object of a `?.`",
+            "class H {\n    mut xs: [i64]?\n}\nfn add(h: H?) {\n    h?.xs.push(4)\n}\nfn main() {}",
+            (5, 5, "h?.xs"),
+            false,
+        ),
+        (
+            "array stored by an optional object",
+            "class H {\n    mut xs: [i64]\n}\nfn main() {\n    let h: H? = H(xs: [1])\n    h.xs.push(2)\n}",
+            (6, 5, "h"),
+            true,
+        ),
+    ];
+    for (row, src, pos, help) in rows {
+        let d = diagnostic_row(row, src, Code::MayBeNone, pos, &[]);
+        assert_eq!(d.help().is_some(), help, "{row}");
+        let fixes: Vec<_> = d.fixes().iter().map(Fix::safe).collect();
+        assert_eq!(fixes, [false], "{row}: one unsafe fix");
+    }
+}
+
+/// A read keeps its unwrap help: a copy is right for a read.
+#[test]
+fn read_of_an_optional_array_should_offer_the_unwrap_help() {
+    let src = "fn main() {\n    let xs: [i64]? = [1]\n    print(xs.len())\n}";
+    let d = diagnostic(src, Code::MayBeNone, (3, 11, "xs"), &[]);
+    assert!(d.help().is_some());
+}
+
 /// An index after the step makes the `?.` fix lead to an index on an optional. So there is no
 /// fix, in a target and in a read. Each row is a statement in a body where `m` is an `N?`.
 #[test]
