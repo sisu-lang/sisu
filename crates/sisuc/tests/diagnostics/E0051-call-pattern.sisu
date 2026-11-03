@@ -1,0 +1,10 @@
+// GIVEN a `main` whose callee `f` has `let f(x) = 5 else { return }` on line 5, with the value at 5:16
+// WHEN `sisu check` runs on it
+// THEN it reports E0051 at 5:16 and gives no help, as a call is no value to compare with `==`
+fn f() {
+    let f(x) = 5 else { return }
+}
+
+fn main() {
+    f()
+}

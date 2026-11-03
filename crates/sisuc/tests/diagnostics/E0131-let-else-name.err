@@ -1,0 +1,14 @@
+error[E0131]: `let ... else` always matches here
+  --> E0131-let-else-name.sisu:10:9
+   |
+10 |     let v = w else { return }
+   |         ^
+   |
+help: remove the `else` block
+   |
+10 -     let v = w else { return }
+10 +     let v = w
+   |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0131

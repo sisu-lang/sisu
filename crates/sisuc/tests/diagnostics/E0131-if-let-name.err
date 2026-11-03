@@ -1,0 +1,10 @@
+error[E0131]: `if let` always matches here
+  --> E0131-if-let-name.sisu:10:12
+   |
+10 |     if let v = w { print(v) }
+   |            ^
+   |
+   = help: use a plain `let`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0131

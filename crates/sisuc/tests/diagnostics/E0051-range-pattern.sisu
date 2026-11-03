@@ -1,0 +1,6 @@
+// GIVEN a `main` whose line 5 is `let x..y = 5 else { return }`, with the value at 5:16
+// WHEN `sisu check` runs on it
+// THEN it reports E0051 at 5:16 and gives no help, as a range is no value to compare with `==`
+fn main() {
+    let x..y = 5 else { return }
+}

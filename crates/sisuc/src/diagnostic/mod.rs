@@ -14,7 +14,7 @@ pub(crate) use registry::{
     ForeignRange, GuardHelp, Hop, Immutable, Implied, InterfaceBodyForm, Join, LetField, Literal,
     LiteralKind, MainForm, Make, MatchIdiomForm, MathFix, Member, MethodReceiver, MismatchFix,
     MismatchSource, MissingBound, NanFix, NestingForm, NoOperatorForm, NotAny, NotConformForm,
-    NotInterface, Operand, Owner, Panic, Peel, PeelIs, PeelLayers, PowerFix, PrecisionHelp,
+    NotInterface, Operand, Owner, Panic, Peel, PeelIs, PeelLayers, Plain, PowerFix, PrecisionHelp,
     PrintProblem, RETIRED, RangeForm, RangePlace, RangePush, RangeTarget, RangeWrite,
     ReceiverArgument, SpecForm, SpecLimit, Spelled, TypedLiteral, Unbuilt, Ungenerated,
     UnknownForm, Unwrap, UnwrapHelp, UsedBy, VariantLabels, WideKind, invisible,
