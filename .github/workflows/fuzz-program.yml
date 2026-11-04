@@ -203,10 +203,11 @@ jobs:
   # (scripts/fuzz_issue.sh), so a failure does not sit in a step summary that nobody reads. This is
   # the only job with `issues: write`: the job that builds and runs the fuzzer has `contents: read`
   # only. A run started by hand is read by the person who started it, so it opens no issue.
+  # The `fuzz` job is skipped, not failed, when `plan` fails, so the condition names `plan` too.
   report:
     name: Report a failed run
-    needs: fuzz
-    if: always() && needs.fuzz.result == 'failure' && github.event_name == 'schedule'
+    needs: [plan, fuzz]
+    if: always() && (needs.fuzz.result == 'failure' || needs.plan.result == 'failure') && github.event_name == 'schedule'
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:

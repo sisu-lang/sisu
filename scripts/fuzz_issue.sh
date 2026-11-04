@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Opens a GitHub issue for a failed scheduled fuzz run, or comments on the issue that is open.
 # The issue has a fixed title for each target and the label `fuzz`, so a failure on a later night
-# goes to the same issue. The comment or the issue holds the run's summary (fuzz/artifacts/summary.md)
-# and the run's URL. The summary is read from a file and sent as JSON by jq, never put into a
-# command line or a script: a crash input can hold any bytes.
+# goes to the same issue. The comment or the issue holds the run's summary
+# (fuzz/artifacts/summary.md) and the run's URL.
+# The script reads the summary from a file and sends it as JSON through jq. It never puts the
+# summary into a command line or a script, because a crash input can hold any bytes.
+# The script gives no severity label, because it cannot judge one. The maintainer who triages the
+# issue adds it (docs/agents/triage-labels.md).
 # The environment has GH_TOKEN (with `issues: write`), GITHUB_REPOSITORY and RUN_URL.
 #   scripts/fuzz_issue.sh <target> <summary file>
 set -euo pipefail
@@ -19,6 +22,9 @@ trap 'rm -f "$body"' EXIT
     echo "The scheduled fuzz run of the \`${target}\` target failed."
     echo
     echo "Run: ${RUN_URL:?RUN_URL is not set}"
+    echo
+    echo "A maintainer adds the severity label when the issue is triaged. The maintainer also writes the"
+    echo "text again as What, Why, Repro and Options."
     echo
     if [[ -s $summary ]]; then
         echo "The summary of the run:"

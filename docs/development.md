@@ -490,9 +490,10 @@ When the fuzz job of a scheduled run fails, the `report` job runs
 `scripts/fuzz_issue.sh`. It opens a GitHub issue with the title
 `Nightly fuzz failure: front_end` and the labels `needs-triage`, `bug` and
 `fuzz`, or, when an open issue with that label and title exists, adds a
-comment to it. The text is the summary and the run's URL. A run that you
-start by hand opens no issue. The `report` job is the only job with
-`issues: write`.
+comment to it. The text is the summary and the run's URL. The script adds no
+severity label: the maintainer who triages the issue adds it, and writes the
+text again in the usual form. A run that you start by hand opens no issue.
+The `report` job is the only job with `issues: write`.
 
 GitHub disables a `schedule` trigger in a public repository after 60 days
 without activity in it. That stop sends no failure email: the only sign is a
@@ -618,7 +619,8 @@ waits for the other. On a failure it uploads `fuzz/artifacts/` as
 `fuzz-program-failure`, with the `.dump` directory of each replayed crash, and
 the minimized inputs as `fuzz-program-minimized`. When a scheduled run fails,
 its `report` job opens an issue titled `Nightly fuzz failure: program`, or
-comments on the open one, as for the front end. Nothing blocks a merge.
+comments on the open one, as for the front end. A failed `plan` job opens one
+too. Nothing blocks a merge.
 
 Program inputs are slow, so watch the corpus as well. The job summary gives
 the corpus size before and after cmin and whether cmin finished within its

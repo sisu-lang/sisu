@@ -61,6 +61,7 @@ class FuzzIssue(unittest.TestCase):
         self.assertEqual(body['labels'], ['needs-triage', 'bug', 'fuzz'])
         self.assertIn('# Fuzzing: front_end', body['body'])
         self.assertIn('https://example.test/run/1', body['body'])
+        self.assertIn('severity label', body['body'])
         with open(os.path.join(self.dir, 'list'), encoding='utf-8') as f:
             self.assertIn('labels=fuzz', f.read())
 
