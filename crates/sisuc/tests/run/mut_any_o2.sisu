@@ -6,9 +6,11 @@ fn iterations() -> i64 { 1000 }
 // WHEN `main` chooses the class of the receiver at run time, calls `fill_all` 1000 times with
 // `mut xs`, and prints `xs`
 // THEN it prints "[9000]": 500 calls add 7 + 0 and 7 + 1, and 500 calls add 1 + 0 and 1 + 1
-// AND `-O2` keeps the call of `fill_all` in `main` (the depth is not known to the compiler, and
-// the receiver is one of two classes), so the call through the table in `fill_all` passes the out
-// pointer of an optimized function
+// AND `-O2` keeps the call of `fill_all` in `main`, because the compiler cannot know the depth:
+// the marker below checks this
+// AND the receiver is chosen at run time, so `fill_all` keeps the call through the table. That
+// call passes the out pointer of an optimized function. No marker checks it, because the harness
+// counts only direct calls
 // o2-calls: main fill_all 1
 interface Filler {
     fn fill(self, mut xs: [i64], v: i64)
