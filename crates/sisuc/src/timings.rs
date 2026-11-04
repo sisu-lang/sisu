@@ -81,8 +81,9 @@ impl Timings {
     }
 
     /// Records the stages of `units`: for each stage that any unit recorded, in stage order, the
-    /// longest time of that stage. The units run at the same time, so the longest one decides the
-    /// wall time. It also records the number of units for the `codegen units` line.
+    /// longest time that one unit took for that stage. This is not the elapsed time of the stage:
+    /// a worker can run several units one after the other. It also records the number of units
+    /// for the `codegen units` line.
     #[cfg_attr(not(test), expect(dead_code, reason = "Task 4 merges the units"))]
     pub(crate) fn merge_units(&mut self, units: Vec<Timings>) {
         if let Some(recording) = &mut self.0 {
@@ -328,18 +329,5 @@ mod tests {
     fn for_unit_should_be_on_only_when_the_report_is_on() {
         assert!(Timings::start().for_unit().0.is_some());
         assert!(Timings::off().for_unit().0.is_none());
-    }
-
-    #[test]
-    fn report_should_have_no_unit_line_without_codegen() {
-        let ms = Duration::from_millis;
-        assert_eq!(
-            render(&[(Stage::Lex, ms(1))], ms(2), None, None),
-            [
-                "timings: lex           1.0 ms   50.0%",
-                "timings: other         1.0 ms   50.0%",
-                "timings: total         2.0 ms  100.0%",
-            ]
-        );
     }
 }

@@ -52,7 +52,8 @@ const BACK_EDGES: &[(&str, &str, &str)] = &[
     (
         "codegen",
         "crate",
-        "the scheduler gives each worker thread the `STACK_SIZE` that lib.rs sets for the compiler",
+        "`STACK_SIZE` stays at the crate root, where `main.rs` and the fuzz targets read it as \
+         `sisuc::STACK_SIZE`; the scheduler gives it to its workers",
     ),
     (
         "link",

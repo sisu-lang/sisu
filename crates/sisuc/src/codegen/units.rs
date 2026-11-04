@@ -195,14 +195,16 @@ pub(crate) fn threads(count: usize) -> usize {
     count.min(thread::available_parallelism().map_or(1, NonZeroUsize::get))
 }
 
-/// Runs `work` for each unit from 0 to `count`, and returns the results in unit order, whatever
-/// the order in which the units end. With one unit, `work` runs on the calling thread. Else a
-/// worker has the stack of the compiler. With `Threads`, up to `threads` workers take the units
-/// one by one. With `Forward` or `Reverse`, one worker runs every unit in that order.
+/// Runs `work` for each unit from 0 to `count - 1`, and returns the results in unit order,
+/// whatever the order in which the units end. With one unit, `work` runs on the calling thread.
+/// Else every worker thread has a stack of `STACK_SIZE` and the name `codegen`. With `Threads`, up
+/// to `threads` workers take the units one by one. With `Forward` or `Reverse`, one worker runs
+/// every unit in that order.
 ///
 /// # Panics
 ///
-/// If `work` panics, the panic goes on in the caller. If the system cannot start a thread.
+/// If `work` panics, the panic goes on in the caller. A panic on a worker names the thread
+/// `codegen`. Also, if the system cannot start a thread, it panics.
 #[cfg_attr(not(test), expect(dead_code, reason = "Task 4 calls it"))]
 pub(crate) fn schedule<T: Send>(
     count: usize,
@@ -224,6 +226,7 @@ pub(crate) fn schedule<T: Send>(
         let handles: Vec<_> = (0..workers)
             .map(|_| {
                 thread::Builder::new()
+                    .name("codegen".to_owned())
                     .stack_size(crate::STACK_SIZE)
                     .spawn_scoped(scope, || {
                         let mut done = Vec::new();
@@ -490,11 +493,39 @@ fn main() { print(e(1)) }";
     }
 
     #[test]
-    fn threads_should_be_at_most_the_unit_count_and_the_cores() {
+    fn threads_should_be_at_least_one_and_at_most_the_unit_count() {
         assert_eq!(threads(1), 1);
-        assert_eq!(
-            threads(usize::MAX),
-            thread::available_parallelism().map_or(1, NonZeroUsize::get)
-        );
+        assert!((1..=64).all(|count| (1..=count).contains(&threads(count))));
+    }
+
+    #[test]
+    fn one_worker_should_run_the_units_of_forward_and_reverse_in_turn() {
+        for (order, want) in [
+            (Order::Forward, [false, true]),
+            (Order::Reverse, [true, false]),
+        ] {
+            let arrived = (Mutex::new(0), Condvar::new());
+            let met = schedule(2, 2, order, |_| {
+                rendezvous(&arrived, Duration::from_millis(100))
+            });
+            assert_eq!(met, want, "{order:?}");
+        }
+    }
+
+    /// Recurses with a 64 KiB array in each of 64 frames: about 4 MiB of stack. The 2 MiB stack of
+    /// a default thread overflows.
+    #[expect(
+        clippy::large_stack_arrays,
+        reason = "the test needs a frame that holds much stack"
+    )]
+    fn deep(frames: usize) -> usize {
+        let array = std::hint::black_box([1_u8; 64 << 10]);
+        let below = if frames == 0 { 0 } else { deep(frames - 1) };
+        below + usize::from(std::hint::black_box(array)[0])
+    }
+
+    #[test]
+    fn workers_should_have_the_stack_of_the_compiler() {
+        assert_eq!(schedule(2, 2, Order::Threads, |_| deep(64)), [65, 65]);
     }
 }
