@@ -569,8 +569,11 @@ fn unknown_name_poisons() {
     }
 }
 
+/// A `let` without a type binds no type when its value fails with no known type, so a use of the
+/// name gives no error. A `let` with a type is in `check::tests`, in the test
+/// `failed_value_of_an_annotated_let_should_keep_the_declared_type`.
 #[test]
-fn own_error_poisons() {
+fn a_failed_value_of_an_unannotated_let_should_give_no_second_error() {
     for (src, code, pos) in [
         (
             "fn main() {\n    let x = [1, []]\n    print(x + true)\n}".to_owned(),
@@ -587,11 +590,6 @@ fn own_error_poisons() {
                 .to_owned(),
             Code::Mismatch,
             (2, 16),
-        ),
-        (
-            "fn main() {\n    let x: [i64] = [true]\n    print(x + true)\n}".to_owned(),
-            Code::Mismatch,
-            (2, 21),
         ),
     ] {
         codes(&src, &[(code, pos)]);

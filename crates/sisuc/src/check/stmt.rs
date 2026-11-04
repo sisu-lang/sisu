@@ -359,10 +359,14 @@ impl Checker<'_> {
                 if name.name.as_str() == "_" {
                     return init.map(tir::Stmt::Expr).map_err(|_| unit());
                 }
-                // The initializer's type, which a failed one keeps only while it is still
-                // known (`if` with one failed branch); an unknown declared type is `Error`.
-                let ty = match declared {
-                    Some(None) => None,
+                // A declared type that does not resolve (`Error`) binds no type. A declared
+                // type binds its type also when the value failed, as for a `const`. So each
+                // use of the name is still checked. Otherwise the name gets the type of the
+                // initializer. A failed value keeps that type when it is still known (an `if`
+                // with one failed branch).
+                let ty = match (declared, &init) {
+                    (Some(None), _) => None,
+                    (Some(Some(declared)), Err(_)) => Some(declared),
                     _ => type_of(&init),
                 };
                 let kind = if mutable.is_some() {
