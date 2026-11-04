@@ -63,6 +63,7 @@ class HeavyRun(unittest.TestCase):
             wait_for(lambda: 'when the lock is free' in self.stderr(), 'the waiting message')
             self.assertIn('heavy-run: waiting for this run to end: make test in /elsewhere', self.stderr())
             self.assertIn('heavy-run: the run starts when the lock is free', self.stderr())
+            self.assertNotIn('SISU_HEAVY_LOCK', self.stderr())
             self.assertIsNone(run.poll())
             self.assertFalse(os.path.exists(self.path('ran')))
         self.assertEqual(run.wait(timeout=20), 0)

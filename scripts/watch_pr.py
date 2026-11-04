@@ -2,12 +2,14 @@
 
 Usage: python3 scripts/watch_pr.py PR [STATE_FILE]
 
-An event is a new or edited review, inline comment or issue comment from someone other than you,
-the first failed check of the head, or the end of all checks of the head. CodeRabbit's "review in
-progress" note is not an event; the review that replaces it is. STATE_FILE (by default
-$TMPDIR/watch-pr-<PR>.json) keeps the events already printed, so the next run prints only newer
-ones. Run it with `run_in_background` and the sandbox off (`gh api` is REST and needs the
-network), then run it again after each event. Exit status: 0 an event, 1 the time limit.
+An event is a new review with text, or a new or edited inline or issue comment, from someone
+other than you; the first failed check of the head; or the end of all checks of the head.
+CodeRabbit's "review in progress" note is not an event; the review that replaces it is. After a
+failed check, the end of the checks is not an event: the next push gives a new head. Each list
+reads 100 items. STATE_FILE (by default $TMPDIR/watch-pr-<PR>.json) keeps the events already
+printed, so the next run prints only newer ones. Run it with `run_in_background` and the sandbox
+off (`gh api` is REST and needs the network), then run it again after each event. Exit status:
+0 an event, 1 the time limit.
 """
 
 import json
@@ -39,7 +41,7 @@ def events(pr, me):
     """Each event now on the pull request, as (key, line). An edit gives a new key."""
     found = []
     for review in gh(f"{REPO}/pulls/{pr}/reviews?per_page=100"):
-        if review["user"]["login"] != me:
+        if review["user"]["login"] != me and review["body"]:
             key = f"review {review['id']} {review['state']}"
             found.append((key, f"{key} {review['user']['login']}: {text(review['body'])}"))
     for c in gh(f"{REPO}/pulls/{pr}/comments?per_page=100"):
@@ -73,7 +75,12 @@ def main():
     me = gh("user")["login"]
     start = time.monotonic()
     while True:
-        new = [(k, line) for k, line in events(pr, me) if k not in seen]
+        try:
+            new = [(k, line) for k, line in events(pr, me) if k not in seen]
+        except subprocess.CalledProcessError as e:
+            # A network fault or rate limit: try again at the next poll.
+            print(f"gh api failed, trying again: {e.stderr.strip()[:200]}", file=sys.stderr)
+            new = []
         if new:
             for _, line in new:
                 print(line)
