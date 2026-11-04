@@ -439,7 +439,6 @@ impl Checker<'_> {
                     }
                     e = base;
                 }
-                ast::ExprKind::Index { base, .. } => e = base,
                 _ => {
                     return self
                         .one_line(head.span)
@@ -458,7 +457,6 @@ impl Checker<'_> {
                     steps += usize::from(*safe);
                     e = base;
                 }
-                ast::ExprKind::Index { base, .. } => e = base,
                 _ => return steps,
             }
         }
@@ -470,7 +468,6 @@ impl Checker<'_> {
             e = base;
         }
         match &e.kind {
-            ast::ExprKind::Name(name) => name.to_string(),
             ast::ExprKind::Field { name, .. } => name.name.to_string(),
             _ => self.source.text(e.span).to_string(),
         }
