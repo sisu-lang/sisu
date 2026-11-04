@@ -3,7 +3,7 @@
 use rustc_hash::FxHashMap;
 
 use super::array::innermost;
-use super::call::takes_range;
+use super::call::{Dot, takes_range};
 use super::expr::{if_some, local, no_member, path};
 use super::extend::{holder_of, method_holder};
 use super::generic::{Site, named_params};
@@ -25,6 +25,9 @@ pub(super) enum Access {
     /// The receiver of a `.push`, which may be a class's own `push`.
     Push,
 }
+
+/// What a field lookup found: the field's class, its index, and its type, `None` for `Error`.
+pub(super) type FoundField = (tir::ClassId, usize, Option<Type>);
 
 /// What a method lookup found.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -176,7 +179,7 @@ impl Checker<'_> {
         receiver: &ast::Expr,
         name: &ast::Ident,
         access: Access,
-    ) -> Option<(tir::ClassId, usize, Option<Type>)> {
+    ) -> Option<FoundField> {
         let ty = base?;
         let method = |owner, safe: bool| DiagnosticKind::MethodNotField {
             name: name.name.to_string(),
@@ -219,18 +222,40 @@ impl Checker<'_> {
             TypeKind::Array(_) if name.name.as_str() == "len" => {
                 method(self.type_name(ty), true).into()
             }
+            // A field of the payload gives no value here: the caller of a write asks for it.
             TypeKind::Optional(payload) => {
-                let write = match access {
-                    Access::Read => false,
-                    Access::Assign => true,
-                    Access::Push => self.field_is_array(payload, name.name),
-                };
-                may_be_none(receiver, name, !self.body.indexed, write, UnwrapHelp::It)
+                self.field_of_payload(payload, receiver, name, access);
+                return None;
             }
             _ => no_member(Definition::Field, self.type_name(ty), name, []),
         };
         self.diagnostics.push(d);
         None
+    }
+
+    /// The class, index and type of field `name` of the innermost payload of the optional
+    /// `receiver`, whose type is `payload?`, as `find_field` finds them. A `.` checks the member
+    /// as `?.` does, on the payload with no value. E0062 follows only when the field is found: a
+    /// field that is missing, or of the wrong kind, is the error, and the `?.` fix would lead to
+    /// it. A `payload` that is optional too gets no `?.` fix: `?.` takes one layer only.
+    pub(super) fn field_of_payload(
+        &mut self,
+        payload: Type,
+        receiver: &ast::Expr,
+        name: &ast::Ident,
+        access: Access,
+    ) -> Option<FoundField> {
+        let inner = innermost(payload);
+        let found = self.find_field(Some(inner), receiver, name, access)?;
+        let write = match access {
+            Access::Read => false,
+            Access::Assign => true,
+            Access::Push => self.field_is_array(inner, name.name),
+        };
+        let fix = !self.body.indexed && !matches!(payload.kind(), TypeKind::Optional(_));
+        self.diagnostics
+            .push(may_be_none(receiver, name, fix, write, UnwrapHelp::It));
+        Some(found)
     }
 
     /// Whether `ty` is a class type whose field `name` has an array type or an optional array
@@ -313,14 +338,12 @@ impl Checker<'_> {
     /// The method named by `site` of `receiver`, whose checked value is `value`, in the call that
     /// starts at `span`. The type's own method wins; else the method of the one conformance block
     /// that has one, or the one that the call's context picks (`pick_conforming`). `None` when
-    /// there is none, reported unless the type is `Error`. `indexed` when an index follows the
-    /// call in its chain, where a `?.` after the receiver leads to an index on an optional.
+    /// there is none, reported unless the type is `Error`. The type is no optional:
+    /// `method_of_payload` takes the method from the payload.
     pub(super) fn find_method(
         &mut self,
         value: &Checked,
-        receiver: &ast::Expr,
         site: Site<'_>,
-        indexed: bool,
         (span, nullary): (Span, bool),
     ) -> Option<Found> {
         let ty = type_of(value)?;
@@ -383,9 +406,8 @@ impl Checker<'_> {
         if self.has_broken_block(ty) || self.in_duplicate_block(ty, name.name) {
             return None;
         }
-        // A rejected block may have given any type, except an optional, the method.
-        if self.rejected_methods.contains(&name.name) && !matches!(ty.kind(), TypeKind::Optional(_))
-        {
+        // A rejected block may have given any type the method.
+        if self.rejected_methods.contains(&name.name) {
             return None;
         }
         let d = match ty.kind() {
@@ -418,21 +440,48 @@ impl Checker<'_> {
                     no_member(Definition::Method, self.type_name(ty), name, methods)
                 }
             }
-            // A `push` onto an optional array writes: the `?.` fix makes it do nothing.
-            TypeKind::Optional(payload) => {
-                let write = name.name.as_str() == "push"
-                    && matches!(innermost(payload).kind(), TypeKind::Array(_));
-                let unwrap = if write {
-                    self.pushed_array_unwrap(receiver, value)
-                } else {
-                    UnwrapHelp::It
-                };
-                may_be_none(receiver, name, !indexed, write, unwrap)
-            }
             _ => no_member(Definition::Method, self.type_name(ty), name, []),
         };
         self.diagnostics.push(d);
         None
+    }
+
+    /// `receiver.method(args)` on `value`, a value of type `payload?`, `receiver` its source. A `.`
+    /// checks the call as `?.` does: on the innermost payload, with no value, so that the method's
+    /// name and its arguments report their own mistakes. E0062 comes first, unless the name is
+    /// the error: a method that is missing, or a field, stands alone, and the `?.` fix would lead
+    /// to it. `indexed` is `Body::indexed` of the call: an index follows it in its chain. The
+    /// result is `Error`, so a chain checks its first `.` on an optional only.
+    pub(super) fn method_of_payload(
+        &mut self,
+        span: Span,
+        (value, receiver): (Checked, &ast::Expr),
+        payload: Type,
+        site: Site<'_>,
+        args: &[ast::Arg],
+        indexed: bool,
+    ) -> Checked {
+        let start = self.diagnostics.len();
+        let inner = innermost(payload);
+        let checked = Err(Poisoned::typed(inner));
+        drop(self.method_call(span, Dot::Payload, checked, receiver, site, args));
+        let name = site.name;
+        if self.diagnostics[start..]
+            .iter()
+            .all(|d| d.span() != name.span)
+        {
+            // A `push` onto an optional array writes: the `?.` fix makes it do nothing.
+            let write = name.name.as_str() == "push" && matches!(inner.kind(), TypeKind::Array(_));
+            let unwrap = if write {
+                self.pushed_array_unwrap(receiver, &value)
+            } else {
+                UnwrapHelp::It
+            };
+            let fix = !indexed && !matches!(payload.kind(), TypeKind::Optional(_));
+            let d = may_be_none(receiver, name, fix, write, unwrap);
+            self.diagnostics.insert(start, d);
+        }
+        Err(Poisoned::error())
     }
 
     /// The unwrap help for the optional array `receiver`, whose checked value is `value`, that a
@@ -742,6 +791,11 @@ fn may_be_none(
     write: bool,
     unwrap: UnwrapHelp,
 ) -> Diagnostic {
+    // Without a fix, the help says what to do.
+    let unwrap = match unwrap {
+        UnwrapHelp::Nothing if !fix => UnwrapHelp::It,
+        unwrap => unwrap,
+    };
     DiagnosticKind::MayBeNone {
         value: path(receiver),
         at: receiver.span,

@@ -2,6 +2,7 @@
 //! the E0021 report of an assignment to a range index.
 
 use super::array::optional_array;
+use super::call::Dot;
 use super::string::single_term;
 use super::{Checked, Checker, Poisoned, UNKNOWN, type_of};
 use crate::ast::{self, ExprKind};
@@ -183,22 +184,23 @@ impl Checker<'_> {
     }
 
     /// `receiver.get(args)` on a string, `receiver_expr` its source, or `receiver?.get(args)` when
-    /// `safe`: the string's substring in a range written in the call, an `ast::ExprKind::Range`,
-    /// as a `Slice` that is `safe` and has type `string?`. An argument that is no range is E0032;
-    /// `..`, `..=` and `a..=` are E0023, as they are in an index; a wrong count is E0053; a label
-    /// is E0055.
+    /// `dot` is `Safe`: the string's substring in a range written in the call, an
+    /// `ast::ExprKind::Range`, as a `Slice` that is `safe` and has type `string?`. An argument
+    /// that is no range is E0032; `..`, `..=` and `a..=` are E0023, as they are in an index; a
+    /// wrong count is E0053; a label is E0055.
     pub(super) fn string_get(
         &mut self,
-        (span, safe): (Span, bool),
+        (span, dot): (Span, Dot),
         (receiver, receiver_expr): (Checked, &ast::Expr),
         args: &[ast::Arg],
     ) -> Checked {
         let labeled = self.labels(args);
         // A `?.` that is `safe` and has a receiver that failed is itself an error (E0049, E0062).
-        let call = match (safe, &receiver) {
-            (false, _) => GetCall::Plain,
-            (true, Ok(_)) => GetCall::Safe,
-            (true, Err(_)) => GetCall::SafeFailed,
+        let call = match (dot, &receiver) {
+            (Dot::Plain, _) => GetCall::Plain,
+            (Dot::Payload, _) => GetCall::Payload,
+            (Dot::Safe, Ok(_)) => GetCall::Safe,
+            (Dot::Safe, Err(_)) => GetCall::SafeFailed,
         };
         let [arg] = args else {
             let d = DiagnosticKind::ArgumentCount {

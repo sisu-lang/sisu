@@ -3672,20 +3672,19 @@ fn may_be_none_in_an_assignment_target_should_offer_the_fix() {
     }
 }
 
-/// An optional array has no field to hold an array. E0062 must still offer the `?.` fix before a
-/// `push` on such a field.
+/// An optional array has no field to hold an array. A `.` checks the field on the array, so the
+/// missing field is the error, and the `?.` fix would lead to it. The `?.` fix of E0062 before a
+/// `push` stays for a field that exists: the fixtures `E0062-push-optional-field` and
+/// `E0062-member-on-payload` pin it.
 #[test]
-fn may_be_none_before_a_push_on_a_field_of_an_optional_array_should_offer_the_fix() {
+fn push_on_a_missing_field_of_an_optional_array_should_report_the_field_alone() {
     let src = "fn f(xs: [i64]?) {\n    xs.v.push(1)\n}\nfn main() {}";
-    let d = diagnostic(src, Code::MayBeNone, (2, 5, "xs"), &[]);
-    assert_eq!(
-        fixes(src, &d),
-        [(false, vec![(2, 7, ".", "?.".to_owned())])]
-    );
+    codes(src, &[(Code::NoMember, (2, 8))]);
 }
 
 /// An unwrapped array is a copy. The unwrap help is given only where the unwrap changes the array
-/// that the `push` changes: when the object of a `?.` stores it. The `?.` fix is always offered.
+/// that the `push` changes: when the object of a `?.` stores it. The `?.` fix is always offered
+/// for one layer of optional.
 /// Each row is a program, the place of the error, and whether the help is given; the fixtures
 /// `E0062-push*` pin the text.
 #[test]
@@ -3728,12 +3727,6 @@ fn push_onto_an_optional_array_should_offer_unwrap_help_only_for_a_stored_array(
             false,
         ),
         (
-            "two layers",
-            "fn main() {\n    let mut xs: [i64]?? = Some(Some([1]))\n    xs.push(2)\n}",
-            (3, 5, "xs"),
-            false,
-        ),
-        (
             "array stored by the object of a `?.`",
             "class Bag {\n    mut items: [i64]\n}\nfn add(bag: Bag?) {\n    bag?.items.push(4)\n}\nfn main() {}",
             (5, 5, "bag?.items"),
@@ -3764,6 +3757,16 @@ fn push_onto_an_optional_array_should_offer_unwrap_help_only_for_a_stored_array(
         let fixes: Vec<_> = d.fixes().iter().map(Fix::safe).collect();
         assert_eq!(fixes, [false], "{row}: one unsafe fix");
     }
+}
+
+/// `?.` takes one layer only, so a `push` onto an optional array of an optional gets no `?.` fix.
+/// Its help says what to do instead.
+#[test]
+fn push_onto_a_double_optional_array_should_give_the_unwrap_help_and_no_fix() {
+    let src = "fn main() {\n    let mut xs: [i64]?? = Some(Some([1]))\n    xs.push(2)\n}";
+    let d = diagnostic(src, Code::MayBeNone, (3, 5, "xs"), &[]);
+    assert!(d.help().is_some());
+    assert_eq!(fixes(src, &d), []);
 }
 
 /// A read keeps its unwrap help: a copy is right for a read.

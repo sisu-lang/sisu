@@ -2237,6 +2237,9 @@ pub(crate) enum GetCall {
     Safe,
     /// `base?.get(..)` where the `?.` failed (E0049 or E0062), so the call has no value to name.
     SafeFailed,
+    /// `base.get(..)` on an optional `base`, checked on its payload. E0062 is the error, so the
+    /// call has no value to name.
+    Payload,
 }
 
 /// What an index into a string does with its element.
@@ -2323,6 +2326,7 @@ impl RangeForm {
                     GetCall::Safe => (format!("{base}?.get"), Some(base)),
                     // The call is not `base`, so no help names a value for it.
                     GetCall::SafeFailed => (format!("{base}?.get"), None),
+                    GetCall::Payload => (format!("{base}.get"), None),
                 };
                 let d = Diagnostic::coded(code, at, format!("`{call}({dots})` has no bounds"))
                     .with_label("this range has no bounds");
@@ -4575,7 +4579,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 let example = match call {
                     GetCall::Plain => format!("{base}.get(1..3)"),
                     GetCall::Safe => format!("{base}?.get(1..3)"),
-                    GetCall::SafeFailed => "1..3".to_owned(),
+                    GetCall::SafeFailed | GetCall::Payload => "1..3".to_owned(),
                 };
                 Diagnostic::coded(code, at, "a string's `get` takes a range")
                     .with_label("this is not a range")

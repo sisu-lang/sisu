@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use super::array::{innermost, is_optional_array, optional_array};
 use super::expr::{if_some, literal_type, local, operator};
-use super::member::{Access, safe_value};
+use super::member::{Access, FoundField, safe_value};
 use super::operator::Operator;
 use super::unused_names::Used;
 use super::{
@@ -741,6 +741,24 @@ impl Checker<'_> {
         }
     }
 
+    /// The field `name` of the base of a place, a value of type `ty`, as `find_field` finds it, and
+    /// whether `ty` is an optional. A `.` on an optional checks the field on its payload and
+    /// writes nothing. A `push` reads the place only to find that its receiver is no array: it
+    /// finds no field there.
+    fn field_target(
+        &mut self,
+        ty: Option<Type>,
+        base: &ast::Expr,
+        name: &ast::Ident,
+        (access, change): (Access, Change),
+    ) -> Option<(FoundField, bool)> {
+        let Some(TypeKind::Optional(payload)) = ty.map(Type::kind) else {
+            return (self.find_field(ty, base, name, access)).map(|found| (found, false));
+        };
+        let found = self.field_of_payload(payload, base, name, access)?;
+        (change != Change::Push).then_some((found, true))
+    }
+
     /// Reports E0062 at `base`, the optional array of an element place whose place is `inner`.
     /// An `if let` of the array binds a copy, which is no place. The help names the object of the
     /// `?.` only when that object is what makes the array optional: the `?.` field stores an
@@ -805,8 +823,8 @@ impl Checker<'_> {
                 } else {
                     checked
                 };
-                let Some((class, index, ty)) =
-                    self.find_field(type_of(&checked), base, name, access)
+                let Some(((class, index, ty), on_optional)) =
+                    self.field_target(type_of(&checked), base, name, (access, change))
                 else {
                     return CheckedPlace::failed();
                 };
@@ -819,7 +837,7 @@ impl Checker<'_> {
                     self.forbid(change, name, span, Immutable::Field { declared })
                 };
                 CheckedPlace {
-                    path: checked.ok().map(|base| Path {
+                    path: checked.ok().filter(|_| !on_optional).map(|base| Path {
                         root: Root::Field(index),
                         operands: vec![base],
                     }),
