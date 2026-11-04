@@ -293,6 +293,10 @@ impl<'ctx> Codegen<'ctx, '_> {
             !function.prelude,
             "no table entry should call a method of the prelude"
         );
+        assert!(
+            !function.muts.contains(&true),
+            "a `mut` parameter through `any I` lands in Task 8"
+        );
         // The receiver is the data, a pointer, whatever the method's `self` is.
         let ptr = self.context.ptr_type(AddressSpace::default());
         let others: Vec<Type> = function.locals[1..function.params]

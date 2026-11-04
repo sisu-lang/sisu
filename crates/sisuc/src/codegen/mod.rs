@@ -154,6 +154,8 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             enums: Vec::new(),
             functions: Vec::new(),
             slots: Vec::new(),
+            outs: Vec::new(),
+            last_outs: RefCell::new(Vec::new()),
             flagged: Vec::new(),
             types: Vec::new(),
             caller: Cell::new(None),
@@ -326,6 +328,12 @@ struct Codegen<'ctx, 'src> {
     /// The current function's locals, indexed by `LocalId`: each one's `alloca` and its LLVM
     /// type, `None` for `unit`.
     slots: Vec<Option<(PointerValue<'ctx>, BasicTypeEnum<'ctx>)>>,
+    /// The out pointers of the current function, indexed by parameter: `Some` for a `mut`
+    /// parameter, whose final value `SetOut` stores there.
+    outs: Vec<Option<PointerValue<'ctx>>>,
+    /// The out slots of the last call that passed any, indexed by the callee's parameter: `Some`
+    /// for a `mut` parameter. `Out` loads from them. Each slot is an `alloca` in the entry block.
+    last_outs: RefCell<Vec<Option<PointerValue<'ctx>>>>,
     /// The current function's flagged locals, indexed by `LocalId`: a `Move` of one leaves the
     /// zero value in its slot (every local is flagged under the RC checks, which test it).
     flagged: Vec<bool>,
@@ -521,6 +529,13 @@ impl<'ctx> Codegen<'ctx, '_> {
             .iter()
             .flat_map(|p| self.param_types(p.ty))
             .collect();
+        // One out pointer for each `mut` parameter follows the value parameters.
+        params.extend(
+            f.muts
+                .iter()
+                .filter(|&&m| m)
+                .map(|_| BasicMetadataTypeEnum::from(ptr_type)),
+        );
         // A prelude function takes its caller's location: a pointer and a length.
         if f.prelude {
             params.push(ptr_type.into());
@@ -597,6 +612,18 @@ impl<'ctx> Codegen<'ctx, '_> {
         {
             self.store(self.slot(local).0, param);
         }
+        let values: usize = tys.iter().map(|&ty| self.param_types(ty).len()).sum();
+        let mut pointers = function.get_param_iter().skip(values);
+        self.outs = (f.muts.iter())
+            .map(|&m| {
+                m.then(|| {
+                    pointers
+                        .next()
+                        .expect("a `mut` parameter should have an out pointer")
+                        .into_pointer_value()
+                })
+            })
+            .collect();
         self.caller.set(f.prelude.then(|| {
             // The location follows the Sisu parameters, so it is the last two.
             let hidden = |from_end| function.get_nth_param(function.count_params() - from_end);
@@ -780,7 +807,26 @@ impl<'ctx> Codegen<'ctx, '_> {
                         self.split(ty, value)
                     })
                     .collect();
-                if self.mir.functions[func.0].prelude {
+                let callee = &self.mir.functions[func.0];
+                if callee.muts.contains(&true) {
+                    let outs: Vec<_> = (callee.muts.iter().enumerate())
+                        .map(|(index, &m)| {
+                            m.then(|| {
+                                let ty = self
+                                    .llvm_type(callee.locals[index].ty)
+                                    .expect("a `mut` parameter should have a value type");
+                                self.entry_alloca(ty, "out")
+                            })
+                        })
+                        .collect();
+                    args.extend(
+                        outs.iter()
+                            .flatten()
+                            .map(|&p| BasicMetadataValueEnum::from(p)),
+                    );
+                    *self.last_outs.borrow_mut() = outs;
+                }
+                if callee.prelude {
                     // The caller's own location when the caller is the prelude's too, and the
                     // call's when it is the user's.
                     let (at, at_len) = self.report_site(*span);
@@ -856,8 +902,19 @@ impl<'ctx> Codegen<'ctx, '_> {
                 text
             }
             Rvalue::ReadLine => self.read_line(),
-            Rvalue::Out { .. } | Rvalue::SetOut { .. } => {
-                unreachable!("lowering emits no out slot before the copy-in lands")
+            Rvalue::Out { index } => {
+                let slot = self.last_outs.borrow()[*index]
+                    .expect("`out` should follow a call that has that `mut` parameter");
+                let ty = self
+                    .llvm_type(ty())
+                    .expect("a `mut` parameter should have a value type");
+                self.load(ty, slot)
+            }
+            Rvalue::SetOut { index, value } => {
+                let (value, _) = self.operand(value);
+                let slot = self.outs[*index].expect("`set_out` should name a `mut` parameter");
+                self.store(slot, value);
+                return None;
             }
             Rvalue::Chars(op) => self.chars(self.operand(op).0),
             Rvalue::Bytes(op) => self.bytes(self.operand(op).0),

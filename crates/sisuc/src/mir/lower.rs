@@ -78,10 +78,6 @@ pub(super) fn function(
         f.params.len(),
         "a function should have one flag per parameter"
     );
-    assert!(
-        !f.params.iter().any(|p| f.locals[p.0].mutable),
-        "a `mut` parameter lands in Task 5"
-    );
     Lowering::function(program, f, borrowed, written)
 }
 
@@ -251,6 +247,7 @@ impl<'a> Lowering<'a> {
                 lowering.discard(value);
                 None
             };
+            lowering.set_outs();
             lowering.release_scope(0);
             let value = value.map(|value| lowering.owned(value));
             lowering.terminate(Terminator::Return(value));
@@ -462,6 +459,65 @@ impl<'a> Lowering<'a> {
         for i in mark..self.guard.len() {
             self.push(Statement::End(self.guard[i]));
         }
+    }
+
+    /// Hands on the final value of each `mut` parameter, just before a return.
+    fn set_outs(&mut self) {
+        for index in 0..self.borrowed.len() {
+            if self.declared[index].mutable {
+                let value = self.read(LocalId(index));
+                self.push(Statement::Assign {
+                    dest: None,
+                    value: Rvalue::SetOut { index, value },
+                });
+            }
+        }
+    }
+
+    /// `call` with its `mut` arguments: each one copied in (`read` into its temporary, which the
+    /// call then moves in), the call, the final value of each temporary (`out`), then `back`,
+    /// the store-backs.
+    fn mut_call(
+        &mut self,
+        call: &Expr,
+        muts: &[tir::MutArg],
+        back: &Block,
+        dest: Option<LocalId>,
+    ) -> Lowered {
+        let ExprKind::Call { args, .. } = &call.kind else {
+            panic!("a `mut` parameter through `any I` lands in Task 8");
+        };
+        assert!(
+            muts.iter().all(|m| m.keep.is_empty())
+                && back.stmts.iter().all(|stmt| matches!(
+                    stmt,
+                    Stmt::Assign {
+                        place: Place::Local(_),
+                        ..
+                    }
+                )),
+            "a `mut` field or element lands in Task 6"
+        );
+        for m in muts {
+            self.locals[m.temp.0].scope = self.here();
+            let temp = valued(self.locals[m.temp.0].ty).then_some(m.temp);
+            self.into(&m.read, temp)?;
+        }
+        // No temporary joins the scope: no exit comes between a copy-in and its store-back, and a
+        // call in the branch of an `&&` has no block of its own to release in.
+        let value = self.into(call, dest)?;
+        for m in muts {
+            let index = args
+                .iter()
+                .position(|arg| local_of(arg) == Some(m.temp))
+                .expect("a `mut` argument of the call should be its temporary");
+            self.push(Statement::Assign {
+                dest: Some(m.temp),
+                value: Rvalue::Out { index },
+            });
+        }
+        self.block(back, None)?;
+        Some(value)
     }
 
     /// Releases `local`, a temporary that owns its value, when there is one.
@@ -1028,12 +1084,13 @@ impl<'a> Lowering<'a> {
                     None => None,
                 };
                 self.end_guards(0);
+                self.set_outs();
                 self.release_scope(0);
                 self.terminate(Terminator::Return(value));
                 return None;
             }
             ExprKind::Block(block) => return self.block(block, dest),
-            ExprKind::MutCall { .. } => panic!("a call with a `mut` argument lands in Task 5"),
+            ExprKind::MutCall { call, muts, back } => return self.mut_call(call, muts, back, dest),
         };
         Some(self.assign(e.ty, dest, value))
     }

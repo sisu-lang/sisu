@@ -84,15 +84,8 @@ pub(crate) enum Rule {
     /// A token is released, consumed or read, or freed where it may be ended or borrowed; or a
     /// local that is not a token is freed or built into.
     Token,
-    /// An `out` whose nearest call before it in the block, past only `release`s and other
-    /// `out`s, does not hand its destination on as the `mut` argument that the `out` names.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the certifier rule for `out` lands in the next commit"
-        )
-    )]
+    /// An `out` whose nearest call before it in the block, past only `release`s, `end`s and other
+    /// `out`s, does not take its destination as the argument that the `out` names.
     Out,
 }
 
@@ -148,12 +141,49 @@ const NONE: usize = usize::MAX;
 /// first, then the statements that read a root in place and then kill it, then each counted
 /// local in order.
 pub(crate) fn certify(function: &Function) -> Result<(), Violation> {
+    outs(function)?;
     regions(
         function,
         |_| true,
         true,
         |region, scratch| region.check(scratch, &mut |_, _| {}),
     )
+}
+
+/// Each `out` takes the final value of an argument of the call just before it: the nearest call in
+/// its block, past only `release`s, `end`s and other `out`s, passes the `out`'s destination at the
+/// index that the `out` names. Codegen reads the out slots of that call, so no other call may
+/// come between.
+fn outs(function: &Function) -> Result<(), Violation> {
+    for (b, block) in function.blocks.iter().enumerate() {
+        let mut args: Option<&[Operand]> = None;
+        for stmt in &block.stmts {
+            match stmt {
+                Statement::Assign {
+                    value: Rvalue::Call { args: passed, .. } | Rvalue::DynCall { args: passed, .. },
+                    ..
+                } => args = Some(passed),
+                Statement::Assign {
+                    dest: Some(dest),
+                    value: Rvalue::Out { index },
+                } => {
+                    let passed = args
+                        .and_then(|args| args.get(*index))
+                        .and_then(operand_place);
+                    if passed != Some((*dest, &[])) {
+                        return Err(Violation {
+                            block: BlockId(b),
+                            local: *dest,
+                            rule: Rule::Out,
+                        });
+                    }
+                }
+                Statement::Release(_) | Statement::End(_) => {}
+                _ => args = None,
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The set that reaches each scope release of a `named` local (one a `release?` names), keyed by

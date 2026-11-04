@@ -24,6 +24,11 @@
 //! the concrete method's own flags (ADR 0029). A conversion to `any` (`ToAny`) consumes its
 //! operand. Each may run any written method, so each is a clobber (`may_call_written`).
 //!
+//! A `mut` parameter (ADR 0043) has an out slot: the caller passes one more pointer for it, and
+//! the function stores the parameter's final value there with `SetOut`, before each `return`.
+//! A call with a `mut` argument moves the argument's value into a temporary, calls, reads each
+//! final value with `Out`, and stores it back. A `mut` parameter is owned, never borrowed.
+//!
 //! The reuse pass (`reuse.rs`) then gives each boxed field of a construction a token of its
 //! enum that every path into it holds, so the box is built into the token's block.
 //!
@@ -95,13 +100,6 @@ pub(crate) struct Function {
     /// Per parameter, whether it is `mut`: the caller passes one more pointer for it, after the
     /// value parameters, and the function stores the parameter's final value there (`SetOut`).
     /// A `mut` parameter is never borrowed.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "copy-in and copy-out for locals reads it in the next commit"
-        )
-    )]
     pub(crate) muts: Vec<bool>,
     pub(crate) ret: Type,
     /// Whether the prelude writes the function. Codegen gives it two hidden last parameters, the
@@ -325,24 +323,13 @@ pub(crate) enum Rvalue {
     },
     ReadLine,
     /// The final value of argument `index` of the nearest call before it in the same block: the
-    /// callee stored it with `SetOut`. No call stands between them; a `release` may (the
-    /// certifier checks this). The destination takes ownership of the value.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "copy-in and copy-out for locals builds it in the next commit"
-        )
-    )]
+    /// callee stored it with `SetOut`. No call stands between them; a `release` or an `end` may
+    /// (the certifier checks this). The destination takes ownership of the value.
     Out {
         index: usize,
     },
     /// The final value of this function's `mut` parameter `index`, which `value` consumes. It has
     /// no destination: the value goes to the caller's out slot.
-    #[expect(
-        dead_code,
-        reason = "copy-in and copy-out for locals builds it in the next commit"
-    )]
     SetOut {
         index: usize,
         value: Operand,
