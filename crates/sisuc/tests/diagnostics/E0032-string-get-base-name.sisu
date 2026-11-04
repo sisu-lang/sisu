@@ -1,6 +1,13 @@
+class Holder { name: string }
 fn main() {
     let t = "ab"
     let u: string? = "ab"
+    let w = "ab"
+    let p: string?? = Some(Some("ab"))
+    let h = Holder(name: "ab")
     print(t.get(1) ?? "")
     print(u?.get(1) ?? "")
+    print(w?.get(1) ?? "")
+    print(p?.get(1) ?? "")
+    print(h.name?.get(1) ?? "")
 }
