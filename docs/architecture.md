@@ -21,10 +21,13 @@ the terms.
 stages in order and prints diagnostics. `args.rs` parses the command line with
 clap into a `Mode`, one per subcommand plus `--version` and the usage, and `run.rs`
 links a program into a private temporary directory, runs it and removes the
-directory. The `sisu` binary (`main.rs`) only
-runs it on a thread with a 64 MiB stack. It reads at most 1 GiB of source,
+directory. The `sisu` binary (`main.rs`) runs it on a thread with a 64 MiB
+stack, and allocates with mimalloc. It reads at most 1 GiB of source,
 so every span offset fits in a `u32`; a larger file is a tool error. The
-fuzzer calls the library too:
+commands `check` and `build` (without `--emit`) do not free the typed program,
+the mir or the LLVM module: the process exits soon after, and the OS frees all
+of its memory faster. `--emit`, `run` (which waits for the program) and the
+fuzzer free them.
 `fuzz.rs` runs the `check` path on raw bytes and asserts that every
 diagnostic span and fix edit is well formed, and that every safe fix, applied
 alone, deletes no comment and removes its diagnostic and no other. For an
@@ -476,7 +479,8 @@ allocates one block sized for the most text each part can give, plus the width
 of each padded part, then writes the parts into it, padding each part in place. With `--rc-checks`, these helpers check each count before they
 change it, and `main` calls `sisu_rc_check_exit` before it returns.
 
-**LLVM 23**. Runs the `mem2reg` pass, which turns stack slots into registers,
+**LLVM 23**. A debug build of `sisu` verifies the module first; a release
+build does not. Runs the `mem2reg` pass, which turns stack slots into registers,
 or with `-O2` or `-O3` the `default<O2>` or `default<O3>` pipeline. Then it
 emits object code for the machine `sisu` runs on, x86-64 or ARM64.
 
@@ -566,7 +570,9 @@ modules come last. A module uses only its own layer and earlier ones,
 so a stage does not depend on what comes after it. The test fails on a use
 of a later layer outside test code. Its `BACK_EDGES` list holds the few uses
 that stay, each with its reason, and the test fails on an entry that no use
-needs.
+needs. The same file fails when `sisuc` turns on a feature in a package that
+the runtime archives link. `make build` builds both in one cargo run, which
+would give the feature to every compiled program.
 
 ## Updating the diagram
 

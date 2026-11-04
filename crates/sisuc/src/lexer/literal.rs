@@ -1,6 +1,7 @@
 //! Literals: numbers (decimal, and `0x`, `0b` and `0o` with digit separators), `char` and
 //! string literals, and the escapes in them.
 
+use std::borrow::Cow;
 use std::fmt;
 
 use super::{Chars, MIN_MAGNITUDE, Token, TokenKind, literal_too_large, take_while};
@@ -98,7 +99,7 @@ fn number(
         return Ok(float);
     }
     let digits = &source[digits_at..end];
-    let value = u64::from_str_radix(&digits.replace('_', ""), radix)
+    let value = u64::from_str_radix(&without_separators(digits), radix)
         .ok()
         .filter(|&n| n <= MIN_MAGNITUDE);
     // Digits right after a `.` are a float's fraction or a field name, never an integer's value,
@@ -217,8 +218,7 @@ fn float_rest(
         }
         check_digits(source, digits_at, float_end, 10)?;
     }
-    let value = source[start..float_end]
-        .replace('_', "")
+    let value = without_separators(&source[start..float_end])
         .parse::<f64>()
         .ok()
         .filter(|x| x.is_finite())
@@ -226,6 +226,15 @@ fn float_rest(
             at: Span::new(start, float_end),
         })?;
     Ok(Some(TokenKind::Float(Float(value))))
+}
+
+/// `digits` without its `_` separators. Most literals have none, and keep their text uncopied.
+fn without_separators(digits: &str) -> Cow<'_, str> {
+    if digits.contains('_') {
+        Cow::Owned(digits.replace('_', ""))
+    } else {
+        Cow::Borrowed(digits)
+    }
 }
 
 /// The `char` literal that starts at the `'` at `source[start..]`, which `chars` has consumed.

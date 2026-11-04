@@ -1459,21 +1459,24 @@ fn text_part(ty: Type) -> bool {
     )
 }
 
-/// Verifies `module`, then runs the pipeline. This is the build's only verifier run: a pass
-/// pipeline that broke the IR reaches instruction selection instead of a clean error, which would
-/// be an LLVM bug.
+/// Verifies `module` in a debug build, then runs the pipeline. A release build does not verify,
+/// because the verifier takes about 180 ms of a 143k-line build. The tests that run `sisu` run a
+/// debug build, so it verifies each module that they build. No verifier runs after the pipeline: a
+/// pass that broke the IR reaches instruction selection, which would be an LLVM bug.
 pub(crate) fn optimize(
     module: &Module<'_>,
     machine: &TargetMachine,
     level: OptLevel,
 ) -> Result<(), String> {
-    module.verify().map_err(|e| e.to_string())?;
+    if cfg!(debug_assertions) {
+        module.verify().map_err(|e| e.to_string())?;
+    }
     module
         .run_passes(pipeline(level), machine, PassBuilderOptions::create())
         .map_err(|e| e.to_string())
 }
 
-/// Compiles `module`, which `optimize` verified, to object code for `machine`, in memory.
+/// Compiles `module`, which `optimize` ran, to object code for `machine`, in memory.
 pub(crate) fn object_code(
     module: &Module<'_>,
     machine: &TargetMachine,

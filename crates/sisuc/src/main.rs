@@ -4,6 +4,13 @@ use std::panic;
 use std::process::ExitCode;
 use std::thread;
 
+use mimalloc::MiMalloc;
+
+// The compiler makes and frees many small nodes, and mimalloc does that faster than glibc's
+// malloc. LLVM's C++ code still uses `malloc`.
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
+
 fn main() -> ExitCode {
     let compiler = thread::Builder::new()
         .name("main".to_string())
