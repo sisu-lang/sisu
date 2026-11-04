@@ -43,12 +43,13 @@ use self::array::element_of;
 use self::enums::{Component, EnumLayout};
 use self::layout::{ClassLayout, HeapBlock, tbaa_tag};
 use self::rc::Helper;
-use self::units::{Placement, Unit};
+use self::units::{Order, Placement, Unit};
 use crate::conformance::Written;
 use crate::mir::{
     self, BlockId, Const, Operand, Place, Projection, Rvalue, Side, Statement, Terminator,
 };
 use crate::source::{LineIndex, Span};
+use crate::timings::{Stage, Timings};
 use crate::tir::{
     ClassId, EnumId, FuncId, InterfaceId, LocalId, Program, Stream, Type, TypeArgs, TypeKind,
     UnaryOp,
@@ -194,6 +195,81 @@ pub(crate) fn compile<'ctx>(
         machine,
         rc_checks,
     )
+}
+
+/// What `each_unit` needs to build the units of one program.
+pub(crate) struct UnitInput<'src> {
+    pub(crate) program: &'src Program,
+    pub(crate) mir: &'src mir::Program,
+    /// The name of the source in panic messages.
+    pub(crate) path: &'src str,
+    pub(crate) source: &'src str,
+    pub(crate) level: OptLevel,
+    pub(crate) rc_checks: bool,
+}
+
+/// Builds each of `units` and runs `finish` on its module and its target machine, and returns the
+/// results in unit order. With one unit, both run on the calling thread, and the module is
+/// `compile`'s. With several, each unit has its own context and target machine, and runs on a
+/// thread of `units::schedule`. `finish` runs on that thread, before the module goes. The time of
+/// each unit is `timings`' stage `Codegen`, with the stages that `finish` records, and the
+/// slowest unit counts (`Timings::merge_units`).
+///
+/// A unit that fails has an `Err`. The caller reports the lowest index.
+pub(crate) fn each_unit<T: Send>(
+    input: &UnitInput<'_>,
+    units: &[Unit],
+    timings: &mut Timings,
+    finish: impl Fn(&Module<'_>, &TargetMachine, &mut Timings) -> Result<T, String> + Sync,
+) -> Vec<Result<T, String>> {
+    // Once, on this thread; the units only create target machines.
+    if let Err(message) = initialize_native_target() {
+        return units.iter().map(|_| Err(message.clone())).collect();
+    }
+    let analyses = (units.len() > 1).then(|| Analyses::new(input.program, input.source));
+    let parent = &*timings;
+    let built = units::schedule(
+        units.len(),
+        units::threads(units.len()),
+        Order::from_env(),
+        |at| {
+            let mut unit_timings = parent.for_unit();
+            let result = create_target_machine(input.level).and_then(|machine| {
+                let context = Context::create();
+                let module = unit_timings.time(Stage::Codegen, || match &analyses {
+                    None => compile(
+                        &context,
+                        input.program,
+                        input.mir,
+                        input.path,
+                        input.source,
+                        &machine,
+                        input.rc_checks,
+                    ),
+                    Some(analyses) => compile_unit(
+                        &context,
+                        input.program,
+                        input.mir,
+                        analyses,
+                        &units[at],
+                        input.path,
+                        input.source,
+                        &machine,
+                        input.rc_checks,
+                    ),
+                });
+                let done = finish(&module, &machine, &mut unit_timings);
+                // The module goes before the context that owns it.
+                crate::release(module);
+                crate::release(context);
+                done
+            });
+            (result, unit_timings)
+        },
+    );
+    let (results, recorded): (Vec<_>, Vec<_>) = built.into_iter().unzip();
+    timings.merge_units(recorded);
+    results
 }
 
 /// What a whole program gives every codegen unit: the analyses of its types and the index of its
@@ -1498,9 +1574,23 @@ pub(crate) enum OptLevel {
     O3,
 }
 
-/// A target machine for the host `sisu` runs on.
+/// Initializes LLVM's native target. The driver calls it once on the calling thread, before the
+/// threads of a split build make their target machines with `create_target_machine`.
+pub(crate) fn initialize_native_target() -> Result<(), String> {
+    Target::initialize_native(&InitializationConfig::default())
+}
+
+/// A target machine for the host `sisu` runs on. It initializes the native target first, so it
+/// suits one thread.
 pub(crate) fn target_machine(level: OptLevel) -> Result<TargetMachine, String> {
-    Target::initialize_native(&InitializationConfig::default())?;
+    initialize_native_target()?;
+    create_target_machine(level)
+}
+
+/// A target machine for the host `sisu` runs on, after `initialize_native_target`. Several
+/// threads can each make their own. inkwell takes a read lock for the lookup of the target, and
+/// the initialization takes the write lock.
+pub(crate) fn create_target_machine(level: OptLevel) -> Result<TargetMachine, String> {
     let triple = TargetMachine::get_default_triple();
     let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
     // PIC because Ubuntu's `cc` links position-independent executables by default.

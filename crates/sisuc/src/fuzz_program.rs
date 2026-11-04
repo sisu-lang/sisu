@@ -43,6 +43,7 @@ const BUILDS: [(&str, Backend); 3] = [
             rc_checks: false,
             linker: None,
             allocator: None,
+            units: None,
         },
     ),
     (
@@ -52,6 +53,7 @@ const BUILDS: [(&str, Backend); 3] = [
             rc_checks: false,
             linker: None,
             allocator: None,
+            units: None,
         },
     ),
     (
@@ -61,6 +63,7 @@ const BUILDS: [(&str, Backend); 3] = [
             rc_checks: true,
             linker: None,
             allocator: None,
+            units: None,
         },
     ),
 ];

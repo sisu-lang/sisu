@@ -17,25 +17,13 @@ use crate::mir;
 /// The generated program of `make compile-speed` with 100 copies has 195,729 raw IR instructions
 /// in `--emit ir-raw`. Its mir size in all is 38,903. So the value is 25,000 * 38,903 / 195,729,
 /// which is 4,969. That program gets 7 units.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "Task 4 calls `count`, which reads it")
-)]
 pub(crate) const UNIT_SIZE: usize = 4969;
 
 /// The most units a program builds in when the flag is not given.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "Task 4 calls `count`, which reads it")
-)]
 pub(crate) const MAX_UNITS: usize = 8;
 
 /// The mir size of `function`: its statements, and one terminator for each block. Every
 /// function has a block, so the size is at least 1.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "Task 4 measures the functions with it")
-)]
 pub(crate) fn size(function: &mir::Function) -> usize {
     function
         .blocks
@@ -47,7 +35,6 @@ pub(crate) fn size(function: &mir::Function) -> usize {
 /// The number of units for functions of `sizes`: `flag` if it is given, else one unit for each
 /// `UNIT_SIZE`, from 1 to `MAX_UNITS`. A unit always holds a function, so the number is at most
 /// the function count.
-#[cfg_attr(not(test), expect(dead_code, reason = "Task 4 calls it"))]
 pub(crate) fn count(sizes: &[usize], flag: Option<usize>) -> usize {
     let wanted =
         flag.unwrap_or_else(|| (sizes.iter().sum::<usize>() / UNIT_SIZE).clamp(1, MAX_UNITS));
@@ -60,10 +47,6 @@ pub(crate) fn count(sizes: &[usize], flag: Option<usize>) -> usize {
 /// # Panics
 ///
 /// If `count` is 0 and `sizes` is not empty: a function needs a unit.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "Task 4 calls `partition`, which calls it")
-)]
 pub(crate) fn assign(sizes: &[usize], count: usize) -> Vec<usize> {
     let mut order: Vec<usize> = (0..sizes.len()).collect();
     // The sort is stable, so equal sizes stay in id order.
@@ -82,10 +65,6 @@ pub(crate) fn assign(sizes: &[usize], count: usize) -> Vec<usize> {
 
 /// What a unit does with a function.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "Task 4 builds `Other` in `partition`")
-)]
 pub(crate) enum Placement {
     /// The unit defines the function.
     Own,
@@ -125,7 +104,6 @@ impl Unit {
 /// # Panics
 ///
 /// With `count > 1`, if two functions have one name: a split build links by name.
-#[cfg_attr(not(test), expect(dead_code, reason = "Task 4 calls it"))]
 pub(crate) fn partition(mir: &mir::Program, count: usize) -> Vec<Unit> {
     if count > 1 {
         let mut names = FxHashSet::default();
@@ -159,13 +137,6 @@ pub(crate) fn partition(mir: &mir::Program, count: usize) -> Vec<Unit> {
 
 /// How the units of a build run. `Forward` and `Reverse` are for tests of the order of units (the
 /// `SISU_UNIT_ORDER` hook): they run every unit on one thread.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "Task 4 reads the order and gives it to `schedule`"
-    )
-)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Order {
     /// On several threads.
@@ -179,7 +150,6 @@ pub(crate) enum Order {
 impl Order {
     /// The order that `SISU_UNIT_ORDER` names: `forward` or `reverse`. Any other value, or none,
     /// gives `Threads`.
-    #[expect(dead_code, reason = "Task 4 calls it")]
     pub(crate) fn from_env() -> Order {
         match std::env::var("SISU_UNIT_ORDER").as_deref() {
             Ok("forward") => Order::Forward,
@@ -190,7 +160,6 @@ impl Order {
 }
 
 /// The number of threads for `count` units: one for each unit, and at most one for each core.
-#[cfg_attr(not(test), expect(dead_code, reason = "Task 4 calls it"))]
 pub(crate) fn threads(count: usize) -> usize {
     count.min(thread::available_parallelism().map_or(1, NonZeroUsize::get))
 }
@@ -205,7 +174,6 @@ pub(crate) fn threads(count: usize) -> usize {
 ///
 /// If `work` panics, the panic goes on in the caller. A panic on a worker names the thread
 /// `codegen`. Also, if the system cannot start a thread, it panics.
-#[cfg_attr(not(test), expect(dead_code, reason = "Task 4 calls it"))]
 pub(crate) fn schedule<T: Send>(
     count: usize,
     threads: usize,

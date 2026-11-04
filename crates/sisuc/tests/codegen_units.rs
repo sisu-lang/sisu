@@ -6,6 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+mod scratch_path;
 #[expect(dead_code, reason = "this binary uses only part of the shared helpers")]
 mod support;
 
@@ -464,4 +465,36 @@ fn a_count_above_the_functions_should_build_and_run() {
     let out = run(&exe);
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "1\n2\n3\n");
+}
+
+/// GIVEN a program of 3 functions
+/// AND a `PATH` with only `cc`, which cannot find the linker `mold`, and an empty `TMPDIR`
+/// WHEN `sisu build --codegen-units 3 --linker mold` runs
+/// THEN it exits 1 and `TMPDIR` holds no object file, so the link error removed all three
+#[test]
+fn failed_link_of_a_split_build_should_remove_every_object() {
+    let source = "fn one() -> i64 {\n    1\n}\n\nfn two() -> i64 {\n    2\n}\n\nfn main() {\n    print(one())\n    print(two())\n}\n";
+    let dir = fixture(
+        "failed_link_of_a_split_build_should_remove_every_object",
+        &[("link.sisu", source)],
+    );
+    let only_cc = scratch_path::only_cc("split_link_failure_path");
+    let tmp = scratch_path::empty_dir("split_link_failure_tmp");
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .current_dir(&dir)
+        .env("PATH", &only_cc)
+        .env("TMPDIR", &tmp)
+        .env_remove("COMPILER_PATH")
+        .args(["build", "--codegen-units", "3", "--linker", "mold"])
+        .args(["link.sisu", "-o", "link-out"])
+        .output()
+        .expect("sisu starts");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("cc failed"), "{stderr}");
+    let left: Vec<_> = fs::read_dir(&tmp)
+        .expect("reads TMPDIR")
+        .map(|entry| entry.expect("reads an entry").file_name())
+        .collect();
+    assert_eq!(left, Vec::<std::ffi::OsString>::new());
 }

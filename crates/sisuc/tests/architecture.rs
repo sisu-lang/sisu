@@ -56,6 +56,12 @@ const BACK_EDGES: &[(&str, &str, &str)] = &[
          `sisuc::STACK_SIZE`; the scheduler gives it to its workers",
     ),
     (
+        "codegen",
+        "timings",
+        "`each_unit` records the time of each unit in its own `Timings` and merges them for the \
+         driver",
+    ),
+    (
         "link",
         "crate",
         "`Allocator` is a command-line choice in lib.rs, and link picks the runtime by it",

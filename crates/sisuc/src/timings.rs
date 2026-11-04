@@ -70,7 +70,6 @@ impl Timings {
 
     /// A recorder for one codegen unit, on when `self` is on. It runs on the unit's thread, and
     /// `merge_units` takes its stages back.
-    #[cfg_attr(not(test), expect(dead_code, reason = "Task 4 gives one to each unit"))]
     pub(crate) fn for_unit(&self) -> Timings {
         Timings(self.0.is_some().then(|| Recording {
             start: Instant::now(),
@@ -84,7 +83,6 @@ impl Timings {
     /// longest time that one unit took for that stage. This is not the elapsed time of the stage:
     /// a worker can run several units one after the other. It also records the number of units
     /// for the `codegen units` line.
-    #[cfg_attr(not(test), expect(dead_code, reason = "Task 4 merges the units"))]
     pub(crate) fn merge_units(&mut self, units: Vec<Timings>) {
         if let Some(recording) = &mut self.0 {
             recording.units = Some(units.len());
