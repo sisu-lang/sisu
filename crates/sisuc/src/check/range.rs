@@ -2,12 +2,13 @@
 //! the E0021 report of an assignment to a range index.
 
 use super::array::optional_array;
+use super::call::Dot;
 use super::string::single_term;
 use super::{Checked, Checker, Poisoned, UNKNOWN, type_of};
 use crate::ast::{self, ExprKind};
 use crate::diagnostic::{
-    Diagnostic, DiagnosticKind, MissingBound, RangeForm, RangePlace, RangePush, RangeTarget,
-    RangeWrite, UnwrapHelp,
+    Diagnostic, DiagnosticKind, GetCall, IndexUsage, MissingBound, RangeForm, RangePlace,
+    RangePush, RangeTarget, RangeWrite, UnwrapHelp,
 };
 use crate::parser::is_place;
 use crate::source::Span;
@@ -70,18 +71,39 @@ impl Checker<'_> {
         .into()
     }
 
-    /// E0032 for each range in the arguments of the `get` of an array: it takes an `i64`. The
-    /// call is poisoned, so no error follows. The other arguments, and the bounds of a range,
-    /// report their own mistakes.
-    pub(super) fn array_get_range(&mut self, args: &[ast::Arg]) -> Checked {
+    /// The `get` of the array type `array`, called at `span` with a range among `args`: E0055 for
+    /// a label, E0053 for a count that is not one, and E0032 for each range, which `get` takes as
+    /// an `i64`. The call is poisoned, so no error follows. The other arguments, and the bounds
+    /// of a range, report their own mistakes. `base` is the receiver, when the help of E0032 can
+    /// write it: `base[a..b]` needs an array that no `?.` or optional touched.
+    pub(super) fn array_get_range(
+        &mut self,
+        (span, array): (Span, Type),
+        base: Option<&ast::Expr>,
+        args: &[ast::Arg],
+    ) -> Checked {
+        self.labels(args);
+        let base = base.map(|base| self.source.line_text(base.span));
         for arg in args {
             if let ExprKind::Range(range) = &arg.value.kind {
-                self.report(DiagnosticKind::ArrayGetTakesIndex { at: range.span });
+                self.report(DiagnosticKind::ArrayGetTakesIndex {
+                    at: range.span,
+                    base: base.clone(),
+                });
                 self.bounds(range);
             } else {
                 // Only its diagnostics matter.
                 drop(self.expr(&arg.value, Some(UNKNOWN)));
             }
+        }
+        // A comparison misread as a call explains the count, which is known after the arguments.
+        if args.len() != 1 && !self.misread_in(args) {
+            self.report(DiagnosticKind::ArgumentCount {
+                name: self.method_name(array, "get"),
+                want: 1,
+                found: args.len(),
+                at: span,
+            });
         }
         Err(Poisoned::error())
     }
@@ -162,17 +184,24 @@ impl Checker<'_> {
     }
 
     /// `receiver.get(args)` on a string, `receiver_expr` its source, or `receiver?.get(args)` when
-    /// `safe`: the string's substring in a range written in the call, an `ast::ExprKind::Range`,
-    /// as a `Slice` that is `safe` and has type `string?`. An argument that is no range is E0032;
-    /// `..`, `..=` and `a..=` are E0023, as they are in an index; a wrong count is E0053; a label
-    /// is E0055.
+    /// `dot` is `Safe`: the string's substring in a range written in the call, an
+    /// `ast::ExprKind::Range`, as a `Slice` that is `safe` and has type `string?`. An argument
+    /// that is no range is E0032; `..`, `..=` and `a..=` are E0023, as they are in an index; a
+    /// wrong count is E0053; a label is E0055.
     pub(super) fn string_get(
         &mut self,
-        (span, safe): (Span, bool),
+        (span, dot): (Span, Dot),
         (receiver, receiver_expr): (Checked, &ast::Expr),
         args: &[ast::Arg],
     ) -> Checked {
         let labeled = self.labels(args);
+        // A `?.` that is `safe` and has a receiver that failed is itself an error (E0049, E0062).
+        let call = match (dot, &receiver) {
+            (Dot::Plain, _) => GetCall::Plain,
+            (Dot::Payload, _) => GetCall::Payload,
+            (Dot::Safe, Ok(_)) => GetCall::Safe,
+            (Dot::Safe, Err(_)) => GetCall::SafeFailed,
+        };
         let [arg] = args else {
             let d = DiagnosticKind::ArgumentCount {
                 name: self.method_name(Type::STRING, "get"),
@@ -188,14 +217,18 @@ impl Checker<'_> {
             // The argument reports its own mistakes, else it is a value that is no range.
             let checked = self.expr(&arg.value, Some(UNKNOWN));
             if type_of(&checked).is_some() {
-                self.report(DiagnosticKind::StringGetNeedsRange { at: arg.value.span });
+                self.report(DiagnosticKind::StringGetNeedsRange {
+                    at: arg.value.span,
+                    base: self.source.line_text(receiver_expr.span),
+                    call,
+                });
             }
             return Err(Poisoned::error());
         };
         if error_for_good(range) {
             self.stamp_push(receiver_expr);
             self.diagnostics
-                .push(self.index_outside(receiver_expr, range, Some(safe)));
+                .push(self.index_outside(receiver_expr, range, Some(call)));
             return Err(Poisoned::error());
         }
         let sliced = self.slice_of(span, (receiver, Type::STRING), range, true);
@@ -252,14 +285,19 @@ impl Checker<'_> {
     }
 
     /// E0023 for `range`, which is an error for good (`error_for_good`) in the index of `base`, or
-    /// with `get` in the argument of its `get`: `Some(safe)`, where `safe` says `base?.get(..)`.
-    fn index_outside(&self, base: &ast::Expr, range: &ast::Range, get: Option<bool>) -> Diagnostic {
+    /// with `get` in the argument of its `get`: `Some(call)`, where `call` says how it is written.
+    fn index_outside(
+        &self,
+        base: &ast::Expr,
+        range: &ast::Range,
+        get: Option<GetCall>,
+    ) -> Diagnostic {
         let text = |e: &ast::Expr| self.source.text(e.span).to_string();
         let form = match (&range.start, &range.end) {
-            (None, None) if let Some(safe) = get => RangeForm::NoBoundsGet {
+            (None, None) if let Some(call) = get => RangeForm::NoBoundsGet {
                 base: text(base),
                 inclusive: range.inclusive,
-                safe,
+                call,
             },
             (None, None) => RangeForm::NoBounds {
                 base: text(base),
@@ -334,10 +372,24 @@ impl Checker<'_> {
                 },
                 Some(_) => RangeWrite::Other,
             },
-            // An element of a substring is a single index of a string.
+            // An element of a substring is a single index of a string. The write help names the
+            // base, so it fits only when the base is a place, that element is the whole target and
+            // the range starts at the base start, as in `s[..b][i] = v`. A range counts bytes and
+            // `chars()` counts characters, so no other start has a correct index in the help.
             _ if ty == Type::STRING => {
+                let whole = place
+                    && found
+                        .parent
+                        .is_some_and(|parent| parent.span == target.span);
+                let (base, usage) = if whole && found.range.start.is_none() {
+                    (found.base, IndexUsage::Write)
+                } else {
+                    (found.index, IndexUsage::Read)
+                };
                 return DiagnosticKind::StringIndex {
                     at: found.index.span,
+                    base: self.source.line_text(base.span),
+                    usage,
                 }
                 .into();
             }

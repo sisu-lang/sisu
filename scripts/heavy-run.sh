@@ -5,11 +5,16 @@
 # A second run says which run it waits for, and waits.
 # A script that takes a lock of its own first (scripts/mutants.sh) sources this file and calls
 # heavy_lock. When the lock cannot be taken (no flock on macOS, no Git directory, a read-only
-# .git), the command runs with no lock and a warning.
+# .git), the command runs with no lock and a warning. SISU_HEAVY_LOCK=skip runs it with no lock
+# on purpose, such as while a mutation test of hours holds the lock and the machine has room.
 #   scripts/heavy-run.sh <command> [args...]
 
 heavy_lock() {
   local dir lock
+  if [[ ${SISU_HEAVY_LOCK:-} == skip ]]; then
+    echo "heavy-run: SISU_HEAVY_LOCK=skip; running with no lock" >&2
+    return 0
+  fi
   if ! command -v flock >/dev/null; then
     echo "heavy-run: no flock; running with no lock" >&2
     return 0
@@ -24,6 +29,7 @@ heavy_lock() {
   exec {heavy_fd}>>"$lock"
   if ! flock -n "$heavy_fd"; then
     echo "heavy-run: waiting for this run to end: $(cat "$lock")" >&2
+    echo "heavy-run: to run now with no lock, set SISU_HEAVY_LOCK=skip" >&2
     flock "$heavy_fd"
   fi
   # The command inherits the open lock, so the lock lasts until it and its children end.

@@ -1,11 +1,13 @@
 //! The compiler's modules depend on each other in pipeline order: a top-level module of `src/`
 //! uses only the modules of its own layer and of earlier layers. The test reads the source with
 //! `syn` from `lib.rs` through each `mod` item, and skips the items under `#[cfg(test)]`. It also
-//! checks each field count that `docs/register.md` gives for a struct.
+//! checks each field count that `docs/register.md` gives for a struct, and that the compiler turns
+//! on no feature in a package that the runtime archives link.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use syn::visit::{self, Visit};
 
@@ -425,4 +427,41 @@ fn register_field_counts_should_match_their_structs() {
         "correct the field count in docs/register.md:\n{}",
         wrong.join("\n")
     );
+}
+
+/// Each package that `cargo tree` reaches through normal dependencies with `args`, on any target,
+/// with the features that it resolves to.
+fn resolved_features(args: &[&str]) -> BTreeMap<String, String> {
+    let out = Command::new(env!("CARGO"))
+        .args(["tree", "--offline", "--locked", "--color", "never"])
+        .args(["--target", "all", "-e", "normal"])
+        .args(["--prefix", "none", "-f", "{p}|{f}"])
+        .args(args)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("cargo should start");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "cargo tree failed: {stderr}");
+    String::from_utf8(out.stdout)
+        .expect("cargo tree should print UTF-8")
+        .lines()
+        .filter_map(|line| line.trim_end_matches(" (*)").split_once('|'))
+        .map(|(package, features)| (package.to_string(), features.to_string()))
+        .collect()
+}
+
+/// GIVEN the runtime packages, resolved alone and with the whole workspace
+/// WHEN `cargo tree` prints the features of each package they reach
+/// THEN each package has the same features both times
+///
+/// `make build` builds the runtime archives and `sisuc` in one cargo run, so a feature that
+/// `sisuc` turns on in a package they share reaches each compiled program. The tests build the
+/// archives alone (`scripts/build-runtime.sh`), so no other test sees it.
+#[test]
+fn runtime_archives_should_get_no_feature_from_the_compiler() {
+    let alone = resolved_features(&["-p", "sisu-runtime-mimalloc", "-p", "sisu-runtime-system"]);
+    let workspace = resolved_features(&["--workspace"]);
+    for (package, features) in &alone {
+        assert_eq!(workspace.get(package), Some(features), "{package}");
+    }
 }

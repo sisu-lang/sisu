@@ -1,0 +1,8 @@
+// GIVEN a `string??` whose `get` is called with a range
+// WHEN `sisu check` runs on it
+// THEN it reports E0062 for the optional that is not unwrapped
+// AND it reports no E0023, because the range is a string's `get` argument
+fn main() {
+    let s: string?? = Some(Some("ab"))
+    print(s.get(0..1) ?? "")
+}

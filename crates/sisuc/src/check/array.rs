@@ -5,7 +5,9 @@ use super::expr::{fits, literal_type, no_member, path, typed};
 use super::generic::{Rank, mark};
 use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, payload, type_of};
 use crate::ast;
-use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Expected, Literal, UnwrapHelp};
+use crate::diagnostic::{
+    Definition, Diagnostic, DiagnosticKind, Expected, IndexUsage, Literal, UnwrapHelp,
+};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
 
@@ -482,7 +484,7 @@ impl Checker<'_> {
         }
         let outer = std::mem::replace(&mut self.body.indexed, true);
         let checked = self.value(base, None);
-        let element = self.element(base, type_of(&checked));
+        let element = self.element(base, type_of(&checked), IndexUsage::Read);
         // The index is not part of the chain that it ends.
         self.body.indexed = false;
         let (index, mismatched) = self.operand(index, Some(Type::I64));
@@ -500,14 +502,24 @@ impl Checker<'_> {
 
     /// The element type of `base`, which is indexed and has type `ty` (`None` is `Error`). An
     /// optional array, a string, or a value that is no array, is reported and gives `Error`.
-    pub(super) fn element(&mut self, base: &ast::Expr, ty: Option<Type>) -> Option<Type> {
+    pub(super) fn element(
+        &mut self,
+        base: &ast::Expr,
+        ty: Option<Type>,
+        usage: IndexUsage,
+    ) -> Option<Type> {
         let ty = ty?;
         let d = match ty.kind() {
             TypeKind::Array(element) => return Some(element),
             TypeKind::Optional(payload) if matches!(payload.kind(), TypeKind::Array(_)) => {
                 optional_array(base, UnwrapHelp::It)
             }
-            _ if ty == Type::STRING => DiagnosticKind::StringIndex { at: base.span }.into(),
+            _ if ty == Type::STRING => DiagnosticKind::StringIndex {
+                at: base.span,
+                base: self.source.line_text(base.span),
+                usage,
+            }
+            .into(),
             _ => DiagnosticKind::CannotIndex {
                 ty: self.type_name(ty),
                 at: base.span,
@@ -557,7 +569,7 @@ impl Checker<'_> {
                 let names = METHODS.iter().map(|&(m, _)| m).chain(prelude);
                 no_member(Definition::Method, self.type_name(ty), method, names)
             };
-            return self.rejected(d, args);
+            return self.rejected_lookup(d, method, args);
         };
         if args.len() != arity {
             let d = DiagnosticKind::ArgumentCount {

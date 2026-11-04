@@ -4,11 +4,7 @@ error[E0062]: `oo` may be `None`
 3 |     print(oo.get(..) ?? 0)
   |           ^^
   |
-  = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
-help: if a `None` result is fine, use `?.`
-  |
-3 |     print(oo?.get(..) ?? 0)
-  |             +
+  = help: unwrap it with `if let`, `let ... else` or `?? return`
 
 error[E0032]: an array's `get` takes an `i64`, not a range
  --> E0032-optional-get-nested.sisu:3:18

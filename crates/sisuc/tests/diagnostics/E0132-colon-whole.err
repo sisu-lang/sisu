@@ -10,5 +10,17 @@ help: remove the `[:]`
 3 +     print(xs)
   |
 
-sisu: 1 error
+error[E0132]: write `s`
+ --> E0132-colon-whole.sisu:8:13
+  |
+8 |     print(s[:])
+  |             ^
+  |
+help: remove the `[:]`
+  |
+8 -     print(s[:])
+8 +     print(s)
+  |
+
+sisu: 2 errors
 sisu: for more on a code, run `sisu explain <code>`: E0132

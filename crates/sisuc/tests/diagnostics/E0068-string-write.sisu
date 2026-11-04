@@ -1,0 +1,9 @@
+// GIVEN a `main` that reads an index of a string and then writes to it
+// WHEN `sisu check` runs on it
+// THEN it reports E0068 for the read, with a help for bytes and a help for characters
+// AND it reports E0068 for the write, with the help to change `cs[i]` and write `t = string(cs)`
+fn main() {
+    let mut t = "abc"
+    print(t[0])
+    t[0] = "x"
+}

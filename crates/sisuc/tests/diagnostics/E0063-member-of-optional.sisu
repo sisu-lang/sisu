@@ -1,0 +1,261 @@
+// GIVEN an optional whose payload has no member of the name, used with `.` in a function for each case
+// WHEN `sisu check` runs on it
+// THEN it reports E0063 at the name of the member and no E0062
+interface Named {
+    fn name(self) -> string
+}
+class Node {
+    mut v: i64
+    w: i64
+    mut xs: [i64]
+    ys: [i64]
+    fn get(self) -> i64 { self.v }
+}
+enum E {
+    A(x: i64)
+    fn tag(self) -> i64 { 1 }
+}
+type M<T> = T?
+class Box {
+    mut o: Node?
+    inner: Node
+}
+class Cat: Named {
+    fn name(self) -> string { "cat" }
+}
+class G {
+    fn pick<T>(self, a: T) -> T { a }
+}
+extend Node {
+    fn ext(self) -> i64 { 1 }
+}
+class W<T> {
+    v: i64
+}
+extend<T: Named> W<T> {
+    fn only(self) -> i64 { 1 }
+}
+class H {
+    mut o: Node?
+}
+fn mk() -> Node? { None }
+fn id<T>(v: T) -> T { v }
+extend H {
+    fn rd(self) { print(self.o.q) }
+}
+
+fn f_class_missing(c: Node?) {
+    print(c.q)
+}
+
+fn f_alias_missing(c: M<Node>) {
+    print(c.q)
+}
+
+fn f_double_missing(c: Node??) {
+    print(c.q)
+}
+
+fn i_missing_indexed(c: Node?) {
+    print(c.q[0])
+}
+
+fn w_missing(c: Node?) {
+    c.q = 2
+}
+
+fn f_any_field(n: (any Named)?) {
+    print(n.q)
+}
+
+fn f_array_field(xs: [i64]?) {
+    print(xs.v)
+}
+
+fn f_array_field_push(xs: [i64]?) {
+    xs.v.push(1)
+}
+
+fn f_string_field(s: string?) {
+    print(s.v)
+}
+
+fn f_param_field<U>(u: U?) {
+    print(u.q)
+}
+
+fn m_class_missing(c: Node?) {
+    print(c.q())
+}
+
+fn m_double_missing(c: Node??) {
+    print(c.q())
+}
+
+fn m_array_missing(xs: [i64]?) {
+    print(xs.q())
+}
+
+fn m_string_missing(s: string?) {
+    print(s.q())
+}
+
+fn m_enum_missing(e: E?) {
+    print(e.q())
+}
+
+fn m_any_missing(n: (any Named)?) {
+    print(n.q())
+}
+
+fn m_param_missing<U>(u: U?) {
+    print(u.q())
+}
+
+fn d_ahead_missing(c: Node?) {
+    print(id(c.q))
+}
+
+fn d_generic_recv_missing(c: Node?) {
+    print(c.q().to_string())
+}
+
+fn mem_missing_arg_error(c: Node?) {
+    print(c.q(nope))
+}
+
+fn pos_assign_missing_value_error(c: Node?) {
+    c.q = nope
+}
+
+fn pos_elem_missing_write(c: Node?) {
+    c.q[0] = 1
+}
+
+fn recv_double_write_missing(c: Node??) {
+    c.q = 1
+}
+
+fn recv_triple_missing(c: Node???) {
+    print(c.q)
+}
+
+fn pos_if_missing(c: Node?) {
+    if c.q == 1 {}
+}
+
+fn pos_match_missing(c: Node?) {
+    match c.q { _ => {} }
+}
+
+fn pos_for_missing(c: Node?) {
+    for x in c.q { print(x) }
+}
+
+fn pos_interp_missing(c: Node?) {
+    print("{c.q}")
+}
+
+fn pos_coalesce_missing(c: Node?) {
+    print(c.q ?? 1)
+}
+
+fn pos_iflet_missing(c: Node?) {
+    if let a = c.q { print(a) }
+}
+
+fn pos_letelse_missing(c: Node?) {
+    let a = c.q else { return }
+    print(a)
+}
+
+fn pos_while_missing(c: Node?) {
+    while c.q {}
+}
+
+fn pos_return_missing(c: Node?) -> i64 {
+    c.q
+}
+
+fn pos_let_annot_missing(c: Node?) {
+    let a: i64 = c.q
+    print(a)
+}
+
+fn pos_compound_missing(c: Node?) {
+    c.q += 1
+}
+
+fn recv_field(b: Box) {
+    print(b.o.q)
+}
+
+fn recv_index(a: [Node?]) {
+    print(a[0].q)
+}
+
+fn recv_call() {
+    print(mk().q)
+}
+
+fn recv_safe_chain(b: Box?) {
+    print(b?.o.q)
+}
+
+fn recv_paren(c: Node?) {
+    print((c).q)
+}
+
+fn recv_bool(x: bool?) {
+    print(x.q)
+}
+
+fn recv_f64_method(x: f64?) {
+    print(x.q())
+}
+
+fn main() {
+    f_class_missing(None)
+    f_alias_missing(None)
+    f_double_missing(None)
+    i_missing_indexed(None)
+    w_missing(None)
+    f_any_field(None)
+    f_array_field(None)
+    f_array_field_push(None)
+    f_string_field(None)
+    f_param_field<i64>(None)
+    m_class_missing(None)
+    m_double_missing(None)
+    m_array_missing(None)
+    m_string_missing(None)
+    m_enum_missing(None)
+    m_any_missing(None)
+    m_param_missing<i64>(None)
+    d_ahead_missing(None)
+    d_generic_recv_missing(None)
+    mem_missing_arg_error(None)
+    pos_assign_missing_value_error(None)
+    pos_elem_missing_write(None)
+    recv_double_write_missing(None)
+    recv_triple_missing(None)
+    pos_if_missing(None)
+    pos_match_missing(None)
+    pos_for_missing(None)
+    pos_interp_missing(None)
+    pos_coalesce_missing(None)
+    pos_iflet_missing(None)
+    pos_letelse_missing(None)
+    pos_while_missing(None)
+    print(pos_return_missing(None))
+    pos_let_annot_missing(None)
+    pos_compound_missing(None)
+    recv_field(Box(o: None, inner: Node(v: 1, w: 1, xs: [], ys: [])))
+    recv_index([])
+    recv_call()
+    recv_safe_chain(None)
+    recv_paren(None)
+    recv_bool(None)
+    recv_f64_method(None)
+    H(o: None).rd()
+}

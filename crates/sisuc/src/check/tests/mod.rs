@@ -98,7 +98,7 @@ fn contains(src: &str, parts: &[&str]) {
 
 /// The diagnostics are exactly these, in order: `(code, (line, col))`; no `tir` if one is an
 /// error.
-fn codes(src: &str, expected: &[(Code, (usize, usize))]) {
+fn codes(src: &str, expected: &[Wanted]) {
     codes_row("", src, expected);
 }
 
@@ -112,7 +112,7 @@ fn named(row: &str) -> String {
 }
 
 /// `codes` for one row of a table: a failure names `row`.
-fn codes_row(row: &str, src: &str, expected: &[(Code, (usize, usize))]) {
+fn codes_row(row: &str, src: &str, expected: &[Wanted]) {
     let row = named(row);
     let (program, ds) = checked(src);
     let found: Vec<_> = ds.iter().map(|d| (d.code(), at(src, d.span()))).collect();
@@ -126,6 +126,9 @@ fn codes_row(row: &str, src: &str, expected: &[(Code, (usize, usize))]) {
         "{row}only an error withholds the `tir`"
     );
 }
+
+/// A diagnostic's code and its primary position, as a test names it.
+type Wanted = (Code, (usize, usize));
 
 /// A diagnostic's code, its primary position and its secondary positions.
 type Found = (Code, (usize, usize), Vec<(usize, usize)>);
@@ -797,6 +800,174 @@ fn a_never_value_that_failed_should_give_e0043_after_the_other_error() {
     ];
     for &(stmt, under, expected) in rows {
         codes_under(stmt, &wrap(stmt), under, expected);
+    }
+}
+
+/// An annotated `let` binds its name with the declared type when its value fails, as a `const`
+/// does. So each use of the name is still checked. An annotation that does not resolve leaves
+/// the name without a type. So does a `let` with no annotation, when the failed value has no
+/// known type.
+#[test]
+#[expect(clippy::too_many_lines, reason = "a table of programs, one row each")]
+fn failed_value_of_an_annotated_let_should_keep_the_declared_type() {
+    let rows: &[(&str, &str, &[Wanted])] = &[
+        (
+            "repro",
+            "enum Only {\n    One(i64)\n}\n\nfn main() {\n    let w: Only = Only.One(\"x\")\n    let One(n) = w\n    print(n)\n}",
+            &[(Code::Mismatch, (6, 28)), (Code::RefutablePattern, (7, 9))],
+        ),
+        (
+            "use_i64",
+            "enum Only {\n    One(i64)\n}\n\nfn main() {\n    let w: Only = Only.One(\"x\")\n    let q: i64 = w\n    print(q)\n}",
+            &[(Code::Mismatch, (6, 28)), (Code::Mismatch, (7, 18))],
+        ),
+        (
+            "direct_mismatch",
+            "fn main() {\n    let w: i64 = \"x\"\n    let q: string = w\n    print(q)\n}",
+            &[(Code::Mismatch, (2, 18)), (Code::Mismatch, (3, 21))],
+        ),
+        (
+            "unknown_name",
+            "fn main() {\n    let w: i64 = nope\n    let q: string = w\n    print(q)\n}",
+            &[(Code::BindingNotFound, (2, 18)), (Code::Mismatch, (3, 21))],
+        ),
+        (
+            "mut_unknown",
+            "fn main() {\n    let mut w: i64 = nope\n    w = \"s\"\n    print(w)\n}",
+            &[(Code::BindingNotFound, (2, 22)), (Code::Mismatch, (3, 9))],
+        ),
+        (
+            "mut_assign",
+            "fn main() {\n    let mut w: i64 = \"x\"\n    w = \"y\"\n    print(w)\n}",
+            &[(Code::Mismatch, (2, 22)), (Code::Mismatch, (3, 9))],
+        ),
+        (
+            "optional",
+            "fn main() {\n    let w: i64? = nope\n    let q: i64 = w\n    print(q)\n}",
+            &[(Code::BindingNotFound, (2, 19)), (Code::Mismatch, (3, 18))],
+        ),
+        (
+            "if_let",
+            "fn main() {\n    let w: i64? = nope\n    if let Some(v) = w {\n        let s: string = v\n        print(s)\n    }\n}",
+            &[(Code::BindingNotFound, (2, 19)), (Code::Mismatch, (4, 25))],
+        ),
+        (
+            "method",
+            "class Node {\n    v: i64\n}\n\nfn main() {\n    let n: Node = Node(v: \"x\")\n    print(n.w)\n}",
+            &[(Code::Mismatch, (6, 27)), (Code::NoMember, (7, 13))],
+        ),
+        (
+            "never",
+            "fn f() -> i64 {\n    let x: i64 = return 1\n    let s: string = x\n    0\n}\n\nfn main() {\n    print(f())\n}",
+            &[(Code::NoValue, (2, 18)), (Code::Mismatch, (3, 21))],
+        ),
+        (
+            "branch_other",
+            "fn main() {\n    let w: i64 = if true { nope } else { \"s\" }\n    let q: string = w\n    print(q)\n}",
+            &[
+                (Code::Mismatch, (2, 18)),
+                (Code::BindingNotFound, (2, 28)),
+                (Code::Mismatch, (3, 21)),
+            ],
+        ),
+        (
+            "if_branch",
+            "fn main() {\n    let w: i64 = if true { nope } else { 2 }\n    let q: string = w\n    print(q)\n}",
+            &[(Code::BindingNotFound, (2, 28)), (Code::Mismatch, (3, 21))],
+        ),
+        (
+            "unannotated",
+            "fn main() {\n    let w = nope\n    let q: string = w\n    print(q)\n}",
+            &[(Code::BindingNotFound, (2, 13))],
+        ),
+        (
+            "const",
+            "const X: i64 = \"x\"\n\nfn main() {\n    let q: string = X\n    print(q)\n}",
+            &[(Code::Mismatch, (1, 16)), (Code::Mismatch, (4, 21))],
+        ),
+        (
+            "unresolved_annotation",
+            "fn main() {\n    let w: Nope = 1\n    let q: string = w\n    print(q)\n}",
+            &[(Code::UnknownType, (2, 12))],
+        ),
+        (
+            "underscore",
+            "fn main() {\n    let _: i64 = \"x\"\n}",
+            &[(Code::Mismatch, (2, 18))],
+        ),
+        (
+            "in_method",
+            "class C {\n    fn m(self) {\n        let w: i64 = \"x\"\n        let q: string = w\n        print(q)\n    }\n}\n\nfn main() {\n    C().m()\n}",
+            &[(Code::Mismatch, (3, 22)), (Code::Mismatch, (4, 25))],
+        ),
+        (
+            "nested_block",
+            "fn main() {\n    if true {\n        let w: i64 = \"x\"\n        let q: string = w\n        print(q)\n    }\n}",
+            &[(Code::Mismatch, (3, 22)), (Code::Mismatch, (4, 25))],
+        ),
+        (
+            "match_arm",
+            "fn main() {\n    let k = 1\n    match k {\n        0 => {\n            let w: i64 = \"x\"\n            let q: string = w\n            print(q)\n        }\n        _ => {}\n    }\n}",
+            &[(Code::Mismatch, (5, 26)), (Code::Mismatch, (6, 29))],
+        ),
+        (
+            "generic_array",
+            "fn main() {\n    let xs: [i64] = nope\n    let s: string = xs\n    print(s)\n}",
+            &[(Code::BindingNotFound, (2, 21)), (Code::Mismatch, (3, 21))],
+        ),
+        (
+            "class_method_call",
+            "class Node {\n    v: i64\n    fn get(self) -> i64 { self.v }\n}\n\nfn main() {\n    let n: Node = Node(v: \"x\")\n    let s: string = n.get()\n    print(s)\n}",
+            &[(Code::Mismatch, (7, 27)), (Code::Mismatch, (8, 21))],
+        ),
+        (
+            "any_type",
+            "interface Named {\n    fn name(self) -> string\n}\nclass Rock {}\n\nfn main() {\n    let n: any Named = Rock()\n    let i: i64 = n.name()\n    print(i)\n}",
+            &[(Code::NotConform, (7, 24)), (Code::Mismatch, (8, 18))],
+        ),
+        (
+            "type_param",
+            "fn g<T>(v: T) {\n    let w: T = nope\n    let s: string = w\n    print(s)\n}\n\nfn main() {\n    g(1)\n}",
+            &[(Code::BindingNotFound, (2, 16)), (Code::Mismatch, (3, 21))],
+        ),
+        (
+            "shadow",
+            "fn main() {\n    let w = \"s\"\n    let w: i64 = nope\n    let q: string = w\n    print(q)\n}",
+            &[(Code::BindingNotFound, (3, 18)), (Code::Mismatch, (4, 21))],
+        ),
+        (
+            "never_branch",
+            "fn f(c: bool) -> i64 {\n    let x: i64 = if c { return 1 } else { nope }\n    let s: string = x\n    0\n}\n\nfn main() {\n    print(f(true))\n}",
+            &[(Code::BindingNotFound, (2, 43)), (Code::Mismatch, (3, 21))],
+        ),
+        (
+            "never_after",
+            "fn f() -> i64 {\n    let x: i64 = return 1\n    print(x)\n    0\n}\n\nfn main() {\n    print(f())\n}",
+            &[(Code::NoValue, (2, 18))],
+        ),
+        (
+            "correct_use",
+            "fn main() {\n    let w: i64 = \"x\"\n    let w2 = w + 1\n    print(w2)\n}",
+            &[(Code::Mismatch, (2, 18))],
+        ),
+        (
+            "let_else",
+            "fn main() {\n    let Some(v) = nope else { return }\n    let s: string = v\n    print(s)\n}",
+            &[(Code::BindingNotFound, (2, 19))],
+        ),
+        (
+            "wrong_annotation",
+            "fn main() {\n    let w: string = 5\n    print(w + 1)\n}",
+            &[(Code::Mismatch, (2, 21)), (Code::Mismatch, (3, 15))],
+        ),
+        (
+            "array_literal",
+            "fn main() {\n    let x: [i64] = [true]\n    print(x + true)\n}",
+            &[(Code::Mismatch, (2, 21)), (Code::Mismatch, (3, 11))],
+        ),
+    ];
+    for &(row, src, expected) in rows {
+        codes_row(row, src, expected);
     }
 }
 
@@ -3508,98 +3679,135 @@ fn may_be_none_in_an_assignment_target_should_offer_the_fix() {
     }
 }
 
-/// An optional array has no field to hold an array. E0062 must still offer the `?.` fix before a
-/// `push` on such a field.
+/// An optional array has no field to hold an array. A `.` checks the field on the array, so the
+/// missing field is the error, and the `?.` fix would lead to it. The `?.` fix of E0062 before a
+/// `push` stays for a field that exists: the fixtures `E0062-push-optional-field` and
+/// `E0062-member-on-payload` pin it.
 #[test]
-fn may_be_none_before_a_push_on_a_field_of_an_optional_array_should_offer_the_fix() {
+fn push_on_a_missing_field_of_an_optional_array_should_report_the_field_alone() {
     let src = "fn f(xs: [i64]?) {\n    xs.v.push(1)\n}\nfn main() {}";
-    let d = diagnostic(src, Code::MayBeNone, (2, 5, "xs"), &[]);
-    assert_eq!(
-        fixes(src, &d),
-        [(false, vec![(2, 7, ".", "?.".to_owned())])]
-    );
+    codes(src, &[(Code::NoMember, (2, 8))]);
 }
 
 /// An unwrapped array is a copy. The unwrap help is given only where the unwrap changes the array
-/// that the `push` changes: when the object of a `?.` stores it. The `?.` fix is always offered.
+/// that the `push` changes: when the object of a `?.` stores it. The `?.` fix is always offered
+/// for one layer of optional.
 /// Each row is a program, the place of the error, and whether the help is given; the fixtures
 /// `E0062-push*` pin the text.
 #[test]
 fn push_onto_an_optional_array_should_offer_unwrap_help_only_for_a_stored_array() {
-    let rows = [
+    /// A row: its name, program, the position of E0062, whether it has help, and every wanted code.
+    /// No wanted code means E0062 alone.
+    type Row = (
+        &'static str,
+        &'static str,
+        (usize, usize, &'static str),
+        bool,
+        &'static [Wanted],
+    );
+    let rows: &[Row] = &[
         (
             "local",
             "fn main() {\n    let mut xs: [i64]? = [1]\n    xs.push(2)\n}",
             (3, 5, "xs"),
             false,
+            &[],
         ),
         (
             "parameter",
             "fn f(xs: [i64]?) {\n    xs.push(2)\n}\nfn main() {}",
             (2, 5, "xs"),
             false,
+            &[(Code::AssignToImmutable, (2, 5)), (Code::MayBeNone, (2, 5))],
         ),
         (
             "immutable local",
             "fn main() {\n    let xs: [i64]? = [1]\n    xs.push(2)\n}",
             (3, 5, "xs"),
             false,
+            &[(Code::AssignToImmutable, (3, 5)), (Code::MayBeNone, (3, 5))],
         ),
         (
             "field of optional array type",
             "class H {\n    mut xs: [i64]?\n}\nfn main() {\n    let h = H(xs: [1])\n    h.xs.push(2)\n}",
             (6, 5, "h.xs"),
             false,
+            &[],
         ),
         (
             "element",
             "fn main() {\n    let mut ys: [[i64]?] = [[1]]\n    ys[0].push(2)\n}",
             (3, 5, "ys[0]"),
             false,
+            &[],
         ),
         (
             "call",
             "fn g() -> [i64]? {\n    [1]\n}\nfn main() {\n    g().push(2)\n}",
             (5, 5, "g()"),
             false,
-        ),
-        (
-            "two layers",
-            "fn main() {\n    let mut xs: [i64]?? = Some(Some([1]))\n    xs.push(2)\n}",
-            (3, 5, "xs"),
-            false,
+            &[
+                (Code::MayBeNone, (5, 5)),
+                (Code::AssignToExpression, (5, 5)),
+            ],
         ),
         (
             "array stored by the object of a `?.`",
             "class Bag {\n    mut items: [i64]\n}\nfn add(bag: Bag?) {\n    bag?.items.push(4)\n}\nfn main() {}",
             (5, 5, "bag?.items"),
             true,
+            &[],
         ),
         (
             "array stored by an object that spans two lines",
             "class Bag {\n    mut items: [i64]\n}\nfn g(a: i64, b: i64) -> Bag? {\n    None\n}\nfn main() {\n    g(1,\n      2)?.items.push(4)\n}",
             (8, 5, "g(1,\n      2)?.items"),
             false,
+            &[],
         ),
         (
             "optional array stored by the object of a `?.`",
             "class H {\n    mut xs: [i64]?\n}\nfn add(h: H?) {\n    h?.xs.push(4)\n}\nfn main() {}",
             (5, 5, "h?.xs"),
             false,
+            &[],
         ),
         (
             "array stored by an optional object",
             "class H {\n    mut xs: [i64]\n}\nfn main() {\n    let h: H? = H(xs: [1])\n    h.xs.push(2)\n}",
             (6, 5, "h"),
             true,
+            &[],
         ),
     ];
-    for (row, src, pos, help) in rows {
-        let d = diagnostic_row(row, src, Code::MayBeNone, pos, &[]);
+    for &(row, src, pos, help, all) in rows {
+        // A write that is not allowed, or a temporary, comes beside E0062.
+        let d = if all.is_empty() {
+            diagnostic_row(row, src, Code::MayBeNone, pos, &[])
+        } else {
+            codes_row(row, src, all);
+            let (_, ds) = checked(src);
+            let d = ds
+                .into_iter()
+                .find(|d| d.code() == Code::MayBeNone)
+                .expect("each row should report E0062");
+            assert_eq!(&src[d.span().range()], pos.2, "{row}");
+            d
+        };
         assert_eq!(d.help().is_some(), help, "{row}");
         let fixes: Vec<_> = d.fixes().iter().map(Fix::safe).collect();
         assert_eq!(fixes, [false], "{row}: one unsafe fix");
     }
+}
+
+/// `?.` takes one layer only, so a `push` onto an optional array of an optional gets no `?.` fix.
+/// Its help says what to do instead.
+#[test]
+fn push_onto_a_double_optional_array_should_give_the_unwrap_help_and_no_fix() {
+    let src = "fn main() {\n    let mut xs: [i64]?? = Some(Some([1]))\n    xs.push(2)\n}";
+    let d = diagnostic(src, Code::MayBeNone, (3, 5, "xs"), &[]);
+    assert!(d.help().is_some());
+    assert_eq!(fixes(src, &d), []);
 }
 
 /// A read keeps its unwrap help: a copy is right for a read.

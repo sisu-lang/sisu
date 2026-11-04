@@ -321,16 +321,8 @@ fn mut_argument_with_a_failed_expression_should_not_be_reported_as_no_place() {
         ("call of an unknown function", "set(mut nope())"),
         ("index of `self`", "set(mut self[0])"),
         (
-            "range of a string that failed to bind",
-            "let mut s: string = nope\n    set(mut s[0..1])",
-        ),
-        (
             "range of a string that failed to concatenate",
             "let s = \"a\" + 1\n    set(mut s[0..1])",
-        ),
-        (
-            "range of an element of an array that failed to bind",
-            "let s: [string] = nope\n    set(mut s[0][0..1])",
         ),
         (
             "range of a name that failed to bind",
@@ -347,6 +339,33 @@ fn mut_argument_with_a_failed_expression_should_not_be_reported_as_no_place() {
         assert!(!found.is_empty(), "row `{row}`: no error");
         assert!(
             !found.contains(&Code::MutArgumentNotPlace),
+            "row `{row}`: {found:?}"
+        );
+    }
+}
+
+/// GIVEN a `mut` argument that is a range of a `string`, or of an element of an array, whose
+///   `let` has a declared type and a value that fails
+/// WHEN it is checked
+/// THEN both errors stand: the declared type stays (#470), so the range is a known `string` range
+#[test]
+fn mut_argument_range_of_an_annotated_let_with_a_failed_value_should_be_no_place() {
+    let head = "fn set(mut x: string) {\n    x = \"a\"\n}\nfn main() {\n";
+    let rows = [
+        ("string", "let mut s: string = nope\n    set(mut s[0..1])"),
+        (
+            "array element",
+            "let s: [string] = nope\n    set(mut s[0][0..1])",
+        ),
+    ];
+    for (row, stmt) in rows {
+        let found = found_codes(&format!("{head}    {stmt}\n}}"));
+        assert!(
+            found.contains(&Code::BindingNotFound),
+            "row `{row}`: {found:?}"
+        );
+        assert!(
+            found.contains(&Code::MutArgumentNotPlace),
             "row `{row}`: {found:?}"
         );
     }

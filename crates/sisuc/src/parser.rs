@@ -1,5 +1,6 @@
 //! The parser: tokens to the syntax tree.
 
+use std::borrow::Cow;
 use std::cell::OnceCell;
 use std::cmp::Ordering;
 use std::mem;
@@ -1342,7 +1343,7 @@ impl<'a> Parser<'a> {
                 newlines: self
                     .tokens
                     .iter()
-                    .filter(|t| t.kind == TokenKind::Newline && t.span.range().is_empty())
+                    .filter(|t| t.is_line_break())
                     .map(|t| t.span.start())
                     .collect(),
             },
@@ -2529,6 +2530,22 @@ impl<'a> Parser<'a> {
         )
     }
 
+    /// The text of `span` on one line, for a diagnostic (`Source::line_text`). A line break that
+    /// ends a statement keeps the text as written; those are the empty `Newline` tokens in `span`.
+    /// The work is a binary search and a read of the tokens in `span`.
+    fn line_text(&self, span: Span) -> Cow<'a, str> {
+        let first = self
+            .tokens
+            .partition_point(|token| token.span.start() < span.start());
+        let newlines: Vec<usize> = self.tokens[first..]
+            .iter()
+            .take_while(|token| token.span.start() < span.end())
+            .filter(|token| token.is_line_break())
+            .map(|token| token.span.start())
+            .collect();
+        self.source.line_text(span, self.comments, &newlines)
+    }
+
     /// The source text from the `open` bracket at the next token through its matching `close`,
     /// or of the bracket alone when the lexer found none.
     fn bracketed(&self, open: &TokenKind, close: &TokenKind) -> String {
@@ -2545,7 +2562,7 @@ impl<'a> Parser<'a> {
                 depth == 0
             })
             .map_or(start, |token| token.span);
-        self.source.text(start.to(end)).to_string()
+        self.line_text(start.to(end)).into_owned()
     }
 
     /// The `return`, `break` or `continue` at the next token, with its loop label and its value.
@@ -2641,7 +2658,7 @@ impl<'a> Parser<'a> {
         label: Option<Symbol>,
     ) -> Diagnostic {
         let grouped = (name == "return" || self.break_stays_in_body(label))
-            .then(|| self.source.text(Span::new(header, end)).to_string());
+            .then(|| self.line_text(Span::new(header, end)).into_owned());
         DiagnosticKind::JumpTakesBlock {
             keyword: name,
             at: keyword,
@@ -2945,7 +2962,7 @@ impl<'a> Parser<'a> {
                     if let Some(&(first_label, _)) = labels.first() {
                         return Err(DiagnosticKind::PatternForm {
                             form: ForeignPattern::Labels {
-                                form: format!("{}{}", self.source.text(path), self.listed(&fields)),
+                                form: self.one_line_form(path, &fields),
                                 labels: labels.into_iter().map(|(_, remove)| remove).collect(),
                             },
                             at: first_label,
@@ -2962,12 +2979,14 @@ impl<'a> Parser<'a> {
                     (kind, span)
                 } else if self.at(&TokenKind::LBrace) {
                     // Rust's `Rect { w, h }`, or with labels, `Rect { w: x, h: y }`.
-                    let (fields, _, braces) =
+                    let (patterns, _, braces) =
                         self.sub_patterns(base, &mut reach, &TokenKind::RBrace)?;
-                    let fields = self.listed(&fields);
+                    // The message goes on one line, but the fix replaces the source as written.
+                    let fields =
+                        Self::listed(&patterns, |span| Cow::Borrowed(self.source.text(span)));
                     return Err(DiagnosticKind::PatternForm {
                         form: ForeignPattern::Braces {
-                            form: format!("{}{fields}", self.source.text(path)),
+                            form: self.one_line_form(path, &patterns),
                             replace: Span::new(path.end(), braces.end()),
                             fields,
                         },
@@ -3157,8 +3176,8 @@ impl<'a> Parser<'a> {
         end: Option<Span>,
         fixable: bool,
     ) -> Diagnostic {
-        let start_text = self.source.text(start).to_string();
-        let end_text = end.map(|end| self.source.text(end).to_string());
+        let start_text = self.line_text(start).into_owned();
+        let end_text = end.map(|end| self.line_text(end).into_owned());
         let form = match lt {
             Some(lt) => ForeignRange::Exclusive {
                 start: start_text,
@@ -3244,10 +3263,16 @@ impl<'a> Parser<'a> {
         Some((label.span, Span::new(label.span.start(), next.span.start())))
     }
 
-    /// `patterns` as written, in parentheses: `(x, y)`.
-    fn listed(&self, patterns: &[Pattern]) -> String {
-        let written: Vec<&str> = patterns.iter().map(|p| self.source.text(p.span)).collect();
+    /// `patterns` in parentheses, each as `text` gives it: `(x, y)`.
+    fn listed<'t>(patterns: &[Pattern], text: impl Fn(Span) -> Cow<'t, str>) -> String {
+        let written: Vec<Cow<'t, str>> = patterns.iter().map(|p| text(p.span)).collect();
         format!("({})", written.join(", "))
+    }
+
+    /// The pattern `path(patterns)` on one line, as a message quotes it.
+    fn one_line_form(&self, path: Span, patterns: &[Pattern]) -> String {
+        let fields = Self::listed(patterns, |span| self.line_text(span));
+        format!("{}{fields}", self.line_text(path))
     }
 
     /// C++'s and Rust's `Name::member` at the next token, after the name at `name`.
@@ -3989,14 +4014,20 @@ impl<'a> Parser<'a> {
         let close = self.expect(&TokenKind::RBracket)?.span;
         let bound = |bound: &Option<Expr>| bound.as_ref().map(|e| self.colon_bound(e));
         let form = ForeignRange::Colon {
-            base: self.source.text(base.span).to_string(),
+            base: self.line_text(base.span).into_owned(),
             base_place: is_place(base) && is_named(base),
             start: bound(&start),
             end: bound(&end),
             whole: (start.is_none() && end.is_none()).then(|| open.to(close)),
         };
+        // A negative bound has no fix that replaces the colon: the report points at the bound.
+        let at = [&start, &end]
+            .into_iter()
+            .flatten()
+            .find(|bound| starts_negative(bound))
+            .map_or(colon, |bound| bound.span);
         self.recovered
-            .push(DiagnosticKind::ForeignRange { form, at: colon }.into());
+            .push(DiagnosticKind::ForeignRange { form, at }.into());
         if start.is_none() && end.is_none() {
             return Ok((None, close));
         }
@@ -4020,7 +4051,7 @@ impl<'a> Parser<'a> {
         if starts_negative(e) {
             ColonBound::Negative
         } else {
-            ColonBound::Plain(self.source.text(e.span).to_string())
+            ColonBound::Plain(self.line_text(e.span).into_owned())
         }
     }
 
@@ -8910,8 +8941,10 @@ mod tests {
         );
     }
 
-    /// `xs[1:3]` in Python and Go: each form is one E0132 at the `:`, with a safe fix, and the
-    /// range it names for the checker. A step is E0011.
+    /// `xs[1:3]` in Python and Go: each form is one E0132 at the `:`, with a fix, and the range it
+    /// names for the checker. Only `xs[:]` has a safe fix: the parser cannot see the type of the
+    /// base, so `..` may count bytes, and may stop the program, where Python clamps. A step is
+    /// E0011.
     #[test]
     fn colon_slice_should_recover_as_the_range_it_names() {
         let rows = [
@@ -8941,10 +8974,10 @@ mod tests {
             assert_eq!(d.code(), Code::ForeignRange, "{src}");
             assert_eq!(line_col(&program, d.span().start()), at, "{src}");
             let (safe, _) = fix_edits(d).expect("the colon form has a fix");
-            assert!(safe, "{src}");
+            assert_eq!(safe, src == "xs[:]", "{src}");
             let fixed = format!("fn main() {{ {fixed} }}");
             assert_eq!(apply_fix(&program, d), fixed);
-            // Every advertised fix is safe, so its result parses with no diagnostic.
+            // Each fix gives a range that parses with no diagnostic.
             assert_eq!(parsed_fixed(&fixed), 0, "{src}");
             let Some(Item::Function(f)) = parsed.program.items.first() else {
                 panic!("{src}: expected a function");
@@ -9000,6 +9033,68 @@ mod tests {
             assert_eq!(d.code(), Code::ForeignRange, "{src}");
             assert!(d.fixes().is_empty(), "{src}");
         }
+    }
+
+    /// Python counts a negative colon bound from the end, and Sisu has no negative index: the
+    /// report points at the first negative bound, with its whole span, not at the `:`. The
+    /// table gives each row's column and length on line 1, after `fn main() { ` (12 characters).
+    #[test]
+    fn colon_slice_with_a_negative_bound_should_point_at_the_bound() {
+        let rows = [
+            ("xs[:-1]", 17, 2),
+            ("xs[-2:]", 16, 2),
+            ("xs[-3:-1]", 16, 2),
+            ("xs[-2:-1]", 16, 2),
+            ("s[:-1]", 16, 2),
+            ("xs[:-n]", 17, 2),
+            ("xs[:-(n + 1)]", 17, 8),
+            ("xs[:(-1)]", 17, 4),
+            ("xs[1:-1]", 18, 2),
+            ("xs[0:--1]", 18, 3),
+            ("c.xs[:-1]", 19, 2),
+            ("xss[0][:-1]", 21, 2),
+            ("xs[:-a * b]", 17, 6),
+            ("xs[:-1 + n]", 17, 6),
+            ("xs[:-1 < n]", 17, 6),
+            ("xs[:--1]", 17, 3),
+            ("xs[-3:-a * b]", 16, 2),
+            ("xs[:-9223372036854775808]", 17, 20),
+            ("xs[{ xs = [7]; 0 }:-1]", 32, 2),
+            ("self.xs[:-1]", 22, 2),
+            ("f()[:-1]", 18, 2),
+            ("f().xs[:-1]", 21, 2),
+            ("xs[1..][:-1]", 22, 2),
+            // A bound on two lines: the span covers both.
+            ("xs[1:-f(\n 1)]", 18, 7),
+        ];
+        for (src, col, len) in rows {
+            let program = format!("fn main() {{ {src} }}");
+            let d = parse_diagnostic(&program);
+            assert_eq!(d.code(), Code::ForeignRange, "{src}");
+            let (start, end) = (d.span().start(), d.span().end());
+            assert_eq!(line_col(&program, start), (1, col), "{src}");
+            assert_eq!(end - start, len, "{src}");
+        }
+    }
+
+    /// The text of an E0123 message goes on one line, but the replacement of its fix is the source
+    /// as written: a comment inside a sub-pattern, and its line break, stay. The wording of the
+    /// messages is pinned in `tests/diagnostics/E0123-multiline.sisu`.
+    #[test]
+    fn braces_pattern_fix_should_keep_its_replacement_as_written() {
+        let program = "fn main() {\n    match r {\n        R { w: Some( // keep me\n            a), h } => print(h)\n        _ => print(0)\n    }\n}";
+        let d = parse_diagnostic(program);
+        assert_eq!(d.code(), Code::PatternForm);
+        let (safe, edits) = fix_edits(&d).expect("the braces form has a fix");
+        assert!(!safe);
+        let [(start, end, replacement)] = edits.as_slice() else {
+            panic!("expected one edit, got {edits:?}");
+        };
+        assert_eq!(replacement, "(Some( // keep me\n            a), h)");
+        assert_eq!(
+            &program[*start..*end],
+            " { w: Some( // keep me\n            a), h }"
+        );
     }
 
     /// The number of diagnostics of `program`.

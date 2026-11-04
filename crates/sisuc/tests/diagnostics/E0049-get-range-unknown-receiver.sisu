@@ -1,0 +1,12 @@
+// GIVEN a string's `get` with a range that has no bounds, after `?.` on a value that is plain
+// WHEN `sisu check` runs on it
+// THEN it reports E0049 for the `?.`
+// AND no E0023, because the field read after the failed `?.` has no type to check `get` on
+class Node {
+    name: string
+}
+
+fn main() {
+    let c = Node(name: "x")
+    print(c?.name.get(..) ?? "")
+}

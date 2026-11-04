@@ -961,6 +961,10 @@ struct Body {
     /// call has no report, but its member is unknown: a list of type arguments on it is not
     /// reported (`method_call_expr`).
     rejected_calls: FxHashSet<Span>,
+    /// The span of the method name of each lookup that failed and was reported at the name.
+    /// The method is missing, or it is a field or a variant (`report_lookup_failure`). The
+    /// check of a `.` on an optional reads it, to report E0062 only when the member is found.
+    failed_lookups: FxHashSet<Span>,
     /// The target of the compound assignment being checked, whose reads are not reads: they
     /// only give the value back to the target.
     quiet: Option<Span>,
@@ -1585,28 +1589,41 @@ impl Checker<'_> {
         }
     }
 
-    /// Poisons the name of each broken item.
+    /// Poisons the name of each broken item, and reports it as `collect_names` reports an intact
+    /// item's: a name that the language or the prelude takes.
     fn poison_broken(&mut self, broken: &[ast::Broken]) {
         for broken in broken {
             let name = &broken.name.name;
-            match broken.kind {
+            // The prelude's code reads a language interface by its name, so no broken item takes
+            // it, as no intact item of the user's does.
+            let language = is_language_interface(name.as_str());
+            let kind = match broken.kind {
                 ast::BrokenKind::Function => {
                     self.function_ids.insert(*name, Declared::Broken);
+                    Definition::Function
                 }
                 ast::BrokenKind::Class => {
                     self.class_ids.insert(*name, Declared::Broken);
+                    Definition::Class
                 }
                 ast::BrokenKind::Interface => {
-                    self.interface_ids.insert(*name, Declared::Broken);
+                    // A language interface keeps its name.
+                    if !language {
+                        self.interface_ids.insert(*name, Declared::Broken);
+                    }
+                    Definition::Interface
                 }
                 ast::BrokenKind::Enum => {
                     self.enum_ids.insert(*name, Declared::Broken);
+                    Definition::Enum
                 }
                 ast::BrokenKind::Constant => {
                     self.constants.insert(*name, Declared::Broken);
+                    Definition::Constant
                 }
                 ast::BrokenKind::Alias => {
                     self.aliases.names.insert(*name, Declared::Broken);
+                    Definition::Alias
                 }
                 // Its target is intact, and its parse error already fails the program. A method
                 // call on the target that finds no method is poisoned.
@@ -1614,10 +1631,13 @@ impl Checker<'_> {
                     self.broken_extensions.insert(*name);
                     continue;
                 }
+            };
+            if !self.built_in(&broken.name) {
+                self.prelude_taken(kind, &broken.name);
             }
             // Functions, classes, enums, interfaces and constants share a namespace, so an intact
             // item of another kind and this name is poisoned too.
-            if let Some(interface) = self.interface_ids.get_mut(name) {
+            if !language && let Some(interface) = self.interface_ids.get_mut(name) {
                 *interface = Declared::Broken;
             }
             if let Some(class) = self.class_ids.get_mut(name) {
@@ -1671,12 +1691,22 @@ impl Checker<'_> {
         kind: Definition,
         name: &ast::Ident,
     ) -> bool {
-        let written = !name.span.in_prelude() && self.prelude_functions.contains(&name.name);
-        if written || PRELUDE.contains(&name.name.as_str()) {
-            self.report(defined_twice(kind, name, Earlier::BuiltIn));
+        if self.prelude_taken(kind, name) {
             return false;
         }
         self.first_definition(first, kind, None, name)
+    }
+
+    /// Whether `name` is a prelude function's, which no top-level item of `kind` may take;
+    /// reports it when it is.
+    fn prelude_taken(&mut self, kind: Definition, name: &ast::Ident) -> bool {
+        // A function the prelude's code writes is taken too, but not in the prelude's own code.
+        let written = !name.span.in_prelude() && self.prelude_functions.contains(&name.name);
+        let taken = written || PRELUDE.contains(&name.name.as_str());
+        if taken {
+            self.report(defined_twice(kind, name, Earlier::BuiltIn));
+        }
+        taken
     }
 
     /// Whether `name` is the first of its name in `first`, which it joins with its `kind`;

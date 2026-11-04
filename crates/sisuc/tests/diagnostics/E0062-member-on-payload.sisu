@@ -1,0 +1,282 @@
+// GIVEN an optional whose member exists, used with `.` in a function for each case
+// WHEN `sisu check` runs on it
+// THEN it reports E0062 at the optional, then the errors of the member on the payload
+// AND each guard function keeps the output that it had before
+interface Named {
+    fn name(self) -> string
+}
+class Node {
+    mut v: i64
+    w: i64
+    mut xs: [i64]
+    ys: [i64]
+    fn get(self) -> i64 { self.v }
+}
+enum E {
+    A(x: i64)
+    fn tag(self) -> i64 { 1 }
+}
+type M<T> = T?
+class Box {
+    mut o: Node?
+    inner: Node
+}
+class Cat: Named {
+    fn name(self) -> string { "cat" }
+}
+class G {
+    fn pick<T>(self, a: T) -> T { a }
+}
+extend Node {
+    fn ext(self) -> i64 { 1 }
+}
+class W<T> {
+    v: i64
+}
+extend<T: Named> W<T> {
+    fn only(self) -> i64 { 1 }
+}
+class H {
+    mut o: Node?
+}
+fn mk() -> Node? { None }
+fn id<T>(v: T) -> T { v }
+extend H {
+    fn rd(self) { print(self.o.get(1)) }
+    fn wr(self) { self.o.w = 1 }
+}
+
+fn m_wrong_args(c: Node?) {
+    print(c.get(1))
+}
+
+fn d_ahead_args(c: Node?) {
+    print(id(c.get(1)))
+}
+
+fn w_wrong_type(c: Node?) {
+    c.v = "a"
+}
+
+fn w_immutable(c: Node?) {
+    c.w = 2
+}
+
+fn w_immutable_op(c: Node?) {
+    c.w += 2
+}
+
+fn w_elem_immutable(c: Node?) {
+    c.ys[0] = 1
+}
+
+fn g_less(x: i64?) {
+    print(x.less(None))
+}
+
+fn g_string_get_int(s: string?) {
+    print(s.get(1) ?? "")
+}
+
+fn g_string_get_nobounds(s: string?) {
+    print(s.get(..) ?? "")
+}
+
+fn mem_arg_error(c: Node?) {
+    print(c.get(nope))
+}
+
+fn mem_label(c: Node?) {
+    print(c.get(a: 1))
+}
+
+fn pos_assign_value_error(c: Node?) {
+    c.v = nope
+}
+
+fn pos_compound_wrongtype(c: Node?) {
+    c.v += "a"
+}
+
+fn pos_elem_compound_immutable(c: Node?) {
+    c.ys[0] += 1
+}
+
+fn pos_elem_wrongtype(c: Node?) {
+    c.xs[0] = "a"
+}
+
+fn mem_ext_args(c: Node?) {
+    print(c.ext(1))
+}
+
+fn mem_conform_args(c: Cat?) {
+    print(c.name(1))
+}
+
+fn mem_any_args(n: (any Named)?) {
+    print(n.name(1))
+}
+
+fn mem_param_args<U: Named>(u: U?) {
+    print(u.name(1))
+}
+
+fn mem_generic_args(g: G?) {
+    print(g.pick(1, 2))
+}
+
+fn mem_enum_tag_args(e: E?) {
+    print(e.tag(1))
+}
+
+fn mem_array_len_args(xs: [i64]?) {
+    print(xs.len(1))
+}
+
+fn mem_string_len_args(s: string?) {
+    print(s.len(1))
+}
+
+fn mem_string_get_count(s: string?) {
+    print(s.get(1..2, 3) ?? "")
+}
+
+fn mem_string_get_inclusive_nobounds(s: string?) {
+    print(s.get(..=) ?? "")
+}
+
+fn mem_bound_fail(g: W<Node>?) {
+    print(g.only())
+}
+
+fn f_double_ok(c: Node??) {
+    print(c.v)
+}
+
+fn m_double_ok(c: Node??) {
+    print(c.get())
+}
+
+fn m_string_double(s: string??) {
+    print(s.len())
+}
+
+fn recv_double_args(c: Node??) {
+    print(c.get(1))
+}
+
+fn recv_double_write(c: Node??) {
+    c.w = 1
+}
+
+fn recv_double_push(xs: [i64]??) {
+    xs.push(1)
+}
+
+fn get_nested_array(oo: [i64]??) {
+    print(oo.get(..) ?? 0)
+}
+
+fn get_nested_string(s: string??) {
+    s.get(0..1)
+}
+
+fn m_ok(c: Node?) {
+    print(c.get())
+}
+
+fn w_mut_ok(c: Node?) {
+    c.v = 2
+}
+
+fn i_ok_indexed(c: Node?) {
+    print(c.xs[0])
+}
+
+fn g_array_get_range(ys: [i64]?) {
+    print(ys.get(..1) ?? 0)
+}
+
+fn g_to_string(c: Node?) {
+    print(c.to_string())
+}
+
+fn g_eq(x: i64?) {
+    print(x.eq(None))
+}
+
+fn g_to_string_arg(c: Node?) {
+    print(c.to_string(1))
+}
+
+fn d_deep_missing(b: Box?) {
+    print(b.inner.q)
+}
+
+fn recv_unknown_type(c: Nope?) {
+    print(c.q)
+}
+
+fn recv_none() {
+    print(None.q)
+}
+
+fn w_safe_assign_immutable(c: Node?) {
+    c?.w = 1
+}
+
+fn get_failed_interp() {
+    print("{nope}".get(..) ?? "")
+}
+
+fn main() {
+    m_wrong_args(None)
+    d_ahead_args(None)
+    w_wrong_type(None)
+    w_immutable(None)
+    w_immutable_op(None)
+    w_elem_immutable(None)
+    g_less(None)
+    g_string_get_int(None)
+    g_string_get_nobounds(None)
+    mem_arg_error(None)
+    mem_label(None)
+    pos_assign_value_error(None)
+    pos_compound_wrongtype(None)
+    pos_elem_compound_immutable(None)
+    pos_elem_wrongtype(None)
+    mem_ext_args(None)
+    mem_conform_args(None)
+    mem_any_args(None)
+    mem_param_args<Cat>(None)
+    mem_generic_args(None)
+    mem_enum_tag_args(None)
+    mem_array_len_args(None)
+    mem_string_len_args(None)
+    mem_string_get_count(None)
+    mem_string_get_inclusive_nobounds(None)
+    mem_bound_fail(None)
+    f_double_ok(None)
+    m_double_ok(None)
+    m_string_double(None)
+    recv_double_args(None)
+    recv_double_write(None)
+    recv_double_push(None)
+    get_nested_array(None)
+    get_nested_string(None)
+    H(o: None).rd()
+    H(o: None).wr()
+    m_ok(None)
+    w_mut_ok(None)
+    i_ok_indexed(None)
+    g_array_get_range(None)
+    g_to_string(None)
+    g_eq(None)
+    g_to_string_arg(None)
+    d_deep_missing(None)
+    recv_unknown_type(None)
+    recv_none()
+    w_safe_assign_immutable(None)
+    get_failed_interp()
+}

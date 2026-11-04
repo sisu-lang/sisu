@@ -1,0 +1,19 @@
+error[E0026]: `Eq` is a built-in interface
+ --> E0026-broken-interface.sisu:1:11
+  |
+1 | interface Eq
+  |           ^^
+
+error[E0004]: `{` must be on the same line as `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
+ --> E0026-broken-interface.sisu:2:1
+  |
+2 | {}
+  | ^
+  |
+help: move `{` to the end of the line above
+  |
+1 | interface Eq {}
+  |             +
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0004, E0026

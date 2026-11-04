@@ -160,9 +160,10 @@ yourself. A program built without the flag fails under Valgrind on mimalloc's
 startup read and shows none of its Sisu allocations
 ([ADR 0031](adr/0031-compiled-programs-allocate-with-mimalloc.md)).
 
-mimalloc reads the `MIMALLOC_*` variables of the environment. An option such as
-`MIMALLOC_VERBOSE=1` can write to stderr and fail the tests that check a
-default build's stderr, so unset every `MIMALLOC_*` variable before `make test`.
+mimalloc reads the `MIMALLOC_*` variables of the environment, in `sisu` itself
+and in a default build. An option such as `MIMALLOC_VERBOSE=1` can write to
+stderr and fail the tests that check the stderr of either, so unset every
+`MIMALLOC_*` variable before `make test`.
 
 A `run/` case whose output depends on a value crossing a real call says so
 with a marker line, `// o2-calls: <caller> <callee> <count>`. The test then
@@ -262,7 +263,9 @@ of programs at once, and then the disk stops for every other process. So a
 second run prints `heavy-run: waiting for this run to end: <command> in
 <worktree>` and waits for the first. A second `make mutation-test` in the same
 worktree still fails at once. When the lock cannot be taken (no `flock`, no Git
-directory, a read-only `.git`), the run warns and goes on with no lock. Each
+directory, a read-only `.git`), the run warns and goes on with no lock.
+`SISU_HEAVY_LOCK=skip` runs it with no lock on purpose, for example while a
+mutation test of hours holds the lock and the machine has cores to spare. Each
 mutant of a mutation run tests 8 tests at a time. `NEXTEST_TEST_THREADS` sets
 another number.
 
