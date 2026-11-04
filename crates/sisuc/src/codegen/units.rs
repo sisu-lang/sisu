@@ -4,6 +4,8 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::num::NonZeroUsize;
+use std::panic::resume_unwind;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
 use rustc_hash::FxHashSet;
@@ -193,7 +195,14 @@ pub(crate) fn threads(count: usize) -> usize {
     count.min(thread::available_parallelism().map_or(1, NonZeroUsize::get))
 }
 
-/// Runs `work` for each unit from 0 to `count`, and returns the results in unit order.
+/// Runs `work` for each unit from 0 to `count`, and returns the results in unit order, whatever
+/// the order in which the units end. With one unit, `work` runs on the calling thread. Else a
+/// worker has the stack of the compiler. With `Threads`, up to `threads` workers take the units
+/// one by one. With `Forward` or `Reverse`, one worker runs every unit in that order.
+///
+/// # Panics
+///
+/// If `work` panics, the panic goes on in the caller. If the system cannot start a thread.
 #[cfg_attr(not(test), expect(dead_code, reason = "Task 4 calls it"))]
 pub(crate) fn schedule<T: Send>(
     count: usize,
@@ -201,8 +210,45 @@ pub(crate) fn schedule<T: Send>(
     order: Order,
     work: impl Fn(usize) -> T + Sync,
 ) -> Vec<T> {
-    let _ = (threads, order);
-    (0..count).map(work).collect()
+    if count == 1 {
+        return vec![work(0)];
+    }
+    // Every worker takes the next turn from `next`. `Reverse` counts the turns from the last unit.
+    let next = AtomicUsize::new(0);
+    let workers = if order == Order::Threads {
+        threads.min(count).max(1)
+    } else {
+        1
+    };
+    let mut done: Vec<(usize, T)> = thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                thread::Builder::new()
+                    .stack_size(crate::STACK_SIZE)
+                    .spawn_scoped(scope, || {
+                        let mut done = Vec::new();
+                        loop {
+                            let turn = next.fetch_add(1, Ordering::Relaxed);
+                            if turn >= count {
+                                break done;
+                            }
+                            let unit = if order == Order::Reverse {
+                                count - 1 - turn
+                            } else {
+                                turn
+                            };
+                            done.push((unit, work(unit)));
+                        }
+                    })
+                    .expect("the thread should start")
+            })
+            .collect();
+        (handles.into_iter())
+            .flat_map(|handle| handle.join().unwrap_or_else(|panic| resume_unwind(panic)))
+            .collect()
+    });
+    done.sort_unstable_by_key(|&(unit, _)| unit);
+    done.into_iter().map(|(_, result)| result).collect()
 }
 
 #[cfg(test)]

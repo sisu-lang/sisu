@@ -1,6 +1,7 @@
 //! `--timings`: the wall time of each stage of one compile, as the `timings:` lines that the
 //! reporter prints to stderr.
 
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use crate::lexer::{Lexed, TokenKind};
@@ -86,10 +87,16 @@ impl Timings {
     pub(crate) fn merge_units(&mut self, units: Vec<Timings>) {
         if let Some(recording) = &mut self.0 {
             recording.units = Some(units.len());
-            let stages = units
+            let mut slowest: BTreeMap<Stage, Duration> = BTreeMap::new();
+            for (stage, time) in units
                 .into_iter()
-                .flat_map(|unit| unit.0.into_iter().flat_map(|r| r.stages));
-            recording.stages.extend(stages);
+                .filter_map(|unit| unit.0)
+                .flat_map(|r| r.stages)
+            {
+                let longest = slowest.entry(stage).or_default();
+                *longest = (*longest).max(time);
+            }
+            recording.stages.extend(slowest);
         }
     }
 
@@ -136,7 +143,6 @@ fn render(
     counts: Option<(usize, usize)>,
     units: Option<usize>,
 ) -> Vec<String> {
-    let _ = units;
     let percent = |time: Duration| {
         if total.is_zero() {
             0.0
@@ -168,6 +174,9 @@ fn render(
             line(stage.name(), time) + &throughput
         })
         .collect();
+    if let Some(count) = units {
+        lines.push(format!("timings: codegen units: {count}"));
+    }
     let spent: Duration = stages.iter().map(|&(_, time)| time).sum();
     lines.push(line("other", total.saturating_sub(spent)));
     lines.push(line("total", total));

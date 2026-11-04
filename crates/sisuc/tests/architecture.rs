@@ -50,6 +50,11 @@ const BACK_EDGES: &[(&str, &str, &str)] = &[
         "the registry quotes the payload limit that payload_limit owns",
     ),
     (
+        "codegen",
+        "crate",
+        "the scheduler gives each worker thread the `STACK_SIZE` that lib.rs sets for the compiler",
+    ),
+    (
         "link",
         "crate",
         "`Allocator` is a command-line choice in lib.rs, and link picks the runtime by it",
