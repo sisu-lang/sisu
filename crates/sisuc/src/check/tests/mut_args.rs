@@ -1823,3 +1823,36 @@ fn place_at_a_mut_parameter_should_not_be_ranked() {
         assert_eq!(with_mut + 1, without);
     });
 }
+
+/// GIVEN `c: C?` and a `mut` argument that is a field of `c`, an element of that field, a field of
+///   an optional `b` of an object `a`, a field passed to a method, or the field of `exchange`
+/// WHEN each program is checked
+/// THEN each reports one E0062 with no fix, because `?.` makes the argument no place (E0170)
+/// AND the read `print(c.xs)` keeps its `?.` fix
+#[test]
+fn optional_object_of_a_mut_argument_should_get_no_fix() {
+    let head = "class C {\n    mut xs: [i64]\n    mut n: i64\n}\n\
+        class A {\n    mut b: C?\n}\n\
+        class O {\n    fn m(self, mut xs: [i64]) {\n        xs[0] = 1\n    }\n}\n\
+        fn set(mut xs: [i64]) {\n    xs[0] = 1\n}\n\
+        fn put(mut n: i64) {\n    n = 1\n}\n";
+    for call in [
+        "set(mut c.xs)",
+        "put(mut c.xs[0])",
+        "set(mut a.b.xs)",
+        "O().m(mut c.xs)",
+        "exchange(mut c.n, 1)",
+    ] {
+        let src = format!(
+            "{head}fn main() {{\n    let c: C? = C(xs: [0], n: 0)\n    \
+            let a = A(b: c)\n    {call}\n}}"
+        );
+        let (_, ds) = checked(&src);
+        let errors: Vec<_> = ds.iter().filter(|d| d.code() == Code::MayBeNone).collect();
+        assert_eq!(errors.len(), 1, "{call}: {ds:?}");
+        assert_eq!(errors[0].fixes().len(), 0, "{call}");
+    }
+    let read = format!("{head}fn main() {{\n    let c: C? = C(xs: [0], n: 0)\n    print(c.xs)\n}}");
+    let d = only(&read, Code::MayBeNone);
+    assert_eq!(d.fixes().len(), 1, "a read keeps the `?.` fix");
+}

@@ -1,0 +1,10 @@
+error[E0062]: `c` may be `None`
+  --> E0062-mut-argument.sisu:15:13
+   |
+15 |     set(mut c.xs)
+   |             ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0062
