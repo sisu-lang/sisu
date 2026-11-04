@@ -27,6 +27,14 @@ struct Target {
     size: u64,
 }
 
+/// What a statement may do to a `mut` parameter: write an element, `push`, or `+=` on a `string`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MutUse {
+    Element,
+    Push,
+    Append,
+}
+
 /// The most statements in a block, before its jump.
 const MAX_STATEMENTS: usize = 8;
 /// The most blocks nest, statements' and values' alike.
@@ -329,33 +337,32 @@ impl Gen<'_> {
         self.expr(&element, base);
     }
 
-    /// What a statement may do to the `mut` parameter `v`, which adds what `Adds` says: write an
-    /// element (0), `push` (1), or `+=` on a `string` (2).
-    pub(crate) fn mut_uses(&self, v: usize) -> Vec<u8> {
+    /// What a statement may do to the `mut` parameter `v`, which adds what `Adds` says.
+    pub(crate) fn mut_uses(&self, v: usize) -> Vec<MutUse> {
         let var = &self.scope.vars[v];
         let mut uses = Vec::new();
         if self.settable(var) {
-            uses.push(0);
+            uses.push(MutUse::Element);
         }
         if self
             .push_targets()
             .iter()
             .any(|target| matches!(target, Push::Local(w) if *w == v))
         {
-            uses.push(1);
+            uses.push(MutUse::Push);
         }
         if var.ty == Ty::String && var.room > 0 {
-            uses.push(2);
+            uses.push(MutUse::Append);
         }
         uses
     }
 
-    /// A statement that does `usage`, one of `mut_uses`, to the `mut` parameter `v`: the function
-    /// changes what its caller's place holds, within what it adds.
-    pub(crate) fn mut_use(&mut self, v: usize, usage: u8) {
+    /// A statement that does `usage` to the `mut` parameter `v`: the function changes what its
+    /// caller's place holds, within what it adds.
+    pub(crate) fn mut_use(&mut self, v: usize, usage: MutUse) {
         match usage {
-            0 => self.set_element(v),
-            1 => {
+            MutUse::Element => self.set_element(v),
+            MutUse::Push => {
                 let name = self.scope.vars[v].name.clone();
                 let Ty::Array(element) = self.scope.vars[v].ty.clone() else {
                     unreachable!("only an array takes a push")
@@ -363,7 +370,7 @@ impl Gen<'_> {
                 self.w.text(&format!("{name}.push("));
                 self.pushed(v, &element);
             }
-            _ => self.compound_at(v, false),
+            MutUse::Append => self.compound_at(v, false),
         }
     }
 

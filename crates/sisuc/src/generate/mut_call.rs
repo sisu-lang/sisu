@@ -310,8 +310,8 @@ impl Gen<'_> {
         }
     }
 
-    /// After the statements of `main`, now and then, a `mut` call of each function with a `mut`
-    /// parameter that has places to take, so that every such function is called. It first
+    /// After the statements of `main`, now and then, a `mut` call of most functions with a `mut`
+    /// parameter that have places to take (`mut_pick` skips one in four). It first
     /// declares a local for each parameter that adds something. It is written as `mut_statement`
     /// writes a call.
     pub(crate) fn mut_epilogue(&mut self) {
@@ -351,7 +351,7 @@ impl Gen<'_> {
         self.mut_call_of(None);
     }
 
-    /// `mut_call`, of the function `forced` if it is one.
+    /// `mut_call`, of the function `forced` if it is one: it is a call, never an `exchange`.
     fn mut_call_of(&mut self, forced: Option<usize>) {
         let places = self.mut_places();
         let callees = match forced {
@@ -364,7 +364,7 @@ impl Gen<'_> {
         let start = self.w.mark();
         let statements = self.statements;
         let mut locals = Vec::new();
-        if !callees.is_empty() && (swaps.is_empty() || self.pick(3) != 0) {
+        if !callees.is_empty() && (forced.is_some() || swaps.is_empty() || self.pick(3) != 0) {
             let callee = callees[self.pick(callees.len())];
             let wants = self.mut_wants(callee);
             let chosen = self.choose_places(&wants, &places);
@@ -568,33 +568,37 @@ mod tests {
         }
     }
 
-    /// GIVEN a `mut` call of `f1`, whose other argument is an `i64` that the generator writes
+    /// GIVEN a `mut` call of `f1` that passes the local `outer`, whose other argument is an `i64`
+    /// that the generator writes, with statements of its own now and then
     /// WHEN it is written from many seeds
-    /// THEN a call whose other argument holds a statement, so a line break, has no copy of the
-    /// local in the rewritten program, as the seed 404 of the review had one that printed 3 and
-    /// not 7
-    /// AND some call without one has a copy, and some with one is written
+    /// THEN a call whose other argument assigns `outer` has no copy of it in the rewritten
+    /// program: the seed 404 of the review had one, and it printed 3 and not 7
+    /// AND some call that assigns `outer` is written, and some call that does not has a copy
     #[test]
-    fn a_mut_call_should_not_copy_a_local_that_a_statement_in_an_argument_can_change() {
-        let (mut with, mut without) = (0, 0);
+    fn a_mut_call_should_not_copy_a_local_that_an_argument_assigns() {
+        const ASSIGNS: [&str; 6] = [" = ", " += ", " -= ", " *= ", " /= ", " %= "];
+        let (mut assigns, mut kept) = (0, 0);
         for n in 0..256 {
             let data = seed(n);
             let mut g = gen_with_local(&data, Ty::I64, (0, 0), Adds::default());
+            g.scope.vars[0].name = "outer".to_string();
             g.scope.funcs[0].params.push((Ty::I64, 0));
             g.scope.funcs[0].muts.push(None);
             g.statement(|g| g.mut_call_of(Some(0)));
             let copied = g.w.out.rewritten.contains("let mut w");
-            if g.w.out.program.contains('\n') {
+            // The call itself is `f1(0, mut outer, ...)`, whose `mut outer` is no assignment.
+            let rest = g.w.out.program.replacen("mut outer", "", 1);
+            if ASSIGNS
+                .iter()
+                .any(|op| rest.contains(&format!("outer{op}")))
+            {
                 assert!(!copied, "{}", g.w.out.rewritten);
-                with += 1;
+                assigns += 1;
             } else if copied {
-                without += 1;
+                kept += 1;
             }
         }
-        assert!(
-            with > 0 && without > 0,
-            "{with} with a statement, {without} copied"
-        );
+        assert!(assigns > 0 && kept > 0, "{assigns} assign, {kept} copied");
     }
 
     /// GIVEN `mut` parameters of `i64`, `i64` and `string`, and `n` places of `i64`, each at a

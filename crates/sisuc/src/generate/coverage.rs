@@ -1176,11 +1176,13 @@ impl Walk {
             self.mark(&format!("ast::Param.mutable = {}", param.mutable));
             self.type_expr(&param.ty);
             self.params.push(param.name.name.as_str().to_string());
-            // A `mut` array holds at least what its caller's place holds, which the text does not
-            // say: an index below `MAX_MUT_LEN` is in bounds, and the generator writes no other.
-            if param.mutable {
-                let len = i128::from(MAX_MUT_LEN);
-                self.lens.insert(param.name.name.as_str().to_string(), len);
+            // A `mut` array holds at least what its caller's place holds, which the generator
+            // tells (`Generated::mut_lens`).
+            if param.mutable
+                && let Some(&len) = self.mut_lens.get(param.name.name.as_str())
+            {
+                self.lens
+                    .insert(param.name.name.as_str().to_string(), i128::from(len));
             }
         }
         if let Some(ret) = &f.ret {
