@@ -7,6 +7,7 @@
 use std::fmt::Write;
 
 use super::array::pair;
+use super::call::Dot;
 use super::expr::{local, no_member, path, postfix, typed};
 use super::{Checked, Checker, Poisoned, block_expr, type_of};
 use crate::ast::{self, CompareOp, ExprKind};
@@ -333,13 +334,13 @@ impl Checker<'_> {
     pub(super) fn string_method(
         &mut self,
         span: Span,
-        safe: bool,
+        dot: Dot,
         (receiver, receiver_expr): (Checked, &ast::Expr),
         method: &ast::Ident,
         args: &[ast::Arg],
     ) -> Checked {
         let (ty, node): (_, fn(Box<tir::Expr>) -> tir::ExprKind) = match method.name.as_str() {
-            "get" => return self.string_get((span, safe), (receiver, receiver_expr), args),
+            "get" => return self.string_get((span, dot), (receiver, receiver_expr), args),
             "len" => (Type::I64, tir::ExprKind::Len),
             "chars" => (Type::array(Type::CHAR), tir::ExprKind::Chars),
             "bytes" => (Type::array(Type::U8), tir::ExprKind::Bytes),
@@ -355,7 +356,7 @@ impl Checker<'_> {
                     method,
                     METHODS.iter().map(|&(m, _)| m),
                 );
-                return self.rejected(d, args);
+                return self.rejected_lookup(d, method, args);
             }
         };
         if !args.is_empty() {

@@ -343,7 +343,8 @@ impl Checker<'_> {
             } else {
                 self.prelude_method_names(ty)
             };
-            return self.rejected(no_member(Definition::Method, owner, method, names), args);
+            let d = no_member(Definition::Method, owner, method, names);
+            return self.rejected_lookup(d, method, args);
         };
         if args.len() != params {
             let d = DiagnosticKind::ArgumentCount {

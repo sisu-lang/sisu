@@ -1,0 +1,48 @@
+error[E0121]: `E` has no fields; take it apart with `match`
+  --> E0057-member-of-optional.sisu:45:13
+   |
+45 |     print(e.x)
+   |             ^
+
+error[E0121]: `E` has no fields; take it apart with `match`
+  --> E0057-member-of-optional.sisu:49:7
+   |
+49 |     e.x = 2
+   |       ^
+
+error[E0057]: `len` is a method of `[i64]`, not a field
+  --> E0057-member-of-optional.sisu:53:14
+   |
+53 |     print(xs.len)
+   |              ^^^
+   |
+help: call it: `len()`
+   |
+53 |     print(xs.len())
+   |                 ++
+
+error[E0057]: `get` is a method of `Node`, not a field
+  --> E0057-member-of-optional.sisu:57:13
+   |
+57 |     print(c.get)
+   |             ^^^
+   |
+help: call it: `get()`
+   |
+57 |     print(c.get())
+   |                ++
+
+error[E0058]: `v` is a field of `Node`, not a method
+  --> E0057-member-of-optional.sisu:61:13
+   |
+61 |     print(c.v())
+   |             ^
+
+error[E0120]: `A` is a variant; build it with `E.A`
+  --> E0057-member-of-optional.sisu:65:13
+   |
+65 |     print(e.A())
+   |             ^
+
+sisu: 6 errors
+sisu: for more on a code, run `sisu explain <code>`: E0057, E0058, E0120, E0121

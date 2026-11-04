@@ -1,0 +1,690 @@
+error[E0062]: `self.o` may be `None`
+  --> E0062-push-on-payload.sisu:32:9
+   |
+32 |         self.o.xs.push("a")
+   |         ^^^^^^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+   |
+32 |         self.o?.xs.push("a")
+   |               +
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-push-on-payload.sisu:32:24
+   |
+32 |         self.o.xs.push("a")
+   |                        ^^^
+
+error[E0062]: `self.o?.xs` may be `None`
+  --> E0062-push-on-payload.sisu:36:9
+   |
+36 |         self.o?.xs.push("a")
+   |         ^^^^^^^^^^
+   |
+   = help: to use the value only when it is present, unwrap `self.o` with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+   |
+36 |         self.o?.xs?.push("a")
+   |                   +
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-push-on-payload.sisu:36:25
+   |
+36 |         self.o?.xs.push("a")
+   |                         ^^^
+
+error[E0062]: `c?.xs` may be `None`
+  --> E0062-push-on-payload.sisu:41:5
+   |
+41 |     c?.xs.push("a")
+   |     ^^^^^
+   |
+   = help: to use the value only when it is present, unwrap `c` with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+   |
+41 |     c?.xs?.push("a")
+   |          +
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-push-on-payload.sisu:41:16
+   |
+41 |     c?.xs.push("a")
+   |                ^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-push-on-payload.sisu:45:5
+   |
+45 |     c.xs.push("a")
+   |     ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+   |
+45 |     c?.xs.push("a")
+   |      +
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-push-on-payload.sisu:45:15
+   |
+45 |     c.xs.push("a")
+   |               ^^^
+
+error[E0062]: `xs` may be `None`
+  --> E0062-push-on-payload.sisu:50:5
+   |
+50 |     xs.push("a")
+   |     ^^
+   |
+help: to do nothing when it is `None`, use `?.`
+   |
+50 |     xs?.push("a")
+   |       +
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-push-on-payload.sisu:50:13
+   |
+50 |     xs.push("a")
+   |             ^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-push-on-payload.sisu:54:5
+   |
+54 |     c.xss[0].push("a")
+   |     ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-push-on-payload.sisu:54:19
+   |
+54 |     c.xss[0].push("a")
+   |                   ^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-push-on-payload.sisu:58:5
+   |
+58 |     c.xs.push("a")
+   |     ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-push-on-payload.sisu:58:15
+   |
+58 |     c.xs.push("a")
+   |               ^^^
+
+error[E0062]: `s` may be `None`
+  --> E0062-push-on-payload.sisu:62:5
+   |
+62 |     s.push("a")
+   |     ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+62 |     s?.push("a")
+   |      +
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-push-on-payload.sisu:62:12
+   |
+62 |     s.push("a")
+   |            ^^^
+
+error[E0062]: `b?.s` may be `None`
+  --> E0062-push-on-payload.sisu:66:5
+   |
+66 |     b?.s.push("a")
+   |     ^^^^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+66 |     b?.s?.push("a")
+   |         +
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-push-on-payload.sisu:66:15
+   |
+66 |     b?.s.push("a")
+   |               ^^^
+
+error[E0062]: this value may be `None`
+  --> E0062-push-on-payload.sisu:70:5
+   |
+70 |     mko().push("a")
+   |     ^^^^^
+   |
+help: to do nothing when it is `None`, use `?.`
+   |
+70 |     mko()?.push("a")
+   |          +
+
+error[E0021]: cannot push to a temporary value
+  --> E0062-push-on-payload.sisu:70:5
+   |
+70 |     mko().push("a")
+   |     ^^^^^ this value is not stored in a variable
+   |
+   = help: store it in a `let mut` variable first
+
+error[E0062]: this value may be `None`
+  --> E0062-push-on-payload.sisu:74:5
+   |
+74 |     mko().push()
+   |     ^^^^^
+   |
+help: to do nothing when it is `None`, use `?.`
+   |
+74 |     mko()?.push()
+   |          +
+
+error[E0021]: cannot push to a temporary value
+  --> E0062-push-on-payload.sisu:74:5
+   |
+74 |     mko().push()
+   |     ^^^^^ this value is not stored in a variable
+   |
+   = help: store it in a `let mut` variable first
+
+error[E0001]: cannot change `xs`
+  --> E0062-push-on-payload.sisu:78:5
+   |
+77 | fn missing_argument(xs: [i64]?) {
+   |                     -- declared as a parameter here
+78 |     xs.push()
+   |     ^^ `push` changes `xs`
+   |
+   = help: copy it into a variable: `let mut xs = xs`
+
+error[E0062]: `xs` may be `None`
+  --> E0062-push-on-payload.sisu:78:5
+   |
+78 |     xs.push()
+   |     ^^
+   |
+help: to do nothing when it is `None`, use `?.`
+   |
+78 |     xs?.push()
+   |       +
+
+error[E0053]: `[i64].push` takes 1 argument, found 0
+  --> E0062-push-on-payload.sisu:78:5
+   |
+78 |     xs.push()
+   |     ^^^^^^^^^
+
+error[E0062]: `c?.xs` may be `None`
+  --> E0062-push-on-payload.sisu:82:5
+   |
+82 |     c?.xs.push()
+   |     ^^^^^
+   |
+   = help: to use the value only when it is present, unwrap `c` with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+   |
+82 |     c?.xs?.push()
+   |          +
+
+error[E0053]: `[i64].push` takes 1 argument, found 0
+  --> E0062-push-on-payload.sisu:82:5
+   |
+82 |     c?.xs.push()
+   |     ^^^^^^^^^^^^
+
+error[E0062]: `xs` may be `None`
+  --> E0062-push-on-payload.sisu:87:5
+   |
+87 |     xs.push()
+   |     ^^
+   |
+help: to do nothing when it is `None`, use `?.`
+   |
+87 |     xs?.push()
+   |       +
+
+error[E0053]: `[i64].push` takes 1 argument, found 0
+  --> E0062-push-on-payload.sisu:87:5
+   |
+87 |     xs.push()
+   |     ^^^^^^^^^
+
+error[E0062]: `c?.xs` may be `None`
+  --> E0062-push-on-payload.sisu:91:5
+   |
+91 |     c?.xs.push(v: 1)
+   |     ^^^^^
+   |
+   = help: to use the value only when it is present, unwrap `c` with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+   |
+91 |     c?.xs?.push(v: 1)
+   |          +
+
+error[E0055]: this call takes no labels on its arguments
+  --> E0062-push-on-payload.sisu:91:16
+   |
+91 |     c?.xs.push(v: 1)
+   |                ^
+   |
+   = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `xs` may be `None`
+  --> E0062-push-on-payload.sisu:96:5
+   |
+96 |     xs.push(v: 1)
+   |     ^^
+   |
+help: to do nothing when it is `None`, use `?.`
+   |
+96 |     xs?.push(v: 1)
+   |       +
+
+error[E0055]: this call takes no labels on its arguments
+  --> E0062-push-on-payload.sisu:96:13
+   |
+96 |     xs.push(v: 1)
+   |             ^
+   |
+   = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+   --> E0062-push-on-payload.sisu:100:5
+    |
+100 |     c.xs.push(v: 1)
+    |     ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+    |
+100 |     c?.xs.push(v: 1)
+    |      +
+
+error[E0055]: this call takes no labels on its arguments
+   --> E0062-push-on-payload.sisu:100:15
+    |
+100 |     c.xs.push(v: 1)
+    |               ^
+    |
+    = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `b?.inner` may be `None`
+   --> E0062-push-on-payload.sisu:104:5
+    |
+104 |     b?.inner.xs.push(1)
+    |     ^^^^^^^^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+    |
+104 |     b?.inner?.xs.push(1)
+    |             +
+
+error[E0062]: `b?.m` may be `None`
+   --> E0062-push-on-payload.sisu:108:5
+    |
+108 |     b?.m.xs.push(1)
+    |     ^^^^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+    |
+108 |     b?.m?.xs.push(1)
+    |         +
+
+error[E0062]: `c?.xs` may be `None`
+   --> E0062-push-on-payload.sisu:112:5
+    |
+112 |     c?.xs.push(1)
+    |     ^^^^^
+    |
+    = help: to use the value only when it is present, unwrap `c` with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+    |
+112 |     c?.xs?.push(1)
+    |          +
+
+error[E0062]: `c` may be `None`
+   --> E0062-push-on-payload.sisu:116:5
+    |
+116 |     c.xs.push(1)
+    |     ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+    |
+116 |     c?.xs.push(1)
+    |      +
+
+error[E0062]: `xs` may be `None`
+   --> E0062-push-on-payload.sisu:121:5
+    |
+121 |     xs.push(1)
+    |     ^^
+    |
+help: to do nothing when it is `None`, use `?.`
+    |
+121 |     xs?.push(1)
+    |       +
+
+error[E0001]: cannot change `ys`
+   --> E0062-push-on-payload.sisu:125:5
+    |
+ 10 |     ys: [i64]
+    |     -- declared without `mut` here
+...
+125 |     c?.ys?.push(1)
+    |     ^^^^^ `push` changes `ys`
+    |
+help: mark the field `mut`
+    |
+ 10 |     mut ys: [i64]
+    |     +++
+
+error[E0032]: expected `i64`, found `string`
+   --> E0062-push-on-payload.sisu:129:17
+    |
+129 |     c?.xs?.push("a")
+    |                 ^^^
+
+error[E0062]: `c?.xss` may be `None`
+   --> E0062-push-on-payload.sisu:133:5
+    |
+133 |     c?.xss[0].push("a")
+    |     ^^^^^^
+    |
+    = help: unwrap `c` with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c?.xs` may be `None`
+   --> E0062-push-on-payload.sisu:137:5
+    |
+137 |     c?.xs.push(nope)
+    |     ^^^^^
+    |
+    = help: to use the value only when it is present, unwrap `c` with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+    |
+137 |     c?.xs?.push(nope)
+    |          +
+
+error[E0033]: cannot find binding `nope`
+   --> E0062-push-on-payload.sisu:137:16
+    |
+137 |     c?.xs.push(nope)
+    |                ^^^^
+
+error[E0062]: `xs` may be `None`
+   --> E0062-push-on-payload.sisu:142:5
+    |
+142 |     xs.push(nope)
+    |     ^^
+    |
+help: to do nothing when it is `None`, use `?.`
+    |
+142 |     xs?.push(nope)
+    |       +
+
+error[E0033]: cannot find binding `nope`
+   --> E0062-push-on-payload.sisu:142:13
+    |
+142 |     xs.push(nope)
+    |             ^^^^
+
+error[E0063]: `i64` has no method `push`
+   --> E0062-push-on-payload.sisu:146:10
+    |
+146 |     c?.v.push(1)
+    |          ^^^^
+
+error[E0063]: `Node` has no field `q`
+   --> E0062-push-on-payload.sisu:150:8
+    |
+150 |     c?.q.push(1)
+    |        ^
+    |
+help: a field with a similar name exists: `v`
+    |
+150 -     c?.q.push(1)
+150 +     c?.v.push(1)
+    |
+
+error[E0049]: `n` is not optional
+   --> E0062-push-on-payload.sisu:154:5
+    |
+154 |     n?.xs.push(1)
+    |     ^
+    |
+help: replace `?.` with `.`
+    |
+154 -     n?.xs.push(1)
+154 +     n.xs.push(1)
+    |
+
+error[E0062]: `c?.` leaves a `Node?`, which may be `None`
+   --> E0062-push-on-payload.sisu:158:5
+    |
+158 |     c?.ys.push(1)
+    |     ^
+    |
+    = help: peel the other layer first: `(c ?? None)?.ys`
+
+error[E0063]: `U` has no method `push`
+   --> E0062-push-on-payload.sisu:162:7
+    |
+162 |     u.push(1)
+    |       ^^^^
+
+error[E0063]: `string` has no method `push`
+   --> E0062-push-on-payload.sisu:166:7
+    |
+166 |     s.push(1)
+    |       ^^^^
+
+error[E0062]: `s` may be `None`
+   --> E0062-push-on-payload.sisu:170:5
+    |
+170 |     s.push(1)
+    |     ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+170 |     s?.push(1)
+    |      +
+
+error[E0062]: `b?.s` may be `None`
+   --> E0062-push-on-payload.sisu:174:5
+    |
+174 |     b?.s.push(1)
+    |     ^^^^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+174 |     b?.s?.push(1)
+    |         +
+
+error[E0062]: `b` may be `None`
+   --> E0062-push-on-payload.sisu:178:5
+    |
+178 |     b.s.push(1)
+    |     ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+178 |     b?.s.push(1)
+    |      +
+
+error[E0001]: cannot change `xs`
+   --> E0062-push-on-payload.sisu:182:5
+    |
+181 | fn local_optional_array(xs: [i64]?) {
+    |                         -- declared as a parameter here
+182 |     xs.push(1)
+    |     ^^ `push` changes `xs`
+    |
+    = help: copy it into a variable: `let mut xs = xs`
+
+error[E0062]: `xs` may be `None`
+   --> E0062-push-on-payload.sisu:182:5
+    |
+182 |     xs.push(1)
+    |     ^^
+    |
+help: to do nothing when it is `None`, use `?.`
+    |
+182 |     xs?.push(1)
+    |       +
+
+error[E0001]: cannot change `xs`
+   --> E0062-push-on-payload.sisu:186:5
+    |
+185 | fn count_two_local(xs: [i64]?) {
+    |                    -- declared as a parameter here
+186 |     xs.push(1, 2)
+    |     ^^ `push` changes `xs`
+    |
+    = help: copy it into a variable: `let mut xs = xs`
+
+error[E0062]: `xs` may be `None`
+   --> E0062-push-on-payload.sisu:186:5
+    |
+186 |     xs.push(1, 2)
+    |     ^^
+    |
+help: to do nothing when it is `None`, use `?.`
+    |
+186 |     xs?.push(1, 2)
+    |       +
+
+error[E0053]: `[i64].push` takes 1 argument, found 2
+   --> E0062-push-on-payload.sisu:186:5
+    |
+186 |     xs.push(1, 2)
+    |     ^^^^^^^^^^^^^
+
+error[E0001]: cannot change `xss`
+   --> E0062-push-on-payload.sisu:190:5
+    |
+189 | fn index_local_optional(xss: [[i64]?]) {
+    |                         --- declared as a parameter here
+190 |     xss[0].push("a")
+    |     ^^^^^^ `push` changes `xss`
+    |
+    = help: copy it into a variable: `let mut xss = xss`
+
+error[E0062]: this value may be `None`
+   --> E0062-push-on-payload.sisu:190:5
+    |
+190 |     xss[0].push("a")
+    |     ^^^^^^
+    |
+help: to do nothing when it is `None`, use `?.`
+    |
+190 |     xss[0]?.push("a")
+    |           +
+
+error[E0032]: expected `i64`, found `string`
+   --> E0062-push-on-payload.sisu:190:17
+    |
+190 |     xss[0].push("a")
+    |                 ^^^
+
+error[E0001]: cannot change `xs`
+   --> E0062-push-on-payload.sisu:194:5
+    |
+193 | fn alias_local_wrong(xs: M<[i64]>) {
+    |                      -- declared as a parameter here
+194 |     xs.push("a")
+    |     ^^ `push` changes `xs`
+    |
+    = help: copy it into a variable: `let mut xs = xs`
+
+error[E0062]: `xs` may be `None`
+   --> E0062-push-on-payload.sisu:194:5
+    |
+194 |     xs.push("a")
+    |     ^^
+    |
+help: to do nothing when it is `None`, use `?.`
+    |
+194 |     xs?.push("a")
+    |       +
+
+error[E0032]: expected `i64`, found `string`
+   --> E0062-push-on-payload.sisu:194:13
+    |
+194 |     xs.push("a")
+    |             ^^^
+
+error[E0001]: cannot change `xs`
+   --> E0062-push-on-payload.sisu:198:5
+    |
+197 | fn double_local(xs: [i64]??) {
+    |                 -- declared as a parameter here
+198 |     xs.push(1)
+    |     ^^ `push` changes `xs`
+    |
+    = help: copy it into a variable: `let mut xs = xs`
+
+error[E0062]: `xs` may be `None`
+   --> E0062-push-on-payload.sisu:198:5
+    |
+198 |     xs.push(1)
+    |     ^^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0001]: cannot change `xs`
+   --> E0062-push-on-payload.sisu:202:5
+    |
+201 | fn double_local_wrong(xs: [i64]??) {
+    |                       -- declared as a parameter here
+202 |     xs.push("a")
+    |     ^^ `push` changes `xs`
+    |
+    = help: copy it into a variable: `let mut xs = xs`
+
+error[E0062]: `xs` may be `None`
+   --> E0062-push-on-payload.sisu:202:5
+    |
+202 |     xs.push("a")
+    |     ^^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0032]: expected `i64`, found `string`
+   --> E0062-push-on-payload.sisu:202:13
+    |
+202 |     xs.push("a")
+    |             ^^^
+
+error[E0001]: cannot change `xs`
+   --> E0062-push-on-payload.sisu:206:5
+    |
+205 | fn double_local_count(xs: [i64]??) {
+    |                       -- declared as a parameter here
+206 |     xs.push()
+    |     ^^ `push` changes `xs`
+    |
+    = help: copy it into a variable: `let mut xs = xs`
+
+error[E0062]: `xs` may be `None`
+   --> E0062-push-on-payload.sisu:206:5
+    |
+206 |     xs.push()
+    |     ^^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0053]: `[i64].push` takes 1 argument, found 0
+   --> E0062-push-on-payload.sisu:206:5
+    |
+206 |     xs.push()
+    |     ^^^^^^^^^
+
+sisu: 75 errors
+sisu: for more on a code, run `sisu explain <code>`: E0001, E0021, E0032, E0033, E0049, E0053, E0055, E0062, E0063

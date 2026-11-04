@@ -1,0 +1,434 @@
+error[E0063]: `Node` has no field `q`
+  --> E0063-member-of-optional.sisu:44:32
+   |
+44 |     fn rd(self) { print(self.o.q) }
+   |                                ^
+   |
+help: a field with a similar name exists: `v`
+   |
+44 -     fn rd(self) { print(self.o.q) }
+44 +     fn rd(self) { print(self.o.v) }
+   |
+
+error[E0063]: `Node` has no field `q`
+  --> E0063-member-of-optional.sisu:48:13
+   |
+48 |     print(c.q)
+   |             ^
+   |
+help: a field with a similar name exists: `v`
+   |
+48 -     print(c.q)
+48 +     print(c.v)
+   |
+
+error[E0063]: `Node` has no field `q`
+  --> E0063-member-of-optional.sisu:52:13
+   |
+52 |     print(c.q)
+   |             ^
+   |
+help: a field with a similar name exists: `v`
+   |
+52 -     print(c.q)
+52 +     print(c.v)
+   |
+
+error[E0063]: `Node` has no field `q`
+  --> E0063-member-of-optional.sisu:56:13
+   |
+56 |     print(c.q)
+   |             ^
+   |
+help: a field with a similar name exists: `v`
+   |
+56 -     print(c.q)
+56 +     print(c.v)
+   |
+
+error[E0063]: `Node` has no field `q`
+  --> E0063-member-of-optional.sisu:60:13
+   |
+60 |     print(c.q[0])
+   |             ^
+   |
+help: a field with a similar name exists: `v`
+   |
+60 -     print(c.q[0])
+60 +     print(c.v[0])
+   |
+
+error[E0063]: `Node` has no field `q`
+  --> E0063-member-of-optional.sisu:64:7
+   |
+64 |     c.q = 2
+   |       ^
+   |
+help: a field with a similar name exists: `v`
+   |
+64 -     c.q = 2
+64 +     c.v = 2
+   |
+
+error[E0063]: `any Named` has no field `q`
+  --> E0063-member-of-optional.sisu:68:13
+   |
+68 |     print(n.q)
+   |             ^
+
+error[E0063]: `[i64]` has no field `v`
+  --> E0063-member-of-optional.sisu:72:14
+   |
+72 |     print(xs.v)
+   |              ^
+
+error[E0063]: `[i64]` has no field `v`
+  --> E0063-member-of-optional.sisu:76:8
+   |
+76 |     xs.v.push(1)
+   |        ^
+
+error[E0063]: `string` has no field `v`
+  --> E0063-member-of-optional.sisu:80:13
+   |
+80 |     print(s.v)
+   |             ^
+
+error[E0063]: `U` has no field `q`
+  --> E0063-member-of-optional.sisu:84:13
+   |
+84 |     print(u.q)
+   |             ^
+
+error[E0063]: `Node` has no method `q`
+  --> E0063-member-of-optional.sisu:88:13
+   |
+88 |     print(c.q())
+   |             ^
+
+error[E0063]: `Node` has no method `q`
+  --> E0063-member-of-optional.sisu:92:13
+   |
+92 |     print(c.q())
+   |             ^
+
+error[E0063]: `[i64]` has no method `q`
+  --> E0063-member-of-optional.sisu:96:14
+   |
+96 |     print(xs.q())
+   |              ^
+
+error[E0063]: `string` has no method `q`
+   --> E0063-member-of-optional.sisu:100:13
+    |
+100 |     print(s.q())
+    |             ^
+
+error[E0063]: `E` has no method `q`
+   --> E0063-member-of-optional.sisu:104:13
+    |
+104 |     print(e.q())
+    |             ^
+
+error[E0063]: `any Named` has no method `q`
+   --> E0063-member-of-optional.sisu:108:13
+    |
+108 |     print(n.q())
+    |             ^
+
+error[E0063]: `U` has no method `q`
+   --> E0063-member-of-optional.sisu:112:13
+    |
+112 |     print(u.q())
+    |             ^
+
+error[E0063]: `Node` has no field `q`
+   --> E0063-member-of-optional.sisu:116:16
+    |
+116 |     print(id(c.q))
+    |                ^
+    |
+help: a field with a similar name exists: `v`
+    |
+116 -     print(id(c.q))
+116 +     print(id(c.v))
+    |
+
+error[E0063]: `Node` has no method `q`
+   --> E0063-member-of-optional.sisu:120:13
+    |
+120 |     print(c.q().to_string())
+    |             ^
+
+error[E0063]: `Node` has no method `q`
+   --> E0063-member-of-optional.sisu:124:13
+    |
+124 |     print(c.q(nope))
+    |             ^
+
+error[E0033]: cannot find binding `nope`
+   --> E0063-member-of-optional.sisu:124:15
+    |
+124 |     print(c.q(nope))
+    |               ^^^^
+
+error[E0063]: `Node` has no field `q`
+   --> E0063-member-of-optional.sisu:128:7
+    |
+128 |     c.q = nope
+    |       ^
+    |
+help: a field with a similar name exists: `v`
+    |
+128 -     c.q = nope
+128 +     c.v = nope
+    |
+
+error[E0033]: cannot find binding `nope`
+   --> E0063-member-of-optional.sisu:128:11
+    |
+128 |     c.q = nope
+    |           ^^^^
+
+error[E0063]: `Node` has no field `q`
+   --> E0063-member-of-optional.sisu:132:7
+    |
+132 |     c.q[0] = 1
+    |       ^
+    |
+help: a field with a similar name exists: `v`
+    |
+132 -     c.q[0] = 1
+132 +     c.v[0] = 1
+    |
+
+error[E0063]: `Node` has no field `q`
+   --> E0063-member-of-optional.sisu:136:7
+    |
+136 |     c.q = 1
+    |       ^
+    |
+help: a field with a similar name exists: `v`
+    |
+136 -     c.q = 1
+136 +     c.v = 1
+    |
+
+error[E0063]: `Node` has no field `q`
+   --> E0063-member-of-optional.sisu:140:13
+    |
+140 |     print(c.q)
+    |             ^
+    |
+help: a field with a similar name exists: `v`
+    |
+140 -     print(c.q)
+140 +     print(c.v)
+    |
+
+error[E0063]: `Node` has no field `q`
+   --> E0063-member-of-optional.sisu:144:10
+    |
+144 |     if c.q == 1 {}
+    |          ^
+    |
+help: a field with a similar name exists: `v`
+    |
+144 -     if c.q == 1 {}
+144 +     if c.v == 1 {}
+    |
+
+error[E0063]: `Node` has no field `q`
+   --> E0063-member-of-optional.sisu:148:13
+    |
+148 |     match c.q { _ => {} }
+    |             ^
+    |
+help: a field with a similar name exists: `v`
+    |
+148 -     match c.q { _ => {} }
+148 +     match c.v { _ => {} }
+    |
+
+error[E0063]: `Node` has no field `q`
+   --> E0063-member-of-optional.sisu:152:16
+    |
+152 |     for x in c.q { print(x) }
+    |                ^
+    |
+help: a field with a similar name exists: `v`
+    |
+152 -     for x in c.q { print(x) }
+152 +     for x in c.v { print(x) }
+    |
+
+error[E0063]: `Node` has no field `q`
+   --> E0063-member-of-optional.sisu:156:15
+    |
+156 |     print("{c.q}")
+    |               ^
+    |
+help: a field with a similar name exists: `v`
+    |
+156 -     print("{c.q}")
+156 +     print("{c.v}")
+    |
+
+error[E0063]: `Node` has no field `q`
+   --> E0063-member-of-optional.sisu:160:13
+    |
+160 |     print(c.q ?? 1)
+    |             ^
+    |
+help: a field with a similar name exists: `v`
+    |
+160 -     print(c.q ?? 1)
+160 +     print(c.v ?? 1)
+    |
+
+error[E0063]: `Node` has no field `q`
+   --> E0063-member-of-optional.sisu:164:18
+    |
+164 |     if let a = c.q { print(a) }
+    |                  ^
+    |
+help: a field with a similar name exists: `v`
+    |
+164 -     if let a = c.q { print(a) }
+164 +     if let a = c.v { print(a) }
+    |
+
+error[E0063]: `Node` has no field `q`
+   --> E0063-member-of-optional.sisu:168:15
+    |
+168 |     let a = c.q else { return }
+    |               ^
+    |
+help: a field with a similar name exists: `v`
+    |
+168 -     let a = c.q else { return }
+168 +     let a = c.v else { return }
+    |
+
+error[E0063]: `Node` has no field `q`
+   --> E0063-member-of-optional.sisu:173:13
+    |
+173 |     while c.q {}
+    |             ^
+    |
+help: a field with a similar name exists: `v`
+    |
+173 -     while c.q {}
+173 +     while c.v {}
+    |
+
+error[E0063]: `Node` has no field `q`
+   --> E0063-member-of-optional.sisu:177:7
+    |
+177 |     c.q
+    |       ^
+    |
+help: a field with a similar name exists: `v`
+    |
+177 -     c.q
+177 +     c.v
+    |
+
+error[E0063]: `Node` has no field `q`
+   --> E0063-member-of-optional.sisu:181:20
+    |
+181 |     let a: i64 = c.q
+    |                    ^
+    |
+help: a field with a similar name exists: `v`
+    |
+181 -     let a: i64 = c.q
+181 +     let a: i64 = c.v
+    |
+
+error[E0063]: `Node` has no field `q`
+   --> E0063-member-of-optional.sisu:186:7
+    |
+186 |     c.q += 1
+    |       ^
+    |
+help: a field with a similar name exists: `v`
+    |
+186 -     c.q += 1
+186 +     c.v += 1
+    |
+
+error[E0063]: `Node` has no field `q`
+   --> E0063-member-of-optional.sisu:190:15
+    |
+190 |     print(b.o.q)
+    |               ^
+    |
+help: a field with a similar name exists: `v`
+    |
+190 -     print(b.o.q)
+190 +     print(b.o.v)
+    |
+
+error[E0063]: `Node` has no field `q`
+   --> E0063-member-of-optional.sisu:194:16
+    |
+194 |     print(a[0].q)
+    |                ^
+    |
+help: a field with a similar name exists: `v`
+    |
+194 -     print(a[0].q)
+194 +     print(a[0].v)
+    |
+
+error[E0063]: `Node` has no field `q`
+   --> E0063-member-of-optional.sisu:198:16
+    |
+198 |     print(mk().q)
+    |                ^
+    |
+help: a field with a similar name exists: `v`
+    |
+198 -     print(mk().q)
+198 +     print(mk().v)
+    |
+
+error[E0063]: `Node` has no field `q`
+   --> E0063-member-of-optional.sisu:202:16
+    |
+202 |     print(b?.o.q)
+    |                ^
+    |
+help: a field with a similar name exists: `v`
+    |
+202 -     print(b?.o.q)
+202 +     print(b?.o.v)
+    |
+
+error[E0063]: `Node` has no field `q`
+   --> E0063-member-of-optional.sisu:206:15
+    |
+206 |     print((c).q)
+    |               ^
+    |
+help: a field with a similar name exists: `v`
+    |
+206 -     print((c).q)
+206 +     print((c).v)
+    |
+
+error[E0063]: `bool` has no field `q`
+   --> E0063-member-of-optional.sisu:210:13
+    |
+210 |     print(x.q)
+    |             ^
+
+error[E0063]: `f64` has no method `q`
+   --> E0063-member-of-optional.sisu:214:13
+    |
+214 |     print(x.q())
+    |             ^
+
+sisu: 45 errors
+sisu: for more on a code, run `sisu explain <code>`: E0033, E0063

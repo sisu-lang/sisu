@@ -569,7 +569,7 @@ impl Checker<'_> {
                 let names = METHODS.iter().map(|&(m, _)| m).chain(prelude);
                 no_member(Definition::Method, self.type_name(ty), method, names)
             };
-            return self.rejected(d, args);
+            return self.rejected_lookup(d, method, args);
         };
         if args.len() != arity {
             let d = DiagnosticKind::ArgumentCount {

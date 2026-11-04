@@ -1,0 +1,91 @@
+// GIVEN a `.push` whose receiver may be `None`, in a function for each case
+// AND the array that it changes is in a field without `mut`
+// WHEN `sisu check` runs on it
+// THEN it reports E0001 for the write and E0062 for the `None`, as the `?.` form does
+// AND the E0001 of a `.` comes after its E0062, and the safe fix marks the field `mut`
+class Node {
+    mut v: i64
+    w: i64
+    mut xs: [i64]
+    ys: [i64]
+}
+class N2 {
+    yss: [[i64]]
+}
+class Box {
+    inner: Node
+}
+class H {
+    o: Node?
+}
+type M<T> = T?
+fn id<T>(v: T) -> T { v }
+extend H {
+    fn self_safe(self) {
+        self.o?.ys.push(1)
+    }
+
+    fn self_dot(self) {
+        self.o.ys.push(1)
+    }
+}
+
+fn safe_immutable(c: Node?) {
+    c?.ys.push(1)
+}
+
+fn dot_immutable(c: Node?) {
+    c.ys.push(1)
+}
+
+fn deep_immutable(b: Box?) {
+    b?.inner.ys.push(1)
+}
+
+fn ahead_immutable(c: Node?) {
+    id(c?.ys.push(1))
+}
+
+fn index_safe(cs: [Node?]) {
+    cs[0]?.ys.push(1)
+}
+
+fn index_dot(cs: [Node?]) {
+    cs[0].ys.push(1)
+}
+
+fn alias_object(c: M<Node>) {
+    c?.ys.push(1)
+}
+
+fn argument_error_immutable(c: Node?) {
+    c?.ys.push(nope)
+}
+
+fn dot_then_index(c: N2?) {
+    c.yss[0].push(1)
+}
+
+fn double_field_dot(c: Node??) {
+    c.ys.push(1)
+}
+
+fn parenthesized(c: Node?) {
+    (c?.ys).push(1)
+}
+
+fn main() {
+    H(o: None).self_safe()
+    H(o: None).self_dot()
+    safe_immutable(None)
+    dot_immutable(None)
+    deep_immutable(None)
+    ahead_immutable(None)
+    index_safe([])
+    index_dot([])
+    alias_object(None)
+    argument_error_immutable(None)
+    dot_then_index(None)
+    double_field_dot(None)
+    parenthesized(None)
+}

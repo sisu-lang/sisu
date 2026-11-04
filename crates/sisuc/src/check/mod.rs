@@ -948,6 +948,10 @@ struct Body {
     /// call has no report, but its member is unknown: a list of type arguments on it is not
     /// reported (`method_call_expr`).
     rejected_calls: FxHashSet<Span>,
+    /// The span of the method name of each lookup that failed and was reported at the name.
+    /// The method is missing, or it is a field or a variant (`report_lookup_failure`). The
+    /// check of a `.` on an optional reads it, to report E0062 only when the member is found.
+    failed_lookups: FxHashSet<Span>,
     /// The target of the compound assignment being checked, whose reads are not reads: they
     /// only give the value back to the target.
     quiet: Option<Span>,

@@ -179,13 +179,14 @@ impl Checker<'_> {
             Some(&[only]) => self.add_bound(ty, only),
             _ => None,
         };
-        self.report(DiagnosticKind::NoMember {
+        let d = DiagnosticKind::NoMember {
             owner: self.type_name(ty),
             kind: Definition::Method,
             name: name.name.to_string(),
             at: name.span,
             suggestion: None,
             add,
-        });
+        };
+        self.report_lookup_failure(d.into(), name);
     }
 }

@@ -127,8 +127,16 @@ fn push_through_an_optional_of_an_optional_should_be_peeled_first() {
     let object =
         "class C {\n    mut items: [i64]\n}\nfn g(aa: C??) { aa?.items?.push(1) }\nfn main() {}";
     diagnostic(object, Code::MayBeNone, (4, 17, "aa"), &[]);
-    let array = "fn g(xs: [i64]??) { xs?.push(1) }\nfn main() {}";
-    diagnostic(array, Code::MayBeNone, (1, 21, "xs"), &[]);
+    let array = "fn g() {\n    let mut xs: [i64]?? = None\n    xs?.push(1)\n}\nfn main() {}";
+    diagnostic(array, Code::MayBeNone, (3, 5, "xs"), &[]);
+    // A parameter cannot change, so the write is reported first.
+    codes(
+        "fn g(xs: [i64]??) { xs?.push(1) }\nfn main() {}",
+        &[
+            (Code::AssignToImmutable, (1, 21)),
+            (Code::MayBeNone, (1, 21)),
+        ],
+    );
 }
 
 /// `?.` and `is` on an optional of an optional ask for a layer to be peeled, with no fix.
@@ -640,4 +648,74 @@ fn a_waiting_branch_that_is_no_optional_should_be_reported_for_its_type() {
         );
         codes_row(statement, &src, &[(Code::Mismatch, at)]);
     }
+}
+
+/// `class Node` with a method `get` that takes no argument and the fields `v` (`mut`) and `w`.
+/// Then `body` on line 7 of a function over `c: Node?`, and an empty `main`.
+fn on_node_optional(body: &str) -> String {
+    format!(
+        "class Node {{\n    mut v: i64\n    w: i64\n    fn get(self) -> i64 {{ self.v }}\n}}\nfn f(c: Node?) {{\n    {body}\n}}\nfn main() {{}}"
+    )
+}
+
+/// A `.` call on an optional checks the call on the payload, as `?.` does: E0062 first, then the
+/// error of the call.
+#[test]
+fn dot_call_on_optional_should_check_the_arguments_on_the_payload() {
+    codes(
+        &on_node_optional("print(c.get(1))"),
+        &[(Code::MayBeNone, (7, 11)), (Code::ArgumentCount, (7, 11))],
+    );
+}
+
+/// A `.` field on an optional whose payload lacks it is that error alone: the `?.` fix would
+/// lead to it.
+#[test]
+fn dot_field_on_optional_should_report_a_missing_field_alone() {
+    codes(
+        &on_node_optional("print(c.q)"),
+        &[(Code::NoMember, (7, 13))],
+    );
+}
+
+/// A write to a field of an optional checks the write rule and the value on the payload's field.
+#[test]
+fn dot_assign_on_optional_should_check_the_write_rule_and_the_value() {
+    codes(
+        &on_node_optional("c.w = 2"),
+        &[(Code::MayBeNone, (7, 5)), (Code::AssignToImmutable, (7, 5))],
+    );
+    codes(
+        &on_node_optional("c.v = \"a\""),
+        &[(Code::MayBeNone, (7, 5)), (Code::Mismatch, (7, 11))],
+    );
+}
+
+/// `c?.v` on a `Node??` is E0062 again, so a `.` on it has no `?.` fix.
+#[test]
+fn dot_on_double_optional_should_have_no_safe_access_fix() {
+    let src = "class Node {\n    v: i64\n}\nfn f(c: Node??) {\n    print(c.v)\n}\nfn main() {}";
+    let d = diagnostic(src, Code::MayBeNone, (5, 11, "c"), &[]);
+    assert_eq!(fixes(src, &d), []);
+}
+
+/// A `.` call on an optional whose method is found twice keeps E0062: the ambiguity does not say
+/// that the member is missing, and the `?.` fix leads to E0156.
+#[test]
+fn dot_call_on_optional_should_keep_may_be_none_beside_an_ambiguous_method() {
+    let src = "interface Label {\n    fn name(self) -> string\n}\ninterface Code {\n    fn name(self) -> i64\n}\nclass Circle {\n    r: f64\n}\nextend Circle: Label {\n    fn name(self) -> string { \"c\" }\n}\nextend Circle: Code {\n    fn name(self) -> i64 { 7 }\n}\nfn f(c: Circle?) {\n    let n = c.name()\n    print(n)\n}\nfn main() {}";
+    codes(
+        src,
+        &[(Code::MayBeNone, (17, 13)), (Code::Ambiguous, (17, 15))],
+    );
+}
+
+/// The same holds when the type parameter of the method cannot be inferred (E0050, at its name).
+#[test]
+fn dot_call_on_optional_should_keep_may_be_none_beside_an_uninferred_parameter() {
+    let src = "class G {\n    fn mk<U>(self) -> [U] { [] }\n}\nfn f(g: G?) {\n    let x = g.mk()\n    print(x)\n}\nfn main() {}";
+    codes(
+        src,
+        &[(Code::MayBeNone, (5, 13)), (Code::CannotInfer, (5, 15))],
+    );
 }

@@ -25,6 +25,18 @@ use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
 
+/// How a method call reaches its receiver.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Dot {
+    /// `receiver.method(args)`.
+    Plain,
+    /// `receiver?.method(args)`.
+    Safe,
+    /// The check of `receiver.method(args)` on the payload of an optional `receiver`. The user
+    /// wrote `.` on the optional, so the call is neither of the others.
+    Payload,
+}
+
 /// The method that a call written as a function names.
 enum Idiom {
     /// A method of an array or a number.
@@ -498,7 +510,7 @@ impl Checker<'_> {
             checked
         } else {
             // The receiver of a `push` is a place, checked once and held for the call.
-            let on_place = method.name.as_str() == "push" && self.is_push_place(receiver, safe);
+            let on_place = method.name.as_str() == "push" && self.is_push_place(receiver);
             let scrutinee = if on_place {
                 self.push_receiver(receiver)
             } else {
@@ -541,7 +553,8 @@ impl Checker<'_> {
                         return Err(c.misread_as(at, compare));
                     }
                 }
-                c.method_call(span, safe, checked, receiver, site, args)
+                let dot = if safe { Dot::Safe } else { Dot::Plain };
+                c.method_call(span, dot, checked, receiver, site, args)
             };
             match scrutinee {
                 // `?.push` onto an array in a place writes the place: no payload is bound.
@@ -550,6 +563,12 @@ impl Checker<'_> {
                     Ok(array) => call(self, Ok(array)),
                     Err(value) => self.member_of(span, safe, value, receiver, method, call),
                 },
+                // A `.push` on a place that may be `None` reports its write rule first. The call
+                // then finds the array behind the optional, as `?.push` does.
+                scrutinee if on_place && self.pushed_may_be_none(&scrutinee) => {
+                    let value = self.pushed_value(receiver, scrutinee);
+                    call(self, value)
+                }
                 scrutinee => self.member_of(span, safe, scrutinee, receiver, method, call),
             }
         };
@@ -567,24 +586,25 @@ impl Checker<'_> {
         checked
     }
 
-    /// `receiver.method(args)`, `receiver` checked from `receiver_expr`. `safe` when it is
-    /// `receiver?.method(args)`.
-    fn method_call(
+    /// `receiver.method(args)`, `receiver` checked from `receiver_expr`. `dot` says whether it
+    /// is `receiver?.method(args)`, or the check of a `.` call on an optional's payload.
+    pub(super) fn method_call(
         &mut self,
         span: Span,
-        safe: bool,
+        dot: Dot,
         receiver: Checked,
         receiver_expr: &ast::Expr,
         site: Site<'_>,
         args: &[ast::Arg],
     ) -> Checked {
         let method = site.name;
+        let safe = dot == Dot::Safe;
         // The arguments are not part of the chain that an index ends; `expr` restores the flag.
         let indexed = std::mem::take(&mut self.body.indexed);
         // A range argument is E0023 once the call is found, as it is anywhere else. A string's
         // `get` takes its range (`string_method`), and so does the `get` of a `string?`, which is
         // E0062 first. An array's `get` takes an `i64`, so a range is E0032, found before
-        // the lookup. The `get` of an optional array reports E0062 in the lookup, then E0032.
+        // the lookup. The `get` of an optional array is E0062 first, then E0032, as through `?.`.
         let gets_range = method.name.as_str() == "get"
             && args
                 .iter()
@@ -593,8 +613,10 @@ impl Checker<'_> {
             && let Some(array) =
                 type_of(&receiver).filter(|ty| matches!(ty.kind(), TypeKind::Array(_)))
         {
-            // `base[a..b]` is the help for a `.` call only: through `?.`, it would be E0062.
-            return self.array_get_range((span, array), (!safe).then_some(receiver_expr), args);
+            // `base[a..b]` is the help for a `.` call only: through `?.`, or on an optional's
+            // payload, it would be E0062.
+            let base = (dot == Dot::Plain).then_some(receiver_expr);
+            return self.array_get_range((span, array), base, args);
         }
         let receiver = match self.generated_operator(span, receiver, site, args) {
             Ok(checked) => return checked,
@@ -629,7 +651,7 @@ impl Checker<'_> {
                 return self.array_method(span, receiver, ty, method, args);
             }
             Some(Type::STRING) => {
-                return self.string_method(span, safe, (receiver, receiver_expr), method, args);
+                return self.string_method(span, dot, (receiver, receiver_expr), method, args);
             }
             Some(ty @ (Type::I64 | Type::F64)) => {
                 return self.number_method(span, receiver, ty, method, args);
@@ -644,25 +666,18 @@ impl Checker<'_> {
             }
             _ => {}
         }
+        // The members of an optional are those of its payload, which `.` does not reach.
+        if let Some(ty) = type_of(&receiver)
+            && let TypeKind::Optional(payload) = ty.kind()
+        {
+            let value = (receiver, receiver_expr);
+            return self.method_of_payload(span, value, payload, site, args, indexed);
+        }
         let ty = type_of(&receiver);
-        match self.find_method(
-            &receiver,
-            receiver_expr,
-            site,
-            indexed,
-            (span, args.is_empty()),
-        ) {
+        match self.find_method(&receiver, site, (span, args.is_empty())) {
             Some(Found::Func(func)) => self.invoke(span, func, Some(receiver), site, args),
             Some(Found::GeneratedDisplay { listed }) => {
                 self.generated_display(span, receiver, site, args, listed)
-            }
-            // An optional array's `get` is E0062 first, then E0032 for the range, as through `?.`.
-            None if gets_range
-                && let Some(array) = ty
-                    .map(array::innermost)
-                    .filter(|array| matches!(array.kind(), TypeKind::Array(_))) =>
-            {
-                self.array_get_range((span, array), None, args)
             }
             None => {
                 self.labels(args);

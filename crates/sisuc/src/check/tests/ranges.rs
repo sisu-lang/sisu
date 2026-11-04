@@ -497,11 +497,11 @@ fn optional_array_get_with_a_range_should_be_e0062_then_e0032() {
             "fn main() {\n    let o: [i64]? = Some([1, 2])\n    print(o.contains(0..1) ?? 0)\n}",
             &[(Code::MayBeNone, (3, 11)), (Code::RangeOutsideFor, (3, 22))],
         ),
-        // The inner type is no array, so the range keeps E0023.
+        // The inner type is no array, so the range keeps E0023, and `T` has no method `get`.
         (
             "generic optional",
             "fn g<T>(o: T?) {\n    print(o.get(1..).is_none())\n}\nfn main() {}",
-            &[(Code::MayBeNone, (2, 11)), (Code::RangeOutsideFor, (2, 17))],
+            &[(Code::NoMember, (2, 13)), (Code::RangeOutsideFor, (2, 17))],
         ),
         (
             "doubly optional through safe access",
@@ -861,7 +861,7 @@ fn get_with_a_range_should_report_only_true_errors() {
         (
             "nested optional, no bounds",
             main_with("let s: string?? = Some(Some(\"ab\"))\n    print(s.get(..) ?? \"\")"),
-            vec![(OPTIONAL, (3, 11))],
+            vec![(OPTIONAL, (3, 11)), (RANGE, (3, 17))],
         ),
         (
             "nested optional, bad bound",
@@ -896,7 +896,7 @@ fn get_with_a_range_should_report_only_true_errors() {
         (
             "optional, no bounds",
             main_with("let s: string? = \"ab\"\n    print(s.get(..) ?? \"\")"),
-            vec![(OPTIONAL, (3, 11))],
+            vec![(OPTIONAL, (3, 11)), (RANGE, (3, 17))],
         ),
         (
             "chain of failed safe accesses",

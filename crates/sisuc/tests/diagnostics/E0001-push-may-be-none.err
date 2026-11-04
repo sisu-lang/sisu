@@ -1,0 +1,338 @@
+error[E0001]: cannot change `ys`
+  --> E0001-push-may-be-none.sisu:25:9
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
+...
+25 |         self.o?.ys.push(1)
+   |         ^^^^^^^^^^ `push` changes `ys`
+   |
+help: mark the field `mut`
+   |
+10 |     mut ys: [i64]
+   |     +++
+
+error[E0062]: `self.o?.ys` may be `None`
+  --> E0001-push-may-be-none.sisu:25:9
+   |
+25 |         self.o?.ys.push(1)
+   |         ^^^^^^^^^^
+   |
+   = help: to use the value only when it is present, unwrap `self.o` with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+   |
+25 |         self.o?.ys?.push(1)
+   |                   +
+
+error[E0062]: `self.o` may be `None`
+  --> E0001-push-may-be-none.sisu:29:9
+   |
+29 |         self.o.ys.push(1)
+   |         ^^^^^^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+   |
+29 |         self.o?.ys.push(1)
+   |               +
+
+error[E0001]: cannot change `ys`
+  --> E0001-push-may-be-none.sisu:29:9
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
+...
+29 |         self.o.ys.push(1)
+   |         ^^^^^^^^^ `push` changes `ys`
+   |
+help: mark the field `mut`
+   |
+10 |     mut ys: [i64]
+   |     +++
+
+error[E0001]: cannot change `ys`
+  --> E0001-push-may-be-none.sisu:34:5
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
+...
+34 |     c?.ys.push(1)
+   |     ^^^^^ `push` changes `ys`
+   |
+help: mark the field `mut`
+   |
+10 |     mut ys: [i64]
+   |     +++
+
+error[E0062]: `c?.ys` may be `None`
+  --> E0001-push-may-be-none.sisu:34:5
+   |
+34 |     c?.ys.push(1)
+   |     ^^^^^
+   |
+   = help: to use the value only when it is present, unwrap `c` with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+   |
+34 |     c?.ys?.push(1)
+   |          +
+
+error[E0062]: `c` may be `None`
+  --> E0001-push-may-be-none.sisu:38:5
+   |
+38 |     c.ys.push(1)
+   |     ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+   |
+38 |     c?.ys.push(1)
+   |      +
+
+error[E0001]: cannot change `ys`
+  --> E0001-push-may-be-none.sisu:38:5
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
+...
+38 |     c.ys.push(1)
+   |     ^^^^ `push` changes `ys`
+   |
+help: mark the field `mut`
+   |
+10 |     mut ys: [i64]
+   |     +++
+
+error[E0062]: `b?.inner` may be `None`
+  --> E0001-push-may-be-none.sisu:42:5
+   |
+42 |     b?.inner.ys.push(1)
+   |     ^^^^^^^^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+   |
+42 |     b?.inner?.ys.push(1)
+   |             +
+
+error[E0001]: cannot change `ys`
+  --> E0001-push-may-be-none.sisu:42:5
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
+...
+42 |     b?.inner.ys.push(1)
+   |     ^^^^^^^^^^^ `push` changes `ys`
+   |
+help: mark the field `mut`
+   |
+10 |     mut ys: [i64]
+   |     +++
+
+error[E0001]: cannot change `ys`
+  --> E0001-push-may-be-none.sisu:46:8
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
+...
+46 |     id(c?.ys.push(1))
+   |        ^^^^^ `push` changes `ys`
+   |
+help: mark the field `mut`
+   |
+10 |     mut ys: [i64]
+   |     +++
+
+error[E0062]: `c?.ys` may be `None`
+  --> E0001-push-may-be-none.sisu:46:8
+   |
+46 |     id(c?.ys.push(1))
+   |        ^^^^^
+   |
+   = help: to use the value only when it is present, unwrap `c` with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+   |
+46 |     id(c?.ys?.push(1))
+   |             +
+
+error[E0001]: cannot change `ys`
+  --> E0001-push-may-be-none.sisu:50:5
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
+...
+50 |     cs[0]?.ys.push(1)
+   |     ^^^^^^^^^ `push` changes `ys`
+   |
+help: mark the field `mut`
+   |
+10 |     mut ys: [i64]
+   |     +++
+
+error[E0062]: this value may be `None`
+  --> E0001-push-may-be-none.sisu:50:5
+   |
+50 |     cs[0]?.ys.push(1)
+   |     ^^^^^^^^^
+   |
+   = help: to use the value only when it is present, unwrap `cs[0]` with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+   |
+50 |     cs[0]?.ys?.push(1)
+   |              +
+
+error[E0062]: this value may be `None`
+  --> E0001-push-may-be-none.sisu:54:5
+   |
+54 |     cs[0].ys.push(1)
+   |     ^^^^^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+   |
+54 |     cs[0]?.ys.push(1)
+   |          +
+
+error[E0001]: cannot change `ys`
+  --> E0001-push-may-be-none.sisu:54:5
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
+...
+54 |     cs[0].ys.push(1)
+   |     ^^^^^^^^ `push` changes `ys`
+   |
+help: mark the field `mut`
+   |
+10 |     mut ys: [i64]
+   |     +++
+
+error[E0001]: cannot change `ys`
+  --> E0001-push-may-be-none.sisu:58:5
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
+...
+58 |     c?.ys.push(1)
+   |     ^^^^^ `push` changes `ys`
+   |
+help: mark the field `mut`
+   |
+10 |     mut ys: [i64]
+   |     +++
+
+error[E0062]: `c?.ys` may be `None`
+  --> E0001-push-may-be-none.sisu:58:5
+   |
+58 |     c?.ys.push(1)
+   |     ^^^^^
+   |
+   = help: to use the value only when it is present, unwrap `c` with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+   |
+58 |     c?.ys?.push(1)
+   |          +
+
+error[E0001]: cannot change `ys`
+  --> E0001-push-may-be-none.sisu:62:5
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
+...
+62 |     c?.ys.push(nope)
+   |     ^^^^^ `push` changes `ys`
+   |
+help: mark the field `mut`
+   |
+10 |     mut ys: [i64]
+   |     +++
+
+error[E0062]: `c?.ys` may be `None`
+  --> E0001-push-may-be-none.sisu:62:5
+   |
+62 |     c?.ys.push(nope)
+   |     ^^^^^
+   |
+   = help: to use the value only when it is present, unwrap `c` with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+   |
+62 |     c?.ys?.push(nope)
+   |          +
+
+error[E0033]: cannot find binding `nope`
+  --> E0001-push-may-be-none.sisu:62:16
+   |
+62 |     c?.ys.push(nope)
+   |                ^^^^
+
+error[E0062]: `c` may be `None`
+  --> E0001-push-may-be-none.sisu:66:5
+   |
+66 |     c.yss[0].push(1)
+   |     ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0001]: cannot change `yss`
+  --> E0001-push-may-be-none.sisu:66:5
+   |
+13 |     yss: [[i64]]
+   |     --- declared without `mut` here
+...
+66 |     c.yss[0].push(1)
+   |     ^^^^^^^^ `push` changes `yss`
+   |
+help: mark the field `mut`
+   |
+13 |     mut yss: [[i64]]
+   |     +++
+
+error[E0062]: `c` may be `None`
+  --> E0001-push-may-be-none.sisu:70:5
+   |
+70 |     c.ys.push(1)
+   |     ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0001]: cannot change `ys`
+  --> E0001-push-may-be-none.sisu:70:5
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
+...
+70 |     c.ys.push(1)
+   |     ^^^^ `push` changes `ys`
+   |
+help: mark the field `mut`
+   |
+10 |     mut ys: [i64]
+   |     +++
+
+error[E0001]: cannot change `ys`
+  --> E0001-push-may-be-none.sisu:74:5
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
+...
+74 |     (c?.ys).push(1)
+   |     ^^^^^^^ `push` changes `ys`
+   |
+help: mark the field `mut`
+   |
+10 |     mut ys: [i64]
+   |     +++
+
+error[E0062]: `c?.ys` may be `None`
+  --> E0001-push-may-be-none.sisu:74:5
+   |
+74 |     (c?.ys).push(1)
+   |     ^^^^^^^
+   |
+   = help: to use the value only when it is present, unwrap `c` with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+   |
+74 |     (c?.ys)?.push(1)
+   |            +
+
+sisu: 27 errors
+sisu: for more on a code, run `sisu explain <code>`: E0001, E0033, E0062

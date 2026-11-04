@@ -899,46 +899,40 @@ fn an_element_target_help_should_name_what_gives_a_place() {
 /// wrong type is: its failure says nothing about `mut`, so W0002 stays silent.
 #[test]
 fn a_failed_push_should_count_as_a_change_of_its_receiver() {
-    let rows = [
+    let rows: [(&str, &str, &[Wanted]); 6] = [
         (
             "optional array",
             "fn main() {\n    let mut xs: [i64]? = [1]\n    xs.push(2)\n}",
-            Code::MayBeNone,
-            (3, 5),
+            &[(Code::MayBeNone, (3, 5))],
         ),
         (
             "optional array with a bad value",
             "fn main() {\n    let mut xs: [i64]? = [1]\n    xs.push(\"s\")\n}",
-            Code::MayBeNone,
-            (3, 5),
+            &[(Code::MayBeNone, (3, 5)), (Code::Mismatch, (3, 13))],
         ),
         (
             "optional array with two arguments",
             "fn main() {\n    let mut xs: [i64]? = [1]\n    xs.push(2, 3)\n}",
-            Code::MayBeNone,
-            (3, 5),
+            &[(Code::MayBeNone, (3, 5)), (Code::ArgumentCount, (3, 5))],
         ),
         (
             "element that is an optional array",
             "fn main() {\n    let mut xss: [[i64]?] = [[1]]\n    xss[0].push(2)\n}",
-            Code::MayBeNone,
-            (3, 5),
+            &[(Code::MayBeNone, (3, 5))],
         ),
         (
             "string",
             "fn main() {\n    let mut s = \"a\"\n    s.push(\"b\")\n}",
-            Code::NoMember,
-            (3, 7),
+            &[(Code::NoMember, (3, 7))],
         ),
         (
             "integer",
             "fn main() {\n    let mut n = 1\n    n.push(2)\n}",
-            Code::NoMember,
-            (3, 7),
+            &[(Code::NoMember, (3, 7))],
         ),
     ];
-    for (row, src, code, pos) in rows {
-        codes_row(row, src, &[(code, pos)]);
+    for (row, src, wanted) in rows {
+        codes_row(row, src, wanted);
     }
 }
 
@@ -974,5 +968,57 @@ fn an_element_target_of_an_optional_number_should_not_be_an_optional_array() {
     codes(
         "fn main() {\n    let mut n: i64? = 1\n    n[0] = 2\n}",
         &[(Code::CannotIndex, (3, 5))],
+    );
+}
+
+/// A `.push` through `?.` is a place as `?.push` is, so the write rule runs, then E0062.
+#[test]
+fn dot_push_through_safe_access_should_check_the_write_rule() {
+    codes(
+        "class Node {\n    ys: [i64]\n}\nfn f(c: Node?) {\n    c?.ys.push(1)\n}\nfn main() {}",
+        &[(Code::AssignToImmutable, (5, 5)), (Code::MayBeNone, (5, 5))],
+    );
+}
+
+/// The array is in a place that cannot change: its E0001 comes before E0062.
+#[test]
+fn dot_push_on_optional_local_should_report_the_held_write() {
+    codes(
+        "fn f(xs: [i64]?) {\n    xs.push(1)\n}\nfn main() {}",
+        &[(Code::AssignToImmutable, (2, 5)), (Code::MayBeNone, (2, 5))],
+    );
+}
+
+/// The local is no `?.` and no field, so only the element check is new: E0062, then E0032.
+#[test]
+fn dot_push_on_optional_array_should_check_the_element() {
+    codes(
+        "fn main() {\n    let mut xs: [i64]? = None\n    xs.push(\"a\")\n}",
+        &[(Code::MayBeNone, (3, 5)), (Code::Mismatch, (3, 13))],
+    );
+}
+
+/// The receiver is a call, which stores nothing: E0062, then E0021.
+/// The argument is checked with no expected element type.
+#[test]
+fn dot_push_on_optional_temporary_should_report_the_temporary() {
+    codes(
+        "fn mko() -> [i64]? { None }\nfn main() {\n    mko().push(\"a\")\n}",
+        &[
+            (Code::MayBeNone, (3, 5)),
+            (Code::AssignToExpression, (3, 5)),
+        ],
+    );
+}
+
+/// A failed receiver of array type is still a temporary: E0021, then E0033 for `nope` in the call.
+#[test]
+fn push_on_failed_array_receiver_should_report_the_temporary() {
+    codes(
+        "fn g(n: i64) -> [string] {\n    []\n}\nfn main() {\n    g(nope).push(\"a\")\n}",
+        &[
+            (Code::AssignToExpression, (5, 5)),
+            (Code::BindingNotFound, (5, 7)),
+        ],
     );
 }

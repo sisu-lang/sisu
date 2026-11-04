@@ -1,0 +1,228 @@
+error[E0062]: `self.o` may be `None`
+  --> E0062-member-ambiguous-on-payload.sisu:27:17
+   |
+27 |         let n = self.o.name()
+   |                 ^^^^^^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+27 |         let n = self.o?.name()
+   |                       +
+
+error[E0156]: `name` on `Circle` could come from `Label` or `Code`
+  --> E0062-member-ambiguous-on-payload.sisu:27:24
+   |
+27 |         let n = self.o.name()
+   |                        ^^^^
+   |
+   = help: annotate the result: `let n: string = self.o.name()`
+
+error[E0155]: `i64` is a built-in type; only the prelude extends it
+  --> E0062-member-ambiguous-on-payload.sisu:34:8
+   |
+34 | extend i64 {
+   |        ^^^
+
+error[E0155]: `[i64]` is a built-in type; only the prelude extends it
+  --> E0062-member-ambiguous-on-payload.sisu:37:8
+   |
+37 | extend [i64] {
+   |        ^^^^^
+
+error[E0155]: `string` is a built-in type; only the prelude extends it
+  --> E0062-member-ambiguous-on-payload.sisu:40:8
+   |
+40 | extend string {
+   |        ^^^^^^
+
+error[E0155]: `extend` takes a class or enum, and `T` is a type parameter
+  --> E0062-member-ambiguous-on-payload.sisu:43:11
+   |
+43 | extend<T> T {
+   |           ^
+
+error[E0062]: `c` may be `None`
+  --> E0062-member-ambiguous-on-payload.sisu:51:13
+   |
+51 |     let n = c.name()
+   |             ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+51 |     let n = c?.name()
+   |              +
+
+error[E0156]: `name` on `Circle` could come from `Label` or `Code`
+  --> E0062-member-ambiguous-on-payload.sisu:51:15
+   |
+51 |     let n = c.name()
+   |               ^^^^
+   |
+   = help: annotate the result: `let n: string = c.name()`
+
+error[E0062]: `c` may be `None`
+  --> E0062-member-ambiguous-on-payload.sisu:56:13
+   |
+56 |     let n = c.name(1)
+   |             ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+56 |     let n = c?.name(1)
+   |              +
+
+error[E0156]: `name` on `Circle` could come from `Label` or `Code`
+  --> E0062-member-ambiguous-on-payload.sisu:56:15
+   |
+56 |     let n = c.name(1)
+   |               ^^^^
+   |
+   = help: annotate the result: `let n: string = c.name(1)`
+
+error[E0062]: `c` may be `None`
+  --> E0062-member-ambiguous-on-payload.sisu:61:13
+   |
+61 |     let n = c.name()
+   |             ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0156]: `name` on `Circle` could come from `Label` or `Code`
+  --> E0062-member-ambiguous-on-payload.sisu:61:15
+   |
+61 |     let n = c.name()
+   |               ^^^^
+   |
+   = help: annotate the result: `let n: string = c.name()`
+
+error[E0062]: `c` may be `None`
+  --> E0062-member-ambiguous-on-payload.sisu:66:13
+   |
+66 |     let n = c.name()
+   |             ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+66 |     let n = c?.name()
+   |              +
+
+error[E0156]: `name` on `Circle` could come from `Label` or `Code`
+  --> E0062-member-ambiguous-on-payload.sisu:66:15
+   |
+66 |     let n = c.name()
+   |               ^^^^
+   |
+   = help: annotate the result: `let n: string = c.name()`
+
+error[E0062]: `c` may be `None`
+  --> E0062-member-ambiguous-on-payload.sisu:71:13
+   |
+71 |     let n = c.name()
+   |             ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+71 |     let n = c?.name()
+   |              +
+
+error[E0156]: `name` on `T` could come from `Label` or `Code`
+  --> E0062-member-ambiguous-on-payload.sisu:71:15
+   |
+71 |     let n = c.name()
+   |               ^^^^
+   |
+   = help: annotate the result: `let n: string = c.name()`
+
+error[E0062]: `g` may be `None`
+  --> E0062-member-ambiguous-on-payload.sisu:76:13
+   |
+76 |     let x = g.mk()
+   |             ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+76 |     let x = g?.mk()
+   |              +
+
+error[E0050]: cannot infer `U` for `mk`
+  --> E0062-member-ambiguous-on-payload.sisu:76:15
+   |
+76 |     let x = g.mk()
+   |               ^^
+   |
+   = help: annotate the result, or write the type: `mk<...>(...)`
+
+error[E0069]: `sum` needs an `[i64]` or an `[f64]`, found `[string]`
+  --> E0062-member-ambiguous-on-payload.sisu:81:14
+   |
+81 |     print(xs.sum())
+   |              ^^^
+
+error[E0062]: `a` may be `None`
+  --> E0062-member-ambiguous-on-payload.sisu:86:11
+   |
+86 |     print(a.twice())
+   |           ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+86 |     print(a?.twice())
+   |            +
+
+error[E0062]: `b` may be `None`
+  --> E0062-member-ambiguous-on-payload.sisu:87:11
+   |
+87 |     print(b.second())
+   |           ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+87 |     print(b?.second())
+   |            +
+
+error[E0062]: `s` may be `None`
+  --> E0062-member-ambiguous-on-payload.sisu:88:11
+   |
+88 |     print(s.shout())
+   |           ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+88 |     print(s?.shout())
+   |            +
+
+error[E0062]: `c` may be `None`
+  --> E0062-member-ambiguous-on-payload.sisu:89:11
+   |
+89 |     print(c.same())
+   |           ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+89 |     print(c?.same())
+   |            +
+
+error[E0062]: `u` may be `None`
+  --> E0062-member-ambiguous-on-payload.sisu:93:11
+   |
+93 |     print(u.same())
+   |           ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+93 |     print(u?.same())
+   |            +
+
+sisu: 24 errors
+sisu: for more on a code, run `sisu explain <code>`: E0050, E0062, E0069, E0155, E0156
