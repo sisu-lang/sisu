@@ -23,7 +23,7 @@ P = 'repos/sisu-lang/sisu'
 
 def comment(id, login, body, updated='t1'):
     return {'id': id, 'user': {'login': login}, 'body': body, 'updated_at': updated,
-            'path': 'a.rs', 'line': 3}
+            'path': 'a.rs', 'line': 3, 'html_url': f'u{id}'}
 
 
 class WatchPr(unittest.TestCase):
@@ -54,7 +54,7 @@ class WatchPr(unittest.TestCase):
         self.table[f'{P}/pulls/7/comments'] = [comment(1, 'bot', '<b>Fix</b> the line'),
                                                comment(2, 'me', 'done')]
         out = self.watch()
-        self.assertEqual((out.returncode, out.stdout), (0, 'inline 1 bot a.rs:3: Fix the line\n'))
+        self.assertEqual((out.returncode, out.stdout), (0, 'inline 1 bot a.rs:3: Fix the line u1\n'))
         self.assertEqual(self.watch().returncode, 1)
 
     def test_watch_should_skip_the_in_progress_note_and_wake_on_its_edit(self):
@@ -62,7 +62,14 @@ class WatchPr(unittest.TestCase):
         self.table[f'{P}/issues/7/comments'] = [comment(5, 'coderabbitai[bot]', note)]
         self.assertEqual(self.watch().returncode, 1)
         self.table[f'{P}/issues/7/comments'] = [comment(5, 'coderabbitai[bot]', 'Summary', 't2')]
-        self.assertEqual(self.watch().stdout, 'comment 5 coderabbitai[bot]: Summary\n')
+        self.assertEqual(self.watch().stdout, 'comment 5 coderabbitai[bot]: Summary u5\n')
+
+    def test_watch_should_wake_on_an_edited_review(self):
+        review = {'id': 9, 'user': {'login': 'bot'}, 'state': 'COMMENTED', 'html_url': 'r9'}
+        self.table[f'{P}/pulls/7/reviews'] = [dict(review, body='One')]
+        self.assertEqual(self.watch().stdout, 'review 9 COMMENTED bot: One r9\n')
+        self.table[f'{P}/pulls/7/reviews'] = [dict(review, body='Two')]
+        self.assertEqual(self.watch().stdout, 'review 9 COMMENTED bot: Two r9\n')
 
     def test_watch_should_report_a_failed_check_and_then_the_end_of_checks_once(self):
         runs = f'{P}/commits/abcdef0123/check-runs'
