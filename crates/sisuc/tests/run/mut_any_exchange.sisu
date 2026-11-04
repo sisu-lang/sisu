@@ -1,0 +1,29 @@
+// GIVEN `interface Filler { fn fill(self, mut xs: [i64]) }`, a class `Nines` that conforms to it,
+// a class `Zeros` that conforms to it, and `let mut f: any Filler = Nines()`
+// WHEN `main` runs `let old = exchange(mut f, Zeros())` and calls `fill` on `old` and on `f`
+// THEN `old` still fills with 9 and `f` fills with 0
+interface Filler {
+    fn fill(self, mut xs: [i64])
+}
+
+class Nines: Filler {
+    fn fill(self, mut xs: [i64]) {
+        xs[0] = 9
+    }
+}
+
+class Zeros: Filler {
+    fn fill(self, mut xs: [i64]) {
+        xs[0] = 0
+    }
+}
+
+fn main() {
+    let mut f: any Filler = Nines()
+    let old = exchange(mut f, Zeros())
+    let mut xs = [5]
+    old.fill(mut xs)
+    print(xs)
+    f.fill(mut xs)
+    print(xs)
+}

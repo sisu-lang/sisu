@@ -6145,3 +6145,72 @@ fn prelude_mut_function_should_report_the_location_that_follows_its_out_pointer(
     assert!(body.contains(&bounds), "{bounds} in\n{body}");
     assert!(!body.contains(&format!("ptr {out}, i64")), "{body}");
 }
+
+/// The table entry of a requirement with a `mut` parameter takes the out pointer after its value
+/// parameters and passes it on, last, to the method. The call through the table passes an out
+/// slot that is an `alloca`, last, and the indirect function type has the `ptr` for it.
+///
+/// ```text
+/// GIVEN `interface Filler { fn fill(self, mut xs: [i64]) }`, a class `Nines` whose `fill` has the
+///   `mut` parameter, and a `main` that calls `fill` on an `any Filler` with `mut xs`
+/// WHEN the module is compiled, before optimization
+/// THEN the entry glue of `Nines.fill` has a `ptr` parameter after its value parameters
+/// AND it passes that parameter as the last argument of the call to the method
+/// AND the call in `main` passes an `alloca` of `main` last, through a function type that ends
+///   in `ptr`
+/// ```
+#[test]
+fn entry_glue_should_pass_the_out_pointer() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "interface Filler {\n    fn fill(self, mut xs: [i64])\n}\n\
+         class Nines: Filler {\n    fn fill(self, mut xs: [i64]) {\n        xs[0] = 9\n    }\n}\n\
+         fn main() {\n    let mut xs = [0]\n    let f: any Filler = Nines()\n    f.fill(mut xs)\n    print(xs)\n}",
+    )
+    .print_to_string()
+    .to_string();
+    let header = ir
+        .lines()
+        .find(|line| line.starts_with("define ") && line.contains("@sisu_any.entry.Nines"))
+        .unwrap_or_else(|| panic!("no entry glue of `Nines.fill` in\n{ir}"));
+    let params = header
+        .split_once('(')
+        .and_then(|(_, rest)| rest.rsplit_once(')'))
+        .map_or("", |(params, _)| params);
+    let last = params
+        .rsplit(", ")
+        .next()
+        .unwrap_or_else(|| panic!("no parameters in {header}"));
+    let (kind, out) = last.split_once(' ').unwrap_or((last, ""));
+    assert_eq!(
+        kind, "ptr",
+        "the last parameter should be the out pointer: {header}"
+    );
+    let out = out.rsplit(' ').next().unwrap_or(out);
+    let glue = function_body(&ir, header);
+    let call = glue
+        .lines()
+        .find(|line| line.contains("call ") && line.contains("@sisu.Nines"))
+        .unwrap_or_else(|| panic!("no call of the method in\n{glue}"));
+    assert!(
+        call.trim_end().ends_with(&format!("ptr {out})")),
+        "the glue should pass {out} last: {call}\n{glue}"
+    );
+    let main = function_body(&ir, "define internal void @sisu.main()");
+    let dyn_call = main
+        .lines()
+        .find(|line| line.contains("%dyn = call"))
+        .unwrap_or_else(|| panic!("no call through the table in\n{main}"));
+    let slot = dyn_call
+        .trim_end_matches(')')
+        .rsplit(", ")
+        .next()
+        .and_then(|last| last.strip_prefix("ptr "))
+        .unwrap_or_else(|| panic!("the call should pass a pointer last: {dyn_call}"));
+    assert!(
+        main.lines()
+            .any(|line| line.trim_start().starts_with(&format!("{slot} = alloca "))),
+        "{slot} should be an `alloca` of `main`:\n{main}"
+    );
+}

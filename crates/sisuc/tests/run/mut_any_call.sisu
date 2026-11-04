@@ -1,0 +1,20 @@
+// GIVEN `interface Filler { fn fill(self, mut xs: [i64]) }`, a class `Nines` whose `fill` writes
+// `xs[0] = 9`, and `let mut xs = [0]`
+// WHEN `main` runs `let f: any Filler = Nines()`, calls `f.fill(mut xs)` and prints `xs`
+// THEN it prints "[9]": a call through the table of `any Filler` changes the caller's array
+interface Filler {
+    fn fill(self, mut xs: [i64])
+}
+
+class Nines: Filler {
+    fn fill(self, mut xs: [i64]) {
+        xs[0] = 9
+    }
+}
+
+fn main() {
+    let mut xs = [0]
+    let f: any Filler = Nines()
+    f.fill(mut xs)
+    print(xs)
+}
