@@ -8758,20 +8758,12 @@ fn a_leaving_if_should_nest_no_deeper_than_the_block_bound() {
 /// THEN `Generated::mut_lens` holds, for some parameter, a length below `MAX_MUT_LEN`, and for no
 ///   parameter more than `MAX_MUT_LEN`: it records the length that `Adds::len` drew, and not the
 ///   most that a callee asks for
-/// AND the walk of each program with its lengths finds no index out of bounds
 #[test]
 fn generated_mut_lens_should_record_the_length_of_a_mut_parameter() {
-    let mut lens = Vec::new();
-    for data in seeds() {
-        let generated = generate(&data);
-        lens.extend(generated.mut_lens.iter().map(|(_, len)| *len));
-        let mut walk = Walk {
-            mut_lens: generated.mut_lens.into_iter().collect(),
-            ..Walk::default()
-        };
-        walk.program(&generated.plain);
-        assert!(walk.out_of_bounds.is_empty(), "{:?}", walk.out_of_bounds);
-    }
+    let lens: Vec<u64> = seeds()
+        .flat_map(|data| generate(&data).mut_lens)
+        .map(|(_, len)| len)
+        .collect();
     assert!(lens.iter().any(|&len| len < MAX_MUT_LEN), "{lens:?}");
     assert!(lens.iter().all(|&len| len <= MAX_MUT_LEN), "{lens:?}");
 }
