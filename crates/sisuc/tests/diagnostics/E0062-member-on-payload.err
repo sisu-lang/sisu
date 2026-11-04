@@ -611,6 +611,16 @@ help: mark the field `mut`
  10 |     mut w: i64
     |     +++
 
+error[E0001]: cannot change `xs`
+   --> E0062-member-on-payload.sisu:174:5
+    |
+173 | fn recv_double_push(xs: [i64]??) {
+    |                     -- declared as a parameter here
+174 |     xs.push(1)
+    |     ^^ `push` changes `xs`
+    |
+    = help: copy it into a variable: `let mut xs = xs`
+
 error[E0062]: `xs` may be `None`
    --> E0062-member-on-payload.sisu:174:5
     |
@@ -762,5 +772,5 @@ error[E0023]: `"{nope}".get(..)` has no bounds
     |
     = help: `"{nope}".get(..)` is `Some("{nope}")`
 
-sisu: 81 errors
+sisu: 82 errors
 sisu: for more on a code, run `sisu explain <code>`: E0001, E0023, E0030, E0032, E0033, E0050, E0053, E0055, E0062, E0154

@@ -3752,7 +3752,17 @@ fn push_onto_an_optional_array_should_offer_unwrap_help_only_for_a_stored_array(
         ),
     ];
     for (row, src, pos, help) in rows {
-        let d = diagnostic_row(row, src, Code::MayBeNone, pos, &[]);
+        // A write that is not allowed, or a temporary, comes beside E0062: `places.rs` holds them.
+        let (_, ds) = checked(src);
+        let mut found = ds.into_iter().filter(|d| d.code() == Code::MayBeNone);
+        let d = found.next().expect("each row should report E0062");
+        assert!(found.next().is_none(), "{row}: E0062 once");
+        let span = d.span();
+        assert_eq!(
+            (at(src, span), &src[span.range()]),
+            ((pos.0, pos.1), pos.2),
+            "{row}"
+        );
         assert_eq!(d.help().is_some(), help, "{row}");
         let fixes: Vec<_> = d.fixes().iter().map(Fix::safe).collect();
         assert_eq!(fixes, [false], "{row}: one unsafe fix");
