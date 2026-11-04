@@ -1069,10 +1069,9 @@ impl Checker<'_> {
 
     /// The test that every index of `place` is in range now, or `None` for a place with no index.
     /// The test of an index is `index < len(array)`. The tests join with `&&`, from the root
-    /// outwards, so each array is read only after the indexes before it passed. Each array after
-    /// the first is a `let` of the block that holds the test of the next index, so the path is
-    /// read once, and the arrays are released before the store-back, which then finds them
-    /// unique.
+    /// outwards. So each array is read only after the indexes before it passed. Each array after
+    /// the first is a `let` in the block of the test that reads it. So the path is read once. The
+    /// block releases these arrays before the store-back. So the store-back finds them unique.
     fn indexes_in_range(&mut self, place: &tir::Place, at: Span) -> Option<tir::Expr> {
         let mut indexes = Vec::new();
         let mut root = place;
