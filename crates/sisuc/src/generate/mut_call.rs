@@ -390,7 +390,10 @@ impl Gen<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Adds, Kind, PLACE_STEPS, Place, Ty, Want, placeable};
+    use super::{Adds, Gen, Kind, PLACE_STEPS, Place, Ty, Want, placeable};
+    use crate::generate::DEPTHS;
+    use crate::generate::coverage::seed;
+    use crate::generate::scope::{Func, Var};
 
     fn place(root: usize, ty: Ty, size: u64) -> Place {
         Place {
@@ -481,6 +484,119 @@ mod tests {
         assert!(!placeable(&wants, &[field], &[]));
     }
 
+    /// GIVEN a `mut` parameter that adds to an array 2 elements' length, 64 of growth and 16 of
+    /// room, and a local array that has each
+    /// WHEN the parameter takes a place
+    /// THEN a local that lacks the length, the growth or the room is refused, each by its own
+    /// clause
+    #[test]
+    fn placeable_should_refuse_an_array_without_the_length_or_growth_a_parameter_adds() {
+        let ty = Ty::Array(Box::new(Ty::String));
+        let adds = Adds {
+            room: 16,
+            grow: 64,
+            len: 2,
+        };
+        let wants = [Want {
+            adds,
+            ..want(ty.clone(), 100)
+        }];
+        let array = |len, room, grow| Place {
+            len,
+            room,
+            grow,
+            ..place(0, ty.clone(), 0)
+        };
+        assert!(placeable(&wants, &[array(2, 16, 64)], &[]));
+        assert!(!placeable(&wants, &[array(1, 16, 64)], &[]), "length");
+        assert!(!placeable(&wants, &[array(2, 16, 63)], &[]), "growth");
+        assert!(!placeable(&wants, &[array(2, 15, 64)], &[]), "room");
+    }
+
+    /// A `Gen` in `main` that knows the local `v1`, `ty` with the room and growth `room` and
+    /// `grow`, and `f1`, which has one `mut` parameter of `ty` that adds `adds`.
+    fn gen_with_local(data: &[u8], ty: Ty, (room, grow): (u64, u64), adds: Adds) -> Gen<'_> {
+        let mut g = Gen::new(data);
+        let mut var = Var::new("v1".to_string(), ty.clone(), true, 0, room, 0);
+        var.size += grow;
+        var.grow = grow;
+        var.len = adds.len;
+        g.scope.vars.push(var);
+        g.scope.funcs.push(Func {
+            name: "f1".to_string(),
+            owner: None,
+            params: vec![(ty, 100)],
+            muts: vec![Some(adds)],
+            ret: Ty::Unit,
+            ret_size: 0,
+            cost: [1; DEPTHS],
+        });
+        g
+    }
+
+    /// GIVEN a local `string` with room for 16 chars, and a function whose `mut` parameter adds 16
+    /// WHEN a `mut` call passes the local
+    /// THEN the call takes the room, so no block in another argument can spend it again
+    /// AND the same holds for the growth of an array
+    #[test]
+    fn a_mut_call_should_take_what_its_parameter_adds_from_the_local() {
+        let array = Ty::Array(Box::new(Ty::I64));
+        let rows = [
+            (
+                Ty::String,
+                (16, 0),
+                Adds {
+                    room: 16,
+                    ..Adds::default()
+                },
+            ),
+            (
+                array,
+                (0, 64),
+                Adds {
+                    grow: 64,
+                    len: 1,
+                    ..Adds::default()
+                },
+            ),
+        ];
+        for (ty, (room, grow), adds) in rows {
+            let mut g = gen_with_local(&[], ty, (room, grow), adds);
+            g.statement(|g| g.mut_call_of(Some(0)));
+            assert_eq!(g.w.out.program, "f1(0, mut v1)");
+            assert_eq!((g.scope.vars[0].room, g.scope.vars[0].grow), (0, 0));
+        }
+    }
+
+    /// GIVEN a `mut` call of `f1`, whose other argument is an `i64` that the generator writes
+    /// WHEN it is written from many seeds
+    /// THEN a call whose other argument holds a statement, so a line break, has no copy of the
+    /// local in the rewritten program, as the seed 404 of the review had one that printed 3 and
+    /// not 7
+    /// AND some call without one has a copy, and some with one is written
+    #[test]
+    fn a_mut_call_should_not_copy_a_local_that_a_statement_in_an_argument_can_change() {
+        let (mut with, mut without) = (0, 0);
+        for n in 0..256 {
+            let data = seed(n);
+            let mut g = gen_with_local(&data, Ty::I64, (0, 0), Adds::default());
+            g.scope.funcs[0].params.push((Ty::I64, 0));
+            g.scope.funcs[0].muts.push(None);
+            g.statement(|g| g.mut_call_of(Some(0)));
+            let copied = g.w.out.rewritten.contains("let mut w");
+            if g.w.out.program.contains('\n') {
+                assert!(!copied, "{}", g.w.out.rewritten);
+                with += 1;
+            } else if copied {
+                without += 1;
+            }
+        }
+        assert!(
+            with > 0 && without > 0,
+            "{with} with a statement, {without} copied"
+        );
+    }
+
     /// GIVEN `mut` parameters of `i64`, `i64` and `string`, and `n` places of `i64`, each at a
     /// local of its own, which no parameter of `string` can take
     /// WHEN `placeable` looks for a place for each parameter
@@ -493,6 +609,24 @@ mod tests {
             let places: Vec<Place> = (0..n).map(|root| place(root, Ty::I64, 0)).collect();
             PLACE_STEPS.set(0);
             assert!(!placeable(&wants, &places, &[]));
+            PLACE_STEPS.get()
+        };
+        crate::mir::tests::assert_near_linear(reads(20), reads(40), reads(60));
+    }
+
+    /// GIVEN the same parameters, and `n` places of `i64`, each at a local of its own, and one
+    /// place of `string` at another
+    /// WHEN `choose_places` picks a place for each parameter
+    /// THEN its work grows in proportion to `n` too: it does not ask `placeable` about each place
+    #[test]
+    fn choose_places_should_read_the_places_linearly() {
+        let wants = [want(Ty::I64, 0), want(Ty::I64, 0), want(Ty::String, 0)];
+        let reads = |n: usize| {
+            let mut places: Vec<Place> = (0..n).map(|root| place(root, Ty::I64, 0)).collect();
+            places.push(place(n, Ty::String, 0));
+            let mut g = Gen::new(&[]);
+            PLACE_STEPS.set(0);
+            assert_eq!(g.choose_places(&wants, &places).len(), 3);
             PLACE_STEPS.get()
         };
         crate::mir::tests::assert_near_linear(reads(20), reads(40), reads(60));

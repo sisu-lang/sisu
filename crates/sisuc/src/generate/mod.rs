@@ -44,6 +44,10 @@ pub(crate) struct Generated {
     /// The most blocks open around an `if` of which every branch jumps.
     #[cfg(test)]
     pub(crate) leaving_if_depth: u32,
+    /// For each `mut` parameter of `program`: its name, and how many elements its place holds at
+    /// least (`Adds::len`), which the text does not say.
+    #[cfg(test)]
+    pub(crate) mut_lens: Vec<(String, u64)>,
 }
 
 /// An argument of a call of a bounded generic function or class, whose parameter is a bare type
@@ -173,6 +177,8 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
         made: g.w.made,
         #[cfg(test)]
         leaving_if_depth: g.leaving_if_depth,
+        #[cfg(test)]
+        mut_lens: g.mut_lens,
     }
 }
 
@@ -267,6 +273,9 @@ struct Gen<'a> {
     /// Where `program` holds the known sites' text, in order.
     #[cfg(test)]
     known_text: Vec<std::ops::Range<usize>>,
+    /// See `Generated::mut_lens`.
+    #[cfg(test)]
+    mut_lens: Vec<(String, u64)>,
 }
 
 impl<'a> Gen<'a> {
@@ -303,6 +312,8 @@ impl<'a> Gen<'a> {
             bound_sites: Vec::new(),
             #[cfg(test)]
             known_text: Vec::new(),
+            #[cfg(test)]
+            mut_lens: Vec::new(),
         }
     }
 

@@ -613,6 +613,9 @@ struct Walk {
     source: String,
     /// The length of each array local whose `let` writes it as a literal or a fill.
     lens: FxHashMap<String, i128>,
+    /// For each `mut` parameter of the generated program: how many elements its place holds at
+    /// least, which the text does not say (`Generated::mut_lens`).
+    mut_lens: FxHashMap<String, u64>,
     /// The value of each `let` whose init is a sum, difference or remainder of integer literals,
     /// other such locals and `xs.len()`, for an array of 0, 1, ... `SAMPLE_LENS - 1` elements.
     offsets: FxHashMap<String, Vec<i128>>,
@@ -3359,7 +3362,9 @@ fn walk() -> Walk {
     let mut walk = Walk::default();
     // Twice the `SEEDS`: a bare `Ok(..)` is rare, and the seeds of the other tests shift it.
     for data in (0..2 * SEEDS).map(seed) {
-        walk.program(&generate(&data).plain);
+        let generated = generate(&data);
+        walk.mut_lens = generated.mut_lens.into_iter().collect();
+        walk.program(&generated.plain);
     }
     walk
 }
@@ -4071,6 +4076,22 @@ fn some_seed_should_change_and_grow_what_a_mut_call_passes() {
         found = [0, 1, 2].map(|i| found[i] || writes[i]);
     }
     assert_eq!(found, [true; 3], "element write, push, string append");
+}
+
+/// GIVEN a function whose `mut` array parameter holds 1 element at least, as its callers give it
+/// WHEN it writes the element at 0, and at 1
+/// THEN the walk finds the second index out of bounds: it knows the parameter's real length
+#[test]
+fn the_walk_should_read_the_length_of_a_mut_array_parameter() {
+    for (at, in_bounds) in [(0, true), (1, false)] {
+        let source = format!(
+            "fn f(depth: i64, mut v1: [i64]) {{\n    v1[{at}] = 0\n}}\nfn main() {{\n    let mut xs = [1]\n    f(0, mut xs)\n}}\n"
+        );
+        let mut walk = Walk::default();
+        walk.mut_lens.insert("v1".to_string(), 1);
+        walk.program(&source);
+        assert_eq!(walk.out_of_bounds.is_empty(), in_bounds, "index {at}");
+    }
 }
 
 /// GIVEN the bytes of fuzz input crash-e973ec3e, where a block in the first statement of a

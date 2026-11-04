@@ -745,6 +745,11 @@ impl Gen<'_> {
             self.w.text(&format!(" -> {written}"));
         }
         self.w.text(" ");
+        #[cfg(test)]
+        self.mut_lens.extend(
+            (params.iter())
+                .filter_map(|(name, _, _, adds)| Some((name.clone(), adds.as_ref()?.len))),
+        );
         self.scope.funcs.push(Func {
             name,
             owner: owner.clone(),
