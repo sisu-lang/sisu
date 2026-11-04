@@ -89,6 +89,8 @@ pub(super) struct MutPart {
     ty: Type,
     /// The place as written.
     span: Span,
+    /// The name at the root of the place as written, when it is a name.
+    root: Option<Symbol>,
 }
 
 /// The types of the place of a `mut` argument, for E0170.
@@ -585,12 +587,22 @@ impl Checker<'_> {
         let key = self.mut_key(&path);
         let temp = self.fresh(ty);
         let span = arg.value.span;
+        let mut root = &arg.value;
+        while let ast::ExprKind::Index { base, .. } | ast::ExprKind::Field { base, .. } = &root.kind
+        {
+            root = base;
+        }
+        let root = match root.kind {
+            ast::ExprKind::Name(name) => Some(name),
+            _ => None,
+        };
         parts.marked.push((
             MutPart {
                 path,
                 temp,
                 ty,
                 span,
+                root,
             },
             key,
         ));
@@ -1138,6 +1150,16 @@ impl Checker<'_> {
     /// of the place is in range then: a write to an element that is gone is lost.
     pub(super) fn mut_call(&mut self, mut call: tir::Expr, parts: Vec<MutPart>) -> tir::Expr {
         let (ty, span) = (call.ty, call.span);
+        // The copy-in reads the place, and a result can carry that value out: `exchange` returns
+        // it. So the call reads the root local. A call with no result keeps the rule that a
+        // `mut` argument is a write (`stamp_marked`).
+        if ty != Type::UNIT {
+            for name in parts.iter().filter_map(|part| part.root) {
+                if let Some(binding) = self.lookup(name) {
+                    binding.read = true;
+                }
+            }
+        }
         let (ExprKind::Call { args, .. } | ExprKind::InterfaceCall { args, .. }) = &mut call.kind
         else {
             unreachable!("a call with `mut` arguments should be a call of a function or a method")
