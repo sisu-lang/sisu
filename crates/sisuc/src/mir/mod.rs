@@ -114,7 +114,7 @@ pub(crate) struct Function {
 impl Function {
     /// The functions this one calls directly, in the order of its call sites, with a repeat for
     /// each call. A call through a table (`DynCall`) names no function. This is the one place
-    /// that knows which statements call a function.
+    /// that lists the functions that a function calls.
     pub(crate) fn callees(&self) -> Vec<usize> {
         let mut called = Vec::new();
         for block in &self.blocks {
