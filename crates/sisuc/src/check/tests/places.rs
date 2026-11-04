@@ -1011,7 +1011,7 @@ fn dot_push_on_optional_temporary_should_report_the_temporary() {
     );
 }
 
-/// A failed receiver of array type is still a temporary: E0021, then the argument error E0033.
+/// A failed receiver of array type is still a temporary: E0021, then E0033 for `nope` in the call.
 #[test]
 fn push_on_failed_array_receiver_should_report_the_temporary() {
     codes(
