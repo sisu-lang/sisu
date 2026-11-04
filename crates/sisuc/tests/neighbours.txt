@@ -44,6 +44,7 @@ fn id<T>(v: T) -> T { v }
 fn take<T>(mut x: T?) { x = None }
 fn take2<T>(mut x: T?, n: i64) { x = None }
 fn generic<U: Named, V>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?) {
+    let mut mq: (any Pet)? = op
     {stmt}
 }
 fn main() {
@@ -55,6 +56,7 @@ fn main() {
     let op: (any Pet)? = Fox()
     let ob: Bx? = Bx()
     generic(Cat(), Rock(), c, d, k, n, p, op, ob)
+    let mut mq: (any Pet)? = op
     {stmt}
 }
 
@@ -93,6 +95,11 @@ id(Some(Some(p)))
 # Values that are no optional.
 p
 op
+# A mutable local, the only value that a `mut` argument can take: it reaches the rebind.
+mq
+# A place in parentheses: its span keeps the parentheses.
+(p)
+((p))
 Rock()
 []
 [[]]

@@ -4,6 +4,8 @@
 // THEN an empty `o` leaves through the `return`, `continue` or `break` before the copy-in, with no
 // call, and the final value of the caller's own `mut` parameter reaches its caller
 // AND a value runs the call, and a borrowed field argument `c.items` beside a `mut` local works
+// AND an index of the `mut` place that exits (`mut grid[o ?? return]`) leaves before the copy-in
+// too, and a value goes through the copy-in and the store-back of the element
 class Putter {
     fn put(self, mut xs: [i64], n: i64) {
         xs.push(n)
@@ -64,6 +66,15 @@ fn stopping(mut xs: [i64], items: [i64?]) {
     }
 }
 
+fn inc(mut n: i64) {
+    n += 1
+}
+
+fn element(mut grid: [i64], o: i64?) {
+    inc(mut grid[o ?? return])
+    grid.push(600)
+}
+
 fn show(items: [i64], mut xs: [i64]) {
     xs.push(items.len())
 }
@@ -100,4 +111,9 @@ fn main() {
     let mut ws: [i64] = []
     show(c.items, mut ws)
     print(ws)
+    let mut grid = [0, 0]
+    element(mut grid, None)
+    print(grid)
+    element(mut grid, 1)
+    print(grid)
 }
