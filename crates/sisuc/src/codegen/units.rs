@@ -169,10 +169,10 @@ impl Unit {
     }
 }
 
-/// The functions, by id, that the helpers of a unit may call although no `Call` of the mir names
-/// them: the written `Eq` and `Display` methods that the release, `eq` and `to_string` helpers
+/// The functions, by id, that a helper may call although no `Call` of the mir names them. These
+/// are the written `Eq` and `Display` methods, which the release, `eq` and `to_string` helpers
 /// call, and the methods in the `any` tables. A helper is made in the unit that needs it, so any
-/// unit may call these.
+/// unit may call these functions.
 pub(crate) fn helper_methods(program: &tir::Program, functions: usize) -> Vec<bool> {
     let mut pinned = vec![false; functions];
     let lang = &program.lang;
@@ -191,11 +191,12 @@ pub(crate) fn helper_methods(program: &tir::Program, functions: usize) -> Vec<bo
     pinned
 }
 
-/// For each function, whether the unit that owns it must export it: a function that a unit other
-/// than its owner emits (owns or copies) calls, `main` when the C `main` is in another unit
-/// (`main` is the id of `sisu.main`; the C `main` is in unit 0), and a `pinned` function (see
-/// `helper_methods`). `unit_of[f]` is the unit that owns `f`, `copied[u]` the functions that unit
-/// `u` copies, and `callees[f]` the functions that `f` calls.
+/// For each function, whether the unit that owns it must export it. A function is exported when
+/// a unit other than its owner emits (owns or copies) a function that calls it. It is also
+/// exported when it is `main`, the entry function (`mir.main`), and unit 0, which holds the C
+/// `main` that calls it, is not its owner. A `pinned` function (see `helper_methods`) is exported
+/// too. `unit_of[f]` is the unit that owns `f`, `copied[u]` the functions that unit `u` copies,
+/// and `callees[f]` the functions that `f` calls.
 pub(crate) fn exported(
     unit_of: &[usize],
     copied: &[Vec<usize>],
@@ -237,14 +238,26 @@ pub(crate) fn split(
     level: OptLevel,
 ) -> Vec<Unit> {
     let sizes: Vec<usize> = mir.functions.iter().map(size).collect();
-    let pinned = helper_methods(program, sizes.len());
-    partition(mir, &sizes, count(&sizes, flag), level, &pinned)
+    let count = count(&sizes, flag);
+    // One unit has no other unit to export to.
+    let pinned = if count > 1 {
+        helper_methods(program, sizes.len())
+    } else {
+        Vec::new()
+    };
+    partition(mir, &sizes, count, level, &pinned)
 }
 
 /// The `count` units of `mir`, whose functions have the sizes `sizes`; `pinned` is from
-/// `helper_methods`. One unit is `Unit::whole`,
-/// with no assignment. With more, and `level` above `O0`, a unit also copies the small functions
-/// of the other units that it calls (see `copies`).
+/// `helper_methods`. One unit is `Unit::whole`, with no assignment. With more, and `level` above
+/// `O0`, a unit also copies the small functions of the other units that it calls (see `copies`).
+///
+/// A function with exactly one call site goes to the group of its caller, but only while the
+/// group stays at most `cap` in size (see `groups`). The cap is one unit's share of the program
+/// plus the largest function. It bounds each group. It does not bound the load of a unit, which
+/// can be larger than the greedy rule gives for single functions. A function that joined its
+/// caller's group is internal to the unit unless `exported` says another unit refers to it: a
+/// pinned function is external wherever it is.
 ///
 /// # Panics
 ///
@@ -269,8 +282,7 @@ pub(crate) fn partition(
     }
     let callees: Vec<Vec<usize>> = mir.functions.iter().map(mir::Function::callees).collect();
     // A function with one call site goes with its caller, up to one unit's share of the program
-    // and the largest function. The greedy rule below already gives a unit that much more than
-    // its share, so the balance is no worse.
+    // and the largest function. The cap bounds a group, not the load of a unit.
     let largest = sizes.iter().copied().max().unwrap_or(0);
     let group = groups(
         sizes,
@@ -294,8 +306,7 @@ pub(crate) fn partition(
     } else {
         copies(sizes, &callees, &owner, count)
     };
-    let main = mir.functions.iter().position(|f| f.name == "main");
-    let exported: Arc<[bool]> = exported(&owner, &copied, &callees, pinned, main).into();
+    let exported: Arc<[bool]> = exported(&owner, &copied, &callees, pinned, mir.main).into();
     copied
         .into_iter()
         .enumerate()

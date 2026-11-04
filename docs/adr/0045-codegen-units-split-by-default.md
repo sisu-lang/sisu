@@ -23,18 +23,20 @@ threads. `sisu` links their objects into one executable.
    executable is the same bytes. There is no `auto` value and no environment
    variable that sets the count.
 4. **The assignment is greedy and reads only the program.** First, a
-   function with exactly one direct call site goes to the group of its
-   caller, while the group stays at most one unit's share of the program
-   plus the largest function. Then the largest group goes first, each one to
-   the unit with the least total size, ties broken by function index and unit
-   index. A function with one caller stays in the unit of that caller, and no
-   other unit refers to it, so it is internal to its unit and LLVM can inline
-   it and use its constant arguments. With no such rule, `sieve` and
+   function with exactly one direct call site joins the group of its caller,
+   but only while the group stays at most one unit's share of the program
+   plus the largest function. The cap bounds each group. It does not bound
+   the load of a unit: the groups can make a unit larger than the greedy
+   rule makes it for single functions. Then the largest group goes first,
+   each one to the unit with the least total size, ties broken by function
+   index and unit index. A function that joins the group of its caller stays
+   in that unit. Unless it is pinned, no other unit refers to it, so it is
+   internal to its unit and LLVM can inline it and use its constant
+   arguments. Whether a function is internal comes from the full analysis of
+   references, not from its one call site. With no such rule, `sieve` and
    `fannkuch_redux`, forced into 8 units, ran 14% and 23% slower than in one
    unit, because their hot function has one call site, in `main`, in another
-   unit. The share plus the largest function is the worst load that the
-   greedy rule already gives a unit, so the groups do not make the balance
-   worse. A program with fewer groups than units gets one unit for each
+   unit. A program with fewer groups than units gets one unit for each
    group.
 5. **Small callees are copied at `-O2` and `-O3`.** A unit that calls a small
    function of another unit gets an `available_externally` copy of it, and of

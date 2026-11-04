@@ -532,6 +532,12 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.functions[func.0].count_params() as usize,
             "a call should pass every parameter; a prelude function takes its caller's location too"
         );
+        debug_assert!(
+            self.refers_only_to_exported(func),
+            "`{}` is not defined in unit {} and is not exported, so the link would fail",
+            self.mir.functions[func.0].name,
+            self.unit.index
+        );
         let result = self
             .builder
             .build_call(self.functions[func.0], args, "call")
@@ -540,6 +546,15 @@ impl<'ctx> Codegen<'ctx, '_> {
             .basic()?;
         self.assume_len(self.mir.functions[func.0].ret, result);
         Some(result)
+    }
+
+    /// Whether this unit may refer to function `func`: it defines it, or the unit that does
+    /// defines it with external linkage. Every path of codegen that names a user function checks
+    /// this, so a split test catches a missing export.
+    fn refers_only_to_exported(&self, func: FuncId) -> bool {
+        !self.unit.is_split()
+            || self.unit.placement[func.0] == Placement::Own
+            || self.unit.exported[func.0]
     }
 
     /// States to LLVM that the length of `value`, a value returned by a call, is not negative:
@@ -1263,6 +1278,12 @@ impl<'ctx> Codegen<'ctx, '_> {
         );
         self.builder
             .position_at_end(self.context.append_basic_block(main, "entry"));
+        debug_assert!(
+            self.mir
+                .main
+                .is_none_or(|main| self.refers_only_to_exported(FuncId(main))),
+            "`main` is not defined in unit 0 and is not exported, so the link would fail"
+        );
         let sisu_main = self
             .module
             .get_function("sisu.main")

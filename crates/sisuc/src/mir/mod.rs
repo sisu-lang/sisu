@@ -83,10 +83,6 @@ pub(crate) fn lowered(program: &tir::Program) -> Program {
 pub(crate) struct Program {
     pub(crate) functions: Vec<Function>,
     /// The id of the entry function, `main`. `None` in a test lowering that does not look for it.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "`units::partition` reads it in this task")
-    )]
     pub(crate) main: Option<usize>,
 }
 
@@ -619,7 +615,7 @@ pub(crate) fn build(program: &tir::Program) -> Program {
     finish(&mut functions, program);
     Program {
         functions,
-        main: None,
+        main: Some(main),
     }
 }
 
