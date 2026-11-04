@@ -544,10 +544,10 @@ pub(crate) fn fixture(test: &str, files: &[(&str, &str)]) -> PathBuf {
 }
 
 /// The builds `build` makes: the executable's name in the case directory, and `sisu`'s flags.
-type Build = (&'static str, &'static [&'static str]);
+pub(crate) type Build = (&'static str, &'static [&'static str]);
 const O0: Build = ("O0", &[]);
 const O2: Build = ("O2", &["-O2"]);
-const RC_CHECKS: Build = ("rc", &["--rc-checks"]);
+pub(crate) const RC_CHECKS: Build = ("rc", &["--rc-checks"]);
 /// `-O2` on the default allocator, mimalloc, for `run` on Linux, where `VALGRIND_O2` is a System
 /// build: without it, no Linux case runs `-O2` code on mimalloc, the allocator that users get.
 /// On macOS `VALGRIND_O2` is this build already.
@@ -555,7 +555,7 @@ pub(crate) const MIMALLOC_O2: Build = ("O2-mimalloc", &["-O2"]);
 /// `--rc-checks` on the System allocator, for `run` on Linux, where Valgrind checks it as it
 /// checks `VALGRIND_O0`. Its stderr is Valgrind's own log, and is not compared. On macOS Valgrind
 /// does not run, and `RC_CHECKS` is this build already.
-const VALGRIND_RC: Build = (
+pub(crate) const VALGRIND_RC: Build = (
     "rc-valgrind",
     if cfg!(target_os = "linux") {
         &["--rc-checks", "--allocator", "system"]
@@ -564,10 +564,10 @@ const VALGRIND_RC: Build = (
     },
 );
 /// `O0` and `O2` for `run`, whose plain builds also run under Valgrind.
-const VALGRIND_O0: Build = ("O0", VALGRIND_FLAGS);
+pub(crate) const VALGRIND_O0: Build = ("O0", VALGRIND_FLAGS);
 // Repeats `VALGRIND_FLAGS`' values after `-O2`, and must stay in step with them: a const cannot
 // concatenate slices.
-const VALGRIND_O2: Build = (
+pub(crate) const VALGRIND_O2: Build = (
     "O2",
     if cfg!(target_os = "linux") {
         &["-O2", "--allocator", "system"]
@@ -641,7 +641,7 @@ const O2_CALLS: &str = "// o2-calls:";
 
 /// How LLVM's text names the function `name`: `@sisu.name`, or `@"sisu.name"` when the name holds
 /// a character outside an identifier's, as an instantiation's `<` and `,` are.
-fn symbol(name: &str) -> String {
+pub(crate) fn symbol(name: &str) -> String {
     let symbol = format!("sisu.{name}");
     if symbol
         .chars()
@@ -655,7 +655,7 @@ fn symbol(name: &str) -> String {
 
 /// The text of the function `name` in `ir`, from its header line to its closing brace, if `ir`
 /// defines it.
-fn function_text<'a>(ir: &'a str, name: &str) -> Option<&'a str> {
+pub(crate) fn function_text<'a>(ir: &'a str, name: &str) -> Option<&'a str> {
     let header = format!("{}(", symbol(name));
     ir.split("\ndefine ")
         .skip(1)

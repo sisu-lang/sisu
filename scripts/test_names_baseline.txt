@@ -753,12 +753,8 @@ crates/sisuc/src/fuzz.rs::rejects_end_past_the_source
 crates/sisuc/src/fuzz.rs::rejects_overlapping_edits
 crates/sisuc/src/fuzz.rs::rejects_start_after_end
 crates/sisuc/src/fuzz.rs::rejects_start_inside_a_char
-crates/sisuc/src/fuzz_program.rs::a_clean_program_passes
-crates/sisuc/src/fuzz_program.rs::a_hang_fails_property_3
-crates/sisuc/src/fuzz_program.rs::a_panic_passes_when_every_build_agrees
 crates/sisuc/src/fuzz_program.rs::a_signal_is_its_number
 crates/sisuc/src/fuzz_program.rs::a_timed_out_child_is_reaped
-crates/sisuc/src/fuzz_program.rs::judge_builds_rejects_any_difference
 crates/sisuc/src/fuzz_program.rs::known_panic_is_the_last_line
 crates/sisuc/src/fuzz_program.rs::known_value_matches
 crates/sisuc/src/fuzz_program.rs::missing_known_value_fails
@@ -776,9 +772,7 @@ crates/sisuc/src/fuzz_program.rs::seed_2_program_passes
 crates/sisuc/src/fuzz_program.rs::seed_2_rewritten_passes
 crates/sisuc/src/fuzz_program.rs::seed_3_program_passes
 crates/sisuc/src/fuzz_program.rs::seed_3_rewritten_passes
-crates/sisuc/src/fuzz_program.rs::stdin_past_its_end_agrees
 crates/sisuc/src/fuzz_program.rs::unreached_panic_site_needs_a_panic
-crates/sisuc/src/fuzz_program.rs::unused_overflow_panics_in_every_build
 crates/sisuc/src/generate/coverage.rs::a_call_statement_names_any_function_the_budget_lets_it
 crates/sisuc/src/generate/coverage.rs::a_cap_holds_the_least_value_of_its_field
 crates/sisuc/src/generate/coverage.rs::a_chain_counts_each_node_within_its_room
@@ -1136,7 +1130,6 @@ crates/sisuc/src/mir/tests/lower.rs::loops_record_their_blocks
 crates/sisuc/src/mir/tests/lower.rs::lowers_chains_and_exits
 crates/sisuc/src/mir/tests/lower.rs::nested_read_copies_the_middle_level
 crates/sisuc/src/mir/tests/lower.rs::operand_read_before_a_later_sibling_assigns
-crates/sisuc/src/mir/tests/lower.rs::some_projection_prints_as_a_pattern
 crates/sisuc/src/mir/tests/lower.rs::store_order_field_base_before_the_value
 crates/sisuc/src/mir/tests/lower.rs::store_order_index_then_value_then_check
 crates/sisuc/src/mir/tests/lower.rs::store_order_value_before_the_root_array

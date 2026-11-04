@@ -1001,9 +1001,8 @@ fn interpolation_examines_each_format_once() {
     assert_eq!(printed.matches(", \">3\")").count(), parts);
 }
 
-/// The present value of an optional prints as a pattern would bind it.
 #[test]
-fn some_projection_prints_as_a_pattern() {
+fn some_projection_should_print_as_a_pattern() {
     let program = checked("");
     let mut b = Builder::new("f");
     let p = b.param("p", Type::optional(Type::STRING));
@@ -1023,6 +1022,7 @@ fn some_projection_prints_as_a_pattern() {
     );
     let mir = Program {
         functions: vec![b.finish()],
+        main: None,
     };
     has(&print(&mir, &program), "f", &["x#1 = borrow (p#0 as some)"]);
 }

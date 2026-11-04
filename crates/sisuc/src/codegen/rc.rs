@@ -420,7 +420,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let entry = self.context.append_basic_block(drop, "entry");
         self.builder.position_at_end(entry);
         let exit = self.begin_drop(drop, ty);
-        let Some(members) = self.class_cycles.members(id) else {
+        let Some(members) = self.analyses.class_cycles.members(id) else {
             self.release_class_fields(id, param(drop), None);
             self.free_class(id, param(drop));
             self.end_drop(exit);
@@ -429,7 +429,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let heads_type = self.heads_type(members.len());
         let heads = self.entry_alloca_heads(heads_type);
         if members.len() > 1 {
-            let head = self.head(heads_type, heads, self.class_cycles.position(id));
+            let head = self.head(heads_type, heads, self.analyses.class_cycles.position(id));
             self.store(head, param(drop).into());
             // The object is the whole list, so the link in its count word ends it.
             self.store(param(drop), ptr_type.const_null().into());
@@ -485,7 +485,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let TypeKind::Class(first, _) = ty.kind() else {
             unreachable!("only a class type should reach the class helper bodies")
         };
-        let members = self.class_cycles.members(first).expect(
+        let members = self.analyses.class_cycles.members(first).expect(
             "only the first class of a cycle should get a `drain` helper, and it has a cycle",
         );
         let heads = param(function);
@@ -544,7 +544,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         for (index, field) in self.program.classes[id.0].fields.iter().enumerate() {
             let place = self.field_ptr(id, object, index);
             let Some(((heads_type, heads), position)) =
-                heads.zip(self.class_cycles.link(id, field.ty))
+                heads.zip(self.analyses.class_cycles.link(id, field.ty))
             else {
                 if field.ty.is_counted(&self.program.enums) {
                     self.release_at(place, field.ty);
@@ -791,8 +791,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     pub(super) fn reflexive(&self, ty: Type) -> bool {
         match unwrapped(ty).kind() {
             TypeKind::F64 => false,
-            TypeKind::Class(id, _) => !self.unreflexive[id.0],
-            TypeKind::Enum(id, _) => !self.unreflexive[self.program.classes.len() + id.0],
+            TypeKind::Class(id, _) => !self.analyses.unreflexive[id.0],
+            TypeKind::Enum(id, _) => !self.analyses.unreflexive[self.program.classes.len() + id.0],
             _ => true,
         }
     }

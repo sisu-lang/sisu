@@ -4,6 +4,7 @@ use crate::mir::tests::assert_near_linear;
 use crate::parser::parse_ok;
 use crate::payload_limit;
 use crate::tir::BinaryOp;
+use inkwell::GlobalVisibility;
 use inkwell::values::{AnyValue, CallSiteValue, InstructionOpcode, InstructionValue, Operand};
 use std::panic::{self, AssertUnwindSafe};
 
@@ -1728,7 +1729,19 @@ fn niche_should_run_out_past_its_storage() {
     let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
     let mir = mir::build(&program);
-    let mut codegen = Codegen::new(&context, &program, &mir, "test.sisu", &src, &machine, false);
+    let analyses = Analyses::new(&program, &src);
+    let unit = Unit::whole(mir.functions.len());
+    let mut codegen = Codegen::new(
+        &context,
+        &program,
+        &mir,
+        &analyses,
+        &unit,
+        "test.sisu",
+        &src,
+        &machine,
+        false,
+    );
     codegen.lay_out_types();
     let layers = |ty, k| (0..k).fold(ty, |ty, _| Type::optional(ty));
     let pair = |value| {
@@ -3031,7 +3044,19 @@ fn binary_should_take_and_and_or_as_the_eager_operations_of_two_computed_bools()
     let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
     let mir = mir::build(&program);
-    let codegen = Codegen::new(&context, &program, &mir, "test.sisu", src, &machine, false);
+    let analyses = Analyses::new(&program, src);
+    let unit = Unit::whole(mir.functions.len());
+    let codegen = Codegen::new(
+        &context,
+        &program,
+        &mir,
+        &analyses,
+        &unit,
+        "test.sisu",
+        src,
+        &machine,
+        false,
+    );
     let bool_type = context.bool_type();
     let fn_type = bool_type.fn_type(&[bool_type.into(), bool_type.into()], false);
     let function = codegen.module.add_function("both", fn_type, None);
@@ -4979,7 +5004,19 @@ fn with_codegen(src: &str, check: impl FnOnce(&Codegen<'_, '_>)) {
     let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
     let mir = mir::build(&program);
-    let codegen = Codegen::new(&context, &program, &mir, "test.sisu", src, &machine, false);
+    let analyses = Analyses::new(&program, src);
+    let unit = Unit::whole(mir.functions.len());
+    let codegen = Codegen::new(
+        &context,
+        &program,
+        &mir,
+        &analyses,
+        &unit,
+        "test.sisu",
+        src,
+        &machine,
+        false,
+    );
     check(&codegen);
 }
 
@@ -5681,7 +5718,19 @@ fn convention_should_give_one_type_per_part() {
     let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
     let mir = mir::build(&program);
-    let mut codegen = Codegen::new(&context, &program, &mir, "test.sisu", src, &machine, false);
+    let analyses = Analyses::new(&program, src);
+    let unit = Unit::whole(mir.functions.len());
+    let mut codegen = Codegen::new(
+        &context,
+        &program,
+        &mir,
+        &analyses,
+        &unit,
+        "test.sisu",
+        src,
+        &machine,
+        false,
+    );
     codegen.lay_out_types();
     let class = program
         .classes
@@ -5993,4 +6042,352 @@ fn a_length_from_the_runtime_should_carry_the_facts_of_a_length() {
         "fn main(args: [string]) {\n    print(args.len())\n}",
         "define i32 @main(",
     );
+}
+
+/// A program of more than four functions with a class, a generic function and an `any` value.
+/// `Idle` is a class that no function uses; `Lone` is a class that only `use_lone` uses. `Shape`
+/// inherits `Named`, so the table of `Circle` for `Shape` has inherited tables.
+const UNIT_SOURCE: &str = "interface Named {
+    fn title(self) -> string
+}
+interface Shape: Named {
+    fn area(self) -> i64
+}
+class Circle: Shape {
+    r: i64
+    fn title(self) -> string { \"circle\" }
+    fn area(self) -> i64 { self.r }
+}
+class Lone {
+    v: i64
+}
+class Idle {
+    v: i64
+}
+fn id<T>(x: T) -> T { x }
+fn use_lone(n: i64) -> i64 {
+    let l = Lone(v: n)
+    l.v
+}
+fn show_shape(s: any Shape) -> i64 {
+    print(s.title())
+    s.area()
+}
+fn main() {
+    let s: any Shape = Circle(r: id(2))
+    print(show_shape(s) + use_lone(3))
+}";
+
+/// The modules of the `count` codegen units of `src`, each verified.
+fn compiled_units<'ctx>(context: &'ctx Context, src: &str, count: usize) -> Vec<Module<'ctx>> {
+    compiled_units_at(context, src, count, OptLevel::O0)
+}
+
+/// `compiled_units` for the level `level`, which decides the copies of small functions.
+fn compiled_units_at<'ctx>(
+    context: &'ctx Context,
+    src: &str,
+    count: usize,
+    level: OptLevel,
+) -> Vec<Module<'ctx>> {
+    let program = parse_ok(src);
+    let (program, diagnostics) = crate::check::check(
+        &program,
+        &crate::front_end::prelude_program(crate::front_end::PRELUDE_SOURCE),
+        src,
+        &[],
+    );
+    let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+    let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
+    let mir = mir::build(&program);
+    let machine = target_machine(level).expect("the host is a target");
+    let analyses = Analyses::new(&program, src);
+    units::split(&mir, &program, Some(count), level)
+        .iter()
+        .map(|unit| {
+            let module = compile_unit(
+                context,
+                &program,
+                &mir,
+                &analyses,
+                unit,
+                "test.sisu",
+                src,
+                &machine,
+                false,
+            );
+            if let Err(e) = module.verify() {
+                panic!("unit {}: {e}\n{}", unit.index, module.print_to_string());
+            }
+            module
+        })
+        .collect()
+}
+
+/// Whether `module` defines the function `name`: it has a body.
+fn has_body(module: &Module<'_>, name: &str) -> bool {
+    module
+        .get_function(name)
+        .is_some_and(|function| function.count_basic_blocks() > 0)
+}
+
+/// The places of the modules that define the function `name`.
+fn definers(modules: &[Module<'_>], name: &str) -> Vec<usize> {
+    (0..modules.len())
+        .filter(|&at| has_body(&modules[at], name))
+        .collect()
+}
+
+/// The names of the globals of `module` that begin with `prefix`.
+fn global_names(module: &Module<'_>, prefix: &str) -> Vec<String> {
+    module
+        .get_globals()
+        .map(|global| global.get_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(prefix))
+        .collect()
+}
+
+/// Whether `module` uses the function `name`: some instruction calls or refers to it. The
+/// declaration or the body of the function itself does not count.
+fn uses(module: &Module<'_>, name: &str) -> bool {
+    let reference = format!("@{name}");
+    module.print_to_string().to_string().lines().any(|line| {
+        let uses_it = line.match_indices(&reference).any(|(at, _)| {
+            !line[at + reference.len()..]
+                .starts_with(|c: char| c.is_alphanumeric() || matches!(c, '.' | '_' | ':'))
+        });
+        uses_it && !line.starts_with("define ") && !line.starts_with("declare ")
+    })
+}
+
+/// The methods that the `any` table of `UNIT_SOURCE` calls: the functions that a helper of any
+/// unit may call, so that they are always external.
+const UNIT_SOURCE_PINNED: [&str; 2] = ["sisu.Circle.title", "sisu.Circle.area"];
+
+#[test]
+fn split_units_should_define_each_function_once() {
+    let context = Context::create();
+    let modules = compiled_units(&context, UNIT_SOURCE, 3);
+    let names: Vec<String> = modules[0]
+        .get_functions()
+        .map(|function| function.get_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("sisu."))
+        .collect();
+    assert!(names.len() >= 4, "too few functions in {names:?}");
+    for name in &names {
+        let owners = definers(&modules, name);
+        assert_eq!(owners.len(), 1, "`{name}` should have one body");
+        for module in &modules {
+            assert!(
+                module.get_function(name).is_some(),
+                "every unit should declare `{name}`"
+            );
+        }
+    }
+}
+
+#[test]
+fn split_units_should_export_a_function_only_when_another_unit_uses_it() {
+    let context = Context::create();
+    let modules = compiled_units(&context, UNIT_SOURCE, 3);
+    let names: Vec<String> = modules[0]
+        .get_functions()
+        .map(|function| function.get_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("sisu."))
+        .collect();
+    let (mut exported, mut internal) = (0, 0);
+    for name in &names {
+        let [owner] = definers(&modules, name)[..] else {
+            panic!("`{name}` should have one body");
+        };
+        let used_elsewhere = (0..modules.len()).any(|at| at != owner && uses(&modules[at], name));
+        let pinned = UNIT_SOURCE_PINNED.contains(&name.as_str());
+        let function = modules[owner].get_function(name).expect("the owner has it");
+        if used_elsewhere || pinned {
+            exported += 1;
+            // Another unit links to it by name.
+            assert_eq!(function.get_linkage(), Linkage::External, "`{name}`");
+            assert_eq!(
+                function.as_global_value().get_visibility(),
+                GlobalVisibility::Hidden,
+                "`{name}`"
+            );
+        } else {
+            internal += 1;
+            // No other unit refers to it, so it is internal, as in a build of one unit.
+            assert_eq!(function.get_linkage(), Linkage::Internal, "`{name}`");
+        }
+        // The other units declare it as before.
+        for (at, module) in modules.iter().enumerate().filter(|&(at, _)| at != owner) {
+            let declared = module.get_function(name).expect("every unit declares it");
+            assert_eq!(
+                declared.get_linkage(),
+                Linkage::External,
+                "`{name}` in {at}"
+            );
+        }
+    }
+    assert!(
+        exported > 0 && internal > 0,
+        "{exported} exported, {internal} internal"
+    );
+}
+
+#[test]
+fn split_units_should_put_the_c_main_in_unit_0() {
+    let context = Context::create();
+    let modules = compiled_units(&context, UNIT_SOURCE, 3);
+    assert_eq!(definers(&modules, "main"), [0]);
+    assert!(
+        modules[1..]
+            .iter()
+            .all(|m| m.get_function("main").is_none())
+    );
+}
+
+#[test]
+fn split_units_should_give_the_drop_depth_state_one_home() {
+    let context = Context::create();
+    let modules = compiled_units(&context, UNIT_SOURCE, 3);
+    for (at, module) in modules.iter().enumerate() {
+        for name in ["sisu_rc.depth", "sisu_rc.deferred"] {
+            let global = module
+                .get_global(name)
+                .unwrap_or_else(|| panic!("unit {at} should have `{name}`"));
+            assert_eq!(
+                global.get_linkage(),
+                Linkage::External,
+                "unit {at} `{name}`"
+            );
+            assert_eq!(
+                global.get_visibility(),
+                GlobalVisibility::Hidden,
+                "unit {at} `{name}`"
+            );
+            assert_eq!(
+                global.get_initializer().is_some(),
+                at == 0,
+                "only unit 0 should give `{name}` an initializer, in unit {at}"
+            );
+        }
+    }
+}
+
+#[test]
+fn split_units_should_make_only_the_helpers_they_use() {
+    let context = Context::create();
+    let modules = compiled_units(&context, UNIT_SOURCE, 3);
+    let owners = definers(&modules, "sisu.use_lone");
+    assert_eq!(owners.len(), 1, "`use_lone` should have one body");
+    assert_eq!(
+        definers(&modules, "sisu_rc.release.Lone"),
+        owners,
+        "only the unit of `use_lone` should make the release helper of `Lone`"
+    );
+    assert_eq!(
+        definers(&modules, "sisu_rc.release.Idle"),
+        Vec::<usize>::new()
+    );
+}
+
+#[test]
+fn split_units_should_copy_each_any_table_they_use() {
+    let context = Context::create();
+    let modules = compiled_units(&context, UNIT_SOURCE, 3);
+    let owners = definers(&modules, "sisu.main");
+    assert_eq!(owners.len(), 1, "`main` should have one body");
+    let table = "sisu.Circle:Shape";
+    for (at, module) in modules.iter().enumerate() {
+        let tables = global_names(module, "sisu.Circle:");
+        if owners.contains(&at) {
+            let global = module
+                .get_global(table)
+                .unwrap_or_else(|| panic!("unit {at} converts to `any`, so it needs {table}"));
+            assert_eq!(global.get_linkage(), Linkage::Internal);
+            assert!(global.is_constant());
+        } else {
+            assert!(
+                tables.is_empty(),
+                "unit {at} should have no table: {tables:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn split_units_should_define_inherited_tables() {
+    let context = Context::create();
+    let modules = compiled_units(&context, UNIT_SOURCE, 3);
+    let owners = definers(&modules, "sisu.main");
+    assert_eq!(owners.len(), 1, "`main` should have one body");
+    let module = &modules[owners[0]];
+    let mut names = global_names(module, "sisu.Circle:");
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "sisu.Circle:Display",
+            "sisu.Circle:Named",
+            "sisu.Circle:Shape"
+        ]
+    );
+    for name in &names {
+        let global = module.get_global(name).expect("the table was listed");
+        assert!(global.get_initializer().is_some(), "`{name}` needs slots");
+        assert_eq!(global.get_linkage(), Linkage::Internal, "`{name}`");
+    }
+}
+
+#[test]
+fn one_unit_should_keep_every_function_internal() {
+    let context = Context::create();
+    let module = compiled(&context, UNIT_SOURCE);
+    let names: Vec<String> = module
+        .get_functions()
+        .map(|function| function.get_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("sisu."))
+        .collect();
+    assert!(names.len() >= 4, "too few functions in {names:?}");
+    for name in &names {
+        let function = module.get_function(name).expect("the name was listed");
+        assert_eq!(function.get_linkage(), Linkage::Internal, "`{name}`");
+    }
+    assert!(
+        has_body(&module, "sisu_rc.release.Idle"),
+        "one unit makes the release helper of every class"
+    );
+}
+
+/// At `-O2` with 2 units, the unit of `main` has a hidden body of `step` that LLVM may drop
+/// after it inlines the call, and the unit of `step` has the function itself, external because
+/// `main` calls it. `step` has two call sites, so it does not go to the unit of `main`.
+#[test]
+fn copy_should_be_available_externally() {
+    let src = "fn step(i: i64) -> i64 { i * 3 + 1 }
+fn main() {
+    let mut sum = 0
+    for i in 0..10 {
+        sum += step(i) % 7 + step(0) % 1
+    }
+    print(sum)
+}";
+    let context = Context::create();
+    let modules = compiled_units_at(&context, src, 2, OptLevel::O2);
+    let [main_unit] = definers(&modules, "sisu.main")[..] else {
+        panic!("`main` should have one body");
+    };
+    let copy = modules[main_unit]
+        .get_function("sisu.step")
+        .expect("the unit of `main` should have `step`");
+    assert!(copy.count_basic_blocks() > 0, "the copy should have a body");
+    assert_eq!(copy.get_linkage(), Linkage::AvailableExternally);
+    assert_eq!(
+        copy.as_global_value().get_visibility(),
+        GlobalVisibility::Hidden
+    );
+    let home = &modules[1 - main_unit];
+    let step = home
+        .get_function("sisu.step")
+        .expect("the other unit has `step`");
+    assert_eq!(step.get_linkage(), Linkage::External);
 }

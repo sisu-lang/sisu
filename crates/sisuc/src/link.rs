@@ -14,8 +14,9 @@ pub(crate) struct Linking<'a> {
     pub(crate) linker: Option<&'a str>,
 }
 
-/// Links with `cc`'s default linker, or with `ld.<linker>` through `cc -fuse-ld=<linker>`.
-pub(crate) fn link(object: &Path, linking: &Linking<'_>) -> Result<(), String> {
+/// Links `objects`, in order, with `cc`'s default linker, or with `ld.<linker>` through
+/// `cc -fuse-ld=<linker>`.
+pub(crate) fn link(objects: &[PathBuf], linking: &Linking<'_>) -> Result<(), String> {
     let Linking {
         runtime,
         output,
@@ -27,7 +28,7 @@ pub(crate) fn link(object: &Path, linking: &Linking<'_>) -> Result<(), String> {
     }
     // `output`, not `status`: cc's messages go into the tool error, so stderr stays one format.
     let out = cc
-        .arg(object)
+        .args(objects)
         .arg(runtime)
         // libm, after the runtime, for the C math functions. Not for `fmod`, which `frem`
         // lowers to: the runtime's compiler_builtins defines it, weakly, and is linked first.

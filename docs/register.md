@@ -42,6 +42,7 @@ are GitHub issues.
 | A `mut` parameter lets a function change the caller's array or struct: `fn set(mut cells: [i64])`, called as `set(mut b.cells)`. `exchange` becomes a prelude function. | 2026-10-30 | ADR 0007 and ADR 0011 (no parameter changes the caller's value); E0019; `docs/roadmap.md` ("`inout` parameters stay out", `x.exchange(with: v)` as a method) | `mut` parameters step 1, after milestone 8 part 8 and before milestone 9 |
 | A bare variant `V` means `E.V` when the expected type is the enum `E`. A name that is also a local is an error. | 2026-10-31 | ADR 0019 (bare `Num(2)`, the reserved `.Variant` form); `docs/roadmap.md` ("Names and namespaces" keeps Swift's `.circle` open, with a note) | After slices: a new ADR |
 | `sisu check` builds the mir. Copies show as the loop-copy warning only, with no run-time copy report. | 2026-10-26 | `docs/architecture.md` (check stops after the checker; the mir is built on the build path only); `GLOSSARY.md` (Front end); ADR 0023 and E0030 (a chain that mono stops passes `sisu check`) | The loop-copy warning |
+| When projects arrive, `sisu.toml` gets a setting for the codegen unit count, and a setting for LTO once LTO exists. No environment variable sets the count. | 2026-11-02 | none | The `sisu.toml` work |
 
 ## Debt
 
