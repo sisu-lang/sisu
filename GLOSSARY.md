@@ -16,9 +16,9 @@ _Avoid_: mutable binding, `var` (the keyword before milestone 4)
 
 **Place**:
 An expression that names storage and can stand on the left of `=`. It is a
-variable, a `mut` field, a field of a struct held in a place, or an element of
-an array held in a place, such as `grid[i][j]`. A `mut` argument is any
-place except a path through `?.`: if `x = v` compiles and `x` has no `?.`,
+variable, a `mut` field, a field of a class object held in a place, or an
+element of an array held in a place, such as `grid[i][j]`. A `mut` argument is
+any place except a path through `?.`: if `x = v` compiles and `x` has no `?.`,
 `f(mut x)` does. A path through `?.` is a place, but it is not a `mut`
 argument (the error E0170). In mir, a place can also name a
 payload field under a known variant, which only `match` reads.
@@ -257,7 +257,9 @@ _Avoid_: member function
 **Mutating method**:
 A method of a record or an array that takes `mut self`, such as `push`, and
 changes the value in the place it was called on. That place must be able to
-change. Its receiver is copied in and out like a `mut` argument.
+change. Its receiver is copied in and out like a `mut` argument. This is for
+milestone 9: in step 1 of ADR 0043, a built-in receiver call such as
+`xs.push(y)` stays as it was.
 _Avoid_: `inout`, `mutating`
 
 **Receiver**:

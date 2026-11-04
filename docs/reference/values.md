@@ -67,7 +67,7 @@ A call does not copy its arguments. A plain parameter cannot change ([Parameters
 
 A function can write the `mut` fields of an object that it gets, because the object is shared.
 
-A `mut` parameter is different. The call copies the value of the caller's place in, and stores the last value of the parameter back into that place ([`mut` parameters](functions.md#mut-parameters)). For an array, a string or an enum value, the caller sees the change, and no other holder of the old value does. A class object in such a value is not copied, so a change to the fields of the object shows through each holder. For an object of a class, the value in the place is the reference, which the call does not copy either.
+A `mut` parameter is different. The call copies the value of the caller's place in, and stores the last value of the parameter back into that place ([`mut` parameters](functions.md#mut-parameters)). For an array, a string or an enum value, the caller sees the change, and no other holder of the old value does. A class object in such a value is not copied, so a change to the fields of the object shows through each holder. For an object of a class, the value in the place is the reference. The call copies the reference in and out, and never copies the object.
 
 ```sisu
 class Box {
@@ -99,7 +99,7 @@ A call that passes a place `mut` copies the value in the place, as this table te
 
 An object of a class is never copied, also when an array or an enum value holds it. In each row, the parameter gets the value of the place: the array, or the reference to the object.
 
-A function that changes a field of an object during the call does not change what its `mut` parameter holds. The store-back replaces that change ([What a call does](functions.md#what-a-call-does)).
+The store-back replaces a change to the place itself. If a function assigns `b.cells` while `b.cells` is a `mut` argument, the store-back replaces that assignment ([What a call does](functions.md#what-a-call-does)). A write through a shared object to its other fields is not undone.
 
 ## Copy-on-write
 
