@@ -1,0 +1,18 @@
+// GIVEN a requirement with a `mut` parameter `xs`
+// WHEN a conformance spells the parameter without `mut`
+// THEN it reports E0152 on the method, with the note that the requirement's parameter is `mut`
+interface Filler {
+    fn fill(self, mut xs: [i64])
+}
+
+class Nines: Filler {
+    n: i64
+
+    fn fill(self, xs: [i64]) {
+        print(xs)
+    }
+}
+
+fn main() {
+    print(Nines(n: 9).n)
+}

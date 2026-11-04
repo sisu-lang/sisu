@@ -453,6 +453,234 @@ fn let_mut_passed_mut_and_never_read_should_warn() {
     codes(&src, &[(Code::UnusedVariable, (5, 13))]);
 }
 
+/// GIVEN `class Named { mut name: string }` and `fn rename(mut b: Named, name: string)` that only
+///   writes `b.name`
+/// WHEN it is checked
+/// THEN W0002 warns on `b`, with no fix
+#[test]
+fn mut_class_parameter_never_reassigned_should_warn_with_the_class_help() {
+    let src = "class Named {\n    mut name: string\n}\n\
+        fn rename(mut b: Named, name: string) {\n    b.name = name\n}\n\
+        fn main() {\n    let mut n = Named(name: \"a\")\n    rename(mut n, \"b\")\n    print(n.name)\n}";
+    let d = diagnostic(src, Code::NeverReassigned, (4, 15, "b"), &[]);
+    assert_eq!(d.fixes().len(), 0, "removing `mut` changes every caller");
+}
+
+/// GIVEN a `mut` parameter of a type that is not a class, which the function never reassigns
+/// WHEN it is checked
+/// THEN W0002 warns on the parameter, with no fix
+#[test]
+fn mut_array_parameter_never_reassigned_should_warn_without_help() {
+    let src = "fn show(mut xs: [i64]) {\n    print(xs)\n}\n\
+        fn main() {\n    let mut xs = [1]\n    show(mut xs)\n}";
+    let d = diagnostic(src, Code::NeverReassigned, (1, 13, "xs"), &[]);
+    assert_eq!(d.fixes().len(), 0);
+}
+
+/// GIVEN a `mut` parameter in each kind of function, which the function never reassigns
+/// WHEN it is checked
+/// THEN W0002 warns on the parameter, and on no other
+#[test]
+fn mut_parameter_never_reassigned_should_warn_in_each_kind_of_function() {
+    let rows = [
+        (
+            "function",
+            "fn f(mut xs: [i64]) {\n    print(xs)\n}",
+            (1, 10),
+        ),
+        (
+            "generic function",
+            "fn f<T>(mut xs: [T]) -> [T] {\n    xs\n}",
+            (1, 13),
+        ),
+        (
+            "method",
+            "class C {\n    n: i64\n    fn f(self, mut xs: [i64]) {\n        print(xs)\n    }\n}",
+            (3, 20),
+        ),
+        (
+            "method of a generic class",
+            "class C<T> {\n    n: T\n    fn f(self, mut xs: [T]) -> [T] {\n        xs\n    }\n}",
+            (3, 20),
+        ),
+        (
+            "method of an extend block",
+            "class C {\n    n: i64\n}\nextend C {\n    fn f(self, mut xs: [i64]) {\n        print(xs)\n    }\n}",
+            (5, 20),
+        ),
+        (
+            "second parameter",
+            "fn f(mut a: [i64], mut b: [i64]) {\n    a[0] = 1\n    print(b)\n}",
+            (1, 24),
+        ),
+    ];
+    for (row, decl, pos) in rows {
+        let src = format!("{decl}\nfn main() {{}}");
+        codes_row(row, &src, &[(Code::NeverReassigned, pos)]);
+    }
+}
+
+/// GIVEN a `mut` parameter that the function reassigns in some way
+/// WHEN it is checked
+/// THEN there is no W0002: whole, element, `push`, or passed `mut` to another call, also through a
+///   nested call
+#[test]
+fn mut_parameter_that_changes_should_not_warn() {
+    let rows = [
+        ("assigned", "fn f(mut xs: [i64]) {\n    xs = [1]\n}"),
+        ("element", "fn f(mut xs: [i64]) {\n    xs[0] = 1\n}"),
+        ("push", "fn f(mut xs: [i64]) {\n    xs.push(1)\n}"),
+        ("passed mut", "fn f(mut xs: [i64]) {\n    set(mut xs)\n}"),
+        (
+            "passed mut to an element",
+            "fn f(mut xs: [[i64]]) {\n    set(mut xs[0])\n}",
+        ),
+        (
+            "method",
+            "class C {\n    n: i64\n    fn f(self, mut xs: [i64]) {\n        set(mut xs)\n    }\n}",
+        ),
+        ("number", "fn f(mut n: i64) {\n    n += 1\n}"),
+    ];
+    for (row, decl) in rows {
+        let src = format!("{SET}{decl}\nfn main() {{}}");
+        codes_row(row, &src, &[]);
+    }
+}
+
+/// GIVEN a function with a `todo` body and a `mut` parameter
+/// WHEN it is checked
+/// THEN there is no W0002 on the parameter: the body that is not yet written may change it
+#[test]
+fn mut_parameter_of_a_todo_body_should_not_warn() {
+    codes(
+        "fn f(mut xs: [i64]) {\n    todo\n}\nfn main() {}",
+        &[(Code::TodoLeft, (2, 5))],
+    );
+}
+
+/// GIVEN an interface requirement that spells `mut`, and a conformance method that never
+///   reassigns the parameter, in the body of a class, in an `extend` block, for a generic
+///   interface and for a method that two interfaces require
+/// WHEN it is checked
+/// THEN there is no W0002: the caller needs the `mut` through the interface
+#[test]
+fn requirement_mut_should_not_warn() {
+    let rows = [
+        (
+            "class body",
+            "interface Filler {\n    fn fill(self, mut xs: [i64])\n}\n\
+            class C: Filler {\n    n: i64\n    fn fill(self, mut xs: [i64]) {\n        print(xs)\n    }\n}",
+        ),
+        (
+            "extend block",
+            "interface Filler {\n    fn fill(self, mut xs: [i64])\n}\n\
+            class C {\n    n: i64\n}\n\
+            extend C: Filler {\n    fn fill(self, mut xs: [i64]) {\n        print(xs)\n    }\n}",
+        ),
+        (
+            "generic interface",
+            "interface Filler<T> {\n    fn fill(self, mut xs: [T])\n}\n\
+            class C: Filler<i64> {\n    n: i64\n    fn fill(self, mut xs: [i64]) {\n        print(xs)\n    }\n}",
+        ),
+        (
+            "two interfaces",
+            "interface A {\n    fn fill(self, mut xs: [i64])\n}\n\
+            interface B {\n    fn fill(self, mut xs: [i64])\n}\n\
+            class C: A, B {\n    n: i64\n    fn fill(self, mut xs: [i64]) {\n        print(xs)\n    }\n}",
+        ),
+    ];
+    for (row, decl) in rows {
+        let src = format!("{decl}\nfn main() {{}}");
+        codes_row(row, &src, &[]);
+    }
+}
+
+/// GIVEN a requirement that spells `mut` on one parameter, and a conformance method that spells it
+///   on a second parameter too, and reassigns neither
+/// WHEN it is checked
+/// THEN E0152 reports the method, and W0002 warns on the second parameter only
+#[test]
+fn requirement_mut_should_exempt_only_its_own_parameter() {
+    let src = "interface Filler {\n    fn fill(self, mut xs: [i64], ys: [i64])\n}\n\
+        class C: Filler {\n    n: i64\n    fn fill(self, mut xs: [i64], mut ys: [i64]) {\n        print(xs)\n        print(ys)\n    }\n}\n\
+        fn main() {}";
+    assert_eq!(
+        found(src),
+        [
+            (Code::ConformanceBody, (6, 8), vec![(2, 34)]),
+            (Code::NeverReassigned, (6, 38), vec![]),
+        ]
+    );
+}
+
+/// GIVEN a requirement and a conformance that differ in the type of a parameter that both spell
+///   `mut`
+/// WHEN it is checked
+/// THEN E0152 reports the method, and W0002 does not warn on the parameter: the requirement spells
+///   its `mut`, and the error is about the type
+#[test]
+fn requirement_mut_should_exempt_a_method_that_fails_on_a_type() {
+    let src = "interface Filler {\n    fn fill(self, mut xs: [i64])\n}\n\
+        class C: Filler {\n    n: i64\n    fn fill(self, mut xs: [bool]) {\n        print(xs)\n    }\n}\n\
+        fn main() {}";
+    diagnostic(src, Code::ConformanceBody, (6, 8, "fill"), &[]);
+}
+
+/// GIVEN a requirement and a conformance that differ in the `mut` of a parameter, in either
+///   direction, in a class body, in an `extend` block and for a generic interface
+/// WHEN it is checked
+/// THEN E0152 reports the method, with a note on the requirement's parameter
+#[test]
+fn conformance_mut_that_differs_should_give_e0152_with_a_note() {
+    let rows = [
+        (
+            "requirement mut, class body",
+            "interface Filler {\n    fn fill(self, mut xs: [i64])\n}\n\
+            class C: Filler {\n    n: i64\n    fn fill(self, xs: [i64]) {\n        print(xs)\n    }\n}",
+            (6, 8, "fill"),
+            (2, 23),
+        ),
+        (
+            "requirement not mut, class body",
+            "interface Filler {\n    fn fill(self, xs: [i64])\n}\n\
+            class C: Filler {\n    n: i64\n    fn fill(self, mut xs: [i64]) {\n        xs[0] = 1\n    }\n}",
+            (6, 8, "fill"),
+            (2, 19),
+        ),
+        (
+            "requirement mut, extend block",
+            "interface Filler {\n    fn fill(self, mut xs: [i64])\n}\n\
+            class C {\n    n: i64\n}\n\
+            extend C: Filler {\n    fn fill(self, xs: [i64]) {\n        print(xs)\n    }\n}",
+            (8, 8, "fill"),
+            (2, 23),
+        ),
+        (
+            "second parameter, generic interface",
+            "interface Filler<T> {\n    fn fill(self, n: i64, mut xs: [T])\n}\n\
+            class C: Filler<i64> {\n    n: i64\n    fn fill(self, n: i64, xs: [i64]) {\n        print(xs)\n    }\n}",
+            (6, 8, "fill"),
+            (2, 31),
+        ),
+    ];
+    for (row, src, pos, note) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        diagnostic_row(row, &src, Code::ConformanceBody, pos, &[note]);
+    }
+}
+
+/// GIVEN a conformance that differs from its requirement in the `mut` of a parameter and in the
+///   type of another
+/// WHEN it is checked
+/// THEN E0152 reports the method once, with the note on the `mut` parameter
+#[test]
+fn conformance_with_mut_and_type_differing_should_give_one_e0152() {
+    let src = "interface Filler {\n    fn fill(self, mut xs: [i64], n: i64)\n}\n\
+        class C: Filler {\n    n: i64\n    fn fill(self, xs: [i64], n: bool) {\n        print(xs)\n    }\n}\n\
+        fn main() {}";
+    diagnostic(src, Code::ConformanceBody, (6, 8, "fill"), &[(2, 23)]);
+}
+
 /// The `MUT_KEY_STEPS` that checking `src` takes.
 ///
 /// A path of 150 indexes nests deeper than a test's stack allows, so this runs on the compiler's.

@@ -1,0 +1,18 @@
+// GIVEN `rename`, whose `mut` parameter `b` is a class object that the function only writes through
+// WHEN `sisu check` runs on it
+// THEN it warns W0002 on `b`: its `mut` changes nothing for the caller
+// AND the help says that the fields of a class object change without `mut`
+// AND there is no fix, because removing `mut` changes every caller
+class Named {
+    mut name: string
+}
+
+fn rename(mut b: Named, name: string) {
+    b.name = name
+}
+
+fn main() {
+    let mut n = Named(name: "a")
+    rename(mut n, "b")
+    print(n.name)
+}
