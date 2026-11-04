@@ -10,11 +10,11 @@ use rustc_hash::{FxHashMap, FxHashSet};
 #[cfg(test)]
 use std::cell::Cell;
 
-use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
 use inkwell::module::Linkage;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{FunctionValue, GlobalValue};
+use inkwell::{GlobalVisibility, IntPredicate};
 
 use super::rc::param;
 use super::{Codegen, POSITIONED};
@@ -83,7 +83,7 @@ impl Codegen<'_, '_> {
         match ty.kind() {
             TypeKind::String => false,
             TypeKind::Class(..) => {
-                holder.is_none_or(|class| self.class_cycles.link(class, ty).is_none())
+                holder.is_none_or(|class| self.analyses.class_cycles.link(class, ty).is_none())
             }
             // The elements are dropped in the frame of the array, so the array is as deep as one
             // element. That is `counts` of the array, which keeps its answer: each level of
@@ -135,11 +135,12 @@ impl Codegen<'_, '_> {
         let parts = match key.kind() {
             TypeKind::Class(id, _) => {
                 let drain = self
+                    .analyses
                     .class_cycles
                     .members(id)
                     .map_or(0, |m| u32::from(m.len() > 1));
                 let fields = self.cycle_fields(id);
-                let linked = |class, field| self.class_cycles.link(class, field).is_some();
+                let linked = |class, field| self.analyses.class_cycles.link(class, field).is_some();
                 let fields = fields.filter(|&(class, field)| !linked(class, field));
                 drain
                     + fields
@@ -164,6 +165,7 @@ impl Codegen<'_, '_> {
             return ty;
         };
         let first = self
+            .analyses
             .class_cycles
             .members(id)
             .map_or(id, |members| members[0]);
@@ -173,7 +175,7 @@ impl Codegen<'_, '_> {
     /// Each field type of the class `id`, or of each class of its cycle, with the class that
     /// holds it.
     fn cycle_fields(&self, id: ClassId) -> impl Iterator<Item = (ClassId, Type)> + '_ {
-        let cycle = self.class_cycles.members(id);
+        let cycle = self.analyses.class_cycles.members(id);
         let classes = cycle.into_iter().flatten().copied();
         let classes = classes.chain(cycle.is_none().then_some(id));
         classes.flat_map(|class| {
@@ -358,7 +360,27 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
     }
 
-    /// The internal global `name` of type `ty`, zero at the start. It is made at the first call
+    /// Makes `sisu_rc.depth` and `sisu_rc.deferred` for a split build, before any function: unit 0
+    /// defines them, zero at the start, and each other unit declares them. All units share them
+    /// by name, so there is one drop depth in the program (ADR 0038).
+    pub(super) fn declare_drop_globals(&self) {
+        let (i64_type, bool_type) = (self.context.i64_type(), self.context.bool_type());
+        let globals: [(&str, BasicTypeEnum<'ctx>); 2] = [
+            ("sisu_rc.depth", i64_type.into()),
+            ("sisu_rc.deferred", bool_type.into()),
+        ];
+        for (name, ty) in globals {
+            let global = self.module.add_global(ty, None, name);
+            global.set_linkage(Linkage::External);
+            global.set_visibility(GlobalVisibility::Hidden);
+            if self.unit.index == 0 {
+                global.set_initializer(&ty.const_zero());
+            }
+        }
+    }
+
+    /// The global `name` of type `ty`: the one that `declare_drop_globals` made in a split build.
+    /// With one unit it is internal, zero at the start. It is made at the first call
     /// for it, so a program with no counting drop function does not have it.
     fn drop_global(&self, name: &str, ty: BasicTypeEnum<'ctx>) -> GlobalValue<'ctx> {
         self.module.get_global(name).unwrap_or_else(|| {

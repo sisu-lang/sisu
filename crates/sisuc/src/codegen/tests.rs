@@ -1729,7 +1729,19 @@ fn niche_should_run_out_past_its_storage() {
     let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
     let mir = mir::build(&program);
-    let mut codegen = Codegen::new(&context, &program, &mir, "test.sisu", &src, &machine, false);
+    let analyses = Analyses::new(&program, &src);
+    let unit = Unit::whole(mir.functions.len());
+    let mut codegen = Codegen::new(
+        &context,
+        &program,
+        &mir,
+        &analyses,
+        &unit,
+        "test.sisu",
+        &src,
+        &machine,
+        false,
+    );
     codegen.lay_out_types();
     let layers = |ty, k| (0..k).fold(ty, |ty, _| Type::optional(ty));
     let pair = |value| {
@@ -3032,7 +3044,19 @@ fn binary_should_take_and_and_or_as_the_eager_operations_of_two_computed_bools()
     let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
     let mir = mir::build(&program);
-    let codegen = Codegen::new(&context, &program, &mir, "test.sisu", src, &machine, false);
+    let analyses = Analyses::new(&program, src);
+    let unit = Unit::whole(mir.functions.len());
+    let codegen = Codegen::new(
+        &context,
+        &program,
+        &mir,
+        &analyses,
+        &unit,
+        "test.sisu",
+        src,
+        &machine,
+        false,
+    );
     let bool_type = context.bool_type();
     let fn_type = bool_type.fn_type(&[bool_type.into(), bool_type.into()], false);
     let function = codegen.module.add_function("both", fn_type, None);
@@ -4980,7 +5004,19 @@ fn with_codegen(src: &str, check: impl FnOnce(&Codegen<'_, '_>)) {
     let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
     let mir = mir::build(&program);
-    let codegen = Codegen::new(&context, &program, &mir, "test.sisu", src, &machine, false);
+    let analyses = Analyses::new(&program, src);
+    let unit = Unit::whole(mir.functions.len());
+    let codegen = Codegen::new(
+        &context,
+        &program,
+        &mir,
+        &analyses,
+        &unit,
+        "test.sisu",
+        src,
+        &machine,
+        false,
+    );
     check(&codegen);
 }
 
@@ -5682,7 +5718,19 @@ fn convention_should_give_one_type_per_part() {
     let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
     let mir = mir::build(&program);
-    let mut codegen = Codegen::new(&context, &program, &mir, "test.sisu", src, &machine, false);
+    let analyses = Analyses::new(&program, src);
+    let unit = Unit::whole(mir.functions.len());
+    let mut codegen = Codegen::new(
+        &context,
+        &program,
+        &mir,
+        &analyses,
+        &unit,
+        "test.sisu",
+        src,
+        &machine,
+        false,
+    );
     codegen.lay_out_types();
     let class = program
         .classes

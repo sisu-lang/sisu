@@ -58,7 +58,7 @@ pub(crate) fn count(sizes: &[usize], flag: Option<usize>) -> usize {
 /// If `count` is 0 and `sizes` is not empty: a function needs a unit.
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "Task 2 calls `partition`, which calls it")
+    expect(dead_code, reason = "Task 4 calls `partition`, which calls it")
 )]
 pub(crate) fn assign(sizes: &[usize], count: usize) -> Vec<usize> {
     let mut order: Vec<usize> = (0..sizes.len()).collect();
@@ -78,7 +78,10 @@ pub(crate) fn assign(sizes: &[usize], count: usize) -> Vec<usize> {
 
 /// What a unit does with a function.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code, reason = "Task 2 reads it"))]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "Task 4 builds `Other` in `partition`")
+)]
 pub(crate) enum Placement {
     /// The unit defines the function.
     Own,
@@ -88,7 +91,6 @@ pub(crate) enum Placement {
 
 /// One codegen unit of a build.
 #[derive(Clone, Debug)]
-#[cfg_attr(not(test), expect(dead_code, reason = "Task 2 builds the units"))]
 pub(crate) struct Unit {
     /// The place of this unit among the `count` units, from 0.
     pub(crate) index: usize,
@@ -98,7 +100,6 @@ pub(crate) struct Unit {
     pub(crate) placement: Vec<Placement>,
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "Task 2 calls them"))]
 impl Unit {
     /// The only unit of a build with one unit: it defines all `functions`.
     pub(crate) fn whole(functions: usize) -> Unit {
@@ -120,7 +121,7 @@ impl Unit {
 /// # Panics
 ///
 /// With `count > 1`, if two functions have one name: a split build links by name.
-#[cfg_attr(not(test), expect(dead_code, reason = "Task 2 calls it"))]
+#[cfg_attr(not(test), expect(dead_code, reason = "Task 4 calls it"))]
 pub(crate) fn partition(mir: &mir::Program, count: usize) -> Vec<Unit> {
     if count > 1 {
         let mut names = FxHashSet::default();

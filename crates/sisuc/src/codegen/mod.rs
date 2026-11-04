@@ -37,12 +37,13 @@ use inkwell::values::{
     BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, GlobalValue, IntValue,
     MetadataValue, PointerValue,
 };
-use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
+use inkwell::{AddressSpace, GlobalVisibility, IntPredicate, OptimizationLevel};
 
 use self::array::element_of;
 use self::enums::{Component, EnumLayout};
 use self::layout::{ClassLayout, HeapBlock, tbaa_tag};
 use self::rc::Helper;
+use self::units::{Placement, Unit};
 use crate::conformance::Written;
 use crate::mir::{
     self, BlockId, Const, Operand, Place, Projection, Rvalue, Side, Statement, Terminator,
@@ -72,10 +73,16 @@ thread_local! {
 
 impl<'ctx, 'src> Codegen<'ctx, 'src> {
     /// An empty module for `program`, with the runtime's declarations and no function defined.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a unit needs the program, its analyses, its place, its text and the target"
+    )]
     fn new(
         context: &'ctx Context,
         program: &'src Program,
         mir: &'src mir::Program,
+        analyses: &'src Analyses,
+        unit: &'src Unit,
         path: &'src str,
         source: &'src str,
         machine: &TargetMachine,
@@ -135,13 +142,10 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             tbaa_root,
             program,
             mir,
-            unreflexive: rc::reaching_unreflexive(program),
-            class_cycles: rc::class_cycles(program),
-            components: enums::components(&program.enums),
-            any_layouts: (program.any_layouts.iter())
-                .map(|layout| (layout.any, layout.interfaces.clone()))
-                .collect(),
+            analyses,
+            unit,
             any_tables: RefCell::new(FxHashMap::default()),
+            pending_tables: RefCell::new(Vec::new()),
             helpers: RefCell::new(FxHashMap::default()),
             pending: RefCell::new(Vec::new()),
             written: RefCell::new(Written::default()),
@@ -150,7 +154,6 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             target_data,
             path,
             source,
-            lines: LineIndex::new(source),
             classes: Vec::new(),
             enums: Vec::new(),
             functions: Vec::new(),
@@ -180,44 +183,70 @@ pub(crate) fn compile<'ctx>(
     machine: &TargetMachine,
     rc_checks: bool,
 ) -> Module<'ctx> {
-    let mut codegen = Codegen::new(context, program, mir, path, source, machine, rc_checks);
-    codegen.lay_out_types();
-    codegen.declare_any_tables();
-    // Every class gets its release helper, used or not; an `eq` helper is made on first use.
-    for id in 0..program.classes.len() {
-        codegen.helper(
-            Helper::Release,
-            Type::intern(TypeKind::Class(ClassId(id), TypeArgs::NONE)),
-        );
-    }
-    // Declare every function first so that calls can refer to functions defined later.
-    for f in &mir.functions {
-        codegen.declare(f);
-    }
-    for (i, f) in mir.functions.iter().enumerate() {
-        let function = codegen.functions[i];
-        codegen.define(f, function);
-    }
-    codegen.define_any_tables();
-    codegen.c_main();
-    codegen.define_helpers();
-    codegen.module
+    compile_unit(
+        context,
+        program,
+        mir,
+        &Analyses::new(program, source),
+        &Unit::whole(mir.functions.len()),
+        path,
+        source,
+        machine,
+        rc_checks,
+    )
 }
 
-/// What a whole program gives every codegen unit: the analyses of its types and the line starts of
-/// its source. A unit reads them and never changes them.
-pub(crate) struct Analyses;
+/// What a whole program gives every codegen unit: the analyses of its types, the index of its
+/// `any` tables and the line starts of its source. A unit reads them and never changes them.
+pub(crate) struct Analyses {
+    /// Whether each class, then each enum, reaches an `f64` or a written `eq` through its fields;
+    /// see `rc::reaching_unreflexive`.
+    unreflexive: Vec<bool>,
+    /// The classes that hold each other in a loop; see `rc::class_cycles`.
+    class_cycles: rc::ClassCycles,
+    /// For each enum, indexed by `EnumId`, its component when the component has boxes; see
+    /// `enums::components`.
+    components: Vec<Option<Component>>,
+    /// The interfaces of the table of each `any` type, as `mono` laid them out.
+    any_layouts: FxHashMap<Type, Vec<(InterfaceId, TypeArgs)>>,
+    /// The place of each `(type, any type)` pair in `program.any_tables`.
+    any_table_index: FxHashMap<(Type, Type), usize>,
+    /// The line starts of the source, so that a panic site costs a binary search.
+    lines: LineIndex,
+}
+
+// Every unit reads the same analyses, program and mir from its own thread.
+const _: () = {
+    const fn assert_sync<T: Sync>() {}
+    assert_sync::<Analyses>();
+    assert_sync::<Program>();
+    assert_sync::<mir::Program>();
+};
 
 impl Analyses {
     /// The analyses of `program`, whose text is `source`.
-    #[cfg_attr(not(test), expect(dead_code, reason = "Task 2 reads it"))]
-    pub(crate) fn new(_program: &Program, _source: &str) -> Analyses {
-        Analyses
+    pub(crate) fn new(program: &Program, source: &str) -> Analyses {
+        Analyses {
+            unreflexive: rc::reaching_unreflexive(program),
+            class_cycles: rc::class_cycles(program),
+            components: enums::components(&program.enums),
+            any_layouts: (program.any_layouts.iter())
+                .map(|layout| (layout.any, layout.interfaces.clone()))
+                .collect(),
+            any_table_index: (program.any_tables.iter().enumerate())
+                .map(|(index, table)| ((table.ty, table.any), index))
+                .collect(),
+            lines: LineIndex::new(source),
+        }
     }
 }
 
-/// The LLVM module of codegen unit `unit` of a program; see `compile`.
-#[cfg_attr(not(test), expect(dead_code, reason = "Task 2 calls it"))]
+/// The LLVM module of codegen unit `unit` of a program; see `compile`. With one unit, every
+/// function is internal and the module is the whole program. In a split build, every function has
+/// external linkage and hidden visibility, so that the units link by name: the unit defines the
+/// functions that it owns and declares the others. Unit 0 holds the C `main` and the drop-depth
+/// state (`sisu_rc.depth`, `sisu_rc.deferred`), which the other units declare. A unit makes the
+/// release helpers and the `any` tables that its functions use, and no other.
 #[inline(never)]
 #[expect(
     clippy::too_many_arguments,
@@ -225,16 +254,47 @@ impl Analyses {
 )]
 pub(crate) fn compile_unit<'ctx>(
     context: &'ctx Context,
-    _program: &Program,
-    _mir: &mir::Program,
-    _analyses: &Analyses,
-    _unit: &units::Unit,
-    _path: &str,
-    _source: &str,
-    _machine: &TargetMachine,
-    _rc_checks: bool,
+    program: &Program,
+    mir: &mir::Program,
+    analyses: &Analyses,
+    unit: &Unit,
+    path: &str,
+    source: &str,
+    machine: &TargetMachine,
+    rc_checks: bool,
 ) -> Module<'ctx> {
-    context.create_module("main")
+    let mut codegen = Codegen::new(
+        context, program, mir, analyses, unit, path, source, machine, rc_checks,
+    );
+    codegen.lay_out_types();
+    if unit.is_split() {
+        codegen.declare_drop_globals();
+    } else {
+        codegen.declare_any_tables();
+        // Every class gets its release helper, used or not; an `eq` helper is made on first use.
+        for id in 0..program.classes.len() {
+            codegen.helper(
+                Helper::Release,
+                Type::intern(TypeKind::Class(ClassId(id), TypeArgs::NONE)),
+            );
+        }
+    }
+    // Declare every function first so that calls can refer to functions defined later.
+    for f in &mir.functions {
+        codegen.declare(f);
+    }
+    for (i, f) in mir.functions.iter().enumerate() {
+        if unit.placement[i] == Placement::Own {
+            let function = codegen.functions[i];
+            codegen.define(f, function);
+        }
+    }
+    codegen.define_any_tables();
+    if unit.index == 0 {
+        codegen.c_main();
+    }
+    codegen.define_helpers();
+    codegen.module
 }
 
 /// The runtime's print functions for one stream, by operand type.
@@ -322,18 +382,16 @@ struct Codegen<'ctx, 'src> {
     /// The mir, whose functions' `borrowed` flags say how a helper passes a part to a written
     /// method.
     mir: &'src mir::Program,
-    /// Whether each class, then each enum, reaches an `f64` or a written `eq` through its fields;
-    /// see `rc::reaching_unreflexive`.
-    unreflexive: Vec<bool>,
-    /// The classes that hold each other in a loop; see `rc::class_cycles`.
-    class_cycles: rc::ClassCycles,
-    /// For each enum, indexed by `EnumId`, its component when the component has boxes; see
-    /// `enums::components`.
-    components: Vec<Option<Component>>,
-    /// The interfaces of the table of each `any` type, as `mono` laid them out.
-    any_layouts: FxHashMap<Type, Vec<(InterfaceId, TypeArgs)>>,
-    /// The global of the table of each object type for each `any` type.
+    /// The analyses of the whole program, shared by every unit.
+    analyses: &'src Analyses,
+    /// The unit this module is for.
+    unit: &'src Unit,
+    /// The global of the table of each object type for each `any` type. One unit declares every
+    /// table first; a split build declares a table on its first use (`table_global`).
     any_tables: RefCell<FxHashMap<(Type, Type), GlobalValue<'ctx>>>,
+    /// The places in `program.any_tables` of the tables of a split build that are declared and not
+    /// yet defined; `define_any_tables` empties it.
+    pending_tables: RefCell<Vec<usize>>,
     /// The helpers declared so far, by kind and counted type; see `rc::helper`.
     helpers: RefCell<FxHashMap<(Helper, Type), FunctionValue<'ctx>>>,
     /// The helpers declared but not yet defined; `define_helpers` empties it.
@@ -349,8 +407,6 @@ struct Codegen<'ctx, 'src> {
     /// The input path as given, and its text: panic messages name a position in it.
     path: &'src str,
     source: &'src str,
-    /// The line starts of `source`, so that a panic site costs a binary search.
-    lines: LineIndex,
     /// `%sisu.<Class>` and its field elements, indexed by `ClassId`.
     classes: Vec<ClassLayout<'ctx>>,
     /// `%sisu.<Enum>` and its payload structs, indexed by `EnumId`.
@@ -566,11 +622,19 @@ impl<'ctx> Codegen<'ctx, '_> {
         };
         // `mono` names a method of a conformance block with its interface (`C.Label.name`), so
         // two blocks that each hold `name` get two symbols.
-        let function = self.module.add_function(
-            &format!("sisu.{}", f.name),
-            fn_type,
-            Some(Linkage::Internal),
-        );
+        let linkage = if self.unit.is_split() {
+            Linkage::External
+        } else {
+            Linkage::Internal
+        };
+        let function =
+            self.module
+                .add_function(&format!("sisu.{}", f.name), fn_type, Some(linkage));
+        if self.unit.is_split() {
+            function
+                .as_global_value()
+                .set_visibility(GlobalVisibility::Hidden);
+        }
         let tys: Vec<Type> = f.locals[..f.params].iter().map(|p| p.ty).collect();
         self.mark_len_params(function, 0, &tys);
         self.functions.push(function);
@@ -1342,7 +1406,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             !span.in_prelude(),
             "a prelude span should not reach a baked location: the function should report its caller's"
         );
-        let (line, col) = self.lines.line_col(self.source, span.start());
+        let (line, col) = self.analyses.lines.line_col(self.source, span.start());
         format!("{}:{line}:{col}", self.path)
     }
 
