@@ -1,71 +1,71 @@
 error[E0032]: a string's `get` takes a range
- --> E0032-string-get-base-name.sisu:8:17
-  |
-8 |     print(t.get(1) ?? "")
-  |                 ^ this is not a range
-  |
-  = help: write a range, such as `t.get(1..3)`
+  --> E0032-string-get-base-name.sisu:13:17
+   |
+13 |     print(t.get(1) ?? "")
+   |                 ^ this is not a range
+   |
+   = help: write a range, such as `t.get(1..3)`
 
 error[E0032]: a string's `get` takes a range
- --> E0032-string-get-base-name.sisu:9:18
-  |
-9 |     print(u?.get(1) ?? "")
-  |                  ^ this is not a range
-  |
-  = help: write a range, such as `u?.get(1..3)`
+  --> E0032-string-get-base-name.sisu:14:18
+   |
+14 |     print(u?.get(1) ?? "")
+   |                  ^ this is not a range
+   |
+   = help: write a range, such as `u?.get(1..3)`
 
 error[E0049]: `w` is not optional
-  --> E0032-string-get-base-name.sisu:10:11
+  --> E0032-string-get-base-name.sisu:15:11
    |
-10 |     print(w?.get(1) ?? "")
+15 |     print(w?.get(1) ?? "")
    |           ^
    |
 help: replace `?.` with `.`
    |
-10 -     print(w?.get(1) ?? "")
-10 +     print(w.get(1) ?? "")
+15 -     print(w?.get(1) ?? "")
+15 +     print(w.get(1) ?? "")
    |
 
 error[E0032]: a string's `get` takes a range
-  --> E0032-string-get-base-name.sisu:10:18
+  --> E0032-string-get-base-name.sisu:15:18
    |
-10 |     print(w?.get(1) ?? "")
+15 |     print(w?.get(1) ?? "")
    |                  ^ this is not a range
    |
    = help: write a range, such as `1..3`
 
 error[E0062]: `p?.` leaves a `string?`, which may be `None`
-  --> E0032-string-get-base-name.sisu:11:11
+  --> E0032-string-get-base-name.sisu:16:11
    |
-11 |     print(p?.get(1) ?? "")
+16 |     print(p?.get(1) ?? "")
    |           ^
    |
    = help: peel the other layer first: `(p ?? None)?.get`
 
 error[E0032]: a string's `get` takes a range
-  --> E0032-string-get-base-name.sisu:11:18
+  --> E0032-string-get-base-name.sisu:16:18
    |
-11 |     print(p?.get(1) ?? "")
+16 |     print(p?.get(1) ?? "")
    |                  ^ this is not a range
    |
    = help: write a range, such as `1..3`
 
 error[E0049]: `h.name` is not optional
-  --> E0032-string-get-base-name.sisu:12:11
+  --> E0032-string-get-base-name.sisu:17:11
    |
-12 |     print(h.name?.get(1) ?? "")
+17 |     print(h.name?.get(1) ?? "")
    |           ^^^^^^
    |
 help: replace `?.` with `.`
    |
-12 -     print(h.name?.get(1) ?? "")
-12 +     print(h.name.get(1) ?? "")
+17 -     print(h.name?.get(1) ?? "")
+17 +     print(h.name.get(1) ?? "")
    |
 
 error[E0032]: a string's `get` takes a range
-  --> E0032-string-get-base-name.sisu:12:23
+  --> E0032-string-get-base-name.sisu:17:23
    |
-12 |     print(h.name?.get(1) ?? "")
+17 |     print(h.name?.get(1) ?? "")
    |                       ^ this is not a range
    |
    = help: write a range, such as `1..3`
